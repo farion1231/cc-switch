@@ -9,6 +9,7 @@ export const PRESET_SEARCH_ALIASES: Record<string, string> = {
   "Baidu Qianfan Coding Plan": "百度 千帆 文心",
   "Baidu Qianfan Token Plan": "百度 千帆 文心",
   BaiLing: "蚂蚁 百灵 ling",
+  "Cloudflare AI Gateway": "cf aig workers ai",
   Codex: "chatgpt openai gpt",
   DeepInfra: "deep infra",
   DeepSeek: "深度求索",

@@ -1951,6 +1951,25 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "mistral",
   },
   {
+    name: "Cloudflare AI Gateway",
+    websiteUrl: "https://developers.cloudflare.com/ai-gateway/",
+    apiKeyUrl: "https://dash.cloudflare.com/profile/api-tokens",
+    category: "cloud_provider",
+    // 官方 Claude Desktop 接入页（developers.cloudflare.com/ai-gateway/
+    // integrations/coding-agents/claude-desktop，2026-10-14 核对）：Gateway 连接、
+    // 认证方式 Bearer、Key 填网关 token，base 为 …/v1/<账户 ID>/<网关 ID>/
+    // anthropic、不带 /v1，不需要自定义头（Key 是自己的 Anthropic Key 时才另加
+    // cf-aig-authorization）。上游是 Anthropic 原生透传，直连即可。表单不支持模板
+    // 变量，账户 ID 用字面占位符（同 Codex 的 Azure OpenAI），网关 ID 填自动创建
+    // 的 default，忘了改会 401
+    baseUrl:
+      "https://gateway.ai.cloudflare.com/v1/YOUR_ACCOUNT_ID/default/anthropic",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(),
+    icon: "cloudflare",
+  },
+  {
     name: "Nvidia",
     websiteUrl: "https://build.nvidia.com",
     apiKeyUrl: "https://build.nvidia.com/settings/api-keys",

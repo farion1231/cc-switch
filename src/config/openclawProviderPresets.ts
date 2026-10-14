@@ -5437,6 +5437,73 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "Cloudflare AI Gateway",
+    websiteUrl: "https://developers.cloudflare.com/ai-gateway/",
+    apiKeyUrl: "https://dash.cloudflare.com/profile/api-tokens",
+    // 走 REST 统一 API（developers.cloudflare.com/ai-gateway/usage/rest-api，
+    // 2026-05-21 上线，2026-10-14 核对）：base 为 https://api.cloudflare.com/
+    // client/v4/accounts/<账户 ID>/ai/v1，标准 Bearer 鉴权，默认走 default 网关；
+    // 该页要求 token 带 Workers AI Read（只有 AI Gateway 权限会 401）。表单不替换
+    // 模板变量，账户 ID 用字面占位符，忘了改会 401。旧的 /compat 端点已废弃不用。
+    // OpenClaw 官方插件 @openclaw/cloudflare-ai-gateway-provider 用的 provider ID
+    // 是 cloudflare-ai-gateway（docs.openclaw.ai/providers/cloudflare-ai-gateway
+    // 同日），供应商名请另取（如 cloudflare）免得撞车。模型 ID 为 author/model、
+    // 用点号；Claude 系列在官方目录（developers.cloudflare.com/ai/models 同日）只
+    // 写 Anthropic Messages 格式，Chat 端点不放。窗口、最大输出与 cost（每百万
+    // token）取该目录与 models.dev 的 cloudflare-ai-gateway 条目同日，GPT 取 272K
+    // 内的单价；缓存写入未列，不写。带工具调用加流式的实际行为未经真 Key 实测
+    settingsConfig: {
+      baseUrl:
+        "https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "openai/gpt-6.1-sol",
+          name: "GPT-6.1 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1050000,
+          maxTokens: 128000,
+          cost: { input: 2, output: 10, cacheRead: 0.1 },
+        },
+        {
+          id: "openai/gpt-6-luna",
+          name: "GPT-6 Luna",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1050000,
+          maxTokens: 128000,
+          cost: { input: 0.1, output: 0.5, cacheRead: 0.01 },
+        },
+        {
+          id: "moonshotai/kimi-k3",
+          name: "Kimi K3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 3, output: 15, cacheRead: 0.3 },
+        },
+      ],
+    },
+    category: "cloud_provider",
+    icon: "cloudflare",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "cloudflare/openai/gpt-6.1-sol" },
+      modelCatalog: {
+        "cloudflare/openai/gpt-6.1-sol": { alias: "GPT-6.1 Sol" },
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

@@ -2876,6 +2876,45 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Cloudflare AI Gateway",
+    websiteUrl: "https://developers.cloudflare.com/ai-gateway/",
+    apiKeyUrl: "https://dash.cloudflare.com/profile/api-tokens",
+    settingsConfig: {
+      // Hermes 没有内置的 Cloudflare provider，名字不冲突
+      name: "cloudflare",
+      // REST 统一 API 的 OpenAI Chat 端点（developers.cloudflare.com/ai-gateway/
+      // usage/rest-api，2026-10-14 核对），标准 Bearer 鉴权，token 须带 Workers
+      // AI Read；账户 ID 用字面占位符，忘了改会 401。模型与窗口同 OpenClaw 预设
+      //（developers.cloudflare.com/ai/models 同日），Claude 只有 Messages 格式不放
+      base_url:
+        "https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "openai/gpt-6.1-sol",
+          name: "GPT-6.1 Sol",
+          context_length: 1050000,
+        },
+        {
+          id: "openai/gpt-6-luna",
+          name: "GPT-6 Luna",
+          context_length: 1050000,
+        },
+        {
+          id: "moonshotai/kimi-k3",
+          name: "Kimi K3",
+          context_length: 1048576,
+        },
+      ],
+    },
+    category: "cloud_provider",
+    icon: "cloudflare",
+    suggestedDefaults: {
+      model: { default: "openai/gpt-6.1-sol", provider: "cloudflare" },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

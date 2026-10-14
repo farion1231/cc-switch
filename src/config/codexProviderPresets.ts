@@ -4108,6 +4108,30 @@ requires_openai_auth = true`,
     icon: "mistral",
   },
   {
+    name: "Cloudflare AI Gateway",
+    websiteUrl: "https://developers.cloudflare.com/ai-gateway/",
+    apiKeyUrl: "https://dash.cloudflare.com/profile/api-tokens",
+    auth: generateThirdPartyAuth(""),
+    // 官方 Codex 接入页（developers.cloudflare.com/ai-gateway/integrations/
+    // coding-agents/openai-codex，2026-10-14 核对）：base_url 为 …/v1/<账户 ID>/
+    // <网关 ID>/openai、wire_api = "responses"，网关 token 走 Bearer；Codex 不展开
+    // base_url 里的环境变量，账户 ID 只能写字面占位符（同 Azure OpenAI），网关 ID
+    // 填自动创建的 default，忘了改会 401。该页明说 Anthropic、Google 等非 OpenAI
+    // 模型走不了这个配置，只放 GPT
+    config: generateThirdPartyConfig(
+      "cloudflare_ai_gateway",
+      "https://gateway.ai.cloudflare.com/v1/YOUR_ACCOUNT_ID/default/openai",
+      "gpt-6.1-sol",
+    ),
+    // 透传端点后面就是 OpenAI 自己的 /v1/responses，custom 工具（apply_patch）
+    // 原生支持；后端给 GPT 行镜像官方目录条目（档位、窗口随官方），同 OpenRouter
+    // 不写 modelCatalog。gpt-6.1-sol 须 Codex ≥ 0.153.0。不用 REST 统一 API 的
+    // /ai/v1/responses：那一层是否原样转发 custom 工具未证实
+    apiFormat: "openai_responses",
+    category: "cloud_provider",
+    icon: "cloudflare",
+  },
+  {
     name: "OpenCode Go",
     family: "opencode",
     planKey: "coding",

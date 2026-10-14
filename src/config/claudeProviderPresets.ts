@@ -2269,6 +2269,56 @@ export const providerPresets: ProviderPreset[] = [
     icon: "mistral",
   },
   {
+    name: "Cloudflare AI Gateway",
+    websiteUrl: "https://developers.cloudflare.com/ai-gateway/",
+    // 网关设置页 dash.cloudflare.com/?to=/:account/ai/ai-gateway 也能建 token
+    //（developers.cloudflare.com/ai-gateway/get-started，2026-10-14 核对）
+    apiKeyUrl: "https://dash.cloudflare.com/profile/api-tokens",
+    // 走厂商原生透传端点：base 为 https://gateway.ai.cloudflare.com/v1/<账户 ID>/
+    // <网关 ID>/anthropic、不带 /v1（官方 Claude Code 接入页 developers.
+    // cloudflare.com/ai-gateway/integrations/coding-agents/claude-code，
+    // 2026-10-14 核对）。该页写法是 ANTHROPIC_API_KEY 填网关 token 再加
+    // ANTHROPIC_CUSTOM_HEADERS 的 cf-aig-authorization 头，但本地路由不转发自定义
+    // 头，靠它鉴权的卡进路由会 401；官方 Claude Desktop 接入页（…/coding-agents/
+    // claude-desktop 同日）对同一端点写的是 Bearer 直接带网关 token（Key 是自己
+    // 的 Anthropic Key 时才另加该头），故用默认的 AUTH_TOKEN 发 Bearer，只填一次
+    // token、路由模式也能用。未经真 Key 实测：Unified Billing 页说请求带了厂商
+    // Key 会原样转给厂商，Bearer 网关 token 会不会被当成 Anthropic Key 转发。
+    // 网关 ID 默认 default（首个带鉴权的请求自动创建，get-started 同日），token
+    // 须有 AI Gateway Run 权限。走 Unified Billing 预充值（充值收 5%，推理按厂商
+    // 原价）或 BYOK 存自家 Key。模型用 Anthropic 原生连字符 ID（点号 ID 属于 REST
+    // 统一 API，这里不用），三款窗口均 1M（developers.cloudflare.com/ai/models
+    // 同日）。走 ANTHROPIC_BASE_URL 时 Claude Code 当普通网关，而 cloud_provider
+    // 不会自动补 AUTO_MODE_SERVER=0，故手写（同 Microsoft Foundry）
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://gateway.ai.cloudflare.com/v1/${ACCOUNT_ID}/${GATEWAY_ID}/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "claude-sonnet-5-5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-5-5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5-5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5-5",
+        CLAUDE_CODE_AUTO_MODE_SERVER: "0",
+      },
+    },
+    category: "cloud_provider",
+    templateValues: {
+      ACCOUNT_ID: {
+        label: "Account ID",
+        placeholder: "32-character account ID",
+        editorValue: "",
+      },
+      GATEWAY_ID: {
+        label: "Gateway ID",
+        placeholder: "default",
+        defaultValue: "default",
+        editorValue: "default",
+      },
+    },
+    icon: "cloudflare",
+  },
+  {
     name: "GitHub Copilot",
     websiteUrl: "https://github.com/features/copilot",
     settingsConfig: {
