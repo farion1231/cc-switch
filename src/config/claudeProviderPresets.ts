@@ -1926,6 +1926,38 @@ export const providerPresets: ProviderPreset[] = [
     icon: "ollama",
   },
   {
+    name: "Meta Model API",
+    websiteUrl: "https://dev.meta.ai",
+    // Key 在 dev.meta.ai 登录后的「API keys」标签页（dev.meta.ai/docs/
+    // authentication.md，2026-10-14 核对），没有独立的 Key 页面
+    apiKeyUrl: "https://dev.meta.ai",
+    // 官方 Claude Code 接入文档（dev.meta.ai/docs/coding-agents.md，2026-10-14
+    // 核对）原样：base 不带 /v1（Claude Code 自己拼 /v1/messages），只认
+    // Authorization: Bearer，Key 填 AUTH_TOKEN 而非 ANTHROPIC_API_KEY
+    //（x-api-key）；五个模型变量全部钉到 Muse，主循环/opus 用 Wonder、
+    // sonnet/haiku/子代理用 Spark 1.3。两个 -contributor 版本会拿用户内容训练
+    // 模型，禁收。根路径 + /v1/models 即模型列表（无 Key 401），不覆写 modelsUrl
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.meta.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "muse-wonder-1.0",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "muse-wonder-1.0",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "muse-spark-1.3",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "muse-spark-1.3",
+        CLAUDE_CODE_SUBAGENT_MODEL: "muse-spark-1.3",
+        // 非第一方 host 默认关闭 MCP 工具搜索，官方要求打开
+        ENABLE_TOOL_SEARCH: "true",
+        // 模型 id 非 claude-* 时 Claude Code 按 200K 默认窗口处理，必须显式
+        // 钉住官方值：两款模型窗口均为 1048576（dev.meta.ai/docs/models.md）
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1048576",
+      },
+    },
+    category: "cn_official",
+    endpointCandidates: ["https://api.meta.ai"],
+    icon: "meta",
+  },
+  {
     name: "GitHub Copilot",
     websiteUrl: "https://github.com/features/copilot",
     settingsConfig: {

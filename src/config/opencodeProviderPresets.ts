@@ -3474,6 +3474,64 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "Meta Model API",
+    websiteUrl: "https://dev.meta.ai",
+    apiKeyUrl: "https://dev.meta.ai",
+    // 官方 OpenCode 接入文档推荐写法（dev.meta.ai/docs/coding-agents.md，
+    // 2026-10-14 核对）：@ai-sdk/openai 走 Responses，靠
+    // reasoning.encrypted_content 保住跨轮推理，也只有它能附 PDF；模态、
+    // 窗口、最大输出与模型级 options 照抄官方配置。冒烟不过就退回官方给的
+    // @ai-sdk/openai-compatible 备选（去掉模型级 options、输入改 text+image）
+    settingsConfig: {
+      npm: "@ai-sdk/openai",
+      name: "Meta Model API",
+      options: {
+        baseURL: "https://api.meta.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "muse-wonder-1.0": {
+          name: "Muse Wonder 1.0",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: {
+            input: ["text", "image", "pdf", "video"],
+            output: ["text"],
+          },
+          options: {
+            reasoningEffort: "high",
+            reasoningSummary: "auto",
+            include: ["reasoning.encrypted_content"],
+          },
+        },
+        "muse-spark-1.3": {
+          name: "Muse Spark 1.3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: {
+            input: ["text", "image", "pdf", "video"],
+            output: ["text"],
+          },
+          options: {
+            reasoningEffort: "high",
+            reasoningSummary: "auto",
+            include: ["reasoning.encrypted_content"],
+          },
+        },
+      },
+    },
+    category: "cn_official",
+    icon: "meta",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

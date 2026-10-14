@@ -1693,6 +1693,28 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "ollama",
   },
   {
+    name: "Meta Model API",
+    websiteUrl: "https://dev.meta.ai",
+    apiKeyUrl: "https://dev.meta.ai",
+    category: "cn_official",
+    // 同 Claude Code 预设：Messages 端点 /v1/messages 只认 Bearer，路由按
+    // ANTHROPIC_AUTH_TOKEN 发 Bearer（dev.meta.ai/docs/coding-agents.md，
+    // 2026-10-14 核对）；模型名非 Claude，只能走路由。两款窗口均为 1M
+    //（dev.meta.ai/docs/models.md）。haiku 与 sonnet 同为 Spark 1.3，按上游
+    // 去重后只剩两条路由
+    baseUrl: "https://api.meta.ai",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "muse-spark-1.3",
+      "muse-wonder-1.0",
+      "muse-spark-1.3",
+      true,
+    ),
+    endpointCandidates: ["https://api.meta.ai"],
+    icon: "meta",
+  },
+  {
     name: "Nvidia",
     websiteUrl: "https://build.nvidia.com",
     apiKeyUrl: "https://build.nvidia.com/settings/api-keys",

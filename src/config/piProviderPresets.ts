@@ -2004,6 +2004,34 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "ollama",
   },
   {
+    name: "Meta Model API",
+    providerKey: "cc-switch-meta",
+    websiteUrl: "https://dev.meta.ai",
+    apiKeyUrl: "https://dev.meta.ai",
+    settingsConfig: {
+      name: "Meta Model API",
+      // OpenAI Chat 端点 /v1/chat/completions（dev.meta.ai/docs/coding-agents.md，
+      // 2026-10-14 核对），Bearer 鉴权。两款常开思考（none 返回 400），关闭档
+      // 隐藏；xhigh/max 原样发（dev.meta.ai/docs/reasoning.md）。Chat 参数表只
+      // 列到 xhigh，max 是否被 Chat 接受未实测
+      baseUrl: "https://api.meta.ai/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("meta/muse-wonder-1.0", {
+          id: "muse-wonder-1.0",
+          thinkingProfile: "offUnsupportedXhighAndMax",
+        }),
+        piModel("meta/muse-spark-1.3", {
+          id: "muse-spark-1.3",
+          thinkingProfile: "offUnsupportedXhighAndMax",
+        }),
+      ],
+    },
+    category: "cn_official",
+    icon: "meta",
+  },
+  {
     name: "PIPELLM",
     providerKey: "cc-switch-pipellm",
     websiteUrl: "https://code.pipellm.ai",

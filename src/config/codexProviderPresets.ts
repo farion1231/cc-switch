@@ -3547,6 +3547,49 @@ requires_openai_auth = true`,
     icon: "ollama",
   },
   {
+    name: "Meta Model API",
+    websiteUrl: "https://dev.meta.ai",
+    apiKeyUrl: "https://dev.meta.ai",
+    auth: generateThirdPartyAuth(""),
+    // 官方 Codex 接入文档（dev.meta.ai/docs/coding-agents.md，2026-10-14 核对）：
+    // wire_api = "responses"，base 带 /v1，Bearer，默认 effort high
+    config: generateThirdPartyConfig(
+      "meta",
+      "https://api.meta.ai/v1",
+      "muse-wonder-1.0",
+    ),
+    endpointCandidates: ["https://api.meta.ai/v1"],
+    // Responses 接受 custom 工具（dev.meta.ai/docs/tool-calling.md，Chat 才
+    // 400），这里不是拒收问题；NativeResponses 档案靠 shell_command 改文件，
+    // 不开 verbosity（文档注明未实现）
+    apiFormat: "openai_responses",
+    // 档位来源：dev.meta.ai/docs/models.md 与 reasoning.md（2026-10-14）。两款
+    // 都常开思考，none 返回 400 故不列；minimal 到 max 全支持（max 只限非
+    // contributor 版本）。每档都含 high，后端保留模板默认 high，与 config 的
+    // model_reasoning_effort = "high" 一致，无需 defaultReasoningLevel。
+    // 首行 = 默认模型，须与 config 的 model 一致
+    modelCatalog: modelCatalog([
+      {
+        model: "muse-wonder-1.0",
+        displayName: "Muse Wonder 1.0",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["minimal", "low", "medium", "high", "xhigh", "max"],
+      },
+      {
+        model: "muse-spark-1.3",
+        displayName: "Muse Spark 1.3",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        supportsParallelToolCalls: true,
+        reasoningLevels: ["minimal", "low", "medium", "high", "xhigh", "max"],
+      },
+    ]),
+    category: "cn_official",
+    icon: "meta",
+  },
+  {
     name: "OpenCode Go",
     family: "opencode",
     planKey: "coding",

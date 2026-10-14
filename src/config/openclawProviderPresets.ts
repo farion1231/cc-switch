@@ -4700,6 +4700,55 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "Meta Model API",
+    websiteUrl: "https://dev.meta.ai",
+    apiKeyUrl: "https://dev.meta.ai",
+    // OpenAI Chat 端点 /v1/chat/completions（dev.meta.ai/docs/coding-agents.md，
+    // 2026-10-14 核对），Bearer 鉴权。cost 取 dev.meta.ai/docs/
+    // pricing-rate-limits.md 同日 Standard mode 价（每百万 token）；缓存自动
+    // 生效、写入不另收故记 0。最大输出取官方 OpenCode 配置的 limit.output
+    settingsConfig: {
+      baseUrl: "https://api.meta.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "muse-wonder-1.0",
+          name: "Muse Wonder 1.0",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 0 },
+        },
+        {
+          id: "muse-spark-1.3",
+          name: "Muse Spark 1.3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 1.25, output: 4.25, cacheRead: 0.15, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "meta",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "meta/muse-wonder-1.0" },
+      modelCatalog: {
+        "meta/muse-wonder-1.0": { alias: "Muse Wonder" },
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

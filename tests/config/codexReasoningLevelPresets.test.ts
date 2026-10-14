@@ -197,6 +197,19 @@ describe("Codex preset pre-filled reasoning levels", () => {
       ["none", "high", "max"],
       "high",
     ],
+    // Meta Model API（原生 Responses 直连）：dev.meta.ai/docs/models.md 与
+    // reasoning.md（2026-10-14）。两款常开思考，none 返回 400 故不列；
+    // minimal 到 max 全支持
+    [
+      "Meta Model API",
+      "muse-wonder-1.0",
+      ["minimal", "low", "medium", "high", "xhigh", "max"],
+    ],
+    [
+      "Meta Model API",
+      "muse-spark-1.3",
+      ["minimal", "low", "medium", "high", "xhigh", "max"],
+    ],
   ];
 
   it.each(EXPECTED)(

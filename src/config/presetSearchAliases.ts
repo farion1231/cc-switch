@@ -17,6 +17,7 @@ export const PRESET_SEARCH_ALIASES: Record<string, string> = {
   "Kimi For Coding Global": "月之暗面 moonshot",
   "Kimi Global": "月之暗面 moonshot",
   Longcat: "美团",
+  "Meta Model API": "muse facebook",
   MiniMax: "海螺",
   "MiniMax en": "海螺",
   ModelScope: "魔搭",

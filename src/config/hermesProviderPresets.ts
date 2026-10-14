@@ -2495,6 +2495,36 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Meta Model API",
+    websiteUrl: "https://dev.meta.ai",
+    apiKeyUrl: "https://dev.meta.ai",
+    settingsConfig: {
+      name: "meta",
+      // OpenAI Chat 端点 /v1/chat/completions（dev.meta.ai/docs/coding-agents.md，
+      // 2026-10-14 核对），Bearer 鉴权；窗口取 dev.meta.ai/docs/models.md
+      base_url: "https://api.meta.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "muse-wonder-1.0",
+          name: "Muse Wonder 1.0",
+          context_length: 1048576,
+        },
+        {
+          id: "muse-spark-1.3",
+          name: "Muse Spark 1.3",
+          context_length: 1048576,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "meta",
+    suggestedDefaults: {
+      model: { default: "muse-wonder-1.0", provider: "meta" },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",
