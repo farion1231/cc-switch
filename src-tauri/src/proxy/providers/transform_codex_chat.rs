@@ -2030,27 +2030,28 @@ fn chat_legacy_function_call_to_response_item(
     ))
 }
 
-/// Chat 上游签发的 id 可能包含 Responses API 不接受的字符（实测出现过
-/// `exec_command:0` 这类 `tool:index` 形式，冒号会被严格校验的端点以
-/// `invalid_value` 拒绝，见 #5730）。统一把非法字符替换成 `_`；
-/// item_id 与 call_id 都从这里取值，保证两条出处始终一致。
-/// 注意：不同上游 id 消毒后可能撞车（如 `a:1` 与 `a_1`），概率极低，可接受。
+/// Encode upstream IDs using only characters accepted by Responses endpoints.
+/// Keep ordinary legal IDs unchanged. Reserve `enc_` for hex-encoded UTF-8:
+/// IDs already starting with that prefix must also be encoded, so no raw ID
+/// can collide with an encoded one. All SSE stages and history use this same
+/// deterministic mapping for item_id and call_id.
 pub(crate) fn sanitize_upstream_id(id: &str) -> String {
-    if id
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    const PREFIX: &str = "enc_";
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    if !id.starts_with(PREFIX)
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
     {
         return id.to_string();
     }
-    id.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
+    let mut encoded = String::with_capacity(PREFIX.len() + id.len() * 2);
+    encoded.push_str(PREFIX);
+    for byte in id.bytes() {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
 }
 
 /// 转换器自产 message 条目的 id：官方端点按前缀校验（message 必须以
@@ -6014,8 +6015,8 @@ mod tests {
         let output = result["output"].as_array().unwrap();
 
         assert_eq!(output[0]["type"], "function_call");
-        assert_eq!(output[0]["id"], "fc_exec_command_0");
-        assert_eq!(output[0]["call_id"], "exec_command_0");
+        assert_eq!(output[0]["id"], "fc_enc_657865635f636f6d6d616e643a30");
+        assert_eq!(output[0]["call_id"], "enc_657865635f636f6d6d616e643a30");
     }
 
     /// 自产 message 条目 id 必须以 msg_ 开头（官方端点按前缀校验，#5730）。
@@ -6041,10 +6042,114 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_upstream_id_replaces_invalid_chars() {
+    fn sanitize_upstream_id_encodes_without_collisions() {
         assert_eq!(sanitize_upstream_id("call_abc-123"), "call_abc-123");
-        assert_eq!(sanitize_upstream_id("exec_command:0"), "exec_command_0");
-        assert_eq!(sanitize_upstream_id("toolu:1:abc"), "toolu_1_abc");
+        assert_eq!(
+            sanitize_upstream_id("exec_command:0"),
+            "enc_657865635f636f6d6d616e643a30"
+        );
+        assert_eq!(
+            sanitize_upstream_id("toolu:1:abc"),
+            "enc_746f6f6c753a313a616263"
+        );
+        let ids = [
+            "",
+            "enc_",
+            "a:1",
+            "a_1",
+            "a/1",
+            "a\\1",
+            "enc_613a31",
+            "工具:0",
+            "工具_0",
+        ];
+        let encoded: std::collections::HashSet<_> =
+            ids.iter().map(|id| sanitize_upstream_id(id)).collect();
+        assert_eq!(encoded.len(), ids.len());
+        for id in encoded {
+            assert!(id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'));
+        }
+    }
+
+    #[tokio::test]
+    async fn encoded_tool_ids_preserve_parallel_calls_and_history() {
+        use super::super::codex_chat_history::CodexChatHistoryStore;
+        for custom in [false, true] {
+            let context = build_codex_tool_context_from_request(&json!({
+                "tools": if custom { json!([{"type": "custom", "name": "exec"}]) } else { json!([]) }
+            }));
+            let ids = ["exec:0", "exec_0", "enc_657865633a30", "工具:0"];
+            let calls: Vec<Value> = ids
+                .iter()
+                .enumerate()
+                .map(|(i, id)| {
+                    json!({
+                        "id": id, "type": "function",
+                        "function": {"name": "exec", "arguments": if custom {
+                            json!({"input": format!("command {i}")}).to_string()
+                        } else { json!({"index": i}).to_string() }}
+                    })
+                })
+                .collect();
+            let response = chat_completion_to_response_with_context(json!({
+                "id": "chatcmpl_collision", "model": "test",
+                "choices": [{"message": {"role": "assistant", "reasoning_content": "Need all calls.", "tool_calls": calls}, "finish_reason": "tool_calls"}]
+            }), &context).unwrap();
+            let items: Vec<&Value> = response["output"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|item| item.get("call_id").is_some())
+                .collect();
+            let call_ids: std::collections::HashSet<_> = items
+                .iter()
+                .map(|item| item["call_id"].as_str().unwrap())
+                .collect();
+            let item_ids: std::collections::HashSet<_> = items
+                .iter()
+                .map(|item| item["id"].as_str().unwrap())
+                .collect();
+            assert_eq!(call_ids.len(), ids.len());
+            assert_eq!(item_ids.len(), ids.len());
+            for item in &items {
+                assert!(item["call_id"]
+                    .as_str()
+                    .unwrap()
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'));
+            }
+            let history = CodexChatHistoryStore::default();
+            assert_eq!(history.record_response(&response).await, ids.len());
+            let mut request = json!({
+                "previous_response_id": response["id"],
+                "input": items.iter().map(|item| json!({
+                    "type": if custom {"custom_tool_call_output"} else {"function_call_output"},
+                    "call_id": item["call_id"], "output": "ok"
+                })).collect::<Vec<_>>()
+            });
+            assert_eq!(history.enrich_request(&mut request).await, ids.len());
+            let restored = request["input"].as_array().unwrap();
+            for (index, item) in items.iter().enumerate() {
+                assert_eq!(&restored[index], *item);
+            }
+            let chat = responses_to_chat_completions(request).unwrap();
+            let messages = chat["messages"].as_array().unwrap();
+            let assistant = messages
+                .iter()
+                .find(|message| message.get("tool_calls").is_some())
+                .unwrap();
+            let restored_calls = assistant["tool_calls"].as_array().unwrap();
+            assert_eq!(restored_calls.len(), ids.len());
+            for (index, call) in restored_calls.iter().enumerate() {
+                assert_eq!(call["id"], items[index]["call_id"]);
+                assert_eq!(
+                    call["function"]["arguments"],
+                    calls[index]["function"]["arguments"]
+                );
+            }
+        }
     }
 
     #[test]
@@ -6055,7 +6160,7 @@ mod tests {
         );
         assert_eq!(
             message_item_id_from_response_id("chatcmpl:1"),
-            "msg_chatcmpl_1"
+            "msg_enc_63686174636d706c3a31"
         );
     }
 }

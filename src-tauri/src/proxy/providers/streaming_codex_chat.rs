@@ -891,6 +891,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn encoded_tool_ids_remain_distinct_across_sse_stages_and_history() {
+        use super::super::codex_chat_history::{
+            record_responses_sse_stream, CodexChatHistoryStore,
+        };
+        use super::super::transform_codex_chat::build_codex_tool_context_from_request;
+        use std::sync::Arc;
+
+        for custom in [false, true] {
+            let context = build_codex_tool_context_from_request(&json!({
+                "tools": if custom { json!([{"type": "custom", "name": "exec"}]) } else { json!([]) }
+            }));
+            let ids = ["exec:0", "exec_0", "enc_657865633a30", "工具:0"];
+            let calls: Vec<Value> = ids
+                .iter()
+                .enumerate()
+                .map(|(i, id)| {
+                    json!({
+                        "index": i, "id": id, "type": "function",
+                        "function": {"name": "exec", "arguments": if custom {
+                            json!({"input": format!("command {i}")}).to_string()
+                        } else { json!({"index": i}).to_string() }}
+                    })
+                })
+                .collect();
+            let chunk = format!(
+                "data: {}\n\n",
+                json!({
+                    "id": "chatcmpl_collision", "model": "test",
+                    "choices": [{"delta": {"tool_calls": calls}, "finish_reason": "tool_calls"}]
+                })
+            );
+            let upstream = stream::iter(vec![
+                Ok::<_, std::io::Error>(Bytes::from(chunk)),
+                Ok(Bytes::from_static(b"data: [DONE]\n\n")),
+            ]);
+            let history = Arc::new(CodexChatHistoryStore::default());
+            let converted = create_responses_sse_stream_from_chat_with_context(upstream, context);
+            let bytes: Vec<Bytes> = record_responses_sse_stream(converted, history.clone())
+                .map(|item| item.unwrap())
+                .collect()
+                .await;
+            let events = parse_sse_events(&String::from_utf8(bytes.concat()).unwrap());
+            let completed = events
+                .iter()
+                .find(|event| event["type"] == "response.completed")
+                .unwrap();
+            let items = completed["response"]["output"].as_array().unwrap();
+            assert_eq!(items.len(), ids.len());
+            let unique: std::collections::HashSet<_> = items
+                .iter()
+                .map(|item| item["call_id"].as_str().unwrap())
+                .collect();
+            assert_eq!(unique.len(), ids.len());
+            for item in items {
+                for stage in ["response.output_item.added", "response.output_item.done"] {
+                    let event = events
+                        .iter()
+                        .find(|event| event["type"] == stage && event["item"]["id"] == item["id"])
+                        .unwrap();
+                    assert_eq!(event["item"]["call_id"], item["call_id"]);
+                }
+                let stage = if custom {
+                    "response.custom_tool_call_input.done"
+                } else {
+                    "response.function_call_arguments.done"
+                };
+                assert!(events
+                    .iter()
+                    .any(|event| event["type"] == stage && event["item_id"] == item["id"]));
+            }
+            let mut request = json!({
+                "previous_response_id": completed["response"]["id"],
+                "input": items.iter().map(|item| json!({
+                    "type": if custom {"custom_tool_call_output"} else {"function_call_output"},
+                    "call_id": item["call_id"], "output": "ok"
+                })).collect::<Vec<_>>()
+            });
+            assert_eq!(history.enrich_request(&mut request).await, ids.len());
+            for (index, item) in items.iter().enumerate() {
+                assert_eq!(&request["input"][index], item);
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn converts_text_chat_sse_to_responses_sse() {
         let output = collect(vec![
             "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n",
