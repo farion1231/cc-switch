@@ -26,6 +26,7 @@ pub(super) struct BrowserFlow {
     callback: CallbackState,
     task: tokio::task::AbortHandle,
     join: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    shutdown: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     polling: Mutex<()>,
 }
 
@@ -37,9 +38,17 @@ impl Drop for BrowserFlow {
 
 impl BrowserFlow {
     pub(super) async fn stop(&self) {
-        self.task.abort();
-        if let Some(join) = self.join.lock().await.take() {
-            let _ = join.await;
+        if let Some(shutdown) = self.shutdown.lock().await.take() {
+            let _ = shutdown.send(());
+        }
+        if let Some(mut join) = self.join.lock().await.take() {
+            if tokio::time::timeout(Duration::from_secs(2), &mut join)
+                .await
+                .is_err()
+            {
+                self.task.abort();
+                let _ = join.await;
+            }
         }
     }
 }
@@ -202,9 +211,26 @@ impl CodexOAuthManager {
         let pending = Arc::downgrade(&self.pending_device_codes);
         let flows = Arc::downgrade(&self.browser_flows);
         let cleanup_id = flow_id.clone();
+        let (shutdown, stopped) = tokio::sync::oneshot::channel();
         let task = tokio::spawn(async move {
-            let _ =
-                tokio::time::timeout(lifetime, axum::serve(listener, router).into_future()).await;
+            // Close accepted keep-alive connections along with the listener so
+            // a browser cannot reuse a socket attached to the previous state.
+            let expired = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let deadline_expired = expired.clone();
+            let server = axum::serve(listener, router).with_graceful_shutdown(async move {
+                tokio::select! {
+                    _ = stopped => (),
+                    _ = tokio::time::sleep(lifetime) => deadline_expired.store(true, Ordering::Release),
+                }
+            });
+            let result =
+                tokio::time::timeout(lifetime + Duration::from_secs(2), server.into_future()).await;
+            // Closing callbacks before token exchange must retain the pending
+            // commit gate. Cancellation removes it separately; expiry owns its
+            // own cleanup even without a frontend.
+            if !expired.load(Ordering::Acquire) && matches!(result, Ok(Ok(()))) {
+                return;
+            }
             // Expiry must clean backend state even when the WebView disappeared.
             // Weak references avoid keeping the manager/listener alive on drop.
             if let Some(pending) = pending.upgrade() {
@@ -219,6 +245,7 @@ impl CodexOAuthManager {
             callback: callback_state,
             task: task.abort_handle(),
             join: Mutex::new(Some(task)),
+            shutdown: Mutex::new(Some(shutdown)),
             polling: Mutex::new(()),
         });
         // Use the existing pending-flow registry so cancellation, clear-all, and
@@ -513,5 +540,89 @@ mod tests {
             .is_err());
         assert!(manager.browser_flows.read().await.is_empty());
         assert!(bind_callback_listener(port).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn stopping_callbacks_preserves_the_token_commit_gate() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = CodexOAuthManager::new(dir.path().into());
+        let listener = bind_callback_listener(0).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let response = manager
+            .start_browser_flow_with_listener(None, listener, Duration::from_secs(LOGIN_LIFETIME))
+            .await
+            .unwrap();
+        let flow = manager
+            .browser_flows
+            .read()
+            .await
+            .get(&response.device_code)
+            .cloned()
+            .unwrap();
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let callback = client
+            .get(format!("http://127.0.0.1:{port}/auth/callback"))
+            .query(&[
+                ("state", flow.callback.state.as_str()),
+                ("code", "fixture-code"),
+            ])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(callback.status(), StatusCode::OK);
+        callback.bytes().await.unwrap();
+        flow.stop().await;
+        assert!(manager
+            .pending_device_codes
+            .read()
+            .await
+            .contains_key(&response.device_code));
+        assert_eq!(
+            flow.callback.result.lock().await.as_ref(),
+            Some(&Ok("fixture-code".into()))
+        );
+        manager.cancel_device_flow(&response.device_code).await;
+    }
+
+    #[tokio::test]
+    async fn replacement_closes_the_previous_keep_alive_connection() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = CodexOAuthManager::new(dir.path().into());
+        let listener = bind_callback_listener(0).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        manager
+            .start_browser_flow_with_listener(None, listener, Duration::from_secs(LOGIN_LIFETIME))
+            .await
+            .unwrap();
+        let endpoint = format!("http://127.0.0.1:{port}/auth/callback");
+        let old = client
+            .get(&endpoint)
+            .query(&[("state", "wrong"), ("code", "c")])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(old.status(), StatusCode::BAD_REQUEST);
+        old.bytes().await.unwrap();
+        let response = manager
+            .start_browser_flow_at_port(None, port, Duration::from_secs(LOGIN_LIFETIME))
+            .await
+            .unwrap();
+        let url = url::Url::parse(&response.verification_uri).unwrap();
+        let state = url
+            .query_pairs()
+            .find(|(key, _)| key == "state")
+            .unwrap()
+            .1
+            .into_owned();
+        let new = client
+            .get(&endpoint)
+            .query(&[("state", state.as_str()), ("error", "access_denied")])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(new.status(), StatusCode::OK);
+        new.bytes().await.unwrap();
+        manager.cancel_device_flow(&response.device_code).await;
     }
 }
