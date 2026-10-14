@@ -917,6 +917,12 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["stepfun", "step", "jieyue", "阶跃星辰"],
     defaultColor: "#005AFF",
   },
+  streamlake: {
+    name: "streamlake",
+    displayName: "StreamLake",
+    category: "ai-provider",
+    keywords: ["streamlake", "vanchin", "wanqing", "万擎", "快手", "kwai"],
+  },
   ppio: {
     name: "ppio",
     displayName: "PPIO",

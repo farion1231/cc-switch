@@ -189,3 +189,23 @@ describe("AWS Bedrock Provider Presets", () => {
     expect(bedrockApiKey!.category).toBe("cloud_provider");
   });
 });
+
+describe("Microsoft Foundry Provider Preset", () => {
+  const foundry = providerPresets.find((p) => p.name === "Microsoft Foundry");
+
+  it("lets the user fill the Azure resource name into the base URL", () => {
+    const env = (foundry!.settingsConfig as any).env;
+    expect(foundry!.templateValues!.AZURE_RESOURCE_NAME).toBeDefined();
+    expect(env.ANTHROPIC_BASE_URL).toBe(
+      "https://${AZURE_RESOURCE_NAME}.services.ai.azure.com/anthropic",
+    );
+  });
+
+  // 官方文档的 API Key 走 x-api-key
+  it("sends the key as x-api-key", () => {
+    const env = (foundry!.settingsConfig as any).env;
+    expect(foundry!.apiKeyField).toBe("ANTHROPIC_API_KEY");
+    expect(env).toHaveProperty("ANTHROPIC_API_KEY", "");
+    expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
+  });
+});
