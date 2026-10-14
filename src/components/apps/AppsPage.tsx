@@ -88,9 +88,9 @@ const ROWS: Row[] = [
   ),
 ];
 
-// 表头和应用行共用列宽；操作列按当前可见按钮的最大宽度收缩。
+// 表头和应用行共用列宽；操作列按当前可见按钮的最大宽度收缩，最后一列是行尾的「⋯」菜单。
 const APP_ROW_GRID =
-  "grid grid-cols-[minmax(0,1fr)_168px_var(--apps-actions-width,0px)_56px] items-center gap-x-4";
+  "grid grid-cols-[minmax(0,1fr)_168px_var(--apps-actions-width,0px)_56px_28px] items-center gap-x-4";
 
 function formatCheckedAt(timestamp: number, locale: string): string {
   const date = new Date(timestamp);
@@ -105,7 +105,7 @@ function formatCheckedAt(timestamp: number, locale: string): string {
 }
 
 /**
- * 「应用」页（v7）：每个应用一行 = 安装状态 / 版本 + 安装 / 升级 / 卸载 + 在侧栏显示的开关。
+ * 「应用」页（v7）：每个应用一行 = 安装状态 / 版本 + 安装 / 升级 + 在侧栏显示的开关 + 「⋯」菜单（卸载）。
  * 隐藏一个应用只影响界面（侧栏、MCP / Skills 的列、提示词和会话的下拉），配置照常同步。
  */
 export function AppsPage() {
@@ -308,6 +308,7 @@ export function AppsPage() {
                 {t("appsPage.visibleHelp")}
               </HelpTip>
             </span>
+            <span />
           </div>
 
           <div className="divide-y divide-border overflow-hidden rounded-panel border border-border bg-surface">
@@ -317,20 +318,23 @@ export function AppsPage() {
                   key="claude-desktop"
                   app="claude-desktop"
                   name={
-                    <span className="flex items-center gap-1">
+                    <span className="truncate">
                       {APP_DISPLAY_NAME["claude-desktop"]}
-                      <HelpTip title={APP_DISPLAY_NAME["claude-desktop"]}>
-                        {t("appsPage.desktopHelp")}
-                      </HelpTip>
                     </span>
                   }
                   version={
-                    <span className="text-caption text-fg-2">
+                    <span className="inline-flex items-center gap-1 text-caption text-fg-2">
                       {desktopStatus?.supported === false
                         ? t("appsPage.desktopUnsupported")
                         : desktopStatus?.configured
                           ? t("appsPage.desktopConnected")
                           : t("appsPage.desktopNotConnected")}
+                      <HelpTip
+                        title={APP_DISPLAY_NAME["claude-desktop"]}
+                        align="end"
+                      >
+                        {t("appsPage.desktopHelp")}
+                      </HelpTip>
                     </span>
                   }
                   visibility={visibilitySwitch("claude-desktop")}
@@ -431,6 +435,7 @@ function AppRow({
   version,
   action,
   visibility,
+  menu,
   footer,
 }: {
   app: AppId;
@@ -439,6 +444,7 @@ function AppRow({
   version?: React.ReactNode;
   action?: React.ReactNode;
   visibility: React.ReactNode;
+  menu?: React.ReactNode;
   footer?: React.ReactNode;
 }) {
   return (
@@ -465,6 +471,7 @@ function AppRow({
           {action}
         </div>
         <div className="flex justify-end">{visibility}</div>
+        <div className="flex justify-end">{menu}</div>
       </div>
       {footer && <div className="ms-9 mt-2">{footer}</div>}
     </div>
@@ -710,29 +717,42 @@ function ToolRow({
       }
       meta={meta}
       version={version}
-      action={
-        <>
-          {actionButton}
-          {(canUninstall || busyAction === "uninstall") && (
-            <Button
-              variant="neutral"
-              size="compact"
-              className="border-red-200 text-danger-text hover:border-red-300 hover:bg-danger-soft dark:border-red-400/40 dark:hover:border-red-400/60"
-              onClick={onUninstall}
-              disabled={isVersionLoading || isBusy}
-              aria-busy={busyAction === "uninstall"}
-            >
-              {busyAction === "uninstall" ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Trash2 className="h-3.5 w-3.5" />
-              )}
-              {t("settings.toolUninstall")}
-            </Button>
-          )}
-        </>
-      }
+      action={actionButton}
       visibility={visibility}
+      menu={
+        (canUninstall || busyAction === "uninstall") && (
+          <DropdownMenu>
+            <HoverTip content={t("common.more")}>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="quiet"
+                  size="icon-compact"
+                  aria-label={t("appPage.moreActions", {
+                    name: toolDisplayName(tool),
+                  })}
+                  disabled={isVersionLoading || isBusy}
+                  aria-busy={busyAction === "uninstall"}
+                >
+                  {busyAction === "uninstall" ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />
+                  )}
+                </Button>
+              </DropdownMenuTrigger>
+            </HoverTip>
+            <DropdownMenuContent align="end" className="min-w-[160px]">
+              <DropdownMenuItem
+                onSelect={onUninstall}
+                className="text-danger-text focus:text-danger-text"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {t("settings.toolUninstall")}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )
+      }
       footer={footer}
     />
   );
