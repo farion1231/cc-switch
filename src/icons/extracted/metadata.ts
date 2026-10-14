@@ -562,6 +562,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: [],
     defaultColor: "currentColor",
   },
+  omp: {
+    name: "omp",
+    displayName: "Oh My Pi",
+    category: "tool",
+    keywords: ["omp", "oh my pi", "oh-my-pi", "coding agent"],
+    defaultColor: "currentColor",
+  },
   minimax: {
     name: "minimax",
     displayName: "MiniMax",

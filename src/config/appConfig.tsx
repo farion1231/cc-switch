@@ -29,6 +29,7 @@ export const APP_IDS: AppId[] = [
   "mcode",
   "kimi",
   "agy",
+  "omp",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -44,6 +45,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   mcode: true,
   kimi: true,
   agy: true,
+  omp: true,
 };
 
 /** App IDs shown in Skills panels. */
@@ -58,6 +60,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "mcode",
   "kimi",
   "agy",
+  "omp",
 ];
 
 export type ProxyAppId = Extract<
@@ -107,12 +110,13 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi"
+  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi" | "omp"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "mcode",
   "kimi",
+  "omp",
   "opencode",
   "openclaw",
   "hermes",
@@ -151,6 +155,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "mcode",
   "kimi",
   "agy",
+  "omp",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
@@ -260,6 +265,15 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     activeClass: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
     badgeClass:
       "bg-orange-500/10 text-orange-700 dark:text-orange-300 border-0 gap-1.5",
+  },
+  omp: {
+    label: "Oh My Pi",
+    icon: (
+      <ProviderIcon icon="omp" name="Oh My Pi" size={14} showFallback={false} />
+    ),
+    activeClass: "bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400",
+    badgeClass:
+      "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 border-0 gap-1.5",
   },
   pi: {
     label: "Pi",

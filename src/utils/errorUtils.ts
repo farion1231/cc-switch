@@ -42,6 +42,8 @@ export const translatePiProviderMutationError = (
   t: (key: string, options?: Record<string, unknown>) => string,
 ): string => {
   if (!message) return "";
+  const ompKey = message.match(/omp\.errors\.[A-Za-z]+/)?.[0];
+  if (ompKey) return t(ompKey);
 
   if (
     message.includes("models.json changed") ||
@@ -87,6 +89,8 @@ export const translateMcpBackendError = (
   t: (key: string, opts?: any) => string,
 ): string => {
   if (!message) return "";
+  const ompKey = message.match(/omp\.errors\.[A-Za-z]+/)?.[0];
+  if (ompKey) return t(ompKey);
   const msg = String(message).trim();
 
   // 基础字段与结构校验相关

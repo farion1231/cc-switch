@@ -7,7 +7,7 @@ import {
 } from "@/config/appConfig";
 
 describe("appConfig provider lifecycle", () => {
-  it.each(["opencode", "openclaw", "hermes", "pi", "mcode", "kimi"])(
+  it.each(["opencode", "openclaw", "hermes", "pi", "mcode", "kimi", "omp"])(
     "classifies %s as additive",
     (appId) => {
       expect(isAdditiveAppId(appId)).toBe(true);

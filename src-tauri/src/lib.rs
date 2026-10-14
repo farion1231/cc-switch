@@ -32,6 +32,7 @@ mod mcode_config;
 mod mcp;
 pub mod mode;
 mod model_capabilities;
+mod omp_config;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
@@ -1616,6 +1617,7 @@ pub fn run() {
             commands::delete_pi_prompt_template,
             // Pi native provider and session views
             commands::get_pi_current_state,
+            commands::get_omp_current_state,
             commands::update_pi_provider_usage_script,
             commands::get_pi_session_discovery,
             // Profile management (项目配置方案)

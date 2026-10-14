@@ -33,6 +33,7 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Kimi => {
             crate::kimi_config::get_providers().map(|providers| providers.contains_key(provider_id))
         }
+        AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         _ => Ok(false),
@@ -303,6 +304,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
+        | AppType::Omp
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Agy
@@ -381,6 +383,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
+        | AppType::Omp
         | AppType::Mcode
         | AppType::Kimi
         | AppType::ClaudeDesktop
@@ -705,7 +708,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
-        AppType::Pi => {
+        AppType::Pi | AppType::Omp => {
             return Err(AppError::InvalidInput(
                 "Pi providers use the Pi provider service".to_string(),
             ));
@@ -845,7 +848,10 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
     // Sync providers based on mode
     for app_type in AppType::all() {
-        if matches!(app_type, AppType::Pi | AppType::Mcode | AppType::Kimi) {
+        if matches!(
+            app_type,
+            AppType::Pi | AppType::Omp | AppType::Mcode | AppType::Kimi
+        ) {
             continue;
         }
         let result = if app_type.is_additive_mode() {
@@ -1002,7 +1008,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         }
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
-        AppType::Pi => Err(AppError::InvalidInput(
+        AppType::Pi | AppType::Omp => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
         AppType::Agy => crate::agy_config::read_live_settings(),
@@ -1014,6 +1020,9 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
 /// Returns `Ok(true)` if a provider was actually imported,
 /// `Ok(false)` if skipped (providers already exist for this app).
 pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
+    if app_type == AppType::Omp {
+        return super::import_omp_providers_from_live(state).map(|count| count > 0);
+    }
     // Additive mode apps (OpenCode, OpenClaw) should use their dedicated
     // import_xxx_providers_from_live functions, not this generic default config import
     if app_type.is_additive_mode() {

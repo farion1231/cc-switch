@@ -50,6 +50,7 @@ export const TOOL_NAMES = [
   "mcode",
   "kimi",
   "agy",
+  "omp",
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 export type ToolLifecycleAction = "install" | "update" | "uninstall";
@@ -157,6 +158,8 @@ npm i -g openclaw@latest
 ${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh")}
 # Pi
 npm i -g @earendil-works/pi-coding-agent@latest
+# Oh My Pi (requires Bun)
+bun install -g @oh-my-pi/pi-coding-agent@latest
 # MiniMax Code
 ${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}
 # Kimi Code
@@ -180,6 +183,8 @@ npm i -g openclaw@latest
 ${HERMES_WINDOWS_INSTALL_COMMAND}
 # Pi
 npm i -g @earendil-works/pi-coding-agent@latest
+# Oh My Pi (requires Bun)
+bun install -g @oh-my-pi/pi-coding-agent@latest
 # MiniMax Code
 ${MCODE_WINDOWS_INSTALL_COMMAND}
 # Kimi Code
@@ -203,6 +208,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   mcode: "MiniMax Code",
   kimi: "Kimi Code",
   agy: "Antigravity CLI",
+  omp: "Oh My Pi",
 };
 
 // 后端返回的 tool 是 string；这里收敛唯一的 ToolName 断言与兜底，供升级确认
@@ -223,6 +229,7 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   mcode: "mcode",
   kimi: "kimi",
   agy: "agy",
+  omp: "omp",
 };
 
 // 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。

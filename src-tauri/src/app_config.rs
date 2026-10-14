@@ -27,6 +27,8 @@ pub struct McpApps {
     pub hermes: bool,
     #[serde(default)]
     pub pi: bool,
+    #[serde(default)]
+    pub omp: bool,
 }
 
 impl McpApps {
@@ -43,6 +45,7 @@ impl McpApps {
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
             AppType::Pi => self.pi,
+            AppType::Omp => self.omp,
             AppType::ClaudeDesktop => false,
             AppType::Agy => self.agy,
         }
@@ -63,6 +66,7 @@ impl McpApps {
             AppType::Pi => self.pi = enabled,
             AppType::ClaudeDesktop => {}
             AppType::Agy => self.agy = enabled,
+            AppType::Omp => self.omp = enabled,
         }
     }
 
@@ -99,6 +103,9 @@ impl McpApps {
         if self.pi {
             apps.push(AppType::Pi);
         }
+        if self.omp {
+            apps.push(AppType::Omp);
+        }
         apps
     }
 
@@ -114,6 +121,7 @@ impl McpApps {
             && !self.kimi
             && !self.mcode
             && !self.pi
+            && !self.omp
     }
 }
 
@@ -140,6 +148,8 @@ pub struct SkillApps {
     pub hermes: bool,
     #[serde(default)]
     pub pi: bool,
+    #[serde(default)]
+    pub omp: bool,
 }
 
 impl SkillApps {
@@ -153,6 +163,7 @@ impl SkillApps {
             AppType::OpenCode => self.opencode,
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
+            AppType::Omp => self.omp,
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
             AppType::OpenClaw => false,
@@ -171,6 +182,7 @@ impl SkillApps {
             AppType::OpenCode => self.opencode = enabled,
             AppType::Hermes => self.hermes = enabled,
             AppType::Pi => self.pi = enabled,
+            AppType::Omp => self.omp = enabled,
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
             AppType::OpenClaw => {}
@@ -212,6 +224,9 @@ impl SkillApps {
         if self.pi {
             apps.push(AppType::Pi);
         }
+        if self.omp {
+            apps.push(AppType::Omp);
+        }
         apps
     }
 
@@ -227,6 +242,7 @@ impl SkillApps {
             && !self.kimi
             && !self.mcode
             && !self.pi
+            && !self.omp
     }
 
     /// 仅启用指定应用（其他应用设为禁用）
@@ -446,6 +462,7 @@ pub enum AppType {
     OpenClaw,
     Hermes,
     Pi,
+    Omp,
     Mcode,
     Kimi,
     Agy,
@@ -463,6 +480,7 @@ impl AppType {
             AppType::OpenClaw => "openclaw",
             AppType::Hermes => "hermes",
             AppType::Pi => "pi",
+            AppType::Omp => "omp",
             AppType::Mcode => "mcode",
             AppType::Kimi => "kimi",
             AppType::Agy => "agy",
@@ -483,6 +501,7 @@ impl AppType {
                 | AppType::Pi
                 | AppType::Mcode
                 | AppType::Kimi
+                | AppType::Omp
         )
     }
 
@@ -512,6 +531,7 @@ impl AppType {
             AppType::OpenClaw,
             AppType::Hermes,
             AppType::Pi,
+            AppType::Omp,
             AppType::Mcode,
             AppType::Kimi,
             AppType::Agy,
@@ -535,6 +555,7 @@ impl FromStr for AppType {
             "openclaw" => Ok(AppType::OpenClaw),
             "hermes" => Ok(AppType::Hermes),
             "pi" => Ok(AppType::Pi),
+            "omp" => Ok(AppType::Omp),
             "mcode" => Ok(AppType::Mcode),
             "kimi" | "kimi-code" => Ok(AppType::Kimi),
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
@@ -581,7 +602,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode.as_ref(),
             AppType::OpenClaw => self.openclaw.as_ref(),
             AppType::Hermes => self.hermes.as_ref(),
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy => None,
+            AppType::Pi | AppType::Omp | AppType::Mcode | AppType::Kimi | AppType::Agy => None,
         }
     }
 
@@ -596,7 +617,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode = snippet,
             AppType::OpenClaw => self.openclaw = snippet,
             AppType::Hermes => self.hermes = snippet,
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy => {}
+            AppType::Pi | AppType::Omp | AppType::Mcode | AppType::Kimi | AppType::Agy => {}
         }
     }
 }
@@ -923,7 +944,9 @@ impl MultiAppConfig {
             AppType::Hermes => &mut config.prompts.hermes.prompts,
             // Pi was added after prompts moved to SQLite. Keeping it out of
             // this legacy config avoids a second, unused prompt state.
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy => return Ok(false),
+            AppType::Pi | AppType::Omp | AppType::Mcode | AppType::Kimi | AppType::Agy => {
+                return Ok(false)
+            }
         };
 
         prompts.insert(id, prompt);
@@ -967,7 +990,9 @@ impl MultiAppConfig {
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
                 AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
-                AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy => continue, // Pi didn't exist in v3.6.x, skip
+                AppType::Pi | AppType::Omp | AppType::Mcode | AppType::Kimi | AppType::Agy => {
+                    continue
+                } // Pi didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {

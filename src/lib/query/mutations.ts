@@ -17,6 +17,7 @@ import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
 import { sessionKeys } from "@/lib/query/sessions";
+import { invalidateOmpProviderCaches } from "@/lib/query/omp";
 import { invalidatePiProviderCaches } from "@/lib/query/pi";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 
@@ -70,7 +71,7 @@ export const useAddProviderMutation = (appId: AppId) => {
         appId === "openclaw" ||
         appId === "hermes" ||
         appId === "pi" ||
-        appId === "mcode" ||
+        appId === "omp" || appId === "mcode" ||
         appId === "kimi"
       ) {
         if (
@@ -149,7 +150,7 @@ export const useAddProviderMutation = (appId: AppId) => {
       if (parseLiveEditConflict(error)) return;
       const rawDetail = extractErrorMessage(error);
       const detail =
-        (appId === "pi"
+        (appId === "pi" || appId === "omp"
           ? translatePiProviderMutationError(rawDetail, t)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
@@ -164,6 +165,9 @@ export const useAddProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
+      if (appId === "omp") {
+        await invalidateOmpProviderCaches(queryClient);
+      }
       if (appId === "pi") {
         await invalidatePiProviderCaches(queryClient);
       }
@@ -219,7 +223,7 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       if (parseLiveEditConflict(error)) return;
       const rawDetail = extractErrorMessage(error);
       const detail =
-        (appId === "pi"
+        (appId === "pi" || appId === "omp"
           ? translatePiProviderMutationError(rawDetail, t)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
@@ -234,6 +238,9 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
+      if (appId === "omp") {
+        await invalidateOmpProviderCaches(queryClient);
+      }
       if (appId === "pi") {
         await invalidatePiProviderCaches(queryClient);
       } else if (appId === "kimi") {
@@ -302,7 +309,7 @@ export const useDeleteProviderMutation = (appId: AppId) => {
     onError: (error: Error) => {
       const rawDetail = extractErrorMessage(error);
       const detail =
-        (appId === "pi"
+        (appId === "pi" || appId === "omp"
           ? translatePiProviderMutationError(rawDetail, t)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
@@ -317,6 +324,9 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
+      if (appId === "omp") {
+        await invalidateOmpProviderCaches(queryClient);
+      }
       if (appId === "pi") {
         await invalidatePiProviderCaches(queryClient);
       } else if (appId === "kimi") {
@@ -405,6 +415,9 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
+      if (appId === "omp") {
+        await invalidateOmpProviderCaches(queryClient);
+      }
       if (appId === "pi") {
         await invalidatePiProviderCaches(queryClient);
       }

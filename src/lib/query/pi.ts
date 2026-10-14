@@ -1,4 +1,5 @@
 import { useQuery, type QueryClient } from "@tanstack/react-query";
+import { ompApi } from "./omp";
 import { piApi } from "@/lib/api/pi";
 
 export const piKeys = {
@@ -23,10 +24,11 @@ export const invalidatePiDirectoryCaches = async (queryClient: QueryClient) => {
   ]);
 };
 
-export function usePiCurrentState(enabled = true) {
+export function usePiCurrentState(enabled = true, appId: "pi" | "omp" = "pi") {
   return useQuery({
-    queryKey: piKeys.currentState,
-    queryFn: () => piApi.getCurrentState(),
+    queryKey: [appId, "currentState"],
+    queryFn: () =>
+      appId === "omp" ? ompApi.getCurrentState() : piApi.getCurrentState(),
     enabled,
   });
 }

@@ -931,6 +931,8 @@
     "hermesConfigDir": "Hermes 設定ディレクトリ",
     "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
     "piConfigDir": "Pi 設定ディレクトリ",
+    "ompConfigDir": "Oh My Pi",
+    "browsePlaceholderOmp": "~/.omp/agent",
     "piConfigDirDescription": "Pi の設定ディレクトリ（models.json、指示ファイル、プロンプト、Skills、セッション）を上書きします。",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
@@ -4966,6 +4968,37 @@
     "error": {
       "defaultModelInUse": "Kimi Code がこのプロバイダーのモデルを使用中です。先に Kimi Code の /model でほかのモデルに切り替えてください。",
       "secondaryModelInUse": "Kimi Code のサブエージェントモデルがこのプロバイダーのモデルを使用中です。先に Kimi Code の /secondary-model で変更してください。"
+    }
+  },
+  "omp": {
+    "empty": {
+      "title": "API キープロバイダーはまだありません",
+      "description": "右上の + から、プリセットまたはカスタムプロバイダーを追加できます。"
+    },
+    "provider": {
+      "enabled": "Oh My Pi で有効にしました",
+      "enableFailed": "Oh My Pi でこのプロバイダーを有効にできませんでした",
+      "removed": "Oh My Pi から削除しました"
+    },
+    "current": {
+      "readFailed": "Oh My Pi のプロバイダー設定を読み込めません",
+      "stateUnavailableHint": "CC Switch が Oh My Pi のプロバイダー設定を読み込むまで、プロバイダーの変更は無効です。"
+    },
+    "errors": {
+      "deeplinkModel": "Oh My Pi のプロバイダリンクにはモデルが必要です。model パラメータを追加してください。",
+      "mcpImportConflict": "一部の Oh My Pi MCP サーバーは定義が無効、または既存サーバーと競合するためインポートできませんでした。ネイティブ設定は保持されています。",
+      "directory": "Oh My Pi の設定ディレクトリには絶対パスを指定してください。",
+      "fileTooLarge": "Oh My Pi の設定が 1 MiB の上限を超えています。",
+      "externalChange": "Oh My Pi の設定が外部で変更されました。更新して再試行してください。",
+      "rollbackConflict": "データベース保存に失敗し、Oh My Pi の設定も外部で変更されました。手動で復元してください。",
+      "invalidMcp": "Oh My Pi の MCP JSON が無効です。ルートと mcpServers はオブジェクトである必要があります。",
+      "invalidYaml": "Oh My Pi の YAML が無効です。ルートと providers はマッピングにしてください。",
+      "invalidProvider": "Oh My Pi のプロバイダ設定が無効です。必須項目、API 形式、値の型を確認してください。",
+      "manualEdit": "この YAML の構造は CC Switch で安全に編集できません。models.yml を手動で編集してください。",
+      "duplicateProvider": "この Oh My Pi プロバイダキーは既に存在します。",
+      "renameProvider": "Oh My Pi プロバイダキーは変更できません。",
+      "providerMissing": "この Oh My Pi プロバイダは保存済みリストにありません。",
+      "mcpName": "MCP 名には英数字、_、-、.、: と単一の空白を使用できます。最大 100 文字です。"
     }
   }
 }

@@ -70,6 +70,7 @@ impl Database {
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_omp BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0
         )",
@@ -606,6 +607,17 @@ impl Database {
                             }
                         }
                         Self::set_user_version(conn, 22)?;
+                    }
+                    22 => {
+                        if Self::table_exists(conn, "mcp_servers")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "mcp_servers",
+                                "enabled_omp",
+                                "BOOLEAN NOT NULL DEFAULT 0",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 23)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -3999,6 +4011,42 @@ mod tests {
         let read = db.get_all_installed_skills()?;
         assert!(!read["s"].apps.agy);
         assert!(read["s"].apps.gemini);
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v22_to_v23_keeps_rows_flags_and_dao_reads() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute_batch("ALTER TABLE mcp_servers DROP COLUMN enabled_omp;
+                INSERT INTO mcp_servers (id, name, server_config, enabled_codex, enabled_pi, enabled_mcode)
+                  VALUES ('existing', 'Existing', '{}', 1, 1, 1);
+                INSERT INTO skills (id, name, directory, installed_at, enabled_codex, enabled_mcode)
+                  VALUES ('existing', 'Existing', 'existing', 1, 1, 1);")?;
+            Database::set_user_version(&conn, 22)?;
+            Database::create_tables_on_conn(&conn)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            let flag: i64 = conn.query_row(
+                "SELECT enabled_omp FROM mcp_servers WHERE id = 'existing'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(flag, 0);
+            assert!(!Database::has_column(&conn, "skills", "enabled_omp")?);
+        }
+        let servers = db.get_all_mcp_servers()?;
+        assert!(
+            servers["existing"].apps.codex
+                && servers["existing"].apps.pi
+                && servers["existing"].apps.mcode
+        );
+        assert!(!servers["existing"].apps.omp);
+        let skills = db.get_all_installed_skills()?;
+        assert!(skills["existing"].apps.codex && skills["existing"].apps.mcode);
+        assert!(!skills["existing"].apps.omp);
+        assert!(db.get_installed_skill("existing")?.is_some());
         Ok(())
     }
 

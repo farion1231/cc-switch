@@ -1,3 +1,5 @@
+import { invalidateOmpProviderCaches } from "@/lib/query/omp";
+import { translatePiProviderMutationError } from "@/utils/errorUtils";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -308,6 +310,8 @@ export function DeepLinkImportDialog() {
               queryKey: ["opencode", "runtime-models"],
             });
           }
+          if (request.app === "omp")
+            await invalidateOmpProviderCaches(queryClient);
           await refreshTrayMenu();
           toast.success(t("deeplink.importSuccess"), {
             description: t("deeplink.importSuccessDescription", {
@@ -352,6 +356,8 @@ export function DeepLinkImportDialog() {
         await refreshMcp(result);
       } else {
         // Legacy return type (string ID) - assume provider
+        if (request.app === "omp")
+          await invalidateOmpProviderCaches(queryClient);
         await queryClient.invalidateQueries({
           queryKey: ["providers", request.app],
         });
@@ -368,8 +374,9 @@ export function DeepLinkImportDialog() {
       if (shownRequestRef.current === request) setIsOpen(false);
     } catch (error) {
       console.error("Failed to import from deep link:", error);
+      const detail = error instanceof Error ? error.message : String(error);
       toast.error(t("deeplink.importError"), {
-        description: error instanceof Error ? error.message : String(error),
+        description: translatePiProviderMutationError(detail, t) || detail,
       });
     } finally {
       setIsImporting(false);

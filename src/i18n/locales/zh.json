@@ -931,6 +931,8 @@
     "hermesConfigDir": "Hermes 配置目录",
     "hermesConfigDirDescription": "覆盖 Hermes 配置目录 (config.yaml)。",
     "piConfigDir": "Pi 配置目录",
+    "ompConfigDir": "Oh My Pi",
+    "browsePlaceholderOmp": "~/.omp/agent",
     "piConfigDirDescription": "覆盖 Pi 配置目录（models.json、指令文件、提示词、Skills 与会话）。",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
     "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
@@ -4966,6 +4968,37 @@
     "error": {
       "defaultModelInUse": "Kimi Code 正在使用该供应商的模型，请先在 Kimi Code 中用 /model 切换到其他模型",
       "secondaryModelInUse": "Kimi Code 的子代理模型正在使用该供应商的模型，请先在 Kimi Code 中用 /secondary-model 更换"
+    }
+  },
+  "omp": {
+    "empty": {
+      "title": "还没有添加 API Key 供应商",
+      "description": "点击右上角 +，从预设或自定义配置添加供应商。"
+    },
+    "provider": {
+      "enabled": "已在 Oh My Pi 中启用",
+      "enableFailed": "无法在 Oh My Pi 中启用此供应商",
+      "removed": "已从 Oh My Pi 移除"
+    },
+    "current": {
+      "readFailed": "无法读取 Oh My Pi 供应商配置",
+      "stateUnavailableHint": "CC Switch 读取到 Oh My Pi 供应商配置前，供应商变更已暂时禁用。"
+    },
+    "errors": {
+      "deeplinkModel": "Oh My Pi 供应商链接需要指定模型，请在链接中添加 model 参数。",
+      "mcpImportConflict": "部分 Oh My Pi MCP 服务器定义无效或与已有服务器冲突，未能导入。原生配置已保留。",
+      "directory": "Oh My Pi 配置目录必须是绝对路径。",
+      "fileTooLarge": "Oh My Pi 配置超过 1 MiB 大小限制。",
+      "externalChange": "Oh My Pi 配置已被其他程序修改，请刷新后重试。",
+      "rollbackConflict": "数据库保存失败，且 Oh My Pi 配置已被其他程序修改，请手动恢复。",
+      "invalidMcp": "Oh My Pi MCP JSON 格式无效，根节点和 mcpServers 必须为对象。",
+      "invalidYaml": "Oh My Pi YAML 无效，根节点和 providers 必须是映射。",
+      "invalidProvider": "Oh My Pi 供应商配置无效，请检查必填字段、API 格式和字段类型。",
+      "manualEdit": "此 YAML 使用了 CC Switch 无法安全编辑的格式或语法，请手动编辑 models.yml。",
+      "duplicateProvider": "此 Oh My Pi 供应商标识已存在。",
+      "renameProvider": "Oh My Pi 供应商标识不能重命名。",
+      "providerMissing": "此 Oh My Pi 供应商已不在保存的列表中。",
+      "mcpName": "MCP 名称允许字母、数字、_、-、.、: 和单个空格，最多 100 个字符。"
     }
   }
 }

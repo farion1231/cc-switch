@@ -19,6 +19,7 @@ pub(crate) mod grok_direct;
 mod grok_editor;
 pub(crate) mod icon;
 mod live;
+mod omp;
 #[cfg(test)]
 mod opencode_tests;
 mod pi;
@@ -42,6 +43,10 @@ pub use live::{
     import_opencode_providers_from_live, read_live_settings,
     should_import_default_config_on_startup, sync_current_to_live,
 };
+
+pub fn import_omp_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    omp::import_from_live(state)
+}
 
 pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     pi::import_from_live(state)
@@ -5458,6 +5463,9 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::list(state);
         }
+        if app_type == AppType::Omp {
+            return omp::list(state);
+        }
         if matches!(app_type, AppType::Mcode | AppType::Kimi) {
             let native = if app_type == AppType::Kimi {
                 crate::kimi_config::get_providers()?
@@ -5615,6 +5623,9 @@ impl ProviderService {
         }
         if app_type == AppType::Pi {
             return pi::add(state, provider, add_to_live);
+        }
+        if app_type == AppType::Omp {
+            return omp::add(state, provider, add_to_live);
         }
 
         let mut provider = provider;
@@ -6188,6 +6199,9 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::update(state, original_id, provider);
         }
+        if app_type == AppType::Omp {
+            return omp::update(state, original_id, provider);
+        }
 
         let mut provider = provider;
         let original_id = original_id.unwrap_or(provider.id.as_str()).to_string();
@@ -6474,6 +6488,9 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::delete(state, id);
         }
+        if app_type == AppType::Omp {
+            return omp::delete(state, id);
+        }
         if app_type == AppType::Kimi {
             Self::ensure_kimi_provider_editable(id)?;
             let saved = state.db.get_provider_by_id(id, "kimi")?;
@@ -6602,6 +6619,9 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::remove(state, id);
         }
+        if app_type == AppType::Omp {
+            return omp::remove(state, id);
+        }
         if app_type == AppType::Kimi {
             Self::ensure_kimi_provider_editable(id)?;
             return crate::kimi_config::save_and_commit(id, None, false, || {
@@ -6719,6 +6739,9 @@ impl ProviderService {
     ) -> Result<SwitchResult, AppError> {
         if app_type == AppType::Pi {
             return pi::enable(state, id);
+        }
+        if app_type == AppType::Omp {
+            return omp::enable(state, id);
         }
         // Antigravity 的卡只作用于它打开的终端，没有「启用」（见 agy_config 模块说明）。
         if app_type == AppType::Agy {
@@ -7177,7 +7200,9 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy => Ok(String::new()),
+            AppType::Pi | AppType::Omp | AppType::Mcode | AppType::Kimi | AppType::Agy => {
+                Ok(String::new())
+            }
         }
     }
 
@@ -7195,7 +7220,9 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy => Ok(String::new()),
+            AppType::Pi | AppType::Omp | AppType::Mcode | AppType::Kimi | AppType::Agy => {
+                Ok(String::new())
+            }
         }
     }
 
@@ -7967,6 +7994,9 @@ impl ProviderService {
             AppType::Mcode => {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?
             }
+            AppType::Omp => {
+                crate::omp_config::validate_provider(&provider.id, &provider.settings_config)?;
+            }
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
@@ -8182,7 +8212,7 @@ impl ProviderService {
                     .unwrap_or_default()
                     .into(),
             )),
-            AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode => {
+            AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Omp | AppType::Mcode => {
                 // These native formats use apiKey and baseUrl directly on the object.
                 let api_key = provider
                     .settings_config

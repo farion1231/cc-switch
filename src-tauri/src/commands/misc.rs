@@ -170,9 +170,9 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 11] = [
+const VALID_TOOLS: [&str; 12] = [
     "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
-    "agy",
+    "agy", "omp",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -626,6 +626,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "openclaw" => "OpenClaw",
         "hermes" => "Hermes",
         "pi" => "Pi",
+        "omp" => "Oh My Pi",
         "mcode" => "MiniMax Code",
         "kimi" => "Kimi Code",
         "agy" => "Antigravity CLI",
@@ -874,6 +875,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "openclaw" => Some("npm i -g openclaw@latest"),
         "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
         "kimi" => Some("npm i -g @moonshot-ai/kimi-code@latest"),
+        "omp" => Some("bun install -g @oh-my-pi/pi-coding-agent@latest"),
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
@@ -1280,6 +1282,7 @@ async fn get_single_tool_version_impl(
         "pi" => {
             fetch_npm_latest_for_tool(&client, "@earendil-works/pi-coding-agent", tool, local).await
         }
+        "omp" => fetch_npm_latest_for_tool(&client, "@oh-my-pi/pi-coding-agent", tool, local).await,
         "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
         "kimi" => fetch_npm_latest_for_tool(&client, "@moonshot-ai/kimi-code", tool, local).await,
         "agy" => fetch_agy_latest_version(&client).await,
@@ -3294,6 +3297,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "opencode" => Some("opencode-ai"),
         "openclaw" => Some("openclaw"),
         "pi" => Some("@earendil-works/pi-coding-agent"),
+        "omp" => Some("@oh-my-pi/pi-coding-agent"),
         "mcode" => Some("@minimax-ai/code"),
         "kimi" => Some("@moonshot-ai/kimi-code"),
         _ => None,
@@ -3759,6 +3763,14 @@ fn package_manager_anchored_command_from_paths(
         let brew = sibling_bin(bin_path, "brew")?;
         return Some(format!("{} upgrade {formula}", quote_path_if_spaced(&brew)));
     }
+    if tool == "omp" {
+        return sibling_bin(bin_path, "bun").map(|bun| {
+            format!(
+                "{} install -g @oh-my-pi/pi-coding-agent@latest",
+                quote_path_if_spaced(&bun)
+            )
+        });
+    }
     let pkg = npm_package_for(tool)?;
     match infer_install_source(Path::new(bin_path)) {
         "volta" => {
@@ -3875,6 +3887,14 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
 
 #[cfg(target_os = "windows")]
 fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Option<String> {
+    if tool == "omp" {
+        return sibling_bin_with_ext(bin_path, "bun", &["exe", "cmd"]).map(|bun| {
+            format!(
+                "{} install -g @oh-my-pi/pi-coding-agent@latest",
+                win_quote_path_for_batch(&bun)
+            )
+        });
+    }
     let pkg = npm_package_for(tool)?;
 
     match infer_install_source(Path::new(bin_path)) {
@@ -7135,6 +7155,30 @@ mod tests {
         // The verified distribution exposes `pi --version`, but no updater
         // contract is assumed; upgrades stay on the package-manager path.
         assert_eq!(official_update_args("pi"), None);
+    }
+
+    #[test]
+    fn omp_lifecycle_uses_bun_and_the_official_package() {
+        assert_eq!(tool_display_name("omp"), "Oh My Pi");
+        assert_eq!(extract_version("omp/18.10.4"), "18.10.4");
+        assert_eq!(npm_package_for("omp"), Some("@oh-my-pi/pi-coding-agent"));
+        assert_eq!(
+            npm_install_command_for("omp"),
+            Some("bun install -g @oh-my-pi/pi-coding-agent@latest")
+        );
+        assert_eq!(
+            static_fallback_command("omp"),
+            "bun install -g @oh-my-pi/pi-coding-agent@latest"
+        );
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(
+            anchored_command_from_paths(
+                "omp",
+                "/home/test/.bun/bin/omp",
+                "/home/test/.bun/install/global/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js"
+            ),
+            Some("/home/test/.bun/bin/bun install -g @oh-my-pi/pi-coding-agent@latest".into())
+        );
     }
 
     #[test]

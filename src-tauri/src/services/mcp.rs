@@ -58,15 +58,27 @@ impl McpService {
                 save_with_kimi()
             }
         };
+        let save_with_omp = || {
+            if server.apps.omp || prev_apps.omp {
+                mcp::pi::sync_and_commit_for(
+                    AppType::Omp,
+                    &server.id,
+                    mcp::pi::PiChange::from_enabled(server.apps.omp.then_some(&server.server)),
+                    save_with_agy,
+                )
+            } else {
+                save_with_agy()
+            }
+        };
         let save_with_pi = || {
             if server.apps.pi || prev_apps.pi {
                 mcp::pi::sync_and_commit(
                     &server.id,
                     mcp::pi::PiChange::from_enabled(server.apps.pi.then_some(&server.server)),
-                    save_with_agy,
+                    save_with_omp,
                 )
             } else {
-                save_with_agy()
+                save_with_omp()
             }
         };
         if server.apps.mcode || prev_apps.mcode {
@@ -126,17 +138,34 @@ impl McpService {
                     delete_with_kimi()
                 }
             };
-            let delete_with_pi = || {
-                if server.apps.pi {
-                    mcp::pi::sync_and_commit(id, mcp::pi::PiChange::Remove, delete_with_agy)
+            let delete_with_omp = || {
+                if server.apps.omp {
+                    mcp::pi::sync_and_commit_for(
+                        AppType::Omp,
+                        id,
+                        mcp::pi::PiChange::Remove,
+                        delete_with_agy,
+                    )
                 } else {
                     delete_with_agy()
+                }
+            };
+            let delete_with_pi = || {
+                if server.apps.pi {
+                    mcp::pi::sync_and_commit(id, mcp::pi::PiChange::Remove, delete_with_omp)
+                } else {
+                    delete_with_omp()
                 }
             };
             if server.apps.mcode {
                 mcp::mcode::sync_and_commit(id, None, delete_with_pi)?;
             } else {
                 delete_with_pi()?;
+            }
+            if !server.apps.omp {
+                if let Err(err) = mcp::pi::remove_disabled_for(AppType::Omp, id, &server.server) {
+                    log::warn!("Failed to clean disabled omp MCP entry: {err}");
+                }
             }
             // A false agy flag carries no ownership history. Even an identical disabled
             // native entry may belong to the user; leave it intact without proof of ownership.
@@ -179,7 +208,7 @@ impl McpService {
     ) -> Result<(), AppError> {
         if matches!(
             app,
-            AppType::Mcode | AppType::Kimi | AppType::Pi | AppType::Agy
+            AppType::Mcode | AppType::Kimi | AppType::Pi | AppType::Omp | AppType::Agy
         ) {
             if let Some(server) = state.db.get_all_mcp_servers()?.get(server_id) {
                 let spec = enabled.then_some(&server.server);
@@ -199,7 +228,8 @@ impl McpService {
                 } else if app == AppType::Mcode {
                     mcp::mcode::sync_and_commit(server_id, spec, commit)?;
                 } else {
-                    mcp::pi::sync_and_commit(
+                    mcp::pi::sync_and_commit_for(
+                        app.clone(),
                         server_id,
                         mcp::pi::PiChange::from_enabled(spec),
                         commit,
@@ -228,7 +258,7 @@ impl McpService {
         for app in server.apps.enabled_apps() {
             if matches!(
                 app,
-                AppType::Mcode | AppType::Kimi | AppType::Pi | AppType::Agy
+                AppType::Mcode | AppType::Kimi | AppType::Pi | AppType::Omp | AppType::Agy
             ) {
                 continue; // Already written before saving the managed state.
             }
@@ -288,6 +318,7 @@ impl McpService {
             AppType::Kimi => mcp::kimi::sync(&server.id, Some(&server.server))?,
             AppType::Pi => mcp::pi::sync(&server.id, Some(&server.server))?,
             AppType::Agy => mcp::agy::sync(&server.id, Some(&server.server))?,
+            AppType::Omp => mcp::pi::sync_for(AppType::Omp, &server.id, Some(&server.server))?,
         }
         Ok(())
     }
@@ -302,7 +333,7 @@ impl McpService {
         for app in server.apps.enabled_apps() {
             if matches!(
                 app,
-                AppType::Mcode | AppType::Kimi | AppType::Pi | AppType::Agy
+                AppType::Mcode | AppType::Kimi | AppType::Pi | AppType::Omp | AppType::Agy
             ) {
                 continue; // Already removed before deleting the managed record.
             }
@@ -334,6 +365,7 @@ impl McpService {
             AppType::Kimi => mcp::kimi::sync(id, None)?,
             AppType::Pi => mcp::pi::sync(id, None)?,
             AppType::Agy => mcp::agy::sync(id, None)?,
+            AppType::Omp => mcp::pi::sync_for(AppType::Omp, id, None)?,
         }
         Ok(())
     }
@@ -441,7 +473,7 @@ impl McpService {
                 Self::sync_server_to_app(state, server, app)
             } else if !matches!(
                 app,
-                AppType::Mcode | AppType::Kimi | AppType::Pi | AppType::Agy
+                AppType::Mcode | AppType::Kimi | AppType::Pi | AppType::Omp | AppType::Agy
             ) {
                 Self::remove_server_from_app(state, &server.id, app)
             } else {
@@ -746,7 +778,7 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 10] = [
+        let results: [(&str, Result<usize, AppError>); 11] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
@@ -756,6 +788,7 @@ impl McpService {
             ("mcode", mcp::mcode::import(state)),
             ("kimi", mcp::kimi::import(state)),
             ("agy", mcp::agy::import(state)),
+            ("omp", mcp::pi::import_for(AppType::Omp, state)),
             ("pi", mcp::pi::import(state)),
         ];
         for (app, result) in results {

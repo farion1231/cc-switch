@@ -21,8 +21,8 @@ pub(super) async fn update_node_gap(
     target: &str,
 ) -> Option<NodeRequirementGap> {
     let package = npm_package_for(tool)?;
-    // MiniMax Code 的官方 installer 在系统 Node 不达标时会自带一份 Node。
-    if tool == "mcode" {
+    // MiniMax Code 的官方 installer 在系统 Node 不达标时会自带一份 Node；omp 使用 Bun 而非 Node。
+    if matches!(tool, "mcode" | "omp") {
         return None;
     }
     #[cfg(target_os = "windows")]

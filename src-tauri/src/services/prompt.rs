@@ -309,7 +309,7 @@ impl PromptService {
     pub fn sync_all_to_live(state: &AppState) -> Result<(), AppError> {
         let mut failures = Vec::new();
         for app in AppType::all() {
-            if matches!(app, AppType::ClaudeDesktop) {
+            if matches!(app, AppType::ClaudeDesktop | AppType::Omp) {
                 continue;
             }
             if let Err(error) = Self::sync_to_live(state, app.clone()) {

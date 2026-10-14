@@ -383,6 +383,10 @@ export const handlers = [
     success({ success: true }),
   ),
 
+  http.post(`${TAURI_ENDPOINT}/get_omp_current_state`, () =>
+    success({ enabledProviderIds: [], defaultProviderId: null }),
+  ),
+
   http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
     success({
       enabledProviderIds: [],

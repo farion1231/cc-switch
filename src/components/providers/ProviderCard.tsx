@@ -600,7 +600,9 @@ export function ProviderCard({
                 : () => onConfigureUsage(provider)
             }
             onOpenTerminal={
-              onOpenTerminal ? () => onOpenTerminal(provider) : undefined
+              onOpenTerminal && appId !== "omp"
+                ? () => onOpenTerminal(provider)
+                : undefined
             }
           />
         </div>

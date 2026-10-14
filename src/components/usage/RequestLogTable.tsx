@@ -123,6 +123,7 @@ const APP_SHORT_NAME: Record<AppId, string> = {
   mcode: "MiniMax",
   kimi: "Kimi",
   agy: "Antigravity",
+  omp: "OMP",
 };
 
 export function appShortName(appType: string): string {
