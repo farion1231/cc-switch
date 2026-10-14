@@ -244,6 +244,10 @@ export const setApiKeyInConfig = (
 // ========== Codex base_url utils ==========
 
 const TOML_SECTION_HEADER_PATTERN = /^\s*\[([^\]\r\n]+)\]\s*$/;
+const TOML_BARE_KEY_PATTERN = /^[A-Za-z0-9_-]+$/;
+// 点分键的一段（基本字符串、字面字符串或裸键）及其后的 "." 或结尾
+const TOML_DOTTED_KEY_SEGMENT_PATTERN =
+  /\s*(?:"((?:\\.|[^"\\\r\n])*)"|'([^'\r\n]*)'|([A-Za-z0-9_-]+))\s*(\.|$)/y;
 const TOML_BASE_URL_PATTERN =
   /^\s*base_url\s*=\s*(?:"((?:\\.|[^"\\\r\n])*)"|'([^'\r\n]*)')\s*(?:#.*)?$/;
 const TOML_EXPERIMENTAL_BEARER_TOKEN_PATTERN =
@@ -298,10 +302,38 @@ const finalizeTomlText = (lines: string[]): string =>
     .replace(/\n{3,}/g, "\n\n")
     .replace(/^\n+/, "");
 
+// 表名的规范写法：能用裸键的段用裸键，其余用基本字符串
+const tomlTableName = (...segments: string[]): string =>
+  segments
+    .map((segment) =>
+      TOML_BARE_KEY_PATTERN.test(segment) ? segment : tomlBasicString(segment),
+    )
+    .join(".");
+
+// `[model_providers."custom"]`、`[ model_providers . custom ]` 与
+// `[model_providers.custom]` 是同一张表（#8271），比较表头前先统一成规范写法；
+// 认不出的表头原样返回
+const normalizeTomlTableName = (header: string): string => {
+  const segments: string[] = [];
+  let index = 0;
+  for (;;) {
+    TOML_DOTTED_KEY_SEGMENT_PATTERN.lastIndex = index;
+    const match = TOML_DOTTED_KEY_SEGMENT_PATTERN.exec(header);
+    if (!match) return header;
+    const [, basic, literal, bare, separator] = match;
+    segments.push(
+      basic !== undefined ? unescapeTomlBasicString(basic) : (literal ?? bare),
+    );
+    if (separator !== ".") return tomlTableName(...segments);
+    index = TOML_DOTTED_KEY_SEGMENT_PATTERN.lastIndex;
+  }
+};
+
 const getTomlSectionRange = (
   lines: string[],
   sectionName: string,
 ): TomlSectionRange | undefined => {
+  const targetName = normalizeTomlTableName(sectionName);
   let headerLineIndex = -1;
 
   for (let index = 0; index < lines.length; index += 1) {
@@ -311,7 +343,7 @@ const getTomlSectionRange = (
     }
 
     if (headerLineIndex === -1) {
-      if (match[1] === sectionName) {
+      if (normalizeTomlTableName(match[1]) === targetName) {
         headerLineIndex = index;
       }
       continue;
@@ -414,7 +446,9 @@ const getCodexProviderSectionName = (
   configText: string,
 ): string | undefined => {
   const providerName = getCodexModelProviderName(configText);
-  return providerName ? `model_providers.${providerName}` : undefined;
+  return providerName
+    ? tomlTableName("model_providers", providerName)
+    : undefined;
 };
 
 const isCustomCodexModelProviderId = (providerName: string): boolean => {
@@ -430,7 +464,7 @@ const getCodexCustomProviderSectionName = (
 ): string | undefined => {
   const providerName = getCodexModelProviderName(configText);
   return providerName && isCustomCodexModelProviderId(providerName)
-    ? `model_providers.${providerName}`
+    ? tomlTableName("model_providers", providerName)
     : undefined;
 };
 
@@ -501,7 +535,7 @@ const findTomlAssignments = (
   lines.forEach((line, index) => {
     const sectionMatch = line.match(TOML_SECTION_HEADER_PATTERN);
     if (sectionMatch) {
-      currentSectionName = sectionMatch[1];
+      currentSectionName = normalizeTomlTableName(sectionMatch[1]);
       return;
     }
 

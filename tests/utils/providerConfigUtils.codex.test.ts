@@ -242,6 +242,80 @@ describe("Codex TOML utils", () => {
     expect(extractCodexBaseUrl(output)).toBe("https://relay.example/v1");
   });
 
+  it("finds the active provider table when its header quotes the key", () => {
+    for (const header of [
+      '[model_providers."custom"]',
+      "[model_providers.'custom']",
+      "[ model_providers . custom ]",
+      '["model_providers".custom]',
+    ]) {
+      const input = [
+        'model_provider = "custom"',
+        "",
+        header,
+        'name = "custom"',
+        'wire_api = "responses"',
+        "",
+        "[features]",
+        "",
+      ].join("\n");
+
+      const output = setCodexBaseUrl(input, "https://relay.example/v1");
+
+      const parsed = parseToml(output) as Record<string, any>;
+      expect(parsed.model_providers.custom, header).toEqual({
+        name: "custom",
+        wire_api: "responses",
+        base_url: "https://relay.example/v1",
+      });
+      expect(output.split(/^\s*\[/m), header).toHaveLength(3);
+      expect(extractCodexBaseUrl(output), header).toBe(
+        "https://relay.example/v1",
+      );
+      expect(
+        extractCodexBaseUrl(setCodexBaseUrl(output, "")),
+        header,
+      ).toBeUndefined();
+    }
+  });
+
+  it("writes base_url into a quoted provider table whose id needs quoting", () => {
+    const input = [
+      'model_provider = "my.relay"',
+      "",
+      '[model_providers."my.relay"]',
+      'name = "my.relay"',
+      "",
+    ].join("\n");
+
+    const output = setCodexBaseUrl(input, "https://relay.example/v1");
+
+    const parsed = parseToml(output) as Record<string, any>;
+    expect(Object.keys(parsed.model_providers)).toEqual(["my.relay"]);
+    expect(parsed.model_providers["my.relay"].base_url).toBe(
+      "https://relay.example/v1",
+    );
+  });
+
+  it("updates the bearer token in a provider table whose header quotes the key", () => {
+    const input = [
+      'model_provider = "custom"',
+      "",
+      '[model_providers."custom"]',
+      'name = "custom"',
+      'experimental_bearer_token = "old"',
+      "",
+    ].join("\n");
+
+    const output = updateCodexExperimentalBearerToken(input, "new");
+
+    expect(extractCodexExperimentalBearerToken(output)).toBe("new");
+    expect(
+      (parseToml(output) as Record<string, any>).model_providers.custom
+        .experimental_bearer_token,
+    ).toBe("new");
+  });
+
   it("never redefines a custom table the line scan cannot see", () => {
     for (const input of [
       'model = "m"\n\n[model_providers.custom] # mine\nname = "custom"\nwire_api = "responses"\n',
