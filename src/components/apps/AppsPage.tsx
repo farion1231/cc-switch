@@ -88,7 +88,7 @@ const ROWS: Row[] = [
   ),
 ];
 
-// 表头和应用行共用列宽；操作列按当前可见按钮的最大宽度收缩，最后一列是行尾的「⋯」菜单。
+// 表头和应用行共用列宽；操作列宽取各行按钮和表头量宽按钮的最大值，最后一列是行尾的「⋯」菜单。
 const APP_ROW_GRID =
   "grid grid-cols-[minmax(0,1fr)_168px_var(--apps-actions-width,0px)_56px_28px] items-center gap-x-4";
 
@@ -188,6 +188,16 @@ export function AppsPage() {
     />
   );
 
+  // 检查更新时各工具逐个进入加载，可升级列表会先清零再逐个回来；页头沿用检查前的数，
+  // 检查完再一次性更新，免得「全部升级」闪没又出现、数字逐个跳。
+  const settledUpdatableCount = useRef(0);
+  if (!tools.isLoadingTools) {
+    settledUpdatableCount.current = tools.updatableToolNames.length;
+  }
+  const updatableCount = tools.isLoadingTools
+    ? settledUpdatableCount.current
+    : tools.updatableToolNames.length;
+
   const lastChecked = tools.lastCheckedAt
     ? t("appsPage.lastChecked", {
         time: formatCheckedAt(tools.lastCheckedAt, i18n.language),
@@ -209,7 +219,7 @@ export function AppsPage() {
             <span className="whitespace-nowrap text-caption text-fg-3">
               {lastChecked}
             </span>
-            {(tools.updatableToolNames.length > 0 || tools.batchAction) && (
+            {(updatableCount > 0 || tools.batchAction) && (
               <Button
                 variant="neutral"
                 size="regular"
@@ -228,9 +238,7 @@ export function AppsPage() {
                 ) : (
                   <ArrowUpCircle className="h-3.5 w-3.5" />
                 )}
-                {t("settings.updateAllTools", {
-                  count: tools.updatableToolNames.length,
-                })}
+                {t("settings.updateAllTools", { count: updatableCount })}
               </Button>
             )}
             <Button
@@ -245,9 +253,21 @@ export function AppsPage() {
                   tools.isLoadingTools && "animate-spin",
                 )}
               />
-              {tools.isLoadingTools
-                ? t("appsPage.checking")
-                : t("appsPage.checkUpdates")}
+              {/* 两种文案叠在同一格，按钮按较宽的那个定宽，切换时不改变宽度 */}
+              <span className="grid justify-items-center [&>*]:col-start-1 [&>*]:row-start-1">
+                <span
+                  aria-hidden={tools.isLoadingTools}
+                  className={cn(tools.isLoadingTools && "invisible")}
+                >
+                  {t("appsPage.checkUpdates")}
+                </span>
+                <span
+                  aria-hidden={!tools.isLoadingTools}
+                  className={cn(!tools.isLoadingTools && "invisible")}
+                >
+                  {t("appsPage.checking")}
+                </span>
+              </span>
             </Button>
             <DropdownMenu>
               <HoverTip content={t("common.more")}>
@@ -301,7 +321,22 @@ export function AppsPage() {
           >
             <span>{t("appsPage.columnApp")}</span>
             <span className="text-end">{t("appsPage.columnVersion")}</span>
-            <span />
+            {/* 看不见的「安装 / 升级」按钮只用来量宽：操作列始终留出按钮的位置，
+                版本号加载完或检查到新版本、按钮冒出来时，版本列不会被推开。 */}
+            <div
+              data-tool-actions
+              aria-hidden
+              className="invisible grid w-max justify-self-end [&>*]:col-start-1 [&>*]:row-start-1"
+            >
+              <Button variant="neutral" size="compact" tabIndex={-1}>
+                <Download className="h-3.5 w-3.5" />
+                {t("settings.toolInstall")}
+              </Button>
+              <Button variant="neutral" size="compact" tabIndex={-1}>
+                <ArrowUpCircle className="h-3.5 w-3.5" />
+                {t("settings.toolUpdate")}
+              </Button>
+            </div>
             <span className="flex items-center justify-end gap-0.5">
               {t("appsPage.columnVisible")}
               <HelpTip title={t("appsPage.columnVisible")} align="end">

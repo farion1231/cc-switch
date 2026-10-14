@@ -1801,6 +1801,30 @@ describe("AppsPage concurrent CLI upgrades", () => {
       expect.anything(),
     );
   });
+  it("keeps the header steady while checking for updates", async () => {
+    await renderApps();
+    expect(updateAllButton()).toBeEnabled();
+    const pending = deferred<void>();
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) => {
+      await pending.promise;
+      return getVersions(tools);
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "appsPage.checkUpdates" }),
+    );
+    // 检查期间各工具都在加载：「全部升级」保持显示（禁用），不先消失再出现
+    expect(
+      await screen.findByRole("button", { name: "appsPage.checking" }),
+    ).toBeDisabled();
+    expect(updateAllButton()).toBeDisabled();
+    await act(async () => pending.resolve());
+    expect(updateAllButton()).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "appsPage.checkUpdates" }),
+    ).toBeEnabled();
+  });
+
   it("withholds the upgrade when the new version needs a newer Node and leaves it out of update all", async () => {
     const defaultVersions = mocks.getToolVersions.getMockImplementation()!;
     mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
