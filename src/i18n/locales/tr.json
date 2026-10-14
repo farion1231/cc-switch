@@ -904,6 +904,8 @@
     "hermesConfigDir": "Hermes Yapılandırma Dizini",
     "hermesConfigDirDescription": "Hermes yapılandırma dizinini (config.yaml) geçersiz kılın.",
     "piConfigDir": "Pi Yapılandırma Dizini",
+    "ompConfigDir": "Oh My Pi",
+    "browsePlaceholderOmp": "~/.omp/agent",
     "piConfigDirDescription": "Pi yapılandırma dizinini (models.json, talimat dosyaları, istemler, beceriler ve oturumlar) geçersiz kılın.",
     "browsePlaceholderClaude": "ör. /home/<your-username>/.claude",
     "browsePlaceholderCodex": "ör. /home/<your-username>/.codex",
@@ -4779,6 +4781,37 @@
       "loading": "Kota kontrol ediliyor…",
       "refresh": "Kotayı yenile",
       "refreshAria": "{{login}} için kotayı yenileyin"
+    }
+  },
+  "omp": {
+    "empty": {
+      "title": "Henüz API anahtarı sağlayıcısı yok",
+      "description": "Ön ayar veya özel sağlayıcı eklemek için sağ üstteki + düğmesini kullanın."
+    },
+    "provider": {
+      "enabled": "Oh My Pi içinde etkinleştirildi",
+      "enableFailed": "Sağlayıcı Oh My Pi içinde etkinleştirilemedi",
+      "removed": "Oh My Pi içinden kaldırıldı"
+    },
+    "current": {
+      "readFailed": "Oh My Pi sağlayıcı yapılandırması okunamadı",
+      "stateUnavailableHint": "Oh My Pi yapılandırması okunana kadar sağlayıcı değişiklikleri devre dışıdır."
+    },
+    "errors": {
+      "deeplinkModel": "Oh My Pi sağlayıcı bağlantıları bir model gerektirir. Bağlantıya model parametresini ekleyin.",
+      "mcpImportConflict": "Bazı Oh My Pi MCP sunucuları geçersiz tanımlar veya mevcut sunucularla çakışmalar nedeniyle içe aktarılamadı. Yerel yapılandırma korundu.",
+      "directory": "Oh My Pi yapılandırma dizini mutlak bir yol olmalıdır.",
+      "fileTooLarge": "Oh My Pi yapılandırması 1 MiB sınırını aşıyor.",
+      "externalChange": "Oh My Pi yapılandırması dışarıdan değiştirildi. Yenileyip tekrar deneyin.",
+      "rollbackConflict": "Veritabanı kaydı başarısız oldu ve Oh My Pi yapılandırması dışarıdan değiştirildi. Elle geri yükleyin.",
+      "invalidMcp": "Oh My Pi MCP JSON geçersiz. Kök ve mcpServers nesne olmalıdır.",
+      "invalidYaml": "Geçersiz Oh My Pi YAML. Kök ve providers birer eşleme olmalıdır.",
+      "invalidProvider": "Geçersiz Oh My Pi sağlayıcısı. Gerekli alanları, API biçimini ve alan türlerini kontrol edin.",
+      "manualEdit": "Bu YAML yapısını CC Switch güvenle düzenleyemiyor. models.yml dosyasını elle düzenleyin.",
+      "duplicateProvider": "Bu Oh My Pi sağlayıcı anahtarı zaten var.",
+      "renameProvider": "Oh My Pi sağlayıcı anahtarları yeniden adlandırılamaz.",
+      "providerMissing": "Bu Oh My Pi sağlayıcısı artık kayıtlı değil.",
+      "mcpName": "MCP adları harf, rakam, _, -, ., :, ve tek boşluk içerebilir; en fazla 100 karakter olabilir."
     }
   }
 }

@@ -119,6 +119,9 @@ pub fn import_provider_from_deeplink(
             .to_lowercase();
         format!("{sanitized_name}-{timestamp}")
     };
+    if app_type == AppType::Omp {
+        provider.id = format!("cc-switch-{}", provider.id);
+    }
 
     let provider_id = provider.id.clone();
 
@@ -213,10 +216,18 @@ impl ApiFormat {
             (AppType::OpenCode, OpenAiChat) => Some("@ai-sdk/openai-compatible"),
             (AppType::OpenCode, OpenAiResponses) => Some("@ai-sdk/openai"),
             (AppType::OpenCode, GeminiNative) => Some("@ai-sdk/google"),
-            (AppType::OpenClaw | AppType::Pi, Anthropic) => Some("anthropic-messages"),
-            (AppType::OpenClaw | AppType::Pi, OpenAiChat) => Some("openai-completions"),
-            (AppType::OpenClaw | AppType::Pi, OpenAiResponses) => Some("openai-responses"),
-            (AppType::OpenClaw | AppType::Pi, GeminiNative) => Some("google-generative-ai"),
+            (AppType::OpenClaw | AppType::Pi | AppType::Omp, Anthropic) => {
+                Some("anthropic-messages")
+            }
+            (AppType::OpenClaw | AppType::Pi | AppType::Omp, OpenAiChat) => {
+                Some("openai-completions")
+            }
+            (AppType::OpenClaw | AppType::Pi | AppType::Omp, OpenAiResponses) => {
+                Some("openai-responses")
+            }
+            (AppType::OpenClaw | AppType::Pi | AppType::Omp, GeminiNative) => {
+                Some("google-generative-ai")
+            }
             (AppType::Hermes, Anthropic) => Some("anthropic_messages"),
             (AppType::Hermes, OpenAiChat) => Some("chat_completions"),
             (AppType::Hermes, OpenAiResponses) => Some("codex_responses"),
@@ -286,7 +297,7 @@ pub(super) fn check_link_values(
     if !app_type.is_additive_mode() {
         return Ok(());
     }
-    let is_pi = matches!(app_type, AppType::Pi);
+    let is_pi = matches!(app_type, AppType::Pi | AppType::Omp);
     let fields = [
         ("name", request.name.as_deref()),
         ("endpoint", request.endpoint.as_deref()),
@@ -331,7 +342,7 @@ pub(crate) fn build_provider_from_request(
 ) -> Result<Provider, AppError> {
     let api_format = link_api_format(app_type, request)?;
     check_link_values(app_type, request)?;
-    let settings_config = match app_type {
+    let mut settings_config = match app_type {
         AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
         AppType::Codex => build_codex_settings(request)?,
         AppType::Gemini => build_gemini_settings(request),
@@ -339,13 +350,19 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenCode => build_opencode_settings(request, api_format),
         AppType::OpenClaw => build_additive_app_settings(request, api_format),
         AppType::Hermes => build_hermes_settings(request, api_format),
-        AppType::Pi => build_pi_settings(request, api_format)?,
+        AppType::Pi | AppType::Omp => build_pi_settings(request, api_format)?,
         AppType::Mcode => {
             return Err(AppError::InvalidInput(
                 "Add MCode providers from the MCode page".into(),
             ))
         }
     };
+
+    if *app_type == AppType::Omp {
+        if let Some(config) = settings_config.as_object_mut() {
+            config.remove("name");
+        }
+    }
 
     // Build usage script configuration if provided
     let mut meta = build_provider_meta(app_type, request)?;
@@ -976,7 +993,7 @@ pub fn parse_and_merge_config(
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
         "grokbuild" => merge_grokbuild_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is
-        "openclaw" | "opencode" | "hermes" | "pi" => {
+        "openclaw" | "opencode" | "hermes" | "pi" | "omp" => {
             merge_additive_config(&mut merged, &config_value)?;
             // 从 config 里补来的地址和 Key 同样要查，让确认框当场报错
             if let Ok(app_type) = AppType::from_str(request.app.as_deref().unwrap_or("")) {
@@ -1299,6 +1316,24 @@ mod tests {
             model: Some("anthropic/claude-opus-4-8".to_string()),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn omp_deeplinks_accept_literal_keys_and_reject_dynamic_credentials() {
+        let mut request = hermes_request();
+        request.app = Some("omp".into());
+        let provider = build_provider_from_request(&AppType::Omp, &request).unwrap();
+        assert!(provider.settings_config.get("name").is_none());
+        crate::omp_config::validate_provider("cc-switch-import", &provider.settings_config)
+            .unwrap();
+        for key in ["PRIVATE_API_KEY", "abc123", "_123_key"] {
+            request.api_key = Some(key.into());
+            assert!(check_link_values(&AppType::Omp, &request).is_ok());
+        }
+        request.api_key = Some("${PRIVATE_API_KEY}".into());
+        assert!(check_link_values(&AppType::Omp, &request).is_err());
+        request.api_key = Some("!secret-command".into());
+        assert!(check_link_values(&AppType::Omp, &request).is_err());
     }
 
     /// deeplink 同时声明 `api_key` 与 `env_key` 时，导入结果只保留用户可见的

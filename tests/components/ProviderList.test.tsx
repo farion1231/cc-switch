@@ -8,6 +8,7 @@ import {
   ProviderList,
   type SwitchModeProps,
 } from "@/components/providers/ProviderList";
+import { invalidateOmpProviderCaches } from "@/lib/query/omp";
 import { server } from "../msw/server";
 
 vi.mock("sonner", () => ({
@@ -839,6 +840,51 @@ describe("ProviderList Component", () => {
         ).toEqual(["remove"]);
       }
     });
+  });
+
+  it("refreshes omp membership after removal and offers enable again", async () => {
+    const provider = createProvider({
+      id: "cc-switch-omp",
+      meta: { liveConfigManaged: true },
+    });
+    const onSwitch = vi.fn();
+    let enabledProviderIds = [provider.id];
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_omp_current_state`, () =>
+        HttpResponse.json({ enabledProviderIds, defaultProviderId: null }),
+      ),
+    );
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <ProviderList
+          providers={{ [provider.id]: provider }}
+          currentProviderId=""
+          appId="omp"
+          onSwitch={onSwitch}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onRemoveFromConfig={vi.fn()}
+          onOpenWebsite={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(lastProps(provider.id)?.isInConfig).toBe(true));
+    expect(lastProps(provider.id).isCurrent).toBe(false);
+    expect(lastProps(provider.id).presentation.showHealth).toBeFalsy();
+    enabledProviderIds = [];
+    await invalidateOmpProviderCaches(client);
+    await waitFor(() => expect(lastProps(provider.id)?.isInConfig).toBe(false));
+    fireEvent.click(screen.getByTestId(`add-${provider.id}`));
+    expect(onSwitch).toHaveBeenCalledWith(provider);
   });
 
   it("derives Pi membership only from the native provider ID list", async () => {

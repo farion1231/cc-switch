@@ -916,6 +916,8 @@
     "hermesConfigDir": "Hermes Configuration Directory",
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
     "piConfigDir": "Pi Configuration Directory",
+    "ompConfigDir": "Oh My Pi",
+    "browsePlaceholderOmp": "~/.omp/agent",
     "piConfigDirDescription": "Override the Pi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
@@ -4851,6 +4853,37 @@
       "loading": "Checking quota…",
       "refresh": "Refresh quota",
       "refreshAria": "Refresh quota for {{login}}"
+    }
+  },
+  "omp": {
+    "empty": {
+      "title": "No API key providers yet",
+      "description": "Use the + button in the top-right corner to add a preset or custom provider."
+    },
+    "provider": {
+      "enabled": "Enabled in Oh My Pi",
+      "enableFailed": "Could not enable this provider in Oh My Pi",
+      "removed": "Removed from Oh My Pi"
+    },
+    "current": {
+      "readFailed": "Could not read Oh My Pi's provider configuration",
+      "stateUnavailableHint": "Provider changes are disabled until CC Switch can read Oh My Pi's provider configuration."
+    },
+    "errors": {
+      "deeplinkModel": "Oh My Pi provider links need a model. Add the model parameter to the link.",
+      "mcpImportConflict": "Some Oh My Pi MCP servers could not be imported because their definitions are invalid or conflict with existing servers. Native configuration was preserved.",
+      "directory": "The Oh My Pi agent directory must be absolute.",
+      "fileTooLarge": "Oh My Pi configuration exceeds the 1 MiB limit.",
+      "externalChange": "Oh My Pi configuration changed outside CC Switch. Refresh and try again.",
+      "rollbackConflict": "The database save failed and Oh My Pi configuration changed externally. Restore it by hand.",
+      "invalidMcp": "Invalid Oh My Pi MCP JSON. The root and mcpServers must be objects.",
+      "invalidYaml": "Invalid Oh My Pi YAML. The root and providers must be mappings.",
+      "invalidProvider": "Invalid Oh My Pi provider. Check required fields, API format and field types.",
+      "manualEdit": "This YAML uses a layout or construct CC Switch cannot safely edit. Edit models.yml by hand.",
+      "duplicateProvider": "This Oh My Pi provider key already exists.",
+      "renameProvider": "Oh My Pi provider keys cannot be renamed.",
+      "providerMissing": "This Oh My Pi provider is no longer saved.",
+      "mcpName": "MCP names allow letters, digits, _, -, ., :, and single spaces, up to 100 characters."
     }
   }
 }

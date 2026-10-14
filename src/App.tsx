@@ -123,6 +123,7 @@ import {
   useDisableCurrentOmo,
   useDisableCurrentOmoSlim,
 } from "@/lib/query/omo";
+import { ompApi, invalidateOmpProviderCaches } from "@/lib/query/omp";
 import { invalidatePiProviderCaches, usePiCurrentState } from "@/lib/query/pi";
 import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
 import EnvPanel from "@/components/openclaw/EnvPanel";
@@ -332,9 +333,11 @@ function App() {
     isProxyRunning && isCurrentAppTakeoverActive,
   );
   const handleEnablePiProvider = async (provider: Provider) => {
+    const membershipApp = activeApp === "omp" ? "omp" : "pi";
     try {
-      await providersApi.switch(provider.id, "pi");
-      await invalidatePiProviderCaches(queryClient);
+      await providersApi.switch(provider.id, membershipApp);
+      if (activeApp === "omp") await invalidateOmpProviderCaches(queryClient);
+      else await invalidatePiProviderCaches(queryClient);
       await providersApi.updateTrayMenu().catch((error) => {
         console.error(
           "Failed to update tray menu after enabling Pi provider",
@@ -342,7 +345,7 @@ function App() {
         );
       });
       toast.success(
-        t("pi.provider.enabled", {
+        t(`${membershipApp}.provider.enabled`, {
           defaultValue: "已在 Pi 中启用",
         }),
         { closeButton: true },
@@ -350,7 +353,7 @@ function App() {
     } catch (error) {
       const detail = extractErrorMessage(error);
       toast.error(
-        t("pi.provider.enableFailed", {
+        t(`${membershipApp}.provider.enableFailed`, {
           defaultValue: "无法在 Pi 中启用此供应商",
         }),
         {
@@ -406,6 +409,9 @@ function App() {
           async (event: ProviderSwitchEvent) => {
             if (event.appType === activeApp) {
               await refetch();
+            }
+            if (event.appType === "omp") {
+              await invalidateOmpProviderCaches(queryClient);
             }
             if (event.appType === "pi") {
               await invalidatePiProviderCaches(queryClient);
@@ -586,7 +592,7 @@ function App() {
   useEffect(() => {
     const checkEnvOnSwitch = async () => {
       try {
-        if (activeApp === "mcode") return;
+        if (activeApp === "mcode" || activeApp === "omp") return;
         const conflicts = await checkEnvConflicts(activeApp);
 
         if (conflicts.length > 0) {
@@ -801,11 +807,13 @@ function App() {
       } catch (error) {
         const detail = extractErrorMessage(error);
         const description =
-          activeApp === "pi"
+          activeApp === "pi" || activeApp === "omp"
             ? translatePiProviderMutationError(detail, t) || detail
             : detail;
         if (activeApp === "pi") {
           void invalidatePiProviderCaches(queryClient).catch(() => undefined);
+        } else if (activeApp === "omp") {
+          void invalidateOmpProviderCaches(queryClient).catch(() => undefined);
         }
         toast.error(t("notifications.removeFromConfigFailed"), {
           description: description || t("common.unknown"),
@@ -815,6 +823,8 @@ function App() {
       }
       if (activeApp === "pi") {
         await invalidatePiProviderCaches(queryClient);
+      } else if (activeApp === "omp") {
+        await invalidateOmpProviderCaches(queryClient);
       }
       // Invalidate queries to refresh the isInConfig state
       if (activeApp === "opencode") {
@@ -842,9 +852,11 @@ function App() {
           ? t("pi.provider.removed", {
               defaultValue: "已从 Pi 移除",
             })
-          : t("notifications.removeFromConfigSuccess", {
-              defaultValue: "已从配置移除",
-            }),
+          : activeApp === "omp"
+            ? t("omp.provider.removed")
+            : t("notifications.removeFromConfigSuccess", {
+                defaultValue: "已从配置移除",
+              }),
         { closeButton: true },
       );
     } else {
@@ -924,7 +936,8 @@ function App() {
       activeApp === "opencode" ||
       activeApp === "openclaw" ||
       activeApp === "hermes" ||
-      activeApp === "pi"
+      activeApp === "pi" ||
+      activeApp === "omp"
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -946,8 +959,11 @@ function App() {
                   })
                 : (
                     await queryClient.ensureQueryData({
-                      queryKey: ["pi", "currentState"],
-                      queryFn: () => piApi.getCurrentState(),
+                      queryKey: [activeApp, "currentState"],
+                      queryFn: () =>
+                        activeApp === "omp"
+                          ? ompApi.getCurrentState()
+                          : piApi.getCurrentState(),
                     })
                   ).enabledProviderIds;
       } catch (error) {
@@ -1151,6 +1167,7 @@ function App() {
         <>
           {currentView === "providers" &&
             activeApp !== "mcode" &&
+            activeApp !== "omp" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
@@ -1300,7 +1317,7 @@ function App() {
             appId={activeApp}
             isLoading={isLoading}
             onSwitch={(provider) =>
-              void (activeApp === "pi"
+              void (activeApp === "pi" || activeApp === "omp"
                 ? handleEnablePiProvider(provider)
                 : switchProvider(provider))
             }
@@ -1309,6 +1326,7 @@ function App() {
               activeApp === "openclaw" ||
               activeApp === "hermes" ||
               activeApp === "pi" ||
+              activeApp === "omp" ||
               activeApp === "mcode"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
