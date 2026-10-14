@@ -829,6 +829,163 @@ describe("AppsPage concurrent CLI upgrades", () => {
     }
   });
 
+  it.each(["rejected", "empty"])(
+    "warns when uninstall succeeds but installation diagnostics are %s",
+    async (result) => {
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await renderApps();
+        mocks.runToolLifecycleAction.mockImplementationOnce(async () => {
+          missing.add("claude");
+          if (result === "rejected") {
+            mocks.probeToolInstallations.mockRejectedValueOnce(
+              new Error("diagnostics failed"),
+            );
+          } else {
+            mocks.probeToolInstallations.mockResolvedValueOnce([]);
+          }
+        });
+        fireEvent.click(
+          card("Claude Code").getByRole("button", {
+            name: "settings.toolUninstall",
+          }),
+        );
+        fireEvent.click(
+          await within(screen.getByRole("dialog")).findByRole("button", {
+            name: "settings.toolUninstall",
+          }),
+        );
+        await waitFor(() =>
+          expect(mocks.warning).toHaveBeenCalledWith(
+            "settings.toolUninstallWarningTitle",
+            {
+              description: "settings.toolUninstallCheckFailed",
+              closeButton: true,
+            },
+          ),
+        );
+        expect(mocks.error).not.toHaveBeenCalled();
+        expect(mocks.success).not.toHaveBeenCalled();
+        expect(
+          card("Claude Code").getByRole("button", {
+            name: "settings.toolInstall",
+          }),
+        ).toBeEnabled();
+      } finally {
+        errorLog.mockRestore();
+      }
+    },
+  );
+
+  it.each(["rejected", "empty"])(
+    "warns when uninstall succeeds but the status refresh is %s",
+    async (result) => {
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await renderApps();
+        mocks.runToolLifecycleAction.mockImplementationOnce(async () => {
+          if (result === "rejected") {
+            mocks.getToolVersions.mockRejectedValueOnce(
+              new Error("refresh failed"),
+            );
+          } else {
+            mocks.getToolVersions.mockResolvedValueOnce([]);
+          }
+        });
+        fireEvent.click(
+          card("Claude Code").getByRole("button", {
+            name: "settings.toolUninstall",
+          }),
+        );
+        fireEvent.click(
+          await within(screen.getByRole("dialog")).findByRole("button", {
+            name: "settings.toolUninstall",
+          }),
+        );
+        await waitFor(() =>
+          expect(mocks.warning).toHaveBeenCalledWith(
+            "settings.toolUninstallWarningTitle",
+            {
+              description: "settings.toolUninstallCheckFailed",
+              closeButton: true,
+            },
+          ),
+        );
+        expect(mocks.error).not.toHaveBeenCalled();
+        expect(mocks.success).not.toHaveBeenCalled();
+        expect(
+          card("Claude Code").getByRole("button", {
+            name: "settings.toolUninstall",
+          }),
+        ).toBeEnabled();
+      } finally {
+        errorLog.mockRestore();
+      }
+    },
+  );
+
+  it.each([
+    ["Windows NT 10.0", null, true],
+    ["Windows NT 10.0", "Ubuntu", false],
+    ["X11; Linux x86_64", null, false],
+  ])(
+    "warns about Hermes leftovers only on native Windows (%s, %s)",
+    async (userAgent, distro, warn) => {
+      const platform = vi
+        .spyOn(navigator, "userAgent", "get")
+        .mockReturnValue(userAgent);
+      try {
+        mocks.prepareToolUninstall.mockResolvedValueOnce({
+          ...uninstallPlan("hermes"),
+          command: "hermes uninstall --yes",
+          wsl_distro: distro,
+        });
+        mocks.runToolLifecycleAction.mockImplementationOnce(async () => {
+          missing.add("hermes");
+        });
+        await renderApps();
+        fireEvent.click(
+          card("Hermes").getByRole("button", {
+            name: "settings.toolUninstall",
+          }),
+        );
+        const dialog = within(screen.getByRole("dialog"));
+        const confirm = await dialog.findByRole("button", {
+          name: "settings.toolUninstall",
+        });
+        expect(
+          dialog.queryByText("settings.toolUninstallHermesWindowsHint") !==
+            null,
+        ).toBe(warn);
+        expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+        fireEvent.click(confirm);
+        await waitFor(() =>
+          expect(
+            card("Hermes").getByRole("button", {
+              name: "settings.toolInstall",
+            }),
+          ).toBeEnabled(),
+        );
+        if (warn) {
+          expect(mocks.warning).toHaveBeenCalledWith(
+            "settings.toolUninstallWarningTitle",
+            {
+              description: "settings.toolUninstallHermesWindowsHint",
+              closeButton: true,
+            },
+          );
+          expect(mocks.success).not.toHaveBeenCalled();
+        } else {
+          expect(mocks.warning).not.toHaveBeenCalled();
+          expect(mocks.success).toHaveBeenCalledOnce();
+        }
+        expect(mocks.error).not.toHaveBeenCalled();
+      } finally {
+        platform.mockRestore();
+      }
+    },
+  );
+
   it("refreshes the remaining installation after uninstall instead of reporting a broken install", async () => {
     await renderApps();
     mocks.probeToolInstallations.mockResolvedValueOnce([

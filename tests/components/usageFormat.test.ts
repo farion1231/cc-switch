@@ -26,6 +26,11 @@ describe("usage format helpers", () => {
     expect(getLocaleFromLanguage("zh-HK")).toBe("zh-TW");
   });
 
+  it("resolves Turkish to a Turkish date locale", () => {
+    expect(getLocaleFromLanguage("tr")).toBe("tr-TR");
+    expect(getLocaleFromLanguage("tr-TR")).toBe("tr-TR");
+  });
+
   it("calculates speed from generation time after the first token", () => {
     expect(
       getOutputTokensPerSecond({

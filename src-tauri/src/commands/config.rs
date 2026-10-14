@@ -24,6 +24,7 @@ fn invalid_json_format_error(error: serde_json::Error) -> String {
 
     match lang.as_str() {
         "en" => format!("Invalid JSON format: {error}"),
+        "tr" => format!("Geçersiz JSON biçimi: {error}"),
         "ja" => format!("JSON形式が無効です: {error}"),
         _ => format!("无效的 JSON 格式: {error}"),
     }
@@ -36,6 +37,7 @@ fn invalid_toml_format_error(error: toml_edit::TomlError) -> String {
 
     match lang.as_str() {
         "en" => format!("Invalid TOML format: {error}"),
+        "tr" => format!("Geçersiz TOML biçimi: {error}"),
         "ja" => format!("TOML形式が無効です: {error}"),
         _ => format!("无效的 TOML 格式: {error}"),
     }
