@@ -27,10 +27,15 @@ export async function checkForUpdate(
 ): Promise<
   { status: "up-to-date" } | { status: "available"; info: UpdateInfo }
 > {
+  const currentVersion = await getCurrentVersion();
+  // DSH releases use a separate channel. Never offer the upstream 4.x updater,
+  // whose artifacts do not contain the DSH integration.
+  if (currentVersion.includes("-dsh.")) {
+    return { status: "up-to-date" };
+  }
+
   // 动态引入，避免在未安装插件时导致打包期问题
   const { check } = await import("@tauri-apps/plugin-updater");
-
-  const currentVersion = await getCurrentVersion();
   const update = await check({ timeout: opts.timeout ?? 30000 } as any);
 
   if (!update) {
