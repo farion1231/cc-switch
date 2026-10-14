@@ -1708,6 +1708,25 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "ollama",
   },
   {
+    name: "LM Studio",
+    websiteUrl: "https://lmstudio.ai",
+    category: "local",
+    // 同 Claude Code 预设：本机 /v1/messages（0.4.1 起，lmstudio.ai/docs/
+    // developer/anthropic-compat，2026-10-14 核对）。默认不鉴权，但表单要求
+    // 必填，选预设后手填 lmstudio 即可（开启鉴权后填 API Token）。模型名不是
+    // Claude，只能走路由；openai/gpt-oss-20b 是官方示例，换成自己已下载的模型
+    // 或用「获取模型」拉取。原生窗口 131072 小于 1M，不开 1M
+    baseUrl: "http://localhost:1234",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "openai/gpt-oss-20b",
+      "openai/gpt-oss-20b",
+      "openai/gpt-oss-20b",
+    ),
+    endpointCandidates: ["http://localhost:1234", "http://127.0.0.1:1234"],
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",

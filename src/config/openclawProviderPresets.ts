@@ -4699,6 +4699,48 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "LM Studio",
+    websiteUrl: "https://lmstudio.ai",
+    // 本机 OpenAI Chat base http://localhost:1234/v1（docs.openclaw.ai/providers/
+    // lmstudio，2026-10-14 核对）。OpenClaw 自带 lmstudio 供应商，供应商名请
+    // 另取（下面示例用 lmstudio-local）。默认不鉴权，未开鉴权时 OpenClaw 也要
+    // 存一个非机密占位值，预填官方占位 Key lmstudio；开启鉴权后换成 API Token。
+    // 本地推理不计费，cost 记 0；maxTokens 取 models.dev 的 lmstudio 条目。
+    // 模型换成自己已下载的；实际窗口受 LM Studio 加载模型时的 context length
+    // 限制（UI 设置或 lms load --context-length），官方要求至少约 25K，加载
+    // 窗口更小时把 contextWindow 一起调小
+    settingsConfig: {
+      baseUrl: "http://localhost:1234/v1",
+      apiKey: "lmstudio",
+      api: "openai-completions",
+      models: [
+        {
+          id: "openai/gpt-oss-20b",
+          name: "GPT-OSS 20B",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 131072,
+          maxTokens: 32768,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "local",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "lmstudio",
+        editorValue: "lmstudio",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "lmstudio-local/openai/gpt-oss-20b" },
+      modelCatalog: {
+        "lmstudio-local/openai/gpt-oss-20b": { alias: "GPT-OSS 20B" },
+      },
+    },
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",

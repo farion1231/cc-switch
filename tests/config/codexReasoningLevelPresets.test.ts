@@ -208,6 +208,9 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["Ollama", "gpt-oss:20b", ["low", "medium", "high"]],
     ["Ollama", "gpt-oss:120b", ["low", "medium", "high"]],
     ["Ollama", "qwen3.5", ["none", "high"]],
+    // LM Studio 本机（原生 Responses 直连）：取 LM Studio 声明的
+    // reasoning.effort 枚举（lmstudio.ai/blog/lmstudio-v0.3.29，2026-10-14）
+    ["LM Studio", "openai/gpt-oss-20b", ["low", "medium", "high"]],
     // Baseten（Chat 路由，reasoning_effort 透传）：docs.baseten.co/inference/
     // model-apis/reasoning（2026-10-14）。GLM-5.3 系 none 按 low 处理（假关）
     // 故不列 none；V4.1 Flash 不支持 low；Kimi K3 API 默认 max，四款都显式

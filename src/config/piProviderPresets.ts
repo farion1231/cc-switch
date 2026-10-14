@@ -2025,6 +2025,36 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "ollama",
   },
   {
+    // Pi 运行时没有内置 LM Studio provider（pi-mono models.generated.ts 搜不到），
+    // Pi 文档自己就用 models.json 写它，不违反「勿写内置节点」契约
+    name: "LM Studio",
+    providerKey: "cc-switch-lmstudio",
+    websiteUrl: "https://lmstudio.ai",
+    settingsConfig: {
+      name: "LM Studio",
+      // 本机 OpenAI Chat base http://localhost:1234/v1（lmstudio.ai/docs/
+      // developer/openai-compat、pi-mono packages/coding-agent/docs/models.md，
+      // 2026-10-14 核对）。默认不鉴权，但 Pi 要填一个占位 Key 模型才会出现在
+      // 列表里，添加后手填 lmstudio。Chat 上的 reasoning_effort 未证实，同 Groq
+      // 先例不写 thinkingProfile，compat 按通用 OpenAI Completions 写；最大输出
+      // 取 models.dev 的 lmstudio 条目（目录里的 65536 来自 Groq）。模型换成
+      // 自己已下载的；实际窗口受 LM Studio 加载时的 context length 限制
+      baseUrl: "http://localhost:1234/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        {
+          ...piModel("openai/gpt-oss-20b", {
+            id: "openai/gpt-oss-20b",
+            maxTokens: 32_768,
+          }),
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
+        },
+      ],
+    },
+    category: "local",
+  },
+  {
     name: "Meta Model API",
     providerKey: "cc-switch-meta",
     websiteUrl: "https://dev.meta.ai",

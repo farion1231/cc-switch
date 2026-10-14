@@ -3607,6 +3607,47 @@ requires_openai_auth = true`,
     icon: "ollama",
   },
   {
+    name: "LM Studio",
+    websiteUrl: "https://lmstudio.ai",
+    // 默认不鉴权，但表单要求必填，预填官方占位值 lmstudio；开启 Require
+    // Authentication 后换成 App 里创建的 API Token
+    auth: generateThirdPartyAuth("lmstudio"),
+    // 本机 /v1/responses（0.3.29 起，lmstudio.ai/blog/lmstudio-v0.3.29、
+    // lmstudio.ai/docs/integrations/codex，2026-10-14 核对），base 带 /v1，支持
+    // 流式、previous_response_id 与函数工具。lmstudio 是 Codex 内置的保留
+    // provider id，这里照常写 [model_providers.custom]。openai/gpt-oss-20b 是
+    // codex --oss 的默认模型，需先在 LM Studio 下载，或换成自己已下载的模型 /
+    // 用「获取模型」从 /v1/models 拉取
+    config: generateThirdPartyConfig(
+      "lm_studio",
+      "http://localhost:1234/v1",
+      "openai/gpt-oss-20b",
+    ),
+    endpointCandidates: [
+      "http://localhost:1234/v1",
+      "http://127.0.0.1:1234/v1",
+    ],
+    // 文档所说的 custom tool calling 指函数工具，是否接受 type=custom 的
+    // freeform apply_patch 未证实：NativeResponses 档案不发 freeform，改用
+    // shell_command，两种情况都安全
+    apiFormat: "openai_responses",
+    // 窗口取模型原生值；实际受 LM Studio 加载模型时的 context length 限制
+    //（UI 设置或 lms load --context-length），官方要求至少约 25K，加载窗口
+    // 更小时一起调小。档位取 LM Studio 声明的 reasoning.effort 枚举（blog
+    // v0.3.29），含 high，沿用模板默认 high。首行 = 默认模型，须与 config 的
+    // model 一致
+    modelCatalog: modelCatalog([
+      {
+        model: "openai/gpt-oss-20b",
+        displayName: "GPT-OSS 20B",
+        contextWindow: 131072,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "medium", "high"],
+      },
+    ]),
+    category: "local",
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",

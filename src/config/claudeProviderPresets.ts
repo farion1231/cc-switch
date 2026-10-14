@@ -1950,6 +1950,38 @@ export const providerPresets: ProviderPreset[] = [
     icon: "ollama",
   },
   {
+    name: "LM Studio",
+    websiteUrl: "https://lmstudio.ai",
+    // 本机 LM Studio（lmstudio.ai/docs/integrations/claude-code，2026-10-14
+    // 核对）：Anthropic 兼容 /v1/messages 自 0.4.1 起支持，base 不带 /v1。默认
+    // 不鉴权，官方写法 AUTH_TOKEN=lmstudio，预填该占位值；开启 Require
+    // Authentication 后换成 App 里创建的 API Token（x-api-key 与 Bearer 都认，
+    // lmstudio.ai/docs/developer/core/authentication）。官方另建议
+    // CLAUDE_CODE_ATTRIBUTION_HEADER=0，它不是关键 / 独有字段，写进预设不生效，
+    // 需自行加到全局设置。模型由用户自己下载：openai/gpt-oss-20b 是官方示例，
+    // 换成自己已下载的模型 ID，或用「获取模型」从 /v1/models 拉取。已知问题
+    //（lmstudio-bug-tracker #2164、#2220，仍未关）：0.4.19 Build 2 起 Qwen 停在
+    // 一句话、0.4.20 起 gpt-oss-120b 报 grammar 400，撞上时可改 openai_chat +
+    // http://localhost:1234/v1 走路由
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "http://localhost:1234",
+        ANTHROPIC_AUTH_TOKEN: "lmstudio",
+        ANTHROPIC_MODEL: "openai/gpt-oss-20b",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "openai/gpt-oss-20b",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "openai/gpt-oss-20b",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "openai/gpt-oss-20b",
+        // 模型 id 非 claude-* 时 Claude Code 按 200K 默认窗口处理，钉住
+        // gpt-oss-20b 的原生值 131072。实际窗口受 LM Studio 加载模型时的
+        // context length 限制（UI 设置或 lms load --context-length），官方要求
+        // 至少约 25K；加载窗口更小时此值要一起调小
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "131072",
+      },
+    },
+    category: "local",
+    endpointCandidates: ["http://localhost:1234", "http://127.0.0.1:1234"],
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     // Key 在 dev.meta.ai 登录后的「API keys」标签页（dev.meta.ai/docs/

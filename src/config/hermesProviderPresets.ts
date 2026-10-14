@@ -2520,6 +2520,35 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "LM Studio",
+    websiteUrl: "https://lmstudio.ai",
+    settingsConfig: {
+      // Hermes 内置 provider lmstudio，且 lm-studio / lm_studio 都是它的别名
+      //（hermes_cli/auth.py），照 ollama-local 先例换名避开
+      name: "lmstudio-local",
+      // base http://localhost:1234/v1、默认不鉴权，Key 留空（开启鉴权后填 API
+      // Token；hermes-agent.nousresearch.com/docs/integrations/providers，
+      // 2026-10-14 核对）。Hermes 启动时拒绝小于 64000 的窗口：这里填模型原生
+      // 值，LM Studio 加载模型时的 context length 也要至少 64K（UI 设置或
+      // lms load --context-length），加载窗口更小时同步调小。模型换成自己已
+      // 下载的，或用「获取模型」从 /v1/models 拉取
+      base_url: "http://localhost:1234/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "openai/gpt-oss-20b",
+          name: "GPT-OSS 20B",
+          context_length: 131072,
+        },
+      ],
+    },
+    category: "local",
+    suggestedDefaults: {
+      model: { default: "openai/gpt-oss-20b", provider: "lmstudio-local" },
+    },
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",
