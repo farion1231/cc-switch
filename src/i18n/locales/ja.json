@@ -2241,8 +2241,7 @@
     "allModels": "すべてのモデル",
     "filterBySource": "ソースで絞り込む",
     "filterByModel": "モデルで絞り込む",
-    "refreshInterval": "自動更新間隔",
-    "refreshOff": "オフ",
+    "refreshInterval": "セッションログのスキャン間隔",
     "timeRange": "期間",
     "customRange": "カレンダーフィルター",
     "customRangeHint": "日付と時刻の両方に対応",
@@ -2343,12 +2342,11 @@
       "justNow": "セッションログ · たった今同期",
       "minutesAgo": "セッションログ · {{count}} 分前に同期",
       "off": "セッションログ · 自動スキャンはオフ",
-      "tipAuto": "バックグラウンドでは 60 秒ごとに更新。使用量統計は右側で設定した間隔で更新されます",
+      "tipAuto": "バックグラウンドでは 10 分ごとにスキャン。このページを開いている間は右側の間隔でスキャンします",
       "tipOff": "手動で同期したときだけセッションログをスキャンします"
     },
     "refreshMenu": {
-      "label": "自動更新 {{seconds}} 秒",
-      "off": "自動更新オフ",
+      "label": "{{seconds}} 秒ごとにスキャン",
       "seconds": "{{seconds}} 秒"
     },
     "dataSources": "データソース",
@@ -2439,7 +2437,7 @@
       "scanHelpTitle": "セッションログとは",
       "scanHelp": "各アプリがこのコンピューターに書き込む会話記録です。CC Switch はここから使用量を読み取るので、ルーティングなしでもデータがあります。",
       "coverage": "対象の 7 アプリ：{{apps}}",
-      "cadenceOn": "起動時とバックグラウンドで 60 秒ごとにスキャン。使用量ページの表示中は自動更新の間隔でも同期",
+      "cadenceOn": "起動時とバックグラウンドで 10 分ごとにスキャン。使用量ページを開くとすぐにスキャンし、その後は選択した間隔でスキャン",
       "cadenceOff": "自動スキャンはオフです。「今すぐ同期」を押したときだけスキャンします",
       "unsupported": "Hermes と OpenClaw は使用量統計にまだ対応していません",
       "loggingHelpTitle": "リクエストの使用量の記録とは",

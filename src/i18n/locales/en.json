@@ -2241,8 +2241,7 @@
     "allModels": "All Models",
     "filterBySource": "Filter by source",
     "filterByModel": "Filter by model",
-    "refreshInterval": "Auto-refresh interval",
-    "refreshOff": "Off",
+    "refreshInterval": "Session log scan interval",
     "timeRange": "Time Range",
     "customRange": "Calendar Filter",
     "customRangeHint": "Supports both date and time",
@@ -2343,12 +2342,11 @@
       "justNow": "Session logs · synced just now",
       "minutesAgo": "Session logs · synced {{count}} min ago",
       "off": "Session logs · auto scan off",
-      "tipAuto": "Background refresh runs every 60 seconds; usage statistics refresh at the interval set on the right",
+      "tipAuto": "Scanned every 10 minutes in the background, and at the interval on the right while this page is open",
       "tipOff": "Session logs are scanned only when you sync manually"
     },
     "refreshMenu": {
-      "label": "Auto refresh {{seconds}}s",
-      "off": "Auto refresh off",
+      "label": "Scan every {{seconds}}s",
       "seconds": "{{seconds}}s"
     },
     "dataSources": "Data sources",
@@ -2439,7 +2437,7 @@
       "scanHelpTitle": "What are session logs?",
       "scanHelp": "The conversation records each app writes on this computer. CC Switch reads usage from them, so you get data even without routing.",
       "coverage": "Covers 7 apps: {{apps}}",
-      "cadenceOn": "Scans at startup and every 60 seconds in the background; also syncs at the auto-refresh interval while the usage page is visible",
+      "cadenceOn": "Scans at startup and every 10 minutes in the background; opening the Usage page scans right away, then at the selected interval",
       "cadenceOff": "Auto scan is off; logs are scanned only when you click Sync Now",
       "unsupported": "Hermes and OpenClaw don't support usage stats yet",
       "loggingHelpTitle": "What does recording request usage do?",

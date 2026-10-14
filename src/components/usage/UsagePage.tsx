@@ -33,6 +33,7 @@ export function UsagePage({
         save({ usageDashboardRefreshIntervalMs })
       }
       sessionAutoSyncEnabled={settings?.sessionAutoSyncEnabled ?? true}
+      settingsReady={settings != null}
       onSessionAutoSyncEnabledChange={(sessionAutoSyncEnabled) =>
         save({ sessionAutoSyncEnabled })
       }

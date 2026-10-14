@@ -2241,8 +2241,7 @@
     "allModels": "全部模型",
     "filterBySource": "按来源筛选",
     "filterByModel": "按模型筛选",
-    "refreshInterval": "自动刷新间隔",
-    "refreshOff": "关闭",
+    "refreshInterval": "会话日志扫描间隔",
     "timeRange": "时间范围",
     "customRange": "日历筛选",
     "customRangeHint": "支持日期与时间",
@@ -2343,12 +2342,11 @@
       "justNow": "会话日志 · 刚刚同步",
       "minutesAgo": "会话日志 · {{count}} 分钟前同步",
       "off": "会话日志 · 自动扫描已关闭",
-      "tipAuto": "后台 60 秒 刷新；用量统计跟随右侧设置项间隔刷新",
+      "tipAuto": "后台每 10 分钟扫描一次；打开用量页时按右侧间隔扫描",
       "tipOff": "只在手动同步时扫描会话日志"
     },
     "refreshMenu": {
-      "label": "自动刷新 {{seconds}} 秒",
-      "off": "自动刷新已关闭",
+      "label": "每 {{seconds}} 秒扫描",
       "seconds": "{{seconds}} 秒"
     },
     "dataSources": "数据来源",
@@ -2439,7 +2437,7 @@
       "scanHelpTitle": "会话日志是什么",
       "scanHelp": "各应用写在本机的会话记录。CC Switch 从里面读取用量，不开路由也有数据。",
       "coverage": "覆盖 7 个应用：{{apps}}",
-      "cadenceOn": "启动时及后台每 60 秒扫描；用量页可见时也按自动刷新间隔同步",
+      "cadenceOn": "启动时扫描一次，后台每 10 分钟一次；打开用量页时立即扫描，之后按所选间隔扫描",
       "cadenceOff": "自动扫描已关闭，只在点「立即同步」时扫描",
       "unsupported": "Hermes、OpenClaw 暂不支持用量统计",
       "loggingHelpTitle": "记录请求用量是什么",

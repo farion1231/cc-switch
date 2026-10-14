@@ -2242,8 +2242,7 @@
     "allModels": "全部模型",
     "filterBySource": "依來源篩選",
     "filterByModel": "依模型篩選",
-    "refreshInterval": "自動重新整理間隔",
-    "refreshOff": "關閉",
+    "refreshInterval": "工作階段日誌掃描間隔",
     "timeRange": "時間範圍",
     "customRange": "日曆篩選",
     "customRangeHint": "支援日期與時間",
@@ -2344,12 +2343,11 @@
       "justNow": "工作階段日誌 · 剛剛同步",
       "minutesAgo": "工作階段日誌 · {{count}} 分鐘前同步",
       "off": "工作階段日誌 · 自動掃描已關閉",
-      "tipAuto": "背景每 60 秒重新整理；用量統計依右側設定的間隔重新整理",
+      "tipAuto": "背景每 10 分鐘掃描一次；開啟用量頁時依右側間隔掃描",
       "tipOff": "只在手動同步時掃描工作階段日誌"
     },
     "refreshMenu": {
-      "label": "自動重新整理 {{seconds}} 秒",
-      "off": "自動重新整理已關閉",
+      "label": "每 {{seconds}} 秒掃描",
       "seconds": "{{seconds}} 秒"
     },
     "dataSources": "資料來源",
@@ -2440,7 +2438,7 @@
       "scanHelpTitle": "工作階段日誌是什麼",
       "scanHelp": "各應用程式寫在本機的工作階段記錄。CC Switch 從中讀取用量，不開路由也有資料。",
       "coverage": "涵蓋 7 個應用程式：{{apps}}",
-      "cadenceOn": "啟動時及背景每 60 秒掃描；用量頁可見時也依自動重新整理間隔同步",
+      "cadenceOn": "啟動時掃描一次，背景每 10 分鐘一次；開啟用量頁時立即掃描，之後依所選間隔掃描",
       "cadenceOff": "自動掃描已關閉，只在點「立即同步」時掃描",
       "unsupported": "Hermes、OpenClaw 暫不支援用量統計",
       "loggingHelpTitle": "記錄請求用量是什麼",
