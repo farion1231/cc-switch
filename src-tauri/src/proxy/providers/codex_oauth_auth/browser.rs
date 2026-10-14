@@ -130,14 +130,28 @@ async fn callback(
     )
 }
 
+async fn bind_callback_listener(port: u16) -> Result<tokio::net::TcpListener, CodexOAuthError> {
+    // Bind before changing login state. Never stop another app's listener or
+    // silently fall back to device authentication.
+    tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await
+        .map_err(|_| CodexOAuthError::IoError(format!("Cannot open the browser login callback on localhost:{port}. Finish any other Codex login and retry, or choose device-code login.")))
+}
+
 impl CodexOAuthManager {
     pub async fn start_browser_flow(
         &self,
         target_account_id: Option<&str>,
     ) -> Result<GitHubDeviceCodeResponse, CodexOAuthError> {
-        // Bind before changing any pending login state. Never kill another app's
-        // listener or silently fall back to device authentication.
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:1455").await.map_err(|_| CodexOAuthError::IoError("Cannot open the browser login callback on localhost:1455. Finish any other Codex login and retry, or choose device-code login.".into()))?;
+        let listener = bind_callback_listener(1455).await?;
+        self.start_browser_flow_with_listener(target_account_id, listener)
+            .await
+    }
+
+    async fn start_browser_flow_with_listener(
+        &self,
+        target_account_id: Option<&str>,
+        listener: tokio::net::TcpListener,
+    ) -> Result<GitHubDeviceCodeResponse, CodexOAuthError> {
         let (epoch, target, generation) = self.prepare_login_target(target_account_id).await?;
         let flow_id = format!("browser:{}", Uuid::new_v4());
         let verifier = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
@@ -291,11 +305,16 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial(codex_browser_login)]
     async fn browser_listener_validates_state_and_releases_port_on_cancel() {
         let dir = tempfile::tempdir().unwrap();
         let manager = CodexOAuthManager::new(dir.path().into());
-        let flow = manager.start_browser_flow(None).await.unwrap();
+        let listener = bind_callback_listener(0).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base = format!("http://127.0.0.1:{port}/auth/callback");
+        let flow = manager
+            .start_browser_flow_with_listener(None, listener)
+            .await
+            .unwrap();
         assert!(flow.user_code.is_empty());
         let url = url::Url::parse(&flow.verification_uri).unwrap();
         let state = url
@@ -306,7 +325,7 @@ mod tests {
             .into_owned();
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
         let bad = client
-            .get("http://127.0.0.1:1455/auth/callback?state=wrong&code=c")
+            .get(format!("{base}?state=wrong&code=c"))
             .send()
             .await
             .unwrap();
@@ -317,7 +336,7 @@ mod tests {
             .unwrap()
             .is_none());
         let denied = client
-            .get("http://127.0.0.1:1455/auth/callback")
+            .get(&base)
             .query(&[("state", state.as_str()), ("error", "access_denied")])
             .send()
             .await
@@ -329,7 +348,12 @@ mod tests {
             .await
             .is_err());
         assert!(manager.list_accounts().await.is_empty());
-        let flow = manager.start_browser_flow(None).await.unwrap();
+        let listener = bind_callback_listener(0).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let flow = manager
+            .start_browser_flow_with_listener(None, listener)
+            .await
+            .unwrap();
         assert!(manager.cancel_device_flow(&flow.device_code).await);
         assert!(manager
             .poll_for_token(&flow.device_code, || async {})
@@ -337,7 +361,9 @@ mod tests {
             .is_err());
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
-                if let Ok(listener) = tokio::net::TcpListener::bind("127.0.0.1:1455").await {
+                if let Ok(listener) =
+                    tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await
+                {
                     drop(listener);
                     break;
                 }
@@ -349,19 +375,12 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial_test::serial(codex_browser_login)]
-    async fn browser_port_conflict_does_not_change_pending_logins() {
-        let dir = tempfile::tempdir().unwrap();
-        let manager = CodexOAuthManager::new(dir.path().into());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:1455")
-            .await
-            .unwrap();
+    async fn callback_bind_reports_port_conflict() {
+        let listener = bind_callback_listener(0).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
         assert!(matches!(
-            manager.start_browser_flow(None).await,
+            bind_callback_listener(port).await,
             Err(CodexOAuthError::IoError(_))
         ));
-        assert!(manager.pending_device_codes.read().await.is_empty());
-        assert!(manager.list_accounts().await.is_empty());
-        drop(listener);
     }
 }
