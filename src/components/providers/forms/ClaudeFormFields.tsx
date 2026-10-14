@@ -1,3 +1,7 @@
+import {
+  ModelApiFormatsField,
+  type ModelApiFormatsEditor,
+} from "./ModelApiFormatsField";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -79,6 +83,7 @@ interface EndpointCandidate {
 }
 
 interface ClaudeFormFieldsProps {
+  modelApiFormatsEditor?: ModelApiFormatsEditor;
   providerId?: string;
   // API Key
   shouldShowApiKey: boolean;
@@ -234,6 +239,7 @@ export function ClaudeFormFields({
   onModelChange,
   speedTestEndpoints,
   apiFormat,
+  modelApiFormatsEditor,
   onApiFormatChange,
   apiKeyField,
   onApiKeyFieldChange,
@@ -265,7 +271,8 @@ export function ClaudeFormFields({
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
     isFullUrl ||
     customUserAgent ||
-    hasRequestOverrides
+    hasRequestOverrides ||
+    !!modelApiFormatsEditor?.rows.length
   );
   const [advancedExpanded, setAdvancedExpanded] = useState(
     isXaiOauthPreset ? false : hasAnyAdvancedValue,
@@ -891,6 +898,25 @@ export function ClaudeFormFields({
                 </SelectItem>
               </SelectContent>
             </Select>
+            {modelApiFormatsEditor && (
+              <ModelApiFormatsField
+                {...modelApiFormatsEditor}
+                models={Array.from(
+                  new Set(
+                    [
+                      ...fetchedModels.map((model) => model.id),
+                      ...stackModelRows.map((row) => row.model),
+                      claudeModel,
+                      defaultHaikuModel,
+                      defaultSonnetModel,
+                      defaultOpusModel,
+                      defaultFableModel,
+                      subagentModel,
+                    ].filter(Boolean),
+                  ),
+                ).map((id) => ({ id, ownedBy: null }))}
+              />
+            )}
             {directModeFormatNotice && apiFormat !== "anthropic" && (
               <DirectModeFormatWarning notice={directModeFormatNotice} />
             )}
@@ -900,6 +926,9 @@ export function ClaudeFormFields({
   );
 
   // 认证字段选择器
+  const hasAnthropicUpstream =
+    apiFormat === "anthropic" ||
+    !!modelApiFormatsEditor?.rows.some((row) => row.format === "anthropic");
   const authFieldLabel = t("providerForm.authField", {
     defaultValue: "认证字段",
   });
@@ -1004,7 +1033,7 @@ export function ClaudeFormFields({
       !usesOAuth &&
       !isCodexOauthPreset &&
       !isXaiOauthPreset &&
-      apiFormat === "anthropic";
+      hasAnthropicUpstream;
 
     return (
       <>
@@ -1101,7 +1130,7 @@ export function ClaudeFormFields({
                 靠它决定占位符写在哪个变量；Codex / xAI 托管账号卡的认证由后端注入。 */}
             {!isCodexOauthPreset &&
               !isXaiOauthPreset &&
-              (apiFormat === "anthropic" || isCopilotPreset) &&
+              (hasAnthropicUpstream || isCopilotPreset) &&
               authFieldSelect}
 
             {/* 模型映射 */}

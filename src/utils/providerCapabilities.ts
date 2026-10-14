@@ -155,6 +155,12 @@ export function providerNeedsRouting(
     return false;
   }
 
+  if (
+    (appId === "claude" || appId === "codex") &&
+    Object.keys(provider.meta?.modelApiFormats ?? {}).length > 0
+  )
+    return true;
+
   // 托管 OAuth：凭据由代理注入，与 apiFormat 无关，必须接管。
   if (isManagedOAuth) return true;
 

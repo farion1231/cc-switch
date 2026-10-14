@@ -2363,6 +2363,85 @@ fn codex_catalog_from_specs_for_row(
     Ok(json!({ "models": entries }))
 }
 
+/// Overrides are applied per catalog entry, including Stack member catalogs.
+fn codex_catalog_with_model_formats(
+    specs: &[CodexCatalogModelSpec],
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+    formats: Option<&std::collections::HashMap<String, String>>,
+) -> Result<Value, AppError> {
+    if formats.is_none_or(|formats| formats.is_empty()) {
+        return codex_catalog_from_specs_for_row(specs, config_text, profile);
+    }
+    let mut entries = Vec::new();
+    for (index, spec) in specs.iter().enumerate() {
+        let selected =
+            crate::proxy::providers::model_api_format::format_for_model(formats, &spec.model)
+                .map(|format| CodexCatalogToolProfile::from_api_format(Some(format)))
+                .unwrap_or(profile);
+        let mut catalog =
+            codex_catalog_from_specs_for_row(std::slice::from_ref(spec), config_text, selected)?;
+        if let Some(mut entry) = catalog
+            .get_mut("models")
+            .and_then(Value::as_array_mut)
+            .and_then(|models| models.pop())
+        {
+            entry["priority"] = json!(1000 + index);
+            entries.push(entry);
+        }
+    }
+    Ok(json!({ "models": entries }))
+}
+
+/// Provider-aware projection, keeping proxy metadata out of the live settings.
+pub(crate) fn plan_codex_provider_model_catalog(
+    provider: &crate::provider::Provider,
+    config_text: &str,
+) -> Result<CodexCatalogPlan, AppError> {
+    let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
+    let formats = if crate::proxy::providers::is_codex_official_provider(provider) {
+        None
+    } else {
+        crate::proxy::providers::model_api_format::formats(provider)
+    };
+    if formats.is_none_or(|formats| formats.is_empty()) {
+        return plan_codex_model_catalog(&provider.settings_config, config_text, profile);
+    }
+    let specs = codex_catalog_model_specs(&provider.settings_config);
+    Ok(CodexCatalogPlan {
+        catalog: if specs.is_empty() {
+            None
+        } else {
+            Some(codex_catalog_with_model_formats(
+                &specs,
+                config_text,
+                profile,
+                formats,
+            )?)
+        },
+    })
+}
+
+pub(crate) fn codex_provider_has_messages_models(
+    provider: &crate::provider::Provider,
+    config_text: &str,
+) -> bool {
+    if crate::proxy::providers::is_codex_official_provider(provider) {
+        return false;
+    }
+    let default_messages = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider)
+        == CodexCatalogToolProfile::Anthropic;
+    codex_published_specs(&provider.settings_config, config_text)
+        .iter()
+        .any(|spec| {
+            match crate::proxy::providers::model_api_format::model_api_format(provider, &spec.model)
+            {
+                Some(format) => format == "anthropic",
+                None => default_messages,
+            }
+        })
+}
+
 /// 一个供应商的模型目录：没有配置模型时为 `None`，不生成、也不指向目录文件。
 /// `web_search` 由 [`codex_disables_web_search`] 另算（切走时要按上一家算，不必生成目录）。
 pub(crate) struct CodexCatalogPlan {
@@ -2432,6 +2511,7 @@ pub(crate) struct CodexCatalogRow<'a> {
     pub config_text: &'a str,
     /// 这一家自己的工具 profile：各家的请求走各自的转换，目录要和转换对得上。
     pub profile: CodexCatalogToolProfile,
+    pub model_api_formats: Option<&'a std::collections::HashMap<String, String>>,
 }
 
 /// 合并目录里的一家 Stack 供应商。
@@ -2563,7 +2643,12 @@ fn codex_stack_third_party_rows(row: &CodexCatalogRow<'_>) -> Result<Vec<Value>,
     if specs.is_empty() {
         return Ok(Vec::new());
     }
-    let catalog = codex_catalog_from_specs_for_row(&specs, row.config_text, row.profile)?;
+    let catalog = codex_catalog_with_model_formats(
+        &specs,
+        row.config_text,
+        row.profile,
+        row.model_api_formats,
+    )?;
     let mut entries = match catalog {
         Value::Object(mut obj) => match obj.remove("models") {
             Some(Value::Array(entries)) => entries,
@@ -5073,6 +5158,7 @@ wire_api = "responses"
             let member = json!({ "modelCatalog": { "models": [{ "model": "gpt-6-sol" }] } });
             plan_codex_stack_catalog(
                 CodexStackRoute::ThirdParty(CodexCatalogRow {
+                    model_api_formats: None,
                     settings: &route,
                     config_text: "",
                     profile: CodexCatalogToolProfile::NativeResponses,
@@ -5081,6 +5167,7 @@ wire_api = "responses"
                     key: "relay",
                     provider_name: "Relay",
                     row: CodexCatalogRow {
+                        model_api_formats: None,
                         settings: &member,
                         config_text: "",
                         profile: CodexCatalogToolProfile::ProxyChat,
@@ -5259,6 +5346,7 @@ wire_api = "responses"
                 key: "ds",
                 provider_name: "DS",
                 row: CodexCatalogRow {
+                    model_api_formats: None,
                     settings: &stacked_settings,
                     config_text: "model = \"deepseek-v4-pro\"\n",
                     profile: CodexCatalogToolProfile::NativeResponses,
@@ -5334,6 +5422,7 @@ wire_api = "responses"
                     key: "ds",
                     provider_name: "DS",
                     row: CodexCatalogRow {
+                        model_api_formats: None,
                         settings: &stacked_settings,
                         config_text: "model = \"deepseek-v4-pro\"\n",
                         profile: CodexCatalogToolProfile::NativeResponses,
@@ -5392,6 +5481,7 @@ wire_api = "responses"
         let stacked_settings = json!({});
         let stacked = plan_codex_stack_catalog(
             CodexStackRoute::ThirdParty(CodexCatalogRow {
+                model_api_formats: None,
                 settings: &route_settings,
                 config_text: route_text,
                 profile,
@@ -5400,6 +5490,7 @@ wire_api = "responses"
                 key: "ds",
                 provider_name: "DS",
                 row: CodexCatalogRow {
+                    model_api_formats: None,
                     settings: &stacked_settings,
                     config_text: route_text,
                     profile,
@@ -5423,6 +5514,7 @@ wire_api = "responses"
         let stacked_text = "model = \"claude-opus-5\"\nmodel_context_window = 400000\n";
         let catalog = plan_codex_stack_catalog(
             CodexStackRoute::ThirdParty(CodexCatalogRow {
+                model_api_formats: None,
                 settings: &route_settings,
                 config_text: route_text,
                 profile: CodexCatalogToolProfile::NativeResponses,
@@ -5431,6 +5523,7 @@ wire_api = "responses"
                 key: "anth",
                 provider_name: "Anth",
                 row: CodexCatalogRow {
+                    model_api_formats: None,
                     settings: &stacked_settings,
                     config_text: stacked_text,
                     profile: CodexCatalogToolProfile::Anthropic,
@@ -5946,5 +6039,44 @@ model_catalog_json = "cc-switch-model-catalog.json"
             result.is_err(),
             "file larger than MAX_CODEX_CATALOG_BYTES must be rejected"
         );
+    }
+    #[test]
+    fn model_api_formats_generate_per_model_tools_and_messages_web_search_policy() {
+        let provider: crate::provider::Provider = serde_json::from_value(json!({
+            "id": "mixed", "name": "Mixed",
+            "settingsConfig": { "modelCatalog": {"models": [
+                {"model": "chat-model"}, {"model": "messages-model[1M]"}, {"model": "responses-model"}, {"model": "default-model"}
+            ]}},
+            "meta": {"apiFormat": "openai_chat", "modelApiFormats": {
+                "messages-model": "anthropic", "responses-model": "openai_responses"
+            }}
+        })).unwrap();
+        let catalog = plan_codex_provider_model_catalog(&provider, "model = \"chat-model\"\n")
+            .unwrap()
+            .catalog
+            .unwrap();
+        let entries = catalog["models"].as_array().unwrap();
+        assert_eq!(entries.len(), 4);
+        assert_eq!(entries[0]["apply_patch_tool_type"], "freeform");
+        assert_ne!(entries[1]["apply_patch_tool_type"], "freeform");
+        assert_ne!(entries[2]["apply_patch_tool_type"], "freeform");
+        assert_eq!(
+            entries[3]["apply_patch_tool_type"],
+            entries[0]["apply_patch_tool_type"]
+        );
+        assert!(codex_provider_has_messages_models(&provider, ""));
+        let mut removed = provider.clone();
+        removed.meta.as_mut().unwrap().model_api_formats = None;
+        assert!(!codex_provider_has_messages_models(&removed, ""));
+        let specs = codex_published_specs(&provider.settings_config, "");
+        let formats = crate::proxy::providers::model_api_format::formats(&provider);
+        let stack = codex_catalog_with_model_formats(
+            &specs,
+            "",
+            CodexCatalogToolProfile::ProxyChat,
+            formats,
+        )
+        .unwrap();
+        assert_eq!(stack["models"], catalog["models"]);
     }
 }

@@ -381,3 +381,23 @@ describe("providerNeedsRouting", () => {
     );
   });
 });
+
+describe("model protocol routing requirements", () => {
+  it("requires routing even when the provider default matches the client protocol", () => {
+    for (const appId of ["claude", "codex"] as const) {
+      const provider = mkProvider({
+        category: "third_party",
+        meta: {
+          apiFormat: appId === "claude" ? "anthropic" : "openai_responses",
+          modelApiFormats: { model: "openai_chat" },
+        },
+      });
+      expect(providerNeedsRouting(appId, provider)).toBe(true);
+      provider.meta!.modelApiFormats = {};
+      expect(providerNeedsRouting(appId, provider)).toBe(false);
+      provider.meta!.modelApiFormats = { model: "anthropic" };
+      provider.category = "official";
+      expect(providerNeedsRouting(appId, provider)).toBe(false);
+    }
+  });
+});

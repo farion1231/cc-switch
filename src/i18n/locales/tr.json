@@ -1722,7 +1722,19 @@
     "localProxyRequestOverridesHelp": "Format dönüştürme sonrasındaki yukarı akış isteği için geçerlidir.",
     "apiFormatHelp": "Sağlayıcının yerel olarak desteklediği protokolü seçin: Anthropic Mesajlar, dönüştürme yapılmadan olduğu gibi iletilir; yönlendirme diğer üçünü Anthropic Mesajlarına dönüştürür.",
     "directModeFormatInUse": "Bu kart doğrudan modda kullanılıyor: bu formatta kaydedilmesi isteklerin başarısız olmasına neden olur. Önce yönlendirmeye veya Birleştirme'ya geçin.",
-    "directModeFormatSwitch": "Bu biçim doğrudan modda çalışmaz; Bu kartı kullanmak için yönlendirmeye veya Birleştirme'ya geçin."
+    "directModeFormatSwitch": "Bu biçim doğrudan modda çalışmaz; Bu kartı kullanmak için yönlendirmeye veya Birleştirme'ya geçin.",
+    "modelApiFormats": {
+      "title": "Model protokol geçersiz kılmaları",
+      "hint": "Son üst model kimliği için protokol seçin. Diğer modeller varsayılan protokolü kullanır. URL ve API anahtarı ortaktır; yerel yönlendirme gerekir.",
+      "fullUrl": "Tam uç nokta URL modu ve model protokol ayarları birlikte kullanılamaz. Tam URL modunu kapatın veya ayarları kaldırın.",
+      "model": "Model kimliği",
+      "protocol": "Üst protokol",
+      "remove": "Ayarı kaldır",
+      "add": "Model protokolü ekle",
+      "missingModel": "Bu protokol için model kimliğini girin.",
+      "missingProtocol": "Model için bir üst protokol seçin.",
+      "duplicate": "Her modelin yalnızca bir protokol ayarı olabilir ([1M] yok sayılır)."
+    }
   },
   "copilot": {
     "authSection": "GitHub Copilot Kimlik Doğrulaması",

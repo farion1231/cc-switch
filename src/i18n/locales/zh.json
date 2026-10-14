@@ -1746,7 +1746,19 @@
     "localProxyRequestOverridesHelp": "作用于格式转换后发给上游的请求。",
     "apiFormatHelp": "看供应商原生支持哪种协议：Anthropic Messages 原样转发、不转换格式；其余三种由路由转成 Anthropic Messages。",
     "directModeFormatInUse": "这张卡正在直连使用：改成这种格式后保存，请求会失败。请先切到路由或聚合。",
-    "directModeFormatSwitch": "直连模式下用不了这种格式，切到路由或聚合后才能用这张卡。"
+    "directModeFormatSwitch": "直连模式下用不了这种格式，切到路由或聚合后才能用这张卡。",
+    "modelApiFormats": {
+      "title": "模型协议覆盖",
+      "hint": "按最终上游模型 ID 选择协议；未配置的模型沿用默认协议。地址和 API Key 共用，需要开启本地路由。",
+      "fullUrl": "完整端点 URL 与模型协议覆盖不能同时使用，请关闭完整 URL 模式或删除覆盖配置。",
+      "model": "模型 ID",
+      "protocol": "上游协议",
+      "remove": "删除覆盖",
+      "add": "新增模型协议",
+      "missingModel": "请选择协议对应的模型 ID。",
+      "missingProtocol": "请选择模型的上游协议。",
+      "duplicate": "同一模型只能配置一次协议（[1M] 不区分）。"
+    }
   },
   "copilot": {
     "authSection": "GitHub Copilot 认证",

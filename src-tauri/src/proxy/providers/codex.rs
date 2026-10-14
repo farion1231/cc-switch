@@ -522,7 +522,10 @@ pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> 
         .map(str::trim)
         .filter(|model| !model.is_empty())
     {
-        if catalog_model_ids.contains(request_model) {
+        if catalog_model_ids.contains(request_model)
+            || (super::model_api_format::has_model_api_formats(provider)
+                && super::model_api_format::model_api_format(provider, request_model).is_some())
+        {
             return Some(request_model.to_string());
         }
     }

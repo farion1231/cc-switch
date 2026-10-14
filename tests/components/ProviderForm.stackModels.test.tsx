@@ -128,7 +128,9 @@ describe("ProviderForm Stack layout (Claude Code)", () => {
     expect(screen.getByDisplayValue("m-s")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Model S")).toBeInTheDocument();
     // 没有 ★：第一行是默认模型，写在「模型列表」后面的「?」里。
-    expect(screen.getByRole("button", { name: "模型列表" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "模型列表" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("providerForm.modelMappingLabel")).toBeNull();
     expect(screen.queryByText("默认兜底模型")).toBeNull();
   });
@@ -136,10 +138,14 @@ describe("ProviderForm Stack layout (Claude Code)", () => {
   it("简化面板的说明收进「?」，高级选项折叠时不挂说明", () => {
     renderForm("claude", vi.fn());
 
-    expect(screen.getByRole("button", { name: "上游格式" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "上游格式" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/一般无需修改/)).toBeNull();
     fireEvent.click(
-      screen.getByRole("button", { name: "providerForm.advancedOptionsToggle" }),
+      screen.getByRole("button", {
+        name: "providerForm.advancedOptionsToggle",
+      }),
     );
     expect(
       screen.getByText("以下两项只在路由、聚合模式下生效。"),
@@ -295,7 +301,9 @@ describe("ProviderForm Stack layout (Codex)", () => {
       ],
     });
 
-    expect(screen.getByRole("button", { name: "模型列表" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "模型列表" }),
+    ).toBeInTheDocument();
     // 有列表时第一行就是默认模型，不再单独显示默认模型框。
     expect(document.getElementById("codexDefaultModel")).toBeNull();
     fireEvent.change(screen.getByDisplayValue("m-1"), {
@@ -389,4 +397,68 @@ describe("ProviderForm Stack layout (Codex)", () => {
     expect(screen.getByText("模型列表")).toBeInTheDocument();
     expect(screen.queryByTestId("codex-config-editor")).toBeNull();
   });
+});
+
+describe("ProviderForm model protocol metadata", () => {
+  beforeEach(() => {
+    settingsState.enableStackMode = true;
+  });
+  for (const appId of ["claude", "codex"] as const) {
+    it(`${appId}: loads, edits and removes saved model protocol overrides`, async () => {
+      const onSubmit = vi.fn();
+      renderForm(appId, onSubmit, {
+        meta: { modelApiFormats: { "m-a": "anthropic" } },
+      });
+      const input = screen.getByRole("textbox", {
+        name: "providerForm.modelApiFormats.model 1",
+      });
+      expect(input).toHaveValue("m-a");
+      fireEvent.change(input, { target: { value: "m-new[1M]" } });
+      const { values } = await save(onSubmit);
+      expect(values.meta?.modelApiFormats).toEqual({ "m-new": "anthropic" });
+      onSubmit.mockClear();
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "providerForm.modelApiFormats.remove 1",
+        }),
+      );
+      expect(
+        (await save(onSubmit)).values.meta?.modelApiFormats,
+      ).toBeUndefined();
+    });
+    it(`${appId}: blocks saving full URL conflicts`, async () => {
+      const onSubmit = vi.fn();
+      renderForm(appId, onSubmit, {
+        meta: { isFullUrl: true, modelApiFormats: { "m-a": "anthropic" } },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+    it(`${appId}: hides overrides for official cards`, () => {
+      renderForm(appId, vi.fn(), {
+        category: "official",
+        meta: { modelApiFormats: { "m-a": "anthropic" } },
+      });
+      expect(
+        screen.queryByText("providerForm.modelApiFormats.title"),
+      ).toBeNull();
+    });
+    it(`${appId}: rejects duplicate models and incomplete protocols`, async () => {
+      const onSubmit = vi.fn();
+      renderForm(appId, onSubmit, {
+        meta: { modelApiFormats: { "m-a": "anthropic", "m-b": "openai_chat" } },
+      });
+      fireEvent.change(
+        screen.getByRole("textbox", {
+          name: "providerForm.modelApiFormats.model 2",
+        }),
+        { target: { value: "m-a[1M]" } },
+      );
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "providerForm.modelApiFormats.duplicate",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+  }
 });
