@@ -51,7 +51,10 @@ fn authorize_url(verifier: &str, state: &str) -> String {
         ("response_type", "code"),
         ("client_id", CODEX_CLIENT_ID),
         ("redirect_uri", REDIRECT_URI),
-        ("scope", "openid profile email offline_access"),
+        (
+            "scope",
+            "openid profile email offline_access api.connectors.read api.connectors.invoke",
+        ),
         ("code_challenge", challenge.as_str()),
         ("code_challenge_method", "S256"),
         ("state", state),
@@ -276,6 +279,10 @@ mod tests {
         assert_eq!(query["redirect_uri"], REDIRECT_URI);
         assert_eq!(query["state"], "random-state");
         assert_eq!(query["code_challenge_method"], "S256");
+        assert_eq!(
+            query["scope"],
+            "openid profile email offline_access api.connectors.read api.connectors.invoke"
+        );
         assert_eq!(
             query["code_challenge"],
             URL_SAFE_NO_PAD.encode(Sha256::digest(b"verifier"))
