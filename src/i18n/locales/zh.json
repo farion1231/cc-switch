@@ -2343,7 +2343,7 @@
       "justNow": "会话日志 · 刚刚同步",
       "minutesAgo": "会话日志 · {{count}} 分钟前同步",
       "off": "会话日志 · 自动扫描已关闭",
-      "tipAuto": "每 60 秒自动扫描一次会话日志",
+      "tipAuto": "后台 60 秒 刷新；用量统计跟随右侧设置项间隔刷新",
       "tipOff": "只在手动同步时扫描会话日志"
     },
     "refreshMenu": {
@@ -2439,7 +2439,7 @@
       "scanHelpTitle": "会话日志是什么",
       "scanHelp": "各应用写在本机的会话记录。CC Switch 从里面读取用量，不开路由也有数据。",
       "coverage": "覆盖 7 个应用：{{apps}}",
-      "cadenceOn": "启动时扫描一次，之后每 60 秒一次",
+      "cadenceOn": "启动时及后台每 60 秒扫描；用量页可见时也按自动刷新间隔同步",
       "cadenceOff": "自动扫描已关闭，只在点「立即同步」时扫描",
       "unsupported": "Hermes、OpenClaw 暂不支持用量统计",
       "loggingHelpTitle": "记录请求用量是什么",
