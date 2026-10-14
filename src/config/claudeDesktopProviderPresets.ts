@@ -1641,6 +1641,26 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "therouter",
   },
   {
+    name: "Baseten",
+    websiteUrl: "https://www.baseten.co",
+    apiKeyUrl: "https://app.baseten.co/settings/api_keys",
+    category: "aggregator",
+    // 同 Claude Code 预设：Messages 端点（beta）只认 Bearer，路由按
+    // ANTHROPIC_AUTH_TOKEN 发 Bearer；三个模型窗口均为 1M（docs.baseten.co/
+    // development/model-apis/overview，2026-10-14 核对）。Claude Code 若改走
+    // openai_chat，这里一起改
+    baseUrl: "https://inference.baseten.co",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "zai-org/GLM-5.3",
+      "moonshotai/Kimi-K3",
+      "zai-org/GLM-5.3-Flash",
+      true,
+    ),
+    endpointCandidates: ["https://inference.baseten.co"],
+  },
+  {
     name: "Novita AI",
     websiteUrl: "https://novita.ai",
     apiKeyUrl: "https://novita.ai",

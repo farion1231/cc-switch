@@ -4445,6 +4445,65 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "Baseten",
+    websiteUrl: "https://www.baseten.co",
+    apiKeyUrl: "https://app.baseten.co/settings/api_keys",
+    // OpenAI Chat 端点 /v1/chat/completions（docs.baseten.co/development/
+    // model-apis/overview，2026-10-14 核对）；窗口、最大输出与输入模态取同页
+    // 模型表
+    settingsConfig: {
+      baseUrl: "https://inference.baseten.co/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "zai-org/GLM-5.3",
+          name: "GLM-5.3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 262144,
+        },
+        {
+          id: "moonshotai/Kimi-K3",
+          name: "Kimi K3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 262144,
+        },
+        {
+          id: "zai-org/GLM-5.3-Flash",
+          name: "GLM-5.3 Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 262144,
+        },
+        {
+          id: "deepseek-ai/DeepSeek-V4.1-Flash",
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 262144,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "baseten/zai-org/GLM-5.3" },
+      modelCatalog: { "baseten/zai-org/GLM-5.3": { alias: "GLM" } },
+    },
+  },
+  {
     name: "Novita AI",
     websiteUrl: "https://novita.ai",
     apiKeyUrl: "https://novita.ai",

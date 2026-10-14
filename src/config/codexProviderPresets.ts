@@ -3270,6 +3270,73 @@ requires_openai_auth = true`,
     iconColor: "#000000",
   },
   {
+    name: "Baseten",
+    websiteUrl: "https://www.baseten.co",
+    apiKeyUrl: "https://app.baseten.co/settings/api_keys",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "baseten",
+      "https://inference.baseten.co/v1",
+      "zai-org/GLM-5.3",
+    ),
+    endpointCandidates: ["https://inference.baseten.co/v1"],
+    // 只有 /v1/chat/completions 与 beta 的 /v1/messages，文档与 OpenAPI 都没有
+    // /v1/responses（docs.baseten.co/development/model-apis/overview，
+    // 2026-10-14 核对），走本地路由转 Chat
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      // 档位来源：https://docs.baseten.co/inference/model-apis/reasoning
+      //（2026-10-14）。GLM-5.3 系列平台声明 none/low/high/max，但注明 none 按
+      // low 处理（假关），故不列 none；首行 = 默认模型，须与 config 的 model 一致
+      {
+        model: "zai-org/GLM-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
+      },
+      // Kimi K3：API 不传 effort 时默认 max；显式 high，与 config.toml 一致
+      {
+        model: "moonshotai/Kimi-K3",
+        displayName: "Kimi K3",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["none", "low", "high", "max"],
+        defaultReasoningLevel: "high",
+      },
+      {
+        model: "zai-org/GLM-5.3-Flash",
+        displayName: "GLM-5.3 Flash",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high", "max"],
+        defaultReasoningLevel: "high",
+      },
+      // V4.1 Flash 不支持 low（传了按默认档处理）
+      {
+        model: "deepseek-ai/DeepSeek-V4.1-Flash",
+        displayName: "DeepSeek V4.1 Flash",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["none", "high", "max"],
+        defaultReasoningLevel: "high",
+      },
+    ]),
+    // 思考开关是嵌套的 chat_template_args.enable_thinking，与顶层
+    // enable_thinking 对不上，不声明开关；effort 按 OpenAPI 枚举
+    //（none|minimal|low|medium|high|xhigh|max）原样透传
+    codexChatReasoning: {
+      supportsThinking: false,
+      supportsEffort: true,
+      thinkingParam: "none",
+      effortParam: "reasoning_effort",
+      effortValueMode: "passthrough",
+      outputFormat: "reasoning_content",
+    },
+    category: "aggregator",
+  },
+  {
     name: "Novita AI",
     websiteUrl: "https://novita.ai",
     apiKeyUrl: "https://novita.ai",

@@ -2367,6 +2367,37 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "therouter",
   },
   {
+    name: "Baseten",
+    websiteUrl: "https://www.baseten.co",
+    apiKeyUrl: "https://app.baseten.co/settings/api_keys",
+    settingsConfig: {
+      name: "baseten",
+      // OpenAI Chat 端点 /v1/chat/completions（docs.baseten.co/development/
+      // model-apis/overview，2026-10-14 核对）；窗口取同页模型表
+      base_url: "https://inference.baseten.co/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "zai-org/GLM-5.3", name: "GLM-5.3", context_length: 1048576 },
+        { id: "moonshotai/Kimi-K3", name: "Kimi K3", context_length: 1048576 },
+        {
+          id: "zai-org/GLM-5.3-Flash",
+          name: "GLM-5.3 Flash",
+          context_length: 1048576,
+        },
+        {
+          id: "deepseek-ai/DeepSeek-V4.1-Flash",
+          name: "DeepSeek V4.1 Flash",
+          context_length: 1048576,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "zai-org/GLM-5.3", provider: "baseten" },
+    },
+  },
+  {
     name: "Novita AI",
     websiteUrl: "https://novita.ai",
     apiKeyUrl: "https://novita.ai",

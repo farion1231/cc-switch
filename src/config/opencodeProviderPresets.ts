@@ -3268,6 +3268,57 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     icon: "therouter",
   },
   {
+    name: "Baseten",
+    websiteUrl: "https://www.baseten.co",
+    apiKeyUrl: "https://app.baseten.co/settings/api_keys",
+    // 官方编程工具接入文档 OpenCode 直连 /v1 Chat（docs.baseten.co/inference/
+    // model-apis/coding-agents，2026-10-14 核对）；窗口、最大输出与输入模态取
+    // docs.baseten.co/development/model-apis/overview 同日模型表
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Baseten",
+      options: {
+        baseURL: "https://inference.baseten.co/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "zai-org/GLM-5.3": {
+          name: "GLM-5.3",
+          reasoning: true,
+          limit: { context: 1048576, output: 262144 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "moonshotai/Kimi-K3": {
+          name: "Kimi K3",
+          reasoning: true,
+          limit: { context: 1048576, output: 262144 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "zai-org/GLM-5.3-Flash": {
+          name: "GLM-5.3 Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 262144 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "deepseek-ai/DeepSeek-V4.1-Flash": {
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 262144 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "Novita AI",
     websiteUrl: "https://novita.ai",
     apiKeyUrl: "https://novita.ai",

@@ -1888,6 +1888,45 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "therouter",
   },
   {
+    name: "Baseten",
+    // Pi 运行时内置了 baseten，用 cc-switch- 前缀避免同名遮蔽内置定义
+    providerKey: "cc-switch-baseten",
+    websiteUrl: "https://www.baseten.co",
+    apiKeyUrl: "https://app.baseten.co/settings/api_keys",
+    settingsConfig: {
+      name: "Baseten",
+      // 官方编程工具接入文档 Pi 直连 /v1 Chat（docs.baseten.co/inference/
+      // model-apis/coding-agents，2026-10-14 核对）。窗口、最大输出与输入模态取
+      // docs.baseten.co/development/model-apis/overview 同日模型表：目录里
+      // glm-5.3 记为纯文本、131072，DeepSeek Flash 记为 1000000 / 384000，
+      // 与平台声明不同，故覆盖
+      baseUrl: "https://inference.baseten.co/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("zai/glm-5.3", {
+          id: "zai-org/GLM-5.3",
+          input: ["text", "image"],
+          maxTokens: 262_144,
+        }),
+        piModel("moonshotai/kimi-k3", {
+          id: "moonshotai/Kimi-K3",
+          maxTokens: 262_144,
+        }),
+        piModel("zai/glm-5.3-flash", {
+          id: "zai-org/GLM-5.3-Flash",
+          maxTokens: 262_144,
+        }),
+        piModel("deepseek/deepseek-flash", {
+          id: "deepseek-ai/DeepSeek-V4.1-Flash",
+          contextWindow: 1_048_576,
+          maxTokens: 262_144,
+        }),
+      ],
+    },
+    category: "aggregator",
+  },
+  {
     name: "Novita AI",
     providerKey: "cc-switch-novita-ai",
     websiteUrl: "https://novita.ai",

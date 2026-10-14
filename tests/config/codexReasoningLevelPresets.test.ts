@@ -184,6 +184,19 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["Ollama Cloud", "kimi-k3", ["low", "high", "max"]],
     ["Ollama Cloud", "deepseek-v4-pro:0813", ["low", "high", "max"]],
     ["Ollama Cloud", "deepseek-v4.1-flash", ["low", "high", "max"]],
+    // Baseten（Chat 路由，reasoning_effort 透传）：docs.baseten.co/inference/
+    // model-apis/reasoning（2026-10-14）。GLM-5.3 系 none 按 low 处理（假关）
+    // 故不列 none；V4.1 Flash 不支持 low；Kimi K3 API 默认 max，四款都显式
+    // high 与 config.toml 一致
+    ["Baseten", "zai-org/GLM-5.3", ["low", "high", "max"], "high"],
+    ["Baseten", "moonshotai/Kimi-K3", ["none", "low", "high", "max"], "high"],
+    ["Baseten", "zai-org/GLM-5.3-Flash", ["low", "high", "max"], "high"],
+    [
+      "Baseten",
+      "deepseek-ai/DeepSeek-V4.1-Flash",
+      ["none", "high", "max"],
+      "high",
+    ],
   ];
 
   it.each(EXPECTED)(

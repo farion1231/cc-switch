@@ -1854,6 +1854,30 @@ export const providerPresets: ProviderPreset[] = [
     icon: "therouter",
   },
   {
+    name: "Baseten",
+    websiteUrl: "https://www.baseten.co",
+    apiKeyUrl: "https://app.baseten.co/settings/api_keys",
+    // Anthropic Messages 端点 /v1/messages（docs.baseten.co/development/
+    // model-apis/overview，2026-10-14 核对）官方标注 beta，生产推荐 Chat
+    // Completions；冒烟不过就改 apiFormat: "openai_chat"，地址不变。鉴权只认
+    // Authorization: Bearer / Api-Key，不认 x-api-key（Messages OpenAPI 原文），
+    // 默认的 AUTH_TOKEN 正好发 Bearer。模型 ID 是固定版本、无 latest 别名；
+    // haiku 用小模型 GLM-5.3-Flash（-Fast 是同权重独享算力的高价版）。
+    // 根路径 + /v1/models 即模型列表（无 Key 401），不覆写 modelsUrl
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://inference.baseten.co",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "zai-org/GLM-5.3",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "zai-org/GLM-5.3-Flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "zai-org/GLM-5.3",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "moonshotai/Kimi-K3",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://inference.baseten.co"],
+  },
+  {
     name: "Novita AI",
     websiteUrl: "https://novita.ai",
     apiKeyUrl: "https://novita.ai",
