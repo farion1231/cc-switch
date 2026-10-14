@@ -22,7 +22,7 @@ interface FullScreenPanelProps {
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
-  /** Entry/exit motion. Nested navigation panels can opt into a horizontal transition. */
+  /** Defaults to no motion to avoid revealing the underlying page during a fade. */
   motionPreset?: "none" | "fade" | "slide-from-right";
   /**
    * 覆盖内容区滚动容器的内边距/间距类。默认 `px-6 py-6 space-y-6`。
@@ -73,7 +73,7 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   children,
   footer,
   contentClassName,
-  motionPreset = "fade",
+  motionPreset = "none",
   trackUnsavedChanges = false,
 }) => {
   // 面板关掉后组件可能还挂着：只在打开时登记，关掉即撤销

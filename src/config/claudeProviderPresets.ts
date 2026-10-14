@@ -320,6 +320,22 @@ export const providerPresets: ProviderPreset[] = [
     icon: "openmodel",
   },
   {
+    name: "GrooRoute Pro",
+    websiteUrl: "https://grooroute.pro",
+    apiKeyUrl: "https://grooroute.xyz/sign-up?aff=qqm9",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://grooroute.pro",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-sonnet-5-5",
+      },
+    },
+    endpointCandidates: ["https://grooroute.pro", "https://grooroute.xyz"],
+    category: "aggregator",
+    isPartner: true,
+    icon: "grooroute",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
@@ -341,16 +357,19 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.app",
-    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.net",
+    apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.aigocode.app",
+        ANTHROPIC_BASE_URL: "https://api.aigocode.dev",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
     // 请求地址候选（用于地址管理/测速）
-    endpointCandidates: ["https://api.aigocode.app"],
+    endpointCandidates: [
+      "https://api.aigocode.dev",
+      "https://api.aigocode.app",
+    ],
     category: "third_party",
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "aigocode", // 促销信息 i18n key
@@ -1606,7 +1625,37 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#624AFF",
   },
   {
-    name: "KAT-Coder",
+    name: "StreamLake",
+    family: "streamlake",
+    regionKey: "cn",
+    websiteUrl: "https://www.streamlake.com",
+    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints/${ENDPOINT_ID}/claude-code-proxy",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "KAT-Coder-Pro-V2.5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "KAT-Coder-Air-V2.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "KAT-Coder-Pro-V2.5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "KAT-Coder-Pro-V2.5",
+      },
+    },
+    category: "cn_official",
+    templateValues: {
+      ENDPOINT_ID: {
+        label: "Vanchin Endpoint ID",
+        placeholder: "ep-xxx-xxx",
+        defaultValue: "",
+        editorValue: "",
+      },
+    },
+    icon: "catcoder",
+  },
+  {
+    name: "StreamLake en",
+    family: "streamlake",
+    regionKey: "intl",
     websiteUrl: "https://console.streamlake.ai",
     apiKeyUrl: "https://console.streamlake.ai/console/api-key",
     settingsConfig: {
@@ -2140,6 +2189,8 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "SoruxGPT",
+    family: "soruxgpt",
+    planKey: "payg",
     websiteUrl: "https://ai.soruxgpt.com",
     apiKeyUrl: "https://ai.soruxgpt.com/console/token",
     settingsConfig: {
@@ -2154,6 +2205,25 @@ export const providerPresets: ProviderPreset[] = [
       "https://api-host.soruxgpt.com",
       "https://api-node6.soruxgpt.com",
       "https://api-node3.soruxgpt.com",
+    ],
+    category: "aggregator",
+    icon: "soruxgpt",
+  },
+  {
+    name: "SoruxGPT Coding Plan",
+    family: "soruxgpt",
+    planKey: "codingPlan",
+    websiteUrl: "https://app.soruxgpt.com",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://app.soruxgpt.com/api/cc",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: [
+      "https://app.soruxgpt.com/api/cc",
+      "https://center.soruxgpt.com/api/cc",
+      "https://u.soruxgpt.com/api/cc",
     ],
     category: "aggregator",
     icon: "soruxgpt",
@@ -2243,5 +2313,18 @@ export const providerPresets: ProviderPreset[] = [
     },
     category: "aggregator",
     icon: "nekocode",
+  },
+  {
+    name: "AIComing",
+    websiteUrl: "https://aicoming.top",
+    apiKeyUrl: "https://aicoming.top/console#keys",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.aicoming.top",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    icon: "aicoming",
   },
 ];

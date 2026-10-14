@@ -40,6 +40,14 @@ export const iconMetadata: Record<string, IconMetadata> = {
     ],
     defaultColor: "#3A3B40",
   },
+  aicoming: {
+    name: "aicoming",
+    displayName: "AIComing",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["aicoming", "aggregator", "relay", "gateway"],
+    defaultColor: "currentColor",
+  },
   aigocode: {
     name: "aigocode",
     displayName: "AIGoCode",
@@ -509,6 +517,14 @@ export const iconMetadata: Record<string, IconMetadata> = {
     displayName: "grok",
     category: "other",
     keywords: [],
+    defaultColor: "currentColor",
+  },
+  grooroute: {
+    name: "grooroute",
+    displayName: "GrooRoute Pro",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["grooroute", "aggregator", "relay", "gateway"],
     defaultColor: "currentColor",
   },
   huawei: {

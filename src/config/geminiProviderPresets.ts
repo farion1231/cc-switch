@@ -155,21 +155,24 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.app",
-    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.net",
+    apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
     settingsConfig: {
       env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.aigocode.app",
+        GOOGLE_GEMINI_BASE_URL: "https://api.aigocode.dev",
         GEMINI_MODEL: "gemini-3.6-flash",
       },
     },
-    baseURL: "https://api.aigocode.app",
+    baseURL: "https://api.aigocode.dev",
     model: "gemini-3.6-flash",
     description: "AIGoCode",
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "aigocode",
-    endpointCandidates: ["https://api.aigocode.app"],
+    endpointCandidates: [
+      "https://api.aigocode.dev",
+      "https://api.aigocode.app",
+    ],
     icon: "aigocode",
     iconColor: "#5B7FFF",
   },
@@ -691,6 +694,22 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     description: "TokenFlux",
     category: "aggregator",
     icon: "tokenflux",
+  },
+  {
+    name: "AIComing",
+    websiteUrl: "https://aicoming.top",
+    apiKeyUrl: "https://aicoming.top/console#keys",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.aicoming.top",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://api.aicoming.top",
+    model: "gemini-3.1-pro-preview",
+    description: "AIComing",
+    category: "aggregator",
+    icon: "aicoming",
   },
 ];
 

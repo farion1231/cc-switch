@@ -11,6 +11,7 @@ import {
   Loader2,
   MoreHorizontal,
   RefreshCw,
+  Trash2,
 } from "lucide-react";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
@@ -49,6 +50,8 @@ import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ToolUpgradeConfirmDialog } from "@/components/settings/ToolUpgradeConfirmDialog";
 import { ToolInstallRow } from "@/components/settings/ToolInstallRow";
 import { ToolErrorMessage } from "@/components/settings/ToolErrorMessage";
+import { ToolUninstallConfirmDialog } from "./ToolUninstallConfirmDialog";
+import { ManualUninstallDialog } from "./ManualUninstallDialog";
 import {
   DESKTOP_ONLY_TOOLS,
   ENV_BADGE_CONFIG,
@@ -99,7 +102,7 @@ function formatCheckedAt(timestamp: number, locale: string): string {
 }
 
 /**
- * 「应用」页（v7）：每个应用一行 = 安装状态 / 版本 + 安装 / 升级 + 在侧栏显示的开关。
+ * 「应用」页（v7）：每个应用一行 = 安装状态 / 版本 + 安装 / 升级 / 卸载 + 在侧栏显示的开关。
  * 隐藏一个应用只影响界面（侧栏、MCP / Skills 的列、提示词和会话的下拉），配置照常同步。
  */
 export function AppsPage() {
@@ -107,6 +110,10 @@ export function AppsPage() {
   const tools = useToolManagement();
   const { settings, updateSettings, autoSaveSettings } = useSettings();
   const [showCommands, setShowCommands] = useState(false);
+  const [showUninstallCommands, setShowUninstallCommands] = useState(false);
+  const [pendingUninstall, setPendingUninstall] = useState<ToolName | null>(
+    null,
+  );
   const [expanded, setExpanded] = useState<Partial<Record<ToolName, boolean>>>(
     {},
   );
@@ -243,6 +250,12 @@ export function AppsPage() {
                 <DropdownMenuItem onSelect={() => setShowCommands(true)}>
                   {t("appsPage.manualCommands")}
                 </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-red-500 focus:text-red-500 dark:text-red-400 dark:focus:text-red-400"
+                  onSelect={() => setShowUninstallCommands(true)}
+                >
+                  {t("settings.manualUninstallCommands")}
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </>
@@ -259,7 +272,7 @@ export function AppsPage() {
             <span className="w-[168px] text-end">
               {t("appsPage.columnVersion")}
             </span>
-            <span className="w-[104px]" />
+            <span className="w-[200px]" />
             <span className="flex w-[56px] items-center justify-end gap-0.5">
               {t("appsPage.columnVisible")}
               <HelpTip title={t("appsPage.columnVisible")} align="end">
@@ -298,6 +311,7 @@ export function AppsPage() {
                   key={row.tool}
                   tool={row.tool}
                   tools={tools}
+                  onUninstall={() => setPendingUninstall(row.tool)}
                   expanded={expanded[row.tool] ?? false}
                   onToggleExpanded={() =>
                     setExpanded((prev) => ({
@@ -346,6 +360,30 @@ export function AppsPage() {
         </DialogContent>
       </Dialog>
 
+      <ManualUninstallDialog
+        open={showUninstallCommands}
+        onOpenChange={setShowUninstallCommands}
+        toolVersionByName={tools.toolVersionByName}
+      />
+
+      {pendingUninstall && (
+        <ToolUninstallConfirmDialog
+          tool={pendingUninstall}
+          wslShellByTool={tools.wslShellByTool}
+          onConfirm={(uninstallPlan) => {
+            void tools.handleRunToolAction([pendingUninstall], "uninstall", {
+              uninstallPlan,
+            });
+            setPendingUninstall(null);
+          }}
+          onCancel={() => setPendingUninstall(null)}
+          onManualUninstall={() => {
+            setPendingUninstall(null);
+            setShowUninstallCommands(true);
+          }}
+        />
+      )}
+
       <ToolUpgradeConfirmDialog
         isOpen={tools.pendingUpgrade !== null}
         plans={tools.pendingUpgrade?.plans ?? []}
@@ -389,7 +427,9 @@ function AppRow({
           )}
         </div>
         <div className="w-[168px] shrink-0 text-end">{version}</div>
-        <div className="flex w-[104px] shrink-0 justify-end">{action}</div>
+        <div className="flex w-[200px] shrink-0 flex-wrap justify-end gap-2">
+          {action}
+        </div>
         <div className="flex w-[56px] shrink-0 justify-end">{visibility}</div>
       </div>
       {footer && <div className="ms-9 mt-2">{footer}</div>}
@@ -408,12 +448,14 @@ function Pill({ children }: { children: React.ReactNode }) {
 function ToolRow({
   tool,
   tools,
+  onUninstall,
   expanded,
   onToggleExpanded,
   visibility,
 }: {
   tool: ToolName;
   tools: ReturnType<typeof useToolManagement>;
+  onUninstall: () => void;
   expanded: boolean;
   onToggleExpanded: () => void;
   visibility: React.ReactNode;
@@ -435,18 +477,21 @@ function ToolRow({
   const isOutdated = isUpdateAvailable(info?.version, info?.latest_version);
   const broken = Boolean(info?.installed_but_broken);
   const isBusy = tools.busyTools.has(tool);
-  // 桌面分发的工具（ZCode）应用内自更新，不提供安装/升级动作
+  const busyAction = tools.busyTools.get(tool);
+  const canUninstall = Boolean(info?.version || broken || defaultInstall);
+  // 桌面分发的工具（ZCode）应用内自更新、由安装器管理卸载：
+  // 不提供安装/升级动作，也不提供 npm 卸载
   const isDesktopOnly = DESKTOP_ONLY_TOOLS.has(tool);
-  const action: ToolLifecycleAction | null = isDesktopOnly
+  const action: Exclude<ToolLifecycleAction, "uninstall"> | null = isDesktopOnly
     ? null
-    : (tools.busyTools.get(tool) ??
+    : (busyAction !== "uninstall" ? busyAction : undefined) ??
       (isVersionLoading || broken
         ? null
         : !info?.version
           ? "install"
           : isOutdated
             ? "update"
-            : null));
+            : null);
   const sourceLabel = defaultInstall
     ? SOURCE_LABEL[defaultInstall.source]
     : undefined;
@@ -491,7 +536,7 @@ function ToolRow({
       disabled={isVersionLoading || isBusy}
       aria-busy={isBusy}
     >
-      {isBusy ? (
+      {isBusy && busyAction !== "uninstall" ? (
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
       ) : action === "install" ? (
         <Download className="h-3.5 w-3.5" />
@@ -631,7 +676,28 @@ function ToolRow({
       }
       meta={meta}
       version={version}
-      action={actionButton}
+      action={
+        <>
+          {actionButton}
+          {!isDesktopOnly && (canUninstall || busyAction === "uninstall") && (
+            <Button
+              variant="neutral"
+              size="compact"
+              className="border-red-200 text-danger-text hover:border-red-300 hover:bg-danger-soft dark:border-red-400/40 dark:hover:border-red-400/60"
+              onClick={onUninstall}
+              disabled={isVersionLoading || isBusy}
+              aria-busy={busyAction === "uninstall"}
+            >
+              {busyAction === "uninstall" ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="h-3.5 w-3.5" />
+              )}
+              {t("settings.toolUninstall")}
+            </Button>
+          )}
+        </>
+      }
       visibility={visibility}
       footer={footer}
     />
