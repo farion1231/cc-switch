@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -88,9 +88,9 @@ const ROWS: Row[] = [
   ),
 ];
 
-// 表头和应用行共用列宽；操作列始终保留双按钮空间，升级完成后不挤动其他列。
+// 表头和应用行共用列宽；操作列按当前可见按钮的最大宽度收缩。
 const APP_ROW_GRID =
-  "grid grid-cols-[minmax(0,1fr)_168px_232px_56px] items-center gap-x-4";
+  "grid grid-cols-[minmax(0,1fr)_168px_var(--apps-actions-width,0px)_56px] items-center gap-x-4";
 
 function formatCheckedAt(timestamp: number, locale: string): string {
   const date = new Date(timestamp);
@@ -112,6 +112,29 @@ export function AppsPage() {
   const { t, i18n } = useTranslation();
   const tools = useToolManagement();
   const { settings, updateSettings, autoSaveSettings } = useSettings();
+  const tableRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const table = tableRef.current;
+    if (!table) return;
+    const actions = Array.from(
+      table.querySelectorAll<HTMLElement>("[data-tool-actions]"),
+    );
+    const updateActionWidth = () => {
+      const width = Math.max(
+        0,
+        ...actions.map((action) => action.getBoundingClientRect().width),
+      );
+      table.style.setProperty("--apps-actions-width", `${width}px`);
+    };
+    updateActionWidth();
+    // 按钮增减、文案或字体变化时同步整列，避免各行自行收缩后版本列错位。
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateActionWidth);
+    actions.forEach((action) => observer.observe(action));
+    return () => observer.disconnect();
+  }, []);
+
   const [showCommands, setShowCommands] = useState(false);
   const [showUninstallCommands, setShowUninstallCommands] = useState(false);
   const [pendingUninstall, setPendingUninstall] = useState<ToolName | null>(
@@ -269,7 +292,7 @@ export function AppsPage() {
         id="main-content"
         className="min-h-0 flex-1 overflow-y-auto scroll-stable"
       >
-        <div className="px-6 pb-10 pt-4">
+        <div ref={tableRef} className="px-6 pb-10 pt-4">
           <div
             className={cn(
               APP_ROW_GRID,
@@ -435,7 +458,10 @@ function AppRow({
           </div>
         </div>
         <div className="text-end">{version}</div>
-        <div className="flex items-center justify-end gap-2 [&>button]:shrink-0">
+        <div
+          data-tool-actions
+          className="flex w-max items-center justify-self-end gap-2 [&>button]:shrink-0"
+        >
           {action}
         </div>
         <div className="flex justify-end">{visibility}</div>
@@ -553,6 +579,7 @@ function ToolRow({
     </Button>
   ) : null;
 
+  const installHint = t(`appsPage.installHint.${tool}`, { defaultValue: "" });
   const meta = defaultInstall ? (
     <>
       <span className="min-w-0 truncate font-mono" title={defaultInstall.path}>
@@ -576,7 +603,9 @@ function ToolRow({
       )}
     </>
   ) : !info?.version && !isVersionLoading ? (
-    <span>{t(`appsPage.installHint.${tool}`, { defaultValue: "" })}</span>
+    <span className="truncate" title={installHint}>
+      {installHint}
+    </span>
   ) : null;
 
   const wslControls =
