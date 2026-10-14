@@ -484,14 +484,14 @@ function ToolRow({
   const isDesktopOnly = DESKTOP_ONLY_TOOLS.has(tool);
   const action: Exclude<ToolLifecycleAction, "uninstall"> | null = isDesktopOnly
     ? null
-    : (busyAction !== "uninstall" ? busyAction : undefined) ??
+    : ((busyAction !== "uninstall" ? busyAction : undefined) ??
       (isVersionLoading || broken
         ? null
         : !info?.version
           ? "install"
           : isOutdated
             ? "update"
-            : null);
+            : null));
   const sourceLabel = defaultInstall
     ? SOURCE_LABEL[defaultInstall.source]
     : undefined;
