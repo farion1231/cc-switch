@@ -13,6 +13,54 @@ pub struct OpenCodeModelRef {
     pub model_id: String,
 }
 
+/// Read the current runtime's model list. No shell and no credential values in errors.
+#[tauri::command]
+pub async fn get_agy_models() -> Result<Vec<FetchedModel>, String> {
+    let settings = crate::agy_config::read_live_settings().map_err(|e| e.to_string())?;
+    let path = crate::agy_config::real_agy_bin(&crate::agy_config::agy_dir().join("bin/agy"));
+    let mut command = tokio::process::Command::new(path);
+    command
+        .arg("models")
+        .kill_on_drop(true)
+        .env_remove("GEMINI_API_KEY")
+        .env_remove("GOOGLE_GEMINI_BASE_URL");
+    if let Some(env) = settings["env"].as_object() {
+        for name in ["GEMINI_API_KEY", "GOOGLE_GEMINI_BASE_URL"] {
+            if let Some(value) = env.get(name).and_then(serde_json::Value::as_str) {
+                command.env(name, value);
+            }
+        }
+    }
+    let output = tokio::time::timeout(std::time::Duration::from_secs(20), command.output())
+        .await
+        .map_err(|_| "Antigravity model discovery timed out".to_string())?
+        .map_err(|_| "Antigravity CLI not found; install agy first".to_string())?;
+    if !output.status.success() {
+        return Err("Antigravity could not list models. Check the active provider and sign in with agy for official models.".into());
+    }
+    Ok(parse_agy_models(&String::from_utf8_lossy(&output.stdout)))
+}
+
+fn parse_agy_models(output: &str) -> Vec<FetchedModel> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let (id, _) = line.trim().split_once('\t')?;
+            if id.is_empty()
+                || !id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | ':'))
+            {
+                return None;
+            }
+            Some(id.to_string())
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|id| FetchedModel { id, owned_by: None })
+        .collect()
+}
+
 const OPENCODE_MODELS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// 获取 OpenCode 当前运行时可用的模型。
@@ -146,5 +194,17 @@ mod tests {
             "notice: loading models\n/model\nprovider/\nbad provider/model\nprovider/bad model\nprovider/bad\u{1b}[0m\n"
         )
         .is_empty());
+    }
+}
+
+#[cfg(test)]
+mod agy_tests {
+    #[test]
+    fn agy_model_list_ignores_status_and_deduplicates_ids() {
+        let models = super::parse_agy_models("Fetching available models...\ngemini-test\tGemini Test\nclaude-test\tClaude Test\ngemini-test\tDuplicate\n");
+        assert_eq!(
+            models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            ["claude-test", "gemini-test"]
+        );
     }
 }

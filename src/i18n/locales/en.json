@@ -196,6 +196,9 @@
     "geminiConfig": "Gemini Configuration",
     "geminiConfigHint": "Use .env format to configure Gemini",
     "form": {
+      "agy": {
+        "connectionHint": "Official Antigravity providers use the agy sign-in. Third-party providers must support the Gemini API. Open a new terminal or restart agy after switching; running sessions keep their configuration. Official model discovery uses the current agy configuration."
+      },
       "gemini": {
         "model": "Model",
         "oauthTitle": "OAuth Authentication Mode",
@@ -361,6 +364,7 @@
       "confirm": "Turn off"
     },
     "usage": {
+      "agyUsageHint": "Antigravity shows native session token counters; missing historical models are unknown. The log does not provide reliable billing data; a displayed cost of 0 does not mean free usage.",
       "title": "Configure Usage Query",
       "message": "Usage query requires a custom script or API parameters. Please make sure you have obtained the necessary information from your provider.\n\nIf unsure how to configure, please consult your provider's documentation first.",
       "confirm": "I understand, configure"
@@ -1065,7 +1069,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "agy": "Antigravity"
   },
   "mcode": {
     "empty": {
@@ -1304,6 +1309,7 @@
     "deleteSessionEllipsis": "Delete sessions",
     "deleteEllipsis": "Delete",
     "selectSessionLabel": "Select {{title}}",
+    "agyDeleteHint": "Delete this session in Antigravity to also remove its runtime state",
     "mcodeDeleteHint": "Delete it in MiniMax Code",
     "groupMeta": "{{count}} sessions · {{time}}",
     "bucketToday": "Today",

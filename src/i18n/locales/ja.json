@@ -196,6 +196,9 @@
     "geminiConfig": "Gemini 設定",
     "geminiConfigHint": ".env 形式で Gemini を設定してください",
     "form": {
+      "agy": {
+        "connectionHint": "Antigravity の公式プロバイダーは agy のログインを使用します。サードパーティには Gemini API 対応が必要です。切替後は新しいターミナルを開くか agy を再起動してください。実行中のセッションは切り替わりません。公式モデルの取得には現在の agy 設定を使用します。"
+      },
       "gemini": {
         "model": "モデル",
         "oauthTitle": "OAuth 認証モード",
@@ -361,6 +364,7 @@
       "confirm": "オフにする"
     },
     "usage": {
+      "agyUsageHint": "Antigravity はログの Token 数を表示し、過去のモデルが不明な場合は unknown と表示します。ログに信頼できる料金情報がないため、料金 0 は無料を意味しません。",
       "title": "使用量クエリの設定",
       "message": "使用量クエリにはカスタムスクリプトまたは API パラメータが必要です。プロバイダーから必要な情報を取得していることをご確認ください。\n\n設定方法が不明な場合は、プロバイダーのドキュメントを先にご確認ください。",
       "confirm": "理解しました、設定する"
@@ -1065,7 +1069,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "agy": "Antigravity"
   },
   "mcode": {
     "empty": {
@@ -1304,6 +1309,7 @@
     "deleteSessionEllipsis": "セッションを削除",
     "deleteEllipsis": "削除",
     "selectSessionLabel": "{{title}} を選択",
+    "agyDeleteHint": "実行状態も削除するには Antigravity でセッションを削除してください",
     "mcodeDeleteHint": "MiniMax Code で削除してください",
     "groupMeta": "{{count}} 件 · {{time}}",
     "bucketToday": "今日",

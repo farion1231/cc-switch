@@ -301,6 +301,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Hermes
         | AppType::Pi
         | AppType::Mcode
+        | AppType::Agy
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -377,7 +378,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Hermes
         | AppType::Pi
         | AppType::Mcode
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
+        | AppType::ClaudeDesktop
+        | AppType::Agy => Ok(settings.clone()),
     }
 }
 
@@ -414,6 +416,10 @@ pub(crate) fn write_live_for_state(
     }
     if matches!(app_type, AppType::GrokBuild) {
         super::grok_direct::reapply(db, Some(provider), provider)?;
+        return Ok(());
+    }
+    if matches!(app_type, AppType::Agy) {
+        super::agy_direct::reapply(db, provider)?;
         return Ok(());
     }
 
@@ -694,6 +700,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Pi => {
             return Err(AppError::InvalidInput(
                 "Pi providers use the Pi provider service".to_string(),
+            ));
+        }
+        AppType::Agy => {
+            return Err(AppError::Config(
+                "Antigravity configuration requires the provider switch flow".into(),
             ));
         }
     }
@@ -985,6 +996,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
+        AppType::Agy => crate::agy_config::read_live_settings(),
     }
 }
 
@@ -1089,6 +1101,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
+        AppType::Agy => crate::agy_config::read_live_settings()?,
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode => {
             unreachable!("additive mode apps are handled by early return")

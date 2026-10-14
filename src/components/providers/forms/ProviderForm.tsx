@@ -43,6 +43,7 @@ import {
   geminiProviderPresets,
   type GeminiProviderPreset,
 } from "@/config/geminiProviderPresets";
+import { usesGeminiStyleForm } from "@/config/appConfig";
 import {
   opencodeProviderPresets,
   type OpenCodeProviderPreset,
@@ -471,7 +472,7 @@ function ProviderFormFull({
             )
           : appId === "codex"
             ? CODEX_DEFAULT_CONFIG
-            : appId === "gemini"
+            : usesGeminiStyleForm(appId)
               ? GEMINI_DEFAULT_CONFIG
               : appId === "opencode"
                 ? OPENCODE_DEFAULT_CONFIG
@@ -882,7 +883,7 @@ function ProviderFormFull({
         id: `codex-${index}`,
         preset,
       }));
-    } else if (appId === "gemini") {
+    } else if (usesGeminiStyleForm(appId)) {
       return geminiProviderPresets.map<PresetEntry>((preset, index) => ({
         id: `gemini-${index}`,
         preset,
@@ -993,7 +994,8 @@ function ProviderFormFull({
     resetGeminiConfig,
     envStringToObj,
   } = useGeminiConfigState({
-    initialData: appId === "gemini" ? initialData : undefined,
+    initialData: usesGeminiStyleForm(appId) ? initialData : undefined,
+    preferConfigModel: appId === "agy",
   });
 
   const projectGeminiDraft = useCallback(
@@ -1013,7 +1015,11 @@ function ProviderFormFull({
   projectGeminiDraftRef.current = projectGeminiDraft;
 
   useEffect(() => {
-    if (appId === "gemini" && !initialData && selectedPresetId === "custom") {
+    if (
+      usesGeminiStyleForm(appId) &&
+      !initialData &&
+      selectedPresetId === "custom"
+    ) {
       projectGeminiDraftRef.current({}, {});
     }
   }, [appId, initialData, selectedPresetId]);
@@ -1613,7 +1619,7 @@ function ProviderFormFull({
           );
         }
       }
-      if (appId === "gemini") {
+      if (usesGeminiStyleForm(appId)) {
         if (!geminiBaseUrl.trim()) {
           issues.push(
             t("providerForm.endpointRequired", {
@@ -1705,7 +1711,7 @@ function ProviderFormFull({
       } catch (err) {
         settingsConfig = values.settingsConfig.trim();
       }
-    } else if (appId === "gemini") {
+    } else if (usesGeminiStyleForm(appId)) {
       try {
         const envObj = envStringToObj(geminiEnv);
         const configObj = geminiConfig.trim() ? JSON.parse(geminiConfig) : {};
@@ -1883,7 +1889,7 @@ function ProviderFormFull({
       // Claude Code、Codex、Gemini CLI 的通用配置片段已冻结：沿用行里原有的标记，新增时
       // 由后端写 true（兼容旧版）。
       commonConfigEnabled:
-        appId === "claude" || appId === "codex" || appId === "gemini"
+        appId === "claude" || appId === "codex" || usesGeminiStyleForm(appId)
           ? initialData?.meta?.commonConfigEnabled
           : undefined,
       endpointAutoSelect,
@@ -2129,7 +2135,7 @@ function ProviderFormFull({
         );
         projectCodexDraft(template.auth, template.config);
       }
-      if (appId === "gemini") {
+      if (usesGeminiStyleForm(appId)) {
         resetGeminiConfig({}, {});
         projectGeminiDraft({}, {});
       }
@@ -2193,7 +2199,7 @@ function ProviderFormFull({
       return;
     }
 
-    if (appId === "gemini") {
+    if (usesGeminiStyleForm(appId)) {
       const preset = entry.preset as GeminiProviderPreset;
       const env = (preset.settingsConfig as any)?.env ?? {};
       const config = (preset.settingsConfig as any)?.config ?? {};
@@ -2716,8 +2722,9 @@ function ProviderFormFull({
             />
           )}
 
-          {appId === "gemini" && (
+          {usesGeminiStyleForm(appId) && (
             <GeminiFormFields
+              appId={appId as "gemini" | "agy"}
               providerId={providerId}
               shouldShowApiKey={shouldShowApiKey(
                 form.getValues("settingsConfig"),
@@ -2853,7 +2860,7 @@ function ProviderFormFull({
               />
               {settingsConfigErrorField}
             </>
-          ) : appId === "gemini" ? (
+          ) : usesGeminiStyleForm(appId) ? (
             <>
               <GeminiConfigEditor
                 envValue={geminiEnv}

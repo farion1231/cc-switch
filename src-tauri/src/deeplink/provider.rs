@@ -334,6 +334,7 @@ pub(crate) fn build_provider_from_request(
                 "Add MCode providers from the MCode page".into(),
             ))
         }
+        AppType::Agy => build_gemini_settings(request),
     };
 
     // Build usage script configuration if provided
