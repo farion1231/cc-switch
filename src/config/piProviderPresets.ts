@@ -2055,6 +2055,30 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "local",
   },
   {
+    // Pi 运行时没有内置 vLLM provider（pi-mono models.generated.ts 搜不到），
+    // Pi 文档把 vLLM 列为用 models.json 配置兼容端点的场景，不违反「勿写内置
+    // 节点」契约
+    name: "vLLM",
+    providerKey: "cc-switch-vllm",
+    websiteUrl: "https://vllm.ai",
+    settingsConfig: {
+      name: "vLLM",
+      // 本机 vllm serve 的 OpenAI Chat base http://localhost:8000/v1
+      //（docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server、
+      // pi-mono packages/coding-agent/docs/models.md，2026-10-14 核对）。不带
+      // --api-key 时不校验，但 Pi 要填一个非空占位 Key 模型才会出现在列表里，
+      // 添加后手填 dummy（带了 --api-key 就填那个值）。工具调用要启动时加
+      // --enable-auto-tool-choice --tool-call-parser qwen3_coder。档位映射没有
+      // 逐模型证据，不写 thinkingProfile。默认模型须与 /v1/models 的 id 一致，
+      // 换成自己已下载的；实际窗口受 --max-model-len 限制
+      baseUrl: "http://localhost:8000/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [piModel("qwen/qwen3.6-27b", { id: "Qwen/Qwen3.6-27B" })],
+    },
+    category: "local",
+  },
+  {
     name: "Meta Model API",
     providerKey: "cc-switch-meta",
     websiteUrl: "https://dev.meta.ai",

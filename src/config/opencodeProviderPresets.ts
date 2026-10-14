@@ -3639,6 +3639,45 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "vLLM",
+    websiteUrl: "https://vllm.ai",
+    // 本机 vllm serve 的 OpenAI Chat 端点（docs.vllm.ai/en/latest/serving/
+    // online_serving/openai_compatible_server、opencode.ai/docs/providers，
+    // 2026-10-14 核对）；models.dev 没有 vllm，OpenCode 文档也没有 vLLM 段落，
+    // 不算内置。默认端口 8000，不带 --host 时监听全部 IPv4 网卡，建议加
+    // --host 127.0.0.1；工具调用要启动时加 --enable-auto-tool-choice
+    // --tool-call-parser qwen3_coder，思考另加 --reasoning-parser qwen3。不带
+    // --api-key 时不校验，填官方占位值 dummy（带了就填那个值，只认 Bearer）。
+    // 默认模型取 vLLM Codex 接入页的示例 Qwen/Qwen3.6-27B（原生窗口 262144、
+    // 建议输出 32768，取 Qwen 模型卡），须与 /v1/models 的 id 一致，换成自己
+    // 已下载的；本地实际窗口受 --max-model-len 限制，更小时把 context 一起调小
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "vLLM",
+      options: {
+        baseURL: "http://localhost:8000/v1",
+        apiKey: "dummy",
+        setCacheKey: true,
+      },
+      models: {
+        "Qwen/Qwen3.6-27B": {
+          name: "Qwen3.6 27B",
+          reasoning: true,
+          limit: { context: 262144, output: 32768 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "local",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "dummy",
+        editorValue: "dummy",
+      },
+    },
+  },
+  {
     name: "Oh My OpenCode",
     websiteUrl: "https://github.com/code-yeongyu/oh-my-openagent",
     settingsConfig: {

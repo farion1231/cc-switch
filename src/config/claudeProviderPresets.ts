@@ -2017,6 +2017,40 @@ export const providerPresets: ProviderPreset[] = [
     endpointCandidates: ["http://127.0.0.1:9931", "http://127.0.0.1:8080"],
   },
   {
+    name: "vLLM",
+    websiteUrl: "https://vllm.ai",
+    // 本机 vllm serve（docs.vllm.ai/en/stable/serving/integrations/claude_code，
+    // v0.31.0 源码，2026-10-14 核对）：Anthropic 兼容 /v1/messages 自 v0.11.1
+    // 起支持，与 OpenAI 接口同端口，base 不带 /v1；Claude Code 2.1.154 起在
+    // messages 里带 system 角色，v0.23.0 之前报 400（PR #44283），故要求
+    // vLLM ≥ 0.23.0；0.17.1 之后会自动剥掉 Claude Code 注入的逐请求 hash，
+    // 前缀缓存不受影响，不用设 CLAUDE_CODE_ATTRIBUTION_HEADER。默认端口 8000，
+    // 不带 --host 时监听全部 IPv4 网卡，建议加 --host 127.0.0.1。不带 --api-key
+    // 时不校验 Key，预填官方占位值 dummy；带了就填那个值（只认 Bearer，不认
+    // x-api-key，默认的 AUTH_TOKEN 正好是 Bearer）。工具调用要启动时加
+    // --enable-auto-tool-choice 与 --tool-call-parser，推荐命令（Qwen 模型卡）：
+    // vllm serve Qwen/Qwen3.6-27B --max-model-len 262144 --reasoning-parser qwen3
+    // --enable-auto-tool-choice --tool-call-parser qwen3_coder。兼容层不支持
+    // PDF document 块，cache_control 被忽略。模型由用户自己下载：默认取 vLLM
+    // Codex 接入页的示例 Qwen/Qwen3.6-27B，模型 ID 须与 /v1/models 返回的一致
+    //（没传 --served-model-name 时就是 HF 仓库名），换成自己的模型，或用
+    // 「获取模型」从 /v1/models 拉取。模型 id 非 claude-* 时 Claude Code 按 200K
+    // 默认窗口处理，而本地实际窗口受 --max-model-len 限制，更小时自行加
+    // CLAUDE_CODE_MAX_CONTEXT_TOKENS 钉成实际值
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "http://localhost:8000",
+        ANTHROPIC_AUTH_TOKEN: "dummy",
+        ANTHROPIC_MODEL: "Qwen/Qwen3.6-27B",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "Qwen/Qwen3.6-27B",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "Qwen/Qwen3.6-27B",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "Qwen/Qwen3.6-27B",
+      },
+    },
+    category: "local",
+    endpointCandidates: ["http://localhost:8000", "http://127.0.0.1:8000"],
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     // Key 在 dev.meta.ai 登录后的「API keys」标签页（dev.meta.ai/docs/

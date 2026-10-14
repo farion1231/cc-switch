@@ -219,6 +219,10 @@ describe("Codex preset pre-filled reasoning levels", () => {
       "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
       ["high"],
     ],
+    // vLLM 本机（原生 Responses 直连）：vLLM 用户没设 enable_thinking 时按
+    // effort != "none" 开关思考（responses/protocol.py，v0.31.0，2026-10-14），
+    // Qwen3.6 模板只有开关，故两态
+    ["vLLM", "Qwen/Qwen3.6-27B", ["none", "high"]],
     // Baseten（Chat 路由，reasoning_effort 透传）：docs.baseten.co/inference/
     // model-apis/reasoning（2026-10-14）。GLM-5.3 系 none 按 low 处理（假关）
     // 故不列 none；V4.1 Flash 不支持 low；Kimi K3 API 默认 max，四款都显式

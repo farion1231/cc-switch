@@ -2584,6 +2584,39 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "vLLM",
+    websiteUrl: "https://vllm.ai",
+    settingsConfig: {
+      // Hermes 里 vllm / local 都是指向 custom 的别名（hermes_cli/providers.py），
+      // 照 llamacpp-local 先例换名避开
+      name: "vllm-local",
+      // 本机 vllm serve 的 OpenAI Chat base（docs.vllm.ai/en/latest/serving/
+      // online_serving/openai_compatible_server、hermes-agent.nousresearch.com/
+      // docs/integrations/providers，2026-10-14 核对）。默认端口 8000，不带
+      // --host 时监听全部 IPv4 网卡，建议加 --host 127.0.0.1；工具调用要启动时加
+      // --enable-auto-tool-choice --tool-call-parser qwen3_coder。不带 --api-key
+      // 时不校验，Key 留空（Hermes 会发占位值 no-key-required；带了就填那个值）。
+      // Hermes 启动时拒绝小于 64000 的窗口：这里填模型原生值，--max-model-len
+      // 也要至少 64K，实际窗口更小时同步调小。默认模型取 vLLM Codex 接入页的
+      // 示例 Qwen/Qwen3.6-27B，须与 /v1/models 的 id 一致，换成自己已下载的，
+      // 或用「获取模型」从 /v1/models 拉取
+      base_url: "http://localhost:8000/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "Qwen/Qwen3.6-27B",
+          name: "Qwen3.6 27B",
+          context_length: 262144,
+        },
+      ],
+    },
+    category: "local",
+    suggestedDefaults: {
+      model: { default: "Qwen/Qwen3.6-27B", provider: "vllm-local" },
+    },
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",

@@ -1748,6 +1748,26 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     endpointCandidates: ["http://127.0.0.1:9931", "http://127.0.0.1:8080"],
   },
   {
+    name: "vLLM",
+    websiteUrl: "https://vllm.ai",
+    category: "local",
+    // 同 Claude Code 预设：本机 vllm serve 的 /v1/messages（v0.11.1 起，
+    // docs.vllm.ai/en/stable/serving/integrations/claude_code，2026-10-14 核对），
+    // 要求 vLLM ≥ 0.23.0，默认端口 8000。不带 --api-key 时不校验，但表单要求
+    // 必填，选预设后手填 dummy 即可（带了 --api-key 就填那个值，只认 Bearer）。
+    // 模型名不是 Claude，只能走路由；默认模型换成自己已下载的或用「获取模型」
+    // 拉取。Qwen3.6-27B 原生窗口 262144 小于 1M，不开 1M
+    baseUrl: "http://localhost:8000",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "Qwen/Qwen3.6-27B",
+      "Qwen/Qwen3.6-27B",
+      "Qwen/Qwen3.6-27B",
+    ),
+    endpointCandidates: ["http://localhost:8000", "http://127.0.0.1:8000"],
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",

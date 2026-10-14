@@ -4792,6 +4792,52 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "vLLM",
+    websiteUrl: "https://vllm.ai",
+    // 本机 vllm serve 的 OpenAI Chat base http://localhost:8000/v1（docs.openclaw.ai/
+    // providers/vllm、docs.vllm.ai/en/latest/serving/online_serving/
+    // openai_compatible_server，2026-10-14 核对）。OpenClaw 自带 vllm 供应商
+    //（设了 VLLM_API_KEY 时自动发现模型），供应商名请另取（下面示例用
+    // vllm-local）。默认端口 8000，不带 --host 时监听全部 IPv4 网卡，建议加
+    // --host 127.0.0.1；工具调用要启动时加 --enable-auto-tool-choice
+    // --tool-call-parser qwen3_coder，思考另加 --reasoning-parser qwen3。不带
+    // --api-key 时不校验，预填官方占位值 dummy（任意非空值都行，带了就填那个值）。
+    // 本地推理不计费，cost 记 0。默认模型取 vLLM Codex 接入页的示例
+    // Qwen/Qwen3.6-27B（窗口 / 输出取 Qwen 模型卡），须与 /v1/models 的 id 一致，
+    // 换成自己已下载的；本地实际窗口受 --max-model-len 限制，更小时把
+    // contextWindow 一起调小
+    settingsConfig: {
+      baseUrl: "http://localhost:8000/v1",
+      apiKey: "dummy",
+      api: "openai-completions",
+      models: [
+        {
+          id: "Qwen/Qwen3.6-27B",
+          name: "Qwen3.6 27B",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 262144,
+          maxTokens: 32768,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "local",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "dummy",
+        editorValue: "dummy",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "vllm-local/Qwen/Qwen3.6-27B" },
+      modelCatalog: {
+        "vllm-local/Qwen/Qwen3.6-27B": { alias: "Qwen3.6 27B" },
+      },
+    },
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",

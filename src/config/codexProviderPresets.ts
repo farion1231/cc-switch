@@ -3692,6 +3692,53 @@ requires_openai_auth = true`,
     category: "local",
   },
   {
+    name: "vLLM",
+    websiteUrl: "https://vllm.ai",
+    // 不带 --api-key 启动时不校验 Key，但表单要求必填，预填官方占位值 dummy
+    //（vLLM Codex 接入页写 VLLM_API_KEY=dummy）；带了 --api-key 就填那个值
+    auth: generateThirdPartyAuth("dummy"),
+    // 本机 vllm serve 的 /v1/responses（docs.vllm.ai/en/stable/serving/
+    // integrations/codex，v0.31.0 源码，2026-10-14 核对），base 带 /v1，官方写法
+    // 即 wire_api = "responses"；非 gpt-oss 模型的函数调用自 v0.11.1 起支持，
+    // 统一要求 vLLM ≥ 0.23.0。store 默认被静默关掉，disable_response_storage 下
+    // Codex 每轮发完整 input，不受影响。默认端口 8000，不带 --host 时监听全部
+    // IPv4 网卡，建议加 --host 127.0.0.1；工具调用要启动时加
+    // --enable-auto-tool-choice --tool-call-parser qwen3_coder（思考另加
+    // --reasoning-parser qwen3）。默认模型取 Codex 接入页的示例
+    // Qwen/Qwen3.6-27B，须与 /v1/models 的 id 一致，换成自己已下载的模型，或用
+    // 「获取模型」从 /v1/models 拉取
+    config: generateThirdPartyConfig(
+      "vllm",
+      "http://localhost:8000/v1",
+      "Qwen/Qwen3.6-27B",
+    ),
+    endpointCandidates: [
+      "http://localhost:8000/v1",
+      "http://127.0.0.1:8000/v1",
+    ],
+    // v0.31.0 的非 Harmony 路径只把 function / namespace 工具放进 prompt，custom
+    // 与 web_search 被静默丢弃，回放 custom_tool_call 报 Unsupported input item
+    // type（vllm entrypoints/openai/responses/utils.py）：NativeResponses 档案
+    // 不发 freeform apply_patch，改用 shell_command 改文件。完整支持（PR #57322）
+    // 尚未发版，发版前不要改档案
+    apiFormat: "openai_responses",
+    // vLLM 把 reasoning_effort 交给 chat template，用户没设 enable_thinking 时
+    // 自动设成 effort != "none"（responses/protocol.py，v0.31.0），Qwen3.6 模板
+    // 只有开关、没有档位差异，故两态；含 high，沿用模板默认 high。窗口取模型
+    // 原生值，本地实际窗口受 --max-model-len 限制，更小时一起调小。首行 = 默认
+    // 模型，须与 config 的 model 一致
+    modelCatalog: modelCatalog([
+      {
+        model: "Qwen/Qwen3.6-27B",
+        displayName: "Qwen3.6 27B",
+        contextWindow: 262144,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["none", "high"],
+      },
+    ]),
+    category: "local",
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",
