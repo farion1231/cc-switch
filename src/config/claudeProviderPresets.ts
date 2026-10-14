@@ -1979,6 +1979,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "local",
+    icon: "lmstudio",
     endpointCandidates: ["http://localhost:1234", "http://127.0.0.1:1234"],
   },
   {
@@ -2014,6 +2015,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "local",
+    icon: "llamacpp",
     endpointCandidates: ["http://127.0.0.1:9931", "http://127.0.0.1:8080"],
   },
   {
@@ -2048,6 +2050,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "local",
+    icon: "vllm",
     endpointCandidates: ["http://localhost:8000", "http://127.0.0.1:8000"],
   },
   {

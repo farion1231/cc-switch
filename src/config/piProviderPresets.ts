@@ -2053,6 +2053,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "local",
+    icon: "lmstudio",
   },
   {
     // Pi 运行时没有内置 vLLM provider（pi-mono models.generated.ts 搜不到），
@@ -2077,6 +2078,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       models: [piModel("qwen/qwen3.6-27b", { id: "Qwen/Qwen3.6-27B" })],
     },
     category: "local",
+    icon: "vllm",
   },
   {
     name: "Meta Model API",

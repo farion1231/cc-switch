@@ -3630,6 +3630,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "local",
+    icon: "llamacpp",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -3669,6 +3670,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "local",
+    icon: "vllm",
     templateValues: {
       apiKey: {
         label: "API Key",

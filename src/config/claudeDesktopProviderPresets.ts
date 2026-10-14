@@ -1711,6 +1711,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     name: "LM Studio",
     websiteUrl: "https://lmstudio.ai",
     category: "local",
+    icon: "lmstudio",
     // 同 Claude Code 预设：本机 /v1/messages（0.4.1 起，lmstudio.ai/docs/
     // developer/anthropic-compat，2026-10-14 核对）。默认不鉴权，但表单要求
     // 必填，选预设后手填 lmstudio 即可（开启鉴权后填 API Token）。模型名不是
@@ -1730,6 +1731,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     name: "llama.cpp",
     websiteUrl: "https://github.com/ggml-org/llama.cpp",
     category: "local",
+    icon: "llamacpp",
     // 同 Claude Code 预设：本机 llama-server 的 /v1/messages（b7187 起，
     // github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md，
     // 2026-10-14 核对），默认端口 b11521 起为 9931，旧版 / Homebrew / Docker 为
@@ -1751,6 +1753,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     name: "vLLM",
     websiteUrl: "https://vllm.ai",
     category: "local",
+    icon: "vllm",
     // 同 Claude Code 预设：本机 vllm serve 的 /v1/messages（v0.11.1 起，
     // docs.vllm.ai/en/stable/serving/integrations/claude_code，2026-10-14 核对），
     // 要求 vLLM ≥ 0.23.0，默认端口 8000。不带 --api-key 时不校验，但表单要求

@@ -2544,6 +2544,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "local",
+    icon: "lmstudio",
     suggestedDefaults: {
       model: { default: "openai/gpt-oss-20b", provider: "lmstudio-local" },
     },
@@ -2576,6 +2577,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "local",
+    icon: "llamacpp",
     suggestedDefaults: {
       model: {
         default: "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
@@ -2612,6 +2614,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "local",
+    icon: "vllm",
     suggestedDefaults: {
       model: { default: "Qwen/Qwen3.6-27B", provider: "vllm-local" },
     },

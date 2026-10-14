@@ -4726,6 +4726,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "local",
+    icon: "lmstudio",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -4772,6 +4773,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "local",
+    icon: "llamacpp",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -4823,6 +4825,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "local",
+    icon: "vllm",
     templateValues: {
       apiKey: {
         label: "API Key",
