@@ -66,7 +66,7 @@ pub fn map_proxy_error_to_status(error: &ProxyError) -> u16 {
 /// 将 ProxyError 转换为用户友好的错误消息
 pub fn get_error_message(error: &ProxyError) -> String {
     match error {
-        ProxyError::UpstreamError { status, body } => {
+        ProxyError::UpstreamError { status, body, .. } => {
             if let Some(body) = body {
                 format!("上游错误 ({status}): {body}")
             } else {
@@ -95,6 +95,7 @@ mod tests {
         let error = ProxyError::UpstreamError {
             status: 401,
             body: Some("Unauthorized".to_string()),
+            retry_after_secs: None,
         };
         assert_eq!(map_proxy_error_to_status(&error), 401);
     }
@@ -146,6 +147,7 @@ mod tests {
         let error = ProxyError::UpstreamError {
             status: 500,
             body: Some("Internal Server Error".to_string()),
+            retry_after_secs: None,
         };
         let msg = get_error_message(&error);
         assert!(msg.contains("上游错误"));

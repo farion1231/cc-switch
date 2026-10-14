@@ -1893,7 +1893,49 @@
     "testFailed": "测速失败: {{error}}",
     "empty": "暂无端点"
   },
-  "codexConfig": {
+  "codingPlanPresets": {
+    "placeholder": "套餐预设（一键填充）",
+    "kimiTier1": "Kimi 第 1 档",
+    "kimiTier2": "Kimi 第 2 档",
+    "kimiTier3": "Kimi 第 3 档",
+    "kimiTier4": "Kimi 第 4 档",
+    "kimiMax": "Kimi Max",
+    "glmMax": "GLM Coding Max",
+    "mimo": "MiMo",
+    "sources": {
+      "userSpecified": "用户指定（2026-10-07）",
+      "kimiMax": "用户指定 8（2026-10-07）；官网定价页口径 Max=4，以用户指定为准",
+      "glmConsole": "控制台实测（2026-10-07）：glm-5.3=30，glm-5.3-flash=50",
+      "mimoUnspecified": "官网无公开数字，留空不限；运行时按 429/403 冷却自适应"
+    }
+  },
+  "providerAdvanced": {
+    "loadBalance": {
+      "title": "并发上限",
+      "enable": "启用",
+      "hint": "会话粘性负载均衡生效时，新会话优先分配到未达上限的账号；0 或留空 = 不限。粘性命中的会话不受上限约束。",
+      "preset": "套餐预设",
+      "presetHint": "选中即填充，来源见各档位说明，可手改",
+      "maxConcurrent": "账号默认并发上限",
+      "maxConcurrentHint": "0 或留空 = 不限",
+      "byModel": "按模型覆盖",
+      "byModelHint": "针对指定出站模型名单独设限，优先于账号默认值（模型映射后的上游真名）",
+      "model": "模型名",
+      "limit": "上限",
+      "addOverride": "添加模型覆盖"
+    },
+    "pricingConfig": "计费配置",
+    "useCustomPricing": "使用单独配置",
+    "pricingConfigDesc": "为此供应商配置单独的计费参数，不启用时使用全局默认配置。",
+    "costMultiplier": "成本倍率",
+    "costMultiplierPlaceholder": "留空使用全局默认（1）",
+    "costMultiplierHint": "实际成本 = 基础成本 × 倍率，支持小数如 1.5",
+    "pricingModelSourceLabel": "计费模式",
+    "pricingModelSourceInherit": "继承全局默认",
+    "pricingModelSourceRequest": "请求模型",
+    "pricingModelSourceResponse": "返回模型",
+    "pricingModelSourceHint": "选择按请求模型还是返回模型进行定价匹配"
+  },  "codexConfig": {
     "authJson": "auth.json (JSON) *",
     "authJsonPlaceholder": "{\n  \"OPENAI_API_KEY\": \"sk-your-api-key-here\"\n}",
     "authJsonHint": "Codex auth.json 配置内容",
@@ -3701,6 +3743,15 @@
       "reorderSuccess": "队列顺序已更新",
       "reorderFailed": "更新顺序失败",
       "toggleFailed": "状态更新失败"
+    },
+    "loadBalance": {
+      "modeLabel": "负载均衡模式",
+      "off": "关闭（主备）",
+      "session": "会话粘性轮询",
+      "hint": "同一会话固定走同一账号，新会话在故障转移队列的账号间轮询分摊并发。需开启自动故障转移且队列中有多个账号。",
+      "live": "池 {{pool}} 账号 · 在途 {{inflight}} · 冷却中 {{cooling}}",
+      "liveLoading": "读取负载状态…",
+      "minuteUnit": "分钟"
     },
     "autoFailover": {
       "info": "当故障转移队列中配置了多个供应商时，系统会在请求失败时按优先级顺序依次尝试。当某个供应商连续失败达到阈值时，熔断器会打开并在一段时间内跳过该供应商。",

@@ -12,6 +12,18 @@ import type {
   StartupAttachFailure,
 } from "@/types/proxy";
 
+/** 负载均衡实时指示（后端 LoadBalanceStatus） */
+export interface LoadBalanceStatus {
+  loadBalanceMode: "off" | "session";
+  poolSize: number;
+  inFlight: number;
+  cooling: Array<{
+    providerId: string;
+    providerName: string;
+    remainingSecs: number;
+  }>;
+}
+
 export const proxyApi = {
   // ========== 代理服务器控制 API ==========
 
@@ -150,6 +162,11 @@ export const proxyApi = {
   // 更新指定应用的代理配置
   async updateProxyConfigForApp(config: AppProxyConfig): Promise<void> {
     return invoke("update_proxy_config_for_app", { config });
+  },
+
+  // 获取指定应用的负载均衡实时指示（池/在途/冷却）
+  async getLoadBalanceStatus(appType: string): Promise<LoadBalanceStatus> {
+    return invoke("get_load_balance_status", { appType });
   },
 
   // ========== 计费默认配置 API ==========

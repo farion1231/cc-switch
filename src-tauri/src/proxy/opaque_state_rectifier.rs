@@ -78,7 +78,7 @@ pub fn detect_opaque_state_rejection(
     if !config.enabled {
         return None;
     }
-    let ProxyError::UpstreamError { status, body } = error else {
+    let ProxyError::UpstreamError { status, body, .. } = error else {
         return None;
     };
 
@@ -380,6 +380,7 @@ mod tests {
         ProxyError::UpstreamError {
             status,
             body: Some(body.to_string()),
+            retry_after_secs: None,
         }
     }
 
@@ -439,6 +440,7 @@ mod tests {
         let function_output = ProxyError::UpstreamError {
             status: 502,
             body: Some(ENCRYPTED_FUNCTION_OUTPUT_REJECTION.to_string()),
+            retry_after_secs: None,
         };
         assert!(detect(&function_output).is_some());
     }
@@ -579,6 +581,7 @@ mod tests {
         let plain_text = ProxyError::UpstreamError {
             status: 422,
             body: Some("bad input".to_string()),
+            retry_after_secs: None,
         };
 
         assert_eq!(

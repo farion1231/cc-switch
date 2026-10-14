@@ -104,7 +104,6 @@ impl ProxyServer {
         if self.shutdown_tx.read().await.is_some() {
             return Err(ProxyError::AlreadyRunning);
         }
-
         let addr: SocketAddr =
             format!("{}:{}", self.config.listen_address, self.config.listen_port)
                 .parse()
@@ -228,6 +227,11 @@ impl ProxyServer {
             port: actual_port,
             started_at: chrono::Utc::now().to_rfc3339(),
         })
+    }
+
+    /// 内部访问共享状态（services 层状态查询用，如负载均衡指示）
+    pub(crate) fn proxy_state(&self) -> &ProxyState {
+        &self.state
     }
 
     pub async fn stop(&self) -> Result<(), ProxyError> {

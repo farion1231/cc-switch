@@ -18,6 +18,8 @@ export const proxyKeys = {
   globalConfig: ["globalProxyConfig"] as const,
   clientHost: ["proxyClientHost"] as const,
   appConfig: (appType: string) => ["appProxyConfig", appType] as const,
+  loadBalanceStatus: (appType: string) =>
+    ["loadBalanceStatus", appType] as const,
 };
 
 // ========== 代理服务器状态 Hooks ==========
@@ -338,6 +340,18 @@ export function useAppProxyConfig(appType: string) {
     queryKey: proxyKeys.appConfig(appType),
     queryFn: () => proxyApi.getProxyConfigForApp(appType),
     enabled: !!appType,
+  });
+}
+
+/**
+ * 负载均衡实时指示（池/在途/冷却），session 模式下 5s 轮询
+ */
+export function useLoadBalanceStatus(appType: string, enabled: boolean) {
+  return useQuery({
+    queryKey: proxyKeys.loadBalanceStatus(appType),
+    queryFn: () => proxyApi.getLoadBalanceStatus(appType),
+    enabled: enabled && !!appType,
+    refetchInterval: 5000,
   });
 }
 

@@ -71,6 +71,24 @@ impl Provider {
         self.provider_type() == Some("codex_oauth")
     }
 
+    /// 并发上限配置（meta.loadBalance）
+    pub fn load_balance(&self) -> Option<&ProviderLoadBalance> {
+        self.meta.as_ref().and_then(|m| m.load_balance.as_ref())
+    }
+
+    /// 两级并发上限查表：模型覆盖优先，其次账号默认，0 = 不限
+    pub fn max_concurrent_for(&self, outbound_model: &str) -> u32 {
+        self.load_balance()
+            .map(|lb| {
+                lb.max_concurrent_by_model
+                    .get(outbound_model)
+                    .copied()
+                    .or(lb.max_concurrent_requests)
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0)
+    }
+
     pub fn is_xai_oauth(&self) -> bool {
         self.provider_type() == Some("xai_oauth")
     }
@@ -605,6 +623,15 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+    /// 并发上限配置（代理会话粘性负载均衡）
+    ///
+    /// 与 costMultiplier 同层：CC Switch 内部调优项，不写入各 CLI 工具的 live 配置
+    #[serde(
+        rename = "loadBalance",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub load_balance: Option<ProviderLoadBalance>,
     /// Stack 模式下这家 Claude Code 供应商发布的模型（`mode::stack`）。`None` 是没配列表，
     /// 按模型映射（`ANTHROPIC_MODEL` 和各档）发布；空列表是用户清空了，什么都不发布。
     #[serde(
@@ -613,6 +640,18 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub stack_models: Option<Vec<ClaudeStackModel>>,
+}
+
+/// 供应商级并发上限（代理负载均衡用；两级：账号默认 + 按模型覆盖）
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderLoadBalance {
+    /// 账号默认并发上限；0 或缺省 = 不限
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_requests: Option<u32>,
+    /// 按模型覆盖（key = outbound model 名，即模型映射后的上游真名）
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub max_concurrent_by_model: HashMap<String, u32>,
 }
 
 /// Stack 模式下 Claude Code 供应商发布的一个模型。
@@ -1092,11 +1131,72 @@ pub struct OpenCodeModelLimit {
 mod tests {
     use super::{
         ClaudeModelConfig, CodexCopilotApiFormat, CodexModelConfig, GeminiModelConfig,
-        LocalProxyRequestOverrides, OpenCodeProviderConfig, Provider, ProviderManager,
-        ProviderMeta, UniversalProvider,
+        LocalProxyRequestOverrides, OpenCodeProviderConfig, Provider, ProviderLoadBalance,
+        ProviderManager, ProviderMeta, UniversalProvider,
     };
     use serde_json::json;
     use std::collections::HashMap;
+
+    #[test]
+    fn max_concurrent_two_level_lookup() {
+        let mut provider = Provider::with_id("p".to_string(), "P".to_string(), json!({}), None);
+        provider.meta = Some(ProviderMeta {
+            load_balance: Some(ProviderLoadBalance {
+                max_concurrent_requests: Some(8),
+                max_concurrent_by_model: HashMap::from([("glm-5.3-flash".to_string(), 50)]),
+            }),
+            ..Default::default()
+        });
+        assert_eq!(provider.max_concurrent_for("glm-5.3"), 8);
+        assert_eq!(provider.max_concurrent_for("glm-5.3-flash"), 50); // 模型覆盖
+        assert_eq!(provider.max_concurrent_for("other"), 8); // 回退默认
+    }
+
+    #[test]
+    fn max_concurrent_defaults_to_unlimited() {
+        let plain = Provider::with_id("p".to_string(), "P".to_string(), json!({}), None);
+        assert_eq!(plain.max_concurrent_for("any"), 0); // 0 = 不限
+
+        let mut only_model = Provider::with_id("q".to_string(), "Q".to_string(), json!({}), None);
+        only_model.meta = Some(ProviderMeta {
+            load_balance: Some(ProviderLoadBalance {
+                max_concurrent_requests: None,
+                max_concurrent_by_model: HashMap::from([("kimi-k2".to_string(), 4)]),
+            }),
+            ..Default::default()
+        });
+        assert_eq!(only_model.max_concurrent_for("kimi-k2"), 4);
+        assert_eq!(only_model.max_concurrent_for("other"), 0); // 无默认 → 不限
+    }
+
+    #[test]
+    fn provider_meta_load_balance_serde_roundtrip() {
+        let mut provider = Provider::with_id("p".to_string(), "P".to_string(), json!({}), None);
+        provider.meta = Some(ProviderMeta {
+            load_balance: Some(ProviderLoadBalance {
+                max_concurrent_requests: Some(30),
+                max_concurrent_by_model: HashMap::from([("glm-5.3-flash".to_string(), 50)]),
+            }),
+            ..Default::default()
+        });
+        let serialized = serde_json::to_value(&provider).unwrap();
+        assert_eq!(
+            serialized["meta"]["loadBalance"]["maxConcurrentRequests"],
+            json!(30)
+        );
+        assert_eq!(
+            serialized["meta"]["loadBalance"]["maxConcurrentByModel"]["glm-5.3-flash"],
+            json!(50)
+        );
+        let deserialized: Provider = serde_json::from_value(serialized).unwrap();
+        assert_eq!(
+            deserialized.load_balance(),
+            Some(&ProviderLoadBalance {
+                max_concurrent_requests: Some(30),
+                max_concurrent_by_model: HashMap::from([("glm-5.3-flash".to_string(), 50)]),
+            })
+        );
+    }
 
     #[test]
     fn proxy_injected_oauth_excludes_codex_oauth() {
