@@ -2792,6 +2792,58 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Fireworks AI",
+    websiteUrl: "https://fireworks.ai",
+    apiKeyUrl: "https://app.fireworks.ai/settings/users/api-keys",
+    settingsConfig: {
+      // Hermes 内置 provider fireworks（别名 fireworks-ai / fw，hermes-agent.
+      // nousresearch.com/docs/integrations/providers，2026-10-14 核对），与
+      // custom_providers 同名时谁优先文档没写，照 huggingface-router 先例换个
+      // 名字避开
+      name: "fireworks-inference",
+      // OpenAI Chat 端点 base 为 https://api.fireworks.ai/inference/v1
+      //（docs.fireworks.ai/nexus/harnesses 同日），Bearer 鉴权，模型写全名；
+      // 窗口取各模型页与定价页（同日），MiniMax M3 只开 512K
+      base_url: "https://api.fireworks.ai/inference/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "accounts/fireworks/models/glm-5p3",
+          name: "GLM 5.3",
+          context_length: 1048576,
+        },
+        {
+          id: "accounts/fireworks/models/kimi-k3",
+          name: "Kimi K3",
+          context_length: 1048576,
+        },
+        {
+          id: "accounts/fireworks/models/deepseek-v4p1-flash",
+          name: "DeepSeek V4.1 Flash",
+          context_length: 1000000,
+        },
+        {
+          id: "accounts/fireworks/models/glm-5p3-flash",
+          name: "GLM 5.3 Flash",
+          context_length: 1048576,
+        },
+        {
+          id: "accounts/fireworks/models/minimax-m3",
+          name: "MiniMax M3",
+          context_length: 512000,
+        },
+      ],
+    },
+    category: "cloud_provider",
+    suggestedDefaults: {
+      model: {
+        default: "accounts/fireworks/models/glm-5p3",
+        provider: "fireworks-inference",
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

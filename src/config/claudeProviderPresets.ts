@@ -2200,6 +2200,39 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#0078D4",
   },
   {
+    name: "Fireworks AI",
+    websiteUrl: "https://fireworks.ai",
+    apiKeyUrl: "https://app.fireworks.ai/settings/users/api-keys",
+    // 官方 Anthropic 兼容文档（docs.fireworks.ai/tools-sdks/
+    // anthropic-compatibility，2026-10-14 核对）：base 为
+    // https://api.fireworks.ai/inference、不带 /v1（实测 /inference/v1/messages
+    // 未知模型 404 "Model not found"、/inference/messages 404 "Path not found"），
+    // Bearer 鉴权；文档说 Key 放 ANTHROPIC_API_KEY 可能触发 "Not logged in"，
+    // 故用默认的 AUTH_TOKEN。模型 ID 写全名 accounts/fireworks/models/<id>：
+    // 官方 Claude Code 示例即全名，短 ID 并非每款都能解析（glm-5p2 短 ID 404、
+    // 全名 401）。不用会漂移的 glm-latest / kimi-latest 别名，按官方 Open Models
+    // 页（docs.fireworks.ai/nexus/open-models）写它们当前指向的固定 ID；分档照
+    // 官方推荐模型页（docs.fireworks.ai/guides/recommended-models）：Kimi K3 顶
+    // Opus、DeepSeek V4.1 Flash 顶 Haiku、GLM 5.3 做编程主力。GLM 5.3 只收文本，
+    // 默认档贴图会失败。兼容层不支持 cache_control 与服务端工具，
+    // count_tokens 实测 404，max_tokens 必填。仅美国节点 us.api.fireworks.ai
+    // 标准档贵约 50%（docs.fireworks.ai/serverless/pricing），不放进候选。
+    // /inference/v1/models 无 Key 401、路径存在，默认探测即可，不写 modelsUrl
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.fireworks.ai/inference",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "accounts/fireworks/models/glm-5p3",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL:
+          "accounts/fireworks/models/deepseek-v4p1-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "accounts/fireworks/models/glm-5p3",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "accounts/fireworks/models/kimi-k3",
+      },
+    },
+    category: "cloud_provider",
+    endpointCandidates: ["https://api.fireworks.ai/inference"],
+  },
+  {
     name: "GitHub Copilot",
     websiteUrl: "https://github.com/features/copilot",
     settingsConfig: {

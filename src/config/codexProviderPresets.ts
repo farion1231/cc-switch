@@ -4004,6 +4004,69 @@ requires_openai_auth = true`,
     icon: "huggingface",
   },
   {
+    name: "Fireworks AI",
+    websiteUrl: "https://fireworks.ai",
+    apiKeyUrl: "https://app.fireworks.ai/settings/users/api-keys",
+    auth: generateThirdPartyAuth(""),
+    // 官方各客户端接入文档的 Codex 段（docs.fireworks.ai/nexus/harnesses，
+    // 2026-10-14 核对）：base_url = https://api.fireworks.ai/inference/v1、
+    // wire_api = "responses"，Bearer 鉴权；Responses 文档
+    //（docs.fireworks.ai/guides/response-api 同日）建议模型写全名，否则 404
+    config: generateThirdPartyConfig(
+      "fireworks",
+      "https://api.fireworks.ai/inference/v1",
+      "accounts/fireworks/models/glm-5p3",
+    ),
+    endpointCandidates: ["https://api.fireworks.ai/inference/v1"],
+    // 模型 ID 对不上官方条目，落到中性模板：不发 freeform apply_patch、改用
+    // shell_command 改文件（Responses 工具类型只列 function / mcp / sse /
+    // python）。Responses 文档写明会把 Codex 的 namespace 工具展平成
+    // <namespace>__<tool>，MCP 工具可用
+    apiFormat: "openai_responses",
+    // 官方原话 "Do not use MiniMax models in Codex"（harnesses 同上），不收
+    // MiniMax M3。档位取 Chat API 参考的逐模型说明（docs.fireworks.ai/
+    // api-reference/post-chatcompletions 同日）：Kimi K3 为 low/high/max、
+    // none 关思考；DeepSeek V4.1 Flash 为 low/max 直通、medium/high/xhigh 按
+    // high、none 关思考。GLM 5.3 / 5.3 Flash 参考里没写（只写到 GLM 5.2），
+    // 取 Pi 内置目录（@earendil-works/pi-ai@1.2.0 providers/data/fireworks.json）
+    // 与 z.ai 官方的 low/high/max、不能关。Responses 的 reasoning.effort 是否同
+    // 映射、Kimi K3 的 none 是否真关（Pi 目录标 off 不支持）未经真 Key 实测。
+    // 每档都含 high，与 config 的 model_reasoning_effort = "high" 一致，无需
+    // defaultReasoningLevel。窗口与输入模态取各模型页与定价页（同日）。
+    // 首行 = 默认模型，须与 config 的 model 一致
+    modelCatalog: modelCatalog([
+      {
+        model: "accounts/fireworks/models/glm-5p3",
+        displayName: "GLM 5.3",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+      {
+        model: "accounts/fireworks/models/kimi-k3",
+        displayName: "Kimi K3",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["none", "low", "high", "max"],
+      },
+      {
+        model: "accounts/fireworks/models/deepseek-v4p1-flash",
+        displayName: "DeepSeek V4.1 Flash",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["none", "low", "high", "max"],
+      },
+      {
+        model: "accounts/fireworks/models/glm-5p3-flash",
+        displayName: "GLM 5.3 Flash",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+    ]),
+    category: "cloud_provider",
+  },
+  {
     name: "OpenCode Go",
     family: "opencode",
     planKey: "coding",

@@ -1909,6 +1909,28 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#0078D4",
   },
   {
+    name: "Fireworks AI",
+    websiteUrl: "https://fireworks.ai",
+    apiKeyUrl: "https://app.fireworks.ai/settings/users/api-keys",
+    category: "cloud_provider",
+    // 同 Claude Code 预设：Anthropic 端点 base 不带 /v1，Bearer 鉴权，模型写全名
+    //（docs.fireworks.ai/tools-sdks/anthropic-compatibility，2026-10-14 核对）；
+    // 模型名非 Claude，只能走路由。官方给 Desktop 的只有本机网关 FireConnect
+    //（docs.fireworks.ai/nexus/harnesses 同日），路由模式即替代它。三个路由
+    // 模型窗口均 ≥ 1M（各模型页与 docs.fireworks.ai/serverless/pricing 同日），
+    // 标 1M
+    baseUrl: "https://api.fireworks.ai/inference",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "accounts/fireworks/models/glm-5p3",
+      "accounts/fireworks/models/kimi-k3",
+      "accounts/fireworks/models/deepseek-v4p1-flash",
+      true,
+    ),
+    endpointCandidates: ["https://api.fireworks.ai/inference"],
+  },
+  {
     name: "Nvidia",
     websiteUrl: "https://build.nvidia.com",
     apiKeyUrl: "https://build.nvidia.com/settings/api-keys",

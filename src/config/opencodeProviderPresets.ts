@@ -3859,6 +3859,70 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "Fireworks AI",
+    websiteUrl: "https://fireworks.ai",
+    apiKeyUrl: "https://app.fireworks.ai/settings/users/api-keys",
+    // OpenAI Chat 端点 base 为 https://api.fireworks.ai/inference/v1
+    //（docs.fireworks.ai/nexus/harnesses，2026-10-14 核对），Bearer 鉴权，模型
+    // 写全名。Chat 请求体有 prompt_cache_key（用途写明是缓存的会话亲和，
+    // docs.fireworks.ai/api-reference/post-chatcompletions 同日），Fireworks
+    // 缓存只在单副本内有效，故开 setCacheKey；请求体 additionalProperties:false，
+    // 别加 schema 外的 options。窗口与输入模态取各模型页与定价页（同日），
+    // MiniMax M3 只开 512K、不收图片；最大输出平台写"可到整个上下文"，保守按
+    // 131072 写，DeepSeek V4.1 Flash 取 384000。OpenCode 自带 fireworks-ai
+    // 供应商（models.dev），这里是显式的自定义节点；供应商 ID 别填 fireworks-ai
+    // 以免叠到内置定义上
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Fireworks AI",
+      options: {
+        baseURL: "https://api.fireworks.ai/inference/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "accounts/fireworks/models/glm-5p3": {
+          name: "GLM 5.3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "accounts/fireworks/models/kimi-k3": {
+          name: "Kimi K3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "accounts/fireworks/models/deepseek-v4p1-flash": {
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 384000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "accounts/fireworks/models/glm-5p3-flash": {
+          name: "GLM 5.3 Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "accounts/fireworks/models/minimax-m3": {
+          name: "MiniMax M3",
+          reasoning: true,
+          limit: { context: 512000, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+      },
+    },
+    category: "cloud_provider",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "fw_...",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

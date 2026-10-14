@@ -282,6 +282,29 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["Hugging Face", "zai-org/GLM-5.3-Flash:baseten", ["high"]],
     ["Hugging Face", "moonshotai/Kimi-K3:baseten", ["high"]],
     ["Hugging Face", "deepseek-ai/DeepSeek-V4-Pro-0813:baseten", ["high"]],
+    // Fireworks AI（原生 Responses 直连）：Kimi K3 / DeepSeek V4.1 Flash 取 Chat
+    // API 参考逐模型说明（docs.fireworks.ai/api-reference/post-chatcompletions，
+    // 2026-10-14），GLM 5.3 / 5.3 Flash 参考未写，取 Pi 内置目录与 z.ai 官方
+    [
+      "Fireworks AI",
+      "accounts/fireworks/models/glm-5p3",
+      ["low", "high", "max"],
+    ],
+    [
+      "Fireworks AI",
+      "accounts/fireworks/models/kimi-k3",
+      ["none", "low", "high", "max"],
+    ],
+    [
+      "Fireworks AI",
+      "accounts/fireworks/models/deepseek-v4p1-flash",
+      ["none", "low", "high", "max"],
+    ],
+    [
+      "Fireworks AI",
+      "accounts/fireworks/models/glm-5p3-flash",
+      ["low", "high", "max"],
+    ],
   ];
 
   it.each(EXPECTED)(

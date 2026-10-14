@@ -5303,6 +5303,86 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "Fireworks AI",
+    websiteUrl: "https://fireworks.ai",
+    apiKeyUrl: "https://app.fireworks.ai/settings/users/api-keys",
+    // OpenClaw 官方 Fireworks 文档（docs.openclaw.ai/providers/fireworks，
+    // 2026-10-14 核对）：base 为 https://api.fireworks.ai/inference/v1、
+    // openai-completions，Bearer 鉴权，模型引用写 fireworks/accounts/fireworks/
+    // models/<id>。官方 Fireworks 插件（须另装）占用 fireworks / fireworks-ai
+    // 两个 ID，装了插件的话供应商名请另取。引用前缀不能省：rebase 在第一个 /
+    // 处切开，省了会把 accounts 当成供应商键。窗口、输入模态取各模型页，cost
+    //（每百万 token，标准档）取 docs.fireworks.ai/serverless/pricing 同日；
+    // 定价页没列缓存写入价，写 0。最大输出平台写"可到整个上下文"，保守按 131072
+    // 写，DeepSeek V4.1 Flash 取 384000；MiniMax M3 只开 512K、不收图片
+    settingsConfig: {
+      baseUrl: "https://api.fireworks.ai/inference/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "accounts/fireworks/models/glm-5p3",
+          name: "GLM 5.3",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 },
+        },
+        {
+          id: "accounts/fireworks/models/kimi-k3",
+          name: "Kimi K3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
+        },
+        {
+          id: "accounts/fireworks/models/deepseek-v4p1-flash",
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 384000,
+          cost: { input: 0.3, output: 1.2, cacheRead: 0.006, cacheWrite: 0 },
+        },
+        {
+          id: "accounts/fireworks/models/glm-5p3-flash",
+          name: "GLM 5.3 Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 },
+        },
+        {
+          id: "accounts/fireworks/models/minimax-m3",
+          name: "MiniMax M3",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 512000,
+          maxTokens: 131072,
+          cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "cloud_provider",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "fw_...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "fireworks/accounts/fireworks/models/glm-5p3" },
+      modelCatalog: {
+        "fireworks/accounts/fireworks/models/glm-5p3": { alias: "GLM 5.3" },
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",
