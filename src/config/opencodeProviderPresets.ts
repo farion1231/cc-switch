@@ -708,7 +708,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
-    apiKeyUrl: "https://grooroute.xyz/sign-up?aff=qqm9",
+    apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "GrooRoute Pro",

@@ -435,7 +435,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
-    apiKeyUrl: "https://grooroute.xyz/sign-up?aff=qqm9",
+    apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
     settingsConfig: {
       name: "grooroute_pro",
       base_url: "https://grooroute.pro",

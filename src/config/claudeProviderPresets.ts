@@ -322,7 +322,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
-    apiKeyUrl: "https://grooroute.xyz/sign-up?aff=qqm9",
+    apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://grooroute.pro",
