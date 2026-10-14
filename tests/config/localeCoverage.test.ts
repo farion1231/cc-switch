@@ -48,7 +48,6 @@ const piProductReferences = new Map(
   [...reference].filter(([, value]) => /\bPi\b/.test(value)),
 );
 const locales = [
-  ["tr", tr],
   ["zh", zh],
   ["ja", ja],
   ["zh-TW", zhTW],
@@ -95,27 +94,29 @@ describe("locale coverage", () => {
   );
 });
 
+// Turkish is a community translation: keys it does not have yet fall back to
+// English, so new English strings must never fail CI here. These checks only
+// look at strings that already exist in tr.json.
 describe("Turkish locale", () => {
-  it("covers the complete English catalog without stale keys or empty values", () => {
-    const translations = flattenStrings(tr);
-    expect([...translations.keys()].sort()).toEqual(
-      [...reference.keys()].sort(),
-    );
+  it("keeps every existing translation non-empty", () => {
     expect(
-      [...translations].filter(
+      [...flattenStrings(tr)].filter(
         ([key, value]) => reference.get(key)?.trim() && !value.trim(),
       ),
     ).toEqual([]);
   });
-  it("preserves interpolation variables across the full catalog", () => {
-    const translations = flattenStrings(tr);
+
+  it("preserves interpolation variables in existing translations", () => {
     expect(
-      [...reference]
-        .filter(
-          ([key, value]) =>
+      [...flattenStrings(tr)]
+        .filter(([key, value]) => {
+          const expected = reference.get(key);
+          return (
+            expected !== undefined &&
             interpolationVariables(value).join("\0") !==
-            interpolationVariables(translations.get(key) ?? "").join("\0"),
-        )
+              interpolationVariables(expected).join("\0")
+          );
+        })
         .map(([key]) => key),
     ).toEqual([]);
   });
@@ -127,6 +128,15 @@ describe("Turkish locale", () => {
       "opencode.modelExtraFieldKeyPlaceholder",
       "opencode.modelOptionKeyPlaceholder",
       "opencode.modelOptionValuePlaceholder",
+      "opencode.providerKeyPlaceholder",
+      "openclaw.providerKeyPlaceholder",
+      "hermes.form.providerKeyPlaceholder",
+      "grokBuild.rawConfig",
+      "codexConfig.configToml",
+      "providerPreset.plan.aksk",
+      "mcp.envPlaceholder",
+      "mcp.wizard.envPlaceholder",
+      "skills.searchSource.skillssh",
     ];
 
     for (const key of exactLiterals) {
@@ -148,6 +158,9 @@ describe("Turkish locale", () => {
     );
     expect(translations.get("hermes.webui.launchConfirmMessage")).toContain(
       "pip install hermes-agent[web]",
+    );
+    expect(translations.get("prompts.contentPlaceholderHermes")).toMatch(
+      /^# SOUL\.md\n/,
     );
   });
 });

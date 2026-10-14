@@ -809,6 +809,7 @@
     "languageOptionTraditionalChinese": "繁體中文",
     "languageOptionEnglish": "English",
     "languageOptionJapanese": "日本語",
+    "languageOptionTurkish": "Türkçe (topluluk çevirisi)",
     "windowBehavior": "Pencere Davranışı",
     "windowBehaviorHint": "Pencere simge durumuna küçültme ve Claude eklenti entegrasyon ilkelerini yapılandırın.",
     "launchOnStartup": "Başlangıçta Başlat",
@@ -1030,8 +1031,7 @@
     },
     "data": {
       "location": "Konum"
-    },
-    "languageOptionTurkish": "Türkçe"
+    }
   },
   "apps": {
     "claude": "Claude",
@@ -1209,7 +1209,7 @@
     "contextWindow": "Bağlam penceresi",
     "contextWindowInvalid": "Bağlam penceresi pozitif bir tam sayı olmalıdır",
     "profile": "Müşteri modeli profili",
-    "rawConfig": "yapılandırma.toml",
+    "rawConfig": "config.toml",
     "invalidToml": "Geçersiz config.toml: {{error}}",
     "defaultModelPlaceholder": "örneğin grok-4.5",
     "defaultModelHint": "Grok Build modeli varsayılan olarak talep eder; istediğiniz zaman değiştirin.",
@@ -1801,7 +1801,7 @@
     "logoutAll": "Tüm hesaplardan çıkış yapın",
     "retry": "Yeniden dene",
     "copyCode": "Kodu kopyala",
-    "fastMode": "HIZLI mod",
+    "fastMode": "FAST modu",
     "fastModeDescription": "Daha düşük gecikme süresi için service_tier=\"priority\" gönderin. Varsayılan olarak kapalı — etkinleştirilmesi ChatGPT kotanızı daha yüksek oranda tüketir."
   },
   "xaiOauth": {
@@ -1878,7 +1878,7 @@
     "authJsonPlaceholder": "{\n  \"OPENAI_API_KEY\": \"sk-your-api-key-here\"\n}",
     "authJsonHint": "Codex auth.json yapılandırma içeriği",
     "authJsonStorageHint": "Yönlendirme modunda bu, canlı auth.json'u değil, depolanan kimlik doğrulamasını gösterir.",
-    "configToml": "yapılandırma.toml (TOML)",
+    "configToml": "config.toml (TOML)",
     "configTomlHint": "Codex config.toml yapılandırma içeriği",
     "configTomlStorageHint": "Yönlendirme modunda bu, canlı config.toml'yi değil, depolanan yapılandırmayı gösterir.",
     "proxyTakeoverStorageNotice": "💡 Bu uygulama Yönlendirme modundadır. Saklanan sağlayıcı yapılandırmasını düzenliyorsunuz; canlı yapılandırma, yönlendirme hizmeti tarafından geçici olarak yönetilir.",
@@ -1983,7 +1983,7 @@
     "modelsRequired": "Lütfen en az bir model ekleyin",
     "toggleModelDetails": "Model ayrıntılarını değiştir",
     "providerKey": "Sağlayıcı Anahtarı",
-    "providerKeyPlaceholder": "sağlayıcım",
+    "providerKeyPlaceholder": "my-provider",
     "providerKeyHint": "Yapılandırma dosyasındaki benzersiz tanımlayıcı. Yalnızca küçük harf, rakam ve kısa çizgi kullanın.",
     "providerKeyLockedHint": "Bu sağlayıcı zaten uygulama yapılandırmasına eklendiğinden anahtarı artık değiştirilemez.",
     "providerKeyRequired": "Sağlayıcı anahtarı gerekli",
@@ -2086,7 +2086,7 @@
       "enterpriseLite": "Kurumsal Lite",
       "enterprisePro": "Kurumsal Pro",
       "stepPlan": "Adım Planı",
-      "aksk": "AKŞK",
+      "aksk": "AKSK",
       "apiKey": "API Anahtarı"
     },
     "region": {
@@ -2269,7 +2269,7 @@
     "importFromModelsDev": "models.dev'den içe aktar",
     "modelsDevHint": "Manuel girişi atlayın; models.dev'den model fiyatlandırmasını seçin",
     "modelsDevPickerTitle": "Models.dev'den İçe Aktarma Fiyatlandırması",
-    "modelsDevPickerDesc": "İçe aktarılacak bir model seçin (milyon token başına ABD doları cinsinden fiyatlar). İthalat başına bir model.",
+    "modelsDevPickerDesc": "İçe aktarılacak bir model seçin (milyon token başına ABD doları cinsinden fiyatlar). Her içe aktarmada bir model.",
     "modelsDevSearchPlaceholder": "Modelleri veya sağlayıcıları arayın (tam arama)...",
     "modelsDevAllProviders": "Tüm sağlayıcılar",
     "modelsDevLoadError": "models.dev verileri yüklenemedi",
@@ -2666,7 +2666,7 @@
       "args": "Argümanlar",
       "argsPlaceholder": "arg1\narg2",
       "env": "Ortam Değişkenleri",
-      "envPlaceholder": "ANAHTAR1=değer1\nTUŞ2=değer2",
+      "envPlaceholder": "KEY1=value1\nKEY2=value2",
       "url": "URL'si",
       "urlPlaceholder": "https://api.example.com/mcp",
       "urlRequired": "Lütfen URL'yi girin",
@@ -2682,7 +2682,7 @@
     "args": "Argümanlar",
     "argsPlaceholder": "örneğin, mcp-server-fetch --help",
     "env": "Ortam (her satıra bir tane, ANAHTAR=DEĞER)",
-    "envPlaceholder": "FOO=çubuk\nMERHABA=dünya",
+    "envPlaceholder": "FOO=bar\nHELLO=world",
     "reset": "Sıfırla",
     "msg": {
       "saved": "Kaydedildi",
@@ -2770,7 +2770,7 @@
     "helpTitle": "İstemler nasıl etkili olur?",
     "helpText": "Her uygulamanın aynı anda etkinleştirilmiş bir istemi vardır ve bu, hedef dosya haline gelir. Başka bir yerde yapılan düzenlemeler, bu sayfayı bir sonraki açışınızda etkinleştirilmiş istemin içine alınır; Henüz burada olmayan dosya içeriği, başka bir bilgi istemi etkinleştirilmeden önce \"Orijinal bilgi istemi\" olarak kaydedilir.",
     "helpHermesTitle": "SOUL.md nasıl etkili olur?",
-    "helpHermesText": "SOUL.md, Hermes'nin kişiliğidir; aynı anda bir tanesi etkinleştirilir. Başka bir yerde yapılan düzenlemeler, bu sayfayı bir sonraki açışınızda etkin olana aktarılır; Henüz burada olmayan dosya içeriği, başka bir bilgi istemi etkinleştirilmeden önce \"Orijinal bilgi istemi\" olarak kaydedilir.",
+    "helpHermesText": "SOUL.md, Hermes'in kişiliğidir; aynı anda bir tanesi etkinleştirilir. Başka bir yerde yapılan düzenlemeler, bu sayfayı bir sonraki açışınızda etkin olana aktarılır; Henüz burada olmayan dosya içeriği, başka bir bilgi istemi etkinleştirilmeden önce \"Orijinal bilgi istemi\" olarak kaydedilir.",
     "helpPiTitle": "Pi istemleri nasıl etkili olur?",
     "helpPiText": "Aynı anda bir kitaplık istemi etkinleştirilir ve AGENTS.md olur. Sistem bilgi istemi dosyaları, mevcut oldukları anda etkili olur ve şablonlar Pi'de /command yazılarak çalıştırılır; her ikisinin de etkinleştirilmesi gerekmez.",
     "moreActions": "Daha fazla hızlı işlem",
@@ -2818,7 +2818,7 @@
     "namePlaceholderHermes": "örneğin Dost canlısı ortak",
     "nameRequired": "Bir ad girin, ör. Takım kodlama kuralları",
     "nameRequiredHermes": "Bir ad girin, ör. Dost canlısı ortak",
-    "contentPlaceholderHermes": "#RUH.md\n\nHermes'nin Markdown'daki kişiliği: ses tonu, konuşma şekli, nelerden kaçınmalı…",
+    "contentPlaceholderHermes": "# SOUL.md\n\nHermes'in Markdown'daki kişiliği: ses tonu, konuşma şekli, nelerden kaçınmalı…",
     "charCount": "{{chars}} karakterleri · {{size}}",
     "mcodeTooLarge": "MiniMax Code istemleri en fazla 32 KB (UTF-8 bayt) olabilir. Bu {{size}}; kaydetmeden önce kırpın",
     "addSubmit": "Ekle",
@@ -2940,7 +2940,7 @@
   "openclaw": {
     "backupCreated": "Yedekleme oluşturuldu: {{path}}",
     "providerKey": "Sağlayıcı Anahtarı",
-    "providerKeyPlaceholder": "sağlayıcım",
+    "providerKeyPlaceholder": "my-provider",
     "providerKeyHint": "Yapılandırma dosyasındaki benzersiz tanımlayıcı. Yalnızca küçük harf, rakam ve kısa çizgi kullanın.",
     "providerKeyLockedHint": "Bu sağlayıcı zaten uygulama yapılandırmasına eklendiğinden anahtarı artık değiştirilemez.",
     "providerKeyRequired": "Sağlayıcı anahtarı gerekli",
@@ -3045,7 +3045,7 @@
       "baseUrl": "API Uç Nokta",
       "baseUrlHint": "Bu sağlayıcının API uç nokta URL'si.",
       "providerKey": "Sağlayıcı Anahtarı",
-      "providerKeyPlaceholder": "sağlayıcım",
+      "providerKeyPlaceholder": "my-provider",
       "providerKeyHint": "Yalnızca küçük harfler, sayılar ve kısa çizgiler. config.yaml dosyasında sağlayıcı adı olarak kullanılır.",
       "providerKeyLockedHint": "Bu sağlayıcı Hermes yapılandırmasındadır; anahtar kilitli.",
       "providerKeyRequired": "Sağlayıcı anahtarı gerekli",
@@ -3095,7 +3095,7 @@
       "agentName": "Ajan Belleği",
       "userName": "Kullanıcı Profili",
       "agentDesc": "Notlar Hermes kendisi için saklar; sistem istemine giriyorlar",
-      "userDesc": "Hermes'nin sizin hakkınızda bildikleri; Hermes'nin sistem istemine giriyor",
+      "userDesc": "Hermes'in sizin hakkınızda bildikleri; Hermes'in sistem istemine giriyor",
       "separatorRule": "Girişleri yalnızca § içeren bir satırla ayırın",
       "helpTitle": "{{name}} nedir?",
       "helpBody": "{{desc}}. {{rule}}.",
@@ -3249,7 +3249,7 @@
     "noInstalledSearchResults": "Aramanızla eşleşen yüklü beceri yok",
     "searchSource": {
       "repos": "Repolar",
-      "skillssh": "beceriler.sh"
+      "skillssh": "skills.sh"
     },
     "skillssh": {
       "searchPlaceholder": "Skills.sh'de arama yapın (en az 2 karakter)...",
@@ -4626,7 +4626,7 @@
       "skillsShPlaceholder": "En az 2 karakter, Enter'a basın",
       "skillsShAria": "Skills.sh'de arama yapın",
       "skillsShHint": "Skills.sh'yi aramak için yukarıya en az 2 karakter yazın ve Enter tuşuna basın.",
-      "skillsShNone": "Skill.sh'de “{{query}}” için hiçbir şey bulunamadı",
+      "skillsShNone": "skills.sh'de “{{query}}” için hiçbir şey bulunamadı",
       "sourceAria": "Kaynağı keşfedin",
       "sourceRepos": "Depolar · {{count}}",
       "reload": "Kod depolarını yeniden yükle",
