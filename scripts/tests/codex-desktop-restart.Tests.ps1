@@ -18,6 +18,11 @@ function Get-Process {
         if ($script:launchTimeout) { return }
         return [pscustomobject]@{ Id = 42; Path = $script:exe; MainWindowHandle = 100 }
     }
+    if ($script:noDesktop) {
+        # A separately installed CLI cannot make the desktop appear running.
+        [pscustomobject]@{ Id = 99; Path = 'C:\tools\codex.exe'; MainWindowHandle = 200 }
+        return
+    }
     if ($script:killed -and -not $script:stopTimeout) { return }
     if ($script:closed -and -not $script:backgroundResident) { return }
     $desktop = [pscustomobject]@{ Id = 10; Path = $script:exe; MainWindowHandle = $(if ($script:noWindow) { 0 } else { 100 }) }
@@ -44,6 +49,7 @@ function Start-Sleep { param($Milliseconds) }
 function Reset-Fixture {
     $script:missing = $false; $script:closed = $false; $script:launched = $false
     $script:noWindow = $false; $script:backgroundResident = $false; $script:launchTimeout = $false
+    $script:noDesktop = $false
     $script:killed = $false; $script:stopDenied = $false; $script:stopTimeout = $false; $script:closeRejected = $false; $script:identityChanged = $false
 }
 function Expect-Failure([string]$Expected) {
@@ -52,6 +58,21 @@ function Expect-Failure([string]$Expected) {
         if ($_.Exception.Message -notlike ('*' + $Expected + '*')) { throw }
     }
 }
+Reset-Fixture
+$status = (. $restartScript -Mode Status | ConvertFrom-Json)
+if (-not $status.supported -or -not $status.installed -or -not $status.running -or $script:closed -or $script:launched) { throw 'Running desktop status mutated process state' }
+Reset-Fixture; $script:noWindow = $true
+$status = (. $restartScript -Mode Status | ConvertFrom-Json)
+if (-not $status.running) { throw 'Background desktop was reported as stopped' }
+Reset-Fixture; $script:noDesktop = $true
+$status = (. $restartScript -Mode Status | ConvertFrom-Json)
+if (-not $status.installed -or $status.running) { throw 'CLI was reported as a running desktop' }
+Reset-Fixture; $script:missing = $true
+$status = (. $restartScript -Mode Status | ConvertFrom-Json)
+if (-not $status.supported -or $status.installed -or $status.running) { throw 'Missing desktop status was incorrect' }
+Reset-Fixture; $script:noDesktop = $true
+$result = (. $restartScript -Mode Restart | ConvertFrom-Json)
+if ($result.action -ne 'started' -or $result.desktop_pid -ne 42 -or $script:closed -or $script:killed) { throw 'Opening a stopped desktop attempted to stop a process' }
 Reset-Fixture
 $plan = (. $restartScript -Mode Plan | ConvertFrom-Json)
 if (@($plan.pids).Count -ne 1 -or $plan.pids[0] -ne 10 -or $script:closed -or $script:launched) { throw 'Plan selected a CLI or changed process state' }

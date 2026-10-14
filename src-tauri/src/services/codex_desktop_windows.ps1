@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('Plan', 'Restart')][string]$Mode = 'Restart',
+    [ValidateSet('Plan', 'Status', 'Restart')][string]$Mode = 'Restart',
     [ValidateRange(0, 20)][int]$ExitTimeoutSeconds = 3,
     [ValidateRange(0, 10)][int]$StopTimeoutSeconds = 10,
     [ValidateRange(0, 25)][int]$StartTimeoutSeconds = 25
@@ -17,15 +17,31 @@ trap {
 # Resolve the installed package rather than matching a process name. Newer Codex
 # releases use ChatGPT.exe; ordinary Codex CLI processes must remain untouched.
 $package = Get-AppxPackage -Name OpenAI.Codex | Sort-Object Version -Descending | Select-Object -First 1
-if (-not $package) { throw 'Codex desktop (OpenAI.Codex) is not installed for this Windows user.' }
+if (-not $package) {
+    if ($Mode -eq 'Status') {
+        @{ supported = $true; installed = $false; running = $false } | ConvertTo-Json -Compress
+        return
+    }
+    throw 'Codex desktop (OpenAI.Codex) is not installed for this Windows user.'
+}
 $manifest = Get-AppxPackageManifest -Package $package.PackageFullName
 $application = @($manifest.Package.Applications.Application) | Where-Object {
     [IO.Path]::GetFileName([string]$_.Executable) -in @('Codex.exe', 'ChatGPT.exe')
 } | Select-Object -First 1
-if (-not $application) { throw 'Cannot identify the Codex desktop executable in the installed package.' }
+if (-not $application) {
+    if ($Mode -eq 'Status') {
+        @{ supported = $true; installed = $false; running = $false } | ConvertTo-Json -Compress
+        return
+    }
+    throw 'Cannot identify the Codex desktop executable in the installed package.'
+}
 $executable = [IO.Path]::GetFullPath((Join-Path $package.InstallLocation ([string]$application.Executable)))
 $packageRoot = [IO.Path]::GetFullPath($package.InstallLocation).TrimEnd('\') + '\'
 if (-not $executable.StartsWith($packageRoot, [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+    if ($Mode -eq 'Status') {
+        @{ supported = $true; installed = $false; running = $false } | ConvertTo-Json -Compress
+        return
+    }
     throw 'The Codex desktop executable is outside its installed package or unavailable.'
 }
 $appId = $package.PackageFamilyName + '!' + [string]$application.Id
@@ -35,6 +51,10 @@ function Get-DesktopProcesses {
     })
 }
 $before = @(Get-DesktopProcesses)
+if ($Mode -eq 'Status') {
+    @{ supported = $true; installed = $true; running = ($before.Count -gt 0) } | ConvertTo-Json -Compress
+    return
+}
 if ($Mode -eq 'Plan') {
     @{ app_id = $appId; executable = $executable; pids = @($before | ForEach-Object Id); windows = @($before | Where-Object MainWindowHandle -NE 0 | ForEach-Object Id) } | ConvertTo-Json -Compress
     return

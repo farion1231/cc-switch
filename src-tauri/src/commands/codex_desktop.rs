@@ -1,9 +1,17 @@
-use crate::services::codex_desktop::{self, DesktopRestartOutcome};
+use crate::services::codex_desktop::{self, DesktopRestartOutcome, DesktopStatus};
 use crate::store::AppState;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::State;
 
 static RESTART_PENDING: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command]
+pub async fn get_codex_desktop_status() -> Result<DesktopStatus, String> {
+    tauri::async_runtime::spawn_blocking(codex_desktop::status)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 struct RestartGuard;
 impl Drop for RestartGuard {
     fn drop(&mut self) {

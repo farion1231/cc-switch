@@ -254,14 +254,24 @@ export function useProviderActions(
 
         if (activeApp === "codex" && options?.restartDesktop) {
           try {
-            await restartCodexDesktop();
-            toast.success(t("codexDesktop.switchedAndRestarted"));
+            const result = await restartCodexDesktop();
+            toast.success(
+              t(
+                result.action === "started"
+                  ? "codexDesktop.switchedAndOpened"
+                  : "codexDesktop.switchedAndRestarted",
+              ),
+            );
           } catch (error) {
             toast.error(
               t("codexDesktop.switchRestartFailed", {
                 error: error instanceof Error ? error.message : String(error),
               }),
             );
+          } finally {
+            void queryClient.invalidateQueries({
+              queryKey: ["codex-desktop-status"],
+            });
           }
           return;
         }
@@ -304,7 +314,14 @@ export function useProviderActions(
         // 错误提示由 mutation 处理
       }
     },
-    [switchProviderMutation, syncClaudePlugin, activeApp, isProxyTakeover, t],
+    [
+      switchProviderMutation,
+      syncClaudePlugin,
+      activeApp,
+      isProxyTakeover,
+      queryClient,
+      t,
+    ],
   );
 
   // 删除供应商

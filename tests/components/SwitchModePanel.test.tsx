@@ -54,6 +54,13 @@ vi.mock("@/hooks/useStreamCheck", () => ({
 
 const TAURI_ENDPOINT = "http://tauri.local";
 
+vi.mock("@/hooks/useCodexDesktopStatus", () => ({
+  useCodexDesktopStatus: () => ({
+    data: { supported: true, installed: true, running: true },
+    isError: false,
+  }),
+}));
+
 const provider = (id: string): Provider => ({
   id,
   name: id,
@@ -361,7 +368,11 @@ describe("SwitchModePanel — mode layer", () => {
     );
     const takeover = captureTakeover();
     const onSwitch = vi.fn();
-    renderPanel("claude", { a: provider("a"), kimi: provider("kimi") }, onSwitch);
+    renderPanel(
+      "claude",
+      { a: provider("a"), kimi: provider("kimi") },
+      onSwitch,
+    );
 
     await user.click(
       await screen.findByRole("button", { name: /mode\.names\.stack/ }),
@@ -382,7 +393,9 @@ describe("SwitchModePanel — mode layer", () => {
     );
     // 记下的那家成了「切换后的默认」：自己不再有「设为默认」，原来那家有了
     await screen.findByTestId("menu-setDefault-a");
-    expect(screen.queryByTestId("menu-setDefault-kimi")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("menu-setDefault-kimi"),
+    ).not.toBeInTheDocument();
 
     // 确认框预选它
     await user.click(
@@ -420,7 +433,9 @@ describe("SwitchModePanel — mode layer", () => {
     fireEvent.click(await screen.findByTestId("menu-setDefault-kimi"));
     fireEvent.click(screen.getByTestId("menu-setDefault-other"));
     expect(onSwitch.mock.calls.map(([p]) => p)).toEqual([kimi, other]);
-    expect(screen.queryByTestId("menu-setDefault-route")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("menu-setDefault-route"),
+    ).not.toBeInTheDocument();
     expect(routeCalls).toEqual([]);
   });
 

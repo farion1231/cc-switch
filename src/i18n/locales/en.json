@@ -4785,13 +4785,19 @@
     }
   },
   "codexDesktop": {
+    "open": "Open Codex",
+    "opening": "Opening...",
+    "openHint": "Open the installed Codex desktop app.",
+    "opened": "Codex desktop has opened.",
+    "switchAndOpen": "Switch and open Codex",
+    "switchedAndOpened": "Account switched and Codex desktop opened.",
     "restart": "Restart Codex",
     "restarting": "Restarting...",
     "restartHint": "Close and reopen the desktop app. Running tasks will be interrupted.",
     "restarted": "Codex desktop has reopened.",
-    "failed": "Codex desktop restart failed: {{error}}",
+    "failed": "Could not open or restart Codex desktop: {{error}}",
     "switchAndRestart": "Switch and restart Codex",
     "switchedAndRestarted": "Account switched and Codex desktop reopened.",
-    "switchRestartFailed": "Account switched, but desktop restart failed: {{error}}"
+    "switchRestartFailed": "Account switched, but Codex desktop could not open or restart: {{error}}"
   }
 }

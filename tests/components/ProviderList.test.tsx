@@ -195,6 +195,38 @@ describe("ProviderList Component", () => {
     expect(container.querySelectorAll(".border-dashed")).toHaveLength(3);
   });
 
+  it.each([
+    [true, "codexDesktop.switchAndRestart"],
+    [false, "codexDesktop.switchAndOpen"],
+  ])(
+    "uses the desktop running state for the combined switch menu (%s)",
+    async (running, label) => {
+      const provider = createProvider({ id: "next", name: "Next account" });
+      const action = vi.fn();
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [provider],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      renderWithQueryClient(
+        <ProviderList
+          {...baseProps}
+          providers={{ next: provider }}
+          appId="codex"
+          onSwitchAndRestart={action}
+          desktopRunning={running}
+        />,
+      );
+      await waitFor(() => expect(lastProps("next")).toBeDefined());
+      const menu = lastProps("next").presentation.menuItems.find(
+        (item: any) => item.key === "switchAndRestart",
+      );
+      expect(menu.label).toBe(label);
+      menu.onSelect();
+      expect(action).toHaveBeenCalledWith(provider);
+    },
+  );
+
   it("should show empty state and trigger create callback when no providers exist", () => {
     const handleCreate = vi.fn();
 

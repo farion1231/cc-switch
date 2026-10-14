@@ -146,6 +146,24 @@ beforeEach(() => {
 });
 
 describe("useProviderActions", () => {
+  it("reports opening when the desktop was stopped during a combined switch", async () => {
+    restartDesktopMock
+      .mockReset()
+      .mockResolvedValue({ action: "started", desktop_pid: 42 });
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useProviderActions("codex"), {
+      wrapper,
+    });
+    await act(async () => {
+      await result.current.switchProvider(createProvider(), {
+        restartDesktop: true,
+      });
+    });
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "codexDesktop.switchedAndOpened",
+    );
+  });
+
   it("only restarts after the account switch has succeeded", async () => {
     restartDesktopMock
       .mockReset()

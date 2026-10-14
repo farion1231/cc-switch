@@ -7,12 +7,20 @@ const mocks = vi.hoisted(() => ({
   restart: vi.fn(),
   success: vi.fn(),
   error: vi.fn(),
+  status: {
+    data: { supported: true, installed: true, running: true },
+    isError: false,
+    refetch: vi.fn(),
+  },
 }));
 vi.mock("@/lib/api/codexDesktop", () => ({
   restartCodexDesktop: mocks.restart,
 }));
 vi.mock("@/lib/toast", () => ({
   toast: { success: mocks.success, error: mocks.error },
+}));
+vi.mock("@/hooks/useCodexDesktopStatus", () => ({
+  useCodexDesktopStatus: () => mocks.status,
 }));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -22,7 +30,38 @@ vi.mock("react-i18next", () => ({
 }));
 
 describe("CodexDesktopRestartButton", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.status.data = { supported: true, installed: true, running: true };
+    mocks.status.isError = false;
+  });
+  it("hides controls when the desktop is not installed", () => {
+    mocks.status.data.installed = false;
+    render(<CodexDesktopRestartButton />);
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+  it("hides controls on an unsupported platform", () => {
+    mocks.status.data.supported = false;
+    render(<CodexDesktopRestartButton />);
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+  it("hides controls when detection fails", () => {
+    mocks.status.isError = true;
+    render(<CodexDesktopRestartButton />);
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+  it("opens an installed desktop that is not running", async () => {
+    mocks.status.data.running = false;
+    mocks.restart.mockResolvedValue({ action: "started", desktop_pid: 42 });
+    render(<CodexDesktopRestartButton />);
+    await userEvent.click(
+      screen.getByRole("button", { name: "codexDesktop.open" }),
+    );
+    await waitFor(() =>
+      expect(mocks.success).toHaveBeenCalledWith("codexDesktop.opened"),
+    );
+    expect(mocks.status.refetch).toHaveBeenCalled();
+  });
   it("waits for the desktop receipt and prevents duplicate clicks", async () => {
     let complete!: (value: unknown) => void;
     mocks.restart.mockImplementation(

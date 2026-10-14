@@ -1767,6 +1767,7 @@ pub fn run() {
             // Generic managed auth commands
             commands::auth_start_login,
             commands::restart_codex_desktop,
+            commands::get_codex_desktop_status,
             commands::auth_poll_for_account,
             commands::auth_cancel_login,
             commands::auth_list_accounts,

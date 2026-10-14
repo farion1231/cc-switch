@@ -65,6 +65,7 @@ interface ProviderListProps {
   /** 直连切换 / 共存式的添加 / Pi 的启用 / Claude Desktop 的切换 */
   onSwitch: (provider: Provider) => void;
   onSwitchAndRestart?: (provider: Provider) => void;
+  desktopRunning?: boolean;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onRemoveFromConfig?: (provider: Provider) => void;
@@ -91,6 +92,7 @@ export function ProviderList({
   appId,
   onSwitch,
   onSwitchAndRestart,
+  desktopRunning = true,
   onEdit,
   onDelete,
   onRemoveFromConfig,
@@ -449,7 +451,11 @@ export function ProviderList({
               menuItems: [
                 {
                   key: "switchAndRestart",
-                  label: t("codexDesktop.switchAndRestart"),
+                  label: t(
+                    desktopRunning
+                      ? "codexDesktop.switchAndRestart"
+                      : "codexDesktop.switchAndOpen",
+                  ),
                   onSelect: () => onSwitchAndRestart(provider),
                 },
                 ...(presentation.menuItems ?? []),

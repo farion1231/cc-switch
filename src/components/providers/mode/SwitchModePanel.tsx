@@ -8,6 +8,7 @@ import type { ProxyAppId } from "@/config/appConfig";
 import { isStackAppId } from "@/config/appConfig";
 import { settingsApi } from "@/lib/api";
 import { isWindows } from "@/lib/platform";
+import { useCodexDesktopStatus } from "@/hooks/useCodexDesktopStatus";
 import { providersApi } from "@/lib/api/providers";
 import { proxyApi } from "@/lib/api/proxy";
 import { useSettingsQuery } from "@/lib/query";
@@ -98,6 +99,7 @@ export function SwitchModePanel({
 }: SwitchModePanelProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const desktopStatus = useCodexDesktopStatus(app === "codex");
   const appName = APP_DISPLAY_NAME[app];
   const modes = modesFor(app);
 
@@ -557,12 +559,16 @@ export function SwitchModePanel({
           onSwitchAndRestart={
             app === "codex" &&
             isWindows() &&
+            !desktopStatus.isError &&
+            desktopStatus.data?.supported &&
+            desktopStatus.data.installed &&
             active === view &&
             view !== "stack" &&
             !failoverOn
               ? (provider) => void onSwitch(provider, { restartDesktop: true })
               : undefined
           }
+          desktopRunning={desktopStatus.data?.running}
           switchMode={switchMode}
         />
       </div>

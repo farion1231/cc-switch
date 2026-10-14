@@ -6,6 +6,28 @@ pub struct DesktopRestartOutcome {
     pub desktop_pid: u32,
 }
 
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct DesktopStatus {
+    pub supported: bool,
+    pub installed: bool,
+    pub running: bool,
+}
+
+#[cfg(target_os = "windows")]
+pub fn status() -> Result<DesktopStatus, String> {
+    let output = run_powershell_script(include_bytes!("codex_desktop_windows.ps1"), "Status")?;
+    serde_json::from_slice(&output.stdout).map_err(|e| format!("Invalid Codex desktop status: {e}"))
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn status() -> Result<DesktopStatus, String> {
+    Ok(DesktopStatus {
+        supported: false,
+        installed: false,
+        running: false,
+    })
+}
+
 #[cfg(target_os = "windows")]
 pub fn restart() -> Result<DesktopRestartOutcome, String> {
     // Serialize requests so two button clicks cannot close the newly opened app.
@@ -82,6 +104,14 @@ pub fn restart() -> Result<DesktopRestartOutcome, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn unsupported_platform_does_not_offer_desktop_controls() {
+        let state = status().unwrap();
+        assert!(!state.supported);
+        assert!(!state.installed);
+        assert!(!state.running);
+    }
     #[test]
     fn desktop_restart_receipt_requires_a_pid_and_action() {
         let receipt: DesktopRestartOutcome =

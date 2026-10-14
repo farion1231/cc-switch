@@ -4786,13 +4786,19 @@
     }
   },
   "codexDesktop": {
+    "open": "開啟 Codex",
+    "opening": "正在開啟...",
+    "openHint": "開啟已安裝的 Codex 桌面應用程式。",
+    "opened": "Codex 桌面應用程式已開啟。",
+    "switchAndOpen": "切換並開啟 Codex",
+    "switchedAndOpened": "帳號已切換，Codex 桌面應用程式已開啟。",
     "restart": "重新啟動 Codex",
     "restarting": "正在重新啟動…",
     "restartHint": "關閉並重新開啟桌面應用程式，會中斷執行中的任務。",
     "restarted": "Codex 桌面應用程式已重新開啟。",
-    "failed": "Codex 桌面應用程式重新啟動失敗：{{error}}",
+    "failed": "Codex 桌面應用程式開啟或重新啟動失敗：{{error}}",
     "switchAndRestart": "切換並重新啟動 Codex",
     "switchedAndRestarted": "帳號已切換，Codex 桌面應用程式已重新開啟。",
-    "switchRestartFailed": "帳號已切換，但桌面應用程式重新啟動失敗：{{error}}"
+    "switchRestartFailed": "帳號已切換，但 Codex 桌面應用程式開啟或重新啟動失敗：{{error}}"
   }
 }
