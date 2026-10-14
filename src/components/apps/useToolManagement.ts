@@ -49,6 +49,10 @@ export const TOOL_NAMES = [
 export type ToolName = (typeof TOOL_NAMES)[number];
 export type ToolLifecycleAction = "install" | "update" | "uninstall";
 
+export function hermesUninstallMayLeaveFiles(plan: ToolUninstallPlan) {
+  return isWindows() && plan.tool === "hermes" && !plan.wsl_distro;
+}
+
 interface PendingUpgrade {
   toolNames: ToolName[];
   plans: ToolInstallationReport[];
@@ -530,18 +534,18 @@ export function useToolManagement() {
   const diagnoseToolSilently = useCallback(async (toolName: ToolName) => {
     try {
       const [report] = await settingsApi.probeToolInstallations([toolName]);
+      // 没拿到报告代表状态未知，不能把它当成「没有其他安装」。
+      if (!report) return false;
       // 同一份报告也是行上的路径 / 来源 / 「另有 N 处安装」：装完、升级完就刷新，
       // 不用等手动「检查更新」
-      if (report) {
-        updateToolManagementState({
-          installReports: {
-            ...(toolManagementState.installReports ?? {}),
-            [toolName]: report,
-          },
-        });
-      }
+      updateToolManagementState({
+        installReports: {
+          ...(toolManagementState.installReports ?? {}),
+          [toolName]: report,
+        },
+      });
       setToolDiagnostics((prev) => {
-        if (report?.is_conflict) {
+        if (report.is_conflict) {
           return { ...prev, [toolName]: report.installs };
         }
         // 无冲突：清掉残留;无旧结果则返回同引用，避免无谓 re-render。
@@ -550,11 +554,13 @@ export function useToolManagement() {
         delete next[toolName];
         return next;
       });
+      return true;
     } catch (error) {
       console.error(
         `[useToolManagement] Auto-diagnose failed for ${toolName}`,
         error,
       );
+      return false;
     }
   }, []);
 
@@ -610,7 +616,7 @@ export function useToolManagement() {
       const isBatch = toolNames.length > 1;
 
       // 每个工具独立调用后端，一个失败不会中断其它工具。
-      // soft=true 表示"命令成功执行但结果仍需用户介入"（版本没变/装上却跑不起来），
+      // soft=true 表示"命令成功执行但结果仍需用户介入"（版本没变/无法运行/卸载待核实），
       // 与命令本身报错（soft=false）区别对待：前者不算硬失败，toast 降级为 warning。
       const failures: {
         toolName: ToolName;
@@ -658,15 +664,30 @@ export function useToolManagement() {
             );
             const tool = refreshed.find((t) => t.name === toolName);
             if (action === "uninstall") {
-              await diagnoseToolSilently(toolName);
-              if (!tool) {
-                throw new Error(t("settings.toolUninstallCheckFailed"));
+              const diagnosed = await diagnoseToolSilently(toolName);
+              const warnings: string[] = [];
+              if (!tool || !diagnosed) {
+                warnings.push(t("settings.toolUninstallCheckFailed"));
               }
-              if (tool.version || tool.installed_but_broken) {
+              if (
+                uninstallPlan &&
+                hermesUninstallMayLeaveFiles(uninstallPlan)
+              ) {
+                warnings.push(t("settings.toolUninstallHermesWindowsHint"));
+              }
+              if (tool?.version || tool?.installed_but_broken) {
                 toast.info(t("settings.toolUninstallRemaining"), {
                   description: TOOL_DISPLAY_NAMES[toolName],
                   closeButton: true,
                 });
+              }
+              if (warnings.length > 0) {
+                failures.push({
+                  toolName,
+                  detail: warnings.join("\n"),
+                  soft: true,
+                });
+                return;
               }
               succeeded += 1;
               return;
@@ -777,12 +798,14 @@ export function useToolManagement() {
         failures.every((f) => f.soft && f.kind === "versionUnchanged");
 
       if (succeeded === 0 && hardFailures.length === 0) {
-        // 命令均成功执行、但结果需要用户介入（版本没变 / 装上却跑不起来）
+        // 命令均成功执行、但结果需要用户介入（版本没变 / 无法运行 / 卸载待核实）
         // → 降级为 warning 并解释原因。
         toast.warning(
-          allSoftVersionUnchanged
-            ? t("settings.toolActionVersionUnchangedTitle")
-            : t("settings.toolActionInstalledNotRunnable"),
+          action === "uninstall"
+            ? t("settings.toolUninstallWarningTitle")
+            : allSoftVersionUnchanged
+              ? t("settings.toolActionVersionUnchangedTitle")
+              : t("settings.toolActionInstalledNotRunnable"),
           {
             description: failureDescription || undefined,
             closeButton: true,
