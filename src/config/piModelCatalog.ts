@@ -426,6 +426,25 @@ export const piModelCatalog = {
       maxTokens: 128_000,
     },
   },
+  // 开源权重模型，窗口与最大输出取 console.groq.com/docs/models（2026-10-14）
+  "openai/gpt-oss-120b": {
+    capabilities: {
+      name: "GPT-OSS 120B",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 131_072,
+      maxTokens: 65_536,
+    },
+  },
+  "openai/gpt-oss-20b": {
+    capabilities: {
+      name: "GPT-OSS 20B",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 131_072,
+      maxTokens: 65_536,
+    },
+  },
   "openai/o3": {
     capabilities: {
       name: "o3",

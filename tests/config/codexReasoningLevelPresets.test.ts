@@ -124,6 +124,11 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["Novita AI", "zai-org/glm-5.3", ["high"]],
     // NIM K3 的官方枚举；显式 high 与预设配置一致。
     ["Nvidia", "moonshotai/kimi-k3", ["low", "high", "max"], "high"],
+    // Groq gpt-oss（Chat 路由）：平台声明的 reasoning_effort 枚举
+    // low/medium/high（console.groq.com/docs/reasoning，2026-10-14），含 high，
+    // 无需显式默认
+    ["Groq", "openai/gpt-oss-120b", ["low", "medium", "high"]],
+    ["Groq", "openai/gpt-oss-20b", ["low", "medium", "high"]],
     // 千帆 v2 官方 thinking:{type}（声明已补）→ 两态
     ["Baidu Qianfan Coding Plan", "qianfan-code-latest", ["none", "high"]],
     // 千帆 Token Plan：deepseek-v4-pro/v4-flash 在 thinking+reasoning_effort

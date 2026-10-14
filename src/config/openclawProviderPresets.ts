@@ -4994,6 +4994,55 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "Groq",
+    websiteUrl: "https://groq.com",
+    apiKeyUrl: "https://console.groq.com/keys",
+    // OpenAI Chat 端点 base 为 https://api.groq.com/openai/v1（console.groq.com/
+    // docs/openai，2026-10-14 核对），Bearer 鉴权。cost 取各模型页同日价
+    //（console.groq.com/docs/model/openai/gpt-oss-120b、.../gpt-oss-20b，每百万
+    // token）；缓存自动生效、命中部分五折（console.groq.com/docs/prompt-caching），
+    // 20b 的缓存价按页面显示值 0.037 填。窗口与最大输出同 OpenCode 预设
+    settingsConfig: {
+      baseUrl: "https://api.groq.com/openai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "openai/gpt-oss-120b",
+          name: "GPT-OSS 120B",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 131072,
+          maxTokens: 65536,
+          cost: { input: 0.15, output: 0.6, cacheRead: 0.075, cacheWrite: 0 },
+        },
+        {
+          id: "openai/gpt-oss-20b",
+          name: "GPT-OSS 20B",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 131072,
+          maxTokens: 65536,
+          cost: { input: 0.075, output: 0.3, cacheRead: 0.037, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "groq/openai/gpt-oss-120b" },
+      modelCatalog: {
+        "groq/openai/gpt-oss-120b": { alias: "GPT-OSS 120B" },
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

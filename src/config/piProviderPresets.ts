@@ -2157,6 +2157,34 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "aggregator",
   },
   {
+    name: "Groq",
+    // Pi 是否内置 groq provider 未证实，加前缀两种情况都不会遮蔽内置定义
+    providerKey: "cc-switch-groq",
+    websiteUrl: "https://groq.com",
+    apiKeyUrl: "https://console.groq.com/keys",
+    settingsConfig: {
+      name: "Groq",
+      // OpenAI Chat 端点 base 为 /openai/v1（console.groq.com/docs/openai，
+      // 2026-10-14 核对），只收自助可用的 Production 模型 gpt-oss 两款。Groq
+      // 是否接受 developer role / store 未证实，compat 按保守的通用 OpenAI
+      // Completions 写；同 Novita / Nvidia，不写 thinkingProfile
+      baseUrl: "https://api.groq.com/openai/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        {
+          ...piModel("openai/gpt-oss-120b", { id: "openai/gpt-oss-120b" }),
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
+        },
+        {
+          ...piModel("openai/gpt-oss-20b", { id: "openai/gpt-oss-20b" }),
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
+        },
+      ],
+    },
+    category: "aggregator",
+  },
+  {
     name: "PIPELLM",
     providerKey: "cc-switch-pipellm",
     websiteUrl: "https://code.pipellm.ai",

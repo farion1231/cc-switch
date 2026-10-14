@@ -3788,6 +3788,57 @@ requires_openai_auth = true`,
     category: "aggregator",
   },
   {
+    name: "Groq",
+    websiteUrl: "https://groq.com",
+    apiKeyUrl: "https://console.groq.com/keys",
+    auth: generateThirdPartyAuth(""),
+    // OpenAI 兼容 base 为 https://api.groq.com/openai/v1（console.groq.com/
+    // docs/openai，2026-10-14 核对），Bearer 鉴权
+    config: generateThirdPartyConfig(
+      "groq",
+      "https://api.groq.com/openai/v1",
+      "openai/gpt-oss-120b",
+    ),
+    endpointCandidates: ["https://api.groq.com/openai/v1"],
+    // Responses 为 beta，且明写不支持 store / include / prompt_cache_key /
+    // previous_response_id 等参数（console.groq.com/docs/responses-api，
+    // 2026-10-14），Codex 每轮都带前两者，未经真 Key 实测前走 Chat 路由
+    apiFormat: "openai_chat",
+    // 只收自助可用的 Production 模型 gpt-oss 两款（console.groq.com/docs/
+    // models 同日），窗口 131072、纯文本。档位取平台声明的 reasoning_effort
+    // 枚举 low/medium/high（console.groq.com/docs/reasoning）；每档都含 high，
+    // 后端保留模板默认 high，与 config 的 model_reasoning_effort = "high" 一致，
+    // 无需 defaultReasoningLevel。首行 = 默认模型，须与 config 的 model 一致
+    modelCatalog: modelCatalog([
+      {
+        model: "openai/gpt-oss-120b",
+        displayName: "GPT-OSS 120B",
+        contextWindow: 131072,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "medium", "high"],
+      },
+      {
+        model: "openai/gpt-oss-20b",
+        displayName: "GPT-OSS 20B",
+        contextWindow: 131072,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "medium", "high"],
+      },
+    ]),
+    // gpt-oss 始终思考，只接受 reasoning_effort: low/medium/high，无思考开关；
+    // 不支持 reasoning_format，推理内容放在 message.reasoning
+    //（console.groq.com/docs/reasoning）
+    codexChatReasoning: {
+      supportsThinking: false,
+      supportsEffort: true,
+      thinkingParam: "none",
+      effortParam: "reasoning_effort",
+      effortValueMode: "passthrough",
+      outputFormat: "reasoning",
+    },
+    category: "aggregator",
+  },
+  {
     name: "OpenCode Go",
     family: "opencode",
     planKey: "coding",

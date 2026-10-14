@@ -3721,6 +3721,47 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "Groq",
+    websiteUrl: "https://groq.com",
+    apiKeyUrl: "https://console.groq.com/keys",
+    // OpenAI Chat 端点 base 为 https://api.groq.com/openai/v1（console.groq.com/
+    // docs/openai，2026-10-14 核对），Bearer 鉴权。只收自助可用的 Production
+    // 模型 gpt-oss 两款，窗口 131072、最大输出 65536（console.groq.com/docs/
+    // models 同日）。Groq 的提示缓存自动生效、关不掉（console.groq.com/docs/
+    // prompt-caching），Chat 是否接受 prompt_cache_key 未证实，故不写
+    // setCacheKey。OpenCode 自带 groq 供应商，供应商 ID 别填 groq 以免遮蔽内置定义
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Groq",
+      options: {
+        baseURL: "https://api.groq.com/openai/v1",
+        apiKey: "",
+      },
+      models: {
+        "openai/gpt-oss-120b": {
+          name: "GPT-OSS 120B",
+          reasoning: true,
+          limit: { context: 131072, output: 65536 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "openai/gpt-oss-20b": {
+          name: "GPT-OSS 20B",
+          reasoning: true,
+          limit: { context: 131072, output: 65536 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

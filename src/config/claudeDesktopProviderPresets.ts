@@ -1791,6 +1791,24 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     endpointCandidates: ["https://api.tokenfactory.nebius.com"],
   },
   {
+    name: "Groq",
+    websiteUrl: "https://groq.com",
+    apiKeyUrl: "https://console.groq.com/keys",
+    category: "aggregator",
+    // 同 Claude Code 预设：没有可用的 Anthropic 端点（/anthropic/v1/messages
+    // 实测 404，2026-10-14），走 openai_chat 路由。gpt-oss 两款窗口均为
+    // 131072（console.groq.com/docs/models），不标 1M
+    baseUrl: "https://api.groq.com/openai/v1",
+    mode: "proxy",
+    apiFormat: "openai_chat",
+    modelRoutes: brandedRoutes(
+      "openai/gpt-oss-120b",
+      "openai/gpt-oss-120b",
+      "openai/gpt-oss-20b",
+    ),
+    endpointCandidates: ["https://api.groq.com/openai/v1"],
+  },
+  {
     name: "Nvidia",
     websiteUrl: "https://build.nvidia.com",
     apiKeyUrl: "https://build.nvidia.com/settings/api-keys",

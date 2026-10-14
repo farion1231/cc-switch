@@ -2655,6 +2655,36 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Groq",
+    websiteUrl: "https://groq.com",
+    apiKeyUrl: "https://console.groq.com/keys",
+    settingsConfig: {
+      name: "groq",
+      // OpenAI Chat 端点 base 为 /openai/v1（console.groq.com/docs/openai，
+      // 2026-10-14 核对），Bearer 鉴权。只收自助可用的 Production 模型 gpt-oss
+      // 两款，窗口取 console.groq.com/docs/models 同日值
+      base_url: "https://api.groq.com/openai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "openai/gpt-oss-120b",
+          name: "GPT-OSS 120B",
+          context_length: 131072,
+        },
+        {
+          id: "openai/gpt-oss-20b",
+          name: "GPT-OSS 20B",
+          context_length: 131072,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "openai/gpt-oss-120b", provider: "groq" },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

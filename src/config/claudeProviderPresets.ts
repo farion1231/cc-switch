@@ -2037,6 +2037,36 @@ export const providerPresets: ProviderPreset[] = [
     endpointCandidates: ["https://api.tokenfactory.nebius.com"],
   },
   {
+    name: "Groq",
+    websiteUrl: "https://groq.com",
+    apiKeyUrl: "https://console.groq.com/keys",
+    // OpenAI 兼容 base 为 https://api.groq.com/openai/v1（console.groq.com/
+    // docs/openai，2026-10-14 核对），Bearer 鉴权。/anthropic/v1/models 已在线
+    // 但 POST /anthropic/v1/messages 实测 404，官方文档与 changelog 均未提
+    // Anthropic 端点，只能走 openai_chat 路由；适配器拼出 /openai/v1/v1/... 后
+    // 去重 /v1/v1，落到 /openai/v1/chat/completions。base 以 /v1 结尾，模型列表
+    // 自动探测 {base}/models（无 Key 401），不写 modelsUrl。编程可用的自助
+    // Production 模型只有 gpt-oss 两款（console.groq.com/docs/models 同日）：
+    // 主力 120b、haiku 档 20b；qwen3.8-27b 为 Preview 且最大输出仅 16384，不收
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.groq.com/openai/v1",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "openai/gpt-oss-120b",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "openai/gpt-oss-20b",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "openai/gpt-oss-120b",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "openai/gpt-oss-120b",
+        // 模型 id 非 claude-* 时 Claude Code 按 200K 默认窗口处理，必须显式
+        // 钉住官方值：gpt-oss 两款 context window = 131072
+        //（console.groq.com/docs/model/openai/gpt-oss-120b）
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "131072",
+      },
+    },
+    category: "aggregator",
+    apiFormat: "openai_chat",
+    endpointCandidates: ["https://api.groq.com/openai/v1"],
+  },
+  {
     name: "GitHub Copilot",
     websiteUrl: "https://github.com/features/copilot",
     settingsConfig: {
