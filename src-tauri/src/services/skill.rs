@@ -601,6 +601,119 @@ fn parse_agents_lock_content(
     Ok(parsed)
 }
 
+/// 从一个外部软链接的真实目录向上查找 Git 仓库，并识别 GitHub 的 origin。
+///
+/// 这覆盖了手动 `ln -s` 安装的 Skills：它们没有安装器 lock，但其原始项目仍是
+/// 可验证的来源。普通目录不参与推断，避免把用户自建目录误归到某个仓库。
+fn infer_github_provenance_from_symlink(path: &Path) -> Option<LockSkillInfo> {
+    if !path.symlink_metadata().ok()?.file_type().is_symlink() {
+        return None;
+    }
+    let resolved = path.canonicalize().ok()?;
+    let remote_url = resolved.ancestors().find_map(git_origin_url)?;
+    let (owner, repo) = parse_github_remote(&remote_url)?;
+    github_lock_info(owner, repo)
+}
+
+/// 从已安装 Skill 的 frontmatter 中读取其显式声明的 GitHub homepage。
+///
+/// 有些安装器将项目文件复制到各应用目录，或只在 `$HOME/.baoyu-skills`
+/// 保存偏好文件；这两种情形均没有可追溯的软链接或 lock。只有 Skill 自己声明
+/// 了 GitHub homepage 时才使用该来源，避免按名称前缀猜测项目归属。
+fn infer_github_provenance_from_skill_document(directory: &str) -> Option<LockSkillInfo> {
+    for app in AppType::all() {
+        let Ok(app_dir) = SkillService::get_app_skills_dir(&app) else {
+            continue;
+        };
+        let skill_file = app_dir.join(directory).join("SKILL.md");
+        let content = match fs::read_to_string(skill_file) {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
+        let Some(frontmatter) = content.strip_prefix("---").and_then(|value| {
+            value
+                .split_once("\n---")
+                .map(|(frontmatter, _)| frontmatter)
+        }) else {
+            continue;
+        };
+        let homepage = frontmatter.lines().find_map(|line| {
+            line.trim()
+                .strip_prefix("homepage:")
+                .map(|value| value.trim().trim_matches(['\"', '\'']))
+        });
+        if let Some((owner, repo)) = homepage.and_then(parse_github_remote) {
+            return github_lock_info(owner, repo);
+        }
+    }
+    None
+}
+
+fn github_lock_info(owner: String, repo: String) -> Option<LockSkillInfo> {
+    if SkillService::validate_repo_ref(&owner, &repo, "HEAD").is_err() {
+        return None;
+    }
+    Some(LockSkillInfo {
+        source_type: "github".to_string(),
+        source_id: format!("{owner}/{repo}"),
+        source_url: Some(format!("https://github.com/{owner}/{repo}")),
+        repo: Some(LockRepoInfo {
+            owner,
+            repo,
+            skill_path: None,
+            branch: None,
+        }),
+    })
+}
+
+fn git_origin_url(repo_dir: &Path) -> Option<String> {
+    let git = repo_dir.join(".git");
+    let git_dir = if git.is_dir() {
+        git
+    } else {
+        let git_dir = fs::read_to_string(git)
+            .ok()?
+            .strip_prefix("gitdir:")?
+            .trim()
+            .to_string();
+        let git_dir = PathBuf::from(git_dir);
+        if git_dir.is_absolute() {
+            git_dir
+        } else {
+            repo_dir.join(git_dir)
+        }
+    };
+    let config = fs::read_to_string(git_dir.join("config")).ok()?;
+    let mut in_origin = false;
+    for line in config.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_origin = line == r#"[remote "origin"]"#;
+        } else if in_origin {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            if key.trim() == "url" {
+                return Some(value.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+fn parse_github_remote(remote: &str) -> Option<(String, String)> {
+    let remote = remote.trim().split(['#', '?']).next()?;
+    let path = remote
+        .strip_prefix("git@github.com:")
+        .or_else(|| remote.strip_prefix("ssh://git@github.com/"))
+        .or_else(|| remote.strip_prefix("https://github.com/"))?
+        .trim_end_matches('/')
+        .trim_end_matches(".git");
+    let (owner, repo) = path.split_once('/')?;
+    (!owner.is_empty() && !repo.is_empty() && !repo.contains('/'))
+        .then(|| (owner.to_string(), repo.to_string()))
+}
+
 // ========== SkillService ==========
 
 pub struct SkillService {
@@ -850,15 +963,12 @@ impl SkillService {
         Ok(skills.into_values().collect())
     }
 
-    /// 为早于来源字段的本地导入记录补写安装器 lock 中的稳定来源。
+    /// 为早于来源字段的本地导入记录补写安装器 lock 或外部软链接中的稳定来源。
     ///
     /// 只补非 GitHub Skill 缺失的来源字段，既不猜目录前缀，也不改既有 ID、仓库
     /// 坐标或用户定义的项目分组。
     fn backfill_lock_provenance(db: &Arc<Database>, skills: &mut IndexMap<String, InstalledSkill>) {
         let lock = parse_agents_lock();
-        if lock.is_empty() {
-            return;
-        }
 
         for skill in skills.values_mut() {
             if skill.repo_owner.is_some()
@@ -867,16 +977,28 @@ impl SkillService {
             {
                 continue;
             }
-            let Some(info) = lock.get(&skill.directory) else {
+            let info = lock
+                .get(&skill.directory)
+                .cloned()
+                .or_else(|| {
+                    get_agents_skills_dir().and_then(|dir| {
+                        infer_github_provenance_from_symlink(&dir.join(&skill.directory))
+                    })
+                })
+                .or_else(|| infer_github_provenance_from_skill_document(&skill.directory));
+            let Some(info) = info else {
                 continue;
             };
-            if info.repo.is_some() {
-                continue;
-            }
 
-            skill.source_type = Some(info.source_type.clone());
-            skill.source_id = Some(info.source_id.clone());
-            skill.source_url = info.source_url.clone();
+            skill.source_type = Some(info.source_type);
+            skill.source_id = Some(info.source_id);
+            skill.source_url = info.source_url;
+            if let Some(repo) = info.repo {
+                skill.repo_owner = Some(repo.owner.clone());
+                skill.repo_name = Some(repo.repo.clone());
+                skill.repo_branch = repo.branch.clone();
+                skill.readme_url = Some(format!("https://github.com/{}/{}", repo.owner, repo.repo));
+            }
             if let Err(error) = db.update_skill_metadata(skill) {
                 log::warn!("回填 Skill {} 的安装来源失败: {}", skill.directory, error);
             }
@@ -7894,5 +8016,68 @@ mod tests {
             .expect("query")
             .expect("skill");
         assert_eq!(persisted.source_id.as_deref(), Some("open.feishu.cn"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial_test::serial]
+    fn installed_local_skill_backfills_github_provenance_from_agents_symlink() {
+        let home = tempdir().expect("home");
+        let _home = TestHomeGuard::set(home.path());
+        let source_repo = home.path().join("source").join("matt-skills");
+        let source_skill = source_repo
+            .join("skills")
+            .join("engineering")
+            .join("ask-matt");
+        write_skill(&source_skill, "ask matt");
+        fs::create_dir_all(source_repo.join(".git")).expect("git dir");
+        fs::write(
+            source_repo.join(".git").join("config"),
+            "[remote \"origin\"]\n\turl = git@github.com:mattpocock/skills.git\n",
+        )
+        .expect("git config");
+
+        let agents_skill = home.path().join(".agents").join("skills").join("ask-matt");
+        fs::create_dir_all(agents_skill.parent().unwrap()).expect("agents skills dir");
+        std::os::unix::fs::symlink(&source_skill, &agents_skill).expect("external symlink");
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let local = poisoned_skill("local:ask-matt", "ask-matt");
+        db.save_skill(&local).expect("seed local skill");
+
+        let installed = SkillService::get_all_installed(&db).expect("list skills");
+        assert_eq!(installed[0].repo_owner.as_deref(), Some("mattpocock"));
+        assert_eq!(installed[0].repo_name.as_deref(), Some("skills"));
+        assert_eq!(installed[0].source_id.as_deref(), Some("mattpocock/skills"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn installed_local_skill_backfills_github_provenance_from_declared_homepage() {
+        let home = tempdir().expect("home");
+        let _home = TestHomeGuard::set(home.path());
+        let skill_dir = home
+            .path()
+            .join(".codex")
+            .join("skills")
+            .join("baoyu-translate");
+        fs::create_dir_all(&skill_dir).expect("create skill dir");
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: baoyu-translate\nmetadata:\n  openclaw:\n    homepage: https://github.com/JimLiu/baoyu-skills#baoyu-translate\n---\n",
+        )
+        .expect("write skill");
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let local = poisoned_skill("local:baoyu-translate", "baoyu-translate");
+        db.save_skill(&local).expect("seed local skill");
+
+        let installed = SkillService::get_all_installed(&db).expect("list skills");
+        assert_eq!(installed[0].repo_owner.as_deref(), Some("JimLiu"));
+        assert_eq!(installed[0].repo_name.as_deref(), Some("baoyu-skills"));
+        assert_eq!(
+            installed[0].source_id.as_deref(),
+            Some("JimLiu/baoyu-skills")
+        );
     }
 }
