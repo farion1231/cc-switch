@@ -12,11 +12,12 @@ use crate::error::AppError;
 use crate::store::AppState;
 
 /// 用户级 mcp.json 路径（`%APPDATA%\Code\User\mcp.json`）。
-fn user_config_path() -> Result<std::path::PathBuf, AppError> {
-    let appdata = std::env::var_os("APPDATA")
+/// 只在 Windows 存在；其他平台（没有 APPDATA）返回 None = 源不可用，
+/// 统一导入继续读其余来源，不因平台差异整体报错。
+fn user_config_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("APPDATA")
         .map(std::path::PathBuf::from)
-        .ok_or_else(|| AppError::Config("APPDATA is not set".into()))?;
-    Ok(appdata.join("Code").join("User").join("mcp.json"))
+        .map(|appdata| appdata.join("Code").join("User").join("mcp.json"))
 }
 
 /// `type` 缺省时按字段推断（与社区 .mcp.json 惯例一致）：有 url 无 command
@@ -38,8 +39,11 @@ fn unified_spec(native: &Value) -> Value {
 }
 
 /// 连接定义比对用的 transport 投影：只保留 type/command/args/url/headers/env。
+/// 先走 `unified_spec`（隐式 type 补成显式），再投影——两侧同样归一化，
+/// 否则「库里存的隐式 stdio」和「新导入补成显式 stdio」会被误报成冲突。
 fn transport_spec(spec: &Value) -> Value {
     const TRANSPORT_FIELDS: [&str; 6] = ["type", "command", "args", "url", "headers", "env"];
+    let spec = unified_spec(spec);
     let mut fields = serde_json::Map::new();
     if let Some(object) = spec.as_object() {
         for field in TRANSPORT_FIELDS {
@@ -55,13 +59,19 @@ fn transport_spec(spec: &Value) -> Value {
 /// `inputs` 声明（`${input:...}` 占位符的解析来源）不导入——占位符原样保留在
 /// headers 里，仅对支持 promptString 的应用有效。
 pub fn import(state: &AppState) -> Result<usize, AppError> {
-    let path = user_config_path()?;
+    // 非 Windows（没有 APPDATA）= 源不存在，不是错误：其余来源照常导入。
+    let Some(path) = user_config_path() else {
+        return Ok(0);
+    };
     let content = match std::fs::read_to_string(&path) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
         Err(error) => return Err(AppError::io(&path, error)),
     };
-    let document: Value = serde_json::from_str(&content)
+    // VS Code 的 mcp.json 允许注释和尾逗号（官方 schema allowComments/
+    // allowTrailingCommas），严格 JSON 解析会把整份文件拒掉——按仓库读
+    // Pi 配置的先例用 JSON5 读语义值。
+    let document: Value = json5::from_str(&content)
         .map_err(|error| AppError::Config(format!("invalid {}: {error}", path.display())))?;
     let mut existing = state.db.get_all_mcp_servers()?;
     let mut count = 0;
@@ -204,14 +214,14 @@ mod tests {
 
         let playwright = &servers["microsoft/playwright-mcp"];
         assert_eq!(
-            playwright.server.pointer("/command").and_then(Value::as_str),
+            playwright
+                .server
+                .pointer("/command")
+                .and_then(Value::as_str),
             Some("npx")
         );
         assert_eq!(
-            playwright
-                .server
-                .pointer("/args/0")
-                .and_then(Value::as_str),
+            playwright.server.pointer("/args/0").and_then(Value::as_str),
             Some("@playwright/mcp@latest")
         );
 
@@ -245,5 +255,124 @@ mod tests {
             state.db.get_all_mcp_servers().expect("count again").len(),
             2
         );
+    }
+
+    /// VS Code 的 mcp.json 允许注释和尾逗号（官方 schema allowComments/
+    /// allowTrailingCommas）：带注释和尾逗号的配置要能正常导入。
+    #[test]
+    #[serial]
+    fn import_reads_jsonc_user_mcp_json() {
+        let appdata = tempfile::tempdir().expect("temp APPDATA");
+        let user_dir = appdata.path().join("Code").join("User");
+        std::fs::create_dir_all(&user_dir).expect("create user dir");
+        std::fs::write(
+            user_dir.join("mcp.json"),
+            // 行注释 + 尾逗号：严格 JSON 解析会整份拒绝
+            r#"{
+                "servers": {
+                    // filesystem access for the agent
+                    "filesystem": {
+                        "type": "stdio",
+                        "command": "npx",
+                        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/"],
+                    },
+                },
+            }"#,
+        )
+        .expect("write user mcp.json");
+
+        let state = AppState::new(Arc::new(
+            Database::memory().expect("create in-memory database"),
+        ));
+        let _redirect = RedirectedAppdata::to(appdata.path());
+        let imported = import(&state).expect("import JSONC config");
+        assert_eq!(imported, 1, "JSONC server imported");
+        let servers = state.db.get_all_mcp_servers().expect("read servers");
+        assert_eq!(
+            servers["filesystem"]
+                .server
+                .pointer("/args/0")
+                .and_then(Value::as_str),
+            Some("-y")
+        );
+    }
+
+    /// 非 Windows（没有 APPDATA）= 源不可用：导入返回 Ok(0) 而不是把
+    /// 统一导入整体报成失败，其余来源照常工作。
+    #[test]
+    #[serial]
+    fn import_without_appdata_reports_no_source() {
+        let state = AppState::new(Arc::new(
+            Database::memory().expect("create in-memory database"),
+        ));
+        let previous = std::env::var_os("APPDATA");
+        std::env::remove_var("APPDATA");
+        let imported = import(&state);
+        match previous {
+            Some(value) => std::env::set_var("APPDATA", value),
+            None => std::env::remove_var("APPDATA"),
+        }
+        assert_eq!(imported.expect("no-source import"), 0);
+    }
+
+    /// 库里存的隐式 stdio（缺 type，社区 .mcp.json 惯例）与 VS Code 里
+    /// 同一定义（unified_spec 补成显式 stdio）是同一条连接：不该误报冲突。
+    #[test]
+    #[serial]
+    fn import_treats_implicit_stdio_as_same_transport() {
+        let appdata = tempfile::tempdir().expect("temp APPDATA");
+        let user_dir = appdata.path().join("Code").join("User");
+        std::fs::create_dir_all(&user_dir).expect("create user dir");
+        std::fs::write(
+            user_dir.join("mcp.json"),
+            serde_json::json!({
+                "servers": {
+                    "shared": {
+                        "type": "stdio",
+                        "command": "node",
+                        "args": ["server.js"]
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .expect("write user mcp.json");
+
+        let state = AppState::new(Arc::new(
+            Database::memory().expect("create in-memory database"),
+        ));
+        // 库里已有同一条连接，type 是隐式的（导入路径原样保留）
+        state
+            .db
+            .save_mcp_server(&mcp_server(
+                "shared",
+                serde_json::json!({"command": "node", "args": ["server.js"]}),
+            ))
+            .expect("seed existing server");
+
+        let _redirect = RedirectedAppdata::to(appdata.path());
+        // 同一条连接（隐式 stdio ≡ 显式 stdio）：Ok(0)、不报冲突、不新增条目。
+        // 冲突路径返回 Err，这里 expect 就是最强的断言。
+        let imported = import(&state).expect("same transport must not conflict");
+        assert_eq!(imported, 0, "existing server, not a new entry");
+        assert_eq!(
+            state.db.get_all_mcp_servers().expect("read servers").len(),
+            1,
+            "no duplicate entry"
+        );
+    }
+
+    /// 造一条只用于测试的 McpServer（开关全关，连接定义原样存）。
+    fn mcp_server(id: &str, spec: Value) -> crate::app_config::McpServer {
+        crate::app_config::McpServer {
+            id: id.to_string(),
+            name: id.to_string(),
+            server: spec,
+            apps: crate::app_config::McpApps::default(),
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: vec![],
+        }
     }
 }
