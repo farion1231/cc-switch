@@ -4782,5 +4782,15 @@
       "refresh": "残量を更新",
       "refreshAria": "{{login}} の残量を更新"
     }
+  },
+  "codexDesktop": {
+    "restart": "Codexを再起動",
+    "restarting": "再起動中…",
+    "restartHint": "デスクトップアプリを閉じて開き直します。実行中のタスクは中断されます。",
+    "restarted": "Codexデスクトップアプリを開き直しました。",
+    "failed": "Codexデスクトップアプリの再起動に失敗しました：{{error}}",
+    "switchAndRestart": "切り替えてCodexを再起動",
+    "switchedAndRestarted": "アカウントを切り替えてCodexデスクトップアプリを開き直しました。",
+    "switchRestartFailed": "アカウントは切り替わりましたが、再起動に失敗しました：{{error}}"
   }
 }

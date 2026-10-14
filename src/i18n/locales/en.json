@@ -4782,5 +4782,15 @@
       "refresh": "Refresh quota",
       "refreshAria": "Refresh quota for {{login}}"
     }
+  },
+  "codexDesktop": {
+    "restart": "Restart Codex",
+    "restarting": "Restarting...",
+    "restartHint": "Close and reopen the desktop app. Running tasks will be interrupted.",
+    "restarted": "Codex desktop has reopened.",
+    "failed": "Codex desktop restart failed: {{error}}",
+    "switchAndRestart": "Switch and restart Codex",
+    "switchedAndRestarted": "Account switched and Codex desktop reopened.",
+    "switchRestartFailed": "Account switched, but desktop restart failed: {{error}}"
   }
 }

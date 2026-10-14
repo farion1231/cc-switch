@@ -7,6 +7,7 @@ import type { AppMode, StartupAttachFailure } from "@/types/proxy";
 import type { ProxyAppId } from "@/config/appConfig";
 import { isStackAppId } from "@/config/appConfig";
 import { settingsApi } from "@/lib/api";
+import { isWindows } from "@/lib/platform";
 import { providersApi } from "@/lib/api/providers";
 import { proxyApi } from "@/lib/api/proxy";
 import { useSettingsQuery } from "@/lib/query";
@@ -60,7 +61,7 @@ interface SwitchModePanelProps extends ListCallbacks {
   scrollRef?: RefObject<HTMLDivElement>;
   onSwitch: (
     provider: Provider,
-    options?: { acknowledgedRouting?: boolean },
+    options?: { acknowledgedRouting?: boolean; restartDesktop?: boolean },
   ) => unknown;
   onOpenRoutingSettings: () => void;
   startupFailure?: StartupAttachFailure;
@@ -553,6 +554,15 @@ export function SwitchModePanel({
           appId={app}
           isLoading={isLoading}
           onSwitch={(provider) => void onSwitch(provider)}
+          onSwitchAndRestart={
+            app === "codex" &&
+            isWindows() &&
+            active === view &&
+            view !== "stack" &&
+            !failoverOn
+              ? (provider) => void onSwitch(provider, { restartDesktop: true })
+              : undefined
+          }
           switchMode={switchMode}
         />
       </div>

@@ -30,6 +30,7 @@ import { openclawKeys } from "@/hooks/useOpenClaw";
 import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import { getRoutingReason } from "@/utils/routingReason";
 import { logFrontendInfo } from "@/lib/frontendLogger";
+import { restartCodexDesktop } from "@/lib/api/codexDesktop";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -166,7 +167,10 @@ export function useProviderActions(
 
   // 切换供应商
   const switchProvider = useCallback(
-    async (provider: Provider, options?: { acknowledgedRouting?: boolean }) => {
+    async (
+      provider: Provider,
+      options?: { acknowledgedRouting?: boolean; restartDesktop?: boolean },
+    ) => {
       // Claude Desktop 切到模型映射卡时，后端会自动拉起路由服务，不用提醒；
       // 其余应用必须开启当前应用的 takeover（只看全局进程会漏判别的应用已接管的情况）。
       // 确认框 F 里选了「仍然直连切换」的不再重复提醒。
@@ -218,7 +222,6 @@ export function useProviderActions(
       try {
         const result = await switchProviderMutation.mutateAsync(provider.id);
         await syncClaudePlugin(provider);
-
         // Surface switch warnings by code — a generic "backfill failed"
         // message for an auth-cleanup warning would point the user at the
         // wrong problem entirely.
@@ -247,6 +250,20 @@ export function useProviderActions(
               { duration: 5000 },
             );
           }
+        }
+
+        if (activeApp === "codex" && options?.restartDesktop) {
+          try {
+            await restartCodexDesktop();
+            toast.success(t("codexDesktop.switchedAndRestarted"));
+          } catch (error) {
+            toast.error(
+              t("codexDesktop.switchRestartFailed", {
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            );
+          }
+          return;
         }
 
         // 若已弹过 proxyRequired 警告则不再弹 success

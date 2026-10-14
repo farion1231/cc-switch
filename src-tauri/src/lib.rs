@@ -1766,6 +1766,7 @@ pub fn run() {
             commands::set_window_theme,
             // Generic managed auth commands
             commands::auth_start_login,
+            commands::restart_codex_desktop,
             commands::auth_poll_for_account,
             commands::auth_cancel_login,
             commands::auth_list_accounts,

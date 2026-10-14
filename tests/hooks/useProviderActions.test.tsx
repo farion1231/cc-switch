@@ -5,6 +5,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import type { Provider, UsageScript } from "@/types";
 
+const restartDesktopMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/api/codexDesktop", () => ({
+  restartCodexDesktop: restartDesktopMock,
+}));
+
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
 const toastInfoMock = vi.fn();
@@ -141,6 +146,38 @@ beforeEach(() => {
 });
 
 describe("useProviderActions", () => {
+  it("only restarts after the account switch has succeeded", async () => {
+    restartDesktopMock
+      .mockReset()
+      .mockResolvedValue({ action: "restarted", desktop_pid: 42 });
+    const order: string[] = [];
+    switchProviderMutateAsync.mockImplementationOnce(async () => {
+      order.push("switch");
+    });
+    restartDesktopMock.mockImplementationOnce(async () => {
+      order.push("restart");
+      return { action: "restarted", desktop_pid: 42 };
+    });
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useProviderActions("codex"), {
+      wrapper,
+    });
+    await act(async () => {
+      await result.current.switchProvider(createProvider(), {
+        restartDesktop: true,
+      });
+    });
+    expect(order).toEqual(["switch", "restart"]);
+    restartDesktopMock.mockClear();
+    switchProviderMutateAsync.mockRejectedValueOnce(new Error("write failed"));
+    await act(async () => {
+      await result.current.switchProvider(createProvider(), {
+        restartDesktop: true,
+      });
+    });
+    expect(restartDesktopMock).not.toHaveBeenCalled();
+  });
+
   it("should trigger mutation when calling addProvider", async () => {
     addProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();
