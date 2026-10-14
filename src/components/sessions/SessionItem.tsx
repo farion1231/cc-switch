@@ -21,6 +21,7 @@ import {
   getBaseName,
   getSessionLastText,
   highlightText,
+  highlightTextRanges,
   isArchivedSession,
   isSessionAppId,
 } from "./utils";
@@ -110,7 +111,8 @@ export function SessionItem({
   const title = formatSessionTitle(session);
   const untitled = !session.title && !session.projectDir;
   const lastText = getSessionLastText(session);
-  const snippet = contentHit?.snippets[0]?.text;
+  const primarySnippet = contentHit?.snippets[0];
+  const snippet = primarySnippet?.text;
   const extraSnippets = extraSnippetsOf(contentHit, selectionMode);
   const archived = isArchivedSession(session);
   const deletable = canDeleteSession(session);
@@ -242,8 +244,11 @@ export function SessionItem({
                 {t("sessionManager.contentHitPrefix", {
                   defaultValue: "正文：",
                 })}
-                {searchQuery ? highlightText(snippet, searchQuery) : snippet}
-                {contentHit.matchCount > 1 &&
+                {searchQuery && primarySnippet
+                  ? highlightTextRanges(snippet, primarySnippet.highlights)
+                  : snippet}
+                {contentHit &&
+                  contentHit.matchCount > 1 &&
                   t("sessionManager.contentHitMore", {
                     defaultValue: "（{{count}} 条消息命中）",
                     count: contentHit.matchCount,
@@ -418,7 +423,9 @@ export function SessionItem({
               onClick={() => onOpenAt?.(item.messageIndex)}
               className="block h-5 w-full truncate rounded-control text-left text-caption text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              {searchQuery ? highlightText(item.text, searchQuery) : item.text}
+              {searchQuery
+                ? highlightTextRanges(item.text, item.highlights)
+                : item.text}
             </button>
           </li>
         ))}

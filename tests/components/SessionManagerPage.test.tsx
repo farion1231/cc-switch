@@ -80,7 +80,7 @@ const openAppMenu = async () =>
 
 const EXPANDED_KEY = "cc-switch.sessionManager.expandedProjects";
 
-const setupZetaSession = () => {
+const setupZetaSession = (word = "zeta") => {
   const source = "/mock/codex/needle.jsonl";
   setSessionFixtures(
     [
@@ -100,7 +100,7 @@ const setupZetaSession = () => {
           role: "user",
           content: "",
           turnId: "t1",
-          blocks: [{ type: "text", text: "zeta first" }],
+          blocks: [{ type: "text", text: `${word} first` }],
         },
         {
           role: "assistant",
@@ -118,7 +118,7 @@ const setupZetaSession = () => {
           role: "assistant",
           content: "",
           turnId: "t2",
-          blocks: [{ type: "text", text: "zeta second" }],
+          blocks: [{ type: "text", text: `${word} second` }],
         },
       ],
     },
@@ -130,8 +130,16 @@ const setupZetaSession = () => {
         providerId: "codex",
         sourcePath: source,
         snippets: [
-          { messageIndex: 3, text: "zeta second" },
-          { messageIndex: 0, text: "zeta first" },
+          {
+            messageIndex: 3,
+            text: `${word} second`,
+            highlights: [{ start: 0, end: word.length }],
+          },
+          {
+            messageIndex: 0,
+            text: `${word} first`,
+            highlights: [{ start: 0, end: word.length }],
+          },
         ],
         matchCount: 2,
       },
@@ -355,6 +363,77 @@ describe("SessionManagerPage", () => {
     const extras = await screen.findByRole("list", { name: "更多正文命中" });
     fireEvent.click(within(extras).getByRole("button"));
     expect(await screen.findByText("1 / 2")).toBeInTheDocument();
+    searchSpy.mockRestore();
+  });
+
+  it.each([false, true])(
+    "keeps Unicode snippet highlights and clicked message positions aligned (extra: %s)",
+    async (extra) => {
+      const searchSpy = setupZetaSession("İZMİR");
+      renderPage("codex");
+      await screen.findByText("Needle Session");
+      fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), {
+        target: { value: "i\u0307zmi\u0307r" },
+      });
+      expect(await screen.findByText(/2 条消息命中/)).toBeInTheDocument();
+      expect(
+        Array.from(
+          sessionList().querySelectorAll("mark"),
+          (mark) => mark.textContent,
+        ),
+      ).toEqual(["İZMİR", "İZMİR"]);
+
+      if (extra) {
+        const extras = screen.getByRole("list", { name: "更多正文命中" });
+        fireEvent.click(within(extras).getByRole("button"));
+      } else {
+        openRow("Needle Session");
+      }
+      expect(
+        await screen.findByText(extra ? "1 / 2" : "2 / 2"),
+      ).toBeInTheDocument();
+      const reader = screen.getByRole("region", { name: "对话内容" });
+      expect(
+        Array.from(reader.querySelectorAll("mark"), (mark) => mark.textContent),
+      ).toEqual(["İZMİR", "İZMİR"]);
+      searchSpy.mockRestore();
+    },
+  );
+
+  it("uses full-source ranges when cropping changes contextual sigma lowercase", async () => {
+    const source = "A" + "\u0301".repeat(100) + "Σ";
+    const snippet = "…" + "\u0301".repeat(60) + "Σ";
+    const searchSpy = setupZetaSession(source);
+    searchSpy.mockResolvedValue({
+      hits: [
+        {
+          providerId: "codex",
+          sourcePath: "/mock/codex/needle.jsonl",
+          snippets: [3, 0].map((messageIndex) => ({
+            messageIndex,
+            text: snippet,
+            highlights: [{ start: 61, end: 62 }],
+          })),
+          matchCount: 2,
+        },
+      ],
+      status: { running: false, processed: 1, total: 1 },
+    });
+    renderPage("codex");
+    await screen.findByText("Needle Session");
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), {
+      target: { value: "ς" },
+    });
+
+    expect(source.toLowerCase()).toContain("ς");
+    expect(snippet.toLowerCase()).not.toContain("ς");
+    expect(await screen.findByText(/2 条消息命中/)).toBeInTheDocument();
+    expect(
+      Array.from(
+        sessionList().querySelectorAll("mark"),
+        (mark) => mark.textContent,
+      ),
+    ).toEqual(["Σ", "Σ"]);
     searchSpy.mockRestore();
   });
 

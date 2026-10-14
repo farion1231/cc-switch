@@ -490,12 +490,20 @@ export interface Settings {
   };
 }
 
+/** 原文 UTF-16 坐标，左闭右开；不得切开代理对。 */
+export interface SessionTextRange {
+  start: number;
+  end: number;
+}
+
 /** 一条命中消息的摘录 */
 export interface SessionContentSnippet {
   /** 摘录所在消息在会话里的序号 */
   messageIndex: number;
   /** 命中词附近的纯文本，空白已压缩 */
   text: string;
+  /** 按完整消息匹配后映射到最终 text 的位置，避免截断改变上下文小写规则。 */
+  highlights: SessionTextRange[];
 }
 
 /** 会话正文搜索的命中（search_session_content）：最多 3 条摘录，第一条最相关 */

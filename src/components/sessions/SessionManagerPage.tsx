@@ -7,7 +7,12 @@ import {
   type Range,
 } from "@tanstack/react-virtual";
 import { toast } from "@/lib/toast";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useIsMutating,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   Check,
   ChevronDown,
@@ -70,6 +75,8 @@ import {
   type SessionAppId,
   type SessionTimeBucket,
 } from "./utils";
+
+const CONTENT_SEARCH_TOGGLE_KEY = ["sessionContentSearchToggle"] as const;
 
 const GROUP_MODE_STORAGE_KEY = "cc-switch.sessionManager.groupMode";
 // 按项目分组时默认全部收起，只记住用户手动展开过的项目。
@@ -149,7 +156,8 @@ export function SessionManagerPage({
 }: SessionManagerPageProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { data, dataUpdatedAt, isLoading, refetch } = useSessionsQuery();
+  const { data, dataUpdatedAt, isSuccess, isLoading, refetch } =
+    useSessionsQuery();
   const sessions = useMemo(() => data ?? [], [data]);
   const { data: settings } = useSettingsQuery();
   const { updateSettings, autoSaveSettings } = useSettings();
@@ -260,7 +268,7 @@ export function SessionManagerPage({
   } = useSessionContentSearch({
     query,
     enabled: contentSearchEnabled,
-    sessions,
+    listIsSuccess: isSuccess,
     listUpdatedAt: dataUpdatedAt,
     providerIds: contentProviderIds,
   });
@@ -296,19 +304,33 @@ export function SessionManagerPage({
     contentHitOf,
   ]);
 
+  // Keep persistence and index cleanup in one operation. Settings refresh before
+  // autoSaveSettings finishes (e.g. tray updates); enabling in that gap could
+  // rebuild an index which the older disable would then clear. The shared
+  // mutation key also keeps the toggle locked if this page is remounted.
+  const isTogglingContentSearch =
+    useIsMutating({ mutationKey: CONTENT_SEARCH_TOGGLE_KEY }) > 0;
+  const contentSearchToggle = useMutation({
+    mutationKey: CONTENT_SEARCH_TOGGLE_KEY,
+    mutationFn: async (enabled: boolean) => {
+      const updates = { sessionContentSearchEnabled: enabled };
+      updateSettings(updates);
+      const saved = await autoSaveSettings(updates);
+      if (saved && !enabled) await sessionsApi.clearContentIndex();
+    },
+    onError: (error) =>
+      toast.error(
+        t("sessionManager.contentSearchToggleFailed", {
+          defaultValue: "无法更改正文搜索设置：{{error}}",
+          error: extractErrorMessage(error),
+        }),
+      ),
+  });
   const toggleContentSearch = (enabled: boolean) => {
-    const updates = { sessionContentSearchEnabled: enabled };
-    updateSettings(updates);
-    void autoSaveSettings(updates)
-      .then(() => (enabled ? undefined : sessionsApi.clearContentIndex()))
-      .catch((error) =>
-        toast.error(
-          t("sessionManager.contentSearchToggleFailed", {
-            defaultValue: "无法更改正文搜索设置：{{error}}",
-            error: extractErrorMessage(error),
-          }),
-        ),
-      );
+    // The mutation cache changes synchronously, before React disables the item.
+    if (queryClient.isMutating({ mutationKey: CONTENT_SEARCH_TOGGLE_KEY }))
+      return;
+    contentSearchToggle.mutate(enabled);
   };
 
   const unknownLabel = t("sessionManager.unknownDirectory", {
@@ -1103,6 +1125,7 @@ export function SessionManagerPage({
                 <DropdownMenuItem
                   role="menuitemcheckbox"
                   aria-checked={contentSearchEnabled}
+                  disabled={isTogglingContentSearch || !settings}
                   className={sessionMenuItemClass}
                   onSelect={() => toggleContentSearch(!contentSearchEnabled)}
                 >

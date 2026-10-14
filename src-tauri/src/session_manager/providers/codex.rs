@@ -34,7 +34,7 @@ use super::codex_items::{
 
 use super::utils::{
     extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
-    FileParseCache, JsonlSpan, LineSpans, TITLE_MAX_CHARS,
+    FileParseCache, JsonlSpan, LineSpans, ScanStatus, TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "codex";
@@ -54,8 +54,12 @@ struct SessionIndexEntry {
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
+    scan_sessions_with_status(&mut ScanStatus::default())
+}
+
+pub(crate) fn scan_sessions_with_status(status: &mut ScanStatus) -> Vec<SessionMeta> {
     let roots = session_roots();
-    scan_sessions_in_roots(&roots)
+    scan_sessions_in_roots_with_titles_and_status(&roots, &load_thread_titles(), status)
 }
 
 pub fn session_roots() -> Vec<PathBuf> {
@@ -66,23 +70,33 @@ pub fn session_roots() -> Vec<PathBuf> {
     ]
 }
 
+#[cfg(test)]
 fn scan_sessions_in_roots(roots: &[PathBuf]) -> Vec<SessionMeta> {
     let thread_titles = load_thread_titles();
     scan_sessions_in_roots_with_titles(roots, &thread_titles)
 }
 
+#[cfg(test)]
 fn scan_sessions_in_roots_with_titles(
     roots: &[PathBuf],
     thread_titles: &HashMap<String, String>,
 ) -> Vec<SessionMeta> {
+    scan_sessions_in_roots_with_titles_and_status(roots, thread_titles, &mut ScanStatus::default())
+}
+
+fn scan_sessions_in_roots_with_titles_and_status(
+    roots: &[PathBuf],
+    thread_titles: &HashMap<String, String>,
+    status: &mut ScanStatus,
+) -> Vec<SessionMeta> {
     let mut files = Vec::new();
     for root in roots {
-        collect_jsonl_files(root, &mut files);
+        collect_jsonl_files_with_status(root, &mut files, status);
     }
 
     // 缓存里只放文件本身解析出的结果；线程标题来自外部索引 / 数据库，
     // 每轮重新读取后再覆盖上去，和逐个调用 parse_session_with_titles 等价。
-    let mut sessions = PARSE_CACHE.scan(files, scan_session_file);
+    let mut sessions = PARSE_CACHE.scan_with_status(files, scan_session_file, status);
     for meta in &mut sessions {
         if let Some(title) = thread_titles.get(&meta.session_id) {
             meta.title = Some(truncate_summary(title, TITLE_MAX_CHARS));
@@ -2113,20 +2127,11 @@ fn infer_session_id_from_filename(path: &Path) -> Option<String> {
     UUID_RE.find(&file_name).map(|mat| mat.as_str().to_string())
 }
 
-fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
-    if !root.exists() {
-        return;
-    }
-
-    let entries = match std::fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
+fn collect_jsonl_files_with_status(root: &Path, files: &mut Vec<PathBuf>, status: &mut ScanStatus) {
+    for entry in status.entries(root) {
         let path = entry.path();
-        if path.is_dir() {
-            collect_jsonl_files(&path, files);
+        if status.is_dir(&path) {
+            collect_jsonl_files_with_status(&path, files, status);
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
             files.push(path);
         }

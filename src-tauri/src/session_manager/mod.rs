@@ -6,6 +6,7 @@ pub mod search;
 pub mod terminal;
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -55,45 +56,62 @@ pub struct DeleteSessionOutcome {
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let (r1, r2, r3, r4, r5, r6, r7, r8) = std::thread::scope(|s| {
-        let h1 = s.spawn(codex::scan_sessions);
-        let h2 = s.spawn(claude::scan_sessions);
-        let h3 = s.spawn(opencode::scan_sessions);
-        let h4 = s.spawn(openclaw::scan_sessions);
-        let h5 = s.spawn(gemini::scan_sessions);
-        let h6 = s.spawn(hermes::scan_sessions);
-        let h7 = s.spawn(grokbuild::scan_sessions);
-        let h8 = s.spawn(pi::scan_sessions);
-        (
-            h1.join().unwrap_or_default(),
-            h2.join().unwrap_or_default(),
-            h3.join().unwrap_or_default(),
-            h4.join().unwrap_or_default(),
-            h5.join().unwrap_or_default(),
-            h6.join().unwrap_or_default(),
-            h7.join().unwrap_or_default(),
-            h8.join().unwrap_or_default(),
-        )
+    scan_sessions_with_status().sessions
+}
+
+pub(crate) struct SessionScan {
+    pub sessions: Vec<SessionMeta>,
+    pub complete_providers: HashSet<String>,
+}
+
+pub(crate) fn scan_sessions_with_status() -> SessionScan {
+    use providers::utils::ScanStatus;
+    type Scanner = fn(&mut ScanStatus) -> Vec<SessionMeta>;
+    let scanners: [(&str, Scanner); 9] = [
+        ("codex", codex::scan_sessions_with_status),
+        ("claude", claude::scan_sessions_with_status),
+        ("opencode", opencode::scan_sessions_with_status),
+        ("openclaw", openclaw::scan_sessions_with_status),
+        ("gemini", gemini::scan_sessions_with_status),
+        ("hermes", hermes::scan_sessions_with_status),
+        ("grokbuild", grokbuild::scan_sessions_with_status),
+        ("pi", pi::scan_sessions_with_status),
+        ("mcode", mcode::scan_sessions_with_status),
+    ];
+    let mut scan = SessionScan {
+        sessions: Vec::new(),
+        complete_providers: HashSet::new(),
+    };
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = scanners
+            .into_iter()
+            .map(|(provider, scanner)| {
+                (
+                    provider,
+                    scope.spawn(move || {
+                        let mut status = ScanStatus::default();
+                        let sessions = scanner(&mut status);
+                        (sessions, status)
+                    }),
+                )
+            })
+            .collect();
+        for (provider, handle) in handles {
+            // A failed worker is not evidence that all its sessions were deleted.
+            if let Ok((sessions, status)) = handle.join() {
+                scan.sessions.extend(sessions);
+                if !status.incomplete {
+                    scan.complete_providers.insert(provider.to_string());
+                }
+            }
+        }
     });
-
-    let mut sessions = Vec::new();
-    sessions.extend(r1);
-    sessions.extend(r2);
-    sessions.extend(r3);
-    sessions.extend(r4);
-    sessions.extend(r5);
-    sessions.extend(r6);
-    sessions.extend(r7);
-    sessions.extend(r8);
-    sessions.extend(mcode::scan_sessions());
-
-    sessions.sort_by(|a, b| {
+    scan.sessions.sort_by(|a, b| {
         let a_ts = a.last_active_at.or(a.created_at).unwrap_or(0);
         let b_ts = b.last_active_at.or(b.created_at).unwrap_or(0);
         b_ts.cmp(&a_ts)
     });
-
-    sessions
+    scan
 }
 
 pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<SessionMessage>, String> {

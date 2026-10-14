@@ -2,11 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { sessionsApi } from "@/lib/api/sessions";
-import type {
-  SessionContentHit,
-  SessionIndexStatus,
-  SessionMeta,
-} from "@/types";
+import type { SessionContentHit, SessionIndexStatus } from "@/types";
 
 /** 输入停顿多久后才查正文（毫秒） */
 const SEARCH_DEBOUNCE_MS = 250;
@@ -28,8 +24,8 @@ interface UseSessionContentSearchOptions {
   query: string;
   /** 「搜索消息正文」开关 */
   enabled: boolean;
-  /** 当前会话列表（为空时不同步） */
-  sessions: SessionMeta[];
+  /** 最近一次列表读取是否成功；失败后缓存的时间戳仍会保留 */
+  listIsSuccess: boolean;
   /**
    * 列表最近一次成功读取的时间（useQuery 的 dataUpdatedAt）。每次读取成功都同步一次索引：
    * 正文变了而元数据没变时（如 Grok Build 一轮进行中只追加 chat_history），列表数组的引用
@@ -55,7 +51,7 @@ interface UseSessionContentSearchResult {
 export function useSessionContentSearch({
   query,
   enabled,
-  sessions,
+  listIsSuccess,
   listUpdatedAt,
   providerIds,
 }: UseSessionContentSearchOptions): UseSessionContentSearchResult {
@@ -107,9 +103,9 @@ export function useSessionContentSearch({
   }, [enabled, queryClient]);
 
   // 会话列表每次读取成功后同步索引；后端只处理有变化的会话，已在跑时只排一次重跑
-  const hasSessions = sessions.length > 0;
   useEffect(() => {
-    if (!enabled || !hasSessions) return;
+    // 空列表也要同步，以清理已被外部删除的会话；首次读取完成前不启动。
+    if (!enabled || !listIsSuccess || listUpdatedAt === 0) return;
     let cancelled = false;
     sessionsApi
       .syncContentIndex()
@@ -120,7 +116,7 @@ export function useSessionContentSearch({
     return () => {
       cancelled = true;
     };
-  }, [enabled, hasSessions, listUpdatedAt]);
+  }, [enabled, listIsSuccess, listUpdatedAt]);
 
   const providerKey = useMemo(() => [...providerIds].sort(), [providerIds]);
 
