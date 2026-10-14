@@ -4092,8 +4092,10 @@
       "openclaw": "Installs with npm",
       "hermes": "Installs with the official script",
       "pi": "Installs with npm",
-      "mcode": "Installs with the official script, falls back to npm"
-    }
+      "mcode": "Installs with the official script, falls back to npm",
+      "zcode": "Desktop app; it updates itself inside ZCode"
+    },
+    "downloadFromSite": "Download from website"
   },
   "appPage": {
     "moreActions": "More actions for {{name}}",
@@ -4792,7 +4794,7 @@
     "noModels": "No models configured",
     "providerKey": "Provider Key",
     "providerKeyDuplicate": "This key is already in use",
-    "providerKeyHint": "Unique identifier in ~/.zcode/v2/config.json. Use lowercase letters, numbers, colons, and hyphens only.",
+    "providerKeyHint": "Unique identifier in ~/.zcode/v2/provider_config.json. Use lowercase letters, numbers, colons, and hyphens only.",
     "providerKeyInvalid": "Invalid format. Use lowercase letters, numbers, colons, and hyphens only.",
     "providerKeyLockedHint": "This provider has already been added to the ZCode config, so its key can no longer be changed.",
     "providerKeyPlaceholder": "my-provider",
@@ -4801,6 +4803,7 @@
     "providerName": "Provider Name",
     "providerNameHint": "Display name shown in ZCode",
     "providerNamePlaceholder": "My Provider",
-    "toggleModelDetails": "Toggle model details"
+    "toggleModelDetails": "Toggle model details",
+    "activationHint": "ZCode keeps all providers live at once: saving adds this provider to ZCode's list, but you must switch to it inside ZCode's provider picker for it to take effect."
   }
 }

@@ -285,6 +285,14 @@ export function ZCodeFormFields({
 
   return (
     <>
+      {/* ZCode 是 additive 模式：写入的供应商不会自动生效，必须在 ZCode 内手动选择 */}
+      <div className="rounded-md border border-border-default bg-muted/40 px-3 py-2.5 text-xs text-muted-foreground">
+        {t("zcode.activationHint", {
+          defaultValue:
+            "ZCode keeps all providers live at once. After saving, switch to this provider inside ZCode's provider picker to actually use it.",
+        })}
+      </div>
+
       {/* Provider Kind Selector */}
       <div className="space-y-2">
         <FormLabel htmlFor="zcode-kind">

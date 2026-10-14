@@ -1028,9 +1028,11 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             "Pi providers are read from Pi's native models file".to_string(),
         )),
         AppType::ZCode => {
-            use crate::zcode_config::{get_zcode_config_path, read_zcode_config};
+            use crate::zcode_config::{
+                get_zcode_provider_config_path, read_zcode_provider_config,
+            };
 
-            let config_path = get_zcode_config_path();
+            let config_path = get_zcode_provider_config_path();
             if !config_path.exists() {
                 return Err(AppError::localized(
                     "zcode.config.missing",
@@ -1039,7 +1041,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
                 ));
             }
 
-            let config = read_zcode_config()?;
+            let config = read_zcode_provider_config()?;
             Ok(config)
         }
     }
@@ -1541,12 +1543,12 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 /// Remove a ZCode provider from the live configuration
 ///
 /// This is specific to ZCode's additive mode - removing a provider
-/// from the ~/.zcode/v2/config.json file.
+/// from the ~/.zcode/v2/provider_config.json file.
 pub fn remove_zcode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::zcode_config;
 
-    // ZCode 自管的内置节点（builtin: 前缀）不归 CC Switch 管，拒绝删除
-    if provider_id.starts_with("builtin:") || provider_id.starts_with("account:") {
+    // ZCode 自管的节点（builtin:/account: 套餐与模板 id 连接）不归 CC Switch 管，拒绝删除
+    if crate::zcode_config::is_zcode_managed_provider_id(provider_id) {
         return Err(AppError::InvalidInput(format!(
             "ZCode built-in provider '{provider_id}' is managed by ZCode itself"
         )));
@@ -1566,7 +1568,7 @@ pub fn remove_zcode_provider_from_live(provider_id: &str) -> Result<(), AppError
 
 /// Import all providers from ZCode live config to database
 ///
-/// This imports existing providers from ~/.zcode/v2/config.json
+/// This imports existing providers from ~/.zcode/v2/provider_config.json
 /// into the CC Switch database. Each provider found will be added to the
 /// database with is_current set to false.
 pub fn import_zcode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
@@ -1582,9 +1584,10 @@ pub fn import_zcode_providers_from_live(state: &AppState) -> Result<usize, AppEr
     let existing_ids = state.db.get_provider_ids("zcode")?;
 
     for (id, config) in providers {
-        // ZCode 自管的内置节点（builtin: 前缀，由桌面版的供应商家族设置管理）
-        // 不归 CC Switch 管：不导入，也不允许从 CC Switch 删除。
-        if id.starts_with("builtin:") || id.starts_with("account:") {
+        // ZCode 自管的节点（builtin:/account: 套餐，以及用户在 ZCode 内按模板
+        // id 建号的连接如 bigmodel-api / deepseek）不归 CC Switch 管：
+        // 不导入，也不允许从 CC Switch 删除。
+        if crate::zcode_config::is_zcode_managed_provider_id(&id) {
             log::debug!("Skipping ZCode built-in provider '{id}'");
             continue;
         }

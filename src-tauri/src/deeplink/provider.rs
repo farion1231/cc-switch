@@ -744,7 +744,8 @@ fn build_opencode_settings(
 
 /// Build ZCode settings configuration
 ///
-/// ZCode provider fragment shape (matches `~/.zcode/v2/config.json`):
+/// ZCode provider fragment shape (matches cc-switch's ZCodeProviderConfig; the
+/// live file `~/.zcode/v2/provider_config.json` derives it into a rule):
 /// `{ name, kind, options: { baseURL, apiKey }, source, models: { <id>: {} } }`
 fn build_zcode_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     let endpoint = get_primary_endpoint(request);

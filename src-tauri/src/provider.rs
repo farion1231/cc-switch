@@ -1102,7 +1102,7 @@ pub struct OpenCodeModelLimit {
 
 /// ZCode 供应商的 settings_config 结构
 ///
-/// ZCode (dev.zcode.app) 的 provider 配置位于 `~/.zcode/v2/config.json`，
+/// ZCode (dev.zcode.app) 的个人供应商规则位于 `~/.zcode/v2/provider_config.json`，
 /// 通过 `kind` 字段指定供应商类型（anthropic / openai-compatible / openai），
 /// 凭据嵌套在 `options`（baseURL / apiKey），与 OpenCode 结构类似。
 /// 配置示例：
@@ -1144,9 +1144,9 @@ pub struct ZCodeProviderConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
 
-    /// 模型定义映射
+    /// 模型定义映射（IndexMap 保持用户配置的模型顺序，写入 modelOrder 时不变）
     #[serde(default)]
-    pub models: HashMap<String, ZCodeModel>,
+    pub models: IndexMap<String, ZCodeModel>,
 
     /// 捕获所有未明确定义的顶层字段，确保 import/live-sync 不会丢失
     /// ZCode 配置中的额外属性（前端 ZCodeProviderConfig 显式允许任意 extra 字段）。

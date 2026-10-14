@@ -128,8 +128,8 @@ pub struct ToolVersion {
     wsl_distro: Option<String>,
 }
 
-const VALID_TOOLS: [&str; 9] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode",
+const VALID_TOOLS: [&str; 10] = [
+    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "zcode",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -717,6 +717,27 @@ enum LifecycleCommandShell {
     WindowsBatch,
 }
 
+const ZCODE_DOWNLOAD_URL: &str = "https://dev.zcode.app";
+
+fn zcode_download_command(shell: LifecycleCommandShell) -> String {
+    match shell {
+        // `start` 的第一个引号参数是窗口标题，URL 必须再带一层引号
+        LifecycleCommandShell::WindowsBatch => {
+            format!(r#"cmd /c start "" "{ZCODE_DOWNLOAD_URL}""#)
+        }
+        LifecycleCommandShell::Posix => {
+            #[cfg(target_os = "macos")]
+            {
+                format!("open {ZCODE_DOWNLOAD_URL}")
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                format!("xdg-open {ZCODE_DOWNLOAD_URL}")
+            }
+        }
+    }
+}
+
 fn npm_install_command_for(tool: &str) -> Option<&'static str> {
     match tool {
         "claude" => Some(
@@ -812,6 +833,12 @@ fn tool_action_shell_command_for_shell(
                 shell,
             ));
         }
+    }
+
+    // ZCode 只有桌面分发（无 npm 包、无 CLI 安装器）：安装/升级动作打开官网
+    // 下载页，由应用自带的更新器完成实际升级。
+    if tool == "zcode" {
+        return Some(zcode_download_command(shell));
     }
 
     if tool == "hermes" {
@@ -1002,12 +1029,73 @@ fn windows_cmd_double_quote_arg(value: &str) -> String {
 
 /// 获取单个工具的版本信息（内部实现）
 /// 本机工具的版本（只探测本地，不联网）。
+/// ZCode 桌面版版本探测。
+///
+/// 桌面端启动时会把内置供应商目录物化到
+/// `~/.zcode/v2/runtime/provider/<平台>/<应用版本>/`，取其中的最大版本号即可。
+/// 没有再退路：ZCode 无 CLI、注册表键名不固定；应用装了但从未启动时报告
+/// 未安装是可接受的——那种状态下 cc-switch 的 ZCode 集成本身也无从谈起。
+fn probe_zcode_desktop_version() -> ShellProbe {
+    match scan_zcode_runtime_version() {
+        Some(version) => ShellProbe::Found(version),
+        None => ShellProbe::NotFound(
+            "ZCode desktop app not found (no runtime under ~/.zcode/v2/runtime/provider)".into(),
+        ),
+    }
+}
+
+/// 扫描 `~/.zcode/v2/runtime/provider/<平台>/<版本>/`，返回最大的语义化版本。
+fn scan_zcode_runtime_version() -> Option<String> {
+    let root = crate::zcode_config::get_zcode_dir()
+        .join("v2")
+        .join("runtime")
+        .join("provider");
+
+    let mut best: Option<((u64, u64, u64), String)> = None;
+    // 单个平台/版本目录读失败只跳过该项，不能让整个扫描短路
+    for platform in std::fs::read_dir(&root).ok()?.flatten() {
+        let Ok(versions) = std::fs::read_dir(platform.path()) else {
+            continue;
+        };
+        for entry in versions.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if !file_type.is_dir() {
+                continue;
+            }
+            let Some(parsed) = parse_version_triple(&entry.file_name().to_string_lossy()) else {
+                continue;
+            };
+            if best.as_ref().is_none_or(|(best_v, _)| parsed > *best_v) {
+                best = Some((parsed, entry.file_name().to_string_lossy().into_owned()));
+            }
+        }
+    }
+    best.map(|(_, version)| version)
+}
+
+/// 解析 "3.14.5" 或 "3.14.5-xxx" 形态的前三段数字版本；不匹配返回 None。
+fn parse_version_triple(name: &str) -> Option<(u64, u64, u64)> {
+    let core = name.split(['-', '+', ' ']).next()?;
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    Some((major, minor, patch))
+}
+
 fn probe_local_version(
     tool: &str,
     wsl_distro: Option<&str>,
     wsl_shell: Option<&str>,
     wsl_shell_flag: Option<&str>,
 ) -> ShellProbe {
+    // ZCode 是桌面分发、没有 CLI（`zcode` 不在 PATH），走专属探测：
+    // PATH/目录扫描对它必然 NotFound，还会扫出无意义的报错文案。
+    if tool == "zcode" {
+        return probe_zcode_desktop_version();
+    }
     if let Some(distro) = wsl_distro {
         try_get_version_wsl(tool, distro, wsl_shell, wsl_shell_flag)
     } else {

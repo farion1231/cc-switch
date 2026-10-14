@@ -4092,8 +4092,10 @@
       "openclaw": "npm でインストール",
       "hermes": "公式インストールスクリプトでインストール",
       "pi": "npm でインストール",
-      "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います"
-    }
+      "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います",
+      "zcode": "デスクトップアプリです。ZCode 内で更新してください"
+    },
+    "downloadFromSite": "公式サイトからダウンロード"
   },
   "appPage": {
     "moreActions": "{{name}} のその他の操作",
@@ -4792,7 +4794,7 @@
     "noModels": "モデルが設定されていません",
     "providerKey": "プロバイダーキー",
     "providerKeyDuplicate": "このキーは既に使用されています",
-    "providerKeyHint": "~/.zcode/v2/config.json 内の固有識別子。小文字、数字、コロン、ハイフンのみ使用できます。",
+    "providerKeyHint": "~/.zcode/v2/provider_config.json 内の固有識別子。小文字、数字、コロン、ハイフンのみ使用できます。",
     "providerKeyInvalid": "無効な形式です。小文字、数字、コロン、ハイフンのみ使用できます。",
     "providerKeyLockedHint": "このプロバイダーは既に ZCode 設定に追加されているため、キーを変更できません。",
     "providerKeyPlaceholder": "my-provider",
@@ -4801,6 +4803,7 @@
     "providerName": "プロバイダー名",
     "providerNameHint": "ZCode に表示される名前",
     "providerNamePlaceholder": "マイプロバイダー",
-    "toggleModelDetails": "モデルの詳細を切り替え"
+    "toggleModelDetails": "モデルの詳細を切り替え",
+    "activationHint": "ZCode はすべてのプロバイダーを同時に保持します。保存すると ZCode のプロバイダーリストに追加されますが、実際に使用するには ZCode アプリ内のプロバイダーセレクターで切り替える必要があります。"
   }
 }

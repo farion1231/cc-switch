@@ -155,7 +155,7 @@ pub async fn get_config_status(
             })
         }
         AppType::ZCode => {
-            let config_path = crate::zcode_config::get_zcode_config_path();
+            let config_path = crate::zcode_config::get_zcode_provider_config_path();
             let exists = config_path.exists();
             let path = crate::zcode_config::get_zcode_dir()
                 .to_string_lossy()

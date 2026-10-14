@@ -1,7 +1,7 @@
 //! ZCode provider commands
 //!
 //! ZCode (dev.zcode.app) uses additive mode — users may already have providers
-//! configured in `~/.zcode/v2/config.json`. These commands mirror the OpenCode /
+//! configured in `~/.zcode/v2/provider_config.json`. These commands mirror the OpenCode /
 //! Hermes import commands.
 
 use crate::store::AppState;
@@ -14,7 +14,7 @@ use tauri::State;
 /// Import providers from ZCode live config to database.
 ///
 /// ZCode uses additive mode — users may already have providers
-/// configured in `~/.zcode/v2/config.json`.
+/// configured in `~/.zcode/v2/provider_config.json`.
 #[tauri::command]
 pub fn import_zcode_providers_from_live(state: State<'_, AppState>) -> Result<usize, String> {
     crate::services::provider::import_zcode_providers_from_live(state.inner())

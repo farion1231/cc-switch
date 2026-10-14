@@ -4092,8 +4092,10 @@
       "openclaw": "通过 npm 安装",
       "hermes": "安装时运行官方安装脚本",
       "pi": "通过 npm 安装",
-      "mcode": "安装时运行官方安装脚本，失败时改用 npm"
-    }
+      "mcode": "安装时运行官方安装脚本，失败时改用 npm",
+      "zcode": "桌面版应用，请在 ZCode 内自行更新"
+    },
+    "downloadFromSite": "官网下载"
   },
   "appPage": {
     "moreActions": "{{name}} 的更多操作",
@@ -4792,7 +4794,7 @@
     "noModels": "未配置任何模型",
     "providerKey": "供应商标识",
     "providerKeyDuplicate": "该标识已被使用",
-    "providerKeyHint": "在 ~/.zcode/v2/config.json 中的唯一标识。只能使用小写字母、数字、冒号和连字符。",
+    "providerKeyHint": "在 ~/.zcode/v2/provider_config.json 中的唯一标识。只能使用小写字母、数字、冒号和连字符。",
     "providerKeyInvalid": "格式无效。只能使用小写字母、数字、冒号和连字符。",
     "providerKeyLockedHint": "该供应商已添加到 ZCode 配置中，因此其标识无法再修改。",
     "providerKeyPlaceholder": "my-provider",
@@ -4801,6 +4803,7 @@
     "providerName": "供应商名称",
     "providerNameHint": "在 ZCode 中显示的名称",
     "providerNamePlaceholder": "我的供应商",
-    "toggleModelDetails": "切换模型详情"
+    "toggleModelDetails": "切换模型详情",
+    "activationHint": "ZCode 的供应商是叠加式的：保存后写入 ZCode 的供应商列表，但需要在 ZCode 应用的供应商选择器中手动切换到该供应商才会实际生效。"
   }
 }

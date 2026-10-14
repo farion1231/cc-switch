@@ -31,10 +31,14 @@ export interface ZCodeProviderPreset {
 /**
  * Official ZCode provider presets.
  *
- * Based on the built-in model catalog shipped with ZCode.app v3.3.6
- * (10 official providers observed). Each preset uses the ZCode
- * config.json shape: { name, kind, options:{baseURL,apiKey},
- * enabled, source:"custom", models:{<id>:{...}} }.
+ * cc-switch stores each provider in the ZCodeProviderConfig shape
+ * { name, kind, options:{baseURL,apiKey}, enabled, source, models } and the
+ * backend derives a `provider_config.json` personal rule from it: when the
+ * baseURL matches a template in ZCode's builtin catalog
+ * (resources/config/provider/zcode-builtin.json), the rule references that
+ * templateId and inherits its endpoint + builtin models. So `kind` and
+ * `baseURL` must match a real template, and `models` must list model IDs the
+ * vendor actually serves — all values below mirror the ZCode 3.14 catalog.
  */
 export const zcodeProviderPresets: ZCodeProviderPreset[] = [
   // ===== Z.AI / BigModel (智谱) — Anthropic-compatible coding endpoints =====
@@ -52,8 +56,8 @@ export const zcodeProviderPresets: ZCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "glm-5.2": { name: "GLM-5.2" },
-        "glm-5-turbo": { name: "GLM-5-Turbo" },
+        "GLM-5.3": { name: "GLM-5.3" },
+        "GLM-5.3-Flash": { name: "GLM-5.3 Flash" },
       },
     },
     category: "cn_official",
@@ -81,8 +85,8 @@ export const zcodeProviderPresets: ZCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "glm-5.2": { name: "GLM-5.2" },
-        "glm-5-turbo": { name: "GLM-5-Turbo" },
+        "GLM-5.3": { name: "GLM-5.3" },
+        "GLM-5.3-Flash": { name: "GLM-5.3 Flash" },
       },
     },
     category: "cn_official",
@@ -112,6 +116,8 @@ export const zcodeProviderPresets: ZCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
+        "kimi-k3": { name: "Kimi K3" },
+        "kimi-k2.7-code": { name: "Kimi K2.7 Code" },
         "kimi-k2.6": { name: "Kimi K2.6" },
       },
     },
@@ -140,7 +146,8 @@ export const zcodeProviderPresets: ZCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "deepseek-v4-flash": { name: "DeepSeek V4 Flash" },
+        "deepseek-flash": { name: "DeepSeek Flash" },
+        "deepseek-v4-pro": { name: "DeepSeek V4 Pro" },
       },
     },
     category: "cn_official",
@@ -196,6 +203,8 @@ export const zcodeProviderPresets: ZCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
+        "qwen3.8-max": { name: "Qwen 3.8 Max" },
+        "qwen3.8-flash": { name: "Qwen 3.8 Flash" },
         "qwen3.5-plus": { name: "Qwen 3.5 Plus" },
       },
     },
@@ -229,6 +238,7 @@ export const zcodeProviderPresets: ZCodeProviderPreset[] = [
           limit: { context: 1048576, output: 131072 },
           modalities: { input: ["text"], output: ["text"] },
         },
+        "mimo-v2.5": { name: "MiMo V2.5" },
       },
     },
     category: "cn_official",

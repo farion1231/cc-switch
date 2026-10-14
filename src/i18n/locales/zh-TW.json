@@ -4093,8 +4093,10 @@
       "openclaw": "透過 npm 安裝",
       "hermes": "安裝時執行官方安裝腳本",
       "pi": "透過 npm 安裝",
-      "mcode": "安裝時執行官方安裝腳本，失敗時改用 npm"
-    }
+      "mcode": "安裝時執行官方安裝腳本，失敗時改用 npm",
+      "zcode": "桌面版應用，請在 ZCode 內自行更新"
+    },
+    "downloadFromSite": "官網下載"
   },
   "appPage": {
     "moreActions": "{{name}} 的更多操作",
@@ -4793,7 +4795,7 @@
     "noModels": "未設定任何模型",
     "providerKey": "供應商識別碼",
     "providerKeyDuplicate": "此識別碼已被使用",
-    "providerKeyHint": "在 ~/.zcode/v2/config.json 中的唯一識別碼。僅能使用小寫字母、數字、冒號和連字號。",
+    "providerKeyHint": "在 ~/.zcode/v2/provider_config.json 中的唯一識別碼。僅能使用小寫字母、數字、冒號和連字號。",
     "providerKeyInvalid": "格式無效。僅能使用小寫字母、數字、冒號和連字號。",
     "providerKeyLockedHint": "此供應商已新增至 ZCode 設定，因此其識別碼無法再修改。",
     "providerKeyPlaceholder": "my-provider",
@@ -4802,6 +4804,7 @@
     "providerName": "供應商名稱",
     "providerNameHint": "在 ZCode 中顯示的名稱",
     "providerNamePlaceholder": "我的供應商",
-    "toggleModelDetails": "切換模型詳情"
+    "toggleModelDetails": "切換模型詳情",
+    "activationHint": "ZCode 的供應商是疊加式的：儲存後寫入 ZCode 的供應商清單，但需要在 ZCode 應用的供應商選擇器中手動切換到該供應商才會實際生效。"
   }
 }

@@ -50,6 +50,7 @@ import { ToolUpgradeConfirmDialog } from "@/components/settings/ToolUpgradeConfi
 import { ToolInstallRow } from "@/components/settings/ToolInstallRow";
 import { ToolErrorMessage } from "@/components/settings/ToolErrorMessage";
 import {
+  DESKTOP_ONLY_TOOLS,
   ENV_BADGE_CONFIG,
   ONE_CLICK_INSTALL_COMMANDS,
   TOOL_APP_IDS,
@@ -434,15 +435,18 @@ function ToolRow({
   const isOutdated = isUpdateAvailable(info?.version, info?.latest_version);
   const broken = Boolean(info?.installed_but_broken);
   const isBusy = tools.busyTools.has(tool);
-  const action: ToolLifecycleAction | null =
-    tools.busyTools.get(tool) ??
-    (isVersionLoading || broken
-      ? null
-      : !info?.version
-        ? "install"
-        : isOutdated
-          ? "update"
-          : null);
+  // 桌面分发的工具（ZCode）应用内自更新，不提供安装/升级动作
+  const isDesktopOnly = DESKTOP_ONLY_TOOLS.has(tool);
+  const action: ToolLifecycleAction | null = isDesktopOnly
+    ? null
+    : (tools.busyTools.get(tool) ??
+      (isVersionLoading || broken
+        ? null
+        : !info?.version
+          ? "install"
+          : isOutdated
+            ? "update"
+            : null));
   const sourceLabel = defaultInstall
     ? SOURCE_LABEL[defaultInstall.source]
     : undefined;
@@ -523,7 +527,20 @@ function ToolRow({
       )}
     </>
   ) : !info?.version && !isVersionLoading ? (
-    <span>{t(`appsPage.installHint.${tool}`, { defaultValue: "" })}</span>
+    isDesktopOnly ? (
+      <a
+        href="https://dev.zcode.app"
+        target="_blank"
+        rel="noreferrer"
+        className="underline decoration-dotted underline-offset-2 hover:text-fg-1"
+      >
+        {t("appsPage.downloadFromSite", {
+          defaultValue: "Download from website",
+        })}
+      </a>
+    ) : (
+      <span>{t(`appsPage.installHint.${tool}`, { defaultValue: "" })}</span>
+    )
   ) : null;
 
   const wslControls =

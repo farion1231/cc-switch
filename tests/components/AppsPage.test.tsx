@@ -10,6 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { settingsApi, ToolInstallationReport } from "@/lib/api/settings";
+import { TOOL_NAMES } from "@/components/apps/useToolManagement";
 
 type ToolVersions = Awaited<ReturnType<typeof settingsApi.getToolVersions>>;
 
@@ -331,7 +332,10 @@ describe("AppsPage concurrent CLI upgrades", () => {
     });
     const { AppsPage } = await import("@/components/apps/AppsPage");
     const view = mountApps(AppsPage);
-    await waitFor(() => expect(mocks.getToolVersions).toHaveBeenCalledTimes(9));
+    // TOOL_NAMES 里包含 ZCode 后探测数 = 工具数，断言从常量派生避免硬编码
+    await waitFor(() =>
+      expect(mocks.getToolVersions).toHaveBeenCalledTimes(TOOL_NAMES.length),
+    );
     view.unmount();
     const remounted = await renderApps();
     fireEvent.click(updateButton("Claude Code"));
