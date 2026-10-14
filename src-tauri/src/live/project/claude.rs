@@ -199,7 +199,11 @@ fn legacy_bedrock_shape(row: &Value, projection: &ClaudeProjection) -> Option<Cl
 pub const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
 
 /// 代理契约里的稳定模型别名：客户端只看到这几个名字，真实模型由代理映射。
-const PROXY_HAIKU_ALIAS: &str = "claude-haiku-4-5";
+///
+/// Claude Code 按别名查自己的模型表决定思考参数：`claude-haiku-4-5` 被当成可关思考的旧
+/// 模型，haiku 档会发 `thinking: disabled`，强制思考的上游直接拒（#8118）。别名要跟上
+/// 当代模型。
+const PROXY_HAIKU_ALIAS: &str = "claude-haiku-5-5";
 const PROXY_SONNET_ALIAS: &str = "claude-sonnet-5";
 const PROXY_OPUS_ALIAS: &str = "claude-opus-5";
 const PROXY_FABLE_ALIAS: &str = "claude-fable-5";

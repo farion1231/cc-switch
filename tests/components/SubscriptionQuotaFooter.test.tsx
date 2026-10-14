@@ -12,6 +12,7 @@ import {
 } from "vitest";
 import { SubscriptionQuotaView } from "@/components/SubscriptionQuotaFooter";
 import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
+import type { QuotaDisplay } from "@/components/quota/quotaRules";
 import zh from "@/i18n/locales/zh.json";
 import zhTW from "@/i18n/locales/zh-TW.json";
 import en from "@/i18n/locales/en.json";
@@ -50,6 +51,7 @@ function renderQuota(
   inline = true,
   overrides: Partial<SubscriptionQuota> = {},
   refetch: () => unknown = vi.fn(),
+  display: QuotaDisplay = "left",
 ) {
   const quota: SubscriptionQuota = {
     tool: "claude",
@@ -70,6 +72,7 @@ function renderQuota(
         refetch={refetch}
         appIdForExpiredHint="claude"
         inline={inline}
+        display={display}
       />
     </I18nextProvider>,
   );
@@ -145,6 +148,27 @@ describe("Claude Fable subscription quota", () => {
     expect(screen.getByText("已用完")).toHaveClass("text-red-500");
     // 展开时重置时间直接写在数值后面
     expect(screen.getByText("2d12h后重置")).toBeInTheDocument();
+  });
+
+  it("writes what is used when chosen, on the card and in the bars", () => {
+    const tiers: QuotaTier[] = [
+      ...baseTiers,
+      { name: "seven_day_fable", utilization: 95, resetsAt: null },
+    ];
+    renderQuota(tiers, true, {}, vi.fn(), "used");
+    const lines = screen.getByRole("button").children;
+    expect(lines[0]).toHaveTextContent("5 小时已用 12%");
+    expect(lines[1]).toHaveTextContent("每周 25% · Fable 95%");
+    // 颜色仍按剩余：Fable 已用 95% = 剩余 5%
+    expect(screen.getByText("95%")).toHaveClass("text-orange-500");
+    expect(screen.getByText("12%")).toHaveClass("text-green-600");
+  });
+
+  it("draws the expanded bar as used when chosen", () => {
+    renderQuota(baseTiers, false, {}, vi.fn(), "used");
+    expect(
+      screen.getByRole("meter", { name: "5 小时: 已用 12%" }),
+    ).toHaveAttribute("aria-valuenow", "12");
   });
 
   it("shows an unused Fable limit in the normal color", () => {

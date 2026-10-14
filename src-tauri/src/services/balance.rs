@@ -283,6 +283,7 @@ async fn query_siliconflow(api_key: &str, is_cn: bool) -> Result<UsageResult, St
 // ── OpenRouter ──────────────────────────────────────────────
 // GET https://openrouter.ai/api/v1/credits
 // Response: { data: { total_credits, total_usage } }
+// /key's limit_remaining is a spending cap, not the account credit balance.
 
 async fn query_openrouter(api_key: &str) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
@@ -320,12 +321,23 @@ async fn query_openrouter(api_key: &str) -> Result<UsageResult, String> {
         Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
     };
 
-    let data = body.get("data").unwrap_or(&body);
-    let total_credits = parse_f64_field(data, "total_credits").unwrap_or(0.0);
-    let total_usage = parse_f64_field(data, "total_usage").unwrap_or(0.0);
-    let remaining = total_credits - total_usage;
+    Ok(parse_openrouter_balance(&body))
+}
 
-    Ok(UsageResult {
+fn parse_openrouter_balance(body: &serde_json::Value) -> UsageResult {
+    let data = body.get("data").unwrap_or(body);
+    let (Some(total_credits), Some(total_usage)) = (
+        parse_f64_field(data, "total_credits").filter(|v| v.is_finite()),
+        parse_f64_field(data, "total_usage").filter(|v| v.is_finite()),
+    ) else {
+        return make_error("Missing or invalid OpenRouter credit amounts".to_string());
+    };
+    let remaining = total_credits - total_usage;
+    if !remaining.is_finite() {
+        return make_error("Invalid OpenRouter credit balance".to_string());
+    }
+
+    UsageResult {
         success: true,
         data: Some(vec![UsageData {
             plan_name: Some("OpenRouter".to_string()),
@@ -333,16 +345,15 @@ async fn query_openrouter(api_key: &str) -> Result<UsageResult, String> {
             total: Some(total_credits),
             used: Some(total_usage),
             unit: Some("USD".to_string()),
-            is_valid: Some(remaining > 0.0),
-            invalid_message: if remaining <= 0.0 {
-                Some("No credits remaining".to_string())
-            } else {
-                None
-            },
+            // /credits reports purchased credits, not key expiration. A free
+            // account can have no credits and still use free models; let the
+            // UI show the balance without marking the key as expired.
+            is_valid: Some(true),
+            invalid_message: None,
             extra: None,
         }]),
         error: None,
-    })
+    }
 }
 
 // ── Novita AI ───────────────────────────────────────────────
@@ -386,10 +397,19 @@ async fn query_novita(api_key: &str) -> Result<UsageResult, String> {
         Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
     };
 
-    // Novita 金额单位为 0.0001 USD，需除以 10000 转为 USD
-    let available = parse_f64_field(&body, "availableBalance").unwrap_or(0.0) / 10000.0;
+    Ok(parse_novita_balance(&body))
+}
 
-    Ok(UsageResult {
+fn parse_novita_balance(body: &serde_json::Value) -> UsageResult {
+    // Novita 金额单位为 0.0001 USD，需除以 10000 转为 USD
+    let Some(available) = parse_f64_field(body, "availableBalance")
+        .map(|v| v / 10000.0)
+        .filter(|v| v.is_finite())
+    else {
+        return make_error("Missing or invalid Novita AI balance".to_string());
+    };
+
+    UsageResult {
         success: true,
         data: Some(vec![UsageData {
             plan_name: Some("Novita AI".to_string()),
@@ -397,16 +417,14 @@ async fn query_novita(api_key: &str) -> Result<UsageResult, String> {
             total: None,
             used: None,
             unit: Some("USD".to_string()),
-            is_valid: Some(available > 0.0),
-            invalid_message: if available <= 0.0 {
-                Some("No balance remaining".to_string())
-            } else {
-                None
-            },
+            // 余额为 0 或负数不代表 key 失效：交给 UI 显示「余额已用完」，
+            // 而不是标成套餐已过期（同 OpenRouter，#8175）
+            is_valid: Some(true),
+            invalid_message: None,
             extra: None,
         }]),
         error: None,
-    })
+    }
 }
 
 // ── 工具函数 ────────────────────────────────────────────────
@@ -450,5 +468,104 @@ pub async fn get_balance(base_url: &str, api_key: &str) -> Result<UsageResult, S
         BalanceProvider::SiliconFlowEn => query_siliconflow(api_key, false).await,
         BalanceProvider::OpenRouter => query_openrouter(api_key).await,
         BalanceProvider::NovitaAI => query_novita(api_key).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn openrouter_balance_does_not_determine_key_validity() {
+        // Free accounts, exhausted paid accounts, and overdrawn accounts do not
+        // imply an expired key. Positive balances must retain their amounts too.
+        for (credits, usage, remaining) in [
+            (0.0, 0.0, 0.0),
+            (100.0, 100.0, 0.0),
+            (100.0, 105.0, -5.0),
+            (100.0, 25.5, 74.5),
+        ] {
+            let result = parse_openrouter_balance(&json!({
+                "data": { "total_credits": credits, "total_usage": usage }
+            }));
+            assert!(result.success);
+            assert!(result.error.is_none());
+            let data = result.data.unwrap();
+            assert_eq!(data.len(), 1);
+            let balance = &data[0];
+            assert_eq!(balance.plan_name.as_deref(), Some("OpenRouter"));
+            assert_eq!(balance.unit.as_deref(), Some("USD"));
+            assert_eq!(balance.total, Some(credits));
+            assert_eq!(balance.used, Some(usage));
+            assert_eq!(balance.remaining, Some(remaining));
+            assert_eq!(balance.is_valid, Some(true));
+            assert!(balance.invalid_message.is_none());
+        }
+    }
+
+    #[test]
+    fn openrouter_balance_accepts_numeric_strings_and_unwrapped_response() {
+        let result = parse_openrouter_balance(&json!({
+            "total_credits": "100.00", "total_usage": "25.50"
+        }));
+        assert!(result.success);
+        let balance = result.data.unwrap().remove(0);
+        assert_eq!(balance.total, Some(100.0));
+        assert_eq!(balance.used, Some(25.5));
+        assert_eq!(balance.remaining, Some(74.5));
+    }
+
+    #[test]
+    fn openrouter_balance_rejects_missing_or_invalid_amounts() {
+        for body in [
+            json!({}),
+            json!({ "data": null }),
+            json!({ "data": { "limit": 100, "limit_remaining": 100, "is_free_tier": true } }),
+            json!({ "data": { "total_credits": 100 } }),
+            json!({ "data": { "total_usage": 0 } }),
+            json!({ "data": { "total_credits": null, "total_usage": 0 } }),
+            json!({ "data": { "total_credits": 100, "total_usage": "invalid" } }),
+            json!({ "data": { "total_credits": "NaN", "total_usage": 0 } }),
+            json!({ "data": { "total_credits": 100, "total_usage": "inf" } }),
+            json!({ "data": { "total_credits": 1e308, "total_usage": -1e308 } }),
+        ] {
+            let result = parse_openrouter_balance(&body);
+            assert!(!result.success, "unexpected success for {body}");
+            assert!(result.data.is_none());
+            assert!(result.error.is_some());
+        }
+    }
+
+    #[test]
+    fn novita_balance_does_not_determine_key_validity() {
+        for (raw, available) in [(0.0, 0.0), (-50000.0, -5.0), (255000.0, 25.5)] {
+            let result = parse_novita_balance(&json!({ "availableBalance": raw }));
+            assert!(result.success);
+            let balance = result.data.unwrap().remove(0);
+            assert_eq!(balance.remaining, Some(available));
+            assert_eq!(balance.unit.as_deref(), Some("USD"));
+            assert_eq!(balance.is_valid, Some(true));
+            assert!(balance.invalid_message.is_none());
+        }
+
+        let result = parse_novita_balance(&json!({ "availableBalance": "10000" }));
+        assert_eq!(result.data.unwrap()[0].remaining, Some(1.0));
+    }
+
+    #[test]
+    fn novita_balance_rejects_missing_or_invalid_amount() {
+        for body in [
+            json!({}),
+            json!({ "availableBalance": null }),
+            json!({ "availableBalance": "invalid" }),
+            json!({ "availableBalance": "inf" }),
+            json!({ "cashBalance": 10000 }),
+        ] {
+            let result = parse_novita_balance(&body);
+            assert!(!result.success, "unexpected success for {body}");
+            assert!(result.data.is_none());
+            assert!(result.error.is_some());
+        }
     }
 }

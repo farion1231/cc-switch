@@ -154,6 +154,44 @@ CC Switch 的三种模式，适合不同的使用习惯。
 
 配置好聚合后，你可以让常用模型保持默认，把其他模型留在选择器中，需要时再切换。在熟悉的 Claude Code 或 Codex 会话里，就能完成从选模型到继续工作的整个过程。
 
+## Codex 子 agent 读不到任务怎么办
+
+在 Codex 聚合模式里，主 agent 和子 agent 可以选不同供应商的模型。如果子 agent 一启动就报错，常见的提示有：
+
+- `Encrypted function output content could not be decrypted`
+- `stream disconnected before completion`
+- CC Switch 返回的 `unreadable_encrypted_agent_task`，提示里会直接指向下面这个开关
+
+**原因在 Codex 新版的子 agent 机制。** 主 agent 派任务时，任务内容由主 agent 所在的供应商加密，只有这一家能解开。这好比一封只有寄件方能拆的密封信：子 agent 用的是同一家时能读，换成另一家就拆不开，等于没拿到任务。OpenAI 官方加密的任务，别家同样读不了。
+
+**解决方法：** 在 CC Switch 的「设置 → 应用配置 → Codex」里打开「聚合模式下子 agent 用经典工具」，然后**重启 Codex**（重启方法见上文“Codex 需要怎样重启”）。打开后，聚合里的所有模型改用 Codex 经典的子 agent 工具，任务以明文传递，换哪一家都能读。
+
+打开前需要知道几点：
+
+- **有代价。** 经典工具没有 `followup_task`、`interrupt_agent` 等新版功能，所以这个开关默认关闭，只建议遇到上述问题时打开。
+- **只影响聚合模式。** 直连和路由模式下 Codex 的行为不变。
+- **开了仍报错，先查 `config.toml`。** 如果 `~/.codex/config.toml` 的 `[features]` 里有 `multi_agent_v2 = true`，它的优先级高于这个开关，开关不会生效，设置页也会给出提示。删掉这一项后再重启 Codex。
+
+不想打开开关，也可以让子 agent 使用和主 agent 同一家供应商的模型，这样任务能正常解开。
+
+## 官方额度用完后，第三方模型也发不出去怎么办
+
+默认供应商是 OpenAI Official 时，官方的 5 小时额度一旦用完，Codex 可能会锁住发送键，或者把模型选择器收成只剩“Luna Reserve”一项。这时聚合里的第三方模型既选不了，也发不出去。
+
+**这是 Codex 客户端自己的限制。** 2026 年 9 月起的新版 Codex 会自己向 OpenAI 查询账号额度，发现普通额度用完后，就在请求发出之前把模型换成 Luna Reserve（`gpt-reserve`），其他模型要等额度恢复才回来。这个判断只看当前配置是否使用官方登录，不管你选的是哪家模型；请求也根本到不了 CC Switch，所以 CC Switch 这一侧没办法放行。
+
+**绕开方法：** 额度恢复前，暂时让第三方当默认供应商。
+
+1. 在 Codex 的聚合页，打开任意一家第三方供应商卡片的「更多」菜单，选择「设为默认」。
+2. 彻底重启 Codex（方法见上文“Codex 需要怎样重启”），然后新开一个会话。已经被切到 Luna Reserve 的会话，可能仍保留这个模型。
+3. 官方额度恢复后，再把 OpenAI Official 设回默认，并同样重启 Codex。
+
+期间 OpenAI 官方模型不会出现在选择器里，设回默认后就会回来。它们本来就已经用完额度，所以这样换不会有额外损失。
+
+这个办法依据 Codex 公开源码里的判断条件。如果按上面的步骤操作后仍然被锁，欢迎到 [#7962](https://github.com/farion1231/cc-switch/issues/7962) 反馈。
+
+> 不用聚合、直连第三方供应商时也可能遇到同样的情况。如果在「设置 → 应用配置 → Codex」里打开了「非接管切换时保留官方登录」，Codex 会继续按官方账号判断额度。关掉这个开关，重新切换一次供应商，再重启 Codex 即可；切回官方时，登录会自动恢复。
+
 ## 致敬 opencodex
 
 CC Switch 的聚合模式大量学习和参考了 [opencodex](https://github.com/lidge-jun/opencodex)：通过供应商前缀区分模型，让多家模型同时出现在客户端的选择器里；让 Codex 在使用第三方模型时也能处理上下文压缩；检测后台服务是否仍在使用旧的模型列表，并提醒用户重启。这些设计都受益于 opencodex 的开源探索。

@@ -48,6 +48,9 @@ fn merge_settings_for_save(
     // 开关）后、前端 query 缓存刷新前的一次全量保存会把旧 marker 重放回来，
     // 重新开启时被"复活"的标记挡住而漏迁。
     incoming.local_migrations = existing.local_migrations.clone();
+    // 客户端地址只经 set_proxy_client_host 保存（它还要重写客户端）；全量保存带的是前端
+    // 缓存里的旧值，透传会把刚保存的地址冲掉。
+    incoming.proxy_client_host = existing.proxy_client_host.clone();
     incoming
 }
 
@@ -168,6 +171,37 @@ pub async fn codex_forces_multi_agent_v2() -> Result<bool, String> {
     Ok(crate::codex_config::codex_config_forces_multi_agent_v2(
         &text,
     ))
+}
+
+/// Codex 会话压缩开关（`[features] local_thread_store_compression`）当前是否开启。
+#[tauri::command]
+pub async fn get_codex_session_compression() -> Result<bool, String> {
+    crate::services::codex_session_compression::is_enabled().map_err(|e| e.to_string())
+}
+
+/// 开关 Codex 会话压缩，返回写入后的状态。
+#[tauri::command]
+pub async fn set_codex_session_compression(
+    state: tauri::State<'_, crate::store::AppState>,
+    enabled: bool,
+) -> Result<bool, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::services::codex_session_compression::set_enabled(&db, enabled)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
+/// Codex 会话目录（sessions + archived_sessions）当前占用的字节数。
+#[tauri::command]
+pub async fn get_codex_sessions_disk_usage() -> Result<u64, String> {
+    tauri::async_runtime::spawn_blocking(
+        crate::services::codex_session_compression::sessions_disk_usage,
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// 按迁移备份账本把当时迁入共享桶的官方会话还原回 "openai" 桶。
@@ -349,6 +383,18 @@ mod tests {
         CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
         WebDavSyncSettings,
     };
+
+    #[test]
+    fn save_settings_should_keep_the_existing_proxy_client_host() {
+        let existing = AppSettings {
+            proxy_client_host: Some("172.25.144.1".to_string()),
+            ..AppSettings::default()
+        };
+
+        let merged = merge_settings_for_save(AppSettings::default(), &existing);
+
+        assert_eq!(merged.proxy_client_host.as_deref(), Some("172.25.144.1"));
+    }
 
     #[test]
     fn save_settings_should_preserve_existing_webdav_when_payload_omits_it() {
@@ -553,6 +599,7 @@ mod tests {
                     migrated_state_rows: 7,
                     codex_config_dir: None,
                 }),
+                ..LocalMigrations::default()
             }),
             ..AppSettings::default()
         };
@@ -606,6 +653,7 @@ mod tests {
                     migrated_state_rows: 2,
                     codex_config_dir: None,
                 }),
+                ..LocalMigrations::default()
             }),
             ..AppSettings::default()
         };

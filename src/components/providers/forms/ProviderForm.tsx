@@ -82,6 +82,7 @@ import { Label } from "@/components/ui/label";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
+import type { DirectModeFormatNotice } from "./shared";
 import {
   claudeStackModelsFromEnv,
   createClaudeStackModelRow,
@@ -696,6 +697,14 @@ function ProviderFormFull({
     appId,
     appId === "claude" || appId === "codex",
   );
+  // 应用实际在直连时，非原生上游格式发不出请求：正在直连用的这张卡一保存就坏，别的卡切不过去。
+  // 按实际模式判断，不看从哪一格打开。
+  const directModeFormatNotice: DirectModeFormatNotice | undefined =
+    appModeView?.mode === "direct"
+      ? providerId && providerId === appModeView.directProviderId
+        ? "inUse"
+        : "switch"
+      : undefined;
 
   const {
     codexAuth,
@@ -703,6 +712,8 @@ function ProviderFormFull({
     codexApiKey,
     codexBaseUrl,
     codexModel,
+    codexSubagentModel,
+    codexSubagentReasoningEffort,
     codexCatalogModels,
     codexAuthError,
     setCodexAuth,
@@ -711,6 +722,8 @@ function ProviderFormFull({
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelChange,
+    handleCodexSubagentModelChange,
+    handleCodexSubagentReasoningEffortChange,
     handleCodexConfigChange: originalHandleCodexConfigChange,
     resetCodexConfig,
   } = useCodexConfigState({ initialData });
@@ -2608,6 +2621,7 @@ function ProviderFormFull({
               localProxyBodyOverride={localProxyBodyOverride}
               onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
               variant={useStackLayout ? "stack" : "classic"}
+              directModeFormatNotice={directModeFormatNotice}
               stackModelRows={shownClaudeStackRows}
               onStackModelRowsChange={handleClaudeStackRowsChange}
             />
@@ -2668,6 +2682,12 @@ function ProviderFormFull({
               onAutoSelectChange={setEndpointAutoSelect}
               codexModel={codexModel}
               onModelChange={handleCodexModelChange}
+              subagentModel={codexSubagentModel}
+              onSubagentModelChange={handleCodexSubagentModelChange}
+              subagentReasoningEffort={codexSubagentReasoningEffort}
+              onSubagentReasoningEffortChange={
+                handleCodexSubagentReasoningEffortChange
+              }
               apiFormat={localCodexApiFormat}
               onApiFormatChange={handleCodexApiFormatChange}
               copilotApiFormat={effectiveCodexCopilotApiFormat}
@@ -2692,6 +2712,7 @@ function ProviderFormFull({
               localProxyBodyOverride={localProxyBodyOverride}
               onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
               variant={useStackLayout ? "stack" : "classic"}
+              directModeFormatNotice={directModeFormatNotice}
             />
           )}
 
