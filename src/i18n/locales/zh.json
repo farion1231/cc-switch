@@ -2059,6 +2059,7 @@
       "vendor": "模型厂商",
       "thirdparty": "第三方平台",
       "cloud": "云服务商",
+      "local": "本地",
       "plugin": "插件配置",
       "universal": "统一供应商"
     },
@@ -2068,6 +2069,7 @@
       "vendor": "厂商自己的 API 和编程套餐。同一家的国内站、海外站、套餐合成一行，下一步再选版本。",
       "thirdparty": "聚合多家模型的平台，或转售官方模型的中转服务。",
       "cloud": "用云厂商账号调用模型。",
+      "local": "在本机运行的推理服务，先启动服务并下载模型。Key 填占位值即可。",
       "plugin": "OpenCode 插件的模型分配配置。",
       "universal": "一次配置，同步到 Claude Code、Codex、Gemini CLI。"
     },

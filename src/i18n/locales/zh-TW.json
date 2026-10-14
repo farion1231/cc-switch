@@ -2060,6 +2060,7 @@
       "vendor": "模型廠商",
       "thirdparty": "第三方平台",
       "cloud": "雲端服務商",
+      "local": "本機",
       "plugin": "外掛設定",
       "universal": "統一供應商"
     },
@@ -2069,6 +2070,7 @@
       "vendor": "廠商自己的 API 和程式設計方案。同一家的國內站、海外站、方案合成一行，下一步再選版本。",
       "thirdparty": "聚合多家模型的平台，或轉售官方模型的中轉服務。",
       "cloud": "用雲端廠商帳號呼叫模型。",
+      "local": "在本機執行的推論服務，先啟動服務並下載模型。Key 填佔位值即可。",
       "plugin": "OpenCode 外掛的模型分配設定。",
       "universal": "一次設定，同步到 Claude Code、Codex、Gemini CLI。"
     },

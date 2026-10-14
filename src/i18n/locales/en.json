@@ -2059,6 +2059,7 @@
       "vendor": "Model vendors",
       "thirdparty": "Third-party platforms",
       "cloud": "Cloud providers",
+      "local": "Local",
       "plugin": "Plugin configs",
       "universal": "Universal providers"
     },
@@ -2068,6 +2069,7 @@
       "vendor": "The vendors' own APIs and coding plans. A vendor's China site, global site and plans share one row; pick the version in the next step.",
       "thirdparty": "Platforms that aggregate many models, or relays reselling official models.",
       "cloud": "Call models with a cloud provider account.",
+      "local": "Inference servers running on this computer. Start the server and pull a model first; the key is just a placeholder.",
       "plugin": "Model assignment configs for OpenCode plugins.",
       "universal": "Configure once, synced to Claude Code, Codex and Gemini CLI."
     },
