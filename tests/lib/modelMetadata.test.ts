@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  GPT_CONTEXT_WINDOW_CAP,
   resolveModelMetadata,
   type KnownModelMetadata,
   type PresetModelSource,
@@ -308,5 +309,57 @@ describe("resolveModelMetadata", () => {
     expect(
       resolveModelMetadata("glm-5", { baseUrl: "https://api.z.ai/v1" }),
     ).toBeNull();
+  });
+
+  it("caps GPT windows at the subscription window whatever the source", () => {
+    const openai: ModelsDevResponse = {
+      openai: {
+        id: "openai",
+        api: "https://api.openai.com/v1",
+        models: {
+          "gpt-6-astra": {
+            id: "gpt-6-astra",
+            limit: { context: 1050000, output: 128000 },
+          },
+          "gpt-4o": { id: "gpt-4o", limit: { context: 128000 } },
+          "o9-big": { id: "o9-big", limit: { context: 1050000 } },
+        },
+      },
+      relay: {
+        id: "relay",
+        models: {
+          "openai/gpt-6-astra": {
+            id: "openai/gpt-6-astra",
+            canonical_model_id: "openai/gpt-6-astra",
+          },
+        },
+      },
+    };
+    const resolve = (id: string, baseUrl: string) =>
+      resolveModelMetadata(id, { baseUrl, modelsDev: openai })?.contextWindow;
+
+    // 认出了 OpenAI 自己、走原厂兜底的中转、带命名空间或平台前缀的写法都封顶。
+    expect(resolve("gpt-6-astra", "https://api.openai.com/v1")).toBe(
+      GPT_CONTEXT_WINDOW_CAP,
+    );
+    expect(resolve("gpt-6-astra", "https://relay.example.com/v1")).toBe(
+      GPT_CONTEXT_WINDOW_CAP,
+    );
+    expect(resolve("openai/GPT-6-Astra", "https://relay.example.com/v1")).toBe(
+      GPT_CONTEXT_WINDOW_CAP,
+    );
+    expect(
+      resolveModelMetadata("openai-gpt-6-astra", {
+        baseUrl: "https://relay.example.com/v1",
+        presets: [
+          preset("https://relay.example.com/v1", {
+            "openai-gpt-6-astra": { contextWindow: 1050000 },
+          }),
+        ],
+      })?.contextWindow,
+    ).toBe(GPT_CONTEXT_WINDOW_CAP);
+    // 本来就小的 GPT 不往上抬，其他模型不受影响。
+    expect(resolve("gpt-4o", "https://api.openai.com/v1")).toBe(128000);
+    expect(resolve("o9-big", "https://api.openai.com/v1")).toBe(1050000);
   });
 });
