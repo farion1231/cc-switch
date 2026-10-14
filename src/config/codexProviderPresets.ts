@@ -4067,6 +4067,47 @@ requires_openai_auth = true`,
     category: "cloud_provider",
   },
   {
+    name: "Mistral AI",
+    websiteUrl: "https://mistral.ai",
+    apiKeyUrl: "https://console.mistral.ai/api-keys",
+    auth: generateThirdPartyAuth(""),
+    // 官方 OpenAPI（docs.mistral.ai/openapi.yaml，2026-10-14 核对）只列
+    // /v1/chat/completions，Bearer 鉴权；官方给 Codex 的只有 MCP 接法，没有模型
+    // 接入文档
+    config: generateThirdPartyConfig(
+      "mistral",
+      "https://api.mistral.ai/v1",
+      "mistral-medium-3-5",
+    ),
+    endpointCandidates: ["https://api.mistral.ai/v1"],
+    // /v1/responses 无 Key 实测 401（网关配了路由），但 OpenAPI、llms-full.txt
+    // 与 changelog 均未提，未经真 Key 实测前不直连，走 Chat 路由（custom 工具
+    // 由转换层转成 function）。Chat 请求 schema 不收额外字段，转换层加的
+    // stream_options 与透传的 user / logit_bias / seed 会不会被拒，未经真 Key 实测
+    apiFormat: "openai_chat",
+    // 模型取官方模型表（docs.mistral.ai/models.md 同日）的固定版本 ID，均为 GA，
+    // 窗口官方写 256k、收文本与图片。两款都支持 reasoning_effort（官方只写
+    // none / high），但开推理后流式 content 是 thinking/text 分块数组，转换层
+    // 暂不解析，第一版不声明 codexChatReasoning、不下发推理参数，也不填档位。
+    // 首行 = 默认模型，须与 config 的 model 一致
+    modelCatalog: modelCatalog([
+      {
+        model: "mistral-medium-3-5",
+        displayName: "Mistral Medium 3.5",
+        contextWindow: 256000,
+        inputModalities: ["text", "image"],
+      },
+      {
+        model: "mistral-small-2603",
+        displayName: "Mistral Small 4",
+        contextWindow: 256000,
+        inputModalities: ["text", "image"],
+      },
+    ]),
+    category: "cn_official",
+    icon: "mistral",
+  },
+  {
     name: "OpenCode Go",
     family: "opencode",
     planKey: "coding",

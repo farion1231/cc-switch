@@ -334,6 +334,10 @@ describe("Codex preset pre-filled reasoning levels", () => {
       ["Baidu Qianfan Token Plan", "kimi-k2.6"],
       // DeepInfra GLM-5.2：平台未声明、各处口径不一，未实测前不造档位
       ["DeepInfra", "zai-org/GLM-5.2"],
+      // Mistral AI：开推理后流式 content 为分块数组、转换层暂不解析，且
+      // 现有 effortValueMode 发不出 "none"，第一版不下发推理参数、不填档位
+      ["Mistral AI", "mistral-medium-3-5"],
+      ["Mistral AI", "mistral-small-2603"],
     ];
     for (const [presetName, modelId] of UNFILLED) {
       const model = catalogModel(presetName, modelId);

@@ -1931,6 +1931,26 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     endpointCandidates: ["https://api.fireworks.ai/inference"],
   },
   {
+    name: "Mistral AI",
+    websiteUrl: "https://mistral.ai",
+    apiKeyUrl: "https://console.mistral.ai/api-keys",
+    category: "cn_official",
+    // 同 Claude Code 预设：官方只文档化 OpenAI Chat 端点（docs.mistral.ai/
+    // openapi.yaml，2026-10-14 核对），走 openai_chat 路由，base 不带 /v1。
+    // Medium 3.5 / Small 4 窗口均为 256k（docs.mistral.ai/models.md 同日），
+    // 不标 1M
+    baseUrl: "https://api.mistral.ai",
+    mode: "proxy",
+    apiFormat: "openai_chat",
+    modelRoutes: brandedRoutes(
+      "mistral-medium-3-5",
+      "mistral-medium-3-5",
+      "mistral-small-2603",
+    ),
+    endpointCandidates: ["https://api.mistral.ai"],
+    icon: "mistral",
+  },
+  {
     name: "Nvidia",
     websiteUrl: "https://build.nvidia.com",
     apiKeyUrl: "https://build.nvidia.com/settings/api-keys",

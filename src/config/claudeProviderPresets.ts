@@ -2233,6 +2233,42 @@ export const providerPresets: ProviderPreset[] = [
     endpointCandidates: ["https://api.fireworks.ai/inference"],
   },
   {
+    name: "Mistral AI",
+    websiteUrl: "https://mistral.ai",
+    apiKeyUrl: "https://console.mistral.ai/api-keys",
+    // 官方 OpenAPI（docs.mistral.ai/openapi.yaml，2026-10-14 核对）只列
+    // /v1/chat/completions，鉴权为 Bearer。/v1/messages 与 /v1/responses 无 Key
+    // 实测 401（不是 404，网关配了路由），但文档与 changelog 均未提，未经真 Key
+    // 实测前只走 openai_chat 路由；base 不带 /v1，适配器自拼
+    // /v1/chat/completions（同 Nebius）。模型取官方模型表（docs.mistral.ai/
+    // models.md 同日），用固定版本 ID：主力 Mistral Medium 3.5、haiku 档
+    // Mistral Small 4，均为 GA。Devstral 全系已下线（官方替代即这两款）；
+    // Codestral 定位补全 / FIM，不做 Agent 主力。ChatCompletionRequest 不收
+    // 额外字段且没有 stream_options，转换层给流式请求加的
+    // stream_options.include_usage 会不会被 422 拒、开推理后 content 变成
+    // thinking/text 分块数组能否解析，均未经真 Key 实测。/v1/models 无 Key 401，
+    // 默认探测即可，不写 modelsUrl
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.mistral.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "mistral-medium-3-5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "mistral-small-2603",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "mistral-medium-3-5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "mistral-medium-3-5",
+        // 两款窗口官方只写「256k」（模型卡 docs.mistral.ai/models/
+        // mistral-medium-3-5-26-04.md、mistral-small-4-0-26-03.md 同日），规则是
+        // prompt + max_tokens ≤ 窗口；models.dev 记 262144，取较小的 256000 钉住
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "256000",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "256000",
+      },
+    },
+    category: "cn_official",
+    apiFormat: "openai_chat",
+    endpointCandidates: ["https://api.mistral.ai"],
+    icon: "mistral",
+  },
+  {
     name: "GitHub Copilot",
     websiteUrl: "https://github.com/features/copilot",
     settingsConfig: {

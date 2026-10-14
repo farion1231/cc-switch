@@ -5383,6 +5383,60 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "Mistral AI",
+    websiteUrl: "https://mistral.ai",
+    apiKeyUrl: "https://console.mistral.ai/api-keys",
+    // OpenAI Chat 端点 base 为 https://api.mistral.ai/v1（docs.mistral.ai/
+    // openapi.yaml，2026-10-14 核对），Bearer 鉴权。OpenClaw 的 Mistral 支持是
+    // 须另装的官方插件（docs.openclaw.ai/providers/mistral 同日），装了插件的话
+    // 供应商名请另取。模型用官方模型表（docs.mistral.ai/models.md 同日）的固定
+    // 版本 ID，窗口官方写 256k；cost（每百万 token）取 docs.mistral.ai/inference/
+    // pricing.md 同日，缓存读按官方「缓存 token 按输入价 10% 计」
+    //（docs.mistral.ai/studio/conversations/advanced/prompt-caching.md）推算，
+    // 不收缓存写入费，写 0。官方没有单独的最大输出，规则是 prompt + max_tokens
+    // ≤ 窗口，保守按 32768 写
+    settingsConfig: {
+      baseUrl: "https://api.mistral.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "mistral-medium-3-5",
+          name: "Mistral Medium 3.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 256000,
+          maxTokens: 32768,
+          cost: { input: 1.5, output: 7.5, cacheRead: 0.15, cacheWrite: 0 },
+        },
+        {
+          id: "mistral-small-2603",
+          name: "Mistral Small 4",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 256000,
+          maxTokens: 32768,
+          cost: { input: 0.15, output: 0.6, cacheRead: 0.015, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "mistral",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "mistral/mistral-medium-3-5" },
+      modelCatalog: {
+        "mistral/mistral-medium-3-5": { alias: "Mistral Medium 3.5" },
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

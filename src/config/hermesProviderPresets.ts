@@ -2844,6 +2844,38 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Mistral AI",
+    websiteUrl: "https://mistral.ai",
+    apiKeyUrl: "https://console.mistral.ai/api-keys",
+    settingsConfig: {
+      // Hermes 内置的 Mistral 只有语音与转写，没有 LLM provider，名字不冲突
+      name: "mistral",
+      // OpenAI Chat 端点 base 为 https://api.mistral.ai/v1（docs.mistral.ai/
+      // openapi.yaml，2026-10-14 核对），Bearer 鉴权。模型用官方模型表
+      //（docs.mistral.ai/models.md 同日）的固定版本 ID，窗口官方写 256k
+      base_url: "https://api.mistral.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "mistral-medium-3-5",
+          name: "Mistral Medium 3.5",
+          context_length: 256000,
+        },
+        {
+          id: "mistral-small-2603",
+          name: "Mistral Small 4",
+          context_length: 256000,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "mistral",
+    suggestedDefaults: {
+      model: { default: "mistral-medium-3-5", provider: "mistral" },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",
