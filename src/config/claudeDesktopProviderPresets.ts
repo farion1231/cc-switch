@@ -1883,6 +1883,32 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "huggingface",
   },
   {
+    name: "Microsoft Foundry",
+    websiteUrl: "https://azure.microsoft.com/en-us/products/ai-foundry",
+    apiKeyUrl: "https://ai.azure.com/",
+    category: "cloud_provider",
+    // 同 Claude Code 预设：base 为 https://<资源名>.services.ai.azure.com/anthropic、
+    // 不带 /v1，API Key 发 x-api-key（learn.microsoft.com/en-us/azure/foundry/
+    // foundry-models/how-to/use-foundry-models-claude，2026-10-14 核对）。表单不支持
+    // 模板变量，资源名用字面占位符（同 Codex 的 Azure OpenAI）。直连只能写 Bearer，
+    // 文档只把 Bearer 写成 Entra token 的用法，故走路由，按 ANTHROPIC_API_KEY 发
+    // x-api-key。上游填默认部署名（自定义了须同步改）；三个 5.5 模型窗口均为 1M
+    //（learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/
+    // claude-models 同日），标 1M
+    baseUrl: "https://YOUR_RESOURCE_NAME.services.ai.azure.com/anthropic",
+    apiKeyField: "ANTHROPIC_API_KEY",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5-5",
+      "claude-opus-5-5",
+      "claude-haiku-5-5",
+      true,
+    ),
+    icon: "azure",
+    iconColor: "#0078D4",
+  },
+  {
     name: "Nvidia",
     websiteUrl: "https://build.nvidia.com",
     apiKeyUrl: "https://build.nvidia.com/settings/api-keys",

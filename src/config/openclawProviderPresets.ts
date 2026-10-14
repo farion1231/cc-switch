@@ -5233,6 +5233,76 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "Microsoft Foundry",
+    websiteUrl: "https://azure.microsoft.com/en-us/products/ai-foundry",
+    apiKeyUrl: "https://ai.azure.com/",
+    // OpenClaw 官方 Microsoft Foundry 文档（docs.openclaw.ai/plugins/reference/
+    // microsoft-foundry.md，2026-10-14 核对）：Foundry 上的 Claude 要配成自定义
+    // anthropic-messages 供应商；内置插件占用 microsoft-foundry 这个 ID，供应商
+    // 名请另取（下面引用用 foundry-claude）。base 同 Claude Code 预设，为
+    // https://<资源名>.services.ai.azure.com/anthropic、不带 /v1，API Key 发
+    // x-api-key（learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/
+    // use-foundry-models-claude 同日），资源名用字面占位符。模型 ID 填默认部署名；
+    // 部署名与模型 ID 不一致时须在模型上设 params.canonicalModelId，否则思考档位
+    // 处理会错。窗口与最大输出取微软模型表（.../concepts/claude-models 同日），
+    // cost（每百万 token）取 Anthropic 官方价（Foundry 按同价折 CCU），缓存写入
+    // 取 5 分钟价；Haiku 5.5 取提示词 10 万 token 以内的标准档
+    settingsConfig: {
+      baseUrl: "https://YOUR_RESOURCE_NAME.services.ai.azure.com/anthropic",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+          cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+          cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
+        },
+        {
+          id: "claude-haiku-5-5",
+          name: "Claude Haiku 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+          cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
+        },
+      ],
+    },
+    category: "cloud_provider",
+    icon: "azure",
+    iconColor: "#0078D4",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "foundry-claude/claude-opus-5-5",
+        fallbacks: ["foundry-claude/claude-sonnet-5-5"],
+      },
+      modelCatalog: {
+        "foundry-claude/claude-opus-5-5": { alias: "Opus" },
+        "foundry-claude/claude-sonnet-5-5": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

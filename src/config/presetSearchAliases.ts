@@ -5,6 +5,7 @@
 export const PRESET_SEARCH_ALIASES: Record<string, string> = {
   "AWS Bedrock (AKSK)": "amazon 亚马逊",
   "AWS Bedrock (API Key)": "amazon 亚马逊",
+  "Azure OpenAI": "microsoft 微软 foundry",
   "Baidu Qianfan Coding Plan": "百度 千帆 文心",
   "Baidu Qianfan Token Plan": "百度 千帆 文心",
   BaiLing: "蚂蚁 百灵 ling",
@@ -21,6 +22,7 @@ export const PRESET_SEARCH_ALIASES: Record<string, string> = {
   "Kimi Global": "月之暗面 moonshot",
   Longcat: "美团",
   "Meta Model API": "muse facebook",
+  "Microsoft Foundry": "azure 微软 ai foundry claude",
   MiniMax: "海螺",
   "MiniMax en": "海螺",
   ModelScope: "魔搭",

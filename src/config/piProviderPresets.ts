@@ -2279,6 +2279,34 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "huggingface",
   },
   {
+    name: "Microsoft Foundry",
+    providerKey: "cc-switch-microsoft-foundry",
+    websiteUrl: "https://azure.microsoft.com/en-us/products/ai-foundry",
+    apiKeyUrl: "https://ai.azure.com/",
+    settingsConfig: {
+      name: "Microsoft Foundry",
+      // 同 Claude Code 预设：Anthropic 端点 base 为 https://<资源名>.services.ai.azure.com/
+      // anthropic、不带 /v1，API Key 发 x-api-key（learn.microsoft.com/en-us/azure/
+      // foundry/foundry-models/how-to/use-foundry-models-claude，2026-10-14 核对）；
+      // pi-ai 对普通 Key 走 Anthropic SDK 的 apiKey，发的正是 x-api-key。Pi 内置的
+      // azure-openai-responses 只管 GPT，Claude 须自定义节点。资源名用字面占位符；
+      // 模型 ID 填默认部署名，自定义了须同步改。Haiku 5.5 为 1M / 128K、支持思考
+      //（learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/
+      // claude-models 同日），目录里原先没有，已补
+      baseUrl: "https://YOUR_RESOURCE_NAME.services.ai.azure.com/anthropic",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+        piModel("anthropic/claude-haiku-5.5", { id: "claude-haiku-5-5" }),
+      ],
+    },
+    category: "cloud_provider",
+    icon: "azure",
+    iconColor: "#0078D4",
+  },
+  {
     name: "PIPELLM",
     providerKey: "cc-switch-pipellm",
     websiteUrl: "https://code.pipellm.ai",

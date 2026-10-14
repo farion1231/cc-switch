@@ -2155,6 +2155,51 @@ export const providerPresets: ProviderPreset[] = [
     icon: "huggingface",
   },
   {
+    name: "Microsoft Foundry",
+    websiteUrl: "https://azure.microsoft.com/en-us/products/ai-foundry",
+    // Key 和 Target URI 都在 Foundry 门户 Build → Models → 部署的 Details 标签页
+    //（Azure 门户里是资源的 Keys and Endpoint），没有直达 Key 的页面
+    apiKeyUrl: "https://ai.azure.com/",
+    // 原名 Azure AI Foundry。官方部署文档（learn.microsoft.com/en-us/azure/
+    // foundry/foundry-models/how-to/use-foundry-models-claude，2026-10-14 核对）：
+    // base 为 https://<资源名>.services.ai.azure.com/anthropic、不带 /v1（实测
+    // /anthropic/v1/messages 无 Key 401，少了 /v1 则 404），资源名由用户填。
+    // REST 示例发 x-api-key，Anthropic 文档（platform.claude.com/docs/en/
+    // build-with-claude/claude-in-microsoft-foundry）与官方 foundry-sdk 同，故
+    // Key 填 ANTHROPIC_API_KEY；Hermes 有用户报 x-api-key 401、Bearer 可用
+    //（hermes-agent #26970 / #29414），未经真 Key 实测。模型名填的是部署名，
+    // 默认等于模型 ID，部署后不能改，自定义了名字须同步改；Mythos 系列只认
+    // Entra，不收。走 ANTHROPIC_BASE_URL 时 Claude Code 当普通网关，而
+    // cloud_provider 不会自动补 AUTO_MODE_SERVER=0，故手写。Foundry 不支持
+    // Models API（文档同上），「获取模型列表」会失败，不写 modelsUrl。原生
+    // CLAUDE_CODE_USE_FOUNDRY 模式没有 BASE_URL，走不了本地路由，不用。须付费
+    // Azure 订阅并在 Marketplace 订阅 Claude，学生、试用、CSP 订阅不可用；开了
+    // ZDR 的订阅调用 Covered Model 返回 400
+    apiKeyField: "ANTHROPIC_API_KEY",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://${AZURE_RESOURCE_NAME}.services.ai.azure.com/anthropic",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_MODEL: "claude-opus-5-5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-5-5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5-5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5-5",
+        CLAUDE_CODE_AUTO_MODE_SERVER: "0",
+      },
+    },
+    category: "cloud_provider",
+    templateValues: {
+      AZURE_RESOURCE_NAME: {
+        label: "Azure Resource Name",
+        placeholder: "my-foundry-resource",
+        editorValue: "",
+      },
+    },
+    icon: "azure",
+    iconColor: "#0078D4",
+  },
+  {
     name: "GitHub Copilot",
     websiteUrl: "https://github.com/features/copilot",
     settingsConfig: {

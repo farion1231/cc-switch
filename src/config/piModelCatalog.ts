@@ -753,6 +753,15 @@ export const piModelCatalog = {
       maxTokens: 128000,
     },
   },
+  "anthropic/claude-haiku-5.5": {
+    capabilities: {
+      name: "Claude Haiku 5.5",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1000000,
+      maxTokens: 128000,
+    },
+  },
   "anthropic/claude-fable-5.1": {
     capabilities: {
       name: "Claude Fable 5.1",
