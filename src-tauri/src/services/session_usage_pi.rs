@@ -19,7 +19,6 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::Arc;
 
 const APP_TYPE: &str = "pi";
 const DATA_SOURCE: &str = "pi_session";
@@ -32,12 +31,11 @@ const REVISION_TAIL_BYTES: u64 = 4096;
 const REVISION_MARKER_SHIFT: u32 = 61;
 const REVISION_COMPLETE_SHIFT: u32 = 60;
 const REVISION_SIZE_SHIFT: u32 = 32;
-// Both tags describe the same append cursor. The newer tag only records that
-// historical timing has been backfilled; upgrading must not invalidate 0b101.
+// Keep the original cursor format so existing history stays incremental.
 const REVISION_MARKER: u64 = 0b101;
-const TIMING_REVISION_MARKER: u64 = 0b110;
+// Earlier builds of the timing fix wrote this tag with the same cursor layout.
+const COMPAT_REVISION_MARKER: u64 = 0b110;
 const REVISION_SIZE_MASK: u64 = (1 << 28) - 1;
-const TIMING_BACKFILL_BATCH_SIZE: usize = 128;
 const PI_REQUEST_DEDUP_SQL: &str = "SELECT EXISTS(
          SELECT 1 FROM session_usage_dedup
          WHERE data_source = ?1 AND request_id = ?2
@@ -114,13 +112,8 @@ struct PiFileRevision {
 }
 
 impl PiFileRevision {
-    fn encoded(self, timing_backfilled: bool) -> i64 {
-        let marker = if timing_backfilled {
-            TIMING_REVISION_MARKER
-        } else {
-            REVISION_MARKER
-        };
-        ((marker << REVISION_MARKER_SHIFT)
+    fn encoded(self) -> i64 {
+        ((REVISION_MARKER << REVISION_MARKER_SHIFT)
             | (u64::from(self.complete) << REVISION_COMPLETE_SHIFT)
             | (self.file_size << REVISION_SIZE_SHIFT)
             | u64::from(self.tail_fingerprint)) as i64
@@ -131,7 +124,6 @@ impl PiFileRevision {
 struct PiSyncState {
     revision: PiFileRevision,
     last_line_offset: i64,
-    timing_backfilled: bool,
 }
 
 #[derive(Debug)]
@@ -147,159 +139,6 @@ pub fn sync_pi_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let files = crate::session_manager::providers::pi::session_files()
         .map_err(|error| AppError::Config(format!("无法发现 Pi 会话: {error}")))?;
     Ok(sync_pi_files(db, &files))
-}
-
-/// Start historical timing repair after an authorized automatic or manual sync.
-/// Parsing runs outside the shared sync lock. Only bounded UPDATE transactions
-/// take that lock, so a queued manual sync can run between batches.
-pub fn spawn_pi_timing_backfill(db: Arc<Database>) {
-    static BACKFILL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-    tauri::async_runtime::spawn(async move {
-        let Ok(_guard) = BACKFILL_LOCK.try_lock() else {
-            return;
-        };
-        let task = tauri::async_runtime::spawn_blocking(|| {
-            crate::session_manager::providers::pi::session_files()
-                .map_err(|error| AppError::Config(format!("无法发现 Pi 会话: {error}")))
-        });
-        let result = match task.await {
-            Ok(Ok(files)) => backfill_pi_files(db, files).await,
-            Ok(Err(error)) => Err(error),
-            Err(error) => Err(AppError::Message(format!("Pi 耗时回填任务失败: {error}"))),
-        };
-        match result {
-            Ok(result) if !result.errors.is_empty() => {
-                log::warn!("[PI-SYNC] 耗时回填失败: {}", result.errors.join("; "));
-            }
-            Err(error) => log::warn!("[PI-SYNC] 耗时回填失败: {error}"),
-            _ => {}
-        }
-    });
-}
-
-async fn backfill_pi_files(
-    db: Arc<Database>,
-    files: Vec<PathBuf>,
-) -> Result<SessionSyncResult, AppError> {
-    let db_for_cursors = db.clone();
-    let cursors = tauri::async_runtime::spawn_blocking(move || {
-        crate::services::session_usage::load_sync_cursors(&db_for_cursors)
-    })
-    .await
-    .map_err(|error| AppError::Message(format!("Pi 耗时回填任务失败: {error}")))??;
-    let mut result = SessionSyncResult::default();
-    for path in files {
-        let Some(&cursor) = cursors.get(path.to_string_lossy().as_ref()) else {
-            continue;
-        };
-        let Some(state) = decode_pi_sync_state(Some(&cursor)) else {
-            continue;
-        };
-        if state.timing_backfilled {
-            continue;
-        }
-        let path_for_parse = path.clone();
-        let parsed = tauri::async_runtime::spawn_blocking(move || {
-            // A foreground sync may have advanced the cursor since it was read.
-            // Leave that revision pending for the next pass instead of marking
-            // unparsed history complete.
-            if pi_revision_for_path(&path_for_parse)? != state.revision {
-                return Ok(None);
-            }
-            let parsed = parse_pi_file(
-                &path_for_parse,
-                0,
-                None,
-                state.revision.file_size,
-                state.revision.modified_nanos,
-            )?;
-            Ok::<_, AppError>(Some(parsed))
-        })
-        .await
-        .map_err(|error| AppError::Message(format!("Pi 耗时回填任务失败: {error}")))?;
-        let parsed = match parsed {
-            Ok(Some(parsed)) => parsed,
-            Ok(None) => continue,
-            Err(error) => {
-                result.errors.push(format!("{}: {error}", path.display()));
-                continue;
-            }
-        };
-        result.files_scanned = result.files_scanned.saturating_add(1);
-        let mut records = parsed.records.into_iter();
-        loop {
-            let batch: Vec<_> = records.by_ref().take(TIMING_BACKFILL_BATCH_SIZE).collect();
-            let finished = records.len() == 0;
-            let db_for_batch = db.clone();
-            let path_for_batch = path.clone();
-            let guard = crate::services::session_usage::session_sync_mutex()
-                .lock()
-                .await;
-            let updated = tauri::async_runtime::spawn_blocking(move || {
-                backfill_pi_timing_batch(&db_for_batch, &path_for_batch, cursor, &batch, finished)
-            })
-            .await
-            .map_err(|error| AppError::Message(format!("Pi 耗时回填任务失败: {error}")))?;
-            drop(guard);
-            match updated {
-                Ok(updated) => {
-                    result.imported = result.imported.saturating_add(updated);
-                    if updated > 0 {
-                        crate::usage_events::notify_log_recorded();
-                    }
-                }
-                Err(error) => {
-                    result.errors.push(format!("{}: {error}", path.display()));
-                    break;
-                }
-            }
-            if finished {
-                break;
-            }
-        }
-    }
-    Ok(result)
-}
-
-fn backfill_pi_timing_batch(
-    db: &Database,
-    path: &Path,
-    cursor: crate::services::session_usage::SyncCursor,
-    records: &[PiUsageRecord],
-    finished: bool,
-) -> Result<u32, AppError> {
-    let conn = lock_conn!(db.conn);
-    let tx = conn.unchecked_transaction()?;
-    let mut updated = 0;
-    for record in records.iter().filter(|record| record.latency_ms > 0) {
-        let request_seen = tx.query_row(
-            PI_REQUEST_DEDUP_SQL,
-            rusqlite::params![DATA_SOURCE, record.request_id],
-            |row| row.get(0),
-        )?;
-        updated += u32::from(backfill_pi_timing(&tx, record, request_seen)?);
-    }
-    if finished {
-        // Persist completion only for the snapshot we parsed. Never overwrite
-        // a cursor advanced by a foreground append/rewrite, or recreate a reset
-        // cursor. Failed/interrupted files remain pending and retry safely.
-        let revision = (cursor.last_synced_at as u64 & ((1 << REVISION_MARKER_SHIFT) - 1))
-            | (TIMING_REVISION_MARKER << REVISION_MARKER_SHIFT);
-        tx.execute(
-            "UPDATE session_log_sync SET last_synced_at = ?1
-             WHERE file_path = ?2 AND last_synced_at = ?3
-                 AND last_modified = ?4 AND last_line_offset = ?5",
-            rusqlite::params![
-                revision as i64,
-                path.to_string_lossy(),
-                cursor.last_synced_at,
-                cursor.last_modified,
-                cursor.last_line_offset,
-            ],
-        )?;
-    }
-    tx.commit()?;
-    Ok(updated)
 }
 
 fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
@@ -344,8 +183,25 @@ fn sync_single_pi_file(
     file_path: &Path,
     cursors: &std::collections::HashMap<String, crate::services::session_usage::SyncCursor>,
 ) -> Result<SessionSyncResult, AppError> {
+    let metadata = fs::symlink_metadata(file_path)
+        .map_err(|error| AppError::Config(format!("无法读取 Pi 会话文件元数据: {error}")))?;
+    if !metadata.file_type().is_file()
+        || file_path.extension().and_then(|value| value.to_str()) != Some("jsonl")
+    {
+        return Err(AppError::Config(
+            "Pi 会话路径不是普通 JSONL 文件".to_string(),
+        ));
+    }
+    if metadata.len() > crate::session_manager::providers::pi::MAX_SESSION_BYTES {
+        return Err(AppError::Config(format!(
+            "Pi 会话文件超过 {} 字节安全上限",
+            crate::session_manager::providers::pi::MAX_SESSION_BYTES
+        )));
+    }
+
     let file_path_string = file_path.to_string_lossy().to_string();
-    let revision = pi_revision_for_path(file_path)?;
+    let modified = metadata_modified_nanos(&metadata);
+    let revision = pi_file_revision(file_path, &metadata, modified)?;
     let previous = decode_pi_sync_state(cursors.get(&file_path_string));
     if previous.is_some_and(|state| state.revision == revision) {
         return Ok(SessionSyncResult::default());
@@ -370,7 +226,7 @@ fn sync_single_pi_file(
         start_after_line,
         start_at_byte,
         revision.file_size,
-        revision.modified_nanos,
+        modified,
     )?;
     let conn = lock_conn!(db.conn);
     let tx = conn
@@ -385,17 +241,7 @@ fn sync_single_pi_file(
         }
     }
 
-    // An append only repairs the new suffix. Preserve pending historical work
-    // until a full parse or the background backfill has covered the old prefix.
-    let timing_backfilled =
-        start_at_byte.is_none() || previous.is_some_and(|state| state.timing_backfilled);
-    update_pi_sync_state_on_conn(
-        &tx,
-        &file_path_string,
-        revision,
-        parsed.last_complete_line,
-        timing_backfilled,
-    )?;
+    update_pi_sync_state_on_conn(&tx, &file_path_string, revision, parsed.last_complete_line)?;
     tx.commit()
         .map_err(|error| AppError::Database(format!("提交 Pi 用量导入事务失败: {error}")))?;
     if parsed.incomplete_tail {
@@ -412,7 +258,7 @@ fn decode_pi_sync_state(
     let last_line_offset = cursor.last_line_offset;
     let encoded_revision = cursor.last_synced_at as u64;
     let marker = encoded_revision >> REVISION_MARKER_SHIFT;
-    if marker != REVISION_MARKER && marker != TIMING_REVISION_MARKER {
+    if marker != REVISION_MARKER && marker != COMPAT_REVISION_MARKER {
         return None;
     }
     let file_size = (encoded_revision >> REVISION_SIZE_SHIFT) & REVISION_SIZE_MASK;
@@ -430,7 +276,6 @@ fn decode_pi_sync_state(
             complete: ((encoded_revision >> REVISION_COMPLETE_SHIFT) & 1) == 1,
         },
         last_line_offset,
-        timing_backfilled: marker == TIMING_REVISION_MARKER,
     })
 }
 
@@ -439,36 +284,16 @@ fn update_pi_sync_state_on_conn(
     file_path: &str,
     revision: PiFileRevision,
     last_line_offset: i64,
-    timing_backfilled: bool,
 ) -> Result<(), AppError> {
     update_sync_state_on_conn(conn, file_path, revision.modified_nanos, last_line_offset)?;
     // No schema expansion is needed for Pi's append proof. This tagged value
     // is private to Pi rows; no production consumer interprets last_synced_at.
     conn.execute(
         "UPDATE session_log_sync SET last_synced_at = ?2 WHERE file_path = ?1",
-        rusqlite::params![file_path, revision.encoded(timing_backfilled)],
+        rusqlite::params![file_path, revision.encoded()],
     )
     .map_err(|error| AppError::Database(format!("更新 Pi 会话同步状态失败: {error}")))?;
     Ok(())
-}
-
-fn pi_revision_for_path(file_path: &Path) -> Result<PiFileRevision, AppError> {
-    let metadata = fs::symlink_metadata(file_path)
-        .map_err(|error| AppError::Config(format!("无法读取 Pi 会话文件元数据: {error}")))?;
-    if !metadata.file_type().is_file()
-        || file_path.extension().and_then(|value| value.to_str()) != Some("jsonl")
-    {
-        return Err(AppError::Config(
-            "Pi 会话路径不是普通 JSONL 文件".to_string(),
-        ));
-    }
-    if metadata.len() > crate::session_manager::providers::pi::MAX_SESSION_BYTES {
-        return Err(AppError::Config(format!(
-            "Pi 会话文件超过 {} 字节安全上限",
-            crate::session_manager::providers::pi::MAX_SESSION_BYTES
-        )));
-    }
-    pi_file_revision(file_path, &metadata, metadata_modified_nanos(&metadata))
 }
 
 fn pi_file_revision(
@@ -973,7 +798,7 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
             )
             .map_err(|error| AppError::Database(format!("查询 Pi 用量去重账本失败: {error}")))?;
     if already_seen {
-        return backfill_pi_timing(conn, record, request_seen);
+        return Ok(false);
     }
     conn.execute(
         "INSERT OR IGNORE INTO session_usage_dedup
@@ -1063,50 +888,6 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
     )
     .map(|changed| changed > 0)
     .map_err(|error| AppError::Database(format!("插入 Pi 会话用量失败: {error}")))
-}
-
-fn backfill_pi_timing(
-    conn: &rusqlite::Connection,
-    record: &PiUsageRecord,
-    request_seen: bool,
-) -> Result<bool, AppError> {
-    if record.latency_ms == 0 {
-        return Ok(false);
-    }
-    // Update only surviving, untimed detail rows. In particular, never recreate
-    // rolled-up requests or change their tokens/costs. Semantic matching also
-    // handles Pi v1 files whose migration added entry IDs after the first import.
-    let (sql, identity) = if request_seen {
-        (
-            "UPDATE proxy_request_logs SET latency_ms = ?1
-             WHERE data_source = ?2 AND latency_ms = 0 AND request_id = ?3",
-            &record.request_id,
-        )
-    } else {
-        (
-            if record.has_entry_id {
-                "UPDATE proxy_request_logs SET latency_ms = ?1
-                 WHERE data_source = ?2 AND latency_ms = 0 AND request_id IN (
-                     SELECT request_id FROM session_usage_dedup
-                     WHERE data_source = ?2 AND semantic_id = ?3 AND has_entry_id = 0
-                 )"
-            } else {
-                "UPDATE proxy_request_logs SET latency_ms = ?1
-                 WHERE data_source = ?2 AND latency_ms = 0 AND request_id IN (
-                     SELECT request_id FROM session_usage_dedup
-                     WHERE data_source = ?2 AND semantic_id = ?3
-                 )"
-            },
-            &record.semantic_id,
-        )
-    };
-    conn.execute(
-        sql,
-        rusqlite::params![record.latency_ms, DATA_SOURCE, identity],
-    )
-    // Timing changes count as imports so the normal usage refresh fires.
-    .map(|changed| changed > 0)
-    .map_err(|error| AppError::Database(format!("补全 Pi 会话耗时失败: {error}")))
 }
 
 #[cfg(test)]
@@ -1466,248 +1247,77 @@ mod tests {
         Ok(())
     }
 
-    fn restore_pre_timing_cursor(db: &Database, path: &Path) -> Result<(), AppError> {
-        let cursors = crate::services::session_usage::load_sync_cursors(db)?;
-        let file_path = path.to_string_lossy();
-        let cursor = cursors.get(file_path.as_ref()).expect("saved cursor");
-        let old_revision = ((cursor.last_synced_at as u64 & ((1 << REVISION_MARKER_SHIFT) - 1))
-            | (0b101 << REVISION_MARKER_SHIFT)) as i64;
-        lock_conn!(db.conn).execute(
-            "UPDATE session_log_sync SET last_synced_at = ?1 WHERE file_path = ?2",
-            rusqlite::params![old_revision, file_path],
-        )?;
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn backfills_unchanged_files_once_without_reimporting_pruned_rows() -> Result<(), AppError>
-    {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let path = session_path(temp.path(), "backfill");
-        let first = assistant_line("untimed", "2023-11-14T22:13:30Z", 1);
-        let second = assistant_line("already-timed", "2023-11-14T22:13:40Z", 2);
-        write_lines(
-            &path,
-            &[
-                r#"{"type":"session","version":3,"id":"session-backfill","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#,
-                &first,
-                &second,
-            ],
-        );
-        let db = Arc::new(Database::memory()?);
-        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 2);
-        lock_conn!(db.conn).execute(
-            "UPDATE proxy_request_logs SET latency_ms = CASE input_tokens WHEN 1 THEN 0 ELSE 1234 END,
-                total_cost_usd = '0.42' WHERE data_source = 'pi_session'",
-            [],
-        )?;
-        restore_pre_timing_cursor(&db, &path)?;
-
-        // Old cursors still skip unchanged files immediately. History repair
-        // happens separately, and its completion survives subsequent workers.
-        let foreground = sync_pi_files(&db, std::slice::from_ref(&path));
-        assert!(foreground.errors.is_empty());
-        assert_eq!((foreground.imported, foreground.skipped), (0, 0));
-        crate::usage_events::take_test_notify_count();
-        let backfill = backfill_pi_files(db.clone(), vec![path.clone()]).await?;
-        assert!(backfill.errors.is_empty());
-        assert_eq!((backfill.imported, backfill.files_scanned), (1, 1));
-        assert_eq!(crate::usage_events::take_test_notify_count(), 1);
-        {
-            let conn = lock_conn!(db.conn);
-            let totals: (i64, i64, i64, f64, i64) = conn.query_row(
-                "SELECT COUNT(*), SUM(input_tokens), SUM(output_tokens),
-                    SUM(CAST(total_cost_usd AS REAL)), SUM(latency_ms) FROM proxy_request_logs",
+    #[test]
+    fn compatible_cursors_stay_incremental_without_changing_history() -> Result<(), AppError> {
+        for marker in [0b101u64, 0b110] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = session_path(temp.path(), "compatible-cursor");
+            let header = r#"{"type":"session","version":3,"id":"compatible-cursor"}"#;
+            let first = assistant_line("untimed", "2023-11-14T22:13:30Z", 1);
+            let second = assistant_line("timed", "2023-11-14T22:13:40Z", 2);
+            write_lines(&path, &[header, &first, &second]);
+            let db = Database::memory()?;
+            assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 2);
+            lock_conn!(db.conn).execute(
+                "UPDATE proxy_request_logs SET latency_ms = CASE input_tokens WHEN 1 THEN 0 ELSE 1234 END,
+                    total_cost_usd = '0.42'",
                 [],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                    ))
-                },
             )?;
-            assert_eq!(totals, (2, 3, 4, 0.84, 11_234));
-        }
-        let unchanged = sync_pi_files(&db, std::slice::from_ref(&path));
-        assert_eq!((unchanged.imported, unchanged.skipped), (0, 0));
-        let completed = backfill_pi_files(db.clone(), vec![path.clone()]).await?;
-        assert_eq!((completed.imported, completed.files_scanned), (0, 0));
+            let cursors = crate::services::session_usage::load_sync_cursors(&db)?;
+            let cursor = cursors[path.to_string_lossy().as_ref()];
+            let revision = (cursor.last_synced_at as u64 & ((1 << REVISION_MARKER_SHIFT) - 1))
+                | (marker << REVISION_MARKER_SHIFT);
+            lock_conn!(db.conn).execute(
+                "UPDATE session_log_sync SET last_synced_at = ?1 WHERE file_path = ?2",
+                rusqlite::params![revision as i64, path.to_string_lossy()],
+            )?;
 
-        assert_eq!(db.rollup_and_prune(30)?, 2);
-        restore_pre_timing_cursor(&db, &path)?;
-        let pruned = backfill_pi_files(db.clone(), vec![path.clone()]).await?;
-        assert!(pruned.errors.is_empty());
-        assert_eq!((pruned.imported, pruned.files_scanned), (0, 1));
-        let count: i64 = lock_conn!(db.conn).query_row(
-            "SELECT COUNT(*) FROM proxy_request_logs",
-            [],
-            |row| row.get(0),
-        )?;
-        assert_eq!(count, 0);
-        assert_eq!(db.rollup_and_prune(30)?, 0);
-        Ok(())
-    }
+            let unchanged = sync_pi_files(&db, std::slice::from_ref(&path));
+            assert!(unchanged.errors.is_empty());
+            assert_eq!((unchanged.imported, unchanged.skipped), (0, 0));
 
-    #[tokio::test]
-    async fn old_cursor_appends_stay_incremental_and_keep_history_pending() -> Result<(), AppError>
-    {
-        let temp = tempfile::tempdir().unwrap();
-        let path = session_path(temp.path(), "pending-append");
-        write_lines(
-            &path,
-            &[
-                r#"{"type":"session","version":3,"id":"pending-append"}"#,
-                &assistant_line("old", "2023-11-14T22:13:30Z", 1),
-            ],
-        );
-        let db = Arc::new(Database::memory()?);
-        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 1);
-        lock_conn!(db.conn).execute("UPDATE proxy_request_logs SET latency_ms = 0", [])?;
-        restore_pre_timing_cursor(&db, &path)?;
-        let cursors = crate::services::session_usage::load_sync_cursors(&db)?;
-        let old_cursor = cursors[path.to_string_lossy().as_ref()];
-        let parsed = parse_pi_file(
-            &path,
-            0,
-            None,
-            fs::metadata(&path).unwrap().len(),
-            old_cursor.last_modified,
-        )?;
-        {
-            let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
-            writeln!(file, "{}", assistant_line("new", "2023-11-14T22:13:40Z", 2)).unwrap();
-        }
-        let appended = sync_pi_files(&db, std::slice::from_ref(&path));
-        assert!(appended.errors.is_empty());
-        assert_eq!((appended.imported, appended.skipped), (1, 0));
-        let untimed: i64 = lock_conn!(db.conn).query_row(
-            "SELECT COUNT(*) FROM proxy_request_logs WHERE latency_ms = 0",
-            [],
-            |row| row.get(0),
-        )?;
-        assert_eq!(untimed, 1, "appending must not reparse the old prefix");
-
-        // Finishing a stale background snapshot must not overwrite the newer
-        // foreground cursor or mark its unprocessed revision complete.
-        assert_eq!(
-            backfill_pi_timing_batch(&db, &path, old_cursor, &parsed.records, true)?,
-            1
-        );
-        let cursors = crate::services::session_usage::load_sync_cursors(&db)?;
-        let state = decode_pi_sync_state(cursors.get(path.to_string_lossy().as_ref())).unwrap();
-        assert!(!state.timing_backfilled);
-        assert_eq!(state.revision.file_size, fs::metadata(&path).unwrap().len());
-        assert_eq!(state.last_line_offset, 3);
-        let retry = backfill_pi_files(db.clone(), vec![path.clone()]).await?;
-        assert!(retry.errors.is_empty());
-        assert_eq!((retry.imported, retry.files_scanned), (0, 1));
-        assert_eq!(backfill_pi_files(db, vec![path]).await?.files_scanned, 0);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn failed_backfill_retries_after_reopening_database() -> Result<(), AppError> {
-        let temp = tempfile::tempdir().unwrap();
-        let path = session_path(temp.path(), "retry");
-        write_lines(
-            &path,
-            &[
-                r#"{"type":"session","version":3,"id":"retry"}"#,
-                &assistant_line("first", "2023-11-14T22:13:30Z", 1),
-            ],
-        );
-        let db = Arc::new(Database::memory()?);
-        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 1);
-        restore_pre_timing_cursor(&db, &path)?;
-        lock_conn!(db.conn).execute("UPDATE proxy_request_logs SET latency_ms = 0", [])?;
-        lock_conn!(db.conn).execute_batch(
-            "CREATE TRIGGER fail_timing BEFORE UPDATE OF latency_ms ON proxy_request_logs
-             BEGIN SELECT RAISE(ABORT, 'test backfill failure'); END;",
-        )?;
-        let failed = backfill_pi_files(db.clone(), vec![path.clone()]).await?;
-        assert_eq!(failed.errors.len(), 1);
-        assert_eq!(failed.imported, 0);
-        lock_conn!(db.conn).execute_batch("DROP TRIGGER fail_timing")?;
-
-        // Persist and reopen the database so the retry cannot rely on an
-        // in-memory completion flag from the earlier worker.
-        let saved = temp.path().join("retry.db");
-        lock_conn!(db.conn).backup(rusqlite::DatabaseName::Main, &saved, None)?;
-        drop(db);
-        let reopened = Database::memory()?;
-        *reopened.conn.lock().unwrap() = rusqlite::Connection::open(&saved)?;
-        let reopened = Arc::new(reopened);
-        let retry = backfill_pi_files(reopened.clone(), vec![path.clone()]).await?;
-        assert!(retry.errors.is_empty());
-        assert_eq!((retry.imported, retry.files_scanned), (1, 1));
-        assert_eq!(
-            backfill_pi_files(reopened, vec![path]).await?.files_scanned,
-            0
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn foreground_sync_can_run_between_history_batches() -> Result<(), AppError> {
-        let temp = tempfile::tempdir().unwrap();
-        let path = session_path(temp.path(), "batches");
-        let count = TIMING_BACKFILL_BATCH_SIZE * 3;
-        {
-            let mut file = File::create(&path).unwrap();
-            writeln!(file, r#"{{"type":"session","version":3,"id":"batches"}}"#).unwrap();
-            for index in 0..count {
-                writeln!(
-                    file,
-                    "{}",
-                    assistant_line(&index.to_string(), "2023-11-14T22:13:30Z", 1)
-                )
-                .unwrap();
+            let third = assistant_line("new", "2023-11-14T22:13:50Z", 3);
+            {
+                let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+                writeln!(file, "{third}").unwrap();
             }
+            let appended = sync_pi_files(&db, std::slice::from_ref(&path));
+            assert!(appended.errors.is_empty());
+            assert_eq!((appended.imported, appended.skipped), (1, 0));
+            let cursors = crate::services::session_usage::load_sync_cursors(&db)?;
+            let cursor = cursors[path.to_string_lossy().as_ref()];
+            assert_eq!(cursor.last_line_offset, 4);
+            assert_eq!(cursor.last_synced_at as u64 >> REVISION_MARKER_SHIFT, 0b101);
+
+            // A normal rewrite may revisit old requests, but deduplication must
+            // leave their missing or previously recorded timing untouched.
+            write_lines(&path, &[&format!("{header} "), &first, &second, &third]);
+            let rewritten = sync_pi_files(&db, std::slice::from_ref(&path));
+            assert!(rewritten.errors.is_empty());
+            assert_eq!((rewritten.imported, rewritten.skipped), (0, 3));
+            let conn = lock_conn!(db.conn);
+            let mut stmt = conn.prepare(
+                "SELECT latency_ms, total_cost_usd FROM proxy_request_logs ORDER BY input_tokens",
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            assert_eq!(
+                rows,
+                vec![
+                    (0, "0.42".into()),
+                    (1234, "0.42".into()),
+                    (30_000, "0".into())
+                ]
+            );
         }
-        let db = Arc::new(Database::memory()?);
-        assert_eq!(
-            sync_pi_files(&db, std::slice::from_ref(&path)).imported as usize,
-            count
-        );
-        restore_pre_timing_cursor(&db, &path)?;
-        lock_conn!(db.conn).execute("UPDATE proxy_request_logs SET latency_ms = 0", [])?;
-        let worker = tokio::spawn(backfill_pi_files(db.clone(), vec![path.clone()]));
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            loop {
-                let guard = crate::services::session_usage::session_sync_mutex()
-                    .lock()
-                    .await;
-                let timed: usize = lock_conn!(db.conn).query_row(
-                    "SELECT COUNT(*) FROM proxy_request_logs WHERE latency_ms > 0",
-                    [],
-                    |row| row.get(0),
-                )?;
-                if timed > 0 {
-                    assert!(timed < count, "manual sync must not wait for all history");
-                    assert_eq!(timed, TIMING_BACKFILL_BATCH_SIZE);
-                    let foreground = sync_pi_files(&db, std::slice::from_ref(&path));
-                    assert!(foreground.errors.is_empty());
-                    assert_eq!((foreground.imported, foreground.skipped), (0, 0));
-                    break;
-                }
-                drop(guard);
-                tokio::task::yield_now().await;
-            }
-            Ok::<_, AppError>(())
-        })
-        .await
-        .expect("foreground sync gets the lock between batches")?;
-        let completed = worker.await.unwrap()?;
-        assert!(completed.errors.is_empty());
-        assert_eq!(completed.imported as usize, count);
         Ok(())
     }
 
     #[test]
-    fn backfills_legacy_timing_after_entry_ids_are_added() -> Result<(), AppError> {
+    fn legacy_entry_id_migration_preserves_existing_timing() -> Result<(), AppError> {
         let temp = tempfile::tempdir().expect("tempdir");
         let path = session_path(temp.path(), "legacy-timing");
         let header = r#"{"type":"session","version":1,"id":"session-legacy","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#;
@@ -1725,15 +1335,15 @@ mod tests {
                 &migrated,
             ],
         );
-        let backfill = sync_pi_files(&db, std::slice::from_ref(&path));
-        assert!(backfill.errors.is_empty());
-        assert_eq!((backfill.imported, backfill.skipped), (1, 0));
+        let migrated = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(migrated.errors.is_empty());
+        assert_eq!((migrated.imported, migrated.skipped), (0, 1));
         let totals: (i64, i64) = lock_conn!(db.conn).query_row(
             "SELECT COUNT(*), SUM(latency_ms) FROM proxy_request_logs",
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
-        assert_eq!(totals, (1, 10_000));
+        assert_eq!(totals, (1, 0));
         Ok(())
     }
 
