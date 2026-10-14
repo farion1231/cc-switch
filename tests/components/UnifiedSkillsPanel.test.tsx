@@ -191,6 +191,17 @@ async function openMenu(trigger: string, item: string) {
   await userEvent.click(await screen.findByRole("menuitem", { name: item }));
 }
 
+async function expandGroup(name: string) {
+  const group = screen.getByRole("region", { name });
+  const toggle = within(group).getByRole("button", {
+    name: "skillsPage.groups.expand",
+  });
+  if (toggle.getAttribute("aria-expanded") === "false") {
+    await userEvent.click(toggle);
+  }
+  return group;
+}
+
 describe("UnifiedSkillsPanel", () => {
   it("groups repositories case-insensitively without combining unrelated local projects", async () => {
     m.installed = [
@@ -225,6 +236,14 @@ describe("UnifiedSkillsPanel", () => {
       { id: "b", name: "Project B", skillIds: ["local-b"] },
     ];
     renderPanel();
+    expect(
+      within(screen.getByRole("region", { name: "owner/repo" })).getByRole(
+        "button",
+        { name: "skillsPage.groups.expand" },
+      ),
+    ).toHaveAttribute("aria-expanded", "false");
+    await expandGroup("owner/repo");
+    await expandGroup("Project A");
     expect(
       within(screen.getByRole("region", { name: "owner/repo" })).getAllByRole(
         "listitem",
@@ -372,7 +391,8 @@ describe("UnifiedSkillsPanel", () => {
     ];
     renderPanel();
 
-    const group = screen.getByRole("region", { name: "open.feishu.cn" });
+    const group = await expandGroup("open.feishu.cn");
+    await expandGroup("skillsPage.groups.ungrouped");
     expect(within(group).getByText("Lark A")).toBeInTheDocument();
     expect(within(group).getByText("Lark B")).toBeInTheDocument();
     expect(screen.getByText("Unknown")).toBeInTheDocument();
@@ -387,7 +407,7 @@ describe("UnifiedSkillsPanel", () => {
     );
   });
 
-  it("gives a manual project group priority over an automatic source group", () => {
+  it("gives a manual project group priority over an automatic source group", async () => {
     m.installed = [
       makeSkill({
         id: "local:lark-a",
@@ -408,6 +428,8 @@ describe("UnifiedSkillsPanel", () => {
     ];
     m.projects = [{ id: "project", name: "My Lark", skillIds: ["local:lark-a"] }];
     renderPanel();
+    await expandGroup("My Lark");
+    await expandGroup("skillsPage.groups.ungrouped");
 
     expect(
       within(screen.getByRole("region", { name: "My Lark" })).getByText("Lark A"),
@@ -491,9 +513,6 @@ describe("UnifiedSkillsPanel", () => {
     m.installed = [makeSkill({ name: "Alpha" })];
     renderPanel();
     const group = screen.getByRole("region", { name: "owner/repo" });
-    await userEvent.click(
-      within(group).getByRole("button", { name: "skillsPage.groups.expand" }),
-    );
     expect(within(group).queryByText("Alpha")).not.toBeInTheDocument();
     const search = screen.getByRole("textbox", {
       name: "skills.installedSearchAriaLabel",
@@ -594,6 +613,7 @@ describe("UnifiedSkillsPanel", () => {
   it("always shows the Pi column and toggles it like the other apps", async () => {
     m.installed = [makeSkill({ apps: { claude: true, pi: true } })];
     renderPanel();
+    await expandGroup("owner/repo");
     expect(columns()).toHaveLength(3);
     // Pi 列头的说明走 HoverTip（悬停即显），不再用原生 title
     expect(columns()[2]).not.toHaveAttribute("title");
@@ -647,6 +667,7 @@ describe("UnifiedSkillsPanel", () => {
       makeSkill({ id: "c", name: "C" }),
     ];
     renderPanel();
+    await expandGroup("owner/repo");
     await userEvent.click(columns()[1]);
     await userEvent.click(
       screen.getByRole("button", { name: "appMatrix.pop.enableRest" }),
@@ -680,6 +701,7 @@ describe("UnifiedSkillsPanel", () => {
       failed: [{ item: "b", error: new Error("symlink failed") }],
     });
     renderPanel();
+    await expandGroup("owner/repo");
     await userEvent.click(columns()[0]);
     await userEvent.click(
       screen.getByRole("button", { name: "appMatrix.pop.enableRest" }),
@@ -703,6 +725,7 @@ describe("UnifiedSkillsPanel", () => {
       makeSkill({ id: "c", name: "C" }),
     ];
     renderPanel();
+    await expandGroup("owner/repo");
     const picks = screen.getAllByRole("checkbox", {
       name: "skillsPage.selectAria",
     });
@@ -730,6 +753,7 @@ describe("UnifiedSkillsPanel", () => {
       makeSkill({ id: "b", name: "B" }),
     ];
     renderPanel();
+    await expandGroup("owner/repo");
     const all = screen.getByRole("checkbox", {
       name: "skillsPage.selectAllAria",
     }) as HTMLInputElement;
@@ -755,6 +779,7 @@ describe("UnifiedSkillsPanel", () => {
       preservedPiPath: "/tmp/.pi/agent/skills/alpha-skill",
     });
     renderPanel();
+    await expandGroup("owner/repo");
     await openMenu("skillsPage.rowMoreAria", "skillsPage.uninstallEllipsis");
     expect(
       screen.getByText("skillsPage.confirm.uninstallBody"),
@@ -783,6 +808,7 @@ describe("UnifiedSkillsPanel", () => {
       { id: "gone", name: "Gone", remoteHash: "y" },
     ];
     renderPanel();
+    await expandGroup("owner/repo");
     // 更新横幅已去掉：页头的「N 个可更新」、行上的徽标、「检查更新」按钮说的是同一件事
     expect(screen.getAllByText("skills.updateAvailable")).toHaveLength(1);
     expect(screen.getAllByRole("listitem")).toHaveLength(2);
@@ -873,6 +899,7 @@ describe("UnifiedSkillsPanel", () => {
   it("highlights a column header and shows the app name while hovering its cells", async () => {
     m.installed = [makeSkill({ apps: { claude: true } })];
     renderPanel();
+    await expandGroup("owner/repo");
     const cells = screen.getAllByRole("button", { name: /appMatrix.cell/ });
     // 开 / 关是同一个方框，只换填充
     expect(cells[0]).toHaveAttribute("data-state", "on");
@@ -1077,6 +1104,7 @@ describe("UnifiedSkillsPanel", () => {
       onInteractionBlockedChange: onInteraction,
       onNavigationBlockedChange: onNavigation,
     });
+    await expandGroup("owner/repo");
     await waitFor(() => {
       expect(onInteraction).toHaveBeenLastCalledWith(true);
       expect(onNavigation).toHaveBeenLastCalledWith(false);

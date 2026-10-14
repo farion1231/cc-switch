@@ -146,6 +146,9 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
     new Set(),
   );
+  // 分组列表首次加载时全部收起，避免大量未归类 Skill 把项目分组淹没。
+  const [groupsInitialized, setGroupsInitialized] = useState(false);
+  const initializedGroupKeysRef = useRef<Set<string>>(new Set());
   // 搜索会临时展开先前收起的分组，方便看见命中的 Skill；用户仍可手动收起它们。
   const [searchRevealedGroups, setSearchRevealedGroups] = useState<Set<string>>(
     new Set(),
@@ -410,6 +413,22 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       ),
     [installedSkills, projectGroups, t],
   );
+  useEffect(() => {
+    if (isLoading) return;
+    const newGroupKeys = groupedSkills
+      .map((group) => group.key)
+      .filter((key) => !initializedGroupKeysRef.current.has(key));
+    if (newGroupKeys.length > 0) {
+      for (const key of newGroupKeys) initializedGroupKeysRef.current.add(key);
+    }
+    setCollapsedGroups((current) => {
+      if (newGroupKeys.length === 0) return current;
+      const next = new Set(current);
+      for (const key of newGroupKeys) next.add(key);
+      return next;
+    });
+    setGroupsInitialized(true);
+  }, [groupedSkills, isLoading]);
   const visibleSkillIds = new Set(filteredSkills.map((skill) => skill.id));
   // App/status filters only hide rows; group headers and their operation scope stay intact.
   const visibleGroups = groupedSkills.filter((group) => {
@@ -1466,7 +1485,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                     visibleSkillIds.has(skill.id),
                   );
                   const expanded =
-                    !collapsedGroups.has(group.key) ||
+                    (groupsInitialized && !collapsedGroups.has(group.key)) ||
                     (Boolean(normalizedQuery) &&
                       searchRevealedGroups.has(group.key));
                   return (
