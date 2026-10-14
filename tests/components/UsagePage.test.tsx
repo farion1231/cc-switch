@@ -4,14 +4,14 @@ import { UsagePage } from "@/components/usage/UsagePage";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
 
 const autoSaveSettings = vi.hoisted(() => vi.fn());
+const settingsState = vi.hoisted(() => ({
+  current: null as null | {
+    usageDashboardRefreshIntervalMs: number;
+    sessionAutoSyncEnabled: boolean;
+  },
+}));
 vi.mock("@/hooks/useSettings", () => ({
-  useSettings: () => ({
-    settings: {
-      usageDashboardRefreshIntervalMs: 30000,
-      sessionAutoSyncEnabled: true,
-    },
-    autoSaveSettings,
-  }),
+  useSettings: () => ({ settings: settingsState.current, autoSaveSettings }),
 }));
 vi.mock("@/components/usage/UsageDashboard", () => ({
   UsageDashboard: vi.fn(() => null),
@@ -20,6 +20,28 @@ vi.mock("@/components/usage/UsageDashboard", () => ({
 describe("UsagePage settings persistence", () => {
   beforeEach(() => {
     autoSaveSettings.mockReset();
+    vi.mocked(UsageDashboard).mockClear();
+    settingsState.current = {
+      usageDashboardRefreshIntervalMs: 30000,
+      sessionAutoSyncEnabled: true,
+    };
+  });
+
+  it("tells the dashboard settings are not ready until they load", () => {
+    settingsState.current = null;
+    const { rerender } = render(<UsagePage />);
+    expect(vi.mocked(UsageDashboard).mock.lastCall![0]).toMatchObject({
+      settingsReady: false,
+    });
+    settingsState.current = {
+      usageDashboardRefreshIntervalMs: 5000,
+      sessionAutoSyncEnabled: false,
+    };
+    rerender(<UsagePage />);
+    expect(vi.mocked(UsageDashboard).mock.lastCall![0]).toMatchObject({
+      settingsReady: true,
+      sessionAutoSyncEnabled: false,
+    });
   });
 
   it("waits for saving before reporting success to the dashboard", async () => {

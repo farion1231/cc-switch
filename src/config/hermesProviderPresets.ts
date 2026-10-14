@@ -435,7 +435,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
-    apiKeyUrl: "https://grooroute.xyz/sign-up?aff=qqm9",
+    apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
     settingsConfig: {
       name: "grooroute_pro",
       base_url: "https://grooroute.pro",
@@ -2391,6 +2391,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "baseten",
     suggestedDefaults: {
       model: { default: "zai-org/GLM-5.3", provider: "baseten" },
     },
@@ -2493,6 +2494,132 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Ollama",
+    websiteUrl: "https://ollama.com",
+    settingsConfig: {
+      // Hermes 里 ollama / local 都是指向 custom 的别名（hermes_cli/auth.py），
+      // 照 ollama_cloud 先例换名避开
+      name: "ollama-local",
+      // Hermes 官方本机写法：base http://localhost:11434/v1、Key 留空
+      //（hermes-agent.nousresearch.com/docs/integrations/providers，2026-10-14
+      // 核对）。Hermes 启动时拒绝小于 64000 的窗口：这里填模型原生值，服务端
+      // 实际窗口也要至少 64k（OLLAMA_CONTEXT_LENGTH 或 model.ollama_num_ctx）。
+      // 模型换成自己已下载的
+      base_url: "http://localhost:11434/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "qwen3.5", name: "Qwen3.5", context_length: 262144 },
+        { id: "gpt-oss:20b", name: "GPT-OSS 20B", context_length: 131072 },
+      ],
+    },
+    category: "local",
+    icon: "ollama",
+    suggestedDefaults: {
+      model: { default: "qwen3.5", provider: "ollama-local" },
+    },
+  },
+  {
+    name: "LM Studio",
+    websiteUrl: "https://lmstudio.ai",
+    settingsConfig: {
+      // Hermes 内置 provider lmstudio，且 lm-studio / lm_studio 都是它的别名
+      //（hermes_cli/auth.py），照 ollama-local 先例换名避开
+      name: "lmstudio-local",
+      // base http://localhost:1234/v1、默认不鉴权，Key 留空（开启鉴权后填 API
+      // Token；hermes-agent.nousresearch.com/docs/integrations/providers，
+      // 2026-10-14 核对）。Hermes 启动时拒绝小于 64000 的窗口：这里填模型原生
+      // 值，LM Studio 加载模型时的 context length 也要至少 64K（UI 设置或
+      // lms load --context-length），加载窗口更小时同步调小。模型换成自己已
+      // 下载的，或用「获取模型」从 /v1/models 拉取
+      base_url: "http://localhost:1234/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "openai/gpt-oss-20b",
+          name: "GPT-OSS 20B",
+          context_length: 131072,
+        },
+      ],
+    },
+    category: "local",
+    icon: "lmstudio",
+    suggestedDefaults: {
+      model: { default: "openai/gpt-oss-20b", provider: "lmstudio-local" },
+    },
+  },
+  {
+    name: "llama.cpp",
+    websiteUrl: "https://github.com/ggml-org/llama.cpp",
+    settingsConfig: {
+      // Hermes 里 llamacpp / llama.cpp / llama-cpp 都是指向 custom 的别名
+      //（hermes_cli/auth.py、providers.py），照 lmstudio-local 先例换名避开
+      name: "llamacpp-local",
+      // 本机 llama-server 的 OpenAI Chat base（github.com/ggml-org/llama.cpp/
+      // blob/master/tools/server/README.md、hermes-agent.nousresearch.com/docs/
+      // integrations/providers，2026-10-14 核对）。默认端口 b11521（PR #30159）
+      // 起为 9931，v0.6.0 及更早、Homebrew 与 Docker 仍是 8080；只监听 IPv4 的
+      // 127.0.0.1。不带 --api-key 时不校验，Key 留空（带了就填那个值）。Hermes
+      // 启动时拒绝小于 64000 的窗口：这里填模型原生值，llama-server 的 -c 也要
+      // 至少 64K（--fit 可能自动调小），实际窗口更小时同步调小。默认模型取
+      // ggml-org 官方 GGUF 的 Qwen3-Coder 30B A3B，换成自己已下载的，或用
+      // 「获取模型」从 /v1/models 拉取
+      base_url: "http://127.0.0.1:9931/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+          name: "Qwen3-Coder 30B A3B",
+          context_length: 262144,
+        },
+      ],
+    },
+    category: "local",
+    icon: "llamacpp",
+    suggestedDefaults: {
+      model: {
+        default: "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+        provider: "llamacpp-local",
+      },
+    },
+  },
+  {
+    name: "vLLM",
+    websiteUrl: "https://vllm.ai",
+    settingsConfig: {
+      // Hermes 里 vllm / local 都是指向 custom 的别名（hermes_cli/providers.py），
+      // 照 llamacpp-local 先例换名避开
+      name: "vllm-local",
+      // 本机 vllm serve 的 OpenAI Chat base（docs.vllm.ai/en/latest/serving/
+      // online_serving/openai_compatible_server、hermes-agent.nousresearch.com/
+      // docs/integrations/providers，2026-10-14 核对）。默认端口 8000，不带
+      // --host 时监听全部 IPv4 网卡，建议加 --host 127.0.0.1；工具调用要启动时加
+      // --enable-auto-tool-choice --tool-call-parser qwen3_coder。不带 --api-key
+      // 时不校验，Key 留空（Hermes 会发占位值 no-key-required；带了就填那个值）。
+      // Hermes 启动时拒绝小于 64000 的窗口：这里填模型原生值，--max-model-len
+      // 也要至少 64K，实际窗口更小时同步调小。默认模型取 vLLM Codex 接入页的
+      // 示例 Qwen/Qwen3.6-27B，须与 /v1/models 的 id 一致，换成自己已下载的，
+      // 或用「获取模型」从 /v1/models 拉取
+      base_url: "http://localhost:8000/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "Qwen/Qwen3.6-27B",
+          name: "Qwen3.6 27B",
+          context_length: 262144,
+        },
+      ],
+    },
+    category: "local",
+    icon: "vllm",
+    suggestedDefaults: {
+      model: { default: "Qwen/Qwen3.6-27B", provider: "vllm-local" },
+    },
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",
@@ -2552,6 +2679,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "deepinfra",
     suggestedDefaults: {
       model: {
         default: "deepseek-ai/DeepSeek-V4-Flash-0731",
@@ -2648,6 +2776,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "nebius",
     suggestedDefaults: {
       model: { default: "zai-org/GLM-5.3", provider: "nebius" },
     },
@@ -2678,6 +2807,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "groq",
     suggestedDefaults: {
       model: { default: "openai/gpt-oss-120b", provider: "groq" },
     },
@@ -2701,6 +2831,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "cloud_provider",
+    icon: "sambanova",
     suggestedDefaults: {
       model: { default: "MiniMax-M3", provider: "sambanova" },
     },
@@ -2735,6 +2866,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "cloud_provider",
+    icon: "digitalocean",
     suggestedDefaults: {
       model: { default: "glm-5.3", provider: "digitalocean" },
     },
@@ -2834,6 +2966,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "cloud_provider",
+    icon: "fireworks",
     suggestedDefaults: {
       model: {
         default: "accounts/fireworks/models/glm-5p3",

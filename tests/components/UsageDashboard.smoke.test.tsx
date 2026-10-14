@@ -3,6 +3,7 @@ import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
+import { emitTauriEvent } from "../msw/tauriMocks";
 
 /**
  * 不 mock 子组件，把整页（指标、趋势图、四个页签）真渲染一遍，接口用假数据。
@@ -37,10 +38,6 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => i18nMock,
 }));
 
-vi.mock("@/hooks/useUsageEventBridge", () => ({
-  useUsageEventBridge: () => {},
-}));
-
 vi.mock("@/lib/api/usage", () => ({ usageApi: usageApiMock }));
 
 vi.mock("@/lib/api/proxy", () => ({
@@ -64,7 +61,11 @@ const summary = {
 
 describe("UsageDashboard (smoke)", () => {
   beforeEach(() => {
-    usageApiMock.syncSessionUsage.mockReset();
+    usageApiMock.syncSessionUsage.mockReset().mockResolvedValue({
+      imported: 0,
+      filesScanned: 0,
+      errors: [],
+    });
     usageApiMock.getUsageSummary.mockResolvedValue(summary);
     usageApiMock.getUsageSummaryByApp.mockResolvedValue([
       { appType: "claude", summary },
@@ -139,7 +140,7 @@ describe("UsageDashboard (smoke)", () => {
     vi.useRealTimers();
   });
 
-  it("imports new session usage before refreshing metrics at the selected interval", async () => {
+  it("scans session logs on open and shows imported usage via the backend event", async () => {
     vi.useFakeTimers();
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -148,6 +149,8 @@ describe("UsageDashboard (smoke)", () => {
       usageApiMock.getUsageSummaryByApp.mockResolvedValue([
         { appType: "claude", summary: { ...summary, totalCost: "43.1" } },
       ]);
+      // 真实后端扫完、防抖 200ms 后才发这个事件，那时监听早已挂上
+      setTimeout(() => emitTauriEvent("usage-log-recorded", null), 200);
       return { imported: 1, filesScanned: 1, errors: [] };
     });
     render(
@@ -156,29 +159,26 @@ describe("UsageDashboard (smoke)", () => {
       </QueryClientProvider>,
     );
     await act(() => vi.advanceTimersByTimeAsync(10));
-    expect(screen.getByText("$42.10")).toBeInTheDocument();
-
-    await act(() => vi.advanceTimersByTimeAsync(4990));
     expect(usageApiMock.syncSessionUsage).toHaveBeenCalledTimes(1);
-    await act(() => vi.advanceTimersByTimeAsync(10));
+    expect(screen.getByText("$42.10")).toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(200));
     expect(screen.getByText("$43.10")).toBeInTheDocument();
     client.clear();
   });
 
-  it("stops every dashboard query timer when auto refresh is turned off", async () => {
+  it("scans at the interval and re-runs statistics only once a minute for rolling ranges", async () => {
     vi.useFakeTimers();
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
-    const { rerender } = render(
+    usageApiMock.syncSessionUsage.mockResolvedValue({
+      imported: 0,
+      filesScanned: 1,
+      errors: [],
+    });
+    render(
       <QueryClientProvider client={client}>
         <UsageDashboard refreshIntervalMs={5000} />
-      </QueryClientProvider>,
-    );
-    await act(() => vi.advanceTimersByTimeAsync(10));
-    rerender(
-      <QueryClientProvider client={client}>
-        <UsageDashboard refreshIntervalMs={0} />
       </QueryClientProvider>,
     );
     await act(() => vi.advanceTimersByTimeAsync(10));
@@ -189,13 +189,38 @@ describe("UsageDashboard (smoke)", () => {
       usageApiMock.getProviderStats,
       usageApiMock.getModelStats,
       usageApiMock.getRequestLogs,
-      usageApiMock.getSessionUsageLastSync,
     ];
     const counts = queries.map((query) => query.mock.calls.length);
     expect(counts.every((count) => count > 0)).toBe(true);
-    await act(() => vi.advanceTimersByTimeAsync(60000));
+    // 没有新用量：扫描不触发重查，只有「今天」这类范围每分钟重算一次
+    await act(() => vi.advanceTimersByTimeAsync(59000));
     expect(queries.map((query) => query.mock.calls.length)).toEqual(counts);
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    expect(queries.map((query) => query.mock.calls.length)).toEqual(
+      counts.map((count) => count + 1),
+    );
+    expect(usageApiMock.syncSessionUsage).toHaveBeenCalledTimes(13);
+    client.clear();
+  });
+
+  it("hides the scan interval and never scans while auto scanning is off", async () => {
+    vi.useFakeTimers();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <UsageDashboard
+          refreshIntervalMs={5000}
+          sessionAutoSyncEnabled={false}
+        />
+      </QueryClientProvider>,
+    );
+    await act(() => vi.advanceTimersByTimeAsync(60000));
     expect(usageApiMock.syncSessionUsage).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", { name: /usage\.refreshInterval/ }),
+    ).not.toBeInTheDocument();
     client.clear();
   });
 
