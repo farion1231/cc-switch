@@ -195,8 +195,17 @@ describe("RequestLogTable", () => {
             firstTokenMs: 3_300,
             dataSource: "codex_session",
           },
+          // Pi 用自己的请求开始/回复写入时间估算耗时，没有首字计时。
+          {
+            ...base,
+            appType: "pi",
+            requestId: "pi-session-estimated",
+            outputTokens: 900,
+            latencyMs: 10_000,
+            dataSource: "pi_session",
+          },
         ],
-        total: 5,
+        total: 6,
         page: 0,
         pageSize: 20,
       },
@@ -213,7 +222,7 @@ describe("RequestLogTable", () => {
     );
 
     const rows = screen.getAllByRole("row").slice(1);
-    expect(rows).toHaveLength(5);
+    expect(rows).toHaveLength(6);
     // 最后两列：速度、首字
     const speedCell = (row: HTMLElement) =>
       row.children[row.children.length - 2];
@@ -238,6 +247,12 @@ describe("RequestLogTable", () => {
       "title",
       "usage.estimatedTimingTipWithFirstToken",
     );
+    expect(speedCell(rows[5])).toHaveTextContent("≈90tok/s");
+    expect(speedCell(rows[5])).toHaveAttribute(
+      "title",
+      "usage.estimatedTimingTip",
+    );
+    expect(firstTokenCell(rows[5])).toHaveTextContent("—");
     expect(
       screen.getByRole("columnheader", { name: /usage.firstToken/ }),
     ).toBeInTheDocument();

@@ -3,30 +3,96 @@
 
 use super::*;
 
-pub(super) fn plan(
+/// Every detected installation with its own plan. The user picks one; the others stay.
+pub(super) fn candidates(
     tool: &str,
     pref: Option<&WslShellPreferenceInput>,
-) -> Result<ToolUninstallPlan, String> {
+) -> Result<Vec<ToolUninstallCandidate>, String> {
     #[cfg(target_os = "windows")]
     if let Some(distro) = wsl_distro_for_tool(tool) {
-        return wsl_plan(tool, &distro, pref);
+        let plan = wsl_plan(tool, &distro, pref)?;
+        let install = ToolInstallation {
+            path: plan.path.clone(),
+            real: PathBuf::from(&plan.real_path),
+            version: None,
+            runnable: true,
+            error: None,
+            source: "wsl".into(),
+            is_path_default: true,
+        };
+        return Ok(vec![ToolUninstallCandidate {
+            install,
+            plan: Some(plan),
+            unavailable_reason: None,
+            reinstalled_by_updater: false,
+        }]);
     }
     let _ = pref;
     let installs = enumerate_tool_installations(tool);
-    let inst = default_install(&installs).ok_or_else(|| {
-        format!("Cannot identify the installation of {} to uninstall. Check installations and try again.", tool_display_name(tool))
-    })?;
-    plan_for_install(tool, inst)
+    if installs.is_empty() {
+        return Err(format!(
+            "Cannot identify the installation of {} to uninstall. Check installations and try again.",
+            tool_display_name(tool)
+        ));
+    }
+    let has_grok_native = tool == "grok" && installs.iter().any(|i| known_native_install(tool, i));
+    let grok_npm_mode = has_grok_native && grok_updater_uses_npm();
+    Ok(installs
+        .into_iter()
+        .map(|install| {
+            let (plan, unavailable_reason) = match plan_for_install(tool, &install) {
+                Ok(plan) => (Some(plan), None),
+                Err(reason) => (None, Some(reason)),
+            };
+            // `grok update` in npm mode reinstalls the global package next to the native one.
+            let reinstalled_by_updater = grok_npm_mode
+                && plan.as_ref().is_some_and(|plan| !plan.native)
+                && install
+                    .real
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .contains("/node_modules/");
+            ToolUninstallCandidate {
+                install,
+                plan,
+                unavailable_reason,
+                reinstalled_by_updater,
+            }
+        })
+        .collect())
+}
+
+fn grok_updater_uses_npm() -> bool {
+    std::fs::read_to_string(crate::grok_config::get_grok_config_path())
+        .ok()
+        .and_then(|text| text.parse::<toml::Table>().ok())
+        .is_some_and(|config| {
+            config
+                .get("cli")
+                .and_then(|cli| cli.get("installer"))
+                .and_then(toml::Value::as_str)
+                == Some("npm")
+        })
 }
 
 fn plan_for_install(tool: &str, inst: &ToolInstallation) -> Result<ToolUninstallPlan, String> {
+    plan_and_removals(tool, inst).map(|(plan, _)| plan)
+}
+
+/// The plan plus, for native installs, the exact files it removes (the plan displays them).
+fn plan_and_removals(
+    tool: &str,
+    inst: &ToolInstallation,
+) -> Result<(ToolUninstallPlan, Vec<PathBuf>), String> {
+    let mut removals = Vec::new();
     let (command, native) = if let Some(command) = package_uninstall_command(tool, inst)? {
         (command, false)
     } else if known_native_install(tool, inst) {
-        let mut paths = vec![inst.real.to_string_lossy().into_owned()];
-        if Path::new(&inst.path) != inst.real {
-            paths.push(inst.path.clone());
-        }
+        removals = native_removal_paths(tool, inst);
+        let paths: Vec<String> = removals
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
         // Display the equivalent file operation; execution uses remove_file, never a shell.
         #[cfg(target_os = "windows")]
         let command = format!(
@@ -63,14 +129,15 @@ fn plan_for_install(tool: &str, inst: &ToolInstallation) -> Result<ToolUninstall
     } else {
         command
     };
-    Ok(ToolUninstallPlan {
+    let plan = ToolUninstallPlan {
         tool: tool.into(),
         path: inst.path.clone(),
         real_path: inst.real.to_string_lossy().into_owned(),
         command,
         native,
         wsl_distro: None,
-    })
+    };
+    Ok((plan, removals))
 }
 
 pub(super) fn uninstall(
@@ -90,18 +157,19 @@ pub(super) fn uninstall(
             .map_err(|e| format!("Cannot start WSL uninstall: {e}"))?;
         return finish_lifecycle_output(&output);
     }
-    let current = plan(tool, pref)?;
+    let _ = pref;
+    // Re-derive the plan for the installation the user picked, not whichever is the default now.
+    let installs = enumerate_tool_installations(tool);
+    let inst = installs
+        .iter()
+        .find(|inst| inst.path == confirmed.path)
+        .ok_or(
+        "Installation changed since the uninstall preview. Check installations and confirm again.",
+    )?;
+    let (current, removals) = plan_and_removals(tool, inst)?;
     validate_confirmed_plan(&current, confirmed)?;
     if current.native {
-        remove_native_executable(&ToolInstallation {
-            path: current.path.clone(),
-            real: PathBuf::from(&current.real_path),
-            version: None,
-            runnable: false,
-            error: None,
-            source: "system".into(),
-            is_path_default: true,
-        })?;
+        remove_native_files(inst, &removals)?;
     } else {
         run_package_uninstall(&current.command)?;
     }
@@ -339,23 +407,7 @@ fn known_native_install(tool: &str, inst: &ToolInstallation) -> bool {
                         "bin/codex" | "bin/codex.exe" | "codex" | "codex.exe"
                     )
             }),
-        "grok" => {
-            normalized.ends_with("/.grok/bin/grok")
-                || normalized.ends_with("/.grok/bin/grok.exe")
-                || normalized
-                    .split_once("/.grok/downloads/")
-                    .is_some_and(|(_, binary)| {
-                        matches!(
-                            binary,
-                            "grok-macos-aarch64"
-                                | "grok-macos-x86_64"
-                                | "grok-linux-aarch64"
-                                | "grok-linux-x86_64"
-                                | "grok-windows-aarch64.exe"
-                                | "grok-windows-x86_64.exe"
-                        )
-                    })
-        }
+        "grok" => grok_native_root(&inst.real).is_some(),
         // The current curl installer (including Git Bash on Windows) uses this
         // directory. Do not invent OPENCODE_INSTALL_DIR / XDG_BIN_DIR layouts.
         "opencode" => {
@@ -366,17 +418,127 @@ fn known_native_install(tool: &str, inst: &ToolInstallation) -> bool {
     }
 }
 
-/// Remove only the selected executable and its launcher. No recursive deletion:
+const GROK_PLATFORMS: [&str; 6] = [
+    "macos-aarch64",
+    "macos-x86_64",
+    "linux-aarch64",
+    "linux-x86_64",
+    "windows-aarch64.exe",
+    "windows-x86_64.exe",
+];
+
+/// Names the official Grok installer writes: `bin/grok`, `bin/grok-<version>` (0.2.112+),
+/// `downloads/grok-<platform>` and `downloads/grok-<version>-<platform>`.
+fn is_grok_binary_name(dir: &str, name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    let Some(rest) = name.strip_prefix("grok-") else {
+        return dir == "bin" && matches!(name.as_str(), "grok" | "grok.exe");
+    };
+    match dir {
+        "bin" => is_grok_version(rest.strip_suffix(".exe").unwrap_or(rest)),
+        "downloads" => GROK_PLATFORMS.iter().any(|platform| {
+            rest == *platform
+                || rest
+                    .strip_suffix(platform)
+                    .and_then(|version| version.strip_suffix('-'))
+                    .is_some_and(is_grok_version)
+        }),
+        _ => false,
+    }
+}
+
+fn is_grok_version(version: &str) -> bool {
+    version.starts_with(|c: char| c.is_ascii_digit())
+        && version
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'))
+}
+
+/// The `.grok` directory owning an installer binary, or None for any other file.
+fn grok_native_root(real: &Path) -> Option<PathBuf> {
+    let name = real.file_name()?.to_str()?;
+    let dir = real.parent()?;
+    let kind = dir.file_name()?.to_str()?.to_ascii_lowercase();
+    let root = dir.parent()?;
+    (root.file_name()?.eq_ignore_ascii_case(".grok") && is_grok_binary_name(&kind, name))
+        .then(|| root.to_path_buf())
+}
+
+/// The Grok installer keeps every version it fetched plus `grok` / `agent` links to one of
+/// them. Removing only the current binary would leave the others and a working `agent`.
+fn grok_installer_files(root: &Path) -> Vec<PathBuf> {
+    let mut launchers = Vec::new();
+    let mut binaries = Vec::new();
+    for kind in ["bin", "downloads"] {
+        let Ok(entries) = std::fs::read_dir(root.join(kind)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            if metadata.file_type().is_symlink() {
+                // Only installer launchers that still point at one of its binaries.
+                let launcher = kind == "bin"
+                    && matches!(name.as_str(), "grok" | "grok.exe" | "agent" | "agent.exe");
+                if launcher
+                    && std::fs::canonicalize(&path)
+                        .is_ok_and(|target| grok_native_root(&target).as_deref() == Some(root))
+                {
+                    launchers.push(path);
+                }
+            } else if metadata.is_file()
+                && is_grok_binary_name(kind, &name)
+                && is_native_executable(&path)
+            {
+                binaries.push(path);
+            }
+        }
+    }
+    launchers.sort();
+    binaries.sort();
+    launchers.extend(binaries);
+    launchers
+}
+
+/// Files removed for a native install: the selected launcher, other launcher symlinks to
+/// the same binary in the search directories, the binary, and for Grok the rest of the
+/// installer's binaries. Launchers first, so a failure never leaves a dangling command.
+fn native_removal_paths(tool: &str, inst: &ToolInstallation) -> Vec<PathBuf> {
+    let mut paths = vec![PathBuf::from(&inst.path)];
+    for dir in build_tool_search_paths(tool) {
+        for launcher in tool_executable_candidates(tool, &dir) {
+            let is_symlink = std::fs::symlink_metadata(&launcher)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink());
+            if is_symlink && std::fs::canonicalize(&launcher).is_ok_and(|real| real == inst.real) {
+                paths.push(launcher);
+            }
+        }
+    }
+    paths.push(inst.real.clone());
+    if tool == "grok" {
+        if let Some(root) = grok_native_root(&inst.real) {
+            paths.extend(grok_installer_files(&root));
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    paths.retain(|path| seen.insert(path.clone()));
+    paths
+}
+
+/// Remove only the listed files. No recursive deletion:
 /// native installers may keep settings, sessions and projects next to their binaries.
-fn remove_native_executable(inst: &ToolInstallation) -> Result<(), String> {
+fn remove_native_files(inst: &ToolInstallation, paths: &[PathBuf]) -> Result<(), String> {
     let entry = Path::new(&inst.path);
-    // Validate both paths before changing either. A replaced symlink must not delete a new target.
+    // Validate before changing anything. A replaced symlink must not delete a new target.
     if std::fs::canonicalize(entry).map_err(|e| e.to_string())? != inst.real {
         return Err(
             "Installation changed during uninstall. Check installations and try again.".into(),
         );
     }
-    for path in [inst.real.as_path(), entry] {
+    for path in paths {
         match std::fs::symlink_metadata(path) {
             Ok(metadata) if metadata.is_file() || metadata.file_type().is_symlink() => {
                 std::fs::remove_file(path)
@@ -708,7 +870,9 @@ mod tests {
     #[test]
     fn windows_npm_path_fallback_uses_batch_compatible_path() {
         use std::os::windows::process::CommandExt;
+        use std::time::Duration;
 
+        const TEST_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
         const FIXTURE_ROOT: &str = "CC_SWITCH_TEST_NPM_UNINSTALL_ROOT";
         if let Some(root) = std::env::var_os(FIXTURE_ROOT) {
             let root = PathBuf::from(root);
@@ -721,7 +885,7 @@ mod tests {
 
             let resolved = resolve_path_default(
                 "npm",
-                CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+                CommandDeadline::from_timeout(Some(TEST_PROBE_TIMEOUT)),
             )
             .unwrap()
             .expect("npm should resolve from the separate PATH directory");
@@ -1347,6 +1511,9 @@ mod tests {
         }
         for (tool, binary) in [
             ("grok", ".grok/downloads/grok-linux-x86_64"),
+            ("grok", ".grok/downloads/grok-1.0.3-macos-aarch64"),
+            ("grok", ".grok/bin/grok-1.0.50"),
+            ("grok", ".grok/bin/grok-1.1.0-beta.1.exe"),
             (
                 "codex",
                 ".codex/packages/standalone/releases/0.157.0-linux/bin/codex",
@@ -1400,7 +1567,8 @@ mod tests {
         let config = temp.path().join("settings.json");
         std::fs::write(&executable, "MZ").unwrap();
         std::fs::write(&config, "settings").unwrap();
-        remove_native_executable(&installation(&executable)).unwrap();
+        let inst = installation(&executable);
+        remove_native_files(&inst, &[inst.real.clone()]).unwrap();
         assert!(!executable.exists());
         assert_eq!(std::fs::read_to_string(config).unwrap(), "settings");
     }
@@ -1412,7 +1580,94 @@ mod tests {
         std::fs::write(&executable, "MZ").unwrap();
         let mut inst = installation(&executable);
         inst.real = temp.path().join("another.exe");
-        assert!(remove_native_executable(&inst).is_err());
+        assert!(remove_native_files(&inst, &[executable.clone()]).is_err());
         assert!(executable.exists());
+    }
+
+    #[test]
+    fn grok_binary_names_follow_the_installer_layout() {
+        for (dir, name) in [
+            ("bin", "grok"),
+            ("bin", "grok.exe"),
+            ("bin", "grok-1.0.50"),
+            ("downloads", "grok-macos-aarch64"),
+            ("downloads", "grok-1.0.3-linux-x86_64"),
+            ("downloads", "grok-1.0.3-windows-x86_64.exe"),
+        ] {
+            assert!(is_grok_binary_name(dir, name), "{dir}/{name}");
+        }
+        for (dir, name) in [
+            ("bin", "agent"),
+            ("bin", "grok-latest"),
+            ("bin", "grok-macos-aarch64"),
+            ("downloads", "grok-1.0.3"),
+            ("downloads", "grok-1.0.3-freebsd-x86_64"),
+            ("downloads", "grok"),
+            ("lib", "grok-1.0.50"),
+        ] {
+            assert!(!is_grok_binary_name(dir, name), "{dir}/{name}");
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let other = temp.path().join("tools/bin/grok-1.0.50");
+        assert!(grok_native_root(&other).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn grok_native_removal_covers_every_installer_binary_and_launcher() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(temp.path()).unwrap().join(".grok");
+        let bin = root.join("bin");
+        let downloads = root.join("downloads");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&downloads).unwrap();
+        let current = bin.join("grok-1.0.50");
+        let previous = bin.join("grok-1.0.46");
+        let fetched = downloads.join("grok-1.0.3-macos-aarch64");
+        let legacy = downloads.join("grok-macos-aarch64");
+        for binary in [&current, &previous, &fetched, &legacy] {
+            std::fs::write(binary, [0xcf, 0xfa, 0xed, 0xfe]).unwrap();
+        }
+        let config = root.join("config.toml");
+        let session = root.join("sessions/one.json");
+        std::fs::create_dir_all(session.parent().unwrap()).unwrap();
+        std::fs::write(&config, "[cli]\ninstaller = \"internal\"\n").unwrap();
+        std::fs::write(&session, "{}").unwrap();
+        let notes = bin.join("grok-notes.txt");
+        std::fs::write(&notes, "user file").unwrap();
+        let unrelated = temp.path().join("elsewhere");
+        std::fs::write(&unrelated, [0x7f, b'E', b'L', b'F']).unwrap();
+        symlink("grok-1.0.50", bin.join("grok")).unwrap();
+        symlink("../downloads/grok-1.0.3-macos-aarch64", bin.join("agent")).unwrap();
+        let foreign_agent = root.join("bin/agent.exe");
+        symlink(&unrelated, &foreign_agent).unwrap();
+
+        let inst = ToolInstallation {
+            path: bin.join("grok").to_string_lossy().into_owned(),
+            ..installation(&current)
+        };
+        assert!(known_native_install("grok", &inst));
+        let (plan, removals) = plan_and_removals("grok", &inst).unwrap();
+        assert!(plan.native);
+        assert_eq!(removals.first(), Some(&bin.join("grok")));
+        for path in [&current, &previous, &fetched, &legacy, &bin.join("agent")] {
+            assert!(removals.contains(path), "{}", path.display());
+            assert!(plan.command.contains(&*path.to_string_lossy()));
+        }
+        for kept in [&config, &session, &notes, &unrelated, &foreign_agent] {
+            assert!(!removals.contains(kept), "{}", kept.display());
+        }
+
+        remove_native_files(&inst, &removals).unwrap();
+        assert!(std::fs::symlink_metadata(bin.join("grok")).is_err());
+        assert!(std::fs::symlink_metadata(bin.join("agent")).is_err());
+        for path in [&current, &previous, &fetched, &legacy] {
+            assert!(!path.exists());
+        }
+        for kept in [&config, &session, &notes, &unrelated] {
+            assert!(kept.exists());
+        }
+        assert!(std::fs::symlink_metadata(&foreign_agent).is_ok());
     }
 }
