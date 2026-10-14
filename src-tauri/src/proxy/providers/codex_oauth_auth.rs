@@ -385,6 +385,7 @@ pub struct CodexOAuthManager {
     /// 过期条目会在 start_device_flow 时被清理，防止放弃的登录流程导致无界增长
     pending_device_codes: Arc<RwLock<HashMap<String, PendingDeviceCode>>>,
     browser_flows: Arc<RwLock<HashMap<String, Arc<browser::BrowserFlow>>>>,
+    browser_start_lock: Mutex<()>,
     /// 清除全部认证时递增，使已经在网络请求中的登录流程无法重新登记。
     login_epoch: AtomicU64,
     /// 每个目标账号最新一次定向重新认证的 generation。
@@ -409,6 +410,7 @@ impl CodexOAuthManager {
             lifecycle_lock: Arc::new(RwLock::new(())),
             pending_device_codes: Arc::new(RwLock::new(HashMap::new())),
             browser_flows: Arc::new(RwLock::new(HashMap::new())),
+            browser_start_lock: Mutex::new(()),
             login_epoch: AtomicU64::new(0),
             target_login_generations: Arc::new(RwLock::new(HashMap::new())),
             next_target_login_generation: AtomicU64::new(0),

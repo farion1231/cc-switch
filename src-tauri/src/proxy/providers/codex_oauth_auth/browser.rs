@@ -145,8 +145,29 @@ impl CodexOAuthManager {
         &self,
         target_account_id: Option<&str>,
     ) -> Result<GitHubDeviceCodeResponse, CodexOAuthError> {
-        let listener = bind_callback_listener(1455).await?;
-        self.start_browser_flow_with_listener(target_account_id, listener)
+        self.start_browser_flow_at_port(
+            target_account_id,
+            1455,
+            Duration::from_secs(LOGIN_LIFETIME),
+        )
+        .await
+    }
+
+    async fn start_browser_flow_at_port(
+        &self,
+        target_account_id: Option<&str>,
+        port: u16,
+        lifetime: Duration,
+    ) -> Result<GitHubDeviceCodeResponse, CodexOAuthError> {
+        let _start = self.browser_start_lock.lock().await;
+        // A new login supersedes only this manager's flow. Never disturb an
+        // unrelated application that owns the fixed callback port.
+        let previous: Vec<_> = self.browser_flows.read().await.keys().cloned().collect();
+        for flow_id in previous {
+            self.cancel_device_flow(&flow_id).await;
+        }
+        let listener = bind_callback_listener(port).await?;
+        self.start_browser_flow_with_listener(target_account_id, listener, lifetime)
             .await
     }
 
@@ -154,6 +175,7 @@ impl CodexOAuthManager {
         &self,
         target_account_id: Option<&str>,
         listener: tokio::net::TcpListener,
+        lifetime: Duration,
     ) -> Result<GitHubDeviceCodeResponse, CodexOAuthError> {
         let (epoch, target, generation) = self.prepare_login_target(target_account_id).await?;
         let flow_id = format!("browser:{}", Uuid::new_v4());
@@ -167,23 +189,7 @@ impl CodexOAuthManager {
         let router = Router::new()
             .route("/auth/callback", get(callback))
             .with_state(callback_state.clone());
-        let task = tokio::spawn(async move {
-            let _ = tokio::time::timeout(
-                Duration::from_secs(LOGIN_LIFETIME),
-                axum::serve(listener, router).into_future(),
-            )
-            .await;
-        });
-        let flow = Arc::new(BrowserFlow {
-            verifier,
-            callback: callback_state,
-            task: task.abort_handle(),
-            join: Mutex::new(Some(task)),
-            polling: Mutex::new(()),
-        });
-        let expires_at = chrono::Utc::now().timestamp_millis() + (LOGIN_LIFETIME as i64) * 1000;
-        // Use the existing pending-flow registry so cancellation, clear-all, and
-        // newer targeted reauthentication linearize against token persistence.
+        let expires_at = chrono::Utc::now().timestamp_millis() + lifetime.as_millis() as i64;
         self.register_pending_device_code(
             flow_id.clone(),
             String::new(),
@@ -193,6 +199,30 @@ impl CodexOAuthManager {
             generation,
         )
         .await?;
+        let pending = Arc::downgrade(&self.pending_device_codes);
+        let flows = Arc::downgrade(&self.browser_flows);
+        let cleanup_id = flow_id.clone();
+        let task = tokio::spawn(async move {
+            let _ =
+                tokio::time::timeout(lifetime, axum::serve(listener, router).into_future()).await;
+            // Expiry must clean backend state even when the WebView disappeared.
+            // Weak references avoid keeping the manager/listener alive on drop.
+            if let Some(pending) = pending.upgrade() {
+                pending.write().await.remove(&cleanup_id);
+            }
+            if let Some(flows) = flows.upgrade() {
+                flows.write().await.remove(&cleanup_id);
+            }
+        });
+        let flow = Arc::new(BrowserFlow {
+            verifier,
+            callback: callback_state,
+            task: task.abort_handle(),
+            join: Mutex::new(Some(task)),
+            polling: Mutex::new(()),
+        });
+        // Use the existing pending-flow registry so cancellation, clear-all, and
+        // newer targeted reauthentication linearize against token persistence.
         let mut flows = self.browser_flows.write().await;
         if !self
             .pending_device_codes
@@ -207,7 +237,7 @@ impl CodexOAuthManager {
             device_code: flow_id,
             user_code: String::new(),
             verification_uri: authorization_url,
-            expires_in: LOGIN_LIFETIME,
+            expires_in: lifetime.as_secs(),
             interval: 1,
         })
     }
@@ -231,13 +261,11 @@ impl CodexOAuthManager {
         let Ok(_poll_guard) = flow.polling.try_lock() else {
             return Ok(None);
         };
-        let entry = self
-            .pending_device_codes
-            .read()
-            .await
-            .get(flow_id)
-            .cloned()
-            .ok_or(CodexOAuthError::ExpiredToken)?;
+        let entry = self.pending_device_codes.read().await.get(flow_id).cloned();
+        let Some(entry) = entry else {
+            self.cancel_device_flow(flow_id).await;
+            return Err(CodexOAuthError::ExpiredToken);
+        };
         if entry.expires_at_ms <= chrono::Utc::now().timestamp_millis() {
             self.cancel_device_flow(flow_id).await;
             return Err(CodexOAuthError::ExpiredToken);
@@ -319,7 +347,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let base = format!("http://127.0.0.1:{port}/auth/callback");
         let flow = manager
-            .start_browser_flow_with_listener(None, listener)
+            .start_browser_flow_with_listener(None, listener, Duration::from_secs(LOGIN_LIFETIME))
             .await
             .unwrap();
         assert!(flow.user_code.is_empty());
@@ -358,7 +386,7 @@ mod tests {
         let listener = bind_callback_listener(0).await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let flow = manager
-            .start_browser_flow_with_listener(None, listener)
+            .start_browser_flow_with_listener(None, listener, Duration::from_secs(LOGIN_LIFETIME))
             .await
             .unwrap();
         assert!(manager.cancel_device_flow(&flow.device_code).await);
@@ -389,5 +417,101 @@ mod tests {
             bind_callback_listener(port).await,
             Err(CodexOAuthError::IoError(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn new_browser_login_replaces_only_its_owned_listener() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = CodexOAuthManager::new(dir.path().into());
+        let listener = bind_callback_listener(0).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let first = manager
+            .start_browser_flow_with_listener(None, listener, Duration::from_secs(LOGIN_LIFETIME))
+            .await
+            .unwrap();
+        let second = manager
+            .start_browser_flow_at_port(None, port, Duration::from_secs(LOGIN_LIFETIME))
+            .await
+            .unwrap();
+        assert_ne!(first.device_code, second.device_code);
+        assert!(!manager
+            .pending_device_codes
+            .read()
+            .await
+            .contains_key(&first.device_code));
+        assert!(!manager
+            .browser_flows
+            .read()
+            .await
+            .contains_key(&first.device_code));
+        assert!(manager
+            .pending_device_codes
+            .read()
+            .await
+            .contains_key(&second.device_code));
+        manager.cancel_device_flow(&second.device_code).await;
+        let unrelated = bind_callback_listener(port).await.unwrap();
+        assert!(manager
+            .start_browser_flow_at_port(None, port, Duration::from_secs(LOGIN_LIFETIME))
+            .await
+            .is_err());
+        assert_eq!(unrelated.local_addr().unwrap().port(), port);
+        assert!(manager.browser_flows.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn abandoned_browser_login_expires_without_a_frontend_poll() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = CodexOAuthManager::new(dir.path().into());
+        let listener = bind_callback_listener(0).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let flow = manager
+            .start_browser_flow_with_listener(None, listener, Duration::from_millis(100))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if manager.browser_flows.read().await.is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(!manager
+            .pending_device_codes
+            .read()
+            .await
+            .contains_key(&flow.device_code));
+        assert!(bind_callback_listener(port).await.is_ok());
+        assert!(manager
+            .poll_for_token(&flow.device_code, || async {})
+            .await
+            .is_err());
+        assert!(manager.list_accounts().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_missing_pending_entry_also_cleans_its_browser_flow() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = CodexOAuthManager::new(dir.path().into());
+        let listener = bind_callback_listener(0).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let flow = manager
+            .start_browser_flow_with_listener(None, listener, Duration::from_secs(LOGIN_LIFETIME))
+            .await
+            .unwrap();
+        manager
+            .pending_device_codes
+            .write()
+            .await
+            .remove(&flow.device_code);
+        assert!(manager
+            .poll_for_token(&flow.device_code, || async {})
+            .await
+            .is_err());
+        assert!(manager.browser_flows.read().await.is_empty());
+        assert!(bind_callback_listener(port).await.is_ok());
     }
 }
