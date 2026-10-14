@@ -115,6 +115,24 @@ if ($Mode -ne 'Plan') { throw 'Unexpected execution mode' }
 
     #[cfg(target_os = "windows")]
     #[test]
+    fn materialized_desktop_failure_reports_only_the_message() {
+        // Run the production error handler without querying or changing a real
+        // installation. A package lookup failure should not expose a PS stack.
+        let (_, body) = include_str!("codex_desktop_windows.ps1")
+            .split_once("$ErrorActionPreference")
+            .unwrap();
+        let source = format!(
+            "param([string]$Mode)\nfunction Get-AppxPackage {{ param($Name) }}\n$ErrorActionPreference{body}"
+        );
+        let error = run_powershell_script(source.as_bytes(), "Plan").unwrap_err();
+        assert_eq!(
+            error,
+            "Codex desktop (OpenAI.Codex) is not installed for this Windows user."
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
     fn desktop_restart_lifecycle_fixtures() {
         use std::os::windows::process::CommandExt;
         let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
