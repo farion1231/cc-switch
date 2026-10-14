@@ -1711,6 +1711,7 @@ pub fn run() {
             commands::launch_session_terminal,
             commands::get_tool_versions,
             commands::run_tool_lifecycle_action,
+            commands::prepare_tool_uninstall,
             commands::probe_tool_installations,
             commands::list_tool_installations,
             // Provider terminal
