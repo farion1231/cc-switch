@@ -151,7 +151,8 @@ pub struct TrayTexts {
 /// 镜像前端 `i18n/getInitialLanguage` 的判定顺序，确保首次安装
 /// （`settings.language` 尚未写入）时托盘语言与界面语言一致：
 /// 繁中系统（zh-TW/HK/MO/Hant）→ `zh-TW`，其余 zh → `zh`，
-/// 日文 → `ja`，英文 → `en`，未知区域回退到 `zh`（与前端默认一致）。
+/// 日文 → `ja`，土耳其文 → `tr`，英文 → `en`，其他语言回退到 `en`，
+/// 区域为空时回退到 `zh`（与前端默认一致）。
 fn map_locale_to_tray_language(locale: &str) -> &'static str {
     let locale = locale.to_lowercase();
     if locale == "zh" {
@@ -166,10 +167,12 @@ fn map_locale_to_tray_language(locale: &str) -> &'static str {
         "zh"
     } else if locale.starts_with("ja") {
         "ja"
-    } else if locale.starts_with("en") {
-        "en"
-    } else {
+    } else if locale.starts_with("tr") {
+        "tr"
+    } else if locale.is_empty() {
         "zh"
+    } else {
+        "en"
     }
 }
 
@@ -245,6 +248,67 @@ impl TrayTexts {
                 date_format: "%b %-d",
                 quota_used: false,
             },
+            // 土耳其语是社区翻译：从英文起步再覆盖已翻译的项，之后新增的托盘项
+            // 在有人翻译前显示英文，而不是让所有改托盘的提交都必须补土耳其语。
+            "tr" => {
+                let mut texts = Self::from_language("en");
+                texts.show_main = "CC Switch'i aç";
+                texts.open_website = "Resmî web sitesini aç";
+                texts.lightweight_mode = "Hafif mod";
+                texts.quit = "CC Switch'ten çık";
+                texts.quit_stops_routing = "CC Switch'ten çık (yönlendirme hizmeti durur)";
+                texts.projects_label = "Projeler";
+                texts.no_project_label = "Proje yok";
+                texts.header_direct = "Doğrudan";
+                texts.header_route = "Yönlendirme";
+                texts.header_failover = "Yönlendirme · Yedek sağlayıcıya geçiş açık";
+                texts.header_stack = "Birleştirme · Varsayılan sağlayıcı";
+                texts.header_stack_default = "Birleştirme · Varsayılan: {name}";
+                texts.failover_note = "Kuyruktan otomatik seçilir; uygulama sayfasından değiştirebilirsiniz";
+                texts.mode_route = "Yönlendirme";
+                texts.mode_stack = "Birleştirme";
+                texts.mode_mapping = "Model eşleme";
+                texts.needs_routing_suffix = " (yönlendirme gerekir)…";
+                texts.official_blocked_suffix = " (resmî abonelikler yönlendirmeyi kullanmaz)";
+                texts.mapping_suffix = " · Model eşleme";
+                texts.open_app_page = "{app} sayfasını aç";
+                texts.add_provider = "Sağlayıcı ekle…";
+                texts.almost_out = "bitmek üzere";
+                texts.needs_attention = "ilgilenilmesi gerekiyor";
+                texts.problem_service_down = "Yönlendirme hizmeti çalışmıyor (port {port})";
+                texts.problem_attach_failed = "{app}: {mode} başlangıçta yeniden bağlanamadı; doğrudan bağlantıya dönüldü";
+                texts.problem_switch_failed = "{app} geçiş yapamadı: {reason}";
+                texts.problem_more = "{count} sorun daha var — görmek için CC Switch'i açın";
+                texts.desktop_unavailable = "Yönlendirme hizmeti çalışmıyor; {name} şu anda kullanılamıyor";
+                texts.tooltip_problem = "CC Switch · İlgilenilmesi gerekiyor: {problem}";
+                texts.feedback_switched = "{app}, {name} sağlayıcısına geçti. Uygulamak için {app} uygulamasını yeniden başlatın";
+                texts.feedback_stack_default = "{app} için varsayılan sağlayıcı artık {name}. Uygulamak için {app} uygulamasını yeniden başlatın";
+                texts.feedback_profile = "{name} projesi {app} uygulamasına uygulandı";
+                texts.tier_five_hour = "5 saatlik";
+                texts.tier_weekly = "Haftalık";
+                texts.tier_fable = "Fable";
+                texts.tier_monthly = "Aylık";
+                texts.tier_thirty_day = "30 günlük";
+                texts.tier_credits = "Krediler";
+                texts.tier_gemini_pro = "Pro";
+                texts.tier_gemini_flash = "Flash";
+                texts.tier_gemini_flash_lite = "Flash Lite";
+                texts.tier_premium = "Premium";
+                texts.tier_left = "{label} %{value} kaldı";
+                texts.tier_used = "{label} %{value} kullanıldı";
+                texts.tier_used_up = "{label} tükendi";
+                texts.balance = "Bakiye {value}";
+                texts.balance_used_up = "Bakiye tükendi";
+                texts.plan_expired = "Planın süresi doldu";
+                texts.used_amount = "Kullanılan: {value}";
+                texts.quota_failed = "Kota bilgisi alınamıyor";
+                texts.quota_failed_login_expired = "Kota bilgisi alınamıyor: oturumun süresi doldu";
+                texts.quota_failed_token_refresh_pending = "Kota bilgisi alınamıyor: token yenilenmesi bekleniyor";
+                texts.reset_on_date = "{label} kotası {when} tarihinde sıfırlanır";
+                texts.reset_at_time = "{label} kotası {when} saatinde sıfırlanır";
+                texts.date_format = "%d.%m";
+                texts
+            }
             "ja" => Self {
                 show_main: "CC Switch を開く",
                 open_website: "公式サイトを開く",
@@ -2916,6 +2980,8 @@ mod tests {
 
     #[test]
     fn locale_maps_japanese_and_english() {
+        assert_eq!(map_locale_to_tray_language("tr-TR"), "tr");
+        assert_eq!(map_locale_to_tray_language("tr"), "tr");
         assert_eq!(map_locale_to_tray_language("ja-JP"), "ja");
         assert_eq!(map_locale_to_tray_language("ja"), "ja");
         assert_eq!(map_locale_to_tray_language("en-US"), "en");
@@ -2923,15 +2989,16 @@ mod tests {
     }
 
     #[test]
-    fn locale_unknown_falls_back_to_zh() {
-        // 与前端 getInitialLanguage 的默认值保持一致。
-        for locale in ["de-DE", "fr", "ko-KR", ""] {
+    fn locale_unknown_falls_back_to_en() {
+        // 与前端 getInitialLanguage 保持一致：认不出的语言用英文，区域为空才用默认的 zh。
+        for locale in ["de-DE", "fr", "ko-KR"] {
             assert_eq!(
                 map_locale_to_tray_language(locale),
-                "zh",
-                "expected {locale} -> zh (default)"
+                "en",
+                "expected {locale} -> en"
             );
         }
+        assert_eq!(map_locale_to_tray_language(""), "zh");
     }
 
     #[test]
@@ -4050,7 +4117,7 @@ mod tests {
             quit_text(&en(), true),
             "Quit CC Switch (stops the routing service)"
         );
-        for language in ["zh", "zh-TW", "en", "ja"] {
+        for language in ["zh", "zh-TW", "en", "ja", "tr"] {
             let texts = TrayTexts::from_language(language);
             assert_ne!(texts.quit, texts.quit_stops_routing, "{language}");
             assert!(

@@ -18,11 +18,15 @@ export function UsagePage({
   onOpenRoutingSettings,
   onOpenSyncSettings,
 }: UsagePageProps = {}) {
-  const { settings, updateSettings, autoSaveSettings } = useSettings();
+  const { settings, autoSaveSettings } = useSettings();
 
-  const save = (updates: Partial<SettingsFormState>) => {
-    updateSettings(updates);
-    void autoSaveSettings(updates).catch(() => undefined);
+  const save = async (updates: Partial<SettingsFormState>) => {
+    try {
+      return (await autoSaveSettings(updates)) != null;
+    } catch {
+      // useSettings 已提示保存失败；将结果传回面板，回滚乐观更新的刷新间隔。
+      return false;
+    }
   };
 
   return (
@@ -32,6 +36,7 @@ export function UsagePage({
         save({ usageDashboardRefreshIntervalMs })
       }
       sessionAutoSyncEnabled={settings?.sessionAutoSyncEnabled ?? true}
+      settingsReady={settings != null}
       onSessionAutoSyncEnabledChange={(sessionAutoSyncEnabled) =>
         save({ sessionAutoSyncEnabled })
       }

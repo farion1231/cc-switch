@@ -190,7 +190,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
-    apiKeyUrl: "https://grooroute.xyz/sign-up?aff=qqm9",
+    apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
     auth: grokAuth(),
     config: grokPresetConfig(
       "GrooRoute Pro",
@@ -318,8 +318,6 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     config: grokPresetConfig("Code0", "https://code0.ai/v1"),
     endpointCandidates: ["https://code0.ai/v1"],
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "code0",
     icon: "code0",
   },
   {

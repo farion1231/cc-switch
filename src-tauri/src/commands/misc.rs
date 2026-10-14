@@ -13,6 +13,8 @@ use tauri::AppHandle;
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
 
+#[path = "tool_node_requirement.rs"]
+mod tool_node_requirement;
 #[path = "tool_uninstall.rs"]
 mod tool_uninstall;
 
@@ -129,6 +131,8 @@ pub struct ToolVersion {
     env_type: String,
     /// 当 env_type 为 "wsl" 时，返回该工具绑定的 WSL distro（用于按 distro 探测 shells）
     wsl_distro: Option<String>,
+    /// 有新版本、但新版本要求的 Node 比这处安装用的新：前端不给升级按钮，提示先升级 Node。
+    update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
 const VALID_TOOLS: [&str; 9] = [
@@ -261,11 +265,22 @@ pub struct ToolUninstallPlan {
     wsl_distro: Option<String>,
 }
 
+/// One installation offered in the uninstall dialog: a plan, or why it must be removed manually.
+#[derive(Debug, serde::Serialize)]
+pub struct ToolUninstallCandidate {
+    #[serde(flatten)]
+    install: ToolInstallation,
+    plan: Option<ToolUninstallPlan>,
+    unavailable_reason: Option<String>,
+    /// A copy the tool's own updater recreates (Grok in npm mode), so removing it alone is temporary.
+    reinstalled_by_updater: bool,
+}
+
 #[tauri::command]
 pub async fn prepare_tool_uninstall(
     tool: String,
     wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
-) -> Result<ToolUninstallPlan, String> {
+) -> Result<Vec<ToolUninstallCandidate>, String> {
     if !VALID_TOOLS.contains(&tool.as_str()) {
         return Err(format!("Unsupported tool action target: {tool}"));
     }
@@ -273,7 +288,7 @@ pub async fn prepare_tool_uninstall(
         let pref = wsl_shell_by_tool
             .as_ref()
             .and_then(|prefs| prefs.get(&tool));
-        tool_uninstall::plan(&tool, pref)
+        tool_uninstall::candidates(&tool, pref)
     })
     .await
     .map_err(|e| format!("uninstall plan task join error: {e}"))?
@@ -309,6 +324,11 @@ pub async fn run_tool_lifecycle_action(
             .await;
     }
     let action = ToolLifecycleAction::from_str(&action)?;
+    if matches!(action, ToolLifecycleAction::Update) {
+        for tool in &requested {
+            tool_node_requirement::ensure_update_node(tool).await?;
+        }
+    }
 
     let label = match action {
         ToolLifecycleAction::Install => "tool_install",
@@ -1160,6 +1180,16 @@ async fn get_single_tool_version_impl(
         _ => None,
     };
 
+    // 3. 有新版本时，看新版本要求的 Node 与这处安装用的对不对得上
+    let update_blocked_by_node = match (local, latest_version.as_deref()) {
+        (Some(local), Some(latest))
+            if compare_semver(local, latest) == Some(std::cmp::Ordering::Less) =>
+        {
+            tool_node_requirement::update_node_gap(&client, tool, latest).await
+        }
+        _ => None,
+    };
+
     ToolVersion {
         name: tool.to_string(),
         version: local_version,
@@ -1168,6 +1198,7 @@ async fn get_single_tool_version_impl(
         installed_but_broken,
         env_type,
         wsl_distro,
+        update_blocked_by_node,
     }
 }
 
@@ -2063,13 +2094,15 @@ fn extend_mise_node_search_paths(paths: &mut Vec<std::path::PathBuf>, home: &Pat
 /// duplicates are removed.
 ///
 /// See `env_checker::check_system_env` for the same set of registry keys; here
-/// we read only the `Path` value.
+/// referenced variables also fall back to these keys if absent from the process.
 #[cfg(target_os = "windows")]
 fn effective_path_string() -> String {
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
     use winreg::RegKey;
 
-    let process = std::env::var("PATH").unwrap_or_default();
+    let process = std::env::var_os("PATH")
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let user = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey("Environment")
         .and_then(|k| k.get_value::<String, &str>("Path"))
@@ -2112,12 +2145,43 @@ fn prepend_search_dir_to_path(dir: &Path, current_path: &std::ffi::OsStr) -> std
 
 /// Expand `%VAR%` environment-variable references. The registry `Path` value is
 /// `REG_EXPAND_SZ`, and the `String` returned by `winreg` is not auto-expanded.
-/// Variables such as `%LOCALAPPDATA%` / `%USERPROFILE%` / `%SystemRoot%` are
-/// still defined in a process that lost its user PATH (Winlogon injects them
-/// from the user profile), so expanding each via `std::env::var` is safe.
-/// Undefined variables are preserved verbatim (no characters dropped).
+/// MSI launches can also lose user-defined variables such as `%PNPM_HOME%`.
+/// Prefer process overrides, then the user and machine registry values. Registry
+/// values may reference other variables; unknown/cyclic references stay literal.
 #[cfg(target_os = "windows")]
 fn expand_env_chars(raw: &str) -> String {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    use winreg::RegKey;
+
+    let user = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey("Environment")
+        .ok();
+    let machine = RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey("SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment")
+        .ok();
+    expand_env_chars_with_lookup(
+        raw,
+        &|name| std::env::var(name).ok(),
+        &|name| {
+            user.as_ref()
+                .and_then(|key| key.get_value::<String, _>(name).ok())
+                .or_else(|| {
+                    machine
+                        .as_ref()
+                        .and_then(|key| key.get_value::<String, _>(name).ok())
+                })
+        },
+        &mut Vec::new(),
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn expand_env_chars_with_lookup(
+    raw: &str,
+    process: &impl Fn(&str) -> Option<String>,
+    registry: &impl Fn(&str) -> Option<String>,
+    expanding: &mut Vec<String>,
+) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut rest = raw;
     while let Some(open) = rest.find('%') {
@@ -2134,19 +2198,31 @@ fn expand_env_chars(raw: &str) -> String {
                 let name = &after[..close];
                 let is_ident =
                     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-                if is_ident {
-                    match std::env::var(name) {
-                        Ok(val) => out.push_str(&val),
-                        Err(_) => {
-                            out.push('%');
-                            out.push_str(name);
-                            out.push('%');
+                let value = if is_ident {
+                    process(name).or_else(|| {
+                        // Bound nesting even for an unusually long registry chain.
+                        if expanding.len() >= 32
+                            || expanding.iter().any(|var| var.eq_ignore_ascii_case(name))
+                        {
+                            return None;
                         }
-                    }
+                        let raw = registry(name)?;
+                        expanding.push(name.to_owned());
+                        let value =
+                            expand_env_chars_with_lookup(&raw, process, registry, expanding);
+                        expanding.pop();
+                        Some(value)
+                    })
                 } else {
-                    out.push('%');
-                    out.push_str(name);
-                    out.push('%');
+                    None
+                };
+                match value {
+                    Some(value) => out.push_str(&value),
+                    None => {
+                        out.push('%');
+                        out.push_str(name);
+                        out.push('%');
+                    }
                 }
                 rest = &after[close + 1..];
             }
@@ -3893,6 +3969,9 @@ pub(crate) fn run_detected_tool_command_with_timeout(
     let dir = tool_path
         .parent()
         .ok_or_else(|| format!("Invalid {tool} executable path"))?;
+    #[cfg(target_os = "windows")]
+    let current_path = effective_path_string();
+    #[cfg(not(target_os = "windows"))]
     let current_path = std::env::var_os("PATH")
         .map(|value| value.to_string_lossy().into_owned())
         .unwrap_or_default();
@@ -3937,38 +4016,9 @@ fn run_windows_tool_command_capture(
     extra_env: &[(&str, String)],
     working_dir: &Path,
 ) -> Result<std::process::Output, String> {
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
 
-    let mut cmd = if is_windows_command_script(tool_path) {
-        let path = tool_path.to_string_lossy();
-        let args = args
-            .iter()
-            .map(|arg| windows_cmd_double_quote_arg(arg))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let command = format!(
-            "call {}{}",
-            win_quote_path_for_batch(&path),
-            if args.is_empty() {
-                String::new()
-            } else {
-                format!(" {args}")
-            }
-        );
-        let mut cmd = Command::new("cmd");
-        cmd.args(["/D", "/S", "/C"])
-            .raw_arg(&command)
-            .env("PATH", new_path)
-            .creation_flags(CREATE_NO_WINDOW);
-        cmd
-    } else {
-        let mut cmd = Command::new(tool_path);
-        cmd.args(args)
-            .env("PATH", new_path)
-            .creation_flags(CREATE_NO_WINDOW);
-        cmd
-    };
-
+    let mut cmd = build_windows_tool_command(tool_path, args, new_path);
     apply_extra_env(&mut cmd, extra_env);
     cmd.current_dir(working_dir)
         .stdout(Stdio::piped())
@@ -8811,6 +8861,65 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
+    fn expand_env_chars_recovers_missing_user_variables_and_nested_references() {
+        let process = |name: &str| match name.to_ascii_uppercase().as_str() {
+            "USERPROFILE" => Some(r"C:\Users\tester".into()),
+            "OVERRIDE" => Some(r"D:\runtime".into()),
+            _ => None,
+        };
+        let registry = |name: &str| match name.to_ascii_uppercase().as_str() {
+            "PNPM_HOME" => Some(r"%LOCALAPPDATA%\pnpm".into()),
+            "LOCALAPPDATA" => Some(r"%USERPROFILE%\AppData\Local".into()),
+            "OVERRIDE" => Some(r"D:\registry".into()),
+            "CYCLE_A" => Some("%CYCLE_B%".into()),
+            "CYCLE_B" => Some("%cycle_a%".into()),
+            _ => None,
+        };
+        let expanded = expand_env_chars_with_lookup(
+            r"%pnpm_home%;%OVERRIDE%;%MISSING%;%CYCLE_A%;%PNPM_HOME%;unfinished%",
+            &process,
+            &registry,
+            &mut Vec::new(),
+        );
+        assert_eq!(
+            expanded,
+            r"C:\Users\tester\AppData\Local\pnpm;D:\runtime;%MISSING%;%cycle_a%;C:\Users\tester\AppData\Local\pnpm;unfinished%"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn effective_path_keeps_process_entries_with_non_unicode_path() {
+        use std::os::windows::ffi::OsStringExt;
+
+        const CHILD: &str = "CC_SWITCH_TEST_NON_UNICODE_PATH";
+        if std::env::var_os(CHILD).is_some() {
+            assert!(std::env::var("PATH").is_err());
+            let effective = effective_path_string();
+            assert!(effective.starts_with(r"C:\cc-switch-path-test;"));
+            assert!(effective.contains(r";D:\cc-switch-path-test"));
+            return;
+        }
+        // Use a subprocess so other tests never observe a modified process PATH.
+        let mut path: Vec<u16> = r"C:\cc-switch-path-test;C:\".encode_utf16().collect();
+        path.push(0xD800); // Unpaired UTF-16 surrogate.
+        path.extend(r";D:\cc-switch-path-test".encode_utf16());
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "commands::misc::tests::effective_path_keeps_process_entries_with_non_unicode_path",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("PATH", std::ffi::OsString::from_wide(&path))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
     fn build_tool_search_paths_includes_standalone_installer_dirs() {
         // Non-npm installer locations must be scanned even when the process PATH
         // dropped them (regression guard for #6061 / #6278 / #6047).
@@ -8938,6 +9047,45 @@ mod tests {
         let preferred = windows_runnable_sibling_for_extensionless_tool(&extensionless);
 
         assert_eq!(preferred.as_deref(), Some(cmd.as_path()));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_tool_capture_accepts_canonicalized_batch_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let bin = root.path().join("模型 tools & helpers");
+        std::fs::create_dir(&bin).unwrap();
+        std::fs::write(
+            bin.join("cc_switch_capture_helper.cmd"),
+            "@echo helper-found\r\n@exit /b 23\r\n",
+        )
+        .unwrap();
+        let path = format!("{};{}", bin.display(), effective_path_string());
+        for extension in ["cmd", "bat"] {
+            let entry = bin.join(format!("opencode.{extension}"));
+            std::fs::write(
+                &entry,
+                "@echo off\r\necho arg=%~1\r\necho env=%CC_SWITCH_CAPTURE_TEST%\r\necho captured-stderr 1>&2\r\ncmd /D /C cc_switch_capture_helper.cmd\r\nexit /b %errorlevel%\r\n",
+            )
+            .unwrap();
+            let canonical = std::fs::canonicalize(entry).unwrap();
+            assert!(canonical.to_string_lossy().starts_with(r"\\?\"));
+            let output = run_windows_tool_command_capture(
+                &canonical,
+                &["models"],
+                &path,
+                CommandDeadline::from_timeout(Some(std::time::Duration::from_secs(10))),
+                &[("CC_SWITCH_CAPTURE_TEST", "preserved".into())],
+                root.path(),
+            )
+            .unwrap();
+            let stdout = decode_command_output(&output.stdout);
+            assert_eq!(output.status.code(), Some(23), "{output:?}");
+            assert!(stdout.contains("arg=models"), "{stdout}");
+            assert!(stdout.contains("env=preserved"), "{stdout}");
+            assert!(stdout.contains("helper-found"), "{stdout}");
+            assert!(decode_command_output(&output.stderr).contains("captured-stderr"));
+        }
     }
 
     #[cfg(target_os = "windows")]
