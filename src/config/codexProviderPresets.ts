@@ -3648,6 +3648,50 @@ requires_openai_auth = true`,
     category: "local",
   },
   {
+    name: "llama.cpp",
+    websiteUrl: "https://github.com/ggml-org/llama.cpp",
+    // 不带 --api-key 启动时不校验 Key，但表单要求必填，预填占位值 no-key（同
+    // README 示例）；带了 --api-key 就填那个值
+    auth: generateThirdPartyAuth("no-key"),
+    // 本机 llama-server 的 /v1/responses（b7793 起，PR #18486；github.com/
+    // ggml-org/llama.cpp/blob/master/tools/server/README.md，2026-10-14 核对），
+    // base 带 /v1。只是部分实现：内部先转成 Chat 再处理，不认
+    // previous_response_id，disable_response_storage 下 Codex 每轮发完整 input，
+    // 不受影响。默认端口 b11521（PR #30159）起为 9931，v0.6.0 及更早、Homebrew
+    // 与 Docker 仍是 8080，见候选地址；只监听 IPv4 的 127.0.0.1。默认模型取
+    // ggml-org 官方 GGUF 的 Qwen3-Coder 30B A3B，换成自己已下载的模型，或用
+    // 「获取模型」从 /v1/models 拉取（单模型启动时 model 字段被忽略）
+    config: generateThirdPartyConfig(
+      "llamacpp",
+      "http://127.0.0.1:9931/v1",
+      "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+    ),
+    endpointCandidates: [
+      "http://127.0.0.1:9931/v1",
+      "http://127.0.0.1:8080/v1",
+    ],
+    // 非 function 工具（custom / web_search / namespace）自 b9161（PR #23041）起
+    // 被跳过而不报错，输入里出现 custom_tool_call 则直接 400（源码
+    // tools/server/server-chat.cpp）：NativeResponses 档案不发 freeform
+    // apply_patch，改用 shell_command 改文件。MCP 的 namespace 工具同样会被跳过，
+    // 需要时改 openai_chat 走路由
+    apiFormat: "openai_responses",
+    // Qwen3-Coder 不思考；llama.cpp 把 reasoning_effort 交给模型模板处理，该模板
+    // 不读，照 Nebius 先例只钉单档 high，与模板默认 high 一致。窗口取模型原生值，
+    // 本地实际窗口受 -c / --fit / -np 限制（以 /v1/models 的 meta.n_ctx 为准），
+    // 更小时一起调小。首行 = 默认模型，须与 config 的 model 一致
+    modelCatalog: modelCatalog([
+      {
+        model: "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+        displayName: "Qwen3-Coder 30B A3B",
+        contextWindow: 262144,
+        inputModalities: ["text"],
+        reasoningLevels: ["high"],
+      },
+    ]),
+    category: "local",
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",

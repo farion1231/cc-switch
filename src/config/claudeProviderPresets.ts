@@ -1982,6 +1982,41 @@ export const providerPresets: ProviderPreset[] = [
     endpointCandidates: ["http://localhost:1234", "http://127.0.0.1:1234"],
   },
   {
+    name: "llama.cpp",
+    websiteUrl: "https://github.com/ggml-org/llama.cpp",
+    // 本机 llama-server（github.com/ggml-org/llama.cpp/blob/master/tools/server/
+    // README.md，2026-10-14 核对）：Anthropic 兼容 /v1/messages 自 b7187 起支持
+    //（PR #17570），只有带 /v1 的路由，base 不带 /v1；工具调用需要的 jinja 自
+    // b7170 起默认开启，不用再加 --jinja。默认端口自 b11521（PR #30159，
+    // 2026-10-09）起为 9931，v0.6.0 及更早、Homebrew 与 Docker 镜像仍是 8080，
+    // 见候选地址；默认只监听 IPv4 的 127.0.0.1，故不写 localhost。不带
+    // --api-key 启动时不校验 Key，预填占位值 no-key（同 README 示例）；带了
+    // --api-key 就填那个值（Bearer 与 x-api-key 都认）。server 会归一化
+    // x-anthropic-billing-header 里每次变化的 cch=，前缀缓存不受影响（PR #21793）。
+    // 模型由用户自己下载：默认取 ggml-org 官方 GGUF 的 Qwen3-Coder 30B A3B
+    //（llama-server -hf 拉取后 /v1/models 的 id 即此值），换成自己已下载的模型，
+    // 或用「获取模型」从 /v1/models 拉取；单模型启动时 model 字段被忽略，
+    // router 模式（启动不带 -m / -hf）须与 /v1/models 的 id 一致。模型 id 非
+    // claude-* 时 Claude Code 按 200K 默认窗口处理，而本地实际窗口受 -c / --fit /
+    // -np 限制（以 /v1/models 的 meta.n_ctx 为准），更小时自行加
+    // CLAUDE_CODE_MAX_CONTEXT_TOKENS 钉成实际值
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "http://127.0.0.1:9931",
+        ANTHROPIC_AUTH_TOKEN: "no-key",
+        ANTHROPIC_MODEL: "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL:
+          "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+        ANTHROPIC_DEFAULT_SONNET_MODEL:
+          "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+        ANTHROPIC_DEFAULT_OPUS_MODEL:
+          "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+      },
+    },
+    category: "local",
+    endpointCandidates: ["http://127.0.0.1:9931", "http://127.0.0.1:8080"],
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     // Key 在 dev.meta.ai 登录后的「API keys」标签页（dev.meta.ai/docs/

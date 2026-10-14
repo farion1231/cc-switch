@@ -3603,6 +3603,42 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "llama.cpp",
+    websiteUrl: "https://github.com/ggml-org/llama.cpp",
+    // 本机 llama-server 的 OpenAI Chat 端点（github.com/ggml-org/llama.cpp/blob/
+    // master/tools/server/README.md、opencode.ai/docs/providers，2026-10-14
+    // 核对）；models.dev 没有 llama.cpp，OpenCode 文档也要求手动配置，不算内置。
+    // 默认端口 b11521（PR #30159）起为 9931，v0.6.0 及更早、Homebrew 与 Docker
+    // 仍是 8080；只监听 IPv4 的 127.0.0.1。不带 --api-key 时不校验，填占位值
+    // no-key（同 README 示例）。默认模型取 ggml-org 官方 GGUF 的 Qwen3-Coder
+    // 30B A3B（原生窗口 262144、建议输出 65536，取 Qwen 模型卡），换成自己已
+    // 下载的；本地实际窗口受 -c / --fit / -np 限制，更小时把 context 一起调小
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "llama.cpp",
+      options: {
+        baseURL: "http://127.0.0.1:9931/v1",
+        apiKey: "no-key",
+        setCacheKey: true,
+      },
+      models: {
+        "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF": {
+          name: "Qwen3-Coder 30B A3B",
+          limit: { context: 262144, output: 65536 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+      },
+    },
+    category: "local",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "no-key",
+        editorValue: "no-key",
+      },
+    },
+  },
+  {
     name: "Oh My OpenCode",
     websiteUrl: "https://github.com/code-yeongyu/oh-my-openagent",
     settingsConfig: {

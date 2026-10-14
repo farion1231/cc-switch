@@ -211,6 +211,14 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // LM Studio 本机（原生 Responses 直连）：取 LM Studio 声明的
     // reasoning.effort 枚举（lmstudio.ai/blog/lmstudio-v0.3.29，2026-10-14）
     ["LM Studio", "openai/gpt-oss-20b", ["low", "medium", "high"]],
+    // llama.cpp 本机（原生 Responses 直连）：Qwen3-Coder 不思考，llama-server 把
+    // reasoning_effort 交给模型模板（PR #26941，2026-10-14），该模板不读，照
+    // Nebius 先例只钉单档 high
+    [
+      "llama.cpp",
+      "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+      ["high"],
+    ],
     // Baseten（Chat 路由，reasoning_effort 透传）：docs.baseten.co/inference/
     // model-apis/reasoning（2026-10-14）。GLM-5.3 系 none 按 low 处理（假关）
     // 故不列 none；V4.1 Flash 不支持 low；Kimi K3 API 默认 max，四款都显式

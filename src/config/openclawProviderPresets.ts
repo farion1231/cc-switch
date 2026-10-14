@@ -4741,6 +4741,57 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "llama.cpp",
+    websiteUrl: "https://github.com/ggml-org/llama.cpp",
+    // 本机 llama-server 的 OpenAI Chat base http://127.0.0.1:9931/v1（github.com/
+    // openclaw/openclaw/blob/main/docs/gateway/config-tools/provider-examples.md、
+    // docs/plugins/llama-cpp.md，2026-10-14 核对）。OpenClaw 自带 llama-cpp 插件
+    // 供应商，供应商名请另取（下面示例用 llamacpp-local）；自定义 ID 指向
+    // llama-server 时官方要求每个模型声明 compat.toolSchemaProfile=llamacpp，
+    // 清掉 GBNF 编译不了的 pattern / maxLength（影响 cron 工具）。默认端口
+    // b11521（PR #30159）起为 9931，v0.6.0 及更早、Homebrew 与 Docker 仍是 8080。
+    // 不带 --api-key 时不校验，预填占位值 no-key（官方示例用 llamacpp-no-key，
+    // 任意非空值都行）。本地推理不计费，cost 记 0。默认模型取 ggml-org 官方
+    // GGUF 的 Qwen3-Coder 30B A3B（窗口 / 输出取 Qwen 模型卡），换成自己已下载
+    // 的；本地实际窗口受 -c / --fit / -np 限制，更小时把 contextWindow 一起调小
+    settingsConfig: {
+      baseUrl: "http://127.0.0.1:9931/v1",
+      apiKey: "no-key",
+      api: "openai-completions",
+      models: [
+        {
+          id: "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+          name: "Qwen3-Coder 30B A3B",
+          reasoning: false,
+          input: ["text"],
+          contextWindow: 262144,
+          maxTokens: 65536,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          compat: { supportsTools: true, toolSchemaProfile: "llamacpp" },
+        },
+      ],
+    },
+    category: "local",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "no-key",
+        editorValue: "no-key",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary:
+          "llamacpp-local/ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+      },
+      modelCatalog: {
+        "llamacpp-local/ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF": {
+          alias: "Qwen3-Coder 30B A3B",
+        },
+      },
+    },
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",

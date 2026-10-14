@@ -2549,6 +2549,41 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "llama.cpp",
+    websiteUrl: "https://github.com/ggml-org/llama.cpp",
+    settingsConfig: {
+      // Hermes 里 llamacpp / llama.cpp / llama-cpp 都是指向 custom 的别名
+      //（hermes_cli/auth.py、providers.py），照 lmstudio-local 先例换名避开
+      name: "llamacpp-local",
+      // 本机 llama-server 的 OpenAI Chat base（github.com/ggml-org/llama.cpp/
+      // blob/master/tools/server/README.md、hermes-agent.nousresearch.com/docs/
+      // integrations/providers，2026-10-14 核对）。默认端口 b11521（PR #30159）
+      // 起为 9931，v0.6.0 及更早、Homebrew 与 Docker 仍是 8080；只监听 IPv4 的
+      // 127.0.0.1。不带 --api-key 时不校验，Key 留空（带了就填那个值）。Hermes
+      // 启动时拒绝小于 64000 的窗口：这里填模型原生值，llama-server 的 -c 也要
+      // 至少 64K（--fit 可能自动调小），实际窗口更小时同步调小。默认模型取
+      // ggml-org 官方 GGUF 的 Qwen3-Coder 30B A3B，换成自己已下载的，或用
+      // 「获取模型」从 /v1/models 拉取
+      base_url: "http://127.0.0.1:9931/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+          name: "Qwen3-Coder 30B A3B",
+          context_length: 262144,
+        },
+      ],
+    },
+    category: "local",
+    suggestedDefaults: {
+      model: {
+        default: "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+        provider: "llamacpp-local",
+      },
+    },
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",

@@ -1727,6 +1727,27 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     endpointCandidates: ["http://localhost:1234", "http://127.0.0.1:1234"],
   },
   {
+    name: "llama.cpp",
+    websiteUrl: "https://github.com/ggml-org/llama.cpp",
+    category: "local",
+    // 同 Claude Code 预设：本机 llama-server 的 /v1/messages（b7187 起，
+    // github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md，
+    // 2026-10-14 核对），默认端口 b11521 起为 9931，旧版 / Homebrew / Docker 为
+    // 8080。不带 --api-key 时不校验，但表单要求必填，选预设后手填 no-key 即可
+    //（带了 --api-key 就填那个值）。模型名不是 Claude，只能走路由；默认模型
+    // 换成自己已下载的或用「获取模型」拉取。Qwen3-Coder 原生窗口 262144 小于
+    // 1M，不开 1M
+    baseUrl: "http://127.0.0.1:9931",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+      "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+      "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+    ),
+    endpointCandidates: ["http://127.0.0.1:9931", "http://127.0.0.1:8080"],
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",
