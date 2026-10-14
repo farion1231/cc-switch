@@ -254,7 +254,7 @@ export function useProviderActions(
 
         if (activeApp === "codex" && options?.restartDesktop) {
           try {
-            const result = await restartCodexDesktop();
+            const result = await restartCodexDesktop(provider.id);
             toast.success(
               t(
                 result.action === "started"

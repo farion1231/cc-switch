@@ -1,3 +1,5 @@
+use crate::app_config::AppType;
+use crate::mode::current::{self, Purpose};
 use crate::services::codex_desktop::{self, DesktopRestartOutcome, DesktopStatus};
 use crate::store::AppState;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,12 +24,24 @@ impl Drop for RestartGuard {
 #[tauri::command]
 pub async fn restart_codex_desktop(
     app_state: State<'_, AppState>,
+    expected_provider_id: Option<String>,
 ) -> Result<DesktopRestartOutcome, String> {
     RESTART_PENDING
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .map_err(|_| "Codex desktop is already restarting".to_string())?;
     let _pending = RestartGuard;
-    let _switch = app_state.proxy_service.lock_switch_for_app("codex").await;
+    let _switch = crate::mode::controller::lock_settled(&app_state, &AppType::Codex)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(expected) = expected_provider_id {
+        let selected = current::provider_for(&app_state.db, &AppType::Codex, Purpose::Direct)
+            .map_err(|e| e.to_string())?;
+        codex_desktop::validate_switch_target(
+            &expected,
+            selected.as_deref(),
+            current::is_proxy(&AppType::Codex),
+        )?;
+    }
     tauri::async_runtime::spawn_blocking(codex_desktop::restart)
         .await
         .map_err(|e| e.to_string())?

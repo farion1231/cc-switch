@@ -564,9 +564,8 @@ export function SwitchModePanel({
             !desktopStatus.isError &&
             desktopStatus.data?.supported &&
             desktopStatus.data.installed &&
-            active === view &&
-            view !== "stack" &&
-            !failoverOn
+            active === "direct" &&
+            view === "direct"
               ? (provider) => void onSwitch(provider, { restartDesktop: true })
               : undefined
           }

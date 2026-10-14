@@ -186,6 +186,7 @@ describe("useProviderActions", () => {
       });
     });
     expect(order).toEqual(["switch", "restart"]);
+    expect(restartDesktopMock).toHaveBeenCalledWith("provider-1");
     restartDesktopMock.mockClear();
     switchProviderMutateAsync.mockRejectedValueOnce(new Error("write failed"));
     await act(async () => {
@@ -194,6 +195,28 @@ describe("useProviderActions", () => {
       });
     });
     expect(restartDesktopMock).not.toHaveBeenCalled();
+  });
+
+  it("reports a stale combined switch without claiming restart succeeded", async () => {
+    restartDesktopMock
+      .mockReset()
+      .mockRejectedValue(
+        new Error("The selected provider changed; desktop was not restarted"),
+      );
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useProviderActions("codex"), {
+      wrapper,
+    });
+    await act(async () => {
+      await result.current.switchProvider(createProvider({ id: "account-A" }), {
+        restartDesktop: true,
+      });
+    });
+    expect(restartDesktopMock).toHaveBeenCalledWith("account-A");
+    expect(toastSuccessMock).not.toHaveBeenCalled();
+    expect(toastErrorMock.mock.calls[0][0]).toBe(
+      "codexDesktop.switchRestartFailed",
+    );
   });
 
   it("should trigger mutation when calling addProvider", async () => {

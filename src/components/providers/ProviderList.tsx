@@ -319,6 +319,9 @@ export function ProviderList({
         t,
         providers: filteredProviders,
         queue: switchMode.queue.filter((id) => known.has(id)),
+        desktopAction: onSwitchAndRestart
+          ? { running: desktopRunning, onSelect: onSwitchAndRestart }
+          : undefined,
       });
     }
     if (appId === "claude-desktop") {
@@ -371,6 +374,8 @@ export function ProviderList({
     });
   }, [
     switchMode,
+    onSwitchAndRestart,
+    desktopRunning,
     appId,
     t,
     sortedProviders,
@@ -452,25 +457,7 @@ export function ProviderList({
       key={provider.id}
       provider={provider}
       appId={appId}
-      presentation={
-        onSwitchAndRestart
-          ? {
-              ...presentation,
-              menuItems: [
-                {
-                  key: "switchAndRestart",
-                  label: t(
-                    desktopRunning
-                      ? "codexDesktop.switchAndRestart"
-                      : "codexDesktop.switchAndOpen",
-                  ),
-                  onSelect: () => onSwitchAndRestart(provider),
-                },
-                ...(presentation.menuItems ?? []),
-              ],
-            }
-          : presentation
-      }
+      presentation={presentation}
       isCurrent={isCurrentFor(provider)}
       isInConfig={isInConfig(provider)}
       onEdit={onEdit}

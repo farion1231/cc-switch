@@ -15,6 +15,10 @@ export function getCodexDesktopStatus(): Promise<DesktopStatus> {
   return invoke("get_codex_desktop_status");
 }
 
-export function restartCodexDesktop(): Promise<DesktopRestartOutcome> {
-  return invoke("restart_codex_desktop");
+export function restartCodexDesktop(
+  expectedProviderId?: string,
+): Promise<DesktopRestartOutcome> {
+  return invoke("restart_codex_desktop", {
+    expectedProviderId: expectedProviderId ?? null,
+  });
 }

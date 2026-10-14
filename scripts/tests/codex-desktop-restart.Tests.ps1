@@ -2,6 +2,14 @@
 $ErrorActionPreference = 'Stop'
 $restartScript = Join-Path $PSScriptRoot '../../src-tauri/src/services/codex_desktop_windows.ps1'
 $script:exe = 'C:\Program Files\WindowsApps\OpenAI.Codex_test\app\ChatGPT.exe'
+$script:rootTime = [DateTime]::UtcNow.AddMinutes(-1)
+function Get-CimInstance {
+    param($ClassName, $Property)
+    [pscustomobject]@{ ProcessId = 10; ParentProcessId = 1; CreationDate = $script:rootTime }
+    if ($script:includeChild) {
+        [pscustomobject]@{ ProcessId = 20; ParentProcessId = 10; CreationDate = $script:rootTime.AddSeconds(1) }
+    }
+}
 function Get-AppxPackage {
     param($Name)
     if ($script:missing) { return }
@@ -13,7 +21,20 @@ function Get-AppxPackageManifest {
 }
 function Test-Path { param($LiteralPath, $PathType) $true }
 function Get-Process {
-    param($Name, $ErrorAction)
+    param($Name, $Id, $ErrorAction)
+    if ($PSBoundParameters.ContainsKey('Id')) {
+        if ($Id -ne 20 -or -not $script:includeChild -or $script:childKilled) { return }
+        $child = [pscustomobject]@{ Id = 20; Path = 'C:\tools\Codex\bin\codex.exe'; StartTime = $script:rootTime.AddSeconds($(if ($script:childPidReused) { 5 } else { 1 })); SafeHandle = 1; HasExited = $false }
+        $child | Add-Member -MemberType ScriptMethod -Name Refresh -Value {
+            $this.HasExited = $script:childKilled
+            if ($script:childIdentityChanged) { $this.StartTime = $script:rootTime.AddSeconds(3) }
+        }
+        $child | Add-Member -MemberType ScriptMethod -Name Kill -Value {
+            if ($script:childStopDenied) { throw 'Access denied' }
+            $script:childKilled = $true
+        }
+        return $child
+    }
     if ($script:launched) {
         if ($script:launchTimeout) { return }
         return [pscustomobject]@{ Id = 42; Path = $script:exe; MainWindowHandle = 100 }
@@ -25,7 +46,7 @@ function Get-Process {
     }
     if ($script:killed -and -not $script:stopTimeout) { return }
     if ($script:closed -and -not $script:backgroundResident) { return }
-    $desktop = [pscustomobject]@{ Id = 10; Path = $script:exe; MainWindowHandle = $(if ($script:noWindow) { 0 } else { 100 }) }
+    $desktop = [pscustomobject]@{ Id = 10; Path = $script:exe; StartTime = $script:rootTime; SafeHandle = 1; MainWindowHandle = $(if ($script:noWindow) { 0 } else { 100 }) }
     $desktop | Add-Member -NotePropertyName HasExited -NotePropertyValue $false
     $desktop | Add-Member -MemberType ScriptMethod -Name Refresh -Value {
         if ($script:identityChanged) { $this.Path = 'C:\tools\codex.exe' }
@@ -43,6 +64,7 @@ function Start-Process {
     param($FilePath, $ArgumentList, $WindowStyle)
     if ($FilePath -ne 'explorer.exe' -or $ArgumentList -ne 'shell:AppsFolder\OpenAI.Codex_test!App') { throw 'Unexpected desktop activation' }
     if ($script:backgroundResident -and -not $script:killed) { throw 'Activated before background desktop exited' }
+    if ($script:includeChild -and -not $script:childPidReused -and -not $script:childKilled) { throw 'Activated before desktop child exited' }
     $script:launched = $true
 }
 function Start-Sleep { param($Milliseconds) }
@@ -50,6 +72,7 @@ function Reset-Fixture {
     $script:missing = $false; $script:closed = $false; $script:launched = $false
     $script:noWindow = $false; $script:backgroundResident = $false; $script:launchTimeout = $false
     $script:noDesktop = $false
+    $script:includeChild = $false; $script:childKilled = $false; $script:childStopDenied = $false; $script:childIdentityChanged = $false; $script:childPidReused = $false
     $script:killed = $false; $script:stopDenied = $false; $script:stopTimeout = $false; $script:closeRejected = $false; $script:identityChanged = $false
 }
 function Expect-Failure([string]$Expected) {
@@ -101,4 +124,19 @@ Expect-Failure 'still exiting'
 if ($script:launched) { throw 'Launched while old processes were still exiting' }
 Reset-Fixture; $script:launchTimeout = $true
 Expect-Failure 'did not open'
-Write-Output 'Desktop lifecycle fixtures passed (selection, plan, graceful exit, background residency, no window, rejected close, missing package, stop denied, identity change, stop timeout, launch timeout).'
+Reset-Fixture; $script:includeChild = $true; $script:backgroundResident = $true
+$result = (. $restartScript -ExitTimeoutSeconds 0 | ConvertFrom-Json)
+if (-not $script:childKilled -or -not $script:killed -or $result.desktop_pid -ne 42) { throw 'Desktop child outside the package survived restart' }
+Reset-Fixture; $script:includeChild = $true
+$result = (. $restartScript -ExitTimeoutSeconds 0 | ConvertFrom-Json)
+if (-not $script:childKilled -or $script:killed -or $result.desktop_pid -ne 42) { throw 'Child orphaned by graceful parent exit survived restart' }
+Reset-Fixture; $script:includeChild = $true; $script:childStopDenied = $true; $script:backgroundResident = $true
+Expect-Failure 'Cannot stop a Codex desktop child'
+if ($script:launched) { throw 'Launched despite child stop failure' }
+Reset-Fixture; $script:includeChild = $true; $script:childIdentityChanged = $true; $script:backgroundResident = $true
+Expect-Failure 'Cannot stop a Codex desktop child'
+if ($script:childKilled -or $script:launched) { throw 'Stopped child after its identity changed' }
+Reset-Fixture; $script:includeChild = $true; $script:childPidReused = $true; $script:backgroundResident = $true
+$result = (. $restartScript -ExitTimeoutSeconds 0 | ConvertFrom-Json)
+if ($script:childKilled -or $result.desktop_pid -ne 42) { throw 'Stopped a reused child PID' }
+Write-Output 'Desktop lifecycle fixtures passed (status, selection, graceful exit, background residency, descendant stop, orphaned child, PID reuse, identity change, stop denied/timeouts, launch timeout).'

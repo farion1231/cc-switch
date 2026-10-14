@@ -13,6 +13,17 @@ pub struct DesktopStatus {
     pub running: bool,
 }
 
+pub fn validate_switch_target(
+    expected: &str,
+    selected: Option<&str>,
+    proxy_mode: bool,
+) -> Result<(), String> {
+    if expected.trim().is_empty() || proxy_mode || selected != Some(expected) {
+        return Err("The selected Codex provider or mode changed before restart. The desktop was not restarted; retry from the current provider.".into());
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "windows")]
 pub fn status() -> Result<DesktopStatus, String> {
     let output = run_powershell_script(include_bytes!("codex_desktop_windows.ps1"), "Status")?;
@@ -43,7 +54,7 @@ pub fn restart() -> Result<DesktopRestartOutcome, String> {
 #[cfg(target_os = "windows")]
 fn run_powershell_script(source: &[u8], mode: &str) -> Result<std::process::Output, String> {
     use std::{
-        io::Write,
+        io::{Read, Write},
         os::windows::process::CommandExt,
         process::{Command, Stdio},
         time::{Duration, Instant},
@@ -77,19 +88,49 @@ fn run_powershell_script(source: &[u8], mode: &str) -> Result<std::process::Outp
         .creation_flags(0x08000000)
         .spawn()
         .map_err(|e| format!("Cannot start Codex desktop restart: {e}"))?;
+    // Drain both pipes while the helper runs. Waiting first can deadlock when a
+    // diagnostic fills either pipe and prevents the child from exiting.
+    let mut stdout = child.stdout.take().ok_or("Missing desktop helper stdout")?;
+    let mut stderr = child.stderr.take().ok_or("Missing desktop helper stderr")?;
+    let stdout_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).map(|_| bytes)
+    });
     let deadline = Instant::now() + Duration::from_secs(60);
-    loop {
-        if child.try_wait().map_err(|e| e.to_string())?.is_some() {
-            break;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) => (),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break Err(error.to_string());
+            }
         }
         if Instant::now() >= deadline {
             let _ = child.kill(); // Only the helper started above, never a Codex client.
             let _ = child.wait();
-            return Err("Codex desktop restart timed out. Check whether the desktop app has exited before retrying.".into());
+            break Err("Codex desktop restart timed out. Check whether the desktop app has exited before retrying.".into());
         }
         std::thread::sleep(Duration::from_millis(100));
-    }
-    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    };
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| "Desktop helper stdout reader failed")?
+        .map_err(|e| e.to_string())?;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| "Desktop helper stderr reader failed")?
+        .map_err(|e| e.to_string())?;
+    let output = std::process::Output {
+        status: status?,
+        stdout,
+        stderr,
+    };
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
@@ -104,6 +145,14 @@ pub fn restart() -> Result<DesktopRestartOutcome, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn switch_restart_rejects_a_stale_provider_or_mode() {
+        assert!(validate_switch_target("A", Some("A"), false).is_ok());
+        assert!(validate_switch_target("A", Some("B"), false).is_err());
+        assert!(validate_switch_target("A", None, false).is_err());
+        assert!(validate_switch_target("A", Some("A"), true).is_err());
+        assert!(validate_switch_target("", Some(""), false).is_err());
+    }
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn unsupported_platform_does_not_offer_desktop_controls() {
@@ -141,6 +190,19 @@ if ($Mode -ne 'Plan') { throw 'Unexpected execution mode' }
         assert_eq!(receipt["label"], "桌面");
         let path = receipt["script_path"].as_str().unwrap();
         assert!(!std::path::Path::new(path).exists());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn materialized_script_drains_both_pipes_before_waiting() {
+        let source = r#"param([string]$Mode)
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::Out.Write(('o' * 262144))
+[Console]::Error.Write(('e' * 262144))
+"#;
+        let output = run_powershell_script(source.as_bytes(), "Plan").unwrap();
+        assert_eq!(output.stdout.len(), 262144);
+        assert_eq!(output.stderr.len(), 262144);
     }
 
     #[cfg(target_os = "windows")]
