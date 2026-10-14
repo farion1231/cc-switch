@@ -63,6 +63,21 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
     }
 }
 
+/// 按地址认出的套餐 id，取值与前端 `CodingPlanProviderEntry.id` 一致
+/// （写进 `usage_script.coding_plan_provider`，用量弹窗下拉按它回显）。
+/// 智谱团队版与个人版地址相同、无法自动区分，这里永远返回个人版。
+pub(crate) fn detect_provider_id(base_url: &str) -> Option<&'static str> {
+    Some(match detect_provider(base_url)? {
+        CodingPlanProvider::Kimi => "kimi",
+        CodingPlanProvider::ZhipuCn | CodingPlanProvider::ZhipuEn => "zhipu",
+        CodingPlanProvider::MiniMaxCn | CodingPlanProvider::MiniMaxEn => "minimax",
+        CodingPlanProvider::ZenMux => "zenmux",
+        CodingPlanProvider::Volcengine => "volcengine",
+        CodingPlanProvider::OpencodeGo => "opencode_go",
+        CodingPlanProvider::CommandCode => "command_code",
+    })
+}
+
 fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

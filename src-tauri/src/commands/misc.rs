@@ -13,6 +13,9 @@ use tauri::AppHandle;
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
 
+#[path = "tool_uninstall.rs"]
+mod tool_uninstall;
+
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
@@ -247,17 +250,65 @@ impl ToolLifecycleCoordinator {
 static TOOL_LIFECYCLE: Lazy<ToolLifecycleCoordinator> =
     Lazy::new(ToolLifecycleCoordinator::default);
 
+/// Display-only plan. Execution regenerates it under the lifecycle lock and rejects changes.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ToolUninstallPlan {
+    tool: String,
+    path: String,
+    real_path: String,
+    command: String,
+    native: bool,
+    wsl_distro: Option<String>,
+}
+
+#[tauri::command]
+pub async fn prepare_tool_uninstall(
+    tool: String,
+    wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
+) -> Result<ToolUninstallPlan, String> {
+    if !VALID_TOOLS.contains(&tool.as_str()) {
+        return Err(format!("Unsupported tool action target: {tool}"));
+    }
+    tokio::task::spawn_blocking(move || {
+        let pref = wsl_shell_by_tool
+            .as_ref()
+            .and_then(|prefs| prefs.get(&tool));
+        tool_uninstall::plan(&tool, pref)
+    })
+    .await
+    .map_err(|e| format!("uninstall plan task join error: {e}"))?
+}
+
 #[tauri::command]
 pub async fn run_tool_lifecycle_action(
     tools: Vec<String>,
     action: String,
     wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
+    uninstall_plan: Option<ToolUninstallPlan>,
 ) -> Result<(), String> {
-    let action = ToolLifecycleAction::from_str(&action)?;
     let requested = normalize_requested_tools(&tools);
     if requested.is_empty() {
         return Err("No supported tools selected".to_string());
     }
+
+    if action == "uninstall" {
+        let plan = uninstall_plan.ok_or("Preview the uninstall plan before confirming.")?;
+        if requested.len() != 1 || requested[0] != plan.tool {
+            return Err("The uninstall plan does not match the selected tool.".into());
+        }
+        return TOOL_LIFECYCLE
+            .run(requested, move |tools| {
+                for tool in tools {
+                    let pref = wsl_shell_by_tool
+                        .as_ref()
+                        .and_then(|prefs| prefs.get(*tool));
+                    tool_uninstall::uninstall(tool, pref, &plan)?;
+                }
+                Ok(())
+            })
+            .await;
+    }
+    let action = ToolLifecycleAction::from_str(&action)?;
 
     let label = match action {
         ToolLifecycleAction::Install => "tool_install",
@@ -300,9 +351,6 @@ fn run_tool_lifecycle_silently(command_line: &str, _label: &str) -> Result<(), S
 /// 写临时 .bat 后用 `cmd /C` 执行，`CREATE_NO_WINDOW` 抑制 console 窗口。
 #[cfg(target_os = "windows")]
 fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), String> {
-    use std::os::windows::process::CommandExt;
-    use std::process::Command;
-
     // 每次调用使用独立目录，避免同进程并发升级时覆盖或删除另一工具的脚本。
     let script_dir = tempfile::Builder::new()
         .prefix("cc_switch_lifecycle_")
@@ -311,13 +359,22 @@ fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), St
     let bat_file = script_dir.path().join(format!("{label}.bat"));
     std::fs::write(&bat_file, command_line).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
-    let output = Command::new("cmd")
-        .arg("/C")
-        .arg(&bat_file)
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
+    let output = windows_lifecycle_command(&bat_file, &effective_path_string()).output();
 
     finish_lifecycle_output(&output.map_err(|e| format!("启动安装进程失败: {e}"))?)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_lifecycle_command(bat_file: &Path, effective_path: &str) -> std::process::Command {
+    let mut command = std::process::Command::new("cmd");
+    command
+        .arg("/C")
+        .arg(bat_file)
+        // MSI 自动重启可能丢失用户 PATH（#8171）。执行与探测共用补全后的 PATH，
+        // 让裸 npm 兜底及工具内部启动的 node/npm 都能找到；仅设置子进程环境。
+        .env("PATH", effective_path)
+        .creation_flags(CREATE_NO_WINDOW);
+    command
 }
 
 /// 把子进程退出结果转成 `Result`：成功返回 `Ok`；失败提取 stderr（空则回退 stdout）
@@ -1377,6 +1434,29 @@ fn version_probe_payload(tool: &str) -> String {
     format!("echo {VERSION_PROBE_SENTINEL}; {tool} --version")
 }
 
+/// WSL 未指定 shell 时依次尝试的 flag：交互式初始化（nvm 等写在 rc 里）优先。
+/// 卸载探测（`tool_uninstall`）按同一顺序选 flag，否则两边可能命中不同的安装。
+#[cfg(any(target_os = "windows", test))]
+const WSL_AUTO_SHELL_FLAGS: [&str; 3] = ["-lic", "-lc", "-c"];
+
+/// WSL 未指定 shell 时的版本检测命令（由外层 `sh -c` 执行）：在 `$SHELL` 里按
+/// `WSL_AUTO_SHELL_FLAGS` 依次重试，或只用调用方已校验过的 `flag`。
+#[cfg(any(target_os = "windows", test))]
+fn wsl_auto_shell_command(payload: &str, flag: Option<&str>) -> String {
+    let flags = flag.map_or(WSL_AUTO_SHELL_FLAGS.to_vec(), |flag| vec![flag]);
+    let last = flags.len() - 1;
+    flags
+        .iter()
+        .enumerate()
+        .map(|(i, flag)| {
+            // 只有最后一次尝试保留 stderr，供报错展示
+            let quiet = if i < last { " 2>/dev/null" } else { "" };
+            format!("\"${{SHELL:-sh}}\" {flag} '{payload}'{quiet}")
+        })
+        .collect::<Vec<_>>()
+        .join(" || ")
+}
+
 /// 取哨兵**最后一次**出现之后的输出。
 ///
 /// 取最后一次：兜底链 `-lic || -lc || -c` 失败重试时会多次打印哨兵。
@@ -1647,18 +1727,12 @@ fn try_get_version_wsl(
 
         (shell.to_string(), flag, version_probe_payload(tool))
     } else {
-        let payload = version_probe_payload(tool);
-        let cmd = if let Some(flag) = force_shell_flag {
+        if let Some(flag) = force_shell_flag {
             if !is_valid_shell_flag(flag) {
                 return ShellProbe::NotFound(format!("[WSL:{distro}] invalid shell flag: {flag}"));
             }
-            format!("\"${{SHELL:-sh}}\" {flag} '{payload}'")
-        } else {
-            // 兜底：自动尝试 -lic, -lc, -c
-            format!(
-                "\"${{SHELL:-sh}}\" -lic '{payload}' 2>/dev/null || \"${{SHELL:-sh}}\" -lc '{payload}' 2>/dev/null || \"${{SHELL:-sh}}\" -c '{payload}'"
-            )
-        };
+        }
+        let cmd = wsl_auto_shell_command(&version_probe_payload(tool), force_shell_flag);
 
         ("sh".to_string(), "-c", cmd)
     };
@@ -1973,8 +2047,8 @@ fn extend_mise_node_search_paths(paths: &mut Vec<std::path::PathBuf>, home: &Pat
     }
 }
 
-/// The "effective PATH" used during detection. On Windows the inherited
-/// process PATH can be incomplete — most notably after an in-app self-update,
+/// The "effective PATH" used for CLI detection and lifecycle commands. On Windows
+/// the inherited process PATH can be incomplete — most notably after an in-app self-update,
 /// where the MSI/WiX-auto-launched process inherits only the machine-level PATH
 /// and drops the user-level PATH (see #6061). Any CLI installed in a user-PATH
 /// location (winget Claude `%LOCALAPPDATA%\Programs\claude`, the standalone
@@ -5604,6 +5678,91 @@ mod tests {
                 "temporary directory must be cleaned up"
             );
         }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_lifecycle_restores_user_path_for_npm_and_its_child() {
+        let root = tempfile::tempdir().unwrap();
+        let npm_dir = root.path().join("npm 用户 & tools");
+        let node_dir = root.path().join("node 用户 tools");
+        std::fs::create_dir_all(&npm_dir).unwrap();
+        std::fs::create_dir_all(&node_dir).unwrap();
+        std::fs::write(
+            npm_dir.join("npm.cmd"),
+            "@echo off\r\ncmd /D /C cc_switch_lifecycle_test_node.cmd\r\nexit /b %errorlevel%\r\n",
+        )
+        .unwrap();
+        std::fs::write(
+            node_dir.join("cc_switch_lifecycle_test_node.cmd"),
+            "@echo restored-user-path\r\n@exit /b 0\r\n",
+        )
+        .unwrap();
+        let script = root.path().join("update.bat");
+        std::fs::write(&script, "@echo off\r\ncall npm --version\r\n").unwrap();
+
+        // Model an MSI-launched process with only the system directory on PATH.
+        // Inject the registry contribution without modifying the real registry
+        // or the test runner's process environment.
+        let system_path = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32");
+        let inherited = system_path.to_str().unwrap();
+        let user_path = format!("{};{}", npm_dir.display(), node_dir.display());
+        let effective = merge_path_segments_win(&[inherited, &user_path]);
+        let parent_path = std::env::var_os("PATH");
+
+        let missing = windows_lifecycle_command(&script, inherited)
+            .current_dir(root.path())
+            .output()
+            .unwrap();
+        assert!(
+            !missing.status.success(),
+            "npm must be absent on the narrow PATH"
+        );
+
+        let restored = windows_lifecycle_command(&script, &effective)
+            .current_dir(root.path())
+            .output()
+            .unwrap();
+        assert!(restored.status.success(), "{restored:?}");
+        assert_eq!(
+            decode_command_output(&restored.stdout).trim(),
+            "restored-user-path"
+        );
+        assert_eq!(std::env::var_os("PATH"), parent_path);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_lifecycle_preserves_process_path_priority_and_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let preferred = root.path().join("process tools");
+        let fallback = root.path().join("registry tools");
+        std::fs::create_dir_all(&preferred).unwrap();
+        std::fs::create_dir_all(&fallback).unwrap();
+        std::fs::write(
+            preferred.join("npm.cmd"),
+            "@echo process-npm-failed 1>&2\r\n@exit /b 23\r\n",
+        )
+        .unwrap();
+        std::fs::write(
+            fallback.join("npm.cmd"),
+            "@echo registry-npm\r\n@exit /b 0\r\n",
+        )
+        .unwrap();
+        let script = root.path().join("update.bat");
+        std::fs::write(&script, "@echo off\r\ncall npm --version\r\n").unwrap();
+        let effective =
+            merge_path_segments_win(&[preferred.to_str().unwrap(), fallback.to_str().unwrap()]);
+
+        let output = windows_lifecycle_command(&script, &effective)
+            .current_dir(root.path())
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(23));
+        assert_eq!(
+            finish_lifecycle_output(&output).unwrap_err(),
+            "process-npm-failed"
+        );
     }
 
     /// 探测 helper 正常路径：spawn（含 pre_exec setsid）能启动、输出能捕获。

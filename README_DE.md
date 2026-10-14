@@ -84,13 +84,18 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
+<td width="180"><a href="https://grooroute.xyz/sign-up?aff=qqm9"><img src="assets/partners/logos/grooroute-banner.jpg" alt="GrooRoute Pro" width="150"></a></td>
+<td>Danke an GrooRoute Pro für die Unterstützung dieses Projekts! GrooRoute Pro ist eine zuverlässige und reibungslose AI-API-Relay-Plattform mit Zugang zu OpenAI, Claude, DeepSeek und weiteren gängigen Modellen. Die Plattform läuft auf Servern im Ausland, lässt Sie die Preismultiplikator-Stufe selbst wählen und bietet sowohl nutzungsbasierte Abrechnung als auch Abo-Pakete — flexibel nutzbar, mit stabilen Verbindungen und schnellen Antwortzeiten, damit Sie KI-Funktionen aller Art bequem nutzen können. Exklusiver Vorteil für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://grooroute.xyz/sign-up?aff=qqm9">diesen Link</a> und erhalten Sie ein kostenloses Testguthaben von 5 ¥!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
 <td>Danke an Shengsuanyun für die Unterstützung dieses Projekts! Shengsuanyun ist eine Superfabrik für KI-native Teams — eine Plattform zur parallelen Ausführung von KI-Aufgaben in industrieller Qualität. Ihr Modellmarktplatz bündelt die Fähigkeiten von Claude, ChatGPT, Gemini und weiteren in- und ausländischen LLM- und Multimedia-Modellen mit Direktbezug. Absolut kein Reverse Engineering und keine Verwässerung — die plattformweite Modell-SLA-Verfügbarkeit erreicht 99,7 %, und die <a href="https://watch.shengsuanyun.com/status/shengsuanyun">Monitoring-Dashboards</a> zeigen durchgehend grün an. Es bietet außerdem unternehmensgerechte, anpassbare Gateways für fein abgestufte Kosten- und Berechtigungsverwaltung im Team, intelligentes Routing, Sicherheitsschutz und BYOK-Hosting (Bring Your Own Key). Die Plattform rechnet nach Nutzung sowie über einen Token-Plan (in Kürze verfügbar) ab, und Rechnungsstellung ist möglich. Registrieren Sie sich über <a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">diesen Link</a> als Neukunde und erhalten Sie ein Guthaben von ¥10 sowie 10 % Bonus auf Ihre erste Aufladung.</td>
 </tr>
 
 <tr>
-<td width="180"><a href="https://aigocode.app/invite/CC-SWITCH"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></a></td>
-<td>Danke an AIGoCode für die Unterstützung dieses Projekts! AIGoCode ist eine All-in-One-Plattform, die Claude Code, Codex und die neuesten Gemini-Modelle integriert und Ihnen stabile, effiziente und äußerst kostengünstige KI-Coding-Dienste bietet. Die Plattform stellt flexible Abonnementpläne bereit, birgt kein Risiko einer Kontosperrung, ermöglicht Direktzugriff ohne VPN und reagiert blitzschnell. AIGoCode hat ein besonderes Angebot für CC-Switch-Nutzer vorbereitet: Wenn Sie sich über <a href="https://aigocode.app/invite/CC-SWITCH">diesen Link</a> registrieren, erhalten Sie bei Ihrer ersten Aufladung zusätzliche 10 % Bonusguthaben!</td>
+<td width="180"><a href="https://aigocode.net/invite/CC-SWITCH"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></a></td>
+<td>Danke an AIGoCode für die Unterstützung dieses Projekts! AIGoCode ist eine All-in-One-Plattform, die Claude Code, Codex und die neuesten Gemini-Modelle integriert und Ihnen stabile, effiziente und äußerst kostengünstige KI-Coding-Dienste bietet. Die Plattform stellt flexible Abonnementpläne bereit, birgt kein Risiko einer Kontosperrung, ermöglicht Direktzugriff ohne VPN und reagiert blitzschnell. AIGoCode hat ein besonderes Angebot für CC-Switch-Nutzer vorbereitet: Wenn Sie sich über <a href="https://aigocode.net/invite/CC-SWITCH">diesen Link</a> registrieren, erhalten Sie bei Ihrer ersten Aufladung zusätzliche 10 % Bonusguthaben!</td>
 </tr>
 
 <tr>
