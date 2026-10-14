@@ -3939,6 +3939,71 @@ requires_openai_auth = true`,
     category: "cloud_provider",
   },
   {
+    name: "Hugging Face",
+    websiteUrl: "https://huggingface.co/inference/models",
+    apiKeyUrl:
+      "https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "huggingface",
+      "https://router.huggingface.co/v1",
+      "zai-org/GLM-5.3:baseten",
+    ),
+    endpointCandidates: ["https://router.huggingface.co/v1"],
+    // 官方 Codex 接入文档写的是 wire_api = "responses"（huggingface.co/docs/
+    // inference-providers/integrations/codex，2026-10-14 核对），但 router 的
+    // Responses 是架在 Chat 上的翻译层（github.com/huggingface/responses.js
+    // src/schemas.ts 同日）：工具只认 function / mcp，Codex 发的 namespace、
+    // tool_search、custom（freeform apply_patch）、web_search 都会 400；
+    // reasoning.effort 只认 low/medium/high；流式 usage 的 cached_tokens 写死 0。
+    // 故走本地路由转 Chat，namespace 由转换层展开，缓存用量也能拿到
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      // 上游钉 :baseten（同 Claude Code 预设）；窗口与输入模态取公开
+      // router.huggingface.co/v1/models 对 Baseten 的声明（2026-10-14 快照）。
+      // 平台不按模型声明思考开关与 effort 档位，只列单档 high。首行 = 默认模型，
+      // 须与 config 的 model 一致
+      {
+        model: "zai-org/GLM-5.3:baseten",
+        displayName: "GLM-5.3 (Baseten)",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "zai-org/GLM-5.3-Flash:baseten",
+        displayName: "GLM-5.3 Flash (Baseten)",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "moonshotai/Kimi-K3:baseten",
+        displayName: "Kimi K3 (Baseten)",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["high"],
+      },
+      {
+        model: "deepseek-ai/DeepSeek-V4-Pro-0813:baseten",
+        displayName: "DeepSeek V4 Pro 0813 (Baseten)",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["high"],
+      },
+    ]),
+    // 平台不按模型声明思考开关与 effort 语义：照 Novita，不下发推理控制参数
+    codexChatReasoning: {
+      supportsThinking: false,
+      supportsEffort: false,
+      thinkingParam: "none",
+      effortParam: "none",
+      outputFormat: "reasoning_content",
+    },
+    category: "aggregator",
+    icon: "huggingface",
+  },
+  {
     name: "OpenCode Go",
     family: "opencode",
     planKey: "coding",

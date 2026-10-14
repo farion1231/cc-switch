@@ -2742,6 +2742,56 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Hugging Face",
+    websiteUrl: "https://huggingface.co/inference/models",
+    apiKeyUrl:
+      "https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained",
+    settingsConfig: {
+      // Hermes 内置 provider huggingface（别名 hf，hermes-agent.nousresearch.com/
+      // docs/integrations/providers，2026-10-14 核对），与 custom_providers 同名
+      // 时谁优先文档没写，照 ollama_cloud 先例换个名字避开
+      name: "huggingface-router",
+      // OpenAI Chat 端点 base 为 https://router.huggingface.co/v1
+      //（huggingface.co/docs/inference-providers/integrations/hermes-agent 同日），
+      // Bearer 鉴权；Hermes 文档说可用 :provider_name 后缀强制上游，这里钉
+      // :baseten（同 Claude Code 预设），窗口取公开 /v1/models 对 Baseten 的
+      // 同日声明
+      base_url: "https://router.huggingface.co/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "zai-org/GLM-5.3:baseten",
+          name: "GLM-5.3 (Baseten)",
+          context_length: 1048576,
+        },
+        {
+          id: "zai-org/GLM-5.3-Flash:baseten",
+          name: "GLM-5.3 Flash (Baseten)",
+          context_length: 1048576,
+        },
+        {
+          id: "moonshotai/Kimi-K3:baseten",
+          name: "Kimi K3 (Baseten)",
+          context_length: 1048576,
+        },
+        {
+          id: "deepseek-ai/DeepSeek-V4-Pro-0813:baseten",
+          name: "DeepSeek V4 Pro 0813 (Baseten)",
+          context_length: 1048576,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "huggingface",
+    suggestedDefaults: {
+      model: {
+        default: "zai-org/GLM-5.3:baseten",
+        provider: "huggingface-router",
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

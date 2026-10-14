@@ -276,6 +276,12 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["Nebius Token Factory", "moonshotai/Kimi-K3", ["high"]],
     ["Nebius Token Factory", "moonshotai/Kimi-K2.7-Code", ["high"]],
     ["Nebius Token Factory", "deepseek-ai/DeepSeek-V4-Pro-0813", ["high"]],
+    // Hugging Face（Chat 路由，不下发推理参数）：router.huggingface.co/v1/models
+    // 不按模型声明思考开关与档位（2026-10-14），上游钉 :baseten，只钉单档 high
+    ["Hugging Face", "zai-org/GLM-5.3:baseten", ["high"]],
+    ["Hugging Face", "zai-org/GLM-5.3-Flash:baseten", ["high"]],
+    ["Hugging Face", "moonshotai/Kimi-K3:baseten", ["high"]],
+    ["Hugging Face", "deepseek-ai/DeepSeek-V4-Pro-0813:baseten", ["high"]],
   ];
 
   it.each(EXPECTED)(

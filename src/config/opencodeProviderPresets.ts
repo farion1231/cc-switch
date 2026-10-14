@@ -3803,6 +3803,62 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "Hugging Face",
+    websiteUrl: "https://huggingface.co/inference/models",
+    apiKeyUrl:
+      "https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained",
+    // Inference Providers 的 OpenAI Chat 端点 base 为 https://router.huggingface.co/v1
+    //（huggingface.co/docs/inference-providers/integrations/opencode，2026-10-14
+    // 核对），Bearer 鉴权。上游钉 :baseten（同 Claude Code 预设）；窗口与输入模态
+    // 取公开 /v1/models 对 Baseten 的同日声明，最大输出平台未声明，沿用仓库口径。
+    // OpenCode 自带 huggingface 供应商，这里是显式的自定义节点，照 OpenRouter
+    // 先例；供应商 ID 别填 huggingface 以免遮蔽内置定义
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Hugging Face",
+      options: {
+        baseURL: "https://router.huggingface.co/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "zai-org/GLM-5.3:baseten": {
+          name: "GLM-5.3 (Baseten)",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "zai-org/GLM-5.3-Flash:baseten": {
+          name: "GLM-5.3 Flash (Baseten)",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "moonshotai/Kimi-K3:baseten": {
+          name: "Kimi K3 (Baseten)",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "deepseek-ai/DeepSeek-V4-Pro-0813:baseten": {
+          name: "DeepSeek V4 Pro 0813 (Baseten)",
+          reasoning: true,
+          limit: { context: 1048576, output: 384000 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    icon: "huggingface",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "hf_...",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

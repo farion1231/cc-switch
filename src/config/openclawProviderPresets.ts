@@ -5163,6 +5163,76 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "Hugging Face",
+    websiteUrl: "https://huggingface.co/inference/models",
+    apiKeyUrl:
+      "https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained",
+    // Inference Providers 的 OpenAI Chat 端点 base 为 https://router.huggingface.co/v1
+    //（docs.openclaw.ai/providers/huggingface 与 huggingface.co/docs/
+    // inference-providers/index，2026-10-14 核对），Bearer 鉴权；OpenClaw 官方
+    // 示例的模型引用带 :cheapest 后缀，冒号可用。上游钉 :baseten（同 Claude Code
+    // 预设）；窗口、输入模态与 cost（每百万 token）取公开 /v1/models 对 Baseten
+    // 的同日声明，缓存价未公布故不写 cacheRead；最大输出平台未声明，沿用仓库口径
+    settingsConfig: {
+      baseUrl: "https://router.huggingface.co/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "zai-org/GLM-5.3:baseten",
+          name: "GLM-5.3 (Baseten)",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 1.4, output: 4.4 },
+        },
+        {
+          id: "zai-org/GLM-5.3-Flash:baseten",
+          name: "GLM-5.3 Flash (Baseten)",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 0.15, output: 0.5 },
+        },
+        {
+          id: "moonshotai/Kimi-K3:baseten",
+          name: "Kimi K3 (Baseten)",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 3, output: 15 },
+        },
+        {
+          id: "deepseek-ai/DeepSeek-V4-Pro-0813:baseten",
+          name: "DeepSeek V4 Pro 0813 (Baseten)",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 384000,
+          cost: { input: 1.32, output: 3.96 },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "huggingface",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "hf_...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "huggingface/zai-org/GLM-5.3:baseten" },
+      modelCatalog: {
+        "huggingface/zai-org/GLM-5.3:baseten": { alias: "GLM-5.3" },
+      },
+    },
+  },
+  {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
     apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",

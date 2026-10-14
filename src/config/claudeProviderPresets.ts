@@ -2123,6 +2123,38 @@ export const providerPresets: ProviderPreset[] = [
     endpointCandidates: ["https://inference.do-ai.run"],
   },
   {
+    name: "Hugging Face",
+    websiteUrl: "https://huggingface.co/inference/models",
+    apiKeyUrl:
+      "https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained",
+    // Inference Providers 路由。官方 Claude Code 接入文档（huggingface.co/docs/
+    // inference-providers/integrations/claude-code，2026-10-14 核对）：base 为
+    // https://router.huggingface.co、不带 /v1（实测 GET /v1/messages 与
+    // /v1/messages/count_tokens 均 405，路由存在）。Key 用勾选 "Make calls to
+    // Inference Providers" 的 fine-grained token，示例发 Bearer，默认的
+    // AUTH_TOKEN 即可；只发 x-api-key 能否通过未证实。模型 ID 一律钉上游
+    // :baseten：文档说写明上游即确定路由，不写按吞吐挑选并自动切换，上游一变
+    // prompt cache 前缀就丢；代价是没有故障转移，Baseten 挂了请求直接失败。
+    // Baseten 同时提供这几款且窗口均为 1048576（公开 /v1/models 同日快照）。
+    // 非 claude- 前缀 ID 默认按 200K 算，照官方 hf-claude 启动器写
+    // CLAUDE_CODE_MAX_CONTEXT_TOKENS。/v1/models 公开可读（返回的 ID 不带上游
+    // 后缀），默认探测即可，不写 modelsUrl
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://router.huggingface.co",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "zai-org/GLM-5.3:baseten",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "zai-org/GLM-5.3-Flash:baseten",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "zai-org/GLM-5.3:baseten",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "zai-org/GLM-5.3:baseten",
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1048576",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://router.huggingface.co"],
+    icon: "huggingface",
+  },
+  {
     name: "GitHub Copilot",
     websiteUrl: "https://github.com/features/copilot",
     settingsConfig: {

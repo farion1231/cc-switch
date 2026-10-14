@@ -2248,6 +2248,37 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "cloud_provider",
   },
   {
+    name: "Hugging Face",
+    // Pi 运行时内置了 huggingface，用 cc-switch- 前缀避免同名遮蔽内置定义
+    providerKey: "cc-switch-hugging-face",
+    websiteUrl: "https://huggingface.co/inference/models",
+    apiKeyUrl:
+      "https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained",
+    settingsConfig: {
+      name: "Hugging Face",
+      // OpenAI Chat 端点 base 为 https://router.huggingface.co/v1
+      //（huggingface.co/docs/inference-providers/integrations/pi，2026-10-14
+      // 核对），Bearer 鉴权，不加 compat（同 Novita 等聚合平台）。上游钉
+      // :baseten（同 Claude Code 预设）；公开 /v1/models 对 Baseten 的同日声明
+      // 窗口均为 1048576，目录里 V4 Pro 记为 1000000，故覆盖。catalog 没有
+      // V4 Pro 0813，借 V4 Pro 的能力值
+      baseUrl: "https://router.huggingface.co/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("zai/glm-5.3", { id: "zai-org/GLM-5.3:baseten" }),
+        piModel("zai/glm-5.3-flash", { id: "zai-org/GLM-5.3-Flash:baseten" }),
+        piModel("moonshotai/kimi-k3", { id: "moonshotai/Kimi-K3:baseten" }),
+        piModel("deepseek/deepseek-v4-pro", {
+          id: "deepseek-ai/DeepSeek-V4-Pro-0813:baseten",
+          contextWindow: 1_048_576,
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "huggingface",
+  },
+  {
     name: "PIPELLM",
     providerKey: "cc-switch-pipellm",
     websiteUrl: "https://code.pipellm.ai",

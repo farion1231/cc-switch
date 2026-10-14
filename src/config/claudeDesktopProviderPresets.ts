@@ -1860,6 +1860,29 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     endpointCandidates: ["https://inference.do-ai.run"],
   },
   {
+    name: "Hugging Face",
+    websiteUrl: "https://huggingface.co/inference/models",
+    apiKeyUrl:
+      "https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained",
+    category: "aggregator",
+    // 同 Claude Code 预设：Anthropic 端点 base 不带 /v1，发 Bearer
+    //（huggingface.co/docs/inference-providers/integrations/claude-code，
+    // 2026-10-14 核对）；模型名非 Claude，只能走路由。上游钉 :baseten，路由
+    // 模型窗口均为 1048576（公开 /v1/models 同日），标 1M；opus 与 sonnet 相同，
+    // 去重后只剩两条路由
+    baseUrl: "https://router.huggingface.co",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "zai-org/GLM-5.3:baseten",
+      "zai-org/GLM-5.3:baseten",
+      "zai-org/GLM-5.3-Flash:baseten",
+      true,
+    ),
+    endpointCandidates: ["https://router.huggingface.co"],
+    icon: "huggingface",
+  },
+  {
     name: "Nvidia",
     websiteUrl: "https://build.nvidia.com",
     apiKeyUrl: "https://build.nvidia.com/settings/api-keys",
