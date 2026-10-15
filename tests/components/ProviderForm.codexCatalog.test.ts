@@ -18,6 +18,20 @@ describe("ProviderForm Codex catalog helpers", () => {
     ]);
   });
 
+  it("keeps identical display names and even completely identical rows", () => {
+    const row = {
+      model: "gpt-6.1-sol",
+      displayName: "GPT",
+      contextWindow: 500000,
+    };
+    const rows = [row, { ...row }, { ...row, contextWindow: 1050000 }];
+    const saved = normalizeCodexCatalogModelsForSave(rows);
+    expect(saved).toEqual(rows);
+    expect(
+      normalizeCodexCatalogModelsForSave(saved.map(mapCodexCatalogModelForForm)),
+    ).toEqual(rows);
+  });
+
   it("preserves context variants through repeated save and reload", () => {
     const rows = [
       {
