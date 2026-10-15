@@ -9,6 +9,9 @@
 use std::sync::Arc;
 
 use rusqlite::params;
+// Tests that import a database write a safety backup under the app home;
+// they run serialized with the backup tests that swap that home (#[serial]).
+use serial_test::serial;
 
 use super::protocol::{self, manifest_path, DeviceManifest};
 use super::store;
@@ -873,6 +876,7 @@ fn clone_identity(from: &Device, to: &Device) {
 }
 
 #[tokio::test]
+#[serial]
 async fn cloned_profile_is_detected_and_resolved_with_a_new_identity() {
     let cloud = remote();
     let a = Device::new("Original");
@@ -910,6 +914,7 @@ async fn cloned_profile_is_detected_and_resolved_with_a_new_identity() {
 }
 
 #[tokio::test]
+#[serial]
 async fn take_over_adopts_the_remote_writer() {
     let cloud = remote();
     let a = Device::new("A");
@@ -1125,6 +1130,7 @@ async fn partitions_follow_the_source_local_calendar() {
 // ─── Storage isolation ───────────────────────────────────────
 
 #[tokio::test]
+#[serial]
 async fn config_snapshot_sync_neither_exports_nor_overwrites_usage_sync_state() {
     let cloud = remote();
     let a = Device::new("A");
@@ -1815,6 +1821,7 @@ fn seed_history(device: &Device) {
 }
 
 #[tokio::test]
+#[serial]
 async fn copied_installation_with_new_identity_keeps_history_once_and_counts_new_work() {
     let cloud = remote();
     let a = Device::new("Original");
@@ -1866,6 +1873,7 @@ async fn copied_installation_with_new_identity_keeps_history_once_and_counts_new
 }
 
 #[tokio::test]
+#[serial]
 async fn copied_legacy_history_is_attributed_to_the_parent_while_present() {
     let cloud = remote();
     let a = Device::new("Original");
@@ -1908,6 +1916,7 @@ async fn copied_legacy_history_is_attributed_to_the_parent_while_present() {
 }
 
 #[tokio::test]
+#[serial]
 async fn restored_backup_conflict_resolves_either_way_without_double_counting() {
     for take_over in [true, false] {
         let cloud = remote();
@@ -2075,6 +2084,7 @@ async fn device_utc_offset_and_lineage_are_recorded_for_day_labels() {
 /// each rolled up 50k requests (10% shared between all devices).
 /// `cargo test --lib usage_sync::tests::perf_ledger -- --ignored --nocapture`
 #[tokio::test]
+#[serial]
 #[ignore]
 async fn perf_ledger_storage_and_all_scope_queries() {
     let cloud = remote();
@@ -2381,6 +2391,7 @@ fn legacy_group(device: &Device) -> Option<(u64, String)> {
 }
 
 #[tokio::test]
+#[serial]
 async fn codex_rebuild_on_a_copy_never_cancels_the_parents_history() {
     let cloud = remote();
     let a = Device::new("Original");
@@ -2449,6 +2460,7 @@ async fn codex_rebuild_on_a_copy_never_cancels_the_parents_history() {
 }
 
 #[tokio::test]
+#[serial]
 async fn inherited_subtraction_is_bounded_by_what_the_ancestor_still_holds() {
     let cloud = remote();
     let a = Device::new("Original");
@@ -2487,6 +2499,7 @@ async fn inherited_subtraction_is_bounded_by_what_the_ancestor_still_holds() {
 /// A → B → C, each a copied installation that took a new identity; hide,
 /// restore and retire the middle device; the root keeps working.
 #[tokio::test]
+#[serial]
 async fn lineage_chain_survives_hidden_restored_and_retired_middle_devices() {
     let cloud = remote();
     let a = Device::new("A");
@@ -2589,6 +2602,7 @@ fn malformed_or_cyclic_ancestry_is_rejected() {
 }
 
 #[tokio::test]
+#[serial]
 async fn consecutive_resets_keep_the_published_ancestor_and_mid_publish_extends_it() {
     let cloud = remote();
     let a = Device::new("A");
@@ -3345,6 +3359,7 @@ async fn switching_namespaces_a_b_a_keeps_writer_state_and_never_mixes_caches() 
 }
 
 #[tokio::test]
+#[serial]
 async fn a_real_second_writer_is_still_detected_within_one_namespace() {
     let cloud = remote();
     let other = remote();

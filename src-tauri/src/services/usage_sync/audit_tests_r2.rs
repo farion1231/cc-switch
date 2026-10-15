@@ -308,6 +308,7 @@ const SEED_COST: &str = "0.100000";
 /// A → B (fork) → C (fork from B). Viewer V hides B (the middle of the chain).
 /// EXPECTED: 10 requests. Lineage is only followed one level.
 #[tokio::test]
+#[serial_test::serial]
 async fn r2_lineage_chain_with_hidden_middle_device() {
     let c = cloud();
     let a = Dev::new("A", "aaaaaaaa-r2-a");
@@ -360,6 +361,7 @@ async fn r2_lineage_chain_with_hidden_middle_device() {
 /// Two identity resets with no publish in between (the first new identity was
 /// never uploaded, e.g. offline). EXPECTED: 10 + new work, once.
 #[tokio::test]
+#[serial_test::serial]
 async fn r2_double_reset_without_intermediate_publish() {
     let c = cloud();
     let a = Dev::new("A", "aaaaaaaa-r2-a");
@@ -394,6 +396,7 @@ async fn r2_double_reset_without_intermediate_publish() {
 /// Codex rebuild). The inherited snapshot is not adjusted.
 /// EXPECTED: totals never below the parent's own 10 + new work, never negative groups.
 #[tokio::test]
+#[serial_test::serial]
 async fn r2_inherited_snapshot_outlives_deleted_child_rollups() {
     let c = cloud();
     let a = Dev::new("A", "aaaaaaaa-r2-a");
@@ -430,6 +433,7 @@ async fn r2_inherited_snapshot_outlives_deleted_child_rollups() {
 
 /// Parent hidden then shown again on the child: history must not vanish or double.
 #[tokio::test]
+#[serial_test::serial]
 async fn r2_parent_hidden_then_unhidden_on_child() {
     let c = cloud();
     let a = Dev::new("A", "aaaaaaaa-r2-a");
