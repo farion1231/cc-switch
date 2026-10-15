@@ -359,6 +359,38 @@ pub struct CodexLegacyOfficialHistoryBucketMigration {
     pub codex_config_dir: Option<String>,
 }
 
+/// Used-percentage cutoffs for the Codex ChatGPT proxy. Independent windows.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CodexQuotaProtection {
+    pub enabled: bool,
+    pub five_hour_threshold: u8,
+    pub weekly_threshold: u8,
+}
+
+impl Default for CodexQuotaProtection {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            five_hour_threshold: 95,
+            weekly_threshold: 98,
+        }
+    }
+}
+
+impl CodexQuotaProtection {
+    pub fn validate(&self) -> Result<(), AppError> {
+        if !(1..=99).contains(&self.five_hour_threshold)
+            || !(1..=99).contains(&self.weekly_threshold)
+        {
+            return Err(AppError::Config(
+                "Codex quota protection thresholds must be integers from 1 to 99".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -423,6 +455,9 @@ pub struct AppSettings {
     /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
     #[serde(default)]
     pub preserve_codex_official_auth_on_switch: bool,
+    /// Pre-exhaustion protection for ChatGPT requests passing through the Codex proxy.
+    #[serde(default)]
+    pub codex_quota_protection: CodexQuotaProtection,
     /// Run official Codex providers under the shared "custom" model_provider id
     /// so official sessions share one resume-history bucket with third-party
     /// providers. Opt-in: defaults to false.
@@ -604,6 +639,7 @@ impl Default for AppSettings {
             show_provider_search: true,
             check_tool_updates_on_startup: false,
             preserve_codex_official_auth_on_switch: false,
+            codex_quota_protection: CodexQuotaProtection::default(),
             unify_codex_session_history: false,
             unify_codex_migrate_existing: None,
             codex_stack_classic_tools: true,
@@ -866,6 +902,7 @@ pub fn get_settings_for_frontend() -> AppSettings {
 }
 
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
+    new_settings.codex_quota_protection.validate()?;
     new_settings.normalize_paths();
     save_settings_file(&new_settings)?;
 

@@ -838,6 +838,17 @@
     "skipClaudeOnboarding": "Skip Claude Code first-run confirmation",
     "skipClaudeOnboardingDescription": "On first launch, Claude Code runs an onboarding flow that asks you to pick a theme and sign in to an Anthropic account. If you use a third-party provider you don't need that sign-in, so turning this on skips straight past it. It works by writing hasCompletedOnboarding: true to ~/.claude.json; turning it off removes that field, and the onboarding appears again on the next launch.",
     "codexAuth": "Codex App Enhancements",
+    "codexQuotaProtection": {
+      "title": "Official quota protection",
+      "help": "Pause new official requests when either usage threshold is reached; third-party models remain available. Covers Codex official requests through CC Switch only: every request first queries the real quota with that request's own login, so each official request is slightly slower and requests for the same account are checked serially. Quota lookup failures pause requests; a fresh reading below the thresholds restores them. In-flight requests and other apps can still exhaust quota, and protection keeps ordinary-quota exhaustion from activating Luna Reserve.",
+      "thresholds": "Usage cutoffs for official requests",
+      "fiveHour": "5-hour usage (%)",
+      "weekly": "Weekly usage (%)",
+      "save": "Save thresholds",
+      "reset": "Restore defaults",
+      "hint": "Pause at either cutoff. Defaults: 95% / 98%. Saved changes apply to new requests immediately.",
+      "invalid": "Enter whole numbers from 1 to 99."
+    },
     "preserveCodexOfficialAuthOnSwitch": "Keep official login for direct switches",
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
     "unifyCodexSessionHistory": "Unified Codex session history",
