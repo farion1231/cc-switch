@@ -317,6 +317,7 @@ export const providerPresets: ProviderPreset[] = [
     },
     category: "aggregator",
     isPartner: true,
+    partnerPromotionKey: "openmodel",
     icon: "openmodel",
   },
   {
@@ -333,6 +334,7 @@ export const providerPresets: ProviderPreset[] = [
     endpointCandidates: ["https://grooroute.pro", "https://grooroute.xyz"],
     category: "aggregator",
     isPartner: true,
+    partnerPromotionKey: "grooroute",
     icon: "grooroute",
   },
   {
@@ -359,6 +361,7 @@ export const providerPresets: ProviderPreset[] = [
     endpointCandidates: ["https://api.tokenfactory.cn/anthropic"],
     category: "aggregator",
     isPartner: true,
+    partnerPromotionKey: "tokenfactory",
     icon: "tokenfactory",
   },
   {
@@ -1037,6 +1040,7 @@ export const providerPresets: ProviderPreset[] = [
     ],
     category: "aggregator",
     isPartner: true,
+    partnerPromotionKey: "modelflare",
     icon: "modelflare",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====

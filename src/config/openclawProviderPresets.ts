@@ -665,6 +665,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     isPartner: true,
+    partnerPromotionKey: "openmodel",
     icon: "openmodel",
   },
   {
@@ -713,6 +714,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     isPartner: true,
+    partnerPromotionKey: "grooroute",
     icon: "grooroute",
   },
   {
@@ -796,6 +798,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     isPartner: true,
+    partnerPromotionKey: "tokenfactory",
     icon: "tokenfactory",
   },
   {
@@ -2467,6 +2470,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     isPartner: true,
+    partnerPromotionKey: "modelflare",
     icon: "modelflare",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====

@@ -132,6 +132,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     description: "OpenModel",
     category: "aggregator",
     isPartner: true,
+    partnerPromotionKey: "openmodel",
     icon: "openmodel",
   },
   {
@@ -488,6 +489,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     description: "Modelflare",
     category: "aggregator",
     isPartner: true,
+    partnerPromotionKey: "modelflare",
     icon: "modelflare",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====

@@ -430,6 +430,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "claude-opus-5-5", provider: "openmodel" },
     },
     isPartner: true,
+    partnerPromotionKey: "openmodel",
     icon: "openmodel",
   },
   {
@@ -459,6 +460,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "claude-opus-5-5", provider: "grooroute_pro" },
     },
     isPartner: true,
+    partnerPromotionKey: "grooroute",
     icon: "grooroute",
   },
   {
@@ -497,6 +499,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "glm-5.3", provider: "tokenfactory" },
     },
     isPartner: true,
+    partnerPromotionKey: "tokenfactory",
     icon: "tokenfactory",
   },
   {
@@ -1456,6 +1459,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "gpt-5.6-sol", provider: "modelflare" },
     },
     isPartner: true,
+    partnerPromotionKey: "modelflare",
     icon: "modelflare",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====

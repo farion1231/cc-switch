@@ -185,6 +185,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     config: grokPresetConfig("OpenModel", "https://api.openmodel.ai/v1"),
     category: "aggregator",
     isPartner: true,
+    partnerPromotionKey: "openmodel",
     icon: "openmodel",
   },
   {
@@ -199,6 +200,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     ),
     category: "aggregator",
     isPartner: true,
+    partnerPromotionKey: "grooroute",
     icon: "grooroute",
   },
   {
@@ -552,6 +554,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     ],
     category: "aggregator",
     isPartner: true,
+    partnerPromotionKey: "modelflare",
     icon: "modelflare",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
