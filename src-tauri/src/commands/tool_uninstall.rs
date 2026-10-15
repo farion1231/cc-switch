@@ -1568,7 +1568,7 @@ mod tests {
         std::fs::write(&executable, "MZ").unwrap();
         std::fs::write(&config, "settings").unwrap();
         let inst = installation(&executable);
-        remove_native_files(&inst, &[inst.real.clone()]).unwrap();
+        remove_native_files(&inst, std::slice::from_ref(&inst.real)).unwrap();
         assert!(!executable.exists());
         assert_eq!(std::fs::read_to_string(config).unwrap(), "settings");
     }
@@ -1580,7 +1580,7 @@ mod tests {
         std::fs::write(&executable, "MZ").unwrap();
         let mut inst = installation(&executable);
         inst.real = temp.path().join("another.exe");
-        assert!(remove_native_files(&inst, &[executable.clone()]).is_err());
+        assert!(remove_native_files(&inst, std::slice::from_ref(&executable)).is_err());
         assert!(executable.exists());
     }
 
