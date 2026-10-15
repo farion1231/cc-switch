@@ -50,7 +50,6 @@ import { usePiCurrentState } from "@/lib/query/pi";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import {
   buildAdditiveSections,
-  buildDesktopSections,
   buildSwitchSections,
   type CardPresentation,
   type ProviderSection,
@@ -322,14 +321,6 @@ export function ProviderList({
         desktopAction: onSwitchAndRestart
           ? { running: desktopRunning, onSelect: onSwitchAndRestart }
           : undefined,
-      });
-    }
-    if (appId === "claude-desktop") {
-      return buildDesktopSections({
-        t,
-        providers: filteredProviders,
-        currentId: currentProviderId,
-        onSwitch,
       });
     }
     const defaultPrimary = openclawDefaultModel?.primary ?? "";

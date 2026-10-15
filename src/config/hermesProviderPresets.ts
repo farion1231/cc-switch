@@ -303,7 +303,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
         },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "third_party",
@@ -476,7 +476,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-6-astra",
           name: "GPT-6 Astra",
-          context_length: 1050000,
+          context_length: 272000,
         },
       ],
     },
@@ -523,7 +523,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_key: "",
       api_mode: "chat_completions",
       models: [
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
         { id: "moonshotai/kimi-k3", name: "Kimi K3", context_length: 1048576 },
         { id: "z-ai/glm-5.3", name: "GLM-5.3", context_length: 1048576 },
         {
@@ -578,9 +578,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
-          context_length: 400000,
+          context_length: 272000,
         },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",
@@ -761,7 +761,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",
@@ -1052,7 +1052,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",
@@ -1077,7 +1077,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_key: "",
       api_mode: "chat_completions",
       models: [
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
         { id: "kimi-k3", name: "Kimi K3", context_length: 1048576 },
       ],
     },
@@ -1127,7 +1127,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "gpt-6-astra",
           name: "GPT-6 Astra",
-          context_length: 1050000,
+          context_length: 272000,
         },
       ],
     },
@@ -1334,9 +1334,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
         },
-        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 1050000 },
-        { id: "gpt-6-luna", name: "GPT-6 Luna", context_length: 1050000 },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-luna", name: "GPT-6 Luna", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "third_party",
@@ -1362,8 +1362,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
         },
-        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 1050000 },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "third_party",
@@ -1384,7 +1384,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",
@@ -1441,7 +1441,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",
@@ -1521,7 +1521,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-5.6-sol",
           name: "GPT-5.6 Sol",
-          context_length: 400000,
+          context_length: 272000,
         },
         {
           id: "google/gemini-3.6-flash",
@@ -1541,7 +1541,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-6-astra",
           name: "GPT-6 Astra",
-          context_length: 1050000,
+          context_length: 272000,
         },
         {
           id: "google/gemini-3.8-flash",
@@ -2273,7 +2273,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",
@@ -2720,12 +2720,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-6-astra",
           name: "GPT-6 Astra",
-          context_length: 1050000,
+          context_length: 272000,
         },
         {
           id: "openai/gpt-6.1-sol",
           name: "GPT-6.1 Sol",
-          context_length: 1050000,
+          context_length: 272000,
         },
         {
           id: "google/gemini-3.8-flash",
@@ -3025,12 +3025,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-6.1-sol",
           name: "GPT-6.1 Sol",
-          context_length: 1050000,
+          context_length: 272000,
         },
         {
           id: "openai/gpt-6-luna",
           name: "GPT-6 Luna",
-          context_length: 1050000,
+          context_length: 272000,
         },
         {
           id: "moonshotai/kimi-k3",
@@ -3179,8 +3179,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
         },
-        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 1050000 },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",

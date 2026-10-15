@@ -34,6 +34,7 @@ import { HoverTip } from "@/components/ui/hover-tip";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { fieldClass } from "@/components/ui/input";
 import { useSessionUsageSummary } from "@/lib/query/usage";
+import { DRAG_REGION_ATTR } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import type { SessionMeta, TurnIndex } from "@/types";
 import {
@@ -384,7 +385,11 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
           <AppGlyph app={appId} size={16} badgeClassName="bg-app" />
         ) : undefined
       }
-      title={<span title={title}>{title}</span>}
+      title={
+        <span {...DRAG_REGION_ATTR} title={title}>
+          {title}
+        </span>
+      }
       titleExtra={
         <span className="sr-only">
           {t("sessionManager.sessionOf", {
