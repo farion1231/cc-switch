@@ -727,9 +727,10 @@ pub fn resolve(
     })))
 }
 
-/// Claude Desktop 的数字 id：按名单顺序在成员的模型里找这个数字（路由那家也找：它变成默认后
-/// 不再发布，但客户端可能还带着旧 id）。找不到再看登记簿里已移除的那些，区分「已移除」和
-/// 「不存在」；已删除的供应商算不出模型，归到「不存在」。
+/// Claude Desktop 的数字 id：先按名单顺序在发布出去的成员（路由那家以外）里找，和
+/// [`desktop_published`] 的去重同一个顺序，撞号时命中的就是选择器里显示的那个；再找路由那家
+/// （它变成默认后不再发布，但客户端可能还带着旧 id）。找不到再看登记簿里已移除的那些，区分
+/// 「已移除」和「不存在」；已删除的供应商算不出模型，归到「不存在」。
 fn resolve_desktop(
     db: &Database,
     store: &DeviceStore,
@@ -741,31 +742,33 @@ fn resolve_desktop(
         return Ok(Resolved::Miss(StackMiss::StackOff));
     }
     let stack = state::stack(store, app.as_str())?;
+    let route = state::mode_state(store, app.as_str())?.proxy_route;
     let id = format!("{DESKTOP_PREFIX}{code}");
-    let find = |key: &str, provider_id: &str| -> Result<Option<(Provider, String)>, AppError> {
-        let Some(provider) = db.get_provider_by_id(provider_id, app.as_str())? else {
-            return Ok(None);
-        };
-        let upstream = desktop_models(key, &provider)
+    let members = members(db, app, &stack, route.as_deref())?;
+    let published = members.iter().filter(|member| !member.route);
+    let route = members.iter().filter(|member| member.route);
+    for member in published.chain(route) {
+        if let Some(found) = desktop_models(&member.key, &member.provider)
             .into_iter()
             .find(|published| published.id == id)
-            .map(|published| published.upstream);
-        Ok(upstream.map(|upstream| (provider, upstream)))
-    };
-    for provider_id in &stack.members {
-        let Some(key) = stack.key_of(provider_id) else {
-            continue;
-        };
-        if let Some((provider, upstream_model)) = find(key, provider_id)? {
+        {
             return Ok(Resolved::Hit(Box::new(StackTarget {
-                provider,
-                upstream_model,
+                provider: member.provider.clone(),
+                upstream_model: found.upstream,
                 original_model: model.to_string(),
             })));
         }
     }
+    let find = |key: &str, provider_id: &str| -> Result<bool, AppError> {
+        let Some(provider) = db.get_provider_by_id(provider_id, app.as_str())? else {
+            return Ok(false);
+        };
+        Ok(desktop_models(key, &provider)
+            .iter()
+            .any(|published| published.id == id))
+    };
     for (key, provider_id) in &stack.keys {
-        if !stack.is_member(provider_id) && find(key, provider_id)?.is_some() {
+        if !stack.is_member(provider_id) && find(key, provider_id)? {
             return Ok(Resolved::Miss(StackMiss::Removed));
         }
     }
@@ -1656,6 +1659,44 @@ mod tests {
             })
             .unwrap();
             assert_eq!(miss(resolve_in(&fx, app, &kimi)), StackMiss::StackOff);
+        }
+
+        #[test]
+        fn a_colliding_id_resolves_to_the_published_member_not_an_earlier_route() {
+            let app = AppType::ClaudeDesktop;
+            let id = encode(&app, "relay-1944", "kimi-k3", false);
+            assert_eq!(id, encode(&app, "relay-484", "kimi-k3", false));
+
+            let dir = tempfile::tempdir().unwrap();
+            let fx = Fixture {
+                store: DeviceStore::at(dir.path()),
+                db: Database::memory().unwrap(),
+                _dir: dir,
+            };
+            for key in ["relay-484", "relay-1944"] {
+                let row = card(key, key, &[("claude-sonnet-5", "kimi-k3", None, false)]);
+                fx.db.save_provider("claude-desktop", &row).unwrap();
+            }
+            state::update(&fx.store, |live| {
+                let desktop = live.apps.entry("claude-desktop".to_string()).or_default();
+                desktop.mode = Some(state::Mode::Proxy);
+                desktop.proxy_route = Some("relay-484".to_string());
+                let stack = &mut desktop.stack;
+                stack.enabled = true;
+                // 路由那家排在前面
+                stack.members = vec!["relay-484".to_string(), "relay-1944".to_string()];
+                for key in ["relay-484", "relay-1944"] {
+                    stack.keys.insert(key.to_string(), key.to_string());
+                }
+            })
+            .unwrap();
+
+            let stack = state::stack(&fx.store, "claude-desktop").unwrap();
+            let members = published_members(&fx.db, &app, &stack, Some("relay-484")).unwrap();
+            let published = desktop_published(&members);
+            assert_eq!(published.len(), 1);
+            assert_eq!(published[0].label, "relay-1944 / kimi-k3");
+            assert_eq!(hit(resolve_in(&fx, app, &id)).0, "relay-1944");
         }
     }
 }
