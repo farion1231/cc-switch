@@ -4221,6 +4221,7 @@
       "exitLead": "{{app}} 会直接连接 {{provider}}，请求不再经过 CC Switch。",
       "exitNoteFile": "会把 {{file}} 里的地址和密钥改回 {{provider}} 的，其他设置不动。",
       "exitNoteRouteKept": "路由目标、故障转移队列和设置都会保留，下次开始路由时恢复。",
+      "desktopExitNoteRouteKept": "路由目标会保留，下次开始路由时恢复。",
       "confirmDirect": "回到直连",
       "confirmRoute": "开始路由",
       "confirmStack": "切换到聚合模式",

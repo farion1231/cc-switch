@@ -384,12 +384,24 @@ function ExitBody({
   const provider =
     providers.find((p) => p.id === targetId)?.name ?? t("mode.noProvider");
 
-  const notes = [
-    t("mode.dialog.exitNoteFile", { file: CLIENT_FILE[app] ?? "", provider }),
-    active === "stack"
-      ? t("mode.dialog.leaveStackNote")
-      : t("mode.dialog.exitNoteRouteKept"),
-  ];
+  // Claude Desktop 没有单个配置文件可指，也没有故障转移队列和路由设置
+  const notes =
+    app === "claude-desktop"
+      ? [
+          t("mode.dialog.desktopRouteNoteRestart", { app: appName }),
+          active === "stack"
+            ? t("mode.dialog.desktopLeaveStackNote")
+            : t("mode.dialog.desktopExitNoteRouteKept"),
+        ]
+      : [
+          t("mode.dialog.exitNoteFile", {
+            file: CLIENT_FILE[app] ?? "",
+            provider,
+          }),
+          active === "stack"
+            ? t("mode.dialog.leaveStackNote")
+            : t("mode.dialog.exitNoteRouteKept"),
+        ];
 
   const confirm = async () => {
     if (busy) return;

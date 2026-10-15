@@ -4221,6 +4221,7 @@
       "exitLead": "{{app}} は {{provider}} に直接接続し、リクエストは CC Switch を経由しなくなります。",
       "exitNoteFile": "{{file}} のアドレスとキーを {{provider}} のものに書き戻します。ほかの設定は変わりません。",
       "exitNoteRouteKept": "ルーティング先、フェイルオーバーのキューと設定は保持され、次にルーティングを開始すると復元されます。",
+      "desktopExitNoteRouteKept": "ルーティング先は保持され、次にルーティングを開始すると復元されます。",
       "confirmDirect": "直接接続に戻す",
       "confirmRoute": "ルーティングを開始",
       "confirmStack": "集約に切り替え",

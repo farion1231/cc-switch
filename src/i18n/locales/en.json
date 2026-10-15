@@ -4221,6 +4221,7 @@
       "exitLead": "{{app}} will connect to {{provider}} directly; requests no longer go through CC Switch.",
       "exitNoteFile": "Rewrites the address and key in {{file}} back to {{provider}}'s; other settings are untouched.",
       "exitNoteRouteKept": "The routing target, failover queue and settings are kept and come back the next time you start routing.",
+      "desktopExitNoteRouteKept": "The routing target is kept and comes back the next time you start routing.",
       "confirmDirect": "Back to direct",
       "confirmRoute": "Start routing",
       "confirmStack": "Switch to Aggregation",

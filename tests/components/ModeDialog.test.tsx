@@ -73,6 +73,34 @@ describe("ModeDialog exit", () => {
     expect(props.onClose).not.toHaveBeenCalled();
   });
 
+  it("gives Claude Desktop its own notes: restart, no file, no failover", () => {
+    renderExit({ app: "claude-desktop" });
+
+    expect(
+      screen.getByText("mode.dialog.desktopRouteNoteRestart"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("mode.dialog.desktopExitNoteRouteKept"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("mode.dialog.exitNoteFile"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("mode.dialog.exitNoteRouteKept"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("tells Claude Desktop where the aggregated models go when leaving it", () => {
+    renderExit({ app: "claude-desktop", active: "stack" });
+
+    expect(
+      screen.getByText("mode.dialog.desktopLeaveStackNote"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("mode.dialog.leaveStackNote"),
+    ).not.toBeInTheDocument();
+  });
+
   it("does nothing on cancel", () => {
     const props = renderExit();
 
