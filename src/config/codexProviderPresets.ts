@@ -4108,7 +4108,8 @@ requires_openai_auth = true`,
     // 官方列 low/medium/high/xhigh/max，无 none/minimal）；GLM-5.3 平台声明
     // low/high/max；DeepSeek V4 Pro 0813 平台未写，退回 DeepSeek 官方
     // low/high/max。每档都含 high，与 config 的 model_reasoning_effort = "high"
-    // 一致，无需 defaultReasoningLevel。窗口取平台模型表；GPT-6.1 Sol 超 272K
+    // 一致，无需 defaultReasoningLevel。窗口取平台模型表，GPT 按
+    // GPT_CONTEXT_WINDOW_CAP 封顶；GPT-6.1 Sol 超 272K
     // 按长上下文价计费（docs.digitalocean.com/products/inference/details/
     // pricing）。Tier 1 / Tier 2 账号只能用 gpt-oss，GPT-6.1 Sol 须 Tier 3+。
     // 首行 = 默认模型，须与 config 的 model 一致
@@ -4116,7 +4117,7 @@ requires_openai_auth = true`,
       {
         model: "openai-gpt-6-1-sol",
         displayName: "GPT-6.1 Sol",
-        contextWindow: 1050000,
+        contextWindow: 272000,
         inputModalities: ["text", "image"],
         reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
       },

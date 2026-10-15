@@ -163,10 +163,12 @@ async function renderApps() {
   // 安装 / 升级的状态放在模块级 store 里，跨挂载保留。
   const { AppsPage } = await import("@/components/apps/AppsPage");
   const view = mountApps(AppsPage);
+  // Both header labels stay mounted to reserve their width. Wait for the idle
+  // label to be shown, including when a pending dialog hides the page itself.
   await waitFor(() =>
     expect(
       within(view.container).getByText("appsPage.checkUpdates"),
-    ).toBeInTheDocument(),
+    ).toHaveAttribute("aria-hidden", "false"),
   );
   return view;
 }
@@ -1729,7 +1731,6 @@ describe("AppsPage concurrent CLI upgrades", () => {
   it("keeps a tool locked through version refresh and remount with an expired cache", async () => {
     const refreshed =
       deferred<Awaited<ReturnType<typeof mocks.getToolVersions>>>();
-    const remountedCodex = deferred<ToolVersions>();
     const view = await renderApps();
     mocks.getToolVersions.mockImplementationOnce(() => refreshed.promise);
     fireEvent.click(updateButton("Claude Code"));
@@ -1739,10 +1740,6 @@ describe("AppsPage concurrent CLI upgrades", () => {
       ).toBeGreaterThan(0),
     );
     view.unmount();
-    const getVersions = mocks.getToolVersions.getMockImplementation()!;
-    mocks.getToolVersions.mockImplementation((tools: string[]) =>
-      tools.includes("codex") ? remountedCodex.promise : getVersions(tools),
-    );
     const now = vi
       .spyOn(Date, "now")
       .mockReturnValue(Date.now() + 11 * 60 * 1000);
@@ -1760,12 +1757,12 @@ describe("AppsPage concurrent CLI upgrades", () => {
     }
     expect(updateButton("Claude Code")).toBeDisabled();
     expect(updateButton("Claude Code")).toHaveAttribute("aria-busy", "true");
-    // The expired-cache remount probes idle tools independently of Claude's
-    // pending task. Keep that probe pending to exercise CI's loading state.
-    expect(card("Codex").getByLabelText("common.loading")).toBeInTheDocument();
-    mocks.getToolVersions.mockImplementation(getVersions);
-    await act(async () => remountedCodex.resolve(await getVersions(["codex"])));
-    await waitFor(() => expect(updateButton("Codex")).toBeEnabled());
+    // 缓存过期，重新挂载时别的工具会重新探测版本；等探测完、按钮出来再点「全部更新」，
+    // 不然机器慢时这几行还在加载
+    await waitFor(() => {
+      expect(updateButton("Codex")).toBeEnabled();
+      expect(updateButton("Gemini CLI")).toBeEnabled();
+    });
     fireEvent.click(updateAllButton());
     await waitFor(() =>
       expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(3),

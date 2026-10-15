@@ -135,7 +135,7 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
     {
       id: "gpt-5.6-sol",
       name: "GPT-5.6 Sol",
-      contextLimit: 400000,
+      contextLimit: 272000,
       outputLimit: 128000,
       modalities: { input: ["text", "image"], output: ["text"] },
       variants: {
@@ -545,7 +545,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
@@ -835,7 +835,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
         "moonshotai/kimi-k3": {
@@ -917,7 +917,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
@@ -1117,7 +1117,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
@@ -1392,7 +1392,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
@@ -1425,7 +1425,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
         },
       },
     },
@@ -1677,19 +1677,19 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-sol": {
           name: "GPT-6 Sol",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
         "gpt-6-luna": {
           name: "GPT-6 Luna",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
@@ -1724,13 +1724,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-sol": {
           name: "GPT-6 Sol",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
@@ -1763,7 +1763,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
@@ -1827,7 +1827,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
@@ -3484,13 +3484,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-sol": {
           name: "GPT-6 Sol",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
