@@ -4192,7 +4192,6 @@
       "exited": "Back to direct: {{app}} now connects to {{provider}} directly.",
       "defaultRemembered": "{{provider}} will be the default provider once you switch to Aggregation.",
       "restartHint": " Restart {{app}} to apply.",
-      "undo": "Undo",
       "failed": "Couldn't switch: {{detail}}"
     },
     "dialog": {
@@ -4213,7 +4212,12 @@
       "stackNoteNoFailover": "Aggregation has no failover. The queue and its settings are kept and come back with routing.",
       "stackNoteRestartCodex": "Restart {{app}} to see the aggregated models; quit the desktop app completely and reopen it.",
       "stackSubagentLead": "Sub-agents follow the main model by default; you can also pick an aggregated model (change it any time later in Aggregation settings).",
-      "stackToRouteNote": "Aggregated models are withdrawn from /model (the list is kept); a selected aggregated model must be changed back to a regular one.",
+      "leaveStackNote": "The ccs- aggregated models disappear from /model. The aggregation list is kept and they come back when you switch to aggregation again. If you're using one of them, pick a regular model in /model.",
+      "exitTitle": "Switch {{app}} from “{{from}}” back to direct?",
+      "exitLead": "{{app}} will connect to {{provider}} directly; requests no longer go through CC Switch.",
+      "exitNoteFile": "Rewrites the address and key in {{file}} back to {{provider}}'s; other settings are untouched.",
+      "exitNoteRouteKept": "The routing target, failover queue and settings are kept and come back the next time you start routing.",
+      "confirmDirect": "Back to direct",
       "confirmRoute": "Start routing",
       "confirmStack": "Switch to Aggregation",
       "needsRouteTitle": "{{provider}} needs routing",

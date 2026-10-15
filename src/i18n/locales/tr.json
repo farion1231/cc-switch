@@ -4140,7 +4140,6 @@
       "exited": "Direkt olarak geri dön: {{app}} artık doğrudan {{provider}}'ye bağlanıyor.",
       "defaultRemembered": "Birleştirme'ya geçtiğinizde {{provider}} varsayılan sağlayıcı olacaktır.",
       "restartHint": "Uygulamak için {{app}}'yi yeniden başlatın.",
-      "undo": "Geri al",
       "failed": "Geçiş yapılamadı: {{detail}}"
     },
     "dialog": {
@@ -4160,7 +4159,7 @@
       "stackNoteEmpty": "Henüz başka sağlayıcı eklenmediğinden yalnızca varsayılan kullanılabilir. Daha sonra Birleştirme sekmesine daha fazlasını ekleyebilirsiniz.",
       "stackNoteNoFailover": "Birleştirmenın yedek sağlayıcıya geçiş özelliği yoktur. Kuyruk ve ayarları tutulur ve yönlendirme ile geri gelir.",
       "stackNoteRestartCodex": "Toplu modelleri görmek için {{app}}'yi yeniden başlatın; masaüstü uygulamasından tamamen çıkın ve yeniden açın.",
-      "stackToRouteNote": "Toplu modeller /model'den çıkarılır (liste tutulur); seçilen birleştirilmiş modelin normal modele dönüştürülmesi gerekir.",
+      "leaveStackNote": "ccs- ile başlayan birleştirme modelleri /model'den kaybolur. Birleştirme listesi korunur ve birleştirmeye geri döndüğünüzde geri gelir. Bunlardan birini kullanıyorsanız /model'de normal bir model seçin.",
       "confirmRoute": "Yönlendirmeyi başlat",
       "confirmStack": "Birleştirme moduna geç",
       "needsRouteTitle": "{{provider}}'nin yönlendirmeye ihtiyacı var",

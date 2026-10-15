@@ -4193,7 +4193,6 @@
       "exited": "已回到直連：{{app}} 現在直接連線 {{provider}}。",
       "defaultRemembered": "切換到聚合模式後，預設供應商是 {{provider}}。",
       "restartHint": "重新啟動 {{app}} 後生效。",
-      "undo": "復原",
       "failed": "切換失敗：{{detail}}"
     },
     "dialog": {
@@ -4214,7 +4213,12 @@
       "stackNoteNoFailover": "聚合模式不做故障轉移；佇列和設定會保留，回到路由模式後恢復。",
       "stackNoteRestartCodex": "需要重新啟動 {{app}} 才能看到聚合的模型；桌面版要徹底結束後重新開啟。",
       "stackSubagentLead": "子代理預設跟隨主模型，也可以選聚合裡的一個模型（之後在「聚合設定」裡隨時能改）。",
-      "stackToRouteNote": "聚合的模型會從 /model 撤下（名單保留）；已選中的聚合模型需要改回一般模型。",
+      "leaveStackNote": "以 ccs- 開頭的聚合模型會從 /model 裡消失；聚合名單不會刪，切回聚合模式就回來。正在用其中某個的話，要在 /model 裡換回一般模型。",
+      "exitTitle": "把 {{app}} 從「{{from}}」切回直連？",
+      "exitLead": "{{app}} 會直接連線 {{provider}}，請求不再經過 CC Switch。",
+      "exitNoteFile": "會把 {{file}} 裡的位址和金鑰改回 {{provider}} 的，其他設定不動。",
+      "exitNoteRouteKept": "路由目標、故障轉移佇列和設定都會保留，下次開始路由時恢復。",
+      "confirmDirect": "回到直連",
       "confirmRoute": "開始路由",
       "confirmStack": "切換到聚合模式",
       "needsRouteTitle": "{{provider}} 需要路由",

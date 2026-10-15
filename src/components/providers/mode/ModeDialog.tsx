@@ -37,6 +37,8 @@ const CLIENT_FILE: Partial<Record<AppId, string>> = {
 
 export type ModeDialogState =
   | { kind: "enter"; target: Exclude<AppMode, "direct"> }
+  /** 回到直连；`useProviderId` 不为空时回到直连后改用这家 */
+  | { kind: "exit"; useProviderId?: string }
   | { kind: "needsRoute"; providerId: string; reason: string };
 
 const MODE_LABEL: Record<Exclude<AppMode, "direct">, string> = {
@@ -49,7 +51,9 @@ function logDialog(app: AppId, state: ModeDialogState, choice: string) {
   const subject =
     state.kind === "enter"
       ? `进入${MODE_LABEL[state.target]}模式确认框`
-      : `「${state.providerId} 需要路由」确认框`;
+      : state.kind === "exit"
+        ? "回到直连确认框"
+        : `「${state.providerId} 需要路由」确认框`;
   logFrontendInfo(`[MODE] ${app} ${subject}：${choice}`);
 }
 
@@ -58,6 +62,8 @@ interface ModeDialogProps {
   state: ModeDialogState | null;
   active: AppMode;
   providers: Provider[];
+  /** 直连那家：回到直连后默认落到它 */
+  directId: string | null;
   /** 能做路由目标 / 聚合默认的供应商 */
   eligibleIds: string[];
   /** 默认选中：上次的路由目标（聚合里就是默认那家），没有就用直连那家 */
@@ -79,12 +85,14 @@ interface ModeDialogProps {
     pick: string,
     subagent?: StackSubagentValue,
   ) => Promise<void>;
+  /** 回到直连（`useProviderId` 见 `exit` 状态） */
+  onExit: (useProviderId?: string) => Promise<void>;
   /** 对话框 F：仍然直连切换 */
   onSwitchDirect: (providerId: string) => void;
 }
 
 /**
- * 模式切换确认框（B4.4 的 A / C / D / E，以及 F「需要路由」）。确认键 = 入口按钮去掉「…」。
+ * 模式切换确认框（B4.4 的 A / B / C / D / E，以及 F「需要路由」）。确认键 = 入口按钮去掉「…」。
  * 出错时就地显示，不关框。路由到哪家、聚合以哪家为默认都在框里选（进入模式只有这一个入口，
  * 卡片上不再有「从这家开始」的按钮）。
  */
@@ -109,6 +117,8 @@ export function ModeDialog(props: ModeDialogProps) {
         >
           {state.kind === "enter" ? (
             <EnterBody {...props} state={state} onCancel={cancel} />
+          ) : state.kind === "exit" ? (
+            <ExitBody {...props} state={state} onCancel={cancel} />
           ) : (
             <NeedsRouteBody {...props} state={state} onCancel={cancel} />
           )}
@@ -195,7 +205,7 @@ function EnterBody({
             : []),
         ];
   if (active === "stack" && target === "route") {
-    notes.push(t("mode.dialog.stackToRouteNote"));
+    notes.push(t("mode.dialog.leaveStackNote"));
   }
 
   const confirm = async () => {
@@ -324,6 +334,105 @@ function EnterBody({
           {target === "route"
             ? t("mode.dialog.confirmRoute")
             : t("mode.dialog.confirmStack")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ExitBody({
+  app,
+  state,
+  active,
+  providers,
+  directId,
+  onClose,
+  onCancel,
+  onExit,
+}: ModeDialogProps & {
+  state: Extract<ModeDialogState, { kind: "exit" }>;
+  onCancel: () => void;
+}) {
+  const { t } = useTranslation();
+  const appName = APP_DISPLAY_NAME[app];
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const targetId = state.useProviderId ?? directId;
+  const provider =
+    providers.find((p) => p.id === targetId)?.name ?? t("mode.noProvider");
+
+  const notes = [
+    t("mode.dialog.exitNoteFile", { file: CLIENT_FILE[app] ?? "", provider }),
+    active === "stack"
+      ? t("mode.dialog.leaveStackNote")
+      : t("mode.dialog.exitNoteRouteKept"),
+  ];
+
+  const confirm = async () => {
+    if (busy) return;
+    logDialog(app, state, `确认，落到 ${targetId ?? "（无）"}`);
+    setBusy(true);
+    setError(null);
+    try {
+      await onExit(state.useProviderId);
+      onClose();
+    } catch (err) {
+      setError(extractErrorMessage(err) || t("common.unknown"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-1">
+        <DialogTitle className="text-title">
+          {t("mode.dialog.exitTitle", {
+            app: appName,
+            from: t(`mode.names.${active}`),
+          })}
+        </DialogTitle>
+        <DialogDescription className="text-body text-fg-2">
+          {t("mode.dialog.exitLead", { app: appName, provider })}
+        </DialogDescription>
+      </div>
+
+      <ul className="space-y-1.5 rounded-panel bg-subtle px-4 py-3 text-caption text-fg-2">
+        {notes.map((note) => (
+          <li key={note} className="flex gap-2">
+            <span aria-hidden="true">·</span>
+            <span>{note}</span>
+          </li>
+        ))}
+      </ul>
+
+      {error && (
+        <p
+          role="alert"
+          className="rounded-control bg-danger-soft px-3 py-2 text-caption text-danger-text"
+        >
+          {error}
+        </p>
+      )}
+
+      <div className="flex flex-wrap justify-end gap-2 pt-1">
+        <Button
+          variant="neutral"
+          size="regular"
+          autoFocus
+          disabled={busy}
+          onClick={onCancel}
+        >
+          {t("common.cancel")}
+        </Button>
+        <Button
+          variant="direct"
+          size="regular"
+          disabled={busy}
+          onClick={() => void confirm()}
+        >
+          {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          {t("mode.dialog.confirmDirect")}
         </Button>
       </div>
     </div>

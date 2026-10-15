@@ -86,7 +86,7 @@ const modesFor = (app: ProxyAppId): AppMode[] =>
 
 /**
  * 切换式应用的供应商页（v7 S1–S3）：模式行 → 通知槽 → 按查看的模式分区的列表。
- * tab 只负责查看；要生效必须点写明后果的按钮（确认框），回到直连一步完成、可撤销。
+ * tab 只负责查看；要生效必须点写明后果的按钮（确认框），回到直连也一样。
  */
 export function SwitchModePanel({
   app,
@@ -179,15 +179,8 @@ export function SwitchModePanel({
     [queue],
   );
 
-  const previous = { mode: active, routeProviderId: routeId };
-
   const exitAndUse = (provider: Provider) =>
-    void modeActions.exitToDirect({
-      previous,
-      directProviderId: directId,
-      useProviderId: provider.id,
-      providerName: provider.name,
-    });
+    setDialog({ kind: "exit", useProviderId: provider.id });
 
   const queueMove = async (provider: Provider, delta: -1 | 1) => {
     const items = queue ?? [];
@@ -400,13 +393,7 @@ export function SwitchModePanel({
             <Button
               variant="neutral"
               size="compact"
-              onClick={() =>
-                void modeActions.exitToDirect({
-                  previous,
-                  directProviderId: directId,
-                  providerName: nameOf(directId),
-                })
-              }
+              onClick={() => setDialog({ kind: "exit" })}
             >
               {t("mode.notice.backToDirect")}
             </Button>
@@ -520,13 +507,11 @@ export function SwitchModePanel({
             size="regular"
             disabled={modeActions.pending}
             onClick={() =>
-              view === "direct"
-                ? void modeActions.exitToDirect({
-                    previous,
-                    directProviderId: directId,
-                    providerName: nameOf(directId),
-                  })
-                : setDialog({ kind: "enter", target: view })
+              setDialog(
+                view === "direct"
+                  ? { kind: "exit" }
+                  : { kind: "enter", target: view },
+              )
             }
           >
             {cta}
@@ -592,6 +577,7 @@ export function SwitchModePanel({
         state={dialog}
         active={active}
         providers={providerList}
+        directId={directId}
         eligibleIds={eligibleIds}
         defaultPick={routeId ?? directId}
         stackMembers={(stack?.members ?? []).map((member) => ({
@@ -609,6 +595,13 @@ export function SwitchModePanel({
         }
         onClose={() => setDialog(null)}
         onEnter={enterMode}
+        onExit={(useProviderId) =>
+          modeActions.exitToDirect({
+            directProviderId: directId,
+            useProviderId,
+            providerName: nameOf(useProviderId ?? directId),
+          })
+        }
         onSwitchDirect={(providerId) => {
           const provider = providers[providerId];
           if (provider) void onSwitch(provider, { acknowledgedRouting: true });

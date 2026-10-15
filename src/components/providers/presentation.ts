@@ -177,7 +177,7 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
       tone: "outline",
       title: input.routingReason(p),
     }),
-    // 只在直连页上标：那里的「回到直连」一步生效、不写名字，要靠它看出会落到哪家。
+    // 只在直连页上标：不用点开「回到直连」的确认框，在列表里就看得出会落到哪家。
     // 路由页上没有跟直连那家有关的操作，不标
     directWhenDirect: (): CardChip => ({
       key: "direct",

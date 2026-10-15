@@ -4192,7 +4192,6 @@
       "exited": "直接接続に戻しました：{{app}} は {{provider}} に直接接続しています。",
       "defaultRemembered": "集約に切り替えると、{{provider}} が既定のプロバイダーになります。",
       "restartHint": "{{app}} の再起動後に反映されます。",
-      "undo": "元に戻す",
       "failed": "切り替えに失敗しました：{{detail}}"
     },
     "dialog": {
@@ -4213,7 +4212,12 @@
       "stackNoteNoFailover": "集約ではフェイルオーバーしません。キューと設定は保持され、ルーティングに戻すと復元されます。",
       "stackNoteRestartCodex": "{{app}} を再起動すると集約したモデルが表示されます。デスクトップ版は完全に終了してから開き直してください。",
       "stackSubagentLead": "サブエージェントは既定でメインモデルに従います。集約内のモデルを選ぶこともできます（あとから「集約設定」でいつでも変更できます）。",
-      "stackToRouteNote": "集約したモデルは /model から外れます（リストは保持）。選択中の集約したモデルは通常のモデルに戻す必要があります。",
+      "leaveStackNote": "ccs- で始まる集約モデルは /model から消えます。集約リストは残り、集約に戻すと復活します。そのどれかを使用中なら、/model で通常のモデルに切り替えてください。",
+      "exitTitle": "{{app}} を「{{from}}」から直接接続に戻しますか？",
+      "exitLead": "{{app}} は {{provider}} に直接接続し、リクエストは CC Switch を経由しなくなります。",
+      "exitNoteFile": "{{file}} のアドレスとキーを {{provider}} のものに書き戻します。ほかの設定は変わりません。",
+      "exitNoteRouteKept": "ルーティング先、フェイルオーバーのキューと設定は保持され、次にルーティングを開始すると復元されます。",
+      "confirmDirect": "直接接続に戻す",
       "confirmRoute": "ルーティングを開始",
       "confirmStack": "集約に切り替え",
       "needsRouteTitle": "{{provider}} にはルーティングが必要です",
