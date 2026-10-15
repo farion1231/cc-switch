@@ -4114,7 +4114,7 @@
     "installHint": {
       "claude": "安裝時執行官方安裝腳本，失敗時改用 npm",
       "codex": "透過 npm 安裝",
-      "gemini": "透過 npm 安裝",
+      "gemini": "安裝時執行官方安裝腳本（agy）",
       "grok": "透過 npm 安裝",
       "opencode": "安裝時執行官方安裝腳本，失敗時改用 npm",
       "openclaw": "透過 npm 安裝",

@@ -4113,7 +4113,7 @@
     "installHint": {
       "claude": "Installs with the official script, falls back to npm",
       "codex": "Installs with npm",
-      "gemini": "Installs with npm",
+      "gemini": "Installs with the official script (agy)",
       "grok": "Installs with npm",
       "opencode": "Installs with the official script, falls back to npm",
       "openclaw": "Installs with npm",

@@ -121,6 +121,10 @@ const MCODE_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy By
   "irm https://filecdn.minimax.chat/public/install.ps1 | iex",
 )}`;
 
+const AGY_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
+  "irm https://antigravity.google/cli/install.ps1 | iex",
+)}`;
+
 // 与后端 npm_install_command_for("claude") 保持一致：原生依赖和 postinstall 缺一不可，
 // 否则 bin/claude.exe 会保留文本占位文件，在 Windows 上报兼容性错误。
 const CLAUDE_NPM_INSTALL_COMMAND =
@@ -135,8 +139,8 @@ const POSIX_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${posixScriptInstallCommand("https://claude.ai/install.sh")} || ${CLAUDE_NPM_INSTALL_COMMAND}
 # Codex
 npm i -g @openai/codex@latest
-# Gemini CLI
-npm i -g @google/gemini-cli@latest
+# Antigravity CLI (replaces Gemini CLI for individual accounts)
+${posixScriptInstallCommand("https://antigravity.google/cli/install.sh")}
 # Grok Build
 npm i -g @xai-official/grok@latest
 # OpenCode
@@ -154,8 +158,8 @@ const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${CLAUDE_NPM_INSTALL_COMMAND}
 # Codex
 npm i -g @openai/codex@latest
-# Gemini CLI
-npm i -g @google/gemini-cli@latest
+# Antigravity CLI (replaces Gemini CLI for individual accounts)
+${AGY_WINDOWS_INSTALL_COMMAND}
 # Grok Build
 npm i -g @xai-official/grok@latest
 # OpenCode
@@ -176,7 +180,7 @@ export const ONE_CLICK_INSTALL_COMMANDS = isWindows()
 export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   claude: "Claude Code",
   codex: "Codex",
-  gemini: "Gemini CLI",
+  gemini: "Antigravity CLI",
   grok: "Grok Build",
   opencode: "OpenCode",
   openclaw: "OpenClaw",

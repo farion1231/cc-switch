@@ -4113,7 +4113,7 @@
     "installHint": {
       "claude": "公式インストールスクリプトで入れ、失敗したら npm を使います",
       "codex": "npm でインストール",
-      "gemini": "npm でインストール",
+      "gemini": "公式インストールスクリプトでインストール（agy）",
       "grok": "npm でインストール",
       "opencode": "公式インストールスクリプトで入れ、失敗したら npm を使います",
       "openclaw": "npm でインストール",

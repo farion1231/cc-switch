@@ -619,7 +619,7 @@ fn tool_display_name(tool: &str) -> &'static str {
     match tool {
         "claude" => "Claude Code",
         "codex" => "Codex",
-        "gemini" => "Gemini CLI",
+        "gemini" => "Antigravity CLI",
         "grok" => "Grok Build",
         "opencode" => "OpenCode",
         "openclaw" => "OpenClaw",
@@ -660,6 +660,11 @@ const CODEX_INSTALL_UNIX: &str =
 /// 真正的 Python 版本问题盖成 "python command exists in these Python versions"。
 const HERMES_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+/// Antigravity CLI 官方安装器（https://antigravity.google/docs/cli/install）。
+/// 二进制落到 `~/.local/bin/agy`。没有 npm 包，所以不接 npm 兜底。
+/// 已安装时同一条脚本会升级；静默升级优先走 `agy update`。
+const AGY_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://antigravity.google/cli/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 const HERMES_UPDATE_UNIX: &str =
     "hermes update || bash -c 'tmp=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 
@@ -673,6 +678,8 @@ const MCODE_INSTALL_WINDOWS_SCRIPT: &str =
     "irm https://filecdn.minimax.chat/public/install.ps1 | iex";
 #[cfg(target_os = "windows")]
 const CODEX_INSTALL_WINDOWS_SCRIPT: &str = "irm https://chatgpt.com/codex/install.ps1 | iex";
+#[cfg(target_os = "windows")]
+const AGY_INSTALL_WINDOWS_SCRIPT: &str = "irm https://antigravity.google/cli/install.ps1 | iex";
 
 #[cfg(target_os = "windows")]
 fn powershell_encoded_command(script: &str) -> String {
@@ -699,6 +706,19 @@ fn grok_install_windows_command() -> String {
         "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
         powershell_encoded_command(GROK_INSTALL_WINDOWS_SCRIPT)
     )
+}
+
+#[cfg(target_os = "windows")]
+fn agy_install_windows_command() -> String {
+    format!(
+        "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(AGY_INSTALL_WINDOWS_SCRIPT)
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn agy_update_windows_command() -> String {
+    format!("agy update || {}", agy_install_windows_command())
 }
 
 #[cfg(target_os = "windows")]
@@ -835,7 +855,9 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
             "npm i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code",
         ),
         "codex" => Some("npm i -g @openai/codex@latest"),
-        "gemini" => Some("npm i -g @google/gemini-cli@latest"),
+        // 个人版 Gemini CLI 已停服。应用页不再安装旧包；
+        // Antigravity CLI 只有官方安装脚本，没有可作兜底的 npm 包。
+        "gemini" => None,
         "grok" => Some("npm i -g @xai-official/grok@latest"),
         "opencode" => Some("npm i -g opencode-ai@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
@@ -874,7 +896,7 @@ fn npm_install_extra_args(tool: &str) -> &'static str {
 // `cmd.output()` 正是非 TTY，放进来会让 `mcode update || <fallback>` 的兜底永不触发。
 fn official_update_args(tool: &str) -> Option<&'static str> {
     match tool {
-        "claude" | "codex" | "grok" | "hermes" => Some("update"),
+        "claude" | "codex" | "grok" | "hermes" | "gemini" => Some("update"),
         "openclaw" => Some("update --yes"),
         "opencode" => Some("upgrade"),
         _ => None,
@@ -909,6 +931,13 @@ fn tool_action_shell_command_for_shell(
     // xAI's and MiniMax's primary Windows distribution is the official PowerShell
     // installer. Keep npm as the network/policy fallback, matching the POSIX installer chain.
     #[cfg(target_os = "windows")]
+    if tool == "gemini" && matches!(shell, LifecycleCommandShell::WindowsBatch) {
+        return Some(match action {
+            ToolLifecycleAction::Install => agy_install_windows_command(),
+            ToolLifecycleAction::Update => agy_update_windows_command(),
+        });
+    }
+
     if matches!(action, ToolLifecycleAction::Install)
         && matches!(shell, LifecycleCommandShell::WindowsBatch)
     {
@@ -924,6 +953,13 @@ fn tool_action_shell_command_for_shell(
                 shell,
             ));
         }
+    }
+
+    if tool == "gemini" && matches!(shell, LifecycleCommandShell::Posix) {
+        return Some(match action {
+            ToolLifecycleAction::Install => AGY_INSTALL_UNIX.to_string(),
+            ToolLifecycleAction::Update => format!("agy update || {AGY_INSTALL_UNIX}"),
+        });
     }
 
     if tool == "hermes" {
@@ -1195,7 +1231,9 @@ async fn get_single_tool_version_impl(
             fetch_npm_latest_for_tool(&client, "@anthropic-ai/claude-code", tool, local).await
         }
         "codex" => fetch_npm_latest_for_tool(&client, "@openai/codex", tool, local).await,
-        "gemini" => fetch_npm_latest_for_tool(&client, "@google/gemini-cli", tool, local).await,
+        "gemini" => {
+            fetch_github_latest_version(&client, "google-antigravity/antigravity-cli").await
+        }
         "grok" => fetch_npm_latest_for_tool(&client, "@xai-official/grok", tool, local).await,
         "opencode" => {
             if let Some(version) =
@@ -1497,7 +1535,10 @@ const VERSION_PROBE_SENTINEL: &str = "__CCSWITCH_VERSION__";
 /// 不含单引号，可以直接嵌进外层 `'...'`。
 #[cfg_attr(not(windows), allow(dead_code))]
 fn version_probe_payload(tool: &str) -> String {
-    format!("echo {VERSION_PROBE_SENTINEL}; {tool} --version")
+    format!(
+        "echo {VERSION_PROBE_SENTINEL}; {} --version",
+        tool_executable_name(tool)
+    )
 }
 
 /// WSL 未指定 shell 时依次尝试的 flag：交互式初始化（nvm 等写在 rc 里）优先。
@@ -1580,7 +1621,7 @@ fn try_get_version(tool: &str) -> ShellProbe {
         let flag = default_flag_for_shell(&shell);
         Command::new(shell)
             .arg(flag)
-            .arg(format!("{tool} --version"))
+            .arg(format!("{} --version", tool_executable_name(tool)))
             .output()
     };
 
@@ -2073,13 +2114,27 @@ fn mcode_extra_search_paths(
     paths.into_iter().collect()
 }
 
+/// 版本探测与安装枚举用的可执行文件名。
+///
+/// Gemini CLI 个人版已在 2026-06-18 停止服务，继任者是 Antigravity CLI。
+/// 官方二进制叫 `agy`（`~/.local/bin/agy`，Windows 在 `%LOCALAPPDATA%\agy\bin`），
+/// 不是旧 npm 包的 `gemini`。应用页这一行继续用内部 id `gemini`，但探测、安装
+/// 和升级都对准 `agy`。供应商、MCP 与 `~/.gemini` 配置仍走原来的 Gemini 路径。
+fn tool_executable_name(tool: &str) -> &'static str {
+    match tool {
+        "gemini" => "agy",
+        _ => tool,
+    }
+}
+
 fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
+    let name = tool_executable_name(tool);
     #[cfg(target_os = "windows")]
     {
-        let extensionless = dir.join(tool);
+        let extensionless = dir.join(name);
         let mut candidates = vec![
-            dir.join(format!("{tool}.cmd")),
-            dir.join(format!("{tool}.exe")),
+            dir.join(format!("{name}.cmd")),
+            dir.join(format!("{name}.exe")),
         ];
         if windows_runnable_sibling_for_extensionless_tool(&extensionless).is_none() {
             candidates.push(extensionless);
@@ -2089,7 +2144,7 @@ fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf>
 
     #[cfg(not(target_os = "windows"))]
     {
-        vec![dir.join(tool)]
+        vec![dir.join(name)]
     }
 }
 
@@ -2380,6 +2435,12 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
                     &mut search_paths,
                     local_data.join("Programs").join("claude"),
                 );
+            }
+            if tool == "gemini" {
+                // Antigravity CLI 官方安装器把 `agy` 放到这里
+                // （https://antigravity.google/docs/cli/install）。安装器会改用户
+                // PATH，但应用内重启后的进程经常看不到用户 PATH（#6061）。
+                push_unique_path(&mut search_paths, local_data.join("agy").join("bin"));
             }
         }
         if let Some(appdata) = dirs::data_dir() {
@@ -2840,7 +2901,10 @@ fn resolve_path_default(
     let flag = default_flag_for_shell(&shell);
     let mut cmd = Command::new(shell);
     cmd.arg(flag)
-        .arg(format!("command -v {tool}"))
+        .arg(format!(
+            "command -v {}",
+            tool_executable_name(tool)
+        ))
         // 改 spawn 后 stdin 不再像 output() 那样默认置 null，须显式关闭：
         // 继承来的 stdin 可能是终端/管道，交互式 rc 里的读操作会永久阻塞。
         .stdin(Stdio::null())
@@ -2883,7 +2947,7 @@ fn windows_path_lookup_command(
         // `$PATH:pattern` is where.exe's documented environment-variable
         // search form. Unlike a bare pattern, it does not search the current
         // directory before PATH.
-        .arg(format!("$PATH:{tool}"))
+        .arg(format!("$PATH:{}", tool_executable_name(tool)))
         .env("PATH", effective_path)
         .creation_flags(CREATE_NO_WINDOW)
         .stdout(Stdio::piped())
@@ -3074,7 +3138,9 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
     match tool {
         "claude" => Some("@anthropic-ai/claude-code"),
         "codex" => Some("@openai/codex"),
-        "gemini" => Some("@google/gemini-cli"),
+        // Antigravity CLI 不走 npm。留着旧包名会让锚定升级对 `agy`
+        // 执行安装已停服的 Gemini CLI。
+        "gemini" => None,
         "grok" => Some("@xai-official/grok"),
         "opencode" => Some("opencode-ai"),
         "openclaw" => Some("openclaw"),
@@ -3605,8 +3671,16 @@ fn package_manager_anchored_command_from_paths(
 fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) -> Option<String> {
     let real_lower = real_target.to_ascii_lowercase();
 
-    if tool == "hermes" {
-        return anchored_official_update_command(tool, bin_path);
+    if tool == "hermes" || tool == "gemini" {
+        let update = anchored_official_update_command(tool, bin_path)?;
+        if tool == "gemini" {
+            return Some(chain_update_commands(
+                update,
+                AGY_INSTALL_UNIX.to_string(),
+                LifecycleCommandShell::Posix,
+            ));
+        }
+        return Some(update);
     }
     if tool == "claude"
         && (real_lower.contains("/.local/share/claude/")
@@ -3720,6 +3794,10 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
 fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) -> Option<String> {
     if tool == "hermes" {
         return anchored_official_update_command(tool, bin_path);
+    }
+    if tool == "gemini" {
+        let update = anchored_official_update_command(tool, bin_path)?;
+        return Some(format!("{update} || {}", agy_install_windows_command()));
     }
     if tool == "grok" && is_grok_native_install(bin_path, real_target) {
         return Some(grok_native_update_command(
@@ -4138,12 +4216,13 @@ fn build_wsl_tool_command(
     args: &[&str],
     deadline: Option<CommandDeadline>,
 ) -> Result<String, String> {
-    let invocation = std::iter::once(tool)
+    let bin = tool_executable_name(tool);
+    let invocation = std::iter::once(bin)
         .chain(args.iter().copied())
         .collect::<Vec<_>>()
         .join(" ");
     let command = format!(
-        "for flag in -lic -lc -c; do if \"${{SHELL:-sh}}\" \"$flag\" 'command -v {tool}' >/dev/null 2>&1; then exec \"${{SHELL:-sh}}\" \"$flag\" '{invocation}'; fi; done; exit 127"
+        "for flag in -lic -lc -c; do if \"${{SHELL:-sh}}\" \"$flag\" 'command -v {bin}' >/dev/null 2>&1; then exec \"${{SHELL:-sh}}\" \"$flag\" '{invocation}'; fi; done; exit 127"
     );
 
     let Some(deadline) = deadline else {
@@ -4372,6 +4451,8 @@ fn posix_install_command_for(tool: &str) -> String {
         "opencode" => installer_with_npm_fallback(OPENCODE_INSTALL_UNIX, tool),
         "mcode" => installer_with_npm_fallback(MCODE_INSTALL_UNIX, tool),
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
+        // 没有 npm 包。已装时官方脚本也会升级，但静默升级优先走 `agy update`。
+        "gemini" => AGY_INSTALL_UNIX.to_string(),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
     }
 }
@@ -6704,6 +6785,23 @@ mod tests {
             }
         }
 
+        fn agy_native_binary_updates_in_place() {
+            // `agy` 是官方安装器落下的原生二进制，升级必须写回这一处，
+            // 不能另装一份已停服的 npm Gemini CLI。
+            let dir = tempfile::tempdir().unwrap();
+            let agy = installed(&dir, ".local/bin/agy", &MACH_O_64, true);
+            let command = match resolve_update_command("gemini", &[agy]) {
+                UpdateCommand::Anchored(command) => command,
+                other => panic!("expected an anchored agy update, got {other:?}"),
+            };
+            assert!(command.contains("agy update"), "{command}");
+            assert!(
+                command.contains("https://antigravity.google/cli/install.sh"),
+                "{command}"
+            );
+            assert!(!command.contains("npm"), "{command}");
+        }
+
         #[test]
         fn native_binary_outside_node_modules_is_unmanaged() {
             let dir = tempfile::tempdir().unwrap();
@@ -7557,20 +7655,21 @@ mod tests {
         }
 
         #[test]
-        fn gemini_homebrew_formula_uses_brew_upgrade() {
-            // /opt/homebrew/bin/gemini → Cellar/gemini-cli/...:是 brew formula 而非 npm 全局包,
-            // 且 formula 名(gemini-cli) ≠ npm 包名(@google/gemini-cli)。
-            // **brew 与 formula 入口同目录**,用 `<dir>/brew` 绝对路径调用,避免 GUI
-            // 非登录 `bash -c` 时 PATH 没有 /opt/homebrew/bin 导致 `brew: not found`。
+        fn gemini_row_updates_agy_even_if_an_old_formula_path_is_reported() {
+            // 应用页这一行现在只管理 Antigravity CLI。即便探测记录里还留着旧
+            // Homebrew formula 路径，也不能再 `brew upgrade gemini-cli`。
             let cmd = anchored_command_from_paths(
                 "gemini",
-                "/opt/homebrew/bin/gemini",
+                "/Users/me/.local/bin/agy",
                 "/opt/homebrew/Cellar/gemini-cli/0.13.0/libexec/lib/node_modules/@google/gemini-cli/dist/index.js",
             );
-            assert_eq!(
-                cmd.as_deref(),
-                Some("/opt/homebrew/bin/brew upgrade gemini-cli")
+            let cmd = cmd.expect("agy update should still be anchored");
+            assert!(
+                cmd.starts_with("/Users/me/.local/bin/agy update"),
+                "{cmd}"
             );
+            assert!(!cmd.contains("brew"), "{cmd}");
+            assert!(!cmd.contains("gemini-cli"), "{cmd}");
         }
 
         #[test]
@@ -7617,18 +7716,16 @@ mod tests {
         }
 
         #[test]
-        fn gemini_nvm_anchors_to_npm_without_cli_update() {
+        fn agy_install_anchors_to_agy_update_not_npm() {
             let cmd = anchored_command_from_paths(
                 "gemini",
-                "/Users/me/.nvm/versions/node/v22.14.0/bin/gemini",
-                "/Users/me/.nvm/versions/node/v22.14.0/lib/node_modules/@google/gemini-cli/dist/index.js",
+                "/Users/me/.local/bin/agy",
+                "/Users/me/.local/bin/agy",
             );
-            assert_eq!(
-                cmd.as_deref(),
-                Some(
-                    "PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @google/gemini-cli@latest"
-                )
-            );
+            let cmd = cmd.expect("agy should have an anchored update");
+            assert!(cmd.starts_with("/Users/me/.local/bin/agy update || "), "{cmd}");
+            assert!(cmd.contains("https://antigravity.google/cli/install.sh"), "{cmd}");
+            assert!(!cmd.contains("npm") && !cmd.contains("gemini-cli"), "{cmd}");
         }
 
         #[test]
@@ -8097,14 +8194,15 @@ mod tests {
         #[test]
         fn brew_path_with_space_is_quoted() {
             // brew 分支用 `<bin_path 同目录>/brew`,目录含空格时同样要引号包裹。
+            // 用仍由 Homebrew formula 管理的 OpenCode，不再用已停服的 gemini-cli。
             let cmd = anchored_command_from_paths(
-                "gemini",
-                "/opt/my brew/bin/gemini",
-                "/opt/my brew/Cellar/gemini-cli/0.13.0/libexec/lib/node_modules/@google/gemini-cli/dist/index.js",
+                "opencode",
+                "/opt/my brew/bin/opencode",
+                "/opt/my brew/Cellar/opencode/1.0.0/bin/opencode",
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("'/opt/my brew/bin/brew' upgrade gemini-cli")
+                Some("'/opt/my brew/bin/brew' upgrade opencode")
             );
         }
 
@@ -8539,12 +8637,22 @@ mod tests {
         }
 
         #[test]
-        fn gemini_install_keeps_static_npm() {
-            // Google 文档同时支持 brew/npm,但本表保持与 update fallback 一致的 npm。
-            // 用户若已装 brew gemini-cli,update 路径的锚定会识别 formula → brew upgrade,
-            // 所以 install 端不强行替用户决策"用 brew 还是 npm"。
+        fn gemini_install_uses_official_agy_script() {
+            // 个人版 Gemini CLI 已停服。应用页安装 Antigravity CLI 官方脚本，
+            // 二进制是 `agy`，没有 npm 兜底。
             let cmd = install_command_for("gemini");
-            assert_eq!(cmd, "npm i -g @google/gemini-cli@latest");
+            assert!(
+                cmd.contains("https://antigravity.google/cli/install.sh"),
+                "should use the official Antigravity installer: {cmd}"
+            );
+            assert!(
+                !cmd.contains("npm") && !cmd.contains("@google/gemini-cli"),
+                "must not install the retired Gemini CLI package: {cmd}"
+            );
+            assert!(
+                !cmd.contains('|'),
+                "official installer should avoid pipe: {cmd}"
+            );
         }
 
         #[test]
@@ -8611,9 +8719,9 @@ mod tests {
             assert!(!static_fallback_command("codex").contains("codex update"));
             assert_eq!(
                 static_fallback_command("gemini"),
-                "npm i -g @google/gemini-cli@latest"
+                format!("agy update || {AGY_INSTALL_UNIX}")
             );
-            assert!(!static_fallback_command("gemini").contains("gemini update"));
+            assert!(!static_fallback_command("gemini").contains("gemini-cli"));
             assert_eq!(
                 static_fallback_command("grok"),
                 "npm i -g @xai-official/grok@latest"
