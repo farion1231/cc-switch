@@ -34,6 +34,10 @@ import { decodeBase64Utf8 } from "@/lib/utils/base64";
 import { Switch } from "@/components/ui/switch";
 import { getAppLabel, isAdditiveAppId } from "@/config/appConfig";
 import { normalizeIconDataUri } from "@/utils/customIcon";
+import {
+  CODING_PLAN_PROVIDERS,
+  detectCodingPlanProvider,
+} from "@/config/codingPlanProviders";
 
 const API_FORMAT_LABELS: Record<
   NonNullable<DeepLinkImportRequest["apiFormat"]>,
@@ -83,10 +87,6 @@ export function DeepLinkImportDialog() {
   const [isImporting, setIsImporting] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [activateAfterImport, setActivateAfterImport] = useState(false);
-
-  useEffect(() => {
-    if (request) setActivateAfterImport(initialActivation(request));
-  }, [request]);
 
   // 链接带 iconUrl 时，确认框一打开就下载图标并直接预览，不再单独询问；
   // 导入时等这次下载结束（最多几秒），拿到的图标随请求交给后端，后端保存时再完整校验
@@ -168,6 +168,8 @@ export function DeepLinkImportDialog() {
         }
       }
       if (disposed) return false;
+      // 与请求一起初始化，避免弹窗先显示旧开关状态，再由 effect 更新。
+      setActivateAfterImport(initialActivation(next));
       setRequest(next);
       setIsOpen(true);
       return true;
@@ -369,9 +371,23 @@ export function DeepLinkImportDialog() {
       ? `${request.apiKey.substring(0, 4)}${"*".repeat(20)}`
       : "****";
 
-  // 导入后用量查询是否启用：链接写了 usageEnabled 就照办，没写时带脚本即启用（与后端一致）
+  // 主地址是套餐地址且链接没带脚本时，按套餐额度查询（与后端 `link_coding_plan_provider`
+  // 一致：所有应用都认，只有 ZenMux 限 Claude）
+  const detectedCodingPlan = detectCodingPlanProvider(
+    request?.endpoint?.split(",")[0]?.trim(),
+  );
+  const codingPlan =
+    !request?.usageScript &&
+    detectedCodingPlan &&
+    (detectedCodingPlan !== "zenmux" || request?.app === "claude")
+      ? CODING_PLAN_PROVIDERS.find((cp) => cp.id === detectedCodingPlan)
+      : undefined;
+
+  // 导入后用量查询是否启用：链接写了 usageEnabled 就照办；没写时带脚本或是套餐地址即启用
+  // （与后端一致）
   const usageWillBeEnabled =
-    request?.usageEnabled ?? Boolean(request?.usageScript);
+    request?.usageEnabled ??
+    (Boolean(request?.usageScript) || Boolean(codingPlan));
 
   // Check if config file is present
   const hasConfigFile = !!(request?.config || request?.configUrl);
@@ -771,6 +787,7 @@ export function DeepLinkImportDialog() {
                     情况下把凭据写进供应商配置——展示是用户同意机制的承重部分。
                   */}
                   {(request.usageScript ||
+                    codingPlan ||
                     request.usageEnabled !== undefined ||
                     request.usageApiKey ||
                     request.usageBaseUrl ||
@@ -779,6 +796,7 @@ export function DeepLinkImportDialog() {
                     request.usageAutoInterval !== undefined) && (
                     <div className="space-y-3 pt-2 border-t border-border">
                       {(request.usageScript ||
+                        codingPlan ||
                         request.usageEnabled !== undefined) && (
                         <div className="grid grid-cols-3 items-center gap-4">
                           <div className="font-medium text-sm text-fg-2">
@@ -788,8 +806,8 @@ export function DeepLinkImportDialog() {
                           </div>
                           <div className="col-span-2 text-sm">
                             {/*
-                            与后端 `usage_enabled.unwrap_or(!code.is_empty())` 严格对齐：
-                            链接写了就照办，没写时带脚本即启用。徽章必须显示实际会发生
+                            与后端 `build_provider_meta` 严格对齐：链接写了就照办，
+                            没写时带脚本或是套餐地址即启用。徽章必须显示实际会发生
                             的事，不能比后端更乐观，也不能更保守。
                           */}
                             <span
@@ -807,6 +825,14 @@ export function DeepLinkImportDialog() {
                                     defaultValue: "未启用",
                                   })}
                             </span>
+                            {codingPlan && (
+                              <span className="ml-2 text-xs text-fg-2">
+                                {t("deeplink.usageCodingPlan", {
+                                  name: codingPlan.label,
+                                  defaultValue: "套餐额度：{{name}}",
+                                })}
+                              </span>
+                            )}
                           </div>
                         </div>
                       )}
