@@ -27,6 +27,13 @@ describe("syncLanguageFromSettings", () => {
     expect(localStorage.getItem("language")).toBe("zh-TW");
   });
 
+  it("restores Turkish and its translated labels from saved settings", async () => {
+    await i18n.changeLanguage("en");
+    syncLanguageFromSettings("tr");
+    expect(i18n.language).toBe("tr");
+    expect(localStorage.getItem("language")).toBe("tr");
+  });
+
   it("leaves the current language alone when nothing is saved", async () => {
     await i18n.changeLanguage("en");
 

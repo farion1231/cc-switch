@@ -11,6 +11,7 @@ const events = vi.hoisted(() => ({ listen: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: events.listen }));
 
 import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
+import { usageKeys } from "@/lib/query/usage";
 
 const key = ["usage", "summary", "all"] as const;
 let client: QueryClient;
@@ -81,6 +82,29 @@ function observeDeferredQuery(seed = true) {
 }
 
 describe("useUsageEventBridge", () => {
+  it("invalidates only usage caches on successive backend events until unmount", async () => {
+    client.setQueryData(key, 0);
+    const unrelatedKey = ["providers", "claude"];
+    client.setQueryData(unrelatedKey, []);
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const bridge = mountBridge();
+
+    await act(async () => emit());
+    expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(unrelatedKey)?.isInvalidated).toBe(false);
+    await act(async () => emit());
+    expect(invalidate).toHaveBeenCalledTimes(2);
+    expect(invalidate).toHaveBeenCalledWith(
+      { queryKey: usageKeys.all },
+      { cancelRefetch: false },
+    );
+
+    bridge.unmount();
+    act(() => emit());
+    expect(invalidate).toHaveBeenCalledTimes(2);
+    expect(off).toHaveBeenCalledTimes(1);
+  });
+
   it("coalesces a burst into one running query and one fresh trailing query", async () => {
     const work = observeDeferredQuery();
     mountBridge();
@@ -138,7 +162,7 @@ describe("useUsageEventBridge", () => {
     expect(work.queryFn).toHaveBeenCalledTimes(3);
   });
 
-  it("joins a running poll without restarting its uncancellable backend work", async () => {
+  it("joins an external refresh without restarting its uncancellable backend work", async () => {
     const work = observeDeferredQuery();
     mountBridge();
     const poll = client.refetchQueries({ queryKey: key });

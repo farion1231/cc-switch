@@ -3,15 +3,20 @@ import { initReactI18next } from "react-i18next";
 
 import en from "./locales/en.json";
 import ja from "./locales/ja.json";
+import tr from "./locales/tr.json";
 import zh from "./locales/zh.json";
 import zhTW from "./locales/zh-TW.json";
 
-type Language = "zh" | "zh-TW" | "en" | "ja";
+type Language = "zh" | "zh-TW" | "en" | "ja" | "tr";
 
 const DEFAULT_LANGUAGE: Language = "zh";
 
 const isLanguage = (value: unknown): value is Language =>
-  value === "zh" || value === "zh-TW" || value === "en" || value === "ja";
+  value === "zh" ||
+  value === "zh-TW" ||
+  value === "en" ||
+  value === "ja" ||
+  value === "tr";
 
 const getInitialLanguage = (): Language => {
   if (typeof window !== "undefined") {
@@ -52,14 +57,20 @@ const getInitialLanguage = (): Language => {
     return "ja";
   }
 
+  if (navigatorLang?.startsWith("tr")) {
+    return "tr";
+  }
+
   if (navigatorLang?.startsWith("en")) {
     return "en";
   }
 
-  return DEFAULT_LANGUAGE;
+  // 认得出系统语言、但界面没有这种语言（德、法、韩…）时用英文：英文大多数人能读，简中几乎不能
+  return navigatorLang ? "en" : DEFAULT_LANGUAGE;
 };
 
 const resources = {
+  tr: { translation: tr },
   en: {
     translation: en,
   },
