@@ -204,15 +204,18 @@ describe("ProviderList drag collision", () => {
 
   it.each([
     ["a", 110, "a"], // Past the old nearest-center threshold, still before B.
-    ["a", 167, "a"],
-    ["a", 168, "b"],
-    ["c", 230, "c"], // Upward drag must also reach the tall card's center.
-    ["c", 169, "c"],
-    ["c", 168, "b"],
-    ["b", 250, "b"], // The expanded card must not displace a compact card early.
-    ["b", 306, "c"],
-    ["c", 350, "c"], // Equal-height cards use the same crossing threshold.
-    ["c", 374, "d"],
+    ["a", 137, "a"],
+    ["a", 138, "b"], // Bottom edge reaches B's center at 168.
+    ["c", 230, "c"],
+    ["c", 199, "c"],
+    ["c", 198, "b"], // Top edge reaches B's center at 168.
+    ["b", 168, "b"], // No movement keeps the expanded card in place.
+    ["b", 205, "b"],
+    ["b", 206, "c"], // Tall card crosses C after only 38px of downward travel.
+    ["b", 131, "b"],
+    ["b", 130, "a"], // Upward travel also uses the leading edge.
+    ["c", 343, "c"],
+    ["c", 344, "d"], // Equal-height cards use the same edge threshold.
   ])("dragging %s to center %i selects %s", (active, center, expected) => {
     expect(collisionAt(active, center)).toBe(expected);
   });
@@ -220,11 +223,12 @@ describe("ProviderList drag collision", () => {
   it("selects the last crossed card during a fast drag across several cards", () => {
     expect(collisionAt("a", 340)).toBe("c");
     expect(collisionAt("a", 450)).toBe("d");
+    expect(collisionAt("b", 274)).toBe("d");
     expect(collisionAt("d", 20)).toBe("a");
   });
 
   it("restores the original position when the pointer reverses before dropping", () => {
-    expect([180, 165, 40].map((center) => collisionAt("a", center))).toEqual([
+    expect([150, 137, 40].map((center) => collisionAt("a", center))).toEqual([
       "b",
       "a",
       "a",
@@ -232,8 +236,8 @@ describe("ProviderList drag collision", () => {
   });
 
   it("uses viewport measurements consistently while scrolling", () => {
-    expect(collisionAt("a", 67, { scroll: 100 })).toBe("a");
-    expect(collisionAt("a", 68, { scroll: 100 })).toBe("b");
+    expect(collisionAt("a", 37, { scroll: 100 })).toBe("a");
+    expect(collisionAt("a", 38, { scroll: 100 })).toBe("b");
   });
 
   it("keeps keyboard sorting independent of the pointer crossing threshold", () => {
@@ -401,6 +405,73 @@ describe("ProviderList Component", () => {
     ).toBeInTheDocument();
     expect(screen.getByTestId("queueRemove-b")).toBeInTheDocument();
     expect(screen.getByTestId("queueAdd-a")).toBeInTheDocument();
+  });
+
+  it("renders queue priorities and moves in drag order while saved order is stale", () => {
+    const providerA = createProvider({ id: "a", name: "Alpha", sortIndex: 0 });
+    const providerB = createProvider({ id: "b", name: "Beta", sortIndex: 1 });
+    const providerC = createProvider({ id: "c", name: "Gamma", sortIndex: 2 });
+    const other = createProvider({ id: "other", name: "Other", sortIndex: 3 });
+    const mode = switchMode({
+      active: "route",
+      view: "route",
+      routeId: "a",
+      failoverOn: true,
+      queue: ["a", "b", "missing", "c"],
+    });
+    useDragSortMock.mockReturnValue({
+      // The optimistic order leads both saved sortIndex and the queue response.
+      sortedProviders: [providerB, other, providerA, providerC],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        providers={{ a: providerA, b: providerB, c: providerC, other }}
+        appId="claude"
+        switchMode={mode}
+      />,
+    );
+
+    expect(
+      screen
+        .getAllByTestId(/^provider-card-/)
+        .map((card) => card.dataset.testid),
+    ).toEqual([
+      "provider-card-b",
+      "provider-card-a",
+      "provider-card-c",
+      "provider-card-other",
+    ]);
+    for (const [index, id] of ["b", "a", "c"].entries()) {
+      expect(lastProps(id).presentation.chips).toContainEqual(
+        expect.objectContaining({ key: "priority", label: `P${index + 1}` }),
+      );
+    }
+    expect(lastProps("b").presentation.move.onUp).toBeUndefined();
+    expect(lastProps("c").presentation.move.onDown).toBeUndefined();
+    expect(screen.getByTestId("status-a")).toHaveTextContent(
+      "providerCard.status.routing",
+    );
+
+    // Filtering hides cards without changing their full-queue priorities/moves.
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Search providers" }),
+      {
+        target: { value: "Alpha" },
+      },
+    );
+    expect(screen.getAllByTestId(/^provider-card-/)).toHaveLength(1);
+    expect(lastProps("a").presentation.chips).toContainEqual(
+      expect.objectContaining({ key: "priority", label: "P2" }),
+    );
+    lastProps("a").presentation.move.onUp();
+    lastProps("a").presentation.move.onDown();
+    expect(mode.actions.queueMove).toHaveBeenNthCalledWith(1, providerA, -1);
+    expect(mode.actions.queueMove).toHaveBeenNthCalledWith(2, providerA, 1);
   });
 
   it("uses the additive layout for apps that keep several providers", async () => {

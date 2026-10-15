@@ -76,23 +76,31 @@ export const providerDragCollision: CollisionDetection = (args) => {
   if (!pointerCoordinates || !activeRect) return closestCenter(args);
 
   const originCenter = activeRect.top + activeRect.height / 2;
-  const dragCenter = collisionRect.top + collisionRect.height / 2;
+  const movingDown = collisionRect.top > activeRect.top;
+  const leadingEdge = movingDown ? collisionRect.bottom : collisionRect.top;
+  let targetId = active.id;
+  let targetCenter = originCenter;
 
-  return closestCenter({
-    ...args,
-    droppableContainers: args.droppableContainers.filter(({ id }) => {
-      if (id === active.id) return true;
-      const rect = droppableRects.get(id);
-      if (!rect) return false;
+  for (const { id } of args.droppableContainers) {
+    if (id === active.id) continue;
+    const rect = droppableRects.get(id);
+    if (!rect) continue;
 
-      // Wait until the dragged center crosses a neighbor's original center.
-      // Using untransformed rects keeps the threshold stable as neighbors move.
-      const center = rect.top + rect.height / 2;
-      return dragCenter > originCenter
-        ? center > originCenter && center <= dragCenter
-        : center < originCenter && center >= dragCenter;
-    }),
-  });
+    // Cross each neighbor's original center with the leading edge so expanded
+    // cards need no extra travel. Keep the furthest crossed target instead of
+    // comparing card centers, which would still delay swaps for tall cards.
+    const center = rect.top + rect.height / 2;
+    if (
+      movingDown
+        ? center > targetCenter && center <= leadingEdge
+        : center < targetCenter && center >= leadingEdge
+    ) {
+      targetId = id;
+      targetCenter = center;
+    }
+  }
+
+  return [{ id: targetId }];
 };
 
 interface ProviderListProps {
@@ -341,15 +349,17 @@ export function ProviderList({
 
   const sections = useMemo<ProviderSection[]>(() => {
     if (switchMode) {
-      // 队列按没过滤的全部供应商剔掉已不存在的 id：序号和上下移要按完整队列算，
-      // 搜索只决定画哪些卡
-      const known = new Set(sortedProviders.map((p) => p.id));
+      // 队列和拖拽共用本地顺序，保存期间也立即显示新位置。序号和上下移按
+      // 没过滤的完整队列算，搜索只决定画哪些卡，同时剔掉已不存在的 id。
+      const queueIds = new Set(switchMode.queue);
       return buildSwitchSections({
         ...switchMode,
         app: appId,
         t,
         providers: filteredProviders,
-        queue: switchMode.queue.filter((id) => known.has(id)),
+        queue: sortedProviders
+          .filter((provider) => queueIds.has(provider.id))
+          .map((provider) => provider.id),
       });
     }
     const defaultPrimary = openclawDefaultModel?.primary ?? "";
