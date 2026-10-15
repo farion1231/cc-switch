@@ -16,6 +16,18 @@ pub struct CostBreakdown {
     pub total_cost: Decimal,
 }
 
+/// 提示词（全部输入，含缓存读写）超过这个长度时，分档模型整条请求改用高价档
+pub const PROMPT_TIER_THRESHOLD_TOKENS: u64 = 100_000;
+
+/// 每百万 tokens 的四项单价
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rates {
+    pub input: Decimal,
+    pub output: Decimal,
+    pub cache_read: Decimal,
+    pub cache_creation: Decimal,
+}
+
 /// 模型定价信息
 #[derive(Debug, Clone)]
 pub struct ModelPricing {
@@ -23,6 +35,8 @@ pub struct ModelPricing {
     pub output_cost_per_million: Decimal,
     pub cache_read_cost_per_million: Decimal,
     pub cache_creation_cost_per_million: Decimal,
+    /// 提示词超过 [`PROMPT_TIER_THRESHOLD_TOKENS`] 时的单价；None 表示不分档
+    pub above_100k: Option<Rates>,
 }
 
 /// 成本计算器
@@ -88,13 +102,16 @@ impl CostCalculator {
             usage.input_tokens
         };
 
+        let rates = pricing.rates_for_prompt(
+            u64::from(billable_input_tokens)
+                + u64::from(usage.cache_read_tokens)
+                + u64::from(usage.cache_creation_tokens),
+        );
+
         // 各项基础成本（不含倍率）
-        let input_cost =
-            Decimal::from(billable_input_tokens) * pricing.input_cost_per_million / million;
-        let output_cost =
-            Decimal::from(usage.output_tokens) * pricing.output_cost_per_million / million;
-        let cache_read_cost =
-            Decimal::from(usage.cache_read_tokens) * pricing.cache_read_cost_per_million / million;
+        let input_cost = Decimal::from(billable_input_tokens) * rates.input / million;
+        let output_cost = Decimal::from(usage.output_tokens) * rates.output / million;
+        let cache_read_cost = Decimal::from(usage.cache_read_tokens) * rates.cache_read / million;
         // Anthropic 5 分钟缓存写入为输入价 1.25 倍、1 小时写入为 2 倍；定价表的
         // cache_creation 单价对应 5 分钟写入，1 小时写入按其 1.6 倍计。
         let cache_creation_1h_tokens = usage
@@ -103,7 +120,7 @@ impl CostCalculator {
         let cache_creation_cost =
             (Decimal::from(usage.cache_creation_tokens - cache_creation_1h_tokens)
                 + Decimal::from(cache_creation_1h_tokens) * Decimal::new(16, 1))
-                * pricing.cache_creation_cost_per_million
+                * rates.cache_creation
                 / million;
 
         // 总成本 = 各项基础成本之和 × 倍率
@@ -142,6 +159,36 @@ impl ModelPricing {
             output_cost_per_million: Decimal::from_str(output)?,
             cache_read_cost_per_million: Decimal::from_str(cache_read)?,
             cache_creation_cost_per_million: Decimal::from_str(cache_creation)?,
+            above_100k: None,
+        })
+    }
+
+    /// 提示词长度为 `prompt_tokens` 的请求适用的单价
+    pub fn rates_for_prompt(&self, prompt_tokens: u64) -> Rates {
+        match self.above_100k {
+            Some(rates) if prompt_tokens > PROMPT_TIER_THRESHOLD_TOKENS => rates,
+            _ => Rates {
+                input: self.input_cost_per_million,
+                output: self.output_cost_per_million,
+                cache_read: self.cache_read_cost_per_million,
+                cache_creation: self.cache_creation_cost_per_million,
+            },
+        }
+    }
+}
+
+impl Rates {
+    pub fn from_strings(
+        input: &str,
+        output: &str,
+        cache_read: &str,
+        cache_creation: &str,
+    ) -> Result<Self, rust_decimal::Error> {
+        Ok(Self {
+            input: Decimal::from_str(input)?,
+            output: Decimal::from_str(output)?,
+            cache_read: Decimal::from_str(cache_read)?,
+            cache_creation: Decimal::from_str(cache_creation)?,
         })
     }
 }
@@ -310,5 +357,82 @@ mod tests {
         // 验证高精度计算
         assert!(cost.total_cost > Decimal::ZERO);
         assert!(cost.total_cost.to_string().len() > 2); // 确保保留了小数位
+    }
+
+    fn dec(value: &str) -> Decimal {
+        Decimal::from_str(value).unwrap()
+    }
+
+    fn haiku_55_pricing() -> ModelPricing {
+        ModelPricing {
+            above_100k: Some(Rates::from_strings("0.50", "2.50", "0.05", "0.625").unwrap()),
+            ..ModelPricing::from_strings("0.10", "0.50", "0.01", "0.125").unwrap()
+        }
+    }
+
+    fn prompt_usage(input: u32, output: u32, cache_read: u32, cache_creation: u32) -> TokenUsage {
+        TokenUsage {
+            input_tokens: input,
+            output_tokens: output,
+            cache_read_tokens: cache_read,
+            cache_creation_tokens: cache_creation,
+            cache_creation_1h_tokens: 0,
+            model: None,
+            message_id: None,
+        }
+    }
+
+    #[test]
+    fn prompt_tier_applies_only_above_100k_prompt_tokens_including_cache() {
+        let pricing = haiku_55_pricing();
+
+        // 50K 输入 + 40K 缓存读 + 10K 缓存写 = 100K：标准档
+        let at_limit = CostCalculator::calculate(
+            &prompt_usage(50_000, 1_000, 40_000, 10_000),
+            &pricing,
+            Decimal::ONE,
+        );
+        assert_eq!(at_limit.total_cost, dec("0.00715"));
+
+        // 多 1 个缓存写入 token：整条请求（含输出）都按高价档
+        let above = CostCalculator::calculate(
+            &prompt_usage(50_000, 1_000, 40_000, 10_001),
+            &pricing,
+            Decimal::ONE,
+        );
+        assert_eq!(above.input_cost, dec("0.025"));
+        assert_eq!(above.output_cost, dec("0.0025"));
+        assert_eq!(above.cache_read_cost, dec("0.002"));
+        assert_eq!(above.cache_creation_cost, dec("0.006250625"));
+        assert_eq!(above.total_cost, dec("0.035750625"));
+    }
+
+    #[test]
+    fn prompt_tier_counts_cache_inclusive_input_once() {
+        // Codex 的 input_tokens 已含缓存读写，提示词就是 input_tokens 本身
+        let pricing = haiku_55_pricing();
+        let at_limit = CostCalculator::calculate_for_app(
+            "codex",
+            &prompt_usage(100_000, 0, 20_000, 10_000),
+            &pricing,
+            Decimal::ONE,
+        );
+        assert_eq!(at_limit.input_cost, dec("0.007"));
+
+        let above = CostCalculator::calculate_for_app(
+            "codex",
+            &prompt_usage(100_001, 0, 20_000, 10_000),
+            &pricing,
+            Decimal::ONE,
+        );
+        assert_eq!(above.input_cost, dec("0.0350005"));
+    }
+
+    #[test]
+    fn pricing_without_tier_ignores_prompt_length() {
+        let pricing = ModelPricing::from_strings("3", "15", "0.3", "3.75").unwrap();
+        let cost =
+            CostCalculator::calculate(&prompt_usage(200_000, 0, 0, 0), &pricing, Decimal::ONE);
+        assert_eq!(cost.total_cost, dec("0.6"));
     }
 }

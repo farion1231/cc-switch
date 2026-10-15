@@ -2339,6 +2339,8 @@
     },
     "cacheReadCostPerMillion": "Cache Read Cost (per million tokens, USD)",
     "cacheCreationCostPerMillion": "Cache Write Cost (per million tokens, USD)",
+    "above100kHint": "Prices used when the prompt exceeds 100K tokens (cache reads and writes included). Leave all four empty for flat pricing.",
+    "above100kIncomplete": "Fill in all four prices above 100K, or leave all four empty.",
     "syncStatus": {
       "auto": "Session logs · auto scan",
       "justNow": "Session logs · synced just now",
@@ -2469,7 +2471,7 @@
       "edit": "Change",
       "tableTitle": "Model pricing · {{count}}",
       "costHelpTitle": "How cost is calculated",
-      "costHelp": "Each request is priced by its model: fresh input, output, cache hits and cache writes are each multiplied by their unit price and added up.",
+      "costHelp": "Each request is priced by its model: fresh input, output, cache hits and cache writes are each multiplied by their unit price and added up. Some models charge the whole request at higher prices when the prompt exceeds 100K tokens (cache reads and writes included); the table shows these as \"up to 100K / above 100K\".",
       "unit": "USD / 1M tokens",
       "editAria": "Edit pricing for {{name}}",
       "deleteAria": "Delete pricing for {{name}}",

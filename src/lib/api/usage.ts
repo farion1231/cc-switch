@@ -168,22 +168,8 @@ export const usageApi = {
     return invoke("get_model_pricing");
   },
 
-  updateModelPricing: async (
-    modelId: string,
-    displayName: string,
-    inputCost: string,
-    outputCost: string,
-    cacheReadCost: string,
-    cacheCreationCost: string,
-  ): Promise<void> => {
-    return invoke("update_model_pricing", {
-      modelId,
-      displayName,
-      inputCost,
-      outputCost,
-      cacheReadCost,
-      cacheCreationCost,
-    });
+  updateModelPricing: async (entry: ModelPricing): Promise<void> => {
+    return invoke("update_model_pricing", { entry });
   },
 
   updateModelPricingBatch: async (entries: ModelPricing[]): Promise<number> => {

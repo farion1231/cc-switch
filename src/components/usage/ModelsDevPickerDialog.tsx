@@ -119,10 +119,10 @@ export function ModelsDevPickerDialog({
       await updatePricing.mutateAsync({
         modelId: selected.normalizedId,
         displayName: selected.modelName,
-        inputCost: formatPrice(selected.input),
-        outputCost: formatPrice(selected.output),
-        cacheReadCost: formatPrice(selected.cacheRead),
-        cacheCreationCost: formatPrice(selected.cacheWrite),
+        inputCostPerMillion: formatPrice(selected.input),
+        outputCostPerMillion: formatPrice(selected.output),
+        cacheReadCostPerMillion: formatPrice(selected.cacheRead),
+        cacheCreationCostPerMillion: formatPrice(selected.cacheWrite),
       });
 
       toast.success(

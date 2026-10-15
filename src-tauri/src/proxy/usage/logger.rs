@@ -5,7 +5,9 @@ use super::parser::TokenUsage;
 use crate::database::{Database, PRICING_SOURCE_REQUEST, PRICING_SOURCE_RESPONSE};
 use crate::error::AppError;
 use crate::services::sql_helpers::{INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL};
-use crate::services::usage_stats::{find_model_pricing_row, is_placeholder_pricing_model};
+use crate::services::usage_stats::{
+    find_model_pricing_row, is_placeholder_pricing_model, parse_pricing_row,
+};
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use sha2::{Digest, Sha256};
@@ -336,11 +338,9 @@ impl<'a> UsageLogger<'a> {
         let conn = crate::database::lock_conn!(self.db.conn);
         let row = find_model_pricing_row(&conn, model_id)?;
         match row {
-            Some((input, output, cache_read, cache_creation)) => {
-                ModelPricing::from_strings(&input, &output, &cache_read, &cache_creation)
-                    .map(Some)
-                    .map_err(|e| AppError::Database(format!("解析定价数据失败: {e}")))
-            }
+            Some(row) => parse_pricing_row(&row)
+                .map(Some)
+                .map_err(|e| AppError::Database(format!("解析定价数据失败: {e}"))),
             None => Ok(None),
         }
     }

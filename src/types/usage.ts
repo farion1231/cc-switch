@@ -59,6 +59,13 @@ export interface PaginatedLogs {
   pageSize: number;
 }
 
+export interface PromptTierPricing {
+  inputCostPerMillion: string;
+  outputCostPerMillion: string;
+  cacheReadCostPerMillion: string;
+  cacheCreationCostPerMillion: string;
+}
+
 export interface ModelPricing {
   modelId: string;
   displayName: string;
@@ -66,6 +73,11 @@ export interface ModelPricing {
   outputCostPerMillion: string;
   cacheReadCostPerMillion: string;
   cacheCreationCostPerMillion: string;
+  /**
+   * 提示词（含缓存读写）超过 100K tokens 时的单价。null 表示不分档；
+   * 提交更新时不带这个字段表示保留已有设置。
+   */
+  above100k?: PromptTierPricing | null;
 }
 
 export interface ModelsDevSyncConfig {

@@ -26,7 +26,7 @@ import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { useModelPricing, useDeleteModelPricing } from "@/lib/query/usage";
 import { TablePagination, useClientPagination } from "./TablePagination";
 import { proxyApi } from "@/lib/api/proxy";
-import type { ModelPricing } from "@/types/usage";
+import type { ModelPricing, PromptTierPricing } from "@/types/usage";
 import { cn } from "@/lib/utils";
 import { PricingEditModal } from "./PricingEditModal";
 import { ModelsDevAutoSyncPanel } from "./ModelsDevAutoSyncPanel";
@@ -67,6 +67,17 @@ export function formatUnitPrice(value: string): string {
   const fixed = num.toFixed(4).replace(/0+$/, "");
   const [whole, frac = ""] = fixed.split(".");
   return `$${whole}.${frac.padEnd(2, "0")}`;
+}
+
+/** 有 >100K 高价档时显示「标准价 / 高价」，如「$0.10 / $0.50」。 */
+export function formatTieredUnitPrice(
+  model: ModelPricing,
+  key: keyof PromptTierPricing,
+): string {
+  const standard = formatUnitPrice(model[key]);
+  return model.above100k
+    ? `${standard} / ${formatUnitPrice(model.above100k[key])}`
+    : standard;
 }
 
 function useBillingSources() {
@@ -426,16 +437,22 @@ export function PricingConfigPanel() {
                         </span>
                       </td>
                       <td className={usageTable.td}>
-                        {formatUnitPrice(model.inputCostPerMillion)}
+                        {formatTieredUnitPrice(model, "inputCostPerMillion")}
                       </td>
                       <td className={usageTable.td}>
-                        {formatUnitPrice(model.outputCostPerMillion)}
+                        {formatTieredUnitPrice(model, "outputCostPerMillion")}
                       </td>
                       <td className={usageTable.td}>
-                        {formatUnitPrice(model.cacheReadCostPerMillion)}
+                        {formatTieredUnitPrice(
+                          model,
+                          "cacheReadCostPerMillion",
+                        )}
                       </td>
                       <td className={cn(usageTable.td, "text-fg-2")}>
-                        {formatUnitPrice(model.cacheCreationCostPerMillion)}
+                        {formatTieredUnitPrice(
+                          model,
+                          "cacheCreationCostPerMillion",
+                        )}
                       </td>
                       <td className="whitespace-nowrap pe-1 text-end">
                         <HoverTip content={t("common.edit")}>

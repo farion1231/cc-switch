@@ -1,7 +1,9 @@
 //! 使用统计相关命令
 
 use crate::error::AppError;
-use crate::services::model_pricing::{ModelPricingInfo, ModelsDevSyncConfig, ModelsDevSyncState};
+use crate::services::model_pricing::{
+    ModelPricingInfo, ModelsDevSyncConfig, ModelsDevSyncState, PromptTierInfo,
+};
 use crate::services::usage_stats::*;
 use crate::store::AppState;
 use tauri::State;
@@ -207,12 +209,26 @@ pub fn get_model_pricing(state: State<'_, AppState>) -> Result<Vec<ModelPricingI
 
     let mut stmt = conn.prepare(
         "SELECT model_id, display_name, input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million
+                cache_read_cost_per_million, cache_creation_cost_per_million,
+                input_cost_per_million_above_100k, output_cost_per_million_above_100k,
+                cache_read_cost_per_million_above_100k, cache_creation_cost_per_million_above_100k
          FROM model_pricing
          ORDER BY display_name",
     )?;
 
     let rows = stmt.query_map([], |row| {
+        // 四列都有值才算分档，与计费时的读取规则一致
+        let above_100k = match (row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?) {
+            (Some(input), Some(output), Some(cache_read), Some(cache_creation)) => {
+                Some(PromptTierInfo {
+                    input_cost_per_million: input,
+                    output_cost_per_million: output,
+                    cache_read_cost_per_million: cache_read,
+                    cache_creation_cost_per_million: cache_creation,
+                })
+            }
+            _ => None,
+        };
         Ok(ModelPricingInfo {
             model_id: row.get(0)?,
             display_name: row.get(1)?,
@@ -220,6 +236,7 @@ pub fn get_model_pricing(state: State<'_, AppState>) -> Result<Vec<ModelPricingI
             output_cost_per_million: row.get(3)?,
             cache_read_cost_per_million: row.get(4)?,
             cache_creation_cost_per_million: row.get(5)?,
+            above_100k: Some(above_100k),
         })
     })?;
 
@@ -236,24 +253,9 @@ pub fn get_model_pricing(state: State<'_, AppState>) -> Result<Vec<ModelPricingI
 #[tauri::command]
 pub fn update_model_pricing(
     state: State<'_, AppState>,
-    model_id: String,
-    display_name: String,
-    input_cost: String,
-    output_cost: String,
-    cache_read_cost: String,
-    cache_creation_cost: String,
+    entry: ModelPricingInfo,
 ) -> Result<(), AppError> {
-    crate::services::model_pricing::update_model_pricing(
-        &state.db,
-        ModelPricingInfo {
-            model_id,
-            display_name,
-            input_cost_per_million: input_cost,
-            output_cost_per_million: output_cost,
-            cache_read_cost_per_million: cache_read_cost,
-            cache_creation_cost_per_million: cache_creation_cost,
-        },
-    )?;
+    crate::services::model_pricing::update_model_pricing(&state.db, entry)?;
     Ok(())
 }
 

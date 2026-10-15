@@ -36,6 +36,32 @@ pub struct ModelPricingInfo {
     pub output_cost_per_million: String,
     pub cache_read_cost_per_million: String,
     pub cache_creation_cost_per_million: String,
+    /// 提示词（含缓存读写）超过 100K tokens 时的单价。字段缺省 = 不改动已有设置
+    /// （models.dev 同步和旧版价格文件都不带这个字段）；null = 不分档；对象 = 用这组单价。
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present"
+    )]
+    pub above_100k: Option<Option<PromptTierInfo>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptTierInfo {
+    pub input_cost_per_million: String,
+    pub output_cost_per_million: String,
+    pub cache_read_cost_per_million: String,
+    pub cache_creation_cost_per_million: String,
+}
+
+/// 让 `Option<Option<T>>` 字段区分缺省（None）和 null（Some(None)）
+fn deserialize_present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -153,6 +179,31 @@ fn normalize_pricing(entry: ModelPricingInfo) -> Result<ModelPricingInfo, AppErr
             "cache_creation_cost",
             &entry.cache_creation_cost_per_million,
         )?,
+        above_100k: match entry.above_100k {
+            Some(Some(tier)) => Some(Some(normalize_prompt_tier(tier)?)),
+            other => other,
+        },
+    })
+}
+
+fn normalize_prompt_tier(tier: PromptTierInfo) -> Result<PromptTierInfo, AppError> {
+    Ok(PromptTierInfo {
+        input_cost_per_million: normalize_decimal(
+            "input_cost_above_100k",
+            &tier.input_cost_per_million,
+        )?,
+        output_cost_per_million: normalize_decimal(
+            "output_cost_above_100k",
+            &tier.output_cost_per_million,
+        )?,
+        cache_read_cost_per_million: normalize_decimal(
+            "cache_read_cost_above_100k",
+            &tier.cache_read_cost_per_million,
+        )?,
+        cache_creation_cost_per_million: normalize_decimal(
+            "cache_creation_cost_above_100k",
+            &tier.cache_creation_cost_per_million,
+        )?,
     })
 }
 
@@ -241,7 +292,7 @@ fn upsert_pricing(
     transaction: &Transaction<'_>,
     entry: &ModelPricingInfo,
 ) -> Result<usize, AppError> {
-    transaction
+    let changed = transaction
         .execute(
             "INSERT INTO model_pricing (
                 model_id, display_name, input_cost_per_million, output_cost_per_million,
@@ -267,7 +318,36 @@ fn upsert_pricing(
                 entry.cache_creation_cost_per_million
             ],
         )
-        .map_err(|error| AppError::Database(format!("更新模型定价失败: {error}")))
+        .map_err(|error| AppError::Database(format!("更新模型定价失败: {error}")))?;
+
+    let Some(above_100k) = &entry.above_100k else {
+        return Ok(changed);
+    };
+    let [input, output, cache_read, cache_creation] = match above_100k {
+        Some(tier) => [
+            Some(&tier.input_cost_per_million),
+            Some(&tier.output_cost_per_million),
+            Some(&tier.cache_read_cost_per_million),
+            Some(&tier.cache_creation_cost_per_million),
+        ],
+        None => [None; 4],
+    };
+    let tier_changed = transaction
+        .execute(
+            "UPDATE model_pricing SET
+                input_cost_per_million_above_100k = ?2,
+                output_cost_per_million_above_100k = ?3,
+                cache_read_cost_per_million_above_100k = ?4,
+                cache_creation_cost_per_million_above_100k = ?5
+             WHERE model_id = ?1
+               AND (input_cost_per_million_above_100k IS NOT ?2
+                    OR output_cost_per_million_above_100k IS NOT ?3
+                    OR cache_read_cost_per_million_above_100k IS NOT ?4
+                    OR cache_creation_cost_per_million_above_100k IS NOT ?5)",
+            params![entry.model_id, input, output, cache_read, cache_creation],
+        )
+        .map_err(|error| AppError::Database(format!("更新模型 >100K 定价失败: {error}")))?;
+    Ok(changed.max(tier_changed))
 }
 
 fn apply_file_to_database(
@@ -373,7 +453,7 @@ fn update_model_pricing_batch_inner(
         let entry = normalize_pricing(entry)?;
         normalized.insert(entry.model_id.clone(), entry);
     }
-    let entries = normalized.into_values().collect::<Vec<_>>();
+    let mut entries = normalized.into_values().collect::<Vec<_>>();
     let model_ids = entries
         .iter()
         .map(|entry| entry.model_id.clone())
@@ -394,7 +474,13 @@ fn update_model_pricing_batch_inner(
             .iter()
             .map(|entry| entry.model_id.clone())
             .collect::<BTreeSet<_>>();
-        for entry in &entries {
+        for entry in &mut entries {
+            // 不带 above100k 的更新（如 models.dev 同步）沿用文件里已有的 >100K 设置
+            if entry.above_100k.is_none() {
+                if let Some(previous) = file_models.get(&entry.model_id) {
+                    entry.above_100k.clone_from(&previous.above_100k);
+                }
+            }
             file_models.insert(entry.model_id.clone(), entry.clone());
         }
         file.models = file_models.into_values().collect();
@@ -499,6 +585,7 @@ mod tests {
             output_cost_per_million: "5".to_string(),
             cache_read_cost_per_million: "0.1".to_string(),
             cache_creation_cost_per_million: "1.5".to_string(),
+            above_100k: None,
         }
     }
 
@@ -606,6 +693,74 @@ mod tests {
                 .find(|entry| entry.model_id == "custom-model")
                 .expect("saved synced pricing");
             assert_eq!(saved, &synced);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn above_100k_is_kept_when_omitted_and_cleared_durably_when_null() {
+        with_test_home(|db, path| {
+            let tier_input = || -> Option<String> {
+                let conn = db.conn.lock().expect("lock test database");
+                conn.query_row(
+                    "SELECT input_cost_per_million_above_100k
+                     FROM model_pricing WHERE model_id = 'claude-haiku-5-5'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("query haiku pricing")
+            };
+            let haiku = |above_100k| ModelPricingInfo {
+                model_id: "claude-haiku-5-5".to_string(),
+                display_name: "Claude Haiku 5.5".to_string(),
+                input_cost_per_million: "0.1".to_string(),
+                output_cost_per_million: "0.5".to_string(),
+                cache_read_cost_per_million: "0.01".to_string(),
+                cache_creation_cost_per_million: "0.125".to_string(),
+                above_100k,
+            };
+
+            // 新插入的内置行带官方高价档；models.dev 同步不带 above100k，保留它
+            assert_eq!(tier_input().as_deref(), Some("0.50"));
+            update_model_pricing_batch(db, vec![haiku(None)]).expect("models.dev sync");
+            assert_eq!(tier_input().as_deref(), Some("0.50"));
+
+            // null 清除高价档，价格文件记下 null：数据库里的高价档回来后，重新加载仍会清掉
+            update_model_pricing(db, haiku(Some(None))).expect("clear tier");
+            assert_eq!(tier_input(), None);
+            {
+                let conn = db.conn.lock().expect("lock test database");
+                conn.execute(
+                    "UPDATE model_pricing SET
+                        input_cost_per_million_above_100k = '0.50',
+                        output_cost_per_million_above_100k = '2.50',
+                        cache_read_cost_per_million_above_100k = '0.05',
+                        cache_creation_cost_per_million_above_100k = '0.625'
+                     WHERE model_id = 'claude-haiku-5-5'",
+                    [],
+                )
+                .expect("simulate a rebuilt database");
+            }
+            sync_local_model_pricing(db).expect("reload overrides");
+            assert_eq!(tier_input(), None);
+
+            // 之后的 models.dev 同步也沿用文件里的 null
+            update_model_pricing_batch(db, vec![haiku(None)]).expect("models.dev sync");
+            let content = fs::read_to_string(path).expect("read pricing file");
+            let file: ModelPricingFile = serde_json::from_str(&content).expect("parse file");
+            assert_eq!(file.models[0].above_100k, Some(None));
+
+            update_model_pricing(
+                db,
+                haiku(Some(Some(PromptTierInfo {
+                    input_cost_per_million: "0.6".to_string(),
+                    output_cost_per_million: "3".to_string(),
+                    cache_read_cost_per_million: "0.06".to_string(),
+                    cache_creation_cost_per_million: "0.75".to_string(),
+                }))),
+            )
+            .expect("set custom tier");
+            assert_eq!(tier_input().as_deref(), Some("0.6"));
         });
     }
 

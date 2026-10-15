@@ -7,7 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useUpdateModelPricing } from "@/lib/query/usage";
-import { isNonNegativeDecimalString, type ModelPricing } from "@/types/usage";
+import {
+  isNonNegativeDecimalString,
+  type ModelPricing,
+  type PromptTierPricing,
+} from "@/types/usage";
 import { ModelsDevPickerDialog } from "./ModelsDevPickerDialog";
 
 interface PricingEditModalProps {
@@ -18,6 +22,46 @@ interface PricingEditModalProps {
 }
 
 const PRICE_INPUT_STEP = "0.0001";
+
+// 提示词超过 100K 时的四项单价；标签沿用上方标准价的文案
+const TIER_FIELDS = [
+  {
+    key: "inputCostPerMillion",
+    id: "inputCostAbove100k",
+    labelKey: "usage.inputCostPerMillion",
+    label: "输入成本 (每百万 tokens, USD)",
+  },
+  {
+    key: "outputCostPerMillion",
+    id: "outputCostAbove100k",
+    labelKey: "usage.outputCostPerMillion",
+    label: "输出成本 (每百万 tokens, USD)",
+  },
+  {
+    key: "cacheReadCostPerMillion",
+    id: "cacheReadCostAbove100k",
+    labelKey: "usage.cacheReadCostPerMillion",
+    label: "缓存读取成本 (每百万 tokens, USD)",
+  },
+  {
+    key: "cacheCreationCostPerMillion",
+    id: "cacheCreationCostAbove100k",
+    labelKey: "usage.cacheCreationCostPerMillion",
+    label: "缓存写入成本 (每百万 tokens, USD)",
+  },
+] as const satisfies ReadonlyArray<{
+  key: keyof PromptTierPricing;
+  id: string;
+  labelKey: string;
+  label: string;
+}>;
+
+const EMPTY_TIER: PromptTierPricing = {
+  inputCostPerMillion: "",
+  outputCostPerMillion: "",
+  cacheReadCostPerMillion: "",
+  cacheCreationCostPerMillion: "",
+};
 
 export function PricingEditModal({
   open,
@@ -37,6 +81,9 @@ export function PricingEditModal({
     cacheReadCost: model.cacheReadCostPerMillion,
     cacheCreationCost: model.cacheCreationCostPerMillion,
   });
+  const [tier, setTier] = useState<PromptTierPricing>(
+    model.above100k ?? EMPTY_TIER,
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,14 +109,34 @@ export function PricingEditModal({
       }
     }
 
+    // 超过 100K 的单价：四项要么都填，要么都空
+    const filledTiers = TIER_FIELDS.filter(({ key }) => tier[key].trim());
+    if (filledTiers.length > 0 && filledTiers.length < TIER_FIELDS.length) {
+      toast.error(
+        t(
+          "usage.above100kIncomplete",
+          "超过 100K 的四项单价要么都填，要么都留空",
+        ),
+      );
+      return;
+    }
+    if (filledTiers.some(({ key }) => !isNonNegativeDecimalString(tier[key]))) {
+      toast.error(t("usage.invalidPrice", "价格必须为非负数"));
+      return;
+    }
+    // 四项都空时：原来有高价档就提交 null 清除；原来没有就不带这个字段，后端保持原样
+    const above100k =
+      filledTiers.length > 0 ? tier : model.above100k ? null : undefined;
+
     try {
       await updatePricing.mutateAsync({
         modelId: isNew ? formData.modelId : model.modelId,
         displayName: formData.displayName,
-        inputCost: formData.inputCost,
-        outputCost: formData.outputCost,
-        cacheReadCost: formData.cacheReadCost,
-        cacheCreationCost: formData.cacheCreationCost,
+        inputCostPerMillion: formData.inputCost,
+        outputCostPerMillion: formData.outputCost,
+        cacheReadCostPerMillion: formData.cacheReadCost,
+        cacheCreationCostPerMillion: formData.cacheCreationCost,
+        ...(above100k !== undefined && { above100k }),
       });
 
       toast.success(
@@ -240,6 +307,32 @@ export function PricingEditModal({
             }
             required
           />
+        </div>
+
+        <div
+          role="group"
+          aria-labelledby="above100k-hint"
+          className="space-y-4 rounded-panel border border-border bg-subtle p-3"
+        >
+          <p id="above100k-hint" className="text-caption text-fg-2">
+            {t(
+              "usage.above100kHint",
+              "提示词超过 100K tokens（含缓存读写）时的单价。四项都留空表示不分档。",
+            )}
+          </p>
+          {TIER_FIELDS.map(({ key, id, labelKey, label }) => (
+            <div key={id} className="space-y-2">
+              <Label htmlFor={id}>{t(labelKey, label)}</Label>
+              <Input
+                id={id}
+                type="number"
+                step={PRICE_INPUT_STEP}
+                min="0"
+                value={tier[key]}
+                onChange={(e) => setTier({ ...tier, [key]: e.target.value })}
+              />
+            </div>
+          ))}
         </div>
       </form>
 

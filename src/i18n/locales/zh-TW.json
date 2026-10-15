@@ -2340,6 +2340,8 @@
     },
     "cacheReadCostPerMillion": "快取讀取成本 (每百萬 tokens, USD)",
     "cacheCreationCostPerMillion": "快取寫入成本 (每百萬 tokens, USD)",
+    "above100kHint": "提示詞超過 100K tokens（含快取讀寫）時的單價。四項都留空表示不分檔。",
+    "above100kIncomplete": "超過 100K 的四項單價要麼都填，要麼都留空",
     "syncStatus": {
       "auto": "工作階段日誌 · 自動掃描",
       "justNow": "工作階段日誌 · 剛剛同步",
@@ -2470,7 +2472,7 @@
       "edit": "修改",
       "tableTitle": "模型定價 · {{count}}",
       "costHelpTitle": "成本怎麼算",
-      "costHelp": "每筆請求按模型定價算成本：新增輸入、輸出、快取命中、快取寫入各乘對應單價，再相加。",
+      "costHelp": "每筆請求按模型定價算成本：新增輸入、輸出、快取命中、快取寫入各乘對應單價，再相加。部分模型在提示詞超過 100K tokens（含快取讀寫）時整筆請求改用較高單價，表中顯示為「100K 以內 / 超過 100K」。",
       "unit": "USD / 每百萬 Tokens",
       "editAria": "編輯 {{name}} 的定價",
       "deleteAria": "刪除 {{name}} 的定價",

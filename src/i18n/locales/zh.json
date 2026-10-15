@@ -2339,6 +2339,8 @@
     },
     "cacheReadCostPerMillion": "缓存读取成本 (每百万 tokens, USD)",
     "cacheCreationCostPerMillion": "缓存写入成本 (每百万 tokens, USD)",
+    "above100kHint": "提示词超过 100K tokens（含缓存读写）时的单价。四项都留空表示不分档。",
+    "above100kIncomplete": "超过 100K 的四项单价要么都填，要么都留空",
     "syncStatus": {
       "auto": "会话日志 · 自动扫描",
       "justNow": "会话日志 · 刚刚同步",
@@ -2469,7 +2471,7 @@
       "edit": "修改",
       "tableTitle": "模型定价 · {{count}}",
       "costHelpTitle": "成本怎么算",
-      "costHelp": "每条请求按模型定价算成本：新增输入、输出、缓存命中、缓存写入各乘对应单价，再相加。",
+      "costHelp": "每条请求按模型定价算成本：新增输入、输出、缓存命中、缓存写入各乘对应单价，再相加。部分模型在提示词超过 100K tokens（含缓存读写）时整条请求改用更高单价，表中显示为「100K 以内 / 超过 100K」。",
       "unit": "USD / 每百万 Tokens",
       "editAria": "编辑 {{name}} 的定价",
       "deleteAria": "删除 {{name}} 的定价",

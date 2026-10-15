@@ -4,7 +4,7 @@
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use crate::proxy::usage::calculator::ModelPricing;
+use crate::proxy::usage::calculator::{ModelPricing, Rates, PROMPT_TIER_THRESHOLD_TOKENS};
 use crate::services::sql_helpers::{
     fresh_input_sql, real_total_tokens_sql, INPUT_TOKEN_SEMANTICS_FRESH,
     INPUT_TOKEN_SEMANTICS_LEGACY, INPUT_TOKEN_SEMANTICS_TOTAL,
@@ -2356,12 +2356,38 @@ pub struct ProviderLimitStatus {
     pub monthly_exceeded: bool,
 }
 
-#[derive(Clone)]
-struct PricingInfo {
-    input: rust_decimal::Decimal,
-    output: rust_decimal::Decimal,
-    cache_read: rust_decimal::Decimal,
-    cache_creation: rust_decimal::Decimal,
+/// 回填、重算成本时读取明细行的 SELECT（列顺序对应 row_to_request_log_detail）
+const COST_LOG_SELECT_SQL: &str =
+    "SELECT request_id, provider_id, NULL AS provider_name, app_type, model, request_model,
+            cost_multiplier,
+            input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+            input_cost_usd, output_cost_usd, cache_read_cost_usd,
+            cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
+            first_token_ms, duration_ms, status_code, error_message, created_at,
+            data_source, pricing_model, input_token_semantics
+     FROM proxy_request_logs";
+
+/// 按输入价计费的 tokens，与 CostCalculator::calculate_for_app 保持一致：
+/// 1. 历史 cache-inclusive 行只包含 cache read；新 total 行还包含 cache write。
+/// 2. Claude/Anthropic 的 input_tokens 已经是 fresh input，不能再次扣减
+fn billable_input_tokens(log: &RequestLogDetail) -> u64 {
+    let cache_inclusive_app =
+        crate::services::sql_helpers::is_cache_inclusive_app(log.app_type.as_str());
+    if !cache_inclusive_app || log.input_token_semantics == INPUT_TOKEN_SEMANTICS_FRESH {
+        log.input_tokens as u64
+    } else if log.input_token_semantics == INPUT_TOKEN_SEMANTICS_TOTAL {
+        (log.input_tokens as u64)
+            .saturating_sub(log.cache_read_tokens as u64)
+            .saturating_sub(log.cache_creation_tokens as u64)
+    } else {
+        // v12 and earlier: input included cache reads but excluded cache writes.
+        (log.input_tokens as u64).saturating_sub(log.cache_read_tokens as u64)
+    }
+}
+
+/// 提示词长度（决定是否用 >100K 高价档）：计费输入 + 缓存读 + 缓存写
+fn prompt_tokens(log: &RequestLogDetail) -> u64 {
+    billable_input_tokens(log) + log.cache_read_tokens as u64 + log.cache_creation_tokens as u64
 }
 
 impl Database {
@@ -2384,21 +2410,13 @@ impl Database {
         conn: &Connection,
         only_model_id: Option<&str>,
     ) -> Result<u64, AppError> {
-        const BASE_SQL: &str =
-            "SELECT request_id, provider_id, NULL AS provider_name, app_type, model, request_model,
-                        cost_multiplier,
-                        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                        input_cost_usd, output_cost_usd, cache_read_cost_usd,
-                        cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
-                        first_token_ms, duration_ms, status_code, error_message, created_at,
-                        data_source, pricing_model, input_token_semantics
-             FROM proxy_request_logs
-             WHERE CAST(total_cost_usd AS REAL) <= 0
-               AND (input_tokens > 0 OR output_tokens > 0
-                    OR cache_read_tokens > 0 OR cache_creation_tokens > 0)";
-
         let mut logs = {
-            let mut stmt = conn.prepare(BASE_SQL)?;
+            let mut stmt = conn.prepare(&format!(
+                "{COST_LOG_SELECT_SQL}
+                 WHERE CAST(total_cost_usd AS REAL) <= 0
+                   AND (input_tokens > 0 OR output_tokens > 0
+                        OR cache_read_tokens > 0 OR cache_creation_tokens > 0)"
+            ))?;
             let rows = stmt.query_map([], row_to_request_log_detail)?;
             rows.collect::<Result<Vec<_>, _>>()?
         };
@@ -2437,11 +2455,91 @@ impl Database {
         Ok(updated)
     }
 
+    /// 只供 v20→v21 迁移调用：>100K 高价档刚写入定价表时，把此前提示词超过 100K、
+    /// 已按标准档入账的明细改按高价档计。输入、输出、缓存读按 tokens 重算；行里没有
+    /// 1 小时缓存写入的占比，缓存写入金额按「高价档单价 ÷ 标准档单价」等比放大。
+    /// 倍率照旧只作用于总价。
+    pub(crate) fn reprice_prompt_tier_rows_on_conn(conn: &Connection) -> Result<u64, AppError> {
+        // input + 缓存读写不小于提示词长度，先用它在 SQL 里粗筛
+        let logs = {
+            let mut stmt = conn.prepare(&format!(
+                "{COST_LOG_SELECT_SQL}
+                 WHERE CAST(total_cost_usd AS REAL) > 0
+                   AND input_tokens + cache_read_tokens + cache_creation_tokens > ?1"
+            ))?;
+            let rows = stmt.query_map([PROMPT_TIER_THRESHOLD_TOKENS], row_to_request_log_detail)?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+
+        let million = rust_decimal::Decimal::from(1_000_000u64);
+        let mut pricing_cache = HashMap::new();
+        let mut updated = 0u64;
+        for log in &logs {
+            let prompt = prompt_tokens(log);
+            let Some(pricing) = Self::get_log_model_pricing_cached(conn, &mut pricing_cache, log)?
+            else {
+                continue;
+            };
+            let Some(tier) = pricing.above_100k else {
+                continue;
+            };
+            if prompt <= PROMPT_TIER_THRESHOLD_TOKENS {
+                continue;
+            }
+            let standard = pricing.rates_for_prompt(0);
+
+            let input_cost =
+                rust_decimal::Decimal::from(billable_input_tokens(log)) * tier.input / million;
+            let output_cost =
+                rust_decimal::Decimal::from(log.output_tokens as u64) * tier.output / million;
+            let cache_read_cost = rust_decimal::Decimal::from(log.cache_read_tokens as u64)
+                * tier.cache_read
+                / million;
+            let stored_cache_creation_cost =
+                rust_decimal::Decimal::from_str(&log.cache_creation_cost_usd)
+                    .unwrap_or(rust_decimal::Decimal::ZERO);
+            let cache_creation_cost = if standard.cache_creation.is_zero() {
+                stored_cache_creation_cost
+            } else {
+                stored_cache_creation_cost * tier.cache_creation / standard.cache_creation
+            };
+            let multiplier = rust_decimal::Decimal::from_str(&log.cost_multiplier)
+                .unwrap_or(rust_decimal::Decimal::ONE);
+            let total_cost =
+                (input_cost + output_cost + cache_read_cost + cache_creation_cost) * multiplier;
+
+            conn.execute(
+                "UPDATE proxy_request_logs
+                 SET input_cost_usd = ?1,
+                     output_cost_usd = ?2,
+                     cache_read_cost_usd = ?3,
+                     cache_creation_cost_usd = ?4,
+                     total_cost_usd = ?5
+                 WHERE request_id = ?6",
+                params![
+                    format!("{input_cost:.6}"),
+                    format!("{output_cost:.6}"),
+                    format!("{cache_read_cost:.6}"),
+                    format!("{cache_creation_cost:.6}"),
+                    format!("{total_cost:.6}"),
+                    log.request_id
+                ],
+            )
+            .map_err(|e| AppError::Database(format!("按 >100K 高价档重算请求成本失败: {e}")))?;
+            updated += 1;
+        }
+
+        if updated > 0 {
+            log::info!("已按 >100K 高价档重算 {updated} 条历史用量成本");
+        }
+        Ok(updated)
+    }
+
     /// 尝试为单条 log 回填成本字段。返回是否实际写入（true=已 UPDATE，false=跳过）。
     fn maybe_backfill_log_costs(
         conn: &Connection,
         log: &mut RequestLogDetail,
-        pricing_cache: &mut HashMap<String, PricingInfo>,
+        pricing_cache: &mut HashMap<String, ModelPricing>,
     ) -> Result<bool, AppError> {
         let existing_cost = rust_decimal::Decimal::from_str(&log.total_cost_usd)
             .unwrap_or(rust_decimal::Decimal::ZERO);
@@ -2471,32 +2569,16 @@ impl Database {
 
         let million = rust_decimal::Decimal::from(1_000_000u64);
 
-        // 与 CostCalculator::calculate_for_app 保持一致的计算逻辑：
-        // 1. 历史 cache-inclusive 行只包含 cache read；新 total 行还包含 cache write。
-        // 2. Claude/Anthropic 的 input_tokens 已经是 fresh input，不能再次扣减
-        // 3. 各项成本是基础成本（不含倍率），倍率只作用于最终总价
-        let cache_inclusive_app =
-            crate::services::sql_helpers::is_cache_inclusive_app(log.app_type.as_str());
-        let billable_input_tokens =
-            if !cache_inclusive_app || log.input_token_semantics == INPUT_TOKEN_SEMANTICS_FRESH {
-                log.input_tokens as u64
-            } else if log.input_token_semantics == INPUT_TOKEN_SEMANTICS_TOTAL {
-                (log.input_tokens as u64)
-                    .saturating_sub(log.cache_read_tokens as u64)
-                    .saturating_sub(log.cache_creation_tokens as u64)
-            } else {
-                // v12 and earlier: input included cache reads but excluded cache writes.
-                (log.input_tokens as u64).saturating_sub(log.cache_read_tokens as u64)
-            };
+        // 各项成本是基础成本（不含倍率），倍率只作用于最终总价
+        let rates = pricing.rates_for_prompt(prompt_tokens(log));
         let input_cost =
-            rust_decimal::Decimal::from(billable_input_tokens) * pricing.input / million;
+            rust_decimal::Decimal::from(billable_input_tokens(log)) * rates.input / million;
         let output_cost =
-            rust_decimal::Decimal::from(log.output_tokens as u64) * pricing.output / million;
-        let cache_read_cost = rust_decimal::Decimal::from(log.cache_read_tokens as u64)
-            * pricing.cache_read
-            / million;
+            rust_decimal::Decimal::from(log.output_tokens as u64) * rates.output / million;
+        let cache_read_cost =
+            rust_decimal::Decimal::from(log.cache_read_tokens as u64) * rates.cache_read / million;
         let cache_creation_cost = rust_decimal::Decimal::from(log.cache_creation_tokens as u64)
-            * pricing.cache_creation
+            * rates.cache_creation
             / million;
         // 总成本 = 基础成本之和 × 倍率
         let base_total = input_cost + output_cost + cache_read_cost + cache_creation_cost;
@@ -2532,28 +2614,18 @@ impl Database {
 
     fn get_model_pricing_cached(
         conn: &Connection,
-        cache: &mut HashMap<String, PricingInfo>,
+        cache: &mut HashMap<String, ModelPricing>,
         model: &str,
-    ) -> Result<Option<PricingInfo>, AppError> {
+    ) -> Result<Option<ModelPricing>, AppError> {
         if let Some(info) = cache.get(model) {
             return Ok(Some(info.clone()));
         }
 
-        let row = find_model_pricing_row(conn, model)?;
-        let Some((input, output, cache_read, cache_creation)) = row else {
+        let Some(row) = find_model_pricing_row(conn, model)? else {
             return Ok(None);
         };
-
-        let pricing = PricingInfo {
-            input: rust_decimal::Decimal::from_str(&input)
-                .map_err(|e| AppError::Database(format!("解析输入价格失败: {e}")))?,
-            output: rust_decimal::Decimal::from_str(&output)
-                .map_err(|e| AppError::Database(format!("解析输出价格失败: {e}")))?,
-            cache_read: rust_decimal::Decimal::from_str(&cache_read)
-                .map_err(|e| AppError::Database(format!("解析缓存读取价格失败: {e}")))?,
-            cache_creation: rust_decimal::Decimal::from_str(&cache_creation)
-                .map_err(|e| AppError::Database(format!("解析缓存写入价格失败: {e}")))?,
-        };
+        let pricing = parse_pricing_row(&row)
+            .map_err(|e| AppError::Database(format!("解析模型定价失败: {e}")))?;
 
         cache.insert(model.to_string(), pricing.clone());
         Ok(Some(pricing))
@@ -2561,9 +2633,9 @@ impl Database {
 
     fn get_log_model_pricing_cached(
         conn: &Connection,
-        cache: &mut HashMap<String, PricingInfo>,
+        cache: &mut HashMap<String, ModelPricing>,
         log: &RequestLogDetail,
-    ) -> Result<Option<PricingInfo>, AppError> {
+    ) -> Result<Option<ModelPricing>, AppError> {
         // 写入时的计价基准已落库（v11+）：回填只按它重算，找不到就保持 0 成本
         // 等补价。不能换用 model/request_model 猜——路由接管 + request 计价模式下
         // 三者可能各不相同（model=上游回显、request_model=客户端别名、
@@ -2605,15 +2677,46 @@ pub(crate) fn find_model_pricing(conn: &Connection, model_id: &str) -> Option<Mo
     find_model_pricing_row(conn, model_id)
         .ok()
         .flatten()
-        .and_then(|(input, output, cache_read, cache_creation)| {
-            ModelPricing::from_strings(&input, &output, &cache_read, &cache_creation).ok()
-        })
+        .and_then(|row| parse_pricing_row(&row).ok())
+}
+
+/// 定价表一行：标准档的输入、输出、缓存读、缓存写单价，以及提示词超过 100K 时的
+/// 同四项单价（四列都有值才算分档）
+pub(crate) type PricingRow = (String, String, String, String, Option<[String; 4]>);
+
+pub(crate) fn parse_pricing_row(row: &PricingRow) -> Result<ModelPricing, rust_decimal::Error> {
+    let (input, output, cache_read, cache_creation, above_100k) = row;
+    Ok(ModelPricing {
+        above_100k: above_100k
+            .as_ref()
+            .map(|[input, output, cache_read, cache_creation]| {
+                Rates::from_strings(input, output, cache_read, cache_creation)
+            })
+            .transpose()?,
+        ..ModelPricing::from_strings(input, output, cache_read, cache_creation)?
+    })
+}
+
+fn pricing_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<PricingRow> {
+    let above_100k = match (row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?) {
+        (Some(input), Some(output), Some(cache_read), Some(cache_creation)) => {
+            Some([input, output, cache_read, cache_creation])
+        }
+        _ => None,
+    };
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        above_100k,
+    ))
 }
 
 pub(crate) fn find_model_pricing_row(
     conn: &Connection,
     model_id: &str,
-) -> Result<Option<(String, String, String, String)>, AppError> {
+) -> Result<Option<PricingRow>, AppError> {
     let candidates = model_pricing_candidates(model_id);
     if candidates.is_empty() {
         return Ok(None);
@@ -2668,21 +2771,16 @@ pub(crate) fn is_placeholder_pricing_model(model_id: &str) -> bool {
 fn query_model_pricing_exact(
     conn: &Connection,
     model_id: &str,
-) -> Result<Option<(String, String, String, String)>, AppError> {
+) -> Result<Option<PricingRow>, AppError> {
     conn.query_row(
         "SELECT input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million
+                cache_read_cost_per_million, cache_creation_cost_per_million,
+                input_cost_per_million_above_100k, output_cost_per_million_above_100k,
+                cache_read_cost_per_million_above_100k, cache_creation_cost_per_million_above_100k
          FROM model_pricing
          WHERE model_id = ?1",
         [model_id],
-        |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        },
+        pricing_row_from_sql,
     )
     .optional()
     .map_err(|e| AppError::Database(format!("查询模型定价失败: {e}")))
@@ -2691,24 +2789,19 @@ fn query_model_pricing_exact(
 fn query_model_pricing_prefix(
     conn: &Connection,
     model_id: &str,
-) -> Result<Option<(String, String, String, String)>, AppError> {
+) -> Result<Option<PricingRow>, AppError> {
     let pattern = format!("{model_id}-%");
     conn.query_row(
         "SELECT input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million
+                cache_read_cost_per_million, cache_creation_cost_per_million,
+                input_cost_per_million_above_100k, output_cost_per_million_above_100k,
+                cache_read_cost_per_million_above_100k, cache_creation_cost_per_million_above_100k
          FROM model_pricing
          WHERE model_id LIKE ?1
          ORDER BY LENGTH(model_id) ASC
          LIMIT 1",
         [pattern],
-        |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        },
+        pricing_row_from_sql,
     )
     .optional()
     .map_err(|e| AppError::Database(format!("查询模型前缀定价失败: {e}")))
@@ -3776,6 +3869,144 @@ mod tests {
         assert_eq!(input_cost, "5.000000");
         assert_eq!(total_cost, "7.500000");
 
+        Ok(())
+    }
+
+    /// 插入一条 Claude 明细，成本依次为输入、输出、缓存读、缓存写、总价
+    fn insert_claude_log(
+        conn: &Connection,
+        request_id: &str,
+        model: &str,
+        [input, output, cache_read, cache_creation]: [i64; 4],
+        costs: [&str; 5],
+        multiplier: &str,
+    ) -> Result<(), AppError> {
+        insert_usage_log(
+            conn,
+            request_id,
+            "claude",
+            "_claude_session",
+            model,
+            "claude_session",
+            1000,
+            input,
+            output,
+            cache_read,
+            cache_creation,
+            200,
+            costs[4],
+        )?;
+        conn.execute(
+            "UPDATE proxy_request_logs
+             SET input_cost_usd = ?2, output_cost_usd = ?3, cache_read_cost_usd = ?4,
+                 cache_creation_cost_usd = ?5, cost_multiplier = ?6
+             WHERE request_id = ?1",
+            params![request_id, costs[0], costs[1], costs[2], costs[3], multiplier],
+        )?;
+        Ok(())
+    }
+
+    fn stored_costs(conn: &Connection, request_id: &str) -> Result<[String; 5], AppError> {
+        Ok(conn.query_row(
+            "SELECT input_cost_usd, output_cost_usd, cache_read_cost_usd,
+                    cache_creation_cost_usd, total_cost_usd
+             FROM proxy_request_logs WHERE request_id = ?1",
+            [request_id],
+            |row| {
+                Ok([
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ])
+            },
+        )?)
+    }
+
+    #[test]
+    fn test_backfill_uses_upper_tier_only_above_100k_prompt_tokens() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let zero = ["0", "0", "0", "0", "0"];
+        {
+            let conn = lock_conn!(db.conn);
+            // 60K 输入 + 30K 缓存读 + 10K 缓存写 = 100K，再多 1 个缓存写入 token 就超过
+            let model = "claude-haiku-5-5";
+            insert_claude_log(
+                &conn,
+                "at-limit",
+                model,
+                [60_000, 1_000, 30_000, 10_000],
+                zero,
+                "1",
+            )?;
+            insert_claude_log(
+                &conn,
+                "above",
+                model,
+                [60_000, 1_000, 30_000, 10_001],
+                zero,
+                "1",
+            )?;
+        }
+
+        assert_eq!(db.backfill_missing_usage_costs()?, 2);
+
+        let conn = lock_conn!(db.conn);
+        assert_eq!(stored_costs(&conn, "at-limit")?[4], "0.008050");
+        assert_eq!(
+            stored_costs(&conn, "above")?,
+            ["0.030000", "0.002500", "0.001500", "0.006250", "0.040250"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_reprice_prompt_tier_rows_moves_priced_rows_above_100k_to_upper_tier(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        let haiku = "claude-haiku-5-5";
+        // 按标准档入账；缓存写入 0.001 含 1 小时写入的 1.6 倍，只能按单价比例放大
+        let standard = ["0.008000", "0.001000", "0.000150", "0.001000", "0.020300"];
+        insert_claude_log(
+            &conn,
+            "above",
+            haiku,
+            [80_000, 2_000, 15_000, 5_001],
+            standard,
+            "2",
+        )?;
+        insert_claude_log(
+            &conn,
+            "at-limit",
+            haiku,
+            [80_000, 2_000, 15_000, 5_000],
+            standard,
+            "2",
+        )?;
+        // 没有高价档的模型、还没计价（留给回填）的行都不动
+        insert_claude_log(
+            &conn,
+            "flat",
+            "claude-opus-5-5",
+            [200_000, 0, 0, 0],
+            standard,
+            "1",
+        )?;
+        let zero = ["0", "0", "0", "0", "0"];
+        insert_claude_log(&conn, "unpriced", haiku, [200_000, 0, 0, 0], zero, "1")?;
+
+        assert_eq!(Database::reprice_prompt_tier_rows_on_conn(&conn)?, 1);
+
+        assert_eq!(
+            stored_costs(&conn, "above")?,
+            ["0.040000", "0.005000", "0.000750", "0.005000", "0.101500"]
+        );
+        for request_id in ["at-limit", "flat"] {
+            assert_eq!(stored_costs(&conn, request_id)?, standard.map(String::from));
+        }
+        assert_eq!(stored_costs(&conn, "unpriced")?, zero.map(String::from));
         Ok(())
     }
 

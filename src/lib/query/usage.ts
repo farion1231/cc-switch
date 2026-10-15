@@ -8,6 +8,7 @@ import { usageApi } from "@/lib/api/usage";
 import { resolveUsageRange } from "@/lib/usageRange";
 import type {
   LogFilters,
+  ModelPricing,
   UsageRangeSelection,
   UsageScopeFilters,
 } from "@/types/usage";
@@ -426,22 +427,7 @@ export function useUpdateModelPricing() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (params: {
-      modelId: string;
-      displayName: string;
-      inputCost: string;
-      outputCost: string;
-      cacheReadCost: string;
-      cacheCreationCost: string;
-    }) =>
-      usageApi.updateModelPricing(
-        params.modelId,
-        params.displayName,
-        params.inputCost,
-        params.outputCost,
-        params.cacheReadCost,
-        params.cacheCreationCost,
-      ),
+    mutationFn: (entry: ModelPricing) => usageApi.updateModelPricing(entry),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: usageKeys.all });
     },

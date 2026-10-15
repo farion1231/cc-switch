@@ -4,8 +4,18 @@
 
 use super::{lock_conn, Database, SCHEMA_VERSION};
 use crate::error::AppError;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
+use rust_decimal::Decimal;
 use serde::Serialize;
+use std::str::FromStr;
+
+/// 按提示词长度分档的内置模型：(model_id, 标准档单价, 提示词超过 100K tokens 时的单价)，
+/// 单价依次为输入、输出、缓存读、缓存写（每百万 tokens, USD）
+const BUILTIN_PROMPT_TIERS: [(&str, [&str; 4], [&str; 4]); 1] = [(
+    "claude-haiku-5-5",
+    ["0.10", "0.50", "0.01", "0.125"],
+    ["0.50", "2.50", "0.05", "0.625"],
+)];
 
 #[derive(Serialize)]
 struct LegacySkillMigrationRow {
@@ -240,7 +250,11 @@ impl Database {
             model_id TEXT PRIMARY KEY, display_name TEXT NOT NULL,
             input_cost_per_million TEXT NOT NULL, output_cost_per_million TEXT NOT NULL,
             cache_read_cost_per_million TEXT NOT NULL DEFAULT '0',
-            cache_creation_cost_per_million TEXT NOT NULL DEFAULT '0'
+            cache_creation_cost_per_million TEXT NOT NULL DEFAULT '0',
+            input_cost_per_million_above_100k TEXT,
+            output_cost_per_million_above_100k TEXT,
+            cache_read_cost_per_million_above_100k TEXT,
+            cache_creation_cost_per_million_above_100k TEXT
         )",
             [],
         )
@@ -576,6 +590,11 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 20)?;
+                    }
+                    20 => {
+                        log::info!("迁移数据库从 v20 到 v21（模型定价添加 >100K 提示词单价）");
+                        Self::migrate_v20_to_v21(conn)?;
+                        Self::set_user_version(conn, 21)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1627,6 +1646,93 @@ impl Database {
         Ok(())
     }
 
+    /// v20 -> v21：模型定价添加提示词超过 100K tokens 时的四项单价列。内置分档模型的
+    /// 已有行若仍是官方标准价，补上官方高价档，再把此前超过 100K、按标准档入账的明细
+    /// 重算一次。之后高价档只随新插入的行写入（见 seed_model_pricing），用户清空的不会被补回。
+    fn migrate_v20_to_v21(conn: &Connection) -> Result<(), AppError> {
+        // 缺表的库（异常/测试夹具）跳过：create_tables 会以含列的新 DDL 建表。
+        if !Self::table_exists(conn, "model_pricing")? {
+            return Ok(());
+        }
+        for column in [
+            "input_cost_per_million_above_100k",
+            "output_cost_per_million_above_100k",
+            "cache_read_cost_per_million_above_100k",
+            "cache_creation_cost_per_million_above_100k",
+        ] {
+            Self::add_column_if_missing(conn, "model_pricing", column, "TEXT")?;
+        }
+
+        let mut tier_added = false;
+        for (model_id, standard, above_100k) in BUILTIN_PROMPT_TIERS {
+            if Self::has_standard_rates(conn, model_id, standard)? {
+                tier_added |= Self::set_builtin_prompt_tier(conn, model_id, above_100k)?;
+            }
+        }
+        // 缺表或缺成本列的库（测试夹具）没有可重算的明细
+        if tier_added
+            && Self::table_exists(conn, "proxy_request_logs")?
+            && Self::has_column(conn, "proxy_request_logs", "total_cost_usd")?
+        {
+            Self::reprice_prompt_tier_rows_on_conn(conn)?;
+        }
+        Ok(())
+    }
+
+    /// 定价行的标准档是否仍等于 `expected`。按数值比较：价格可能写成 0.1 或 0.10
+    /// （例如 models.dev 同步写入的值）；解析不了的价格视为不等。
+    fn has_standard_rates(
+        conn: &Connection,
+        model_id: &str,
+        expected: [&str; 4],
+    ) -> Result<bool, AppError> {
+        let actual: Option<[String; 4]> = conn
+            .query_row(
+                "SELECT input_cost_per_million, output_cost_per_million,
+                        cache_read_cost_per_million, cache_creation_cost_per_million
+                 FROM model_pricing WHERE model_id = ?1",
+                [model_id],
+                |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?]),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(format!("查询模型 {model_id} 定价失败: {e}")))?;
+        Ok(actual.is_some_and(|actual| {
+            actual.iter().zip(expected).all(|(actual, expected)| {
+                matches!(
+                    (Decimal::from_str(actual.trim()), Decimal::from_str(expected)),
+                    (Ok(actual), Ok(expected)) if actual == expected
+                )
+            })
+        }))
+    }
+
+    /// 给还没有高价档的定价行写入内置高价档；返回是否写入
+    fn set_builtin_prompt_tier(
+        conn: &Connection,
+        model_id: &str,
+        above_100k: [&str; 4],
+    ) -> Result<bool, AppError> {
+        let [input, output, cache_read, cache_creation] = above_100k;
+        let updated = conn
+            .execute(
+                "UPDATE model_pricing SET
+                    input_cost_per_million_above_100k = ?2,
+                    output_cost_per_million_above_100k = ?3,
+                    cache_read_cost_per_million_above_100k = ?4,
+                    cache_creation_cost_per_million_above_100k = ?5
+                 WHERE model_id = ?1
+                   AND input_cost_per_million_above_100k IS NULL
+                   AND output_cost_per_million_above_100k IS NULL
+                   AND cache_read_cost_per_million_above_100k IS NULL
+                   AND cache_creation_cost_per_million_above_100k IS NULL",
+                params![model_id, input, output, cache_read, cache_creation],
+            )
+            .map_err(|e| {
+                AppError::Database(format!("写入模型 {model_id} 的 >100K 单价失败: {e}"))
+            })?;
+        Ok(updated > 0)
+    }
+
     /// 插入默认模型定价数据
     /// 格式: (model_id, display_name, input, output, cache_read, cache_creation)
     /// 注意: model_id 使用短横线格式（如 claude-haiku-4-5），与 API 返回的模型名称标准化后一致
@@ -1691,8 +1797,8 @@ impl Database {
                 "0.10",
                 "2.50",
             ),
-            // Claude Haiku 5.5（2026-10-07 发布；按提示词长度分档，表内只存
-            // 10 万 token 以内的标准档，超过时 $0.50/$2.50 的高档不入表）
+            // Claude Haiku 5.5（2026-10-07 发布；按提示词长度分档，这里是 10 万 token
+            // 以内的标准档，超过时的 $0.50/$2.50 高价档见 BUILTIN_PROMPT_TIERS）
             (
                 "claude-haiku-5-5",
                 "Claude Haiku 5.5",
@@ -2830,16 +2936,28 @@ impl Database {
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             )
             .map_err(|e| AppError::Database(format!("准备模型定价语句失败: {e}")))?;
+        // 旧版本迁移中途调用时表里还没有高价档列，由 v20→v21 迁移补上
+        let has_tier_columns =
+            Self::has_column(conn, "model_pricing", "input_cost_per_million_above_100k")?;
         for (model_id, display_name, input, output, cache_read, cache_creation) in pricing_data {
-            stmt.execute(rusqlite::params![
-                model_id,
-                display_name,
-                input,
-                output,
-                cache_read,
-                cache_creation
-            ])
-            .map_err(|e| AppError::Database(format!("插入模型定价失败: {e}")))?;
+            let inserted = stmt
+                .execute(rusqlite::params![
+                    model_id,
+                    display_name,
+                    input,
+                    output,
+                    cache_read,
+                    cache_creation
+                ])
+                .map_err(|e| AppError::Database(format!("插入模型定价失败: {e}")))?;
+            // 高价档只随新插入的行写入，已有行（包括用户清空过高价档的）不动
+            if inserted > 0 && has_tier_columns {
+                if let Some((_, _, above_100k)) =
+                    BUILTIN_PROMPT_TIERS.iter().find(|(id, ..)| *id == model_id)
+                {
+                    Self::set_builtin_prompt_tier(conn, model_id, *above_100k)?;
+                }
+            }
         }
 
         log::info!("已插入 {} 条默认模型定价数据", pricing_data.len());
@@ -3835,6 +3953,82 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         assert_eq!(values, (1, 1, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v20_to_v21_adds_builtin_prompt_tier_and_reprices_history() -> Result<(), AppError> {
+        // models.dev 同步会把 0.10 写成 0.1：按数值比较仍算官方标准价
+        for (standard_input, tier_expected) in [("0.1", true), ("0.12", false)] {
+            let conn = Connection::open_in_memory()?;
+            // v20 的定价表还没有 >100K 列；其余表按当前结构建
+            conn.execute_batch(
+                "CREATE TABLE model_pricing (
+                    model_id TEXT PRIMARY KEY, display_name TEXT NOT NULL,
+                    input_cost_per_million TEXT NOT NULL, output_cost_per_million TEXT NOT NULL,
+                    cache_read_cost_per_million TEXT NOT NULL DEFAULT '0',
+                    cache_creation_cost_per_million TEXT NOT NULL DEFAULT '0'
+                );",
+            )?;
+            Database::create_tables_on_conn(&conn)?;
+            conn.execute(
+                "INSERT INTO model_pricing VALUES
+                    ('claude-haiku-5-5', 'Claude Haiku 5.5', ?1, '0.5', '0.01', '0.125')",
+                [standard_input],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens, input_cost_usd, output_cost_usd,
+                    cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
+                    latency_ms, status_code, created_at, data_source
+                ) VALUES ('r1', '_claude_session', 'claude', 'claude-haiku-5-5-20261007',
+                          200000, 1000, 0, 0, '0.020000', '0.000500', '0', '0', '0.020500',
+                          100, 200, 1000, 'claude_session')",
+                [],
+            )?;
+            Database::set_user_version(&conn, 20)?;
+
+            Database::apply_schema_migrations_on_conn(&conn)?;
+
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            let tier: Option<String> = conn.query_row(
+                "SELECT output_cost_per_million_above_100k FROM model_pricing
+                 WHERE model_id = 'claude-haiku-5-5'",
+                [],
+                |row| row.get(0),
+            )?;
+            let total: String = conn.query_row(
+                "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id = 'r1'",
+                [],
+                |row| row.get(0),
+            )?;
+            if tier_expected {
+                assert_eq!(tier.as_deref(), Some("2.50"));
+                // 200K 输入 × $0.50 + 1K 输出 × $2.50
+                assert_eq!(total, "0.102500");
+            } else {
+                assert_eq!(tier, None, "改过的标准价不补官方高价档");
+                assert_eq!(total, "0.020500");
+            }
+
+            // 之后每次启动的内置价格写入不会把清空的高价档补回来
+            conn.execute(
+                "UPDATE model_pricing SET input_cost_per_million_above_100k = NULL,
+                    output_cost_per_million_above_100k = NULL,
+                    cache_read_cost_per_million_above_100k = NULL,
+                    cache_creation_cost_per_million_above_100k = NULL",
+                [],
+            )?;
+            Database::ensure_model_pricing_seeded_on_conn(&conn)?;
+            let tier: Option<String> = conn.query_row(
+                "SELECT output_cost_per_million_above_100k FROM model_pricing
+                 WHERE model_id = 'claude-haiku-5-5'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(tier, None);
+        }
         Ok(())
     }
 

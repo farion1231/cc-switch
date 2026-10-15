@@ -2313,6 +2313,8 @@
     },
     "cacheReadCostPerMillion": "Önbellek Okuma Maliyeti (milyon token başına, USD)",
     "cacheCreationCostPerMillion": "Önbellek Yazma Maliyeti (milyon token başına, USD)",
+    "above100kHint": "İstem 100K token'ı aştığında (önbellek okuma ve yazma dahil) kullanılan fiyatlar. Kademesiz fiyat için dördünü de boş bırakın.",
+    "above100kIncomplete": "100K üzeri dört fiyatın hepsini doldurun ya da hepsini boş bırakın.",
     "syncStatus": {
       "auto": "Oturum günlükleri · otomatik tarama",
       "justNow": "Oturum günlükleri · az önce eşitle edildi",
@@ -2437,7 +2439,7 @@
       "edit": "Değiştir",
       "tableTitle": "Model fiyatlandırması · {{count}}",
       "costHelpTitle": "Maliyet nasıl hesaplanır?",
-      "costHelp": "Her istek modeline göre fiyatlandırılır: yeni giriş, çıkış, önbellek isabetleri ve önbellek yazma işlemlerinin her biri birim fiyatıyla çarpılır ve toplanır.",
+      "costHelp": "Her istek modeline göre fiyatlandırılır: yeni giriş, çıkış, önbellek isabetleri ve önbellek yazma işlemlerinin her biri birim fiyatıyla çarpılır ve toplanır. Bazı modeller istem 100K token'ı aştığında (önbellek okuma ve yazma dahil) isteğin tamamını daha yüksek fiyatla ücretlendirir; tabloda bunlar \"100K'ya kadar / 100K üzeri\" olarak gösterilir.",
       "unit": "USD / 1 milyon token",
       "editAria": "{{name}} için fiyatlandırmayı düzenleyin",
       "deleteAria": "{{name}} için fiyatlandırmayı sil",
