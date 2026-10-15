@@ -2721,7 +2721,7 @@
         "mcode": "MiniMax Code"
       }
     },
-    "userLevelPath": "Kullanıcı düzeyinde MCP yolu",
+    "userLevelPath": "Kullanıcı düzeyinde MCP yapılandırma yolu",
     "serverList": "Sunucular",
     "loading": "Yükleniyor...",
     "empty": "MCP sunucusu yok",
@@ -2744,12 +2744,12 @@
       "titlePlaceholder": "my-mcp-server",
       "name": "Görünen Ad",
       "namePlaceholder": "ör. mcp-server-time",
-      "enabledApps": "Uygulamaları Etkinleştir",
+      "enabledApps": "Uygulamalarda etkinleştir",
       "noAppsWarning": "En az bir uygulama seçilmelidir",
       "description": "Açıklama",
       "descriptionPlaceholder": "İsteğe bağlı açıklama",
       "tags": "Etiketler (virgülle ayrılmış)",
-      "tagsPlaceholder": "stdio, zaman, yardımcı program",
+      "tagsPlaceholder": "stdio, time, utility",
       "homepage": "Ana sayfa",
       "homepagePlaceholder": "https://example.com",
       "docs": "Dokümanlar",
@@ -2764,7 +2764,7 @@
       "useWizard": "Yapılandırma Sihirbazı",
       "syncOtherSide": "{{target}}'ye aynalama",
       "syncOtherSideHint": "Aynı ayarları {{target}}'ye uygulayın; aynı kimliğe sahip mevcut girişlerin üzerine yazılacaktır.",
-      "willOverwriteWarning": "{{target}}'deki mevcut yapılandırmanın üzerine yazacak"
+      "willOverwriteWarning": "{{target}} içindeki aynı adlı yapılandırmanın üzerine yazılacak"
     },
     "wizard": {
       "title": "MCP Yapılandırma Sihirbazı",
@@ -2783,7 +2783,7 @@
       "urlPlaceholder": "https://api.example.com/mcp",
       "urlRequired": "Lütfen URL'yi girin",
       "headers": "Başlıklar (isteğe bağlı)",
-      "headersPlaceholder": "Yetkilendirme: Taşıyıcı your_token_here\nİçerik Türü: application/json",
+      "headersPlaceholder": "Authorization: Bearer your_token_here\nContent-Type: application/json",
       "preview": "Yapılandırma Önizlemesi",
       "apply": "Yapılandırmayı Uygula"
     },
@@ -2793,7 +2793,7 @@
     "validateCommand": "Komutu Doğrula",
     "args": "Argümanlar",
     "argsPlaceholder": "örneğin, mcp-server-fetch --help",
-    "env": "Ortam (her satıra bir tane, ANAHTAR=DEĞER)",
+    "env": "Ortam değişkenleri (her satıra bir tane, KEY=VALUE)",
     "envPlaceholder": "FOO=bar\nHELLO=world",
     "reset": "Sıfırla",
     "msg": {
@@ -4521,14 +4521,14 @@
   },
   "mcpPage": {
     "connection": {
-      "connected": "Bağlandı",
+      "connected": "Bağlantı başarılı",
       "disconnected": "Bağlantı başarısız",
       "checking": "Bağlantı kontrol ediliyor",
-      "disabled": "Devre dışı"
+      "disabled": "Etkin değil"
     },
     "noun": "MCP sunucuları",
-    "listSeparator": ",",
-    "helpTitle": "MCP nasıl eşitle edilir?",
+    "listSeparator": ", ",
+    "helpTitle": "MCP nasıl eşitlenir?",
     "help": "Bu liste gerçeğin kaynağıdır: işaretlediğiniz uygulamaların yapılandırma dosyalarına yazılır ve sağlayıcıları değiştirdiğinizde buradan yeniden yazılır. Claude Desktop ve OpenClaw desteklenmediğinden sütunları yoktur; Pi, 1.0 veya üzeri bir sürüme ihtiyaç duyar ve SSE'yi desteklemez.",
     "importFromApps": "Uygulamalardan içe aktar",
     "add": "MCP'yi ekleyin",
@@ -4550,7 +4550,7 @@
     "noMatch": "Hiçbir MCP sunucusunun adı, komutu veya URL'si “{{query}}” ile eşleşmiyor",
     "clearSearch": "Aramayı temizle",
     "listLabel": "MCP sunucuları",
-    "notEnabled": "Kapalı",
+    "notEnabled": "Etkin değil",
     "rowFail": "{{apps}}'ye yazma işlemi başarısız oldu",
     "rowRetryAria": "{{id}}'yi {{apps}}'ye tekrar yazın",
     "editAria": "{{id}}'yi düzenleyin",
@@ -4588,7 +4588,7 @@
       "ok": "Anladım"
     },
     "templateLabels": {
-      "sequential-thinking": "sequential-thinking"
+      "sequential-thinking": "Sıralı düşünme"
     },
     "drawer": {
       "addTitle": "MCP'yi ekleyin",
@@ -4596,10 +4596,10 @@
       "templates": "Bir şablondan başlayın",
       "paste": "Bir yapılandırma yapıştırın",
       "pastePlaceholder": "JSON veya TOML'yi yapıştırın; mcpServers, Codex ve OpenCode formatları tanınır",
-      "pasteOneOk": "Tanınmış {{format}}: {{name}}, aşağıdaki formu doldurun",
-      "pasteOneNoName": "Tanınmış {{format}}, aşağıdaki formu doldurdu; kendin bir isim ekle",
+      "pasteOneOk": "{{format}} olarak tanındı: {{name}}, aşağıdaki forma dolduruldu",
+      "pasteOneNoName": "{{format}} olarak tanındı ve aşağıdaki forma dolduruldu; adı kendiniz girin",
       "pasteManyOk": "Tanınan; aşağıdaki listeye bakın",
-      "pasteHelp": "Bunu tanıyamadım. Desteklenen: tek bir sunucu nesnesi, \"name\": {…}, {\"mcpServers\": {…}}, Codex'nin [mcp_servers.name] ve OpenCode'nin yerel/uzak formatı.",
+      "pasteHelp": "Biçim tanınamadı. Desteklenenler: tek bir sunucu nesnesi, \"name\": {…}, {\"mcpServers\": {…}}, Codex için [mcp_servers.name] ve OpenCode için local / remote biçimi.",
       "pasteFormats": {
         "mcpServers": "mcpServers biçimi",
         "opencode": "OpenCode biçimi",
@@ -4633,10 +4633,10 @@
         "urlRequired": "Sunucu URL'sini girin, ör. https://mcp.example.com/mcp",
         "urlScheme": "URL http:// veya https:// ile başlamalıdır"
       },
-      "connection": "Bağlantı",
-      "editMode": "Farklı düzenle",
+      "connection": "Bağlantı yapılandırması",
+      "editMode": "Düzenleme yöntemi",
       "tabForm": "Form",
-      "transport": "Taşıma",
+      "transport": "Bağlantı türü",
       "transportStdio": "Yerel komut (stdio)",
       "command": "Komut",
       "commandPlaceholder": "Sadece program, ör. npx veya uvx; argümanlar aşağıya doğru gidiyor",
@@ -4645,9 +4645,9 @@
       "removeArg": "Bağımsız değişkeni kaldır {{index}}",
       "addArg": "Bağımsız değişken ekle",
       "env": "Ortam değişkenleri",
-      "headers": "Başlıklar",
+      "headers": "İstek başlıkları",
       "addEnv": "Değişken ekle",
-      "addHeader": "Başlık ekle",
+      "addHeader": "İstek başlığı ekle",
       "kvKeyPlaceholder": "İsim",
       "kvValuePlaceholder": "Değer",
       "kvKeyAria": "{{label}} {{index}} adı",
@@ -4680,7 +4680,7 @@
       "displayNameHelp": "Yalnızca CC Switch’te gösterilir; uygulama yapılandırmalarına yazılmaz.",
       "description": "Açıklama",
       "tags": "Etiketler",
-      "tagsPlaceholder": "Virgülle ayrılmış, ör. dokümanlar, web",
+      "tagsPlaceholder": "Virgülle ayırın, ör. docs, web",
       "homepage": "Ana sayfa",
       "docs": "Dokümanlar"
     },

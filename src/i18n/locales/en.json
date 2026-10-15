@@ -2744,7 +2744,7 @@
         "mcode": "MiniMax Code"
       }
     },
-    "userLevelPath": "User-level MCP path",
+    "userLevelPath": "User-level MCP config path",
     "serverList": "Servers",
     "loading": "Loading...",
     "empty": "No MCP servers",
@@ -2767,7 +2767,7 @@
       "titlePlaceholder": "my-mcp-server",
       "name": "Display Name",
       "namePlaceholder": "e.g. mcp-server-time",
-      "enabledApps": "Enable to Apps",
+      "enabledApps": "Enable for Apps",
       "noAppsWarning": "At least one app must be selected",
       "description": "Description",
       "descriptionPlaceholder": "Optional description",
@@ -2787,7 +2787,7 @@
       "useWizard": "Config Wizard",
       "syncOtherSide": "Mirror to {{target}}",
       "syncOtherSideHint": "Apply the same settings to {{target}}; existing entries with the same id will be overwritten.",
-      "willOverwriteWarning": "Will overwrite existing config in {{target}}"
+      "willOverwriteWarning": "Will overwrite config with the same name in {{target}}"
     },
     "wizard": {
       "title": "MCP Configuration Wizard",
@@ -4543,10 +4543,10 @@
   },
   "mcpPage": {
     "connection": {
-      "connected": "Connected",
+      "connected": "Connection successful",
       "disconnected": "Connection failed",
       "checking": "Checking connection",
-      "disabled": "Disabled"
+      "disabled": "Not enabled"
     },
     "noun": "MCP servers",
     "listSeparator": ", ",
@@ -4572,7 +4572,7 @@
     "noMatch": "No MCP server's name, command or URL matches “{{query}}”",
     "clearSearch": "Clear search",
     "listLabel": "MCP servers",
-    "notEnabled": "Off",
+    "notEnabled": "Not enabled",
     "rowFail": "Writing to {{apps}} failed",
     "rowRetryAria": "Write {{id}} to {{apps}} again",
     "editAria": "Edit {{id}}",
@@ -4610,7 +4610,7 @@
       "ok": "Got it"
     },
     "templateLabels": {
-      "sequential-thinking": "sequential-thinking"
+      "sequential-thinking": "Sequential thinking"
     },
     "drawer": {
       "addTitle": "Add MCP",
