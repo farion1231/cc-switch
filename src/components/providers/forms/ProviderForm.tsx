@@ -168,8 +168,7 @@ export const normalizeCodexCatalogModelsForSave = (
   for (const item of models) {
     const model = item.model.trim();
     // Rows are user-owned configurations, not unique upstream model IDs.
-    // Keep variants (including their order) even when the live catalog can
-    // currently publish only the first row for each model.
+    // Preserve same-model variants and their order in the saved catalog.
     if (!model) continue;
 
     const displayName = item.displayName?.trim();

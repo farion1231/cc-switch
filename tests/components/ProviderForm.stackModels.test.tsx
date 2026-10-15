@@ -287,7 +287,7 @@ describe("ProviderForm Stack layout (Codex)", () => {
   });
 
   it.each(["direct", "stack"] as const)(
-    "%s 模式保存并重新打开时保留同名模型的上下文配置，提示选择限制",
+    "%s 模式保存并重新打开时保留同名模型的上下文配置",
     async (modeView) => {
       const rows = [
         { model: "m-1", displayName: "Standard", contextWindow: 500000 },
@@ -298,9 +298,6 @@ describe("ProviderForm Stack layout (Codex)", () => {
         modeView,
         codexCatalog: rows,
       });
-      expect(screen.getByRole("status")).toHaveTextContent(
-        "相同实际请求模型的所有行都会保存",
-      );
       const { settings } = await save(onSubmit);
       expect(settings.modelCatalog.models).toEqual(rows);
       unmount();
@@ -313,10 +310,6 @@ describe("ProviderForm Stack layout (Codex)", () => {
       expect(screen.getByDisplayValue("Long")).toBeInTheDocument();
       expect(screen.getByDisplayValue("500000")).toBeInTheDocument();
       expect(screen.getByDisplayValue("1050000")).toBeInTheDocument();
-      fireEvent.change(screen.getAllByDisplayValue("m-1")[1], {
-        target: { value: "m-2" },
-      });
-      expect(screen.queryByRole("status")).not.toBeInTheDocument();
     },
   );
 

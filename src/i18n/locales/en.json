@@ -1955,7 +1955,6 @@
     "catalogModelPlaceholder": "e.g., deepseek-v4-flash",
     "catalogColumnDisplay": "Menu Display Name",
     "catalogColumnModel": "Actual Request Model",
-    "duplicateCatalogModelsHint": "All rows with the same actual request model are saved, but currently only the first is used in the Codex model catalog. Different display names or context windows cannot be selected independently.",
     "catalogColumnContext": "Context Window",
     "catalogColumnReasoning": "Reasoning Levels",
     "reasoningLevelsNotSet": "Not set",

@@ -1461,7 +1461,6 @@ fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
         return Vec::new();
     };
 
-    let mut seen = std::collections::HashSet::new();
     let mut specs = Vec::new();
 
     for model_config in models {
@@ -1473,10 +1472,6 @@ fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
         else {
             continue;
         };
-
-        if !seen.insert(model.to_string()) {
-            continue;
-        }
 
         let display_name = model_config
             .get("displayName")
@@ -3781,6 +3776,54 @@ experimental_bearer_token = "stale-table-key"
             assert_eq!(model["visibility"], "list");
         }
         assert_eq!(template["visibility"], "hide");
+    }
+
+    #[test]
+    fn codex_model_catalog_preserves_same_model_rows_and_contexts() {
+        let settings = json!({
+            "modelCatalog": { "models": [
+                { "model": " deepseek-v4-flash ", "displayName": "Standard", "contextWindow": 500_000 },
+                { "model": "deepseek-v4-flash", "display_name": "Long", "context_window": "1050000" },
+                { "model": "deepseek-v4-flash", "contextWindow": 200_000 },
+                { "model": "deepseek-v4-flash", "contextWindow": 300_000 },
+                { "model": "  " }
+            ] }
+        });
+        let original = settings.clone();
+        // Exercise both template generation and the official vendor-catalog path.
+        for profile in [
+            CodexCatalogToolProfile::ProxyChat,
+            CodexCatalogToolProfile::NativeResponses,
+            CodexCatalogToolProfile::Anthropic,
+            CodexCatalogToolProfile::Copilot,
+        ] {
+            for config in ["", DEEPSEEK_NATIVE_CONFIG] {
+                let catalog = codex_model_catalog_from_settings(&settings, config, profile)
+                    .unwrap()
+                    .unwrap();
+                let models = catalog["models"].as_array().unwrap();
+                assert_eq!(models.len(), 4, "{profile:?} {config}");
+                assert!(models.iter().all(|row| row["slug"] == "deepseek-v4-flash"));
+                assert_eq!(models[0]["display_name"], "Standard");
+                assert_eq!(models[1]["display_name"], "Long");
+                for (row, window) in models.iter().zip([500_000, 1_050_000, 200_000, 300_000]) {
+                    assert_eq!(row["context_window"], window);
+                    assert_eq!(row["max_context_window"], window);
+                }
+                let imported =
+                    build_simplified_catalog_from_texts("", &catalog.to_string()).unwrap();
+                let reloaded = codex_catalog_model_specs(&json!({ "modelCatalog": imported }));
+                assert_eq!(reloaded.len(), 4);
+                assert_eq!(
+                    reloaded
+                        .iter()
+                        .map(|row| row.context_window.unwrap())
+                        .collect::<Vec<_>>(),
+                    vec![500_000, 1_050_000, 200_000, 300_000]
+                );
+            }
+        }
+        assert_eq!(settings, original);
     }
 
     #[test]
