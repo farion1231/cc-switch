@@ -316,6 +316,49 @@ describe("Codex TOML utils", () => {
     ).toBe("new");
   });
 
+  it("skips provider tables quoted inside a multi-line string", () => {
+    for (const delimiter of ['"""', "'''"]) {
+      const instructions = [
+        "Example:",
+        '[model_providers."custom"]',
+        'base_url = "https://example.invalid/v1"',
+        'experimental_bearer_token = "example-token"',
+        "",
+      ].join("\n");
+      const input = [
+        'model_provider = "custom"',
+        `developer_instructions = ${delimiter}`,
+        `${instructions}${delimiter}`,
+        "",
+        "[model_providers.custom]",
+        'name = "custom"',
+        'base_url = "https://old.invalid/v1"',
+        'experimental_bearer_token = "old-token"',
+        "",
+      ].join("\n");
+
+      expect(extractCodexBaseUrl(input), delimiter).toBe(
+        "https://old.invalid/v1",
+      );
+      expect(extractCodexExperimentalBearerToken(input), delimiter).toBe(
+        "old-token",
+      );
+
+      const output = updateCodexExperimentalBearerToken(
+        setCodexBaseUrl(input, "https://new.invalid/v1"),
+        "new-token",
+      );
+
+      const parsed = parseToml(output) as Record<string, any>;
+      expect(parsed.developer_instructions, delimiter).toBe(instructions);
+      expect(parsed.model_providers.custom, delimiter).toEqual({
+        name: "custom",
+        base_url: "https://new.invalid/v1",
+        experimental_bearer_token: "new-token",
+      });
+    }
+  });
+
   it("never redefines a custom table the line scan cannot see", () => {
     for (const input of [
       'model = "m"\n\n[model_providers.custom] # mine\nname = "custom"\nwire_api = "responses"\n',

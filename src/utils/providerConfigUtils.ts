@@ -329,14 +329,69 @@ const normalizeTomlTableName = (header: string): string => {
   }
 };
 
+// 标出以多行字符串（""" 或 '''）内部开头的行。这些行是字符串内容，像表头或赋值也不算：
+// 说明文字里的 `[model_providers."custom"]` 示例不能被当成真正的 provider 表。
+// 逐字符跟踪字符串和注释状态；单行字符串和注释到行尾为止。
+const getTomlMultilineStringLines = (lines: string[]): boolean[] => {
+  let delimiter: '"""' | "'''" | undefined;
+  return lines.map((line) => {
+    const insideString = delimiter !== undefined;
+    let index = 0;
+    while (index < line.length) {
+      if (delimiter) {
+        if (delimiter === '"""' && line[index] === "\\") {
+          index += 2;
+          continue;
+        }
+        if (line.startsWith(delimiter, index)) {
+          // 结束符前最多可以再贴两个引号，它们属于字符串内容
+          const quote = delimiter[0];
+          let end = index + 3;
+          while (end < index + 5 && line[end] === quote) end += 1;
+          delimiter = undefined;
+          index = end;
+          continue;
+        }
+        index += 1;
+        continue;
+      }
+
+      const ch = line[index];
+      if (ch === "#") break;
+      if (line.startsWith('"""', index) || line.startsWith("'''", index)) {
+        delimiter = line.startsWith('"""', index) ? '"""' : "'''";
+        index += 3;
+        continue;
+      }
+      if (ch === '"') {
+        index += 1;
+        while (index < line.length && line[index] !== '"') {
+          index += line[index] === "\\" ? 2 : 1;
+        }
+        index += 1;
+        continue;
+      }
+      if (ch === "'") {
+        const end = line.indexOf("'", index + 1);
+        index = end === -1 ? line.length : end + 1;
+        continue;
+      }
+      index += 1;
+    }
+    return insideString;
+  });
+};
+
 const getTomlSectionRange = (
   lines: string[],
   sectionName: string,
 ): TomlSectionRange | undefined => {
   const targetName = normalizeTomlTableName(sectionName);
+  const stringLines = getTomlMultilineStringLines(lines);
   let headerLineIndex = -1;
 
   for (let index = 0; index < lines.length; index += 1) {
+    if (stringLines[index]) continue;
     const match = lines[index].match(TOML_SECTION_HEADER_PATTERN);
     if (!match) {
       continue;
@@ -368,8 +423,10 @@ const getTomlSectionRange = (
 };
 
 const getTopLevelEndIndex = (lines: string[]): number => {
-  const firstSectionIndex = lines.findIndex((line) =>
-    TOML_SECTION_HEADER_PATTERN.test(line),
+  const stringLines = getTomlMultilineStringLines(lines);
+  const firstSectionIndex = lines.findIndex(
+    (line, index) =>
+      !stringLines[index] && TOML_SECTION_HEADER_PATTERN.test(line),
   );
   return firstSectionIndex === -1 ? lines.length : firstSectionIndex;
 };
@@ -475,7 +532,9 @@ const findTomlAssignmentInRange = (
   endIndex: number,
   sectionName?: string,
 ): TomlAssignmentMatch | undefined => {
+  const stringLines = getTomlMultilineStringLines(lines);
   for (let index = startIndex; index < endIndex; index += 1) {
+    if (stringLines[index]) continue;
     const match = lines[index].match(pattern);
     const value = match?.[2] ?? match?.[1];
     if (value) {
@@ -498,8 +557,10 @@ const findTomlAssignmentsInRange = (
   sectionName?: string,
 ): TomlAssignmentMatch[] => {
   const matches: TomlAssignmentMatch[] = [];
+  const stringLines = getTomlMultilineStringLines(lines);
 
   for (let index = startIndex; index < endIndex; index += 1) {
+    if (stringLines[index]) continue;
     const match = lines[index].match(pattern);
     const value = match?.[2] ?? match?.[1];
     if (value) {
@@ -516,8 +577,9 @@ const findTomlLineInRange = (
   startIndex: number,
   endIndex: number,
 ): number => {
+  const stringLines = getTomlMultilineStringLines(lines);
   for (let index = startIndex; index < endIndex; index += 1) {
-    if (pattern.test(lines[index])) {
+    if (!stringLines[index] && pattern.test(lines[index])) {
       return index;
     }
   }
@@ -531,8 +593,10 @@ const findTomlAssignments = (
 ): TomlAssignmentMatch[] => {
   const assignments: TomlAssignmentMatch[] = [];
   let currentSectionName: string | undefined;
+  const stringLines = getTomlMultilineStringLines(lines);
 
   lines.forEach((line, index) => {
+    if (stringLines[index]) return;
     const sectionMatch = line.match(TOML_SECTION_HEADER_PATTERN);
     if (sectionMatch) {
       currentSectionName = normalizeTomlTableName(sectionMatch[1]);
@@ -584,15 +648,12 @@ const getRecoverableBaseUrlAssignments = (
 const getRecoverableCodexProviderAssignments = getRecoverableBaseUrlAssignments;
 
 const getTopLevelModelProviderLineIndex = (lines: string[]): number => {
-  const topLevelEndIndex = getTopLevelEndIndex(lines);
-
-  for (let index = 0; index < topLevelEndIndex; index += 1) {
-    if (TOML_MODEL_PROVIDER_LINE_PATTERN.test(lines[index])) {
-      return index;
-    }
-  }
-
-  return -1;
+  return findTomlLineInRange(
+    lines,
+    TOML_MODEL_PROVIDER_LINE_PATTERN,
+    0,
+    getTopLevelEndIndex(lines),
+  );
 };
 
 const TOML_BASIC_STRING_ESCAPES: Record<string, string> = {
