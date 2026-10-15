@@ -48,6 +48,9 @@ fn merge_settings_for_save(
     // 开关）后、前端 query 缓存刷新前的一次全量保存会把旧 marker 重放回来，
     // 重新开启时被"复活"的标记挡住而漏迁。
     incoming.local_migrations = existing.local_migrations.clone();
+    // 客户端地址只经 set_proxy_client_host 保存（它还要重写客户端）；全量保存带的是前端
+    // 缓存里的旧值，透传会把刚保存的地址冲掉。
+    incoming.proxy_client_host = existing.proxy_client_host.clone();
     incoming
 }
 
@@ -68,7 +71,25 @@ pub async fn save_settings(
     let unify_codex_changed =
         merged.unify_codex_session_history != existing.unify_codex_session_history;
     let unify_codex_enabled = merged.unify_codex_session_history;
+    let classic_subagents_changed =
+        merged.codex_stack_classic_subagents != existing.codex_stack_classic_subagents;
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
+
+    // 经典子 agent 开关只影响 Stack 模式下的合并目录：立即重写，失败时回滚设置，
+    // 免得界面显示已打开、客户端还是旧目录。
+    if classic_subagents_changed {
+        if let Err(err) = crate::mode::controller::resync_codex_stack_catalog(state.inner()).await {
+            log::warn!("经典子 agent 开关变更后重写 Codex 模型目录失败，回滚设置: {err}");
+            let mut rollback = crate::settings::get_settings();
+            rollback.codex_stack_classic_subagents = existing.codex_stack_classic_subagents;
+            if let Err(rollback_err) = crate::settings::update_settings(rollback) {
+                log::error!("回滚经典子 agent 开关失败: {rollback_err}");
+            }
+            return Err(format!(
+                "子 agent 开关未生效（Codex 模型目录重写失败） (The sub-agent setting did not take effect: rewriting the Codex model catalog failed): {err}"
+            ));
+        }
+    }
 
     // 统一会话开关变更时立即重写当前官方 Codex 供应商的 live 配置，
     // 不必等下一次切换才生效。
@@ -142,6 +163,47 @@ pub async fn has_codex_unify_history_backup() -> Result<bool, String> {
     Ok(crate::codex_history_migration::has_codex_official_history_unify_backup())
 }
 
+/// Codex 的 `config.toml` 是不是用 `[features] multi_agent_v2` 强制了新版子 agent 工具
+/// （这时「经典子 agent 工具」开关不生效，界面上提示）。
+#[tauri::command]
+pub async fn codex_forces_multi_agent_v2() -> Result<bool, String> {
+    let text = crate::codex_config::read_codex_config_text().map_err(|e| e.to_string())?;
+    Ok(crate::codex_config::codex_config_forces_multi_agent_v2(
+        &text,
+    ))
+}
+
+/// Codex 会话压缩开关（`[features] local_thread_store_compression`）当前是否开启。
+#[tauri::command]
+pub async fn get_codex_session_compression() -> Result<bool, String> {
+    crate::services::codex_session_compression::is_enabled().map_err(|e| e.to_string())
+}
+
+/// 开关 Codex 会话压缩，返回写入后的状态。
+#[tauri::command]
+pub async fn set_codex_session_compression(
+    state: tauri::State<'_, crate::store::AppState>,
+    enabled: bool,
+) -> Result<bool, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::services::codex_session_compression::set_enabled(&db, enabled)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
+/// Codex 会话目录（sessions + archived_sessions）当前占用的字节数。
+#[tauri::command]
+pub async fn get_codex_sessions_disk_usage() -> Result<u64, String> {
+    tauri::async_runtime::spawn_blocking(
+        crate::services::codex_session_compression::sessions_disk_usage,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// 按迁移备份账本把当时迁入共享桶的官方会话还原回 "openai" 桶。
 /// 由关闭统一会话开关的确认弹窗触发；幂等，可安全重试。
 #[tauri::command]
@@ -178,13 +240,14 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
     // 在后台延迟重启，让函数有时间返回响应
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        // app.restart() 走 RESTART_EXIT_CODE 路径，ExitRequested 处理器会直接
-        // 放行给 Tauri 默认 re-exec，不执行代理/Live 清理。但本命令用于
-        // app_config_dir 变更后的重启：新实例会切到新数据库，拿不到旧库里的
-        // Live 备份，无法恢复被接管的 Live 配置。因此必须趁旧实例的事件循环
-        // 仍存活，在这里同步完成恢复（保留代理状态，新实例启动时自动重新接管）。
+        // 本命令用于 app_config_dir 变更后的重启：新实例会切到新数据库，拿不到
+        // 旧库里的 Live 备份，无法恢复被接管的 Live 配置。因此必须趁旧实例的
+        // 事件循环仍存活，在这里同步完成恢复（保留代理状态，新实例启动时自动
+        // 重新接管）。
         crate::cleanup_before_exit(&app).await;
-        app.restart();
+        // 与自更新共用 restart_process，而不是 app.restart()：macOS 上经
+        // LaunchServices 启动，新窗口才能回到前台。
+        crate::restart_process(&app);
     });
     Ok(true)
 }
@@ -320,6 +383,18 @@ mod tests {
         CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
         WebDavSyncSettings,
     };
+
+    #[test]
+    fn save_settings_should_keep_the_existing_proxy_client_host() {
+        let existing = AppSettings {
+            proxy_client_host: Some("172.25.144.1".to_string()),
+            ..AppSettings::default()
+        };
+
+        let merged = merge_settings_for_save(AppSettings::default(), &existing);
+
+        assert_eq!(merged.proxy_client_host.as_deref(), Some("172.25.144.1"));
+    }
 
     #[test]
     fn save_settings_should_preserve_existing_webdav_when_payload_omits_it() {
@@ -524,6 +599,7 @@ mod tests {
                     migrated_state_rows: 7,
                     codex_config_dir: None,
                 }),
+                ..LocalMigrations::default()
             }),
             ..AppSettings::default()
         };
@@ -577,6 +653,7 @@ mod tests {
                     migrated_state_rows: 2,
                     codex_config_dir: None,
                 }),
+                ..LocalMigrations::default()
             }),
             ..AppSettings::default()
         };

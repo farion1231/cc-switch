@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import {
@@ -49,7 +49,7 @@ export function LogConfigPanel() {
       <div className="flex items-center justify-between">
         <div className="space-y-0.5">
           <Label>{t("settings.advanced.logConfig.enabled")}</Label>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-fg-2">
             {t("settings.advanced.logConfig.enabledDescription")}
           </p>
         </div>
@@ -62,7 +62,7 @@ export function LogConfigPanel() {
       <div className="flex items-center justify-between">
         <div className="space-y-0.5">
           <Label>{t("settings.advanced.logConfig.level")}</Label>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-fg-2">
             {t("settings.advanced.logConfig.levelDescription")}
           </p>
         </div>
@@ -87,29 +87,29 @@ export function LogConfigPanel() {
       </div>
 
       {/* 日志级别说明 */}
-      <div className="rounded-lg bg-muted/50 p-4 text-xs space-y-1.5">
-        <p className="font-medium text-muted-foreground mb-2">
+      <div className="rounded-lg bg-subtle p-4 text-xs space-y-1.5">
+        <p className="font-medium text-fg-2 mb-2">
           {t("settings.advanced.logConfig.levelHint")}
         </p>
-        <div className="grid gap-1 text-muted-foreground">
+        <div className="grid gap-1 text-fg-2">
           <p>
-            <span className="font-mono text-red-500">error</span> -{" "}
+            <span className="font-mono text-danger-text">error</span> -{""}
             {t("settings.advanced.logConfig.levelDesc.error")}
           </p>
           <p>
-            <span className="font-mono text-orange-500">warn</span> -{" "}
+            <span className="font-mono text-warning-text">warn</span> -{""}
             {t("settings.advanced.logConfig.levelDesc.warn")}
           </p>
           <p>
-            <span className="font-mono text-blue-500">info</span> -{" "}
+            <span className="font-mono text-fg-1">info</span> -{""}
             {t("settings.advanced.logConfig.levelDesc.info")}
           </p>
           <p>
-            <span className="font-mono text-green-500">debug</span> -{" "}
+            <span className="font-mono text-success-text">debug</span> -{""}
             {t("settings.advanced.logConfig.levelDesc.debug")}
           </p>
           <p>
-            <span className="font-mono text-gray-500">trace</span> -{" "}
+            <span className="font-mono text-fg-2">trace</span> -{""}
             {t("settings.advanced.logConfig.levelDesc.trace")}
           </p>
         </div>

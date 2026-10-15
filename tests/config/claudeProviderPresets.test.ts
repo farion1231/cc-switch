@@ -87,6 +87,31 @@ describe("OpenCode Go Provider Preset", () => {
   });
 });
 
+describe("OpenCode Zen Provider Preset", () => {
+  const openCodeZen = providerPresets.find((p) => p.name === "OpenCode Zen");
+
+  it("should connect Claude models to Zen /messages directly with x-api-key auth", () => {
+    expect(openCodeZen).toBeDefined();
+    expect(openCodeZen!.family).toBe("opencode");
+
+    const env = (openCodeZen!.settingsConfig as any).env;
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://opencode.ai/zen");
+    // 和 Go 同一套网关：/messages 只认 x-api-key
+    expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
+    expect(openCodeZen!.apiKeyField).toBe("ANTHROPIC_API_KEY");
+    expect(openCodeZen!.apiFormat).toBeUndefined();
+    // 免费模型外部调用会被 403，默认模型不能是 *-free / big-pickle
+    for (const key of [
+      "ANTHROPIC_MODEL",
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    ]) {
+      expect(env[key]).toMatch(/^claude-/);
+    }
+  });
+});
+
 describe("AWS Bedrock Provider Presets", () => {
   const bedrockAksk = providerPresets.find(
     (p) => p.name === "AWS Bedrock (AKSK)",
@@ -137,9 +162,11 @@ describe("AWS Bedrock Provider Presets", () => {
     expect(bedrockApiKey).toBeDefined();
   });
 
-  it("API Key preset should have apiKey field and AWS env variables", () => {
+  // Claude Code 只从 AWS_BEARER_TOKEN_BEDROCK 读 Bedrock API Key，顶层 apiKey 不生效
+  it("API Key preset should carry the key in AWS_BEARER_TOKEN_BEDROCK", () => {
     const config = bedrockApiKey!.settingsConfig as any;
-    expect(config).toHaveProperty("apiKey", "");
+    expect(config).not.toHaveProperty("apiKey");
+    expect(config.env).toHaveProperty("AWS_BEARER_TOKEN_BEDROCK", "");
     expect(config.env).toHaveProperty("AWS_REGION");
     expect(config.env).toHaveProperty("CLAUDE_CODE_USE_BEDROCK", "1");
   });
@@ -160,5 +187,25 @@ describe("AWS Bedrock Provider Presets", () => {
 
   it("API Key preset should have cloud_provider category", () => {
     expect(bedrockApiKey!.category).toBe("cloud_provider");
+  });
+});
+
+describe("Microsoft Foundry Provider Preset", () => {
+  const foundry = providerPresets.find((p) => p.name === "Microsoft Foundry");
+
+  it("lets the user fill the Azure resource name into the base URL", () => {
+    const env = (foundry!.settingsConfig as any).env;
+    expect(foundry!.templateValues!.AZURE_RESOURCE_NAME).toBeDefined();
+    expect(env.ANTHROPIC_BASE_URL).toBe(
+      "https://${AZURE_RESOURCE_NAME}.services.ai.azure.com/anthropic",
+    );
+  });
+
+  // 官方文档的 API Key 走 x-api-key
+  it("sends the key as x-api-key", () => {
+    const env = (foundry!.settingsConfig as any).env;
+    expect(foundry!.apiKeyField).toBe("ANTHROPIC_API_KEY");
+    expect(env).toHaveProperty("ANTHROPIC_API_KEY", "");
+    expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
   });
 });

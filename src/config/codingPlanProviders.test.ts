@@ -33,6 +33,24 @@ describe("detectCodingPlanProvider (OpenCode Go)", () => {
   });
 });
 
+describe("detectCodingPlanProvider (MiniMax)", () => {
+  it.each([
+    "https://api.minimax.cn/v1",
+    "https://api.minimaxi.com/v1",
+    "https://api.minimax.io/v1",
+    "https://API.MINIMAX.CN/anthropic",
+  ])("recognizes the MiniMax usage provider for %s", (baseUrl) => {
+    expect(detectCodingPlanProvider(baseUrl)).toBe("minimax");
+  });
+
+  it.each([
+    "https://api.minimax.cn.example.com/v1",
+    "https://proxy.example.com/api.minimax.io/v1",
+  ])("ignores look-alike MiniMax hosts such as %s", (baseUrl) => {
+    expect(detectCodingPlanProvider(baseUrl)).toBeNull();
+  });
+});
+
 describe("extractBaseUrlForUsageDetection", () => {
   it("reads env.ANTHROPIC_BASE_URL for claude and claude-desktop", () => {
     const config = {
@@ -68,11 +86,32 @@ describe("extractBaseUrlForUsageDetection", () => {
     ).toBe("https://opencode.ai/zen/go/v1");
   });
 
-  it("returns null for unsupported apps", () => {
+  it("reads the remaining apps' native base URL fields", () => {
+    const kimi = "https://api.kimi.com/coding/v1";
     expect(
       extractBaseUrlForUsageDetection("gemini", {
-        env: { GOOGLE_GEMINI_BASE_URL: "https://opencode.ai/zen/go" },
+        env: { GOOGLE_GEMINI_BASE_URL: kimi },
       }),
+    ).toBe(kimi);
+    expect(
+      extractBaseUrlForUsageDetection("grokbuild", {
+        config: `[models]\ndefault = "k"\n\n[model.k]\nmodel = "kimi-for-coding"\nbase_url = "${kimi}"\n`,
+      }),
+    ).toBe(kimi);
+    expect(extractBaseUrlForUsageDetection("hermes", { base_url: kimi })).toBe(
+      kimi,
+    );
+    expect(extractBaseUrlForUsageDetection("openclaw", { baseUrl: kimi })).toBe(
+      kimi,
+    );
+    expect(
+      extractBaseUrlForUsageDetection("mcode", { options: { baseURL: kimi } }),
+    ).toBe(kimi);
+  });
+
+  it("returns null for unknown apps", () => {
+    expect(
+      extractBaseUrlForUsageDetection("unknown", { baseUrl: "https://x" }),
     ).toBeNull();
   });
 });
@@ -136,14 +175,26 @@ describe("injectCodingPlanUsageScript", () => {
     expect(injected.meta?.usage_script?.codingPlanProvider).toBe("kimi");
   });
 
-  it("does not extend other coding plans to non-claude apps", () => {
-    // 智谱/Kimi 等在其他 app 的自动注入未逐一验证，仅 OpenCode Go 放行
-    const provider: TestProvider = {
-      settingsConfig: {
-        options: { baseURL: "https://open.bigmodel.cn/api/anthropic" },
-      },
-    };
-    expect(inject("opencode", provider).meta?.usage_script).toBeUndefined();
+  it("injects every coding plan for non-claude apps", () => {
+    expect(
+      inject("opencode", {
+        settingsConfig: {
+          options: { baseURL: "https://open.bigmodel.cn/api/anthropic" },
+        },
+      }).meta?.usage_script,
+    ).toMatchObject({ enabled: true, codingPlanProvider: "zhipu" });
+    expect(
+      inject("hermes", {
+        settingsConfig: { base_url: "https://api.kimi.com/coding/v1" },
+      }).meta?.usage_script,
+    ).toMatchObject({ enabled: true, codingPlanProvider: "kimi" });
+  });
+
+  it("keeps ZenMux claude-only", () => {
+    const settingsConfig = { options: { baseURL: "https://zenmux.ai/api/v1" } };
+    expect(
+      inject("opencode", { settingsConfig }).meta?.usage_script,
+    ).toBeUndefined();
   });
 
   it("never overwrites an existing usage_script", () => {

@@ -1,0 +1,33 @@
+{
+  "version": "4.0.7",
+  "items": [
+    {
+      "type": "fix",
+      "zh": "修复 Codex 切不了同一账号的 Plus 和 Team 工作区",
+      "zh-TW": "修復 Codex 切換不了同一帳號的 Plus 和 Team 工作區",
+      "en": "Fixed switching between Plus and Team workspaces of the same OpenAI account in Codex",
+      "ja": "Codex で同じアカウントの Plus と Team ワークスペースを切り替えられない問題を修正"
+    },
+    {
+      "type": "new",
+      "zh": "额度可以改为显示「已用」，在设置 → 通用 → 外观里切换",
+      "zh-TW": "額度可以改為顯示「已用」，在設定 → 一般 → 外觀中切換",
+      "en": "Quotas can show what is used instead of what is left (Settings → General → Appearance)",
+      "ja": "利用枠を「使用済み」で表示できるように（設定 → 一般 → 外観）"
+    },
+    {
+      "type": "new",
+      "zh": "可以压缩 Codex 历史会话，压缩后的会话照常显示和统计用量",
+      "zh-TW": "可以壓縮 Codex 歷史對話，壓縮後的對話照常顯示並統計用量",
+      "en": "Old Codex sessions can be compressed, and still show up with their usage counted",
+      "ja": "Codex の古いセッションを圧縮でき、圧縮後も一覧表示と使用量の集計が可能に"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Claude 1 小时缓存写入少算费用、部分中转站缓存命中显示为 0",
+      "zh-TW": "修復 Claude 1 小時快取寫入費用少算、部分中轉站快取命中顯示為 0",
+      "en": "Fixed under-billed Claude 1-hour cache writes and cache hits showing 0 on some relays",
+      "ja": "Claude 1 時間キャッシュ書き込みの過少計上と一部中継のキャッシュヒット 0 表示を修正"
+    }
+  ]
+}

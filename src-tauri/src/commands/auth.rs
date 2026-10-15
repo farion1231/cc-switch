@@ -384,7 +384,14 @@ pub(crate) async fn remove_codex_oauth_account_with_switch_lock(
         .codex_oauth_manager
         .remove_account(account_id)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    app_state
+        .db
+        .unbind_codex_managed_accounts(&[account_id.to_string()])
+        .map_err(|error| {
+            format!("账号已删除，但 Codex 供应商解绑失败；请编辑供应商重新选择账号或切换供应商: {error}")
+        })?;
+    Ok(())
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -451,9 +458,24 @@ pub(crate) async fn logout_codex_oauth_with_switch_lock(
         .proxy_service
         .lock_switch_for_app(AppType::Codex.as_str())
         .await;
+    // Only this device's accounts: rows synced from another device stay bound there.
+    let removed: Vec<String> = app_state
+        .codex_oauth_manager
+        .list_accounts()
+        .await
+        .into_iter()
+        .map(|account| account.id)
+        .collect();
     app_state
         .codex_oauth_manager
         .clear_auth()
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    app_state
+        .db
+        .unbind_codex_managed_accounts(&removed)
+        .map_err(|error| {
+            format!("托管账号已登出，但 Codex 供应商解绑失败；请编辑供应商重新选择账号或切换供应商: {error}")
+        })?;
+    Ok(())
 }

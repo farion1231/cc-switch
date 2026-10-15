@@ -1,8 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { authApi, settingsApi } from "@/lib/api";
+import { CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR } from "@/lib/api/auth";
 import { copyText } from "@/lib/clipboard";
 import type {
   ManagedAuthProvider,
@@ -185,7 +186,14 @@ export function useManagedAuth(
             void cancelBackendFlow(response.device_code);
             flowGenerationRef.current += 1;
             setPollingState("error");
-            setError(errorMessage);
+            setError(
+              authProvider === "codex_oauth" &&
+                errorMessage === CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR
+                ? t("codexOauth.duplicateAccount", {
+                    defaultValue: "该 ChatGPT 账号已添加，请直接使用现有账号。",
+                  })
+                : errorMessage,
+            );
           }
         }
       };
@@ -228,6 +236,13 @@ export function useManagedAuth(
       setError(e instanceof Error ? e.message : String(e));
       await refetchStatus();
     },
+    onSettled: async () => {
+      if (authProvider === "codex_oauth") {
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", "codex"],
+        });
+      }
+    },
   });
 
   const removeAccountMutation = useMutation({
@@ -245,9 +260,18 @@ export function useManagedAuth(
       await refetchStatus();
       await queryClient.invalidateQueries({ queryKey });
     },
-    onError: (e) => {
+    onError: async (e) => {
       console.error("[ManagedAuth] Failed to remove account:", e);
       setError(e instanceof Error ? e.message : String(e));
+      // Account removal can succeed before provider unbinding fails.
+      if (authProvider === "codex_oauth") await refetchStatus();
+    },
+    onSettled: async () => {
+      if (authProvider === "codex_oauth") {
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", "codex"],
+        });
+      }
     },
   });
 

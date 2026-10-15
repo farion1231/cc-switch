@@ -1,8 +1,8 @@
-# 在 Codex 中用 DeepSeek 这类 Chat 格式 API：CC Switch 本地路由攻略
+# 在 Codex 中使用 Chat 格式 API：本地路由攻略与 DeepSeek 迁移说明
 
-> 适用版本：CC Switch 3.19.1 及以上。本文根据仓库内文档与代码整理。截图使用去敏示例数据生成，避免泄露真实 API Key 或账户余额。
+> 适用版本：CC Switch 3.20.4 及以上。本文根据仓库内文档与代码整理。截图使用去敏示例数据生成，避免泄露真实 API Key 或账户余额。
 >
-> **3.19.1 起有重要变化**：DeepSeek 预设已改为原生 Responses 直连，不再需要本地路由。但这条路由转换的路径并没有作废——它仍是 `deepseek-v4-pro`、升级前已保存的供应商，以及 Kimi、智谱 GLM 等 Chat 格式供应商的必经之路。请先读下一节，确认你属于哪种情况。
+> **DeepSeek 用户多数已不需要本文**：3.19.1 起 DeepSeek 预设改为原生 Responses 直连，`deepseek-v4-pro` 也已可以直连。本文现在主要写给两类读者：仍是 Chat 格式的供应商（如 SiliconFlow、ModelScope），以及 3.19.1 之前保存、仍走 Chat 的 DeepSeek 旧卡片。请先读下一节，确认你属于哪种情况。
 
 ## 先确认你是否还需要这篇攻略
 
@@ -14,15 +14,15 @@
 - **没有徽章** → 它已经是 Responses 原生直连，本文的路由步骤对它没有意义，可以直接用。
 - **带 `不支持路由` 徽章** → 这是官方供应商，CC Switch 会阻止它走本地路由（见文末常见问题）。
 
-徽章由供应商保存时记录的 API 格式决定，所以升级 CC Switch **不会**改变已有供应商的行为。具体到 DeepSeek，升级到 3.19.1 之后有三种情况：
+徽章由供应商保存时记录的 API 格式决定，所以升级 CC Switch **不会**改变已有供应商的行为。具体到 DeepSeek，有三种情况：
 
 | 你的情况 | 是否需要路由 | 说明 |
 |---|---|---|
 | 3.19.1 之前保存的 DeepSeek 供应商 | **需要**，仍带徽章 | 预设改动只影响新建的供应商，已保存的配置原样保留；想改走直连见第一步末尾 |
-| 3.19.1 之后用预设新建的 DeepSeek | 不需要 | 直连 `api.deepseek.com`，并会拿到 DeepSeek 官方的模型目录 |
-| 想用 `deepseek-v4-pro` | **需要** | DeepSeek 官方尚未为该模型开通 Codex 集成（官方预计 2026 年 8 月初），直连会上游报错；必须走 Chat + 路由 |
+| 3.19.1 之后用预设新建的 DeepSeek | 不需要 | 直连 `api.deepseek.com`，并会拿到 DeepSeek 官方的模型目录；3.20.4 起预设默认模型为 `deepseek-flash`（V4.1 Flash） |
+| 想用 `deepseek-v4-pro` | 不需要 | DeepSeek 已于 2026 年 8 月为该模型开通 Codex 集成，直连即可；预设的模型菜单里已包含它 |
 
-除 DeepSeek 外，Kimi、智谱 GLM、SiliconFlow、ModelScope 等大量供应商仍是 Chat 格式，本文对它们完全适用——把下文中的 DeepSeek 换成对应预设即可。
+不只 DeepSeek，Kimi、智谱 GLM、MiniMax、千问AI平台的 Codex 预设也已先后改为原生直连。目前仍是 Chat 格式、需要本文的预设主要有 SiliconFlow、ModelScope、腾讯 Token Plan 系列、百度千帆 Coding Plan / Token Plan、StepFun 等，下文的步骤对它们完全适用。
 
 ## 为什么需要本地路由
 
@@ -47,7 +47,7 @@ CC Switch 的做法是让 Codex 始终连本机路由，仍以 Responses API 发
 - 已安装 Codex CLI，并至少运行过一次，让 `~/.codex/config.toml` 目录结构存在。
 - 目标供应商的 API Key。
 
-以 DeepSeek 为例，官方文档写明 OpenAI 兼容 base URL 是 `https://api.deepseek.com`（其他供应商常见的是带 `/v1` 或更长路径的 base URL，例如智谱 GLM 是 `https://open.bigmodel.cn/api/coding/paas/v4`），Chat API 路径是 `/chat/completions`。CC Switch 的预设已按这些信息配好，请优先使用预设，不需要手动拼接口路径。
+各家 OpenAI 兼容 base URL 的写法不一：常见的是带 `/v1`（例如 SiliconFlow 的 `https://api.siliconflow.cn/v1`），也有路径更长的（例如百度千帆 Coding Plan 的 `https://qianfan.baidubce.com/v2/coding`），Chat API 路径则是 `/chat/completions`。CC Switch 的预设已按各家文档配好，请优先使用预设，不需要手动拼接口路径。
 
 ## 第一步：添加 Codex 供应商
 
@@ -66,8 +66,6 @@ CC Switch 的做法是让 Codex 始终连本机路由，仍以 Responses API 发
 > **改造已有的 DeepSeek 供应商**：把 `上游格式` 改成 `Responses（原生）` 即可，不必删掉重建。下次切换到它时，CC Switch 会认出 `deepseek.com` 地址并套用 DeepSeek 官方的模型目录，freeform `apply_patch`、GPT-5 harness、low/high/max 思考档与 web_search 都会照常生效。
 >
 > 唯一的小差别是上下文窗口：供应商自己保存的模型行优先级更高，3.19.1 之前存下的 `1000000` 会盖掉官方声明的 `1048576`，少 4 万多 token。介意的话，在 `高级选项` → `模型映射` 里把该行的 `上下文窗口` 改成 `1048576` 就行，或者干脆用预设新建一个。
->
-> 反过来，想用 `deepseek-v4-pro`，就把 `上游格式` 改回 `Chat Completions`。
 >
 > 另外，直连所用的官方模型目录要求 Codex CLI **0.144.0 或更新**（它带的 freeform `apply_patch` 注册需要这个版本），CC Switch 不会替你校验；生成的目录文件也会涨到 75 KB 左右，因为其中包含完整的 GPT-5 harness 文本。
 
@@ -111,14 +109,11 @@ CC Switch 的做法是让 Codex 始终连本机路由，仍以 Responses API 发
 
 如果用的是内置预设，先确认当前供应商确实来自预设，并且 Codex 路由已启用。只有在使用自定义供应商时，才需要额外检查 base URL：它应该是对方文档给出的服务端点，而不是带 `/chat/completions` 的完整接口路径。
 
-**切到 `deepseek-v4-pro` 后上游报错**
-
-DeepSeek 官方尚未为该模型开通 Codex 集成。把这个供应商的 `上游格式` 改回 `Chat Completions（需开启路由）` 并开启路由接管即可——这正是 3.19.1 之前 DeepSeek 走的路径，路由的 Responses→Chat 转换照常支持 pro。或者改用 `deepseek-v4-flash`，它是预设默认值，不受影响。
-
 **`/model` 看不到供应商的模型**
 
 保存供应商后重启 Codex。CC Switch 会生成 `cc-switch-model-catalog.json` 并把路径写入 `model_catalog_json`，但正在运行的 Codex 进程不一定会热加载模型目录。
 目前 Codex app 不支持多模型选择，默认使用配置的第一个模型。
+如果命令行 `/model` 正常，但 Codex 桌面应用的模型选择器仍看不到自定义模型，这是 Codex 桌面应用上游自身的模型门控行为，详见 [Codex 桌面应用里看不到自定义模型？（常见问题）](./codex-desktop-custom-model-visibility-zh.md)。
 
 **开了路由但请求仍走错供应商**
 
