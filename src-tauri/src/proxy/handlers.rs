@@ -19,7 +19,7 @@ use super::{
     providers::{
         codex_chat_common::extract_reasoning_field_text,
         codex_chat_history::record_responses_sse_stream,
-        get_adapter, get_claude_api_format,
+        get_claude_api_format,
         streaming::create_anthropic_sse_stream,
         streaming_codex_anthropic::{
             create_responses_sse_stream_from_anthropic_with_context,
@@ -363,36 +363,13 @@ async fn handle_messages_for_app(
         .to_string();
     let response = result.response;
 
-    // 检查是否需要格式转换（OpenRouter 等中转服务）
-    let adapter = get_adapter(&app_type).ok_or_else(|| {
-        ProxyError::ConfigError(format!(
-            "{} does not support proxy routing",
-            app_type.as_str()
-        ))
-    })?;
-    let needs_transform = adapter.needs_transform(&ctx.provider);
-
-    // Claude 特有：格式转换处理
-    if needs_transform {
-        return handle_claude_transform(
-            response,
-            &ctx,
-            &state,
-            &body,
-            is_stream,
-            &api_format,
-            connection_guard,
-        )
-        .await;
-    }
-
-    // 通用响应处理（透传模式）
-    process_response(
+    finish_claude_response(
         response,
         &ctx,
         &state,
-        &CLAUDE_PARSER_CONFIG,
+        &body,
         is_stream,
+        &api_format,
         connection_guard,
     )
     .await
@@ -423,6 +400,46 @@ fn validate_claude_desktop_gateway_auth(
         ));
     }
     Ok(())
+}
+
+/// Select response conversion using the request's resolved upstream protocol.
+pub(super) async fn finish_claude_response(
+    response: super::hyper_client::ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    body: &Value,
+    is_stream: bool,
+    api_format: &str,
+    connection_guard: Option<ActiveConnectionGuard>,
+) -> Result<axum::response::Response, ProxyError> {
+    // The response must use the protocol selected for this request's final model,
+    // not the stored provider default (which can differ between concurrent calls).
+    let needs_transform = super::providers::claude_api_format_needs_transform(api_format);
+
+    // Claude 特有：格式转换处理
+    if needs_transform {
+        return handle_claude_transform(
+            response,
+            ctx,
+            state,
+            body,
+            is_stream,
+            api_format,
+            connection_guard,
+        )
+        .await;
+    }
+
+    // 通用响应处理（透传模式）
+    process_response(
+        response,
+        ctx,
+        state,
+        &CLAUDE_PARSER_CONFIG,
+        is_stream,
+        connection_guard,
+    )
+    .await
 }
 
 /// Claude 格式转换处理（独有逻辑）
@@ -1662,7 +1679,7 @@ async fn handle_codex_xai_native_responses_rewrite(
         })
 }
 
-async fn handle_codex_chat_to_responses_transform(
+pub(super) async fn handle_codex_chat_to_responses_transform(
     response: super::hyper_client::ProxyResponse,
     ctx: &RequestContext,
     state: &ProxyState,
@@ -1901,7 +1918,7 @@ async fn handle_codex_chat_to_responses_transform(
 /// `handle_codex_chat_error_response` (whose extraction logic also works for
 /// Anthropic's `{"error":{type,message}}`). It does not involve codex_chat_history
 /// (tool ids round-trip natively through Anthropic).
-async fn handle_codex_anthropic_to_responses_transform(
+pub(super) async fn handle_codex_anthropic_to_responses_transform(
     response: super::hyper_client::ProxyResponse,
     ctx: &RequestContext,
     state: &ProxyState,

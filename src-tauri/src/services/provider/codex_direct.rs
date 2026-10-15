@@ -23,7 +23,7 @@ use crate::codex_config::{
     codex_disables_web_search, codex_live_auth_is_managed_chatgpt_login,
     codex_managed_oauth_marker_bytes, extract_codex_auth_api_key, get_codex_auth_path,
     get_codex_config_path, get_codex_managed_oauth_live_auth_marker_path,
-    get_codex_model_catalog_path, plan_codex_model_catalog, CodexAuthStoreMode,
+    get_codex_model_catalog_path, plan_codex_provider_model_catalog, CodexAuthStoreMode,
 };
 use crate::codex_config::{
     plan_codex_stack_catalog, CodexCatalogRow, CodexStackCatalogMember, CodexStackRoute,
@@ -383,6 +383,9 @@ fn exclusive_of(provider: &Provider, projection: &CodexProjection) -> Vec<(Strin
         &provider.settings_config,
         &projection.catalog_input_text(),
         profile,
+    ) || crate::codex_config::codex_provider_has_messages_models(
+        provider,
+        &projection.catalog_input_text(),
     ) {
         exclusive.retain(|(key, _)| key != "web_search");
         exclusive.push((
@@ -631,6 +634,14 @@ pub(crate) fn plan(
         (Some(provider), Some(projection)) => stack_catalog(provider, projection, stack, prepared)?,
         _ => None,
     };
+    // A Messages model in any published Stack member cannot use Codex's hosted search.
+    if stack_catalog.is_some() && stack_has_messages_models(stack) {
+        exclusive.retain(|(key, _)| key != "web_search");
+        exclusive.push((
+            "web_search".to_string(),
+            TomlValue::from(WEB_SEARCH_DISABLED),
+        ));
+    }
     let catalog = match (stack_catalog, provider, &projection) {
         (Some(catalog), _, _) => {
             // 窗口类全局键会覆盖目录里的每一行，改由各家写进自己的行。
@@ -638,12 +649,7 @@ pub(crate) fn plan(
             Some(catalog)
         }
         (None, Some(provider), Some(projection)) => {
-            plan_codex_model_catalog(
-                &provider.settings_config,
-                &projection.catalog_input_text(),
-                crate::proxy::providers::resolve_codex_catalog_tool_profile(provider),
-            )?
-            .catalog
+            plan_codex_provider_model_catalog(provider, &projection.catalog_input_text())?.catalog
         }
         _ => None,
     };
@@ -690,6 +696,17 @@ pub(crate) fn plan(
             .and_then(NativeRows::identity)
             .map(str::to_string),
         contract,
+    })
+}
+
+fn stack_has_messages_models(stack: &[Member]) -> bool {
+    stack.iter().any(|member| {
+        project(&member.provider).is_ok_and(|projection| {
+            crate::codex_config::codex_provider_has_messages_models(
+                &member.provider,
+                &projection.catalog_input_text(),
+            )
+        })
     })
 }
 
@@ -764,6 +781,7 @@ fn stack_catalog(
         }
     } else {
         CodexStackRoute::ThirdParty(CodexCatalogRow {
+            model_api_formats: crate::proxy::providers::model_api_format::formats(route),
             settings: &route.settings_config,
             config_text: &route_text,
             profile: crate::proxy::providers::resolve_codex_catalog_tool_profile(route),
@@ -795,6 +813,9 @@ fn stack_catalog(
             key: &member.key,
             provider_name: &member.provider.name,
             row: CodexCatalogRow {
+                model_api_formats: crate::proxy::providers::model_api_format::formats(
+                    &member.provider,
+                ),
                 settings: &member.provider.settings_config,
                 config_text,
                 profile: *profile,
@@ -1191,5 +1212,30 @@ mod tests {
             "127.0.0.1",
             0
         ));
+    }
+    #[test]
+    fn model_api_formats_disable_hosted_search_for_messages_stack_members() {
+        let mut provider: crate::provider::Provider = serde_json::from_value(serde_json::json!({
+            "id": "mixed", "name": "Mixed", "settingsConfig": {
+                "auth": {"OPENAI_API_KEY": "sk-test"},
+                "config": "model_provider = \"mixed\"\nmodel = \"chat-model\"\n[model_providers.mixed]\nname = \"Mixed\"\nbase_url = \"https://relay.example/v1\"\nwire_api = \"responses\"\n",
+                "modelCatalog": {"models":[{"model":"chat-model"},{"model":"messages-model"}]}
+            }, "meta": {"apiFormat": "openai_chat", "modelApiFormats":{"messages-model":"anthropic"}}
+        })).unwrap();
+        let member = |provider| super::Member {
+            provider,
+            key: "mixed".into(),
+            route: false,
+            model_ids: vec![],
+        };
+        assert!(super::stack_has_messages_models(&[member(
+            provider.clone()
+        )]));
+        let projection = super::project(&provider).unwrap();
+        assert!(super::exclusive_of(&provider, &projection)
+            .iter()
+            .any(|(key, value)| key == "web_search" && value.as_str() == Some("disabled")));
+        provider.meta.as_mut().unwrap().model_api_formats = None;
+        assert!(!super::stack_has_messages_models(&[member(provider)]));
     }
 }

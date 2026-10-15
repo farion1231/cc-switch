@@ -1046,6 +1046,11 @@ pub(crate) fn provider_needs_routing(app: &AppType, provider: &Provider) -> bool
     if is_official_account(app, provider) {
         return false;
     }
+    if matches!(app, AppType::Claude | AppType::Codex)
+        && crate::proxy::providers::model_api_format::has_model_api_formats(provider)
+    {
+        return true;
+    }
     let meta = provider.meta.as_ref();
     let managed_oauth = meta
         .and_then(|meta| meta.provider_type.as_deref())

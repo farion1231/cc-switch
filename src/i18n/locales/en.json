@@ -1746,7 +1746,29 @@
     "localProxyRequestOverridesHelp": "Applies to the upstream request after format conversion.",
     "apiFormatHelp": "Pick the protocol the provider supports natively: Anthropic Messages is forwarded as is without conversion; routing converts the other three to Anthropic Messages.",
     "directModeFormatInUse": "This card is in use in direct mode: saving it with this format makes requests fail. Switch to routing or Aggregation first.",
-    "directModeFormatSwitch": "This format doesn't work in direct mode; switch to routing or Aggregation to use this card."
+    "directModeFormatSwitch": "This format doesn't work in direct mode; switch to routing or Aggregation to use this card.",
+    "modelApiFormats": {
+      "title": "Model protocol overrides",
+      "hint": "Choose the protocol for each final upstream model ID; other models use the provider default. Models using the same protocol share its existing settings, base URL and API key. Local routing is required.",
+      "fullUrl": "Full endpoint URLs cannot be combined with model protocol overrides. Turn off full URL mode or remove the overrides.",
+      "model": "Model ID",
+      "protocol": "Upstream protocol",
+      "remove": "Remove override",
+      "add": "Add model protocol",
+      "missingModel": "Enter the model ID for this protocol.",
+      "missingProtocol": "Select an upstream protocol for this model.",
+      "duplicate": "Each model can have only one protocol override ([1M] is ignored)."
+    },
+    "protocolSettings": {
+      "messages": "Anthropic Messages upstream settings",
+      "messagesHint": "These existing settings are shared by models using Messages. Codex still uses Responses locally.",
+      "chat": "OpenAI Chat Completions upstream settings",
+      "chatHint": "These existing settings are shared by models using Chat and map Codex reasoning.effort to upstream parameters. Available levels and default depth remain per model in the model catalog.",
+      "responses": "OpenAI Responses upstream",
+      "responsesHint": "Models using Responses keep native forwarding rules, with no additional conversion settings.",
+      "shared": "Settings shared by all protocols",
+      "sharedHint": "These existing settings apply to all models in this provider, regardless of their protocol."
+    }
   },
   "copilot": {
     "authSection": "GitHub Copilot Authentication",

@@ -1746,7 +1746,29 @@
     "localProxyRequestOverridesHelp": "形式変換後に上流へ送るリクエストに適用されます。",
     "apiFormatHelp": "プロバイダーがネイティブ対応するプロトコルを選びます。Anthropic Messages はそのまま転送して変換なし、他の三つはルーティングが Anthropic Messages に変換します。",
     "directModeFormatInUse": "このカードは直結で使用中です。この形式で保存するとリクエストが失敗します。先にルーティングか集約に切り替えてください。",
-    "directModeFormatSwitch": "この形式は直結モードでは使えません。ルーティングか集約に切り替えるとこのカードを使えます。"
+    "directModeFormatSwitch": "この形式は直結モードでは使えません。ルーティングか集約に切り替えるとこのカードを使えます。",
+    "modelApiFormats": {
+      "title": "モデル別プロトコル",
+      "hint": "最終的な上流モデル ID ごとにプロトコルを選びます。他のモデルは既定値を使います。同じプロトコルのモデルは既存設定、ベース URL と API キーを共有します。ローカルルーティングが必要です。",
+      "fullUrl": "完全なエンドポイント URL とモデル別プロトコルは併用できません。完全 URL モードを無効にするか、設定を削除してください。",
+      "model": "モデル ID",
+      "protocol": "上流プロトコル",
+      "remove": "設定を削除",
+      "add": "モデル別プロトコルを追加",
+      "missingModel": "このプロトコルのモデル ID を入力してください。",
+      "missingProtocol": "モデルの上流プロトコルを選択してください。",
+      "duplicate": "各モデルに設定できるプロトコルは一つです（[1M] は無視されます）。"
+    },
+    "protocolSettings": {
+      "messages": "Anthropic Messages の上流設定",
+      "messagesHint": "Messages を使うモデルで既存設定を共有します。Codex 側は Responses のままです。",
+      "chat": "OpenAI Chat Completions の上流設定",
+      "chatHint": "Chat を使うモデルで既存設定を共有し、Codex reasoning.effort を上流パラメーターに変換します。 選択可能なレベルと既定の深さはモデル一覧で個別に設定します。",
+      "responses": "OpenAI Responses の上流",
+      "responsesHint": "Responses モデルは既存の転送規則を使い、追加の変換設定はありません。",
+      "shared": "全プロトコルの共通設定",
+      "sharedHint": "このプロバイダーの全モデルに適用される既存設定です。"
+    }
   },
   "copilot": {
     "authSection": "GitHub Copilot 認証",

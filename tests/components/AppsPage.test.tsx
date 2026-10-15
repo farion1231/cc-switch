@@ -1755,7 +1755,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     }
     expect(updateButton("Claude Code")).toBeDisabled();
     expect(updateButton("Claude Code")).toHaveAttribute("aria-busy", "true");
-    expect(updateButton("Codex")).toBeEnabled();
+    await waitFor(() => expect(updateButton("Codex")).toBeEnabled());
     fireEvent.click(updateAllButton());
     await waitFor(() =>
       expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(3),

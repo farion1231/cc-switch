@@ -200,6 +200,8 @@ export interface ProviderMeta {
     | "openai_chat"
     | "openai_responses"
     | "gemini_native";
+  // Local proxy overrides, keyed by the final upstream model ID (without [1M]).
+  modelApiFormats?: Record<string, ModelApiFormat>;
   // Managed Codex Copilot uses this instead of apiFormat. Missing/unknown means auto.
   // Keep the raw string so selections from newer versions survive an edit/save.
   codexCopilotApiFormat?: string;
@@ -273,6 +275,8 @@ export type ClaudeApiFormat =
 // - "openai_responses": OpenAI Responses API 格式，直接透传
 // - "openai_chat": OpenAI Chat Completions 格式，需要本地路由转换
 // - "anthropic": native Anthropic Messages format, needs local routing to convert to Responses
+export type ModelApiFormat = "anthropic" | "openai_responses" | "openai_chat";
+
 export type CodexApiFormat = "openai_responses" | "openai_chat" | "anthropic";
 
 export type CodexCopilotApiFormat = "auto" | "openai_responses" | "openai_chat";

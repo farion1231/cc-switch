@@ -1,3 +1,8 @@
+import { UpstreamSettingsGroup } from "./UpstreamSettingsGroup";
+import {
+  ModelApiFormatsField,
+  type ModelApiFormatsEditor,
+} from "./ModelApiFormatsField";
 import {
   useCallback,
   useEffect,
@@ -132,6 +137,7 @@ export function resolveCopilotReportedPromptLimit(
 }
 
 interface CodexFormFieldsProps {
+  modelApiFormatsEditor?: ModelApiFormatsEditor;
   appId?: AppId;
   providerId?: string;
   isCopilotPreset?: boolean;
@@ -567,6 +573,7 @@ export function CodexFormFields({
   subagentReasoningEffort = "",
   onSubagentReasoningEffortChange,
   apiFormat,
+  modelApiFormatsEditor,
   onApiFormatChange,
   copilotApiFormat = "auto",
   onCopilotApiFormatChange,
@@ -627,6 +634,20 @@ export function CodexFormFields({
     : apiFormat;
   const isChatFormat = effectiveApiFormat === "openai_chat";
   const isAnthropicFormat = effectiveApiFormat === "anthropic";
+  const hasAnthropicUpstream =
+    isAnthropicFormat ||
+    !!modelApiFormatsEditor?.rows.some((row) => row.format === "anthropic");
+  const hasChatUpstream =
+    isChatFormat ||
+    !!modelApiFormatsEditor?.rows.some((row) => row.format === "openai_chat");
+  const groupProtocolSettings = !!modelApiFormatsEditor?.rows.some(
+    (row) => row.model.trim() && row.format,
+  );
+  const hasResponsesUpstream =
+    effectiveApiFormat === "openai_responses" ||
+    !!modelApiFormatsEditor?.rows.some(
+      (row) => row.format === "openai_responses",
+    );
   // Grok Build 复用本表单，但语义与 Codex 有差异（无模型映射、协议由 TOML 的
   // api_backend 声明、请求体也不是 Codex 发出的）——提示文案按 appId 分流，
   // 对应词条在 grokBuild.* 下。
@@ -650,6 +671,7 @@ export function CodexFormFields({
     isCopilotPreset ||
     !!customUserAgent ||
     hasRequestOverrides ||
+    !!modelApiFormatsEditor?.rows.length ||
     isAnthropicFormat ||
     supportsThinking ||
     supportsEffort ||
@@ -1288,6 +1310,21 @@ export function CodexFormFields({
           )}
         </SelectContent>
       </Select>
+      {modelApiFormatsEditor && (
+        <ModelApiFormatsField
+          {...modelApiFormatsEditor}
+          models={Array.from(
+            new Set(
+              [
+                ...fetchedModels.map((model) => model.id),
+                ...catalogRows.map((row) => row.model),
+                codexModel,
+                subagentModel,
+              ].filter(Boolean),
+            ),
+          ).map((id) => ({ id, ownedBy: null }))}
+        />
+      )}
       {/* 直连下 Chat / Anthropic 发不出请求，按实际模式提示后果；Copilot 恒需路由，单独提示。 */}
       {directModeFormatNotice &&
         !isCopilotPreset &&
@@ -1888,11 +1925,11 @@ export function CodexFormFields({
 
   if (variant === "stack") {
     const showFormatFields = shouldShowSpeedTest && !isXaiOauthPreset;
-    const showReasoning = isChatFormat && canEditReasoning;
+    const showReasoning = hasChatUpstream && canEditReasoning;
     // Copilot 不显示 UA 和请求覆盖，Responses 格式下高级区就空了。
     const hasStackAdvancedContent =
       showFullUrlToggle ||
-      (showFormatFields && isAnthropicFormat) ||
+      (showFormatFields && hasAnthropicUpstream) ||
       showReasoning ||
       userAgentAndOverrides !== null;
     return (
@@ -1900,7 +1937,10 @@ export function CodexFormFields({
         {oauthSections}
         {showFormatFields && upstreamFormatSelect}
         {apiKeySection}
-        {showFormatFields && isAnthropicFormat && anthropicAuthFieldSelect}
+        {showFormatFields &&
+          hasAnthropicUpstream &&
+          !groupProtocolSettings &&
+          anthropicAuthFieldSelect}
         {endpointSection}
 
         {canEditCatalog && (
@@ -1981,10 +2021,16 @@ export function CodexFormFields({
                   onCheckedChange={onFullUrlChange}
                 />
               )}
-              {showFormatFields &&
-                isAnthropicFormat &&
-                impersonateClaudeCodeToggle}
-              {showFormatFields && isAnthropicFormat && maxOutputTokensField}
+              {showFormatFields && hasAnthropicUpstream && (
+                <UpstreamSettingsGroup
+                  protocol="messages"
+                  enabled={groupProtocolSettings}
+                >
+                  {groupProtocolSettings && anthropicAuthFieldSelect}
+                  {impersonateClaudeCodeToggle}
+                  {maxOutputTokensField}
+                </UpstreamSettingsGroup>
+              )}
               {showReasoning && (
                 <div
                   className={cn(
@@ -1994,20 +2040,33 @@ export function CodexFormFields({
                       "border-t border-border pt-3",
                   )}
                 >
-                  {reasoningFields}
+                  <UpstreamSettingsGroup
+                    protocol="chat"
+                    enabled={groupProtocolSettings}
+                  >
+                    {reasoningFields}
+                  </UpstreamSettingsGroup>
                 </div>
+              )}
+              {groupProtocolSettings && hasResponsesUpstream && (
+                <UpstreamSettingsGroup protocol="responses" enabled />
               )}
               {userAgentAndOverrides && (
                 <div
                   className={cn(
                     "space-y-3",
                     (showFullUrlToggle ||
-                      (showFormatFields && isAnthropicFormat) ||
+                      (showFormatFields && hasAnthropicUpstream) ||
                       showReasoning) &&
                       "border-t border-border pt-3",
                   )}
                 >
-                  {userAgentAndOverrides}
+                  <UpstreamSettingsGroup
+                    protocol="shared"
+                    enabled={groupProtocolSettings}
+                  >
+                    {userAgentAndOverrides}
+                  </UpstreamSettingsGroup>
                 </div>
               )}
             </CollapsibleContent>
@@ -2167,33 +2226,54 @@ export function CodexFormFields({
             {(shouldShowSpeedTest || isCopilotPreset) && !isXaiOauthPreset && (
               <div className="space-y-3">
                 {upstreamFormatSelect}
-                {isAnthropicFormat && anthropicAuthFieldSelect}
-                {isAnthropicFormat && impersonateClaudeCodeToggle}
-                {isAnthropicFormat && maxOutputTokensField}
+                {hasAnthropicUpstream && (
+                  <UpstreamSettingsGroup
+                    protocol="messages"
+                    enabled={groupProtocolSettings}
+                  >
+                    {anthropicAuthFieldSelect}
+                    {impersonateClaudeCodeToggle}
+                    {maxOutputTokensField}
+                  </UpstreamSettingsGroup>
+                )}
                 {showFullUrlToggle && fullUrlToggle}
               </div>
             )}
 
-            {isChatFormat && canEditReasoning && (
+            {hasChatUpstream && canEditReasoning && (
               <div
                 className={cn(
                   "space-y-3",
                   shouldShowSpeedTest && "border-t border-border pt-3",
                 )}
               >
-                {reasoningFields}
+                <UpstreamSettingsGroup
+                  protocol="chat"
+                  enabled={groupProtocolSettings}
+                >
+                  {reasoningFields}
+                </UpstreamSettingsGroup>
               </div>
             )}
 
+            {groupProtocolSettings && hasResponsesUpstream && (
+              <UpstreamSettingsGroup protocol="responses" enabled />
+            )}
             {userAgentAndOverrides && (
               <div
                 className={cn(
                   "space-y-3",
-                  (shouldShowSpeedTest || (isChatFormat && canEditReasoning)) &&
+                  (shouldShowSpeedTest ||
+                    (hasChatUpstream && canEditReasoning)) &&
                     "border-t border-border pt-3",
                 )}
               >
-                {userAgentAndOverrides}
+                <UpstreamSettingsGroup
+                  protocol="shared"
+                  enabled={groupProtocolSettings}
+                >
+                  {userAgentAndOverrides}
+                </UpstreamSettingsGroup>
               </div>
             )}
           </CollapsibleContent>
