@@ -20,7 +20,8 @@ use tokio::process::Command;
 
 use crate::app_config::McpServer;
 
-const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+// Package launchers such as npx/uvx may need time to prepare a cold start.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_CONCURRENT_CHECKS: usize = 3;
 static BATCHES: Lazy<std::sync::Mutex<HashMap<String, AbortHandle>>> = Lazy::new(Default::default);
 

@@ -275,6 +275,39 @@ async fn stdio_honors_args_env_cwd_and_releases_the_process() {
 }
 
 #[tokio::test]
+async fn batches_allow_stdio_cold_starts_longer_than_ten_seconds() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("slow-start");
+    let mut spec = stdio_spec(&marker, false);
+    spec["env"]["MCP_TEST_STARTUP_DELAY_MS"] = json!("11000");
+    // Exercise the shell launcher used by Windows MCP presets as well.
+    #[cfg(windows)]
+    {
+        spec["command"] = json!("cmd");
+        spec["args"] = json!([
+            "/d",
+            "/c",
+            STDIO_FIXTURE.1,
+            "argument with spaces & symbols"
+        ]);
+    }
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    start_checks(vec![server(0, spec, true)], move |result| {
+        tx.send(result).is_ok()
+    });
+    let result = tokio::time::timeout(CHECK_TIMEOUT + Duration::from_secs(5), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        result.connected,
+        "a healthy cold start must not fail after ten seconds"
+    );
+    assert_process_released_port(&marker).await;
+    assert_process_released_port(&marker.with_extension("child")).await;
+}
+
+#[tokio::test]
 async fn cancellation_and_timeout_release_stdio_descendants() {
     for cancel in [false, true] {
         let dir = tempfile::tempdir().unwrap();

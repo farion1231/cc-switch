@@ -44,6 +44,9 @@ fn main() {
     assert!(args
         .iter()
         .any(|arg| arg == "argument with spaces & symbols"));
+    if let Ok(delay) = std::env::var("MCP_TEST_STARTUP_DELAY_MS") {
+        std::thread::sleep(Duration::from_millis(delay.parse().unwrap()));
+    }
     let mut lines = io::stdin().lock().lines();
     let request = lines.next().unwrap().unwrap();
     assert!(request.contains("\"method\":\"initialize\""));
