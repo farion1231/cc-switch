@@ -424,7 +424,7 @@ export function ProviderList({
     );
   }
 
-  // 「当前」只用来决定额度自动刷新：Pi 没有当前项，OMO / Hermes 各看自己的当前项
+  // 「当前」只用来决定官方订阅 / OAuth 额度自动刷新：Pi 没有当前项，OMO / Hermes 各看自己的当前项
   const isCurrentFor = (provider: Provider) => {
     if (appId === "pi") return false;
     if (provider.category === "omo") return provider.id === currentOmoId;
@@ -441,7 +441,6 @@ export function ProviderList({
       appId={appId}
       presentation={presentation}
       isCurrent={isCurrentFor(provider)}
-      isInConfig={isInConfig(provider)}
       onEdit={onEdit}
       onDelete={onDelete}
       onDuplicate={onDuplicate}
@@ -597,7 +596,6 @@ interface SortableProviderCardProps {
   appId: AppId;
   presentation: CardPresentation;
   isCurrent: boolean;
-  isInConfig: boolean;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onDuplicate: (provider: Provider) => void;
