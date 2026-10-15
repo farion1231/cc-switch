@@ -1729,6 +1729,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
   it("keeps a tool locked through version refresh and remount with an expired cache", async () => {
     const refreshed =
       deferred<Awaited<ReturnType<typeof mocks.getToolVersions>>>();
+    const remountedCodex = deferred<ToolVersions>();
     const view = await renderApps();
     mocks.getToolVersions.mockImplementationOnce(() => refreshed.promise);
     fireEvent.click(updateButton("Claude Code"));
@@ -1738,6 +1739,10 @@ describe("AppsPage concurrent CLI upgrades", () => {
       ).toBeGreaterThan(0),
     );
     view.unmount();
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    mocks.getToolVersions.mockImplementation((tools: string[]) =>
+      tools.includes("codex") ? remountedCodex.promise : getVersions(tools),
+    );
     const now = vi
       .spyOn(Date, "now")
       .mockReturnValue(Date.now() + 11 * 60 * 1000);
@@ -1755,7 +1760,12 @@ describe("AppsPage concurrent CLI upgrades", () => {
     }
     expect(updateButton("Claude Code")).toBeDisabled();
     expect(updateButton("Claude Code")).toHaveAttribute("aria-busy", "true");
-    expect(updateButton("Codex")).toBeEnabled();
+    // The expired-cache remount probes idle tools independently of Claude's
+    // pending task. Keep that probe pending to exercise CI's loading state.
+    expect(card("Codex").getByLabelText("common.loading")).toBeInTheDocument();
+    mocks.getToolVersions.mockImplementation(getVersions);
+    await act(async () => remountedCodex.resolve(await getVersions(["codex"])));
+    await waitFor(() => expect(updateButton("Codex")).toBeEnabled());
     fireEvent.click(updateAllButton());
     await waitFor(() =>
       expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(3),
