@@ -667,30 +667,15 @@ fn infer_codex_chat_reasoning_config(
         .or_else(|| codex_provider_upstream_model(provider))
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let base_url = provider
-        .settings_config
-        .get("base_url")
-        .or_else(|| provider.settings_config.get("baseURL"))
-        .and_then(|v| v.as_str())
-        .map(ToString::to_string)
-        .or_else(|| {
-            provider
-                .settings_config
-                .get("config")
-                .and_then(|v| v.as_str())
-                .and_then(extract_codex_base_url_from_toml)
-        })
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let name = provider.name.to_ascii_lowercase();
+    let platform = codex_provider_platform_identity(provider);
 
     // 平台优先：聚合 / 托管平台的 reasoning 接口由平台的推理框架决定，而非模型官方实现，
     // 因此先按平台标识（仅 name + base_url，不含 model 名）判定并覆盖模型规则。
-    if let Some(config) = infer_aggregator_platform_config(&name, &base_url) {
+    if let Some(config) = infer_aggregator_platform_config(&platform) {
         return Some(config);
     }
 
-    let haystack = format!("{name} {base_url} {model}");
+    let haystack = format!("{platform} {model}");
 
     if haystack.contains("deepseek") {
         return Some(CodexChatReasoningConfig {
@@ -793,16 +778,76 @@ fn infer_codex_chat_reasoning_config(
     None
 }
 
+/// Codex 供应商的 base_url（小写）。取值顺序与 `infer_codex_chat_reasoning_config`
+/// 的历史判定面一致：直接字段 → `config` TOML 里提取。
+fn codex_provider_base_url(provider: &Provider) -> String {
+    provider
+        .settings_config
+        .get("base_url")
+        .or_else(|| provider.settings_config.get("baseURL"))
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("config")
+                .and_then(|v| v.as_str())
+                .and_then(extract_codex_base_url_from_toml)
+        })
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+/// 供应商的「平台身份」串：`"{name} {base_url}"`（已小写），**不含 model 名**。
+/// 与 `infer_codex_chat_reasoning_config` 的历史判定面完全一致（同一套取值顺序），
+/// 抽出来是为了让「是否为聚合网关」这类判定能独立于 reasoning 推理结果单独调用——
+/// 预设自带 `meta.codexChatReasoning` 时 `resolve_codex_chat_reasoning_config` 会提前
+/// 返回、根本走不到 `infer_aggregator_platform_config`，平台判定不能被推理结果带着走。
+fn codex_provider_platform_identity(provider: &Provider) -> String {
+    format!(
+        "{} {}",
+        provider.name.to_ascii_lowercase(),
+        codex_provider_base_url(provider)
+    )
+}
+
+/// 聚合 / 托管网关的平台识别核心：任意「name + 若干候选 base_url」组合，只要拼出的身份
+/// 串命中已知网关就判定成立。抽出来是为了让 Claude→Chat 与 Codex→Chat 两条路径共用同一
+/// 套平台名单，不会因为各自读不同的 settings_config 键而判定不一致。
+pub(crate) fn platform_is_aggregator_gateway<'a>(
+    name: &str,
+    base_urls: impl IntoIterator<Item = &'a str>,
+) -> bool {
+    let mut platform = name.to_ascii_lowercase();
+    for url in base_urls {
+        platform.push(' ');
+        platform.push_str(&url.to_ascii_lowercase());
+    }
+    infer_aggregator_platform_config(&platform).is_some()
+}
+
+/// 供应商是否为「聚合 / 托管网关」。
+///
+/// 这类网关自己定义 OpenAI 兼容接口与 reasoning 参数方言（见
+/// `infer_aggregator_platform_config`），并且**严格校验未知字段**：把 CC Switch 补的
+/// 非标准 `reasoning_content` 当作非法参数拒收，返回
+/// `400 Invalid request parameters`（issue #7608，OpenCode Zen + mimo-v2.6-flash）。
+///
+/// 平台身份只由 name / base_url 判定，绝不掺 model 名——model 名属于模型厂商，
+/// 会把托管平台误判成厂商官方接口，反之亦然。
+pub(crate) fn is_aggregator_gateway(provider: &Provider) -> bool {
+    let base_url = codex_provider_base_url(provider);
+    platform_is_aggregator_gateway(&provider.name, [base_url.as_str()])
+}
+
 /// 聚合 / 托管平台的 reasoning 接口由平台决定：同一个模型在不同平台参数可能完全不同
 /// （DeepSeek 官方用 `thinking:{type}`、SiliconFlow 用 `enable_thinking`、
 /// OpenRouter 用原生 `reasoning:{effort}` 对象）。仅以平台标识（name / base_url）判定，
 /// 绝不掺入 model 名——model 名属于模型厂商，会把托管平台误判成模型官方接口。
-fn infer_aggregator_platform_config(
-    name: &str,
-    base_url: &str,
-) -> Option<CodexChatReasoningConfig> {
-    let platform = format!("{name} {base_url}");
-
+///
+/// `platform` 必须是已经拼好并小写的 `"{name} {base_url}"` 身份串
+/// （见 `codex_provider_platform_identity`）。
+fn infer_aggregator_platform_config(platform: &str) -> Option<CodexChatReasoningConfig> {
     // OpenRouter：用原生归一化对象 `reasoning: { effort }`（由 OpenRouter 翻译成各底层
     // 模型的正确推理参数，比顶层 OpenAI 别名 reasoning_effort 覆盖面更全）。effort 走
     // "openrouter" 值映射：枚举为 xhigh|high|medium|low|minimal，无 max——max 会触发
@@ -2318,6 +2363,68 @@ wire_api = "chat"
         let config =
             resolve_codex_chat_reasoning_config(&provider, &json!({ "model": "kimi-k3" })).unwrap();
         assert!(config.effort_levels.is_none());
+    }
+
+    #[test]
+    fn test_apply_codex_upstream_model_keeps_catalogued_mimo_v2_6_flash() {
+        // issue #7608：mimo-v2.6-flash 未收录进 OpenCode Go 目录时会被静默覆写成供应商
+        // 配置模型（glm-5.3）；收录后请求模型应原样透传。
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "opencode"
+model = "glm-5.3"
+
+[model_providers.opencode]
+name = "OpenCode Go"
+base_url = "https://opencode.ai/zen/go/v1"
+wire_api = "chat"
+"#,
+            "modelCatalog": {
+                "models": [
+                    { "model": "glm-5.3", "reasoningLevels": ["low", "high", "max"] },
+                    { "model": "mimo-v2.6-flash" }
+                ]
+            }
+        }));
+
+        let mut body = json!({ "model": "mimo-v2.6-flash" });
+        assert_eq!(
+            apply_codex_upstream_model(&provider, &mut body).as_deref(),
+            Some("mimo-v2.6-flash")
+        );
+        assert_eq!(body["model"], "mimo-v2.6-flash");
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_zen_omits_effort_for_mimo_v2_6_flash() {
+        // models.dev（opencode-go，2026-10-04）：mimo-v2.6-flash 的
+        // reasoning_options 为空 → 目录条目不声明 reasoningLevels →
+        // effort_levels 为 None，转换层完全不发 reasoning_effort。
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "opencode"
+model = "mimo-v2.6-flash"
+
+[model_providers.opencode]
+name = "OpenCode Go"
+base_url = "https://opencode.ai/zen/go/v1"
+wire_api = "chat"
+"#,
+            "modelCatalog": {
+                "models": [ { "model": "mimo-v2.6-flash" } ]
+            }
+        }));
+
+        let config =
+            resolve_codex_chat_reasoning_config(&provider, &json!({ "model": "mimo-v2.6-flash" }))
+                .unwrap();
+
+        assert_eq!(config.effort_value_mode.as_deref(), Some("zen"));
+        assert_eq!(config.output_format.as_deref(), Some("reasoning_content"));
+        assert!(
+            config.effort_levels.is_none(),
+            "未声明档位时不应发 reasoning_effort"
+        );
     }
 
     #[test]
