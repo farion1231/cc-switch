@@ -4388,6 +4388,12 @@
     }
   },
   "mcpPage": {
+    "connection": {
+      "connected": "Bağlandı",
+      "disconnected": "Bağlantı başarısız",
+      "checking": "Bağlantı kontrol ediliyor",
+      "disabled": "Devre dışı"
+    },
     "noun": "MCP sunucuları",
     "listSeparator": ",",
     "helpTitle": "MCP nasıl eşitle edilir?",

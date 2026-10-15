@@ -4473,6 +4473,12 @@
     }
   },
   "mcpPage": {
+    "connection": {
+      "connected": "Connected",
+      "disconnected": "Connection failed",
+      "checking": "Checking connection",
+      "disabled": "Disabled"
+    },
     "noun": "MCP servers",
     "listSeparator": ", ",
     "helpTitle": "How MCP syncs",
