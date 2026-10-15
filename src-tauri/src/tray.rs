@@ -97,10 +97,8 @@ pub struct TrayTexts {
     pub failover_note: &'static str,
     pub mode_route: &'static str,
     pub mode_stack: &'static str,
-    pub mode_mapping: &'static str,
     pub needs_routing_suffix: &'static str,
     pub official_blocked_suffix: &'static str,
-    pub mapping_suffix: &'static str,
     pub open_app_page: &'static str,
     pub add_provider: &'static str,
     pub almost_out: &'static str,
@@ -109,7 +107,6 @@ pub struct TrayTexts {
     pub problem_attach_failed: &'static str,
     pub problem_switch_failed: &'static str,
     pub problem_more: &'static str,
-    pub desktop_unavailable: &'static str,
     /// 出问题时托盘图标的悬停提示：`{problem}` 是问题区第一条
     pub tooltip_problem: &'static str,
     /// 反馈行（灰字）：直连切换 / Claude Desktop 切换，`{app}` `{name}`
@@ -203,10 +200,8 @@ impl TrayTexts {
                 failover_note: "Picked from the queue automatically; change it on the app page",
                 mode_route: "Routing",
                 mode_stack: "Aggregation",
-                mode_mapping: "Model mapping",
                 needs_routing_suffix: " (needs routing)…",
                 official_blocked_suffix: " (official plans don't go through routing)",
-                mapping_suffix: " · Model mapping",
                 open_app_page: "Open {app} page",
                 add_provider: "Add provider…",
                 almost_out: "almost out",
@@ -216,8 +211,6 @@ impl TrayTexts {
                     "{app}: {mode} couldn't reconnect at startup; back to direct",
                 problem_switch_failed: "{app} didn't switch: {reason}",
                 problem_more: "{count} more issues — open CC Switch to see them",
-                desktop_unavailable:
-                    "The routing service isn't running; {name} is unavailable for now",
                 tooltip_problem: "CC Switch · Needs attention: {problem}",
                 feedback_switched: "{app} switched to {name}. Restart {app} to apply",
                 feedback_stack_default:
@@ -267,10 +260,8 @@ impl TrayTexts {
                 texts.failover_note = "Kuyruktan otomatik seçilir; uygulama sayfasından değiştirebilirsiniz";
                 texts.mode_route = "Yönlendirme";
                 texts.mode_stack = "Birleştirme";
-                texts.mode_mapping = "Model eşleme";
                 texts.needs_routing_suffix = " (yönlendirme gerekir)…";
                 texts.official_blocked_suffix = " (resmî abonelikler yönlendirmeyi kullanmaz)";
-                texts.mapping_suffix = " · Model eşleme";
                 texts.open_app_page = "{app} sayfasını aç";
                 texts.add_provider = "Sağlayıcı ekle…";
                 texts.almost_out = "bitmek üzere";
@@ -279,7 +270,6 @@ impl TrayTexts {
                 texts.problem_attach_failed = "{app}: {mode} başlangıçta yeniden bağlanamadı; doğrudan bağlantıya dönüldü";
                 texts.problem_switch_failed = "{app} geçiş yapamadı: {reason}";
                 texts.problem_more = "{count} sorun daha var — görmek için CC Switch'i açın";
-                texts.desktop_unavailable = "Yönlendirme hizmeti çalışmıyor; {name} şu anda kullanılamıyor";
                 texts.tooltip_problem = "CC Switch · İlgilenilmesi gerekiyor: {problem}";
                 texts.feedback_switched = "{app}, {name} sağlayıcısına geçti. Uygulamak için {app} uygulamasını yeniden başlatın";
                 texts.feedback_stack_default = "{app} için varsayılan sağlayıcı artık {name}. Uygulamak için {app} uygulamasını yeniden başlatın";
@@ -325,10 +315,8 @@ impl TrayTexts {
                 failover_note: "キューの順に自動で選ばれます（変更はアプリのページで）",
                 mode_route: "ルーティング",
                 mode_stack: "集約",
-                mode_mapping: "モデルマッピング",
                 needs_routing_suffix: "（ルーティングが必要）…",
                 official_blocked_suffix: "（公式サブスクリプションはルーティングを通りません）",
-                mapping_suffix: " · モデルマッピング",
                 open_app_page: "{app} のページを開く",
                 add_provider: "プロバイダーを追加…",
                 almost_out: "残りわずか",
@@ -338,8 +326,6 @@ impl TrayTexts {
                 problem_switch_failed: "{app} を切り替えられませんでした：{reason}",
                 problem_more:
                     "ほかに {count} 件の問題があります。CC Switch を開いて確認してください",
-                desktop_unavailable:
-                    "ルーティングサービスが動いていないため、{name} は今使えません",
                 tooltip_problem: "CC Switch · 対応が必要：{problem}",
                 feedback_switched:
                     "{app} を {name} に切り替えました。反映するには {app} を再起動してください",
@@ -386,10 +372,8 @@ impl TrayTexts {
                 failover_note: "依佇列自動選擇，要調整請到應用頁",
                 mode_route: "路由",
                 mode_stack: "聚合",
-                mode_mapping: "模型映射",
                 needs_routing_suffix: "（需要路由）…",
                 official_blocked_suffix: "（官方訂閱不經過路由）",
-                mapping_suffix: " · 模型映射",
                 open_app_page: "開啟 {app} 頁面",
                 add_provider: "新增供應商…",
                 almost_out: "快用完",
@@ -398,7 +382,6 @@ impl TrayTexts {
                 problem_attach_failed: "{app}：上次的{mode}沒能接上，已回到直連",
                 problem_switch_failed: "{app} 沒切換成功：{reason}",
                 problem_more: "還有 {count} 個問題，開啟 CC Switch 查看",
-                desktop_unavailable: "路由服務沒在執行，{name} 暫時無法使用",
                 tooltip_problem: "CC Switch · 需要處理：{problem}",
                 feedback_switched: "{app} 已切換到 {name}，重新啟動 {app} 後生效",
                 feedback_stack_default: "{app} 的預設供應商改為 {name}，重新啟動 {app} 後生效",
@@ -444,10 +427,8 @@ impl TrayTexts {
                 failover_note: "按队列自动选择，要调整请到应用页",
                 mode_route: "路由",
                 mode_stack: "聚合",
-                mode_mapping: "模型映射",
                 needs_routing_suffix: "（需要路由）…",
                 official_blocked_suffix: "（官方订阅不经过路由）",
-                mapping_suffix: " · 模型映射",
                 open_app_page: "打开 {app} 页面",
                 add_provider: "添加供应商…",
                 almost_out: "快用完",
@@ -456,7 +437,6 @@ impl TrayTexts {
                 problem_attach_failed: "{app}：上次的{mode}没能接上，已回到直连",
                 problem_switch_failed: "{app} 没切换成功：{reason}",
                 problem_more: "还有 {count} 个问题，打开 CC Switch 查看",
-                desktop_unavailable: "路由服务没在运行，{name} 暂时不可用",
                 tooltip_problem: "CC Switch · 需要处理：{problem}",
                 feedback_switched: "{app} 已切换到 {name}，重启 {app} 后生效",
                 feedback_stack_default: "{app} 的默认供应商改为 {name}，重启 {app} 后生效",
@@ -1089,8 +1069,6 @@ enum TrayMode {
     /// 路由 + 自动故障转移：子菜单只读（#6022）。
     Failover,
     Stack,
-    /// Claude Desktop 没有模式 tab。
-    Desktop,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1137,11 +1115,10 @@ impl AppSnapshot {
         self.providers.iter().find(|p| p.id == id)
     }
 
-    /// 这个应用现在靠路由服务：路由 / 聚合中，或 Desktop 在用模型映射卡。
+    /// 这个应用现在靠路由服务：路由 / 聚合中。
     fn uses_service(&self) -> bool {
         match self.mode {
             TrayMode::Route | TrayMode::Failover | TrayMode::Stack => true,
-            TrayMode::Desktop => self.current().is_some_and(|p| p.needs_routing),
             TrayMode::Direct => false,
         }
     }
@@ -1212,9 +1189,6 @@ fn provider_entry(app: &AppType, provider: &Provider) -> ProviderEntry {
 }
 
 fn tray_mode(app_state: &AppState, app: &AppType) -> TrayMode {
-    if *app == AppType::ClaudeDesktop {
-        return TrayMode::Desktop;
-    }
     if !crate::mode::current::is_proxy(app) {
         return TrayMode::Direct;
     }
@@ -1465,13 +1439,16 @@ struct FeedbackRecord {
 static FEEDBACK: Lazy<Mutex<Option<FeedbackRecord>>> = Lazy::new(|| Mutex::new(None));
 
 /// 切换成功后要不要说一句：客户端只在启动时读配置的才说；Claude Code 直连、路由 / 故障转移
-/// 换一家立即生效，不说。
+/// 换一家立即生效，不说。Claude Desktop 换一家都要重启 Desktop（路由那家的模型列表写在配置
+/// 里，聚合换默认也一样）。
 fn switch_feedback(app: &AppType, mode: TrayMode, name: String) -> Option<TrayFeedback> {
     match mode {
-        TrayMode::Desktop => Some(TrayFeedback::Switched {
-            app: app.clone(),
-            name,
-        }),
+        TrayMode::Direct | TrayMode::Route | TrayMode::Stack if *app == AppType::ClaudeDesktop => {
+            Some(TrayFeedback::Switched {
+                app: app.clone(),
+                name,
+            })
+        }
         TrayMode::Direct
             if matches!(app, AppType::Codex | AppType::Gemini | AppType::GrokBuild) =>
         {
@@ -1659,8 +1636,7 @@ fn app_row_title(texts: &TrayTexts, snapshot: &AppSnapshot) -> String {
     let mode_word = match snapshot.mode {
         TrayMode::Route | TrayMode::Failover => Some(texts.mode_route),
         TrayMode::Stack => Some(texts.mode_stack),
-        TrayMode::Desktop if current.is_some_and(|p| p.needs_routing) => Some(texts.mode_mapping),
-        _ => None,
+        TrayMode::Direct => None,
     };
     if let Some(word) = mode_word {
         parts.push(word.to_string());
@@ -1798,22 +1774,6 @@ fn provider_rows(texts: &TrayTexts, snapshot: &AppSnapshot) -> Vec<TrayEntry> {
                 })
                 .collect()
         }
-        TrayMode::Desktop => {
-            let listed: Vec<&ProviderEntry> = snapshot.providers.iter().collect();
-            let names = display_names(&listed);
-            listed
-                .iter()
-                .zip(names)
-                .map(|(p, name)| {
-                    let text = if p.needs_routing {
-                        format!("{name}{}", texts.mapping_suffix)
-                    } else {
-                        name
-                    };
-                    TrayEntry::check(provider_id_for(app, &p.id), text, true, is_current(p))
-                })
-                .collect()
-        }
     }
 }
 
@@ -1837,24 +1797,10 @@ fn app_children(
             ),
             None => texts.header_stack.to_string(),
         }),
-        TrayMode::Desktop => None,
     };
     if let Some(header) = header {
         children.push(TrayEntry::label(format!("info:{app}:header"), header));
     }
-    if snapshot.mode == TrayMode::Desktop && snapshot.service_down {
-        if let Some(current) = snapshot.current() {
-            children.push(TrayEntry::item(
-                format!("nav:app:{app}:service"),
-                fill(
-                    texts.desktop_unavailable,
-                    &[("name", &truncate_chars(&current.name, MAX_NAME_CHARS))],
-                ),
-            ));
-            children.push(TrayEntry::Separator);
-        }
-    }
-
     children.extend(provider_rows(texts, snapshot));
 
     // 额度说明行：可点（打开应用页），文字才是正常对比度。
@@ -2055,12 +2001,11 @@ fn collect_model(app_state: &AppState, texts: &TrayTexts) -> Result<TrayModel, A
     Ok(TrayModel { entries, status })
 }
 
-/// 退出会让它们断开的情况：路由服务在跑，且有应用在路由 / 聚合模式，或 Claude Desktop 在用
-/// 模型映射卡（和 `controller::stop_server_if_unused` 的「在用」同一口径，隐藏的应用也算）。
+/// 退出会让它们断开的情况：路由服务在跑，且有应用在路由 / 聚合模式（含 Claude Desktop；和
+/// `controller::stop_server_if_unused` 的「在用」同一口径，隐藏的应用也算）。
 fn routing_in_use(app_state: &AppState) -> bool {
     app_state.proxy_service.running_now() == Some(true)
-        && (crate::mode::current::proxy_flags(crate::mode::controller::PROXY_APPS).contains(&true)
-            || crate::claude_desktop_config::current_provider_uses_proxy(&app_state.db))
+        && crate::mode::current::proxy_flags(crate::mode::controller::PROXY_APPS).contains(&true)
 }
 
 // ─── 模型 → Tauri 菜单 ─────────────────────────────────────────────────────────
@@ -2520,7 +2465,6 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
         let Some(app_state) = app_handle.try_state::<AppState>() else {
             return;
         };
-        let desktop_was_mapping = crate::commands::desktop_uses_mapping(app_state.inner(), scope);
         match crate::services::profile::ProfileService::apply(app_state.inner(), &profile_id, scope)
         {
             Ok(warnings) => {
@@ -2551,7 +2495,6 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
                     app_state.inner(),
                     &profile_id,
                     scope,
-                    desktop_was_mapping,
                 );
             }
             Err(e) => {
@@ -2583,10 +2526,6 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
     let app_handle = app.clone();
     let provider_id = provider_id.to_string();
     tauri::async_runtime::spawn_blocking(move || {
-        let desktop_was_mapping = app_type == AppType::ClaudeDesktop
-            && app_handle.try_state::<AppState>().is_some_and(|state| {
-                crate::claude_desktop_config::current_provider_uses_proxy(&state.db)
-            });
         match handle_provider_click(&app_handle, &app_type, &provider_id) {
             Ok(ClickOutcome::Switched { mode, name }) => {
                 clear_app_problems(&app_type);
@@ -2594,21 +2533,6 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
                     record_feedback(&app_handle, feedback);
                 }
                 emit_switched(&app_handle, &app_type, &provider_id);
-                if app_type == AppType::ClaudeDesktop {
-                    // 换上模型映射卡要把路由服务拉起来、换走时别人不用就停掉（同主界面
-                    // `switch_provider`），对齐之后再重建一次。
-                    let handle = app_handle.clone();
-                    tauri::async_runtime::spawn(async move {
-                        if let Some(state) = handle.try_state::<AppState>() {
-                            crate::mode::controller::sync_desktop_mapping_service(
-                                state.inner(),
-                                desktop_was_mapping,
-                            )
-                            .await;
-                        }
-                        refresh_tray_menu(&handle);
-                    });
-                }
             }
             Ok(ClickOutcome::NeedsRoute) => {
                 navigate(
@@ -3887,31 +3811,34 @@ mod tests {
     }
 
     #[test]
-    fn desktop_submenu_marks_mapping_cards_without_a_mode_header() {
+    fn desktop_uses_the_same_mode_rows_as_the_routing_apps() {
         let mut mapping = entry("kimi", "Kimi For Coding");
         mapping.needs_routing = true;
-        let app = snapshot(
+        let mut official = entry("official", "Claude Desktop Official");
+        official.official = true;
+        official.blocked_from_routing = true;
+        let direct = snapshot(
             AppType::ClaudeDesktop,
-            TrayMode::Desktop,
-            vec![mapping, entry("official", "Claude Desktop Official")],
+            TrayMode::Direct,
+            vec![mapping.clone(), official.clone()],
         );
-        let menu = model(&[], &[app]);
-        assert_eq!(
-            text_of(&menu[2]),
-            "Claude Desktop · 模型映射 · Kimi For Coding"
-        );
-        let children = children_of(&menu, &AppType::ClaudeDesktop);
-        assert_eq!(
-            texts_of(&children),
-            [
-                "Kimi For Coding · 模型映射",
-                "Claude Desktop Official",
-                "---",
-                "打开 Claude Desktop 页面"
-            ]
-        );
+        let children = children_of(&model(&[], &[direct]), &AppType::ClaudeDesktop);
+        // 直连下要经路由的卡点了去应用页弹「需要路由」，不直接切。
         assert!(
-            matches!(&children[0], TrayEntry::Check { id, .. } if id == "prov:claude-desktop:kimi")
+            matches!(&children[1], TrayEntry::Item { id, .. } if id == "nav:needs:claude-desktop:kimi")
+        );
+
+        let mut routed = snapshot(
+            AppType::ClaudeDesktop,
+            TrayMode::Route,
+            vec![mapping, official],
+        );
+        routed.current_id = Some("kimi".to_string());
+        let menu = model(&[], &[routed]);
+        assert_eq!(text_of(&menu[2]), "Claude Desktop · 路由 · Kimi For Coding");
+        let children = children_of(&menu, &AppType::ClaudeDesktop);
+        assert!(
+            matches!(&children[1], TrayEntry::Check { id, checked: true, .. } if id == "prov:claude-desktop:kimi")
         );
     }
 
@@ -3919,7 +3846,7 @@ mod tests {
     fn service_down_shows_the_problem_row_and_needs_attention_instead_of_quota() {
         let mut mapping = entry("kimi", "Kimi For Coding");
         mapping.needs_routing = true;
-        let mut desktop = snapshot(AppType::ClaudeDesktop, TrayMode::Desktop, vec![mapping]);
+        let mut desktop = snapshot(AppType::ClaudeDesktop, TrayMode::Route, vec![mapping]);
         desktop.service_down = true;
         desktop.quota = Some(QuotaView::Lines(vec![tier_line(
             &zh(),
@@ -3939,13 +3866,11 @@ mod tests {
         assert_eq!(text_of(&menu[2]), "打开 CC Switch");
         assert_eq!(
             text_of(&menu[4]),
-            "Claude Desktop · 模型映射 · Kimi For Coding · 需要处理"
+            "Claude Desktop · 路由 · Kimi For Coding · 需要处理"
         );
+        // 子菜单和其他路由应用一样以模式标题开头，服务没在跑由顶部问题区说。
         let children = children_of(&menu, &AppType::ClaudeDesktop);
-        assert_eq!(
-            text_of(&children[0]),
-            "路由服务没在运行，Kimi For Coding 暂时不可用"
-        );
+        assert_eq!(text_of(&children[0]), "路由");
     }
 
     #[test]
@@ -4210,10 +4135,13 @@ mod tests {
             switch_feedback(&AppType::Claude, TrayMode::Direct, name()),
             None
         );
-        assert!(matches!(
-            switch_feedback(&AppType::ClaudeDesktop, TrayMode::Desktop, name()),
-            Some(TrayFeedback::Switched { .. })
-        ));
+        // Desktop 只在启动时读配置：直连、路由换一家都要重启。
+        for mode in [TrayMode::Direct, TrayMode::Route] {
+            assert!(matches!(
+                switch_feedback(&AppType::ClaudeDesktop, mode, name()),
+                Some(TrayFeedback::Switched { .. })
+            ));
+        }
         for app in [AppType::Claude, AppType::Codex] {
             assert!(matches!(
                 switch_feedback(&app, TrayMode::Stack, name()),

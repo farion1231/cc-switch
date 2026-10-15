@@ -630,6 +630,7 @@ describe("ProviderList Component", () => {
         {...baseProps}
         providers={{ desk }}
         appId="claude-desktop"
+        switchMode={switchMode()}
       />,
     );
 

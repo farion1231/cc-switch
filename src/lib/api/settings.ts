@@ -81,6 +81,10 @@ export const settingsApi = {
     await invoke("check_for_updates");
   },
 
+  async openPortableUpdateDownload(version: string): Promise<void> {
+    await invoke("open_portable_update_download", { version });
+  },
+
   async isPortable(): Promise<boolean> {
     return await invoke("is_portable_mode");
   },

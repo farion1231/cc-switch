@@ -715,10 +715,12 @@ function ProviderFormFull({
     codexSubagentModel,
     codexSubagentReasoningEffort,
     codexCatalogModels,
+    codexAutoReviewModel,
     codexAuthError,
     setCodexAuth,
     setCodexConfig,
     setCodexCatalogModels,
+    setCodexAutoReviewModel,
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelChange,
@@ -1700,10 +1702,23 @@ function ProviderFormFull({
         } as {
           auth: unknown;
           config: string;
-          modelCatalog?: { models: CodexCatalogModel[] };
+          modelCatalog?: {
+            models: CodexCatalogModel[];
+            autoReviewModel?: string;
+          };
         };
         if (normalizedCatalogModels.length > 0) {
           configObj.modelCatalog = { models: normalizedCatalogModels };
+          // 自动审批模型只能是列表里的（列表里删掉了就不再存，后端也只认列表里的）
+          const autoReviewModel = codexAutoReviewModel.trim();
+          if (
+            autoReviewModel &&
+            normalizedCatalogModels.some(
+              (model) => model.model === autoReviewModel,
+            )
+          ) {
+            configObj.modelCatalog.autoReviewModel = autoReviewModel;
+          }
         }
         settingsConfig = JSON.stringify(configObj);
       } catch (err) {
@@ -2708,6 +2723,8 @@ function ProviderFormFull({
               onPromptCacheRoutingChange={setPromptCacheRouting}
               catalogModels={codexCatalogModels}
               onCatalogModelsChange={setCodexCatalogModels}
+              autoReviewModel={codexAutoReviewModel}
+              onAutoReviewModelChange={setCodexAutoReviewModel}
               speedTestEndpoints={speedTestEndpoints}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}

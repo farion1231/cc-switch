@@ -2488,13 +2488,15 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_DEFAULT_OPUS_MODEL: "gpt-5.6-sol",
         // Claude Code falls back to a 200K context window for unrecognized
         // non-Claude model ids. The ChatGPT Codex backend catalogs gpt-5.6-sol
-        // at a 372K window with a ~353K effective budget (openai/codex#31860),
-        // not the 1.05M API window. Pin both knobs: the compact window equals
-        // min(model window, value), so matching the window is behavior-neutral
-        // today but shields the compact trigger from remote-config experiments.
+        // at a 272K window (Codex budgets 95% of it), not the 1.05M API window;
+        // it was 372K until mid-2026 (openai/codex#31860). Same cap as every
+        // GPT window CC Switch fills (GPT_CONTEXT_WINDOW_CAP). Pin both knobs:
+        // the compact window equals min(model window, value), and the routing
+        // alias gets a 1M model window, so the compact window is what keeps the
+        // trigger under the backend's limit.
         // Tweak these directly in the JSON editor; no form fields on purpose.
-        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "372000",
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "372000",
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "272000",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "272000",
       },
     },
     category: "third_party",
