@@ -174,7 +174,7 @@ pub(crate) fn startup(state: &AppState) -> Result<bool, AppError> {
     ) {
         return Ok(false);
     }
-    let (address, port) = state.db.get_proxy_listen_sync();
+    let (address, port) = state.db.get_proxy_client_endpoint_sync();
     if codex_direct::is_proxy_base_url(endpoint.trim().trim_end_matches('/'), &address, port)
         || !matches!(url.scheme(), "http" | "https")
         || url.host_str().is_none()

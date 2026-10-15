@@ -772,21 +772,30 @@ fn profile_route_overrides_are_left_external_instead_of_creating_unusable_cards(
 #[test]
 fn profile_and_top_level_proxy_routes_are_never_imported() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    let host = [127, 0, 0, 1].map(|part| part.to_string()).join(".");
-    for profile in [false, true] {
-        for credential in ["", "experimental_bearer_token = 'PROXY_MANAGED'\n"] {
-            let selector = if profile {
-                "profile = 'work'\nmodel_provider = 'openai'\n[profiles.work]\nmodel_provider = 'relay'\n"
-            } else {
-                "model_provider = 'relay'\n"
-            };
-            let config = format!("{selector}[model_providers.relay]\nname = 'Relay'\nbase_url = 'http://{host}:15721/v1'\nwire_api = 'responses'\n{credential}");
-            let state = fixture(&config, None);
-            assert!(!reconcile_without_live_writes(&state).unwrap());
-            assert_eq!(
-                ProviderService::list(&state, AppType::Codex).unwrap().len(),
-                1
-            );
+    let loopback = [127, 0, 0, 1].map(|part| part.to_string()).join(".");
+    for client_host in [None, Some("proxy.gateway.test")] {
+        let host = client_host.unwrap_or(&loopback);
+        for profile in [false, true] {
+            for credential in ["", "experimental_bearer_token = 'PROXY_MANAGED'\n"] {
+                let selector = if profile {
+                    "profile = 'work'\nmodel_provider = 'openai'\n[profiles.work]\nmodel_provider = 'relay'\n"
+                } else {
+                    "model_provider = 'relay'\n"
+                };
+                let config = format!("{selector}[model_providers.relay]\nname = 'Relay'\nbase_url = 'http://{host}:15721/v1'\nwire_api = 'responses'\n{credential}");
+                let state = fixture(&config, None);
+                update_settings(AppSettings {
+                    current_provider_codex: Some("manual-official".into()),
+                    proxy_client_host: client_host.map(str::to_string),
+                    ..Default::default()
+                })
+                .unwrap();
+                assert!(!reconcile_without_live_writes(&state).unwrap());
+                assert_eq!(
+                    ProviderService::list(&state, AppType::Codex).unwrap().len(),
+                    1
+                );
+            }
         }
     }
 }
