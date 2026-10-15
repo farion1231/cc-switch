@@ -163,10 +163,12 @@ async function renderApps() {
   // 安装 / 升级的状态放在模块级 store 里，跨挂载保留。
   const { AppsPage } = await import("@/components/apps/AppsPage");
   const view = mountApps(AppsPage);
+  // Both labels stay mounted to stabilize the header width. Check the settled
+  // label's own state, including when a restored confirmation hides the page.
   await waitFor(() =>
     expect(
       within(view.container).getByText("appsPage.checkUpdates"),
-    ).toBeInTheDocument(),
+    ).toHaveAttribute("aria-hidden", "false"),
   );
   return view;
 }
@@ -1738,11 +1740,41 @@ describe("AppsPage concurrent CLI upgrades", () => {
       ).toBeGreaterThan(0),
     );
     view.unmount();
+    const remountCodexVersion = deferred<ToolVersions>();
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    mocks.getToolVersions.mockImplementation((tools: string[]) =>
+      tools.includes("codex")
+        ? remountCodexVersion.promise
+        : getVersions(tools),
+    );
     const now = vi
       .spyOn(Date, "now")
       .mockReturnValue(Date.now() + 11 * 60 * 1000);
     try {
-      await renderApps();
+      const remounted = renderApps();
+      let remountSettled = false;
+      void remounted.then(() => {
+        remountSettled = true;
+      });
+      await waitFor(() =>
+        expect(
+          mocks.getToolVersions.mock.calls.filter(([tools]) =>
+            tools.includes("codex"),
+          ),
+        ).toHaveLength(2),
+      );
+      await act(async () => {});
+      expect(
+        card("Codex").getByRole("status", { name: "common.loading" }),
+      ).toBeInTheDocument();
+      // The static check-updates label remains mounted while checking. The
+      // render helper must wait for the pending probe, not that hidden text.
+      expect(remountSettled).toBe(false);
+      await act(async () =>
+        remountCodexVersion.resolve(await getVersions(["codex"])),
+      );
+      await remounted;
+      mocks.getToolVersions.mockImplementation(getVersions);
       // Initial probe and the original task's refresh only: remount must not
       // probe a tool again while its installation/version refresh is pending.
       expect(
