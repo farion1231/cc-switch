@@ -47,7 +47,7 @@ import {
   showUndoToast,
 } from "./AppMatrix";
 import { DisclosureButton, V7ConfirmDialog, V7Dialog } from "./formBits";
-import { summaryOf, transportOf } from "./mcpDraft";
+import { summaryOf } from "./mcpDraft";
 import { useVisibleAppIds } from "./useVisibleAppIds";
 
 function getMcpSearchText(id: string, server: McpServer): string {
@@ -871,9 +871,6 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                                 >
                                   {id}
                                 </span>
-                                <NeutralBadge mono>
-                                  {transportOf(server.server)}
-                                </NeutralBadge>
                                 {!enabled && (
                                   <NeutralBadge>
                                     {t("mcpPage.notEnabled")}
