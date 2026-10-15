@@ -29,6 +29,8 @@ interface UsageDataSourcesSheetProps {
   onSyncNow: () => void;
   /** 打开设置 → 本地路由（「记录请求用量」开关在那里） */
   onOpenRoutingSettings?: () => void;
+  rebuildingClaude: boolean;
+  onRebuildClaude: () => void;
   rebuildingCodex: boolean;
   /** 只负责打开确认框；确认框里写清后果 */
   onRebuildCodex: () => void;
@@ -80,7 +82,7 @@ function LoggingStatus() {
   );
 }
 
-/** 「数据来源」抽屉（v7 S6）：会话日志扫描、路由请求日志（只读）、Codex 用量维护。 */
+/** 「数据来源」抽屉：会话日志扫描、路由请求日志与会话用量维护。 */
 export function UsageDataSourcesSheet({
   open,
   onOpenChange,
@@ -90,6 +92,8 @@ export function UsageDataSourcesSheet({
   syncing,
   onSyncNow,
   onOpenRoutingSettings,
+  rebuildingClaude,
+  onRebuildClaude,
   rebuildingCodex,
   onRebuildCodex,
 }: UsageDataSourcesSheetProps) {
@@ -175,6 +179,32 @@ export function UsageDataSourcesSheet({
           </SourceCard>
 
           <SourceCard
+            title={t("usage.rebuildClaude.title")}
+            help={{
+              title: t("usage.sources.claudeHelpTitle"),
+              body: t("usage.rebuildClaude.description"),
+            }}
+          >
+            <p className="m-0 text-caption text-fg-2">
+              {t("usage.rebuildClaude.warning")}
+            </p>
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="neutral"
+                size="compact"
+                disabled={rebuildingClaude || rebuildingCodex}
+                onClick={onRebuildClaude}
+              >
+                {rebuildingClaude && (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                )}
+                {t("usage.rebuildClaude.actionEllipsis")}
+              </Button>
+            </div>
+          </SourceCard>
+
+          <SourceCard
             title={t("usage.rebuildCodex.title")}
             help={{
               title: t("usage.sources.codexHelpTitle"),
@@ -189,7 +219,7 @@ export function UsageDataSourcesSheet({
                 type="button"
                 variant="neutral"
                 size="compact"
-                disabled={rebuildingCodex}
+                disabled={rebuildingClaude || rebuildingCodex}
                 onClick={onRebuildCodex}
               >
                 {rebuildingCodex && (

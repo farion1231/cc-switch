@@ -2193,6 +2193,18 @@
       "syncCompleted": "同步完成：新增 {{imported}} 条，扫描 {{files}} 个文件，错误 {{errors}}",
       "syncFailed": "会话用量同步失败：{{error}}"
     },
+    "rebuildClaude": {
+      "title": "Claude Code 用量维护",
+      "description": "从本地会话日志重新构建 Claude Code 用量，并按当前定价估算费用",
+      "warning": "重建前会自动备份数据库。若源 JSONL 已删除，对应历史将无法重新导入。",
+      "action": "重建 Claude Code 用量",
+      "confirmTitle": "确认重建 Claude Code 用量",
+      "confirmMessage": "此操作会清除现有 Claude Code 会话明细与汇总，再从本地会话日志重新导入，并按当前定价估算费用。路由请求记录不受影响。\n\n已删除日志对应的历史将丢失。",
+      "confirmAction": "备份并重建",
+      "completed": "重建完成：导入 {{imported}} 条，错误 {{errors}}，暂缓文件 {{deferred}}",
+      "failed": "Claude Code 用量重建失败：{{error}}",
+      "actionEllipsis": "重建 Claude Code 用量"
+    },
     "rebuildCodex": {
       "title": "Codex 用量维护",
       "description": "从本地 rollout 日志重新构建 Codex 会话用量",
@@ -2447,6 +2459,7 @@
       "on": "已开启",
       "off": "已关闭",
       "editLogging": "修改「记录请求用量」",
+      "claudeHelpTitle": "Claude Code 用量维护做什么",
       "codexHelpTitle": "Codex 用量维护做什么",
       "lastSynced": "上次同步：{{time}}"
     },

@@ -331,16 +331,31 @@ pub fn get_session_usage_last_sync() -> Option<i64> {
     crate::services::session_usage::last_sync_completed_at()
 }
 
-/// Codex reset 成功后，无论重导是否导入新行或返回错误，都必须通知前端刷新。
+/// 会话用量 reset 成功后，无论重导是否导入新行或返回错误，都必须通知前端刷新。
 /// 调用方应只在 reset 成功后调用，避免把未发生的数据变更误报为重建完成。
-fn finish_codex_rebuild(
+fn finish_session_rebuild(
     result: Result<crate::services::session_usage::SessionSyncResult, AppError>,
 ) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
     crate::usage_events::notify_log_recorded();
     result
 }
 
-/// 备份数据库后，仅重建 Codex session 用量。锁覆盖 backup → reset → import
+/// 重建前备份数据库并加载用户在运行期间修改的本地定价。
+/// 定价文件无效时必须在清理会话用量前返回错误。
+fn rebuild_session_usage_from_logs(
+    db: &crate::database::Database,
+    reset: impl FnOnce(&crate::database::Database) -> Result<(), AppError>,
+    sync: impl FnOnce(
+        &crate::database::Database,
+    ) -> Result<crate::services::session_usage::SessionSyncResult, AppError>,
+) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
+    db.backup_database_file()?;
+    crate::services::model_pricing::sync_local_model_pricing(db)?;
+    reset(db)?;
+    finish_session_rebuild(sync(db))
+}
+
+/// 仅重建 Codex session 用量。锁覆盖 backup → pricing → reset → import
 /// 整个序列，避免后台同步在清理和重导之间插入数据。
 #[tauri::command]
 pub async fn rebuild_codex_usage(
@@ -351,13 +366,40 @@ pub async fn rebuild_codex_usage(
         .lock()
         .await;
     tauri::async_runtime::spawn_blocking(move || {
-        db.backup_database_file()?;
-        db.reset_codex_usage()?;
-        let result = crate::services::session_usage_codex::sync_codex_usage(&db);
-        finish_codex_rebuild(result)
+        rebuild_session_usage_from_logs(
+            &db,
+            |db| db.reset_codex_usage(),
+            crate::services::session_usage_codex::sync_codex_usage,
+        )
     })
     .await
     .map_err(|error| AppError::Message(format!("Codex 用量重建任务失败: {error}")))?
+}
+
+/// 备份数据库后，仅重建 Claude Code 会话日志来源的用量。
+/// 锁覆盖 backup → pricing → reset → import，避免后台同步在清理和重导之间插入数据。
+#[tauri::command]
+pub async fn rebuild_claude_usage(
+    state: State<'_, AppState>,
+) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
+    let db = state.db.clone();
+    let _guard = crate::services::session_usage::session_sync_mutex()
+        .lock()
+        .await;
+    tauri::async_runtime::spawn_blocking(move || {
+        if !crate::services::session_usage::has_claude_session_files() {
+            return Err(AppError::Message(
+                "未找到可导入的 Claude Code 会话日志，现有用量未改动".to_string(),
+            ));
+        }
+        rebuild_session_usage_from_logs(
+            &db,
+            |db| db.reset_claude_usage(),
+            crate::services::session_usage::sync_claude_session_logs,
+        )
+    })
+    .await
+    .map_err(|error| AppError::Message(format!("Claude 用量重建任务失败: {error}")))?
 }
 
 /// 获取数据来源分布
@@ -373,10 +415,66 @@ mod tests {
     use super::*;
 
     #[test]
+    #[serial_test::serial]
+    fn rebuild_loads_file_pricing_before_reset_and_stops_on_invalid_json() {
+        struct RestoreTestHome(Option<std::ffi::OsString>);
+        impl Drop for RestoreTestHome {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                    None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                }
+            }
+        }
+
+        let temp = tempfile::tempdir().expect("temporary home");
+        let _home_guard = RestoreTestHome(std::env::var_os("CC_SWITCH_TEST_HOME"));
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        let db = crate::database::Database::memory().expect("memory database");
+        let pricing_path = crate::services::model_pricing::model_pricing_file_path();
+        std::fs::create_dir_all(pricing_path.parent().expect("pricing directory"))
+            .expect("create pricing directory");
+        std::fs::write(
+            &pricing_path,
+            r#"{"version":1,"models":[{"modelId":"rebuild-test-model","displayName":"Rebuild Test","inputCostPerMillion":"0.15","outputCostPerMillion":"0.6","cacheReadCostPerMillion":"0.003","cacheCreationCostPerMillion":"0"}]}"#,
+        )
+        .expect("write edited pricing file");
+
+        rebuild_session_usage_from_logs(
+            &db,
+            |db| {
+                let conn = crate::database::lock_conn!(db.conn);
+                let price: String = conn.query_row(
+                    "SELECT input_cost_per_million FROM model_pricing WHERE model_id = 'rebuild-test-model'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(price, "0.15");
+                Ok(())
+            },
+            |_| Ok(crate::services::session_usage::SessionSyncResult::default()),
+        )
+        .expect("rebuild with edited pricing");
+
+        std::fs::write(&pricing_path, "{ invalid json").expect("write invalid pricing file");
+        let reset_called = std::cell::Cell::new(false);
+        let result = rebuild_session_usage_from_logs(
+            &db,
+            |_| {
+                reset_called.set(true);
+                Ok(())
+            },
+            |_| panic!("import must not run after invalid pricing"),
+        );
+        assert!(result.is_err());
+        assert!(!reset_called.get(), "invalid pricing must not clear usage");
+    }
+
+    #[test]
     fn codex_rebuild_notifies_when_reimport_is_empty() {
         crate::usage_events::take_test_notify_count();
 
-        let result = finish_codex_rebuild(Ok(
+        let result = finish_session_rebuild(Ok(
             crate::services::session_usage::SessionSyncResult::default(),
         ))
         .expect("空重导应成功");
@@ -389,7 +487,7 @@ mod tests {
     fn codex_rebuild_notifies_when_reimport_fails_after_reset() {
         crate::usage_events::take_test_notify_count();
 
-        let result = finish_codex_rebuild(Err(AppError::Message(
+        let result = finish_session_rebuild(Err(AppError::Message(
             "synthetic reimport failure".to_string(),
         )));
 

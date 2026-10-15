@@ -2193,6 +2193,18 @@
       "syncCompleted": "Sync completed: {{imported}} imported, {{files}} files scanned, {{errors}} errors",
       "syncFailed": "Session usage sync failed: {{error}}"
     },
+    "rebuildClaude": {
+      "title": "Claude Code Usage Maintenance",
+      "description": "Rebuild Claude Code usage from local session logs and estimate costs using current pricing",
+      "warning": "The database is backed up first. History whose source JSONL has been deleted cannot be re-imported.",
+      "action": "Rebuild Claude Code Usage",
+      "confirmTitle": "Rebuild Claude Code usage?",
+      "confirmMessage": "This clears existing Claude Code session details and rollups, then imports them again from local session logs using current pricing. Routed request logs are preserved.\n\nHistory with deleted logs will be lost.",
+      "confirmAction": "Back Up and Rebuild",
+      "completed": "Rebuild complete: {{imported}} imported, {{errors}} errors, {{deferred}} deferred files",
+      "failed": "Claude Code usage rebuild failed: {{error}}",
+      "actionEllipsis": "Rebuild Claude Code Usage"
+    },
     "rebuildCodex": {
       "title": "Codex Usage Maintenance",
       "description": "Rebuild Codex session usage from local rollout logs",
@@ -2447,6 +2459,7 @@
       "on": "On",
       "off": "Off",
       "editLogging": "Change “Record request usage”",
+      "claudeHelpTitle": "What does Claude Code usage maintenance do?",
       "codexHelpTitle": "What does Codex usage maintenance do?",
       "lastSynced": "last synced: {{time}}"
     },

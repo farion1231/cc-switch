@@ -2194,6 +2194,18 @@
       "syncCompleted": "同步完成：新增 {{imported}} 筆，掃描 {{files}} 個檔案，錯誤 {{errors}}",
       "syncFailed": "工作階段用量同步失敗：{{error}}"
     },
+    "rebuildClaude": {
+      "title": "Claude Code 用量維護",
+      "description": "從本機工作階段日誌重新建構 Claude Code 用量，並依目前定價估算費用",
+      "warning": "重建前會自動備份資料庫。若來源 JSONL 已刪除，對應歷史將無法重新匯入。",
+      "action": "重建 Claude Code 用量",
+      "confirmTitle": "確認重建 Claude Code 用量",
+      "confirmMessage": "此操作會清除現有 Claude Code 工作階段明細與彙總，再從本機工作階段日誌重新匯入，並依目前定價估算費用。路由請求紀錄不受影響。\n\n已刪除日誌對應的歷史將遺失。",
+      "confirmAction": "備份並重建",
+      "completed": "重建完成：匯入 {{imported}} 筆，錯誤 {{errors}}，暫緩檔案 {{deferred}}",
+      "failed": "Claude Code 用量重建失敗：{{error}}",
+      "actionEllipsis": "重建 Claude Code 用量"
+    },
     "rebuildCodex": {
       "title": "Codex 用量維護",
       "description": "從本機 rollout 日誌重新建構 Codex 工作階段用量",
@@ -2448,6 +2460,7 @@
       "on": "已開啟",
       "off": "已關閉",
       "editLogging": "修改「記錄請求用量」",
+      "claudeHelpTitle": "Claude Code 用量維護做什麼",
       "codexHelpTitle": "Codex 用量維護做什麼",
       "lastSynced": "上次同步：{{time}}"
     },

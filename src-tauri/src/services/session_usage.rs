@@ -58,6 +58,70 @@ pub fn session_sync_mutex() -> &'static tokio::sync::Mutex<()> {
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
+/// Clear only Claude Code session imports before replaying their JSONL files.
+/// The caller must hold the session sync mutex and back up the database first.
+pub(crate) fn reset_claude_usage_on_conn(
+    conn: &rusqlite::Connection,
+    projects_dir: &Path,
+) -> Result<(), AppError> {
+    conn.execute(
+        "DELETE FROM proxy_request_logs
+         WHERE app_type = 'claude' AND provider_id = '_session' AND data_source = 'session_log'",
+        [],
+    )
+    .map_err(|error| AppError::Database(format!("清理 Claude 会话明细失败: {error}")))?;
+    conn.execute(
+        "DELETE FROM usage_daily_rollups
+         WHERE app_type = 'claude' AND provider_id = '_session'",
+        [],
+    )
+    .map_err(|error| AppError::Database(format!("清理 Claude 用量汇总失败: {error}")))?;
+
+    let paths = {
+        let mut statement = conn
+            .prepare("SELECT file_path FROM session_log_sync")
+            .map_err(|error| AppError::Database(format!("读取会话同步游标失败: {error}")))?;
+        let paths = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| AppError::Database(format!("查询会话同步游标失败: {error}")))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| AppError::Database(format!("解析会话同步游标失败: {error}")))?;
+        paths
+    };
+    for file_path in paths
+        .into_iter()
+        .filter(|path| Path::new(path).starts_with(projects_dir))
+    {
+        conn.execute(
+            "DELETE FROM session_log_sync WHERE file_path = ?1",
+            [file_path],
+        )
+        .map_err(|error| AppError::Database(format!("清理 Claude 同步游标失败: {error}")))?;
+    }
+    Ok(())
+}
+
+impl Database {
+    pub(crate) fn reset_claude_usage(&self) -> Result<(), AppError> {
+        let projects_dir = get_claude_config_dir().join("projects");
+        let conn = lock_conn!(self.conn);
+        conn.execute("SAVEPOINT reset_claude_usage", [])
+            .map_err(|error| AppError::Database(format!("开启 Claude 重建事务失败: {error}")))?;
+        let result = reset_claude_usage_on_conn(&conn, &projects_dir);
+        match result {
+            Ok(()) => conn
+                .execute("RELEASE reset_claude_usage", [])
+                .map(|_| ())
+                .map_err(|error| AppError::Database(format!("提交 Claude 重建事务失败: {error}"))),
+            Err(error) => {
+                conn.execute("ROLLBACK TO reset_claude_usage", []).ok();
+                conn.execute("RELEASE reset_claude_usage", []).ok();
+                Err(error)
+            }
+        }
+    }
+}
+
 /// 最近一次完整扫描（[`sync_all_unlocked`]，后台定时和手动同步都走它）完成的时间，
 /// 毫秒时间戳；0 表示本次启动后还没扫过。只在内存里：启动时会立刻扫一轮。
 static LAST_SYNC_COMPLETED_AT_MS: AtomicI64 = AtomicI64::new(0);
@@ -467,6 +531,11 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
     }
 
     Ok(result)
+}
+
+pub(crate) fn has_claude_session_files() -> bool {
+    let projects_dir = get_claude_config_dir().join("projects");
+    !collect_jsonl_files(&projects_dir).is_empty()
 }
 
 /// 收集目录下所有 .jsonl 文件（含子 agent 文件）
@@ -1321,6 +1390,68 @@ pub fn get_data_source_breakdown(db: &Database) -> Result<Vec<DataSourceSummary>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reset_claude_usage_preserves_proxy_and_other_app_data() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempfile::tempdir().unwrap();
+        let projects_dir = temp.path().join("projects");
+        let claude_file = projects_dir.join("project/session.jsonl");
+        let subagent_file = projects_dir.join("project/session/subagents/agent.jsonl");
+        let sibling_file = temp.path().join("projects-other/session.jsonl");
+        let codex_file = temp.path().join("codex/sessions/rollout.jsonl");
+
+        let conn = lock_conn!(db.conn);
+        conn.execute_batch(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, input_tokens,
+                output_tokens, cache_read_tokens, latency_ms, status_code,
+                created_at, data_source
+             ) VALUES
+                ('claude-session', '_session', 'claude', 'model', 1, 1, 0, 0, 200, 1, 'session_log'),
+                ('claude-proxy', 'provider', 'claude', 'model', 1, 1, 0, 0, 200, 1, 'proxy'),
+                ('codex-session', '_codex_session', 'codex', 'model', 1, 1, 0, 0, 200, 1, 'codex_session');
+             INSERT INTO usage_daily_rollups (date, app_type, provider_id, model)
+             VALUES
+                ('2026-07-10', 'claude', '_session', 'model'),
+                ('2026-07-10', 'claude', 'provider', 'model'),
+                ('2026-07-10', 'codex', '_codex_session', 'model');",
+        )?;
+        for path in [&claude_file, &subagent_file, &sibling_file, &codex_file] {
+            conn.execute(
+                "INSERT INTO session_log_sync
+                 (file_path, last_modified, last_line_offset, last_synced_at)
+                 VALUES (?1, 1, 1, 1)",
+                [path.to_string_lossy().to_string()],
+            )?;
+        }
+
+        reset_claude_usage_on_conn(&conn, &projects_dir)?;
+        let remaining_logs = conn
+            .prepare("SELECT request_id FROM proxy_request_logs ORDER BY request_id")?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(remaining_logs, ["claude-proxy", "codex-session"]);
+
+        let remaining_rollups = conn
+            .prepare("SELECT provider_id FROM usage_daily_rollups ORDER BY provider_id")?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(remaining_rollups, ["_codex_session", "provider"]);
+
+        let remaining_cursors = conn
+            .prepare("SELECT file_path FROM session_log_sync ORDER BY file_path")?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            remaining_cursors,
+            [
+                codex_file.to_string_lossy().to_string(),
+                sibling_file.to_string_lossy().to_string(),
+            ]
+        );
+        Ok(())
+    }
 
     #[test]
     fn sync_result_notification_is_coalesced_to_one_call() {

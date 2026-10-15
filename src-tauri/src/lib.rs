@@ -1695,6 +1695,7 @@ pub fn run() {
             // Session usage sync
             commands::sync_session_usage,
             commands::rebuild_codex_usage,
+            commands::rebuild_claude_usage,
             commands::get_session_usage_last_sync,
             commands::get_usage_data_sources,
             // Stream health check

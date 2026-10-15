@@ -180,7 +180,10 @@ export function UsageDashboard({
   const [detailRequestId, setDetailRequestId] = useState<string | null>(null);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [showRebuildConfirm, setShowRebuildConfirm] = useState(false);
+  const [showRebuildClaudeConfirm, setShowRebuildClaudeConfirm] =
+    useState(false);
   const [rebuildingCodex, setRebuildingCodex] = useState(false);
+  const [rebuildingClaude, setRebuildingClaude] = useState(false);
   const [syncingSession, setSyncingSession] = useState(false);
   const [lastManualSyncAt, setLastManualSyncAt] = useState(
     lastManualSessionSyncAt,
@@ -191,7 +194,7 @@ export function UsageDashboard({
   const { syncSessionUsage } = useUsageAutoRefresh({
     refreshIntervalMs,
     sessionAutoSyncEnabled,
-    paused: rebuildingCodex || !settingsReady,
+    paused: rebuildingCodex || rebuildingClaude || !settingsReady,
     // 预设范围和「结束于现在」的自定义范围都随时间移动，没有新用量也要定时重算
     rollingRange: range.preset !== "custom" || !!range.liveEndTime,
   });
@@ -272,6 +275,29 @@ export function UsageDashboard({
       toast.error(t("usage.rebuildCodex.failed", { error: String(error) }));
     } finally {
       setRebuildingCodex(false);
+    }
+  };
+
+  const rebuildClaudeUsage = async () => {
+    setShowRebuildClaudeConfirm(false);
+    setRebuildingClaude(true);
+    try {
+      const result = await usageApi.rebuildClaudeUsage();
+      await queryClient.invalidateQueries({ queryKey: usageKeys.all });
+      const message = t("usage.rebuildClaude.completed", {
+        imported: result.imported,
+        errors: result.errors.length,
+        deferred: result.deferredFiles,
+      });
+      if (result.errors.length > 0 || result.deferredFiles > 0) {
+        toast.warning(message);
+      } else {
+        toast.success(message);
+      }
+    } catch (error) {
+      toast.error(t("usage.rebuildClaude.failed", { error: String(error) }));
+    } finally {
+      setRebuildingClaude(false);
     }
   };
 
@@ -852,8 +878,20 @@ export function UsageDashboard({
         syncing={syncingSession}
         onSyncNow={() => void runManualSessionSync()}
         onOpenRoutingSettings={onOpenRoutingSettings}
+        rebuildingClaude={rebuildingClaude}
+        onRebuildClaude={() => setShowRebuildClaudeConfirm(true)}
         rebuildingCodex={rebuildingCodex}
         onRebuildCodex={() => setShowRebuildConfirm(true)}
+      />
+      <ConfirmDialog
+        isOpen={showRebuildClaudeConfirm}
+        title={t("usage.rebuildClaude.confirmTitle")}
+        message={t("usage.rebuildClaude.confirmMessage")}
+        confirmText={t("usage.rebuildClaude.confirmAction")}
+        variant="info"
+        zIndex="top"
+        onConfirm={() => void rebuildClaudeUsage()}
+        onCancel={() => setShowRebuildClaudeConfirm(false)}
       />
       <ConfirmDialog
         isOpen={showRebuildConfirm}

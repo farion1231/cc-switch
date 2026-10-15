@@ -2193,6 +2193,18 @@
       "syncCompleted": "同期完了：{{imported}} 件追加、{{files}} ファイルをスキャン、エラー {{errors}} 件",
       "syncFailed": "セッション使用量の同期に失敗しました：{{error}}"
     },
+    "rebuildClaude": {
+      "title": "Claude Code 使用量メンテナンス",
+      "description": "ローカルのセッションログから Claude Code の使用量を再構築し、現在の料金で費用を見積もります",
+      "warning": "最初にデータベースを自動バックアップします。元の JSONL が削除済みの履歴は再インポートできません。",
+      "action": "Claude Code 使用量を再構築",
+      "confirmTitle": "Claude Code 使用量を再構築しますか？",
+      "confirmMessage": "既存の Claude Code セッション明細と集計を削除し、ローカルのセッションログから現在の料金で再インポートします。ルーティングされたリクエストの記録は保持されます。\n\n削除済みログの履歴は失われます。",
+      "confirmAction": "バックアップして再構築",
+      "completed": "再構築完了：{{imported}} 件インポート、エラー {{errors}} 件、保留ファイル {{deferred}} 件",
+      "failed": "Claude Code 使用量の再構築に失敗しました：{{error}}",
+      "actionEllipsis": "Claude Code 使用量を再構築"
+    },
     "rebuildCodex": {
       "title": "Codex 使用量メンテナンス",
       "description": "ローカルの rollout ログから Codex セッション使用量を再構築します",
@@ -2447,6 +2459,7 @@
       "on": "オン",
       "off": "オフ",
       "editLogging": "「リクエストの使用量を記録」を変更",
+      "claudeHelpTitle": "Claude Code 使用量メンテナンスとは",
       "codexHelpTitle": "Codex 使用量メンテナンスとは",
       "lastSynced": "前回の同期：{{time}}"
     },
