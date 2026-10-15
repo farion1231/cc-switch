@@ -51,6 +51,10 @@ interface ModeTabsProps {
     onChange: (enabled: boolean) => void;
   };
   onOpenRouteSettings?: () => void;
+  /** Codex 聚合页签上的「聚合设置」（子代理模型、经典子代理） */
+  onOpenStackSettings?: () => void;
+  /** 供应商搜索框挂在状态行右侧（由列表通过 portal 渲染进来） */
+  searchSlotRef?: (node: HTMLDivElement | null) => void;
 }
 
 /**
@@ -66,6 +70,8 @@ export function ModeTabs({
   status,
   failover,
   onOpenRouteSettings,
+  onOpenStackSettings,
+  searchSlotRef,
 }: ModeTabsProps) {
   const { t } = useTranslation();
   const indicator = useSlidingIndicator<HTMLDivElement>(
@@ -143,6 +149,12 @@ export function ModeTabs({
         </div>
       )}
       {!status && <div className="flex-1" />}
+      {searchSlotRef && (
+        <div
+          ref={searchSlotRef}
+          className="flex min-w-0 shrink items-center empty:hidden"
+        />
+      )}
 
       {failover && (
         <HoverTip content={t("mode.failover")}>
@@ -169,6 +181,19 @@ export function ModeTabs({
             className="h-8 w-8 shrink-0 px-0"
             aria-label={t("mode.routeSettings")}
             onClick={onOpenRouteSettings}
+          >
+            <Settings2 className="h-4 w-4" strokeWidth={1.75} />
+          </Button>
+        </HoverTip>
+      )}
+      {onOpenStackSettings && (
+        <HoverTip content={t("mode.stackSettings.title")}>
+          <Button
+            variant="quiet"
+            size="compact"
+            className="h-8 w-8 shrink-0 px-0"
+            aria-label={t("mode.stackSettings.title")}
+            onClick={onOpenStackSettings}
           >
             <Settings2 className="h-4 w-4" strokeWidth={1.75} />
           </Button>

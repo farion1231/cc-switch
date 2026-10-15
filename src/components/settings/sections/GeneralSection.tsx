@@ -28,6 +28,7 @@ const LANGUAGES: { value: Language; labelKey: string }[] = [
   { value: "zh-TW", labelKey: "settings.languageOptionTraditionalChinese" },
   { value: "en", labelKey: "settings.languageOptionEnglish" },
   { value: "ja", labelKey: "settings.languageOptionJapanese" },
+  { value: "tr", labelKey: "settings.languageOptionTurkish" },
 ];
 
 interface GeneralSectionProps {

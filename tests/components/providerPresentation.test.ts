@@ -4,7 +4,6 @@ import type { Provider } from "@/types";
 import type { AppMode } from "@/types/proxy";
 import {
   buildAdditiveSections,
-  buildDesktopSections,
   buildSwitchSections,
   type ProviderSection,
   type SwitchModeInput,
@@ -464,29 +463,6 @@ describe("buildSwitchSections — stack", () => {
     );
     setDefaultItem(sections, "managed").onSelect();
     expect(input.actions.stackSetDefault).toHaveBeenCalledWith(managed);
-  });
-});
-
-describe("buildDesktopSections", () => {
-  it("colors the current card by whether it uses model mapping", () => {
-    const mapped = provider("mapped", { meta: { claudeDesktopMode: "proxy" } });
-    const onSwitch = vi.fn();
-    const sections = buildDesktopSections({
-      t,
-      providers: [mapped, relay],
-      currentId: "mapped",
-      onSwitch,
-    });
-
-    expect(item(sections, "mapped")).toMatchObject({
-      tone: "route",
-      status: { label: "providerCard.status.inUse", dot: "route" },
-      deleteDisabledReason: "providerCard.reason.inUseCannotDelete",
-    });
-    expect(item(sections, "relay").chips.map((c) => c.key)).toEqual(["direct"]);
-    expect(item(sections, "relay").deleteDisabledReason).toBeUndefined();
-    button(sections, "relay", "switch").onClick();
-    expect(onSwitch).toHaveBeenCalledWith(relay);
   });
 });
 

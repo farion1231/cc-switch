@@ -1314,10 +1314,11 @@ pub fn run() {
                     }
                 });
 
-                // Session log usage sync: 启动时同步一次，之后每 60 秒检查
+                // Session log usage sync: 启动时同步一次，之后每 10 分钟兜底一次（防 CLI 清理旧会话
+                // 文件前漏导入）；用量页打开时由前端按所选间隔加扫
                 let db_for_session_sync = state.db.clone();
                 tauri::async_runtime::spawn(async move {
-                    const SESSION_SYNC_INTERVAL_SECS: u64 = 60;
+                    const SESSION_SYNC_INTERVAL_SECS: u64 = 10 * 60;
 
                     async fn run_session_sync(db: std::sync::Arc<crate::database::Database>, backfill: bool) {
                         // 手动扫描模式下跳过定时扫描；backfill 轮（启动首轮）仍进入，
@@ -1480,6 +1481,7 @@ pub fn run() {
             commands::install_update_and_restart,
             commands::check_app_update_available,
             commands::check_for_updates,
+            commands::open_portable_update_download,
             commands::is_portable_mode,
             commands::copy_text_to_clipboard,
             commands::get_claude_plugin_status,
@@ -1711,6 +1713,7 @@ pub fn run() {
             commands::launch_session_terminal,
             commands::get_tool_versions,
             commands::run_tool_lifecycle_action,
+            commands::prepare_tool_uninstall,
             commands::probe_tool_installations,
             commands::list_tool_installations,
             // Provider terminal
