@@ -938,7 +938,7 @@
     "manualUninstallCommands": "Manuel kaldırma komutları",
     "manualUninstallHint": "Her uygulamanın ortamı varsayılan olarak otomatik algılanır; isterseniz farklı bir ortamı elle seçebilirsiniz. Özgün kurulum yöntemini seçin, ardından kaldırmak istediğiniz uygulamanın komutunu kopyalayıp bir terminalde çalıştırın. Durumunu yenilemek için sonrasında “Güncellemeleri kontrol et” seçeneğine tıklayın.",
     "manualUninstallMethod": "Kurulum yöntemi",
-    "manualUninstallBunLauncherHint": "Bun, geride bir OpenClaw başlatıcısı bırakabilir. Bu dosyayı kaldırmadan önce “OpenClaw Bun başlatıcısı” başlığını ve paket yolunu inceleyin; paylaşılan bin dizinini koruyun.",
+    "manualUninstallBunLauncherHint": "Bun, geride bir OpenClaw başlatıcısı bırakabilir. Bu dosyayı kaldırmadan önce “OpenClaw Bun launcher” başlığını ve paket yolunu inceleyin; paylaşılan bin dizinini koruyun.",
     "manualUninstallOpenClawHint": "Yapılandırmayı ve çalışma alanlarını koruyarak Gateway hizmetini kaldırmak için önce openclaw uninstall --service --yes --non-interactive komutunu başarıyla çalıştırın. Ardından aşağıdaki komutla CLI'yi kaldırın.",
     "manualUninstallEnvironment": "Ortam",
     "manualUninstallEnvironmentHint": "Özgün kurulumla aynı Node ortamını ve paket yöneticisini kullanın. --prefix seçeneğini yalnızca doğrulanmış bir genel npm öneki için ekleyin. WSL uygulamalarına ait komutları ilgili dağıtımın içinde çalıştırın.",
