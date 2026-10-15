@@ -2582,19 +2582,29 @@ fn switch_claude_moves_compat_switches_with_their_provider() {
     );
 
     ProviderService::switch(&state, AppType::Claude, "claude-official").expect("to official");
-    assert_eq!(claude_live(), json!({ "env": {} }));
+    // 上一家的地址和凭据写成空串而不是删除：热加载中的会话读到空串等于没设，
+    // 切回官方后立即生效（#7808）。
+    assert_eq!(
+        claude_live(),
+        json!({ "env": { "ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": "" } })
+    );
 
     ProviderService::switch(&state, AppType::Claude, "deepseek").expect("back to deepseek");
     assert_eq!(claude_live(), deepseek);
 
-    // 用户在 live 里手动改成了 0：不是 CC Switch 写的，切走时保留。
+    // 用户在 live 里手动改成了 0：不是 CC Switch 写的，切走时保留；
+    // live 里缺的上一家关键字段补回空串（进程里可能还留着旧值）。
     let mut edited = claude_live();
     edited["env"]["CLAUDE_CODE_DISABLE_ARTIFACT"] = json!("0");
     std::fs::write(get_claude_settings_path(), edited.to_string()).expect("edit live");
     ProviderService::switch(&state, AppType::Claude, "claude-official").expect("to official");
     assert_eq!(
         claude_live(),
-        json!({ "env": { "CLAUDE_CODE_DISABLE_ARTIFACT": "0" } })
+        json!({ "env": {
+            "CLAUDE_CODE_DISABLE_ARTIFACT": "0",
+            "ANTHROPIC_BASE_URL": "",
+            "ANTHROPIC_AUTH_TOKEN": ""
+        }})
     );
 }
 
@@ -2637,7 +2647,11 @@ fn switch_claude_window_values_follow_the_provider() {
         json!("262144")
     );
     ProviderService::switch(&state, AppType::Claude, "claude-official").expect("to official");
-    assert_eq!(claude_live(), json!({ "env": {} }));
+    // 上一家的地址和凭据写成空串而不是删除（#7808，热加载会话读到空串等于没设）。
+    assert_eq!(
+        claude_live(),
+        json!({ "env": { "ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": "" } })
+    );
 
     // 旧版切到早期的 Kimi 行时注入的默认值：上一家的行里查不到。
     ProviderService::switch(&state, AppType::Claude, "old-kimi").expect("to old kimi");
@@ -2646,7 +2660,10 @@ fn switch_claude_window_values_follow_the_provider() {
     live["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = json!("262144");
     std::fs::write(get_claude_settings_path(), live.to_string()).expect("seed injected");
     ProviderService::switch(&state, AppType::Claude, "claude-official").expect("to official");
-    assert_eq!(claude_live(), json!({ "env": {} }));
+    assert_eq!(
+        claude_live(),
+        json!({ "env": { "ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": "" } })
+    );
 }
 
 /// live 解析不了：切换报错，文件字节、mtime 和当前供应商都不变。
@@ -3219,6 +3236,54 @@ fn claude_editor_provider_fields_go_to_the_row() {
     assert_eq!(
         claude_live()["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
         json!("983616")
+    );
+}
+
+/// 编辑别的供应商时，当前供应商缺失的关键字段不中和成空串：编辑视图显示的是供应商
+/// 自己的配置。前端按「存在的键优先」读写凭据（AUTH_TOKEN 优先于 API_KEY，
+/// AWS_BEARER_TOKEN_BEDROCK 截获 Bedrock Key），空串键会把只有 ANTHROPIC_API_KEY
+/// 的行显示成没有 Key，保存还会把改的 Key 写进 AUTH_TOKEN、原字段不动。
+#[test]
+fn claude_editor_view_does_not_show_prev_provider_neutralized_keys() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let with_token = json!({ "env": {
+        "ANTHROPIC_BASE_URL": "https://kimi.example",
+        "ANTHROPIC_AUTH_TOKEN": "sk-kimi"
+    }});
+    let api_key_row = json!({ "env": { "ANTHROPIC_API_KEY": "sk-b" } });
+    let bedrock = json!({ "env": {
+        "CLAUDE_CODE_USE_BEDROCK": "1",
+        "AWS_REGION": "us-west-2",
+        "AWS_BEARER_TOKEN_BEDROCK": "sk-bedrock"
+    }});
+    let state = seed_claude_switch_state(
+        &[
+            ("kimi", with_token.clone()),
+            ("b", api_key_row.clone()),
+            ("bedrock", bedrock),
+        ],
+        "kimi",
+        &serde_json::to_string(&with_token).expect("serialize"),
+    );
+
+    // 当前供应商用 AUTH_TOKEN：编辑只有 ANTHROPIC_API_KEY 的另一家，视图里没有 AUTH_TOKEN。
+    let (row, base) = open_claude_editor(&state, "b");
+    assert_eq!(base["env"], api_key_row["env"], "no neutralized AUTH_TOKEN");
+
+    // 不改 Key 直接保存：中和键不写进这一家的行。
+    save_claude_editor(&state, &row, &base, base.clone(), "refuse").expect("save b");
+    assert_eq!(claude_row(&state, "b"), api_key_row, "row stays clean");
+
+    // 当前供应商是 Bedrock：AWS_BEARER_TOKEN_BEDROCK 同样不进别家的编辑视图。
+    ProviderService::switch(&state, AppType::Claude, "bedrock").expect("switch to bedrock");
+    let (_, base) = open_claude_editor(&state, "b");
+    assert_eq!(
+        base["env"],
+        json!({ "ANTHROPIC_API_KEY": "sk-b" }),
+        "no neutralized Bedrock bearer key"
     );
 }
 
