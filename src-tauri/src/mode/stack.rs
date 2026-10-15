@@ -58,7 +58,12 @@ pub fn allocate_key(stack: &mut StackState, provider: &Provider) -> String {
     if let Some(key) = stack.key_of(&provider.id) {
         return key.to_string();
     }
-    let base = [provider.icon.as_deref(), Some(provider.name.as_str())]
+    // 自定义图标是一长串 base64，拿来生成 key 没有意义，只用内置图标名
+    let icon = provider
+        .icon
+        .as_deref()
+        .filter(|icon| !crate::services::provider::icon::is_custom_icon(icon));
+    let base = [icon, Some(provider.name.as_str())]
         .into_iter()
         .flatten()
         .map(slug)
@@ -670,11 +675,18 @@ mod tests {
         let named = provider("b", "My Relay 2.0!", None, json!({}));
         let chinese = provider("c1b2c3d4-e5f6", "智谱", None, json!({}));
         let blank_icon = provider("d", "DeepSeek", Some("  "), json!({}));
+        let custom_icon = provider(
+            "e",
+            "Acme",
+            Some("data:image/png;base64,iVBORw0KGgo="),
+            json!({}),
+        );
 
         assert_eq!(allocate_key(&mut stack, &kimi), "kimi");
         assert_eq!(allocate_key(&mut stack, &named), "my-relay-2-0");
         assert_eq!(allocate_key(&mut stack, &chinese), "pc1b2c3");
         assert_eq!(allocate_key(&mut stack, &blank_icon), "deepseek");
+        assert_eq!(allocate_key(&mut stack, &custom_icon), "acme");
     }
 
     #[test]

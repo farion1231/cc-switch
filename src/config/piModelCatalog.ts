@@ -225,6 +225,27 @@ export const piModelCatalog = {
       maxTokens: 16_384,
     },
   },
+  // 2026-10-14 按 dev.meta.ai/docs/models.md 核对：窗口 1048576、常开思考；
+  // 平台还收 video/audio/pdf，Pi 只取 text+image。最大输出取官方 OpenCode
+  // 配置的 limit.output（dev.meta.ai/docs/coding-agents.md）
+  "meta/muse-wonder-1.0": {
+    capabilities: {
+      name: "Muse Wonder 1.0",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_048_576,
+      maxTokens: 131_072,
+    },
+  },
+  "meta/muse-spark-1.3": {
+    capabilities: {
+      name: "Muse Spark 1.3",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_048_576,
+      maxTokens: 131_072,
+    },
+  },
   "minimax/minimax-m2.7": {
     capabilities: {
       name: "MiniMax-M2.7",
@@ -405,6 +426,25 @@ export const piModelCatalog = {
       maxTokens: 128_000,
     },
   },
+  // 开源权重模型，窗口与最大输出取 console.groq.com/docs/models（2026-10-14）
+  "openai/gpt-oss-120b": {
+    capabilities: {
+      name: "GPT-OSS 120B",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 131_072,
+      maxTokens: 65_536,
+    },
+  },
+  "openai/gpt-oss-20b": {
+    capabilities: {
+      name: "GPT-OSS 20B",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 131_072,
+      maxTokens: 65_536,
+    },
+  },
   "openai/o3": {
     capabilities: {
       name: "o3",
@@ -439,6 +479,26 @@ export const piModelCatalog = {
       input: ["text"],
       contextWindow: 262_144,
       maxTokens: 65_536,
+    },
+  },
+  // 开源权重模型，窗口与建议输出取 huggingface.co/Qwen/Qwen3.5-9B（2026-10-14）
+  "qwen/qwen3.5": {
+    capabilities: {
+      name: "Qwen3.5",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 262_144,
+      maxTokens: 32_768,
+    },
+  },
+  // 开源权重模型，窗口与建议输出取 huggingface.co/Qwen/Qwen3.6-27B（2026-10-14）
+  "qwen/qwen3.6-27b": {
+    capabilities: {
+      name: "Qwen3.6 27B",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 262_144,
+      maxTokens: 32_768,
     },
   },
   "qwen/qwen3.6-plus": {
@@ -506,13 +566,13 @@ export const piModelCatalog = {
       maxTokens: 256_000,
     },
   },
-  "streamlake/kat-coder-pro": {
+  "streamlake/kat-coder-pro-v2.5": {
     capabilities: {
-      name: "KAT-Coder Pro",
+      name: "KAT-Coder Pro V2.5",
       reasoning: true,
       input: ["text"],
       contextWindow: 256_000,
-      maxTokens: 32_000,
+      maxTokens: 80_000,
     },
   },
   "volcengine/ark-code-latest": {
@@ -707,6 +767,15 @@ export const piModelCatalog = {
   "anthropic/claude-sonnet-5.5": {
     capabilities: {
       name: "Claude Sonnet 5.5",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1000000,
+      maxTokens: 128000,
+    },
+  },
+  "anthropic/claude-haiku-5.5": {
+    capabilities: {
+      name: "Claude Haiku 5.5",
       reasoning: true,
       input: ["text", "image"],
       contextWindow: 1000000,

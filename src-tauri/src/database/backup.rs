@@ -222,6 +222,8 @@ impl Database {
         // 补齐缺失表/索引并执行迁移
         Self::create_tables_on_conn(&temp_conn)?;
         Self::apply_schema_migrations_on_conn(&temp_conn)?;
+        // 导入和同步不经过保存时的校验：坏的自定义图标在这里清掉，不带进主库
+        crate::services::provider::icon::strip_invalid_custom_icons(&temp_conn)?;
         on_staging_ready()?;
 
         let backup_file_guard = lock_backup_file_operations()?;
@@ -1320,6 +1322,65 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(name, "Provider One");
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn import_clears_custom_icons_that_fail_validation() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        // 保存时会拒绝的图标，可以直接写进别人给的 SQL 备份或云端快照：导入时要清掉
+        let too_long = format!(
+            "{}{}",
+            crate::services::provider::icon::CUSTOM_ICON_PREFIX,
+            "A".repeat(crate::services::provider::icon::MAX_CUSTOM_ICON_LENGTH)
+        );
+        let source = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(source.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta, icon)
+                 VALUES ('p1', 'claude', 'Provider One', '{}', '{}', ?1),
+                        ('p2', 'claude', 'Provider Two', '{}', '{}', 'claude')",
+                [&too_long],
+            )?;
+            let universal = serde_json::json!({
+                "u1": {
+                    "id": "u1",
+                    "name": "Universal",
+                    "providerType": "custom",
+                    "apps": {},
+                    "baseUrl": "https://api.example.com",
+                    "apiKey": "sk-test",
+                    "icon": too_long,
+                },
+            });
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES ('universal_providers', ?1)",
+                [universal.to_string()],
+            )?;
+        }
+        let exported = source.export_sql_string()?;
+
+        let target = Database::memory()?;
+        target.import_sql_string(&exported)?;
+
+        let conn = crate::database::lock_conn!(target.conn);
+        let icon_of = |id: &str| -> Result<Option<String>, AppError> {
+            Ok(conn.query_row(
+                "SELECT icon FROM providers WHERE id = ?1 AND app_type = 'claude'",
+                [id],
+                |row| row.get(0),
+            )?)
+        };
+        assert_eq!(icon_of("p1")?, None);
+        assert_eq!(icon_of("p2")?, Some("claude".to_string()));
+        drop(conn);
+        let universal = target
+            .get_universal_provider("u1")?
+            .expect("universal provider survives the import");
+        assert_eq!(universal.name, "Universal");
+        assert_eq!(universal.icon, None);
         Ok(())
     }
 

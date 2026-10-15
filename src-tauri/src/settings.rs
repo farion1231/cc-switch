@@ -302,6 +302,9 @@ pub struct LocalMigrations {
     /// 这样重新开启能把"关闭期间"落入 openai 桶的官方会话补迁进来。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_official_history_unify_v1: Option<CodexOfficialHistoryUnifyMigration>,
+    /// 旧版官方路由桶（`cc-switch-official`）迁回 openai 桶的标记，按 Codex 目录生效。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_legacy_official_history_bucket_v1: Option<CodexLegacyOfficialHistoryBucketMigration>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -338,6 +341,20 @@ pub struct CodexOfficialHistoryUnifyMigration {
     pub migrated_state_rows: usize,
     /// 迁移时的规范化 Codex 目录。标记只对同一目录生效：
     /// 切换 codex_config_dir 后旧标记不会挡住新目录的迁移。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_config_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexLegacyOfficialHistoryBucketMigration {
+    pub completed_at: String,
+    pub target_provider_id: String,
+    #[serde(default)]
+    pub migrated_jsonl_files: usize,
+    #[serde(default)]
+    pub migrated_state_rows: usize,
+    /// 迁移时的规范化 Codex 目录，切换 codex_config_dir 后新目录照常迁移。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_config_dir: Option<String>,
 }
@@ -689,7 +706,7 @@ impl AppSettings {
             .language
             .as_ref()
             .map(|s| s.trim())
-            .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja"))
+            .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja" | "tr"))
             .map(|s| s.to_string());
 
         self.quota_display = self
@@ -937,6 +954,25 @@ pub fn clear_codex_official_history_unify_migration() -> Result<(), AppError> {
         if let Some(migrations) = settings.local_migrations.as_mut() {
             migrations.codex_official_history_unify_v1 = None;
         }
+    })
+}
+
+pub fn is_codex_legacy_official_history_bucket_migrated_for_dir(codex_dir: &str) -> bool {
+    get_settings()
+        .local_migrations
+        .as_ref()
+        .and_then(|migrations| migrations.codex_legacy_official_history_bucket_v1.as_ref())
+        .is_some_and(|migration| migration.codex_config_dir.as_deref() == Some(codex_dir))
+}
+
+pub fn mark_codex_legacy_official_history_bucket_migrated(
+    migration: CodexLegacyOfficialHistoryBucketMigration,
+) -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        settings
+            .local_migrations
+            .get_or_insert_with(Default::default)
+            .codex_legacy_official_history_bucket_v1 = Some(migration);
     })
 }
 

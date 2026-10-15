@@ -258,9 +258,9 @@ fn runtime_log_level_allows(level: log::Level, max_level: log::LevelFilter) -> b
 
 /// 统一处理 ccswitch:// 深链接 URL
 ///
-/// - 解析 URL
-/// - 向前端发射 `deeplink-import` / `deeplink-error` 事件
-/// - 可选：在成功时聚焦主窗口
+/// - 解析 URL，把结果（或错误）暂存为待处理深链接，再发 `deeplink-pending` 通知前端来读
+///   （前端可能还没挂载，见 `deeplink::PendingDeepLink`）
+/// - 可选：聚焦主窗口
 fn handle_deeplink_url(
     app: &tauri::AppHandle,
     url_str: &str,
@@ -276,7 +276,7 @@ fn handle_deeplink_url(
         url_for_log(url_str)
     );
 
-    match crate::deeplink::parse_deeplink_url(url_str) {
+    let pending = match crate::deeplink::parse_deeplink_url(url_str) {
         Ok(request) => {
             log::info!(
                 "✓ Successfully parsed deep link: resource={}, app={:?}, name={:?}",
@@ -284,42 +284,38 @@ fn handle_deeplink_url(
                 request.app,
                 request.name
             );
-
-            if let Err(e) = app.emit("deeplink-import", &request) {
-                log::error!("✗ Failed to emit deeplink-import event: {e}");
-            } else {
-                log::info!("✓ Emitted deeplink-import event to frontend");
-            }
-
-            if focus_main_window {
-                if let Some(window) = app.get_webview_window("main") {
-                    #[cfg(target_os = "windows")]
-                    {
-                        let _ = window.set_skip_taskbar(false);
-                    }
-                    let _ = window.unminimize();
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                    #[cfg(target_os = "linux")]
-                    {
-                        linux_fix::nudge_main_window(window.clone(), "deeplink");
-                    }
-                    log::info!("✓ Window shown and focused");
-                }
+            crate::deeplink::PendingDeepLink::Import {
+                request: Box::new(request),
             }
         }
         Err(e) => {
             log::error!("✗ Failed to parse deep link URL: {e}");
-
-            if let Err(emit_err) = app.emit(
-                "deeplink-error",
-                serde_json::json!({
-                    "url": url_str,
-                    "error": e.to_string()
-                }),
-            ) {
-                log::error!("✗ Failed to emit deeplink-error event: {emit_err}");
+            crate::deeplink::PendingDeepLink::Error {
+                url: url_str.to_string(),
+                error: e.to_string(),
             }
+        }
+    };
+    crate::deeplink::set_pending_deeplink(pending);
+
+    if let Err(e) = app.emit("deeplink-pending", ()) {
+        log::error!("✗ Failed to emit deeplink-pending event: {e}");
+    }
+
+    if focus_main_window {
+        if let Some(window) = app.get_webview_window("main") {
+            #[cfg(target_os = "windows")]
+            {
+                let _ = window.set_skip_taskbar(false);
+            }
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+            #[cfg(target_os = "linux")]
+            {
+                linux_fix::nudge_main_window(window.clone(), "deeplink");
+            }
+            log::info!("✓ Window shown and focused");
         }
     }
 
@@ -833,6 +829,25 @@ pub fn run() {
                         }
                     }
 
+                    // 旧版官方路由桶（cc-switch-official）迁回 openai，须在统一迁移之前：
+                    // 开关开着时，紧接着的统一迁移会把它们按正常流程带进 custom。
+                    match crate::codex_history_migration::maybe_migrate_codex_legacy_official_history_to_openai_bucket() {
+                        Ok(outcome) => {
+                            if let Some(reason) = outcome.skipped_reason {
+                                log::debug!("○ Codex legacy official history bucket migration skipped: {reason}");
+                            } else {
+                                log::info!(
+                                    "✓ Codex legacy official history bucket migration completed: jsonl_files={}, state_rows={}",
+                                    outcome.migrated_jsonl_files,
+                                    outcome.migrated_state_rows
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("✗ Codex legacy official history bucket migration failed: {e}");
+                        }
+                    }
+
                     // 统一会话开关的官方历史迁移：开关开启但上次未完成（如文件被占用
                     // 中途失败）时在启动期重试；函数内部自门控，开关关闭时直接跳过。
                     match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
@@ -1102,6 +1117,21 @@ pub fn run() {
             });
             log::info!("✓ Deep-link URL handler registered");
 
+            // 冷启动补取：Windows/Linux 上插件在自身初始化时就解析了启动参数并发出事件，
+            // macOS 的 Opened 也可能早于这里，都赶在上面的回调注册之前，只能从 get_current 取。
+            // 万一两边都处理了同一条链接也无妨：暂存区只留最新一条，前端处理完就清除。
+            match app.deep_link().get_current() {
+                Ok(Some(urls)) => {
+                    for url in urls {
+                        if handle_deeplink_url(app.handle(), url.as_str(), true, "get_current") {
+                            break;
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => log::warn!("读取启动时的深链接失败: {e}"),
+            }
+
             // 创建动态托盘菜单
             let menu = tray::create_tray_menu(app.handle(), &app_state)?;
 
@@ -1284,10 +1314,11 @@ pub fn run() {
                     }
                 });
 
-                // Session log usage sync: 启动时同步一次，之后每 60 秒检查
+                // Session log usage sync: 启动时同步一次，之后每 10 分钟兜底一次（防 CLI 清理旧会话
+                // 文件前漏导入）；用量页打开时由前端按所选间隔加扫
                 let db_for_session_sync = state.db.clone();
                 tauri::async_runtime::spawn(async move {
-                    const SESSION_SYNC_INTERVAL_SECS: u64 = 60;
+                    const SESSION_SYNC_INTERVAL_SECS: u64 = 10 * 60;
 
                     async fn run_session_sync(db: std::sync::Arc<crate::database::Database>, backfill: bool) {
                         // 手动扫描模式下跳过定时扫描；backfill 轮（启动首轮）仍进入，
@@ -1555,8 +1586,11 @@ pub fn run() {
             // Deep link import
             commands::parse_deeplink,
             commands::merge_deeplink_config,
+            commands::fetch_deeplink_icon,
             commands::import_from_deeplink,
             commands::import_from_deeplink_unified,
+            commands::peek_pending_deeplink,
+            commands::ack_pending_deeplink,
             update_tray_menu,
             // Environment variable management
             commands::check_env_conflicts,
@@ -1678,6 +1712,7 @@ pub fn run() {
             commands::launch_session_terminal,
             commands::get_tool_versions,
             commands::run_tool_lifecycle_action,
+            commands::prepare_tool_uninstall,
             commands::probe_tool_installations,
             commands::list_tool_installations,
             // Provider terminal
@@ -1688,6 +1723,11 @@ pub fn run() {
             commands::upsert_universal_provider,
             commands::delete_universal_provider,
             commands::sync_universal_provider,
+            // Custom icon library
+            commands::get_custom_icons,
+            commands::add_custom_icon,
+            commands::rename_custom_icon,
+            commands::delete_custom_icon,
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,
@@ -1850,91 +1890,24 @@ pub fn run() {
 
         #[cfg(target_os = "macos")]
         {
-            match event {
-                // macOS 在 Dock 图标被点击并重新激活应用时会触发 Reopen 事件，这里手动恢复主窗口
-                RunEvent::Reopen { .. } => {
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        #[cfg(target_os = "windows")]
-                        {
-                            let _ = window.set_skip_taskbar(false);
-                        }
-                        let _ = window.unminimize();
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                        tray::apply_tray_policy(app_handle, true);
-                    } else if crate::lightweight::is_lightweight_mode() {
-                        if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle) {
-                            log::error!("退出轻量模式重建窗口失败: {e}");
-                        }
+            // macOS 在 Dock 图标被点击并重新激活应用时会触发 Reopen 事件，这里手动恢复主窗口。
+            // RunEvent::Opened（ccswitch:// 链接）不在这里处理：deep-link 插件的 on_event 已把它
+            // 转成 on_open_url 回调，这里再处理一遍会让同一条链接触发两次导入。
+            if let RunEvent::Reopen { .. } = event {
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    #[cfg(target_os = "windows")]
+                    {
+                        let _ = window.set_skip_taskbar(false);
+                    }
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                    tray::apply_tray_policy(app_handle, true);
+                } else if crate::lightweight::is_lightweight_mode() {
+                    if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle) {
+                        log::error!("退出轻量模式重建窗口失败: {e}");
                     }
                 }
-                // 处理通过自定义 URL 协议触发的打开事件（例如 ccswitch://...）
-                RunEvent::Opened { urls } => {
-                    if let Some(url) = urls.first() {
-                        let url_str = url.to_string();
-                        log::info!(
-                            "RunEvent::Opened with URL: {}",
-                            url_for_log(&url_str)
-                        );
-
-                        if url_str.starts_with("ccswitch://") {
-                            if crate::lightweight::is_lightweight_mode() {
-                                if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle)
-                                {
-                                    log::error!("退出轻量模式重建窗口失败: {e}");
-                                }
-                            }
-
-                            // 解析并广播深链接事件，复用与 single_instance 相同的逻辑
-                            match crate::deeplink::parse_deeplink_url(&url_str) {
-                                Ok(request) => {
-                                    log::info!(
-                                        "Successfully parsed deep link from RunEvent::Opened: resource={}, app={:?}",
-                                        request.resource,
-                                        request.app
-                                    );
-
-                                    if let Err(e) =
-                                        app_handle.emit("deeplink-import", &request)
-                                    {
-                                        log::error!(
-                                            "Failed to emit deep link event from RunEvent::Opened: {e}"
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    log::error!(
-                                        "Failed to parse deep link URL from RunEvent::Opened: {e}"
-                                    );
-
-                                    if let Err(emit_err) = app_handle.emit(
-                                        "deeplink-error",
-                                        serde_json::json!({
-                                            "url": url_str,
-                                            "error": e.to_string()
-                                        }),
-                                    ) {
-                                        log::error!(
-                                            "Failed to emit deep link error event from RunEvent::Opened: {emit_err}"
-                                        );
-                                    }
-                                }
-                            }
-
-                            // 确保主窗口可见
-                            if let Some(window) = app_handle.get_webview_window("main") {
-                                #[cfg(target_os = "windows")]
-                                {
-                                    let _ = window.set_skip_taskbar(false);
-                                }
-                                let _ = window.unminimize();
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
-                        }
-                    }
-                }
-                _ => {}
             }
         }
 
