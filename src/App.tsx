@@ -10,7 +10,13 @@ import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, KeyRound, MoreHorizontal, Plus } from "lucide-react";
+import {
+  ExternalLink,
+  KeyRound,
+  MoreHorizontal,
+  Plus,
+  Search,
+} from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
 import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
@@ -48,7 +54,7 @@ import {
 } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { deepClone } from "@/utils/deepClone";
-import { isLinux, isWindows } from "@/lib/platform";
+import { isLinux, isMac, isWindows } from "@/lib/platform";
 import {
   APP_STORAGE_KEY,
   appPageBelongsTo,
@@ -61,6 +67,7 @@ import {
   type View,
 } from "@/lib/navigation";
 import { Sidebar } from "@/components/shell/Sidebar";
+import { useUpdate } from "@/contexts/UpdateContext";
 import { NewLayoutDialog } from "@/components/shell/NewLayoutDialog";
 import {
   AppPageHeader,
@@ -88,7 +95,6 @@ import {
 import { UsagePage } from "@/components/usage/UsagePage";
 import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
 import { SwitchModePanel } from "@/components/providers/mode/SwitchModePanel";
-import { DesktopAccessBar } from "@/components/providers/mode/DesktopAccessBar";
 import { proxyApi } from "@/lib/api/proxy";
 import type { AppMode, StartupAttachFailure } from "@/types/proxy";
 import UsageScriptModal from "@/components/UsageScriptModal";
@@ -125,11 +131,7 @@ import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel, {
   HermesMemorySaveButton,
 } from "@/components/hermes/HermesMemoryPanel";
-import {
-  APP_IDS,
-  DEFAULT_VISIBLE_APPS,
-  isProxyAppId,
-} from "@/config/appConfig";
+import { APP_IDS, DEFAULT_VISIBLE_APPS, isModeAppId } from "@/config/appConfig";
 
 interface SyncStatusUpdatedPayload {
   source?: string;
@@ -150,12 +152,14 @@ const getInitialApp = (): AppId => {
 function App() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { hasUpdate } = useUpdate();
 
   const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
   const sharedFeatureApp = sharedFeatureAppOf(activeApp);
   const [currentView, setCurrentView] = useState<View>(readStoredView);
   const [settingsSection, setSettingsSection] =
     useState<SettingsSection>("general");
+  const [appConfigScrollTarget, setAppConfigScrollTarget] = useState<AppId>();
   // 进设置前停留的页面：设置目录里的「← 返回」回到这里
   const settingsReturnViewRef = useRef<View>("providers");
   const [openclawConfigTab, setOpenclawConfigTab] =
@@ -164,6 +168,11 @@ function App() {
     PROMPT_APP_IDS.includes(sharedFeatureApp) ? sharedFeatureApp : "claude",
   );
   const [isAddOpen, setIsAddOpen] = useState(false);
+  // 供应商搜索面板：页头按钮和 ⌘F 都能打开；换应用或离开供应商页就收起
+  const [providerSearchOpen, setProviderSearchOpen] = useState(false);
+  useEffect(() => {
+    setProviderSearchOpen(false);
+  }, [activeApp, currentView]);
   // 供应商页顶部正在看的那格（直连 / 路由 / 聚合），由 SwitchModePanel 报上来。打开新增、
   // 编辑时记下当时那格，表单按它选布局：在聚合那格打开就是聚合的简化表单。
   const [providerModeView, setProviderModeView] = useState<{
@@ -285,7 +294,7 @@ function App() {
   }, [activeApp, currentView]);
 
   const { isRunning: isProxyRunning, takeoverStatus } = useProxyStatus();
-  const proxyAppId = isProxyAppId(activeApp) ? activeApp : null;
+  const modeAppId = isModeAppId(activeApp) ? activeApp : null;
   // 换了应用、新面板还没报上来时为 undefined：表单按应用实际生效的模式
   const currentModeView =
     providerModeView?.app === activeApp ? providerModeView.view : undefined;
@@ -293,10 +302,9 @@ function App() {
     setFormModeView(modeView);
     setIsAddOpen(true);
   };
-  const currentAppUsesProxy =
-    proxyAppId !== null || activeApp === "claude-desktop";
-  const isCurrentAppTakeoverActive = proxyAppId
-    ? takeoverStatus?.[proxyAppId] || false
+  const currentAppUsesProxy = modeAppId !== null;
+  const isCurrentAppTakeoverActive = modeAppId
+    ? takeoverStatus?.[modeAppId] || false
     : false;
 
   const { data, isLoading, refetch } = useProvidersQuery(activeApp, {
@@ -632,14 +640,18 @@ function App() {
     return true;
   };
 
-  const openSettings = (section: SettingsSection = "general") => {
+  const openSettings = (
+    section: SettingsSection = "general",
+    appConfigTarget?: AppId,
+  ) => {
     if (managementBusyRef.current) return;
-    if (confirmLeave(() => openSettings(section))) return;
+    if (confirmLeave(() => openSettings(section, appConfigTarget))) return;
     closeProviderPanels();
     if (currentViewRef.current !== "settings") {
       settingsReturnViewRef.current = currentViewRef.current;
     }
     setSettingsSection(section);
+    setAppConfigScrollTarget(appConfigTarget);
     setCurrentView("settings");
   };
 
@@ -662,6 +674,8 @@ function App() {
       return;
     }
     if (managementBusyRef.current) return;
+    // 再点当前页不会离开：不弹确认，也不能清掉编辑页的未保存登记
+    if (currentViewRef.current === page) return;
     if (confirmLeave(() => openPage(page))) return;
     closeProviderPanels();
     if (page === "prompts" && currentViewRef.current !== "prompts") {
@@ -697,6 +711,11 @@ function App() {
 
   // 侧栏、⌘K 进用量统计看全部应用；只有应用页 ⋯ 进来时带应用筛选
   const openPageFromNav = (page: GlobalPage | "settings") => {
+    // 「设置」上的绿点说的是 CC Switch 有新版本，点进去直接到「关于」里的更新按钮
+    if (page === "settings" && hasUpdate) {
+      openSettings("about");
+      return;
+    }
     if (page === "usage") setUsageAppFilter("all");
     openPage(page);
   };
@@ -1114,7 +1133,7 @@ function App() {
             {t("appPage.viewUsage")}
           </DropdownMenuItem>
         )}
-        <DropdownMenuItem onSelect={() => openSettings("appConfig")}>
+        <DropdownMenuItem onSelect={() => openSettings("appConfig", activeApp)}>
           {t("appPage.configDirectory")}
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => openPage("apps")}>
@@ -1154,7 +1173,7 @@ function App() {
         <>
           {currentView === "providers" &&
             activeApp !== "mcode" &&
-            (settingsData?.showProfileSwitcher ?? true) && (
+            (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
           {activeApp === "hermes" && (
@@ -1167,6 +1186,25 @@ function App() {
               <ExternalLink className="h-3.5 w-3.5" />
             </Button>
           )}
+          {currentView === "providers" &&
+            (settingsData?.showProviderSearch ?? true) && (
+              <HoverTip
+                content={t("provider.searchButtonTip", {
+                  shortcut: isMac() ? "⌘F" : "Ctrl+F",
+                })}
+              >
+                <Button
+                  variant="quiet"
+                  size="icon-compact"
+                  className="h-8 w-8"
+                  aria-label={t("provider.searchAriaLabel")}
+                  aria-pressed={providerSearchOpen}
+                  onClick={() => setProviderSearchOpen((open) => !open)}
+                >
+                  <Search className="h-4 w-4" />
+                </Button>
+              </HoverTip>
+            )}
           {currentView === "providers" && (
             <Button
               variant="solid"
@@ -1235,17 +1273,19 @@ function App() {
     onOpenWebsite: handleOpenWebsite,
     onOpenTerminal: activeApp === "claude" ? handleOpenTerminal : undefined,
     onCreate: () => openAddProvider(currentModeView),
+    searchOpen: providerSearchOpen,
+    onSearchOpenChange: setProviderSearchOpen,
   };
 
   const renderProviderList = () => {
-    if (proxyAppId) {
+    if (modeAppId) {
       const startupFailure = startupFailures.find(
-        (failure) => failure.appType === proxyAppId,
+        (failure) => failure.appType === modeAppId,
       );
       return (
         <SwitchModePanel
-          key={proxyAppId}
-          app={proxyAppId}
+          key={modeAppId}
+          app={modeAppId}
           providers={providers}
           currentProviderId={currentProviderId}
           isLoading={isLoading}
@@ -1253,14 +1293,14 @@ function App() {
           onSwitch={switchProvider}
           onOpenRoutingSettings={() => openSettings("routing")}
           needsRouteRequest={
-            trayNeedsRoute?.app === proxyAppId ? trayNeedsRoute : undefined
+            trayNeedsRoute?.app === modeAppId ? trayNeedsRoute : undefined
           }
           onNeedsRouteHandled={() => setTrayNeedsRoute(null)}
           onViewChange={handleProviderModeViewChange}
           startupFailure={startupFailure}
           onDismissStartupFailure={() =>
             setStartupFailures((list) =>
-              list.filter((failure) => failure.appType !== proxyAppId),
+              list.filter((failure) => failure.appType !== modeAppId),
             )
           }
           {...listCallbacks}
@@ -1275,12 +1315,6 @@ function App() {
         className="min-h-0 flex-1 overflow-y-auto scroll-stable overflow-x-hidden px-6 pb-12 pt-4"
       >
         <div className="space-y-4">
-          {activeApp === "claude-desktop" && (
-            <DesktopAccessBar
-              current={providers[currentProviderId]}
-              onOpenRoutingSettings={() => openSettings("routing")}
-            />
-          )}
           <ProviderList
             {...listCallbacks}
             providers={providers}
@@ -1481,6 +1515,7 @@ function App() {
       return (
         <SettingsPage
           section={settingsSection}
+          appConfigScrollTarget={appConfigScrollTarget}
           onImportSuccess={handleImportSuccess}
           onOpenApps={() => setCurrentView("apps")}
           onOpenApp={selectApp}
@@ -1502,7 +1537,10 @@ function App() {
           settingsSection={settingsSection}
           onSelectApp={selectApp}
           onSelectPage={openPageFromNav}
-          onSelectSettingsSection={setSettingsSection}
+          onSelectSettingsSection={(section) => {
+            setAppConfigScrollTarget(undefined);
+            setSettingsSection(section);
+          }}
           onExitSettings={exitSettings}
           appsUpdateAvailable={
             checkToolUpdatesOnStartup && toolUpdatesAvailable

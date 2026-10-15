@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { HoverTip } from "@/components/ui/hover-tip";
 import {
+  barPercent,
   cardRows,
   FAILED_LINE_KEY,
   countdownStr,
@@ -15,15 +16,13 @@ import {
 } from "./quotaRules";
 import { QuotaBreakdownChevron, QuotaBreakdownRow } from "./QuotaBreakdown";
 
-/**
- * 快用完只加深加粗、不用橙色：浅色模式的警告文字和可点击文字（主题橙）几乎同色，
- * 额度列本身又能点，橙色会被读成「这里可以点」。展开的额度条仍用琥珀色填充
- */
+/** 沿用 v3 的绿 / 橙 / 红：全灰时几档额度看不出差别（用户反馈） */
 export const TONE_TEXT: Record<QuotaTone, string> = {
-  normal: "text-fg-2",
+  normal: "text-green-600 dark:text-green-400",
   muted: "text-fg-3",
-  warning: "font-medium text-fg-1",
-  danger: "font-medium text-danger-text",
+  warning: "text-orange-500 dark:text-orange-400",
+  danger: "text-red-500 dark:text-red-400",
+  plain: "",
 };
 
 export const TONE_FILL: Record<QuotaTone, string> = {
@@ -31,7 +30,34 @@ export const TONE_FILL: Record<QuotaTone, string> = {
   muted: "bg-chart-1",
   warning: "bg-warning",
   danger: "bg-danger",
+  plain: "bg-chart-1",
 };
+
+/**
+ * 只给数值上色（「5 小时剩余 88%」里的「88%」），档名和「剩余」跟外层的灰字；
+ * 句子里没有单独的数值（用完、过期、没查到）时整句上色。className 不传时不上色
+ */
+export function TonedText({
+  text,
+  line,
+  className = TONE_TEXT[line.tone],
+}: {
+  text: string;
+  line: Pick<QuotaLine, "tone" | "emphasis">;
+  className?: string;
+}) {
+  if (!className) return <>{text}</>;
+  const at = line.emphasis ? text.lastIndexOf(line.emphasis) : -1;
+  if (at < 0) return <span className={className}>{text}</span>;
+  const end = at + line.emphasis!.length;
+  return (
+    <>
+      {text.slice(0, at)}
+      <span className={className}>{line.emphasis}</span>
+      {text.slice(end)}
+    </>
+  );
+}
 
 /** 每 30 秒刷新一次「x 分钟前」和重置倒计时 */
 export function useNow(active: boolean) {
@@ -221,15 +247,15 @@ export function QuotaLines({
       className="flex max-w-full items-center justify-end"
     >
       {row.length === 1 ? (
-        <span className={cn("min-w-0 truncate", TONE_TEXT[row[0].tone])}>
-          {row[0].text}
+        <span className="min-w-0 truncate text-fg-2">
+          <TonedText text={row[0].text} line={row[0]} />
         </span>
       ) : (
         <span className="min-w-0 truncate text-fg-2">
           {row.map((line, index) => (
             <span key={line.key}>
               {index > 0 && " · "}
-              <span className={TONE_TEXT[line.tone]}>{line.short}</span>
+              <TonedText text={line.short ?? line.text} line={line} />
             </span>
           ))}
         </span>
@@ -398,9 +424,10 @@ function SplitQuotaColumn({
           const node = (
             <span key={line.key}>
               {segment > 0 && " · "}
-              <span className={TONE_TEXT[line.tone]}>
-                {merged ? line.short : line.text}
-              </span>
+              <TonedText
+                text={(merged && line.short) || line.text}
+                line={line}
+              />
             </span>
           );
           segment += 1;
@@ -424,12 +451,12 @@ function SplitQuotaColumn({
                       line={line}
                       breakdown={line.breakdown!}
                       align="end"
-                      className={cn(
-                        "flex items-center gap-0.5",
-                        TONE_TEXT[line.tone],
-                      )}
+                      className="flex items-center gap-0.5"
                     >
-                      {merged ? line.short : line.text}
+                      <TonedText
+                        text={(merged && line.short) || line.text}
+                        line={line}
+                      />
                       {chevronInSlot ? (
                         <span className="ms-1 flex">
                           <QuotaBreakdownChevron />
@@ -496,7 +523,7 @@ interface QuotaBarsProps {
 
 const BAR_ROW_CLASS = "flex h-[18px] items-center gap-2 text-caption";
 
-/** 展开的额度条（授权中心、多套餐展开）：条越短剩得越少 */
+/** 展开的额度条（授权中心、多套餐展开）：条长跟着数值（剩余或已用，见 barPercent） */
 export function QuotaBars({
   rows,
   title,
@@ -547,9 +574,7 @@ export function QuotaBars({
       )}
       <div className="flex flex-col gap-1">
         {rows.map(({ label, line, note }) => {
-          const width = Number.isFinite(line.left)
-            ? Math.max(0, Math.min(100, line.left))
-            : 100;
+          const width = barPercent(line);
           // 展开时地方够，重置时间直接写在数值后面（卡片上只在悬停说明里）
           const trailing = [resetText(t, line, now), note]
             .filter(Boolean)
@@ -582,13 +607,13 @@ export function QuotaBars({
                   />
                 </span>
               )}
-              <span
-                className={cn(
-                  "shrink-0 text-end tabular-nums whitespace-nowrap",
-                  line.tone === "normal" ? "text-fg-1" : TONE_TEXT[line.tone],
-                )}
-              >
-                {line.value ?? line.text}
+              {/* 旁边已有额度条，正常时数值不上色 */}
+              <span className="shrink-0 text-end tabular-nums whitespace-nowrap text-fg-1">
+                <TonedText
+                  text={line.value ?? line.text}
+                  line={line}
+                  className={line.tone === "normal" ? "" : TONE_TEXT[line.tone]}
+                />
               </span>
               {trailing && (
                 <span className="min-w-0 truncate text-fg-3">{trailing}</span>

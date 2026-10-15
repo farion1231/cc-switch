@@ -43,12 +43,13 @@ interface OutputTokensPerSecondInput {
 
 /**
  * 一条请求的生成时间（毫秒）= 耗时 − 首字。缺耗时或首字、或差值不大于 0 时返回 null。
- * 会话日志没有首字计时，非流式请求也没有，这两类都不算精确速度
- * （会话日志另有估算，见 [getEstimatedTokensPerSecond]）。
+ * 只算路由服务记的请求：会话日志的耗时和首字都是按时间戳估的，不算精确速度
+ * （会话日志另有估算，见 [getEstimatedTokensPerSecond]）；非流式请求没有首字。
  */
 export function getGenerationMs(
   log: OutputTokensPerSecondInput,
 ): number | null {
+  if (isSessionLogRequest(log)) return null;
   const latencyMs = parseFiniteNumber(log.latencyMs);
   const firstTokenMs = parseFiniteNumber(log.firstTokenMs);
   if (latencyMs == null || firstTokenMs == null) return null;
@@ -103,7 +104,7 @@ export function isSessionLogRequest(log: { dataSource?: unknown }): boolean {
 
 /**
  * 这条请求能不能估速度（和后端 `speed_estimate_eligible_sql` 同口径）：会话日志导入、
- * 没有首字计时、输出不少于 200 token、估算耗时不短于 1 秒。
+ * 输出不少于 200 token、估算耗时不短于 1 秒。推出了首字的也照样按整段耗时算。
  */
 export function isSpeedEstimateEligible(
   log: OutputTokensPerSecondInput,
@@ -112,7 +113,6 @@ export function isSpeedEstimateEligible(
   const latencyMs = parseFiniteNumber(log.latencyMs);
   return (
     isSessionLogRequest(log) &&
-    parseFiniteNumber(log.firstTokenMs) == null &&
     outputTokens != null &&
     outputTokens >= SPEED_ESTIMATE_MIN_OUTPUT_TOKENS &&
     latencyMs != null &&
@@ -165,6 +165,13 @@ export function sumSpeedTotals(logs: readonly OutputTokensPerSecondInput[]): {
 export function formatTokensPerSecond(tps: number | null): string | null {
   if (tps == null) return null;
   return tps >= 1 ? Math.round(tps).toString() : tps.toFixed(1);
+}
+
+/** 首字时间的显示：毫秒换成秒、一位小数；没有值返回 null（界面显示「—」）。 */
+export function formatFirstTokenSeconds(ms: unknown): string | null {
+  const value = parseFiniteNumber(ms);
+  if (value == null || value < 0) return null;
+  return `${(value / 1000).toFixed(1)}s`;
 }
 
 export function formatOutputTokensPerSecond(
@@ -232,6 +239,7 @@ export function getLocaleFromLanguage(language: string): string {
   }
   if (normalized.startsWith("zh")) return "zh-CN";
   if (normalized.startsWith("ja")) return "ja-JP";
+  if (normalized.startsWith("tr")) return "tr-TR";
   return "en-US";
 }
 

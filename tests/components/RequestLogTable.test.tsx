@@ -186,8 +186,26 @@ describe("RequestLogTable", () => {
             latencyMs: 10_000,
             dataSource: "codex_session",
           },
+          // 会话日志推出了首字：首字带 ≈，速度仍按整段耗时估
+          {
+            ...base,
+            requestId: "session-first-token",
+            outputTokens: 900,
+            latencyMs: 10_000,
+            firstTokenMs: 3_300,
+            dataSource: "codex_session",
+          },
+          // Pi 用自己的请求开始/回复写入时间估算耗时，没有首字计时。
+          {
+            ...base,
+            appType: "pi",
+            requestId: "pi-session-estimated",
+            outputTokens: 900,
+            latencyMs: 10_000,
+            dataSource: "pi_session",
+          },
         ],
-        total: 4,
+        total: 6,
         page: 0,
         pageSize: 20,
       },
@@ -204,19 +222,40 @@ describe("RequestLogTable", () => {
     );
 
     const rows = screen.getAllByRole("row").slice(1);
-    expect(rows).toHaveLength(4);
-    expect(rows[0].lastElementChild).toHaveTextContent("99tok/s");
-    expect(rows[0].lastElementChild).toHaveAttribute(
-      "title",
-      "usage.timingTip",
-    );
-    expect(rows[1].lastElementChild).toHaveTextContent("—");
-    expect(rows[2].lastElementChild).toHaveTextContent("—");
-    expect(rows[3].lastElementChild).toHaveTextContent("≈90tok/s");
-    expect(rows[3].lastElementChild).toHaveAttribute(
+    expect(rows).toHaveLength(6);
+    // 最后两列：速度、首字
+    const speedCell = (row: HTMLElement) =>
+      row.children[row.children.length - 2];
+    const firstTokenCell = (row: HTMLElement) => row.lastElementChild;
+    expect(speedCell(rows[0])).toHaveTextContent("99tok/s");
+    expect(speedCell(rows[0])).toHaveAttribute("title", "usage.timingTip");
+    expect(firstTokenCell(rows[0])).toHaveTextContent("1.8s");
+    expect(speedCell(rows[1])).toHaveTextContent("—");
+    // 输出太少不算速度，但首字照样显示
+    expect(firstTokenCell(rows[1])).toHaveTextContent("1.9s");
+    expect(speedCell(rows[2])).toHaveTextContent("—");
+    expect(firstTokenCell(rows[2])).toHaveTextContent("—");
+    expect(speedCell(rows[3])).toHaveTextContent("≈90tok/s");
+    expect(speedCell(rows[3])).toHaveAttribute(
       "title",
       "usage.estimatedTimingTip",
     );
+    expect(firstTokenCell(rows[3])).toHaveTextContent("—");
+    expect(speedCell(rows[4])).toHaveTextContent("≈90tok/s");
+    expect(firstTokenCell(rows[4])).toHaveTextContent("≈3.3s");
+    expect(firstTokenCell(rows[4])).toHaveAttribute(
+      "title",
+      "usage.estimatedTimingTipWithFirstToken",
+    );
+    expect(speedCell(rows[5])).toHaveTextContent("≈90tok/s");
+    expect(speedCell(rows[5])).toHaveAttribute(
+      "title",
+      "usage.estimatedTimingTip",
+    );
+    expect(firstTokenCell(rows[5])).toHaveTextContent("—");
+    expect(
+      screen.getByRole("columnheader", { name: /usage.firstToken/ }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("columnheader", { name: /usage.speed/ }),
     ).toBeInTheDocument();

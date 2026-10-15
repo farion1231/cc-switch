@@ -5,6 +5,7 @@ export type ProviderCategory =
   | "aggregator" // 聚合网站
   | "third_party" // 第三方供应商
   | "custom" // 自定义
+  | "local" // 本机推理服务（Ollama、LM Studio 等）
   | "omo" // Oh My OpenCode
   | "omo-slim"; // Oh My OpenCode Slim
 
@@ -199,6 +200,9 @@ export interface ProviderMeta {
     | "openai_chat"
     | "openai_responses"
     | "gemini_native";
+  // Managed Codex Copilot uses this instead of apiFormat. Missing/unknown means auto.
+  // Keep the raw string so selections from newer versions survive an edit/save.
+  codexCopilotApiFormat?: string;
   // 通用认证绑定
   authBinding?: AuthBinding;
   // Claude 认证字段名
@@ -270,6 +274,8 @@ export type ClaudeApiFormat =
 // - "openai_chat": OpenAI Chat Completions 格式，需要本地路由转换
 // - "anthropic": native Anthropic Messages format, needs local routing to convert to Responses
 export type CodexApiFormat = "openai_responses" | "openai_chat" | "anthropic";
+
+export type CodexCopilotApiFormat = "auto" | "openai_responses" | "openai_chat";
 
 export interface CodexCatalogModel {
   model: string;
@@ -396,6 +402,8 @@ export interface Settings {
   enableFailoverToggle?: boolean;
   // Whether to show the project profile switcher on the main page header
   showProfileSwitcher?: boolean;
+  // 供应商页页头显示搜索按钮（默认开；关掉后 ⌘F 仍可用）
+  showProviderSearch?: boolean;
   // 启动时检查已安装的命令行应用有没有新版本（默认关）
   checkToolUpdatesOnStartup?: boolean;
   // Preserve Codex ChatGPT login in auth.json when switching third-party providers
@@ -405,6 +413,16 @@ export interface Settings {
   unifyCodexSessionHistory?: boolean;
   // User opted in (enable dialog checkbox) to migrate existing official sessions
   unifyCodexMigrateExisting?: boolean;
+  // Codex aggregation: every catalog row uses the classic (v1) sub-agent tools,
+  // so a sub-agent on another provider can read its task (on by default)
+  codexStackClassicTools?: boolean;
+  // Codex aggregation: default sub-agent model (a published `ccs-<key>/<model>` id)
+  // and its reasoning effort. Unset = sub-agents follow the main model.
+  codexStackSubagentModel?: string;
+  codexStackSubagentReasoningEffort?: string;
+  // Codex aggregation: Auto Review (approval reviewer) model, a published
+  // `ccs-<key>/<model>` id. Unset = Codex's default reviewer.
+  codexStackAutoReviewModel?: string;
   // User has confirmed the failover toggle first-run notice
   failoverConfirmed?: boolean;
   // User has confirmed the first-run welcome notice
@@ -418,7 +436,9 @@ export interface Settings {
   // User has confirmed the common config first-run notice
   commonConfigConfirmed?: boolean;
   // 首选语言（可选，默认中文）
-  language?: "en" | "zh" | "zh-TW" | "ja";
+  language?: "en" | "zh" | "zh-TW" | "ja" | "tr";
+  // 按档的额度百分比写剩余还是已用（默认剩余；余额、Credits 不受影响）
+  quotaDisplay?: "left" | "used";
 
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;
@@ -893,6 +913,8 @@ export interface OpenClawModel {
   maxTokens?: number; // 最大输出 token 数
   compat?: {
     maxTokensField?: string; // 最大输出 token 请求字段名（如 "max_tokens"）
+    supportsTools?: boolean; // 自定义供应商声明模型支持工具调用
+    toolSchemaProfile?: string; // 工具 schema 清理档案（如 llama-server 用 "llamacpp"）
   };
 }
 

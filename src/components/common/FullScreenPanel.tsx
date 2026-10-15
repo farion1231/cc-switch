@@ -22,8 +22,8 @@ interface FullScreenPanelProps {
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
-  /** Entry/exit motion. Nested navigation panels can opt into a horizontal transition. */
-  motionPreset?: "fade" | "slide-from-right";
+  /** Defaults to no motion to avoid revealing the underlying page during a fade. */
+  motionPreset?: "none" | "fade" | "slide-from-right";
   /**
    * 覆盖内容区滚动容器的内边距/间距类。默认 `px-6 py-6 space-y-6`。
    * 通过 `cn`(twMerge) 合并，传入如 `pt-3` 只覆盖顶部内边距，其余保持默认。
@@ -73,7 +73,7 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   children,
   footer,
   contentClassName,
-  motionPreset = "fade",
+  motionPreset = "none",
   trackUnsavedChanges = false,
 }) => {
   // 面板关掉后组件可能还挂着：只在打开时登记，关掉即撤销
@@ -82,6 +82,7 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   );
   const { t } = useTranslation();
   const prefersReducedMotion = useReducedMotion();
+  const disableMotion = motionPreset === "none" || prefersReducedMotion;
   const shouldSlideFromRight =
     motionPreset === "slide-from-right" && !prefersReducedMotion;
 
@@ -135,18 +136,24 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
       {isOpen && (
         <motion.div
           initial={
-            prefersReducedMotion
+            disableMotion
               ? false
               : shouldSlideFromRight
                 ? { x: "100%" }
                 : { opacity: 0 }
           }
           animate={shouldSlideFromRight ? { x: 0 } : { opacity: 1 }}
-          exit={shouldSlideFromRight ? { x: "100%" } : { opacity: 0 }}
+          exit={
+            disableMotion
+              ? { opacity: 1 }
+              : shouldSlideFromRight
+                ? { x: "100%" }
+                : { opacity: 0 }
+          }
           transition={
             shouldSlideFromRight
               ? { duration: 0.26, ease: [0.22, 1, 0.36, 1] }
-              : { duration: prefersReducedMotion ? 0 : 0.2 }
+              : { duration: disableMotion ? 0 : 0.2 }
           }
           className={cn(
             "inset-0 z-[60] flex flex-col bg-app",

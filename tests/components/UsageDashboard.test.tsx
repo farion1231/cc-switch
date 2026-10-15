@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -160,6 +160,7 @@ describe("UsageDashboard", () => {
       data: [
         {
           providerId: "p1",
+          appType: "claude",
           providerName: "DeepSeek",
           requestCount: 12,
           totalTokens: 100,
@@ -205,6 +206,16 @@ describe("UsageDashboard", () => {
     expect(
       screen.getByRole("button", {
         name: "usage.refreshInterval: usage.refreshMenu.label:5",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("treats a legacy 'off' interval as the 60 second default", () => {
+    renderDashboard({ refreshIntervalMs: 0 });
+
+    expect(
+      screen.getByRole("button", {
+        name: "usage.refreshInterval: usage.refreshMenu.label:60",
       }),
     ).toBeInTheDocument();
   });
@@ -283,7 +294,7 @@ describe("UsageDashboard", () => {
 
     await user.click(
       screen.getByRole("button", {
-        name: "usage.refreshInterval: usage.refreshMenu.label:30",
+        name: "usage.refreshInterval: usage.refreshMenu.label:60",
       }),
     );
     await user.click(
@@ -309,7 +320,7 @@ describe("UsageDashboard", () => {
 
     await user.click(
       screen.getByRole("button", {
-        name: "usage.refreshInterval: usage.refreshMenu.label:30",
+        name: "usage.refreshInterval: usage.refreshMenu.label:60",
       }),
     );
     await user.click(
@@ -324,7 +335,7 @@ describe("UsageDashboard", () => {
     await waitFor(() =>
       expect(
         screen.getByRole("button", {
-          name: "usage.refreshInterval: usage.refreshMenu.label:30",
+          name: "usage.refreshInterval: usage.refreshMenu.label:60",
         }),
       ).toBeInTheDocument(),
     );
@@ -337,12 +348,16 @@ describe("UsageDashboard", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "usage.syncStatus.auto",
     );
+    // 打开页面会先自动扫一次，等它结束后再手动同步
+    await waitFor(() =>
+      expect(usageApiMock.syncSessionUsage).toHaveBeenCalledTimes(1),
+    );
     await user.click(
       screen.getByRole("button", { name: "usage.sessionSync.syncNow" }),
     );
 
     await waitFor(() =>
-      expect(usageApiMock.syncSessionUsage).toHaveBeenCalledTimes(1),
+      expect(usageApiMock.syncSessionUsage).toHaveBeenCalledTimes(2),
     );
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent(
@@ -387,12 +402,36 @@ describe("UsageDashboard", () => {
     );
   });
 
-  it("says when automatic scanning is off", () => {
+  it("does not scan until settings load, and never once they say scanning is off", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const view = render(
+      <QueryClientProvider client={client}>
+        <UsageDashboard settingsReady={false} />
+      </QueryClientProvider>,
+    );
+    await act(async () => {});
+    expect(usageApiMock.syncSessionUsage).not.toHaveBeenCalled();
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <UsageDashboard settingsReady sessionAutoSyncEnabled={false} />
+      </QueryClientProvider>,
+    );
+    await act(async () => {});
+    expect(usageApiMock.syncSessionUsage).not.toHaveBeenCalled();
+  });
+
+  it("says when automatic scanning is off and hides the scan interval", () => {
     renderDashboard({ sessionAutoSyncEnabled: false });
 
     expect(screen.getByRole("status")).toHaveTextContent(
       "usage.syncStatus.off",
     );
+    expect(
+      screen.queryByRole("button", { name: /usage\.refreshInterval/ }),
+    ).not.toBeInTheDocument();
+    expect(usageApiMock.syncSessionUsage).not.toHaveBeenCalled();
   });
 
   it("opens the request detail drawer from a log row", async () => {

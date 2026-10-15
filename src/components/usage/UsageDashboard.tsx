@@ -39,6 +39,7 @@ import {
   useSessionUsageLastSync,
 } from "@/lib/query/usage";
 import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
+import { useUsageAutoRefresh } from "@/hooks/useUsageAutoRefresh";
 import { usageApi } from "@/lib/api/usage";
 import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
 import { cn } from "@/lib/utils";
@@ -55,8 +56,9 @@ import { UsageHeatmap } from "./UsageHeatmap";
 import { fmtInt, formatRelativeTime, getLocaleFromLanguage } from "./format";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
 
-const DEFAULT_REFRESH_INTERVAL_MS = 30000;
-const REFRESH_INTERVAL_OPTIONS_MS = [0, 5000, 10000, 30000, 60000] as const;
+// 用量页打开时扫描会话日志的间隔；旧版存过的「关」(0) 等无效值回落到默认
+const DEFAULT_REFRESH_INTERVAL_MS = 60000;
+const REFRESH_INTERVAL_OPTIONS_MS = [5000, 10000, 30000, 60000] as const;
 type RefreshIntervalOption = (typeof REFRESH_INTERVAL_OPTIONS_MS)[number];
 
 const isRefreshIntervalOption = (
@@ -135,6 +137,8 @@ interface UsageDashboardProps {
   refreshIntervalMs?: number;
   onRefreshIntervalChange?: (next: number) => Promise<boolean> | boolean | void;
   sessionAutoSyncEnabled?: boolean;
+  /** 设置还没读出来时为 false：此时 sessionAutoSyncEnabled 只是默认值，不能据此扫描 */
+  settingsReady?: boolean;
   onSessionAutoSyncEnabledChange?: (
     next: boolean,
   ) => Promise<boolean> | boolean | void;
@@ -151,6 +155,7 @@ export function UsageDashboard({
   refreshIntervalMs: savedRefreshIntervalMs,
   onRefreshIntervalChange,
   sessionAutoSyncEnabled = true,
+  settingsReady = true,
   onSessionAutoSyncEnabledChange,
   initialAppType = "all",
   onOpenRoutingSettings,
@@ -180,7 +185,16 @@ export function UsageDashboard({
   const [lastManualSyncAt, setLastManualSyncAt] = useState(
     lastManualSessionSyncAt,
   );
-  const { data: lastScanAt } = useSessionUsageLastSync();
+  const { data: lastScanAt } = useSessionUsageLastSync({
+    refetchInterval: false,
+  });
+  const { syncSessionUsage } = useUsageAutoRefresh({
+    refreshIntervalMs,
+    sessionAutoSyncEnabled,
+    paused: rebuildingCodex || !settingsReady,
+    // 预设范围和「结束于现在」的自定义范围都随时间移动，没有新用量也要定时重算
+    rollingRange: range.preset !== "custom" || !!range.liveEndTime,
+  });
   const lastSyncAt = Math.max(lastManualSyncAt ?? 0, lastScanAt ?? 0) || null;
   const [containerRef, measuredWidth] = useContainerWidth<HTMLDivElement>();
   const now = useMinuteTicker();
@@ -223,7 +237,6 @@ export function UsageDashboard({
     const normalized = normalizeRefreshInterval(next);
     const previous = refreshIntervalMs;
     setRefreshIntervalMs(normalized);
-    queryClient.invalidateQueries({ queryKey: usageKeys.all });
     try {
       const saved = await onRefreshIntervalChange?.(normalized);
       if (saved === false) {
@@ -265,7 +278,7 @@ export function UsageDashboard({
   const runManualSessionSync = async () => {
     setSyncingSession(true);
     try {
-      const result = await usageApi.syncSessionUsage();
+      const result = await syncSessionUsage();
       await queryClient.invalidateQueries({ queryKey: usageKeys.all });
       lastManualSessionSyncAt = Date.now();
       setLastManualSyncAt(lastManualSessionSyncAt);
@@ -306,11 +319,10 @@ export function UsageDashboard({
   }, [locale, range, resolvedRange.endDate, resolvedRange.startDate, t]);
 
   // 筛选下拉的选项池：供应商列表只跟应用/时间范围走（不受自身选中值影响），
-  // 模型列表随所选供应商级联。refetchInterval 跟随面板的刷新设置——未筛选时
-  // 这两个查询与统计表共享 query key，落下的话会按默认 30s 拖着同 key 查询轮询。
+  // 模型列表随所选供应商级联。所有查询（含子组件）都不轮询：会话用量由
+  // useUsageAutoRefresh 按间隔导入，导入或路由写入后由 useUsageEventBridge 刷新。
   const refetch = {
-    refetchInterval:
-      refreshIntervalMs > 0 ? refreshIntervalMs : (false as const),
+    refetchInterval: false as const,
   };
   const { data: providerOptionsData } = useProviderStats(
     range,
@@ -380,10 +392,9 @@ export function UsageDashboard({
           time: formatRelativeTime(lastSyncAt, t, now),
         });
 
-  const refreshLabel =
-    refreshIntervalMs > 0
-      ? t("usage.refreshMenu.label", { seconds: refreshIntervalMs / 1000 })
-      : t("usage.refreshMenu.off");
+  const refreshLabel = t("usage.refreshMenu.label", {
+    seconds: refreshIntervalMs / 1000,
+  });
 
   const headerActions = (
     <>
@@ -413,37 +424,38 @@ export function UsageDashboard({
           {t("usage.sessionSync.syncNow")}
         </Button>
       </HoverTip>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="quiet"
-            size="regular"
-            className="shrink-0 gap-1 pe-2 ps-2.5 text-fg-2"
-            aria-label={`${t("usage.refreshInterval")}: ${refreshLabel}`}
-          >
-            {refreshLabel}
-            <ChevronDown className="h-3.5 w-3.5" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="end"
-          className={cn(menuContentClass, "min-w-[150px]")}
-        >
-          {REFRESH_INTERVAL_OPTIONS_MS.map((ms) => (
-            <DropdownMenuItem
-              key={ms}
-              className={menuItemClass}
-              onSelect={() => void changeRefreshInterval(ms)}
+      {/* 扫描间隔只在自动扫描开着时有意义 */}
+      {sessionAutoSyncEnabled && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="quiet"
+              size="regular"
+              className="shrink-0 gap-1 pe-2 ps-2.5 text-fg-2"
+              aria-label={`${t("usage.refreshInterval")}: ${refreshLabel}`}
             >
-              <MenuCheck checked={refreshIntervalMs === ms} />
-              {ms > 0
-                ? t("usage.refreshMenu.seconds", { seconds: ms / 1000 })
-                : t("usage.refreshOff")}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+              {refreshLabel}
+              <ChevronDown className="h-3.5 w-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            className={cn(menuContentClass, "min-w-[150px]")}
+          >
+            {REFRESH_INTERVAL_OPTIONS_MS.map((ms) => (
+              <DropdownMenuItem
+                key={ms}
+                className={menuItemClass}
+                onSelect={() => void changeRefreshInterval(ms)}
+              >
+                <MenuCheck checked={refreshIntervalMs === ms} />
+                {t("usage.refreshMenu.seconds", { seconds: ms / 1000 })}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
       <Button
         type="button"
         variant="quiet"
@@ -701,7 +713,7 @@ export function UsageDashboard({
             providerName={providerName}
             model={model}
             statusCode={statusCode}
-            refreshIntervalMs={refreshIntervalMs}
+            refreshIntervalMs={0}
             onOpenDetail={setDetailRequestId}
           />
         )}
@@ -711,7 +723,7 @@ export function UsageDashboard({
             appType={appType}
             providerName={providerName}
             model={model}
-            refreshIntervalMs={refreshIntervalMs}
+            refreshIntervalMs={0}
           />
         )}
         {tab === "models" && (
@@ -720,7 +732,7 @@ export function UsageDashboard({
             appType={appType}
             providerName={providerName}
             model={model}
-            refreshIntervalMs={refreshIntervalMs}
+            refreshIntervalMs={0}
           />
         )}
         {tab === "pricing" && <PricingConfigPanel />}
@@ -785,7 +797,7 @@ export function UsageDashboard({
           appType={scopedAppType}
           providerName={providerName}
           model={model}
-          refreshIntervalMs={refreshIntervalMs}
+          refreshIntervalMs={0}
           compact={compact}
         />
 
@@ -795,7 +807,7 @@ export function UsageDashboard({
             appType={appType}
             providerName={providerName}
             model={model}
-            refreshIntervalMs={refreshIntervalMs}
+            refreshIntervalMs={0}
           />
         ) : (
           <UsageTrendChart
@@ -804,7 +816,7 @@ export function UsageDashboard({
             appType={appType}
             providerName={providerName}
             model={model}
-            refreshIntervalMs={refreshIntervalMs}
+            refreshIntervalMs={0}
           />
         )}
 

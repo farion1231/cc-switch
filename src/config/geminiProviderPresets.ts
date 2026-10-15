@@ -118,6 +118,24 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "OpenModel",
+    websiteUrl: "https://www.openmodel.ai",
+    apiKeyUrl: "https://www.openmodel.ai?ref=cc-switch",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.openmodel.ai",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://api.openmodel.ai",
+    model: "gemini-3.1-pro-preview",
+    description: "OpenModel",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "openmodel",
+    icon: "openmodel",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
@@ -138,21 +156,24 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.app",
-    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.net",
+    apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
     settingsConfig: {
       env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.aigocode.app",
+        GOOGLE_GEMINI_BASE_URL: "https://api.aigocode.dev",
         GEMINI_MODEL: "gemini-3.6-flash",
       },
     },
-    baseURL: "https://api.aigocode.app",
+    baseURL: "https://api.aigocode.dev",
     model: "gemini-3.6-flash",
     description: "AIGoCode",
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "aigocode",
-    endpointCandidates: ["https://api.aigocode.app"],
+    endpointCandidates: [
+      "https://api.aigocode.dev",
+      "https://api.aigocode.app",
+    ],
     icon: "aigocode",
     iconColor: "#5B7FFF",
   },
@@ -300,8 +321,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     model: "gemini-3.6-flash",
     description: "Code0",
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "code0",
     icon: "code0",
   },
   {
@@ -450,6 +469,29 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     endpointCandidates: ["https://apicdn.xycai.us", "https://apicdn.xyc.ai"],
     icon: "xycai",
   },
+  {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    // 官方 Gemini CLI 文档（docs.modelflare.dev/guides/clients/gemini-cli，
+    // 2026-10-15 核对）：base 用站点根。Gemini CLI 走 /v1beta，只有
+    // modelflare.dev 提供，origin 子域不提供，故不加备用端点
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://modelflare.dev",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.6-flash",
+      },
+    },
+    baseURL: "https://modelflare.dev",
+    model: "gemini-3.6-flash",
+    description: "Modelflare",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",
@@ -579,6 +621,117 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     endpointCandidates: ["https://api.aicodewith.ai/gemini_cli"],
     icon: "aicodewith",
     iconColor: "#3A3B40",
+  },
+  {
+    name: "SoruxGPT",
+    websiteUrl: "https://ai.soruxgpt.com",
+    apiKeyUrl: "https://ai.soruxgpt.com/console/token",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://ai.soruxgpt.com",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://ai.soruxgpt.com",
+    model: "gemini-3.1-pro-preview",
+    description: "SoruxGPT",
+    category: "aggregator",
+    endpointCandidates: [
+      "https://ai.soruxgpt.com",
+      "https://api-cf.soruxgpt.com",
+      "https://api-host.soruxgpt.com",
+      "https://api-node6.soruxgpt.com",
+      "https://api-node3.soruxgpt.com",
+    ],
+    icon: "soruxgpt",
+  },
+  {
+    name: "IKunCode",
+    websiteUrl: "https://api.ikuncode.ai",
+    apiKeyUrl: "https://api.ikuncode.ai/console/token",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.ikuncode.ai",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://api.ikuncode.ai",
+    model: "gemini-3.1-pro-preview",
+    description: "IKunCode",
+    category: "aggregator",
+    endpointCandidates: ["https://api.ikuncode.ai", "https://api.ikuncode.cc"],
+    icon: "ikuncode",
+  },
+  {
+    name: "RunToken",
+    websiteUrl: "https://www.runtoken.ai",
+    apiKeyUrl: "https://www.runtoken.ai/console/token",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://www.runtoken.ai",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://www.runtoken.ai",
+    model: "gemini-3.1-pro-preview",
+    description: "RunToken",
+    category: "aggregator",
+    endpointCandidates: ["https://www.runtoken.ai", "https://fast.runtoken.ai"],
+    icon: "runtoken",
+  },
+  {
+    name: "YYLX",
+    nameKey: "providerForm.presets.yylx",
+    websiteUrl: "https://yylx.io",
+    apiKeyUrl: "https://app.yylx.io/keys",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://app.yylx.io",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://app.yylx.io",
+    model: "gemini-3.1-pro-preview",
+    description: "YYLX",
+    category: "aggregator",
+    endpointCandidates: [
+      "https://app.yylx.io",
+      "https://global.yylx.io",
+      "https://cn.yylx.io",
+    ],
+    icon: "yylx",
+  },
+  {
+    name: "TokenFlux",
+    websiteUrl: "https://tokenflux.dev",
+    apiKeyUrl: "https://tokenflux.dev/keys",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://tokenflux.dev",
+        GEMINI_MODEL: "gemini-3.1-pro",
+      },
+    },
+    baseURL: "https://tokenflux.dev",
+    model: "gemini-3.1-pro",
+    description: "TokenFlux",
+    category: "aggregator",
+    icon: "tokenflux",
+  },
+  {
+    name: "AIComing",
+    websiteUrl: "https://aicoming.top",
+    apiKeyUrl: "https://aicoming.top/console#keys",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.aicoming.top",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://api.aicoming.top",
+    model: "gemini-3.1-pro-preview",
+    description: "AIComing",
+    category: "aggregator",
+    icon: "aicoming",
   },
 ];
 
