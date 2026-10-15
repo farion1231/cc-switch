@@ -785,6 +785,9 @@ pub struct StackMemberView {
     /// 这家是默认那家（代理路由）。Claude 的照常发布，第一个模型同时占着四档别名；Codex 的
     /// 模型是默认路由的目录行，`model_ids` 为空，默认换到别家后才带前缀发布。
     pub route: bool,
+    /// 这家不做默认、只做成员时发布几个模型。换默认的预览用它：现在的默认那家（Codex、
+    /// Claude Desktop）`model_ids` 为空，换走后它的模型才发布。
+    pub member_models: usize,
 }
 
 /// 给前端：Codex 聚合面板「子代理模型」下拉的一项（见 `codex_direct::stack_subagent_choices`）。
@@ -833,13 +836,18 @@ pub struct StackView {
     pub subagent_models: Vec<StackSubagentModel>,
 }
 
-pub fn member_views(members: &[Member]) -> Vec<StackMemberView> {
+pub fn member_views(app: &AppType, members: &[Member]) -> Vec<StackMemberView> {
     members
         .iter()
         .map(|member| StackMemberView {
             provider_id: member.provider.id.clone(),
             model_ids: member.model_ids.clone(),
             route: member.route,
+            member_models: if member.route {
+                model_ids_of(app, &member.key, &member.provider, false).len()
+            } else {
+                member.model_ids.len()
+            },
         })
         .collect()
 }
@@ -1216,8 +1224,10 @@ mod tests {
         );
 
         // 界面上标出路由那家，它的模型 id 照常列出。
-        let views =
-            member_views(&super::members(&fx.db, &AppType::Claude, &stack, Some("kimi")).unwrap());
+        let views = member_views(
+            &AppType::Claude,
+            &super::members(&fx.db, &AppType::Claude, &stack, Some("kimi")).unwrap(),
+        );
         let route_flags: Vec<(&str, bool, usize)> = views
             .iter()
             .map(|view| (view.provider_id.as_str(), view.route, view.model_ids.len()))
@@ -1601,6 +1611,23 @@ mod tests {
                 ]
             );
             assert!(published.iter().all(|model| desktop_keeps(&model.id)));
+            // 默认那家现在不发布，但换默认的预览要知道它换走后会发布几个
+            let views = member_views(
+                &AppType::ClaudeDesktop,
+                &super::super::members(&fx.db, &AppType::ClaudeDesktop, &stack, Some("zhipu"))
+                    .unwrap(),
+            );
+            let counts: Vec<(&str, usize, usize)> = views
+                .iter()
+                .map(|view| {
+                    (
+                        view.provider_id.as_str(),
+                        view.model_ids.len(),
+                        view.member_models,
+                    )
+                })
+                .collect();
+            assert_eq!(counts, vec![("zhipu", 0, 1), ("kimi", 2, 2)]);
 
             // 默认换成 kimi 后，zhipu 的模型带数字 id 发布，kimi 的不再发布
             let members =

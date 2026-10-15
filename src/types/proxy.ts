@@ -79,6 +79,8 @@ export interface ProxyStackMember {
   modelIds: string[];
   /** 这家是默认那家（代理路由）：模型走默认路由，`modelIds` 等默认换到别家后才发布。 */
   route: boolean;
+  /** 这家不做默认、只做成员时发布几个模型（换默认的预览用；默认那家的 `modelIds` 可能为空）。 */
+  memberModels: number;
 }
 
 /**

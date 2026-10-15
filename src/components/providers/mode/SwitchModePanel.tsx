@@ -602,7 +602,7 @@ export function SwitchModePanel({
         stackMembers={(stack?.members ?? []).map((member) => ({
           id: member.providerId,
           name: nameOf(member.providerId),
-          models: member.modelIds.length,
+          models: member.memberModels,
         }))}
         stackSubagent={
           app === "codex" && settings

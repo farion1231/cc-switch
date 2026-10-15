@@ -1336,7 +1336,7 @@ pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String>
     };
     Ok(StackView {
         active: mode.is_proxy() && stack.enabled,
-        members: stack::member_views(&members),
+        members: stack::member_views(app, &members),
         notice,
         notice_reasons,
         stale_clients: None,

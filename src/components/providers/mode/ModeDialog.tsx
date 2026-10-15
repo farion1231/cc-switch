@@ -187,7 +187,7 @@ function EnterBody({
       ? [
           t("mode.dialog.desktopRouteNoteModels"),
           t("mode.dialog.desktopRouteNoteRestart", { app: appName }),
-          t("mode.dialog.desktopRouteNoteKeepRunning"),
+          t("mode.dialog.desktopRouteNoteKeepRunning", { app: appName }),
         ]
       : target === "route"
         ? [
@@ -206,7 +206,7 @@ function EnterBody({
                   })
                 : t("mode.dialog.stackNoteEmpty"),
               t("mode.dialog.desktopRouteNoteRestart", { app: appName }),
-              t("mode.dialog.desktopRouteNoteKeepRunning"),
+              t("mode.dialog.desktopRouteNoteKeepRunning", { app: appName }),
             ]
           : [
               otherMembers.length > 0
