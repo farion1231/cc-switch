@@ -537,7 +537,7 @@ export function OhMyPiProviderForm({
       websiteUrl: initialData?.websiteUrl ?? "",
       notes: initialData?.notes ?? "",
       settingsConfig: JSON.stringify(initialConfig, null, 2),
-      icon: initialData?.icon === "pi" ? "omp" : (initialData?.icon ?? ""),
+      icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     },
   });
@@ -701,7 +701,7 @@ export function OhMyPiProviderForm({
         null,
         2,
       ),
-      icon: initialData?.icon === "pi" ? "omp" : (initialData?.icon ?? ""),
+      icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     });
     if (id === "custom") return;
@@ -1012,7 +1012,7 @@ export function OhMyPiProviderForm({
         websiteUrl: identity.websiteUrl?.trim() ?? "",
         notes: identity.notes?.trim() ?? "",
         settingsConfig: JSON.stringify(settingsConfig),
-        icon: identity.icon === "pi" ? "omp" : identity.icon || "omp",
+        icon: identity.icon || "",
         iconColor: identity.iconColor || "",
         providerKey: isEdit ? providerId : trimmedKey,
         presetId: selectedPresetId ?? undefined,

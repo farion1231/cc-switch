@@ -691,7 +691,7 @@ function ToolRow({
     ) : null;
 
   const footer =
-    wslControls || errorLine || nodeLine || conflictList || tool === "omp"? (
+    wslControls || errorLine || nodeLine || conflictList || tool === "omp" ? (
       <div className="space-y-2">
         {errorLine}
         {nodeLine}

@@ -4838,6 +4838,10 @@
       "enableFailed": "无法在 Oh My Pi 中启用此供应商",
       "removed": "已从 Oh My Pi 移除",
       "writeConflict": "Oh My Pi 配置正在被其他进程修改，请稍后再试。"
+    },
+    "current": {
+      "readFailed": "无法读取 Oh My Pi 的供应商配置",
+      "stateUnavailableHint": "在 CC Switch 能读取 Oh My Pi 的供应商配置之前，供应商改动暂不可用。"
     }
   }
 }

@@ -4838,6 +4838,10 @@
       "enableFailed": "Oh My Pi でこのプロバイダーを有効化できません",
       "removed": "Oh My Pi から削除しました",
       "writeConflict": "別のプロセスが Oh My Pi の設定を更新しています。しばらくしてから再試行してください。"
+    },
+    "current": {
+      "readFailed": "Oh My Pi のプロバイダー設定を読み取れません",
+      "stateUnavailableHint": "CC Switch が Oh My Pi のプロバイダー設定を読み取れるまで、プロバイダーの変更はできません。"
     }
   }
 }

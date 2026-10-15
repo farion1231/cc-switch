@@ -26,19 +26,20 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
     // edits to an entry (comments, formatting, unmanaged fields) reach the
     // editor; the stored snapshot is only a fallback when the file or the
     // entry cannot be read.
-    for (id, provider) in providers.iter_mut() {
-        match crate::ohmypi_config::read_ohmypi_provider_entry_raw(id) {
-            Ok(Some(text)) => {
-                let meta = provider.meta.get_or_insert_with(ProviderMeta::default);
-                meta.ohmypi_passthrough_yaml = Some(text);
-            }
-            Ok(None) => {
+    let ids: Vec<String> = providers.keys().cloned().collect();
+    match crate::ohmypi_config::read_ohmypi_provider_entries_raw(&ids) {
+        Ok(entries) => {
+            for (id, provider) in providers.iter_mut() {
+                if let Some(text) = entries.get(id) {
+                    let meta = provider.meta.get_or_insert_with(ProviderMeta::default);
+                    meta.ohmypi_passthrough_yaml = Some(text.clone());
+                }
                 // Entry absent from models.yml (not yet written to live):
                 // keep the stored snapshot so pending editor text survives.
             }
-            Err(error) => {
-                log::warn!("Failed to read Oh My Pi raw entry for '{id}': {error}");
-            }
+        }
+        Err(error) => {
+            log::warn!("Failed to read Oh My Pi raw entries: {error}");
         }
     }
     Ok(providers)
@@ -281,7 +282,6 @@ fn sync_native_locked(
         let mut provider = saved.get(id).cloned().unwrap_or_else(|| {
             let mut imported = Provider::with_id(id.clone(), id.clone(), config.clone(), None);
             imported.category = Some("custom".to_string());
-            imported.icon = Some("pi".to_string());
             imported
         });
         let is_new = !saved.contains_key(id);

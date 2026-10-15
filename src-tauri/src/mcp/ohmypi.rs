@@ -1,6 +1,6 @@
 //! OMP-native MCP state: preserve per-server options and use the user denylist
 //! when disabling so project and foreign discovery cannot reactivate a server.
-use crate::app_config::{McpApps, McpServer, MultiAppConfig};
+use crate::app_config::{McpApps, McpServer};
 use crate::error::AppError;
 use crate::store::AppState;
 use serde_json::{json, Value};
@@ -29,11 +29,7 @@ impl<'a> OhMyPiChange<'a> {
     }
 }
 
-pub fn sync_single_server_to_ohmypi(
-    _config: &MultiAppConfig,
-    id: &str,
-    spec: &Value,
-) -> Result<(), AppError> {
+pub fn sync_single_server_to_ohmypi(id: &str, spec: &Value) -> Result<(), AppError> {
     sync(id, OhMyPiChange::Enable(spec, spec))
 }
 

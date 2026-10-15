@@ -4838,6 +4838,10 @@
       "enableFailed": "Could not enable this provider in Oh My Pi",
       "removed": "Removed from Oh My Pi",
       "writeConflict": "Another process is updating Oh My Pi's configuration. Try again shortly."
+    },
+    "current": {
+      "readFailed": "Could not read Oh My Pi's provider configuration",
+      "stateUnavailableHint": "Provider changes are disabled until CC Switch can read Oh My Pi's provider configuration."
     }
   }
 }

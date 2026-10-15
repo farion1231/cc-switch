@@ -262,9 +262,7 @@ impl McpService {
             }
             AppType::Mcode => mcp::mcode::sync(&server.id, Some(&server.server))?,
             AppType::Pi => mcp::pi::sync(&server.id, Some(&server.server))?,
-            AppType::OhMyPi => {
-                mcp::sync_single_server_to_ohmypi(&Default::default(), &server.id, &server.server)?
-            }
+            AppType::OhMyPi => mcp::sync_single_server_to_ohmypi(&server.id, &server.server)?,
         }
         Ok(())
     }

@@ -314,26 +314,10 @@ fn write_document(
     document: &Value,
     expected_revision: &str,
     label: &str,
-    yaml: bool,
 ) -> Result<(), AppError> {
-    let bytes = if yaml {
-        let yaml: serde_yaml::Value =
-            serde_json::from_value(document.clone()).map_err(|error| {
-                AppError::Config(format!(
-                    "{label} config could not be converted to YAML: {error}"
-                ))
-            })?;
-        serde_yaml::to_string(&yaml)
-            .map_err(|error| {
-                AppError::Config(format!("{label} YAML serialization failed: {error}"))
-            })?
-            .into_bytes()
-    } else {
-        let mut bytes = serde_json::to_vec_pretty(document)
-            .map_err(|source| AppError::JsonSerialize { source })?;
-        bytes.push(b'\n');
-        bytes
-    };
+    let mut bytes =
+        serde_json::to_vec_pretty(document).map_err(|source| AppError::JsonSerialize { source })?;
+    bytes.push(b'\n');
     ensure_parent(path)?;
     ensure_revision(path, expected_revision, label)?;
     atomic_write_private(path, &bytes)
@@ -499,9 +483,36 @@ pub(crate) fn read_ohmypi_provider_entry_raw(
             path.display()
         ))
     })?;
-    let Some((start, end)) = provider_entry_range(&raw, provider_key) else {
-        return Ok(None);
-    };
+    Ok(entry_raw_from_source(&raw, provider_key))
+}
+
+/// The raw text of every requested provider entry, from a single file read.
+/// Missing keys are simply absent from the result.
+pub(crate) fn read_ohmypi_provider_entries_raw(
+    provider_keys: &[String],
+) -> Result<IndexMap<String, String>, AppError> {
+    let _guard = lock_files()?;
+    let path = get_ohmypi_models_path()?;
+    let mut entries = IndexMap::new();
+    if !path.exists() {
+        return Ok(entries);
+    }
+    let raw = String::from_utf8(read_file_limited(&path, "Oh My Pi models")?).map_err(|error| {
+        AppError::Config(format!(
+            "Oh My Pi models file must be UTF-8 ({}): {error}",
+            path.display()
+        ))
+    })?;
+    for key in provider_keys {
+        if let Some(text) = entry_raw_from_source(&raw, key) {
+            entries.insert(key.clone(), text);
+        }
+    }
+    Ok(entries)
+}
+
+fn entry_raw_from_source(raw: &str, provider_key: &str) -> Option<String> {
+    let (start, end) = provider_entry_range(raw, provider_key)?;
     let entry = &raw[start..end];
     // Skip the `<key>:` line and dedent its indent level plus one more: the
     // editor text is the entry's fields at column 0 ("other fields" YAML),
@@ -521,9 +532,7 @@ pub(crate) fn read_ohmypi_provider_entry_raw(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    Ok(Some(
-        dedented.trim_end_matches(['\n', '\r', ' ']).to_string(),
-    ))
+    Some(dedented.trim_end_matches(['\n', '\r', ' ']).to_string())
 }
 
 /// Top-level (column 0) lines of a controlled key, plus the nested block that
@@ -773,6 +782,22 @@ fn replace_provider_entry_in_raw(raw: &str, provider_key: &str, entry_fragment: 
     result
 }
 
+/// Remove one provider entry from the raw models.yml text, leaving every
+/// other byte — comments included — untouched.
+fn remove_provider_entry_from_raw(raw: &str, provider_key: &str) -> String {
+    let Some((start, end)) = provider_entry_range(raw, provider_key) else {
+        return raw.to_string();
+    };
+    let mut result = String::with_capacity(raw.len());
+    result.push_str(&raw[..start]);
+    let mut remainder = &raw[end..];
+    while remainder.starts_with('\n') || remainder.starts_with('\r') {
+        remainder = &remainder[1..];
+    }
+    result.push_str(remainder);
+    result
+}
+
 /// Parse the edited raw text back and verify the composed entry still means
 /// exactly `config`; guards against indentation or duplicate-key mistakes.
 fn verify_entry(raw: &str, provider_key: &str, config: &Value) -> Result<(), AppError> {
@@ -866,11 +891,8 @@ pub(crate) fn insert_ohmypi_provider(provider_key: &str, config: &Value) -> Resu
     validate_provider_node(provider_key, config)?;
     let _guard = lock_files()?;
     let path = get_ohmypi_models_path()?;
-    let (mut document, expected_revision) =
-        read_document_with_revision(&path, "Oh My Pi models", true)?;
-    let providers = providers_mut(&mut document, &path)?;
-
-    match providers.get(provider_key) {
+    let (document, _) = read_document_with_revision(&path, "Oh My Pi models", true)?;
+    match providers(&document, &path)?.get(provider_key) {
         Some(current) if current == config => return Ok(false),
         Some(_) => {
             return Err(AppError::InvalidInput(format!(
@@ -880,14 +902,10 @@ pub(crate) fn insert_ohmypi_provider(provider_key: &str, config: &Value) -> Resu
         None => {}
     }
 
-    providers.insert(provider_key.to_string(), config.clone());
-    write_document(
-        &path,
-        &document,
-        &expected_revision,
-        "Oh My Pi models",
-        true,
-    )?;
+    // Text-level writer: only the `providers.<key>` block is composed; the
+    // rest of the file — comments included — is preserved byte for byte.
+    drop(_guard);
+    write_ohmypi_provider_entry(provider_key, config, None)?;
     Ok(true)
 }
 
@@ -906,9 +924,8 @@ pub(crate) fn replace_ohmypi_provider(
     Ok(())
 }
 
-/// Replace a provider entry. Uses the text-level writer when passthrough text
-/// is available so comments survive; falls back to whole-document rewrite
-/// otherwise (legacy callers). Returns the previous entry value.
+/// Replace a provider entry at the text level so comments survive. Returns the
+/// previous entry value.
 pub(crate) fn replace_ohmypi_provider_if_present(
     provider_key: &str,
     expected: &Value,
@@ -918,10 +935,8 @@ pub(crate) fn replace_ohmypi_provider_if_present(
     validate_provider_node(provider_key, replacement)?;
     let _guard = lock_files()?;
     let path = get_ohmypi_models_path()?;
-    let (mut document, expected_revision) =
-        read_document_with_revision(&path, "Oh My Pi models", true)?;
-    let providers = providers_mut(&mut document, &path)?;
-    let Some(current) = providers.get(provider_key).cloned() else {
+    let (document, _) = read_document_with_revision(&path, "Oh My Pi models", true)?;
+    let Some(current) = providers(&document, &path)?.get(provider_key).cloned() else {
         return Ok(None);
     };
     if current != *expected {
@@ -932,23 +947,12 @@ pub(crate) fn replace_ohmypi_provider_if_present(
     if current == *replacement && passthrough_raw.is_none() {
         return Ok(Some(current));
     }
-    if let Some(passthrough_raw) = passthrough_raw {
-        // Text-level writer takes its own file lock; release ours first. It
-        // runs even when the parsed config is unchanged: comment-only edits
-        // never change `replacement` yet must reach the file (the writer's
-        // own `new_raw == raw` check is the real no-op guard).
-        drop(_guard);
-        write_ohmypi_provider_entry(provider_key, replacement, Some(passthrough_raw))?;
-        return Ok(Some(current));
-    }
-    providers.insert(provider_key.to_string(), replacement.clone());
-    write_document(
-        &path,
-        &document,
-        &expected_revision,
-        "Oh My Pi models",
-        true,
-    )?;
+    // Text-level writer takes its own file lock; release ours first. It runs
+    // even when the parsed config is unchanged: comment-only edits never
+    // change `replacement` yet must reach the file (the writer's own
+    // `new_raw == raw` check is the real no-op guard).
+    drop(_guard);
+    write_ohmypi_provider_entry(provider_key, replacement, passthrough_raw)?;
     Ok(Some(current))
 }
 
@@ -969,10 +973,9 @@ fn remove_ohmypi_provider_inner(
 ) -> Result<Option<Value>, AppError> {
     let _guard = lock_files()?;
     let path = get_ohmypi_models_path()?;
-    let (mut document, expected_revision) =
+    let (document, expected_revision) =
         read_document_with_revision(&path, "Oh My Pi models", true)?;
-    let providers = providers_mut(&mut document, &path)?;
-    let Some(current) = providers.get(provider_key).cloned() else {
+    let Some(current) = providers(&document, &path)?.get(provider_key).cloned() else {
         return Ok(None);
     };
     if expected.is_some_and(|expected| current != *expected) {
@@ -980,14 +983,24 @@ fn remove_ohmypi_provider_inner(
             "Oh My Pi provider '{provider_key}' changed outside CC Switch"
         )));
     }
-    providers.remove(provider_key);
-    write_document(
-        &path,
-        &document,
-        &expected_revision,
-        "Oh My Pi models",
-        true,
-    )?;
+    // Text-level splice: only the `providers.<key>` block is removed; the
+    // rest of the file — comments included — is preserved byte for byte.
+    if path.exists() {
+        let raw =
+            String::from_utf8(read_file_limited(&path, "Oh My Pi models")?).map_err(|error| {
+                AppError::Config(format!(
+                    "Oh My Pi models file must be UTF-8 ({}): {error}",
+                    path.display()
+                ))
+            })?;
+        let new_raw = remove_provider_entry_from_raw(&raw, provider_key);
+        if new_raw != raw {
+            // Fail if the file changed between the read above and this write.
+            ensure_revision(&path, &expected_revision, "Oh My Pi models")?;
+            ensure_parent(&path)?;
+            atomic_write_private(&path, new_raw.as_bytes())?;
+        }
+    }
     Ok(Some(current))
 }
 
@@ -995,19 +1008,21 @@ pub(crate) fn restore_ohmypi_provider_if_missing(
     provider_key: &str,
     config: &Value,
 ) -> Result<(), AppError> {
+    validate_provider_node(provider_key, config)?;
     let _guard = lock_files()?;
     let path = get_ohmypi_models_path()?;
-    let (mut document, expected_revision) =
-        read_document_with_revision(&path, "Oh My Pi models", true)?;
-    let providers = providers_mut(&mut document, &path)?;
-    match providers.get(provider_key) {
+    let (document, _) = read_document_with_revision(&path, "Oh My Pi models", true)?;
+    match providers(&document, &path)?.get(provider_key) {
         Some(current) if current == config => Ok(()),
         Some(_) => Err(AppError::Conflict(format!(
             "cannot restore Oh My Pi provider '{provider_key}' because another value now owns the key"
         ))),
         None => {
-            providers.insert(provider_key.to_string(), config.clone());
-            write_document(&path, &document, &expected_revision, "Oh My Pi models", true)
+            // Text-level writer: only the `providers.<key>` block is composed;
+            // the rest of the file — comments included — is preserved.
+            drop(_guard);
+            write_ohmypi_provider_entry(provider_key, config, None)?;
+            Ok(())
         }
     }
 }
@@ -1048,34 +1063,15 @@ fn providers<'a>(document: &'a Value, path: &Path) -> Result<&'a Map<String, Val
         ))
     })?;
     match root.get("providers") {
-        None => Ok(empty_json_object()),
+        // `providers:` with all entries removed parses as null; treat it as
+        // empty rather than failing every later read.
+        None | Some(Value::Null) => Ok(empty_json_object()),
         Some(Value::Object(providers)) => Ok(providers),
         Some(_) => Err(AppError::Config(format!(
             "Oh My Pi models 'providers' must be an object: {}",
             path.display()
         ))),
     }
-}
-
-fn providers_mut<'a>(
-    document: &'a mut Value,
-    path: &Path,
-) -> Result<&'a mut Map<String, Value>, AppError> {
-    let root = document.as_object_mut().ok_or_else(|| {
-        AppError::Config(format!(
-            "Oh My Pi models root must be an object: {}",
-            path.display()
-        ))
-    })?;
-    let value = root
-        .entry("providers".to_string())
-        .or_insert_with(|| Value::Object(Map::new()));
-    value.as_object_mut().ok_or_else(|| {
-        AppError::Config(format!(
-            "Oh My Pi models 'providers' must be an object: {}",
-            path.display()
-        ))
-    })
 }
 
 fn empty_json_object() -> &'static Map<String, Value> {
@@ -1088,7 +1084,7 @@ fn empty_json_object() -> &'static Map<String, Value> {
 // ============================================================================
 
 /// Read the full `config.yml` as a JSON value.
-pub(crate) fn read_ohmypi_settings() -> Result<Value, AppError> {
+fn read_ohmypi_settings() -> Result<Value, AppError> {
     let _guard = lock_files()?;
     let path = get_ohmypi_settings_path()?;
     if !path.exists() {
@@ -1164,7 +1160,7 @@ pub(crate) fn update_ohmypi_mcp_document(
         )));
     }
     if update(&mut document)? {
-        write_document(&path, &document, &expected_revision, "Oh My Pi MCP", false)?;
+        write_document(&path, &document, &expected_revision, "Oh My Pi MCP")?;
     }
     Ok(())
 }
@@ -1191,7 +1187,7 @@ pub(crate) fn set_ohmypi_mcp_server(id: &str, config: &Value) -> Result<(), AppE
         ))
     })?;
     servers.insert(id.to_string(), config.clone());
-    write_document(&path, &document, &expected_revision, "Oh My Pi MCP", false)
+    write_document(&path, &document, &expected_revision, "Oh My Pi MCP")
 }
 
 #[cfg(test)]
@@ -1210,7 +1206,7 @@ pub(crate) fn remove_ohmypi_mcp_server(id: &str) -> Result<(), AppError> {
         return Ok(());
     };
     servers.remove(id);
-    write_document(&path, &document, &expected_revision, "Oh My Pi MCP", false)
+    write_document(&path, &document, &expected_revision, "Oh My Pi MCP")
 }
 
 #[cfg(test)]

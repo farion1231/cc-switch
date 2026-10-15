@@ -4839,6 +4839,10 @@
       "enableFailed": "無法在 Oh My Pi 中啟用此供應商",
       "removed": "已從 Oh My Pi 移除",
       "writeConflict": "Oh My Pi 設定正由其他程序修改，請稍後再試。"
+    },
+    "current": {
+      "readFailed": "無法讀取 Oh My Pi 的供應商設定",
+      "stateUnavailableHint": "在 CC Switch 能讀取 Oh My Pi 的供應商設定之前，供應商變更暫不可用。"
     }
   }
 }
