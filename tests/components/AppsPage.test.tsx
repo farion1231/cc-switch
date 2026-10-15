@@ -1753,8 +1753,11 @@ describe("AppsPage concurrent CLI upgrades", () => {
     } finally {
       now.mockRestore();
     }
-    expect(updateButton("Claude Code")).toBeDisabled();
-    expect(updateButton("Claude Code")).toHaveAttribute("aria-busy", "true");
+    // The update button can disappear once the command finishes. Version
+    // refresh still locks the row's actions until the refreshed result arrives.
+    expect(
+      card("Claude Code").getByRole("button", { name: "appPage.moreActions" }),
+    ).toBeDisabled();
     expect(updateButton("Codex")).toBeEnabled();
     fireEvent.click(updateAllButton());
     await waitFor(() =>
