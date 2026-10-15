@@ -1013,6 +1013,32 @@ export const providerPresets: ProviderPreset[] = [
     partnerPromotionKey: "xycai",
     icon: "xycai",
   },
+  {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    // 官方 Claude Code 文档（docs.modelflare.dev/guides/clients/claude-code，
+    // 2026-10-15 核对）：Anthropic 客户端 base 用站点根（不带 /v1）、Key 填
+    // AUTH_TOKEN。主模型与 Sonnet / Opus 跟随 Claude Code 默认；Haiku 档按
+    // 官方文档指向 Sonnet：claude-award / claude-tmp-cheap 两个分组没有
+    // claude-haiku-5-5（modelflare.dev/api/pricing），Key 在这两组时后台任务
+    // 会报找不到模型。origin.modelflare.dev 是面向国内的同一应用（EdgeOne 回源）
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://modelflare.dev",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-sonnet-5-5",
+      },
+    },
+    endpointCandidates: [
+      "https://modelflare.dev",
+      "https://origin.modelflare.dev",
+    ],
+    category: "aggregator",
+    isPartner: true,
+    icon: "modelflare",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",

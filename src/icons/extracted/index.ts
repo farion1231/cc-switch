@@ -23,6 +23,7 @@ import _grooroute from "./grooroute.jpg";
 import _hermes from "./hermes.png";
 import _huoshan from "./huoshan.png";
 import _ikuncode from "./ikuncode.jpg";
+import _modelflare from "./modelflare.jpg";
 import _nekocode from "./nekocode-icon.png";
 import _openmodel from "./openmodel.jpg";
 import _pateway from "./pateway.jpg";
@@ -169,6 +170,7 @@ export const iconUrls: Record<string, string> = {
   hermes: _hermes,
   huoshan: _huoshan,
   ikuncode: _ikuncode,
+  modelflare: _modelflare,
   nekocode: _nekocode,
   openmodel: _openmodel,
   pateway: _pateway,

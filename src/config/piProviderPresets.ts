@@ -1173,6 +1173,29 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "sudocode-us",
   },
   {
+    name: "Modelflare",
+    providerKey: "cc-switch-modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    // Responses + /v1（docs.modelflare.dev/guides/endpoints，2026-10-15
+    // 核对）；阵容同 OpenCode
+    settingsConfig: {
+      name: "Modelflare",
+      baseUrl: "https://modelflare.dev/v1",
+      api: "openai-responses",
+      apiKey: "",
+      models: [
+        piModel("openai/gpt-5.6-sol", { id: "gpt-5.6-sol" }),
+        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
+        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    icon: "modelflare",
+  },
+  {
     name: "Amux",
     providerKey: "cc-switch-amux",
     websiteUrl: "https://amux.ai",
