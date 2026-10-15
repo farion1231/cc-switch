@@ -21,6 +21,7 @@ export const PRESET_SEARCH_ALIASES: Record<string, string> = {
   "Kimi For Coding": "月之暗面 moonshot",
   "Kimi For Coding Global": "月之暗面 moonshot",
   "Kimi Global": "月之暗面 moonshot",
+  "llama.cpp": "llamacpp llama-server ggml gguf",
   Longcat: "美团",
   "Meta Model API": "muse facebook",
   "Microsoft Foundry": "azure 微软 ai foundry claude",
