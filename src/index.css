@@ -37,22 +37,23 @@
 
   .dark {
     --background: 240 3.4% 11.4%;
-    --foreground: 240 4.8% 95.9%;
+    /* 文字色与下方 --text-1 一致（#e4e4e7）：纯白主文字铺满整屏时刺眼 */
+    --foreground: 240 5.9% 90%;
     --card: 240 5.2% 19%;
-    --card-foreground: 240 4.8% 95.9%;
+    --card-foreground: 240 5.9% 90%;
     --popover: 240 5.2% 19%;
-    --popover-foreground: 240 4.8% 95.9%;
+    --popover-foreground: 240 5.9% 90%;
 
     --primary: 240 4.8% 95.9%;
     --primary-foreground: 240 5.9% 10%;
 
     --secondary: 240 5% 15.7%;
-    --secondary-foreground: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 90%;
 
     --muted: 240 5% 15.7%;
-    --muted-foreground: 240 5.7% 72.5%;
+    --muted-foreground: 240 5.4% 68.6%;
     --accent: 240 5% 15.7%;
-    --accent-foreground: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 90%;
 
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
@@ -154,9 +155,11 @@
     --bg-selected: #313136;
     --bg-card: #2e2e33;
     --border-strong: #4a4a52;
-    --text-1: #f4f4f5;
-    --text-2: #d0d0d8;
-    --text-3: #b5b5bd;
+    /* 三档文字都比纯白压低一截并拉开明度差：太亮时三档都贴近白色，整屏显得刺眼、层次压平。
+       次级、三级对卡片底、选中底（--bg-card / --bg-selected）都 ≥ 4.5:1 */
+    --text-1: #e4e4e7;
+    --text-2: #ababb3;
+    --text-3: #9a9aa2;
     /* 深色模式：实心块压暗一档（大面积不刺眼）+ 白字；文字、焦点描边用亮一档的 #fb923c */
     --action-bg: #ea580c;
     --action-fg: #ffffff;

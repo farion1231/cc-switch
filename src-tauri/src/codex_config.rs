@@ -1562,6 +1562,18 @@ const CODEX_CLI_FIXED_CANDIDATES: &[&str] = &[
     "/home/linuxbrew/.linuxbrew/bin/codex", // Linux Homebrew
 ];
 
+/// macOS 桌面版的 bundle 名，新的在前：改名前叫 Codex.app，改名迁移有时会两份都留着
+/// （openai/codex#48052），这时 ChatGPT.app 是新的那份。
+const CODEX_DESKTOP_APP_BUNDLES: &[&str] = &["ChatGPT.app", "Codex.app"];
+
+/// bundle 里自带的 Codex CLI，新结构在前：`codex-cli/bin/codex` 是指向同目录 `CodexCLI.app`
+/// 的垫片脚本，更早的版本直接放在 `Resources/codex`。只装了桌面版的人 PATH 上没有 `codex`，
+/// 取 Codex 自带的模型列表只能靠它（#8087）。
+const CODEX_DESKTOP_CLI_IN_BUNDLE: &[&str] = &[
+    "Contents/Resources/codex-cli/bin/codex",
+    "Contents/Resources/codex",
+];
+
 fn push_codex_cli_candidate(
     candidates: &mut Vec<PathBuf>,
     seen: &mut HashSet<String>,
@@ -1707,10 +1719,78 @@ fn codex_cli_candidates() -> Vec<PathBuf> {
         push_codex_cli_candidate(&mut candidates, &mut seen, PathBuf::from(candidate));
     }
 
+    let home = get_home_dir();
     push_env_codex_cli_candidates(&mut candidates, &mut seen);
-    push_home_codex_cli_candidates(&mut candidates, &mut seen, &get_home_dir());
+    push_home_codex_cli_candidates(&mut candidates, &mut seen, &home);
+    push_desktop_codex_cli_candidates(&mut candidates, &mut seen, &home);
 
     candidates
+}
+
+/// 桌面版自带的 CLI。排在最后：装了独立 CLI 的人照旧先用独立的那个。
+///
+/// - macOS：`/Applications` 和 `~/Applications` 下的 ChatGPT.app、Codex.app，新 bundle
+///   排在前面，不管装在哪个目录（别的系统上不存在，自然跳过）；
+/// - Windows：`%LOCALAPPDATA%\OpenAI\Codex\bin\<版本>\codex.exe`，版本目录随桌面版更新而变。
+fn push_desktop_codex_cli_candidates(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+    home: &Path,
+) {
+    for bundle in CODEX_DESKTOP_APP_BUNDLES {
+        for applications in [PathBuf::from("/Applications"), home.join("Applications")] {
+            for layout in CODEX_DESKTOP_CLI_IN_BUNDLE {
+                push_existing_codex_cli_candidate(
+                    candidates,
+                    seen,
+                    applications.join(bundle).join(layout),
+                );
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        if let Some(local_appdata) = std::env::var_os("LOCALAPPDATA") {
+            push_codex_cli_candidates_newest_first(
+                candidates,
+                seen,
+                &PathBuf::from(local_appdata)
+                    .join("OpenAI")
+                    .join("Codex")
+                    .join("bin"),
+                "codex.exe",
+            );
+        }
+    }
+}
+
+/// `versions_dir` 下各个版本目录里的 `exe`，按它的修改时间从新到旧（相同时按目录名）。
+/// 不按目录名排：版本号按字符串比，`0.99.0` 会排在 `0.153.4` 前面。
+#[cfg(any(windows, test))]
+fn push_codex_cli_candidates_newest_first(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+    versions_dir: &Path,
+    exe: &str,
+) {
+    let Ok(entries) = fs::read_dir(versions_dir) else {
+        return;
+    };
+
+    let mut discovered = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let candidate = entry.path().join(exe);
+            let modified = fs::metadata(&candidate).ok()?.modified().ok()?;
+            Some((modified, candidate))
+        })
+        .collect::<Vec<_>>();
+
+    discovered.sort_by(|(a_time, a), (b_time, b)| b_time.cmp(a_time).then_with(|| a.cmp(b)));
+    for (_, candidate) in discovered {
+        push_codex_cli_candidate(candidates, seen, candidate);
+    }
 }
 
 fn codex_bundled_models_command(candidate: &Path) -> Command {
@@ -1731,10 +1811,29 @@ fn codex_bundled_models_command(candidate: &Path) -> Command {
     command
 }
 
+/// 没跑出 Codex 自带的模型列表。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CodexBundledModelsError {
+    /// 每个候选都启动不了：本机找不到 Codex 命令行。
+    NoCli,
+    /// 找到了命令行，但没跑出能用的列表（退出码非零、输出不是 JSON、列表为空）。带最后
+    /// 一个候选的情况，写日志用。
+    Failed(String),
+}
+
+impl std::fmt::Display for CodexBundledModelsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoCli => f.write_str("本机找不到 Codex 命令行"),
+            Self::Failed(detail) => f.write_str(detail),
+        }
+    }
+}
+
 /// 本机 Codex 自带的完整模型列表（`codex debug models --bundled`）。和账号无关，版本和
 /// 那个二进制一致。不能用不带 `--bundled` 的版本：那会读到 CC Switch 自己写的目录。
-pub(crate) fn load_codex_bundled_models() -> Option<Vec<Value>> {
-    first_bundled_catalog(|catalog| {
+pub(crate) fn load_codex_bundled_models() -> Result<Vec<Value>, CodexBundledModelsError> {
+    first_bundled_catalog(codex_cli_candidates(), |catalog| {
         catalog
             .get("models")
             .and_then(Value::as_array)
@@ -1744,13 +1843,21 @@ pub(crate) fn load_codex_bundled_models() -> Option<Vec<Value>> {
 }
 
 /// 依次跑各个候选的 `codex debug models --bundled`，返回第一份 `pick` 取得出东西的结果。
-fn first_bundled_catalog<T>(pick: impl Fn(&Value) -> Option<T>) -> Option<T> {
-    for candidate in codex_cli_candidates() {
+/// 候选里有不存在的路径（固定位置、PATH 上的裸名），启动不了不算失败；一个都启动不了才是
+/// 找不到命令行。
+fn first_bundled_catalog<T>(
+    candidates: Vec<PathBuf>,
+    pick: impl Fn(&Value) -> Option<T>,
+) -> Result<T, CodexBundledModelsError> {
+    let mut failure = None;
+    for candidate in candidates {
         let candidate_label = candidate.to_string_lossy();
         let output = match codex_bundled_models_command(&candidate).output() {
             Ok(output) => output,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
             Err(err) => {
                 log::debug!("failed to run `{candidate_label} debug models --bundled`: {err}");
+                failure = Some(format!("`{candidate_label}` 启动失败: {err}"));
                 continue;
             }
         };
@@ -1758,6 +1865,11 @@ fn first_bundled_catalog<T>(pick: impl Fn(&Value) -> Option<T>) -> Option<T> {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             log::debug!("`{candidate_label} debug models --bundled` failed: {stderr}");
+            failure = Some(format!(
+                "`{candidate_label} debug models --bundled` 失败（{}）: {}",
+                output.status,
+                stderr.trim()
+            ));
             continue;
         }
 
@@ -1767,15 +1879,24 @@ fn first_bundled_catalog<T>(pick: impl Fn(&Value) -> Option<T>) -> Option<T> {
                 log::debug!(
                     "Failed to parse `{candidate_label} debug models --bundled` output: {e}"
                 );
+                failure = Some(format!(
+                    "`{candidate_label} debug models --bundled` 的输出不是 JSON: {e}"
+                ));
                 continue;
             }
         };
         if let Some(found) = pick(&catalog) {
-            return Some(found);
+            return Ok(found);
         }
+        failure = Some(format!(
+            "`{candidate_label} debug models --bundled` 的输出里没有模型"
+        ));
     }
 
-    None
+    Err(failure.map_or(
+        CodexBundledModelsError::NoCli,
+        CodexBundledModelsError::Failed,
+    ))
 }
 
 /// 官方原生行：逐行补 Codex 解析器必需的字段（不覆盖已有值）、补旧的指令字段，再校验。
@@ -2085,6 +2206,7 @@ fn codex_openai_official_models() -> Vec<Value> {
     CODEX_OPENAI_OFFICIAL_MODELS_CACHE
         .get_or_try_init(|| {
             load_codex_bundled_models()
+                .ok()
                 .and_then(normalize_codex_native_rows)
                 .ok_or(())
         })
@@ -5435,6 +5557,42 @@ wire_api = "responses"
     }
 
     #[test]
+    fn bundled_models_tell_a_missing_cli_apart_from_a_failing_one() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let missing = dir.path().join("missing-codex");
+        let pick = |catalog: &Value| catalog.get("models").cloned();
+        assert_eq!(
+            first_bundled_catalog(vec![missing.clone()], pick).err(),
+            Some(CodexBundledModelsError::NoCli)
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let script = |name: &str, body: &str| {
+                let path = dir.path().join(name);
+                fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write script");
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+                    .expect("chmod script");
+                path
+            };
+            let failing = script("failing-codex", "echo boom >&2; exit 1");
+            let working = script("working-codex", r#"echo '{"models":[{"slug":"x"}]}'"#);
+
+            // 找到了命令行但跑失败：不能报成找不到。
+            assert!(matches!(
+                first_bundled_catalog(vec![missing.clone(), failing.clone()], pick),
+                Err(CodexBundledModelsError::Failed(detail)) if detail.contains("boom")
+            ));
+            // 前面的失败不影响后面能用的候选。
+            assert_eq!(
+                first_bundled_catalog(vec![missing, failing, working], pick).ok(),
+                Some(json!([{ "slug": "x" }]))
+            );
+        }
+    }
+
+    #[test]
     fn codex_bundled_models_command_uses_expected_program_and_args() {
         let command = codex_bundled_models_command(Path::new("codex"));
         assert_eq!(command.get_program(), "codex");
@@ -5497,6 +5655,101 @@ wire_api = "responses"
             1,
             "duplicate candidates should be removed"
         );
+    }
+
+    fn create_cli_candidate(path: &Path) {
+        std::fs::create_dir_all(path.parent().expect("candidate parent"))
+            .expect("create candidate parent");
+        std::fs::write(path, "").expect("create candidate");
+    }
+
+    fn desktop_cli(applications: &Path, bundle: &str, layout: &str) -> PathBuf {
+        applications.join(bundle).join(layout)
+    }
+
+    #[test]
+    fn codex_cli_candidates_include_desktop_app_bundles_and_layouts() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let applications = temp_home.path().join("Applications");
+        let current_layout = CODEX_DESKTOP_CLI_IN_BUNDLE[0];
+        let legacy_layout = CODEX_DESKTOP_CLI_IN_BUNDLE[1];
+        let chatgpt_current = desktop_cli(&applications, "ChatGPT.app", current_layout);
+        let chatgpt_legacy = desktop_cli(&applications, "ChatGPT.app", legacy_layout);
+        // 改名前的 Codex.app 只有旧结构（openai/codex#48052）。
+        let codex_legacy = desktop_cli(&applications, "Codex.app", legacy_layout);
+        for path in [&chatgpt_current, &chatgpt_legacy, &codex_legacy] {
+            create_cli_candidate(path);
+        }
+
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+        push_desktop_codex_cli_candidates(&mut candidates, &mut seen, temp_home.path());
+
+        let position = |path: &Path| {
+            candidates
+                .iter()
+                .position(|candidate| candidate == path)
+                .unwrap_or_else(|| panic!("missing desktop candidate {}", path.display()))
+        };
+        assert!(position(&chatgpt_current) < position(&chatgpt_legacy));
+        // 两份都在时 ChatGPT.app 是新的那份，先用它。
+        assert!(position(&chatgpt_legacy) < position(&codex_legacy));
+    }
+
+    fn set_mtime(path: &Path, time: std::time::SystemTime) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("open")
+            .set_times(std::fs::FileTimes::new().set_modified(time))
+            .expect("set mtime");
+    }
+
+    #[test]
+    fn codex_cli_candidates_try_the_newest_desktop_version_first() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path();
+        let now = std::time::SystemTime::now();
+        // 按目录名倒序排的话 0.99.0 会排在前面。
+        let older = root.join("0.99.0").join("codex.exe");
+        let newer = root.join("0.162.0").join("codex.exe");
+        create_cli_candidate(&older);
+        create_cli_candidate(&newer);
+        set_mtime(&older, now - std::time::Duration::from_secs(3600));
+        set_mtime(&newer, now);
+        std::fs::create_dir_all(root.join("logs")).expect("create dir without codex.exe");
+
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+        push_codex_cli_candidates_newest_first(&mut candidates, &mut seen, root, "codex.exe");
+
+        assert_eq!(candidates, vec![newer, older]);
+    }
+
+    #[test]
+    #[serial]
+    fn codex_cli_candidates_try_the_desktop_app_cli_after_standalone_installs() {
+        let test_home = CodexLiveTestHome::new();
+        let home = test_home._dir.path();
+        let standalone = home.join(".volta/bin/codex");
+        let desktop = desktop_cli(
+            &home.join("Applications"),
+            "ChatGPT.app",
+            CODEX_DESKTOP_CLI_IN_BUNDLE[0],
+        );
+        create_cli_candidate(&standalone);
+        create_cli_candidate(&desktop);
+
+        let candidates = codex_cli_candidates();
+        let position = |path: &Path| {
+            candidates
+                .iter()
+                .position(|candidate| candidate == path)
+                .unwrap_or_else(|| panic!("missing candidate {}", path.display()))
+        };
+
+        // 装了独立 CLI 的人照旧先用它，桌面版的只做兜底。
+        assert!(position(&standalone) < position(&desktop));
     }
 
     #[test]

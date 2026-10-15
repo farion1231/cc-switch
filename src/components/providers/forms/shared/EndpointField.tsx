@@ -1,8 +1,8 @@
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
-import { Link2, Zap } from "lucide-react";
+import { HelpTip } from "@/components/ui/help-tip";
+import { Zap } from "lucide-react";
 import { REQUIRED_LABEL } from "../BasicFormFields";
 
 interface EndpointFieldProps {
@@ -12,13 +12,11 @@ interface EndpointFieldProps {
   onChange: (value: string) => void;
   placeholder: string;
   hint?: string;
-  fullUrlHint?: string;
+  /** 填写说明放进字段名后的「?」，不占页面；和 `hint` 二选一。 */
+  help?: string;
   showManageButton?: boolean;
   onManageClick?: () => void;
   manageButtonLabel?: string;
-  showFullUrlToggle?: boolean;
-  isFullUrl?: boolean;
-  onFullUrlChange?: (value: boolean) => void;
 }
 
 export function EndpointField({
@@ -28,58 +26,26 @@ export function EndpointField({
   onChange,
   placeholder,
   hint,
-  fullUrlHint,
+  help,
   showManageButton = true,
   onManageClick,
   manageButtonLabel,
-  showFullUrlToggle = false,
-  isFullUrl = false,
-  onFullUrlChange,
 }: EndpointFieldProps) {
   const { t } = useTranslation();
 
   const defaultManageLabel = t("providerForm.manageAndTest", {
     defaultValue: "管理和测速",
   });
-  const effectiveHint =
-    showFullUrlToggle && isFullUrl
-      ? fullUrlHint ||
-        t("providerForm.fullUrlHint", {
-          defaultValue:
-            "💡 请填写完整请求 URL，并且必须开启代理后使用；代理将直接使用此 URL，不拼接路径",
-        })
-      : hint;
 
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-0.5">
           <FormLabel htmlFor={id} className={REQUIRED_LABEL}>
             {label}
           </FormLabel>
-          {showFullUrlToggle && onFullUrlChange ? (
-            <div className="flex items-center gap-2 rounded-full border border-border px-2.5 py-1">
-              <Link2
-                className={`h-3.5 w-3.5 ${isFullUrl ? "text-fg-1" : "text-fg-3"}`}
-              />
-              <span
-                className={`text-caption font-medium ${
-                  isFullUrl ? "text-fg-1" : "text-fg-2"
-                }`}
-              >
-                {t("providerForm.fullUrlLabel", {
-                  defaultValue: "完整 URL",
-                })}
-              </span>
-              <Switch
-                checked={isFullUrl}
-                onCheckedChange={onFullUrlChange}
-                aria-label={t("providerForm.fullUrlLabel", {
-                  defaultValue: "完整 URL",
-                })}
-                className="h-5 w-9"
-              />
-            </div>
+          {help ? (
+            <HelpTip title={label}>{help.replace(/^💡\s*/u, "")}</HelpTip>
           ) : null}
         </div>
         {showManageButton && onManageClick ? (
@@ -102,10 +68,8 @@ export function EndpointField({
         autoComplete="off"
         aria-required="true"
       />
-      {effectiveHint ? (
-        <p className="text-caption text-fg-2">
-          {effectiveHint.replace(/^💡\s*/u, "")}
-        </p>
+      {hint ? (
+        <p className="text-caption text-fg-2">{hint.replace(/^💡\s*/u, "")}</p>
       ) : null}
     </div>
   );

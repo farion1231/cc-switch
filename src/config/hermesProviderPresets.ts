@@ -399,6 +399,69 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "OpenModel",
+    websiteUrl: "https://www.openmodel.ai",
+    apiKeyUrl: "https://www.openmodel.ai?ref=cc-switch",
+    settingsConfig: {
+      name: "openmodel",
+      base_url: "https://api.openmodel.ai",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "openmodel" },
+    },
+    isPartner: true,
+    icon: "openmodel",
+  },
+  {
+    name: "GrooRoute Pro",
+    websiteUrl: "https://grooroute.pro",
+    apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
+    settingsConfig: {
+      name: "grooroute_pro",
+      base_url: "https://grooroute.pro",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "grooroute_pro" },
+    },
+    isPartner: true,
+    icon: "grooroute",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
@@ -427,11 +490,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.app",
-    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.net",
+    apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
     settingsConfig: {
       name: "aigocode",
-      base_url: "https://api.aigocode.app",
+      base_url: "https://api.aigocode.dev",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -702,8 +765,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "code0",
     icon: "code0",
     suggestedDefaults: {
       model: { default: "gpt-5.6-sol", provider: "code0" },
@@ -2085,32 +2146,43 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "KAT-Coder",
+    name: "StreamLake",
+    family: "streamlake",
+    regionKey: "cn",
+    websiteUrl: "https://www.streamlake.com",
+    apiKeyUrl: "https://console.streamlake.com/console/wanqing/api-key",
+    settingsConfig: {
+      name: "streamlake",
+      base_url:
+        "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints/kat-coder-pro-v2.5/claude-code-proxy",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [{ id: "kat-coder-pro-v2.5", name: "KAT-Coder Pro V2.5" }],
+    },
+    category: "cn_official",
+    icon: "streamlake",
+    suggestedDefaults: {
+      model: { default: "kat-coder-pro-v2.5", provider: "streamlake" },
+    },
+  },
+  {
+    name: "StreamLake en",
+    family: "streamlake",
+    regionKey: "intl",
     websiteUrl: "https://console.streamlake.ai",
     apiKeyUrl: "https://console.streamlake.ai/console/api-key",
     settingsConfig: {
-      name: "kat_coder",
+      name: "streamlake_en",
       base_url:
-        "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/claude-code-proxy",
+        "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/kat-coder-pro-v2.5/claude-code-proxy",
       api_key: "",
       api_mode: "anthropic_messages",
-      models: [
-        { id: "KAT-Coder-Pro V1", name: "KAT-Coder Pro V1" },
-        { id: "KAT-Coder-Air V1", name: "KAT-Coder Air V1" },
-      ],
+      models: [{ id: "kat-coder-pro-v2.5", name: "KAT-Coder Pro V2.5" }],
     },
     category: "cn_official",
-    templateValues: {
-      ENDPOINT_ID: {
-        label: "Vanchin Endpoint ID",
-        placeholder: "ep-xxx-xxx",
-        defaultValue: "",
-        editorValue: "",
-      },
-    },
-    icon: "catcoder",
+    icon: "streamlake",
     suggestedDefaults: {
-      model: { default: "KAT-Coder-Pro V1", provider: "kat_coder" },
+      model: { default: "kat-coder-pro-v2.5", provider: "streamlake_en" },
     },
   },
   {
@@ -2293,6 +2365,38 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "therouter",
   },
   {
+    name: "Baseten",
+    websiteUrl: "https://www.baseten.co",
+    apiKeyUrl: "https://app.baseten.co/settings/api_keys",
+    settingsConfig: {
+      name: "baseten",
+      // OpenAI Chat 端点 /v1/chat/completions（docs.baseten.co/development/
+      // model-apis/overview，2026-10-14 核对）；窗口取同页模型表
+      base_url: "https://inference.baseten.co/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "zai-org/GLM-5.3", name: "GLM-5.3", context_length: 1048576 },
+        { id: "moonshotai/Kimi-K3", name: "Kimi K3", context_length: 1048576 },
+        {
+          id: "zai-org/GLM-5.3-Flash",
+          name: "GLM-5.3 Flash",
+          context_length: 1048576,
+        },
+        {
+          id: "deepseek-ai/DeepSeek-V4.1-Flash",
+          name: "DeepSeek V4.1 Flash",
+          context_length: 1048576,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "baseten",
+    suggestedDefaults: {
+      model: { default: "zai-org/GLM-5.3", provider: "baseten" },
+    },
+  },
+  {
     name: "Novita AI",
     websiteUrl: "https://novita.ai",
     apiKeyUrl: "https://novita.ai",
@@ -2347,6 +2451,598 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#000000",
     suggestedDefaults: {
       model: { default: "moonshotai/kimi-k3", provider: "nvidia" },
+    },
+  },
+  {
+    name: "Ollama Cloud",
+    websiteUrl: "https://ollama.com",
+    apiKeyUrl: "https://ollama.com/settings/keys",
+    settingsConfig: {
+      // Hermes 自带内置 provider ollama-cloud（读 OLLAMA_API_KEY），用下划线
+      // 名避免与之同名，确保走这里的 custom_providers 与 api_key
+      name: "ollama_cloud",
+      // 云端 OpenAI 兼容 base（docs.ollama.com/api/openai-compatibility，
+      // 2026-10-14 核对）；窗口取 https://ollama.com/api/show
+      base_url: "https://ollama.com/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "glm-5.3", name: "GLM-5.3", context_length: 1048576 },
+        {
+          id: "glm-5.3-flash",
+          name: "GLM-5.3-Flash",
+          context_length: 1048576,
+        },
+        { id: "kimi-k3", name: "Kimi K3", context_length: 1048576 },
+        {
+          id: "deepseek-v4-pro:0813",
+          name: "DeepSeek V4 Pro",
+          context_length: 1048576,
+        },
+        {
+          id: "deepseek-v4.1-flash",
+          name: "DeepSeek V4.1 Flash",
+          context_length: 1048576,
+        },
+        { id: "minimax-m3", name: "MiniMax M3", context_length: 512000 },
+      ],
+    },
+    category: "cloud_provider",
+    icon: "ollama",
+    suggestedDefaults: {
+      model: { default: "glm-5.3", provider: "ollama_cloud" },
+    },
+  },
+  {
+    name: "Ollama",
+    websiteUrl: "https://ollama.com",
+    settingsConfig: {
+      // Hermes 里 ollama / local 都是指向 custom 的别名（hermes_cli/auth.py），
+      // 照 ollama_cloud 先例换名避开
+      name: "ollama-local",
+      // Hermes 官方本机写法：base http://localhost:11434/v1、Key 留空
+      //（hermes-agent.nousresearch.com/docs/integrations/providers，2026-10-14
+      // 核对）。Hermes 启动时拒绝小于 64000 的窗口：这里填模型原生值，服务端
+      // 实际窗口也要至少 64k（OLLAMA_CONTEXT_LENGTH 或 model.ollama_num_ctx）。
+      // 模型换成自己已下载的
+      base_url: "http://localhost:11434/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "qwen3.5", name: "Qwen3.5", context_length: 262144 },
+        { id: "gpt-oss:20b", name: "GPT-OSS 20B", context_length: 131072 },
+      ],
+    },
+    category: "local",
+    icon: "ollama",
+    suggestedDefaults: {
+      model: { default: "qwen3.5", provider: "ollama-local" },
+    },
+  },
+  {
+    name: "LM Studio",
+    websiteUrl: "https://lmstudio.ai",
+    settingsConfig: {
+      // Hermes 内置 provider lmstudio，且 lm-studio / lm_studio 都是它的别名
+      //（hermes_cli/auth.py），照 ollama-local 先例换名避开
+      name: "lmstudio-local",
+      // base http://localhost:1234/v1、默认不鉴权，Key 留空（开启鉴权后填 API
+      // Token；hermes-agent.nousresearch.com/docs/integrations/providers，
+      // 2026-10-14 核对）。Hermes 启动时拒绝小于 64000 的窗口：这里填模型原生
+      // 值，LM Studio 加载模型时的 context length 也要至少 64K（UI 设置或
+      // lms load --context-length），加载窗口更小时同步调小。模型换成自己已
+      // 下载的，或用「获取模型」从 /v1/models 拉取
+      base_url: "http://localhost:1234/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "openai/gpt-oss-20b",
+          name: "GPT-OSS 20B",
+          context_length: 131072,
+        },
+      ],
+    },
+    category: "local",
+    icon: "lmstudio",
+    suggestedDefaults: {
+      model: { default: "openai/gpt-oss-20b", provider: "lmstudio-local" },
+    },
+  },
+  {
+    name: "llama.cpp",
+    websiteUrl: "https://github.com/ggml-org/llama.cpp",
+    settingsConfig: {
+      // Hermes 里 llamacpp / llama.cpp / llama-cpp 都是指向 custom 的别名
+      //（hermes_cli/auth.py、providers.py），照 lmstudio-local 先例换名避开
+      name: "llamacpp-local",
+      // 本机 llama-server 的 OpenAI Chat base（github.com/ggml-org/llama.cpp/
+      // blob/master/tools/server/README.md、hermes-agent.nousresearch.com/docs/
+      // integrations/providers，2026-10-14 核对）。默认端口 b11521（PR #30159）
+      // 起为 9931，v0.6.0 及更早、Homebrew 与 Docker 仍是 8080；只监听 IPv4 的
+      // 127.0.0.1。不带 --api-key 时不校验，Key 留空（带了就填那个值）。Hermes
+      // 启动时拒绝小于 64000 的窗口：这里填模型原生值，llama-server 的 -c 也要
+      // 至少 64K（--fit 可能自动调小），实际窗口更小时同步调小。默认模型取
+      // ggml-org 官方 GGUF 的 Qwen3-Coder 30B A3B，换成自己已下载的，或用
+      // 「获取模型」从 /v1/models 拉取
+      base_url: "http://127.0.0.1:9931/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+          name: "Qwen3-Coder 30B A3B",
+          context_length: 262144,
+        },
+      ],
+    },
+    category: "local",
+    icon: "llamacpp",
+    suggestedDefaults: {
+      model: {
+        default: "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+        provider: "llamacpp-local",
+      },
+    },
+  },
+  {
+    name: "vLLM",
+    websiteUrl: "https://vllm.ai",
+    settingsConfig: {
+      // Hermes 里 vllm / local 都是指向 custom 的别名（hermes_cli/providers.py），
+      // 照 llamacpp-local 先例换名避开
+      name: "vllm-local",
+      // 本机 vllm serve 的 OpenAI Chat base（docs.vllm.ai/en/latest/serving/
+      // online_serving/openai_compatible_server、hermes-agent.nousresearch.com/
+      // docs/integrations/providers，2026-10-14 核对）。默认端口 8000，不带
+      // --host 时监听全部 IPv4 网卡，建议加 --host 127.0.0.1；工具调用要启动时加
+      // --enable-auto-tool-choice --tool-call-parser qwen3_coder。不带 --api-key
+      // 时不校验，Key 留空（Hermes 会发占位值 no-key-required；带了就填那个值）。
+      // Hermes 启动时拒绝小于 64000 的窗口：这里填模型原生值，--max-model-len
+      // 也要至少 64K，实际窗口更小时同步调小。默认模型取 vLLM Codex 接入页的
+      // 示例 Qwen/Qwen3.6-27B，须与 /v1/models 的 id 一致，换成自己已下载的，
+      // 或用「获取模型」从 /v1/models 拉取
+      base_url: "http://localhost:8000/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "Qwen/Qwen3.6-27B",
+          name: "Qwen3.6 27B",
+          context_length: 262144,
+        },
+      ],
+    },
+    category: "local",
+    icon: "vllm",
+    suggestedDefaults: {
+      model: { default: "Qwen/Qwen3.6-27B", provider: "vllm-local" },
+    },
+  },
+  {
+    name: "Meta Model API",
+    websiteUrl: "https://dev.meta.ai",
+    apiKeyUrl: "https://dev.meta.ai",
+    settingsConfig: {
+      name: "meta",
+      // OpenAI Chat 端点 /v1/chat/completions（dev.meta.ai/docs/coding-agents.md，
+      // 2026-10-14 核对），Bearer 鉴权；窗口取 dev.meta.ai/docs/models.md
+      base_url: "https://api.meta.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "muse-wonder-1.0",
+          name: "Muse Wonder 1.0",
+          context_length: 1048576,
+        },
+        {
+          id: "muse-spark-1.3",
+          name: "Muse Spark 1.3",
+          context_length: 1048576,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "meta",
+    suggestedDefaults: {
+      model: { default: "muse-wonder-1.0", provider: "meta" },
+    },
+  },
+  {
+    name: "DeepInfra",
+    websiteUrl: "https://deepinfra.com",
+    apiKeyUrl: "https://deepinfra.com/dash/api_keys",
+    settingsConfig: {
+      name: "deepinfra",
+      // 官方 Hermes 接入文档给旧版 Hermes 的自定义端点即 /v1/openai Chat
+      //（docs.deepinfra.com/integrations/hermes-agent.md，2026-10-14 核对）。
+      // Hermes 已内置 deepinfra，同名写法照 openrouter / deepseek 先例；窗口取
+      // https://api.deepinfra.com/models/<id> 同日元数据
+      base_url: "https://api.deepinfra.com/v1/openai",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "deepseek-ai/DeepSeek-V4-Flash-0731",
+          name: "DeepSeek V4 Flash 0731",
+          context_length: 1048576,
+        },
+        {
+          id: "deepseek-ai/DeepSeek-V4-Pro-0813",
+          name: "DeepSeek V4 Pro 0813",
+          context_length: 1048576,
+        },
+        { id: "moonshotai/Kimi-K3", name: "Kimi K3", context_length: 1048576 },
+        { id: "zai-org/GLM-5.3", name: "GLM-5.3", context_length: 1048576 },
+        { id: "zai-org/GLM-5.2", name: "GLM-5.2", context_length: 1048576 },
+      ],
+    },
+    category: "aggregator",
+    icon: "deepinfra",
+    suggestedDefaults: {
+      model: {
+        default: "deepseek-ai/DeepSeek-V4-Flash-0731",
+        provider: "deepinfra",
+      },
+    },
+  },
+  {
+    name: "Vercel AI Gateway",
+    websiteUrl: "https://vercel.com/ai-gateway",
+    apiKeyUrl:
+      "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway%2Fapi-keys",
+    settingsConfig: {
+      // 与 Vercel CLI 写的自定义供应商同名（vercel.com/docs/ai-gateway/
+      // coding-agents/hermes，2026-10-14 核对）；Hermes 内置的 ai-gateway 默认
+      // 走裸 /v1，文档推荐改成 /coding-agent/v1。窗口取 GET
+      // https://ai-gateway.vercel.sh/v1/models 同日公开元数据
+      name: "vercel-ai-gateway",
+      base_url: "https://ai-gateway.vercel.sh/coding-agent/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "anthropic/claude-opus-5.5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "anthropic/claude-sonnet-5.5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "anthropic/claude-haiku-5.5",
+          name: "Claude Haiku 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "openai/gpt-6-astra",
+          name: "GPT-6 Astra",
+          context_length: 1050000,
+        },
+        {
+          id: "openai/gpt-6.1-sol",
+          name: "GPT-6.1 Sol",
+          context_length: 1050000,
+        },
+        {
+          id: "google/gemini-3.8-flash",
+          name: "Gemini 3.8 Flash",
+          context_length: 1000000,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "vercel",
+    suggestedDefaults: {
+      model: {
+        default: "anthropic/claude-sonnet-5.5",
+        provider: "vercel-ai-gateway",
+      },
+    },
+  },
+  {
+    name: "Nebius Token Factory",
+    websiteUrl: "https://nebius.com/token-factory",
+    apiKeyUrl: "https://tokenfactory.nebius.com/project/api-keys",
+    settingsConfig: {
+      name: "nebius",
+      // OpenAI Chat 端点 base 为 /v1（docs.tokenfactory.nebius.com/switch.md，
+      // 2026-10-14 核对），Bearer 鉴权。窗口取官方公开目录
+      // tokenfactory.nebius.com/api/public/models_info 同日快照
+      base_url: "https://api.tokenfactory.nebius.com/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "zai-org/GLM-5.3", name: "GLM-5.3", context_length: 1024000 },
+        {
+          id: "zai-org/GLM-5.3-Flash",
+          name: "GLM-5.3-Flash",
+          context_length: 1024000,
+        },
+        { id: "moonshotai/Kimi-K3", name: "Kimi K3", context_length: 1024000 },
+        {
+          id: "moonshotai/Kimi-K2.7-Code",
+          name: "Kimi K2.7 Code",
+          context_length: 262144,
+        },
+        {
+          id: "deepseek-ai/DeepSeek-V4-Pro-0813",
+          name: "DeepSeek V4 Pro 0813",
+          context_length: 979000,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "nebius",
+    suggestedDefaults: {
+      model: { default: "zai-org/GLM-5.3", provider: "nebius" },
+    },
+  },
+  {
+    name: "Groq",
+    websiteUrl: "https://groq.com",
+    apiKeyUrl: "https://console.groq.com/keys",
+    settingsConfig: {
+      name: "groq",
+      // OpenAI Chat 端点 base 为 /openai/v1（console.groq.com/docs/openai，
+      // 2026-10-14 核对），Bearer 鉴权。只收自助可用的 Production 模型 gpt-oss
+      // 两款，窗口取 console.groq.com/docs/models 同日值
+      base_url: "https://api.groq.com/openai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "openai/gpt-oss-120b",
+          name: "GPT-OSS 120B",
+          context_length: 131072,
+        },
+        {
+          id: "openai/gpt-oss-20b",
+          name: "GPT-OSS 20B",
+          context_length: 131072,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "groq",
+    suggestedDefaults: {
+      model: { default: "openai/gpt-oss-120b", provider: "groq" },
+    },
+  },
+  {
+    name: "SambaNova",
+    websiteUrl: "https://sambanova.ai",
+    apiKeyUrl: "https://cloud.sambanova.ai/apis",
+    settingsConfig: {
+      name: "sambanova",
+      // OpenAI Chat 端点 base 为 /v1（docs.sambanova.ai/docs/en/integrations/
+      // opencode，2026-10-14 核对），Bearer 鉴权，窗口取公开 /v1/models 同日值。
+      // 不选 anthropic_messages（OpenAPI 写明 v1 的 thinking enabled/adaptive
+      // 返回 400），也不选 codex_responses（Responses 只收 function 工具）
+      base_url: "https://api.sambanova.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "MiniMax-M3", name: "MiniMax M3", context_length: 1048576 },
+        { id: "gpt-oss-120b", name: "gpt-oss-120b", context_length: 131072 },
+      ],
+    },
+    category: "cloud_provider",
+    icon: "sambanova",
+    suggestedDefaults: {
+      model: { default: "MiniMax-M3", provider: "sambanova" },
+    },
+  },
+  {
+    name: "DigitalOcean",
+    websiteUrl: "https://www.digitalocean.com/products/ai-platform",
+    apiKeyUrl: "https://cloud.digitalocean.com/model-studio/manage-keys",
+    settingsConfig: {
+      name: "digitalocean",
+      // OpenAI Chat 端点 base 为 /v1（docs.digitalocean.com/products/inference/
+      // how-to/use-with-coding-agents，2026-10-14 核对），Bearer 鉴权；窗口取
+      // 平台模型表（docs.digitalocean.com/products/inference/details/models
+      // 同日）。四款都支持 Chat 与工具调用；Sonnet 5.5 须 Tier 3+ 账号，默认
+      // 用所有等级可用的 GLM-5.3
+      base_url: "https://inference.do-ai.run/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "glm-5.3", name: "GLM-5.3", context_length: 1048576 },
+        { id: "kimi-k3", name: "Kimi K3", context_length: 1048576 },
+        {
+          id: "deepseek-v4-pro-0813",
+          name: "DeepSeek V4 Pro 0813",
+          context_length: 1048576,
+        },
+        {
+          id: "anthropic-claude-sonnet-5.5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+      ],
+    },
+    category: "cloud_provider",
+    icon: "digitalocean",
+    suggestedDefaults: {
+      model: { default: "glm-5.3", provider: "digitalocean" },
+    },
+  },
+  {
+    name: "Hugging Face",
+    websiteUrl: "https://huggingface.co/inference/models",
+    apiKeyUrl:
+      "https://huggingface.co/settings/tokens/new?ownUserPermissions=inference.serverless.write&tokenType=fineGrained",
+    settingsConfig: {
+      // Hermes 内置 provider huggingface（别名 hf，hermes-agent.nousresearch.com/
+      // docs/integrations/providers，2026-10-14 核对），与 custom_providers 同名
+      // 时谁优先文档没写，照 ollama_cloud 先例换个名字避开
+      name: "huggingface-router",
+      // OpenAI Chat 端点 base 为 https://router.huggingface.co/v1
+      //（huggingface.co/docs/inference-providers/integrations/hermes-agent 同日），
+      // Bearer 鉴权；Hermes 文档说可用 :provider_name 后缀强制上游，这里钉
+      // :baseten（同 Claude Code 预设），窗口取公开 /v1/models 对 Baseten 的
+      // 同日声明
+      base_url: "https://router.huggingface.co/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "zai-org/GLM-5.3:baseten",
+          name: "GLM-5.3 (Baseten)",
+          context_length: 1048576,
+        },
+        {
+          id: "zai-org/GLM-5.3-Flash:baseten",
+          name: "GLM-5.3 Flash (Baseten)",
+          context_length: 1048576,
+        },
+        {
+          id: "moonshotai/Kimi-K3:baseten",
+          name: "Kimi K3 (Baseten)",
+          context_length: 1048576,
+        },
+        {
+          id: "deepseek-ai/DeepSeek-V4-Pro-0813:baseten",
+          name: "DeepSeek V4 Pro 0813 (Baseten)",
+          context_length: 1048576,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "huggingface",
+    suggestedDefaults: {
+      model: {
+        default: "zai-org/GLM-5.3:baseten",
+        provider: "huggingface-router",
+      },
+    },
+  },
+  {
+    name: "Fireworks AI",
+    websiteUrl: "https://fireworks.ai",
+    apiKeyUrl: "https://app.fireworks.ai/settings/users/api-keys",
+    settingsConfig: {
+      // Hermes 内置 provider fireworks（别名 fireworks-ai / fw，hermes-agent.
+      // nousresearch.com/docs/integrations/providers，2026-10-14 核对），与
+      // custom_providers 同名时谁优先文档没写，照 huggingface-router 先例换个
+      // 名字避开
+      name: "fireworks-inference",
+      // OpenAI Chat 端点 base 为 https://api.fireworks.ai/inference/v1
+      //（docs.fireworks.ai/nexus/harnesses 同日），Bearer 鉴权，模型写全名；
+      // 窗口取各模型页与定价页（同日），MiniMax M3 只开 512K
+      base_url: "https://api.fireworks.ai/inference/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "accounts/fireworks/models/glm-5p3",
+          name: "GLM 5.3",
+          context_length: 1048576,
+        },
+        {
+          id: "accounts/fireworks/models/kimi-k3",
+          name: "Kimi K3",
+          context_length: 1048576,
+        },
+        {
+          id: "accounts/fireworks/models/deepseek-v4p1-flash",
+          name: "DeepSeek V4.1 Flash",
+          context_length: 1000000,
+        },
+        {
+          id: "accounts/fireworks/models/glm-5p3-flash",
+          name: "GLM 5.3 Flash",
+          context_length: 1048576,
+        },
+        {
+          id: "accounts/fireworks/models/minimax-m3",
+          name: "MiniMax M3",
+          context_length: 512000,
+        },
+      ],
+    },
+    category: "cloud_provider",
+    icon: "fireworks",
+    suggestedDefaults: {
+      model: {
+        default: "accounts/fireworks/models/glm-5p3",
+        provider: "fireworks-inference",
+      },
+    },
+  },
+  {
+    name: "Mistral AI",
+    websiteUrl: "https://mistral.ai",
+    apiKeyUrl: "https://console.mistral.ai/api-keys",
+    settingsConfig: {
+      // Hermes 内置的 Mistral 只有语音与转写，没有 LLM provider，名字不冲突
+      name: "mistral",
+      // OpenAI Chat 端点 base 为 https://api.mistral.ai/v1（docs.mistral.ai/
+      // openapi.yaml，2026-10-14 核对），Bearer 鉴权。模型用官方模型表
+      //（docs.mistral.ai/models.md 同日）的固定版本 ID，窗口官方写 256k
+      base_url: "https://api.mistral.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "mistral-medium-3-5",
+          name: "Mistral Medium 3.5",
+          context_length: 256000,
+        },
+        {
+          id: "mistral-small-2603",
+          name: "Mistral Small 4",
+          context_length: 256000,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "mistral",
+    suggestedDefaults: {
+      model: { default: "mistral-medium-3-5", provider: "mistral" },
+    },
+  },
+  {
+    name: "Cloudflare AI Gateway",
+    websiteUrl: "https://developers.cloudflare.com/ai-gateway/",
+    apiKeyUrl: "https://dash.cloudflare.com/profile/api-tokens",
+    settingsConfig: {
+      // Hermes 没有内置的 Cloudflare provider，名字不冲突
+      name: "cloudflare",
+      // REST 统一 API 的 OpenAI Chat 端点（developers.cloudflare.com/ai-gateway/
+      // usage/rest-api，2026-10-14 核对），标准 Bearer 鉴权，token 须带 Workers
+      // AI Read；账户 ID 用字面占位符，忘了改会 401。模型与窗口同 OpenClaw 预设
+      //（developers.cloudflare.com/ai/models 同日），Claude 只有 Messages 格式不放
+      base_url:
+        "https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "openai/gpt-6.1-sol",
+          name: "GPT-6.1 Sol",
+          context_length: 1050000,
+        },
+        {
+          id: "openai/gpt-6-luna",
+          name: "GPT-6 Luna",
+          context_length: 1050000,
+        },
+        {
+          id: "moonshotai/kimi-k3",
+          name: "Kimi K3",
+          context_length: 1048576,
+        },
+      ],
+    },
+    category: "cloud_provider",
+    icon: "cloudflare",
+    suggestedDefaults: {
+      model: { default: "openai/gpt-6.1-sol", provider: "cloudflare" },
     },
   },
   {
@@ -2493,5 +3189,273 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     suggestedDefaults: {
       model: { default: "gpt-5.6-sol", provider: "aicodewith" },
     },
+  },
+  {
+    name: "SoruxGPT",
+    websiteUrl: "https://ai.soruxgpt.com",
+    apiKeyUrl: "https://ai.soruxgpt.com/console/token",
+    settingsConfig: {
+      name: "soruxgpt",
+      base_url: "https://ai.soruxgpt.com",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "soruxgpt" },
+    },
+    icon: "soruxgpt",
+  },
+  {
+    name: "IKunCode",
+    websiteUrl: "https://api.ikuncode.ai",
+    apiKeyUrl: "https://api.ikuncode.ai/console/token",
+    settingsConfig: {
+      name: "ikuncode",
+      base_url: "https://api.ikuncode.ai",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "ikuncode" },
+    },
+    icon: "ikuncode",
+  },
+  {
+    name: "RunToken",
+    websiteUrl: "https://www.runtoken.ai",
+    apiKeyUrl: "https://www.runtoken.ai/console/token",
+    settingsConfig: {
+      name: "runtoken",
+      base_url: "https://www.runtoken.ai",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "runtoken" },
+    },
+    icon: "runtoken",
+  },
+  {
+    name: "BotCF",
+    websiteUrl: "https://botcf.com",
+    apiKeyUrl: "https://botcf.com/console/token",
+    settingsConfig: {
+      name: "botcf",
+      base_url: "https://botcf.com",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "botcf" },
+    },
+    icon: "botcf",
+  },
+  {
+    name: "YYLX",
+    nameKey: "providerForm.presets.yylx",
+    websiteUrl: "https://yylx.io",
+    apiKeyUrl: "https://app.yylx.io/keys",
+    settingsConfig: {
+      name: "yylx",
+      base_url: "https://app.yylx.io",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "yylx" },
+    },
+    icon: "yylx",
+  },
+  {
+    name: "TokenFlux",
+    websiteUrl: "https://tokenflux.dev",
+    apiKeyUrl: "https://tokenflux.dev/keys",
+    settingsConfig: {
+      name: "tokenflux",
+      base_url: "https://tokenflux.dev",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "tokenflux" },
+    },
+    icon: "tokenflux",
+  },
+  {
+    name: "NekoCode",
+    websiteUrl: "https://nekoapi.ai",
+    apiKeyUrl: "https://nekoapi.ai/token",
+    settingsConfig: {
+      name: "nekocode",
+      base_url: "https://nekoapi.ai",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      extra_headers: {
+        "User-Agent": "claude-cli/2.1.161 (external, cli)",
+      },
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "nekocode" },
+    },
+    icon: "nekocode",
+  },
+  {
+    name: "AIComing",
+    websiteUrl: "https://aicoming.top",
+    apiKeyUrl: "https://aicoming.top/console#keys",
+    settingsConfig: {
+      name: "aicoming",
+      base_url: "https://api.aicoming.top",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-opus-5-5", provider: "aicoming" },
+    },
+    icon: "aicoming",
   },
 ];
