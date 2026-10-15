@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useState } from "react";
 import { useDelayedFlag } from "@/hooks/useDelayedFlag";
+import { useMcpConnectivity } from "@/hooks/useMcpConnectivity";
 import { useTranslation } from "react-i18next";
 import { Download, MoreHorizontal, Pencil, Plus, Server } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -142,6 +143,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     error: loadError,
     refetch,
   } = useAllMcpServers();
+  const connections = useMcpConnectivity(isError ? undefined : serversMap);
   const toggleAppMutation = useToggleMcpApp();
   const bulkToggleAppMutation = useBulkToggleMcpApp();
   const deleteServerMutation = useDeleteMcpServer();
@@ -822,6 +824,9 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                         const enabled = MCP_APP_IDS.some(
                           (app) => server.apps[app],
                         );
+                        const connection = enabled
+                          ? (connections[id] ?? "checking")
+                          : "disabled";
                         const rowFailedApps = appIds.filter(
                           (app) => fails[failKey(id, app)],
                         );
@@ -845,6 +850,21 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                           >
                             <div className="flex min-w-0 flex-1 flex-col pe-3">
                               <div className="flex min-w-0 items-center gap-1.5">
+                                <span
+                                  role="img"
+                                  aria-label={t(
+                                    `mcpPage.connection.${connection}`,
+                                  )}
+                                  title={t(`mcpPage.connection.${connection}`)}
+                                  className={cn(
+                                    "h-2 w-2 shrink-0 rounded-full",
+                                    connection === "connected"
+                                      ? "bg-success"
+                                      : connection === "disconnected"
+                                        ? "bg-danger"
+                                        : "bg-fg-3",
+                                  )}
+                                />
                                 <span
                                   title={id}
                                   className="min-w-0 truncate text-body font-medium"

@@ -59,6 +59,10 @@ vi.mock("@/components/mcp/useVisibleAppIds", () => ({
     ids.filter((id) => mocks.visibleApps.includes(id)),
 }));
 
+vi.mock("@/hooks/useMcpConnectivity", () => ({
+  useMcpConnectivity: () => ({ alpha: "connected", beta: "disconnected" }),
+}));
+
 vi.mock("@/components/mcp/McpFormModal", () => ({
   default: ({ editingId }: { editingId?: string }) => (
     <div data-testid="mcp-drawer">{editingId ?? "add"}</div>
@@ -126,7 +130,7 @@ function PendingEditorSave() {
 const rowNames = () =>
   within(screen.getByRole("list", { name: "mcpPage.listLabel" }))
     .getAllByRole("listitem")
-    .map((item) => item.querySelector("span")?.textContent);
+    .map((item) => item.querySelector("span[title].truncate")?.textContent);
 
 describe("UnifiedMcpPanel", () => {
   beforeEach(() => {
@@ -191,6 +195,28 @@ describe("UnifiedMcpPanel", () => {
     renderPanel();
     expect(screen.getByText("mcpPage.emptyTitle")).toBeInTheDocument();
     expect(screen.queryByText("mcpPage.noMatch")).not.toBeInTheDocument();
+  });
+
+  it("shows compact connectivity lights separately from app enablement", () => {
+    mocks.serversMap = {
+      alpha: makeServer("alpha", { apps: { claude: true } }),
+      beta: makeServer("beta", { apps: { codex: true } }),
+      pending: makeServer("pending", { apps: { claude: true } }),
+      disabled: makeServer("disabled"),
+    };
+    renderPanel();
+    expect(
+      screen.getByRole("img", { name: "mcpPage.connection.connected" }),
+    ).toHaveClass("bg-success", "rounded-full");
+    expect(
+      screen.getByRole("img", { name: "mcpPage.connection.disconnected" }),
+    ).toHaveClass("bg-danger", "rounded-full");
+    expect(
+      screen.getByRole("img", { name: "mcpPage.connection.checking" }),
+    ).toHaveClass("bg-fg-3");
+    expect(
+      screen.getByRole("img", { name: "mcpPage.connection.disabled" }),
+    ).toHaveClass("bg-fg-3");
   });
 
   it("shows the load error instead of the empty state", () => {
