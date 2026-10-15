@@ -4542,6 +4542,12 @@
     }
   },
   "mcpPage": {
+    "connection": {
+      "connected": "接続成功",
+      "disconnected": "接続失敗",
+      "checking": "接続を確認中",
+      "disabled": "無効のため接続は確認しません"
+    },
     "noun": "MCP",
     "listSeparator": "、",
     "helpTitle": "MCP の同期のしくみ",

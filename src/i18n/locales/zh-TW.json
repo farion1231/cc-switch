@@ -4543,6 +4543,12 @@
     }
   },
   "mcpPage": {
+    "connection": {
+      "connected": "連線成功",
+      "disconnected": "連線失敗",
+      "checking": "正在檢查連線",
+      "disabled": "未啟用"
+    },
     "noun": "MCP",
     "listSeparator": "、",
     "helpTitle": "MCP 怎麼同步",

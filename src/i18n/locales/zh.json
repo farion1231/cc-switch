@@ -4542,6 +4542,12 @@
     }
   },
   "mcpPage": {
+    "connection": {
+      "connected": "连接成功",
+      "disconnected": "连接失败",
+      "checking": "正在检查连接",
+      "disabled": "未启用"
+    },
     "noun": "MCP",
     "listSeparator": "、",
     "helpTitle": "MCP 怎么同步",
