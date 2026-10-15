@@ -3301,6 +3301,7 @@
     "noUnmanagedFound": "インポートするスキルが見つかりませんでした。すべてのスキルは CC Switch で管理されています。",
     "unmanagedAvailable": "インポート可能なスキルがあります",
     "foundIn": "発見場所",
+    "providedByPlugin": "プラグイン {{plugin}} が提供 — Claude Code が読み込むためインポートできません",
     "local": "ローカル",
     "uninstallConfirm": "「{{name}}」をアンインストールしますか？すべてのアプリからこのスキルが削除され、削除前にローカルバックアップが自動作成されます。",
     "uninstallInMainPanel": "メインパネルからスキルをアンインストールしてください",

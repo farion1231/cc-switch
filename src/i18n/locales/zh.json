@@ -3301,6 +3301,7 @@
     "noUnmanagedFound": "未发现需要导入的技能。所有技能已在 CC Switch 统一管理中。",
     "unmanagedAvailable": "发现可导入的技能",
     "foundIn": "发现于",
+    "providedByPlugin": "由插件 {{plugin}} 提供，Claude Code 自行加载，不可导入",
     "local": "本地",
     "uninstallConfirm": "确定要卸载技能 \"{{name}}\" 吗？这将从所有应用中移除该技能，并在删除前自动创建本地备份。",
     "uninstallInMainPanel": "请在主面板中卸载技能",

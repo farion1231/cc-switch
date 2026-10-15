@@ -76,6 +76,10 @@ export interface UnmanagedSkill {
   description?: string;
   foundIn: string[];
   path: string;
+  /** 只读来源（如 Claude Code 插件提供的 skill），不可导入到 SSOT */
+  readOnly?: boolean;
+  /** 提供该 skill 的插件标识（`plugin@marketplace`） */
+  pluginId?: string;
 }
 
 /** 导入已有 Skill 时提交的应用启用状态 */

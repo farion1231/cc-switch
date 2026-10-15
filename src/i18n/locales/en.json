@@ -3301,6 +3301,7 @@
     "noUnmanagedFound": "No skills to import found. All skills are already managed by CC Switch.",
     "unmanagedAvailable": "Skills available to import",
     "foundIn": "Found in",
+    "providedByPlugin": "Provided by plugin {{plugin}} — loaded by Claude Code, not importable",
     "local": "Local",
     "uninstallConfirm": "Are you sure you want to uninstall \"{{name}}\"? This will remove the skill from all apps and create a local backup first.",
     "uninstallInMainPanel": "Please uninstall skills from the main panel",
