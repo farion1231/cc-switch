@@ -73,6 +73,12 @@ describe("xAI OAuth provider presets", () => {
     expect(extractCodexModelName(preset!.config)).toBe("grok-4.5");
     expect(preset!.modelCatalog).toEqual([
       expect.objectContaining({
+        model: "grok-4.7",
+        contextWindow: 500000,
+        inputModalities: ["text", "image"],
+        supportsParallelToolCalls: true,
+      }),
+      expect.objectContaining({
         model: "grok-4.5",
         contextWindow: 500000,
         supportsParallelToolCalls: true,

@@ -17,6 +17,7 @@ mod claude;
 mod codex;
 pub(crate) mod codex_chat_common;
 pub mod codex_chat_history;
+pub(crate) mod codex_compaction;
 pub mod codex_oauth_auth;
 pub(crate) mod codex_responses_sse;
 pub mod copilot_auth;
@@ -24,8 +25,10 @@ pub mod copilot_model_map;
 mod gemini;
 pub(crate) mod gemini_schema;
 pub mod gemini_shadow;
+pub(crate) mod inline_think;
 pub mod models;
 pub(crate) mod reasoning_bridge;
+pub(crate) mod responses_late_arguments;
 pub mod streaming;
 pub mod streaming_codex_anthropic;
 pub mod streaming_codex_chat;
@@ -34,6 +37,7 @@ pub mod streaming_responses;
 pub mod transform;
 pub mod transform_codex_anthropic;
 pub mod transform_codex_chat;
+pub mod transform_codex_chat_moonshot_schema;
 pub mod transform_codex_responses_namespace;
 pub mod transform_codex_responses_xai_sanitize;
 pub mod transform_gemini;
@@ -58,10 +62,12 @@ pub use claude::{
 pub use codex::CodexAdapter;
 pub use codex::{
     apply_codex_chat_upstream_model, apply_codex_upstream_model, codex_provider_upstream_model,
-    inject_codex_chat_prompt_cache_key, is_codex_official_provider,
-    provider_needs_responses_namespace_flatten, resolve_codex_catalog_tool_profile,
-    resolve_codex_chat_reasoning_config, should_convert_codex_responses_to_anthropic,
-    should_convert_codex_responses_to_chat,
+    codex_stack_upstream_rejects_web_search, inject_codex_chat_prompt_cache_key,
+    is_codex_official_provider, is_codex_responses_endpoint,
+    provider_needs_responses_late_arguments_repair, provider_needs_responses_namespace_flatten,
+    resolve_codex_catalog_tool_profile, resolve_codex_chat_reasoning_config,
+    should_convert_codex_responses_to_anthropic, should_convert_codex_responses_to_chat,
+    strip_codex_hosted_web_search,
 };
 pub use gemini::GeminiAdapter;
 
@@ -208,7 +214,7 @@ impl ProviderType {
             }
             AppType::GrokBuild => ProviderType::Codex,
             AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => ProviderType::Codex,
-            AppType::Pi => return None,
+            AppType::Pi | AppType::Mcode => return None,
         };
         Some(provider_type)
     }
@@ -264,7 +270,7 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
         AppType::Gemini => Box::new(GeminiAdapter::new()),
         AppType::GrokBuild => Box::new(CodexAdapter::new()),
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => Box::new(CodexAdapter::new()),
-        AppType::Pi => return None,
+        AppType::Pi | AppType::Mcode => return None,
     })
 }
 

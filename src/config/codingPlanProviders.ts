@@ -2,13 +2,15 @@
  * Coding Plan 供应商的 base_url 路由表。
  *
  * 与后端 `src-tauri/src/services/coding_plan.rs::detect_provider` 保持一致：
- * 后端靠 `url.contains(...)` 做子串判断，前端这里用 RegExp 做同效匹配。
+ * 后端靠 `url.contains(...)` 做子串判断（MiniMax 例外，按 host 标签匹配），
+ * 前端这里用 RegExp 做同效匹配。
  * 新增供应商时改这一处即可（UsageScriptModal 下拉 + useProviderActions
  * 新建自动注入 + 托盘识别全部复用）。
  */
 import { createUsageScript } from "@/types";
 import { TEMPLATE_TYPES } from "@/config/constants";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import { extractGrokBuildBaseUrl } from "@/utils/grokBuildConfig";
 
 export interface CodingPlanProviderEntry {
   /** 与后端 QuotaTier 的 `codingPlanProvider` 取值对齐 */
@@ -19,7 +21,8 @@ export interface CodingPlanProviderEntry {
     | "minimax"
     | "zenmux"
     | "volcengine"
-    | "opencode_go";
+    | "opencode_go"
+    | "command_code";
   /** UsageScriptModal 下拉显示用 */
   label: string;
   /** base_url 匹配规则 */
@@ -44,9 +47,12 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     pattern: /bigmodel\.cn/i,
   },
   {
+    // 按 host 标签边界匹配（同后端 codex_url_host_matches_any），不认
+    // api.minimax.cn.example.com 这类伪造后缀或出现在路径里的域名
     id: "minimax",
     label: "MiniMax",
-    pattern: /api\.minimaxi?\.com|api\.minimax\.io/i,
+    pattern:
+      /^(?:https?:\/\/)?(?:[^/?#@]*@)?(?:[\w-]+\.)*api\.(?:minimaxi\.com|minimax\.(?:io|cn))(?=[:/?#]|$)/i,
   },
   {
     id: "zenmux",
@@ -72,6 +78,13 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     id: "opencode_go",
     label: "OpenCode Go",
     pattern: /opencode\.ai\/zen\/go/i,
+  },
+  {
+    // Command Code 的余额与窗口接口由官方 CLI 使用，当前未公开文档化。
+    // Claude 使用 /provider，Codex 使用 /provider/v1。
+    id: "command_code",
+    label: "Command Code",
+    pattern: /api\.commandcode\.ai\/provider(?:[/?#]|$)/i,
   },
 ] as const;
 
@@ -109,11 +122,25 @@ export function extractBaseUrlForUsageDetection(
           : null,
       );
       break;
+    case "gemini":
+      raw = settingsConfig.env?.GOOGLE_GEMINI_BASE_URL;
+      break;
+    case "grokbuild":
+      raw =
+        typeof settingsConfig.config === "string"
+          ? extractGrokBuildBaseUrl(settingsConfig.config)
+          : null;
+      break;
     case "opencode":
+    case "mcode":
       raw = settingsConfig.options?.baseURL;
       break;
     case "pi":
+    case "openclaw":
       raw = settingsConfig.baseUrl;
+      break;
+    case "hermes":
+      raw = settingsConfig.base_url;
       break;
     default:
       return null;
@@ -126,10 +153,10 @@ export function extractBaseUrlForUsageDetection(
  * `meta.usage_script` 标记为 token_plan 并启用。
  *
  * - 仅在 `meta.usage_script` 完全缺失时注入，不覆盖用户/UsageScriptModal 已有配置
- * - Claude app 保持既有行为：命中任意 Coding Plan 供应商都注入；
- *   其余 app（claude-desktop/codex/opencode/pi）仅对 OpenCode Go 注入——
- *   五个 app 各有一份 OpenCode Go 预设、凭据形态后端全部支持，而智谱/Kimi
- *   等在其他 app 的自动注入未逐一验证过，不随手扩大
+ * - 所有 app 一视同仁：套餐额度只按 Key（智谱另看 host）查固定端点，与
+ *   客户端协议、base_url 路径无关；凭据提取与后端 `resolve_usage_credentials` 对齐
+ * - ZenMux 例外，仍只在 Claude 注入：它的查询直接 GET 用户填的 base_url，
+ *   其他 app 的推理地址未验证能返回额度
  * - code 置空：Rust 端走专用 `coding_plan::get_coding_plan_quota`，不执行 JS 脚本
  */
 export function injectCodingPlanUsageScript<
@@ -146,9 +173,7 @@ export function injectCodingPlanUsageScript<
   );
   const codingPlanProvider = detectCodingPlanProvider(baseUrl);
   if (!codingPlanProvider) return provider;
-  if (appId !== "claude" && codingPlanProvider !== "opencode_go") {
-    return provider;
-  }
+  if (codingPlanProvider === "zenmux" && appId !== "claude") return provider;
 
   return {
     ...provider,

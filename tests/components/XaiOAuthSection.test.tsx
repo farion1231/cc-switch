@@ -8,6 +8,11 @@ vi.mock("@/components/providers/forms/hooks/useXaiOauth", () => ({
   useXaiOauth: mockUseXaiOauth,
 }));
 
+// 「N 个供应商在用」要读供应商列表（React Query）；这里不关心，给空
+vi.mock("@/components/providers/forms/hooks/useManagedAccountUsers", () => ({
+  useManagedAccountUsers: () => () => [],
+}));
+
 describe("XaiOAuthSection", () => {
   beforeEach(() => {
     mockUseXaiOauth.mockReturnValue({

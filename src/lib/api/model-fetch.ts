@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { TFunction } from "i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
+import { parseHeaderOverrideJson } from "@/lib/requestOverrides";
 
 export interface FetchedModel {
   id: string;
@@ -13,10 +14,33 @@ export interface ModelFetchOptions {
 }
 
 /**
+ * 把表单里的本地代理 Header 覆盖 JSON 解析成取模型列表时要携带的请求头。
+ *
+ * 与转发路径共用 parseHeaderOverrideJson 的校验规则；解析失败或覆盖为空时
+ * 静默返回 undefined（回退到不带覆盖头取模型），格式错误由表单字段本身提示。
+ */
+export function modelFetchRequestHeaders(
+  headersJson: string,
+): Record<string, string> | undefined {
+  const { headers, error } = parseHeaderOverrideJson(headersJson);
+  if (error || !headers || Object.keys(headers).length === 0) {
+    return undefined;
+  }
+  return headers;
+}
+
+/**
  * 从供应商获取可用模型列表
  *
  * 使用 OpenAI 兼容的 GET /v1/models 端点。优先用 `modelsUrl` 精确覆写；
  * 否则后端会对 baseURL 生成候选列表并按序尝试（含"剥离 /anthropic 等兼容子路径"兜底）。
+ *
+ * 该接口可以获取数据格式为
+ * OpenAI Chat Completion {"data": [{"id": "xxx","owned_by": "xxx"}]} 文档：https://developers.openai.com/api/reference/resources/models/methods/list
+ * 和
+ * Anthropic兼容 {"data":[{"id":"xxx"}]} 文档：https://platform.claude.com/docs/en/api/models/list
+ * 这两种端点的模型列表
+ * 特别支持智谱 OpenAI Responses {"models":[{"slug":"xxx"}]} 端点：https://open.bigmodel.cn/api/v1/models
  */
 export async function fetchModelsForConfig(
   baseUrl: string,
