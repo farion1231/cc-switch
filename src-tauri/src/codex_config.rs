@@ -2290,9 +2290,9 @@ fn find_codex_official_model<'a>(model: &str, candidates: &'a [Value]) -> Option
     })
 }
 
-/// 第三方供应商上命中官方的 GPT 行：官方条目整条照搬（提示词、工具、档位、窗口都以官方
-/// 为准，不接受行里的覆盖值；窗口不同时在 `config.toml` 里设 `model_context_window`），
-/// 只改掉属于官方账号或官方后端的字段。
+/// 第三方供应商上命中官方的 GPT 行：官方条目整条照搬（提示词、工具、档位都以官方为准，
+/// 不接受行里的覆盖值），只改掉属于官方账号或官方后端的字段。行里明确填的上下文窗口
+/// 由调用方另行写入（见 [`apply_codex_row_context_window`]），没填时沿用官方窗口。
 fn codex_official_model_entry(
     official: &Value,
     model: &str,
@@ -2323,6 +2323,21 @@ fn codex_official_model_entry(
         obj.insert("supports_image_detail_original".to_string(), json!(false));
     }
     entry
+}
+
+/// 用户在模型行里明确填了上下文窗口：照搬官方条目时用它替换官方窗口（中转站的窗口可能
+/// 比官方大或小，`model_context_window` 只能整家设一个值），压缩点跟着取窗口的 90%，
+/// 和 Codex 自己的默认一致，避免沿用按官方窗口算的压缩点。
+fn apply_codex_row_context_window(entry: &mut Value, window: u64) {
+    let Some(obj) = entry.as_object_mut() else {
+        return;
+    };
+    obj.insert("context_window".to_string(), json!(window));
+    obj.insert("max_context_window".to_string(), json!(window));
+    obj.insert(
+        "auto_compact_token_limit".to_string(),
+        json!(window * 9 / 10),
+    );
 }
 
 /// 目录里的一行是不是按 `official` 原样镜像出来的：反向解析会保留的几项（显示名、窗口、
@@ -2390,7 +2405,13 @@ fn codex_catalog_from_specs_for_row(
         .enumerate()
         .map(
             |(index, spec)| match find_codex_official_model(&spec.model, &official) {
-                Some(found) => codex_official_model_entry(found, &spec.model, index, profile),
+                Some(found) => {
+                    let mut entry = codex_official_model_entry(found, &spec.model, index, profile);
+                    if let Some(window) = spec.context_window {
+                        apply_codex_row_context_window(&mut entry, window);
+                    }
+                    entry
+                }
                 None => codex_catalog_model_entry(
                     &template,
                     spec,
@@ -5109,8 +5130,8 @@ wire_api = "responses"
         let models = with_official_models(official_gpt_rows(), || {
             catalog_for(
                 json!([
-                    // 行里的覆盖值对官方行不生效。
-                    { "model": "gpt-6-sol", "contextWindow": 128_000, "reasoningLevels": ["none"] },
+                    // 行里明确填的窗口生效，其余覆盖值（档位等）对官方行不生效。
+                    { "model": "gpt-6-sol", "contextWindow": 1_000_000, "reasoningLevels": ["none"] },
                     { "model": "glm-5" }
                 ]),
                 "",
@@ -5128,8 +5149,9 @@ wire_api = "responses"
         assert_eq!(gpt["apply_patch_tool_type"], "freeform");
         assert_eq!(gpt["web_search_tool_type"], "text_and_image");
         assert_eq!(gpt["tool_mode"], "code_mode_only");
-        assert_eq!(gpt["context_window"], 272_000);
-        assert_eq!(gpt["max_context_window"], 872_000);
+        assert_eq!(gpt["context_window"], 1_000_000);
+        assert_eq!(gpt["max_context_window"], 1_000_000);
+        assert_eq!(gpt["auto_compact_token_limit"], 900_000);
         assert_eq!(gpt["default_reasoning_level"], "low");
         assert_eq!(gpt["supported_reasoning_levels"][1]["effort"], "xhigh");
         assert_eq!(gpt["supports_image_detail_original"], true);
@@ -5257,6 +5279,50 @@ wire_api = "responses"
         // 各家按自己的链路：走 Chat 的那家不发 original 精度的图片。
         assert_eq!(models[0]["supports_image_detail_original"], true);
         assert_eq!(models[1]["supports_image_detail_original"], false);
+    }
+
+    #[test]
+    fn official_gpt_rows_without_a_window_keep_the_official_window() {
+        let models = with_official_models(official_gpt_rows(), || {
+            catalog_for(
+                json!([
+                    { "model": "gpt-6-sol" },
+                    { "model": "gpt-6", "contextWindow": 500_000 },
+                    { "model": "gpt-5.5", "contextWindow": 200_000 }
+                ]),
+                "",
+                CodexCatalogToolProfile::ProxyChat,
+            )
+        });
+        assert_eq!(models[0]["context_window"], 272_000);
+        assert_eq!(models[0]["max_context_window"], 872_000);
+        assert!(models[0].get("auto_compact_token_limit").is_none());
+        // 每个模型按自己填的值，互不影响；官方提示词照旧。
+        assert_eq!(models[1]["context_window"], 500_000);
+        assert_eq!(models[1]["auto_compact_token_limit"], 450_000);
+        assert_eq!(models[2]["context_window"], 200_000);
+        assert_eq!(models[2]["max_context_window"], 200_000);
+        assert_eq!(
+            models[2]["model_messages"]["instructions_template"],
+            "GPT-5.5 prompt"
+        );
+    }
+
+    #[test]
+    fn official_gpt_rows_round_trip_their_custom_window() {
+        let simplified = with_official_models(official_gpt_rows(), || {
+            let catalog = json!({
+                "models": catalog_for(
+                    json!([{ "model": "gpt-6-sol", "contextWindow": 1_000_000 }]),
+                    "",
+                    CodexCatalogToolProfile::NativeResponses,
+                )
+            });
+            build_simplified_catalog_from_texts("", &catalog.to_string())
+        });
+        let rows = simplified.unwrap()["models"].as_array().unwrap().clone();
+        assert_eq!(rows[0]["model"], "gpt-6-sol");
+        assert_eq!(rows[0]["contextWindow"], 1_000_000);
     }
 
     #[test]
