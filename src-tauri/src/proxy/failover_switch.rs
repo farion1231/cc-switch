@@ -103,7 +103,7 @@ impl FailoverSwitchManager {
                     return Ok(false);
                 }
 
-                // Linux 重建原生菜单，其它平台通知托盘面板（不挂原生菜单）
+                // Linux 原位更新原生菜单，其它平台重建菜单或通知托盘面板
                 crate::tray::refresh_tray_menu(app);
             }
 

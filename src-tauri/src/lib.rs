@@ -334,29 +334,8 @@ fn handle_deeplink_url(
 
 /// 更新托盘菜单的Tauri命令
 #[tauri::command]
-async fn update_tray_menu(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-) -> Result<bool, String> {
-    if !tray_panel::uses_native_menu() {
-        // 用托盘面板、不挂原生菜单：更新图标状态，通知开着的面板重新取数据。
-        tray::refresh_tray_menu(&app);
-        return Ok(app.tray_by_id(tray::TRAY_ID).is_some());
-    }
-    match tray::create_tray_menu(&app, state.inner()) {
-        Ok(new_menu) => {
-            if let Some(tray) = app.tray_by_id(tray::TRAY_ID) {
-                tray.set_menu(Some(new_menu))
-                    .map_err(|e| format!("更新托盘菜单失败: {e}"))?;
-                return Ok(true);
-            }
-            Ok(false)
-        }
-        Err(err) => {
-            log::error!("创建托盘菜单失败: {err}");
-            Ok(false)
-        }
-    }
+async fn update_tray_menu(app: tauri::AppHandle) -> Result<bool, String> {
+    tray::update_tray_menu(&app).await
 }
 
 /// 本进程打开文件描述符的软上限目标。macOS 的 `setrlimit` 不接受超过 `OPEN_MAX`（10240）的值。

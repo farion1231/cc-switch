@@ -28,6 +28,9 @@ use crate::provider::Provider;
 use crate::services::usage_cache::UsageCache;
 use crate::store::AppState;
 
+#[cfg(any(target_os = "linux", test))]
+mod menu_sync;
+
 const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
 /// Copilot 用量结果的单位（`commands::provider` 的 `COPILOT_UNIT_PREMIUM`）：高级请求次数。
 const COPILOT_UNIT_PREMIUM: &str = "requests";
@@ -74,6 +77,7 @@ const WARN_BELOW_PERCENT: f64 = 20.0;
 
 /// 每个应用行的子菜单句柄，额度更新时就地改标题而不是整菜单重建（整建会关掉 macOS 上
 /// 正开着的菜单）。`create_tray_menu` 每次重建都整表覆盖写入。
+#[cfg(not(target_os = "linux"))]
 static TRAY_SECTION_SUBMENUS: Lazy<Mutex<HashMap<AppType, Submenu<tauri::Wry>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
@@ -2336,11 +2340,11 @@ fn menu_error(e: impl std::fmt::Display) -> AppError {
     AppError::Message(format!("创建托盘菜单失败: {e}"))
 }
 
-fn attach_entry(
-    app: &tauri::AppHandle,
+fn attach_entry<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     entry: &TrayEntry,
-    handles: &mut HashMap<AppType, Submenu<tauri::Wry>>,
-) -> Result<Option<MenuItemKind<tauri::Wry>>, AppError> {
+    handles: &mut HashMap<AppType, Submenu<R>>,
+) -> Result<Option<MenuItemKind<R>>, AppError> {
     Ok(Some(match entry {
         TrayEntry::Separator => return Ok(None),
         TrayEntry::Item { id, text, enabled } => MenuItemKind::MenuItem(
@@ -2378,6 +2382,18 @@ fn attach_entry(
     }))
 }
 
+/// Linux 点图标只能出原生菜单，最上面放一项打开托盘面板。建菜单和原位刷新共用这份条目。
+#[cfg(target_os = "linux")]
+fn linux_menu_entries(entries: Vec<TrayEntry>) -> Vec<TrayEntry> {
+    let texts = crate::tray_panel::PanelTexts::current();
+    let mut all = vec![
+        TrayEntry::item(crate::tray_panel::OPEN_PANEL_ID, texts.open_panel),
+        TrayEntry::Separator,
+    ];
+    all.extend(entries);
+    all
+}
+
 /// 创建动态托盘菜单
 pub fn create_tray_menu(
     app: &tauri::AppHandle,
@@ -2388,21 +2404,11 @@ pub fn create_tray_menu(
 
     let mut handles = HashMap::new();
     let mut builder = MenuBuilder::new(app);
-    // Linux 点图标只能出原生菜单，最上面放一项打开托盘面板。
     #[cfg(target_os = "linux")]
-    {
-        let texts = crate::tray_panel::PanelTexts::current();
-        let item = MenuItem::with_id(
-            app,
-            crate::tray_panel::OPEN_PANEL_ID,
-            texts.open_panel,
-            true,
-            None::<&str>,
-        )
-        .map_err(menu_error)?;
-        builder = builder.item(&item).separator();
-    }
-    for entry in &model.entries {
+    let entries = linux_menu_entries(model.entries);
+    #[cfg(not(target_os = "linux"))]
+    let entries = model.entries;
+    for entry in &entries {
         builder = match attach_entry(app, entry, &mut handles)? {
             Some(item) => builder.item(&item),
             None => builder.separator(),
@@ -2412,7 +2418,13 @@ pub fn create_tray_menu(
     #[cfg(target_os = "windows")]
     crate::tray_compat::remember_native_menu(&menu);
 
-    *lock(&TRAY_SECTION_SUBMENUS) = handles;
+    #[cfg(target_os = "linux")]
+    app.manage(menu_sync::LinuxTrayMenu(menu.clone()));
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        *lock(&TRAY_SECTION_SUBMENUS) = handles;
+    }
     update_problem_indicator(app, &texts, &model.status.problems);
     *lock(&LAST_STATUS) = model.status;
     Ok(menu)
@@ -2566,7 +2578,7 @@ fn update_problem_indicator(app: &tauri::AppHandle, texts: &TrayTexts, problems:
 /// 就地更新各应用行的标题（额度变化时走这条），避免 `set_menu` 关掉用户正开着的菜单。
 /// 句柄由上一次 `create_tray_menu` 填充；为空（从未构建过菜单）时无事发生。
 fn update_tray_usage_labels(app: &tauri::AppHandle) {
-    // Linux（AppIndicator）上 `Submenu::set_text` 不稳，标题会变空（#3385）：一律整菜单重建。
+    // Linux 保留原生菜单树：整棵替换会触发 AppIndicators 读取菜单时的取消竞态。
     #[cfg(target_os = "linux")]
     {
         refresh_tray_menu(app);
@@ -2602,23 +2614,66 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
 }
 
 pub fn refresh_tray_menu(app: &tauri::AppHandle) {
+    #[cfg(target_os = "linux")]
+    {
+        let handle = app.clone();
+        if let Err(e) = app.run_on_main_thread(move || {
+            if let Err(e) = menu_sync::refresh(&handle) {
+                log::error!("刷新托盘菜单失败: {e}");
+            }
+            crate::tray_panel::notify_changed(&handle);
+        }) {
+            log::error!("调度托盘菜单刷新失败: {e}");
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    if let Err(e) = replace_tray_menu(app) {
+        log::error!("刷新托盘菜单失败: {e}");
+    }
+}
+
+/// 前端刷新和后台刷新共用同一条路径；Linux 等主线程完成原位更新再返回。
+pub async fn update_tray_menu(app: &tauri::AppHandle) -> Result<bool, String> {
+    #[cfg(target_os = "linux")]
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let handle = app.clone();
+        app.run_on_main_thread(move || {
+            let _ = tx.send(menu_sync::refresh(&handle).map_err(|e| e.to_string()));
+            crate::tray_panel::notify_changed(&handle);
+        })
+        .map_err(|e| e.to_string())?;
+        rx.await.map_err(|e| e.to_string())?
+    }
+    #[cfg(not(target_os = "linux"))]
+    replace_tray_menu(app)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn replace_tray_menu(app: &tauri::AppHandle) -> Result<bool, String> {
+    let mut updated = Ok(false);
     if let Some(state) = app.try_state::<AppState>() {
         if crate::tray_panel::uses_native_menu() {
             match create_tray_menu(app, state.inner()) {
                 Ok(new_menu) => {
                     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-                        if let Err(e) = tray.set_menu(Some(new_menu)) {
-                            log::error!("刷新托盘菜单失败: {e}");
-                        }
+                        updated = tray
+                            .set_menu(Some(new_menu))
+                            .map(|()| true)
+                            .map_err(|e| e.to_string());
                     }
                 }
                 Err(e) => log::error!("创建托盘菜单失败: {e}"),
             }
-        } else if let Err(e) = sync_tray_status(app, state.inner()) {
-            log::error!("更新托盘状态失败: {e}");
+        } else {
+            if let Err(e) = sync_tray_status(app, state.inner()) {
+                log::error!("更新托盘状态失败: {e}");
+            }
+            updated = Ok(app.tray_by_id(TRAY_ID).is_some());
         }
     }
     crate::tray_panel::notify_changed(app);
+    updated
 }
 
 /// 设置里切换了原生托盘菜单 / 托盘面板：当场换掉托盘的点击行为，不用重启。
@@ -2633,6 +2688,7 @@ pub fn apply_tray_style(app: &tauri::AppHandle) {
                 log::error!("摘掉托盘菜单失败: {e}");
             }
             // 菜单没了，旧句柄不再更新标题。
+            #[cfg(not(target_os = "linux"))]
             lock(&TRAY_SECTION_SUBMENUS).clear();
         }
         if let Err(e) = tray.set_show_menu_on_left_click(native_menu_on_left_click(native)) {

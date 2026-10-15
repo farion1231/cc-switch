@@ -301,7 +301,7 @@ pub async fn set_auto_failover_enabled(
         let _ = app.emit("provider-switched", event_data);
     }
 
-    // 刷新托盘，确保状态同步（Linux 重建原生菜单，其它平台通知托盘面板，不挂原生菜单）
+    // 刷新托盘，确保状态同步（Linux 原位更新原生菜单，其它平台重建菜单或通知托盘面板）
     crate::tray::refresh_tray_menu(&app);
 
     Ok(())
