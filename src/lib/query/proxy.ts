@@ -6,6 +6,7 @@ import type {
   AppModeView,
   GlobalProxyConfig,
   AppProxyConfig,
+  ProxyStack,
   ProxyStackWriteError,
   ProxyTakeoverStatus,
   StackRoleBindings,
@@ -177,7 +178,13 @@ export function useSetProxyStackRoleBindings() {
       bindings: StackRoleBindings;
     }) => proxyApi.setProxyStackRoleBindings(appType, bindings),
     onSuccess: async (_data, variables) => {
-      // 等服务端的新状态进入缓存再关闭 Sheet；重开时不能用旧草稿覆盖刚保存的档位。
+      // 写入已确认的绑定：即使刷新失败，重开 Sheet 也不能从旧缓存起稿并覆盖它。
+      queryClient.setQueryData<ProxyStack>(
+        ["providers", variables.appType, "stack"],
+        (stack) =>
+          stack ? { ...stack, roleBindings: variables.bindings } : stack,
+      );
+      // 等刷新结束再关闭 Sheet；候选和失效状态仍以服务端视图为准。
       await queryClient.invalidateQueries({
         queryKey: ["providers", variables.appType],
       });

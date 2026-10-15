@@ -317,6 +317,63 @@ describe("SwitchModePanel — Stack mode", () => {
     ).toHaveTextContent("K3（Kimi）");
   });
 
+  it("preserves saved tiers when refreshing the stack fails before reopening", async () => {
+    mockMode("stack", "route");
+    const target = { providerId: "kimi", modelId: "ccs-claude-kimi--k3" };
+    const calls: Record<string, unknown>[] = [];
+    let savedBindings: Record<string, typeof target> = {};
+    let failRefresh = false;
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        failRefresh
+          ? HttpResponse.json({ error: "read failed" }, { status: 500 })
+          : HttpResponse.json({
+              active: true,
+              members: [
+                { providerId: "route", modelIds: [], route: true },
+                { providerId: "kimi", modelIds: [target.modelId], route: false },
+              ],
+              roleBindings: savedBindings,
+              roleCandidates: [{ ...target, displayName: "K3（Kimi）" }],
+            }),
+      ),
+      http.post(
+        `${TAURI_ENDPOINT}/set_proxy_stack_role_bindings`,
+        async ({ request }) => {
+          const call = (await request.json()) as {
+            bindings: Record<string, typeof target>;
+          };
+          calls.push(call);
+          savedBindings = call.bindings;
+          failRefresh = true;
+          return HttpResponse.json(null);
+        },
+      ),
+    );
+    renderPanel("claude", { route: provider("route"), kimi: provider("kimi") });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "mode.roleBindings" }),
+    );
+    fireEvent.click(await screen.findByRole("combobox", { name: "Opus" }));
+    fireEvent.click(await screen.findByRole("option", { name: "K3（Kimi）" }));
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() =>
+      expect(screen.queryByText("mode.roleBindingsTitle")).not.toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "mode.roleBindings" }));
+    expect(await screen.findByRole("combobox", { name: "Opus" })).toHaveTextContent(
+      "K3（Kimi）",
+    );
+    fireEvent.click(screen.getByRole("combobox", { name: "Sonnet" }));
+    fireEvent.click(await screen.findByRole("option", { name: "K3（Kimi）" }));
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() => expect(calls).toHaveLength(2));
+    expect(calls[1]).toMatchObject({
+      bindings: { opus: target, sonnet: target },
+    });
+    expect(savedBindings).toEqual({ opus: target, sonnet: target });
+  });
+
   it("adds and removes Stack members through the backend", async () => {
     mockMode("stack", "route");
     const setCalls: unknown[] = [];
