@@ -545,6 +545,33 @@ pub(crate) fn plan(
     let provider = target_provider(target);
     let projection = provider.map(project).transpose()?;
 
+    let stack = match target {
+        Target::Proxy { stack, .. } => *stack,
+        Target::Direct(_) => &[],
+    };
+    let stack_catalog = match (provider, &projection) {
+        (Some(provider), Some(projection)) => stack_catalog(provider, projection, stack, prepared)?,
+        _ => None,
+    };
+    // Capability decisions follow the catalog actually published to Codex. A
+    // foreign catalog or a skipped invalid member must not enable compaction.
+    let published_keys: std::collections::HashSet<&str> = stack_catalog
+        .as_ref()
+        .and_then(|catalog| catalog.get("models"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|model| model.get("slug").and_then(Value::as_str))
+        .filter_map(|id| match crate::mode::stack::decode(&AppType::Codex, id) {
+            crate::mode::stack::Decoded::Stack { key, .. } => Some(key),
+            _ => None,
+        })
+        .collect();
+    let published_stack: Vec<&Member> = stack
+        .iter()
+        .filter(|member| published_keys.contains(member.key.as_str()))
+        .collect();
+
     let (top, mut nested, mut exclusive) = match (&projection, provider) {
         (Some(projection), Some(provider)) => (
             projection.top.clone(),
@@ -593,7 +620,7 @@ pub(crate) fn plan(
             Target::Proxy {
                 route, base_url, ..
             },
-            Some(_),
+            Some(projection),
         ) => {
             if official {
                 let auth = match &managed_login {
@@ -609,8 +636,34 @@ pub(crate) fn plan(
                     auth,
                 )
             } else {
+                // A native relay without published Stack models honors the existing
+                // remote-compaction toggle. Protocol support must not prevent using
+                // Fast with local compaction.
+                let route_remote_compaction = matches!(
+                    &projection.route,
+                    Route::Custom { table, .. }
+                        if table.get("name").and_then(Item::as_str) == Some("OpenAI")
+                );
+                // A published native Stack member needs the shared client provider
+                // to expose remote compaction even when the default route does not.
+                let native_remote_compaction =
+                    (crate::proxy::providers::codex_provider_supports_native_protocol(route)
+                        && (!published_stack.is_empty() || route_remote_compaction))
+                        || published_stack.iter().any(|member| {
+                            crate::proxy::providers::codex_provider_supports_native_protocol(
+                                &member.provider,
+                            )
+                        });
                 (
-                    RouteWrite::Custom(proxy_route_table(ROUTE_ID, base_url, false)),
+                    RouteWrite::Custom(proxy_route_table(
+                        if native_remote_compaction {
+                            "OpenAI"
+                        } else {
+                            ROUTE_ID
+                        },
+                        base_url,
+                        false,
+                    )),
                     Some(RouteAuth::Bearer),
                     AuthGoal::KeepNative,
                 )
@@ -618,19 +671,11 @@ pub(crate) fn plan(
         }
     };
 
-    let stack = match target {
-        Target::Proxy { stack, .. } => *stack,
-        Target::Direct(_) => &[],
-    };
     // 聚合模式下子代理跟随主模型（用户在模型选择器里选的），和 Claude Code 一样不写：行里
     // 是路由那家的模型名，主模型换成别家的 Stack 模型后，子代理会被悄悄发回路由那家。
     if !stack.is_empty() {
         nested.retain(|(path, _)| !is_subagent_key(path));
     }
-    let stack_catalog = match (provider, &projection) {
-        (Some(provider), Some(projection)) => stack_catalog(provider, projection, stack, prepared)?,
-        _ => None,
-    };
     let catalog = match (stack_catalog, provider, &projection) {
         (Some(catalog), _, _) => {
             // 窗口类全局键会覆盖目录里的每一行，改由各家写进自己的行。

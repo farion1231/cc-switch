@@ -434,6 +434,9 @@ function ProviderFormFull({
     );
     setHasValidCodexOfficialSelection(true);
     setCodexFastMode(initialData?.meta?.codexFastMode ?? false);
+    setCodexOfficialCompatible(
+      initialData?.meta?.codexOfficialCompatible ?? false,
+    );
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
@@ -638,6 +641,10 @@ function ProviderFormFull({
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
   );
+  const [codexOfficialCompatible, setCodexOfficialCompatible] =
+    useState<boolean>(
+      () => initialData?.meta?.codexOfficialCompatible ?? false,
+    );
   const [codexChatReasoning, setCodexChatReasoning] =
     useState<CodexChatReasoning>(
       () => initialData?.meta?.codexChatReasoning ?? {},
@@ -804,6 +811,9 @@ function ProviderFormFull({
   const handleCodexApiFormatChange = useCallback(
     (format: CodexApiFormat) => {
       setLocalCodexApiFormat(format);
+      if (format !== "openai_responses") {
+        setCodexOfficialCompatible(false);
+      }
       ensureCodexResponsesWireApi();
     },
     [ensureCodexResponsesWireApi],
@@ -953,6 +963,18 @@ function ProviderFormFull({
         selectedPresetEntry?.preset.category === "official"));
   const isCodexOfficialManagedOauthBound =
     isCodexOfficialProvider && Boolean(selectedCodexAccountId);
+  const canUseCodexOfficialCompatibility =
+    appId === "codex" &&
+    category !== "official" &&
+    !isCodexOfficialProvider &&
+    !isCopilotProvider &&
+    !isXaiOauthProvider &&
+    localCodexApiFormat === "openai_responses";
+  useEffect(() => {
+    if (!canUseCodexOfficialCompatibility) {
+      setCodexOfficialCompatible(false);
+    }
+  }, [canUseCodexOfficialCompatibility, initialData]);
   // 在聚合那格打开（没给就看应用实际是否在聚合模式）时，新增 / 编辑用聚合的简化表单
   const useStackLayout =
     (modeView ?? appModeView?.mode) === "stack" &&
@@ -1925,6 +1947,10 @@ function ProviderFormFull({
           ? selectedGitHubAccountId
           : undefined,
       codexFastMode: isClaudeCodexOauthProvider ? codexFastMode : undefined,
+      codexOfficialCompatible:
+        canUseCodexOfficialCompatibility && codexOfficialCompatible
+          ? true
+          : undefined,
       codexChatReasoning:
         appId === "codex" && category !== "official" && isCodexChatFormat
           ? normalizeCodexChatReasoningForSave(codexChatReasoning)
@@ -2115,6 +2141,9 @@ function ProviderFormFull({
 
   const handlePresetChange = (value: string) => {
     setSelectedPresetId(value);
+    if (appId === "codex") {
+      setCodexOfficialCompatible(false);
+    }
     // Stack 模型是这家自己的：换预设后回到跟着新预设的模型映射。
     setClaudeStackRows(null);
     if (value === "custom") {
@@ -2696,6 +2725,8 @@ function ProviderFormFull({
               onApiFormatChange={handleCodexApiFormatChange}
               copilotApiFormat={effectiveCodexCopilotApiFormat}
               onCopilotApiFormatChange={handleCodexCopilotApiFormatChange}
+              officialCompatible={codexOfficialCompatible}
+              onOfficialCompatibleChange={setCodexOfficialCompatible}
               anthropicAuthField={localCodexAnthropicAuthField}
               onAnthropicAuthFieldChange={setLocalCodexAnthropicAuthField}
               impersonateClaudeCode={localCodexImpersonateClaudeCode}
