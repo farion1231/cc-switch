@@ -1772,7 +1772,33 @@
     "localProxyRequestOverridesHelp": "作用於格式轉換後發給上游的請求。",
     "apiFormatHelp": "看供應商原生支援哪種協定：Anthropic Messages 原樣轉發、不轉換格式；其餘三種由路由轉成 Anthropic Messages。",
     "directModeFormatInUse": "這張卡正在直連使用：改成這種格式後儲存，請求會失敗。請先切到路由或聚合。",
-    "directModeFormatSwitch": "直連模式下用不了這種格式，切到路由或聚合後才能用這張卡。"
+    "directModeFormatSwitch": "直連模式下用不了這種格式，切到路由或聚合後才能用這張卡。",
+    "modelApiFormats": {
+      "title": "上游協定",
+      "native": "原生",
+      "conversionRequired": "需轉換",
+      "defaultProtocol": "預設上游協定",
+      "models": "使用此協定的模型",
+      "hint": "需要本機路由。在對應協定內設定模型與共用參數；未覆蓋的模型使用供應商預設協定。",
+      "fullUrl": "完整端點 URL 與模型協議覆寫不能同時使用，請關閉完整 URL 模式或刪除覆寫設定。",
+      "model": "模型 ID",
+      "protocol": "上游協議",
+      "remove": "刪除覆寫",
+      "add": "新增模型協議",
+      "missingModel": "請填寫此協議的模型 ID。",
+      "missingProtocol": "請選擇模型的上游協議。",
+      "duplicate": "同一模型只能設定一次協議（忽略 [1M]）。"
+    },
+    "protocolSettings": {
+      "messages": "Anthropic Messages 上游參數",
+      "messagesHint": "使用 Messages 的模型共用這些原有參數，不改變 Codex 的 Responses 協議。",
+      "chat": "OpenAI Chat Completions 上游參數",
+      "chatHint": "使用 Chat 的模型共用這些原有參數，將 Codex 的 reasoning.effort 轉為上游參數。 可選等級和預設深度仍在模型清單中逐模型設定。",
+      "responses": "OpenAI Responses 上游",
+      "responsesHint": "使用 Responses 的模型沿用原生轉發規則，無額外協議轉換參數。",
+      "shared": "所有協議共用的設定",
+      "sharedHint": "這些原有設定適用於此供應商的所有模型，不隨模型協議變化。"
+    }
   },
   "copilot": {
     "authSection": "GitHub Copilot 驗證",

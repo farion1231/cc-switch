@@ -1,3 +1,8 @@
+import { UpstreamSettingsGroup } from "./UpstreamSettingsGroup";
+import {
+  ModelApiFormatsField,
+  type ModelApiFormatsEditor,
+} from "./ModelApiFormatsField";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -79,6 +84,7 @@ interface EndpointCandidate {
 }
 
 interface ClaudeFormFieldsProps {
+  modelApiFormatsEditor?: ModelApiFormatsEditor;
   providerId?: string;
   // API Key
   shouldShowApiKey: boolean;
@@ -234,6 +240,7 @@ export function ClaudeFormFields({
   onModelChange,
   speedTestEndpoints,
   apiFormat,
+  modelApiFormatsEditor,
   onApiFormatChange,
   apiKeyField,
   onApiKeyFieldChange,
@@ -265,7 +272,8 @@ export function ClaudeFormFields({
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
     isFullUrl ||
     customUserAgent ||
-    hasRequestOverrides
+    hasRequestOverrides ||
+    !!modelApiFormatsEditor?.rows.length
   );
   const [advancedExpanded, setAdvancedExpanded] = useState(
     isXaiOauthPreset ? false : hasAnyAdvancedValue,
@@ -834,9 +842,11 @@ export function ClaudeFormFields({
   );
 
   // 上游格式、认证字段：经典布局放在高级选项里，Stack 布局放在连接区。
-  const apiFormatLabel = t("providerForm.apiFormat", {
-    defaultValue: "上游格式",
-  });
+  const apiFormatLabel = modelApiFormatsEditor
+    ? t("providerForm.modelApiFormats.defaultProtocol")
+    : t("providerForm.apiFormat", {
+        defaultValue: "上游格式",
+      });
 
   const apiFormatField = (
     <>
@@ -881,6 +891,7 @@ export function ClaudeFormFields({
                 </SelectItem>
               </SelectContent>
             </Select>
+
             {directModeFormatNotice && apiFormat !== "anthropic" && (
               <DirectModeFormatWarning notice={directModeFormatNotice} />
             )}
@@ -890,6 +901,10 @@ export function ClaudeFormFields({
   );
 
   // 认证字段选择器
+  const hasAnthropicUpstream =
+    apiFormat === "anthropic" ||
+    !!modelApiFormatsEditor?.rows.some((row) => row.format === "anthropic");
+  const usesProtocolTabs = !!modelApiFormatsEditor;
   const authFieldLabel = t("providerForm.authField", {
     defaultValue: "认证字段",
   });
@@ -979,6 +994,29 @@ export function ClaudeFormFields({
     </>
   );
 
+  const protocolTabs = modelApiFormatsEditor ? (
+    <ModelApiFormatsField
+      client="claude"
+      {...modelApiFormatsEditor}
+      defaultFormat={apiFormat}
+      protocolSettings={{ anthropic: authFieldSelect }}
+      models={Array.from(
+        new Set(
+          [
+            ...fetchedModels.map((model) => model.id),
+            ...stackModelRows.map((row) => row.model),
+            claudeModel,
+            defaultHaikuModel,
+            defaultSonnetModel,
+            defaultOpusModel,
+            defaultFableModel,
+            subagentModel,
+          ].filter(Boolean),
+        ),
+      ).map((id) => ({ id, ownedBy: null }))}
+    />
+  ) : null;
+
   if (variant === "stack") {
     // 批量勾选模型用当前预设对应的那份上游列表。
     const stackFetchedModels: FetchedModel[] = isCopilotPreset
@@ -994,14 +1032,14 @@ export function ClaudeFormFields({
       !usesOAuth &&
       !isCodexOauthPreset &&
       !isXaiOauthPreset &&
-      apiFormat === "anthropic";
+      hasAnthropicUpstream;
 
     return (
       <>
         {oauthSections}
         {apiFormatField}
         {apiKeySection}
-        {showAuthField && authFieldSelect}
+        {showAuthField && !usesProtocolTabs && authFieldSelect}
         {templateSection}
         {endpointSection}
         {speedTestModal}
@@ -1045,7 +1083,13 @@ export function ClaudeFormFields({
                   {fullUrlToggle}
                 </div>
               )}
-              {userAgentAndOverrides}
+              {protocolTabs}
+              <UpstreamSettingsGroup
+                protocol="shared"
+                enabled={usesProtocolTabs}
+              >
+                {userAgentAndOverrides}
+              </UpstreamSettingsGroup>
             </CollapsibleContent>
           </Collapsible>
         )}
@@ -1084,6 +1128,7 @@ export function ClaudeFormFields({
           </CollapsibleTrigger>
           <CollapsibleContent className="space-y-4 pt-2">
             {apiFormatField}
+            {protocolTabs}
 
             {fullUrlToggle}
 
@@ -1091,7 +1136,8 @@ export function ClaudeFormFields({
                 靠它决定占位符写在哪个变量；Codex / xAI 托管账号卡的认证由后端注入。 */}
             {!isCodexOauthPreset &&
               !isXaiOauthPreset &&
-              (apiFormat === "anthropic" || isCopilotPreset) &&
+              (hasAnthropicUpstream || isCopilotPreset) &&
+              !usesProtocolTabs &&
               authFieldSelect}
 
             {/* 模型映射 */}
@@ -1321,7 +1367,12 @@ export function ClaudeFormFields({
             {/* Copilot 的请求由转发层按 Copilot 客户端的样子发，UA 和请求覆盖都会被跳过 */}
             {!isCopilotPreset && (
               <div className="space-y-4 border-t border-border pt-4">
-                {userAgentAndOverrides}
+                <UpstreamSettingsGroup
+                  protocol="shared"
+                  enabled={usesProtocolTabs}
+                >
+                  {userAgentAndOverrides}
+                </UpstreamSettingsGroup>
               </div>
             )}
           </CollapsibleContent>

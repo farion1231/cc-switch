@@ -164,7 +164,9 @@ function renderForm(
 }
 
 function formatControl() {
-  return screen.getByRole("combobox", { name: "上游格式" });
+  return screen.getByRole("combobox", {
+    name: /上游格式|默认上游协议|providerForm.modelApiFormats.defaultProtocol/,
+  });
 }
 
 const formatLabels = {
