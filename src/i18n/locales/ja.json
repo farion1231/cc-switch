@@ -922,6 +922,7 @@
     "upToDate": "最新バージョンです",
     "aboutHint": "バージョン情報と更新状況を表示します。",
     "portableMode": "ポータブルモード: 更新は手動ダウンロードが必要です。",
+    "portableUpdateHint": "ポータブル版：上のボタンで新しい zip をダウンロードし、展開して既存の cc-switch.exe を上書きしてください。設定とデータはユーザーフォルダの .cc-switch に保存されており、上書きしても失われません。",
     "updateAvailable": "新しいバージョンがあります: {{version}}",
     "updateBadge": "更新あり",
     "updateFailed": "更新のインストールに失敗しました。ダウンロードページを開こうとしました。",

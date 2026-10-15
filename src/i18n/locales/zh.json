@@ -922,6 +922,7 @@
     "upToDate": "已是最新",
     "aboutHint": "查看版本信息与更新状态。",
     "portableMode": "当前为便携版，更新需手动下载。",
+    "portableUpdateHint": "便携版：点击上方按钮会下载新版压缩包，解压后覆盖原来的 cc-switch.exe 即可。配置和数据保存在用户目录下的 .cc-switch，不会因覆盖而丢失。",
     "updateAvailable": "检测到新版本：{{version}}",
     "updateBadge": "有更新可用",
     "updateFailed": "更新安装失败，已尝试打开下载页面。",
