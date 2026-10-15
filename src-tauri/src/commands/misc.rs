@@ -5807,8 +5807,10 @@ mod tests {
         let effective =
             merge_path_segments_win(&[preferred.to_str().unwrap(), fallback.to_str().unwrap()]);
 
+        // 断言整段 stderr：临时目录在 \\wsl.localhost 下时（WSL2 nightly）以它为工作目录，
+        // cmd 会先往 stderr 打一段「UNC paths are not supported」，所以换成系统目录
         let output = windows_lifecycle_command(&script, &effective)
-            .current_dir(root.path())
+            .current_dir(std::env::var_os("SystemRoot").unwrap())
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(23));
