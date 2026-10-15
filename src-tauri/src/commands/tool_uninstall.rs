@@ -870,7 +870,9 @@ mod tests {
     #[test]
     fn windows_npm_path_fallback_uses_batch_compatible_path() {
         use std::os::windows::process::CommandExt;
+        use std::time::Duration;
 
+        const TEST_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
         const FIXTURE_ROOT: &str = "CC_SWITCH_TEST_NPM_UNINSTALL_ROOT";
         if let Some(root) = std::env::var_os(FIXTURE_ROOT) {
             let root = PathBuf::from(root);
@@ -883,7 +885,7 @@ mod tests {
 
             let resolved = resolve_path_default(
                 "npm",
-                CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+                CommandDeadline::from_timeout(Some(TEST_PROBE_TIMEOUT)),
             )
             .unwrap()
             .expect("npm should resolve from the separate PATH directory");
