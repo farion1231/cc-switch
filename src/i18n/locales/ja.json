@@ -2693,7 +2693,7 @@
         "mcode": "MiniMax Code"
       }
     },
-    "userLevelPath": "ユーザーレベルの MCP パス",
+    "userLevelPath": "ユーザーレベルの MCP 設定パス",
     "serverList": "サーバー一覧",
     "loading": "読み込み中...",
     "empty": "MCP サーバーがありません",
@@ -2712,12 +2712,12 @@
       "fetch": "クイックテンプレート: mcp-fetch"
     },
     "form": {
-      "title": "MCP ID（ユニーク）",
+      "title": "MCP タイトル（一意）",
       "titlePlaceholder": "my-mcp-server",
       "name": "表示名",
       "namePlaceholder": "例: mcp-server-time",
       "enabledApps": "適用するアプリ",
-      "noAppsWarning": "少なくとも 1 つ選択してください",
+      "noAppsWarning": "アプリを少なくとも 1 つ選択してください",
       "description": "説明",
       "descriptionPlaceholder": "任意の説明",
       "tags": "タグ（カンマ区切り）",
@@ -2736,7 +2736,7 @@
       "useWizard": "設定ウィザード",
       "syncOtherSide": "{{target}} にも反映",
       "syncOtherSideHint": "{{target}} に同じ設定を書き込みます。既存の同一 ID は上書きされます。",
-      "willOverwriteWarning": "{{target}} の既存設定を上書きします"
+      "willOverwriteWarning": "{{target}} の同名の設定を上書きします"
     },
     "wizard": {
       "title": "MCP 設定ウィザード",
@@ -4477,7 +4477,7 @@
       "connected": "接続成功",
       "disconnected": "接続失敗",
       "checking": "接続を確認中",
-      "disabled": "無効のため接続は確認しません"
+      "disabled": "無効"
     },
     "noun": "MCP",
     "listSeparator": "、",
@@ -4541,7 +4541,7 @@
       "ok": "OK"
     },
     "templateLabels": {
-      "sequential-thinking": "sequential-thinking"
+      "sequential-thinking": "逐次思考"
     },
     "drawer": {
       "addTitle": "MCP を追加",
