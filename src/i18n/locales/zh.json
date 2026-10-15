@@ -3358,8 +3358,8 @@
     "importSelected": "导入已选 ({{count}})",
     "noUnmanagedFound": "未发现需要导入的技能。所有技能已在 CC Switch 统一管理中。",
     "localSourceScan": {
-      "completed": "已补全 {{count}} 个 Skill 的项目来源",
-      "none": "没有找到可唯一确认的本地项目来源",
+      "completed": "已扫描 {{repositories}} 个项目中的 {{skills}} 个 Skill，补全了 {{count}} 个项目来源",
+      "none": "已扫描 {{repositories}} 个项目中的 {{skills}} 个 Skill，未找到可唯一确认的项目来源",
       "ambiguous": "{{count}} 个 Skill 对应多个项目，已保持未分组。"
     },
     "unmanagedAvailable": "发现可导入的技能",
