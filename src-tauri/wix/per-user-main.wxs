@@ -79,11 +79,28 @@
         {{/if}}
 
         <Property Id="INSTALLDIR">
+          <!-- The registry namespace below is pinned to a literal on BOTH the read and
+               the write side, deliberately not derived from the publisher. The per-user
+               template has recorded this namespace as Software\ccswitch\<product> since
+               it was introduced in v3.4.0; the only value that ever diverged was
+               PathComponent, which wrote a malformed key until #6283 was fixed in v3.20.0
+               (the InstallDir value and both searches were correct in every version).
+               Deriving the namespace from the publisher instead would orphan every
+               install since v3.4.0: the recorded install directory would stop being
+               found and the next upgrade would land in the default directory. Keep every
+               use of this key in this file on the same literal.
+               Note the single backslash after "Software": Handlebars collapses a doubled
+               backslash into one only directly before a mustache delimiter, so the literal
+               part of the path must stay single while the parts feeding variables keep
+               theirs doubled. A doubled backslash here survives into the rendered XML and
+               WiX then rejects the path with ICE03 (invalid registry path). -->
           <!-- First attempt: Search for "InstallDir" -->
-          <RegistrySearch Id="PrevInstallDirWithName" Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}" Name="InstallDir" Type="raw" />
+          <RegistrySearch Id="PrevInstallDirWithName" Root="HKCU" Key="Software\ccswitch\\{{product_name}}" Name="InstallDir" Type="raw" />
 
-          <!-- Second attempt: If the first fails, search for the default key value (this is how the nsis installer currently stores the path) -->
-          <RegistrySearch Id="PrevInstallDirNoName" Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}" Type="raw" />
+          <!-- Second attempt: If the first fails, search for the default key value, which is
+               how the nsis installer stores the path. nsis derives that key from the publisher
+               too, so this only matches an nsis install built before bundle.publisher was set. -->
+          <RegistrySearch Id="PrevInstallDirNoName" Root="HKCU" Key="Software\ccswitch\\{{product_name}}" Type="raw" />
         </Property>
 
         <!-- launch app checkbox -->
@@ -127,7 +144,7 @@
                         <ShortcutProperty Key="System.AppUserModel.ID" Value="{{bundle_id}}"/>
                     </Shortcut>
                     <RemoveFolder Id="DesktopFolder" On="uninstall" />
-                    <RegistryValue Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}" Name="Desktop Shortcut" Type="integer" Value="1" KeyPath="yes" />
+                    <RegistryValue Root="HKCU" Key="Software\ccswitch\\{{product_name}}" Name="Desktop Shortcut" Type="integer" Value="1" KeyPath="yes" />
                 </Component>
             </Directory>
             <Directory Id="LocalAppDataFolder">
@@ -142,7 +159,7 @@
 
         <DirectoryRef Id="INSTALLDIR">
             <Component Id="RegistryEntries" Guid="*">
-                <RegistryKey Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}">
+                <RegistryKey Root="HKCU" Key="Software\ccswitch\\{{product_name}}">
                     <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLDIR]" KeyPath="yes" />
                 </RegistryKey>
                 <!-- Change the Root to HKCU for perUser installations -->
@@ -161,7 +178,7 @@
             </Component>
             <Component Id="Path" Guid="{{path_component_guid}}" Win64="$(var.Win64)">
                 <File Id="Path" Source="{{main_binary_path}}" KeyPath="no" Checksum="yes"/>
-                <RegistryValue Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}" Name="PathComponent" Type="integer" Value="1" KeyPath="yes" />
+                <RegistryValue Root="HKCU" Key="Software\ccswitch\\{{product_name}}" Name="PathComponent" Type="integer" Value="1" KeyPath="yes" />
                 {{#each file_associations as |association| ~}}
                 {{#each association.ext as |ext| ~}}
                 <ProgId Id="{{../../product_name}}.{{ext}}" Advertise="yes" Description="{{association.description}}">
@@ -204,7 +221,7 @@
 							  On="uninstall" />
 
 				<RegistryValue Root="HKCU"
-							   Key="Software\\{{manufacturer}}\\{{product_name}}"
+							   Key="Software\ccswitch\\{{product_name}}"
 							   Name="Uninstaller Shortcut"
 							   Type="integer"
 							   Value="1"
@@ -222,7 +239,7 @@
                     <ShortcutProperty Key="System.AppUserModel.ID" Value="{{bundle_id}}"/>
                 </Shortcut>
                 <RemoveFolder Id="ApplicationProgramsFolder" On="uninstall"/>
-                <RegistryValue Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}" Name="Start Menu Shortcut" Type="integer" Value="1" KeyPath="yes"/>
+                <RegistryValue Root="HKCU" Key="Software\ccswitch\\{{product_name}}" Name="Start Menu Shortcut" Type="integer" Value="1" KeyPath="yes"/>
            </Component>
         </DirectoryRef>
 
