@@ -1274,8 +1274,9 @@ wire_api = "responses"
             .unwrap();
             let config = projection.catalog_input_text();
             let parsed: TomlValue = toml::from_str(&config).unwrap();
-            assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
-            let route = &parsed["model_providers"]["custom"];
+            // 统一会话历史关着：按行自己的 model_provider 投影，不再收成 custom。
+            assert_eq!(parsed["model_provider"].as_str(), Some("copilot"));
+            let route = &parsed["model_providers"]["copilot"];
             assert_eq!(route["wire_api"].as_str(), Some("responses"));
             assert!(route.get("requires_openai_auth").is_none());
 

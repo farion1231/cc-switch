@@ -49,7 +49,8 @@ fn is_nested_floor(parent: &str, key: &str) -> bool {
 }
 
 /// 全局设置的每个位置：关键字段、独有字段、CC Switch 的路由表不算。`skip_routes` 是
-/// 配置选中的路由表：它归供应商（投影时按内容收成 custom 表），也不算。
+/// 配置选中的路由表：它归供应商（统一会话历史开着时按内容收成 custom 表，关着时
+/// 保留行自己的 model_provider），也不算。
 fn entries(doc: &DocumentMut, skip_routes: &[&str]) -> Vec<Entry> {
     let mut entries = Vec::new();
     for (key, item) in doc.as_table().iter() {
@@ -123,10 +124,16 @@ pub fn view(
     let row_key = settings_config
         .get("auth")
         .and_then(crate::codex_config::extract_codex_auth_api_key);
+    // 选路的表：统一会话历史开着时是 custom，关着时是行自己的 model_provider。
+    let selected = doc
+        .get("model_provider")
+        .and_then(Item::as_str)
+        .unwrap_or(ROUTE_ID)
+        .to_string();
     if let Some(route) = doc
         .get_mut("model_providers")
         .and_then(Item::as_table_like_mut)
-        .and_then(|providers| providers.get_mut(ROUTE_ID))
+        .and_then(|providers| providers.get_mut(&selected))
         .and_then(Item::as_table_like_mut)
     {
         let injected = route
@@ -361,12 +368,22 @@ pub(crate) fn plan_save(
         .into_iter()
         .filter(|entry| edited_doc.get(&entry.path[0]).is_none());
 
-    // 打开时和保存时选中的路由表都归供应商：用户在编辑器里把 custom 改名成别的表，那张表
-    // 连同里面的 Key 不能当成全局设置留在 live 里。
-    let routes: Vec<&str> = [selected_route(&base_doc), selected_route(&edited_doc)]
-        .into_iter()
-        .flatten()
-        .collect();
+    // 归供应商的路由表有三张：打开时选中的、保存时选中的、投影实际采用的。
+    // 最后一张不能省：关着统一会话历史时，投影会把编辑器里改名的表收成行自己的
+    // id 存回行，那张改名的表若不算进去，就连同里面的 Key 被当成全局设置留在 live 里。
+    let adopted = match &projection.route {
+        Route::Custom { id, .. } => id.as_deref().or(Some(ROUTE_ID)),
+        Route::BuiltIn { id, .. } => Some(id.as_str()),
+        Route::Official | Route::Default => None,
+    };
+    let routes: Vec<&str> = [
+        selected_route(&base_doc),
+        selected_route(&edited_doc),
+        adopted,
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     let mut base_entries = entries(&base_doc, &routes);
     base_entries.extend(removed_from_live);
     Ok(CodexEditorPlan {
@@ -428,7 +445,7 @@ fn store_into_row(
         .get("auth")
         .and_then(crate::codex_config::extract_codex_auth_api_key);
     match &projection.route {
-        Route::Custom { table, .. } => {
+        Route::Custom { table, id, .. } => {
             let mut table = table.clone();
             let token = table
                 .get("experimental_bearer_token")
@@ -437,10 +454,13 @@ fn store_into_row(
             if token.is_some() && token == key {
                 table.remove("experimental_bearer_token");
             }
-            doc["model_provider"] = toml_edit::value(ROUTE_ID);
+            // 和 live 写入同一条规则：统一会话历史开着时收成 custom，关着时按
+            // 行自己的 model_provider 存，用户改的名字不再被覆盖。
+            let id = id.as_deref().unwrap_or(ROUTE_ID);
+            doc["model_provider"] = toml_edit::value(id);
             insert_at(
                 &mut doc,
-                &["model_providers".to_string(), ROUTE_ID.to_string()],
+                &["model_providers".to_string(), id.to_string()],
                 Item::Table(table),
             );
         }
