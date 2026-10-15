@@ -50,10 +50,11 @@ function Get-DesktopProcesses {
         try { $_.Path -and $_.Path.Equals($executable, [StringComparison]::OrdinalIgnoreCase) } catch { $false }
     })
 }
-function Get-DesktopDescendants($Roots) {
+function Get-DesktopProcessTree($Roots, $Tracked = @()) {
     # Capture ancestry and creation times, never command lines or credentials.
     # Hold process handles so PID reuse cannot redirect a later Kill().
-    $rootTimes = @{}
+    $known = @{}
+    foreach ($entry in $Tracked) { $known["$($entry.Process.Id)/$($entry.Created.Ticks)"] = $entry }
     foreach ($root in $Roots) {
         try {
             $root.Refresh()
@@ -62,53 +63,67 @@ function Get-DesktopDescendants($Roots) {
                 throw 'Cannot stop the Codex desktop: its process identity changed.'
             }
             $null = $root.SafeHandle
-            $rootTimes[$root.Id] = $root.StartTime.ToUniversalTime()
+            $created = $root.StartTime.ToUniversalTime()
+            $key = "$($root.Id)/$($created.Ticks)"
+            if (-not $known.ContainsKey($key)) {
+                $known[$key] = [pscustomobject]@{ Process = $root; Created = $created; Depth = 0 }
+            }
         } catch {
             if ($root.HasExited) { continue }
             throw 'Cannot stop the Codex desktop: its process identity could not be verified.'
         }
     }
-    if ($rootTimes.Count -eq 0) { return }
+    if ($known.Count -eq 0) { return }
     $snapshot = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId, CreationDate)
     $children = @{}
     $queue = [Collections.Generic.Queue[object]]::new()
     foreach ($row in $snapshot) {
-        $processId = [int]$row.ProcessId
-        if ($rootTimes.ContainsKey($processId) -and $row.CreationDate -and
-            [Math]::Abs((([DateTime]$row.CreationDate).ToUniversalTime() - $rootTimes[$processId]).TotalMilliseconds) -lt 1) {
-            $queue.Enqueue(@{ ProcessId = $processId; Created = $rootTimes[$processId]; Depth = 0 })
-        }
         $parentId = [int]$row.ParentProcessId
         if (-not $children.ContainsKey($parentId)) { $children[$parentId] = [Collections.Generic.List[object]]::new() }
         $children[$parentId].Add($row)
     }
+    # Previously verified children remain traversal roots after the desktop has
+    # exited. Retain exited handles too: a final snapshot may reveal a child
+    # created just before Kill(). Its creation must precede that parent's exit,
+    # so a later process reusing the parent's PID cannot expand our stop set.
+    foreach ($entry in $known.Values) { $queue.Enqueue($entry) }
     $seen = @{}
     while ($queue.Count -gt 0) {
         $parent = $queue.Dequeue()
-        if ($seen.ContainsKey($parent.ProcessId)) { continue }
-        $seen[$parent.ProcessId] = $true
-        foreach ($row in $children[$parent.ProcessId]) {
+        $key = "$($parent.Process.Id)/$($parent.Created.Ticks)"
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $parent.Process.Refresh()
+        $exitedAt = $null
+        if ($parent.Process.HasExited) {
+            $exitedAt = $parent.Process.ExitTime.ToUniversalTime()
+        } elseif ([Math]::Abs(($parent.Process.StartTime.ToUniversalTime() - $parent.Created).TotalMilliseconds) -ge 1) {
+            throw 'Cannot stop a Codex desktop child process: its identity changed.'
+        }
+        foreach ($row in $children[$parent.Process.Id]) {
             if (-not $row.CreationDate) { continue }
             $created = ([DateTime]$row.CreationDate).ToUniversalTime()
-            if ($created -lt $parent.Created) { continue }
+            if ($created -lt $parent.Created -or ($exitedAt -and $created -gt $exitedAt)) { continue }
+            $key = "$($row.ProcessId)/$($created.Ticks)"
+            if ($known.ContainsKey($key)) { continue }
             $process = Get-Process -Id ([int]$row.ProcessId) -ErrorAction SilentlyContinue
             if (-not $process) { continue }
             try {
                 $null = $process.SafeHandle
                 if ($process.HasExited -or [Math]::Abs(($process.StartTime.ToUniversalTime() - $created).TotalMilliseconds) -ge 1) { continue }
-                $queue.Enqueue(@{ ProcessId = $process.Id; Created = $created; Depth = $parent.Depth + 1 })
-                if (-not $rootTimes.ContainsKey($process.Id)) {
-                    [pscustomobject]@{ Process = $process; Created = $created; Depth = $parent.Depth + 1 }
-                }
+                $entry = [pscustomobject]@{ Process = $process; Created = $created; Depth = $parent.Depth + 1 }
+                $known[$key] = $entry
+                $queue.Enqueue($entry)
             } catch {
                 if ($process.HasExited) { continue }
                 throw 'Cannot inspect a Codex desktop child process safely. Quit the desktop and retry.'
             }
         }
     }
+    $known.Values
 }
-function Get-LiveDesktopDescendants($Descendants) {
-    foreach ($entry in $Descendants) {
+function Get-LiveDesktopProcesses($Tree) {
+    foreach ($entry in $Tree) {
         $entry.Process.Refresh()
         if (-not $entry.Process.HasExited) { $entry }
     }
@@ -123,7 +138,7 @@ if ($Mode -eq 'Plan') {
     return
 }
 if ($before.Count -gt 0) {
-    $descendants = @(Get-DesktopDescendants $before)
+    $tree = @(Get-DesktopProcessTree $before)
     $windows = @($before | Where-Object MainWindowHandle -NE 0)
     foreach ($process in $windows) {
         # Electron may keep the application alive after its last window closes.
@@ -137,50 +152,35 @@ if ($before.Count -gt 0) {
         }
     }
     $deadline = [DateTime]::UtcNow.AddSeconds($ExitTimeoutSeconds)
-    while ((@(Get-DesktopProcesses).Count -gt 0 -or @(Get-LiveDesktopDescendants $descendants).Count -gt 0) -and [DateTime]::UtcNow -lt $deadline) {
+    while (@(Get-LiveDesktopProcesses $tree).Count -gt 0 -and [DateTime]::UtcNow -lt $deadline) {
         Start-Sleep -Milliseconds 200
+        $tree = @(Get-DesktopProcessTree @(Get-DesktopProcesses) $tree)
     }
     # The user explicitly requested a desktop restart, including interruption
     # of its running tasks. Stop background-resident Electron processes only
     # after verifying their exact executable path against the installed package.
-    $windowIds = @($windows | ForEach-Object Id)
-    $remaining = @(Get-DesktopProcesses | Sort-Object @{ Expression = { $windowIds -notcontains $_.Id } }, Id)
-    # Include descendants created during graceful shutdown, while retaining
-    # handles to children whose parent has already exited.
-    if ($remaining.Count -gt 0) {
-        $descendants = @($descendants) + @(Get-DesktopDescendants $remaining)
-    }
-    $descendants = @($descendants | Sort-Object @{ Expression = { $_.Process.Id } }, Created -Unique)
-    foreach ($entry in @($descendants | Sort-Object Depth -Descending)) {
-        $process = $entry.Process
-        try {
-            $process.Refresh()
-            if ($process.HasExited) { continue }
-            if ([Math]::Abs(($process.StartTime.ToUniversalTime() - $entry.Created).TotalMilliseconds) -ge 1) {
-                throw 'The desktop child process identity changed.'
-            }
-            $process.Kill()
-        } catch {
-            if ($process.HasExited) { continue }
-            throw 'Cannot stop a Codex desktop child process. Quit the desktop and retry.'
-        }
-    }
-    foreach ($process in $remaining) {
-        try {
-            $process.Refresh()
-            if ($process.HasExited) { continue }
-            if (-not $process.Path.Equals($executable, [StringComparison]::OrdinalIgnoreCase)) {
-                throw 'The desktop process identity changed while restarting.'
-            }
-            $process.Kill()
-        } catch {
-            # Another desktop process may have already exited with its parent.
-            if ($process.HasExited) { continue }
-            throw 'Cannot stop the Codex desktop process. Quit it from its tray menu and retry.'
-        }
-    }
     $deadline = [DateTime]::UtcNow.AddSeconds($StopTimeoutSeconds)
-    while (@(Get-DesktopProcesses).Count -gt 0 -or @(Get-LiveDesktopDescendants $descendants).Count -gt 0) {
+    $tree = @(Get-DesktopProcessTree @(Get-DesktopProcesses) $tree)
+    while ($true) {
+        foreach ($entry in @($tree | Sort-Object Depth -Descending)) {
+            $process = $entry.Process
+            try {
+                $process.Refresh()
+                if ($process.HasExited) { continue }
+                if ([Math]::Abs(($process.StartTime.ToUniversalTime() - $entry.Created).TotalMilliseconds) -ge 1 -or
+                    ($entry.Depth -eq 0 -and -not $process.Path.Equals($executable, [StringComparison]::OrdinalIgnoreCase))) {
+                    throw 'The desktop process identity changed.'
+                }
+                $process.Kill()
+            } catch {
+                if ($process.HasExited) { continue }
+                throw 'Cannot stop a Codex desktop child or root process. Quit the desktop and retry.'
+            }
+        }
+        # Rescan even when every known handle has exited: a tracked parent can
+        # spawn one last child between our previous snapshot and termination.
+        $tree = @(Get-DesktopProcessTree @(Get-DesktopProcesses) $tree)
+        if (@(Get-LiveDesktopProcesses $tree).Count -eq 0) { break }
         if ([DateTime]::UtcNow -ge $deadline) { throw 'Codex desktop processes are still exiting. A second instance was not started. Quit it from its tray menu and retry.' }
         Start-Sleep -Milliseconds 200
     }
