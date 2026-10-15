@@ -30,6 +30,7 @@ export type SettingsSection =
   | "general"
   | "appConfig"
   | "routing"
+  | "apiKeyVars"
   | "network"
   | "data"
   | "about";
@@ -38,6 +39,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   "general",
   "appConfig",
   "routing",
+  "apiKeyVars",
   "network",
   "data",
   "about",
@@ -131,6 +133,7 @@ export function normalizeSettingsSection(
     case "data":
       return "data";
     case "appConfig":
+    case "apiKeyVars":
     case "network":
     case "about":
     case "general":

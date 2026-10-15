@@ -136,6 +136,16 @@ pub(crate) fn plan_from(
     pre_bytes: Option<Vec<u8>>,
 ) -> Result<Planned, LiveWriteError> {
     let bytes = patch.apply_file(&file.path, pre_bytes.as_deref())?;
+    // 最后一道防线：绝不把字面的 `{{NAME}}` 变量引用写进客户端文件
+    if let Some(name) = crate::services::api_key_vars::resolve::new_literal_ref(
+        pre_bytes.as_deref(),
+        bytes.as_deref(),
+    ) {
+        return Err(LiveWriteError::UnresolvedRef {
+            path: file.path.clone(),
+            name,
+        });
+    }
     Ok(Planned {
         file: file.clone(),
         pre: digest(pre_bytes.as_deref()),
@@ -256,6 +266,21 @@ mod tests {
             1,
             "no temp files"
         );
+    }
+
+    #[test]
+    fn plan_refuses_literal_variable_refs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let err = plan(
+            &LiveFile::shared(&path),
+            &set_patch("ANTHROPIC_AUTH_TOKEN", "{{ENGINE_TEST_KEY}}"),
+        )
+        .expect_err("refused");
+        assert!(
+            matches!(err, LiveWriteError::UnresolvedRef { ref name, .. } if name == "ENGINE_TEST_KEY")
+        );
+        assert!(!path.exists());
     }
 
     #[test]

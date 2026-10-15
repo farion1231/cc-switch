@@ -257,6 +257,8 @@ impl Provider {
         // Normalize like the JS-script path (extract_base_url_from_provider) so a
         // future delegation from services/provider/usage.rs is behavior-preserving
         // and `{{baseUrl}}/path` concatenation never produces a double slash.
+        // `{{NAME}}` 变量引用换成当前值（无法解析时为空，不把字面模板发出去）
+        let api_key = crate::services::api_key_vars::resolve::resolve_key_or_empty(&api_key);
         (base_url.trim_end_matches('/').to_string(), api_key)
     }
 }

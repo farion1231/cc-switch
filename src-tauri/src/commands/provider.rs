@@ -174,8 +174,14 @@ pub async fn switch_provider(
         && app_handle.try_state::<AppState>().is_some_and(|state| {
             crate::claude_desktop_config::current_provider_uses_proxy(&state.db)
         });
+    // 在任何 live 写入前尝试刷新。刷新失败时，仅未过期的已有值能作为降级继续；
+    // 已过期且没有新值会返回错误，后续切换任务不会启动。
+    let refresh_warning =
+        crate::services::api_key_vars::refresh_before_switch(&app_handle, &app_type, &id)
+            .await
+            .map_err(|e| e.to_string())?;
     let handle = app_handle.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
+    let mut result = tauri::async_runtime::spawn_blocking(move || {
         let state = handle
             .try_state::<AppState>()
             .ok_or_else(|| "应用状态不可用".to_string())?;
@@ -183,6 +189,9 @@ pub async fn switch_provider(
     })
     .await
     .map_err(|e| format!("供应商切换任务执行失败: {e}"))??;
+    if let Some(warning) = refresh_warning {
+        result.warnings.push(warning);
+    }
     if is_desktop {
         if let Some(state) = app_handle.try_state::<AppState>() {
             crate::mode::controller::sync_desktop_mapping_service(

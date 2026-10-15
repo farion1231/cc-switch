@@ -171,7 +171,7 @@ impl Drop for ConfigLock {
 }
 
 fn update(path: &Path, id: &str, provider: Option<Value>) -> Result<(), AppError> {
-    write_entry(path, id, provider, false)
+    write_entry(path, id, provider, false, false).map(|_| ())
 }
 
 /// `create_only` rejects a key that already exists, checked while holding MCode's lock.
@@ -180,7 +180,13 @@ fn write_entry(
     id: &str,
     provider: Option<Value>,
     create_only: bool,
-) -> Result<(), AppError> {
+    replace_only: bool,
+) -> Result<bool, AppError> {
+    // Do not create a directory or an empty native config for a propagation
+    // refresh whose externally managed provider has already disappeared.
+    if replace_only && !path.exists() {
+        return Ok(false);
+    }
     fs::create_dir_all(path.parent().expect("MCode configuration directory"))
         .map_err(|e| AppError::Message(format!("Cannot create MCode directory: {e}")))?;
     let path = if path.exists() {
@@ -208,6 +214,18 @@ fn write_entry(
     }
     let _lock = ConfigLock(lock_path);
     let mut document = read(&path)?;
+    let provider_present = document
+        .get("custom_provider")
+        .and_then(serde_yaml::Value::as_mapping)
+        .is_some_and(|providers| providers.contains_key(serde_yaml::Value::from(id)));
+    if replace_only && !provider_present {
+        return Ok(false);
+    }
+    if replace_only {
+        if let Some(provider) = provider.as_ref() {
+            validate_provider(id, provider)?;
+        }
+    }
     let prefix = format!("custom_provider:{id}/");
     if ["defaultModel", "defaultLightModel"].iter().any(|field| {
         let selected = document
@@ -266,7 +284,8 @@ fn write_entry(
     }
     let yaml = serde_yaml::to_string(&document)
         .map_err(|_| AppError::Config("Cannot serialize MCode configuration".into()))?;
-    atomic_write_private(&path, yaml.as_bytes())
+    atomic_write_private(&path, yaml.as_bytes())?;
+    Ok(true)
 }
 
 pub(crate) fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
@@ -276,7 +295,13 @@ pub(crate) fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
 /// Like `set_provider`, but never replaces an existing node.
 pub(crate) fn add_provider(id: &str, config: Value) -> Result<(), AppError> {
     validate_provider(id, &config)?;
-    write_entry(&config_path(), id, Some(config), true)
+    write_entry(&config_path(), id, Some(config), true, false).map(|_| ())
+}
+
+/// Replace a still-present native provider without recreating a provider that
+/// MCode removed while a refresh was pending.
+pub(crate) fn replace_provider_if_present(id: &str, config: Value) -> Result<bool, AppError> {
+    write_entry(&config_path(), id, Some(config), false, true)
 }
 pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
     if !config_path().exists() {
@@ -330,14 +355,37 @@ mod tests {
         let path = dir.path().join("config.yaml");
         let text = "custom_provider:\n  raced:\n    name: Theirs\n";
         fs::write(&path, text).unwrap();
-        assert!(write_entry(&path, "raced", Some(json!({"name":"Ours"})), true).is_err());
+        assert!(write_entry(&path, "raced", Some(json!({"name":"Ours"})), true, false).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), text);
         assert!(!path.with_extension("yaml.lock").exists());
-        write_entry(&path, "fresh", Some(json!({"name":"Ours"})), true).unwrap();
+        write_entry(&path, "fresh", Some(json!({"name":"Ours"})), true, false).unwrap();
         assert_eq!(
             read(&path).unwrap()["custom_provider"]["fresh"]["name"],
             "Ours"
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn replace_if_present_does_not_recreate_and_updates_existing_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let previous = std::env::var_os("MINIMAX_DATA_DIR");
+        std::env::set_var("MINIMAX_DATA_DIR", dir.path());
+        let path = config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let source = "custom_provider:\n  one:\n    api: anthropic-messages\n    options:\n      baseURL: https://example.com\n      apiKey: old\n    models:\n      model: {}\n    future: keep\n";
+        std::fs::write(&path, source).unwrap();
+        assert!(!replace_provider_if_present("missing", json!({"api":"anthropic-messages","options":{"baseURL":"https://example.com","apiKey":"new"},"models":{"model":{}}})).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+        assert!(replace_provider_if_present("one", json!({"api":"anthropic-messages","options":{"baseURL":"https://example.com","apiKey":"new"},"models":{"model":{}}})).unwrap());
+        assert_eq!(
+            read(&path).unwrap()["custom_provider"]["one"]["options"]["apiKey"],
+            "new"
+        );
+        match previous {
+            Some(value) => std::env::set_var("MINIMAX_DATA_DIR", value),
+            None => std::env::remove_var("MINIMAX_DATA_DIR"),
+        }
     }
 
     #[test]

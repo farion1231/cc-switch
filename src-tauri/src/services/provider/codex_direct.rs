@@ -445,6 +445,12 @@ fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
             continue;
         }
         if let Some(key) = auth.and_then(extract_codex_auth_api_key) {
+            // 变量引用：按它现在和最近的值认出 auth.json 里由它写下的 Key
+            if let Some(name) = crate::services::api_key_vars::resolve::parse_ref(&key) {
+                facts
+                    .third_party_keys
+                    .extend(crate::services::api_key_vars::resolve::known_values(name));
+            }
             facts.third_party_keys.push(key);
         }
         let Some(doc) = provider

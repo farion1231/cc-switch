@@ -16,6 +16,24 @@ type OmoProviderRow = (
     String,
 );
 
+/// API Key 变量写回保护：派生的客户端配置回读以数据库模板为准。
+fn guard_key_refs(
+    app_type: &str,
+    old_json: &str,
+    new: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    if !old_json.contains("{{") {
+        return None;
+    }
+    let app = <crate::app_config::AppType as std::str::FromStr>::from_str(app_type).ok()?;
+    let old: serde_json::Value = serde_json::from_str(old_json).ok()?;
+    let restored = crate::services::api_key_vars::resolve::preserve_refs_from_stored_template(
+        &app, &old, new,
+    )?;
+    log::info!("[ApiKeyVars] {app_type} 供应商配置写回时保留了变量引用模板");
+    Some(restored)
+}
+
 impl Database {
     /// Detach Codex providers bound to these deleted local accounts, atomically.
     /// Only this device's account IDs are passed in: provider rows sync across
@@ -263,7 +281,30 @@ impl Database {
         }
     }
 
+    /// Save a provider reconstructed from a client config or another derived
+    /// source. If the stored row contains an API-key variable template, retain
+    /// that template instead of persisting the resolved live value.
     pub fn save_provider(&self, app_type: &str, provider: &Provider) -> Result<(), AppError> {
+        self.save_provider_inner(app_type, provider, true)
+    }
+
+    /// Save an explicit edit made by the user. A literal key is intentional
+    /// here, including when it happens to equal a current or historical value
+    /// of an API-key variable, so it must be allowed to detach the reference.
+    pub fn save_provider_from_user(
+        &self,
+        app_type: &str,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
+        self.save_provider_inner(app_type, provider, false)
+    }
+
+    fn save_provider_inner(
+        &self,
+        app_type: &str,
+        provider: &Provider,
+        preserve_key_refs: bool,
+    ) -> Result<(), AppError> {
         let mut conn = lock_conn!(self.conn);
         let tx = conn
             .transaction()
@@ -272,17 +313,27 @@ impl Database {
         let mut meta_clone = provider.meta.clone().unwrap_or_default();
         let endpoints = std::mem::take(&mut meta_clone.custom_endpoints);
 
-        let existing: Option<(bool, bool)> = tx
+        let existing: Option<(bool, bool, String)> = tx
             .query_row(
-                "SELECT is_current, in_failover_queue FROM providers WHERE id = ?1 AND app_type = ?2",
+                "SELECT is_current, in_failover_queue, settings_config FROM providers WHERE id = ?1 AND app_type = ?2",
                 params![provider.id, app_type],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .ok();
 
         let is_update = existing.is_some();
-        let (is_current, in_failover_queue) =
-            existing.unwrap_or((false, provider.in_failover_queue));
+        // 写回保护：库里是 `{{NAME}}`、新值是该变量的值（从 live 读回）时保留模板
+        let guarded = preserve_key_refs
+            .then(|| {
+                existing.as_ref().and_then(|(_, _, old)| {
+                    guard_key_refs(app_type, old, &provider.settings_config)
+                })
+            })
+            .flatten();
+        let settings_config = guarded.as_ref().unwrap_or(&provider.settings_config);
+        let (is_current, in_failover_queue) = existing
+            .map(|(c, f, _)| (c, f))
+            .unwrap_or((false, provider.in_failover_queue));
 
         if is_update {
             tx.execute(
@@ -302,7 +353,7 @@ impl Database {
                 WHERE id = ?13 AND app_type = ?14",
                 params![
                     provider.name,
-                    serde_json::to_string(&provider.settings_config).map_err(|e| {
+                    serde_json::to_string(settings_config).map_err(|e| {
                         AppError::Database(format!("Failed to serialize settings_config: {e}"))
                     })?,
                     provider.website_url,
@@ -501,6 +552,18 @@ impl Database {
         settings_config: &serde_json::Value,
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
+        let old: Option<String> = conn
+            .query_row(
+                "SELECT settings_config FROM providers WHERE id = ?1 AND app_type = ?2",
+                params![provider_id, app_type],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let guarded = old
+            .as_deref()
+            .and_then(|old| guard_key_refs(app_type, old, settings_config));
+        let settings_config = guarded.as_ref().unwrap_or(settings_config);
         conn.execute(
             "UPDATE providers SET settings_config = ?1 WHERE id = ?2 AND app_type = ?3",
             params![

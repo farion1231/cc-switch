@@ -860,6 +860,66 @@ pub fn set_provider(
     write_yaml_section_to_config_locked("custom_providers", &providers_value)
 }
 
+/// Replace a writable list provider only when it still exists. This is used by
+/// refresh propagation so an external Hermes deletion is not turned into an
+/// unintended upsert.
+pub(crate) fn replace_provider_if_present(
+    name: &str,
+    provider_config: serde_json::Value,
+) -> Result<bool, AppError> {
+    let _guard = hermes_write_lock().lock()?;
+    let config = read_hermes_config()?;
+    ensure_provider_writable(&config, name, "edit")?;
+    let mut providers: Vec<serde_yaml::Value> = config
+        .get("custom_providers")
+        .and_then(|v| v.as_sequence())
+        .cloned()
+        .unwrap_or_default();
+    let Some(existing) = providers
+        .iter_mut()
+        .find(|provider| provider.get("name").and_then(|value| value.as_str()) == Some(name))
+    else {
+        return Ok(false);
+    };
+
+    let mut normalized = provider_config;
+    sanitize_hermes_provider_keys(&mut normalized);
+    normalize_provider_models_for_write(&mut normalized);
+    let first_model_id = normalized
+        .get("models")
+        .and_then(|value| value.as_object())
+        .and_then(|models| models.keys().next())
+        .cloned();
+    let mut yaml_val: serde_yaml::Value = json_to_yaml(&normalized)?;
+    if let serde_yaml::Value::Mapping(ref mut map) = yaml_val {
+        map.insert(
+            serde_yaml::Value::String("name".to_string()),
+            serde_yaml::Value::String(name.to_string()),
+        );
+        if let Some(model_id) = first_model_id {
+            map.insert(
+                serde_yaml::Value::String("model".to_string()),
+                serde_yaml::Value::String(model_id),
+            );
+        } else {
+            map.remove(serde_yaml::Value::String("model".to_string()));
+        }
+    }
+    if let (Some(existing_map), serde_yaml::Value::Mapping(new_map)) =
+        (existing.as_mapping(), &mut yaml_val)
+    {
+        for (key, value) in existing_map {
+            new_map.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+    }
+    *existing = yaml_val;
+    write_yaml_section_to_config_locked(
+        "custom_providers",
+        &serde_yaml::Value::Sequence(providers),
+    )?;
+    Ok(true)
+}
+
 /// Remove a custom provider by name.
 ///
 /// Filters out the matching entry from the `custom_providers:` sequence.
@@ -1180,6 +1240,30 @@ mod tests {
             None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
         }
         result
+    }
+
+    #[test]
+    #[serial]
+    fn replace_if_present_keeps_absent_config_and_list_provider_extensions() {
+        with_test_home(|| {
+            let path = get_hermes_config_path();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let source =
+                "custom_providers:\n  - name: one\n    api_key: old\n    future_extension: keep\n";
+            std::fs::write(&path, source).unwrap();
+            assert!(
+                !replace_provider_if_present("missing", serde_json::json!({"api_key":"new"}))
+                    .unwrap()
+            );
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+            assert!(
+                replace_provider_if_present("one", serde_json::json!({"api_key":"new"})).unwrap()
+            );
+            let value = read_hermes_config().unwrap();
+            let provider = &value["custom_providers"][0];
+            assert_eq!(provider["api_key"].as_str(), Some("new"));
+            assert_eq!(provider["future_extension"].as_str(), Some("keep"));
+        });
     }
 
     // ---- sanitize_hermes_provider_keys tests ----

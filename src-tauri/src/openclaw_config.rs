@@ -323,7 +323,11 @@ impl OpenClawConfigDocument {
 
     fn save(self) -> Result<OpenClawWriteOutcome, AppError> {
         let _guard = openclaw_write_lock().lock()?;
+        self.save_locked()
+    }
 
+    /// Caller holds `openclaw_write_lock` from document load through commit.
+    fn save_locked(self) -> Result<OpenClawWriteOutcome, AppError> {
         let current_source = if self.path.exists() {
             Some(fs::read_to_string(&self.path).map_err(|e| AppError::io(&self.path, e))?)
         } else {
@@ -679,6 +683,41 @@ pub fn set_provider(id: &str, provider_config: Value) -> Result<OpenClawWriteOut
     write_root_section("models", &models_value)
 }
 
+/// Replace only a provider still present in `models.providers`.  The complete
+/// document edit runs under the native write lock, so a provider deleted by
+/// OpenClaw between scheduling and refresh is not recreated.
+pub(crate) fn replace_provider_if_present(
+    id: &str,
+    provider_config: Value,
+) -> Result<bool, AppError> {
+    let _guard = openclaw_write_lock().lock()?;
+    let mut document = OpenClawConfigDocument::load()?;
+    let Some(source) = document.original_source.as_deref() else {
+        return Ok(false);
+    };
+    let mut config: Value = json5::from_str(source).map_err(|error| {
+        AppError::Config(format!("Failed to parse OpenClaw config as JSON5: {error}"))
+    })?;
+    let Some(providers) = config
+        .get_mut("models")
+        .and_then(|models| models.get_mut("providers"))
+        .and_then(Value::as_object_mut)
+    else {
+        return Ok(false);
+    };
+    if !providers.contains_key(id) {
+        return Ok(false);
+    }
+    providers.insert(id.to_string(), provider_config);
+    let models = config
+        .get("models")
+        .cloned()
+        .expect("models is present after provider lookup");
+    document.set_root_section("models", &models)?;
+    document.save_locked()?;
+    Ok(true)
+}
+
 /// 删除供应商配置
 pub fn remove_provider(id: &str) -> Result<OpenClawWriteOutcome, AppError> {
     let mut config = read_openclaw_config()?;
@@ -945,6 +984,23 @@ mod tests {
             None => std::env::remove_var("HOME"),
         }
         result
+    }
+
+    #[test]
+    fn replace_if_present_never_creates_and_preserves_other_model_settings() {
+        with_test_paths(
+            "{ models: { mode: 'merge', providers: { one: { apiKey: 'old', extra: 1 } } }, tools: { profile: 'coding' } }",
+            |path| {
+                let before = fs::read_to_string(path).unwrap();
+                assert!(!replace_provider_if_present("missing", json!({"apiKey":"new"})).unwrap());
+                assert_eq!(fs::read_to_string(path).unwrap(), before);
+                assert!(replace_provider_if_present("one", json!({"apiKey":"new","extra":1})).unwrap());
+                let value = read_openclaw_config().unwrap();
+                assert_eq!(value["models"]["mode"], "merge");
+                assert_eq!(value["models"]["providers"]["one"]["apiKey"], "new");
+                assert_eq!(value["tools"]["profile"], "coding");
+            },
+        );
     }
 
     #[test]

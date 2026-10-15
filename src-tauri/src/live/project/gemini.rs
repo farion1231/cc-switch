@@ -42,6 +42,17 @@ impl GeminiProjection {
     /// 从供应商行（或编辑器里的完整配置）取出关键字段。`official` 由调用方按供应商
     /// 类型判定（`detect_gemini_auth_type`）。
     pub fn of(settings: &Value, official: bool) -> Self {
+        // Key 字段里的 `{{NAME}}` 变量引用在这里换成当前值
+        let resolved = crate::services::api_key_vars::resolve::resolve_settings_lossy(
+            &crate::app_config::AppType::Gemini,
+            settings,
+        );
+        Self::of_raw(&resolved, official)
+    }
+
+    /// Project a provider row for editor display or persistence without resolving
+    /// API-key variable templates. Resolution is only for live/proxy writes.
+    pub(crate) fn of_raw(settings: &Value, official: bool) -> Self {
         let env = settings
             .get("env")
             .and_then(Value::as_object)
@@ -187,6 +198,21 @@ mod tests {
         // 行里回填进来的 oauth-personal 不算：第三方卡一律用 API Key。
         assert_eq!(projection.selected_type, Some(SELECTED_TYPE_API_KEY));
         assert_eq!(projection.model_name, Some(json!("gemini-b-pro")));
+    }
+
+    #[test]
+    fn raw_projection_keeps_a_variable_template_for_editor_views() {
+        crate::services::api_key_vars::resolve::cache_set(
+            "EDITOR_GEMINI_REF",
+            true,
+            Some("sk-editor-gemini"),
+        );
+        let row = json!({"env": {"GEMINI_API_KEY": "{{EDITOR_GEMINI_REF}}"}});
+        let projection = GeminiProjection::of_raw(&row, false);
+        assert_eq!(
+            projection.env,
+            vec![("GEMINI_API_KEY".into(), "{{EDITOR_GEMINI_REF}}".into())]
+        );
     }
 
     #[test]

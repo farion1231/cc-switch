@@ -554,6 +554,11 @@ pub struct AppSettings {
     // ===== 本机自动迁移状态 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_migrations: Option<LocalMigrations>,
+
+    // ===== API Key 自动刷新 =====
+    /// 运行刷新脚本使用的 node 可执行文件（可选，未设置时自动查找）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_refresh_node_path: Option<String>,
 }
 
 fn default_show_in_tray() -> bool {
@@ -626,6 +631,7 @@ impl Default for AppSettings {
             backup_retain_count: None,
             preferred_terminal: None,
             local_migrations: None,
+            api_key_refresh_node_path: None,
         }
     }
 }

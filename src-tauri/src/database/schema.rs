@@ -45,6 +45,24 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // API Key 变量（本机专用：定义、当前值与刷新状态；不参与同步 / 导出）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS api_key_vars (
+                name TEXT PRIMARY KEY,
+                script_dir TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 0,
+                timeout_secs INTEGER,
+                lead_time_secs INTEGER,
+                value TEXT,
+                state_json TEXT NOT NULL DEFAULT '{}',
+                sort_index INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 2. Provider Endpoints 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS provider_endpoints (

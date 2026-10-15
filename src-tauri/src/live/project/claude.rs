@@ -32,6 +32,18 @@ impl ClaudeProjection {
     /// 存量的 Bedrock API Key 行在这里转换：选了 Bedrock、顶层有 `apiKey` 时，投影成
     /// `env.AWS_BEARER_TOKEN_BEDROCK`（`env` 里已有就以它为准），行本身不改写。
     pub fn of(settings: &Value) -> Self {
+        // Key 字段里的 `{{NAME}}` 变量引用在这里换成当前值（无法解析的保持字面值，
+        // 由写入引擎拦下）
+        let resolved = crate::services::api_key_vars::resolve::resolve_settings_lossy(
+            &crate::app_config::AppType::Claude,
+            settings,
+        );
+        Self::of_raw(&resolved)
+    }
+
+    /// Project a provider row for editor display or persistence without resolving
+    /// API-key variable templates. Resolution is only for live/proxy writes.
+    pub(crate) fn of_raw(settings: &Value) -> Self {
         let mut projection = Self::default();
         if let Some(root) = settings.as_object() {
             for (key, value) in root {
