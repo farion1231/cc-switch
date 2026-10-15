@@ -1,9 +1,5 @@
 import React from "react";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { HoverTip } from "@/components/ui/hover-tip";
 import type { AppId } from "@/lib/api/types";
 import { APP_IDS, APP_ICON_MAP } from "@/config/appConfig";
 
@@ -26,28 +22,24 @@ export const AppToggleGroup: React.FC<AppToggleGroupProps> = ({
         const { label, icon, activeClass } = APP_ICON_MAP[app];
         const enabled = apps[app];
         return (
-          <Tooltip key={app}>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={() => onToggle(app, !enabled)}
-                disabled={disabled}
-                aria-label={label}
-                aria-pressed={Boolean(enabled)}
-                className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
-                  enabled ? activeClass : "opacity-35 hover:opacity-70"
-                } disabled:cursor-not-allowed`}
-              >
-                {icon}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">
-              <p>
-                {label}
-                {enabled ? " ✓" : ""}
-              </p>
-            </TooltipContent>
-          </Tooltip>
+          <HoverTip
+            key={app}
+            content={`${label}${enabled ? " ✓" : ""}`}
+            side="bottom"
+          >
+            <button
+              type="button"
+              onClick={() => onToggle(app, !enabled)}
+              disabled={disabled}
+              aria-label={label}
+              aria-pressed={Boolean(enabled)}
+              className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
+                enabled ? activeClass : "opacity-35 hover:opacity-70"
+              } disabled:cursor-not-allowed`}
+            >
+              {icon}
+            </button>
+          </HoverTip>
         );
       })}
     </div>

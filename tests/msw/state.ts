@@ -208,7 +208,63 @@ let mcpConfigs: McpConfigState = {
 const cloneProviders = (value: ProvidersByApp) =>
   deepClone(value) as ProvidersByApp;
 
+// 后端暂存、等前端处理的深链接：peek 不清除，ack 按编号清除
+let pendingDeepLink: { id: number; link: unknown } | null = null;
+let nextPendingDeepLinkId = 1;
+
+export const setPendingDeepLink = (link: unknown) => {
+  pendingDeepLink = { id: nextPendingDeepLinkId++, link };
+};
+
+export const peekPendingDeepLink = () => pendingDeepLink;
+
+export const ackPendingDeepLink = (id: number) => {
+  if (pendingDeepLink?.id === id) pendingDeepLink = null;
+};
+
+export interface CustomIconFixture {
+  id: string;
+  name: string;
+  data: string;
+  createdAt: number;
+}
+
+let customIconsState: CustomIconFixture[] = [];
+
+export const listCustomIcons = () => deepClone(customIconsState);
+
+export const setCustomIcons = (icons: CustomIconFixture[]) => {
+  customIconsState = deepClone(icons);
+};
+
+/** 和后端一样：同一张图不重复存，新的排最前面 */
+export const addCustomIcon = (name: string, data: string) => {
+  const existing = customIconsState.find((icon) => icon.data === data);
+  if (existing) return { icon: deepClone(existing), existed: true };
+  const icon = {
+    id: `icon-${customIconsState.length + 1}`,
+    name: name.trim(),
+    data,
+    createdAt: Date.now(),
+  };
+  customIconsState = [icon, ...customIconsState];
+  return { icon: deepClone(icon), existed: false };
+};
+
+export const renameCustomIcon = (id: string, name: string) => {
+  const icon = customIconsState.find((item) => item.id === id);
+  if (!icon) throw new Error("not found");
+  icon.name = name.trim();
+  return deepClone(icon);
+};
+
+export const deleteCustomIcon = (id: string) => {
+  customIconsState = customIconsState.filter((icon) => icon.id !== id);
+};
+
 export const resetProviderState = () => {
+  pendingDeepLink = null;
+  customIconsState = [];
   providers = createDefaultProviders();
   current = createDefaultCurrent();
   liveProviderIds = {

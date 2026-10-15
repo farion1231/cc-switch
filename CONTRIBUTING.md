@@ -147,7 +147,7 @@ Backend (Tauri 2 + Rust)
 │   ├── config/               # Provider presets per tool (*ProviderPresets.ts), MCP presets
 │   ├── hooks/                # Custom hooks (business logic)
 │   ├── lib/api/              # Tauri invoke wrappers (lib/query/ holds the TanStack Query config)
-│   ├── i18n/locales/         # UI strings (zh / zh-TW / en / ja)
+│   ├── i18n/locales/         # UI strings (zh / zh-TW / en / ja; community: tr)
 │   ├── icons/                # Provider icons (index is maintained by hand)
 │   └── types/ utils/ contexts/
 ├── src-tauri/                # Backend (Rust)
@@ -222,6 +222,16 @@ By submitting a PR, you agree to the following:
 
 **In short**: AI is a tool, not a substitute for understanding. Use it to help you contribute better, not to shift work onto maintainers.
 
+## Provider Presets
+
+There are a great many relay and aggregator services, so to keep the preset list short enough for users to actually browse, we limit which services get a built-in preset:
+
+- **Accepted**: model vendors (e.g., DeepSeek, Moonshot AI, Zhipu AI), cloud platforms that serve models under their own brand (e.g., Alibaba Cloud Bailian, Volcano Engine), and a few large, well-established aggregator platforms (e.g., OpenRouter, SiliconFlow).
+- **Sponsors only**: other relay and aggregator services that resell other vendors' models. They are included only as project sponsors; to become one, contact support@ccswitch.io.
+- **Everything else** still works through **Custom Provider** — a service does not need a preset to be usable in CC Switch.
+
+PRs that add a relay or aggregator preset outside the sponsorship program will be closed. If you are unsure whether a service qualifies, open an issue before writing the PR.
+
 ## Internationalization (i18n)
 
 The CC Switch UI supports four languages: Simplified Chinese, Traditional Chinese, English, and Japanese. When modifying user-facing text:
@@ -233,6 +243,8 @@ The CC Switch UI supports four languages: Simplified Chinese, Traditional Chines
    - `src/i18n/locales/ja.json`
 2. Use the `t()` function from i18next for all UI text.
 3. Never hardcode user-facing strings.
+
+Turkish (`tr.json`) is a community translation and is optional: you do not need to add Turkish strings, and missing ones fall back to English. If you do edit `tr.json`, keep `{{variables}}`, file names, commands, and other technical literals unchanged. The tray's Turkish texts in `src-tauri/src/tray.rs` start from English in the same way.
 
 > Forgetting to update a locale file does not fail the build: the missing strings fall back to English, and if the English file lacks them too, the UI shows the raw key.
 
@@ -392,7 +404,7 @@ Backend (Tauri 2 + Rust)
 │   ├── config/               # 各工具的供应商预设（*ProviderPresets.ts）、MCP 预设
 │   ├── hooks/                # 自定义 hooks（业务逻辑）
 │   ├── lib/api/              # Tauri invoke 封装（lib/query/ 为 TanStack Query 配置）
-│   ├── i18n/locales/         # 界面文案（zh / zh-TW / en / ja）
+│   ├── i18n/locales/         # 界面文案（zh / zh-TW / en / ja；社区翻译：tr）
 │   ├── icons/                # 供应商图标（索引需手工维护）
 │   └── types/ utils/ contexts/
 ├── src-tauri/                # 后端（Rust）
@@ -467,6 +479,16 @@ chore(deps): update dependencies
 
 **一句话总结**：AI 是工具，不是理解力的替代品。用它来帮助你更好地贡献，而不是把工作转移给维护者。
 
+## 供应商预设
+
+中转站和聚合平台数量非常多，为了让预设列表保持在用户翻得过来的长度，我们限制可以内置预设的服务范围：
+
+- **可以收录**：模型原厂（如 DeepSeek、月之暗面、智谱）、以自有品牌提供模型服务的云平台（如阿里云百炼、火山引擎），以及少数规模大、运营成熟的聚合平台（如 OpenRouter、硅基流动）。
+- **仅限赞助商**：其余转售其他厂商模型的中转站、聚合平台，只作为项目赞助商收录；如需赞助，请联系 support@ccswitch.io。
+- **其余服务**照样可以通过「**自定义供应商**」接入——没有预设也不影响在 CC Switch 里使用。
+
+赞助计划之外新增中转站或聚合平台预设的 PR 会被关闭。拿不准某个服务是否符合条件时，请先开 Issue 再写 PR。
+
 ## 国际化（i18n）
 
 CC Switch 的界面支持简体中文、繁体中文、英文和日文四种语言。修改用户可见文本时：
@@ -478,6 +500,8 @@ CC Switch 的界面支持简体中文、繁体中文、英文和日文四种语�
    - `src/i18n/locales/ja.json`
 2. 所有 UI 文本使用 i18next 的 `t()` 函数。
 3. 不要硬编码用户可见的字符串。
+
+土耳其语（`tr.json`）是社区翻译，可以不改：新增文案不必补土耳其语，缺少的会回退显示英文。如果改了 `tr.json`，请保留 `{{变量}}`、文件名、命令等技术字面量不翻译。`src-tauri/src/tray.rs` 里托盘的土耳其语文案同样从英文起步。
 
 > 漏掉某个语言文件不会导致构建失败：缺少的文案会回退显示英文，英文文件也缺时，界面上会直接显示 key 的字面量。
 

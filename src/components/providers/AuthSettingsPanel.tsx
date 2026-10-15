@@ -15,7 +15,7 @@ export function AuthSettingsPanel({ target, onClose }: AuthSettingsPanelProps) {
   return (
     <FullScreenPanel
       isOpen={isOpen}
-      title={t("settings.tabAuth", { defaultValue: "认证" })}
+      title={t("nav.auth")}
       onClose={onClose}
       motionPreset="slide-from-right"
     >

@@ -101,6 +101,8 @@ function openCodeModelMetadata(model: OpenCodeModel): KnownModelMetadata {
   return {
     contextWindow: positiveInteger(model.limit?.context),
     maxOutputTokens: positiveInteger(model.limit?.output),
+    reasoning:
+      typeof model.reasoning === "boolean" ? model.reasoning : undefined,
     inputModalities: stringList(modalities?.input),
     outputModalities: stringList(modalities?.output),
   };

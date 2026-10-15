@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { providersApi, sessionsApi, settingsApi, type AppId } from "@/lib/api";
 import type { DeleteSessionOptions } from "@/lib/api/sessions";
 import type { ProviderEditorSave, SwitchResult } from "@/lib/api/providers";
@@ -15,6 +15,7 @@ import { openclawKeys } from "@/hooks/useOpenClaw";
 import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
+import { sessionKeys } from "@/lib/query/sessions";
 import { invalidatePiProviderCaches } from "@/lib/query/pi";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 
@@ -403,6 +404,15 @@ export const useDeleteSessionMutation = () => {
       return input;
     },
     onSuccess: async (input) => {
+      const deleted = queryClient
+        .getQueryData<SessionMeta[]>(["sessions"])
+        ?.find(
+          (session) =>
+            session.providerId === input.providerId &&
+            session.sessionId === input.sessionId &&
+            session.sourcePath === input.sourcePath,
+        );
+      const deletedTitle = deleted?.title?.trim() || deleted?.summary?.trim();
       queryClient.setQueryData<SessionMeta[]>(["sessions"], (current) =>
         (current ?? []).filter(
           (session) =>
@@ -414,15 +424,20 @@ export const useDeleteSessionMutation = () => {
         ),
       );
       queryClient.removeQueries({
-        queryKey: ["sessionMessages", input.providerId, input.sourcePath],
+        queryKey: sessionKeys.messages(input.providerId, input.sourcePath),
+      });
+      queryClient.removeQueries({
+        queryKey: sessionKeys.transcript(input.providerId, input.sourcePath),
       });
 
       await queryClient.invalidateQueries({ queryKey: ["sessions"] });
 
       toast.success(
-        t("sessionManager.sessionDeleted", {
-          defaultValue: "会话已删除",
-        }),
+        deletedTitle
+          ? t("sessionManager.sessionDeletedNamed", { title: deletedTitle })
+          : t("sessionManager.sessionDeleted", {
+              defaultValue: "会话已删除",
+            }),
       );
     },
     onError: (error: Error) => {

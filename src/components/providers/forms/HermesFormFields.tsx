@@ -5,6 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import {
   Select,
   SelectContent,
@@ -12,7 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Download, Plus, Trash2, ChevronRight, Loader2 } from "lucide-react";
 import { ApiKeySection, ModelDropdown } from "./shared";
 import {
@@ -239,7 +240,7 @@ export function HermesFormFields({
             ))}
           </SelectContent>
         </Select>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-fg-2">
           {t("hermes.form.apiModeHint", {
             defaultValue: "供应商 API 协议。请根据端点选择正确的协议。",
           })}
@@ -266,7 +267,7 @@ export function HermesFormFields({
         {showBaseUrlError ? (
           <p className="text-xs text-destructive">{baseUrlErrorMessage}</p>
         ) : (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-fg-2">
             {t("hermes.form.baseUrlHint", {
               defaultValue: "供应商的 API 端点地址。",
             })}
@@ -286,7 +287,7 @@ export function HermesFormFields({
         partnerPromotionKey={partnerPromotionKey}
       />
 
-      <div className="space-y-3 border-l border-border-default pl-3">
+      <div className="space-y-3 border-l border-border pl-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-normal leading-5">
             {t("hermes.form.models", { defaultValue: "模型列表" })}
@@ -321,14 +322,14 @@ export function HermesFormFields({
         </div>
 
         {models.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-2">
+          <p className="text-sm text-fg-2 py-2">
             {t("hermes.form.noModels", {
               defaultValue: "暂无模型配置。切换到此供应商时将无默认模型。",
             })}
           </p>
         ) : (
           <div className="space-y-2">
-            <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2 px-1 text-xs text-fg-2">
               <span className="w-9" />
               <span className="flex-1">
                 {t("hermes.form.modelId", { defaultValue: "模型 ID" })}
@@ -399,29 +400,35 @@ export function HermesFormFields({
                       })}
                       className="min-w-0 flex-1"
                     />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleRemoveModel(index)}
-                      aria-label={t("hermes.form.removeModel", {
+                    <HoverTip
+                      content={t("hermes.form.removeModel", {
                         defaultValue: "移除模型",
                       })}
-                      className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
                     >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleRemoveModel(index)}
+                        aria-label={t("hermes.form.removeModel", {
+                          defaultValue: "移除模型",
+                        })}
+                        className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </HoverTip>
                   </div>
 
                   {isExpanded && (
                     <div
                       id={detailsId}
-                      className="ml-9 grid gap-3 border-l border-border-default pl-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.25rem]"
+                      className="ml-9 grid gap-3 border-l border-border pl-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.25rem]"
                     >
                       <div className="space-y-1">
                         <Label
                           htmlFor={`hermes-model-context-${modelKey}`}
-                          className="text-xs font-normal text-muted-foreground"
+                          className="text-xs font-normal text-fg-2"
                         >
                           {t("hermes.form.contextLength", {
                             defaultValue: "上下文长度",
@@ -452,7 +459,7 @@ export function HermesFormFields({
           </div>
         )}
 
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-fg-2">
           {t("hermes.form.modelsHint", {
             defaultValue:
               "启用为当前供应商时，第一个模型会设为 Hermes 默认模型。",
@@ -460,7 +467,7 @@ export function HermesFormFields({
         </p>
       </div>
 
-      <div className="space-y-2 border-l border-border-default pl-3">
+      <div className="space-y-2 border-l border-border pl-3">
         <Label htmlFor="hermes-rate-limit-delay">
           {t("hermes.form.rateLimitDelay", {
             defaultValue: "请求间隔（秒）",
@@ -485,7 +492,7 @@ export function HermesFormFields({
           }}
           placeholder="0.5"
         />
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-fg-2">
           {t("hermes.form.rateLimitDelayHint", {
             defaultValue: "连续请求间的最小间隔秒数（可选）。留空表示无限制。",
           })}

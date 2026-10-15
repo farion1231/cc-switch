@@ -1,4 +1,5 @@
 import type { OpenCodeModel, OpenCodeProviderConfig } from "@/types";
+import { isPlainObject } from "@/lib/requestOverrides";
 
 // ── Default configs ──────────────────────────────────────────────────
 
@@ -67,6 +68,75 @@ export const OPENCLAW_DEFAULT_CONFIG = JSON.stringify(
 );
 
 // ── Pure functions ───────────────────────────────────────────────────
+
+// Keys only a V1 declaration has, and keys only a native one has. Mirrors
+// provider_format in src-tauri/src/opencode_config.rs.
+const OPENCODE_LEGACY_ONLY_KEYS = ["npm", "options", "api"];
+const OPENCODE_NATIVE_ONLY_KEYS = [
+  "package",
+  "settings",
+  "headers",
+  "body",
+  "canonical",
+];
+
+function parseJson(json: string): unknown {
+  try {
+    return JSON.parse(json);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Keep native declarations out of the V1 structured editor. Source metadata
+ * disambiguates built-in overrides containing only models (or an empty object).
+ * A pasted full config holding `providers` counts as native too.
+ */
+export function isNativeOpencodeConfig(
+  json: string,
+  source?: "v1" | "v2",
+): boolean {
+  if (source) return source === "v2";
+  const value = parseJson(json);
+  if (!isPlainObject(value)) return false;
+  if (OPENCODE_LEGACY_ONLY_KEYS.some((key) => key in value)) return false;
+  return [...OPENCODE_NATIVE_ONLY_KEYS, "providers"].some(
+    (key) => key in value,
+  );
+}
+
+/** A declaration that does not rely on a built-in definition: it names a
+ * package (`npm` for V1, `package` for native) and at least one model.
+ */
+export function hasOpencodeDefinition(
+  declaration: unknown,
+  packageKey: "npm" | "package",
+): boolean {
+  if (!isPlainObject(declaration)) return false;
+  const pkg = declaration[packageKey];
+  const { models } = declaration;
+  return (
+    typeof pkg === "string" &&
+    pkg.trim() !== "" &&
+    isPlainObject(models) &&
+    Object.keys(models).length > 0
+  );
+}
+
+/** The native form's check: a pasted full config holds the declaration under
+ * `providers.<id>`, where the backend also takes it from.
+ */
+export function hasNativeOpencodeDefinition(
+  json: string,
+  providerId: string,
+): boolean {
+  const value = parseJson(json);
+  const providers = isPlainObject(value) ? value.providers : undefined;
+  const declaration = isPlainObject(providers)
+    ? (providers[providerId] ?? value)
+    : value;
+  return hasOpencodeDefinition(declaration, "package");
+}
 
 export function isKnownOpencodeOptionKey(key: string): boolean {
   return OPENCODE_KNOWN_OPTION_KEYS.includes(
@@ -144,16 +214,86 @@ export function getModelExtraFields(
   return extra;
 }
 
+export function formatOpencodeExtraOptionValue(value: unknown): string {
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
 export function toOpencodeExtraOptions(
   options: OpenCodeProviderConfig["options"],
 ): Record<string, string> {
   const extra: Record<string, string> = {};
   for (const [k, v] of Object.entries(options || {})) {
     if (!isKnownOpencodeOptionKey(k)) {
-      extra[k] = typeof v === "string" ? v : JSON.stringify(v);
+      extra[k] = formatOpencodeExtraOptionValue(v);
     }
   }
   return extra;
+}
+
+/**
+ * Reconciles the extra-option row editor's string map into the stored
+ * `options` object in place. Rows whose text still matches the stored
+ * value's display form were not touched by the user, so their stored
+ * values (types included) are kept as-is; a renamed row carries its old
+ * display text under the new key, so its stored value is re-homed from
+ * the key that vanished from the rows. Only added, edited and removed
+ * rows are rewritten.
+ */
+export function mergeOpencodeExtraOptionRows(
+  options: Record<string, unknown>,
+  rows: Record<string, string>,
+): void {
+  const nextRows: Record<string, string> = {};
+  for (const [k, v] of Object.entries(rows)) {
+    const trimmedKey = k.trim();
+    if (trimmedKey && !k.startsWith(OPENCODE_EXTRA_OPTION_DRAFT_PREFIX)) {
+      nextRows[trimmedKey] = v;
+    }
+  }
+
+  // Keys that vanished from the rows were deleted or renamed away. Keep
+  // their stored values around: a renamed row's untouched display text is
+  // matched against them below to re-home the value with its type.
+  const renamedAway: Array<[string, unknown]> = [];
+  for (const k of Object.keys(options)) {
+    // Own-property check: `k in nextRows` would also match inherited
+    // Object.prototype keys such as "constructor" or "toString", keeping
+    // rows the user deleted.
+    if (
+      !isKnownOpencodeOptionKey(k) &&
+      !Object.prototype.hasOwnProperty.call(nextRows, k)
+    ) {
+      renamedAway.push([k, options[k]]);
+      delete options[k];
+    }
+  }
+
+  for (const [k, v] of Object.entries(nextRows)) {
+    const existing = options[k];
+    if (
+      existing !== undefined &&
+      formatOpencodeExtraOptionValue(existing) === v
+    ) {
+      continue;
+    }
+    // A key unknown to `options` can still be an untouched row, namely a
+    // rename: the editor moves the display text to the new key verbatim.
+    // Inherit the vanished key's stored value instead of re-parsing the
+    // text; same-text vanished keys render identically, so any match has
+    // the same display form and usually the same type.
+    const source = renamedAway.find(
+      ([, stored]) => formatOpencodeExtraOptionValue(stored) === v,
+    );
+    if (source) {
+      options[k] = source[1];
+      continue;
+    }
+    try {
+      options[k] = JSON.parse(v);
+    } catch {
+      options[k] = v;
+    }
+  }
 }
 
 export { buildOmoProfilePreview } from "@/types/omo";

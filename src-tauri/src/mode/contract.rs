@@ -19,16 +19,21 @@ fn key_of(parts: &Value) -> String {
     sha256_hex(&serde_json::to_vec(parts).expect("contract parts serialize"))
 }
 
-/// Claude Code：契约就是代理投影里的关键字段和独有字段。
+/// Claude Code：契约就是代理投影里的关键字段和独有字段。顶层关键字段只有聚合模式才有
+/// （`modelPicker`），没有时不进摘要，路由模式的契约和原来逐字节一致。
 pub fn claude(projection: &ClaudeProjection) -> Contract {
+    let mut parts = json!({
+        "app": "claude",
+        "version": CONTRACT_VERSION,
+        "env": sorted(&projection.env),
+        "exclusive": sorted(&projection.exclusive),
+    });
+    if !projection.top.is_empty() {
+        parts["top"] = sorted(&projection.top);
+    }
     Contract {
         version: CONTRACT_VERSION,
-        key: key_of(&json!({
-            "app": "claude",
-            "version": CONTRACT_VERSION,
-            "env": sorted(&projection.env),
-            "exclusive": sorted(&projection.exclusive),
-        })),
+        key: key_of(&parts),
         exclusive: projection.exclusive.clone(),
     }
 }
@@ -55,6 +60,20 @@ pub fn grok(projection: &GrokProjection) -> Contract {
             "app": "grokbuild",
             "version": CONTRACT_VERSION,
             "projection": projection.to_value(),
+        })),
+        exclusive: Map::new(),
+    }
+}
+
+/// Claude Desktop：路由模式写进 profile 的网关设置（本地路由地址、gateway token、路由那家的
+/// 模型列表）。模型列表跟着路由那家变，换路由时多半要重写文件、重启 Desktop。
+pub fn claude_desktop(profile: &Value) -> Contract {
+    Contract {
+        version: CONTRACT_VERSION,
+        key: key_of(&json!({
+            "app": "claude-desktop",
+            "version": CONTRACT_VERSION,
+            "profile": profile,
         })),
         exclusive: Map::new(),
     }

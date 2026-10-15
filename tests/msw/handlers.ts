@@ -14,6 +14,8 @@ import {
   listSessions,
   resetProviderState,
   setCurrentProviderId,
+  ackPendingDeepLink,
+  peekPendingDeepLink,
   updateProvider,
   updateSortOrder,
   getSettings,
@@ -24,6 +26,10 @@ import {
   setMcpServerEnabled,
   upsertMcpServer,
   deleteMcpServer,
+  listCustomIcons,
+  addCustomIcon,
+  renameCustomIcon,
+  deleteCustomIcon,
 } from "./state";
 
 const TAURI_ENDPOINT = "http://tauri.local";
@@ -70,6 +76,16 @@ export const handlers = [
   ),
 
   http.post(`${TAURI_ENDPOINT}/update_tray_menu`, () => success(true)),
+  http.post(`${TAURI_ENDPOINT}/peek_pending_deeplink`, () =>
+    success(peekPendingDeepLink()),
+  ),
+  // 默认下载失败：确认框退回内置图标或首字母
+  http.post(`${TAURI_ENDPOINT}/fetch_deeplink_icon`, () => success(null)),
+  http.post(`${TAURI_ENDPOINT}/ack_pending_deeplink`, async ({ request }) => {
+    const { id } = await withJson<{ id: number }>(request);
+    ackPendingDeepLink(id);
+    return success(null);
+  }),
 
   http.post(`${TAURI_ENDPOINT}/get_opencode_live_provider_ids`, () =>
     success(getLiveProviderIds("opencode")),
@@ -194,6 +210,31 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/import_mcp_from_claude`, () => success(1)),
   http.post(`${TAURI_ENDPOINT}/import_mcp_from_codex`, () => success(1)),
+  http.post(`${TAURI_ENDPOINT}/resync_mcp_to_apps`, async ({ request }) => {
+    const { apps } = await withJson<{ apps?: AppId[] | null }>(request);
+    const targets = apps?.length
+      ? apps
+      : [
+          "claude",
+          "codex",
+          "gemini",
+          "grokbuild",
+          "opencode",
+          "hermes",
+          "mcode",
+        ];
+    return success(targets.map((app) => ({ app, ok: true })));
+  }),
+
+  // Skills / 用量：新加的只读或重投影命令，测试里默认都成功
+  http.post(`${TAURI_ENDPOINT}/resync_skills_to_apps`, () => success([])),
+  http.post(`${TAURI_ENDPOINT}/get_cc_switch_skills_dir`, () =>
+    success("/home/test/.cc-switch/skills"),
+  ),
+  http.post(`${TAURI_ENDPOINT}/open_cc_switch_skills_dir`, () => success(true)),
+  http.post(`${TAURI_ENDPOINT}/get_session_usage_last_sync`, () =>
+    success(null),
+  ),
 
   http.post(`${TAURI_ENDPOINT}/set_mcp_enabled`, async ({ request }) => {
     const { app, id, enabled } = await withJson<{
@@ -366,8 +407,16 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/set_proxy_stack_member`, () => success(null)),
 
+  http.post(`${TAURI_ENDPOINT}/codex_forces_multi_agent_v2`, () =>
+    success(false),
+  ),
+
   http.post(`${TAURI_ENDPOINT}/restart_codex_app_server_daemon`, () =>
     success("restarted"),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/acknowledge_codex_stale_clients`, () =>
+    success(null),
   ),
 
   http.post(`${TAURI_ENDPOINT}/get_proxy_takeover_status`, () =>
@@ -386,6 +435,23 @@ export const handlers = [
     success(false),
   ),
   http.post(`${TAURI_ENDPOINT}/get_failover_queue`, () => success([])),
+
+  // 模式行：默认都在直连，直连那家就是当前供应商
+  http.post(`${TAURI_ENDPOINT}/get_app_mode`, async ({ request }) => {
+    const { appType } = await withJson<{ appType: AppId }>(request);
+    return success({
+      mode: "direct",
+      attached: false,
+      routeProviderId: null,
+      directProviderId: getCurrentProviderId(appType) || null,
+    });
+  }),
+  http.post(`${TAURI_ENDPOINT}/set_proxy_route`, () => success(null)),
+  http.post(`${TAURI_ENDPOINT}/take_startup_attach_failures`, () =>
+    success([]),
+  ),
+  http.post(`${TAURI_ENDPOINT}/take_tray_navigation`, () => success(null)),
+  http.post(`${TAURI_ENDPOINT}/tray_app_page_seen`, () => success(null)),
   http.post(`${TAURI_ENDPOINT}/get_available_providers_for_failover`, () =>
     success([]),
   ),
@@ -422,4 +488,102 @@ export const handlers = [
   ),
   http.post(`${TAURI_ENDPOINT}/reset_circuit_breaker`, () => success(true)),
   http.post(`${TAURI_ENDPOINT}/get_circuit_breaker_stats`, () => success(null)),
+
+  // 侧栏：今日花费、授权中心提醒；「应用」页：Claude Desktop 接入状态
+  http.post(`${TAURI_ENDPOINT}/get_usage_summary`, () =>
+    success({
+      totalRequests: 0,
+      totalCost: "0",
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalCacheCreationTokens: 0,
+      totalCacheReadTokens: 0,
+      successRate: 0,
+      realTotalTokens: 0,
+      cacheHitRate: 0,
+    }),
+  ),
+  // 会话阅读页头部：没有导入过用量时不显示
+  http.post(`${TAURI_ENDPOINT}/get_session_usage_summary`, () =>
+    success({
+      totalRequests: 0,
+      totalCost: "0",
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalCacheCreationTokens: 0,
+      totalCacheReadTokens: 0,
+      successRate: 0,
+      realTotalTokens: 0,
+      cacheHitRate: 0,
+    }),
+  ),
+  http.post(`${TAURI_ENDPOINT}/auth_get_status`, async ({ request }) => {
+    const { authProvider } = await withJson<{ authProvider: string }>(request);
+    return success({
+      provider: authProvider,
+      authenticated: false,
+      default_account_id: null,
+      accounts: [],
+    });
+  }),
+  // 应用页页头的「提示词：X ›」会读各应用的提示词列表
+  http.post(`${TAURI_ENDPOINT}/get_prompts`, () => success({})),
+  http.post(
+    `${TAURI_ENDPOINT}/get_prompt_file_location`,
+    async ({ request }) => {
+      const { app } = await withJson<{ app: AppId }>(request);
+      const file =
+        app === "claude"
+          ? "CLAUDE.md"
+          : app === "gemini"
+            ? "GEMINI.md"
+            : app === "hermes"
+              ? "SOUL.md"
+              : "AGENTS.md";
+      return success({
+        path: `/home/test/.${app}/${file}`,
+        displayPath: `~/.${app}/${file}`,
+      });
+    },
+  ),
+  http.post(`${TAURI_ENDPOINT}/get_claude_desktop_status`, () =>
+    success({
+      supported: true,
+      configured: false,
+      proxyRunning: false,
+      staleRawModels: false,
+      missingRouteMappings: false,
+      gatewayTokenConfigured: false,
+    }),
+  ),
+  http.post(`${TAURI_ENDPOINT}/get_hermes_memory`, async ({ request }) => {
+    const { kind } = await withJson<{ kind: string }>(request);
+    return success(kind === "user" ? "user profile" : "agent notes");
+  }),
+  http.post(`${TAURI_ENDPOINT}/get_hermes_memory_limits`, () =>
+    success({
+      memory: 2200,
+      user: 1375,
+      memoryEnabled: true,
+      userEnabled: true,
+    }),
+  ),
+  http.post(`${TAURI_ENDPOINT}/get_custom_icons`, () =>
+    success(listCustomIcons()),
+  ),
+  http.post(`${TAURI_ENDPOINT}/add_custom_icon`, async ({ request }) => {
+    const { name, data } = await withJson<{ name: string; data: string }>(
+      request,
+    );
+    return success(addCustomIcon(name, data));
+  }),
+  http.post(`${TAURI_ENDPOINT}/rename_custom_icon`, async ({ request }) => {
+    const { id, name } = await withJson<{ id: string; name: string }>(request);
+    return success(renameCustomIcon(id, name));
+  }),
+  http.post(`${TAURI_ENDPOINT}/delete_custom_icon`, async ({ request }) => {
+    const { id } = await withJson<{ id: string }>(request);
+    deleteCustomIcon(id);
+    return success(null);
+  }),
 ];
