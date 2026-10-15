@@ -804,6 +804,10 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      # 下面要取 src/whats-new/<版本>.json 随包发布，checkout 到 tag 本身
+      - name: Checkout tag
+        uses: actions/checkout@v6
+
       - name: List downloaded release artifacts
         shell: bash
         run: |
@@ -936,6 +940,17 @@ jobs:
           } > "$tmp_json"
           echo "Generated latest.json:" && cat "$tmp_json"
           mv "$tmp_json" release-assets/latest.json
+
+      # 应用内更新摘要随包发布：近期更新窗口对还没装进来的新版本，会按 tag
+      # 取这份 JSON（dl.ccswitch.io 镜像在前、GitHub 在后，见 src/lib/whatsNew.ts）。
+      # whats-new-check 已在最前面验证过它的存在和结构，缺了会在编译前就失败。
+      - name: Add in-app what's new summary
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cp "src/whats-new/${TAG#v}.json" "release-assets/whats-new-${TAG#v}.json"
+
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v3
         with:

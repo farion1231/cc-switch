@@ -19,7 +19,13 @@ import { settingsApi } from "@/lib/api";
 import { useUpdate } from "@/contexts/UpdateContext";
 import { Badge } from "@/components/ui/badge";
 import { WhatsNewDialog } from "@/components/WhatsNewDialog";
-import { WHATS_NEW_ENTRIES, entriesUpTo } from "@/lib/whatsNew";
+import {
+  WHATS_NEW_ENTRIES,
+  entriesUpTo,
+  fetchWhatsNewSummary,
+  type WhatsNewEntry,
+} from "@/lib/whatsNew";
+import { compareVersions } from "@/lib/version";
 import appIcon from "@/assets/icons/app-icon.png";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
@@ -55,6 +61,8 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   );
   const [isDownloading, setIsDownloading] = useState(false);
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  // 待更新版本的随包摘要（安装包里还没有，联网取，失败退回本地摘要）
+  const [pendingEntry, setPendingEntry] = useState<WhatsNewEntry | null>(null);
   const [starPromptDismissed, setStarPromptDismissed] = useState(
     readStarPromptDismissed,
   );
@@ -62,9 +70,34 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     () => (version ? entriesUpTo(WHATS_NEW_ENTRIES, version) : []),
     [version],
   );
+  // 近期更新列表 = 已装版本的摘要 + 待更新版本的摘要（有更新才取，同一版本只取一次）
+  const recentEntriesWithPending = useMemo(
+    () => (pendingEntry ? [pendingEntry, ...recentEntries] : recentEntries),
+    [pendingEntry, recentEntries],
+  );
 
   const { hasUpdate, updateInfo, checkUpdate, resetDismiss, isChecking } =
     useUpdate();
+
+  const candidatePendingVersion = updateInfo?.availableVersion;
+  useEffect(() => {
+    let active = true;
+    const candidate = candidatePendingVersion;
+    if (!candidate || !version || compareVersions(candidate, version) <= 0) {
+      setPendingEntry(null);
+      return;
+    }
+    void fetchWhatsNewSummary(candidate)
+      .then((entry) => {
+        if (active) setPendingEntry(entry);
+      })
+      .catch(() => {
+        if (active) setPendingEntry(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [candidatePendingVersion, version]);
 
   useEffect(() => {
     let active = true;
@@ -296,7 +329,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           <ExternalLink className="h-3.5 w-3.5" />
           {t("settings.releaseNotes")}
         </Button>
-        {recentEntries.length > 0 && (
+        {recentEntriesWithPending.length > 0 && (
           <Button
             type="button"
             variant="neutral"
@@ -349,7 +382,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       <WhatsNewDialog
         open={whatsNewOpen}
         onClose={() => setWhatsNewOpen(false)}
-        entries={recentEntries}
+        entries={recentEntriesWithPending}
       />
     </div>
   );

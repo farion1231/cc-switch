@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   changelogUrl,
   entriesSince,
   entriesUpTo,
+  fetchWhatsNewSummary,
   isNewerThanSeen,
   markSeen,
+  parseWhatsNewEntry,
   resolveWhatsNewLanguage,
   type WhatsNewEntry,
 } from "@/lib/whatsNew";
@@ -92,5 +94,174 @@ describe("language and links", () => {
       "https://ccswitch.io/en/changelog/4.0.2",
     );
     expect(changelogUrl("zh-TW")).toBe("https://ccswitch.io/zh/changelog");
+  });
+});
+
+const REMOTE_ENTRY = {
+  version: "4.0.13",
+  items: [{ type: "new", zh: "新", "zh-TW": "新", en: "new", ja: "新機能" }],
+};
+
+const jsonResponse = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  localStorage.clear();
+});
+
+describe("parseWhatsNewEntry", () => {
+  it("accepts a well-formed entry and keeps only the four languages", () => {
+    const parsed = parseWhatsNewEntry(REMOTE_ENTRY);
+    expect(parsed).toEqual({
+      version: "4.0.13",
+      items: [{
+        type: "new",
+        zh: "新",
+        "zh-TW": "新",
+        en: "new",
+        ja: "新機能",
+      }],
+    });
+  });
+
+  it("rejects broken shapes instead of throwing", () => {
+    expect(parseWhatsNewEntry(null)).toBeNull();
+    expect(parseWhatsNewEntry([])).toBeNull();
+    expect(parseWhatsNewEntry({ version: 3, items: [] })).toBeNull();
+    expect(
+      parseWhatsNewEntry({ version: "4.0.2-beta.1-bad/..", items: [] }),
+    ).toBeNull();
+    expect(parseWhatsNewEntry({ version: "4.0.13" })).toBeNull();
+    expect(parseWhatsNewEntry({ version: "4.0.13", items: [null] })).toBeNull();
+    expect(
+      parseWhatsNewEntry({ version: "4.0.13", items: [{ type: "news" }] }),
+    ).toBeNull();
+    expect(
+      parseWhatsNewEntry({
+        version: "4.0.13",
+        items: [{ type: "new", zh: "新", "zh-TW": "新", en: "new" }],
+      }),
+    ).toBeNull();
+    expect(
+      parseWhatsNewEntry({
+        version: "4.0.13",
+        items: [
+          { type: "new", zh: "", "zh-TW": "新", en: "new", ja: "新機能" },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("allows empty items and rejects more than four", () => {
+    // 纯构建版本本来就是空 items，形状合法；是否算摘要由 fetch 层判
+    expect(parseWhatsNewEntry({ version: "4.0.13", items: [] })).toEqual({
+      version: "4.0.13",
+      items: [],
+    });
+    expect(
+      parseWhatsNewEntry({
+        version: "4.0.13",
+        items: Array.from({ length: 5 }, () => ({
+          type: "new",
+          zh: "新",
+          "zh-TW": "新",
+          en: "new",
+          ja: "新機能",
+        })),
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("fetchWhatsNewSummary", () => {
+  const urls = [
+    `https://dl.ccswitch.io/v4.0.13/whats-new-4.0.13.json`,
+    `https://github.com/farion1231/cc-switch/releases/download/v4.0.13/whats-new-4.0.13.json`,
+  ];
+
+  it("takes the mirror first and validates before accepting", async () => {
+    const fetchMock = vi.fn((url: string) =>
+      Promise.resolve(jsonResponse(REMOTE_ENTRY, url === urls[0] ? 200 : 404)),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const entry = await fetchWhatsNewSummary("4.0.13");
+    expect(entry).toEqual({ ...REMOTE_ENTRY });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(urls[0]);
+  });
+
+  it("falls back to GitHub when the mirror fails", async () => {
+    const fetchMock = vi.fn((url: string) =>
+      Promise.resolve(
+        url === urls[0] ? new Response("", { status: 404 }) : jsonResponse(REMOTE_ENTRY),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const entry = await fetchWhatsNewSummary("4.0.13");
+    expect(entry).toEqual({ ...REMOTE_ENTRY });
+    expect(fetchMock.mock.calls[1][0]).toBe(urls[1]);
+  });
+
+  it("returns null on network failure instead of throwing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+    await expect(fetchWhatsNewSummary("4.0.13")).resolves.toBeNull();
+  });
+
+  it("returns null when the fetched version mismatches or items are empty", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse({
+            version: "4.0.11",
+            items: REMOTE_ENTRY.items,
+          }),
+        ),
+      ),
+    );
+    await expect(fetchWhatsNewSummary("4.0.13")).resolves.toBeNull();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(jsonResponse({ version: "4.0.13", items: [] })),
+      ),
+    );
+    await expect(fetchWhatsNewSummary("4.0.13")).resolves.toBeNull();
+  });
+
+  it("caches per version and only fetches once", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(REMOTE_ENTRY)));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchWhatsNewSummary("4.0.13")).resolves.toEqual({
+      ...REMOTE_ENTRY,
+    });
+    await expect(fetchWhatsNewSummary("4.0.13")).resolves.toEqual({
+      ...REMOTE_ENTRY,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await expect(fetchWhatsNewSummary("4.0.14")).resolves.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not trust a broken cached value", async () => {
+    localStorage.setItem(
+      "ccswitch:whats-new:remote:4.0.13",
+      JSON.stringify({ version: "4.0.13" }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response("", { status: 404 }))),
+    );
+    await expect(fetchWhatsNewSummary("4.0.13")).resolves.toBeNull();
   });
 });
