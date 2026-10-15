@@ -36,6 +36,10 @@ const REVISION_MARKER: u64 = 0b101;
 // Earlier builds of the timing fix wrote this tag with the same cursor layout.
 const COMPAT_REVISION_MARKER: u64 = 0b110;
 const REVISION_SIZE_MASK: u64 = (1 << 28) - 1;
+/// Usage import streams the file line by line, so only a single JSONL line
+/// needs to be held in memory. Long-running Pi sessions routinely grow past
+/// the session browser's whole-file limit and must still be billed.
+const MAX_USAGE_LINE_BYTES: u64 = crate::session_manager::providers::pi::MAX_SESSION_BYTES;
 const PI_REQUEST_DEDUP_SQL: &str = "SELECT EXISTS(
          SELECT 1 FROM session_usage_dedup
          WHERE data_source = ?1 AND request_id = ?2
@@ -115,7 +119,9 @@ impl PiFileRevision {
     fn encoded(self) -> i64 {
         ((REVISION_MARKER << REVISION_MARKER_SHIFT)
             | (u64::from(self.complete) << REVISION_COMPLETE_SHIFT)
-            | (self.file_size << REVISION_SIZE_SHIFT)
+            // The exact size lives in `last_byte_offset`; these bits only keep
+            // cursors written before that column was used decodable.
+            | (self.file_size.min(REVISION_SIZE_MASK) << REVISION_SIZE_SHIFT)
             | u64::from(self.tail_fingerprint)) as i64
     }
 }
@@ -192,13 +198,6 @@ fn sync_single_pi_file(
             "Pi 会话路径不是普通 JSONL 文件".to_string(),
         ));
     }
-    if metadata.len() > crate::session_manager::providers::pi::MAX_SESSION_BYTES {
-        return Err(AppError::Config(format!(
-            "Pi 会话文件超过 {} 字节安全上限",
-            crate::session_manager::providers::pi::MAX_SESSION_BYTES
-        )));
-    }
-
     let file_path_string = file_path.to_string_lossy().to_string();
     let modified = metadata_modified_nanos(&metadata);
     let revision = pi_file_revision(file_path, &metadata, modified)?;
@@ -261,9 +260,11 @@ fn decode_pi_sync_state(
     if marker != REVISION_MARKER && marker != COMPAT_REVISION_MARKER {
         return None;
     }
-    let file_size = (encoded_revision >> REVISION_SIZE_SHIFT) & REVISION_SIZE_MASK;
-    if file_size > crate::session_manager::providers::pi::MAX_SESSION_BYTES
-        || last_line_offset < 0
+    let file_size = match cursor.last_byte_offset {
+        Some(size) => u64::try_from(size).ok()?,
+        None => (encoded_revision >> REVISION_SIZE_SHIFT) & REVISION_SIZE_MASK,
+    };
+    if last_line_offset < 0
         || last_line_offset > crate::session_manager::providers::pi::MAX_TREE_ENTRIES as i64 + 1
     {
         return None;
@@ -289,8 +290,13 @@ fn update_pi_sync_state_on_conn(
     // No schema expansion is needed for Pi's append proof. This tagged value
     // is private to Pi rows; no production consumer interprets last_synced_at.
     conn.execute(
-        "UPDATE session_log_sync SET last_synced_at = ?2 WHERE file_path = ?1",
-        rusqlite::params![file_path, revision.encoded()],
+        "UPDATE session_log_sync SET last_synced_at = ?2, last_byte_offset = ?3
+         WHERE file_path = ?1",
+        rusqlite::params![
+            file_path,
+            revision.encoded(),
+            i64::try_from(revision.file_size).unwrap_or(i64::MAX)
+        ],
     )
     .map_err(|error| AppError::Database(format!("更新 Pi 会话同步状态失败: {error}")))?;
     Ok(())
@@ -367,18 +373,18 @@ fn parse_pi_file(
             break;
         }
         let read = Read::by_ref(&mut reader)
-            .take(remaining)
+            .take(remaining.min(MAX_USAGE_LINE_BYTES + 1))
             .read_line(&mut buffer)
             .map_err(|error| AppError::Config(format!("无法读取 Pi 会话文件: {error}")))?;
         if read == 0 {
             return Err(AppError::Config("Pi 会话文件在读取期间被截断".to_string()));
         }
-        bytes_read = bytes_read.saturating_add(read as u64);
-        if bytes_read > crate::session_manager::providers::pi::MAX_SESSION_BYTES {
-            return Err(AppError::Config(
-                "Pi 会话文件读取时超过安全上限".to_string(),
-            ));
+        if read as u64 > MAX_USAGE_LINE_BYTES {
+            return Err(AppError::Config(format!(
+                "Pi 会话单行超过 {MAX_USAGE_LINE_BYTES} 字节安全上限"
+            )));
         }
+        bytes_read = bytes_read.saturating_add(read as u64);
         let has_newline = buffer.ends_with('\n');
         let line = buffer.trim();
         let value = if line.is_empty() {
@@ -1754,12 +1760,57 @@ mod tests {
     }
 
     #[test]
-    fn oversized_file_is_reported_instead_of_silently_skipped() -> Result<(), AppError> {
+    fn session_beyond_browser_size_limit_is_still_imported() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = session_path(temp.path(), "large");
+        let header = r#"{"type":"session","version":3,"id":"session-large","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#;
+        let filler = format!(
+            r#"{{"type":"custom","customType":"fixture","data":"{}"}}"#,
+            "x".repeat(1024 * 1024)
+        );
+        {
+            let mut file = File::create(&path).expect("create large session");
+            writeln!(file, "{header}").expect("header");
+            while file.metadata().expect("large metadata").len()
+                <= crate::session_manager::providers::pi::MAX_SESSION_BYTES
+            {
+                writeln!(file, "{filler}").expect("filler");
+            }
+            writeln!(
+                file,
+                "{}",
+                assistant_line("first", "2023-11-14T22:13:21Z", 1)
+            )
+            .expect("first row");
+        }
+
+        let db = Database::memory()?;
+        let initial = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(initial.errors.is_empty(), "{:?}", initial.errors);
+        assert_eq!(initial.imported, 1);
+
+        writeln!(
+            fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .expect("append large session"),
+            "{}",
+            assistant_line("second", "2023-11-14T22:13:22Z", 2)
+        )
+        .expect("second row");
+        let appended = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(appended.errors.is_empty(), "{:?}", appended.errors);
+        assert_eq!((appended.imported, appended.skipped), (1, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_line_is_reported_instead_of_silently_skipped() -> Result<(), AppError> {
         let temp = tempfile::tempdir().expect("tempdir");
         let path = session_path(temp.path(), "oversized");
         File::create(&path)
             .expect("create sparse session")
-            .set_len(crate::session_manager::providers::pi::MAX_SESSION_BYTES + 1)
+            .set_len(MAX_USAGE_LINE_BYTES + 1)
             .expect("size sparse session");
 
         let db = Database::memory()?;
@@ -1768,5 +1819,25 @@ mod tests {
         assert_eq!(result.errors.len(), 1);
         assert!(result.errors[0].contains("安全上限"));
         Ok(())
+    }
+
+    #[test]
+    fn sync_state_keeps_sizes_beyond_revision_bits() {
+        let revision = PiFileRevision {
+            modified_nanos: 1,
+            file_size: (REVISION_SIZE_MASK + 1) * 3,
+            tail_fingerprint: 0xdead_beef,
+            complete: true,
+        };
+        let cursor = crate::services::session_usage::SyncCursor {
+            last_modified: revision.modified_nanos,
+            last_line_offset: 7,
+            last_byte_offset: Some(revision.file_size as i64),
+            last_tail_fingerprint: None,
+            last_synced_at: revision.encoded(),
+        };
+        let state = decode_pi_sync_state(Some(&cursor)).expect("decodable state");
+        assert_eq!(state.revision, revision);
+        assert_eq!(state.last_line_offset, 7);
     }
 }
