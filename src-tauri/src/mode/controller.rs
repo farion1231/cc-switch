@@ -5779,7 +5779,7 @@ model_provider = "c"
         assert_eq!(stack_state().members, vec!["a"]);
 
         // 设为默认（比如托盘里点）一家还没添加的：一起加入名单，原来的默认留在名单里，
-        // 之后可以移除。四档指向新默认的第一个模型：1M 模型三档带标记，haiku 不带。
+        // 之后可以移除。四档指向新默认的第一个模型：1M 模型四档都带标记。
         ProviderService::switch(&state, AppType::Claude, "zhipu").expect("set default");
         assert_eq!(stack_state().members, vec!["a", "zhipu"]);
         assert!(picker().is_some());
@@ -5790,7 +5790,7 @@ model_provider = "c"
         );
         assert_eq!(
             env["ANTHROPIC_DEFAULT_HAIKU_MODEL"],
-            "ccs-claude-zhipu--glm-5.2"
+            "ccs-claude-zhipu--glm-5.2[1M]"
         );
         let with_a = settings();
         set_member(&state, "a", false).await;
