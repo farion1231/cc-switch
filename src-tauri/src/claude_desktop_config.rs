@@ -1129,7 +1129,7 @@ fn write_profile_at_paths(
     db: &Database,
     paths: &ClaudeDesktopPaths,
     op: &str,
-    profile: Value,
+    mut profile: Value,
     target: PendingTarget,
 ) -> Result<(), AppError> {
     let deployment = deployment_mode_patch("3p");
