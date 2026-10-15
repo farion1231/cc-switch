@@ -153,6 +153,10 @@ interface ClaudeFormFieldsProps {
   apiFormat: ClaudeApiFormat;
   onApiFormatChange: (format: ClaudeApiFormat) => void;
 
+  // Gemini Native 格式下上游提供 Gemini 服务所用的 API 版本
+  geminiApiVersion: "v1beta" | "v1";
+  onGeminiApiVersionChange: (version: "v1beta" | "v1") => void;
+
   // Auth Field (ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY)
   apiKeyField: ClaudeApiKeyField;
   onApiKeyFieldChange: (field: ClaudeApiKeyField) => void;
@@ -235,6 +239,8 @@ export function ClaudeFormFields({
   speedTestEndpoints,
   apiFormat,
   onApiFormatChange,
+  geminiApiVersion,
+  onGeminiApiVersionChange,
   apiKeyField,
   onApiKeyFieldChange,
   isFullUrl,
@@ -899,6 +905,46 @@ export function ClaudeFormFields({
     </>
   );
 
+  // Gemini Native 专用：上游服务用的是 Google 官方 v1beta，还是以 /v1 代理 Gemini 的网关
+  const geminiApiVersionLabel = t("providerForm.geminiApiVersionLabel", {
+    defaultValue: "Gemini API 版本",
+  });
+  const geminiApiVersionField = apiFormat === "gemini_native" && (
+    <div className="space-y-2">
+      <div className="flex items-center gap-0.5">
+        <FormLabel htmlFor="geminiApiVersion">
+          {geminiApiVersionLabel}
+        </FormLabel>
+        <HelpTip title={geminiApiVersionLabel}>
+          {t("providerForm.geminiApiVersionHelp", {
+            defaultValue:
+              "上游提供 Gemini 服务所用的版本：Google 官方 API 使用 v1beta；部分网关把相同端点暴露在 v1 下。",
+          })}
+        </HelpTip>
+      </div>
+      <Select
+        value={geminiApiVersion}
+        onValueChange={(v) => onGeminiApiVersionChange(v as "v1beta" | "v1")}
+      >
+        <SelectTrigger id="geminiApiVersion" className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="v1beta">
+            {t("providerForm.geminiApiVersionOptionV1Beta", {
+              defaultValue: "v1beta（Google 官方 API）",
+            })}
+          </SelectItem>
+          <SelectItem value="v1">
+            {t("providerForm.geminiApiVersionOptionV1", {
+              defaultValue: "v1（网关）",
+            })}
+          </SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  );
+
   // 认证字段选择器
   const authFieldLabel = t("providerForm.authField", {
     defaultValue: "认证字段",
@@ -1010,6 +1056,7 @@ export function ClaudeFormFields({
       <>
         {oauthSections}
         {apiFormatField}
+        {geminiApiVersionField}
         {apiKeySection}
         {showAuthField && authFieldSelect}
         {templateSection}
@@ -1094,6 +1141,8 @@ export function ClaudeFormFields({
           </CollapsibleTrigger>
           <CollapsibleContent className="space-y-4 pt-2">
             {apiFormatField}
+
+            {geminiApiVersionField}
 
             {fullUrlToggle}
 
