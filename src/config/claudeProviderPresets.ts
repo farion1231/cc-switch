@@ -322,7 +322,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
-    apiKeyUrl: "https://grooroute.xyz/sign-up?aff=qqm9",
+    apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://grooroute.pro",
@@ -1871,6 +1871,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "aggregator",
+    icon: "baseten",
     endpointCandidates: ["https://inference.baseten.co"],
   },
   {
@@ -1920,6 +1921,137 @@ export const providerPresets: ProviderPreset[] = [
     // api.ollama.com / www.ollama.com 都 301/308 跳回 ollama.com，不另列候选
     endpointCandidates: ["https://ollama.com"],
     icon: "ollama",
+  },
+  {
+    name: "Ollama",
+    websiteUrl: "https://ollama.com",
+    // 本机 Ollama（docs.ollama.com/integrations/claude-code，2026-10-14 核对）：
+    // /v1/messages 自 v0.14.0 起支持，服务端不校验 Key，官方写法是
+    // AUTH_TOKEN=ollama、ANTHROPIC_API_KEY 置空；默认只监听 127.0.0.1:11434
+    //（OLLAMA_HOST 可改）。模型由用户自己 ollama pull：qwen3.5 是官方示例，
+    // 换成自己已下载的模型，或用「获取模型」从 /v1/models 拉取（id 带 :latest
+    // 等 tag）。实际窗口受服务端限制：显存低于 24 GiB 时默认只有 4k，官方要求
+    // 编程工具至少 64k（OLLAMA_CONTEXT_LENGTH=64000 ollama serve，
+    // docs.ollama.com/context-length）。兼容层不支持 cache_control、
+    // count_tokens 与 tool_choice（docs.ollama.com/api/anthropic-compatibility）
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "http://localhost:11434",
+        ANTHROPIC_AUTH_TOKEN: "ollama",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_MODEL: "qwen3.5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.5",
+      },
+    },
+    category: "local",
+    endpointCandidates: ["http://localhost:11434", "http://127.0.0.1:11434"],
+    icon: "ollama",
+  },
+  {
+    name: "LM Studio",
+    websiteUrl: "https://lmstudio.ai",
+    // 本机 LM Studio（lmstudio.ai/docs/integrations/claude-code，2026-10-14
+    // 核对）：Anthropic 兼容 /v1/messages 自 0.4.1 起支持，base 不带 /v1。默认
+    // 不鉴权，官方写法 AUTH_TOKEN=lmstudio，预填该占位值；开启 Require
+    // Authentication 后换成 App 里创建的 API Token（x-api-key 与 Bearer 都认，
+    // lmstudio.ai/docs/developer/core/authentication）。官方另建议
+    // CLAUDE_CODE_ATTRIBUTION_HEADER=0，它不是关键 / 独有字段，写进预设不生效，
+    // 需自行加到全局设置。模型由用户自己下载：openai/gpt-oss-20b 是官方示例，
+    // 换成自己已下载的模型 ID，或用「获取模型」从 /v1/models 拉取。已知问题
+    //（lmstudio-bug-tracker #2164、#2220，仍未关）：0.4.19 Build 2 起 Qwen 停在
+    // 一句话、0.4.20 起 gpt-oss-120b 报 grammar 400，撞上时可改 openai_chat +
+    // http://localhost:1234/v1 走路由
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "http://localhost:1234",
+        ANTHROPIC_AUTH_TOKEN: "lmstudio",
+        ANTHROPIC_MODEL: "openai/gpt-oss-20b",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "openai/gpt-oss-20b",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "openai/gpt-oss-20b",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "openai/gpt-oss-20b",
+        // 模型 id 非 claude-* 时 Claude Code 按 200K 默认窗口处理，钉住
+        // gpt-oss-20b 的原生值 131072。实际窗口受 LM Studio 加载模型时的
+        // context length 限制（UI 设置或 lms load --context-length），官方要求
+        // 至少约 25K；加载窗口更小时此值要一起调小
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "131072",
+      },
+    },
+    category: "local",
+    icon: "lmstudio",
+    endpointCandidates: ["http://localhost:1234", "http://127.0.0.1:1234"],
+  },
+  {
+    name: "llama.cpp",
+    websiteUrl: "https://github.com/ggml-org/llama.cpp",
+    // 本机 llama-server（github.com/ggml-org/llama.cpp/blob/master/tools/server/
+    // README.md，2026-10-14 核对）：Anthropic 兼容 /v1/messages 自 b7187 起支持
+    //（PR #17570），只有带 /v1 的路由，base 不带 /v1；工具调用需要的 jinja 自
+    // b7170 起默认开启，不用再加 --jinja。默认端口自 b11521（PR #30159，
+    // 2026-10-09）起为 9931，v0.6.0 及更早、Homebrew 与 Docker 镜像仍是 8080，
+    // 见候选地址；默认只监听 IPv4 的 127.0.0.1，故不写 localhost。不带
+    // --api-key 启动时不校验 Key，预填占位值 no-key（同 README 示例）；带了
+    // --api-key 就填那个值（Bearer 与 x-api-key 都认）。server 会归一化
+    // x-anthropic-billing-header 里每次变化的 cch=，前缀缓存不受影响（PR #21793）。
+    // 模型由用户自己下载：默认取 ggml-org 官方 GGUF 的 Qwen3-Coder 30B A3B
+    //（llama-server -hf 拉取后 /v1/models 的 id 即此值），换成自己已下载的模型，
+    // 或用「获取模型」从 /v1/models 拉取；单模型启动时 model 字段被忽略，
+    // router 模式（启动不带 -m / -hf）须与 /v1/models 的 id 一致。模型 id 非
+    // claude-* 时 Claude Code 按 200K 默认窗口处理，而本地实际窗口受 -c / --fit /
+    // -np 限制（以 /v1/models 的 meta.n_ctx 为准），更小时自行加
+    // CLAUDE_CODE_MAX_CONTEXT_TOKENS 钉成实际值
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "http://127.0.0.1:9931",
+        ANTHROPIC_AUTH_TOKEN: "no-key",
+        ANTHROPIC_MODEL: "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL:
+          "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+        ANTHROPIC_DEFAULT_SONNET_MODEL:
+          "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+        ANTHROPIC_DEFAULT_OPUS_MODEL:
+          "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+      },
+    },
+    category: "local",
+    icon: "llamacpp",
+    endpointCandidates: ["http://127.0.0.1:9931", "http://127.0.0.1:8080"],
+  },
+  {
+    name: "vLLM",
+    websiteUrl: "https://vllm.ai",
+    // 本机 vllm serve（docs.vllm.ai/en/stable/serving/integrations/claude_code，
+    // v0.31.0 源码，2026-10-14 核对）：Anthropic 兼容 /v1/messages 自 v0.11.1
+    // 起支持，与 OpenAI 接口同端口，base 不带 /v1；Claude Code 2.1.154 起在
+    // messages 里带 system 角色，v0.23.0 之前报 400（PR #44283），故要求
+    // vLLM ≥ 0.23.0；0.17.1 之后会自动剥掉 Claude Code 注入的逐请求 hash，
+    // 前缀缓存不受影响，不用设 CLAUDE_CODE_ATTRIBUTION_HEADER。默认端口 8000，
+    // 不带 --host 时监听全部 IPv4 网卡，建议加 --host 127.0.0.1。不带 --api-key
+    // 时不校验 Key，预填官方占位值 dummy；带了就填那个值（只认 Bearer，不认
+    // x-api-key，默认的 AUTH_TOKEN 正好是 Bearer）。工具调用要启动时加
+    // --enable-auto-tool-choice 与 --tool-call-parser，推荐命令（Qwen 模型卡）：
+    // vllm serve Qwen/Qwen3.6-27B --max-model-len 262144 --reasoning-parser qwen3
+    // --enable-auto-tool-choice --tool-call-parser qwen3_coder。兼容层不支持
+    // PDF document 块，cache_control 被忽略。模型由用户自己下载：默认取 vLLM
+    // Codex 接入页的示例 Qwen/Qwen3.6-27B，模型 ID 须与 /v1/models 返回的一致
+    //（没传 --served-model-name 时就是 HF 仓库名），换成自己的模型，或用
+    // 「获取模型」从 /v1/models 拉取。模型 id 非 claude-* 时 Claude Code 按 200K
+    // 默认窗口处理，而本地实际窗口受 --max-model-len 限制，更小时自行加
+    // CLAUDE_CODE_MAX_CONTEXT_TOKENS 钉成实际值
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "http://localhost:8000",
+        ANTHROPIC_AUTH_TOKEN: "dummy",
+        ANTHROPIC_MODEL: "Qwen/Qwen3.6-27B",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "Qwen/Qwen3.6-27B",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "Qwen/Qwen3.6-27B",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "Qwen/Qwen3.6-27B",
+      },
+    },
+    category: "local",
+    icon: "vllm",
+    endpointCandidates: ["http://localhost:8000", "http://127.0.0.1:8000"],
   },
   {
     name: "Meta Model API",
@@ -1975,6 +2107,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "aggregator",
+    icon: "deepinfra",
     endpointCandidates: ["https://api.deepinfra.com/anthropic"],
   },
   {
@@ -2029,6 +2162,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "aggregator",
+    icon: "nebius",
     apiFormat: "openai_chat",
     endpointCandidates: ["https://api.tokenfactory.nebius.com"],
   },
@@ -2059,6 +2193,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "aggregator",
+    icon: "groq",
     apiFormat: "openai_chat",
     endpointCandidates: ["https://api.groq.com/openai/v1"],
   },
@@ -2088,6 +2223,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cloud_provider",
+    icon: "sambanova",
     endpointCandidates: ["https://api.sambanova.ai"],
   },
   {
@@ -2116,6 +2252,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cloud_provider",
+    icon: "digitalocean",
     endpointCandidates: ["https://inference.do-ai.run"],
   },
   {
@@ -2226,6 +2363,7 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "cloud_provider",
+    icon: "fireworks",
     endpointCandidates: ["https://api.fireworks.ai/inference"],
   },
   {

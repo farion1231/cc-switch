@@ -580,7 +580,7 @@ requires_openai_auth = true`,
   {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
-    apiKeyUrl: "https://grooroute.xyz/sign-up?aff=qqm9",
+    apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
     category: "aggregator",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
@@ -3335,6 +3335,7 @@ requires_openai_auth = true`,
       outputFormat: "reasoning_content",
     },
     category: "aggregator",
+    icon: "baseten",
   },
   {
     name: "Novita AI",
@@ -3547,6 +3548,200 @@ requires_openai_auth = true`,
     icon: "ollama",
   },
   {
+    name: "Ollama",
+    websiteUrl: "https://ollama.com",
+    // 本机服务端不校验 Key，但表单要求必填，预填占位值 ollama（同官方示例）
+    auth: generateThirdPartyAuth("ollama"),
+    // 本机 /v1/responses（docs.ollama.com/api/openai-compatibility，2026-10-14
+    // 核对）：文档写 v0.13.3 起，Codex 自己对 --oss 要求 0.13.4+；只支持无状态
+    // 请求（不认 previous_response_id），disable_response_storage 下每轮发完整
+    // input，不受影响。默认只监听 127.0.0.1:11434。gpt-oss:20b 是 codex --oss
+    // 的默认模型（docs.ollama.com/integrations/codex），需先 ollama pull，或换成
+    // 自己已下载的模型 / 用「获取模型」从 /v1/models 拉取
+    config: generateThirdPartyConfig(
+      "ollama",
+      "http://localhost:11434/v1",
+      "gpt-oss:20b",
+    ),
+    endpointCandidates: [
+      "http://localhost:11434/v1",
+      "http://127.0.0.1:11434/v1",
+    ],
+    // 本机 Responses 不认 custom 工具，回放 custom_tool_call 直接报 unknown
+    // input item type（ollama 源码 openai/responses.go）：NativeResponses 档案
+    // 不发 freeform apply_patch，改用 shell_command。Ollama 自己生成的 Codex
+    // 目录也是不带工具、不并行（cmd/launch/codex.go）
+    apiFormat: "openai_responses",
+    // 窗口取模型原生值；实际受服务端限制（显存低于 24 GiB 默认只有 4k），
+    // 官方要求编程工具至少 64k（docs.ollama.com/context-length）。gpt-oss 档位
+    // 取 ollama.com/api/show 的 thinking.values；qwen3.5 只支持开关，文档写
+    // none 映射为关、其余档位映射为开，故两态。都含 high，沿用模板默认 high。
+    // 首行 = 默认模型，须与 config 的 model 一致
+    modelCatalog: modelCatalog([
+      {
+        model: "gpt-oss:20b",
+        displayName: "GPT-OSS 20B",
+        contextWindow: 131072,
+        inputModalities: ["text"],
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "high"],
+      },
+      {
+        model: "gpt-oss:120b",
+        displayName: "GPT-OSS 120B",
+        contextWindow: 131072,
+        inputModalities: ["text"],
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["low", "medium", "high"],
+      },
+      {
+        model: "qwen3.5",
+        displayName: "Qwen3.5",
+        contextWindow: 262144,
+        inputModalities: ["text", "image"],
+        supportsParallelToolCalls: false,
+        reasoningLevels: ["none", "high"],
+      },
+    ]),
+    category: "local",
+    icon: "ollama",
+  },
+  {
+    name: "LM Studio",
+    websiteUrl: "https://lmstudio.ai",
+    // 默认不鉴权，但表单要求必填，预填官方占位值 lmstudio；开启 Require
+    // Authentication 后换成 App 里创建的 API Token
+    auth: generateThirdPartyAuth("lmstudio"),
+    // 本机 /v1/responses（0.3.29 起，lmstudio.ai/blog/lmstudio-v0.3.29、
+    // lmstudio.ai/docs/integrations/codex，2026-10-14 核对），base 带 /v1，支持
+    // 流式、previous_response_id 与函数工具。lmstudio 是 Codex 内置的保留
+    // provider id，这里照常写 [model_providers.custom]。openai/gpt-oss-20b 是
+    // codex --oss 的默认模型，需先在 LM Studio 下载，或换成自己已下载的模型 /
+    // 用「获取模型」从 /v1/models 拉取
+    config: generateThirdPartyConfig(
+      "lm_studio",
+      "http://localhost:1234/v1",
+      "openai/gpt-oss-20b",
+    ),
+    endpointCandidates: [
+      "http://localhost:1234/v1",
+      "http://127.0.0.1:1234/v1",
+    ],
+    // 文档所说的 custom tool calling 指函数工具，是否接受 type=custom 的
+    // freeform apply_patch 未证实：NativeResponses 档案不发 freeform，改用
+    // shell_command，两种情况都安全
+    apiFormat: "openai_responses",
+    // 窗口取模型原生值；实际受 LM Studio 加载模型时的 context length 限制
+    //（UI 设置或 lms load --context-length），官方要求至少约 25K，加载窗口
+    // 更小时一起调小。档位取 LM Studio 声明的 reasoning.effort 枚举（blog
+    // v0.3.29），含 high，沿用模板默认 high。首行 = 默认模型，须与 config 的
+    // model 一致
+    modelCatalog: modelCatalog([
+      {
+        model: "openai/gpt-oss-20b",
+        displayName: "GPT-OSS 20B",
+        contextWindow: 131072,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "medium", "high"],
+      },
+    ]),
+    category: "local",
+    icon: "lmstudio",
+  },
+  {
+    name: "llama.cpp",
+    websiteUrl: "https://github.com/ggml-org/llama.cpp",
+    // 不带 --api-key 启动时不校验 Key，但表单要求必填，预填占位值 no-key（同
+    // README 示例）；带了 --api-key 就填那个值
+    auth: generateThirdPartyAuth("no-key"),
+    // 本机 llama-server 的 /v1/responses（b7793 起，PR #18486；github.com/
+    // ggml-org/llama.cpp/blob/master/tools/server/README.md，2026-10-14 核对），
+    // base 带 /v1。只是部分实现：内部先转成 Chat 再处理，不认
+    // previous_response_id，disable_response_storage 下 Codex 每轮发完整 input，
+    // 不受影响。默认端口 b11521（PR #30159）起为 9931，v0.6.0 及更早、Homebrew
+    // 与 Docker 仍是 8080，见候选地址；只监听 IPv4 的 127.0.0.1。默认模型取
+    // ggml-org 官方 GGUF 的 Qwen3-Coder 30B A3B，换成自己已下载的模型，或用
+    // 「获取模型」从 /v1/models 拉取（单模型启动时 model 字段被忽略）
+    config: generateThirdPartyConfig(
+      "llamacpp",
+      "http://127.0.0.1:9931/v1",
+      "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+    ),
+    endpointCandidates: [
+      "http://127.0.0.1:9931/v1",
+      "http://127.0.0.1:8080/v1",
+    ],
+    // 非 function 工具（custom / web_search / namespace）自 b9161（PR #23041）起
+    // 被跳过而不报错，输入里出现 custom_tool_call 则直接 400（源码
+    // tools/server/server-chat.cpp）：NativeResponses 档案不发 freeform
+    // apply_patch，改用 shell_command 改文件。MCP 的 namespace 工具同样会被跳过，
+    // 需要时改 openai_chat 走路由
+    apiFormat: "openai_responses",
+    // Qwen3-Coder 不思考；llama.cpp 把 reasoning_effort 交给模型模板处理，该模板
+    // 不读，照 Nebius 先例只钉单档 high，与模板默认 high 一致。窗口取模型原生值，
+    // 本地实际窗口受 -c / --fit / -np 限制（以 /v1/models 的 meta.n_ctx 为准），
+    // 更小时一起调小。首行 = 默认模型，须与 config 的 model 一致
+    modelCatalog: modelCatalog([
+      {
+        model: "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+        displayName: "Qwen3-Coder 30B A3B",
+        contextWindow: 262144,
+        inputModalities: ["text"],
+        reasoningLevels: ["high"],
+      },
+    ]),
+    category: "local",
+    icon: "llamacpp",
+  },
+  {
+    name: "vLLM",
+    websiteUrl: "https://vllm.ai",
+    // 不带 --api-key 启动时不校验 Key，但表单要求必填，预填官方占位值 dummy
+    //（vLLM Codex 接入页写 VLLM_API_KEY=dummy）；带了 --api-key 就填那个值
+    auth: generateThirdPartyAuth("dummy"),
+    // 本机 vllm serve 的 /v1/responses（docs.vllm.ai/en/stable/serving/
+    // integrations/codex，v0.31.0 源码，2026-10-14 核对），base 带 /v1，官方写法
+    // 即 wire_api = "responses"；非 gpt-oss 模型的函数调用自 v0.11.1 起支持，
+    // 统一要求 vLLM ≥ 0.23.0。store 默认被静默关掉，disable_response_storage 下
+    // Codex 每轮发完整 input，不受影响。默认端口 8000，不带 --host 时监听全部
+    // IPv4 网卡，建议加 --host 127.0.0.1；工具调用要启动时加
+    // --enable-auto-tool-choice --tool-call-parser qwen3_coder（思考另加
+    // --reasoning-parser qwen3）。默认模型取 Codex 接入页的示例
+    // Qwen/Qwen3.6-27B，须与 /v1/models 的 id 一致，换成自己已下载的模型，或用
+    // 「获取模型」从 /v1/models 拉取
+    config: generateThirdPartyConfig(
+      "vllm",
+      "http://localhost:8000/v1",
+      "Qwen/Qwen3.6-27B",
+    ),
+    endpointCandidates: [
+      "http://localhost:8000/v1",
+      "http://127.0.0.1:8000/v1",
+    ],
+    // v0.31.0 的非 Harmony 路径只把 function / namespace 工具放进 prompt，custom
+    // 与 web_search 被静默丢弃，回放 custom_tool_call 报 Unsupported input item
+    // type（vllm entrypoints/openai/responses/utils.py）：NativeResponses 档案
+    // 不发 freeform apply_patch，改用 shell_command 改文件。完整支持（PR #57322）
+    // 尚未发版，发版前不要改档案
+    apiFormat: "openai_responses",
+    // vLLM 把 reasoning_effort 交给 chat template，用户没设 enable_thinking 时
+    // 自动设成 effort != "none"（responses/protocol.py，v0.31.0），Qwen3.6 模板
+    // 只有开关、没有档位差异，故两态；含 high，沿用模板默认 high。窗口取模型
+    // 原生值，本地实际窗口受 --max-model-len 限制，更小时一起调小。首行 = 默认
+    // 模型，须与 config 的 model 一致
+    modelCatalog: modelCatalog([
+      {
+        model: "Qwen/Qwen3.6-27B",
+        displayName: "Qwen3.6 27B",
+        contextWindow: 262144,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["none", "high"],
+      },
+    ]),
+    category: "local",
+    icon: "vllm",
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",
@@ -3650,6 +3845,7 @@ requires_openai_auth = true`,
       },
     ]),
     category: "aggregator",
+    icon: "deepinfra",
   },
   {
     name: "Vercel AI Gateway",
@@ -3786,6 +3982,7 @@ requires_openai_auth = true`,
       },
     ]),
     category: "aggregator",
+    icon: "nebius",
   },
   {
     name: "Groq",
@@ -3837,6 +4034,7 @@ requires_openai_auth = true`,
       outputFormat: "reasoning",
     },
     category: "aggregator",
+    icon: "groq",
   },
   {
     name: "SambaNova",
@@ -3882,6 +4080,7 @@ requires_openai_auth = true`,
       },
     ]),
     category: "cloud_provider",
+    icon: "sambanova",
   },
   {
     name: "DigitalOcean",
@@ -3937,6 +4136,7 @@ requires_openai_auth = true`,
       },
     ]),
     category: "cloud_provider",
+    icon: "digitalocean",
   },
   {
     name: "Hugging Face",
@@ -4065,6 +4265,7 @@ requires_openai_auth = true`,
       },
     ]),
     category: "cloud_provider",
+    icon: "fireworks",
   },
   {
     name: "Mistral AI",

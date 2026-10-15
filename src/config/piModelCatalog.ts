@@ -481,6 +481,26 @@ export const piModelCatalog = {
       maxTokens: 65_536,
     },
   },
+  // 开源权重模型，窗口与建议输出取 huggingface.co/Qwen/Qwen3.5-9B（2026-10-14）
+  "qwen/qwen3.5": {
+    capabilities: {
+      name: "Qwen3.5",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 262_144,
+      maxTokens: 32_768,
+    },
+  },
+  // 开源权重模型，窗口与建议输出取 huggingface.co/Qwen/Qwen3.6-27B（2026-10-14）
+  "qwen/qwen3.6-27b": {
+    capabilities: {
+      name: "Qwen3.6 27B",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 262_144,
+      maxTokens: 32_768,
+    },
+  },
   "qwen/qwen3.6-plus": {
     capabilities: {
       name: "Qwen3.6 Plus",

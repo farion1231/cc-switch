@@ -670,7 +670,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
-    apiKeyUrl: "https://grooroute.xyz/sign-up?aff=qqm9",
+    apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
     settingsConfig: {
       baseUrl: "https://grooroute.pro",
       apiKey: "",
@@ -4489,6 +4489,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "baseten",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -4698,6 +4699,148 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "LM Studio",
+    websiteUrl: "https://lmstudio.ai",
+    // 本机 OpenAI Chat base http://localhost:1234/v1（docs.openclaw.ai/providers/
+    // lmstudio，2026-10-14 核对）。OpenClaw 自带 lmstudio 供应商，供应商名请
+    // 另取（下面示例用 lmstudio-local）。默认不鉴权，未开鉴权时 OpenClaw 也要
+    // 存一个非机密占位值，预填官方占位 Key lmstudio；开启鉴权后换成 API Token。
+    // 本地推理不计费，cost 记 0；maxTokens 取 models.dev 的 lmstudio 条目。
+    // 模型换成自己已下载的；实际窗口受 LM Studio 加载模型时的 context length
+    // 限制（UI 设置或 lms load --context-length），官方要求至少约 25K，加载
+    // 窗口更小时把 contextWindow 一起调小
+    settingsConfig: {
+      baseUrl: "http://localhost:1234/v1",
+      apiKey: "lmstudio",
+      api: "openai-completions",
+      models: [
+        {
+          id: "openai/gpt-oss-20b",
+          name: "GPT-OSS 20B",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 131072,
+          maxTokens: 32768,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "local",
+    icon: "lmstudio",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "lmstudio",
+        editorValue: "lmstudio",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "lmstudio-local/openai/gpt-oss-20b" },
+      modelCatalog: {
+        "lmstudio-local/openai/gpt-oss-20b": { alias: "GPT-OSS 20B" },
+      },
+    },
+  },
+  {
+    name: "llama.cpp",
+    websiteUrl: "https://github.com/ggml-org/llama.cpp",
+    // 本机 llama-server 的 OpenAI Chat base http://127.0.0.1:9931/v1（github.com/
+    // openclaw/openclaw/blob/main/docs/gateway/config-tools/provider-examples.md、
+    // docs/plugins/llama-cpp.md，2026-10-14 核对）。OpenClaw 自带 llama-cpp 插件
+    // 供应商，供应商名请另取（下面示例用 llamacpp-local）；自定义 ID 指向
+    // llama-server 时官方要求每个模型声明 compat.toolSchemaProfile=llamacpp，
+    // 清掉 GBNF 编译不了的 pattern / maxLength（影响 cron 工具）。默认端口
+    // b11521（PR #30159）起为 9931，v0.6.0 及更早、Homebrew 与 Docker 仍是 8080。
+    // 不带 --api-key 时不校验，预填占位值 no-key（官方示例用 llamacpp-no-key，
+    // 任意非空值都行）。本地推理不计费，cost 记 0。默认模型取 ggml-org 官方
+    // GGUF 的 Qwen3-Coder 30B A3B（窗口 / 输出取 Qwen 模型卡），换成自己已下载
+    // 的；本地实际窗口受 -c / --fit / -np 限制，更小时把 contextWindow 一起调小
+    settingsConfig: {
+      baseUrl: "http://127.0.0.1:9931/v1",
+      apiKey: "no-key",
+      api: "openai-completions",
+      models: [
+        {
+          id: "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+          name: "Qwen3-Coder 30B A3B",
+          reasoning: false,
+          input: ["text"],
+          contextWindow: 262144,
+          maxTokens: 65536,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          compat: { supportsTools: true, toolSchemaProfile: "llamacpp" },
+        },
+      ],
+    },
+    category: "local",
+    icon: "llamacpp",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "no-key",
+        editorValue: "no-key",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary:
+          "llamacpp-local/ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+      },
+      modelCatalog: {
+        "llamacpp-local/ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF": {
+          alias: "Qwen3-Coder 30B A3B",
+        },
+      },
+    },
+  },
+  {
+    name: "vLLM",
+    websiteUrl: "https://vllm.ai",
+    // 本机 vllm serve 的 OpenAI Chat base http://localhost:8000/v1（docs.openclaw.ai/
+    // providers/vllm、docs.vllm.ai/en/latest/serving/online_serving/
+    // openai_compatible_server，2026-10-14 核对）。OpenClaw 自带 vllm 供应商
+    //（设了 VLLM_API_KEY 时自动发现模型），供应商名请另取（下面示例用
+    // vllm-local）。默认端口 8000，不带 --host 时监听全部 IPv4 网卡，建议加
+    // --host 127.0.0.1；工具调用要启动时加 --enable-auto-tool-choice
+    // --tool-call-parser qwen3_coder，思考另加 --reasoning-parser qwen3。不带
+    // --api-key 时不校验，预填官方占位值 dummy（任意非空值都行，带了就填那个值）。
+    // 本地推理不计费，cost 记 0。默认模型取 vLLM Codex 接入页的示例
+    // Qwen/Qwen3.6-27B（窗口 / 输出取 Qwen 模型卡），须与 /v1/models 的 id 一致，
+    // 换成自己已下载的；本地实际窗口受 --max-model-len 限制，更小时把
+    // contextWindow 一起调小
+    settingsConfig: {
+      baseUrl: "http://localhost:8000/v1",
+      apiKey: "dummy",
+      api: "openai-completions",
+      models: [
+        {
+          id: "Qwen/Qwen3.6-27B",
+          name: "Qwen3.6 27B",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 262144,
+          maxTokens: 32768,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "local",
+    icon: "vllm",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "dummy",
+        editorValue: "dummy",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "vllm-local/Qwen/Qwen3.6-27B" },
+      modelCatalog: {
+        "vllm-local/Qwen/Qwen3.6-27B": { alias: "Qwen3.6 27B" },
+      },
+    },
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",
@@ -4807,6 +4950,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "deepinfra",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -4977,6 +5121,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "nebius",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -5026,6 +5171,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "groq",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -5076,6 +5222,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "cloud_provider",
+    icon: "sambanova",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -5146,6 +5293,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "cloud_provider",
+    icon: "digitalocean",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -5366,6 +5514,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "cloud_provider",
+    icon: "fireworks",
     templateValues: {
       apiKey: {
         label: "API Key",

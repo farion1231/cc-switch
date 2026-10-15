@@ -5,6 +5,7 @@ export type ProviderCategory =
   | "aggregator" // 聚合网站
   | "third_party" // 第三方供应商
   | "custom" // 自定义
+  | "local" // 本机推理服务（Ollama、LM Studio 等）
   | "omo" // Oh My OpenCode
   | "omo-slim"; // Oh My OpenCode Slim
 
@@ -905,6 +906,8 @@ export interface OpenClawModel {
   maxTokens?: number; // 最大输出 token 数
   compat?: {
     maxTokensField?: string; // 最大输出 token 请求字段名（如 "max_tokens"）
+    supportsTools?: boolean; // 自定义供应商声明模型支持工具调用
+    toolSchemaProfile?: string; // 工具 schema 清理档案（如 llama-server 用 "llamacpp"）
   };
 }
 
