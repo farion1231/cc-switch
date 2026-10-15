@@ -2071,7 +2071,7 @@ export function CodexFormFields({
       {defaultModelField}
 
       {/* 子代理 —— config.toml 的 [agents] default_subagent_model / default_subagent_reasoning_effort。
-          留空删键，子代理跟随主模型；聚合模式下不写进 live。 */}
+          留空删键，子代理跟随主模型；聚合模式下不写进 live（改用聚合设置）。 */}
       {category !== "official" && onSubagentModelChange && (
         <div className="space-y-1.5">
           {labelWithHelp(
@@ -2080,7 +2080,7 @@ export function CodexFormFields({
             }),
             t("codexConfig.subagentModelHint", {
               defaultValue:
-                "Codex 派出的子代理默认用的模型和推理强度。留空时沿用主代理的；只填模型时用该模型自己的默认强度。聚合模式下不生效，子代理跟随主模型。",
+                "Codex 派出的子代理默认用的模型和推理强度。留空时沿用主代理的；只填模型时用该模型自己的默认强度。聚合模式下不生效，改用聚合页签「聚合设置」里的子代理模型。",
             }),
             "codexSubagentModel",
           )}

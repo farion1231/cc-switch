@@ -156,7 +156,7 @@ CC Switch 的三种模式，适合不同的使用习惯。
 
 ## Codex 子 agent 读不到任务怎么办
 
-在 Codex 聚合模式里，主 agent 和子 agent 可以选不同供应商的模型。如果子 agent 一启动就报错，常见的提示有：
+在 Codex 聚合模式里，主 agent 和子 agent 可以选不同供应商的模型。这个开关现在默认打开；如果你把它关了，子 agent 一启动就可能报错，常见的提示有：
 
 - `Encrypted function output content could not be decrypted`
 - `stream disconnected before completion`
@@ -164,15 +164,17 @@ CC Switch 的三种模式，适合不同的使用习惯。
 
 **原因在 Codex 新版的子 agent 机制。** 主 agent 派任务时，任务内容由主 agent 所在的供应商加密，只有这一家能解开。这好比一封只有寄件方能拆的密封信：子 agent 用的是同一家时能读，换成另一家就拆不开，等于没拿到任务。OpenAI 官方加密的任务，别家同样读不了。
 
-**解决方法：** 在 CC Switch 的「设置 → 应用配置 → Codex」里打开「聚合模式下子 agent 用经典工具」，然后**重启 Codex**（重启方法见上文“Codex 需要怎样重启”）。打开后，聚合里的所有模型改用 Codex 经典的子 agent 工具，任务以明文传递，换哪一家都能读。
+**解决方法：** 在 CC Switch 的 Codex 聚合页签右上角点齿轮，打开「聚合设置」，把「聚合模式下子 agent 用经典工具」重新打开，然后**重启 Codex**（重启方法见上文“Codex 需要怎样重启”）。打开后，聚合里的所有模型改用 Codex 经典的子 agent 工具，任务以明文传递，换哪一家都能读。
 
-打开前需要知道几点：
+关于这个开关需要知道几点：
 
-- **有代价。** 经典工具没有 `followup_task`、`interrupt_agent` 等新版功能，所以这个开关默认关闭，只建议遇到上述问题时打开。
+- **有代价。** 经典工具没有 `followup_task`、`interrupt_agent` 等新版功能，所以只有主、子 agent 始终在同一家时才可以关掉；这个开关默认打开。
 - **只影响聚合模式。** 直连和路由模式下 Codex 的行为不变。
-- **开了仍报错，先查 `config.toml`。** 如果 `~/.codex/config.toml` 的 `[features]` 里有 `multi_agent_v2 = true`，它的优先级高于这个开关，开关不会生效，设置页也会给出提示。删掉这一项后再重启 Codex。
+- **开了仍报错，先查 `config.toml`。** 如果 `~/.codex/config.toml` 的 `[features]` 里有 `multi_agent_v2 = true`，它的优先级高于这个开关，开关不会生效，「聚合设置」里也会给出提示。删掉这一项后再重启 Codex。
 
-不想打开开关，也可以让子 agent 使用和主 agent 同一家供应商的模型，这样任务能正常解开。
+想要新版功能而关掉开关时，就得让子 agent 使用和主 agent 同一家供应商的模型，这样任务才能正常解开。
+
+**想固定让子 agent 用另一个模型？** 切换到聚合模式的确认框里、以及同一个「聚合设置」里，都有「子代理模型」和「子代理推理强度」：比如主 agent 用 GPT 做规划和审核，子 agent 固定用 DeepSeek 去搜代码、改代码。选好后 CC Switch 写进 `config.toml` 的 `[agents]`，不用重启 Codex，新开的对话就会用上（已经开着的对话仍按原设置）。这时子 agent 和主 agent 不在同一家，经典子 agent 工具必须开着（默认就是开的）。所选模型如果被移出聚合，子 agent 会暂时跟随主模型，加回来后自动恢复。
 
 ## 官方额度用完后，第三方模型也发不出去怎么办
 

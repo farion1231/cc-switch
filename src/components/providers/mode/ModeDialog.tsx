@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import type { AppId } from "@/lib/api";
 import type { Provider } from "@/types";
-import type { AppMode } from "@/types/proxy";
+import type { AppMode, ProxyStackSubagentModel } from "@/types/proxy";
 import {
   Dialog,
   DialogContent,
@@ -22,6 +22,10 @@ import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { logFrontendInfo } from "@/lib/frontendLogger";
 import { isOfficialAccount } from "@/utils/providerCapabilities";
+import {
+  StackSubagentFields,
+  type StackSubagentValue,
+} from "./StackSubagentFields";
 
 /** 路由模式改写的客户端文件（确认框里写明，用默认位置）。 */
 const CLIENT_FILE: Partial<Record<AppId, string>> = {
@@ -60,8 +64,21 @@ interface ModeDialogProps {
   defaultPick: string | null;
   /** 聚合名单（含默认那家）及各家的模型数；框里按选中的默认那家算「另有」哪几家 */
   stackMembers: { id: string; name: string; models: number }[];
+  /**
+   * Codex 进入聚合时一起选子代理：名单里各家的模型（框里按选中的默认那家去掉它自己的）和
+   * 现在的设置。不传就不显示。
+   */
+  stackSubagent?: {
+    models: ProxyStackSubagentModel[];
+    value: StackSubagentValue;
+  };
   onClose: () => void;
-  onEnter: (target: Exclude<AppMode, "direct">, pick: string) => Promise<void>;
+  /** `subagent`：进入聚合时框里的子代理设置（没改过也传，由调用方比对后保存） */
+  onEnter: (
+    target: Exclude<AppMode, "direct">,
+    pick: string,
+    subagent?: StackSubagentValue,
+  ) => Promise<void>;
   /** 对话框 F：仍然直连切换 */
   onSwitchDirect: (providerId: string) => void;
 }
@@ -88,7 +105,7 @@ export function ModeDialog(props: ModeDialogProps) {
       {state && (
         <DialogContent
           zIndex="alert"
-          className="max-w-[480px] gap-0 rounded-dialog border-border bg-surface p-6 shadow-v7-lg sm:rounded-dialog"
+          className="max-w-[480px] gap-0 overflow-y-auto rounded-dialog border-border bg-surface p-6 shadow-v7-lg sm:rounded-dialog"
         >
           {state.kind === "enter" ? (
             <EnterBody {...props} state={state} onCancel={cancel} />
@@ -109,6 +126,7 @@ function EnterBody({
   eligibleIds,
   defaultPick,
   stackMembers,
+  stackSubagent,
   onClose,
   onCancel,
   onEnter,
@@ -136,8 +154,18 @@ function EnterBody({
     !isOfficialAccount(app, pickedProvider) &&
     eligible.some((p) => isOfficialAccount(app, p));
 
+  const showSubagent = target === "stack" && stackSubagent !== undefined;
+  const [subagent, setSubagent] = useState<StackSubagentValue | undefined>(
+    stackSubagent?.value,
+  );
+  // 默认那家不发布 `ccs-*` 模型：它自己的模型不能当子代理
+  const subagentModels = (stackSubagent?.models ?? []).filter(
+    (model) => model.providerId !== pick,
+  );
+
   useEffect(() => {
     setPick(initialPick);
+    setSubagent(stackSubagent?.value);
     // 每次打开按传进来的预选重置
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state]);
@@ -176,7 +204,7 @@ function EnterBody({
     setBusy(true);
     setError(null);
     try {
-      await onEnter(target, pick);
+      await onEnter(target, pick, showSubagent ? subagent : undefined);
       onClose();
     } catch (err) {
       setError(extractErrorMessage(err) || t("common.unknown"));
@@ -243,6 +271,20 @@ function EnterBody({
           </p>
         )}
       </div>
+
+      {showSubagent && subagent && (
+        <div className="space-y-2 border-t border-border pt-4">
+          <p className="text-caption text-fg-2">
+            {t("mode.dialog.stackSubagentLead")}
+          </p>
+          <StackSubagentFields
+            models={subagentModels}
+            value={subagent}
+            onChange={setSubagent}
+            disabled={busy}
+          />
+        </div>
+      )}
 
       <ul className="space-y-1.5 rounded-panel bg-subtle px-4 py-3 text-caption text-fg-2">
         {notes.map((note) => (

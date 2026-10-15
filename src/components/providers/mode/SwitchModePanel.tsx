@@ -37,7 +37,14 @@ import { blockedFromRouting } from "@/components/providers/presentation";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { ModeTabs } from "./ModeTabs";
 import { ModeDialog, type ModeDialogState } from "./ModeDialog";
+import {
+  sameStackSubagent,
+  stackSubagentSettings,
+  stackSubagentValue,
+  type StackSubagentValue,
+} from "./StackSubagentFields";
 import { RouteSettingsSheet } from "./RouteSettingsSheet";
+import { StackSettingsSheet } from "./StackSettingsSheet";
 
 type ListCallbacks = Pick<
   React.ComponentProps<typeof ProviderList>,
@@ -131,6 +138,7 @@ export function SwitchModePanel({
 
   const [dialog, setDialog] = useState<ModeDialogState | null>(null);
   const [routeSettingsOpen, setRouteSettingsOpen] = useState(false);
+  const [stackSettingsOpen, setStackSettingsOpen] = useState(false);
   const [confirmFailover, setConfirmFailover] = useState(false);
   // 关掉的是哪一份提示（后端的 staleRevision）：目录或登录又变了就是新的一份，重新显示。
   const [staleDismissed, setStaleDismissed] = useState<string | null>(null);
@@ -335,7 +343,20 @@ export function SwitchModePanel({
   const enterMode = async (
     target: Exclude<AppMode, "direct">,
     pick: string,
+    subagent?: StackSubagentValue,
   ) => {
+    // 框里改了子代理设置就先存（聚合还没生效时后端只存不写），进入聚合时随契约一起写进去
+    if (
+      subagent &&
+      !sameStackSubagent(subagent, stackSubagentValue(settings))
+    ) {
+      const current = await settingsApi.get();
+      await settingsApi.save({
+        ...current,
+        ...stackSubagentSettings(subagent),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+    }
     await modeActions.enter(target, pick, providers[pick]?.name);
   };
 
@@ -536,6 +557,11 @@ export function SwitchModePanel({
             ? () => setRouteSettingsOpen(true)
             : undefined
         }
+        onOpenStackSettings={
+          app === "codex" && view === "stack" && active === "stack"
+            ? () => setStackSettingsOpen(true)
+            : undefined
+        }
         searchSlotRef={setSearchSlot}
       />
       <div
@@ -572,6 +598,14 @@ export function SwitchModePanel({
           name: nameOf(member.providerId),
           models: member.modelIds.length,
         }))}
+        stackSubagent={
+          app === "codex" && settings
+            ? {
+                models: stack?.subagentModels ?? [],
+                value: stackSubagentValue(settings),
+              }
+            : undefined
+        }
         onClose={() => setDialog(null)}
         onEnter={enterMode}
         onSwitchDirect={(providerId) => {
@@ -586,6 +620,17 @@ export function SwitchModePanel({
         onOpenChange={setRouteSettingsOpen}
         onOpenSettings={onOpenRoutingSettings}
       />
+
+      {app === "codex" && (
+        <StackSettingsSheet
+          open={stackSettingsOpen}
+          onOpenChange={setStackSettingsOpen}
+          // 默认那家不发布 `ccs-*` 模型
+          models={(stack?.subagentModels ?? []).filter(
+            (model) => model.providerId !== routeId,
+          )}
+        />
+      )}
 
       <ConfirmDialog
         isOpen={confirmFailover}

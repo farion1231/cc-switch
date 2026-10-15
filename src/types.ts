@@ -414,8 +414,12 @@ export interface Settings {
   // User opted in (enable dialog checkbox) to migrate existing official sessions
   unifyCodexMigrateExisting?: boolean;
   // Codex aggregation: every catalog row uses the classic (v1) sub-agent tools,
-  // so a sub-agent on another provider can read its task (off by default)
-  codexStackClassicSubagents?: boolean;
+  // so a sub-agent on another provider can read its task (on by default)
+  codexStackClassicTools?: boolean;
+  // Codex aggregation: default sub-agent model (a published `ccs-<key>/<model>` id)
+  // and its reasoning effort. Unset = sub-agents follow the main model.
+  codexStackSubagentModel?: string;
+  codexStackSubagentReasoningEffort?: string;
   // User has confirmed the failover toggle first-run notice
   failoverConfirmed?: boolean;
   // User has confirmed the first-run welcome notice

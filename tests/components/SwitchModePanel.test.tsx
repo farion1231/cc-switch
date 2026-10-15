@@ -113,6 +113,65 @@ beforeEach(() => {
 });
 
 describe("SwitchModePanel — Stack mode", () => {
+  it("opens the Codex aggregation settings from the Stack tab only", async () => {
+    const user = userEvent.setup();
+    mockMode("stack", "route");
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({
+          active: true,
+          members: [
+            { providerId: "route", modelIds: [], route: true },
+            {
+              providerId: "deepseek",
+              modelIds: ["ccs-deepseek/deepseek-v4-flash"],
+              route: false,
+            },
+          ],
+          subagentModels: [
+            {
+              id: "ccs-deepseek/deepseek-v4-flash",
+              providerId: "deepseek",
+              displayName: "DeepSeek V4 Flash（deepseek）",
+              efforts: ["high"],
+            },
+          ],
+        }),
+      ),
+    );
+    renderPanel("codex", {
+      route: provider("route"),
+      deepseek: provider("deepseek"),
+    });
+
+    await user.click(
+      await screen.findByRole("button", { name: "mode.stackSettings.title" }),
+    );
+    expect(
+      await screen.findByRole("combobox", {
+        name: "mode.stackSettings.subagentModel",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("has no aggregation settings for Claude Code", async () => {
+    mockMode("stack", "route");
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({
+          active: true,
+          members: [{ providerId: "route", modelIds: ["m"], route: true }],
+        }),
+      ),
+    );
+    renderPanel("claude", { route: provider("route") });
+
+    await screen.findByTestId("card-route");
+    expect(
+      screen.queryByRole("button", { name: "mode.stackSettings.title" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("adds and removes Stack members through the backend", async () => {
     mockMode("stack", "route");
     const setCalls: unknown[] = [];
@@ -292,6 +351,140 @@ describe("SwitchModePanel — mode layer", () => {
     return calls;
   }
 
+  it("picks the Codex sub-agent model in the enter-Stack dialog and saves it before entering", async () => {
+    const user = userEvent.setup();
+    mockMode("direct", null, "a");
+    const order: string[] = [];
+    const saved: Record<string, unknown>[] = [];
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({
+          active: false,
+          members: [
+            { providerId: "deepseek", modelIds: ["x"], route: false },
+            { providerId: "kimi", modelIds: ["y"], route: false },
+          ],
+          subagentModels: [
+            {
+              id: "ccs-deepseek/deepseek-v4-flash",
+              providerId: "deepseek",
+              displayName: "DeepSeek V4 Flash（deepseek）",
+              efforts: ["high"],
+            },
+            {
+              id: "ccs-kimi/kimi-k3",
+              providerId: "kimi",
+              displayName: "Kimi K3（kimi）",
+              efforts: ["medium"],
+            },
+          ],
+        }),
+      ),
+      http.post(`${TAURI_ENDPOINT}/save_settings`, async ({ request }) => {
+        const { settings } = (await request.json()) as {
+          settings: Record<string, unknown>;
+        };
+        order.push("save");
+        saved.push(settings);
+        return HttpResponse.json(true);
+      }),
+      http.post(`${TAURI_ENDPOINT}/set_proxy_takeover_for_app`, () => {
+        order.push("enter");
+        return HttpResponse.json(null);
+      }),
+    );
+    renderPanel("codex", {
+      a: provider("a"),
+      deepseek: provider("deepseek"),
+      kimi: provider("kimi"),
+    });
+
+    await user.click(
+      await screen.findByRole("button", { name: /mode\.names\.stack/ }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "mode.activate.stack" }),
+    );
+    expect(await screen.findByText("mode.dialog.stackTitle")).toBeVisible();
+
+    // 经典工具默认开着：选了别家的模型也不用提醒
+    const classic = screen.getByRole("switch", {
+      name: "settings.codexStackClassicSubagents",
+    });
+    expect(classic).toBeChecked();
+    const model = screen.getByRole("combobox", {
+      name: "mode.stackSettings.subagentModel",
+    });
+    expect(model).toHaveTextContent("mode.stackSettings.followMain");
+    await user.click(model);
+    await user.click(
+      await screen.findByRole("option", { name: "Kimi K3（kimi）" }),
+    );
+    expect(classic).toBeChecked();
+    expect(
+      screen.queryByTestId("stack-subagent-classic-off"),
+    ).not.toBeInTheDocument();
+    // 关掉经典工具：子代理收不到任务，提醒必须打开（不替用户勾回去）
+    await user.click(classic);
+    expect(classic).not.toBeChecked();
+    expect(
+      await screen.findByTestId("stack-subagent-classic-off"),
+    ).toBeInTheDocument();
+    await user.click(classic);
+
+    // 换成 Kimi 当默认：它自己的模型不能当子代理，选过的那个标成已不在聚合里
+    const pick = screen.getByRole("combobox", {
+      name: "mode.dialog.stackDefault",
+    });
+    await user.click(pick);
+    await user.click(await screen.findByRole("option", { name: "kimi" }));
+    expect(
+      await screen.findByTestId("stack-subagent-unavailable"),
+    ).toBeInTheDocument();
+    await user.click(pick);
+    await user.click(await screen.findByRole("option", { name: "a" }));
+    expect(
+      screen.queryByTestId("stack-subagent-unavailable"),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("mode.dialog.confirmStack"));
+    await waitFor(() => expect(order).toEqual(["save", "enter"]));
+    expect(saved[0]).toMatchObject({
+      codexStackSubagentModel: "ccs-kimi/kimi-k3",
+      codexStackClassicTools: true,
+    });
+  });
+
+  it("enters Stack without saving settings when the dialog's sub-agent choice is unchanged", async () => {
+    const user = userEvent.setup();
+    mockMode("direct", null, "a");
+    let saves = 0;
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({ active: false, members: [] }),
+      ),
+      http.post(`${TAURI_ENDPOINT}/save_settings`, () => {
+        saves += 1;
+        return HttpResponse.json(true);
+      }),
+    );
+    const calls = captureTakeover();
+    renderPanel("codex", { a: provider("a") });
+
+    await user.click(
+      await screen.findByRole("button", { name: /mode\.names\.stack/ }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "mode.activate.stack" }),
+    );
+    await screen.findByRole("combobox", {
+      name: "mode.stackSettings.subagentModel",
+    });
+    await user.click(screen.getByText("mode.dialog.confirmStack"));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(saves).toBe(0);
+  });
+
   it("enters Stack from the notice and picks the default in the dialog", async () => {
     const user = userEvent.setup();
     mockMode("direct", null, "a");
@@ -361,7 +554,11 @@ describe("SwitchModePanel — mode layer", () => {
     );
     const takeover = captureTakeover();
     const onSwitch = vi.fn();
-    renderPanel("claude", { a: provider("a"), kimi: provider("kimi") }, onSwitch);
+    renderPanel(
+      "claude",
+      { a: provider("a"), kimi: provider("kimi") },
+      onSwitch,
+    );
 
     await user.click(
       await screen.findByRole("button", { name: /mode\.names\.stack/ }),
@@ -382,7 +579,9 @@ describe("SwitchModePanel — mode layer", () => {
     );
     // 记下的那家成了「切换后的默认」：自己不再有「设为默认」，原来那家有了
     await screen.findByTestId("menu-setDefault-a");
-    expect(screen.queryByTestId("menu-setDefault-kimi")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("menu-setDefault-kimi"),
+    ).not.toBeInTheDocument();
 
     // 确认框预选它
     await user.click(
@@ -420,7 +619,9 @@ describe("SwitchModePanel — mode layer", () => {
     fireEvent.click(await screen.findByTestId("menu-setDefault-kimi"));
     fireEvent.click(screen.getByTestId("menu-setDefault-other"));
     expect(onSwitch.mock.calls.map(([p]) => p)).toEqual([kimi, other]);
-    expect(screen.queryByTestId("menu-setDefault-route")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("menu-setDefault-route"),
+    ).not.toBeInTheDocument();
     expect(routeCalls).toEqual([]);
   });
 

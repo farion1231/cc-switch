@@ -613,6 +613,21 @@ pub struct StackMemberView {
     pub route: bool,
 }
 
+/// 给前端：Codex 聚合面板「子代理模型」下拉的一项（见 `codex_direct::stack_subagent_choices`）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackSubagentModel {
+    /// 发布给客户端的模型 id（`ccs-<key>/<model>`），也是写进 `[agents]` 的值。
+    pub id: String,
+    pub provider_id: String,
+    /// `<模型显示名>（<供应商名>）`，和模型选择器里一样。
+    pub display_name: String,
+    /// 这个模型支持的推理强度，按目录里的顺序。
+    pub efforts: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<String>,
+}
+
 /// 给前端：Stack 模式的状态、名单和提示。
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -639,6 +654,9 @@ pub struct StackView {
     /// 同一个供应商上目录又改了，这个值变了，前端重新显示。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stale_revision: Option<String>,
+    /// Codex：聚合面板「子代理模型」下拉的选项，发布 Stack 模型的成员按名单顺序。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub subagent_models: Vec<StackSubagentModel>,
 }
 
 pub fn member_views(members: &[Member]) -> Vec<StackMemberView> {

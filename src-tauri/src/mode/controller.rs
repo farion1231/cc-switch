@@ -1302,6 +1302,12 @@ pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String>
             }),
         _ => (None, Vec::new()),
     };
+    // 名单里每一家都列上（含路由那家）：切换到聚合的确认框里还能换默认那家，由前端按默认
+    // 那家去掉它的模型（默认那家不发布 `ccs-*` 模型，选了也写不进去）。
+    let subagent_models = match app {
+        AppType::Codex => codex_direct::stack_subagent_choices(&members),
+        _ => Vec::new(),
+    };
     Ok(StackView {
         active: mode.is_proxy() && stack.enabled,
         members: stack::member_views(&members),
@@ -1309,6 +1315,7 @@ pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String>
         notice_reasons,
         stale_clients: None,
         stale_revision: None,
+        subagent_models,
     })
 }
 
@@ -1394,9 +1401,9 @@ pub async fn adopt_codex_stack_catalog(state: &AppState) -> Result<Option<&'stat
         .and_then(|stack| codex_stack_notice(state, &stack)))
 }
 
-/// 「经典子 agent」开关（`codex_stack_classic_subagents`）变了：Codex 在 Stack 模式下按新的
-/// 合并目录重写客户端（契约里有目录，没变就什么都不做）。不在 Stack 模式时目录里没有这个开关
-/// 管的行，等进 Stack 时自然按开关写。
+/// 聚合子 agent 设置（「经典子 agent」开关、子 agent 模型和推理强度）变了：Codex 在 Stack
+/// 模式下按新的合并目录和 `[agents]` 重写客户端（契约没变就什么都不做）。不在 Stack 模式时
+/// 这些设置不起作用，等进 Stack 时自然按设置写。
 pub async fn resync_codex_stack_catalog(state: &AppState) -> Result<(), String> {
     let app = AppType::Codex;
     let _guard = lock_settled(state, &app).await.map_err(err)?;
@@ -6404,9 +6411,126 @@ model_provider = "c"
         assert_eq!(agents(&codex_doc()), routed);
     }
 
+    fn set_stack_subagent(model: Option<&str>, effort: Option<&str>) {
+        crate::settings::update_settings(crate::settings::AppSettings {
+            codex_stack_subagent_model: model.map(str::to_string),
+            codex_stack_subagent_reasoning_effort: effort.map(str::to_string),
+            ..crate::settings::get_settings()
+        })
+        .unwrap();
+    }
+
+    /// 聚合面板的子代理模型和强度：Stack 模式下按合并目录校验后写进 `[agents]`（路由那家行里
+    /// 的照旧不写，`[agents]` 里用户自己的键不动）；强度不在档位里只写模型；模型不在目录里
+    /// （成员移除）就跟随主模型，加回来自动恢复；退出代理回到路由那家行里的。
+    #[tokio::test]
+    #[serial]
+    async fn codex_stack_subagent_setting_follows_the_merged_catalog() {
+        let _home = Home::new();
+        seed_codex("[agents]\nmax_threads = 4\n", None);
+        let [_, deepseek, zhipu] = codex_stack_rows();
+        let route = codex_native(
+            "a",
+            "https://a.example/v1",
+            "[agents]\ndefault_subagent_model = \"gpt-a-mini\"\ndefault_subagent_reasoning_effort = \"low\"\n",
+            None,
+        );
+        let state = state_with(AppType::Codex, &[route, deepseek, zhipu], "a").await;
+        let agents = |doc: &toml::Table| {
+            let agents = &doc["agents"];
+            let text = |key: &str| agents.get(key).and_then(|v| v.as_str()).map(str::to_string);
+            (
+                text("default_subagent_model"),
+                text("default_subagent_reasoning_effort"),
+                agents.get("max_threads").and_then(|v| v.as_integer()),
+            )
+        };
+        let routed = (
+            Some("gpt-a-mini".to_string()),
+            Some("low".to_string()),
+            Some(4),
+        );
+
+        // 还没进 Stack：设置只存着，不碰客户端文件。
+        set_stack_subagent(Some("ccs-deepseek/deepseek-v4-pro"), None);
+        let before = codex_text();
+        resync_codex_stack_catalog(&state).await.expect("no-op");
+        assert_eq!(codex_text(), before);
+        set_stack_subagent(None, None);
+
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        set_codex_member(&state, "zhipu", true).await;
+        assert_eq!(agents(&codex_doc()), (None, None, Some(4)));
+
+        // 面板的选项：名单里每一家的模型都列上，带上合并目录里的档位。路由那家（a）也在：
+        // 切换到聚合的确认框里还能换默认那家，由前端按默认那家去掉。
+        let all = stack_views(&state, &AppType::Codex)
+            .unwrap()
+            .subagent_models;
+        let ids: Vec<&str> = all.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "ccs-a/gpt-a",
+                "ccs-deepseek/deepseek-v4-pro",
+                "ccs-zhipu/gpt-zhipu"
+            ]
+        );
+        assert_eq!(all[0].provider_id, "a");
+        let choices: Vec<_> = all.into_iter().filter(|c| c.provider_id != "a").collect();
+        // 默认那家的 `ccs-*` 不在合并目录里：选了也不写，跟随主模型。
+        set_stack_subagent(Some("ccs-a/gpt-a"), None);
+        resync_codex_stack_catalog(&state)
+            .await
+            .expect("route model");
+        assert_eq!(agents(&codex_doc()), (None, None, Some(4)));
+        set_stack_subagent(None, None);
+        let choice = &choices[0];
+        assert_eq!(choice.provider_id, "deepseek");
+        assert_eq!(choice.display_name, "DeepSeek V4 Pro（DEEPSEEK）");
+        let catalog_efforts: Vec<String> = codex_catalog()["models"][1]
+            ["supported_reasoning_levels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|level| level["effort"].as_str().unwrap().to_string())
+            .collect();
+        assert!(!catalog_efforts.is_empty());
+        assert_eq!(choice.efforts, catalog_efforts);
+        let effort = choice.efforts.last().unwrap().clone();
+        let id = choice.id.clone();
+
+        set_stack_subagent(Some(&id), Some(&effort));
+        resync_codex_stack_catalog(&state).await.expect("set");
+        assert_eq!(
+            agents(&codex_doc()),
+            (Some(id.clone()), Some(effort.clone()), Some(4))
+        );
+
+        set_stack_subagent(Some(&id), Some("not-a-level"));
+        resync_codex_stack_catalog(&state)
+            .await
+            .expect("bad effort");
+        assert_eq!(agents(&codex_doc()), (Some(id.clone()), None, Some(4)));
+
+        set_stack_subagent(Some(&id), Some(&effort));
+        resync_codex_stack_catalog(&state).await.expect("set again");
+        set_codex_member(&state, "deepseek", false).await;
+        assert_eq!(agents(&codex_doc()), (None, None, Some(4)));
+        set_codex_member(&state, "deepseek", true).await;
+        assert_eq!(
+            agents(&codex_doc()),
+            (Some(id.clone()), Some(effort.clone()), Some(4))
+        );
+
+        exit(&state, &AppType::Codex).await.expect("exit");
+        assert_eq!(agents(&codex_doc()), routed);
+    }
+
     fn set_classic_subagents(enabled: bool) {
         crate::settings::update_settings(crate::settings::AppSettings {
-            codex_stack_classic_subagents: enabled,
+            codex_stack_classic_tools: enabled,
             ..crate::settings::get_settings()
         })
         .unwrap();
