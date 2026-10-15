@@ -27,6 +27,7 @@ import {
 } from "@/lib/query/failover";
 import { useModeActions } from "@/hooks/useModeActions";
 import { getRoutingReason } from "@/utils/routingReason";
+import { CODEX_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
@@ -629,6 +630,12 @@ export function SwitchModePanel({
           models={(stack?.subagentModels ?? []).filter(
             (model) => model.providerId !== routeId,
           )}
+          // 官方做默认那家时，合并目录里有官方的 codex-auto-review，自动审批默认用它
+          routeOfficial={
+            !!routeId &&
+            (routeId === CODEX_OFFICIAL_PROVIDER_ID ||
+              providers[routeId]?.category === "official")
+          }
         />
       )}
 

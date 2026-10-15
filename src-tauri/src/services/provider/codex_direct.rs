@@ -19,15 +19,15 @@ use toml_edit::{Item, Table, Value as TomlValue};
 
 use crate::app_config::AppType;
 use crate::codex_config::{
+    apply_codex_auto_review_model, codex_stack_third_party_rows, plan_codex_stack_catalog,
+    CodexCatalogRow, CodexStackCatalogMember, CodexStackRoute,
+};
+use crate::codex_config::{
     codex_auth_has_credential_login_material, codex_config_auth_store_mode,
     codex_disables_web_search, codex_live_auth_is_managed_chatgpt_login,
     codex_managed_oauth_marker_bytes, extract_codex_auth_api_key, get_codex_auth_path,
     get_codex_config_path, get_codex_managed_oauth_live_auth_marker_path,
     get_codex_model_catalog_path, plan_codex_model_catalog, CodexAuthStoreMode,
-};
-use crate::codex_config::{
-    codex_stack_third_party_rows, plan_codex_stack_catalog, CodexCatalogRow,
-    CodexStackCatalogMember, CodexStackRoute,
 };
 use crate::config::sorted_json_bytes;
 use crate::database::Database;
@@ -645,10 +645,17 @@ pub(crate) fn plan(
     if !stack.is_empty() {
         nested.retain(|(path, _)| !is_subagent_key(path));
     }
-    let stack_catalog = match (provider, &projection) {
+    let mut stack_catalog = match (provider, &projection) {
         (Some(provider), Some(projection)) => stack_catalog(provider, projection, stack, prepared)?,
         _ => None,
     };
+    if let Some(catalog) = stack_catalog.as_mut() {
+        // 聚合下的自动审批模型用聚合设置里的（卡上的只在直连、路由下用），不在合并目录里就
+        // 不写，用 Codex 的默认。
+        if let Some(model) = crate::settings::codex_stack_auto_review_model() {
+            apply_codex_auto_review_model(catalog, &model);
+        }
+    }
     if let Some(catalog) = &stack_catalog {
         let (model, effort) = crate::settings::codex_stack_subagent();
         nested.extend(stack_subagent_nested(

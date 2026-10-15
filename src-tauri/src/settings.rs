@@ -448,6 +448,11 @@ pub struct AppSettings {
     /// 上面那个模型的推理强度。不在它支持的档位里时不写，用模型的默认档。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_stack_subagent_reasoning_effort: Option<String>,
+    /// Codex 聚合模式下自动审批（Auto Review）用的模型（合并目录里的 slug）。不设时用 Codex
+    /// 的默认：官方做默认那家时是官方的 `codex-auto-review`，否则由主模型自己审批。只在这个
+    /// slug 还在合并目录里时写进目录行，规则同子 agent 模型。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_stack_auto_review_model: Option<String>,
     /// User has confirmed the failover toggle first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failover_confirmed: Option<bool>,
@@ -604,6 +609,7 @@ impl Default for AppSettings {
             codex_stack_classic_tools: true,
             codex_stack_subagent_model: None,
             codex_stack_subagent_reasoning_effort: None,
+            codex_stack_auto_review_model: None,
             failover_confirmed: None,
             first_run_notice_confirmed: None,
             new_layout_notice_confirmed: None,
@@ -1136,6 +1142,21 @@ pub fn codex_stack_subagent() -> (Option<String>, Option<String>) {
         non_empty(&settings.codex_stack_subagent_model),
         non_empty(&settings.codex_stack_subagent_reasoning_effort),
     )
+}
+
+/// Codex 聚合模式下的自动审批模型 slug，空串当作没设。
+pub fn codex_stack_auto_review_model() -> Option<String> {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .codex_stack_auto_review_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(str::to_string)
 }
 
 // ===== 当前供应商管理函数 =====

@@ -6528,6 +6528,93 @@ model_provider = "c"
         assert_eq!(agents(&codex_doc()), routed);
     }
 
+    fn set_stack_auto_review(model: Option<&str>) {
+        crate::settings::update_settings(crate::settings::AppSettings {
+            codex_stack_auto_review_model: model.map(str::to_string),
+            ..crate::settings::get_settings()
+        })
+        .unwrap();
+    }
+
+    /// 合并目录每一行的 `auto_review_model_override`（没写或写 null 都是 `None`）。
+    fn catalog_auto_review() -> Vec<Option<String>> {
+        codex_catalog()["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|model| {
+                model
+                    .get("auto_review_model_override")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .collect()
+    }
+
+    /// 聚合设置里的自动审批模型：Stack 模式下按合并目录校验后写进每一行（主模型可以是任何
+    /// 一行）；不在目录里（成员移除、默认那家的 `ccs-*`）就不写，加回来自动恢复。路由那家
+    /// 卡上选的审批模型在聚合下不用：它的行照原样进合并目录。
+    #[tokio::test]
+    #[serial]
+    async fn codex_stack_auto_review_setting_follows_the_merged_catalog() {
+        let _home = Home::new();
+        seed_codex("approval_policy = \"on-request\"\n", None);
+        let [_, deepseek, zhipu] = codex_stack_rows();
+        let route = codex_native(
+            "a",
+            "https://a.example/v1",
+            "",
+            Some(json!({
+                "models": [{ "model": "gpt-a" }, { "model": "gpt-a-mini" }],
+                "autoReviewModel": "gpt-a-mini"
+            })),
+        );
+        let state = state_with(AppType::Codex, &[route, deepseek, zhipu], "a").await;
+
+        // 还没进 Stack：设置只存着，不碰客户端文件。
+        set_stack_auto_review(Some("ccs-deepseek/deepseek-v4-pro"));
+        let before = codex_text();
+        resync_codex_stack_catalog(&state).await.expect("no-op");
+        assert_eq!(codex_text(), before);
+        set_stack_auto_review(None);
+
+        // 进代理、名单为空：目录就是路由那家卡上的，卡上选的审批模型照写。
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        assert_eq!(
+            catalog_auto_review(),
+            vec![Some("gpt-a-mini".to_string()); 2]
+        );
+
+        // 名单非空：合并目录里路由那家的行不带卡上的值，没设聚合审批模型时一行都不写。
+        set_codex_member(&state, "deepseek", true).await;
+        assert_eq!(catalog_auto_review(), vec![None; 3]);
+
+        let id = "ccs-deepseek/deepseek-v4-pro";
+        set_stack_auto_review(Some(id));
+        resync_codex_stack_catalog(&state).await.expect("set");
+        assert_eq!(catalog_auto_review(), vec![Some(id.to_string()); 3]);
+
+        // 默认那家的 `ccs-*` 不在合并目录里：不写。
+        set_stack_auto_review(Some("ccs-a/gpt-a"));
+        resync_codex_stack_catalog(&state).await.expect("route id");
+        assert_eq!(catalog_auto_review(), vec![None; 3]);
+
+        // 成员移除后不写，加回来自动恢复。
+        set_stack_auto_review(Some(id));
+        resync_codex_stack_catalog(&state).await.expect("set again");
+        set_codex_member(&state, "zhipu", true).await;
+        set_codex_member(&state, "deepseek", false).await;
+        assert!(catalog_auto_review().iter().all(Option::is_none));
+        set_codex_member(&state, "deepseek", true).await;
+        let restored = catalog_auto_review();
+        assert!(!restored.is_empty());
+        assert!(restored.iter().all(|value| value.as_deref() == Some(id)));
+
+        set_stack_auto_review(None);
+        resync_codex_stack_catalog(&state).await.expect("unset");
+        assert!(catalog_auto_review().iter().all(Option::is_none));
+    }
+
     fn set_classic_subagents(enabled: bool) {
         crate::settings::update_settings(crate::settings::AppSettings {
             codex_stack_classic_tools: enabled,

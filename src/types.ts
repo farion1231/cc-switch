@@ -420,6 +420,9 @@ export interface Settings {
   // and its reasoning effort. Unset = sub-agents follow the main model.
   codexStackSubagentModel?: string;
   codexStackSubagentReasoningEffort?: string;
+  // Codex aggregation: Auto Review (approval reviewer) model, a published
+  // `ccs-<key>/<model>` id. Unset = Codex's default reviewer.
+  codexStackAutoReviewModel?: string;
   // User has confirmed the failover toggle first-run notice
   failoverConfirmed?: boolean;
   // User has confirmed the first-run welcome notice

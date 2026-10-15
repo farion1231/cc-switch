@@ -31,12 +31,16 @@ const MODELS: ProxyStackSubagentModel[] = [
 const MODEL = "mode.stackSettings.subagentModel";
 const EFFORT = "mode.stackSettings.subagentEffort";
 const CLASSIC = "settings.codexStackClassicSubagents";
+const AUTO_REVIEW = "mode.stackSettings.autoReviewModel";
 
 // 真实的 save_settings 整份反序列化：前端不带的键（undefined）就是没设。MSW 默认是合并
 // 写入，这里按真实语义把两个子代理键整体替换，并记下每次保存的请求体。
 let saved: Settings[] = [];
 
-function renderSheet(settings: Partial<Settings> = {}) {
+function renderSheet(
+  settings: Partial<Settings> = {},
+  { routeOfficial = false }: { routeOfficial?: boolean } = {},
+) {
   setSettings(settings);
   saved = [];
   server.use(
@@ -50,13 +54,19 @@ function renderSheet(settings: Partial<Settings> = {}) {
         codexStackSubagentModel: next.codexStackSubagentModel,
         codexStackSubagentReasoningEffort:
           next.codexStackSubagentReasoningEffort,
+        codexStackAutoReviewModel: next.codexStackAutoReviewModel,
       });
       return HttpResponse.json(true);
     }),
   );
   return render(
     <QueryClientProvider client={createTestQueryClient()}>
-      <StackSettingsSheet open onOpenChange={vi.fn()} models={MODELS} />
+      <StackSettingsSheet
+        open
+        onOpenChange={vi.fn()}
+        models={MODELS}
+        routeOfficial={routeOfficial}
+      />
     </QueryClientProvider>,
   );
 }
@@ -197,5 +207,64 @@ describe("StackSettingsSheet", () => {
     expect(
       await screen.findByText("settings.codexStackClassicSubagentsForcedV2"),
     ).toBeInTheDocument();
+  });
+  it("labels the default reviewer by the default provider", async () => {
+    const { unmount } = renderSheet({}, { routeOfficial: true });
+    expect(
+      await screen.findByRole("combobox", { name: AUTO_REVIEW }),
+    ).toHaveTextContent("mode.stackSettings.autoReviewDefaultOfficial");
+    unmount();
+
+    renderSheet();
+    expect(
+      await screen.findByRole("combobox", { name: AUTO_REVIEW }),
+    ).toHaveTextContent("mode.stackSettings.autoReviewDefaultMain");
+  });
+
+  it("saves the picked Auto Review model and goes back to the default", async () => {
+    const user = userEvent.setup();
+    renderSheet({ codexStackSubagentModel: "ccs-kimi/kimi-k3" });
+
+    const reviewer = await screen.findByRole("combobox", {
+      name: AUTO_REVIEW,
+    });
+    await user.click(reviewer);
+    await user.click(
+      await screen.findByRole("option", {
+        name: "DeepSeek V4 Flash（DeepSeek）",
+      }),
+    );
+    await waitFor(() =>
+      expect(getSettings().codexStackAutoReviewModel).toBe(
+        "ccs-deepseek/deepseek-v4-flash",
+      ),
+    );
+    // 子代理设置原样带着
+    expect(getSettings().codexStackSubagentModel).toBe("ccs-kimi/kimi-k3");
+
+    await user.click(screen.getByRole("combobox", { name: AUTO_REVIEW }));
+    await user.click(
+      await screen.findByRole("option", {
+        name: "mode.stackSettings.autoReviewDefaultMain",
+      }),
+    );
+    await waitFor(() =>
+      expect(getSettings().codexStackAutoReviewModel).toBeUndefined(),
+    );
+    expect("codexStackAutoReviewModel" in saved.at(-1)!).toBe(false);
+  });
+
+  it("explains a saved Auto Review model that is no longer aggregated", async () => {
+    renderSheet({ codexStackAutoReviewModel: "ccs-gone/old-model" });
+
+    expect(
+      await screen.findByTestId("stack-auto-review-unavailable"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: AUTO_REVIEW }),
+    ).toHaveTextContent("mode.stackSettings.unavailableOption");
+    expect(
+      screen.queryByTestId("stack-subagent-unavailable"),
+    ).not.toBeInTheDocument();
   });
 });
