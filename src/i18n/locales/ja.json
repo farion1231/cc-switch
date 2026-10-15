@@ -1955,6 +1955,7 @@
     "catalogModelPlaceholder": "例: deepseek-v4-flash",
     "catalogColumnDisplay": "メニュー表示名",
     "catalogColumnModel": "実際のリクエストモデル",
+    "duplicateCatalogModelsHint": "同じ実際のリクエストモデルを持つ行はすべて保存されますが、現在 Codex のモデルカタログには最初の行だけが使われます。表示名やコンテキストウィンドウが異なっても、個別の選択肢として切り替えることはできません。",
     "catalogColumnContext": "コンテキストウィンドウ",
     "catalogColumnReasoning": "思考レベル",
     "reasoningLevelsNotSet": "未設定",

@@ -163,13 +163,14 @@ function getPresetProviderType(
 export const normalizeCodexCatalogModelsForSave = (
   models: CodexCatalogModel[],
 ): CodexCatalogModel[] => {
-  const seen = new Set<string>();
   const normalized: CodexCatalogModel[] = [];
 
   for (const item of models) {
     const model = item.model.trim();
-    if (!model || seen.has(model)) continue;
-    seen.add(model);
+    // Rows are user-owned configurations, not unique upstream model IDs.
+    // Keep variants (including their order) even when the live catalog can
+    // currently publish only the first row for each model.
+    if (!model) continue;
 
     const displayName = item.displayName?.trim();
     const rawContextWindow = String(item.contextWindow ?? "").replace(

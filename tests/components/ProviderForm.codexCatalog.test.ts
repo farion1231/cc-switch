@@ -3,7 +3,7 @@ import { normalizeCodexCatalogModelsForSave } from "@/components/providers/forms
 import { mapCodexCatalogModelForForm } from "@/components/providers/forms/hooks/useCodexConfigState";
 
 describe("ProviderForm Codex catalog helpers", () => {
-  it("normalizes catalog rows and removes empty or duplicate models", () => {
+  it("normalizes catalog rows without discarding same-model variants", () => {
     expect(
       normalizeCodexCatalogModelsForSave([
         { model: " deepseek-v4-flash ", displayName: " DeepSeek " },
@@ -13,8 +13,36 @@ describe("ProviderForm Codex catalog helpers", () => {
       ]),
     ).toEqual([
       { model: "deepseek-v4-flash", displayName: "DeepSeek" },
+      { model: "deepseek-v4-flash", displayName: "Duplicate" },
       { model: "kimi-k2", contextWindow: 128000 },
     ]);
+  });
+
+  it("preserves context variants through repeated save and reload", () => {
+    const rows = [
+      {
+        model: "gpt-6.1-sol",
+        displayName: "gpt-6.1-sol",
+        contextWindow: 500000,
+        reasoningLevels: ["low", "medium", "high", "ultra"],
+      },
+      {
+        model: "gpt-6.1-sol",
+        displayName: "gpt-6.1-sol(1M)",
+        contextWindow: 1050000,
+        reasoningLevels: ["low", "medium", "high", "ultra"],
+      },
+      // Context-only variants must also survive, without requiring a new name.
+      { model: "gpt-6.1-sol", contextWindow: 200000 },
+      { model: "gpt-6.1-sol", contextWindow: 300000 },
+    ];
+    let saved = normalizeCodexCatalogModelsForSave(rows);
+    for (let i = 0; i < 2; i++) {
+      saved = normalizeCodexCatalogModelsForSave(
+        JSON.parse(JSON.stringify(saved)).map(mapCodexCatalogModelForForm),
+      );
+      expect(saved).toEqual(rows);
+    }
   });
 
   it("preserves native-profile overrides (parallel tool calls + input modalities + base instructions)", () => {

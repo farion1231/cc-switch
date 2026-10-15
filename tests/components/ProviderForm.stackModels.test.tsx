@@ -5,7 +5,7 @@ import {
   ProviderForm,
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
-import type { ProviderCategory, ProviderMeta } from "@/types";
+import type { CodexCatalogModel, ProviderCategory, ProviderMeta } from "@/types";
 import type { AppMode } from "@/types/proxy";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
@@ -65,7 +65,7 @@ function renderForm(
   options: {
     meta?: ProviderMeta;
     category?: ProviderCategory;
-    codexCatalog?: Array<{ model: string; displayName?: string }>;
+    codexCatalog?: CodexCatalogModel[];
     modeView?: AppMode;
     onStackLayoutChange?: (stackLayout: boolean) => void;
   } = {},
@@ -285,6 +285,40 @@ describe("ProviderForm Stack layout (Codex)", () => {
     expect(document.getElementById("codexDefaultModel")).not.toBeNull();
     expect(screen.queryByTestId("codex-config-editor")).toBeNull();
   });
+
+  it.each(["direct", "stack"] as const)(
+    "%s 模式保存并重新打开时保留同名模型的上下文配置，提示选择限制",
+    async (modeView) => {
+      const rows = [
+        { model: "m-1", displayName: "Standard", contextWindow: 500000 },
+        { model: "m-1", displayName: "Long", contextWindow: 1050000 },
+      ];
+      const onSubmit = vi.fn();
+      const { unmount } = renderForm("codex", onSubmit, {
+        modeView,
+        codexCatalog: rows,
+      });
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "相同实际请求模型的所有行都会保存",
+      );
+      const { settings } = await save(onSubmit);
+      expect(settings.modelCatalog.models).toEqual(rows);
+      unmount();
+
+      renderForm("codex", vi.fn(), {
+        modeView,
+        codexCatalog: settings.modelCatalog.models,
+      });
+      expect(screen.getByDisplayValue("Standard")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("Long")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("500000")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("1050000")).toBeInTheDocument();
+      fireEvent.change(screen.getAllByDisplayValue("m-1")[1], {
+        target: { value: "m-2" },
+      });
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    },
+  );
 
   it("列表第一行是默认模型，保存时写进 model", async () => {
     const onSubmit = vi.fn();

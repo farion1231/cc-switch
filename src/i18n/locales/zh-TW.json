@@ -1953,6 +1953,7 @@
     "modelListEmpty": "未設定模型：聚合模式下只發布下面的預設模型。",
     "catalogColumnDisplay": "選單顯示名",
     "catalogColumnModel": "實際請求模型",
+    "duplicateCatalogModelsHint": "相同實際請求模型的所有列都會儲存，但目前僅第一列用於 Codex 模型目錄。不同顯示名稱或上下文視窗無法作為獨立選項切換。",
     "catalogColumnContext": "上下文視窗",
     "catalogColumnReasoning": "思考等級",
     "reasoningLevelsNotSet": "未設定",

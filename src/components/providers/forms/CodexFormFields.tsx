@@ -1522,9 +1522,26 @@ export function CodexFormFields({
     </>
   );
 
+  const catalogModelIds = catalogRows
+    .map((row) => row.model.trim())
+    .filter(Boolean);
+  const hasDuplicateCatalogModels =
+    new Set(catalogModelIds).size < catalogModelIds.length;
+
   // 模型映射 / 模型列表的行。
   const renderCatalogRows = () => (
     <div className="space-y-2">
+      {!isGrokBuild && hasDuplicateCatalogModels && (
+        <p
+          role="status"
+          className="text-xs leading-relaxed text-amber-600 dark:text-amber-500"
+        >
+          {t("codexConfig.duplicateCatalogModelsHint", {
+            defaultValue:
+              "相同实际请求模型的所有行都会保存，但当前仅第一条用于 Codex 模型目录。不同显示名或上下文窗口不能作为独立选项切换。",
+          })}
+        </p>
+      )}
       {/* 列头：md+ 显示 */}
       <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_140px_minmax(0,1fr)_36px] gap-2 px-1 text-xs font-medium text-fg-2 md:grid">
         <span>

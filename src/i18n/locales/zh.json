@@ -1955,6 +1955,7 @@
     "catalogModelPlaceholder": "例如: deepseek-v4-flash",
     "catalogColumnDisplay": "菜单显示名",
     "catalogColumnModel": "实际请求模型",
+    "duplicateCatalogModelsHint": "相同实际请求模型的所有行都会保存，但当前仅第一条用于 Codex 模型目录。不同显示名或上下文窗口不能作为独立选项切换。",
     "catalogColumnContext": "上下文窗口",
     "catalogColumnReasoning": "思考等级",
     "reasoningLevelsNotSet": "未设置",
