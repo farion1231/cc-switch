@@ -22,6 +22,10 @@ const HERMES_DEFAULT_CONFIG_OBJ = {
   name: "",
   base_url: "",
   api_key: "",
+  // Must ship in the default JSON: UI-created providers save this object as
+  // the settings config, and without `api_mode` Hermes falls back to guessing
+  // the protocol from the URL (issue #4011).
+  api_mode: HERMES_DEFAULT_API_MODE,
 } as const;
 
 export const HERMES_DEFAULT_CONFIG = JSON.stringify(
