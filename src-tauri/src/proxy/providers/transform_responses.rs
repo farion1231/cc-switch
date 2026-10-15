@@ -1974,12 +1974,30 @@ pub fn anthropic_to_responses(
     }
 
     const WEB_SEARCH_SOURCES_MARKER: &str = "web_search_call.action.sources";
-    // OpenAI otherwise returns citations only on the final message, without a
-    // search-call ID. Request per-call sources so multiple hosted searches can
-    // be paired with the corresponding Anthropic result blocks.
-    if !hosted_web_search_names.is_empty() && !is_codex_oauth {
-        result["include"] = json!([WEB_SEARCH_SOURCES_MARKER]);
+    const REASONING_MARKER: &str = "reasoning.encrypted_content";
+
+    // Responses 协议约束（参考 CPA 规范）：
+    // 包含 "reasoning.encrypted_content"，确保 GPT / Grok 系列推理模型回传密文签名，
+    // 多轮交互时能够准确恢复 reasoning block，避免历史丢弃导致的 Prompt Cache 失效。
+    let mut includes: Vec<Value> = body
+        .get("include")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if !includes
+        .iter()
+        .any(|v| v.as_str() == Some(REASONING_MARKER))
+    {
+        includes.push(json!(REASONING_MARKER));
     }
+    if !hosted_web_search_names.is_empty()
+        && !includes
+            .iter()
+            .any(|v| v.as_str() == Some(WEB_SEARCH_SOURCES_MARKER))
+    {
+        includes.push(json!(WEB_SEARCH_SOURCES_MARKER));
+    }
+    result["include"] = json!(includes);
 
     // Inject prompt_cache_key for improved cache routing on OpenAI-compatible endpoints
     if let Some(key) = cache_key {
@@ -2010,27 +2028,6 @@ pub fn anthropic_to_responses(
         if codex_fast_mode {
             result["service_tier"] = json!("priority");
         }
-
-        const REASONING_MARKER: &str = "reasoning.encrypted_content";
-        let mut includes: Vec<Value> = body
-            .get("include")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        if !includes
-            .iter()
-            .any(|v| v.as_str() == Some(REASONING_MARKER))
-        {
-            includes.push(json!(REASONING_MARKER));
-        }
-        if !hosted_web_search_names.is_empty()
-            && !includes
-                .iter()
-                .any(|v| v.as_str() == Some(WEB_SEARCH_SOURCES_MARKER))
-        {
-            includes.push(json!(WEB_SEARCH_SOURCES_MARKER));
-        }
-        result["include"] = json!(includes);
 
         if let Some(obj) = result.as_object_mut() {
             // —— 删除 ChatGPT 反代不接受的字段 ——
@@ -2290,39 +2287,115 @@ pub(crate) fn build_anthropic_usage_from_responses(usage: Option<&Value>) -> Val
     result
 }
 
+/// Orders tool_result blocks by the preceding tool_use IDs, preserving non-result
+/// content blocks at their existing indices. If a complete one-to-one match
+/// is unavailable, the original blocks are returned unmodified.
+pub(crate) fn align_claude_tool_results(blocks: &[Value], tool_use_ids: &[String]) -> Vec<Value> {
+    if blocks.is_empty() || tool_use_ids.is_empty() {
+        return blocks.to_vec();
+    }
+
+    let mut tool_results = Vec::new();
+    let mut tool_result_indices = Vec::new();
+
+    for (i, block) in blocks.iter().enumerate() {
+        if block.get("type").and_then(Value::as_str) == Some("tool_result") {
+            tool_results.push(block);
+            tool_result_indices.push(i);
+        }
+    }
+
+    if tool_results.len() != tool_use_ids.len() {
+        return blocks.to_vec();
+    }
+
+    let mut reordered_results = Vec::with_capacity(tool_use_ids.len());
+    let mut used = vec![false; tool_results.len()];
+
+    for target_id in tool_use_ids {
+        if target_id.is_empty() {
+            return blocks.to_vec();
+        }
+        let mut matched = None;
+        for (idx, tr) in tool_results.iter().enumerate() {
+            if !used[idx] {
+                let tr_id = tr.get("tool_use_id").and_then(Value::as_str).unwrap_or("");
+                if tr_id == target_id {
+                    matched = Some(idx);
+                    break;
+                }
+            }
+        }
+
+        match matched {
+            Some(idx) => {
+                used[idx] = true;
+                reordered_results.push(tool_results[idx].clone());
+            }
+            None => return blocks.to_vec(),
+        }
+    }
+
+    let mut result = blocks.to_vec();
+    for (slot_idx, reordered) in tool_result_indices.into_iter().zip(reordered_results) {
+        result[slot_idx] = reordered;
+    }
+    result
+}
+
 /// 将 Anthropic messages 数组转换为 Responses API input 数组
 ///
 /// 核心转换逻辑：
-/// - user/assistant 的 text 内容 → 对应 role 的 message item
-/// - tool_use 从 assistant message 中"提升"为独立的 function_call item
+/// - 单个消息内的 text / image / document block 合并为一个 `type: "message"` 项
+/// - `role: "system"` 规范化为 `role: "developer"`
+/// - tool_use 从 assistant message 中"提升"为独立的 function_call item，并记录 call_id
+/// - user 消息紧随 assistant 的 tool_use 时，按 tool_use call_id 顺序对齐 tool_result，
+///   避免并发乱序破坏 Prompt 缓存
 /// - tool_result 从 user message 中"提升"为独立的 function_call_output item
 /// - hosted WebSearch call/result blocks → restore one Responses web_search_call item
 /// - bridge-owned thinking blocks → restore the original Responses reasoning item
 /// - unrelated native thinking blocks → 丢弃
 fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyError> {
     let mut input = Vec::new();
+    let mut pending_tool_use_ids: Vec<String> = Vec::new();
 
     for msg in messages {
-        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+        let raw_role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+        let role = match raw_role {
+            "system" => "developer",
+            other => other,
+        };
         let content = msg.get("content");
         let message_input_start = input.len();
 
         match content {
             // 字符串内容
             Some(Value::String(text)) => {
+                pending_tool_use_ids.clear();
                 let content_type = if role == "assistant" {
                     "output_text"
                 } else {
                     "input_text"
                 };
                 input.push(json!({
+                    "type": "message",
                     "role": role,
                     "content": [{ "type": content_type, "text": text }]
                 }));
             }
 
             // 数组内容（多模态/工具调用）
-            Some(Value::Array(blocks)) => {
+            Some(Value::Array(raw_blocks)) => {
+                let aligned_blocks_storage;
+                let blocks: &[Value] = if role == "user" && !pending_tool_use_ids.is_empty() {
+                    aligned_blocks_storage =
+                        align_claude_tool_results(raw_blocks, &pending_tool_use_ids);
+                    &aligned_blocks_storage
+                } else {
+                    raw_blocks.as_slice()
+                };
+                pending_tool_use_ids.clear();
+
                 let mut message_content = Vec::new();
                 let hosted_web_search_results: HashMap<&str, &Value> = blocks
                     .iter()
@@ -2379,6 +2452,7 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                             // 先刷新已累积的消息内容
                             if !message_content.is_empty() {
                                 input.push(json!({
+                                    "type": "message",
                                     "role": role,
                                     "content": message_content.clone()
                                 }));
@@ -2387,6 +2461,9 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
 
                             // 提升为独立的 function_call item
                             let id = block.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                            if !id.is_empty() {
+                                pending_tool_use_ids.push(id.to_string());
+                            }
                             let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("");
                             let arguments = block.get("input").cloned().unwrap_or(json!({}));
 
@@ -2402,6 +2479,7 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                             // 先刷新已累积的消息内容
                             if !message_content.is_empty() {
                                 input.push(json!({
+                                    "type": "message",
                                     "role": role,
                                     "content": message_content.clone()
                                 }));
@@ -2435,6 +2513,7 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                             if let Some(web_search_call) = web_search_call {
                                 if !message_content.is_empty() {
                                     input.push(json!({
+                                        "type": "message",
                                         "role": role,
                                         "content": message_content.clone()
                                     }));
@@ -2455,6 +2534,7 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                             {
                                 if !message_content.is_empty() {
                                     input.push(json!({
+                                        "type": "message",
                                         "role": role,
                                         "content": message_content.clone()
                                     }));
@@ -2471,6 +2551,7 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                 // 刷新剩余的消息内容
                 if !message_content.is_empty() {
                     input.push(json!({
+                        "type": "message",
                         "role": role,
                         "content": message_content
                     }));
@@ -2478,8 +2559,9 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
             }
 
             _ => {
+                pending_tool_use_ids.clear();
                 // 无内容或 null
-                input.push(json!({ "role": role }));
+                input.push(json!({ "type": "message", "role": role }));
             }
         }
 
@@ -3476,7 +3558,13 @@ mod tests {
 
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["tool_choice"], json!({"type": "web_search"}));
-        assert_eq!(result["include"], json!(["web_search_call.action.sources"]));
+        assert_eq!(
+            result["include"],
+            json!([
+                "reasoning.encrypted_content",
+                "web_search_call.action.sources"
+            ])
+        );
         assert!(result["tools"][0].get("external_web_access").is_none());
     }
 
@@ -5137,9 +5225,11 @@ mod tests {
     }
 
     #[test]
-    fn test_anthropic_to_responses_non_codex_omits_store_and_include() {
-        // 回归护栏：is_codex_oauth=false 时，行为必须与今日字节级一致
-        // —— 不写 store、不写 include，OpenRouter / Azure / OpenAI 付费 API 路径不受影响
+    fn test_anthropic_to_responses_non_codex_sets_reasoning_include() {
+        // Responses 协议约束（与 CPA 对齐）：
+        // 非 Codex OAuth 路径（如 OpenAI 官方 API、OpenRouter、xAI 等）同样需要
+        // include: ["reasoning.encrypted_content"]，以保障多轮 reasoning 缓存命中与历史连贯性；
+        // 同时 store 与 service_tier 保持不注入，max_output_tokens 保留。
         let input = json!({
             "model": "gpt-5-codex",
             "max_tokens": 1024,
@@ -5150,7 +5240,8 @@ mod tests {
 
         assert!(result.get("store").is_none());
         assert!(result.get("service_tier").is_none());
-        assert!(result.get("include").is_none());
+        assert_eq!(result["include"], json!(["reasoning.encrypted_content"]));
+        assert_eq!(result["max_output_tokens"], json!(1024));
     }
 
     #[test]
@@ -5615,5 +5706,106 @@ mod tests {
         assert_eq!(result["output_tokens"], json!(0));
         assert_eq!(result["cache_read_input_tokens"], json!(60));
         assert_eq!(result["cache_creation_input_tokens"], json!(20));
+    }
+
+    #[test]
+    fn test_align_claude_tool_results_reorders_matching_ids() {
+        let tool_uses = vec!["call_a".to_string(), "call_b".to_string(), "call_c".to_string()];
+        let blocks = vec![
+            json!({"type": "tool_result", "tool_use_id": "call_b", "content": "res_b"}),
+            json!({"type": "tool_result", "tool_use_id": "call_c", "content": "res_c"}),
+            json!({"type": "tool_result", "tool_use_id": "call_a", "content": "res_a"}),
+        ];
+
+        let aligned = align_claude_tool_results(&blocks, &tool_uses);
+        assert_eq!(aligned[0]["tool_use_id"], "call_a");
+        assert_eq!(aligned[1]["tool_use_id"], "call_b");
+        assert_eq!(aligned[2]["tool_use_id"], "call_c");
+    }
+
+    #[test]
+    fn test_align_claude_tool_results_preserves_interleaved_non_result_content() {
+        let tool_uses = vec!["call_1".to_string(), "call_2".to_string()];
+        let blocks = vec![
+            json!({"type": "text", "text": "prefix note"}),
+            json!({"type": "tool_result", "tool_use_id": "call_2", "content": "res_2"}),
+            json!({"type": "text", "text": "middle note"}),
+            json!({"type": "tool_result", "tool_use_id": "call_1", "content": "res_1"}),
+        ];
+
+        let aligned = align_claude_tool_results(&blocks, &tool_uses);
+        assert_eq!(aligned[0]["type"], "text");
+        assert_eq!(aligned[0]["text"], "prefix note");
+        assert_eq!(aligned[1]["tool_use_id"], "call_1");
+        assert_eq!(aligned[2]["type"], "text");
+        assert_eq!(aligned[2]["text"], "middle note");
+        assert_eq!(aligned[3]["tool_use_id"], "call_2");
+    }
+
+    #[test]
+    fn test_align_claude_tool_results_mismatched_counts_remains_unchanged() {
+        let tool_uses = vec!["call_1".to_string(), "call_2".to_string()];
+        let blocks = vec![
+            json!({"type": "tool_result", "tool_use_id": "call_2", "content": "res_2"}),
+        ];
+
+        let aligned = align_claude_tool_results(&blocks, &tool_uses);
+        assert_eq!(aligned, blocks);
+    }
+
+    #[test]
+    fn test_convert_messages_to_input_aligns_tool_results_and_adds_type_message() {
+        let messages = vec![
+            json!({
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "tool_1", "name": "read_file", "input": {"path": "a.txt"}},
+                    {"type": "tool_use", "id": "tool_2", "name": "read_file", "input": {"path": "b.txt"}}
+                ]
+            }),
+            json!({
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "tool_2", "content": "content_b"},
+                    {"type": "tool_result", "tool_use_id": "tool_1", "content": "content_a"}
+                ]
+            }),
+        ];
+
+        let input = convert_messages_to_input(&messages).unwrap();
+        // First turn produces 2 function_call items
+        assert_eq!(input[0]["type"], "function_call");
+        assert_eq!(input[0]["call_id"], "tool_1");
+        assert_eq!(input[1]["type"], "function_call");
+        assert_eq!(input[1]["call_id"], "tool_2");
+
+        // Second turn produces 2 aligned function_call_output items
+        assert_eq!(input[2]["type"], "function_call_output");
+        assert_eq!(input[2]["call_id"], "tool_1");
+        assert_eq!(input[3]["type"], "function_call_output");
+        assert_eq!(input[3]["call_id"], "tool_2");
+    }
+
+    #[test]
+    fn test_convert_messages_to_input_maps_system_to_developer_and_adds_type_message() {
+        let messages = vec![
+            json!({
+                "role": "system",
+                "content": "System instructions"
+            }),
+            json!({
+                "role": "user",
+                "content": "Hello world"
+            }),
+        ];
+
+        let input = convert_messages_to_input(&messages).unwrap();
+        assert_eq!(input[0]["type"], "message");
+        assert_eq!(input[0]["role"], "developer");
+        assert_eq!(input[0]["content"][0]["type"], "input_text");
+
+        assert_eq!(input[1]["type"], "message");
+        assert_eq!(input[1]["role"], "user");
+        assert_eq!(input[1]["content"][0]["type"], "input_text");
     }
 }
