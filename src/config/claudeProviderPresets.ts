@@ -336,6 +336,33 @@ export const providerPresets: ProviderPreset[] = [
     icon: "grooroute",
   },
   {
+    name: "TokenFactory",
+    websiteUrl: "https://tokenfactory.cn",
+    apiKeyUrl: "https://console.tokenfactory.cn/login",
+    // 官方 Claude Code 文档（docs.tokenfactory.cn/tools/claude-code，
+    // 2026-10-15 核对）：base 保留 /anthropic、Key 填 AUTH_TOKEN。平台只有
+    // 国产模型；Haiku 档（后台任务与 Explore 子代理）用 deepseek-v4.1-flash，
+    // 它在 Anthropic 接口下的工具调用已核验，glm-5.3-flash 平台不承诺。
+    // 模型窗口均 1M（api.tokenfactory.cn/v1/public/models），主模型与
+    // Sonnet / Opus 预勾 1M；Haiku 档表单不提供 1M 选项，不带标记。带
+    // context-1m beta 头的请求能过网关的请求头校验（假 Key 实测照常走到
+    // 鉴权 401），未经真 Key 实测
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.tokenfactory.cn/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "glm-5.3[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4.1-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3[1M]",
+      },
+    },
+    endpointCandidates: ["https://api.tokenfactory.cn/anthropic"],
+    category: "aggregator",
+    isPartner: true,
+    icon: "tokenfactory",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",

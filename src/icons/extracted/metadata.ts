@@ -1092,6 +1092,14 @@ export const iconMetadata: Record<string, IconMetadata> = {
     shape: "tile",
     keywords: ["sssaicode", "ssai", "relay", "gateway"],
   },
+  tokenfactory: {
+    name: "tokenfactory",
+    displayName: "TokenFactory",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["tokenfactory", "token factory", "词元工厂", "aggregator"],
+    defaultColor: "currentColor",
+  },
 };
 
 export function getIconMetadata(name: string): IconMetadata | undefined {

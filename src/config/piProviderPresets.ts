@@ -417,6 +417,46 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "grooroute",
   },
   {
+    name: "TokenFactory",
+    providerKey: "cc-switch-tokenfactory",
+    websiteUrl: "https://tokenfactory.cn",
+    apiKeyUrl: "https://console.tokenfactory.cn/login",
+    settingsConfig: {
+      name: "TokenFactory",
+      // 官方 Pi 文档（docs.tokenfactory.cn/tools/pi，2026-10-15 核对）；
+      // 平台入口最大输出 128K，低于目录里的 131072，须覆盖
+      baseUrl: "https://api.tokenfactory.cn/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("zai/glm-5.3", { id: "glm-5.3", maxTokens: 128_000 }),
+        piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
+        piModel("deepseek/deepseek-v4-pro", {
+          id: "deepseek-v4-pro-0813",
+          contextWindow: 1_048_576,
+        }),
+        // V4.1 Flash 平台标注可看图，目录里的 V4 Flash 只收文本
+        piModel("deepseek/deepseek-v4-flash", {
+          id: "deepseek-v4.1-flash",
+          name: "DeepSeek V4.1 Flash",
+          input: ["text", "image"],
+          contextWindow: 1_048_576,
+        }),
+        piModel("zai/glm-5.3-flash", {
+          id: "glm-5.3-flash",
+          maxTokens: 128_000,
+        }),
+        piModel("qwen/qwen3.8-flash", {
+          id: "qwen3.8-flash",
+          maxTokens: 128_000,
+        }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    icon: "tokenfactory",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     providerKey: "cc-switch-shengsuanyun",

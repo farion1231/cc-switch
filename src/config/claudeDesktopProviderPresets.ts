@@ -365,6 +365,26 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "grooroute",
   },
   {
+    name: "TokenFactory",
+    websiteUrl: "https://tokenfactory.cn",
+    apiKeyUrl: "https://console.tokenfactory.cn/login",
+    category: "aggregator",
+    baseUrl: "https://api.tokenfactory.cn/anthropic",
+    // 模型名与 Claude 角色无对应关系，走 proxy + brandedRoutes；角色分配同
+    // Claude Code 预设。三个模型窗口均为 1M（api.tokenfactory.cn/v1/public/models）
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "glm-5.3",
+      "kimi-k3",
+      "deepseek-v4.1-flash",
+      true,
+    ),
+    endpointCandidates: ["https://api.tokenfactory.cn/anthropic"],
+    isPartner: true,
+    icon: "tokenfactory",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
