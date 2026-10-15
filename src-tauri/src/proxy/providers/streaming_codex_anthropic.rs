@@ -516,6 +516,7 @@ impl AnthropicToResponsesState {
             events.extend(self.failed_event(
                 "Upstream returned no summary text for the compaction turn".to_string(),
                 Some("compaction_summary_empty".to_string()),
+                None,
             ));
             return events;
         }
@@ -529,13 +530,23 @@ impl AnthropicToResponsesState {
         events
     }
 
-    fn failed_event(&mut self, message: String, error_type: Option<String>) -> Option<Bytes> {
+    fn failed_event(
+        &mut self,
+        message: String,
+        error_type: Option<String>,
+        error_code: Option<String>,
+    ) -> Option<Bytes> {
         if self.completed {
             return None;
         }
         self.completed = true;
-        let mut error = json!({ "message": message });
-        if let Some(error_type) = error_type.filter(|value| !value.is_empty()) {
+        let error_type = error_type.filter(|value| !value.is_empty());
+        // Grok Build / Codex 的 Responses 错误解析器要求 error 对象必须带
+        // code 字段，缺失会报 "missing field `code`"。与 Chat 侧共用同一映射，
+        // 上游自带 code 时优先保留。
+        let code = sse::error_code_for(error_type.as_deref(), error_code.as_deref());
+        let mut error = json!({ "message": message, "code": code });
+        if let Some(error_type) = error_type {
             error["type"] = json!(error_type);
         }
         let mut output = self.output_items.clone();
@@ -547,7 +558,7 @@ impl AnthropicToResponsesState {
     }
 }
 
-fn extract_anthropic_sse_error(value: &Value) -> (String, Option<String>) {
+fn extract_anthropic_sse_error(value: &Value) -> (String, Option<String>, Option<String>) {
     let error = value.get("error").unwrap_or(value);
     let message = error
         .as_str()
@@ -563,7 +574,12 @@ fn extract_anthropic_sse_error(value: &Value) -> (String, Option<String>) {
         .get("type")
         .and_then(|v| v.as_str())
         .map(ToString::to_string);
-    (message, error_type)
+    let error_code = error
+        .get("code")
+        .and_then(|v| v.as_str())
+        .filter(|code| !code.is_empty())
+        .map(ToString::to_string);
+    (message, error_type, error_code)
 }
 
 fn process_anthropic_sse_block(
@@ -604,10 +620,10 @@ fn process_anthropic_sse_block(
         "message_delta" => state.handle_message_delta(&data),
         "message_stop" => state.finalize(),
         "error" => {
-            let (message, error_type) = extract_anthropic_sse_error(&data);
+            let (message, error_type, error_code) = extract_anthropic_sse_error(&data);
             return (
                 state
-                    .failed_event(message, error_type)
+                    .failed_event(message, error_type, error_code)
                     .into_iter()
                     .collect(),
                 true,
@@ -641,15 +657,16 @@ pub(crate) fn responses_sse_events_from_anthropic_message(
             .failed_event(
                 "upstream returned a non-object Anthropic message body".to_string(),
                 Some("invalid_response".to_string()),
+                None,
             )
             .into_iter()
             .collect();
     }
 
     if body.get("type").and_then(Value::as_str) == Some("error") || body.get("error").is_some() {
-        let (message, error_type) = extract_anthropic_sse_error(body);
+        let (message, error_type, error_code) = extract_anthropic_sse_error(body);
         return state
-            .failed_event(message, error_type)
+            .failed_event(message, error_type, error_code)
             .into_iter()
             .collect();
     }
@@ -764,6 +781,7 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
                     if let Some(event) = state.failed_event(
                         format!("Stream error: {e}"),
                         Some("stream_error".to_string()),
+                        None,
                     ) {
                         yield Ok(event);
                     }
@@ -820,6 +838,7 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
                 if let Some(event) = state.failed_event(
                     "Upstream Anthropic stream ended before message_stop".to_string(),
                     Some("stream_truncated".to_string()),
+                    None,
                 ) {
                     yield Ok(event);
                 }
@@ -838,6 +857,8 @@ mod tests {
             input.as_bytes().to_vec(),
         ))]);
         let converted = create_responses_sse_stream_from_anthropic(upstream);
+        // 与 handlers 的 Anthropic 出口一致：转换器之上再套序号盖章。
+        let converted = sse::stamp_sequence_numbers(converted);
         let chunks: Vec<_> = converted.collect().await;
         chunks
             .into_iter()
@@ -849,7 +870,9 @@ mod tests {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
             input.as_bytes().to_vec(),
         ))]);
-        create_responses_sse_stream_from_anthropic_with_context(upstream, context)
+        let converted = create_responses_sse_stream_from_anthropic_with_context(upstream, context);
+        let converted = sse::stamp_sequence_numbers(converted);
+        converted
             .collect::<Vec<_>>()
             .await
             .into_iter()
@@ -861,6 +884,16 @@ mod tests {
         responses_sse_events_from_anthropic_message(body, CodexToolContext::default())
             .into_iter()
             .map(|chunk| String::from_utf8_lossy(&chunk).to_string())
+            .collect()
+    }
+
+    fn parse_sse_events(output: &str) -> Vec<Value> {
+        output
+            .split("\n\n")
+            .filter_map(|block| {
+                let data = block.lines().find_map(|line| line.strip_prefix("data: "))?;
+                serde_json::from_str(data).ok()
+            })
             .collect()
     }
 
@@ -917,6 +950,71 @@ mod tests {
         assert!(merged.contains("overloaded_error"));
         assert!(merged.contains("busy"));
         assert!(!merged.contains("stream_truncated"));
+    }
+
+    #[tokio::test]
+    async fn events_carry_monotonic_sequence_number() {
+        // 回归保护：Grok Build 新版解析器要求每个 SSE 事件带顶层
+        // sequence_number，且从 0 开始连续递增（Anthropic 出口同样要盖章）。
+        let input = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_seq\",\"model\":\"claude\"}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi\"}}\n\n",
+            "event: content_block_stop\n",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n"
+        );
+
+        let events = parse_sse_events(&run(input).await);
+        assert!(!events.is_empty());
+        let seqs: Vec<u64> = events
+            .iter()
+            .map(|e| {
+                e["sequence_number"]
+                    .as_u64()
+                    .expect("event missing sequence_number")
+            })
+            .collect();
+        let expected: Vec<u64> = (0..events.len() as u64).collect();
+        assert_eq!(seqs, expected);
+    }
+
+    #[tokio::test]
+    async fn failed_event_includes_error_code_field() {
+        // 回归保护：上游错误只带 type 不带 code 时，代理也必须补 code，
+        // 否则 Grok Build 报 "missing field `code`"（Anthropic 出口同理）。
+        let merged = run(concat!(
+            "event: error\n",
+            "data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"busy\"}}\n\n"
+        ))
+        .await;
+
+        assert!(merged.contains("event: response.failed"));
+        assert!(merged.contains("\"code\":\"overloaded_error\""));
+        assert!(merged.contains("\"type\":\"overloaded_error\""));
+        assert!(merged.contains("busy"));
+    }
+
+    #[tokio::test]
+    async fn failed_event_preserves_upstream_error_code() {
+        // 上游错误自带具体 code 时必须原样保留，不能被 type 映射覆盖
+        //（与非流式转换的行为一致）。
+        let merged = run(concat!(
+            "event: error\n",
+            "data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"boom\",\"code\":\"model_not_found\"}}\n\n"
+        ))
+        .await;
+
+        assert!(merged.contains("event: response.failed"));
+        assert!(merged.contains("\"code\":\"model_not_found\""));
+        assert!(merged.contains("\"type\":\"invalid_request_error\""));
+        assert!(!merged.contains("\"code\":\"invalid_request_error\""));
     }
 
     #[tokio::test]
