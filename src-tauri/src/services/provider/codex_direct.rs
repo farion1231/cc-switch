@@ -593,7 +593,7 @@ pub(crate) fn plan(
             Target::Proxy {
                 route, base_url, ..
             },
-            Some(_),
+            Some(projection),
         ) => {
             if official {
                 let auth = match &managed_login {
@@ -609,8 +609,25 @@ pub(crate) fn plan(
                     auth,
                 )
             } else {
+                // The proxy owns its URL/auth, but the route still owns the remote
+                // compaction preference. Preserve the existing UI's OpenAI-name
+                // toggle and Codex's explicit override (including "unsupported").
+                let mut proxy_table = proxy_route_table(ROUTE_ID, base_url, false);
+                if let Route::Custom { table, .. } = &projection.route {
+                    if table.get("name").and_then(Item::as_str) == Some("OpenAI") {
+                        proxy_table.insert("name", toml_edit::value("OpenAI"));
+                    }
+                    if let Some(compaction) = table
+                        .get("capabilities")
+                        .and_then(|capabilities| capabilities.get("remote_compaction"))
+                    {
+                        let mut capabilities = Table::new();
+                        capabilities.insert("remote_compaction", compaction.clone());
+                        proxy_table.insert("capabilities", Item::Table(capabilities));
+                    }
+                }
                 (
-                    RouteWrite::Custom(proxy_route_table(ROUTE_ID, base_url, false)),
+                    RouteWrite::Custom(proxy_table),
                     Some(RouteAuth::Bearer),
                     AuthGoal::KeepNative,
                 )
