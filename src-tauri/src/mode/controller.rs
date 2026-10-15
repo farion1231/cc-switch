@@ -6150,6 +6150,133 @@ model_provider = "c"
         crate::config::read_json_file(&crate::codex_config::get_codex_model_catalog_path()).unwrap()
     }
 
+    async fn check_codex_proxy_compaction_preference(name: &str, capability: Option<&str>) {
+        for stack in [false, true] {
+            let _home = Home::new();
+            seed_codex("[features]\ngoals = true\n", None);
+            let mut relay = codex_native(
+                "relay",
+                "https://relay.example/v1",
+                "model_context_window = 372000\nmodel_auto_compact_token_limit = 353400\n",
+                Some(json!({"models": [{"model": "gpt-relay", "displayName": "Relay"}]})),
+            );
+            let mut config = relay.settings_config["config"]
+                .as_str()
+                .unwrap()
+                .parse::<toml_edit::DocumentMut>()
+                .unwrap();
+            let provider = &mut config["model_providers"]["relay"];
+            provider["name"] = toml_edit::value(name);
+            provider["http_headers"]["X-Upstream-Only"] = toml_edit::value("private");
+            provider["capabilities"]["external_web_access"] = toml_edit::value(false);
+            if let Some(value) = capability {
+                provider["capabilities"]["remote_compaction"] = toml_edit::value(value);
+            }
+            relay.settings_config["config"] = json!(config.to_string());
+            let state = state_with(AppType::Codex, &[relay.clone()], "relay").await;
+            enter(&state, &AppType::Codex, stack)
+                .await
+                .expect("enter proxy");
+            let check = |published_stack: bool| {
+                let doc = codex_doc();
+                assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+                let proxy = &doc["model_providers"]["custom"];
+                assert_eq!(
+                    proxy["name"].as_str(),
+                    Some(if name == "OpenAI" { "OpenAI" } else { "custom" })
+                );
+                assert_eq!(
+                    proxy
+                        .get("capabilities")
+                        .and_then(|v| v.get("remote_compaction"))
+                        .and_then(|v| v.as_str()),
+                    capability
+                );
+                assert!(proxy["base_url"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("http://127.0.0.1:"));
+                assert_ne!(
+                    proxy["experimental_bearer_token"].as_str(),
+                    Some("sk-relay")
+                );
+                assert!(proxy.get("http_headers").is_none());
+                assert!(proxy
+                    .get("capabilities")
+                    .and_then(|v| v.get("external_web_access"))
+                    .is_none());
+                if published_stack {
+                    // Stack keeps each provider's window on its own catalog row.
+                    assert!(doc.get("model_context_window").is_none());
+                    assert!(doc.get("model_auto_compact_token_limit").is_none());
+                    let catalog = codex_catalog();
+                    let route = catalog["models"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|model| model["slug"] == "gpt-relay")
+                        .unwrap();
+                    assert_eq!(route["context_window"], 372000);
+                    assert_eq!(route["auto_compact_token_limit"], 353400);
+                } else {
+                    assert_eq!(doc["model_context_window"].as_integer(), Some(372000));
+                    assert_eq!(
+                        doc["model_auto_compact_token_limit"].as_integer(),
+                        Some(353400)
+                    );
+                }
+                assert_eq!(doc["features"]["goals"].as_bool(), Some(true));
+            };
+            check(false);
+            if stack {
+                let member = codex_native(
+                    "member",
+                    "https://member.example/v1",
+                    "",
+                    Some(json!({"models": [{"model": "gpt-member", "displayName": "Member"}]})),
+                );
+                state.db.save_provider("codex", &member).unwrap();
+                set_codex_member(&state, "member", true).await;
+                check(true);
+            }
+            let catalog = codex_catalog();
+            ProviderService::update(&state, AppType::Codex, None, relay.clone()).unwrap();
+            check(stack);
+            assert_eq!(codex_catalog(), catalog);
+            detach_all(&state).await;
+            startup(&state).await;
+            check(stack);
+            assert_eq!(codex_catalog(), catalog);
+
+            // Switching off must remove a previously projected capability rather than
+            // retaining the outgoing provider's opt-in in the shared custom table.
+            let disabled = codex_native("disabled", "https://disabled.example/v1", "", None);
+            state.db.save_provider("codex", &disabled).unwrap();
+            set_route(&state, &AppType::Codex, "disabled")
+                .await
+                .unwrap();
+            let doc = codex_doc();
+            let proxy = &doc["model_providers"]["custom"];
+            assert_eq!(proxy["name"].as_str(), Some("custom"));
+            assert!(proxy.get("capabilities").is_none());
+            exit(&state, &AppType::Codex).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_proxy_preserves_legacy_remote_compaction_toggle() {
+        check_codex_proxy_compaction_preference("OpenAI", None).await;
+        check_codex_proxy_compaction_preference("Relay", None).await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_proxy_preserves_explicit_remote_compaction_capability() {
+        check_codex_proxy_compaction_preference("Relay", Some("v2")).await;
+        check_codex_proxy_compaction_preference("OpenAI", Some("unsupported")).await;
+    }
+
     #[tokio::test]
     #[serial]
     async fn codex_stack_models_join_the_catalog_and_leave_with_it() {
