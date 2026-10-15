@@ -277,6 +277,7 @@ pub fn responses_to_chat_completions_with_reasoning(
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
     let tool_context = build_codex_tool_context_from_request(&body);
+    let model = body.get("model").and_then(Value::as_str).unwrap_or("");
 
     if let Some(model) = body.get("model") {
         result["model"] = model.clone();
@@ -302,10 +303,16 @@ pub fn responses_to_chat_completions_with_reasoning(
         // Counts only: historical arguments and tool results may contain secrets.
         log::warn!("[Codex Chat] Preserved {recovered} malformed historical tool call(s) as text");
     }
+    // DeepSeek strictly validates tool-result adjacency. Limit this replay
+    // repair to explicit DeepSeek model IDs: other providers may interpret
+    // assistant turns differently, and rewriting their history changes caches.
+    if is_deepseek_chat_model(model) {
+        coalesce_replayed_tool_turn_messages(&mut messages);
+    }
+    backfill_tool_call_reasoning_placeholders(&mut messages);
     let messages = collapse_system_messages_to_head(messages);
     result["messages"] = json!(messages);
 
-    let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
     if let Some(max_tokens) = body.get("max_output_tokens") {
         if super::transform::is_openai_o_series(model) {
             result["max_completion_tokens"] = max_tokens.clone();
@@ -703,8 +710,107 @@ fn append_responses_input_as_chat_messages(
         last_assistant_index,
         &mut pending_reasoning,
     );
-    backfill_tool_call_reasoning_placeholders(messages);
     Ok(())
+}
+
+fn is_deepseek_chat_model(model: &str) -> bool {
+    let name = model
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    name == "deepseek" || name.starts_with("deepseek-")
+}
+
+/// Responses can replay assistant text (including an empty tool-only turn's
+/// trailing message) before all tool results have arrived. Chat requires those
+/// results to follow one assistant tool-call message without another assistant
+/// in between. Keep the replayed content on that message until its calls are
+/// answered, without crossing user/system boundaries or fabricating results.
+fn coalesce_replayed_tool_turn_messages(messages: &mut Vec<Value>) {
+    let mut normalized: Vec<Value> = Vec::with_capacity(messages.len());
+    let mut open_tool_turn: Option<usize> = None;
+    let mut pending_call_ids = HashSet::new();
+
+    for mut message in std::mem::take(messages) {
+        match message.get("role").and_then(Value::as_str) {
+            Some("assistant") => {
+                if let Some(calls) = message.get("tool_calls").and_then(Value::as_array) {
+                    for call in calls {
+                        register_known_tool_call_id(&mut pending_call_ids, call);
+                    }
+                }
+                if let Some(index) = open_tool_turn {
+                    let target = &mut normalized[index];
+                    merge_chat_assistant_content(target, message["content"].take());
+                    let mut reasoning = message
+                        .get("reasoning_content")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string);
+                    attach_pending_reasoning_to_assistant_unique(target, &mut reasoning);
+                    if let Some(calls) = message.get_mut("tool_calls").and_then(Value::as_array_mut)
+                    {
+                        target["tool_calls"].as_array_mut().unwrap().append(calls);
+                    }
+                    continue;
+                }
+                if !pending_call_ids.is_empty() {
+                    open_tool_turn = Some(normalized.len());
+                }
+            }
+            Some("tool") => {
+                if let Some(call_id) = message.get("tool_call_id").and_then(Value::as_str) {
+                    pending_call_ids.remove(call_id);
+                }
+                if pending_call_ids.is_empty() {
+                    open_tool_turn = None;
+                }
+            }
+            _ => {
+                open_tool_turn = None;
+                pending_call_ids.clear();
+            }
+        }
+        normalized.push(message);
+    }
+    *messages = normalized;
+}
+
+fn merge_chat_assistant_content(target: &mut Value, content: Value) {
+    fn is_empty(content: &Value) -> bool {
+        content.is_null()
+            || content.as_str().is_some_and(str::is_empty)
+            || content.as_array().is_some_and(Vec::is_empty)
+    }
+
+    fn into_parts(content: Value) -> Vec<Value> {
+        match content {
+            Value::Array(parts) => parts,
+            Value::String(text) => vec![json!({"type": "text", "text": text})],
+            other => vec![other],
+        }
+    }
+
+    if is_empty(&content) {
+        return;
+    }
+    if is_empty(&target["content"]) {
+        target["content"] = content;
+        return;
+    }
+    let previous = target["content"].take();
+    target["content"] = match (previous, content) {
+        (Value::String(mut previous), Value::String(text)) => {
+            previous.push('\n');
+            previous.push_str(&text);
+            Value::String(previous)
+        }
+        (previous, content) => {
+            let mut parts = into_parts(previous);
+            parts.extend(into_parts(content));
+            Value::Array(parts)
+        }
+    };
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2374,6 +2480,292 @@ mod tests {
 
     fn result_messages(result: &Value) -> &[Value] {
         result["messages"].as_array().unwrap()
+    }
+
+    fn convert_deepseek_test_input(items: Vec<Value>) -> Value {
+        responses_to_chat_completions(json!({
+            "model": "deepseek/deepseek-v4-flash",
+            "input": items
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn responses_request_to_chat_limits_tool_replay_repair_to_deepseek() {
+        for (model, repair) in [
+            ("deepseek-v4-flash", true),
+            ("deepseek/deepseek-v4-flash", true),
+            ("deepseek-ai/DeepSeek-V3.2", true),
+            ("Pro/deepseek-ai/DeepSeek-R1", true),
+            ("DEEPSEEK-CHAT", true),
+            ("deepseek", true),
+            ("gpt-5.4", false),
+            ("kimi-k3", false),
+            ("glm-5.2", false),
+            ("MiniMax-M2.7", false),
+            ("qwen3.6-plus", false),
+            ("claude-sonnet-4-6", false),
+            ("custom-alias", false),
+            ("deepseek/gpt-5.4", false),
+            ("not-deepseek-v4-flash", false),
+        ] {
+            let result = responses_to_chat_completions(json!({
+                "model": model,
+                "input": [
+                    test_function_call("call_1"),
+                    {"type": "message", "role": "assistant", "content": "Replay text.",
+                        "reasoning_content": "replay thought"},
+                    test_function_output("call_1", json!("ok"))
+                ]
+            }))
+            .unwrap();
+
+            if repair {
+                assert_complete_tool_turns(&result);
+                assert_eq!(message_roles(&result), vec!["assistant", "tool"], "{model}");
+                assert_eq!(result["messages"][0]["content"], "Replay text.");
+                assert_eq!(result["messages"][0]["reasoning_content"], "replay thought");
+            } else {
+                assert_eq!(
+                    result["messages"],
+                    json!([
+                        {"role": "assistant", "content": null, "tool_calls": [
+                            {"id": "call_1", "type": "function", "function": {
+                                "name": "view_image", "arguments": "{}"
+                            }}
+                        ], "reasoning_content": "tool call"},
+                        {"role": "assistant", "content": "Replay text.", "reasoning_content": "replay thought"},
+                        {"role": "tool", "tool_call_id": "call_1", "content": "ok"}
+                    ]),
+                    "{model}"
+                );
+            }
+        }
+    }
+
+    fn assert_complete_tool_turns(result: &Value) {
+        let mut pending = HashSet::new();
+        for message in result_messages(result) {
+            let role = message["role"].as_str().unwrap();
+            if !pending.is_empty() {
+                assert_eq!(role, "tool", "interrupted tool turn: {result}");
+            }
+            if role == "tool" {
+                let call_id = message["tool_call_id"].as_str().unwrap();
+                assert!(pending.remove(call_id), "unexpected tool result: {result}");
+            }
+            if let Some(calls) = message["tool_calls"].as_array() {
+                for call in calls {
+                    assert!(pending.insert(call["id"].as_str().unwrap()));
+                }
+            }
+        }
+        assert!(pending.is_empty(), "missing tool results: {result}");
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_valid_deepseek_tool_history_bytes_stable() {
+        let items = vec![
+            json!({"type": "message", "role": "user", "content": "Inspect the image."}),
+            json!({"type": "message", "role": "assistant", "content": "Checking."}),
+            test_function_call("call_1"),
+            test_function_call("call_2"),
+            test_function_output("call_2", json!("")),
+            test_function_output(
+                "call_1",
+                json!([
+                    {"type": "text", "text": "image result"},
+                    {"type": "input_image", "image_url": "https://example.com/image.png"}
+                ]),
+            ),
+            json!({"type": "message", "role": "assistant", "content": "Image inspected.",
+                "reasoning_content": "final answer thought"}),
+            json!({"type": "message", "role": "user", "content": "Continue."}),
+            test_function_call("call_next"),
+            test_function_output("call_next", json!("ok")),
+        ];
+        let original = convert_test_input(items.clone());
+        let deepseek = convert_deepseek_test_input(items);
+
+        assert_complete_tool_turns(&deepseek);
+        assert_eq!(
+            serde_json::to_vec(&deepseek["messages"]).unwrap(),
+            serde_json::to_vec(&original["messages"]).unwrap(),
+            "well-formed history must keep its cache-sensitive serialization"
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_empty_assistant_replay_inside_tool_turn() {
+        let empty_messages = [
+            json!({"type": "message", "role": "assistant", "content": null}),
+            json!({"type": "message", "role": "assistant", "content": null,
+                "reasoning_content": "tool-only thought"}),
+            json!({"type": "message", "role": "assistant", "content": ""}),
+            json!({"type": "message", "role": "assistant", "content": []}),
+            json!({"type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": ""}
+            ]}),
+            json!({"type": "message", "role": "assistant"}),
+            json!({"role": "assistant", "content": ""}),
+            json!({"type": "future_message", "role": "assistant", "content": ""}),
+            json!({"type": "input_text", "role": "assistant", "text": ""}),
+        ];
+
+        for empty_message in empty_messages {
+            let reasoning = empty_message.get("reasoning_content").cloned();
+            let result = convert_deepseek_test_input(vec![
+                test_function_call("call_1"),
+                empty_message,
+                test_function_output("call_1", json!("")),
+            ]);
+
+            assert_complete_tool_turns(&result);
+            assert_eq!(message_roles(&result), vec!["assistant", "tool"]);
+            assert_eq!(result["messages"][0]["tool_calls"][0]["id"], "call_1");
+            assert_eq!(result["messages"][1]["content"], "");
+            if let Some(reasoning) = reasoning {
+                assert_eq!(result["messages"][0]["reasoning_content"], reasoning);
+            }
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_coalesces_custom_and_search_tool_replay() {
+        for (call, output) in [
+            (
+                json!({"type": "custom_tool_call", "call_id": "call_1",
+                    "name": "apply_patch", "input": "patch"}),
+                json!({"type": "custom_tool_call_output", "call_id": "call_1", "output": "ok"}),
+            ),
+            (
+                json!({"type": "tool_search_call", "call_id": "call_1", "arguments": {"query": "shell"}}),
+                json!({"type": "tool_search_output", "call_id": "call_1", "output": []}),
+            ),
+        ] {
+            let expected_output = canonical_json_string(&output);
+            let result = convert_deepseek_test_input(vec![
+                call,
+                json!({"type": "message", "role": "assistant", "content": ""}),
+                output,
+            ]);
+            assert_complete_tool_turns(&result);
+            assert_eq!(message_roles(&result), vec!["assistant", "tool"]);
+            assert_eq!(result["messages"][1]["content"], expected_output);
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_preserves_replayed_tool_turn_text_and_reasoning() {
+        let mut first_call = test_function_call("call_1");
+        first_call["reasoning_content"] = json!("first thought");
+        let mut second_call = test_function_call("call_2");
+        second_call["reasoning_content"] = json!("third thought");
+        let result = convert_deepseek_test_input(vec![
+            first_call,
+            json!({
+                "type": "message", "role": "assistant", "content": "First update.",
+                "reasoning_content": "second thought"
+            }),
+            second_call,
+            json!({"type": "message", "role": "assistant", "content": "Second update."}),
+            test_function_output("call_1", json!("first result")),
+            test_function_output("call_2", json!("second result")),
+        ]);
+
+        assert_complete_tool_turns(&result);
+        assert_eq!(message_roles(&result), vec!["assistant", "tool", "tool"]);
+        let assistant = &result["messages"][0];
+        assert_eq!(assistant["content"], "First update.\nSecond update.");
+        assert_eq!(
+            assistant["reasoning_content"],
+            "first thought\n\nsecond thought\n\nthird thought"
+        );
+        assert_eq!(assistant["tool_calls"][0]["id"], "call_1");
+        assert_eq!(assistant["tool_calls"][1]["id"], "call_2");
+    }
+
+    #[test]
+    fn responses_request_to_chat_coalesces_assistant_replay_between_parallel_results() {
+        let result = convert_deepseek_test_input(vec![
+            test_function_call("call_1"),
+            test_function_call("call_2"),
+            test_function_output("call_2", json!("second result")),
+            json!({
+                "type": "message", "role": "assistant", "content": "Still working.",
+                "reasoning_content": "waiting for the first result"
+            }),
+            test_function_output("call_1", json!("first result")),
+            json!({"type": "message", "role": "assistant", "content": "Done."}),
+        ]);
+
+        assert_complete_tool_turns(&result);
+        assert_eq!(
+            message_roles(&result),
+            vec!["assistant", "tool", "tool", "assistant"]
+        );
+        assert_eq!(result["messages"][0]["content"], "Still working.");
+        assert_eq!(
+            result["messages"][0]["reasoning_content"],
+            "waiting for the first result"
+        );
+        assert_eq!(result["messages"][1]["tool_call_id"], "call_2");
+        assert_eq!(result["messages"][2]["tool_call_id"], "call_1");
+        assert_eq!(result["messages"][3]["content"], "Done.");
+    }
+
+    #[test]
+    fn responses_request_to_chat_preserves_multimodal_assistant_replay() {
+        let result = convert_deepseek_test_input(vec![
+            json!({"type": "message", "role": "assistant", "content": "Opening the image."}),
+            test_function_call("call_1"),
+            json!({"type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": "Image context."},
+                {"type": "refusal", "refusal": "Cannot identify a person."},
+                {"type": "input_image", "image_url": "https://example.com/image.png"}
+            ]}),
+            test_function_output("call_1", json!("ok")),
+        ]);
+
+        assert_complete_tool_turns(&result);
+        assert_eq!(message_roles(&result), vec!["assistant", "tool"]);
+        assert_eq!(
+            result["messages"][0]["content"],
+            json!([
+                {"type": "text", "text": "Opening the image."},
+                {"type": "text", "text": "Image context."},
+                {"type": "text", "text": "Cannot identify a person."},
+                {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}}
+            ])
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_user_boundaries_and_missing_results() {
+        for role in ["user", "system"] {
+            let result = convert_deepseek_test_input(vec![
+                test_function_call("call_missing"),
+                json!({"type": "message", "role": role, "content": "New context."}),
+                json!({"type": "message", "role": "assistant", "content": "Next turn."}),
+                test_function_call("call_next"),
+                test_function_output("call_next", json!("ok")),
+            ]);
+            let messages = result_messages(&result);
+            let assistants: Vec<_> = messages
+                .iter()
+                .filter(|message| message["role"] == "assistant")
+                .collect();
+            assert_eq!(assistants.len(), 2);
+            assert_eq!(assistants[0]["tool_calls"][0]["id"], "call_missing");
+            assert_eq!(assistants[1]["tool_calls"][0]["id"], "call_next");
+            assert_eq!(assistants[1]["content"], "Next turn.");
+            let outputs: Vec<_> = messages
+                .iter()
+                .filter(|message| message["role"] == "tool")
+                .collect();
+            assert_eq!(outputs.len(), 1);
+            assert_eq!(outputs[0]["tool_call_id"], "call_next");
+        }
     }
 
     /// 回归：没有配对 function_call、call_id 为空的工具结果（Codex 桌面端
