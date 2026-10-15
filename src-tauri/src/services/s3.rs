@@ -36,6 +36,13 @@ fn is_aws_endpoint(endpoint: &str) -> bool {
     endpoint.is_empty() || endpoint.contains("amazonaws.com")
 }
 
+/// Returns `true` for Alibaba Cloud OSS endpoints, which require virtual-hosted style.
+fn is_aliyun_oss_endpoint(endpoint: &str) -> bool {
+    let (_, host) = split_scheme_host(endpoint);
+    let host = host.to_ascii_lowercase();
+    host.ends_with(".aliyuncs.com") && (host.starts_with("oss-") || host.starts_with("s3.oss-"))
+}
+
 /// Split an endpoint into its scheme and host-with-port parts.
 ///
 /// Preserves the original scheme when one is provided, defaulting to `"https"`
@@ -60,6 +67,7 @@ fn split_scheme_host(endpoint: &str) -> (&str, &str) {
 /// Build the full URL for an S3 object.
 ///
 /// - AWS endpoints use virtual-hosted style: `https://{bucket}.s3.{region}.amazonaws.com/{key}`
+/// - Aliyun OSS uses virtual-hosted style:  `https://{bucket}.{endpoint}/{key}`
 /// - Custom endpoints use path style:       `https://{endpoint}/{bucket}/{key}`
 fn build_object_url(creds: &S3Credentials, key: &str) -> String {
     let key = key.trim_start_matches('/');
@@ -68,6 +76,9 @@ fn build_object_url(creds: &S3Credentials, key: &str) -> String {
             "https://{}.s3.{}.amazonaws.com/{}",
             creds.bucket, creds.region, key
         )
+    } else if is_aliyun_oss_endpoint(&creds.endpoint) {
+        let (scheme, host) = split_scheme_host(&creds.endpoint);
+        format!("{}://{}.{}/{}", scheme, creds.bucket, host, key)
     } else {
         let (scheme, host) = split_scheme_host(&creds.endpoint);
         format!("{}://{}/{}/{}", scheme, host, creds.bucket, key)
@@ -81,6 +92,9 @@ fn build_bucket_url(creds: &S3Credentials) -> String {
             "https://{}.s3.{}.amazonaws.com/",
             creds.bucket, creds.region
         )
+    } else if is_aliyun_oss_endpoint(&creds.endpoint) {
+        let (scheme, host) = split_scheme_host(&creds.endpoint);
+        format!("{}://{}.{}/", scheme, creds.bucket, host)
     } else {
         let (scheme, host) = split_scheme_host(&creds.endpoint);
         format!("{}://{}/{}/", scheme, host, creds.bucket)
@@ -580,6 +594,32 @@ mod tests {
     }
 
     #[test]
+    fn build_object_url_virtual_hosted_style_aliyun_oss() {
+        let creds = test_creds(
+            "https://oss-cn-beijing.aliyuncs.com",
+            "cn-beijing",
+            "cc-switch-phil",
+        );
+        assert_eq!(
+            build_object_url(&creds, "cc-switch-sync/config.json"),
+            "https://cc-switch-phil.oss-cn-beijing.aliyuncs.com/cc-switch-sync/config.json"
+        );
+    }
+
+    #[test]
+    fn build_object_url_virtual_hosted_style_aliyun_oss_case_insensitive() {
+        let creds = test_creds(
+            "https://OSS-CN-BEIJING.ALIYUNCS.COM",
+            "cn-beijing",
+            "cc-switch-phil",
+        );
+        assert_eq!(
+            build_object_url(&creds, "cc-switch-sync/config.json"),
+            "https://cc-switch-phil.OSS-CN-BEIJING.ALIYUNCS.COM/cc-switch-sync/config.json"
+        );
+    }
+
+    #[test]
     fn build_object_url_path_style_custom_endpoint() {
         let creds = test_creds("minio.example.com:9000", "us-east-1", "mybucket");
         assert_eq!(
@@ -603,6 +643,19 @@ mod tests {
         assert_eq!(
             build_bucket_url(&creds),
             "https://testbucket.s3.us-west-2.amazonaws.com/"
+        );
+    }
+
+    #[test]
+    fn build_bucket_url_virtual_hosted_style_aliyun_oss() {
+        let creds = test_creds(
+            "https://oss-cn-beijing.aliyuncs.com",
+            "cn-beijing",
+            "cc-switch-phil",
+        );
+        assert_eq!(
+            build_bucket_url(&creds),
+            "https://cc-switch-phil.oss-cn-beijing.aliyuncs.com/"
         );
     }
 
