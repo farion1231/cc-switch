@@ -471,6 +471,10 @@ pub struct LocalSkillSourceScanResult {
     pub scanned_skills: usize,
 }
 
+const MAX_LOCAL_SOURCE_SCAN_DIRECTORIES: usize = 10_000;
+const MAX_LOCAL_SOURCE_SCAN_REPOSITORIES: usize = 100;
+const MAX_LOCAL_SOURCE_SCAN_SKILLS: usize = 500;
+
 fn normalize_optional_branch(branch: Option<String>) -> Option<String> {
     branch.and_then(|b| {
         let trimmed = b.trim();
@@ -760,14 +764,38 @@ fn should_skip_local_source_scan_dir(path: &Path) -> bool {
 }
 
 /// 在一个由用户显式选择的目录中寻找 GitHub Git 项目。只递归普通目录，绝不跟随
-/// 链接，也不进入依赖/构建目录，避免把扫描变成无边界的磁盘任务。
-fn collect_local_git_repositories(root: &Path, repositories: &mut Vec<PathBuf>) -> Result<()> {
+/// 链接，也不进入依赖/构建目录；目录和项目数量都有上限，避免扫描变成无边界的磁盘任务。
+fn collect_local_git_repositories(
+    root: &Path,
+    repositories: &mut Vec<PathBuf>,
+    scanned_directories: &mut usize,
+) -> Result<()> {
+    *scanned_directories += 1;
+    if *scanned_directories > MAX_LOCAL_SOURCE_SCAN_DIRECTORIES {
+        return Err(anyhow!(
+            "所选目录包含超过 {MAX_LOCAL_SOURCE_SCAN_DIRECTORIES} 个目录，请选择更小的工作区后重试"
+        ));
+    }
     if root.join(".git").exists() {
+        if repositories.len() >= MAX_LOCAL_SOURCE_SCAN_REPOSITORIES {
+            return Err(anyhow!(
+                "所选目录包含超过 {MAX_LOCAL_SOURCE_SCAN_REPOSITORIES} 个 Git 项目，请选择更小的工作区后重试"
+            ));
+        }
         repositories.push(root.to_path_buf());
         return Ok(());
     }
-    for entry in fs::read_dir(root).with_context(|| format!("读取目录失败: {}", root.display()))?
-    {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            log::warn!("跳过无权读取的本地项目目录: {}", root.display());
+            return Ok(());
+        }
+        Err(error) => {
+            return Err(error).with_context(|| format!("读取目录失败: {}", root.display()))
+        }
+    };
+    for entry in entries {
         let entry = entry?;
         let file_type = entry.file_type()?;
         if !file_type.is_dir()
@@ -776,7 +804,7 @@ fn collect_local_git_repositories(root: &Path, repositories: &mut Vec<PathBuf>) 
         {
             continue;
         }
-        collect_local_git_repositories(&entry.path(), repositories)?;
+        collect_local_git_repositories(&entry.path(), repositories, scanned_directories)?;
     }
     Ok(())
 }
@@ -787,10 +815,25 @@ fn collect_skill_hashes_in_repository(
     hashes: &mut HashMap<String, HashSet<String>>,
     source_info: &mut HashMap<String, LockSkillInfo>,
     scanned_skills: &mut usize,
+    scanned_directories: &mut usize,
 ) -> Result<()> {
-    for entry in fs::read_dir(directory)
-        .with_context(|| format!("读取项目目录失败: {}", directory.display()))?
-    {
+    *scanned_directories += 1;
+    if *scanned_directories > MAX_LOCAL_SOURCE_SCAN_DIRECTORIES {
+        return Err(anyhow!(
+            "所选目录包含超过 {MAX_LOCAL_SOURCE_SCAN_DIRECTORIES} 个目录，请选择更小的工作区后重试"
+        ));
+    }
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            log::warn!("跳过无权读取的本地项目目录: {}", directory.display());
+            return Ok(());
+        }
+        Err(error) => {
+            return Err(error).with_context(|| format!("读取项目目录失败: {}", directory.display()))
+        }
+    };
+    for entry in entries {
         let entry = entry?;
         let path = entry.path();
         let file_type = entry.file_type()?;
@@ -808,8 +851,14 @@ fn collect_skill_hashes_in_repository(
                 hashes,
                 source_info,
                 scanned_skills,
+                scanned_directories,
             )?;
         } else if path.file_name().is_some_and(|name| name == "SKILL.md") {
+            if *scanned_skills >= MAX_LOCAL_SOURCE_SCAN_SKILLS {
+                return Err(anyhow!(
+                    "所选目录包含超过 {MAX_LOCAL_SOURCE_SCAN_SKILLS} 个 Skill，请选择更小的工作区后重试"
+                ));
+            }
             let skill_dir = path.parent().expect("SKILL.md has parent");
             let hash = SkillService::compute_dir_hash(skill_dir)?;
             hashes
@@ -1118,7 +1167,8 @@ impl SkillService {
         }
 
         let mut repositories = Vec::new();
-        collect_local_git_repositories(root, &mut repositories)?;
+        let mut scanned_directories = 0;
+        collect_local_git_repositories(root, &mut repositories, &mut scanned_directories)?;
         let mut hashes: HashMap<String, HashSet<String>> = HashMap::new();
         let mut source_info = HashMap::new();
         let mut scanned_repositories = 0;
@@ -1141,6 +1191,7 @@ impl SkillService {
                 &mut hashes,
                 &mut source_info,
                 &mut scanned_skills,
+                &mut scanned_directories,
             )?;
         }
 
@@ -8086,6 +8137,59 @@ mod tests {
         assert_eq!(
             installed[0].source_id.as_deref(),
             Some("JimLiu/baoyu-skills")
+        );
+    }
+
+    #[test]
+    fn local_project_scan_rejects_too_many_git_projects_before_matching() {
+        let workspace = tempdir().expect("workspace");
+        for index in 0..=MAX_LOCAL_SOURCE_SCAN_REPOSITORIES {
+            fs::create_dir_all(workspace.path().join(format!("repo-{index}")).join(".git"))
+                .expect("git dir");
+        }
+
+        let mut repositories = Vec::new();
+        let mut scanned_directories = 0;
+        let error = collect_local_git_repositories(
+            workspace.path(),
+            &mut repositories,
+            &mut scanned_directories,
+        )
+        .expect_err("a broad workspace must be rejected before it is scanned");
+
+        assert!(
+            error.to_string().contains("Git 项目"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn local_project_scan_rejects_too_many_skills_before_matching() {
+        let repository = tempdir().expect("repository");
+        for index in 0..=MAX_LOCAL_SOURCE_SCAN_SKILLS {
+            write_skill(
+                &repository.path().join(format!("skill-{index}")),
+                "test skill",
+            );
+        }
+
+        let mut hashes = HashMap::new();
+        let mut source_info = HashMap::new();
+        let mut scanned_skills = 0;
+        let mut scanned_directories = 0;
+        let error = collect_skill_hashes_in_repository(
+            repository.path(),
+            &github_lock_info("example".to_string(), "skills".to_string()).expect("github info"),
+            &mut hashes,
+            &mut source_info,
+            &mut scanned_skills,
+            &mut scanned_directories,
+        )
+        .expect_err("a broad repository must be rejected before it is scanned");
+
+        assert!(
+            error.to_string().contains("Skill"),
+            "unexpected error: {error}"
         );
     }
 

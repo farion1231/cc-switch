@@ -3278,8 +3278,8 @@
     "importSelected": "匯入已選 ({{count}})",
     "noUnmanagedFound": "未發現需要匯入的技能。所有技能已在 CC Switch 統一管理中。",
     "localSourceScan": {
-      "completed": "已補全 {{count}} 個 Skill 的專案來源",
-      "none": "沒有找到可唯一確認的本機專案來源",
+      "completed": "已掃描 {{repositories}} 個專案中的 {{skills}} 個 Skill，補全了 {{count}} 個專案來源",
+      "none": "已掃描 {{repositories}} 個專案中的 {{skills}} 個 Skill，未找到可唯一確認的本機專案來源",
       "ambiguous": "{{count}} 個 Skill 對應多個專案，已保持未分組。"
     },
     "unmanagedAvailable": "發現可匯入的技能",

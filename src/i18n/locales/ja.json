@@ -3277,8 +3277,8 @@
     "importSelected": "選択をインポート ({{count}})",
     "noUnmanagedFound": "インポートするスキルが見つかりませんでした。すべてのスキルは CC Switch で管理されています。",
     "localSourceScan": {
-      "completed": "{{count}} 個の Skill のプロジェクトソースを補完しました",
-      "none": "一意に確認できるローカルプロジェクトソースは見つかりませんでした",
+      "completed": "{{repositories}} プロジェクト内の {{skills}} 個の Skill をスキャンし、{{count}} 件のプロジェクトソースを補完しました",
+      "none": "{{repositories}} プロジェクト内の {{skills}} 個の Skill をスキャンしましたが、一意に確認できるローカルプロジェクトソースは見つかりませんでした",
       "ambiguous": "{{count}} 個の Skill は複数プロジェクトに一致したため、未分類のままです。"
     },
     "unmanagedAvailable": "インポート可能なスキルがあります",
