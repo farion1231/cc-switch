@@ -1379,7 +1379,7 @@ describe("PiProviderForm", () => {
     );
     await waitFor(() =>
       expect(screen.getByLabelText("pi.form.contextWindow")).toHaveValue(
-        400000,
+        272000,
       ),
     );
     expect(screen.getByLabelText("pi.form.maxTokens")).toHaveValue(128000);

@@ -6,6 +6,7 @@ use super::prompt::import_prompt_from_deeplink;
 use super::provider::parse_and_merge_config;
 use super::utils::{infer_homepage_from_endpoint, validate_url};
 use super::DeepLinkImportRequest;
+use crate::provider::UsageScript;
 use crate::AppType;
 use crate::{store::AppState, Database};
 use base64::prelude::*;
@@ -1953,4 +1954,73 @@ fn test_import_stores_a_valid_custom_icon_and_rejects_a_broken_one() {
     let db = Arc::new(Database::memory().expect("create memory db"));
     let state = AppState::new(db);
     assert!(super::import_provider_from_deeplink(&state, request).is_err());
+}
+
+/// 不带任何用量字段、只填地址的请求。
+fn coding_plan_request(app: &str, endpoint: &str) -> DeepLinkImportRequest {
+    let mut request = usage_script_request("", None);
+    request.app = Some(app.to_string());
+    request.endpoint = Some(endpoint.to_string());
+    request.usage_script = None;
+    request
+}
+
+fn imported_usage_script(
+    app_type: AppType,
+    request: &DeepLinkImportRequest,
+) -> Option<UsageScript> {
+    use super::provider::build_provider_from_request;
+    build_provider_from_request(&app_type, request)
+        .unwrap()
+        .meta
+        .and_then(|meta| meta.usage_script)
+}
+
+#[test]
+fn test_deeplink_coding_plan_endpoint_enables_token_plan_by_default() {
+    // 和在应用里新建一样：套餐地址默认按套餐额度查询，所有应用一视同仁
+    for (app, app_type) in [
+        ("claude", AppType::Claude),
+        ("codex", AppType::Codex),
+        ("opencode", AppType::OpenCode),
+        ("hermes", AppType::Hermes),
+    ] {
+        let request = coding_plan_request(app, "https://api.kimi.com/coding/v1");
+        let script = imported_usage_script(app_type, &request)
+            .unwrap_or_else(|| panic!("{app} 应自动开启套餐用量"));
+        assert!(script.enabled, "{app}");
+        assert_eq!(script.template_type.as_deref(), Some("token_plan"));
+        assert_eq!(script.coding_plan_provider.as_deref(), Some("kimi"));
+        assert!(script.code.is_empty());
+    }
+}
+
+#[test]
+fn test_deeplink_coding_plan_respects_explicit_opt_out() {
+    let mut request = coding_plan_request("claude", "https://open.bigmodel.cn/api/anthropic");
+    request.usage_enabled = Some(false);
+    let script = imported_usage_script(AppType::Claude, &request).unwrap();
+    assert!(!script.enabled, "usageEnabled=false 必须照办");
+    assert_eq!(script.coding_plan_provider.as_deref(), Some("zhipu"));
+}
+
+#[test]
+fn test_deeplink_coding_plan_never_replaces_a_carried_script() {
+    let code = "export async function query() { return { cost: 0 }; }";
+    let mut request = usage_script_request(code, None);
+    request.endpoint = Some("https://api.kimi.com/coding/v1".to_string());
+    let script = imported_usage_script(AppType::Claude, &request).unwrap();
+    assert_eq!(script.code, code);
+    assert_eq!(script.template_type, None);
+}
+
+#[test]
+fn test_deeplink_non_plan_and_zenmux_outside_claude_stay_off() {
+    let request = coding_plan_request("claude", "https://api.example.com/v1");
+    assert!(imported_usage_script(AppType::Claude, &request).is_none());
+
+    let request = coding_plan_request("codex", "https://zenmux.ai/api/v1");
+    assert!(imported_usage_script(AppType::Codex, &request).is_none());
+    let request = coding_plan_request("claude", "https://zenmux.ai/api/anthropic");
+    assert!(imported_usage_script(AppType::Claude, &request).is_some());
 }

@@ -114,6 +114,8 @@ pub struct ProxyTakeoverStatus {
     pub codex: bool,
     pub gemini: bool,
     pub grokbuild: bool,
+    #[serde(rename = "claude-desktop", default)]
+    pub claude_desktop: bool,
     pub opencode: bool,
     pub openclaw: bool,
 }
