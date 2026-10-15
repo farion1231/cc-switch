@@ -1753,7 +1753,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     } finally {
       now.mockRestore();
     }
-    expect(updateButton("Claude Code")).toBeDisabled();
+    await waitFor(() => expect(updateButton("Claude Code")).toBeDisabled());
     expect(updateButton("Claude Code")).toHaveAttribute("aria-busy", "true");
     expect(updateButton("Codex")).toBeEnabled();
     fireEvent.click(updateAllButton());
