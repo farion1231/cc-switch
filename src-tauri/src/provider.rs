@@ -523,6 +523,9 @@ pub struct ProviderMeta {
     /// - "openai_responses": OpenAI Responses API 格式，需要转换
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
+    /// Per-model local proxy protocol overrides. Unknown values survive round trips.
+    #[serde(rename = "modelApiFormats", skip_serializing_if = "Option::is_none")]
+    pub model_api_formats: Option<std::collections::HashMap<String, String>>,
     /// Codex Copilot only: absent or auto prefers advertised Responses, then Chat.
     /// Legacy `apiFormat` does not imply an explicit Copilot protocol override.
     #[serde(
