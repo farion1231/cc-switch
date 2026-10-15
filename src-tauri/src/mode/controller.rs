@@ -1646,8 +1646,16 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
     let legacy = had_backup || placeholder;
     let enabled = if *app == AppType::ClaudeDesktop {
         // 旧版按卡片决定 Desktop 走不走路由：直连指针是模型映射卡就是在用路由。只在第一次
-        // （模式还没有值）时看，路由到的就是这张卡（进入时路由没有值，用直连指针初始化）。
-        mode.mode.is_none() && claude_desktop_config::legacy_mapping_card(&state.db).is_some()
+        // （模式还没有值）时看。
+        let card = mode
+            .mode
+            .is_none()
+            .then(|| claude_desktop_config::legacy_mapping_card(&state.db))
+            .flatten();
+        if let Some(card) = &card {
+            adopt_legacy_desktop_card(state, &mut mode, card)?;
+        }
+        card.is_some()
     } else {
         state.db.get_proxy_flags_sync(app.as_str()).0
     };
@@ -1718,6 +1726,41 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
             },
         )?;
     }
+    Ok(())
+}
+
+/// 旧版的 Desktop 映射卡拆成新版的三样：旧版给映射卡写的一律是本地路由地址，所以客户端
+/// 已经接上（`attached`，接不上退回直连时才会把它写回去）；路由那家是这张卡；直连指针改成
+/// 官方卡（映射卡直连写不进去，退出路由时 Desktop 本来就会回到官方，指针要跟着一致）。
+/// 指针只改本机记录：`provider_for` 先读它，库里的 `is_current` 会随云同步到别的设备。
+/// 先落定模式再改指针：中途崩了，下次启动按已落定的路由模式接上，不会因为指针已经不是
+/// 映射卡而认不出旧版状态。
+fn adopt_legacy_desktop_card(
+    state: &AppState,
+    mode: &mut ModeState,
+    card: &Provider,
+) -> Result<(), String> {
+    let app = AppType::ClaudeDesktop;
+    mode.mode = Some(Mode::Proxy);
+    mode.attached = true;
+    mode.proxy_route = Some(card.id.clone());
+    commit_state(state, &app, &PendingTarget::mode(mode.clone()))?;
+    state
+        .db
+        .ensure_official_seed_by_id(
+            crate::database::CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID,
+            app.clone(),
+        )
+        .map_err(err)?;
+    crate::settings::set_current_provider(
+        &app,
+        Some(crate::database::CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID),
+    )
+    .map_err(err)?;
+    log::info!(
+        "Claude Desktop 旧版映射卡 {} 迁移为路由模式：路由到这张卡，直连指针改为官方",
+        card.id
+    );
     Ok(())
 }
 
@@ -6029,12 +6072,85 @@ model_provider = "c"
         assert!(mode.is_proxy() && mode.attached);
         assert_eq!(mode.proxy_route.as_deref(), Some("map"));
         assert!(state.proxy_service.is_running().await);
+        // 映射卡直连写不进去：直连指针改成官方，退出路由后显示的就是 Desktop 实际在用的。
+        let official = crate::database::CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID;
+        assert_eq!(
+            current::direct_provider(&state.db, &desktop)
+                .unwrap()
+                .map(|provider| provider.id)
+                .as_deref(),
+            Some(official)
+        );
 
         // 第二次启动按已定下的模式接上，不再看卡片。
         exit(&state, &desktop).await.expect("exit desktop");
+        assert_eq!(in_use(&state, &desktop).as_deref(), Some(official));
+        assert!(desktop_profile().get("inferenceGatewayApiKey").is_none());
         startup(&state).await;
         assert!(!current::is_proxy(&desktop));
         assert!(!state.proxy_service.is_running().await);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn claude_desktop_upgrade_that_cannot_attach_points_desktop_back_at_official() {
+        let home = Home::new();
+        let _dirs = DesktopDirs::under(&home);
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[claude("a", "https://a.example", json!({}))],
+            "a",
+        )
+        .await;
+        let desktop = AppType::ClaudeDesktop;
+        state
+            .db
+            .save_provider(desktop.as_str(), &desktop_card("map", true))
+            .expect("save mapping card");
+        crate::settings::set_current_provider(&desktop, Some("map")).expect("desktop current");
+        // 旧版给映射卡写的配置：指着本地路由。
+        let old = crate::claude_desktop_config::route_profile(
+            &state.db,
+            &desktop_card("map", true),
+            "http://127.0.0.1:15721",
+            &[],
+        )
+        .expect("old profile");
+        crate::claude_desktop_config::run(
+            &state.db,
+            op::APPLY,
+            Some(crate::claude_desktop_config::DesktopTarget::Profile(&old)),
+            PendingTarget::default(),
+        )
+        .expect("old version writes the mapping card");
+        assert!(desktop_profile().get("inferenceGatewayApiKey").is_some());
+
+        // 端口被占，路由起不来。
+        let busy = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        state
+            .db
+            .update_proxy_config(ProxyConfig {
+                listen_port: busy.local_addr().unwrap().port(),
+                ..Default::default()
+            })
+            .await
+            .expect("busy port");
+
+        startup(&state).await;
+
+        let mode = current::mode_state(&desktop);
+        assert!(!mode.is_proxy() && !mode.attached);
+        assert!(!state.proxy_service.is_running().await);
+        // Desktop 不再指着起不来的本地路由，界面上的当前供应商也是官方。
+        assert!(desktop_profile().get("inferenceGatewayApiKey").is_none());
+        assert_eq!(
+            in_use(&state, &desktop).as_deref(),
+            Some(crate::database::CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID)
+        );
+        assert!(take_startup_attach_failures()
+            .iter()
+            .any(|failure| failure.app_type == desktop.as_str()));
     }
 
     #[tokio::test]
