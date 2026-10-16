@@ -4228,6 +4228,7 @@
     "columnVisible": "表示",
     "visibleHelp": "オフにすると、このアプリはサイドバー、トレイメニュー、MCP / Skills のアプリ列、プロンプトとセッションのアプリ選択に表示されなくなります。表示しないだけで、プロバイダーや MCP などの設定はそのまま残り、アプリ自身の設定ファイルも変更されません。",
     "desktopHelp": "Claude Desktop はデスクトップアプリのため、ここではインストールやアップグレードはできません。CC Switch は設定ファイル経由で接続します。",
+    "cursorHelp": "Cursor はデスクトップアプリのため、ここではインストールやアップグレードはできません。CC Switch はルーティング接管経由で接続します。",
     "desktopUnsupported": "このシステムには対応していません",
     "desktopConnected": "接続済み",
     "desktopNotConnected": "未接続",
