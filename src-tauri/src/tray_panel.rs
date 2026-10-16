@@ -777,9 +777,12 @@ pub fn tray_panel_state(state: tauri::State<'_, AppState>) -> Result<TrayPanelSt
 }
 
 /// 面板挂载时取一次：第一次弹出时窗口是新建的，`tray-panel-show` 可能早于前端开始监听。
+/// 页面加载慢于 `REVEAL_FALLBACK` 时窗口已经按兜底显示出来（待显示标记已清），这时也要
+/// 返回这次的方位，否则面板一直是空的。
 #[tauri::command]
-pub fn tray_panel_placement() -> Option<PanelPlacement> {
-    if !PENDING_REVEAL.load(Ordering::Acquire) {
+pub fn tray_panel_placement(app: AppHandle) -> Option<PanelPlacement> {
+    let visible = panel_window(&app).is_some_and(|window| window.is_visible().unwrap_or(false));
+    if !PENDING_REVEAL.load(Ordering::Acquire) && !visible {
         return None;
     }
     lock(&ANCHOR)
@@ -849,8 +852,11 @@ pub fn tray_panel_hide(app: AppHandle) {
 
 /// 面板里点了一行：按原生菜单的事件 id 处理。切换供应商、项目、轻量模式之后面板留着
 /// （看得到勾移到哪家），其余（打开页面、退出）先收起面板。
+///
+/// 必须是 async 命令：轻量模式下打开主窗口要新建窗口，Windows 上在同步命令里
+/// `WebviewWindowBuilder::build()` 会死锁（WebView2 限制）。原生菜单的事件回调没有这个问题。
 #[tauri::command]
-pub fn tray_panel_action(app: AppHandle, id: String) {
+pub async fn tray_panel_action(app: AppHandle, id: String) {
     let stays_open =
         id.starts_with("prov:") || id.starts_with("profile_") || id == "lightweight_mode";
     if !stays_open {
