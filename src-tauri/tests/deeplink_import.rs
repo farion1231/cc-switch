@@ -7,6 +7,45 @@ mod support;
 use support::{ensure_test_home, reset_test_fs, test_mutex};
 
 #[test]
+fn deeplink_import_opencode_generates_editable_ids_and_preserves_display_names() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+    let db = Arc::new(Database::memory().expect("create memory db"));
+    let state = AppState::new(db.clone());
+    let key_pattern = regex::Regex::new(r"^[a-z0-9]+(-[a-z0-9]+)*$").unwrap();
+    let mut ids = std::collections::HashSet::new();
+
+    for name in ["中文供应商", "公司 AI", "Test_Provider", "---", "🚀"] {
+        // Repeated imports must still create distinct records, even in the same millisecond.
+        for _ in 0..2 {
+            let mut url = url::Url::parse("ccswitch://v1/import").unwrap();
+            url.query_pairs_mut().extend_pairs([
+                ("resource", "provider"),
+                ("app", "opencode"),
+                ("name", name),
+                ("endpoint", "https://example.com/v1"),
+                ("apiKey", "public-test-key"),
+                ("model", "example-model"),
+            ]);
+            let request = parse_deeplink_url(url.as_str()).unwrap();
+            let id = import_provider_from_deeplink(&state, request).unwrap();
+            assert!(key_pattern.is_match(&id), "uneditable provider ID: {id}");
+            assert!(ids.insert(id.clone()), "duplicate provider ID: {id}");
+            let providers = db.get_all_providers("opencode").unwrap();
+            let provider = providers.get(&id).unwrap();
+            assert_eq!(provider.name, name);
+            let live: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(_home.join(".config/opencode/opencode.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(live["provider"][&id], provider.settings_config);
+        }
+    }
+    assert_eq!(db.get_all_providers("opencode").unwrap().len(), ids.len());
+}
+
+#[test]
 fn deeplink_import_claude_provider_persists_to_db() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();

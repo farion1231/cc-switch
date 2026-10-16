@@ -100,14 +100,25 @@ pub fn import_provider_from_deeplink(
     // Build provider configuration based on app type
     let mut provider = build_provider_from_request(&app_type, &merged_request)?;
 
-    // Generate a unique ID for the provider using timestamp + sanitized name
-    let timestamp = chrono::Utc::now().timestamp_millis();
-    let sanitized_name = name
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
-        .collect::<String>()
-        .to_lowercase();
-    provider.id = format!("{sanitized_name}-{timestamp}");
+    provider.id = if matches!(app_type, AppType::OpenCode) {
+        // Display names may be Unicode, but new OpenCode IDs must pass the editor's slug validation.
+        let slug = name
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("-")
+            .to_ascii_lowercase();
+        let slug = if slug.is_empty() { "provider" } else { &slug };
+        format!("{slug}-{}", uuid::Uuid::new_v4().simple())
+    } else {
+        let timestamp = chrono::Utc::now().timestamp_millis();
+        let sanitized_name = name
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+            .collect::<String>()
+            .to_lowercase();
+        format!("{sanitized_name}-{timestamp}")
+    };
 
     let provider_id = provider.id.clone();
 
