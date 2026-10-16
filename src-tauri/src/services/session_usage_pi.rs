@@ -462,6 +462,7 @@ fn parse_pi_file(
 }
 
 /// Only recognize the official example extension's tool-result contract.
+/// Preserve the legacy top-level usage path and request IDs for pi-subagents.
 /// Do not walk arbitrary details/compaction snapshots looking for `usage`.
 fn parse_subagent_records(
     entry: &Value,
@@ -475,6 +476,7 @@ fn parse_subagent_records(
     let message = entry.get("message")?;
     if message.get("role")?.as_str()? != "toolResult"
         || message.get("toolName")?.as_str()? != "subagent"
+        || message.get("usage").is_some()
     {
         return None;
     }
@@ -1151,6 +1153,64 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(cost, "0.02");
+        Ok(())
+    }
+
+    #[test]
+    fn top_level_subagent_usage_survives_upgrade_and_rewrite_without_double_counting(
+    ) -> Result<(), AppError> {
+        for mode in ["single", "parallel", "chain"] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = session_path(temp.path(), mode);
+            let header = r#"{"type":"session","id":"existing-subagent"}"#;
+            let mut entry = subagent_entry(
+                mode,
+                serde_json::json!([
+                    {"model": "child-model", "usage": {"input": 600, "output": 60, "cost": 0.3}},
+                    {"model": "child-model", "usage": {"input": 400, "output": 40, "cost": 0.2}},
+                ]),
+            );
+            entry["message"]["usage"] = serde_json::json!({
+                "input": 1000, "output": 100, "cost": {"total": 0.5},
+            });
+            write_lines(&path, &[header, &entry.to_string()]);
+            let db = Database::memory()?;
+            let metadata = fs::metadata(&path).unwrap();
+            let revision = pi_file_revision(&path, &metadata, metadata_modified_nanos(&metadata))?;
+            // Seed the exact record and cursor produced by the old importer.
+            {
+                let conn = lock_conn!(db.conn);
+                let record = parse_usage_record(&entry, "existing-subagent", None, 0).unwrap();
+                assert!(insert_pi_record(&conn, &record)?);
+                update_pi_sync_state_on_conn(&conn, &path.to_string_lossy(), revision, 2)?;
+                let old_revision = (revision.encoded() as u64 & ((1 << REVISION_MARKER_SHIFT) - 1))
+                    | (0b110 << REVISION_MARKER_SHIFT);
+                conn.execute(
+                    "UPDATE session_log_sync SET last_synced_at = ?1 WHERE file_path = ?2",
+                    rusqlite::params![old_revision as i64, path.to_string_lossy()],
+                )?;
+            }
+            for rewrite in [false, true] {
+                if rewrite {
+                    write_lines(&path, &[&format!("{header} "), &entry.to_string()]);
+                }
+                let result = sync_pi_files(&db, std::slice::from_ref(&path));
+                assert!(result.errors.is_empty(), "{:?}", result.errors);
+                assert_eq!((result.imported, result.skipped), (0, 1));
+                let conn = lock_conn!(db.conn);
+                let totals: (i64, i64, f64) = conn.query_row(
+                    "SELECT COUNT(*),
+                        SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens),
+                        SUM(CAST(total_cost_usd AS REAL)) FROM proxy_request_logs",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?;
+                assert_eq!(totals, (1, 1100, 0.5));
+            }
+            let repeated = sync_pi_files(&db, &[path]);
+            assert!(repeated.errors.is_empty(), "{:?}", repeated.errors);
+            assert_eq!((repeated.imported, repeated.skipped), (0, 0));
+        }
         Ok(())
     }
 
