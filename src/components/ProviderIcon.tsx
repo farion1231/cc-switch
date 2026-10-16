@@ -5,6 +5,8 @@ import {
   getIconMetadata,
   getIconUrl,
   isUrlIcon,
+  isDarkInk,
+  adaptSvgToTheme,
 } from "@/icons/extracted";
 import { cn } from "@/lib/utils";
 import { isCustomIcon } from "@/utils/customIcon";
@@ -31,7 +33,7 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
   // 获取内联 SVG 字符串
   const iconSvg = useMemo(() => {
     if (icon && !isCustomIcon(icon) && !isUrlIcon(icon) && hasIcon(icon)) {
-      return getIcon(icon);
+      return adaptSvgToTheme(getIcon(icon));
     }
     return "";
   }, [icon]);
@@ -62,18 +64,20 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
     };
   }, [size]);
 
-  // 获取有效颜色：优先使用传入的有效 color，否则从元数据获取 defaultColor
+  // 获取有效颜色：优先使用传入的有效 color，否则从元数据获取 defaultColor。
+  // 近黑色（#000 / #111 这类）的单色图标不写死颜色，交给外层文字色，
+  // 否则深色模式下是黑底上的黑图标
   const effectiveColor = useMemo(() => {
+    let resolved: string | undefined;
     if (color && typeof color === "string" && color.trim() !== "") {
-      return color;
-    }
-    if (icon) {
+      resolved = color;
+    } else if (icon) {
       const metadata = getIconMetadata(icon);
       if (metadata?.defaultColor && metadata.defaultColor !== "currentColor") {
-        return metadata.defaultColor;
+        resolved = metadata.defaultColor;
       }
     }
-    return undefined;
+    return isDarkInk(resolved) ? undefined : resolved;
   }, [color, icon]);
 
   // 内联 SVG 渲染（支持 CSS currentColor 着色）

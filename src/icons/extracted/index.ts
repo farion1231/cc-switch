@@ -1,6 +1,7 @@
 // Hand-curated icon index with optimized SVG content and custom name mappings.
 // Update entries deliberately; automatic regeneration is intentionally unsupported.
 
+import { getIconMetadata, isTileIcon } from "./metadata";
 import _88api from "./88api.png";
 import _alltokens from "./alltokens.png";
 import _alltokensSi from "./alltokens-si.png";
@@ -229,8 +230,53 @@ export function hasIcon(name: string): boolean {
   return key in icons || key in iconUrls;
 }
 
+function hexLuminance(hex: string): number | null {
+  let h = hex.slice(1);
+  if (h.length === 3 || h.length === 4) {
+    h = [...h.slice(0, 3)].map((c) => c + c).join("");
+  }
+  const n = parseInt(h.slice(0, 6), 16);
+  if (Number.isNaN(n)) return null;
+  return 0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255);
+}
+
+/** 近黑色（深色背景上看不清）。 */
+export function isDarkInk(color?: string): boolean {
+  const c = color?.trim().toLowerCase();
+  if (!c) return false;
+  if (c === "black") return true;
+  if (!c.startsWith("#")) return false;
+  const lum = hexLuminance(c);
+  return lum !== null && lum < 60;
+}
+
+const adaptedSvgCache = new Map<string, string>();
+
+/**
+ * 深色模式适配：把写死的近黑色笔画 / 填充换成 currentColor，跟随外层文字色。
+ * 同时带近白色的图标（自带深底 + 白字形的徽标）整体是自洽的，不动。
+ */
+export function adaptSvgToTheme(svg: string): string {
+  const cached = adaptedSvgCache.get(svg);
+  if (cached !== undefined) return cached;
+  const paints = [...svg.matchAll(/\b(?:fill|stroke)="([^"]+)"/g)].map(
+    (m) => m[1],
+  );
+  const hasLightInk = paints.some((c) => {
+    const lum = c.startsWith("#") ? hexLuminance(c.toLowerCase()) : null;
+    return c.toLowerCase() === "white" || (lum !== null && lum > 215);
+  });
+  const result = hasLightInk
+    ? svg
+    : svg.replace(/\b(fill|stroke)="([^"]+)"/g, (whole, attr, color) =>
+        isDarkInk(color) ? `${attr}="currentColor"` : whole,
+      );
+  adaptedSvgCache.set(svg, result);
+  return result;
+}
+
 export function isUrlIcon(name: string): boolean {
   return name.toLowerCase() in iconUrls;
 }
 
-export { getIconMetadata, isTileIcon } from "./metadata";
+export { getIconMetadata, isTileIcon };
