@@ -51,7 +51,6 @@ import { useOhMyPiCurrentState } from "@/lib/query/ohmypi";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import {
   buildAdditiveSections,
-  buildDesktopSections,
   buildSwitchSections,
   type CardPresentation,
   type ProviderSection,
@@ -332,14 +331,6 @@ export function ProviderList({
         t,
         providers: filteredProviders,
         queue: switchMode.queue.filter((id) => known.has(id)),
-      });
-    }
-    if (appId === "claude-desktop") {
-      return buildDesktopSections({
-        t,
-        providers: filteredProviders,
-        currentId: currentProviderId,
-        onSwitch,
       });
     }
     const defaultPrimary = openclawDefaultModel?.primary ?? "";

@@ -177,7 +177,7 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
       tone: "outline",
       title: input.routingReason(p),
     }),
-    // 只在直连页上标：那里的「回到直连」一步生效、不写名字，要靠它看出会落到哪家。
+    // 只在直连页上标：不用点开「回到直连」的确认框，在列表里就看得出会落到哪家。
     // 路由页上没有跟直连那家有关的操作，不标
     directWhenDirect: (): CardChip => ({
       key: "direct",
@@ -575,7 +575,11 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
         : t("providerCard.section.stackDefaultAfterSwitch"),
       help: {
         title: t("providerCard.section.stackDefault"),
-        body: t("providerCard.section.stackDefaultHelp"),
+        body: t(
+          app === "claude-desktop"
+            ? "providerCard.section.stackDefaultHelpDesktop"
+            : "providerCard.section.stackDefaultHelp",
+        ),
       },
       emptyText: t("providerCard.section.stackNoDefault"),
       items: defaultItems,
@@ -590,79 +594,6 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
       key: "available",
       title: t("providerCard.section.available", { count: availItems.length }),
       items: availItems,
-    },
-  ];
-}
-
-// ─── Claude Desktop ─────────────────────────────────────────────────────────
-
-export function buildDesktopSections({
-  t,
-  providers,
-  currentId,
-  onSwitch,
-}: {
-  t: TFunction;
-  providers: Provider[];
-  currentId: string;
-  onSwitch: (provider: Provider) => void;
-}): ProviderSection[] {
-  return [
-    {
-      key: "all",
-      items: providers.map((p) => {
-        const mapping = providerNeedsRouting("claude-desktop", p);
-        const chips: CardChip[] = [];
-        if (isOfficialAccount("claude-desktop", p)) {
-          chips.push({
-            key: "official",
-            label: t("providerCard.chip.official"),
-            tone: "outline",
-          });
-        }
-        const current = p.id === currentId;
-        chips.push(
-          mapping
-            ? {
-                key: "mapping",
-                label: t("providerCard.chip.mapping"),
-                tone: current ? "outline" : "route",
-              }
-            : {
-                key: "direct",
-                label: t("providerCard.chip.direct"),
-                tone: current ? "outline" : "direct",
-              },
-        );
-        if (current) {
-          return {
-            provider: p,
-            presentation: {
-              tone: mapping ? "route" : "direct",
-              status: {
-                label: t("providerCard.status.inUse"),
-                dot: mapping ? "route" : "direct",
-              },
-              chips,
-              buttons: [],
-              deleteDisabledReason: t("providerCard.reason.inUseCannotDelete"),
-            },
-          };
-        }
-        return {
-          provider: p,
-          presentation: {
-            chips,
-            buttons: [
-              {
-                key: "switch",
-                label: t("providerCard.action.switch"),
-                onClick: () => onSwitch(p),
-              },
-            ],
-          },
-        };
-      }),
     },
   ];
 }

@@ -87,6 +87,40 @@ pub async fn check_for_updates(handle: AppHandle) -> Result<bool, String> {
     Ok(true)
 }
 
+/// 便携版新版本压缩包的下载地址，命名与 release.yml 的「Prepare Windows Assets」一致：
+/// `CC-Switch-v<版本>-Windows[-arm64]-Portable.zip`。版本号不像版本号时返回 None。
+fn portable_zip_url(version: &str, arm64: bool) -> Option<String> {
+    let version = version.trim().trim_start_matches('v');
+    let looks_like_version = version.starts_with(|c: char| c.is_ascii_digit())
+        && version
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'));
+    if !looks_like_version {
+        return None;
+    }
+    let suffix = if arm64 { "-arm64" } else { "" };
+    Some(format!(
+        "https://github.com/farion1231/cc-switch/releases/download/v{version}/CC-Switch-v{version}-Windows{suffix}-Portable.zip"
+    ))
+}
+
+/// 便携版更新：直接下载对应架构的新版压缩包（解压覆盖即可，数据在 ~/.cc-switch 不受影响）。
+/// 不做原地替换自身 exe：那样很容易被杀毒软件当成病毒拦截。
+#[tauri::command]
+pub async fn open_portable_update_download(
+    handle: AppHandle,
+    version: String,
+) -> Result<bool, String> {
+    let url = portable_zip_url(&version, cfg!(target_arch = "aarch64"))
+        .unwrap_or_else(|| "https://github.com/farion1231/cc-switch/releases/latest".to_string());
+    handle
+        .opener()
+        .open_url(url, None::<String>)
+        .map_err(|e| format!("打开更新页面失败: {e}"))?;
+
+    Ok(true)
+}
+
 /// 判断是否为便携版（绿色版）运行
 #[tauri::command]
 pub async fn is_portable_mode() -> Result<bool, String> {
@@ -1504,6 +1538,16 @@ fn after_version_sentinel(output: &str) -> &str {
     }
 }
 
+/// 判断 shell 输出是否表示"找不到该命令"。
+/// 只认各 shell 的固定格式，避免把工具自身的 `module not found` 之类错误当成没装：
+/// bash/zsh `command not found`，dash/sh `<tool>: not found`，fish `Unknown command`。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn is_shell_command_missing(err: &str, tool: &str) -> bool {
+    err.contains("command not found")
+        || err.contains(&format!("{tool}: not found"))
+        || err.contains("Unknown command")
+}
+
 /// 从版本输出中提取纯版本号
 fn extract_version(raw: &str) -> String {
     VERSION_RE
@@ -1579,7 +1623,7 @@ fn try_get_version(tool: &str) -> ShellProbe {
 }
 
 /// 校验 WSL 发行版名称是否合法
-/// WSL 发行版名称只允许字母、数字、连字符和下划线
+/// WSL 发行版名称只允许字母、数字、连字符、下划线和点（如 `Ubuntu-22.04`）
 #[cfg(target_os = "windows")]
 fn is_valid_wsl_distro_name(name: &str) -> bool {
     !name.is_empty()
@@ -1799,12 +1843,11 @@ fn try_get_version_wsl(
                 } else {
                     stderr
                 };
-                // wsl.exe 透传的退出码不总可靠，故同时用 exit 127 与 "command not found"
+                // wsl.exe 透传的退出码不总可靠，故同时用 exit 127 与 shell 的"找不到命令"
                 // 文本兜底判别"没装"；其余非零退出视作"装了但 --version 报错"。
                 let not_found = err.is_empty()
                     || out.status.code() == Some(127)
-                    || err.contains("command not found")
-                    || err.contains("not found");
+                    || is_shell_command_missing(&err, tool);
                 if not_found {
                     ShellProbe::NotFound(format!("[WSL:{distro}] {NOT_INSTALLED}"))
                 } else {
@@ -5552,7 +5595,47 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn shell_command_missing_matches_shell_formats_only() {
+        assert!(is_shell_command_missing(
+            "bash: line 1: claude: command not found",
+            "claude"
+        ));
+        assert!(is_shell_command_missing(
+            "zsh:1: command not found: claude",
+            "claude"
+        ));
+        assert!(is_shell_command_missing(
+            "sh: 1: claude: not found",
+            "claude"
+        ));
+        assert!(is_shell_command_missing(
+            "fish: Unknown command: claude",
+            "claude"
+        ));
+        assert!(!is_shell_command_missing(
+            "Error: Cannot find module 'x'\nmodule not found",
+            "claude"
+        ));
+        assert!(!is_shell_command_missing("config file not found", "claude"));
+    }
     use super::*;
+
+    #[test]
+    fn portable_zip_url_matches_release_asset_names() {
+        assert_eq!(
+            portable_zip_url("4.0.12", false).as_deref(),
+            Some("https://github.com/farion1231/cc-switch/releases/download/v4.0.12/CC-Switch-v4.0.12-Windows-Portable.zip")
+        );
+        assert_eq!(
+            portable_zip_url("v4.1.0-beta.1", true).as_deref(),
+            Some("https://github.com/farion1231/cc-switch/releases/download/v4.1.0-beta.1/CC-Switch-v4.1.0-beta.1-Windows-arm64-Portable.zip")
+        );
+        for bad in ["", "v", "latest", "4.0/../x", "4.0.0?x=1"] {
+            assert!(portable_zip_url(bad, false).is_none(), "{bad}");
+        }
+    }
 
     #[test]
     fn external_url_whitelist() {
@@ -5811,8 +5894,10 @@ mod tests {
         let effective =
             merge_path_segments_win(&[preferred.to_str().unwrap(), fallback.to_str().unwrap()]);
 
+        // 断言整段 stderr：临时目录在 \\wsl.localhost 下时（WSL2 nightly）以它为工作目录，
+        // cmd 会先往 stderr 打一段「UNC paths are not supported」，所以换成系统目录
         let output = windows_lifecycle_command(&script, &effective)
-            .current_dir(root.path())
+            .current_dir(std::env::var_os("SystemRoot").unwrap())
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(23));

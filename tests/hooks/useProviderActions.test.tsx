@@ -372,7 +372,28 @@ describe("useProviderActions", () => {
     expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
   });
 
-  it("does not warn for Claude Desktop model mapping, which starts routing itself", async () => {
+  it("does not warn for a Claude Desktop mapping card while Desktop is in route mode", async () => {
+    switchProviderMutateAsync.mockResolvedValue(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: { claudeDesktopMode: "proxy" },
+    });
+
+    const { result } = renderHook(
+      () => useProviderActions("claude-desktop", true),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastWarningMock).not.toHaveBeenCalled();
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+  });
+
+  it("warns for a Claude Desktop mapping card in direct mode", async () => {
     switchProviderMutateAsync.mockResolvedValue(undefined);
     const { wrapper } = createWrapper();
     const provider = createProvider({
@@ -389,8 +410,7 @@ describe("useProviderActions", () => {
       await result.current.switchProvider(provider);
     });
 
-    expect(toastWarningMock).not.toHaveBeenCalled();
-    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+    expect(toastWarningMock).toHaveBeenCalled();
   });
 
   it("allows the native Codex official provider during takeover", async () => {
