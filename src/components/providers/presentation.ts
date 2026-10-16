@@ -95,6 +95,35 @@ export function blockedFromRouting(app: AppId, provider: Provider): boolean {
 
 // ─── 切换式应用（Claude Code / Codex / Gemini CLI / Grok Build）──────────────
 
+/**
+ * 故障转移队列里把一家上移 / 下移一格后，各家要写回的 sortIndex。队列顺序就是供应商的排序：
+ * 按队列成员原来占着的位置重新分配。位置必须两两不同，否则换位后并列、顺序看起来没动——
+ * 两家 sortIndex 相同，或新加的供应商没有 sortIndex、拿下标兜底时撞上别家的值，都会这样。
+ * 移不动（不在队列 / 已到头）返回 null。
+ */
+export function queueMoveSortUpdates(
+  items: { providerId: string; sortIndex?: number }[],
+  providers: Record<string, Pick<Provider, "sortIndex">>,
+  providerId: string,
+  delta: -1 | 1,
+): { id: string; sortIndex: number }[] | null {
+  const index = items.findIndex((item) => item.providerId === providerId);
+  const target = index + delta;
+  if (index < 0 || target < 0 || target >= items.length) return null;
+  const order = items.map((item) => item.providerId);
+  order.splice(index, 1);
+  order.splice(target, 0, providerId);
+  const slots = items
+    .map(
+      (item, i) => item.sortIndex ?? providers[item.providerId]?.sortIndex ?? i,
+    )
+    .sort((a, b) => a - b);
+  for (let i = 1; i < slots.length; i++) {
+    if (slots[i] <= slots[i - 1]) slots[i] = slots[i - 1] + 1;
+  }
+  return order.map((id, i) => ({ id, sortIndex: slots[i] }));
+}
+
 export interface SwitchModeInput {
   app: AppId;
   t: TFunction;
