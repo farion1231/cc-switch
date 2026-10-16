@@ -81,6 +81,13 @@ export const settingsApi = {
     await invoke("check_for_updates");
   },
 
+  async fetchWhatsNewSummary(
+    version: string,
+    source: "mirror" | "github",
+  ): Promise<unknown> {
+    return await invoke("fetch_whats_new_summary", { version, source });
+  },
+
   async openPortableUpdateDownload(version: string): Promise<void> {
     await invoke("open_portable_update_download", { version });
   },

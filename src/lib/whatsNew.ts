@@ -1,4 +1,5 @@
 import { compareVersions } from "@/lib/version";
+import { settingsApi } from "@/lib/api/settings";
 
 /**
  * 更新摘要：每个版本一份 `src/whats-new/<version>.json`，构建时打进安装包。
@@ -94,27 +95,20 @@ export function resolveWhatsNewLanguage(language: string): WhatsNewLanguage {
  * 待更新版本的随包摘要：安装包只带自己之前的摘要，新版本还没装进来，
  * 本地自然没有它的 JSON。发版时 release.yml 把 src/whats-new/<版本>.json
  * 附成发布资产（whats-new-<版本>.json），sync-r2 再镜像到 dl.ccswitch.io，
- * 这里发版后就能按 tag 取到，镜像在前、GitHub 在后。
+ * 后端按 tag 取摘要以避开 webview 的 CORS 限制，镜像在前、GitHub 在后。
  */
-const remoteSummaryUrls = (version: string): string[] => {
-  const tag = `v${version}`;
-  const file = `whats-new-${version}.json`;
-  return [
-    `https://dl.ccswitch.io/${tag}/${file}`,
-    `https://github.com/farion1231/cc-switch/releases/download/${tag}/${file}`,
-  ];
-};
-
 /** 远端摘要缓存进 localStorage，同一版本只取一次（存不下就每次都取） */
 const REMOTE_CACHE_PREFIX = "ccswitch:whats-new:remote:";
-const REMOTE_FETCH_TIMEOUT_MS = 8000;
 const REMOTE_MAX_ITEMS = 4;
 
 function readCachedRemoteEntry(version: string): WhatsNewEntry | null {
   try {
     const raw = localStorage.getItem(REMOTE_CACHE_PREFIX + version);
     if (!raw) return null;
-    return parseWhatsNewEntry(JSON.parse(raw) as unknown);
+    const entry = parseWhatsNewEntry(JSON.parse(raw) as unknown);
+    return entry && entry.version === version && entry.items.length > 0
+      ? entry
+      : null;
   } catch {
     return null;
   }
@@ -179,13 +173,9 @@ export async function fetchWhatsNewSummary(
   const cached = readCachedRemoteEntry(version);
   if (cached) return cached;
 
-  for (const url of remoteSummaryUrls(version)) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REMOTE_FETCH_TIMEOUT_MS);
+  for (const source of ["mirror", "github"] as const) {
     try {
-      const response = await fetch(url, { signal: controller.signal });
-      if (!response.ok) continue;
-      const data = (await response.json()) as unknown;
+      const data = await settingsApi.fetchWhatsNewSummary(version, source);
       const entry = parseWhatsNewEntry(data);
       if (entry && entry.version === version && entry.items.length > 0) {
         cacheRemoteEntry(version, entry);
@@ -193,8 +183,6 @@ export async function fetchWhatsNewSummary(
       }
     } catch {
       // 网络失败就静默试下一个地址，最后退回本地摘要
-    } finally {
-      clearTimeout(timer);
     }
   }
   return null;

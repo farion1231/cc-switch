@@ -72,7 +72,10 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   );
   // 近期更新列表 = 已装版本的摘要 + 待更新版本的摘要（有更新才取，同一版本只取一次）
   const recentEntriesWithPending = useMemo(
-    () => (pendingEntry ? [pendingEntry, ...recentEntries] : recentEntries),
+    () =>
+      pendingEntry
+        ? [{ ...pendingEntry, pending: true }, ...recentEntries]
+        : recentEntries,
     [pendingEntry, recentEntries],
   );
 

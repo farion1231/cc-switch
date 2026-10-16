@@ -797,16 +797,16 @@ jobs:
     permissions:
       contents: write
     steps:
+      # 先 checkout，避免清理工作区时删除已下载的发布产物
+      - name: Checkout tag
+        uses: actions/checkout@v6
+
       - name: Download built release artifacts
         uses: actions/download-artifact@v8
         with:
           pattern: release-assets-*
           path: release-assets
           merge-multiple: true
-
-      # 下面要取 src/whats-new/<版本>.json 随包发布，checkout 到 tag 本身
-      - name: Checkout tag
-        uses: actions/checkout@v6
 
       - name: List downloaded release artifacts
         shell: bash
