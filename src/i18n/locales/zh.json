@@ -2422,6 +2422,9 @@
     "trend": {
       "title": "使用趋势 · {{range}}",
       "metricLabel": "趋势指标",
+      "chartTypeLabel": "图表样式",
+      "bar": "柱形图",
+      "area": "曲线面积图",
       "requests": "请求",
       "tokens": "Tokens",
       "cost": "成本",

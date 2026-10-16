@@ -2422,6 +2422,9 @@
     "trend": {
       "title": "Usage trend · {{range}}",
       "metricLabel": "Trend metric",
+      "chartTypeLabel": "Chart style",
+      "bar": "Bar",
+      "area": "Area",
       "requests": "Requests",
       "tokens": "Tokens",
       "cost": "Cost",

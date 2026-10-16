@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  Area,
+  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -50,7 +52,7 @@ export interface UsageTrendChartPoint {
   outputTokens: number;
   cacheCreationTokens: number;
   cacheReadTokens: number;
-  /** 请求数（「请求」指标的柱） */
+  /** 请求数（「请求」指标） */
   requests: number;
   /** 真实消耗 Tokens = 新增输入 + 输出 + 缓存写入 + 缓存命中（和指标卡同口径） */
   tokens: number;
@@ -165,6 +167,8 @@ export function formatUsageTrendTokenTickLabel(
 
 const TREND_METRICS = ["requests", "tokens", "cost"] as const;
 type TrendMetric = (typeof TREND_METRICS)[number];
+const CHART_TYPES = ["bar", "area"] as const;
+type ChartType = (typeof CHART_TYPES)[number];
 
 const AXIS_TICK = { fill: "var(--text-3)", fontSize: 11 };
 
@@ -182,6 +186,11 @@ export function UsageTrendChart({
     USAGE_CHOICE_KEYS.trendMetric,
     TREND_METRICS,
     "tokens",
+  );
+  const [chartType, setChartType] = useRememberedChoice<ChartType>(
+    USAGE_CHOICE_KEYS.trendChartType,
+    CHART_TYPES,
+    "bar",
   );
   const { startDate, endDate } = resolveUsageRange(range);
   const { data: trends, isLoading } = useUsageTrends(
@@ -226,6 +235,14 @@ export function UsageTrendChart({
     metric === "cost"
       ? moneyTick(value)
       : formatUsageTrendTokenTickLabel(value, tokenTickFormatter);
+
+  const Chart = chartType === "bar" ? BarChart : AreaChart;
+  // 成本先换算成显示币种再画，Y 轴才会按这个币种挑整齐的刻度。
+  const dataKey =
+    metric === "cost"
+      ? (point: UsageTrendChartPoint) =>
+          point.cost == null ? null : point.cost * rate
+      : metric;
 
   const renderTooltip = ({ active, payload }: any) => {
     if (!active || !payload || payload.length === 0) return null;
@@ -282,6 +299,16 @@ export function UsageTrendChart({
             { value: "cost", label: t("usage.trend.cost") },
           ]}
         />
+        <SegmentedControl<ChartType>
+          size="sm"
+          aria-label={t("usage.trend.chartTypeLabel")}
+          value={chartType}
+          onValueChange={setChartType}
+          items={[
+            { value: "bar", label: t("usage.trend.bar") },
+            { value: "area", label: t("usage.trend.area") },
+          ]}
+        />
       </div>
 
       <div className="mt-1 h-[132px] w-full">
@@ -291,7 +318,7 @@ export function UsageTrendChart({
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart
+            <Chart
               data={chartData}
               margin={{ top: 6, right: 0, left: 0, bottom: 0 }}
             >
@@ -323,23 +350,36 @@ export function UsageTrendChart({
               />
               <Tooltip
                 content={renderTooltip}
-                cursor={{ fill: "var(--bg-subtle)" }}
-              />
-              <Bar
-                // 成本先换算成显示币种再画，Y 轴才会按这个币种挑整齐的刻度
-                dataKey={
-                  metric === "cost"
-                    ? (point: UsageTrendChartPoint) =>
-                        point.cost == null ? null : point.cost * rate
-                    : metric
+                cursor={
+                  chartType === "bar"
+                    ? { fill: "var(--bg-subtle)" }
+                    : { stroke: "var(--text-3)", strokeDasharray: "3 3" }
                 }
-                name={metricLabel}
-                fill="var(--chart-1)"
-                radius={[3, 3, 0, 0]}
-                maxBarSize={36}
-                isAnimationActive={false}
               />
-            </BarChart>
+              {chartType === "bar" ? (
+                <Bar
+                  dataKey={dataKey}
+                  name={metricLabel}
+                  fill="var(--chart-1)"
+                  radius={[3, 3, 0, 0]}
+                  maxBarSize={36}
+                  isAnimationActive={false}
+                />
+              ) : (
+                <Area
+                  type="monotone"
+                  dataKey={dataKey}
+                  name={metricLabel}
+                  stroke="var(--chart-1)"
+                  strokeWidth={2}
+                  fill="var(--chart-1)"
+                  fillOpacity={0.16}
+                  dot={chartData.length === 1 ? { r: 3 } : false}
+                  activeDot={{ r: 4 }}
+                  isAnimationActive={false}
+                />
+              )}
+            </Chart>
           </ResponsiveContainer>
         )}
       </div>
