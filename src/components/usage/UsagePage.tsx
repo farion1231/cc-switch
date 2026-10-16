@@ -43,6 +43,8 @@ export function UsagePage({
       initialAppType={initialAppType}
       onOpenRoutingSettings={onOpenRoutingSettings}
       onOpenSyncSettings={onOpenSyncSettings}
+      usageDisplay={settings?.usageDisplay}
+      onUsageDisplayChange={(usageDisplay) => save({ usageDisplay })}
     />
   );
 }

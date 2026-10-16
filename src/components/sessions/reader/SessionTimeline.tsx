@@ -2,14 +2,10 @@ import { memo } from "react";
 import { ChevronRight, Copy } from "lucide-react";
 
 import { HoverTip } from "@/components/ui/hover-tip";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { cn } from "@/lib/utils";
 import { useReaderT } from "./i18n";
-import {
-  formatCost,
-  formatDuration,
-  formatTokens,
-  type TurnSummary,
-} from "./toolSummary";
+import { formatDuration, formatTokens, type TurnSummary } from "./toolSummary";
 
 export interface SessionTimelineProps {
   turnKey: string;
@@ -41,6 +37,7 @@ export const SessionTimeline = memo(function SessionTimeline({
   onCopyTurn,
 }: SessionTimelineProps) {
   const rt = useReaderT();
+  const { moneyCompact } = useMoneyFormat();
   const parts: { key: string; text: string; danger?: boolean }[] = [];
   if (summary.commandCount > 0) {
     parts.push({
@@ -76,7 +73,7 @@ export const SessionTimeline = memo(function SessionTimeline({
     });
   }
   if (summary.costUsd !== undefined) {
-    parts.push({ key: "cost", text: formatCost(summary.costUsd) });
+    parts.push({ key: "cost", text: moneyCompact(summary.costUsd) });
   }
   const steps = summary.stepCount || stepTotal;
   const actionLabel = expanded ? rt("collapseTimeline") : rt("expandTimeline");

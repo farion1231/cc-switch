@@ -6519,6 +6519,8 @@ model_provider = "c"
             provider["name"] = toml_edit::value(name);
             provider["http_headers"]["X-Upstream-Only"] = toml_edit::value("private");
             provider["capabilities"]["external_web_access"] = toml_edit::value(false);
+            provider["stream_max_retries"] = toml_edit::value(50);
+            provider["stream_idle_timeout_ms"] = toml_edit::value(600000);
             if let Some(value) = capability {
                 provider["capabilities"]["remote_compaction"] = toml_edit::value(value);
             }
@@ -6555,6 +6557,9 @@ model_provider = "c"
                     .get("capabilities")
                     .and_then(|v| v.get("external_web_access"))
                     .is_none());
+                // Codex 自己的重试和流空闲超时跟着路由那家走（#8265）。
+                assert_eq!(proxy["stream_max_retries"].as_integer(), Some(50));
+                assert_eq!(proxy["stream_idle_timeout_ms"].as_integer(), Some(600000));
                 if published_stack {
                     // Stack keeps each provider's window on its own catalog row.
                     assert!(doc.get("model_context_window").is_none());
@@ -6609,6 +6614,8 @@ model_provider = "c"
             let proxy = &doc["model_providers"]["custom"];
             assert_eq!(proxy["name"].as_str(), Some("custom"));
             assert!(proxy.get("capabilities").is_none());
+            assert!(proxy.get("stream_max_retries").is_none());
+            assert!(proxy.get("stream_idle_timeout_ms").is_none());
             exit(&state, &AppType::Codex).await.unwrap();
         }
     }

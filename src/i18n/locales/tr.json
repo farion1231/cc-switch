@@ -2364,7 +2364,8 @@
       "label": "Ayrıntılar",
       "providers": "Sağlayıcılar",
       "models": "Modeller",
-      "pricing": "Fiyatlandırma"
+      "pricing": "Fiyatlandırma",
+      "settings": "Ayarlar"
     },
     "sortedByRequests": "İsteklere göre sıralandı",
     "app": "Uygulama",
@@ -2386,7 +2387,7 @@
     },
     "detail": {
       "tokensTitle": "Token kullanımı",
-      "costTitle": "Maliyet dökümü (USD)",
+      "costTitle": "Maliyet dökümü ({{currency}})",
       "performance": "Performans",
       "source": "Kaynak",
       "sourceProxy": "Yönlendirme hizmeti · durumu {{code}}",
@@ -4031,7 +4032,7 @@
     "expandSidebar": "Kenar çubuğunu genişlet",
     "collapseSidebar": "Kenar çubuğunu daralt",
     "appsGroup": "Uygulamalar",
-    "todayCost": "Bugün {{cost}}",
+    "today": "Bugün {{value}}",
     "usage": "Kullanım",
     "auth": "Hesaplar",
     "authNeedsReauth": "Bir hesapta tekrar oturum açılması gerekiyor",

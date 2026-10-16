@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   fmtInt,
-  fmtUsd,
+  formatHitRatePercent,
   formatTokensCompact,
   getLocaleFromLanguage,
   getResolvedLang,
@@ -19,6 +19,7 @@ import {
   type UsageSummary,
   type UsageSummaryByApp,
 } from "@/types/usage";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 
 interface UsageHeroProps {
   range: UsageRangeSelection;
@@ -161,6 +162,7 @@ export function UsageHero({
   compact = false,
 }: UsageHeroProps) {
   const { t, i18n } = useTranslation();
+  const { money, moneyTitle } = useMoneyFormat();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const [moreOpen, setMoreOpen] = useState(false);
 
@@ -191,8 +193,6 @@ export function UsageHero({
   const totalCost = parseFiniteNumber(summary?.totalCost);
   const requests = summary?.totalRequests ?? 0;
 
-  const hitPercent = Math.max(0, Math.min(100, hitRate * 100));
-  const hitPercentLabel = hitPercent.toFixed(hitPercent >= 99.95 ? 0 : 1);
   const placeholder = isLoading ? "…" : undefined;
 
   const cacheWriteHelp =
@@ -218,9 +218,9 @@ export function UsageHero({
             <MetricCard
               label={t("usage.totalCost")}
               value={
-                placeholder ?? (totalCost == null ? "--" : fmtUsd(totalCost, 2))
+                placeholder ?? (totalCost == null ? "--" : money(totalCost, 2))
               }
-              title={totalCost == null ? undefined : fmtUsd(totalCost, 6)}
+              title={totalCost == null ? undefined : moneyTitle(totalCost, 6)}
             />
             <MetricCard
               label={t("usage.totalRequests")}
@@ -241,7 +241,7 @@ export function UsageHero({
                 title: t("usage.metrics.hitRateHelpTitle"),
                 body: t("usage.metrics.hitRateHelp"),
               }}
-              value={placeholder ?? `${hitPercentLabel}%`}
+              value={placeholder ?? formatHitRatePercent(hitRate)}
             />
           </div>
           {moreOpen && (

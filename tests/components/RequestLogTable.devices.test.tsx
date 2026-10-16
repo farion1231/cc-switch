@@ -1,4 +1,6 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
+// RequestLogTable formats money through the settings query (useMoneyFormat)
+import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RequestLogTable } from "@/components/usage/RequestLogTable";
 import type { RequestLog } from "@/types/usage";
@@ -92,5 +94,42 @@ describe("RequestLogTable device scope", () => {
       screen.queryByRole("columnheader", { name: "usageSync.device" }),
     ).not.toBeInTheDocument();
     expect(screen.getAllByRole("columnheader")).toHaveLength(10);
+  });
+
+  it("places the device column after the chosen columns' app (or time) column", () => {
+    const headers = () =>
+      screen.getAllByRole("columnheader").map((th) => th.textContent);
+
+    const { unmount } = render(
+      <RequestLogTable
+        range={{ preset: "today" }}
+        device="all"
+        refreshIntervalMs={0}
+        columns={["time", "app", "model", "cost", "statusCode"]}
+      />,
+    );
+    expect(headers()).toEqual([
+      "usage.time",
+      "usage.app",
+      "usageSync.device",
+      "usage.model",
+      "usage.cost",
+      "usage.statusCode",
+    ]);
+    const cells = screen.getAllByRole("row")[2].querySelectorAll("td");
+    expect(cells).toHaveLength(6);
+    expect(cells[2]).toHaveTextContent("dev-remo");
+    unmount();
+
+    // App column switched off: the device column follows the time column.
+    render(
+      <RequestLogTable
+        range={{ preset: "today" }}
+        device="all"
+        refreshIntervalMs={0}
+        columns={["time", "cost"]}
+      />,
+    );
+    expect(headers()).toEqual(["usage.time", "usageSync.device", "usage.cost"]);
   });
 });
