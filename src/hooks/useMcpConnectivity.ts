@@ -11,6 +11,7 @@ export function useMcpConnectivity(servers: McpServersMap | undefined) {
   const configKey = JSON.stringify(
     Object.entries(servers ?? {})
       .filter(([, server]) => MCP_APP_IDS.some((app) => server.apps[app]))
+      .sort(([left], [right]) => left.localeCompare(right))
       .map(([id, server]) => [id, server.server]),
   );
   const [results, setResults] = useState<{
