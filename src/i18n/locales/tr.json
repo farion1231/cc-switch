@@ -4093,6 +4093,7 @@
     "columnVisible": "Göster",
     "visibleHelp": "Kapalıyken uygulama artık kenar çubuğunda, tepsi menüsünde, MCP / Skills uygulama sütunlarında veya İstemler ve Oturumlar'daki uygulama seçicilerde görünmez. Yalnızca gizlenir: sağlayıcıları, MCP sunucuları ve diğer ayarları yerinde kalır, kendi yapılandırma dosyalarına da dokunulmaz.",
     "desktopHelp": "Claude Desktop bir masaüstü uygulamasıdır ve buraya yüklenemez veya yükseltilemez; CC Switch, yapılandırma dosyası aracılığıyla ona bağlanır.",
+    "cursorHelp": "Cursor bir masaüstü uygulamasıdır ve buraya yüklenemez veya yükseltilemez; CC Switch, yönlendirme devralma aracılığıyla ona bağlanır.",
     "desktopUnsupported": "Bu sistemde desteklenmiyor",
     "desktopConnected": "Bağlı",
     "desktopNotConnected": "Bağlı değil",
