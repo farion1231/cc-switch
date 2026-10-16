@@ -15,7 +15,11 @@ import type {
   ProxyStatus,
   PublicRouteStatus,
 } from "@/types/proxy";
-import { CURSOR_AUTO_MODEL_IDS } from "@/config/cursorProviderPresets";
+import {
+  CURSOR_AUTO_MODEL_IDS,
+  cursorProviderPresets,
+  type CursorProviderPreset,
+} from "@/config/cursorProviderPresets";
 import { proxyApi } from "@/lib/api/proxy";
 import { useModeActions } from "@/hooks/useModeActions";
 import { SwitchModePanel } from "@/components/providers/mode/SwitchModePanel";
@@ -133,6 +137,43 @@ const OFFICIAL: Provider = {
   settingsConfig: {},
 };
 
+/**
+ * 用内置预设造 Provider fixture：预设的 `modelCatalog` 在**顶层**，而组件读的是
+ * `settingsConfig.modelCatalog.models`。这里挪进去的方式与 ProviderForm 选择 Cursor 预设时一致
+ * （见 ProviderForm.tsx 的 cursor 分支：`config.modelCatalog = { models: preset.modelCatalog }`）。
+ */
+function providerFromPreset(
+  preset: CursorProviderPreset,
+  id: string,
+): Provider {
+  return {
+    id,
+    name: preset.name,
+    category: preset.category,
+    settingsConfig: {
+      ...preset.settingsConfig,
+      ...(preset.modelCatalog?.length
+        ? { modelCatalog: { models: preset.modelCatalog } }
+        : {}),
+    },
+  };
+}
+
+/** 按名字取内置 Cursor 预设；找不到直接抛，免得测试悄悄退化成空目录还自称「用了真实列表」。 */
+function requirePreset(name: string): CursorProviderPreset {
+  const preset = cursorProviderPresets.find((item) => item.name === name);
+  if (!preset) throw new Error(`内置预设不存在：${name}`);
+  return preset;
+}
+
+/** fixture 里模型目录的客户端模型名（与组件 cursorClientModelIds 的取值口径一致）。 */
+function catalogModelIds(provider: Provider): string[] {
+  const models = provider.settingsConfig.modelCatalog?.models as
+    | Array<{ model: string }>
+    | undefined;
+  return (models ?? []).map((row) => row.model);
+}
+
 const writeText = vi.fn();
 
 function renderDialog(
@@ -182,6 +223,7 @@ beforeEach(() => {
     baseUrl: null,
     useOpenAIKey: false,
     modelCount: 0,
+    modelIds: [],
   });
   vi.mocked(proxyApi.cursorWriteByok).mockResolvedValue({
     ok: true,
@@ -278,16 +320,76 @@ describe("CursorSetupDialog — 四张卡", () => {
   });
 
   it("已经写好的 BYOK 不再重复写，直接停在卡 D", async () => {
+    // fixture 更新（预期内）：判定「已写好」现在还要比对具体 modelIds 集合，故这里的 mock
+    // 必须给出与本供应商目录一致的列表，否则会被判成「没写好」而重写。
     vi.mocked(proxyApi.cursorByokStatus).mockResolvedValue({
       baseUrl: "https://example.trycloudflare.com/cursor/v1",
       useOpenAIKey: true,
       modelCount: 1,
+      modelIds: ["kimi-k2.7-code"],
     });
     renderDialog();
 
     expect(
       await screen.findByTestId("cursor-setup-pasteKey"),
     ).toBeInTheDocument();
+    expect(proxyApi.cursorWriteByok).not.toHaveBeenCalled();
+  });
+
+  it("同一公网隧道下换供应商：模型目录不同就必须重写 modelIds", async () => {
+    // 回归（P2）：仍走同一条隧道时 baseUrl 不变，旧实现只看 baseUrl + modelCount>0 就判「已写好」，
+    // 于是 B 家的模型列表永远写不进 Cursor（Cursor 继续显示、甚至继续发 A 家的模型 ID）。
+    // 核心不变式：已写入列表非空 ≠ 目标已写入。
+    // 这里用**两个内置预设的真实目录**：上次写进 Cursor 的是 Kimi，这次要换成 Kimi For Coding。
+    const previousModels = catalogModelIds(
+      providerFromPreset(requirePreset("Kimi"), "kimi"),
+    );
+    // 先确认取到的确实是预设里的真实列表（预设改动会让本测试显形，而不是悄悄变空目录走回退）
+    expect(previousModels).toEqual(["kimi-k2.7-code", "kimi-k3"]);
+
+    vi.mocked(proxyApi.cursorByokStatus).mockResolvedValue({
+      baseUrl: "https://example.trycloudflare.com/cursor/v1",
+      useOpenAIKey: true,
+      modelCount: previousModels.length,
+      modelIds: previousModels, // 上次写入的是 Kimi 的真实模型列表
+    });
+    renderDialog({
+      provider: providerFromPreset(
+        requirePreset("Kimi For Coding"),
+        "kimi-coding",
+      ),
+    });
+
+    await screen.findByTestId("cursor-setup-pasteKey");
+    expect(proxyApi.cursorWriteByok).toHaveBeenCalledWith({
+      baseUrl: "https://example.trycloudflare.com/cursor/v1",
+      modelIds: ["kimi-for-coding"], // Kimi For Coding 预设的真实列表
+    });
+  });
+
+  it("已写入列表顺序不同但集合相同：不重复写（比较须与顺序无关）", async () => {
+    // Cursor 侧数组顺序不保证，集合相同就应视为「已写好」。这里故意把顺序反过来。
+    const twoModels: Provider = {
+      id: "two",
+      name: "Two",
+      settingsConfig: {
+        modelCatalog: {
+          models: [
+            { model: "m-alpha", displayName: "A", contextWindow: "" },
+            { model: "m-beta", displayName: "B", contextWindow: "" },
+          ],
+        },
+      },
+    };
+    vi.mocked(proxyApi.cursorByokStatus).mockResolvedValue({
+      baseUrl: "https://example.trycloudflare.com/cursor/v1",
+      useOpenAIKey: true,
+      modelCount: 2,
+      modelIds: ["m-beta", "m-alpha"],
+    });
+    renderDialog({ provider: twoModels });
+
+    await screen.findByTestId("cursor-setup-pasteKey");
     expect(proxyApi.cursorWriteByok).not.toHaveBeenCalled();
   });
 });
