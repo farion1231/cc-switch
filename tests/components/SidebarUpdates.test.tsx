@@ -7,7 +7,10 @@ import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 let collapsed = false;
 let hasUpdate = true;
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    t: (key: string) => key,
+    i18n: { language: "en", resolvedLanguage: "en" },
+  }),
 }));
 vi.mock("@tauri-apps/api/app", () => ({
   getVersion: vi.fn().mockResolvedValue("4.0.13"),

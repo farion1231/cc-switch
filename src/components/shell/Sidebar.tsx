@@ -531,6 +531,7 @@ function NavItem({
   icon: Icon,
   label,
   title,
+  ariaLabel,
   trailing,
   trailingLabel,
   alert,
@@ -547,6 +548,7 @@ function NavItem({
   icon: IconComponent;
   label: string;
   title?: string;
+  ariaLabel?: string;
   /** 行尾的小字；放不下时在空格处折成两行，给数组时直接上下排 */
   trailing?: string | string[];
   /** 行尾小字的完整说法（读屏和悬停用），行尾只写了数时给 */
@@ -626,7 +628,7 @@ function NavItem({
         <button
           type="button"
           onClick={onClick}
-          aria-label={title ?? accessibleName}
+          aria-label={ariaLabel ?? title ?? accessibleName}
           aria-current={selected ? "page" : undefined}
           className={cn(
             "relative mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
@@ -657,7 +659,7 @@ function NavItem({
       <button
         type="button"
         onClick={onClick}
-        aria-label={title ?? (trailingLabel ? accessibleName : undefined)}
+        aria-label={ariaLabel ?? title ?? (trailingLabel ? accessibleName : undefined)}
         aria-current={selected ? "page" : undefined}
         className={cn(
           "relative flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
@@ -767,7 +769,7 @@ function SettingsDirectory({
             dot={section === "about" && hasUpdate}
             dotTone="danger"
             cornerDot
-            title={
+            ariaLabel={
               section === "about" && hasUpdate
                 ? `${t("settings.sections.about")} · ${t("settings.newVersion")}`
                 : undefined
