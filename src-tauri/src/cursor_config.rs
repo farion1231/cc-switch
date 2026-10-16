@@ -755,7 +755,7 @@ pub(crate) fn write_byok_at(
 
     // 1) 备份原始行（回滚点）
     let backup_path = backup_dir.join(format!(
-        "cursor-appuser-PREWRITE-{}.json",
+        "{BYOK_BACKUP_PREFIX}{}{BYOK_BACKUP_SUFFIX}",
         chrono::Local::now().format("%Y%m%d-%H%M%S")
     ));
     // 备份目录可能尚不存在（系统临时目录被清理、或注入的自定义目录），
@@ -784,6 +784,118 @@ pub(crate) fn write_byok_at(
         ok: true,
         backup_path: Some(backup_path.to_string_lossy().to_string()),
         written_base_url: Some(base_url.to_string()),
+    })
+}
+
+/// 可用的 BYOK 回滚点（最新一份 `cursor-appuser-PREWRITE-*.json` 快照）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ByokBackup {
+    /// 快照文件路径。
+    pub path: String,
+    /// 文件名里的时间戳（`YYYYMMDD-HHMMSS`），供界面说明「还原到哪个时间点」。
+    pub written_at: String,
+}
+
+/// 还原 BYOK 的结果（`cursor_restore_byok` 的载荷）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CursorRestoreByokResult {
+    pub ok: bool,
+    /// 还原后的 Base URL（`None` = 回到官方态）。
+    pub restored_base_url: Option<String>,
+    /// 用掉的回滚点。
+    pub backup_path: String,
+}
+
+/// 回滚点文件名 = 前缀 + 时间戳 + 后缀（`write_byok_at` 与查找共用，防止两处漂移）。
+const BYOK_BACKUP_PREFIX: &str = "cursor-appuser-PREWRITE-";
+const BYOK_BACKUP_SUFFIX: &str = ".json";
+
+/// 在 `dir` 里找**最新**的 BYOK 回滚点；目录缺失 / 没有快照 → `None`。
+///
+/// 文件名里的 `YYYYMMDD-HHMMSS` 定长零填充，故按文件名字典序取最大即最新。
+pub(crate) fn latest_byok_backup_in(dir: &Path) -> Option<ByokBackup> {
+    let mut newest: Option<(String, PathBuf)> = None;
+    for entry in fs::read_dir(dir).ok()?.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let Some(stamp) = name
+            .strip_prefix(BYOK_BACKUP_PREFIX)
+            .and_then(|rest| rest.strip_suffix(BYOK_BACKUP_SUFFIX))
+        else {
+            continue;
+        };
+        if newest.as_ref().is_none_or(|(best, _)| stamp > best.as_str()) {
+            newest = Some((stamp.to_string(), entry.path()));
+        }
+    }
+    newest.map(|(written_at, path)| ByokBackup {
+        path: path.to_string_lossy().to_string(),
+        written_at,
+    })
+}
+
+/// 当前最新的 BYOK 回滚点（默认目录）。
+pub fn latest_byok_backup() -> Option<ByokBackup> {
+    latest_byok_backup_in(&byok_backup_dir())
+}
+
+/// 还原 BYOK 到最新回滚点。
+///
+/// **只提示、不代劳**：退出接管后是否还原由用户显式决定，不在退出时静默写回。
+/// **必须 Cursor 完全退出后才能写**，理由同 [`write_byok`]（运行中会被退出回写覆盖）。
+pub fn restore_byok() -> Result<CursorRestoreByokResult, AppError> {
+    restore_byok_at(
+        &get_cursor_state_db_path(),
+        &byok_backup_dir(),
+        is_cursor_running,
+    )
+}
+
+/// 可注入版本（单测用）。
+pub(crate) fn restore_byok_at(
+    db_path: &Path,
+    backup_dir: &Path,
+    running: impl FnOnce() -> bool,
+) -> Result<CursorRestoreByokResult, AppError> {
+    if running() {
+        return Err(AppError::Message(
+            "Cursor 正在运行，请完全退出后再还原".to_string(),
+        ));
+    }
+    let backup = latest_byok_backup_in(backup_dir).ok_or_else(|| {
+        AppError::Config(format!(
+            "找不到可还原的回滚点（{}），无需还原",
+            backup_dir.display()
+        ))
+    })?;
+    let content = fs::read_to_string(&backup.path).map_err(|e| AppError::io(&backup.path, e))?;
+    let row = read_app_user_row(db_path).ok_or_else(|| {
+        AppError::Config(format!(
+            "找不到 Cursor 的 applicationUser 存储（{}），无法还原",
+            db_path.display()
+        ))
+    })?;
+
+    let conn = rusqlite::Connection::open(db_path)
+        .map_err(|e| AppError::Config(format!("打开 Cursor 状态库失败: {e}")))?;
+    conn.execute(
+        "INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?1, ?2)",
+        rusqlite::params![row.key, content],
+    )
+    .map_err(|e| AppError::Config(format!("还原 Cursor BYOK 失败: {e}")))?;
+    drop(conn);
+
+    if read_value_by_key(db_path, &row.key).as_deref() != Some(content.as_str()) {
+        return Err(AppError::Config(
+            "还原后读回校验不一致，已放弃（请检查 Cursor 状态库是否被占用）".to_string(),
+        ));
+    }
+
+    Ok(CursorRestoreByokResult {
+        ok: true,
+        restored_base_url: parse_byok_state(Some(&content)).base_url,
+        backup_path: backup.path,
     })
 }
 
@@ -965,6 +1077,123 @@ mod tests {
             std::fs::read_to_string(&backup).expect("read backup"),
             FIXTURE
         );
+    }
+
+    /// 回归（PR #8270 P2-2）：退出接管后还原 BYOK，也必须等 Cursor 完全退出。
+    #[test]
+    fn restore_refuses_while_cursor_running() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("state.vscdb");
+        let backup_dir = dir.path().join("backups");
+        std::fs::create_dir_all(&backup_dir).expect("mkdir backup");
+        make_state_db(&db_path, FIXTURE);
+        write_byok_at(
+            &db_path,
+            "https://x.trycloudflare.com/cursor/v1",
+            &["custom-k3".to_string()],
+            &backup_dir,
+            || false,
+        )
+        .expect("seed written byok");
+        let written = read_app_user_row(&db_path).expect("row").value;
+
+        let err =
+            restore_byok_at(&db_path, &backup_dir, || true).expect_err("Cursor 运行中必须拒还原");
+
+        assert!(
+            err.to_string().contains("Cursor 正在运行"),
+            "错误文案须提示先退出 Cursor，实际：{err}"
+        );
+        assert_eq!(
+            read_app_user_row(&db_path).expect("row").value,
+            written,
+            "拒还原时库必须一字未动"
+        );
+    }
+
+    /// 回归（PR #8270 P2-2）：没有回滚点时必须明确报错，不能静默「成功」。
+    #[test]
+    fn restore_errors_without_a_backup() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("state.vscdb");
+        make_state_db(&db_path, FIXTURE);
+        let empty = dir.path().join("no-backups");
+
+        let err = restore_byok_at(&db_path, &empty, || false).expect_err("无回滚点必须报错");
+
+        assert!(err.to_string().contains("回滚点"), "实际：{err}");
+        assert_eq!(
+            read_app_user_row(&db_path).expect("row").value,
+            FIXTURE,
+            "报错时库必须一字未动"
+        );
+    }
+
+    /// 回归（PR #8270 P2-2）：还原 = 把写入前的原始行原样写回。
+    #[test]
+    fn restore_roundtrips_to_the_prewrite_snapshot() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("state.vscdb");
+        let backup_dir = dir.path().join("backups");
+        std::fs::create_dir_all(&backup_dir).expect("mkdir backup");
+        make_state_db(&db_path, FIXTURE);
+
+        write_byok_at(
+            &db_path,
+            "https://x.trycloudflare.com/cursor/v1",
+            &["custom-k3".to_string()],
+            &backup_dir,
+            || false,
+        )
+        .expect("write byok");
+        assert_ne!(
+            read_app_user_row(&db_path).expect("row").value,
+            FIXTURE,
+            "前置：写入后行内容必须已变"
+        );
+
+        let result = restore_byok_at(&db_path, &backup_dir, || false).expect("restore");
+
+        assert!(result.ok);
+        assert_eq!(
+            read_app_user_row(&db_path).expect("row").value,
+            FIXTURE,
+            "还原必须写回写入前的原始行"
+        );
+        assert_eq!(
+            read_byok_state_from_path(&db_path).base_url,
+            None,
+            "还原后 baseUrl 回到官方态"
+        );
+    }
+
+    /// 回归（PR #8270 P2-2）：多份回滚点时取**最新**那份，且忽略无关文件。
+    #[test]
+    fn latest_backup_picks_the_newest_snapshot() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("cursor-appuser-PREWRITE-20260101-000000.json"),
+            "old",
+        )
+        .expect("write old");
+        std::fs::write(
+            dir.path().join("cursor-appuser-PREWRITE-20260102-000000.json"),
+            "new",
+        )
+        .expect("write new");
+        std::fs::write(dir.path().join("unrelated.json"), "x").expect("write unrelated");
+
+        let latest = latest_byok_backup_in(dir.path()).expect("backup");
+
+        assert!(
+            latest
+                .path
+                .ends_with("cursor-appuser-PREWRITE-20260102-000000.json"),
+            "必须取最新那份，实际：{}",
+            latest.path
+        );
+        assert_eq!(latest.written_at, "20260102-000000");
+        assert!(latest_byok_backup_in(&dir.path().join("nope")).is_none());
     }
 
     /// 回归（PR #8270 P2）：回滚点目录必须取系统临时目录，不能硬编码 `/tmp`
