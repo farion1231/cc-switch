@@ -4117,6 +4117,8 @@
     "desktopConnected": "接続済み",
     "desktopNotConnected": "未接続",
     "newVersion": "新しいバージョン {{version}}",
+    "retryDetectionHint": "インストール済みの場合は、再インストールする前に検出を再試行してください。",
+    "notDetected": "検出されませんでした",
     "notRunnable": "実行できません",
     "updateNeedsNode": "{{version}} には Node {{required}} が必要ですが、このインストールは Node {{current}} で動いています。先に Node を更新してください。",
     "otherInstalls": "ほかに {{count}} 件のインストール",

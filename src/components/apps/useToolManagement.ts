@@ -205,16 +205,19 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
 
 // 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。
 // 「应用」页离开就卸载，每次回来都重挂，若都全量重查纯属浪费。用「模块级」缓存（生命周期 = JS 模块 = 应用会话，不随组件卸载销毁）
-// 跨重挂存活：重挂时若缓存仍新鲜（距上次全量加载 < TTL）直接复用、跳过探测；超期或用户
-// 手动「刷新」才强制重查。at = 最近一次「全量加载」完成时刻；单工具刷新（切 shell / 升级
-// 后）只更新数据、不重置 at，避免一次局部刷新把整体 TTL 续命。
+// 成功结果保留 10 分钟；没拿到本地版本的结果单独计时，30 秒后可在重挂/聚焦时重查。
+// at 仍是最近一次全量加载完成时刻，单工具恢复不能延长其它工具的成功缓存。
 const TOOL_VERSIONS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 分钟
+const FAILED_TOOL_PROBE_TTL_MS = 30_000;
+const TOOL_PROBE_RETRY_DELAY_MS = 2_000;
 const EMPTY_TOOL_VERSIONS: ToolVersion[] = [];
 let toolVersionRequestSequence = 0;
 const latestToolVersionRequests = new Map<string, number>();
+const pendingToolVersionRequests = new Map<string, number>();
 
 interface ToolManagementState {
   toolVersionsCache: { data: ToolVersion[]; at: number } | null;
+  failedToolProbes: ReadonlyMap<string, { at: number; retried: boolean }>;
   busyTools: ReadonlyMap<ToolName, ToolLifecycleAction>;
   pendingUpgrades: readonly PendingUpgrade[];
   batchAction: ToolLifecycleAction | null;
@@ -226,6 +229,7 @@ interface ToolManagementState {
 // 让新挂载的页面立即恢复进度，并收到原任务的完成结果。
 let toolManagementState: ToolManagementState = {
   toolVersionsCache: null,
+  failedToolProbes: new Map(),
   busyTools: new Map(),
   pendingUpgrades: [],
   batchAction: null,
@@ -260,30 +264,104 @@ function mergeToolVersions(
   return merged;
 }
 
+function staleToolNames(force = false): ToolName[] {
+  const {
+    toolVersionsCache: cache,
+    failedToolProbes,
+    busyTools,
+  } = toolManagementState;
+  const now = Date.now();
+  return TOOL_NAMES.filter((name) => {
+    if (busyTools.has(name)) return false;
+    if (force || !cache || !cache.data.some((tool) => tool.name === name)) {
+      return true;
+    }
+    const failure = failedToolProbes.get(name);
+    return failure
+      ? now - failure.at >= FAILED_TOOL_PROBE_TTL_MS
+      : now - cache.at >= TOOL_VERSIONS_CACHE_TTL_MS;
+  });
+}
+
+function cacheToolVersions(current: ToolVersion[], complete = false): string[] {
+  const { toolVersionsCache: cache, failedToolProbes } = toolManagementState;
+  const failures = new Map(failedToolProbes);
+  const recovered: string[] = [];
+  for (const tool of current) {
+    const previous = failures.get(tool.name);
+    if (tool.version) {
+      if (previous) recovered.push(tool.name);
+      failures.delete(tool.name);
+    } else {
+      failures.set(tool.name, {
+        at: Date.now(),
+        retried: previous?.retried ?? false,
+      });
+    }
+  }
+  updateToolManagementState({
+    toolVersionsCache: {
+      data: mergeToolVersions(cache?.data ?? [], current),
+      at: complete ? Date.now() : (cache?.at ?? 0),
+    },
+    failedToolProbes: failures,
+  });
+  return recovered;
+}
+
+async function refreshRecoveredInstallations(
+  names: string[],
+  requestId: number,
+) {
+  if (names.length === 0) return;
+  try {
+    const reports = await settingsApi.listToolInstallations(names);
+    const next = { ...toolManagementState.installReports };
+    for (const report of reports) {
+      if (latestToolVersionRequests.get(report.tool) === requestId) {
+        next[report.tool as ToolName] = report;
+      }
+    }
+    updateToolManagementState({ installReports: next });
+  } catch (error) {
+    console.error(
+      "[useToolManagement] Recovery installation check failed",
+      error,
+    );
+  }
+}
+
 /**
  * 设置里打开了「启动时检查应用更新」时，启动后在后台查一次（结果进同一个模块缓存）。
  * 不弹任何提示，只让侧栏「应用」上出现圆点。
  */
 export async function checkToolUpdatesInBackground(): Promise<void> {
   const cache = toolManagementState.toolVersionsCache;
-  if (cache && Date.now() - cache.at < TOOL_VERSIONS_CACHE_TTL_MS) return;
+  const refreshCacheTime =
+    !cache || Date.now() - cache.at >= TOOL_VERSIONS_CACHE_TTL_MS;
+  const names = staleToolNames();
+  if (names.length === 0) return;
   const requestId = ++toolVersionRequestSequence;
-  TOOL_NAMES.forEach((name) => latestToolVersionRequests.set(name, requestId));
+  names.forEach((name) => {
+    latestToolVersionRequests.set(name, requestId);
+    pendingToolVersionRequests.set(name, requestId);
+  });
   try {
-    const results = await settingsApi.getToolVersions([...TOOL_NAMES]);
+    const results = await settingsApi.getToolVersions(names);
     const current = results.filter(
       (tool) => latestToolVersionRequests.get(tool.name) === requestId,
     );
     if (current.length === 0) return;
-    const latest = toolManagementState.toolVersionsCache;
-    updateToolManagementState({
-      toolVersionsCache: {
-        data: mergeToolVersions(latest?.data ?? [], current),
-        at: Date.now(),
-      },
-    });
+    const recovered = cacheToolVersions(current, refreshCacheTime);
+    await refreshRecoveredInstallations(recovered, requestId);
   } catch (error) {
     console.error("[useToolManagement] Background update check failed", error);
+  } finally {
+    names.forEach((name) => {
+      if (pendingToolVersionRequests.get(name) === requestId) {
+        pendingToolVersionRequests.delete(name);
+      }
+    });
   }
 }
 
@@ -304,6 +382,7 @@ export function useToolManagement() {
   const { t } = useTranslation();
   const {
     toolVersionsCache,
+    failedToolProbes,
     busyTools,
     pendingUpgrades,
     batchAction,
@@ -363,9 +442,10 @@ export function useToolManagement() {
 
       // 请求顺序跨组件挂载保留，旧页面的迟到响应不能覆盖后续刷新或升级结果。
       const requestId = ++toolVersionRequestSequence;
-      toolNames.forEach((name) =>
-        latestToolVersionRequests.set(name, requestId),
-      );
+      toolNames.forEach((name) => {
+        latestToolVersionRequests.set(name, requestId);
+        pendingToolVersionRequests.set(name, requestId);
+      });
 
       // 单工具刷新使用统一后端入口（get_tool_versions）并带工具过滤。
       setLoadingTools((prev) => {
@@ -384,17 +464,8 @@ export function useToolManagement() {
         );
         if (current.length === 0) return [];
 
-        // 同步进模块缓存，供切 Tab 重挂时复用。时间戳沿用上次「全量加载」的（单工具
-        // 刷新不算全量、不重置 TTL）；缓存为空时以 at=0 起步——0 是「尚未完成全量加载」
-        // 的过期哨兵，确保探测中途切走/切回时，残缺缓存被判过期而触发重查，而非把半套
-        // 数据当成完整结果复用。真实时间戳只由 loadAllToolVersions 的 finally 盖上。
-        const cache = toolManagementState.toolVersionsCache;
-        updateToolManagementState({
-          toolVersionsCache: {
-            data: mergeToolVersions(cache?.data ?? [], current),
-            at: cache?.at ?? 0,
-          },
-        });
+        const recovered = cacheToolVersions(current);
+        await refreshRecoveredInstallations(recovered, requestId);
 
         // 返回刷新结果，调用方可据此判断版本是否真的探到（避免读 state 撞 stale closure）。
         return current;
@@ -402,6 +473,11 @@ export function useToolManagement() {
         console.error("[useToolManagement] Failed to refresh tools", error);
         return [];
       } finally {
+        for (const name of toolNames) {
+          if (pendingToolVersionRequests.get(name) === requestId) {
+            pendingToolVersionRequests.delete(name);
+          }
+        }
         setLoadingTools((prev) => {
           const next = { ...prev };
           for (const name of toolNames) {
@@ -417,36 +493,32 @@ export function useToolManagement() {
   );
 
   const loadAllToolVersions = useCallback(
-    async (options?: { force?: boolean }) => {
-      const force = options?.force ?? false;
+    async (options?: { force?: boolean; skipPending?: boolean }) => {
       const cache = toolManagementState.toolVersionsCache;
-      // 命中新鲜缓存：切回「关于」Tab 触发的重挂直接复用上次结果，跳过 6 个 `--version`
-      // 子进程 + 6 个 latest 版本网络请求。手动「刷新」传 force 绕过缓存强制重查。
-      if (
-        !force &&
-        cache &&
-        Date.now() - cache.at < TOOL_VERSIONS_CACHE_TTL_MS
-      ) {
-        setIsLoadingTools(false);
+      const refreshCacheTime =
+        options?.force ||
+        !cache ||
+        Date.now() - cache.at >= TOOL_VERSIONS_CACHE_TTL_MS;
+      const names = staleToolNames(options?.force).filter(
+        (name) =>
+          !options?.skipPending || !pendingToolVersionRequests.has(name),
+      );
+      if (names.length === 0) {
+        if (!options?.skipPending) setIsLoadingTools(false);
         return;
       }
       setIsLoadingTools(true);
       try {
-        // 逐工具并发探测：每个工具一完成就合并进 toolVersions（并写模块缓存）、清掉自己
-        // 的 loadingTools 标志，对应卡片随即独立刷新——而非等全部探测完才一次性显示（后端
-        // 原本对 6 个工具串行 await，总耗时累加；并发后压成「最慢的那一个」）。refreshTool-
-        // Versions 已内建按 name 合并 + per-tool loading + try/catch 兜底（单工具失败返回 []
-        // 不拖累其余），故 Promise.all 永不 reject。Respect current shell/flag overrides.
-        // 切页后即使缓存已过期，也跳过忙碌工具，由原任务在执行结束后刷新版本。
+        // 逐工具并发刷新过期项，各行独立显示结果。忙碌工具由自身生命周期结束后刷新。
         await Promise.all(
-          TOOL_NAMES.filter(
-            (toolName) => !toolManagementState.busyTools.has(toolName),
-          ).map((toolName) => refreshToolVersions([toolName], wslShellByTool)),
+          names.map((toolName) =>
+            refreshToolVersions([toolName], wslShellByTool),
+          ),
         );
       } finally {
-        // 全量探测结束：把缓存时间戳刷新为现在，标记「刚完成一次全量加载」、重置 TTL。
+        // 仅全量探测重置成功缓存 TTL，失败项恢复不应延长其它工具的缓存。
         const latestCache = toolManagementState.toolVersionsCache;
-        if (latestCache) {
+        if (latestCache && refreshCacheTime) {
           updateToolManagementState({
             toolVersionsCache: { ...latestCache, at: Date.now() },
           });
@@ -484,13 +556,20 @@ export function useToolManagement() {
   const loadInstallations = useCallback(
     async (options?: { force?: boolean }) => {
       if (!options?.force && toolManagementState.installReports) return;
+      const versionRequests = new Map(latestToolVersionRequests);
       try {
         const reports = await settingsApi.listToolInstallations([
           ...TOOL_NAMES,
         ]);
-        const next: Partial<Record<ToolName, ToolInstallationReport>> = {};
+        const next = { ...toolManagementState.installReports };
         for (const report of reports) {
-          next[report.tool as ToolName] = report;
+          // 较早的全量扫描不能盖掉后续重试恢复或生命周期刷新得到的安装路径。
+          if (
+            latestToolVersionRequests.get(report.tool) ===
+            versionRequests.get(report.tool)
+          ) {
+            next[report.tool as ToolName] = report;
+          }
         }
         updateToolManagementState({ installReports: next });
       } catch (error) {
@@ -511,6 +590,80 @@ export function useToolManagement() {
     // refreshes are handled by refreshToolVersions in the shell/flag handlers.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const recheck = () => {
+      if (!document.hidden && !isLoadingTools) {
+        void loadAllToolVersions({ skipPending: true });
+      }
+    };
+    window.addEventListener("focus", recheck);
+    document.addEventListener("visibilitychange", recheck);
+    return () => {
+      window.removeEventListener("focus", recheck);
+      document.removeEventListener("visibilitychange", recheck);
+    };
+  }, [isLoadingTools, loadAllToolVersions]);
+
+  useEffect(() => {
+    // 每次失败过程只做一次短延迟重试；真正没装的工具不会被持续轮询。
+    // 失败结果仍可在 30 秒后通过聚焦、重挂或手动操作重新检查。
+    const names = TOOL_NAMES.filter(
+      (name) =>
+        failedToolProbes.has(name) &&
+        !failedToolProbes.get(name)!.retried &&
+        !busyTools.has(name) &&
+        !pendingToolVersionRequests.has(name) &&
+        !loadingTools[name],
+    );
+    if (names.length === 0) return;
+    const due = Math.min(
+      ...names.map(
+        (name) => failedToolProbes.get(name)!.at + TOOL_PROBE_RETRY_DELAY_MS,
+      ),
+    );
+    let timer: number | undefined;
+    const scheduleRetry = () => {
+      window.clearTimeout(timer);
+      if (document.hidden) return;
+      timer = window.setTimeout(
+        () => {
+          if (document.hidden) return;
+          const failures = new Map(toolManagementState.failedToolProbes);
+          const retry = names.filter((name) => {
+            const failure = failures.get(name);
+            if (
+              !failure ||
+              failure.retried ||
+              pendingToolVersionRequests.has(name) ||
+              toolManagementState.busyTools.has(name)
+            ) {
+              return false;
+            }
+            if (Date.now() - failure.at < TOOL_PROBE_RETRY_DELAY_MS)
+              return false;
+            failures.set(name, { ...failure, retried: true });
+            return true;
+          });
+          updateToolManagementState({ failedToolProbes: failures });
+          void refreshToolVersions(retry, wslShellByTool);
+        },
+        Math.max(0, due - Date.now()),
+      );
+    };
+    scheduleRetry();
+    document.addEventListener("visibilitychange", scheduleRetry);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", scheduleRetry);
+    };
+  }, [
+    failedToolProbes,
+    busyTools,
+    loadingTools,
+    refreshToolVersions,
+    wslShellByTool,
+  ]);
 
   const checkForUpdates = useCallback(async () => {
     await Promise.all([
@@ -1014,6 +1167,8 @@ export function useToolManagement() {
     lastCheckedAt,
     wslShellByTool,
     checkForUpdates,
+    retryToolDetection: (toolName: ToolName) =>
+      refreshToolVersions([toolName], wslShellByTool),
     handleToolShellChange,
     handleToolShellFlagChange,
     handleDiagnoseAll,

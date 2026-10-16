@@ -558,7 +558,7 @@ function ToolRow({
   const canUninstall = Boolean(info?.version || broken || defaultInstall);
   const action: Exclude<ToolLifecycleAction, "uninstall"> | null =
     (busyAction !== "uninstall" ? busyAction : undefined) ??
-    (isVersionLoading || broken
+    (isVersionLoading || broken || (!info?.version && defaultInstall)
       ? null
       : !info?.version
         ? "install"
@@ -598,7 +598,7 @@ function ToolRow({
       {t("appsPage.notRunnable")}
     </span>
   ) : (
-    <span className="text-caption text-fg-2">{t("common.notInstalled")}</span>
+    <span className="text-caption text-fg-2">{t("appsPage.notDetected")}</span>
   );
 
   const actionButton = action ? (
@@ -622,7 +622,7 @@ function ToolRow({
     </Button>
   ) : null;
 
-  const installHint = t(`appsPage.installHint.${tool}`, { defaultValue: "" });
+  const installHint = t("appsPage.retryDetectionHint");
   const meta = defaultInstall ? (
     <>
       <span className="min-w-0 truncate font-mono" title={defaultInstall.path}>
@@ -752,7 +752,22 @@ function ToolRow({
       }
       meta={meta}
       version={version}
-      action={actionButton}
+      action={
+        <>
+          {!info?.version && !isBusy && (
+            <Button
+              variant="neutral"
+              size="compact"
+              onClick={() => void tools.retryToolDetection(tool)}
+              disabled={isVersionLoading}
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              {t("common.retry")}
+            </Button>
+          )}
+          {actionButton}
+        </>
+      }
       visibility={visibility}
       menu={
         (canUninstall || busyAction === "uninstall") && (

@@ -247,6 +247,92 @@ describe("AppsPage concurrent CLI upgrades", () => {
       });
   });
 
+  it("recovers a transient missing-tool result automatically without rechecking healthy tools", async () => {
+    missing.add("grok");
+    await renderApps();
+    expect(mocks.getToolVersions).toHaveBeenCalledTimes(9);
+    missing.delete("grok");
+    mocks.listToolInstallations.mockResolvedValueOnce([
+      report("grok", {
+        installs: [
+          {
+            path: "C:/tools/grok.exe",
+            version: "2.0.0",
+            runnable: true,
+            error: null,
+            source: "system",
+            is_path_default: true,
+          },
+        ],
+      }),
+    ]);
+
+    await waitFor(() => expect(isReady("Grok Build")).toBe(true), {
+      timeout: 4000,
+    });
+    expect(mocks.getToolVersions).toHaveBeenCalledTimes(10);
+    expect(mocks.getToolVersions).toHaveBeenLastCalledWith(["grok"], {});
+    expect(card("Grok Build").getByText("C:/tools/grok.exe")).toBeVisible();
+    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+  });
+
+  it("rechecks only expired failures on remount while keeping successful versions cached", async () => {
+    missing.add("grok");
+    const view = await renderApps();
+    view.unmount();
+    missing.delete("grok");
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
+    try {
+      await renderApps();
+      await waitFor(() => expect(isReady("Grok Build")).toBe(true));
+      expect(mocks.getToolVersions).toHaveBeenCalledTimes(10);
+      expect(mocks.getToolVersions).toHaveBeenLastCalledWith(["grok"], {});
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("offers a targeted detection retry instead of treating a missing version as proof of no installation", async () => {
+    missing.add("grok");
+    await renderApps();
+    expect(card("Grok Build").getByText("appsPage.notDetected")).toBeVisible();
+    missing.delete("grok");
+    fireEvent.click(
+      card("Grok Build").getByRole("button", { name: "common.retry" }),
+    );
+    await waitFor(() => expect(isReady("Grok Build")).toBe(true));
+    expect(mocks.getToolVersions).toHaveBeenCalledTimes(10);
+    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+  });
+
+  it("does not offer another installation when a failed version probe still has an installation path", async () => {
+    missing.add("grok");
+    mocks.listToolInstallations.mockResolvedValueOnce([
+      report("grok", {
+        installs: [
+          {
+            path: "C:/tools/grok.exe",
+            version: null,
+            runnable: false,
+            error: null,
+            source: "system",
+            is_path_default: true,
+          },
+        ],
+      }),
+    ]);
+    await renderApps();
+    expect(card("Grok Build").getByText("C:/tools/grok.exe")).toBeVisible();
+    expect(
+      card("Grok Build").queryByRole("button", {
+        name: "settings.toolInstall",
+      }),
+    ).toBeNull();
+    expect(
+      card("Grok Build").getByRole("button", { name: "common.retry" }),
+    ).toBeEnabled();
+  });
+
   it("copies only the selected application's manual command and switches installation methods", async () => {
     const getVersions = mocks.getToolVersions.getMockImplementation()!;
     mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
@@ -860,7 +946,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       card("Claude Code").getByRole("button", { name: "settings.toolInstall" }),
     ).toBeEnabled();
     expect(
-      card("Claude Code").getByText("common.notInstalled"),
+      card("Claude Code").getByText("appsPage.notDetected"),
     ).toBeInTheDocument();
     expect(mocks.probeToolInstallations).toHaveBeenCalledWith(["claude"]);
     expect(mocks.success).toHaveBeenCalledOnce();
