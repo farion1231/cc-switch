@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Download,
   ExternalLink,
   Github,
   Globe,
@@ -22,6 +21,7 @@ import { WhatsNewDialog } from "@/components/WhatsNewDialog";
 import { WHATS_NEW_ENTRIES, entriesUpTo } from "@/lib/whatsNew";
 import appIcon from "@/assets/icons/app-icon.png";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { AppUpdateCard } from "./AppUpdateCard";
 
 interface AboutSectionProps {
   isPortable: boolean;
@@ -42,7 +42,7 @@ function readStarPromptDismissed(): boolean {
 }
 
 /**
- * 设置 → 关于：版本、便携模式、检查更新 / 安装并重启、项目链接。
+ * 设置 → 关于：版本、便携模式、更新公告与手动下载入口、项目链接。
  * 命令行应用的安装与升级在侧栏「应用」页。
  */
 export function AboutSection({ isPortable }: AboutSectionProps) {
@@ -53,7 +53,6 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   const [isLoadingVersion, setIsLoadingVersion] = useState(
     () => appVersionCache === null,
   );
-  const [isDownloading, setIsDownloading] = useState(false);
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
   const [starPromptDismissed, setStarPromptDismissed] = useState(
     readStarPromptDismissed,
@@ -63,8 +62,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     [version],
   );
 
-  const { hasUpdate, updateInfo, checkUpdate, resetDismiss, isChecking } =
-    useUpdate();
+  const { hasUpdate, updateInfo, checkUpdate, isChecking, error } = useUpdate();
 
   useEffect(() => {
     let active = true;
@@ -132,45 +130,6 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   }, []);
 
   const handleCheckUpdate = useCallback(async () => {
-    if (hasUpdate) {
-      if (isPortable) {
-        try {
-          await settingsApi.openPortableUpdateDownload(
-            updateInfo?.availableVersion ?? "",
-          );
-        } catch (error) {
-          console.error("[AboutSection] Portable update failed", error);
-        }
-        return;
-      }
-
-      setIsDownloading(true);
-      try {
-        resetDismiss();
-        const installed = await settingsApi.installUpdateAndRestart();
-        if (!installed) {
-          toast.success(t("settings.upToDate"), { closeButton: true });
-        }
-      } catch (error) {
-        console.error("[AboutSection] Update failed", error);
-        toast.error(t("settings.updateFailed"), {
-          description: extractErrorMessage(error) || undefined,
-          closeButton: true,
-        });
-        try {
-          await settingsApi.checkUpdates();
-        } catch (fallbackError) {
-          console.error(
-            "[AboutSection] Failed to open fallback updater",
-            fallbackError,
-          );
-        }
-      } finally {
-        setIsDownloading(false);
-      }
-      return;
-    }
-
     try {
       const available = await checkUpdate();
       if (!available) {
@@ -183,14 +142,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         closeButton: true,
       });
     }
-  }, [
-    checkUpdate,
-    hasUpdate,
-    isPortable,
-    resetDismiss,
-    t,
-    updateInfo?.availableVersion,
-  ]);
+  }, [checkUpdate, t]);
 
   const displayVersion = version ?? t("common.unknown");
 
@@ -219,24 +171,12 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         </div>
         <Button
           type="button"
-          variant={hasUpdate ? "solid" : "neutral"}
+          variant="neutral"
           size="regular"
           onClick={handleCheckUpdate}
-          disabled={isChecking || isDownloading}
+          disabled={isChecking}
         >
-          {isDownloading ? (
-            <>
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              {t("settings.updating")}
-            </>
-          ) : hasUpdate ? (
-            <>
-              <Download className="h-3.5 w-3.5" />
-              {t("settings.updateTo", {
-                version: updateInfo?.availableVersion ?? "",
-              })}
-            </>
-          ) : isChecking ? (
+          {isChecking ? (
             <>
               <RefreshCw className="h-3.5 w-3.5 animate-spin" />
               {t("settings.checking")}
@@ -250,18 +190,14 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         </Button>
       </div>
 
-      {hasUpdate && updateInfo && (
-        <div className="space-y-1 px-5 py-4 text-body">
-          <p className="font-medium text-fg-1">
-            {t("settings.updateAvailable", {
-              version: updateInfo.availableVersion,
-            })}
-          </p>
-          {updateInfo.notes && (
-            <p className="line-clamp-3 text-fg-2">{updateInfo.notes}</p>
-          )}
-          {isPortable && (
-            <p className="text-fg-2">{t("settings.portableUpdateHint")}</p>
+      <AppUpdateCard isPortable={isPortable} />
+      {!hasUpdate && (
+        <div className="space-y-2 px-5 py-4 text-caption text-fg-2">
+          <p>{t("settings.autoUpdateCheckHint")}</p>
+          {error && (
+            <p role="alert" className="text-danger">
+              {error}
+            </p>
           )}
         </div>
       )}

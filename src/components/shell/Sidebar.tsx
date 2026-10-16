@@ -376,8 +376,7 @@ function MainDirectory({
           icon={Settings}
           label={t("nav.settings")}
           title={hasUpdate ? t("nav.settingsHasUpdate") : t("nav.settings")}
-          dot={hasUpdate}
-          dotTone="success"
+          updateLabel={hasUpdate ? t("settings.newVersion") : undefined}
           onClick={() => onSelectPage("settings")}
         />
       </div>
@@ -537,7 +536,8 @@ function NavItem({
   alert,
   dot = false,
   dotTone = "neutral",
-  endDot = false,
+  cornerDot = false,
+  updateLabel,
   onClick,
 }: {
   collapsed: boolean;
@@ -555,14 +555,14 @@ function NavItem({
   alert?: string;
   /** 圆点：有更新 */
   dot?: boolean;
-  /** 工具更新用中性色（很多人不想追新）；CC Switch 自己的更新用绿色，和工具更新分开 */
-  dotTone?: "neutral" | "success";
-  /** 圆点放在行尾（设置目录里的「关于」），而不是图标角上 */
-  endDot?: boolean;
+  dotTone?: "neutral" | "danger";
+  /** 设置目录中的更新提示放在整个按钮左上角。 */
+  cornerDot?: boolean;
+  updateLabel?: string;
   onClick: () => void;
 }) {
   const ring = selected ? "border-selected" : "border-sidebar";
-  const dotFill = dotTone === "success" ? "bg-success" : "bg-fg-1";
+  const dotFill = dotTone === "danger" ? "bg-danger" : "bg-fg-1";
   const trailingLines =
     trailing == null ? [] : Array.isArray(trailing) ? trailing : [trailing];
   const accessibleName = [
@@ -575,7 +575,7 @@ function NavItem({
   const glyph = (size: number) => (
     <span aria-hidden="true" className="relative flex shrink-0 text-fg-2">
       <Icon className={size === 20 ? "h-5 w-5" : "h-[18px] w-[18px]"} />
-      {dot && (collapsed || !endDot) && (
+      {dot && !cornerDot && (
         <span
           className={cn(
             "absolute -end-1 -top-[3px] h-2.5 w-2.5 rounded-full border-2",
@@ -597,6 +597,25 @@ function NavItem({
     </span>
   );
 
+  const updateIndicator = (
+    <>
+      {updateLabel && (
+        <span className="pointer-events-none absolute -top-1 end-0 rounded bg-danger px-1 text-[9px] font-medium leading-[14px] text-white">
+          {updateLabel}
+        </span>
+      )}
+      {dot && cornerDot && (
+        <span
+          aria-hidden="true"
+          className={cn(
+            "absolute left-1 top-1 h-1.5 w-1.5 rounded-full",
+            dotFill,
+          )}
+        />
+      )}
+    </>
+  );
+
   if (collapsed) {
     return (
       <HoverTip
@@ -610,11 +629,12 @@ function NavItem({
           aria-label={title ?? accessibleName}
           aria-current={selected ? "page" : undefined}
           className={cn(
-            "mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
+            "relative mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
             selected && "bg-selected hover:bg-selected",
           )}
         >
           {glyph(20)}
+          {updateIndicator}
         </button>
       </HoverTip>
     );
@@ -637,10 +657,10 @@ function NavItem({
       <button
         type="button"
         onClick={onClick}
-        aria-label={trailingLabel ? accessibleName : undefined}
+        aria-label={title ?? (trailingLabel ? accessibleName : undefined)}
         aria-current={selected ? "page" : undefined}
         className={cn(
-          "flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
+          "relative flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
           compact ? "min-w-0 flex-1" : "mx-2 w-[184px]",
           selected && "bg-selected font-medium hover:bg-selected",
         )}
@@ -676,12 +696,7 @@ function NavItem({
             className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger"
           />
         )}
-        {dot && endDot && (
-          <span
-            aria-hidden="true"
-            className={cn("h-1.5 w-1.5 shrink-0 rounded-full", dotFill)}
-          />
-        )}
+        {updateIndicator}
       </button>
     </HoverTip>
   );
@@ -750,11 +765,11 @@ function SettingsDirectory({
             icon={icon}
             label={t(`settings.sections.${section}`)}
             dot={section === "about" && hasUpdate}
-            dotTone="success"
-            endDot
+            dotTone="danger"
+            cornerDot
             title={
               section === "about" && hasUpdate
-                ? t("nav.settingsHasUpdate")
+                ? `${t("settings.sections.about")} · ${t("settings.newVersion")}`
                 : undefined
             }
             onClick={() => onSelectSettingsSection(section)}

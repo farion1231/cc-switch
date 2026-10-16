@@ -1,144 +1,94 @@
-import React, {
+import {
   createContext,
   useContext,
   useState,
   useEffect,
   useCallback,
   useRef,
+  type ReactNode,
 } from "react";
-import type { UpdateInfo } from "../lib/updater";
-import { checkForUpdate } from "../lib/updater";
-import { extractErrorMessage } from "../utils/errorUtils";
+import { checkForUpdate, type UpdateInfo } from "@/lib/updater";
+import { extractErrorMessage } from "@/utils/errorUtils";
+
+const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 interface UpdateContextValue {
-  // 更新状态
   hasUpdate: boolean;
   updateInfo: UpdateInfo | null;
   isChecking: boolean;
   error: string | null;
-
-  // 提示状态
-  isDismissed: boolean;
-  dismissUpdate: () => void;
-
-  // 操作方法
   checkUpdate: () => Promise<boolean>;
-  resetDismiss: () => void;
 }
 
 const UpdateContext = createContext<UpdateContextValue | undefined>(undefined);
 
-export function UpdateProvider({ children }: { children: React.ReactNode }) {
-  const DISMISSED_VERSION_KEY = "ccswitch:update:dismissedVersion";
-  const LEGACY_DISMISSED_KEY = "dismissedUpdateVersion"; // 兼容旧键
-
-  const [hasUpdate, setHasUpdate] = useState(false);
+export function UpdateProvider({ children }: { children: ReactNode }) {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isDismissed, setIsDismissed] = useState(false);
+  const checkPromise = useRef<Promise<boolean> | null>(null);
+  const lastCheckedAt = useRef(0);
 
-  // 从 localStorage 读取已关闭的版本
-  useEffect(() => {
-    const current = updateInfo?.availableVersion;
-    if (!current) return;
-
-    // 读取新键；若不存在，尝试迁移旧键
-    let dismissedVersion = localStorage.getItem(DISMISSED_VERSION_KEY);
-    if (!dismissedVersion) {
-      const legacy = localStorage.getItem(LEGACY_DISMISSED_KEY);
-      if (legacy) {
-        localStorage.setItem(DISMISSED_VERSION_KEY, legacy);
-        localStorage.removeItem(LEGACY_DISMISSED_KEY);
-        dismissedVersion = legacy;
-      }
-    }
-
-    setIsDismissed(dismissedVersion === current);
-  }, [updateInfo?.availableVersion]);
-
-  const isCheckingRef = useRef(false);
-
-  const checkUpdate = useCallback(async () => {
-    if (isCheckingRef.current) return false;
-    isCheckingRef.current = true;
+  const checkUpdate = useCallback((): Promise<boolean> => {
+    if (checkPromise.current) return checkPromise.current;
     setIsChecking(true);
     setError(null);
+    lastCheckedAt.current = Date.now();
 
-    try {
-      const result = await checkForUpdate({ timeout: 30000 });
-
-      if (result.status === "available") {
-        setHasUpdate(true);
-        setUpdateInfo(result.info);
-
-        // 检查是否已经关闭过这个版本的提醒
-        let dismissedVersion = localStorage.getItem(DISMISSED_VERSION_KEY);
-        if (!dismissedVersion) {
-          const legacy = localStorage.getItem(LEGACY_DISMISSED_KEY);
-          if (legacy) {
-            localStorage.setItem(DISMISSED_VERSION_KEY, legacy);
-            localStorage.removeItem(LEGACY_DISMISSED_KEY);
-            dismissedVersion = legacy;
-          }
-        }
-        setIsDismissed(dismissedVersion === result.info.availableVersion);
-        return true; // 有更新
-      } else {
-        setHasUpdate(false);
-        setUpdateInfo(null);
-        setIsDismissed(false);
-        return false; // 已是最新
+    checkPromise.current = (async () => {
+      try {
+        const result = await checkForUpdate({ timeout: 30000 });
+        const info = result.status === "available" ? result.info : null;
+        setUpdateInfo(info);
+        return !!info;
+      } catch (err) {
+        // 临时断网不应让已经发现的新版本提示消失。
+        setError(extractErrorMessage(err));
+        throw err;
+      } finally {
+        setIsChecking(false);
+        checkPromise.current = null;
       }
-    } catch (err) {
-      console.error("检查更新失败:", err);
-      setError(extractErrorMessage(err) || "检查更新失败");
-      setHasUpdate(false);
-      throw err; // 抛出错误让调用方处理
-    } finally {
-      setIsChecking(false);
-      isCheckingRef.current = false;
-    }
+    })();
+    return checkPromise.current;
   }, []);
 
-  const dismissUpdate = useCallback(() => {
-    setIsDismissed(true);
-    if (updateInfo?.availableVersion) {
-      localStorage.setItem(DISMISSED_VERSION_KEY, updateInfo.availableVersion);
-      // 清理旧键
-      localStorage.removeItem(LEGACY_DISMISSED_KEY);
-    }
-  }, [updateInfo?.availableVersion]);
-
-  const resetDismiss = useCallback(() => {
-    setIsDismissed(false);
-    localStorage.removeItem(DISMISSED_VERSION_KEY);
-    localStorage.removeItem(LEGACY_DISMISSED_KEY);
-  }, []);
-
-  // 应用启动时自动检查更新
   useEffect(() => {
-    // 延迟1秒后检查，避免影响启动体验
-    const timer = setTimeout(() => {
-      checkUpdate().catch(console.error);
-    }, 1000);
-
-    return () => clearTimeout(timer);
+    const checkInBackground = () => {
+      void checkUpdate().catch((err) => {
+        console.error("[Updater] Background check failed", err);
+      });
+    };
+    const timer = window.setTimeout(checkInBackground, 1000);
+    const interval = window.setInterval(checkInBackground, CHECK_INTERVAL_MS);
+    const onVisibilityChange = () => {
+      if (
+        document.visibilityState === "visible" &&
+        Date.now() - lastCheckedAt.current >= CHECK_INTERVAL_MS
+      ) {
+        checkInBackground();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.clearTimeout(timer);
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [checkUpdate]);
 
-  const value: UpdateContextValue = {
-    hasUpdate,
-    updateInfo,
-    isChecking,
-    error,
-    isDismissed,
-    dismissUpdate,
-    checkUpdate,
-    resetDismiss,
-  };
-
   return (
-    <UpdateContext.Provider value={value}>{children}</UpdateContext.Provider>
+    <UpdateContext.Provider
+      value={{
+        hasUpdate: !!updateInfo,
+        updateInfo,
+        isChecking,
+        error,
+        checkUpdate,
+      }}
+    >
+      {children}
+    </UpdateContext.Provider>
   );
 }
 
