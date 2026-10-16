@@ -799,6 +799,21 @@ pub async fn cursor_write_byok(
     crate::cursor_config::write_byok(&base_url, &model_ids).map_err(|e| e.to_string())
 }
 
+/// 最新的 BYOK 回滚点（没有则 `null`）。界面据此决定退出接管后是否提示「一键还原」。
+#[tauri::command]
+pub async fn cursor_byok_backup() -> Result<Option<crate::cursor_config::ByokBackup>, String> {
+    Ok(crate::cursor_config::latest_byok_backup())
+}
+
+/// 还原 Cursor BYOK 到最新回滚点（写入前的原始行）。
+///
+/// **只提示、不代劳**：由用户在退出接管后显式点击触发；Cursor 运行中直接报错，不写。
+#[tauri::command]
+pub async fn cursor_restore_byok(
+) -> Result<crate::cursor_config::CursorRestoreByokResult, String> {
+    crate::cursor_config::restore_byok().map_err(|e| e.to_string())
+}
+
 /// 连通性探测结果分档（纯函数分类，便于单测；测试不发真网络请求）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ConnectivityOutcome {

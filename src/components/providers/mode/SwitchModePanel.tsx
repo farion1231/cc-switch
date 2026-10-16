@@ -7,7 +7,11 @@ import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import type { Provider } from "@/types";
-import type { AppMode, StartupAttachFailure } from "@/types/proxy";
+import type {
+  AppMode,
+  CursorByokBackup,
+  StartupAttachFailure,
+} from "@/types/proxy";
 import type { ModeAppId } from "@/config/appConfig";
 import { isProxyAppId, isStackAppId } from "@/config/appConfig";
 import { settingsApi } from "@/lib/api";
@@ -161,6 +165,43 @@ export function SwitchModePanel({
   const [dialog, setDialog] = useState<ModeDialogState | null>(null);
   // Cursor 非官方供应商的「点启用时按需引导」框：非空即打开（只引导，不常驻）
   const [cursorSetup, setCursorSetup] = useState<Provider | null>(null);
+  // 退出 Cursor 接管后的一次性还原提示（非空即打开；只提示、不代劳，也不常驻）
+  const [cursorRestore, setCursorRestore] = useState<CursorByokBackup | null>(
+    null,
+  );
+  const [restorePending, setRestorePending] = useState(false);
+
+  /**
+   * 退出接管后查一次：BYOK 里写的公网地址随接管失效，但 Cursor 里还留着。
+   * 没写过 / 已还原（baseUrl 为空）时不打扰；探测失败也静默（还原不是退出后的必需路径）。
+   */
+  const offerCursorRestore = async () => {
+    try {
+      const [status, backup] = await Promise.all([
+        proxyApi.cursorByokStatus(),
+        proxyApi.cursorByokBackup(),
+      ]);
+      if (!backup || !status.baseUrl) return;
+      setCursorRestore(backup);
+    } catch {
+      // 静默：不因为探测失败打扰用户
+    }
+  };
+
+  /** 用户显式点「还原」才写回（写前原始行），绝不自动改。 */
+  const confirmCursorRestore = async () => {
+    setRestorePending(true);
+    try {
+      await proxyApi.cursorRestoreByok();
+      setCursorRestore(null);
+      toast.success(t("cursor.restore.done"));
+      void queryClient.invalidateQueries({ queryKey: ["cursorByokStatus"] });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRestorePending(false);
+    }
+  };
   const [routeSettingsOpen, setRouteSettingsOpen] = useState(false);
   const [stackSettingsOpen, setStackSettingsOpen] = useState(false);
   const [confirmFailover, setConfirmFailover] = useState(false);
@@ -705,11 +746,16 @@ export function SwitchModePanel({
         onClose={() => setDialog(null)}
         onEnter={enterMode}
         onExit={(useProviderId) =>
-          modeActions.exitToDirect({
-            directProviderId: directId,
-            useProviderId,
-            providerName: nameOf(useProviderId ?? directId),
-          })
+          modeActions
+            .exitToDirect({
+              directProviderId: directId,
+              useProviderId,
+              providerName: nameOf(useProviderId ?? directId),
+            })
+            .then(() => {
+              // 退出接管后 Cursor 里仍写着已失效的公网地址：提示一次，是否还原由用户点。
+              if (app === "cursor") void offerCursorRestore();
+            })
         }
         onSwitchDirect={(providerId) => {
           const provider = providers[providerId];
@@ -757,6 +803,20 @@ export function SwitchModePanel({
           onOpenPublicRouteSettings={onOpenPublicRouteSettings}
         />
       )}
+
+      <ConfirmDialog
+        isOpen={!!cursorRestore}
+        variant="info"
+        title={t("cursor.restore.title")}
+        message={t("cursor.restore.message", {
+          when: cursorRestore?.writtenAt ?? "",
+        })}
+        confirmText={t("cursor.restore.confirm")}
+        cancelText={t("cursor.restore.cancel")}
+        pending={restorePending}
+        onConfirm={() => void confirmCursorRestore()}
+        onCancel={() => setCursorRestore(null)}
+      />
 
       <ConfirmDialog
         isOpen={confirmFailover}

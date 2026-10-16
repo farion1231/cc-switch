@@ -3289,7 +3289,14 @@
       "modelHint": "Optional. Leave empty to use the provider's default model."
     },
     "needsPublicRoute": "Needs Public Routing",
-    "needsPublicRouteHint": "Open Public Routing in Settings"
+    "needsPublicRouteHint": "Open Public Routing in Settings",
+    "restore": {
+      "title": "Restore Cursor settings?",
+      "message": "You've left routing takeover, but Cursor still points at the public URL, which is now dead. Restore the settings captured before the write? (Snapshot: {{when}})",
+      "confirm": "Restore",
+      "cancel": "Not now",
+      "done": "Cursor settings restored"
+    }
   },
   "cursorSetup": {
     "title": "Set up Cursor ({{provider}})",

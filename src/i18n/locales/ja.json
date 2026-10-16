@@ -3290,7 +3290,14 @@
       "modelHint": "任意。空欄の場合はプロバイダーのデフォルトモデルを使用します。"
     },
     "needsPublicRoute": "パブリックルーティングが必要",
-    "needsPublicRouteHint": "設定でパブリックルーティングを開く"
+    "needsPublicRouteHint": "設定でパブリックルーティングを開く",
+    "restore": {
+      "title": "Cursor の設定を復元しますか？",
+      "message": "ルーティング接管を終了しましたが、Cursor には（無効になった）公開 URL が残っています。書き込み前の設定に復元しますか？（スナップショット：{{when}}）",
+      "confirm": "復元",
+      "cancel": "後で",
+      "done": "Cursor の設定を復元しました"
+    }
   },
   "cursorSetup": {
     "title": "Cursor を接続（{{provider}}）",
