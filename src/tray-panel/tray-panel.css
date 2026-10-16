@@ -1,0 +1,108 @@
+/* 背景交给系统玻璃（macOS NSGlassEffectView / NSVisualEffectView，Windows Acrylic），网页本身透明 */
+html,
+body.tray-panel,
+body.tray-panel #root {
+  height: 100%;
+  background: transparent !important;
+  overflow: hidden;
+}
+
+body.tray-panel {
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+.tp-card {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: hsl(var(--foreground));
+}
+
+/* macOS：每块卡片下面一块系统玻璃，网页只叠一层很淡的底色，保证文字对比度 */
+html[data-glass="native"][data-layout="floating"] .tp-card {
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(0, 0, 0, 0.12),
+    0 6px 16px rgba(0, 0, 0, 0.14),
+    0 1px 3px rgba(0, 0, 0, 0.1);
+}
+html.dark[data-glass="native"][data-layout="floating"] .tp-card {
+  background: rgba(24, 24, 27, 0.08);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.14),
+    0 6px 16px rgba(0, 0, 0, 0.3),
+    0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* Windows：整窗 Acrylic，卡片并成两栏 */
+html[data-glass="native"][data-layout="joined"] .tp-card {
+  background: rgba(249, 249, 250, 0.62);
+}
+html.dark[data-glass="native"][data-layout="joined"] .tp-card {
+  background: rgba(30, 30, 33, 0.62);
+}
+
+/* Linux：没有原生模糊，自己画接近不透明的底色 */
+html[data-glass="none"] .tp-card {
+  background: rgba(250, 250, 251, 0.97);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+html.dark[data-glass="none"] .tp-card {
+  background: rgba(30, 30, 33, 0.97);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+/* 两栏时子面板和主面板之间一条分隔线 */
+html[data-layout="joined"] .tp-sub[data-side="right"] {
+  border-left: 1px solid rgba(0, 0, 0, 0.08);
+}
+html[data-layout="joined"] .tp-sub[data-side="left"] {
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+}
+html.dark[data-layout="joined"] .tp-sub[data-side="right"] {
+  border-left-color: rgba(255, 255, 255, 0.08);
+}
+html.dark[data-layout="joined"] .tp-sub[data-side="left"] {
+  border-right-color: rgba(255, 255, 255, 0.08);
+}
+
+.tp-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.tp-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.tp-scroll::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: rgba(127, 127, 127, 0.35);
+}
+
+/* 子面板展开：淡入并略微滑入（玻璃在原生层同步淡入） */
+@keyframes tp-sub-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+}
+@keyframes tp-sub-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(6px);
+  }
+}
+html[data-layout="floating"] .tp-sub[data-side="right"] {
+  animation: tp-sub-in-right 140ms ease-out;
+}
+html[data-layout="floating"] .tp-sub[data-side="left"] {
+  animation: tp-sub-in-left 140ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-layout="floating"] .tp-sub {
+    animation: none;
+  }
+}
