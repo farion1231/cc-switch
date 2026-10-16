@@ -791,6 +791,7 @@ mod tests {
             version: None,
             runnable: false,
             error: None,
+            exited_with_error: false,
             source: "system".into(),
             is_path_default: true,
         }
@@ -1387,6 +1388,7 @@ mod tests {
                 version: None,
                 runnable: false,
                 error: None,
+                exited_with_error: false,
                 source: "homebrew".into(),
                 is_path_default: true,
             };
@@ -1422,6 +1424,7 @@ mod tests {
             version: None,
             runnable: true,
             error: None,
+            exited_with_error: false,
             source: "homebrew".into(),
             is_path_default: true,
         };
