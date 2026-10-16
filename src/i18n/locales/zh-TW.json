@@ -2386,9 +2386,11 @@
       "sidebarTodayModes": {
         "cost": "金額",
         "tokens": "Token",
-        "both": "兩者",
+        "both": "金額 + Token",
         "hidden": "不顯示"
-      }
+      },
+      "logColumns": "請求日誌的欄位",
+      "logColumnsSummary": "{{shown}} / {{total}} 欄"
     },
     "providerFilter": {
       "label": "供應商",
@@ -2450,7 +2452,6 @@
     "estimatedTimingTipWithFirstToken": "耗時約 {{duration}}s · 首字約 {{ttft}}s（按工作階段日誌的時間戳記估算）",
     "cacheTip": "快取命中 {{read}} · 快取寫入 {{write}}",
     "logColumns": {
-      "menu": "顯示的欄位",
       "reset": "還原預設",
       "cacheWrite": "快取寫入",
       "hitRate": "命中率",

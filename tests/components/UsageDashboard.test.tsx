@@ -7,6 +7,7 @@ import {
   UsageDashboard,
   resetUsageSyncClockForTests,
 } from "@/components/usage/UsageDashboard";
+import type { UsageRangeSelection } from "@/types/usage";
 
 const useProviderStatsMock = vi.hoisted(() => vi.fn());
 const useModelStatsMock = vi.hoisted(() => vi.fn());
@@ -116,12 +117,24 @@ vi.mock("@/components/usage/UsageDateRangePicker", () => ({
     onApply,
   }: {
     triggerLabel: string;
-    onApply: (selection: { preset: "all" }) => void;
+    onApply: (selection: UsageRangeSelection) => void;
   }) => (
     <>
       <button type="button">{triggerLabel}</button>
       <button type="button" onClick={() => onApply({ preset: "all" })}>
         pick-all
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          onApply({
+            preset: "custom",
+            customStartDate: 1_700_000_000,
+            customEndDate: 1_700_086_400,
+          })
+        }
+      >
+        pick-custom
       </button>
     </>
   ),
@@ -197,6 +210,48 @@ describe("UsageDashboard", () => {
     expect(screen.queryByTestId("usage-trend")).not.toBeInTheDocument();
     expect(usageHeroMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ range: { preset: "all" } }),
+    );
+  });
+
+  it("reopens on the last tab and preset range, but not on a custom range", async () => {
+    const user = userEvent.setup();
+    const first = renderDashboard();
+
+    await user.click(screen.getByRole("button", { name: "pick-all" }));
+    await user.click(screen.getByRole("tab", { name: "usage.tabs.models" }));
+    first.unmount();
+
+    const second = renderDashboard();
+    expect(await screen.findByTestId("usage-heatmap")).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "usage.tabs.models" }),
+    ).toHaveAttribute("aria-selected", "true");
+
+    // 自定义范围不记：下次还是上一个预设
+    await user.click(screen.getByRole("button", { name: "pick-custom" }));
+    expect(usageHeroMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        range: expect.objectContaining({ preset: "custom" }),
+      }),
+    );
+    second.unmount();
+
+    renderDashboard();
+    expect(usageHeroMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ range: { preset: "all" } }),
+    );
+  });
+
+  it("ignores a remembered tab or range it does not recognise", () => {
+    localStorage.setItem("cc-switch.usage.tab", "pricing");
+    localStorage.setItem("cc-switch.usage.rangePreset", "custom");
+    renderDashboard();
+
+    expect(
+      screen.getByRole("tab", { name: "usage.requestLogs" }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(usageHeroMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ range: { preset: "today" } }),
     );
   });
 
@@ -468,60 +523,16 @@ describe("UsageDashboard", () => {
     ).toHaveAttribute("aria-selected", "true");
   });
 
-  it("shows and hides request log columns from the columns menu", async () => {
-    const user = userEvent.setup();
-    const onUsageDisplayChange = vi.fn().mockResolvedValue(true);
+  it("draws the request log with the columns picked in settings", () => {
     renderDashboard({
       usageDisplay: { currency: "CNY", requestLogColumns: { app: false } },
-      onUsageDisplayChange,
     });
 
     // 改过的列按设置走，没改过的按默认（新列默认不显示），时间列总在
-    const initial = requestLogTableMock.mock.lastCall?.[0].columns;
-    expect(initial).toContain("time");
-    expect(initial).not.toContain("app");
-    expect(initial).not.toContain("statusCode");
-
-    await user.click(
-      screen.getByRole("button", { name: "usage.logColumns.menu" }),
-    );
-    expect(
-      screen.queryByRole("menuitemcheckbox", { name: "usage.time" }),
-    ).not.toBeInTheDocument();
-    const status = await screen.findByRole("menuitemcheckbox", {
-      name: "usage.statusCode",
-    });
-    expect(status).toHaveAttribute("aria-checked", "false");
-    await user.click(status);
-
-    // 菜单不关，可以接着勾；保存时其它显示设置原样带上，只存改过的列
-    expect(onUsageDisplayChange).toHaveBeenLastCalledWith({
-      currency: "CNY",
-      requestLogColumns: { app: false, statusCode: true },
-    });
-    expect(
-      screen.getByRole("menuitemcheckbox", { name: "usage.statusCode" }),
-    ).toHaveAttribute("aria-checked", "true");
-    expect(requestLogTableMock.mock.lastCall?.[0].columns).toContain(
-      "statusCode",
-    );
-
-    // 勾回默认值的列不再写进设置
-    await user.click(
-      screen.getByRole("menuitemcheckbox", { name: "usage.app" }),
-    );
-    expect(onUsageDisplayChange).toHaveBeenLastCalledWith({
-      currency: "CNY",
-      requestLogColumns: { statusCode: true },
-    });
-
-    await user.click(
-      screen.getByRole("menuitem", { name: "usage.logColumns.reset" }),
-    );
-    expect(onUsageDisplayChange).toHaveBeenLastCalledWith({
-      currency: "CNY",
-      requestLogColumns: {},
-    });
+    const columns = requestLogTableMock.mock.lastCall?.[0].columns;
+    expect(columns).toContain("time");
+    expect(columns).not.toContain("app");
+    expect(columns).not.toContain("statusCode");
   });
 
   it("puts the amount display above pricing in the settings tab", async () => {

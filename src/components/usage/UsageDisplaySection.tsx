@@ -1,7 +1,14 @@
 import { useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Input } from "@/components/ui/input";
-import { SegmentedControl } from "@/components/ui/segmented-control";
+import { Check, ChevronDown } from "lucide-react";
+import { fieldClass, Input } from "@/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Select,
   SelectContent,
@@ -10,16 +17,23 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { UsageDisplaySettings } from "@/types";
+import { cn } from "@/lib/utils";
 import {
   DISPLAY_CURRENCIES,
   getResolvedLang,
   isValidExchangeRate,
   resolveMoneyDisplay,
   resolveSidebarToday,
-  SIDEBAR_TODAY_MODES,
   type DisplayCurrency,
   type SidebarTodayMode,
 } from "./format";
+import {
+  REQUEST_LOG_COLUMN_LABEL_KEYS,
+  resolveRequestLogColumns,
+  setRequestLogColumn,
+  TOGGLEABLE_REQUEST_LOG_COLUMNS,
+  type RequestLogColumnId,
+} from "./requestLogColumns";
 
 interface UsageDisplaySectionProps {
   value: UsageDisplaySettings | undefined;
@@ -36,9 +50,113 @@ function currencyName(code: DisplayCurrency, lang: string): string | undefined {
   }
 }
 
+/** 侧栏「今日」拆成「金额」「Token」两个勾：两个都勾＝两者，都不勾＝不显示 */
+const TODAY_PARTS = ["cost", "tokens"] as const;
+type TodayPart = (typeof TODAY_PARTS)[number];
+
+const todayHas = (mode: SidebarTodayMode, part: TodayPart) =>
+  mode === part || mode === "both";
+
+function toggleTodayPart(
+  mode: SidebarTodayMode,
+  part: TodayPart,
+): SidebarTodayMode {
+  const cost =
+    part === "cost" ? !todayHas(mode, "cost") : todayHas(mode, "cost");
+  const tokens =
+    part === "tokens" ? !todayHas(mode, "tokens") : todayHas(mode, "tokens");
+  if (cost && tokens) return "both";
+  if (cost) return "cost";
+  if (tokens) return "tokens";
+  return "hidden";
+}
+
+interface ChecklistItem {
+  id: string;
+  label: string;
+  checked: boolean;
+}
+
+/**
+ * 下拉勾选清单：按钮上写当前选了什么，点开逐项勾；勾一项菜单不关，可以接着勾。
+ * 有 onReset 时底部给「恢复默认」。
+ */
+function ChecklistMenu({
+  label,
+  summary,
+  items,
+  onToggle,
+  onReset,
+}: {
+  label: string;
+  summary: string;
+  items: ChecklistItem[];
+  onToggle: (id: string) => void;
+  onReset?: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label={`${label}: ${summary}`}
+        className={cn(
+          fieldClass,
+          "flex h-7 w-36 items-center justify-between gap-2 whitespace-nowrap text-start text-body data-[state=open]:border-ring data-[state=open]:ring-[3px] data-[state=open]:ring-ring/20",
+        )}
+      >
+        <span className="truncate">{summary}</span>
+        <ChevronDown
+          aria-hidden="true"
+          className="h-4 w-4 shrink-0 opacity-50"
+        />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        aria-label={label}
+        className="min-w-[192px] max-w-[320px] rounded-panel border-border bg-surface p-1 shadow-v7-md"
+      >
+        {items.map((item) => (
+          <DropdownMenuItem
+            key={item.id}
+            role="menuitemcheckbox"
+            aria-checked={item.checked}
+            className="h-[30px] gap-2 rounded-control px-2 text-body"
+            onSelect={(event) => {
+              event.preventDefault();
+              onToggle(item.id);
+            }}
+          >
+            <Check
+              aria-hidden="true"
+              strokeWidth={1.75}
+              className={cn(
+                "h-3.5 w-3.5 shrink-0",
+                !item.checked && "invisible",
+              )}
+            />
+            {item.label}
+          </DropdownMenuItem>
+        ))}
+        {onReset && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="h-[30px] gap-2 rounded-control px-2 text-body"
+              onSelect={onReset}
+            >
+              <span aria-hidden="true" className="w-3.5 shrink-0" />
+              {t("usage.logColumns.reset")}
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 /**
  * 用量「设置」页签顶部的「显示」：币种与手填汇率（只改显示，库里照旧存美元）、
- * 侧栏「今日」显示什么。
+ * 侧栏「今日」显示什么、请求日志显示哪些列。
  */
 export function UsageDisplaySection({
   value,
@@ -72,6 +190,22 @@ export function UsageDisplaySection({
     setTodayMode(next);
     if ((await save({ sidebarToday: next })) === false) {
       setTodayMode(savedTodayMode);
+    }
+  };
+
+  // 请求日志的列：只存改过的列；保存要等设置读回来，先按刚勾的显示
+  const savedColumns = value?.requestLogColumns;
+  const [columnOverrides, setColumnOverrides] = useState(savedColumns ?? {});
+  useEffect(() => setColumnOverrides(savedColumns ?? {}), [savedColumns]);
+  const logColumns = resolveRequestLogColumns(columnOverrides);
+  const shownToggleable = TOGGLEABLE_REQUEST_LOG_COLUMNS.filter(({ id }) =>
+    logColumns.includes(id),
+  ).length;
+
+  const saveColumnOverrides = async (next: Record<string, boolean>) => {
+    setColumnOverrides(next);
+    if ((await save({ requestLogColumns: next })) === false) {
+      setColumnOverrides(savedColumns ?? {});
     }
   };
 
@@ -114,96 +248,130 @@ export function UsageDisplaySection({
       >
         {t("usage.display.title")}
       </h3>
-      <div className="flex flex-col rounded-panel bg-subtle px-4">
-        <div className="py-2.5">
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-            <div className="flex items-center gap-2">
-              <span className="text-body text-fg-2">
-                {t("usage.display.currency")}
-              </span>
-              <Select
-                value={currency}
-                onValueChange={(next) => {
-                  // Radix Select 偶尔回报空串，忽略
-                  const picked = DISPLAY_CURRENCIES.find((c) => c === next);
-                  if (picked && picked !== currency) {
-                    void changeCurrency(picked);
-                  }
-                }}
+      <div className="rounded-panel bg-subtle px-4 py-2.5">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-body text-fg-2">
+              {t("usage.display.currency")}
+            </span>
+            <Select
+              value={currency}
+              onValueChange={(next) => {
+                // Radix Select 偶尔回报空串，忽略
+                const picked = DISPLAY_CURRENCIES.find((c) => c === next);
+                if (picked && picked !== currency) {
+                  void changeCurrency(picked);
+                }
+              }}
+            >
+              <SelectTrigger
+                className="h-7 w-48 text-body"
+                aria-label={t("usage.display.currency")}
               >
-                <SelectTrigger
-                  className="h-7 w-48 text-body"
-                  aria-label={t("usage.display.currency")}
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {DISPLAY_CURRENCIES.map((code) => (
-                    <SelectItem key={code} value={code}>
-                      {optionLabel(code)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {currency !== "USD" && (
-              <div className="flex items-center gap-2 text-body tabular-nums text-fg-2">
-                <label htmlFor={rateId} className="shrink-0">
-                  {t("usage.display.rate")}
-                </label>
-                <span className="shrink-0">1 USD =</span>
-                <Input
-                  id={rateId}
-                  inputMode="decimal"
-                  className="h-7 w-24 tabular-nums"
-                  value={rateDraft}
-                  aria-invalid={rateInvalid}
-                  onChange={(event) => {
-                    setRateDraft(event.target.value);
-                    setRateInvalid(false);
-                  }}
-                  onBlur={commitRate}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") commitRate();
-                  }}
-                />
-                <span className="shrink-0">{currency}</span>
-              </div>
-            )}
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {DISPLAY_CURRENCIES.map((code) => (
+                  <SelectItem key={code} value={code}>
+                    {optionLabel(code)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           {currency !== "USD" && (
-            <p
-              className={
-                rateInvalid
-                  ? "m-0 mt-1.5 text-caption text-danger-text"
-                  : "m-0 mt-1.5 text-caption text-fg-3"
-              }
-            >
-              {rateInvalid
-                ? t("usage.display.rateInvalid")
-                : // 两句各自带句号：中日文直接相连，其他语言隔一个空格
-                  [
-                    t("usage.display.rateHint"),
-                    t("usage.display.approxNote"),
-                  ].join(/^(zh|ja)/i.test(lang) ? "" : " ")}
-            </p>
+            <div className="flex items-center gap-2 text-body tabular-nums text-fg-2">
+              <label htmlFor={rateId} className="shrink-0">
+                {t("usage.display.rate")}
+              </label>
+              <span className="shrink-0">1 USD =</span>
+              <Input
+                id={rateId}
+                inputMode="decimal"
+                className="h-7 w-24 tabular-nums"
+                value={rateDraft}
+                aria-invalid={rateInvalid}
+                onChange={(event) => {
+                  setRateDraft(event.target.value);
+                  setRateInvalid(false);
+                }}
+                onBlur={commitRate}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") commitRate();
+                }}
+              />
+              <span className="shrink-0">{currency}</span>
+            </div>
           )}
+          <div className="flex items-center gap-2">
+            <span className="text-body text-fg-2">
+              {t("usage.display.sidebarToday")}
+            </span>
+            <ChecklistMenu
+              label={t("usage.display.sidebarToday")}
+              summary={t(`usage.display.sidebarTodayModes.${todayMode}`)}
+              items={TODAY_PARTS.map((part) => ({
+                id: part,
+                label: t(`usage.display.sidebarTodayModes.${part}`),
+                checked: todayHas(todayMode, part),
+              }))}
+              onToggle={(id) =>
+                void changeTodayMode(
+                  toggleTodayPart(todayMode, id as TodayPart),
+                )
+              }
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-body text-fg-2">
+              {t("usage.display.logColumns")}
+            </span>
+            <ChecklistMenu
+              label={t("usage.display.logColumns")}
+              summary={t("usage.display.logColumnsSummary", {
+                shown: shownToggleable,
+                total: TOGGLEABLE_REQUEST_LOG_COLUMNS.length,
+              })}
+              items={TOGGLEABLE_REQUEST_LOG_COLUMNS.map(({ id }) => ({
+                id,
+                label: t(REQUEST_LOG_COLUMN_LABEL_KEYS[id]),
+                checked: logColumns.includes(id),
+              }))}
+              onToggle={(id) => {
+                const column = id as RequestLogColumnId;
+                void saveColumnOverrides(
+                  setRequestLogColumn(
+                    columnOverrides,
+                    column,
+                    !logColumns.includes(column),
+                  ),
+                );
+              }}
+              onReset={
+                Object.keys(columnOverrides).length > 0
+                  ? () => void saveColumnOverrides({})
+                  : undefined
+              }
+            />
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border py-2.5">
-          <span className="text-body text-fg-2">
-            {t("usage.display.sidebarToday")}
-          </span>
-          <SegmentedControl<SidebarTodayMode>
-            size="sm"
-            aria-label={t("usage.display.sidebarToday")}
-            value={todayMode}
-            onValueChange={(next) => void changeTodayMode(next)}
-            items={SIDEBAR_TODAY_MODES.map((mode) => ({
-              value: mode,
-              label: t(`usage.display.sidebarTodayModes.${mode}`),
-            }))}
-          />
-        </div>
+        {currency !== "USD" && (
+          <p
+            className={
+              rateInvalid
+                ? "m-0 mt-1.5 text-caption text-danger-text"
+                : "m-0 mt-1.5 text-caption text-fg-3"
+            }
+          >
+            {rateInvalid
+              ? t("usage.display.rateInvalid")
+              : // 两句各自带句号：中日文直接相连，其他语言隔一个空格
+                [
+                  t("usage.display.rateHint"),
+                  t("usage.display.approxNote"),
+                ].join(/^(zh|ja)/i.test(lang) ? "" : " ")}
+          </p>
+        )}
       </div>
     </section>
   );

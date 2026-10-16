@@ -6,7 +6,6 @@ import {
   Check,
   ChartColumn,
   ChevronDown,
-  Columns3,
   Database,
   Loader2,
   RefreshCw,
@@ -25,13 +24,13 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   KNOWN_APP_TYPES,
   type AppTypeFilter,
+  type UsageRangePreset,
   type UsageRangeSelection,
 } from "@/types/usage";
 import {
@@ -54,16 +53,16 @@ import { PricingConfigPanel } from "./PricingConfigPanel";
 import { RequestDetailPanel } from "./RequestDetailPanel";
 import { UsageDataSourcesSheet } from "./UsageDataSourcesSheet";
 import { UsageDisplaySection } from "./UsageDisplaySection";
-import {
-  REQUEST_LOG_COLUMN_LABEL_KEYS,
-  resolveRequestLogColumns,
-  setRequestLogColumn,
-  TOGGLEABLE_REQUEST_LOG_COLUMNS,
-  type RequestLogColumnId,
-} from "./requestLogColumns";
+import { resolveRequestLogColumns } from "./requestLogColumns";
 import type { UsageDisplaySettings } from "@/types";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { UsageHeatmap } from "./UsageHeatmap";
+import {
+  USAGE_CHOICE_KEYS,
+  readRememberedChoice,
+  useRememberedChoice,
+  writeRememberedChoice,
+} from "./rememberedChoice";
 import { fmtInt, formatRelativeTime, getLocaleFromLanguage } from "./format";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
 
@@ -85,6 +84,15 @@ const STATUS_CODE_OPTIONS = [200, 400, 401, 429, 500] as const;
 // 「设置」放显示币种和模型定价（原「定价」页签并进来）
 type UsageTab = "logs" | "providers" | "models" | "settings";
 const TABS: UsageTab[] = ["logs", "providers", "models", "settings"];
+/** 记住的时间范围只认预设：自定义的起止日期过几天就不是用户想看的了，选自定义时不改记下的预设 */
+const REMEMBERED_RANGE_PRESETS: UsageRangePreset[] = [
+  "today",
+  "1d",
+  "7d",
+  "14d",
+  "30d",
+  "all",
+];
 
 /**
  * 手动「立即同步」的时间，离开页面再回来也还在。后端也会记下最近一次扫描（后台定时和
@@ -181,9 +189,19 @@ export function UsageDashboard({
 }: UsageDashboardProps = {}) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
-  const [range, setRange] = useState<UsageRangeSelection>({
-    preset: "today",
-  });
+  const [range, setRange] = useState<UsageRangeSelection>(() => ({
+    preset: readRememberedChoice(
+      USAGE_CHOICE_KEYS.range,
+      REMEMBERED_RANGE_PRESETS,
+      "today",
+    ),
+  }));
+  const applyRange = (next: UsageRangeSelection) => {
+    setRange(next);
+    if (next.preset !== "custom") {
+      writeRememberedChoice(USAGE_CHOICE_KEYS.range, next.preset);
+    }
+  };
   const [appType, setAppType] = useState<AppTypeFilter>(initialAppType);
   const [providerName, setProviderName] = useState<string | undefined>(
     undefined,
@@ -191,25 +209,13 @@ export function UsageDashboard({
   const [model, setModel] = useState<string | undefined>(undefined);
   const [statusCode, setStatusCode] = useState<number | undefined>(undefined);
 
-  // 请求日志的列显隐（设备级设置，只存改过的列）；保存要等设置读回来，先按刚点的显示
-  const savedColumns = usageDisplay?.requestLogColumns;
-  const [columnOverrides, setColumnOverrides] = useState(savedColumns ?? {});
-  useEffect(() => setColumnOverrides(savedColumns ?? {}), [savedColumns]);
-  const logColumns = resolveRequestLogColumns(columnOverrides);
-  const saveColumnOverrides = async (next: Record<string, boolean>) => {
-    setColumnOverrides(next);
-    if (!onUsageDisplayChange) return;
-    const saved = await onUsageDisplayChange({
-      ...usageDisplay,
-      requestLogColumns: next,
-    });
-    if (saved === false) setColumnOverrides(savedColumns ?? {});
-  };
-  const toggleLogColumn = (id: RequestLogColumnId) =>
-    saveColumnOverrides(
-      setRequestLogColumn(columnOverrides, id, !logColumns.includes(id)),
-    );
-  const [tab, setTab] = useState<UsageTab>("logs");
+  // 请求日志显示哪些列在「设置」页签里改，这里只按设置画
+  const logColumns = resolveRequestLogColumns(usageDisplay?.requestLogColumns);
+  const [tab, setTab] = useRememberedChoice<UsageTab>(
+    USAGE_CHOICE_KEYS.tab,
+    TABS,
+    "logs",
+  );
   // 没有用量时也能进定价页：新装的人往往先配好 models.dev 同步再开始用
   const [pricingWhileEmpty, setPricingWhileEmpty] = useState(false);
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(() =>
@@ -664,7 +670,7 @@ export function UsageDashboard({
       <UsageDateRangePicker
         selection={range}
         triggerLabel={rangeLabel}
-        onApply={(nextRange) => setRange(nextRange)}
+        onApply={applyRange}
       />
     </div>
   );
@@ -681,102 +687,44 @@ export function UsageDashboard({
       ? t("usage.statusFilter.all")
       : `${t("usage.statusCode")} ${statusCode}`;
 
-  const columnsLabel = t("usage.logColumns.menu");
-  const columnsMenu = (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="quiet"
-          size="compact"
-          className="px-1.5 text-fg-2"
-          aria-label={columnsLabel}
-          title={columnsLabel}
-        >
-          <Columns3 className="h-3.5 w-3.5" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="end"
-        className={cn(menuContentClass, "min-w-[180px]")}
-        aria-label={columnsLabel}
-      >
-        {TOGGLEABLE_REQUEST_LOG_COLUMNS.map(({ id }) => {
-          const visible = logColumns.includes(id);
-          return (
-            <DropdownMenuItem
-              key={id}
-              role="menuitemcheckbox"
-              aria-checked={visible}
-              className={menuItemClass}
-              // 连着勾几列不用每次重开菜单
-              onSelect={(event) => {
-                event.preventDefault();
-                void toggleLogColumn(id);
-              }}
-            >
-              <MenuCheck checked={visible} />
-              {t(REQUEST_LOG_COLUMN_LABEL_KEYS[id])}
-            </DropdownMenuItem>
-          );
-        })}
-        {Object.keys(columnOverrides).length > 0 && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className={menuItemClass}
-              onSelect={() => void saveColumnOverrides({})}
-            >
-              <MenuCheck checked={false} />
-              {t("usage.logColumns.reset")}
-            </DropdownMenuItem>
-          </>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-
   const tabTrailing =
     tab === "logs" ? (
-      <div className="flex items-center gap-0.5">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="quiet"
-              size="compact"
-              className="gap-1 pe-1.5 ps-2 text-caption text-fg-2"
-              aria-label={`${t("usage.statusCode")}: ${statusLabel}`}
-            >
-              {statusLabel}
-              <ChevronDown className="h-3.5 w-3.5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="end"
-            className={cn(menuContentClass, "min-w-[160px]")}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="quiet"
+            size="compact"
+            className="gap-1 pe-1.5 ps-2 text-caption text-fg-2"
+            aria-label={`${t("usage.statusCode")}: ${statusLabel}`}
           >
+            {statusLabel}
+            <ChevronDown className="h-3.5 w-3.5" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          className={cn(menuContentClass, "min-w-[160px]")}
+        >
+          <DropdownMenuItem
+            className={menuItemClass}
+            onSelect={() => setStatusCode(undefined)}
+          >
+            <MenuCheck checked={statusCode == null} />
+            {t("usage.statusFilter.all")}
+          </DropdownMenuItem>
+          {STATUS_CODE_OPTIONS.map((code) => (
             <DropdownMenuItem
+              key={code}
               className={menuItemClass}
-              onSelect={() => setStatusCode(undefined)}
+              onSelect={() => setStatusCode(code)}
             >
-              <MenuCheck checked={statusCode == null} />
-              {t("usage.statusFilter.all")}
+              <MenuCheck checked={statusCode === code} />
+              <span className="tabular-nums">{code}</span>
             </DropdownMenuItem>
-            {STATUS_CODE_OPTIONS.map((code) => (
-              <DropdownMenuItem
-                key={code}
-                className={menuItemClass}
-                onSelect={() => setStatusCode(code)}
-              >
-                <MenuCheck checked={statusCode === code} />
-                <span className="tabular-nums">{code}</span>
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-        {columnsMenu}
-      </div>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
     ) : tab === "providers" || tab === "models" ? (
       <span className="text-caption text-fg-3">
         {t("usage.sortedByRequests")}

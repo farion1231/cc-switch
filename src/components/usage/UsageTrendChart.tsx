@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Bar,
@@ -16,6 +16,7 @@ import { fmtInt, getLocaleFromLanguage, parseFiniteNumber } from "./format";
 import { resolveUsageRange } from "@/lib/usageRange";
 import type { UsageRangeSelection } from "@/types/usage";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
+import { USAGE_CHOICE_KEYS, useRememberedChoice } from "./rememberedChoice";
 
 interface UsageTrendChartProps {
   range: UsageRangeSelection;
@@ -162,7 +163,8 @@ export function formatUsageTrendTokenTickLabel(
   return formatter.format(num);
 }
 
-type TrendMetric = "requests" | "tokens" | "cost";
+const TREND_METRICS = ["requests", "tokens", "cost"] as const;
+type TrendMetric = (typeof TREND_METRICS)[number];
 
 const AXIS_TICK = { fill: "var(--text-3)", fontSize: 11 };
 
@@ -176,7 +178,11 @@ export function UsageTrendChart({
 }: UsageTrendChartProps) {
   const { t, i18n } = useTranslation();
   const { money, moneyTick, rate } = useMoneyFormat();
-  const [metric, setMetric] = useState<TrendMetric>("tokens");
+  const [metric, setMetric] = useRememberedChoice<TrendMetric>(
+    USAGE_CHOICE_KEYS.trendMetric,
+    TREND_METRICS,
+    "tokens",
+  );
   const { startDate, endDate } = resolveUsageRange(range);
   const { data: trends, isLoading } = useUsageTrends(
     range,

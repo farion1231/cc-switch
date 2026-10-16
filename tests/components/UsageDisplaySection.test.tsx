@@ -96,26 +96,103 @@ describe("UsageDisplaySection", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("saves what the sidebar Today label shows", async () => {
+  it("ticks cost and tokens for the sidebar Today label", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(
       <UsageDisplaySection value={{ currency: "CNY" }} onChange={onChange} />,
     );
+    const trigger = screen.getByRole("button", {
+      name: /^usage\.display\.sidebarToday:/,
+    });
+    expect(trigger).toHaveTextContent("usage.display.sidebarTodayModes.cost");
+
+    await user.click(trigger);
     expect(
-      screen.getByRole("button", {
+      await screen.findByRole("menuitemcheckbox", {
         name: "usage.display.sidebarTodayModes.cost",
       }),
-    ).toHaveAttribute("aria-pressed", "true");
+    ).toHaveAttribute("aria-checked", "true");
+    await user.click(
+      screen.getByRole("menuitemcheckbox", {
+        name: "usage.display.sidebarTodayModes.tokens",
+      }),
+    );
+    expect(onChange).toHaveBeenLastCalledWith({
+      currency: "CNY",
+      sidebarToday: "both",
+    });
+
+    // 菜单不关，接着把金额去掉＝只剩 Token；再去掉 Token＝不显示
+    await user.click(
+      screen.getByRole("menuitemcheckbox", {
+        name: "usage.display.sidebarTodayModes.cost",
+      }),
+    );
+    expect(onChange).toHaveBeenLastCalledWith({
+      currency: "CNY",
+      sidebarToday: "tokens",
+    });
+    await user.click(
+      screen.getByRole("menuitemcheckbox", {
+        name: "usage.display.sidebarTodayModes.tokens",
+      }),
+    );
+    expect(onChange).toHaveBeenLastCalledWith({
+      currency: "CNY",
+      sidebarToday: "hidden",
+    });
+    expect(trigger).toHaveTextContent("usage.display.sidebarTodayModes.hidden");
+  });
+
+  it("shows and hides request log columns", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn().mockResolvedValue(true);
+    render(
+      <UsageDisplaySection
+        value={{ currency: "CNY", requestLogColumns: { app: false } }}
+        onChange={onChange}
+      />,
+    );
 
     await user.click(
       screen.getByRole("button", {
-        name: "usage.display.sidebarTodayModes.both",
+        name: "usage.display.logColumns: usage.display.logColumnsSummary",
       }),
     );
-    expect(onChange).toHaveBeenCalledWith({
+    expect(
+      screen.queryByRole("menuitemcheckbox", { name: "usage.time" }),
+    ).not.toBeInTheDocument();
+    const status = await screen.findByRole("menuitemcheckbox", {
+      name: "usage.statusCode",
+    });
+    expect(status).toHaveAttribute("aria-checked", "false");
+    await user.click(status);
+
+    // 菜单不关，可以接着勾；保存时其它显示设置原样带上，只存改过的列
+    expect(onChange).toHaveBeenLastCalledWith({
       currency: "CNY",
-      sidebarToday: "both",
+      requestLogColumns: { app: false, statusCode: true },
+    });
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: "usage.statusCode" }),
+    ).toHaveAttribute("aria-checked", "true");
+
+    // 勾回默认值的列不再写进设置
+    await user.click(
+      screen.getByRole("menuitemcheckbox", { name: "usage.app" }),
+    );
+    expect(onChange).toHaveBeenLastCalledWith({
+      currency: "CNY",
+      requestLogColumns: { statusCode: true },
+    });
+
+    await user.click(
+      screen.getByRole("menuitem", { name: "usage.logColumns.reset" }),
+    );
+    expect(onChange).toHaveBeenLastCalledWith({
+      currency: "CNY",
+      requestLogColumns: {},
     });
   });
 });

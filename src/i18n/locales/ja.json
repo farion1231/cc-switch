@@ -2385,9 +2385,11 @@
       "sidebarTodayModes": {
         "cost": "金額",
         "tokens": "トークン",
-        "both": "両方",
+        "both": "金額 + トークン",
         "hidden": "非表示"
-      }
+      },
+      "logColumns": "リクエストログの列",
+      "logColumnsSummary": "{{shown}} / {{total}} 列"
     },
     "providerFilter": {
       "label": "プロバイダー",
@@ -2449,7 +2451,6 @@
     "estimatedTimingTipWithFirstToken": "所要 約 {{duration}}s · 最初のトークン 約 {{ttft}}s（セッションログのタイムスタンプから推定）",
     "cacheTip": "キャッシュヒット {{read}} · キャッシュ書き込み {{write}}",
     "logColumns": {
-      "menu": "表示する列",
       "reset": "既定に戻す",
       "cacheWrite": "キャッシュ書き込み",
       "hitRate": "ヒット率",
