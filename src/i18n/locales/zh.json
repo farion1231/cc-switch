@@ -4836,7 +4836,16 @@
       "description": "Oh My Pi 内置供应商由 Oh My Pi 自行管理。点击右上角 +，从预设或自定义配置添加供应商。"
     },
     "form": {
-      "modelsToggle": "配置模型列表",
+      "modelsMode": "模型来源",
+      "modelsModeManual": "手动配置模型列表",
+      "modelsModeDiscovery": "自动发现模型列表",
+      "modelsModeNone": "不配置模型",
+      "modelsDiscoveryHint": "模型列表由 Oh My Pi 运行时自动发现，此处无需手动配置；仍可通过下方 YAML 添加 models 或 modelOverrides 微调。",
+      "discoveryType": "发现方式",
+      "discoveryHint": "由 Oh My Pi 定期从端点拉取模型列表；端点返回的上下文长度等元数据会自动套用。手动模型行和下方 YAML 的 modelOverrides 仍然生效。",
+      "discoveryApiRequired": "启用自动发现时必须选择接口格式（proxy 类型除外）",
+      "apiInherit": "不指定（继承默认）",
+      "apiInheritHint": "选择「不指定」时不写 api 键：标识与内置供应商相同时继承其模型的接口格式，proxy 自动发现时每个模型单独自动判断接口格式。",
       "modelsHiddenHint": "未配置模型列表：保存后不写 models 键。此供应商仅在标识与 Oh My Pi 内置供应商相同时生效（其字段作为该内置供应商的覆盖）。",
       "configYaml": "配置 YAML",
       "fixYamlFirst": "请先修复下方配置 YAML，再编辑结构化字段。",

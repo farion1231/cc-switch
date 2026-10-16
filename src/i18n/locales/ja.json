@@ -4836,7 +4836,16 @@
       "description": "Oh My Pi の組み込みプロバイダーは Oh My Pi が管理します。右上の + をクリックして、プリセットまたはカスタム設定からプロバイダーを追加してください。"
     },
     "form": {
-      "modelsToggle": "モデルリストを設定",
+      "modelsMode": "モデルのソース",
+      "modelsModeManual": "モデルリストを手動で設定",
+      "modelsModeDiscovery": "モデルを自動検出",
+      "modelsModeNone": "モデルを設定しない",
+      "modelsDiscoveryHint": "モデルリストは Oh My Pi が実行時に自動検出するため、ここでの手動設定は不要です。下の YAML の models や modelOverrides で微調整することもできます。",
+      "discoveryType": "検出方式",
+      "discoveryHint": "Oh My Pi がエンドポイントからモデルリストを定期的に取得します。エンドポイントが返すコンテキスト長などのメタデータは自動的に適用されます。手動のモデル行と下の YAML の modelOverrides も引き続き有効です。",
+      "discoveryApiRequired": "自動検出を有効にするには API 形式の選択が必要です（proxy タイプを除く）",
+      "apiInherit": "指定しない（継承）",
+      "apiInheritHint": "「指定しない」を選ぶと api キーを書き込みません。識別子が内蔵プロバイダーと一致する場合はそのモデルの API 形式を継承し、proxy 自動検出では各モデルの API 形式が個別に自動判定されます。",
       "modelsHiddenHint": "モデルリスト未設定：保存時は models キーを書き込みません。このプロバイダーは、識別子が Oh My Pi の内蔵プロバイダーと一致する場合のみ有効になります（そのフィールドは内蔵プロバイダーのオーバーライドとして機能します）。",
       "configYaml": "設定YAML",
       "fixYamlFirst": "下の設定 YAML を修正してから、構造化フィールドを編集してください。",

@@ -4836,7 +4836,16 @@
       "description": "Oh My Pi manages its built-in providers. Click + in the top right to add a provider from a preset or custom configuration."
     },
     "form": {
-      "modelsToggle": "Configure model list",
+      "modelsMode": "Model source",
+      "modelsModeManual": "Configure model list manually",
+      "modelsModeDiscovery": "Discover models automatically",
+      "modelsModeNone": "No models",
+      "modelsDiscoveryHint": "Oh My Pi discovers the model list at runtime; no manual configuration needed here. You can still fine-tune via models or modelOverrides in the YAML below.",
+      "discoveryType": "Discovery method",
+      "discoveryHint": "Oh My Pi periodically fetches the model list from the endpoint; metadata such as context window returned by the endpoint is applied automatically. Manual model rows and modelOverrides in the YAML below still take effect.",
+      "discoveryApiRequired": "An API format is required for automatic discovery (except the proxy type)",
+      "apiInherit": "Unspecified (inherit)",
+      "apiInheritHint": "Choosing \"Unspecified\" omits the api key: when the provider key matches a built-in provider, its models keep their built-in API formats; with proxy discovery, each model's API format is auto-detected individually.",
       "modelsHiddenHint": "No model list configured: saving omits the \"models\" key. The provider only takes effect when its key matches an Oh My Pi built-in provider (its fields act as that provider's override).",
       "configYaml": "Configuration YAML",
       "fixYamlFirst": "Fix the configuration YAML below before editing the structured fields.",

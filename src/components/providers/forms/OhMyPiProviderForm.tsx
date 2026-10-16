@@ -58,6 +58,18 @@ const API_FORMATS = [
   { value: "google-vertex", label: "Google Vertex" },
 ] as const satisfies ReadonlyArray<{ value: string; label: string }>;
 
+// `discovery.type` values per ohmypi models.yml (see oh-my-pi docs/models.md).
+// `proxy` auto-detects each model's wire, so it needs no provider-level api;
+// every other type requires one (models-config loader enforces this).
+const DISCOVERY_TYPES = [
+  { value: "openai-models-list", label: "OpenAI Models List" },
+  { value: "proxy", label: "OpenAI + Anthropic Proxy" },
+  { value: "ollama", label: "Ollama" },
+  { value: "llama.cpp", label: "llama.cpp" },
+  { value: "lm-studio", label: "LM Studio" },
+  { value: "litellm", label: "LiteLLM" },
+] as const satisfies ReadonlyArray<{ value: string; label: string }>;
+
 // Root-level keys owned by the curated form controls. Everything else in the
 // provider's settingsConfig is treated as an unmanaged passthrough and
 // preserved verbatim through the YAML escape hatch.
@@ -69,6 +81,7 @@ const ROOT_CONTROLLED_KEYS: Record<string, true> = {
   headers: true,
   compat: true,
   models: true,
+  discovery: true,
 };
 
 // Per-model keys exposed by the curated model rows (omp model overrides).
@@ -308,6 +321,7 @@ function buildOhMyPiSettingsConfig({
   headers,
   compat,
   includeCompat,
+  discoveryType,
   models,
   includeModels,
 }: {
@@ -319,6 +333,7 @@ function buildOhMyPiSettingsConfig({
   headers: Record<string, string>;
   compat: Record<string, unknown>;
   includeCompat: boolean;
+  discoveryType: string;
   models: Record<string, unknown>[];
   includeModels: boolean;
 }): Record<string, unknown> {
@@ -330,6 +345,7 @@ function buildOhMyPiSettingsConfig({
     ...(apiKey ? { apiKey } : {}),
     ...(Object.keys(headers).length > 0 ? { headers } : {}),
     ...(includeCompat ? { compat } : {}),
+    ...(discoveryType ? { discovery: { type: discoveryType } } : {}),
     ...(includeModels ? { models } : {}),
   };
 }
@@ -346,6 +362,7 @@ function controlledBlockYaml(
   headers: Record<string, string>,
   compat: Record<string, unknown>,
   includeCompat: boolean,
+  discoveryType: string,
   models: OhMyPiModelDraft[],
   includeModels: boolean,
 ): string {
@@ -355,6 +372,7 @@ function controlledBlockYaml(
     ...(api.trim() ? { api: api.trim() } : {}),
     ...(apiKey ? { apiKey } : {}),
     ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    ...(discoveryType ? { discovery: { type: discoveryType } } : {}),
     ...(includeCompat && Object.keys(compat).length > 0 ? { compat } : {}),
     ...(includeModels
       ? {
@@ -467,6 +485,12 @@ export function OhMyPiProviderForm({
   const [includeModels, setIncludeModels] = useState(
     () => !isEdit || hasOwn(initialConfig, "models"),
   );
+  // `discovery.type`（空串 = 未启用自动发现）。导入时带非 type 的
+  // discovery 字段（timeoutMs/injectV1）走 passthrough，保持原样。
+  const [discoveryType, setDiscoveryType] = useState(() => {
+    const discovery = asObject(initialConfig.discovery);
+    return typeof discovery.type === "string" ? discovery.type : "";
+  });
   const initialModels = useMemo<OhMyPiModelDraft[]>(() => {
     if (!Array.isArray(initialConfig.models)) return [];
     return initialConfig.models.map((model) => modelDraft(model));
@@ -508,6 +532,7 @@ export function OhMyPiProviderForm({
       providerHeaders,
       providerCompat,
       includeCompatRef.current,
+      discoveryType,
       models,
       includeModels,
     );
@@ -521,6 +546,7 @@ export function OhMyPiProviderForm({
     providerHeaders,
     providerCompat,
     models,
+    discoveryType,
     includeModels,
     unmanagedText,
     form,
@@ -551,6 +577,7 @@ export function OhMyPiProviderForm({
         headers: normalizeRequestHeaders(providerHeaders),
         compat: providerCompat,
         includeCompat: includeCompatRef.current,
+        discoveryType,
         models: models
           .filter((model) => model.id.trim())
           .map((model) => modelPreview({ ...model, id: model.id.trim() })),
@@ -561,6 +588,7 @@ export function OhMyPiProviderForm({
       api,
       apiKey,
       baseUrl,
+      discoveryType,
       includeModels,
       models,
       unmanagedText,
@@ -590,6 +618,7 @@ export function OhMyPiProviderForm({
     apiKey,
     providerHeaders,
     providerCompat,
+    discoveryType,
     unmanagedText,
     includeModels,
     models,
@@ -630,6 +659,7 @@ export function OhMyPiProviderForm({
     setProviderCompat({});
     includeCompatRef.current = false;
     setProviderPassthrough({});
+    setDiscoveryType("");
     setUnmanagedText("");
     setIncludeModels(true);
     setModels([]);
@@ -648,6 +678,7 @@ export function OhMyPiProviderForm({
           apiKey: "",
           headers: {},
           compat: {},
+          discoveryType: "",
           includeCompat: false,
           models: [],
           includeModels: true,
@@ -760,6 +791,11 @@ export function OhMyPiProviderForm({
       setProviderHeaders(parsedHeaders);
       setProviderCompat(asObject(parsed.compat));
       includeCompatRef.current = hasOwn(parsed, "compat");
+      setDiscoveryType(
+        typeof asObject(parsed.discovery).type === "string"
+          ? (asObject(parsed.discovery).type as string)
+          : "",
+      );
       setIncludeModels(hasOwn(parsed, "models"));
       if (Array.isArray(parsed.models)) {
         // 尽量沿用现有模型行的 key（先按 id 匹配，数量一致时按位置兜底），
@@ -990,6 +1026,15 @@ export function OhMyPiProviderForm({
         }
       }
 
+      // models.yml 校验：discovery 需要供应商级 api，proxy 除外（每模型
+      // 自动识别接口，见 docs/models.md "Discovery"）。
+      if (discoveryType && discoveryType !== "proxy" && !api.trim()) {
+        throw new OhMyPiFormValidationError(
+          t("ohmypi.form.discoveryApiRequired"),
+          "#ohmypi-provider-api-select",
+        );
+      }
+
       if (baseUrl.trim()) {
         validateOhMyPiField(
           () =>
@@ -1166,7 +1211,7 @@ export function OhMyPiProviderForm({
                 <SelectContent>
                   {isEdit && (
                     <SelectItem value="inherit">
-                      {t("common.default", { defaultValue: "Default" })}
+                      {t("ohmypi.form.apiInherit")}
                     </SelectItem>
                   )}
                   {API_FORMATS.map((format) => (
@@ -1179,11 +1224,20 @@ export function OhMyPiProviderForm({
                   )}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-fg-2">
-                {t("opencode.npmPackageHint", {
-                  defaultValue: "选择 AI 服务的 API 接口格式",
-                })}
-              </p>
+              {isEdit ? (
+                <p className="text-xs text-fg-2">
+                  {t("ohmypi.form.apiInheritHint", {
+                    defaultValue:
+                      "选择「不指定」时不写 api 键：标识与内置供应商相同时继承其模型的接口格式，proxy 自动发现时每个模型单独自动判断接口格式。",
+                  })}
+                </p>
+              ) : (
+                <p className="text-xs text-fg-2">
+                  {t("opencode.npmPackageHint", {
+                    defaultValue: "选择 AI 服务的 API 接口格式",
+                  })}
+                </p>
+              )}
             </Field>
 
             <ApiKeySection
@@ -1231,18 +1285,91 @@ export function OhMyPiProviderForm({
               onOptionsChange={handleProviderCompatChange}
             />
 
-            <div className="flex items-center gap-2">
-              <Switch
-                checked={includeModels}
-                onCheckedChange={setIncludeModels}
-                id="ohmypi-models-toggle"
-              />
-              <Label htmlFor="ohmypi-models-toggle">
-                {t("ohmypi.form.modelsToggle", {
-                  defaultValue: "配置模型列表",
+            <Field
+              label={t("ohmypi.form.modelsMode", {
+                defaultValue: "模型来源",
+              })}
+              htmlFor="ohmypi-models-mode"
+            >
+              <Select
+                value={
+                  discoveryType
+                    ? "discovery"
+                    : includeModels
+                      ? "manual"
+                      : "none"
+                }
+                onValueChange={(value) => {
+                  if (value === "discovery") {
+                    if (!discoveryType) setDiscoveryType("openai-models-list");
+                    setIncludeModels(false);
+                  } else {
+                    setDiscoveryType("");
+                    setIncludeModels(value === "manual");
+                  }
+                }}
+              >
+                <SelectTrigger id="ohmypi-models-mode" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="manual">
+                    {t("ohmypi.form.modelsModeManual", {
+                      defaultValue: "手动配置模型列表",
+                    })}
+                  </SelectItem>
+                  <SelectItem value="discovery">
+                    {t("ohmypi.form.modelsModeDiscovery", {
+                      defaultValue: "自动发现模型列表",
+                    })}
+                  </SelectItem>
+                  <SelectItem value="none">
+                    {t("ohmypi.form.modelsModeNone", {
+                      defaultValue: "不配置模型",
+                    })}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+
+            {discoveryType && (
+              <Field
+                label={t("ohmypi.form.discoveryType", {
+                  defaultValue: "发现方式",
                 })}
-              </Label>
-            </div>
+                htmlFor="ohmypi-discovery-type"
+              >
+                <Select
+                  value={discoveryType}
+                  onValueChange={(value) => {
+                    setDiscoveryType(value);
+                    invalidateFetchedModels();
+                  }}
+                >
+                  <SelectTrigger id="ohmypi-discovery-type" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DISCOVERY_TYPES.map((type) => (
+                      <SelectItem key={type.value} value={type.value}>
+                        {t(`ohmypi.form.discoveryType_${type.value}`, {
+                          defaultValue: type.label,
+                        })}
+                      </SelectItem>
+                    ))}
+                    {!DISCOVERY_TYPES.some(
+                      (type) => type.value === discoveryType,
+                    ) && <SelectItem value={discoveryType}>{discoveryType}</SelectItem>}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-fg-2">
+                  {t("ohmypi.form.discoveryHint", {
+                    defaultValue:
+                      "由 Oh My Pi 定期从端点拉取模型列表；端点返回的上下文长度等元数据会自动套用。手动模型行和下方 YAML 的 modelOverrides 仍然生效。",
+                  })}
+                </p>
+              </Field>
+            )}
 
             <div
               id="ohmypi-models-section"
@@ -1283,12 +1410,16 @@ export function OhMyPiProviderForm({
                 </div>
               </div>
 
-              {!includeModels ? (
+              {discoveryType ? (
                 <p role="status" className="py-2 text-sm text-fg-2">
-                  {t("ohmypi.form.modelsHiddenHint", {
+                  {t("ohmypi.form.modelsDiscoveryHint", {
                     defaultValue:
-                      "未启用模型列表：保存后将以 override-only 形态写入（不写 models 键）",
+                      "模型列表由 Oh My Pi 运行时自动发现，此处无需手动配置；仍可通过下方 YAML 添加 models 或 modelOverrides 微调。",
                   })}
+                </p>
+              ) : !includeModels ? (
+                <p role="status" className="py-2 text-sm text-fg-2">
+                  {t("ohmypi.form.modelsHiddenHint")}
                 </p>
               ) : models.length === 0 ? (
                 <p role="status" className="py-2 text-sm text-fg-2">

@@ -4837,7 +4837,16 @@
       "description": "Oh My Pi 內建供應商由 Oh My Pi 自行管理。點擊右上角 +，從預設或自訂設定新增供應商。"
     },
     "form": {
-      "modelsToggle": "設定模型列表",
+      "modelsMode": "模型來源",
+      "modelsModeManual": "手動設定模型列表",
+      "modelsModeDiscovery": "自動探索模型列表",
+      "modelsModeNone": "不設定模型",
+      "modelsDiscoveryHint": "模型列表由 Oh My Pi 執行時自動探索，此處無需手動設定；仍可透過下方 YAML 新增 models 或 modelOverrides 微調。",
+      "discoveryType": "探索方式",
+      "discoveryHint": "由 Oh My Pi 定期從端點擷取模型列表；端點回傳的上下文長度等中繼資料會自動套用。手動模型列和下方 YAML 的 modelOverrides 仍然生效。",
+      "discoveryApiRequired": "啟用自動探索時必須選擇介面格式（proxy 類型除外）",
+      "apiInherit": "不指定（繼承預設）",
+      "apiInheritHint": "選擇「不指定」時不寫 api 鍵：標識與內建供應商相同時繼承其模型的介面格式，proxy 自動探索時每個模型單獨自動判斷介面格式。",
       "modelsHiddenHint": "未設定模型列表：儲存後不寫 models 鍵。此供應商僅在標識與 Oh My Pi 內建供應商相同時生效（其欄位作為該內建供應商的覆寫）。",
       "configYaml": "配置 YAML",
       "fixYamlFirst": "請先修正下方的設定 YAML，再編輯結構化欄位。",

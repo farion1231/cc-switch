@@ -51,6 +51,9 @@ async function save(onSubmit: ReturnType<typeof vi.fn>) {
   return JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
 }
 describe("OhMyPi native edits", () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn();
+  });
   it("preserves inherited API when editing an imported native override", async () => {
     const { onSubmit } = mount(
       { baseUrl: "https://proxy.example.test", apiKey: "review-placeholder" },
@@ -82,7 +85,15 @@ describe("OhMyPi native edits", () => {
     fireEvent.change(container.querySelector('[id^="ohmypi-model-id-"]')!, {
       target: { value: "" },
     });
-    fireEvent.click(container.querySelector("#ohmypi-models-toggle")!);
+    fireEvent.keyDown(
+      container.querySelector("#ohmypi-models-mode") as HTMLElement,
+      { key: "ArrowDown" },
+    );
+    fireEvent.click(await screen.findByRole("option", { name: "不配置模型" }));
+    const editor = container.querySelector(
+      "#ohmypi-settings-config",
+    ) as HTMLTextAreaElement;
+    await waitFor(() => expect(editor.value).not.toContain("models:"));
     const config = await save(onSubmit);
     expect(config).not.toHaveProperty("models");
   });
@@ -297,5 +308,48 @@ describe("OhMyPi native edits", () => {
       cacheRead: 0,
       cacheWrite: 0,
     });
+  });
+
+  it("writes discovery config when the model source is automatic", async () => {
+    const { onSubmit, container } = mount({
+      name: "llama.cpp",
+      baseUrl: "http://127.0.0.1:8080",
+      api: "openai-completions",
+    });
+
+    fireEvent.keyDown(
+      container.querySelector("#ohmypi-models-mode") as HTMLElement,
+      { key: "ArrowDown" },
+    );
+    fireEvent.click(
+      await screen.findByRole("option", { name: "自动发现模型列表" }),
+    );
+    // The discovery-type selector appears and defaults to openai-models-list.
+    await waitFor(() =>
+      expect(container.querySelector("#ohmypi-discovery-type")).toBeTruthy(),
+    );
+    const config = await save(onSubmit);
+    expect(config.discovery).toEqual({ type: "openai-models-list" });
+    expect(config).not.toHaveProperty("models");
+  });
+
+  it("imports a discovery block from YAML and keeps other discovery fields", async () => {
+    const { onSubmit, container } = mount({
+      name: "llama.cpp",
+      baseUrl: "http://127.0.0.1:8080",
+      api: "openai-completions",
+      discovery: { type: "openai-models-list", timeoutMs: 5000 },
+    });
+
+    // The mode select reflects the imported discovery; switching to none
+    // removes the discovery key entirely.
+    fireEvent.keyDown(
+      container.querySelector("#ohmypi-models-mode") as HTMLElement,
+      { key: "ArrowDown" },
+    );
+    fireEvent.click(await screen.findByRole("option", { name: "不配置模型" }));
+    const config = await save(onSubmit);
+    expect(config).not.toHaveProperty("discovery");
+    expect(config).not.toHaveProperty("models");
   });
 });
