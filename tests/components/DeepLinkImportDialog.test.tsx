@@ -1,7 +1,11 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientProvider,
+  useQuery,
+} from "@tanstack/react-query";
 import { Profiler } from "react";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { http, HttpResponse } from "msw";
@@ -10,6 +14,7 @@ import { emitTauriEvent } from "../msw/tauriMocks";
 import { server } from "../msw/server";
 import { peekPendingDeepLink, setPendingDeepLink } from "../msw/state";
 import { pngDataUri } from "../fixtures/customIcon";
+import { toast } from "@/lib/toast";
 
 // jsdom 没有 canvas，重新编码这一步换成可控的假实现
 const { normalizeIconDataUri } = vi.hoisted(() => ({
@@ -54,6 +59,111 @@ const Wrapper = ({ children }: { children: React.ReactNode }) => (
 );
 
 describe("DeepLinkImportDialog", () => {
+  it.each([
+    { app: "opencode", enabled: true, fails: false, refreshes: true },
+    { app: "opencode", enabled: false, fails: false, refreshes: true },
+    { app: "opencode", enabled: true, fails: true, refreshes: false },
+    { app: "claude", enabled: true, fails: false, refreshes: false },
+  ])(
+    "refreshes OpenCode live data only after its successful import: %j",
+    async ({ app, enabled, fails, refreshes }) => {
+      const success = vi.spyOn(toast, "success");
+      const failure = vi.spyOn(toast, "error");
+      const client = new QueryClient({
+        defaultOptions: { queries: { staleTime: Infinity, retry: false } },
+      });
+      let liveIds: string[] = [];
+      let models: string[] = [];
+      const readLiveIds = vi.fn(async () => liveIds);
+      const readModels = vi.fn(async () => models);
+      const importProvider = vi.fn(async () => {
+        if (fails)
+          return HttpResponse.json(
+            { message: "Import failed" },
+            { status: 500 },
+          );
+        if (app === "opencode" && enabled) {
+          liveIds = ["imported-provider"];
+          models = ["imported-provider/model"];
+        }
+        return HttpResponse.json({ type: "provider", id: "imported-provider" });
+      });
+      server.use(
+        http.post(
+          "http://tauri.local/import_from_deeplink_unified",
+          importProvider,
+        ),
+      );
+      function LiveState() {
+        const ids = useQuery({
+          queryKey: ["opencodeLiveProviderIds"],
+          queryFn: readLiveIds,
+        });
+        const runtimeModels = useQuery({
+          queryKey: ["opencode", "runtime-models"],
+          queryFn: readModels,
+        });
+        return (
+          <>
+            <output data-testid="live-ids">{JSON.stringify(ids.data)}</output>
+            <output data-testid="runtime-models">
+              {JSON.stringify(runtimeModels.data)}
+            </output>
+          </>
+        );
+      }
+      render(
+        <QueryClientProvider client={client}>
+          <LiveState />
+          <DeepLinkImportDialog />
+        </QueryClientProvider>,
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("live-ids")).toHaveTextContent("[]"),
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("runtime-models")).toHaveTextContent("[]"),
+      );
+      act(() =>
+        deliverDeepLink({
+          version: "v1",
+          resource: "provider",
+          app,
+          enabled,
+          name: "Imported Provider",
+          endpoint: "https://example.com/v1",
+          apiKey: "public-test-key",
+        }),
+      );
+      const user = userEvent.setup();
+      await user.click(
+        await screen.findByRole("button", { name: "deeplink.import" }),
+      );
+      await waitFor(() => expect(importProvider).toHaveBeenCalledTimes(1));
+      if (fails) {
+        await waitFor(() => expect(failure).toHaveBeenCalled());
+      } else {
+        await waitFor(() => expect(success).toHaveBeenCalled());
+      }
+      expect(readLiveIds).toHaveBeenCalledTimes(refreshes ? 2 : 1);
+      expect(readModels).toHaveBeenCalledTimes(refreshes ? 2 : 1);
+      const shouldBeLive = refreshes && enabled;
+      await waitFor(() =>
+        expect(screen.getByTestId("live-ids")).toHaveTextContent(
+          shouldBeLive ? '["imported-provider"]' : "[]",
+        ),
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("runtime-models")).toHaveTextContent(
+          shouldBeLive ? '["imported-provider/model"]' : "[]",
+        ),
+      );
+      client.clear();
+      success.mockRestore();
+      failure.mockRestore();
+    },
+  );
+
   it("renders masked usage access token and user id for provider imports", async () => {
     render(<DeepLinkImportDialog />, { wrapper: Wrapper });
 

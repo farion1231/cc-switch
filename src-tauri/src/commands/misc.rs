@@ -1260,8 +1260,18 @@ fn npm_prerelease_tags(tool: &str) -> &'static [&'static str] {
 /// 与前端 `src/lib/version.ts` 的 parseVersion 语义对称(跨语言各实现一份)。
 /// patch 用 u64 以容纳 codex 的 `0.1.2505172116` 时间戳式版本而不溢出。
 fn parse_semver(v: &str) -> Option<([u64; 3], Vec<String>)> {
-    // 忽略 `+build` 元数据,再以首个 `-` 切出预发布段。
-    let core_and_pre = v.trim().split('+').next().unwrap_or("");
+    let v = v.trim();
+    // `+local` 段命中开发构建形态(git describe `238.g<sha>`,或含 canary /
+    // nightly / dev 等开发通道标识,如 Hermes main/canary 自报的
+    // `0.22.1+238.g<sha>`)时,版本号可能低于最新 release、内容反而更新,与
+    // release 不可比 —— 返回 None,调用方据此保守处理。普通 semver build
+    // metadata(如 `1.0.0+linux.1`)按 semver 规范忽略后照常比较。
+    if let Some((_, local)) = v.split_once('+') {
+        if is_dev_local(local) {
+            return None;
+        }
+    }
+    let core_and_pre = v.split('+').next().unwrap_or("");
     let (core, pre) = match core_and_pre.split_once('-') {
         Some((c, p)) => (c, Some(p)),
         None => (core_and_pre, None),
@@ -1277,6 +1287,18 @@ fn parse_semver(v: &str) -> Option<([u64; 3], Vec<String>)> {
         .map(|p| p.split('.').map(|s| s.to_string()).collect())
         .unwrap_or_default();
     Some(([major, minor, patch], pre_segments))
+}
+
+/// local version 段的开发构建形态:git describe(`238.g<sha>`)或常见开发通道标识
+/// (canary / nightly / dev / dirty / snapshot)。普通 semver build metadata
+/// (如 `linux.1`)不命中 —— 与前端 `src/lib/version.ts` 的 DEV_LOCAL_RE 语义对称。
+static DEV_LOCAL_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)^\d+\.g[0-9a-f]{4,}|(^|\.)(canary|nightly|dev|dirty|snapshot)(\.|$)")
+        .expect("Invalid dev-local regex")
+});
+
+fn is_dev_local(local: &str) -> bool {
+    DEV_LOCAL_RE.is_match(local)
 }
 
 /// 比较两个版本号(遵循 semver:主版本三段优先;core 相等时有预发布 < 无预发布;
@@ -1485,9 +1507,12 @@ async fn fetch_pypi_latest_version(client: &reqwest::Client, package: &str) -> O
     }
 }
 
-/// 预编译的版本号正则表达式
-static VERSION_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\d+\.\d+\.\d+(-[\w.]+)?").expect("Invalid version regex"));
+/// 预编译的版本号正则表达式。末尾的 `(\+[\w.-]+)?` 保留 PEP 440 local version
+/// 段(git describe 风格,如 Hermes main/canary 开发构建 `0.22.1+238.g<sha>`),
+/// 让前端能据此识别开发构建,避免把"版本号更低但内容更新"误报成"有新版本"。
+static VERSION_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\d+\.\d+\.\d+(-[\w.]+)?(\+[\w.-]+)?").expect("Invalid version regex")
+});
 
 /// WSL 版本探测载荷先打印的哨兵。用户 shell 的启动文件（Ubuntu 的 update-motd、
 /// `/etc/bash.bashrc` 的 sudo 提示、nvm 的 `Using Node vX.Y.Z` 等）输出都在它前面，
@@ -6136,7 +6161,36 @@ mod tests {
     fn test_extract_version() {
         assert_eq!(extract_version("claude 1.0.20"), "1.0.20");
         assert_eq!(extract_version("v2.3.4-beta.1"), "2.3.4-beta.1");
+        // Hermes main/canary 开发构建:保留 local version 段,前端据此识别、不误报升级
+        assert_eq!(
+            extract_version("Hermes Agent v0.22.1+238.g8211bb9 (2026.9.24) · upstream 8211bb96"),
+            "0.22.1+238.g8211bb9"
+        );
         assert_eq!(extract_version("no version here"), "no version here");
+    }
+
+    #[test]
+    fn local_versions_are_dev_builds_and_incomparable() {
+        // 开发构建(git describe / 开发通道标识)与任何版本不可比
+        assert!(parse_semver("0.22.1+238.g8211bb9").is_none());
+        assert!(parse_semver("0.22.1+canary.20261015T070051Z").is_none());
+        assert!(compare_semver("0.22.2", "0.22.1+238.g8211bb9").is_none());
+        assert!(compare_semver("0.22.1+238.g8211bb9", "0.22.1").is_none());
+        // 普通 semver build metadata 按规范忽略后照常比较
+        assert_eq!(parse_semver("1.0.0+linux.1"), Some(([1, 0, 0], vec![])));
+        assert_eq!(
+            compare_semver("1.0.1", "1.0.0+linux.1"),
+            Some(std::cmp::Ordering::Greater)
+        );
+        // 正式版与预发布版不受影响
+        assert_eq!(
+            compare_semver("0.22.2", "0.22.1"),
+            Some(std::cmp::Ordering::Greater)
+        );
+        assert_eq!(
+            compare_semver("2.1.156-beta.1", "2.1.156"),
+            Some(std::cmp::Ordering::Less)
+        );
     }
 
     #[test]
