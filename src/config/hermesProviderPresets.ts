@@ -303,7 +303,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
         },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "third_party",
@@ -430,6 +430,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "claude-opus-5-5", provider: "openmodel" },
     },
     isPartner: true,
+    partnerPromotionKey: "openmodel",
     icon: "openmodel",
   },
   {
@@ -459,7 +460,46 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "claude-opus-5-5", provider: "grooroute_pro" },
     },
     isPartner: true,
+    partnerPromotionKey: "grooroute",
     icon: "grooroute",
+  },
+  {
+    name: "TokenFactory",
+    nameKey: "providerForm.presets.tokenfactory",
+    websiteUrl: "https://tokenfactory.cn",
+    apiKeyUrl: "https://console.tokenfactory.cn/login",
+    settingsConfig: {
+      name: "tokenfactory",
+      // 官方 Hermes 文档（docs.tokenfactory.cn/tools/hermes，2026-10-15 核对）
+      base_url: "https://api.tokenfactory.cn/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "glm-5.3", name: "GLM-5.3", context_length: 1048576 },
+        { id: "kimi-k3", name: "Kimi K3", context_length: 1048576 },
+        {
+          id: "deepseek-v4-pro-0813",
+          name: "DeepSeek V4 Pro",
+          context_length: 1048576,
+        },
+        {
+          id: "deepseek-v4.1-flash",
+          name: "DeepSeek V4.1 Flash",
+          context_length: 1048576,
+        },
+        {
+          id: "glm-5.3-flash",
+          name: "GLM-5.3-Flash",
+          context_length: 1048576,
+        },
+        { id: "qwen3.8-flash", name: "Qwen3.8 Flash", context_length: 1000000 },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "glm-5.3", provider: "tokenfactory" },
+    },
+    icon: "tokenfactory",
   },
   {
     name: "Shengsuanyun",
@@ -476,7 +516,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-6-astra",
           name: "GPT-6 Astra",
-          context_length: 1050000,
+          context_length: 272000,
         },
       ],
     },
@@ -523,7 +563,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_key: "",
       api_mode: "chat_completions",
       models: [
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
         { id: "moonshotai/kimi-k3", name: "Kimi K3", context_length: 1048576 },
         { id: "z-ai/glm-5.3", name: "GLM-5.3", context_length: 1048576 },
         {
@@ -578,9 +618,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
-          context_length: 400000,
+          context_length: 272000,
         },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",
@@ -761,7 +801,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",
@@ -1052,7 +1092,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",
@@ -1077,7 +1117,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_key: "",
       api_mode: "chat_completions",
       models: [
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
         { id: "kimi-k3", name: "Kimi K3", context_length: 1048576 },
       ],
     },
@@ -1127,7 +1167,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "gpt-6-astra",
           name: "GPT-6 Astra",
-          context_length: 1050000,
+          context_length: 272000,
         },
       ],
     },
@@ -1334,9 +1374,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
         },
-        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 1050000 },
-        { id: "gpt-6-luna", name: "GPT-6 Luna", context_length: 1050000 },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-luna", name: "GPT-6 Luna", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "third_party",
@@ -1362,8 +1402,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
         },
-        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 1050000 },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "third_party",
@@ -1384,7 +1424,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",
@@ -1394,6 +1434,32 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     suggestedDefaults: {
       model: { default: "gpt-5.6-sol", provider: "xycai" },
     },
+  },
+  {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    settingsConfig: {
+      name: "modelflare",
+      // Chat Completions + /v1（docs.modelflare.dev/guides/endpoints，
+      // 2026-10-15 核对）；阵容同 OpenCode
+      base_url: "https://modelflare.dev/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", context_length: 272000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "gpt-5.6-sol", provider: "modelflare" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
@@ -1441,7 +1507,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",
@@ -1521,7 +1587,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-5.6-sol",
           name: "GPT-5.6 Sol",
-          context_length: 400000,
+          context_length: 272000,
         },
         {
           id: "google/gemini-3.6-flash",
@@ -1541,7 +1607,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-6-astra",
           name: "GPT-6 Astra",
-          context_length: 1050000,
+          context_length: 272000,
         },
         {
           id: "google/gemini-3.8-flash",
@@ -2273,7 +2339,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",
@@ -2720,12 +2786,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-6-astra",
           name: "GPT-6 Astra",
-          context_length: 1050000,
+          context_length: 272000,
         },
         {
           id: "openai/gpt-6.1-sol",
           name: "GPT-6.1 Sol",
-          context_length: 1050000,
+          context_length: 272000,
         },
         {
           id: "google/gemini-3.8-flash",
@@ -3025,12 +3091,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-6.1-sol",
           name: "GPT-6.1 Sol",
-          context_length: 1050000,
+          context_length: 272000,
         },
         {
           id: "openai/gpt-6-luna",
           name: "GPT-6 Luna",
-          context_length: 1050000,
+          context_length: 272000,
         },
         {
           id: "moonshotai/kimi-k3",
@@ -3179,8 +3245,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
         },
-        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 1050000 },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",

@@ -64,6 +64,15 @@ use usage::validate_usage_script;
 /// Codex official providers are safe to select during takeover: Codex keeps
 /// ownership of the active ChatGPT login and the proxy only forwards the
 /// authenticated request. Other apps' official providers retain the block.
+/// Claude Desktop 直连模式下用不了要经路由的卡。
+fn desktop_needs_routing_error() -> AppError {
+    AppError::localized(
+        "switch.desktop_needs_routing",
+        "这个供应商要经本地路由才能用（模型映射或托管账号），请先把 Claude Desktop 切到路由模式",
+        "This provider only works through local routing (model mapping or a managed account); switch Claude Desktop to the routing mode first",
+    )
+}
+
 pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &Provider) -> bool {
     matches!(app_type, AppType::Codex)
         && crate::proxy::providers::is_codex_official_provider(provider)
@@ -2280,7 +2289,7 @@ requires_openai_auth = true
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     #[tokio::test]
     #[serial]
-    async fn update_current_claude_desktop_provider_syncs_profile_when_proxy_takeover_is_active() {
+    async fn update_claude_desktop_route_provider_rewrites_profile_in_route_mode() {
         let home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
 
@@ -2318,27 +2327,15 @@ requires_openai_auth = true
         crate::settings::set_current_provider(&AppType::ClaudeDesktop, Some("p1"))
             .expect("set local current provider");
 
-        // Claude Desktop keeps backup state from takeover startup; this sentinel only
-        // marks takeover as active so provider updates rewrite the 3P profile.
-        db.save_live_backup("claude-desktop", "{}")
-            .await
-            .expect("seed live backup");
-        {
-            let mut config = db
-                .get_proxy_config_for_app("claude-desktop")
-                .await
-                .expect("get app proxy config");
-            config.enabled = true;
-            db.update_proxy_config_for_app(config)
-                .await
-                .expect("update app proxy config");
-        }
-
-        state
-            .proxy_service
-            .start()
-            .await
-            .expect("start proxy service");
+        // 路由模式路由到这张映射卡：编辑它要按新行重写指向本地路由的 profile。
+        crate::mode::controller::enter_with_route(
+            &state,
+            &AppType::ClaudeDesktop,
+            false,
+            Some("p1"),
+        )
+        .await
+        .expect("enter desktop route mode");
 
         let mut updated = Provider::with_id(
             "p1".into(),
@@ -2365,18 +2362,15 @@ requires_openai_auth = true
             ..Default::default()
         });
 
-        ProviderService::update(&state, AppType::ClaudeDesktop, None, updated.clone())
-            .expect("update current provider");
-
-        let backup = db
-            .get_live_backup("claude-desktop")
-            .await
-            .expect("get live backup")
-            .expect("backup exists");
-        assert_eq!(
-            backup.original_config, "{}",
-            "Claude Desktop provider edits should not rewrite takeover backup"
-        );
+        // 同步命令里取切换锁会阻塞运行时线程：放到阻塞线程池里（同 `switch_provider` 命令）。
+        let update_state = state.clone();
+        let update_row = updated.clone();
+        tokio::task::spawn_blocking(move || {
+            ProviderService::update(&update_state, AppType::ClaudeDesktop, None, update_row)
+        })
+        .await
+        .expect("join update")
+        .expect("update route provider");
 
         let profile_path = claude_desktop_profile_path(home.dir.path());
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
@@ -2388,7 +2382,7 @@ requires_openai_auth = true
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
         assert_eq!(
             profile["inferenceModels"],
-            json!([{ "name": "claude-sonnet-4-6", "labelOverride": "DeepSeek V4 Flash Updated", "supports1m": true }]),
+            json!([{ "name": "claude-sonnet-4-6", "labelOverride": "DeepSeek V4 Flash Updated", "supports1m": true, "prefer1m": true }]),
             "provider edits should propagate into the Claude Desktop 3P profile during takeover"
         );
     }
@@ -5638,6 +5632,20 @@ impl ProviderService {
                     grok_direct::switch_to(state.db.as_ref(), None, &provider)?;
                     return Ok(true);
                 }
+                AppType::ClaudeDesktop => {
+                    // 要经路由的卡直连写不进去，路由模式下配置文件归路由那家：只存行。
+                    if !crate::mode::current::is_proxy(&app_type)
+                        && !crate::claude_desktop_config::needs_routing(&provider)
+                    {
+                        crate::claude_desktop_config::write_direct(
+                            state.db.as_ref(),
+                            crate::mode::state::op::SWITCH,
+                            Some(&provider),
+                            crate::mode::state::PendingTarget::pointer(Some(provider.id.clone())),
+                        )?;
+                    }
+                    return Ok(true);
+                }
                 _ => {}
             }
             // No current provider, set as current and sync. Managed Codex adds
@@ -6281,6 +6289,15 @@ impl ProviderService {
                 is_direct_current,
             );
         }
+        // Desktop 直连模式下正在用的这张卡改成了要经路由的（模型映射、托管账号）：直连写不
+        // 进去，存了行也同步不到 Desktop。先进入路由模式再改。
+        if matches!(app_type, AppType::ClaudeDesktop)
+            && is_direct_current
+            && !mode.is_proxy()
+            && crate::claude_desktop_config::needs_routing(&provider)
+        {
+            return Err(desktop_needs_routing_error());
+        }
 
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
@@ -6570,10 +6587,6 @@ impl ProviderService {
             return Self::switch_normal(state, app_type, id, &providers);
         }
 
-        if matches!(app_type, AppType::ClaudeDesktop) {
-            return Self::switch_normal(state, app_type, id, &providers);
-        }
-
         // 切换和进入 / 退出代理都会改客户端文件和指针。按应用串行，拿到锁、补完上一次
         // 没做完的写入之后再读模式和指针：刚进入代理的应用不会被一次直连写入覆盖，上次
         // 失败后重试也按补完后的指针删上一家的独有字段。
@@ -6652,6 +6665,9 @@ impl ProviderService {
         }
         if matches!(app_type, AppType::GrokBuild) {
             return Self::switch_grok_direct(state, provider, providers);
+        }
+        if matches!(app_type, AppType::ClaudeDesktop) {
+            return Self::switch_desktop_direct(state, provider);
         }
 
         // OMO ↔ OMO Slim are mutually exclusive; activating one removes the other's config file.
@@ -6751,6 +6767,24 @@ impl ProviderService {
         }
 
         Ok(result)
+    }
+
+    /// Claude Desktop 直连切换：配置文件和指针在同一个操作里提交。模型映射卡、托管 OAuth 要经
+    /// 本地路由，直连写不进去（界面上先弹「需要路由」）。
+    fn switch_desktop_direct(
+        state: &AppState,
+        provider: &Provider,
+    ) -> Result<SwitchResult, AppError> {
+        if crate::claude_desktop_config::needs_routing(provider) {
+            return Err(desktop_needs_routing_error());
+        }
+        crate::claude_desktop_config::write_direct(
+            state.db.as_ref(),
+            crate::mode::state::op::SWITCH,
+            Some(provider),
+            crate::mode::state::PendingTarget::pointer(Some(provider.id.clone())),
+        )?;
+        Ok(SwitchResult::default())
     }
 
     /// Claude Code 直连切换：只替换关键字段和独有字段，文件和指针在同一个操作里提交。
