@@ -71,6 +71,20 @@ describe("page-local MCP connectivity", () => {
     expect(result.current.example).toBe("connected");
   });
 
+  it("keeps results when a renamed server changes the list order", () => {
+    const example = servers().example;
+    const other = { ...example, id: "other", name: "Other" };
+    const { result, rerender } = renderHook(
+      ({ data }) => useMcpConnectivity(data),
+      { initialProps: { data: { example, other } } },
+    );
+    const deliver = vi.mocked(mcpApi.startConnectivityChecks).mock.calls[0][1];
+    act(() => deliver({ serverId: "example", connected: true }));
+    rerender({ data: { other, example: { ...example, name: "Renamed" } } });
+    expect(mcpApi.startConnectivityChecks).toHaveBeenCalledTimes(1);
+    expect(result.current.example).toBe("connected");
+  });
+
   it("cancels stale configs and ignores their late results", async () => {
     const { result, rerender, unmount } = renderHook(
       ({ data }) => useMcpConnectivity(data),
