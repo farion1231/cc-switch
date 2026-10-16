@@ -1728,6 +1728,8 @@ pub fn run() {
             commands::cursor_is_running,
             commands::cursor_byok_status,
             commands::cursor_write_byok,
+            commands::cursor_byok_backup,
+            commands::cursor_restore_byok,
             commands::test_public_route_connectivity,
             // Failover queue management
             commands::get_failover_queue,

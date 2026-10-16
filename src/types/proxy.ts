@@ -271,6 +271,25 @@ export interface CursorByokStatus {
   modelIds: string[];
 }
 
+/**
+ * 可用的 BYOK 回滚点：写 BYOK 前自动落盘的那份原始行快照
+ * （`cursor-appuser-PREWRITE-YYYYMMDD-HHMMSS.json`）。
+ */
+export interface CursorByokBackup {
+  path: string;
+  /** 文件名里的时间戳（`YYYYMMDD-HHMMSS`），供界面说明还原到哪个时间点。 */
+  writtenAt: string;
+}
+
+/** 还原 BYOK 的结果（`cursor_restore_byok`）：把写入前的原始行写回。 */
+export interface CursorRestoreByokResult {
+  ok: boolean;
+  /** 还原后的 Base URL；`null` = 回到官方态。 */
+  restoredBaseUrl: string | null;
+  /** 用掉的那份回滚点。 */
+  backupPath: string;
+}
+
 /** 写 Cursor BYOK 的结果（`cursor_write_byok`）：`backupPath` 是回滚点。 */
 export interface CursorWriteByokResult {
   ok: boolean;

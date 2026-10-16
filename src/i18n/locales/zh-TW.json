@@ -3225,7 +3225,14 @@
       "modelHint": "選填。留空則使用供應商的預設模型。"
     },
     "needsPublicRoute": "需要公網路由",
-    "needsPublicRouteHint": "打開設定中的公網路由"
+    "needsPublicRouteHint": "打開設定中的公網路由",
+    "restore": {
+      "title": "還原 Cursor 設定？",
+      "message": "已退出路由接管，但 Cursor 裡仍寫著公網位址（已失效）。要還原成寫入前的設定嗎？（快照：{{when}}）",
+      "confirm": "一鍵還原",
+      "cancel": "暫不",
+      "done": "已還原 Cursor 設定"
+    }
   },
   "cursorSetup": {
     "title": "接入 Cursor（{{provider}}）",
