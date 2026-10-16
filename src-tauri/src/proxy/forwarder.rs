@@ -1455,7 +1455,7 @@ impl RequestForwarder {
                 expected_chatgpt_account_id.as_deref(),
                 managed_session_matches,
             )?;
-            if method == &http::Method::POST {
+            if method == http::Method::POST {
                 let token = codex_bearer_access_token(headers).ok_or_else(|| {
                     ProxyError::AuthError(
                         "Codex official route requires a bearer token".to_string(),
