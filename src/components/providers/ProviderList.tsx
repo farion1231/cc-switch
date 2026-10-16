@@ -1,10 +1,5 @@
 import { CSS } from "@dnd-kit/utilities";
-import {
-  DndContext,
-  closestCenter,
-  type CollisionDetection,
-  type Modifier,
-} from "@dnd-kit/core";
+import { DndContext, closestCenter, type Modifier } from "@dnd-kit/core";
 import {
   SortableContext,
   useSortable,
@@ -67,41 +62,6 @@ export type SwitchModeProps = Omit<SwitchModeInput, "app" | "t" | "providers">;
 const verticalDragModifiers: Modifier[] = [
   ({ transform }) => ({ ...transform, x: 0 }),
 ];
-
-export const providerDragCollision: CollisionDetection = (args) => {
-  const { active, collisionRect, droppableRects, pointerCoordinates } = args;
-  const activeRect = droppableRects.get(active.id);
-
-  // Keyboard sorting positions the card at the target's edge, not its center.
-  if (!pointerCoordinates || !activeRect) return closestCenter(args);
-
-  const originCenter = activeRect.top + activeRect.height / 2;
-  const movingDown = collisionRect.top > activeRect.top;
-  const leadingEdge = movingDown ? collisionRect.bottom : collisionRect.top;
-  let targetId = active.id;
-  let targetCenter = originCenter;
-
-  for (const { id } of args.droppableContainers) {
-    if (id === active.id) continue;
-    const rect = droppableRects.get(id);
-    if (!rect) continue;
-
-    // Cross each neighbor's original center with the leading edge so expanded
-    // cards need no extra travel. Keep the furthest crossed target instead of
-    // comparing card centers, which would still delay swaps for tall cards.
-    const center = rect.top + rect.height / 2;
-    if (
-      movingDown
-        ? center > targetCenter && center <= leadingEdge
-        : center < targetCenter && center >= leadingEdge
-    ) {
-      targetId = id;
-      targetCenter = center;
-    }
-  }
-
-  return [{ id: targetId }];
-};
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -349,17 +309,15 @@ export function ProviderList({
 
   const sections = useMemo<ProviderSection[]>(() => {
     if (switchMode) {
-      // 队列和拖拽共用本地顺序，保存期间也立即显示新位置。序号和上下移按
-      // 没过滤的完整队列算，搜索只决定画哪些卡，同时剔掉已不存在的 id。
-      const queueIds = new Set(switchMode.queue);
+      // 队列按没过滤的全部供应商剔掉已不存在的 id：序号和上下移要按完整队列算，
+      // 搜索只决定画哪些卡
+      const known = new Set(sortedProviders.map((p) => p.id));
       return buildSwitchSections({
         ...switchMode,
         app: appId,
         t,
         providers: filteredProviders,
-        queue: sortedProviders
-          .filter((provider) => queueIds.has(provider.id))
-          .map((provider) => provider.id),
+        queue: switchMode.queue.filter((id) => known.has(id)),
       });
     }
     const defaultPrimary = openclawDefaultModel?.primary ?? "";
@@ -607,7 +565,7 @@ export function ProviderList({
         <DndContext
           sensors={sensors}
           modifiers={verticalDragModifiers}
-          collisionDetection={providerDragCollision}
+          collisionDetection={closestCenter}
           onDragEnd={handleDragEnd}
         >
           {sections.map((section, index) => (
@@ -663,19 +621,11 @@ function SortableProviderCard(props: SortableProviderCardProps) {
     transform,
     transition,
     isDragging,
-  } = useSortable({
-    id: props.provider.id,
-    transition: {
-      duration: 280,
-      easing: "cubic-bezier(0.4, 0, 0.2, 1)",
-    },
-  });
+  } = useSortable({ id: props.provider.id });
 
   const style: CSSProperties = {
-    // Unequal-height cards should move without scaling to the drop target.
     transform: CSS.Translate.toString(transform),
     transition,
-    // The transformed wrapper owns the stacking context, not the inner card.
     position: "relative",
     zIndex: isDragging ? 10 : undefined,
   };
