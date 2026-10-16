@@ -230,49 +230,85 @@ export function hasIcon(name: string): boolean {
   return key in icons || key in iconUrls;
 }
 
-function hexLuminance(hex: string): number | null {
+function hexChannels(hex: string): [number, number, number] | null {
   let h = hex.slice(1);
   if (h.length === 3 || h.length === 4) {
     h = [...h.slice(0, 3)].map((c) => c + c).join("");
   }
+  if (!/^[0-9a-f]{6}([0-9a-f]{2})?$/.test(h)) return null;
   const n = parseInt(h.slice(0, 6), 16);
-  if (Number.isNaN(n)) return null;
-  return 0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255);
+  return [n >> 16, (n >> 8) & 255, n & 255];
 }
 
-/** 近黑色（深色背景上看不清）。 */
+/** 近黑色：三个通道都很低（深红、深蓝这类有色的深色不算）。 */
 export function isDarkInk(color?: string): boolean {
   const c = color?.trim().toLowerCase();
   if (!c) return false;
   if (c === "black") return true;
   if (!c.startsWith("#")) return false;
-  const lum = hexLuminance(c);
-  return lum !== null && lum < 60;
+  const rgb = hexChannels(c);
+  return rgb !== null && Math.max(...rgb) <= 0x50;
+}
+
+function isLightInk(color: string): boolean {
+  const c = color.trim().toLowerCase();
+  if (c === "white") return true;
+  if (!c.startsWith("#")) return false;
+  const rgb = hexChannels(c);
+  return rgb !== null && Math.min(...rgb) >= 0xd8;
+}
+
+// <defs> / <clipPath> / <mask> 里的颜色是遮罩语义，不是画出来的墨色
+const MASK_BLOCK = /(<(defs|clipPath|mask)\b[\s\S]*?<\/\2>)/g;
+const PAINT_ATTR = /\b(fill|stroke)="([^"]+)"/g;
+
+function paintedColors(svg: string): string[] {
+  return [...svg.replace(MASK_BLOCK, "").matchAll(PAINT_ATTR)].map((m) => m[2]);
 }
 
 const adaptedSvgCache = new Map<string, string>();
 
 /**
  * 深色模式适配：把写死的近黑色笔画 / 填充换成 currentColor，跟随外层文字色。
- * 同时带近白色的图标（自带深底 + 白字形的徽标）整体是自洽的，不动。
+ * 不动的情况：已经用了 currentColor（颜色交给 defaultColor 管）；画出来的颜色里
+ * 有近白色（自带深底 + 浅字形的徽标，换了反而看不见）。遮罩里的颜色不参与判断。
  */
 export function adaptSvgToTheme(svg: string): string {
   const cached = adaptedSvgCache.get(svg);
   if (cached !== undefined) return cached;
-  const paints = [...svg.matchAll(/\b(?:fill|stroke)="([^"]+)"/g)].map(
-    (m) => m[1],
-  );
-  const hasLightInk = paints.some((c) => {
-    const lum = c.startsWith("#") ? hexLuminance(c.toLowerCase()) : null;
-    return c.toLowerCase() === "white" || (lum !== null && lum > 215);
-  });
-  const result = hasLightInk
+  const paints = paintedColors(svg);
+  const skip =
+    paints.some((c) => c.trim().toLowerCase() === "currentcolor") ||
+    paints.some(isLightInk);
+  const result = skip
     ? svg
-    : svg.replace(/\b(fill|stroke)="([^"]+)"/g, (whole, attr, color) =>
-        isDarkInk(color) ? `${attr}="currentColor"` : whole,
-      );
+    : svg
+        .split(MASK_BLOCK)
+        // split 带捕获组：[正文, 整块, 标签名, 正文, ...]，只改正文
+        .map((part, i) =>
+          i % 3 === 0
+            ? part.replace(PAINT_ATTR, (whole, attr, color) =>
+                isDarkInk(color) ? `${attr}="currentColor"` : whole,
+              )
+            : part,
+        )
+        .join("");
   adaptedSvgCache.set(svg, result);
   return result;
+}
+
+/**
+ * 深色卡片上需要浅色衬底的图标：非 tile 的位图 / 外链图标（可能是透明底深色墨），
+ * 以及适配后仍然写死了近黑色的 SVG（适配器没动它）。
+ */
+export function needsLightBacking(name?: string): boolean {
+  if (!name) return false;
+  const key = name.toLowerCase();
+  if (isTileIcon(key)) return false;
+  if (key in iconUrls) return true;
+  const svg = icons[key];
+  if (svg === undefined) return false;
+  return paintedColors(adaptSvgToTheme(svg)).some(isDarkInk);
 }
 
 export function isUrlIcon(name: string): boolean {
