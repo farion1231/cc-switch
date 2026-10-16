@@ -4328,6 +4328,7 @@
       "defaultCannotRemove": "默认那家不能移除，先把别家设为默认。",
       "currentCannotRemove": "正在用的这家不能移除，先启用别家。",
       "inUseCannotDelete": "正在用的这家不能删除，先切到别家。",
+      "directDefaultCannotDelete": "退出路由后会回到这家，所以不能删除。先在直连页对别家点「回到直连并使用」，再删除。",
       "noFailover": "官方账号不进故障转移队列：它用客户端自己的登录，不能和别家轮换。"
     },
     "section": {

@@ -129,22 +129,30 @@ export function buildSwitchSections(input: SwitchModeInput): ProviderSection[] {
   const { t, active, directId, routeId } = input;
   // 后端 is_referenced：直连指针指着的、路由 / 聚合模式下正在路由的，都删不掉。
   // 不管当前看的是哪个视图都要标出来，否则确认后后端拒绝、确认框还卡在原地
-  const inUse = (id: string) =>
-    id === directId || (active !== "direct" && id === routeId);
-  const inUseReason = t("providerCard.reason.inUseCannotDelete");
+  // 路由 / 聚合时直连那家不算「正在用」，路由页卡上也不标，单独说明为什么删不掉
+  const deleteBlockedReason = (id: string) => {
+    if (active !== "direct" && id === routeId)
+      return t("providerCard.reason.inUseCannotDelete");
+    if (id === directId)
+      return active === "direct"
+        ? t("providerCard.reason.inUseCannotDelete")
+        : t("providerCard.reason.directDefaultCannotDelete");
+    return undefined;
+  };
   return buildSwitchSectionsByView(input).map((section) => ({
     ...section,
-    items: section.items.map((item) =>
-      inUse(item.provider.id)
+    items: section.items.map((item) => {
+      const reason = deleteBlockedReason(item.provider.id);
+      return reason
         ? {
             ...item,
             presentation: {
               ...item.presentation,
-              deleteDisabledReason: inUseReason,
+              deleteDisabledReason: reason,
             },
           }
-        : item,
-    ),
+        : item;
+    }),
   }));
 }
 

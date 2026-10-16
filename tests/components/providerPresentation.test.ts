@@ -138,8 +138,13 @@ describe("buildSwitchSections — delete guard", () => {
       view: "direct",
       routeId: "backup",
     });
-    expect(item(sections, "relay").deleteDisabledReason).toBeTruthy();
-    expect(item(sections, "backup").deleteDisabledReason).toBeTruthy();
+    // 直连那家此时不算在用，原因要说清是「退出路由后会回到它」（#8277）
+    expect(item(sections, "relay").deleteDisabledReason).toBe(
+      "providerCard.reason.directDefaultCannotDelete",
+    );
+    expect(item(sections, "backup").deleteDisabledReason).toBe(
+      "providerCard.reason.inUseCannotDelete",
+    );
     expect(item(sections, "converted").deleteDisabledReason).toBeUndefined();
 
     // 直连时 routeId 只是上次的路由，不算在用

@@ -4329,6 +4329,7 @@
       "defaultCannotRemove": "預設那家不能移除，先把別家設為預設。",
       "currentCannotRemove": "正在用的這家不能移除，先啟用別家。",
       "inUseCannotDelete": "正在用的這家不能刪除，先切到別家。",
+      "directDefaultCannotDelete": "退出路由後會回到這家，所以不能刪除。先在直連頁對別家點「回到直連並使用」，再刪除。",
       "noFailover": "官方帳號不進故障轉移佇列：它用客戶端自己的登入，不能和別家輪換。"
     },
     "section": {
