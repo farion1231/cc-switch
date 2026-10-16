@@ -132,6 +132,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     description: "OpenModel",
     category: "aggregator",
     isPartner: true,
+    partnerPromotionKey: "openmodel",
     icon: "openmodel",
   },
   {
@@ -467,6 +468,29 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     partnerPromotionKey: "xycai",
     endpointCandidates: ["https://apicdn.xycai.us", "https://apicdn.xyc.ai"],
     icon: "xycai",
+  },
+  {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    // 官方 Gemini CLI 文档（docs.modelflare.dev/guides/clients/gemini-cli，
+    // 2026-10-15 核对）：base 用站点根。Gemini CLI 走 /v1beta，只有
+    // modelflare.dev 提供，origin 子域不提供，故不加备用端点
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://modelflare.dev",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.6-flash",
+      },
+    },
+    baseURL: "https://modelflare.dev",
+    model: "gemini-3.6-flash",
+    description: "Modelflare",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {

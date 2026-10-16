@@ -1459,9 +1459,14 @@ impl RequestForwarder {
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
+        // 聚合模型的请求已经解出了上游名，不再查映射表（查不到会报错，按档位回落会发错模型）。
         let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
-            crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
-                .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+            if self.keeps_resolved_model() {
+                crate::claude_desktop_config::normalize_upstream_request(body.clone(), provider)
+            } else {
+                crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
+                    .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+            }
         } else if self.keeps_resolved_model() {
             body.clone()
         } else {
@@ -8450,6 +8455,55 @@ mod tests {
             send(&stack_forwarder(), vec![kimi], body)
                 .await
                 .map_err(|e| e.error)
+                .expect("stack mode");
+
+            let requests = up.requests.lock().await;
+            assert_eq!(requests[0]["model"], "kimi-k2");
+            assert_eq!(requests[1]["model"], "kimi-k3");
+        }
+
+        #[tokio::test]
+        async fn claude_desktop_stacked_requests_skip_the_mapping_table() {
+            let up = upstream(vec![ok(), ok()]).await;
+            let mut kimi = provider("kimi", &up);
+            kimi.meta = Some(crate::provider::ProviderMeta {
+                claude_desktop_model_routes: [(
+                    "claude-sonnet-5".to_string(),
+                    crate::provider::ClaudeDesktopModelRoute {
+                        model: "kimi-k2".to_string(),
+                        label_override: None,
+                        supports_1m: None,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            });
+            let send_desktop = |fwd: RequestForwarder, model: &'static str| {
+                let kimi = kimi.clone();
+                async move {
+                    let mut body = plain_body();
+                    body["model"] = json!(model);
+                    fwd.forward_with_retry(
+                        &AppType::ClaudeDesktop,
+                        http::Method::POST,
+                        "/v1/messages",
+                        body,
+                        HeaderMap::new(),
+                        Extensions::new(),
+                        vec![kimi],
+                    )
+                    .await
+                    .map_err(|e| e.error)
+                }
+            };
+
+            // 对照：路由请求按映射表换成上游名；聚合请求体里已经是上游名，映射表里没有它也照发。
+            send_desktop(forwarder(1, "kimi"), "claude-sonnet-5")
+                .await
+                .expect("routed");
+            send_desktop(stack_forwarder(), "kimi-k3")
+                .await
                 .expect("stack mode");
 
             let requests = up.requests.lock().await;

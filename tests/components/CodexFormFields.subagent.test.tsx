@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ComponentProps, PropsWithChildren } from "react";
 import { useForm } from "react-hook-form";
 import { describe, expect, it, vi } from "vitest";
@@ -18,8 +19,10 @@ const FormShell = ({ children }: PropsWithChildren) => {
 
 const NOT_IN_CATALOG = /该模型不在模型列表中：Codex 拿不到它的上下文窗口/;
 
-function renderCodexForm(overrides: Partial<CodexFormFieldsProps> = {}) {
-  const props: CodexFormFieldsProps = {
+function codexFormProps(
+  overrides: Partial<CodexFormFieldsProps> = {},
+): CodexFormFieldsProps {
+  return {
     codexApiKey: "sk-test",
     onApiKeyChange: vi.fn(),
     category: "third_party",
@@ -59,6 +62,10 @@ function renderCodexForm(overrides: Partial<CodexFormFieldsProps> = {}) {
     onSubagentReasoningEffortChange: vi.fn(),
     ...overrides,
   };
+}
+
+function renderCodexForm(overrides: Partial<CodexFormFieldsProps> = {}) {
+  const props = codexFormProps(overrides);
   render(
     <FormShell>
       <CodexFormFields {...props} />
@@ -182,11 +189,7 @@ describe("CodexFormFields help tips", () => {
       onCatalogModelsChange: vi.fn(),
     });
 
-    for (const name of [
-      "codexConfig.apiUrlLabel",
-      "默认模型",
-      "子代理模型",
-    ]) {
+    for (const name of ["codexConfig.apiUrlLabel", "默认模型", "子代理模型"]) {
       expect(screen.getByRole("button", { name })).toBeInTheDocument();
     }
     // Anthropic 格式的高级区自动展开：后果提示仍在页面上，说明在字段名后的「?」里。
@@ -196,6 +199,105 @@ describe("CodexFormFields help tips", () => {
     expect(
       screen.getByText("不要超过模型或网关的真实输出上限，否则会返回 400。"),
     ).toBeVisible();
-    expect(screen.getByText("以下两项只在路由、聚合模式下生效。")).toBeVisible();
+    expect(
+      screen.getByText("以下两项只在路由、聚合模式下生效。"),
+    ).toBeVisible();
+  });
+});
+
+const autoReviewSelect = () =>
+  document.getElementById("codexAutoReviewModel") as HTMLButtonElement | null;
+
+describe("CodexFormFields Auto Review model", () => {
+  it("offers the card's own models and writes the pick through the handler", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    const user = userEvent.setup();
+    const onAutoReviewModelChange = vi.fn();
+    renderCodexForm({
+      catalogModels: [
+        { model: "deepseek-v4-pro" },
+        { model: "deepseek-v4-flash", displayName: "DeepSeek V4 Flash" },
+      ],
+      onCatalogModelsChange: vi.fn(),
+      onAutoReviewModelChange,
+    });
+    const trigger = autoReviewSelect()!;
+    // 列表里没有 codex-auto-review：默认由主模型自己审批
+    expect(trigger.textContent).toBe("主模型自己审批（默认）");
+    expect(trigger).not.toBeDisabled();
+
+    await user.click(trigger);
+    const options = await screen.findAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual([
+      "主模型自己审批（默认）",
+      "deepseek-v4-pro",
+      "DeepSeek V4 Flash",
+    ]);
+    await user.click(screen.getByRole("option", { name: "DeepSeek V4 Flash" }));
+    expect(onAutoReviewModelChange).toHaveBeenCalledWith("deepseek-v4-flash");
+  });
+
+  it("keeps a saved pick when the list and the value arrive together inside a form", () => {
+    // 编辑页：表单先空着渲染，读到卡之后列表和已存的值在同一次渲染里到达。Radix 在 <form>
+    // 里带一个隐藏的原生 select，值先到、选项后注册时它会回报一次空串，不能当成「改回默认」。
+    const onAutoReviewModelChange = vi.fn();
+    const props = codexFormProps({
+      catalogModels: [],
+      onCatalogModelsChange: vi.fn(),
+      onAutoReviewModelChange,
+    });
+    const inForm = (overrides: Partial<CodexFormFieldsProps>) => (
+      <FormShell>
+        <form>
+          <CodexFormFields {...props} {...overrides} />
+        </form>
+      </FormShell>
+    );
+    const { rerender } = render(inForm({}));
+    rerender(
+      inForm({
+        catalogModels: [
+          { model: "deepseek-v4-pro" },
+          { model: "deepseek-flash" },
+        ],
+        autoReviewModel: "deepseek-flash",
+      }),
+    );
+    expect(autoReviewSelect()!.textContent).toBe("deepseek-flash");
+    expect(onAutoReviewModelChange).not.toHaveBeenCalled();
+  });
+
+  it("shows a pick that left the list as the default", () => {
+    renderCodexForm({
+      catalogModels: [{ model: "deepseek-v4-pro" }],
+      onCatalogModelsChange: vi.fn(),
+      autoReviewModel: "deepseek-v4-flash",
+      onAutoReviewModelChange: vi.fn(),
+    });
+    expect(autoReviewSelect()!.textContent).toBe("主模型自己审批（默认）");
+  });
+
+  it("is disabled with Codex's default and an explanation when the card has no list", () => {
+    renderCodexForm({
+      catalogModels: [],
+      onCatalogModelsChange: vi.fn(),
+      onAutoReviewModelChange: vi.fn(),
+    });
+    const trigger = autoReviewSelect()!;
+    expect(trigger).toBeDisabled();
+    expect(trigger.textContent).toBe("Codex 默认（codex-auto-review）");
+    expect(
+      screen.getByText(
+        /这张卡没有模型列表：Codex 会用官方的 codex-auto-review 审批/,
+      ),
+    ).toBeTruthy();
+  });
+
+  it("is hidden for the official card", () => {
+    renderCodexForm({
+      category: "official",
+      onAutoReviewModelChange: vi.fn(),
+    });
+    expect(autoReviewSelect()).toBeNull();
   });
 });
