@@ -1,4 +1,5 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -135,7 +136,7 @@ describe("RequestLogTable", () => {
     });
   });
 
-  it("shows exact speed for routed requests and an estimate for timed session logs", () => {
+  it("shows exact speed for routed requests and an estimate for timed session logs", async () => {
     const base = {
       providerId: "p1",
       providerName: "DeepSeek",
@@ -236,22 +237,29 @@ describe("RequestLogTable", () => {
     expect(
       screen.queryByRole("columnheader", { name: "usage.reasoningEffort" }),
     ).not.toBeInTheDocument();
-    const modelTip = (row: HTMLElement) => row.children[3].firstElementChild;
-    expect(modelTip(rows[0])).toHaveAttribute(
+    const user = userEvent.setup();
+    for (const [index, effort] of [
+      [0, "xhigh"],
+      [1, "none"],
+      [3, "high"],
+    ] as const) {
+      const model = rows[index].children[3].firstElementChild as HTMLElement;
+      expect(model).not.toHaveAttribute("title");
+      await user.hover(model);
+      const tip = await screen.findByRole("tooltip");
+      expect(
+        within(tip).getByText(
+          index === 0 ? `requested-model → ${base.model}` : base.model,
+        ),
+      ).toBeInTheDocument();
+      expect(
+        within(tip).getByText(`usage.reasoningEffort: ${effort}`),
+      ).toBeInTheDocument();
+      await user.unhover(model);
+    }
+    expect(rows[2].children[3].firstElementChild).toHaveAttribute(
       "title",
-      `requested-model → ${base.model}\nusage.reasoningEffort: xhigh`,
-    );
-    expect(modelTip(rows[1])).toHaveAttribute(
-      "title",
-      `${base.model}\nusage.reasoningEffort: none`,
-    );
-    expect(modelTip(rows[2])).toHaveAttribute(
-      "title",
-      `${base.model}\nusage.reasoningEffort: —`,
-    );
-    expect(modelTip(rows[3])).toHaveAttribute(
-      "title",
-      `${base.model}\nusage.reasoningEffort: high`,
+      base.model,
     );
     // 最后两列：速度、首字
     const speedCell = (row: HTMLElement) =>

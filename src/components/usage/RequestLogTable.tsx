@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useRequestLogs } from "@/lib/query/usage";
 import { TablePagination } from "./TablePagination";
 import { HelpTip } from "@/components/ui/help-tip";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { AppId } from "@/lib/api";
 import {
@@ -355,9 +356,27 @@ export function RequestLogTable({
       ),
       model: (
         <td className={cn(usageTable.td, usageTable.mono, "w-[18%] max-w-0")}>
-          <span className="block truncate" title={modelTitle}>
-            {log.model}
-          </span>
+          <HoverTip
+            content={
+              log.reasoningEffort ? (
+                <>
+                  <div>{modelTitle}</div>
+                  <div>
+                    {t("usage.reasoningEffort")}: {log.reasoningEffort}
+                  </div>
+                </>
+              ) : undefined
+            }
+            side="right"
+            disableHoverableContent
+          >
+            <span
+              className="block truncate"
+              title={log.reasoningEffort ? undefined : modelTitle}
+            >
+              {log.model}
+            </span>
+          </HoverTip>
         </td>
       ),
       freshInput: (
