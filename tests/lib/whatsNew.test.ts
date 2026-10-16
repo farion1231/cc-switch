@@ -169,6 +169,14 @@ describe("parseWhatsNewEntry", () => {
 });
 
 describe("parseWhatsNewNotes", () => {
+  it("reads the summary when the manifest also contains full announcements", () => {
+    const notes = JSON.stringify({
+      ...REMOTE_ENTRY,
+      releaseNotes: { en: "# Full announcement" },
+    });
+    expect(parseWhatsNewNotes(notes, "4.0.13")).toEqual(REMOTE_ENTRY);
+  });
+
   it("reads the serialized summary from the updater body", () => {
     expect(parseWhatsNewNotes(JSON.stringify(REMOTE_ENTRY), "4.0.13")).toEqual(
       REMOTE_ENTRY,

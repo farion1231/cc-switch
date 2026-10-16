@@ -37,12 +37,18 @@ export async function checkForUpdate(
     return { status: "up-to-date" };
   }
 
-  const info: UpdateInfo = {
-    currentVersion,
-    availableVersion: update.version,
-    notes: update.body,
-    pubDate: update.date,
-  };
-
-  return { status: "available", info };
+  try {
+    return {
+      status: "available",
+      info: {
+        currentVersion: update.currentVersion || currentVersion,
+        availableVersion: update.version,
+        notes: update.body,
+        pubDate: update.date,
+      },
+    };
+  } finally {
+    // 检测只读取元数据，不下载；及时释放插件持有的更新资源。
+    await update.close().catch(console.error);
+  }
 }

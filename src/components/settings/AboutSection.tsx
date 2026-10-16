@@ -63,6 +63,11 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   const [starPromptDismissed, setStarPromptDismissed] = useState(
     readStarPromptDismissed,
   );
+  const recentEntries = useMemo(
+    () => (version ? entriesUpTo(WHATS_NEW_ENTRIES, version) : []),
+    [version],
+  );
+
   const { hasUpdate, updateInfo, checkUpdate, resetDismiss, isChecking } =
     useUpdate();
 
@@ -80,10 +85,6 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     return parseWhatsNewNotes(updateInfo.notes, candidate);
   }, [hasUpdate, updateInfo, version]);
 
-  const recentEntries = useMemo(
-    () => (version ? entriesUpTo(WHATS_NEW_ENTRIES, version) : []),
-    [version],
-  );
   // 近期更新列表 = 已装版本的摘要 + 待更新版本的摘要
   const recentEntriesWithPending = useMemo(
     () =>

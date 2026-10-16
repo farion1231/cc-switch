@@ -827,6 +827,15 @@ jobs:
           base_url="https://github.com/$REPO/releases/download/$TAG"
           # 摘要随更新清单一起到达；notes 是字符串，交给 jq 处理 JSON 转义。
           notes_json=$(jq -c 'tojson' "src/whats-new/${VERSION}.json")
+          # 同时携带完整公告；旧客户端和近期更新仍然只读取 version/items。
+          for language in zh en ja; do
+            release_notes="docs/release-notes/v${VERSION}-${language}.md"
+            if [ -f "$release_notes" ]; then
+              notes_json=$(jq -cn --argjson notes "$notes_json" --arg language "$language" \
+                --rawfile markdown "$release_notes" \
+                '$notes | fromjson | .releaseNotes[$language] = $markdown | tojson')
+            fi
+          done
           # 初始化空平台映射
           mac_url=""; mac_sig=""
           win_x64_url=""; win_x64_sig=""
@@ -942,7 +951,6 @@ jobs:
           } > "$tmp_json"
           echo "Generated latest.json:" && cat "$tmp_json"
           mv "$tmp_json" release-assets/latest.json
-
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v3
         with:
