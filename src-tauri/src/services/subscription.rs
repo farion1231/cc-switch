@@ -969,7 +969,7 @@ pub(crate) async fn query_codex_quota(
     Ok(quota)
 }
 
-async fn query_codex_usage(
+pub(crate) async fn query_codex_usage(
     access_token: &str,
     account_id: Option<&str>,
     tool_label: &str,

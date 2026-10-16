@@ -51,6 +51,7 @@ pub fn map_proxy_error_to_status(error: &ProxyError) -> u16 {
 
         // 认证错误：401 Unauthorized
         ProxyError::AuthError(_) => 401,
+        ProxyError::CodexQuotaProtection(_) => 403,
 
         // 数据库错误：500 Internal Server Error
         ProxyError::DatabaseError(_) => 500,
@@ -121,6 +122,10 @@ mod tests {
 
     #[test]
     fn test_map_status_matches_proxy_error_response_semantics() {
+        assert_eq!(
+            map_proxy_error_to_status(&ProxyError::CodexQuotaProtection("protected".to_string())),
+            403
+        );
         assert_eq!(
             map_proxy_error_to_status(&ProxyError::AuthError("bad token".to_string())),
             401

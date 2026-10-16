@@ -408,6 +408,11 @@ export interface Settings {
   checkToolUpdatesOnStartup?: boolean;
   // Preserve Codex ChatGPT login in auth.json when switching third-party providers
   preserveCodexOfficialAuthOnSwitch?: boolean;
+  codexQuotaProtection?: {
+    enabled: boolean;
+    fiveHourThreshold: number;
+    weeklyThreshold: number;
+  };
   // Run official Codex under the shared "custom" provider id so future
   // sessions share one resume-history bucket with third-party providers
   unifyCodexSessionHistory?: boolean;
