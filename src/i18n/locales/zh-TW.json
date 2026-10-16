@@ -4838,7 +4838,7 @@
     },
     "form": {
       "modelsToggle": "設定模型列表",
-      "modelsHiddenHint": "未啟用模型列表：儲存後將以 override-only 型態寫入（不寫 models 鍵）",
+      "modelsHiddenHint": "未設定模型列表：儲存後不寫 models 鍵。此供應商僅在標識與 Oh My Pi 內建供應商相同時生效（其欄位作為該內建供應商的覆寫）。",
       "configYaml": "配置 YAML",
       "fixYamlFirst": "請先修正下方的設定 YAML，再編輯結構化欄位。",
       "providerKeyDuplicate": "此標識已被使用，請更換",

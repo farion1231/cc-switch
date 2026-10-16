@@ -4837,7 +4837,7 @@
     },
     "form": {
       "modelsToggle": "モデルリストを設定",
-      "modelsHiddenHint": "モデルリスト無効：保存時は override-only 形式で書き込みます（models キーを書きません）",
+      "modelsHiddenHint": "モデルリスト未設定：保存時は models キーを書き込みません。このプロバイダーは、識別子が Oh My Pi の内蔵プロバイダーと一致する場合のみ有効になります（そのフィールドは内蔵プロバイダーのオーバーライドとして機能します）。",
       "configYaml": "設定YAML",
       "fixYamlFirst": "下の設定 YAML を修正してから、構造化フィールドを編集してください。",
       "providerKeyDuplicate": "このキーは既に使用されています",
