@@ -1452,6 +1452,8 @@ struct CodexCatalogModelSpec {
     default_reasoning_level: Option<String>,
 }
 
+/// Publish only the first row per request model, matching Codex's slug lookup.
+/// The provider's saved rows remain intact, including duplicate model names.
 fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
     let Some(models) = settings
         .get("modelCatalog")
@@ -1461,6 +1463,7 @@ fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
         return Vec::new();
     };
 
+    let mut seen = HashSet::new();
     let mut specs = Vec::new();
 
     for model_config in models {
@@ -1472,6 +1475,10 @@ fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
         else {
             continue;
         };
+
+        if !seen.insert(model.to_string()) {
+            continue;
+        }
 
         let display_name = model_config
             .get("displayName")
@@ -3847,13 +3854,14 @@ experimental_bearer_token = "stale-table-key"
     }
 
     #[test]
-    fn codex_model_catalog_preserves_same_model_rows_and_contexts() {
+    fn codex_model_catalog_publishes_first_row_per_model_without_changing_saved_rows() {
         let settings = json!({
             "modelCatalog": { "models": [
                 { "model": " deepseek-v4-flash ", "displayName": "Standard", "contextWindow": 500_000 },
                 { "model": "deepseek-v4-flash", "display_name": "Long", "context_window": "1050000" },
                 { "model": "deepseek-v4-flash", "contextWindow": 200_000 },
                 { "model": "deepseek-v4-flash", "contextWindow": 300_000 },
+                { "model": "deepseek-v4-pro", "displayName": "Pro", "contextWindow": 256_000 },
                 { "model": "  " }
             ] }
         });
@@ -3870,28 +3878,53 @@ experimental_bearer_token = "stale-table-key"
                     .unwrap()
                     .unwrap();
                 let models = catalog["models"].as_array().unwrap();
-                assert_eq!(models.len(), 4, "{profile:?} {config}");
-                assert!(models.iter().all(|row| row["slug"] == "deepseek-v4-flash"));
+                assert_eq!(models.len(), 2, "{profile:?} {config}");
+                assert_eq!(models[0]["slug"], "deepseek-v4-flash");
+                assert_eq!(models[1]["slug"], "deepseek-v4-pro");
                 assert_eq!(models[0]["display_name"], "Standard");
-                assert_eq!(models[1]["display_name"], "Long");
-                for (row, window) in models.iter().zip([500_000, 1_050_000, 200_000, 300_000]) {
+                assert_eq!(models[1]["display_name"], "Pro");
+                for (row, window) in models.iter().zip([500_000, 256_000]) {
                     assert_eq!(row["context_window"], window);
                     assert_eq!(row["max_context_window"], window);
                 }
                 let imported =
                     build_simplified_catalog_from_texts("", &catalog.to_string()).unwrap();
                 let reloaded = codex_catalog_model_specs(&json!({ "modelCatalog": imported }));
-                assert_eq!(reloaded.len(), 4);
+                assert_eq!(reloaded.len(), 2);
                 assert_eq!(
                     reloaded
                         .iter()
                         .map(|row| row.context_window.unwrap())
                         .collect::<Vec<_>>(),
-                    vec![500_000, 1_050_000, 200_000, 300_000]
+                    vec![500_000, 256_000]
                 );
             }
         }
         assert_eq!(settings, original);
+    }
+
+    #[test]
+    fn duplicate_gpt_rows_publish_one_official_entry() {
+        for profile in [
+            CodexCatalogToolProfile::NativeResponses,
+            CodexCatalogToolProfile::ProxyChat,
+        ] {
+            let models = with_official_models(official_gpt_rows(), || {
+                catalog_for(
+                    json!([
+                        { "model": "gpt-5.5", "displayName": "Standard", "contextWindow": 500_000 },
+                        { "model": "gpt-5.5", "displayName": "Long", "contextWindow": 1_050_000 }
+                    ]),
+                    "",
+                    profile,
+                )
+            });
+            assert_eq!(models.len(), 1, "{profile:?}");
+            assert_eq!(models[0]["slug"], "gpt-5.5");
+            assert_eq!(models[0]["display_name"], "GPT-5.5");
+            assert_eq!(models[0]["context_window"], 272_000);
+            assert_eq!(models[0]["max_context_window"], 872_000);
+        }
     }
 
     #[test]

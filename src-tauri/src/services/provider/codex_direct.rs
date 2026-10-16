@@ -1279,8 +1279,54 @@ pub(crate) fn preflight(db: &Database, provider: &Provider) -> Result<(), AppErr
 
 #[cfg(test)]
 mod tests {
-    use super::{is_proxy_base_url, stack_subagent_nested};
+    use super::{
+        is_proxy_base_url, stack_subagent_choices, stack_subagent_nested, Member, Provider,
+    };
     use serde_json::json;
+
+    #[test]
+    fn duplicate_saved_models_publish_unique_stack_ids_and_subagent_choices() {
+        let settings = json!({
+            "auth": { "OPENAI_API_KEY": "test-key" },
+            "config": "model_provider = \"custom\"\n[model_providers.custom]\nname = \"Relay\"\nbase_url = \"https://example.com/v1\"\nwire_api = \"responses\"\n",
+            "modelCatalog": { "models": [
+                { "model": " custom-model ", "displayName": "Standard", "contextWindow": 500_000,
+                  "reasoningLevels": ["low", "high"], "defaultReasoningLevel": "low" },
+                { "model": "custom-model", "displayName": "Long", "contextWindow": 1_050_000,
+                  "reasoningLevels": ["xhigh"], "defaultReasoningLevel": "xhigh" },
+                { "model": "other-model", "displayName": "Other" }
+            ] }
+        });
+        let provider = Provider::with_id(
+            "relay".to_string(),
+            "Relay".to_string(),
+            settings.clone(),
+            None,
+        );
+        let model_ids = crate::mode::stack::codex_model_ids("relay", &provider);
+        assert_eq!(
+            model_ids,
+            vec!["ccs-relay/custom-model", "ccs-relay/other-model"]
+        );
+        let members = vec![Member {
+            provider,
+            key: "relay".to_string(),
+            route: false,
+            model_ids: model_ids.clone(),
+        }];
+        let choices = stack_subagent_choices(&members);
+        assert_eq!(
+            choices.iter().map(|choice| &choice.id).collect::<Vec<_>>(),
+            model_ids.iter().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            choices[0].display_name,
+            crate::mode::stack::display_name("Standard", "Relay")
+        );
+        assert_eq!(choices[0].efforts, vec!["low", "high"]);
+        assert_eq!(choices[0].default_effort.as_deref(), Some("low"));
+        assert_eq!(members[0].provider.settings_config, settings);
+    }
 
     /// 子代理设置按合并目录校验：不在目录里、或者父 agent 用新版工具时会拒收的
     /// （`multi_agent_version = "disabled"`）都不写；强度不在档位里只写模型。
