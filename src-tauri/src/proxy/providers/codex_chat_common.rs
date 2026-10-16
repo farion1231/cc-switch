@@ -147,6 +147,26 @@ pub(crate) fn attach_optional_reasoning_content_field(
     attach_reasoning_content_field(item, reasoning)
 }
 
+/// Gemini 的 OpenAI 兼容接口把 thought signature 放在 tool call 的
+/// `extra_content.google.thought_signature` 里，下一轮必须原样带回，否则工具调用回放报 400。
+/// 这里只做透传：从 `source` 复制非空的 `extra_content` 到 `target`。
+pub(crate) fn copy_tool_call_extra_content(target: &mut Value, source: &Value) -> bool {
+    let Some(extra) = tool_call_extra_content(source) else {
+        return false;
+    };
+    let Some(obj) = target.as_object_mut() else {
+        return false;
+    };
+    obj.insert("extra_content".to_string(), extra.clone());
+    true
+}
+
+pub(crate) fn tool_call_extra_content(source: &Value) -> Option<&Value> {
+    source
+        .get("extra_content")
+        .filter(|value| value.as_object().is_some_and(|obj| !obj.is_empty()))
+}
+
 pub(crate) fn response_function_call_item(
     item_id: &str,
     status: &str,
