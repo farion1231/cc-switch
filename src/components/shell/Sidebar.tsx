@@ -32,10 +32,13 @@ import { sidebarWidth, useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { useSettingsQuery } from "@/lib/query";
 import {
+  fmtInt,
+  formatHitRatePercent,
   formatTokensCompact,
   getLocaleFromLanguage,
   getResolvedLang,
   resolveSidebarToday,
+  type SidebarTodayItem,
 } from "@/components/usage/format";
 import { useSidebarStatus, type AppNavStatus } from "@/hooks/useSidebarStatus";
 import { HoverTip } from "@/components/ui/hover-tip";
@@ -217,26 +220,42 @@ function MainDirectory({
   const { moneyShort } = useMoneyFormat();
   const { data: settings } = useSettingsQuery();
   const { hasUpdate } = useUpdate();
-  const { appStatus, todayCost, todayTokens, authNeedsAttention } =
-    useSidebarStatus();
+  const {
+    appStatus,
+    todayCost,
+    todayTokens,
+    todayRequests,
+    todayHitRate,
+    authNeedsAttention,
+  } = useSidebarStatus();
   const apps = APP_IDS.filter((app) => visibleApps[app]);
   const onAppPage = isAppPage(view);
 
-  // 选了的项里是 0 的不写（没配定价时金额总是 0）；全是 0 就整个不显示。
-  // 两项都有时只写数、上下两行（「今日」放进悬停和读屏）：带上「今日」，
-  // 换成新台币这类长币种后一行放不下，会把「用量统计」挤成省略号
-  const todayMode = resolveSidebarToday(settings?.usageDisplay);
-  const todayValues = [
-    (todayMode === "cost" || todayMode === "both") && todayCost > 0
-      ? moneyShort(todayCost)
-      : null,
-    (todayMode === "tokens" || todayMode === "both") && todayTokens > 0
-      ? formatTokensCompact(
-          todayTokens,
-          getLocaleFromLanguage(getResolvedLang(i18n)),
-        )
-      : null,
-  ].filter((part): part is string => part != null);
+  // 选了的项里是 0 的不写（没配定价时金额总是 0）；命中率在今天还没有请求时不写；
+  // 全都没有就整个不显示。两项都有时只写数、上下两行（「今日」放进悬停和读屏）：
+  // 带上「今日」，换成新台币这类长币种后一行放不下，会把「用量统计」挤成省略号
+  const locale = getLocaleFromLanguage(getResolvedLang(i18n));
+  const todayValue = (item: SidebarTodayItem): string | null => {
+    switch (item) {
+      case "cost":
+        return todayCost > 0 ? moneyShort(todayCost) : null;
+      case "tokens":
+        return todayTokens > 0
+          ? formatTokensCompact(todayTokens, locale)
+          : null;
+      case "requests":
+        return todayRequests > 0
+          ? t("nav.todayRequests", { value: fmtInt(todayRequests, locale) })
+          : null;
+      case "hitRate":
+        return todayRequests > 0
+          ? t("nav.todayHitRate", { value: formatHitRatePercent(todayHitRate) })
+          : null;
+    }
+  };
+  const todayValues = resolveSidebarToday(settings?.usageDisplay)
+    .map(todayValue)
+    .filter((part): part is string => part != null);
   const todayText =
     todayValues.length > 0
       ? t("nav.today", { value: todayValues.join(" · ") })

@@ -44,23 +44,38 @@ export const DEFAULT_EXCHANGE_RATES: Record<
   number
 > = { CNY: 6.8, EUR: 0.87, JPY: 158, TWD: 32, TRY: 48 };
 
-/** 侧栏「今日」：金额 / Token / 两者 / 不显示 */
-export const SIDEBAR_TODAY_MODES = [
+/** 侧栏「今日」可选的项，顺序即菜单和侧栏上的顺序 */
+export const SIDEBAR_TODAY_ITEMS = [
   "cost",
   "tokens",
-  "both",
-  "hidden",
+  "requests",
+  "hitRate",
 ] as const;
 
-export type SidebarTodayMode = (typeof SIDEBAR_TODAY_MODES)[number];
+export type SidebarTodayItem = (typeof SIDEBAR_TODAY_ITEMS)[number];
 
-/** 不认得的值按默认的「金额」 */
+/** 侧栏那一格窄，两项已经是上下两行 */
+export const SIDEBAR_TODAY_MAX_ITEMS = 2;
+
+/**
+ * 侧栏「今日」要显示的项：没设置过只显示金额；空列表＝不显示。
+ * 认不出的项忽略，按菜单顺序排，最多两项（手改设置文件多写了也只取前两项）。
+ */
 export function resolveSidebarToday(
   settings: UsageDisplaySettings | undefined,
-): SidebarTodayMode {
-  return (
-    SIDEBAR_TODAY_MODES.find((m) => m === settings?.sidebarToday) ?? "cost"
+): SidebarTodayItem[] {
+  const saved = settings?.sidebarTodayItems;
+  if (!Array.isArray(saved)) return ["cost"];
+  return SIDEBAR_TODAY_ITEMS.filter((item) => saved.includes(item)).slice(
+    0,
+    SIDEBAR_TODAY_MAX_ITEMS,
   );
+}
+
+/** 命中率百分比：`98.6%`；四舍五入到 100.0 的写成 `100%` */
+export function formatHitRatePercent(rate: number): string {
+  const percent = Math.max(0, Math.min(100, rate * 100));
+  return `${percent.toFixed(percent >= 99.95 ? 0 : 1)}%`;
 }
 
 export interface MoneyDisplay {

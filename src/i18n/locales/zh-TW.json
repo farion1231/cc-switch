@@ -2383,12 +2383,14 @@
       "rateInvalid": "請輸入大於 0 的數字",
       "approxNote": "換算後的金額，滑鼠移上去可看美元原值。",
       "sidebarToday": "側欄「今日」",
-      "sidebarTodayModes": {
+      "sidebarTodayItems": {
         "cost": "金額",
         "tokens": "Token",
-        "both": "金額 + Token",
-        "hidden": "不顯示"
+        "requests": "請求數",
+        "hitRate": "快取命中率",
+        "none": "不顯示"
       },
+      "sidebarTodayLimit": "最多選 {{count}} 項",
       "logColumns": "請求日誌的欄位",
       "logColumnsSummary": "{{shown}} / {{total}} 欄"
     },
@@ -4107,6 +4109,8 @@
     "collapseSidebar": "收起側欄",
     "appsGroup": "應用",
     "today": "今日 {{value}}",
+    "todayRequests": "{{value}} 次",
+    "todayHitRate": "命中 {{value}}",
     "usage": "用量統計",
     "auth": "授權中心",
     "authNeedsReauth": "有帳號需要重新登入",

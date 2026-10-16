@@ -2382,12 +2382,14 @@
       "rateInvalid": "请输入大于 0 的数字",
       "approxNote": "换算后的金额悬停可看美元原值。",
       "sidebarToday": "侧栏「今日」",
-      "sidebarTodayModes": {
+      "sidebarTodayItems": {
         "cost": "金额",
         "tokens": "Token",
-        "both": "金额 + Token",
-        "hidden": "不显示"
+        "requests": "请求数",
+        "hitRate": "缓存命中率",
+        "none": "不显示"
       },
+      "sidebarTodayLimit": "最多选 {{count}} 项",
       "logColumns": "请求日志的列",
       "logColumnsSummary": "{{shown}} / {{total}} 列"
     },
@@ -4106,6 +4108,8 @@
     "collapseSidebar": "收起侧栏",
     "appsGroup": "应用",
     "today": "今日 {{value}}",
+    "todayRequests": "{{value}} 次",
+    "todayHitRate": "命中 {{value}}",
     "usage": "用量统计",
     "auth": "授权中心",
     "authNeedsReauth": "有账号需要重新登录",

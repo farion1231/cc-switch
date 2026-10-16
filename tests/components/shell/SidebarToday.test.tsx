@@ -9,6 +9,8 @@ import { createTestQueryClient } from "../../utils/testQueryClient";
 const status = vi.hoisted(() => ({
   todayCost: 47.2,
   todayTokens: 120_400_000,
+  todayRequests: 663,
+  todayHitRate: 0.986,
 }));
 
 vi.mock("react-i18next", () => ({
@@ -28,6 +30,8 @@ vi.mock("@/hooks/useSidebarStatus", () => ({
     appStatus: () => ({ mode: "direct", alert: false }),
     todayCost: status.todayCost,
     todayTokens: status.todayTokens,
+    todayRequests: status.todayRequests,
+    todayHitRate: status.todayHitRate,
     authNeedsAttention: false,
   }),
 }));
@@ -56,19 +60,22 @@ const renderSidebar = (settings: Partial<Settings>) => {
 describe("sidebar Today label", () => {
   it.each([
     [undefined, "nav.today:$47.20"],
-    ["tokens", "nav.today:120M"],
-  ])("shows %s", (mode, label) => {
+    [["tokens"], "nav.today:120M"],
+    [["requests"], "nav.today:nav.todayRequests:663"],
+    [["hitRate"], "nav.today:nav.todayHitRate:98.6%"],
+  ])("shows %s", (items, label) => {
     status.todayCost = 47.2;
     status.todayTokens = 120_400_000;
-    renderSidebar({ usageDisplay: { sidebarToday: mode } });
+    status.todayRequests = 663;
+    renderSidebar({ usageDisplay: { sidebarTodayItems: items } });
     expect(screen.getByText(label)).toBeInTheDocument();
   });
 
-  it("stacks only the numbers when showing both", async () => {
+  it("stacks only the numbers when showing two items", async () => {
     // 带上「今日」一行放不下长币种，会挤掉「用量统计」；完整说法在读屏名字和悬停里
     status.todayCost = 47.2;
     status.todayTokens = 120_400_000;
-    renderSidebar({ usageDisplay: { sidebarToday: "both" } });
+    renderSidebar({ usageDisplay: { sidebarTodayItems: ["cost", "tokens"] } });
     expect(screen.getByText("$47.20")).toBeInTheDocument();
     expect(screen.getByText("120M")).toBeInTheDocument();
     expect(
@@ -85,16 +92,24 @@ describe("sidebar Today label", () => {
   });
 
   it("shows nothing when hidden", () => {
-    renderSidebar({ usageDisplay: { sidebarToday: "hidden" } });
+    renderSidebar({ usageDisplay: { sidebarTodayItems: [] } });
     expect(screen.queryByText(/^nav\.today/)).not.toBeInTheDocument();
   });
 
   it("skips the parts that are zero", () => {
-    // 没配定价时金额是 0：两者模式只剩 Token，金额模式整个不显示
+    // 没配定价时金额是 0：金额 + Token 只剩 Token，只勾金额就整个不显示
     status.todayCost = 0;
     status.todayTokens = 5_000;
-    renderSidebar({ usageDisplay: { sidebarToday: "both" } });
+    renderSidebar({ usageDisplay: { sidebarTodayItems: ["cost", "tokens"] } });
     expect(screen.getByText("nav.today:5,000")).toBeInTheDocument();
+  });
+
+  it("leaves out the hit rate before the first request of the day", () => {
+    status.todayRequests = 0;
+    status.todayTokens = 0;
+    status.todayCost = 0;
+    renderSidebar({ usageDisplay: { sidebarTodayItems: ["hitRate"] } });
+    expect(screen.queryByText(/^nav\.today/)).not.toBeInTheDocument();
   });
 
   it("hides the cost-only label while nothing is priced", () => {

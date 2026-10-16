@@ -371,9 +371,10 @@ pub struct UsageDisplaySettings {
     /// 1 美元折多少目标币种，按币种存：换回 USD 再换回来，填过的汇率还在
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub exchange_rates: BTreeMap<String, f64>,
-    /// 侧栏「今日」显示什么（"cost" / "tokens" / "both" / "hidden"），缺省为 cost
+    /// 侧栏「今日」显示哪几项（"cost" / "tokens" / "requests" / "hitRate"，最多两项），
+    /// 缺省只显示金额；空列表＝不显示，所以空列表也要写进文件
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sidebar_today: Option<String>,
+    pub sidebar_today_items: Option<Vec<String>>,
     /// 请求日志的列显隐：只存用户改过的列（列 id → 是否显示），没写的按各列默认值，
     /// 以后新加的列也按它自己的默认值出现
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -1414,7 +1415,7 @@ mod tests {
             "usageDisplay": {
                 "currency": "CNY",
                 "exchangeRates": { "CNY": 6.8 },
-                "sidebarToday": "both",
+                "sidebarTodayItems": ["cost", "requests"],
                 "requestLogColumns": { "statusCode": true, "app": false }
             }
         }))
@@ -1422,16 +1423,28 @@ mod tests {
         let display = saved.usage_display.as_ref().expect("usage display");
         assert_eq!(display.currency.as_deref(), Some("CNY"));
         assert_eq!(display.exchange_rates.get("CNY"), Some(&6.8));
-        assert_eq!(display.sidebar_today.as_deref(), Some("both"));
+        assert_eq!(
+            display.sidebar_today_items.as_deref(),
+            Some(&["cost".to_string(), "requests".to_string()][..])
+        );
         assert_eq!(display.request_log_columns.get("app"), Some(&false));
         assert_eq!(
             serde_json::to_value(&saved).expect("serialize")["usageDisplay"],
             serde_json::json!({
                 "currency": "CNY",
                 "exchangeRates": { "CNY": 6.8 },
-                "sidebarToday": "both",
+                "sidebarTodayItems": ["cost", "requests"],
                 "requestLogColumns": { "app": false, "statusCode": true }
             })
+        );
+
+        // 侧栏「今日」一项都不勾＝不显示：空列表要原样写回，不能当成没设置
+        let hidden: UsageDisplaySettings =
+            serde_json::from_value(serde_json::json!({ "sidebarTodayItems": [] }))
+                .expect("hidden today label");
+        assert_eq!(
+            serde_json::to_value(&hidden).expect("serialize"),
+            serde_json::json!({ "sidebarTodayItems": [] })
         );
     }
 

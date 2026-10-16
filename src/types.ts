@@ -375,8 +375,8 @@ export interface UsageDisplaySettings {
   currency?: string;
   /** 1 美元折多少目标币种，按币种存 */
   exchangeRates?: Record<string, number>;
-  /** 侧栏「今日」显示什么（见 `SIDEBAR_TODAY_MODES`），缺省为 cost */
-  sidebarToday?: string;
+  /** 侧栏「今日」显示哪几项（见 `SIDEBAR_TODAY_ITEMS`），缺省只显示金额；空列表＝不显示 */
+  sidebarTodayItems?: string[];
   /** 请求日志列显隐：只存用户改过的列（列 id → 是否显示） */
   requestLogColumns?: Record<string, boolean>;
 }

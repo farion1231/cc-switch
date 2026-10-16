@@ -71,6 +71,8 @@ export function useSidebarStatus() {
   const todayCost = parseFiniteNumber(todaySummary?.totalCost) ?? 0;
   // 和用量页「真实消耗 Tokens」同口径
   const todayTokens = todaySummary?.realTotalTokens ?? 0;
+  const todayRequests = todaySummary?.totalRequests ?? 0;
+  const todayHitRate = todaySummary?.cacheHitRate ?? 0;
 
   const authNeedsAttention = authStatuses.some((query) =>
     query.data?.accounts.some(
@@ -78,5 +80,12 @@ export function useSidebarStatus() {
     ),
   );
 
-  return { appStatus, todayCost, todayTokens, authNeedsAttention };
+  return {
+    appStatus,
+    todayCost,
+    todayTokens,
+    todayRequests,
+    todayHitRate,
+    authNeedsAttention,
+  };
 }

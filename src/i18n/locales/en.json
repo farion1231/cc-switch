@@ -2382,12 +2382,14 @@
       "rateInvalid": "Enter a number greater than 0",
       "approxNote": "Hover a converted amount to see the USD value.",
       "sidebarToday": "Sidebar \"Today\"",
-      "sidebarTodayModes": {
+      "sidebarTodayItems": {
         "cost": "Cost",
         "tokens": "Tokens",
-        "both": "Cost + Tokens",
-        "hidden": "Hidden"
+        "requests": "Requests",
+        "hitRate": "Cache hit rate",
+        "none": "Hidden"
       },
+      "sidebarTodayLimit": "Pick up to {{count}}",
       "logColumns": "Request log columns",
       "logColumnsSummary": "{{shown}} of {{total}} columns"
     },
@@ -4106,6 +4108,8 @@
     "collapseSidebar": "Collapse sidebar",
     "appsGroup": "Apps",
     "today": "Today {{value}}",
+    "todayRequests": "{{value}} req",
+    "todayHitRate": "Hit {{value}}",
     "usage": "Usage",
     "auth": "Accounts",
     "authNeedsReauth": "An account needs to sign in again",

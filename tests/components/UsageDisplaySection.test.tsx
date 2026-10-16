@@ -96,7 +96,7 @@ describe("UsageDisplaySection", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("ticks cost and tokens for the sidebar Today label", async () => {
+  it("picks up to two items for the sidebar Today label", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(
@@ -105,44 +105,47 @@ describe("UsageDisplaySection", () => {
     const trigger = screen.getByRole("button", {
       name: /^usage\.display\.sidebarToday:/,
     });
-    expect(trigger).toHaveTextContent("usage.display.sidebarTodayModes.cost");
+    expect(trigger).toHaveTextContent("usage.display.sidebarTodayItems.cost");
 
+    const item = (key: string) =>
+      screen.getByRole("menuitemcheckbox", {
+        name: `usage.display.sidebarTodayItems.${key}`,
+      });
     await user.click(trigger);
     expect(
-      await screen.findByRole("menuitemcheckbox", {
-        name: "usage.display.sidebarTodayModes.cost",
-      }),
-    ).toHaveAttribute("aria-checked", "true");
-    await user.click(
-      screen.getByRole("menuitemcheckbox", {
-        name: "usage.display.sidebarTodayModes.tokens",
-      }),
-    );
-    expect(onChange).toHaveBeenLastCalledWith({
-      currency: "CNY",
-      sidebarToday: "both",
-    });
+      await screen.findByText("usage.display.sidebarTodayLimit"),
+    ).toBeInTheDocument();
+    expect(item("cost")).toHaveAttribute("aria-checked", "true");
 
-    // 菜单不关，接着把金额去掉＝只剩 Token；再去掉 Token＝不显示
-    await user.click(
-      screen.getByRole("menuitemcheckbox", {
-        name: "usage.display.sidebarTodayModes.cost",
-      }),
-    );
+    // 勾的先后不影响顺序：按菜单顺序存
+    await user.click(item("hitRate"));
     expect(onChange).toHaveBeenLastCalledWith({
       currency: "CNY",
-      sidebarToday: "tokens",
+      sidebarTodayItems: ["cost", "hitRate"],
     });
-    await user.click(
-      screen.getByRole("menuitemcheckbox", {
-        name: "usage.display.sidebarTodayModes.tokens",
-      }),
+    expect(trigger).toHaveTextContent(
+      "usage.display.sidebarTodayItems.cost + usage.display.sidebarTodayItems.hitRate",
     );
+
+    // 勾满两项：没勾的灰掉，点了也不变
+    expect(item("requests")).toHaveAttribute("aria-disabled", "true");
+    expect(item("tokens")).toHaveAttribute("aria-disabled", "true");
+    await user.click(item("requests"));
+    expect(onChange).toHaveBeenCalledTimes(1);
+
+    // 去掉一项后其余的又能勾；全去掉＝不显示，存空列表
+    await user.click(item("cost"));
     expect(onChange).toHaveBeenLastCalledWith({
       currency: "CNY",
-      sidebarToday: "hidden",
+      sidebarTodayItems: ["hitRate"],
     });
-    expect(trigger).toHaveTextContent("usage.display.sidebarTodayModes.hidden");
+    expect(item("requests")).not.toHaveAttribute("aria-disabled");
+    await user.click(item("hitRate"));
+    expect(onChange).toHaveBeenLastCalledWith({
+      currency: "CNY",
+      sidebarTodayItems: [],
+    });
+    expect(trigger).toHaveTextContent("usage.display.sidebarTodayItems.none");
   });
 
   it("shows and hides request log columns", async () => {

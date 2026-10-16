@@ -2382,12 +2382,14 @@
       "rateInvalid": "0 より大きい数値を入力してください",
       "approxNote": "換算した金額はホバーで米ドルの値を確認できます。",
       "sidebarToday": "サイドバーの「今日」",
-      "sidebarTodayModes": {
+      "sidebarTodayItems": {
         "cost": "金額",
         "tokens": "トークン",
-        "both": "金額 + トークン",
-        "hidden": "非表示"
+        "requests": "リクエスト数",
+        "hitRate": "キャッシュヒット率",
+        "none": "非表示"
       },
+      "sidebarTodayLimit": "最大 {{count}} 項目まで",
       "logColumns": "リクエストログの列",
       "logColumnsSummary": "{{shown}} / {{total}} 列"
     },
@@ -4106,6 +4108,8 @@
     "collapseSidebar": "サイドバーを折りたたむ",
     "appsGroup": "アプリ",
     "today": "今日 {{value}}",
+    "todayRequests": "{{value}} 回",
+    "todayHitRate": "ヒット {{value}}",
     "usage": "使用量",
     "auth": "アカウント",
     "authNeedsReauth": "再ログインが必要なアカウントがあります",

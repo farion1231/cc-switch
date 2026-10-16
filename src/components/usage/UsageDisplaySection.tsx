@@ -25,7 +25,9 @@ import {
   resolveMoneyDisplay,
   resolveSidebarToday,
   type DisplayCurrency,
-  type SidebarTodayMode,
+  SIDEBAR_TODAY_ITEMS,
+  SIDEBAR_TODAY_MAX_ITEMS,
+  type SidebarTodayItem,
 } from "./format";
 import {
   REQUEST_LOG_COLUMN_LABEL_KEYS,
@@ -50,36 +52,17 @@ function currencyName(code: DisplayCurrency, lang: string): string | undefined {
   }
 }
 
-/** 侧栏「今日」拆成「金额」「Token」两个勾：两个都勾＝两者，都不勾＝不显示 */
-const TODAY_PARTS = ["cost", "tokens"] as const;
-type TodayPart = (typeof TODAY_PARTS)[number];
-
-const todayHas = (mode: SidebarTodayMode, part: TodayPart) =>
-  mode === part || mode === "both";
-
-function toggleTodayPart(
-  mode: SidebarTodayMode,
-  part: TodayPart,
-): SidebarTodayMode {
-  const cost =
-    part === "cost" ? !todayHas(mode, "cost") : todayHas(mode, "cost");
-  const tokens =
-    part === "tokens" ? !todayHas(mode, "tokens") : todayHas(mode, "tokens");
-  if (cost && tokens) return "both";
-  if (cost) return "cost";
-  if (tokens) return "tokens";
-  return "hidden";
-}
-
 interface ChecklistItem {
   id: string;
   label: string;
   checked: boolean;
+  /** 勾满上限时没勾的项灰掉 */
+  disabled?: boolean;
 }
 
 /**
  * 下拉勾选清单：按钮上写当前选了什么，点开逐项勾；勾一项菜单不关，可以接着勾。
- * 有 onReset 时底部给「恢复默认」。
+ * 有 onReset 时底部给「恢复默认」，有 note 时底部写一行说明。
  */
 function ChecklistMenu({
   label,
@@ -87,12 +70,17 @@ function ChecklistMenu({
   items,
   onToggle,
   onReset,
+  note,
+  className,
 }: {
   label: string;
   summary: string;
   items: ChecklistItem[];
   onToggle: (id: string) => void;
   onReset?: () => void;
+  note?: string;
+  /** 按钮宽度 */
+  className: string;
 }) {
   const { t } = useTranslation();
   return (
@@ -101,7 +89,8 @@ function ChecklistMenu({
         aria-label={`${label}: ${summary}`}
         className={cn(
           fieldClass,
-          "flex h-7 w-36 items-center justify-between gap-2 whitespace-nowrap text-start text-body data-[state=open]:border-ring data-[state=open]:ring-[3px] data-[state=open]:ring-ring/20",
+          "flex h-7 items-center justify-between gap-2 whitespace-nowrap text-start text-body data-[state=open]:border-ring data-[state=open]:ring-[3px] data-[state=open]:ring-ring/20",
+          className,
         )}
       >
         <span className="truncate">{summary}</span>
@@ -120,6 +109,7 @@ function ChecklistMenu({
             key={item.id}
             role="menuitemcheckbox"
             aria-checked={item.checked}
+            disabled={item.disabled}
             className="h-[30px] gap-2 rounded-control px-2 text-body"
             onSelect={(event) => {
               event.preventDefault();
@@ -137,6 +127,12 @@ function ChecklistMenu({
             {item.label}
           </DropdownMenuItem>
         ))}
+        {note && (
+          <>
+            <DropdownMenuSeparator />
+            <p className="m-0 px-2 py-1 text-caption text-fg-3">{note}</p>
+          </>
+        )}
         {onReset && (
           <>
             <DropdownMenuSeparator />
@@ -179,19 +175,31 @@ export function UsageDisplaySection({
     setRateInvalid(false);
   }, [currency, rate]);
 
-  const savedTodayMode = resolveSidebarToday(value);
-  const [todayMode, setTodayMode] = useState<SidebarTodayMode>(savedTodayMode);
-  useEffect(() => setTodayMode(savedTodayMode), [savedTodayMode]);
+  // 每次读出来都是新数组，按内容判断设置有没有变
+  const savedTodayItems = resolveSidebarToday(value);
+  const savedTodayKey = savedTodayItems.join(",");
+  const [todayItems, setTodayItems] =
+    useState<SidebarTodayItem[]>(savedTodayItems);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => setTodayItems(savedTodayItems), [savedTodayKey]);
 
   const save = (next: Partial<UsageDisplaySettings>) =>
     onChange({ ...value, ...next });
 
-  const changeTodayMode = async (next: SidebarTodayMode) => {
-    setTodayMode(next);
-    if ((await save({ sidebarToday: next })) === false) {
-      setTodayMode(savedTodayMode);
+  const toggleTodayItem = async (item: SidebarTodayItem) => {
+    // 按菜单顺序存，侧栏上也按这个顺序排
+    const next = SIDEBAR_TODAY_ITEMS.filter((i) =>
+      i === item ? !todayItems.includes(i) : todayItems.includes(i),
+    );
+    if (next.length > SIDEBAR_TODAY_MAX_ITEMS) return;
+    setTodayItems(next);
+    if ((await save({ sidebarTodayItems: next })) === false) {
+      setTodayItems(savedTodayItems);
     }
   };
+  const todayLabel = (item: SidebarTodayItem) =>
+    t(`usage.display.sidebarTodayItems.${item}`);
+  const todayFull = todayItems.length >= SIDEBAR_TODAY_MAX_ITEMS;
 
   // 请求日志的列：只存改过的列；保存要等设置读回来，先按刚勾的显示
   const savedColumns = value?.requestLogColumns;
@@ -309,17 +317,25 @@ export function UsageDisplaySection({
             </span>
             <ChecklistMenu
               label={t("usage.display.sidebarToday")}
-              summary={t(`usage.display.sidebarTodayModes.${todayMode}`)}
-              items={TODAY_PARTS.map((part) => ({
-                id: part,
-                label: t(`usage.display.sidebarTodayModes.${part}`),
-                checked: todayHas(todayMode, part),
-              }))}
-              onToggle={(id) =>
-                void changeTodayMode(
-                  toggleTodayPart(todayMode, id as TodayPart),
-                )
+              className="w-44"
+              summary={
+                todayItems.length > 0
+                  ? todayItems.map(todayLabel).join(" + ")
+                  : t("usage.display.sidebarTodayItems.none")
               }
+              items={SIDEBAR_TODAY_ITEMS.map((item) => {
+                const checked = todayItems.includes(item);
+                return {
+                  id: item,
+                  label: todayLabel(item),
+                  checked,
+                  disabled: todayFull && !checked,
+                };
+              })}
+              note={t("usage.display.sidebarTodayLimit", {
+                count: SIDEBAR_TODAY_MAX_ITEMS,
+              })}
+              onToggle={(id) => void toggleTodayItem(id as SidebarTodayItem)}
             />
           </div>
           <div className="flex items-center gap-2">
@@ -328,6 +344,7 @@ export function UsageDisplaySection({
             </span>
             <ChecklistMenu
               label={t("usage.display.logColumns")}
+              className="w-36"
               summary={t("usage.display.logColumnsSummary", {
                 shown: shownToggleable,
                 total: TOGGLEABLE_REQUEST_LOG_COLUMNS.length,

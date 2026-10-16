@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   fmtInt,
+  formatHitRatePercent,
   formatTokensCompact,
   getLocaleFromLanguage,
   getResolvedLang,
@@ -189,8 +190,6 @@ export function UsageHero({
   const totalCost = parseFiniteNumber(summary?.totalCost);
   const requests = summary?.totalRequests ?? 0;
 
-  const hitPercent = Math.max(0, Math.min(100, hitRate * 100));
-  const hitPercentLabel = hitPercent.toFixed(hitPercent >= 99.95 ? 0 : 1);
   const placeholder = isLoading ? "…" : undefined;
 
   const cacheWriteHelp =
@@ -239,7 +238,7 @@ export function UsageHero({
                 title: t("usage.metrics.hitRateHelpTitle"),
                 body: t("usage.metrics.hitRateHelp"),
               }}
-              value={placeholder ?? `${hitPercentLabel}%`}
+              value={placeholder ?? formatHitRatePercent(hitRate)}
             />
           </div>
           {moreOpen && (
