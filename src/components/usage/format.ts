@@ -80,8 +80,20 @@ const CURRENCY_SYMBOL: Record<DisplayCurrency, string> = {
   TRY: "₺",
 };
 
-/** 日元面额大（1 美元约 158 日元），同一处少显示两位小数：$0.0012 → ≈¥0.19 */
+/** 日元面额大（1 美元约 158 日元），同一处少显示两位小数：$0.0012 → ¥0.19 */
 const FEWER_DIGITS: Partial<Record<DisplayCurrency, number>> = { JPY: 2 };
+
+/**
+ * 换算出来的金额是按手填汇率估的，再多位数也不更准：最多两位小数（日元再少两位）。
+ * 美元按调用方给的位数。
+ */
+function shownDigits(display: MoneyDisplay, digits: number): number {
+  if (display.currency === "USD") return digits;
+  return Math.max(
+    0,
+    Math.min(digits - (FEWER_DIGITS[display.currency] ?? 0), 2),
+  );
+}
 
 /** 整数部分加千位分隔：换成日元、里拉后动辄七位数 */
 function groupThousands(fixed: string): string {
@@ -108,13 +120,7 @@ export function resolveMoneyDisplay(
   };
 }
 
-/** 换算出来的数只是按手填汇率估的，前面加「≈」；0 不加。 */
-function moneyPrefix(display: MoneyDisplay, value: number): string {
-  const approx = display.currency !== "USD" && value !== 0 ? "≈" : "";
-  return `${approx}${CURRENCY_SYMBOL[display.currency]}`;
-}
-
-/** 固定小数位：`$1.23` / `≈¥8.36`。组件里用 `useMoneyFormat()`，别直接传 display。 */
+/** 固定小数位：`$1.23` / `¥8.36`。组件里用 `useMoneyFormat()`，别直接传 display。 */
 export function formatMoney(
   usd: unknown,
   digits: number,
@@ -124,20 +130,26 @@ export function formatMoney(
   const num = parseFiniteNumber(usd);
   if (num == null) return fallback;
   const value = num * display.rate;
-  const shown = Math.max(0, digits - (FEWER_DIGITS[display.currency] ?? 0));
-  return `${moneyPrefix(display, value)}${groupThousands(value.toFixed(shown))}`;
+  const symbol = CURRENCY_SYMBOL[display.currency];
+  const shown = shownDigits(display, digits);
+  const fixed = value.toFixed(shown);
+  // 换算后位数少了，很小的一笔会四舍五入成 0：改写两位有效数字（¥0.0034），别像是免费
+  if (shown < digits && value !== 0 && Number(fixed) === 0) {
+    return `${symbol}${Number(value.toPrecision(2))}`;
+  }
+  return `${symbol}${groupThousands(fixed)}`;
 }
 
 /** 按大小取位数并去掉末尾的 0：`$0.0081` / `$0.012` / `$1.25` */
 export function formatMoneyCompact(usd: number, display: MoneyDisplay): string {
   const value = usd * display.rate;
-  const prefix = moneyPrefix(display, value);
+  const prefix = CURRENCY_SYMBOL[display.currency];
   if (value < 0.01) return `${prefix}${Number(value.toFixed(4))}`;
   if (value < 1) return `${prefix}${Number(value.toFixed(3))}`;
   return `${prefix}${groupThousands(value.toFixed(2))}`;
 }
 
-/** 侧栏这类窄处：100 以上不带小数（`≈¥280`），免得把旁边的标签挤成省略号。 */
+/** 侧栏这类窄处：100 以上不带小数（`¥280`），免得把旁边的标签挤成省略号。 */
 export function formatMoneyShort(usd: unknown, display: MoneyDisplay): string {
   const num = parseFiniteNumber(usd);
   if (num == null) return "--";
@@ -146,7 +158,7 @@ export function formatMoneyShort(usd: unknown, display: MoneyDisplay): string {
 
 /**
  * 坐标轴刻度：画图前就把数据换算成显示币种（刻度才会是 ¥50 这种整数），
- * 所以这里拿到的已是显示币种的值，只加符号；不定小数位，也不加「≈」。
+ * 所以这里拿到的已是显示币种的值，只加符号，不定小数位。
  */
 export function formatMoneyTick(value: unknown, display: MoneyDisplay): string {
   const num = parseFiniteNumber(value) ?? 0;

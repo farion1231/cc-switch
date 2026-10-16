@@ -31,9 +31,9 @@ describe("useMoneyFormat", () => {
     });
     expect(fmt.currency).toBe("CNY");
     expect(fmt.rate).toBe(7);
-    expect(fmt.money(1.5, 2)).toBe("≈¥10.50");
-    expect(fmt.moneyShort(41.2)).toBe("≈¥288");
+    expect(fmt.money(1.5, 2)).toBe("¥10.50");
+    expect(fmt.moneyShort(41.2)).toBe("¥288");
     expect(fmt.usdHint(1.5)).toBe("$1.500000");
-    expect(fmt.moneyTitle(1.5, 6)).toBe("≈¥10.500000 ($1.500000)");
+    expect(fmt.moneyTitle(1.5, 6)).toBe("¥10.50 ($1.500000)");
   });
 });

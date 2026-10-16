@@ -281,13 +281,13 @@ describe("display currency", () => {
     ).toEqual({ currency: "CNY", rate: 7.25 });
   });
 
-  it("marks converted amounts with ≈ but leaves zero and axis ticks plain", () => {
+  it("writes converted amounts with the plain currency symbol", () => {
     const cny = { currency: "CNY" as const, rate: 7 };
-    expect(formatMoney(1.5, 2, cny)).toBe("≈¥10.50");
+    expect(formatMoney(1.5, 2, cny)).toBe("¥10.50");
     expect(formatMoney(0, 2, cny)).toBe("¥0.00");
     expect(formatMoney(null, 2, cny)).toBe("--");
-    expect(formatMoneyCompact(0.001, cny)).toBe("≈¥0.007");
-    expect(formatMoneyCompact(0.0015, cny)).toBe("≈¥0.011");
+    expect(formatMoneyCompact(0.001, cny)).toBe("¥0.007");
+    expect(formatMoneyCompact(0.0015, cny)).toBe("¥0.011");
     // 刻度值画图前已换算，只加符号
     expect(formatMoneyTick(50, cny)).toBe("¥50");
   });
@@ -295,30 +295,44 @@ describe("display currency", () => {
   it("writes each currency with its own symbol and groups thousands", () => {
     expect(formatMoney(30470.55, 2, USD_DISPLAY)).toBe("$30,470.55");
     expect(formatMoney(-1234, 0, USD_DISPLAY)).toBe("$-1,234");
-    expect(formatMoney(2, 2, { currency: "EUR", rate: 0.87 })).toBe("≈€1.74");
-    expect(formatMoney(2, 2, { currency: "TWD", rate: 32 })).toBe("≈NT$64.00");
+    expect(formatMoney(2, 2, { currency: "EUR", rate: 0.87 })).toBe("€1.74");
+    expect(formatMoney(2, 2, { currency: "TWD", rate: 32 })).toBe("NT$64.00");
     expect(formatMoney(100, 2, { currency: "TRY", rate: 48 })).toBe(
-      "≈₺4,800.00",
+      "₺4,800.00",
     );
     expect(formatMoneyTick(20000, { currency: "JPY", rate: 158 })).toBe(
       "¥20,000",
     );
   });
 
+  it("keeps converted amounts to two decimals at most", () => {
+    const twd = { currency: "TWD" as const, rate: 32 };
+    // 悬停用的 6 位、日志用的 4 位，换算后都只留两位
+    expect(formatMoney(64.912461, 6, twd)).toBe("NT$2,077.20");
+    expect(formatMoney(0.0505, 4, twd)).toBe("NT$1.62");
+    expect(formatMoney(1.5, 1, twd)).toBe("NT$48.0");
+    // 小到四舍五入成 0 的一笔写两位有效数字，不写成 0.00
+    expect(formatMoney(0.0001, 4, twd)).toBe("NT$0.0032");
+    expect(formatMoney(0, 4, twd)).toBe("NT$0.00");
+    // 美元照调用方给的位数
+    expect(formatMoney(0.0001, 4, USD_DISPLAY)).toBe("$0.0001");
+    expect(formatMoney(64.912461, 6, USD_DISPLAY)).toBe("$64.912461");
+  });
+
   it("shows yen with two fewer decimals", () => {
     const jpy = { currency: "JPY" as const, rate: 158 };
-    expect(formatMoney(0.0012, 4, jpy)).toBe("≈¥0.19");
-    expect(formatMoney(30470.55, 2, jpy)).toBe("≈¥4,814,347");
-    expect(formatMoney(1.5, 1, jpy)).toBe("≈¥237");
-    expect(formatMoneyShort(0.5, jpy)).toBe("≈¥79");
+    expect(formatMoney(0.0012, 4, jpy)).toBe("¥0.19");
+    expect(formatMoney(30470.55, 2, jpy)).toBe("¥4,814,347");
+    expect(formatMoney(1.5, 1, jpy)).toBe("¥237");
+    expect(formatMoneyShort(0.5, jpy)).toBe("¥79");
   });
 
   it("drops the decimals in narrow spots once the amount reaches 100", () => {
     const cny = { currency: "CNY" as const, rate: 6.8 };
     expect(formatMoneyShort(41.2, USD_DISPLAY)).toBe("$41.20");
     expect(formatMoneyShort(123.456, USD_DISPLAY)).toBe("$123");
-    expect(formatMoneyShort(41.2, cny)).toBe("≈¥280");
-    expect(formatMoneyShort(14.5, cny)).toBe("≈¥98.60");
+    expect(formatMoneyShort(41.2, cny)).toBe("¥280");
+    expect(formatMoneyShort(14.5, cny)).toBe("¥98.60");
     expect(formatMoneyShort(undefined, cny)).toBe("--");
   });
 });

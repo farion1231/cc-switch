@@ -2380,7 +2380,7 @@
       "rate": "Exchange rate",
       "rateHint": "Entered by hand and used only for display; costs are still recorded in USD.",
       "rateInvalid": "Enter a number greater than 0",
-      "approxNote": "Converted amounts are marked with ≈. Hover to see the USD value.",
+      "approxNote": "Hover a converted amount to see the USD value.",
       "sidebarToday": "Sidebar \"Today\"",
       "sidebarTodayModes": {
         "cost": "Cost",

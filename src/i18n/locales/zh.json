@@ -2380,7 +2380,7 @@
       "rate": "汇率",
       "rateHint": "手动填写，只用于换算显示；费用仍按美元记录。",
       "rateInvalid": "请输入大于 0 的数字",
-      "approxNote": "换算后的金额前面带「≈」，悬停可看美元原值。",
+      "approxNote": "换算后的金额悬停可看美元原值。",
       "sidebarToday": "侧栏「今日」",
       "sidebarTodayModes": {
         "cost": "金额",

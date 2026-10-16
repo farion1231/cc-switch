@@ -2381,7 +2381,7 @@
       "rate": "匯率",
       "rateHint": "手動填寫，只用於換算顯示；費用仍以美元記錄。",
       "rateInvalid": "請輸入大於 0 的數字",
-      "approxNote": "換算後的金額前面帶「≈」，滑鼠移上去可看美元原值。",
+      "approxNote": "換算後的金額，滑鼠移上去可看美元原值。",
       "sidebarToday": "側欄「今日」",
       "sidebarTodayModes": {
         "cost": "金額",
