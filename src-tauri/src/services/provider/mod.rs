@@ -6474,10 +6474,11 @@ impl ProviderService {
 
     pub(crate) fn update_pi_usage_script(
         state: &AppState,
+        app_type: AppType,
         id: &str,
         script: crate::provider::UsageScript,
     ) -> Result<bool, AppError> {
-        pi::update_usage_script(state, id, script)
+        pi::update_usage_script(state, app_type, id, script)
     }
 
     /// Delete a provider

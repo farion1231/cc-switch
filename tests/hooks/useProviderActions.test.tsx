@@ -779,35 +779,39 @@ describe("useProviderActions", () => {
     expect(toastErrorMock.mock.calls[0]?.[0]).toBe("Save failed");
   });
 
-  it("saves Pi usage metadata without updating the native provider config", async () => {
-    piApiUpdateProviderUsageScriptMock.mockResolvedValueOnce(true);
-    const { wrapper } = createWrapper();
-    const provider = createProvider({
-      settingsConfig: {
-        name: "Pi provider",
-        futureField: { preserve: true },
-      },
-    });
-    const script: UsageScript = {
-      enabled: true,
-      language: "javascript",
-      code: "return {}",
-    };
+  it.each(["pi", "omp"] as const)(
+    "saves %s usage metadata without updating the native provider config",
+    async (app) => {
+      piApiUpdateProviderUsageScriptMock.mockResolvedValueOnce(true);
+      const { wrapper } = createWrapper();
+      const provider = createProvider({
+        settingsConfig: {
+          name: "Pi provider",
+          futureField: { preserve: true },
+        },
+      });
+      const script: UsageScript = {
+        enabled: true,
+        language: "javascript",
+        code: "return {}",
+      };
 
-    const { result } = renderHook(() => useProviderActions("pi"), {
-      wrapper,
-    });
+      const { result } = renderHook(() => useProviderActions(app), {
+        wrapper,
+      });
 
-    await act(async () => {
-      await result.current.saveUsageScript(provider, script);
-    });
+      await act(async () => {
+        await result.current.saveUsageScript(provider, script);
+      });
 
-    expect(piApiUpdateProviderUsageScriptMock).toHaveBeenCalledWith(
-      provider.id,
-      script,
-    );
-    expect(providersApiUpdateMock).not.toHaveBeenCalled();
-  });
+      expect(piApiUpdateProviderUsageScriptMock).toHaveBeenCalledWith(
+        provider.id,
+        script,
+        app,
+      );
+      expect(providersApiUpdateMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("should use default error message when saveUsageScript fails without error message", async () => {
     providersApiUpdateMock.mockRejectedValueOnce(new Error(""));

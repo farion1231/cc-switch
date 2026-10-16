@@ -284,6 +284,9 @@ fn native_protocol(app_type: &AppType, api_format: Option<ApiFormat>) -> &'stati
 /// 累加式应用读配置时会解释的字符串写法，链接带了就拒绝导入。
 ///
 /// - Pi：`apiKey` 以 `!` 开头会被当成 shell 命令执行；`$NAME`、`${NAME}` 会换成环境变量。
+/// - Omp：`apiKey` 也会执行 `!` 命令，并优先把整个值当环境变量名查找；拒绝纯变量名
+///   （`[A-Za-z_][A-Za-z0-9_]*`，保守地去掉首尾空白再查），也保留 Pi 的 `$` 引用检查。
+///   `baseUrl` 不走此解析；请求头会解析，但链接不会导入请求头。
 /// - OpenCode：`{env:NAME}` 读环境变量，`{file:path}` 读本机文件。
 /// - OpenClaw、Hermes：`${NAME}` 读环境变量。
 ///
@@ -307,7 +310,14 @@ pub(super) fn check_link_values(
     for (field, value) in fields {
         let Some(value) = value else { continue };
         let command = is_pi && field == "apiKey" && value.trim_start().starts_with('!');
-        if command || has_dynamic_reference(value, is_pi) {
+        let omp_env_key = matches!(app_type, AppType::Omp) && field == "apiKey" && {
+            let mut chars = value.trim().chars();
+            chars
+                .next()
+                .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+                && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+        };
+        if command || omp_env_key || has_dynamic_reference(value, is_pi) {
             return Err(AppError::InvalidInput(format!(
                 "The link's '{field}' uses syntax that {} would expand into a command, an \
                  environment variable or a local file; it cannot be imported from a link. Add the \
@@ -1366,14 +1376,50 @@ mod tests {
         assert!(provider.settings_config.get("name").is_none());
         crate::omp_config::validate_provider("cc-switch-import", &provider.settings_config)
             .unwrap();
-        for key in ["PRIVATE_API_KEY", "abc123", "_123_key"] {
+        for key in ["sk-test", "sk-abc123", "123abc", "literal.key"] {
             request.api_key = Some(key.into());
-            assert!(check_link_values(&AppType::Omp, &request).is_ok());
+            assert!(
+                build_provider_from_request(&AppType::Omp, &request).is_ok(),
+                "{key}"
+            );
         }
-        request.api_key = Some("${PRIVATE_API_KEY}".into());
-        assert!(check_link_values(&AppType::Omp, &request).is_err());
-        request.api_key = Some("!secret-command".into());
-        assert!(check_link_values(&AppType::Omp, &request).is_err());
+        for key in [
+            "PRIVATE_API_KEY",
+            "private_api_key",
+            "abc123",
+            "_123_key",
+            "  PRIVATE_API_KEY\t",
+            "$PRIVATE_API_KEY",
+            "${PRIVATE_API_KEY}",
+            "!secret-command",
+            "  !secret-command",
+        ] {
+            request.api_key = Some(key.into());
+            assert!(
+                build_provider_from_request(&AppType::Omp, &request).is_err(),
+                "{key}"
+            );
+        }
+        request.api_key = Some("PRIVATE_API_KEY".into());
+        assert!(check_link_values(&AppType::Pi, &request).is_ok());
+    }
+
+    #[test]
+    fn omp_deeplinks_check_inline_keys_and_do_not_import_headers() {
+        use base64::prelude::*;
+
+        let mut request = hermes_request();
+        request.app = Some("omp".into());
+        request.api_key = None;
+        request.config = Some(BASE64_STANDARD.encode(r#"{"apiKey":"PRIVATE_API_KEY"}"#));
+        assert!(parse_and_merge_config(&request).is_err());
+
+        request.config = Some(BASE64_STANDARD.encode(
+            r#"{"apiKey":"sk-test","headers":{"Authorization":"PRIVATE_API_KEY","X-Test":"!secret-command"}}"#,
+        ));
+        let merged = parse_and_merge_config(&request).unwrap();
+        let provider = build_provider_from_request(&AppType::Omp, &merged).unwrap();
+        assert!(provider.settings_config.get("headers").is_none());
     }
 
     /// deeplink 同时声明 `api_key` 与 `env_key` 时，导入结果只保留用户可见的

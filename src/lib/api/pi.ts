@@ -27,10 +27,12 @@ export const piApi = {
   async updateProviderUsageScript(
     id: string,
     usageScript: UsageScript,
+    app: "pi" | "omp",
   ): Promise<boolean> {
     return await invoke("update_pi_provider_usage_script", {
       id,
       usageScript,
+      app,
     });
   },
 
