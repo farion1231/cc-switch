@@ -719,6 +719,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "TokenFactory",
+    nameKey: "providerForm.presets.tokenfactory",
     websiteUrl: "https://tokenfactory.cn",
     apiKeyUrl: "https://console.tokenfactory.cn/login",
     // 官方 OpenClaw 文档（docs.tokenfactory.cn/tools/openclaw，2026-10-15
@@ -797,8 +798,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         "tokenfactory/kimi-k3": { alias: "Kimi K3" },
       },
     },
-    isPartner: true,
-    partnerPromotionKey: "tokenfactory",
     icon: "tokenfactory",
   },
   {

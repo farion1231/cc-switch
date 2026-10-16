@@ -420,6 +420,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
   },
   {
     name: "TokenFactory",
+    nameKey: "providerForm.presets.tokenfactory",
     providerKey: "cc-switch-tokenfactory",
     websiteUrl: "https://tokenfactory.cn",
     apiKeyUrl: "https://console.tokenfactory.cn/login",
@@ -455,8 +456,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "tokenfactory",
     icon: "tokenfactory",
   },
   {

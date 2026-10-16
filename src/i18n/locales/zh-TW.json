@@ -1601,7 +1601,6 @@
       "soleapi": "SoleAPI 是面向開發者與企業的 AI 模型閘道，一個 API Key 直達 Claude、GPT、Gemini 等 30+ 主流模型，原生相容 OpenAI 與 Anthropic 協定，智慧選路毫秒級故障切換，可用性 99.99%，7×24 技術支援。透過專屬連結註冊即送體驗額度，邀請好友儲值持續返現！",
       "fluxa": "FluxA 與百度智能雲聯合推出 AgenticPlan，讓 AI Agent 能自主購買、管理和使用模型、API 與工具。內含百度千帆 TokenPlan，低至 6 折，可使用 DeepSeek V4、GLM 5.2、Kimi 等旗艦模型，並獲贈 FluxA AgentMarket API 呼叫額度，解鎖搜尋、資料抓取、社群媒體、金融、加密、生圖、影片等 13000+ 付費 API。",
       "88api": "88API 是由香港企業營運的一站式多模型 API 平台，透過統一介面接入文字、圖片、語音和影片模型，支援國際主流付款方式，可開立發票，提供企業級穩定服務。透過專屬連結註冊可獲得專屬贈送額度！",
-      "tokenfactory": "TokenFactory 詞元工廠是面向開發者與企業的國產大模型 API 平台，自建算力平台 token 速度更快，品質更強。CC Switch 使用者專屬福利：進入控制台使用兌換碼「CCSWITCH」，即可兌換 10 元 API 呼叫餘額！",
       "modelflare": "Modelflare 是穩定、低成本的 AI 模型閘道，一個 Key 即可呼叫 GPT、Claude、Gemini、Grok 等主流模型。CC Switch 使用者專享福利：首次儲值使用優惠碼「CCSWITCH」可享 9 折優惠！",
       "openmodel": "OpenModel 為 Codex 和 Claude Code 提供客戶端專屬折扣，所支援的模型透過 Codex 呼叫最高優惠 90%、透過 Claude Code 呼叫最高優惠 60%。CC Switch 使用者透過此連結註冊並使用優惠碼「cc-switch」，即可享受首次儲值九折優惠！",
       "grooroute": "GrooRoute Pro 是可靠流暢的 AI API 中轉服務平台，接入 OpenAI、Claude、DeepSeek 等主流大模型，支援按量計費與訂閱方案。CC Switch 使用者透過此連結註冊即可獲得免費 5 元體驗額度！"
@@ -1616,7 +1615,8 @@
       "deepseek": "DeepSeek",
       "together": "Together AI",
       "tuzi": "兔子API",
-      "yylx": "魚魚連線"
+      "yylx": "魚魚連線",
+      "tokenfactory": "詞元工廠"
     },
     "parameterConfig": "參數設定 - {{name}} *",
     "mainModel": "主模型 (選填)",

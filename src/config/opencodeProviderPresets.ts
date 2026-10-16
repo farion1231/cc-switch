@@ -747,6 +747,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "TokenFactory",
+    nameKey: "providerForm.presets.tokenfactory",
     websiteUrl: "https://tokenfactory.cn",
     apiKeyUrl: "https://console.tokenfactory.cn/login",
     // 官方 OpenCode 文档（docs.tokenfactory.cn/tools/opencode，2026-10-15
@@ -806,8 +807,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         editorValue: "",
       },
     },
-    isPartner: true,
-    partnerPromotionKey: "tokenfactory",
     icon: "tokenfactory",
   },
   {

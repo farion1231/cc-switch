@@ -339,6 +339,7 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "TokenFactory",
+    nameKey: "providerForm.presets.tokenfactory",
     websiteUrl: "https://tokenfactory.cn",
     apiKeyUrl: "https://console.tokenfactory.cn/login",
     // 官方 Claude Code 文档（docs.tokenfactory.cn/tools/claude-code，
@@ -360,8 +361,6 @@ export const providerPresets: ProviderPreset[] = [
     },
     endpointCandidates: ["https://api.tokenfactory.cn/anthropic"],
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "tokenfactory",
     icon: "tokenfactory",
   },
   {

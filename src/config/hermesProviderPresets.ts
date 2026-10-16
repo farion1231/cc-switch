@@ -465,6 +465,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "TokenFactory",
+    nameKey: "providerForm.presets.tokenfactory",
     websiteUrl: "https://tokenfactory.cn",
     apiKeyUrl: "https://console.tokenfactory.cn/login",
     settingsConfig: {
@@ -498,8 +499,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     suggestedDefaults: {
       model: { default: "glm-5.3", provider: "tokenfactory" },
     },
-    isPartner: true,
-    partnerPromotionKey: "tokenfactory",
     icon: "tokenfactory",
   },
   {

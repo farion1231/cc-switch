@@ -377,6 +377,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "TokenFactory",
+    nameKey: "providerForm.presets.tokenfactory",
     websiteUrl: "https://tokenfactory.cn",
     apiKeyUrl: "https://console.tokenfactory.cn/login",
     category: "aggregator",
@@ -392,8 +393,6 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       true,
     ),
     endpointCandidates: ["https://api.tokenfactory.cn/anthropic"],
-    isPartner: true,
-    partnerPromotionKey: "tokenfactory",
     icon: "tokenfactory",
   },
   {

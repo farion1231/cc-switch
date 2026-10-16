@@ -1600,7 +1600,6 @@
       "soleapi": "SoleAPI は開発者と企業向けの AI モデルゲートウェイ。API キー 1 つで Claude・GPT・Gemini など 30 以上の主要モデルを利用でき、OpenAI / Anthropic プロトコルにネイティブ対応。リアルタイムのスマートルーティングとミリ秒単位の自動切替で可用性 99.99%、24 時間 365 日サポート。専用リンクから登録すると無料のお試しクレジット、友人招待で継続的なキャッシュバック！",
       "fluxa": "FluxA と Baidu AI Cloud が共同で提供する AgenticPlan は、AI エージェントがモデル・API・ツールを自ら購入し、管理し、利用できるようにします。百度千帆 TokenPlan を最大 40% オフで含み、DeepSeek V4・GLM 5.2・Kimi などの主力モデルを利用可能。さらに FluxA AgentMarket の API クレジットが付き、検索・データ取得・ソーシャルメディア・金融・暗号資産・画像生成・動画など 13,000 以上の有料 API を利用できます。",
       "88api": "88API は香港企業が運営するワンストップのマルチモデル API プラットフォームで、統一インターフェースからテキスト・画像・音声・動画モデルを利用できます。主要な国際決済方法に対応し、請求書の発行も可能で、エンタープライズ級の安定したサービスを提供します。専用リンクから登録すると特典クレジットがもらえます！",
-      "tokenfactory": "TokenFactory（词元工厂）は開発者と企業向けの中国製 LLM API プラットフォームで、自社構築の計算基盤により高速・高品質なトークンを提供します。CC Switch ユーザー限定特典：コンソールで引き換えコード \"CCSWITCH\" を入力すると、10 元分の API 利用残高がもらえます！",
       "modelflare": "Modelflare は安定・低コストの AI モデルゲートウェイで、1 つのキーで GPT、Claude、Gemini、Grok などの主要モデルを利用できます。CC Switch ユーザー限定特典：初回チャージ時にクーポンコード \"CCSWITCH\" を入力すると 10% オフ！",
       "openmodel": "OpenModel は Codex と Claude Code 向けにクライアント専用割引を提供し、対応モデルを Codex 経由で最大 90% オフ、Claude Code 経由で最大 60% オフで利用できます。CC Switch ユーザーはこのリンクから登録し、プロモコード \"cc-switch\" を使うと初回チャージが 10% オフになります！",
       "grooroute": "GrooRoute Pro は OpenAI、Claude、DeepSeek などの主要モデルに対応する信頼性の高い AI API 中継プラットフォームで、従量課金とサブスクリプションに対応しています。CC Switch ユーザーはこのリンクから登録すると 5 元分の無料お試しクレジットがもらえます！"
@@ -1615,7 +1614,8 @@
       "deepseek": "DeepSeek",
       "together": "Together AI",
       "tuzi": "Tu-zi",
-      "yylx": "YYLX"
+      "yylx": "YYLX",
+      "tokenfactory": "TokenFactory"
     },
     "parameterConfig": "パラメーター設定 - {{name}} *",
     "mainModel": "メインモデル（任意）",
