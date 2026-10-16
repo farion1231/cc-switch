@@ -659,7 +659,9 @@ function NavItem({
       <button
         type="button"
         onClick={onClick}
-        aria-label={ariaLabel ?? title ?? (trailingLabel ? accessibleName : undefined)}
+        aria-label={
+          ariaLabel ?? title ?? (trailingLabel ? accessibleName : undefined)
+        }
         aria-current={selected ? "page" : undefined}
         className={cn(
           "relative flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",

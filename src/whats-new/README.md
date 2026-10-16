@@ -33,3 +33,5 @@
 ## 什么时候写
 
 和三语发布说明一起，放进打 tag 之前的 `docs(release)` 提交。`release.yml` 会先检查 `src/whats-new/<版本>.json` 是否存在，缺了直接失败，不会白跑构建。
+
+发布时，`latest.json.notes` 保存摘要 JSON 的序列化字符串，并在 `releaseNotes` 对象中附带 `docs/release-notes/v<版本>-<zh|en|ja>.md` 的完整 Markdown。关于页按界面语言显示完整公告；繁中使用中文，其他未提供的语言回退英文。缺少完整公告时仍可显示摘要，旧清单的 `Release vX` 占位文本视为没有公告。

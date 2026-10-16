@@ -4,6 +4,8 @@ import { AppUpdateCard } from "@/components/settings/AppUpdateCard";
 import { AboutSection } from "@/components/settings/AboutSection";
 import { settingsApi } from "@/lib/api";
 import { toast } from "@/lib/toast";
+import summary from "@/whats-new/4.0.14.json";
+import announcement from "../../docs/release-notes/v4.0.14-zh.md?raw";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: "zh" } }),
@@ -14,7 +16,6 @@ vi.mock("@tauri-apps/api/app", () => ({
 vi.mock("@/lib/api", () => ({
   settingsApi: {
     openExternal: vi.fn().mockResolvedValue(undefined),
-    installUpdateAndRestart: vi.fn(),
   },
 }));
 vi.mock("@/lib/toast", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
@@ -39,6 +40,7 @@ vi.mock("@/contexts/UpdateContext", () => ({ useUpdate: () => state }));
 describe("about page update card", () => {
   beforeEach(() => {
     state.updateInfo.notes = notes;
+    state.updateInfo.availableVersion = "4.1.0";
     state.error = null;
     vi.mocked(settingsApi.openExternal)
       .mockReset()
@@ -60,7 +62,6 @@ describe("about page update card", () => {
         "https://github.com/farion1231/cc-switch/releases/tag/v4.1.0#assets",
       ),
     );
-    expect(settingsApi.installUpdateAndRestart).not.toHaveBeenCalled();
   });
 
   it("checks for updates without opening a download or starting installation", async () => {
@@ -70,7 +71,6 @@ describe("about page update card", () => {
     );
     await waitFor(() => expect(state.checkUpdate).toHaveBeenCalledOnce());
     expect(settingsApi.openExternal).not.toHaveBeenCalled();
-    expect(settingsApi.installUpdateAndRestart).not.toHaveBeenCalled();
   });
 
   it("shows manual instructions for portable installations", async () => {
@@ -86,7 +86,6 @@ describe("about page update card", () => {
         "https://github.com/farion1231/cc-switch/releases/tag/v4.1.0",
       ),
     );
-    expect(settingsApi.installUpdateAndRestart).not.toHaveBeenCalled();
   });
 
   it("offers the full release page when no announcement was provided", () => {
@@ -96,6 +95,28 @@ describe("about page update card", () => {
     expect(
       screen.getByRole("button", { name: "settings.viewReleaseNotes" }),
     ).toBeInTheDocument();
+  });
+
+  it("renders the complete localized announcement from the published manifest format", () => {
+    state.updateInfo.availableVersion = summary.version;
+    state.updateInfo.notes = JSON.stringify({
+      ...summary,
+      releaseNotes: { zh: announcement },
+    });
+    render(<AppUpdateCard isPortable={false} />);
+    expect(
+      screen.getByRole("heading", { name: "CC Switch v4.0.14" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "settings.releaseNotes" }).textContent,
+    ).not.toContain('"releaseNotes"');
+  });
+
+  it("treats legacy placeholder notes as a missing announcement", () => {
+    state.updateInfo.notes = "Release v4.1.0";
+    render(<AppUpdateCard isPortable={false} />);
+    expect(screen.getByText("settings.noReleaseNotes")).toBeInTheDocument();
+    expect(screen.queryByText("Release v4.1.0")).not.toBeInTheDocument();
   });
 
   it("reports a failed browser launch and allows retrying", async () => {
@@ -118,6 +139,5 @@ describe("about page update card", () => {
     await waitFor(() =>
       expect(settingsApi.openExternal).toHaveBeenCalledTimes(2),
     );
-    expect(settingsApi.installUpdateAndRestart).not.toHaveBeenCalled();
   });
 });

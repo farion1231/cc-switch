@@ -6,6 +6,7 @@ import { SessionMarkdown } from "@/components/sessions/reader/SessionMarkdown";
 import { useUpdate } from "@/contexts/UpdateContext";
 import { settingsApi } from "@/lib/api";
 import { toast } from "@/lib/toast";
+import { getUpdateReleaseNotes } from "@/lib/updateReleaseNotes";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
 export function AppUpdateCard({ isPortable }: { isPortable: boolean }) {
@@ -14,6 +15,10 @@ export function AppUpdateCard({ isPortable }: { isPortable: boolean }) {
   const [openingDownload, setOpeningDownload] = useState(false);
   if (!updateInfo) return null;
 
+  const releaseNotes = getUpdateReleaseNotes(
+    updateInfo,
+    i18n.resolvedLanguage ?? i18n.language,
+  );
   const publishedAt = updateInfo.pubDate ? new Date(updateInfo.pubDate) : null;
   const releaseUrl = `https://github.com/farion1231/cc-switch/releases/tag/v${encodeURIComponent(updateInfo.availableVersion.replace(/^v/, ""))}`;
   const openExternal = (url: string) => {
@@ -84,11 +89,8 @@ export function AppUpdateCard({ isPortable }: { isPortable: boolean }) {
           tabIndex={0}
           className="max-h-96 overflow-y-auto px-4 py-3"
         >
-          {updateInfo.notes?.trim() ? (
-            <SessionMarkdown
-              content={updateInfo.notes}
-              onOpenLink={openExternal}
-            />
+          {releaseNotes ? (
+            <SessionMarkdown content={releaseNotes} onOpenLink={openExternal} />
           ) : (
             <p className="text-body text-fg-2">
               {t("settings.noReleaseNotes")}

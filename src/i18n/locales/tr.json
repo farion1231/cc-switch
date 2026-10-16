@@ -923,8 +923,6 @@
     "manualPortableUpdateHint": "Sürüm sayfasından sisteminize uygun taşınabilir arşivi indirin. Uygulamadan çıkın, arşivi açın ve mevcut programı değiştirin.",
     "openUpdateDownloadFailed": "İndirme sayfası açılamadı. Lütfen tekrar deneyin.",
     "noReleaseNotes": "Bu sürüm için not sağlanmadı. Tam sürüm sayfası için yukarıdaki bağlantıyı kullanın.",
-    "updateTo": "v{{version}}'ye güncelleme",
-    "updating": "Güncelleniyor...",
     "checking": "Kontrol ediliyor...",
     "upToDate": "Güncel",
     "aboutHint": "Sürüm bilgilerini ve güncelleme durumunu görüntüleyin.",

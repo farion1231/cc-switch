@@ -73,16 +73,8 @@ export const settingsApi = {
     return await invoke("restart_app");
   },
 
-  async installUpdateAndRestart(): Promise<boolean> {
-    return await invoke("install_update_and_restart");
-  },
-
   async checkUpdates(): Promise<void> {
     await invoke("check_for_updates");
-  },
-
-  async openPortableUpdateDownload(version: string): Promise<void> {
-    await invoke("open_portable_update_download", { version });
   },
 
   async isPortable(): Promise<boolean> {
