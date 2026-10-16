@@ -35,7 +35,9 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::OpenCode => get_opencode_dir(),
         AppType::OpenClaw => get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
-        AppType::Cursor => crate::cursor_config::get_cursor_dir(),
+        // Cursor 的用户级规则目录是 `~/.cursor/rules/*.mdc`（不是 `~/.cursor/` 下的
+        // AGENTS.md —— 那个位置 Cursor 不读）。
+        AppType::Cursor => crate::cursor_config::get_cursor_dir().join("rules"),
         AppType::Pi => crate::pi_config::get_pi_agent_dir()?,
         AppType::Mcode => crate::mcode_config::data_dir(),
         AppType::ClaudeDesktop => unreachable!("handled above"),
@@ -45,13 +47,34 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Claude => "CLAUDE.md",
         AppType::Codex => "AGENTS.md",
         AppType::Gemini => "GEMINI.md",
-        AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw | AppType::Cursor => "AGENTS.md",
+        AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw => "AGENTS.md",
+        // 该目录里会有用户自己的多个 `.mdc`（如 force-tdd / code-is-ground-truth），
+        // cc-switch 只写自己这一个，绝不碰别的。
+        AppType::Cursor => "cc-switch.mdc",
         AppType::Hermes => "SOUL.md",
         AppType::Pi | AppType::Mcode => "AGENTS.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
     Ok(base_dir.join(filename))
+}
+
+/// Cursor 规则文件缺少 frontmatter 时补上的默认头。
+///
+/// `.mdc` 的**应用方式由 frontmatter 决定**：`alwaysApply: true` = 总是注入。没有 frontmatter
+/// 的规则不会被当作「总是生效」——只写正文等于写了也不生效。
+const CURSOR_PROMPT_FRONTMATTER: &str =
+    "---\ndescription: CC Switch 管理的 Cursor 用户规则\nalwaysApply: true\n---\n\n";
+
+/// 真正写进提示词文件的正文。
+///
+/// 只有 Cursor 需要加工（补 [`CURSOR_PROMPT_FRONTMATTER`]）；其余应用原样写入。已经带
+/// frontmatter（忽略前导空白）时不加工，避免重复添加、也避免覆盖用户自己写的 `globs` 等设置。
+pub fn prompt_file_body(app: &AppType, content: &str) -> String {
+    if !matches!(app, AppType::Cursor) || content.trim_start().starts_with("---") {
+        return content.to_string();
+    }
+    format!("{CURSOR_PROMPT_FRONTMATTER}{content}")
 }
 
 /// 把用户主目录前缀换成 `~`，给界面显示用（复制路径仍用完整路径）。
@@ -134,5 +157,56 @@ mod tests {
             path.file_name().and_then(|name| name.to_str()),
             Some("AGENTS.md")
         );
+    }
+
+    /// 回归：Cursor 的**用户级**规则在 `~/.cursor/rules/*.mdc`（见 cursor.com/docs/rules：
+    /// User rule files in `~/.cursor/rules`），**不是** `~/.cursor/AGENTS.md` —— 后者 Cursor
+    /// 根本不读（AGENTS.md 只在项目根/子目录生效）。该目录里会有用户自己的多个 `.mdc`，
+    /// cc-switch 只能管自己那一个。
+    #[test]
+    fn cursor_prompt_file_lives_in_the_rules_dir() {
+        let path = prompt_file_path(&AppType::Cursor).expect("Cursor prompt path");
+
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("cc-switch.mdc"),
+            "实际：{}",
+            path.display()
+        );
+        assert_eq!(
+            path.parent()
+                .and_then(|parent| parent.file_name())
+                .and_then(|name| name.to_str()),
+            Some("rules"),
+            "必须落在 ~/.cursor/rules 下，实际：{}",
+            path.display()
+        );
+    }
+
+    /// 回归：`.mdc` 的**应用方式由 frontmatter 决定**，没有 frontmatter 的规则不会按
+    /// 「总是生效」应用 —— 只写正文等于写了也不生效（与刚踩的同类坑一致）。
+    #[test]
+    fn cursor_prompt_body_gets_a_default_frontmatter() {
+        let body = prompt_file_body(&AppType::Cursor, "# 我的规则\n");
+
+        assert!(body.starts_with("---\n"), "实际：{body}");
+        assert!(body.contains("alwaysApply: true"), "实际：{body}");
+        assert!(body.ends_with("# 我的规则\n"), "正文须原样保留：{body}");
+    }
+
+    #[test]
+    fn cursor_prompt_body_keeps_an_existing_frontmatter() {
+        let existing = "---\ndescription: x\nalwaysApply: false\n---\n\n# 正文\n";
+        assert_eq!(prompt_file_body(&AppType::Cursor, existing), existing);
+
+        // 前面有空白也算「已有 frontmatter」，不能重复添加
+        let padded = "\n\n---\nalwaysApply: false\n---\n";
+        assert_eq!(prompt_file_body(&AppType::Cursor, padded), padded);
+    }
+
+    #[test]
+    fn other_apps_write_the_body_verbatim() {
+        assert_eq!(prompt_file_body(&AppType::Claude, "# hi"), "# hi");
+        assert_eq!(prompt_file_body(&AppType::Codex, "# hi"), "# hi");
     }
 }
