@@ -2082,4 +2082,20 @@ describe("AppsPage visibility column", () => {
       expect(element).not.toHaveAttribute("data-tone");
     }
   });
+
+  /**
+   * 回归：Cursor 是桌面应用（没有 CLI 可安装/升级），但它和 Claude Desktop 一样要能控制
+   * 「在侧栏显示」——这页（应用页）是当前**唯一**的可见性入口（旧的 AppVisibilitySettings
+   * 已被上游改成孤儿组件），漏一行就等于 Cursor 的侧栏开关无处可点。
+   */
+  it("lists Cursor so its sidebar visibility can be switched", async () => {
+    vi.resetModules();
+    await renderApps();
+
+    expect(
+      card("Cursor").getByRole("switch", {
+        name: /appsPage\.showInSidebar/,
+      }),
+    ).toBeInTheDocument();
+  });
 });
