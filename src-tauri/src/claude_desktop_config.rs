@@ -142,7 +142,8 @@ pub fn apply_provider(db: &Database, provider: &Provider) -> Result<(), AppError
         let (host, port) = db.get_proxy_client_endpoint_sync();
         if port == 0 {
             return Err(AppError::Config(
-                "Claude Desktop 代理地址需要真实监听端口；请先启动本地代理或使用固定端口".to_string(),
+                "Claude Desktop 代理地址需要真实监听端口；请先启动本地代理或使用固定端口"
+                    .to_string(),
             ));
         }
         let origin = crate::services::proxy::proxy_origin(&host, port);
