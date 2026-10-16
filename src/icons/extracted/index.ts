@@ -234,14 +234,6 @@ export function isDarkInk(color?: string): boolean {
   return rgb !== null && Math.max(...rgb) <= 0x50;
 }
 
-function isLightInk(color: string): boolean {
-  const c = color.trim().toLowerCase();
-  if (c === "white") return true;
-  if (!c.startsWith("#")) return false;
-  const rgb = hexChannels(c);
-  return rgb !== null && Math.min(...rgb) >= 0xd8;
-}
-
 // <defs> / <clipPath> / <mask> 里的颜色是遮罩语义，不是画出来的墨色
 const MASK_BLOCK = /(<(defs|clipPath|mask)\b[\s\S]*?<\/\2>)/g;
 const PAINT_ATTR = /\b(fill|stroke)="([^"]+)"/g;
@@ -253,18 +245,16 @@ function paintedColors(svg: string): string[] {
 const adaptedSvgCache = new Map<string, string>();
 
 /**
- * 深色模式适配：把写死的近黑色笔画 / 填充换成 currentColor，跟随外层文字色。
- * 不动的情况：已经用了 currentColor（颜色交给 defaultColor 管）；画出来的颜色里
- * 有近白色（自带深底 + 浅字形的徽标，换了反而看不见）。遮罩里的颜色不参与判断。
+ * 深色模式适配：只处理单墨色图标——画出来的颜色全是近黑色时，换成 currentColor 跟随文字色。
+ * 多色图标里的近黑细节（Hugging Face 的眼睛、LionCC 的线稿）画在彩色形状上，
+ * 换成浅色文字色反而糊掉，保持原样。遮罩里的颜色不参与判断。
  */
 export function adaptSvgToTheme(svg: string): string {
   const cached = adaptedSvgCache.get(svg);
   if (cached !== undefined) return cached;
-  const paints = paintedColors(svg);
-  const skip =
-    paints.some((c) => c.trim().toLowerCase() === "currentcolor") ||
-    paints.some(isLightInk);
-  const result = skip
+  const paints = paintedColors(svg).filter((c) => c.trim() !== "none");
+  const singleInk = paints.length > 0 && paints.every(isDarkInk);
+  const result = !singleInk
     ? svg
     : svg
         .split(MASK_BLOCK)
@@ -282,17 +272,13 @@ export function adaptSvgToTheme(svg: string): string {
 }
 
 /**
- * 深色卡片上需要浅色衬底的图标：非 tile 的位图 / 外链图标（可能是透明底深色墨），
- * 以及适配后仍然写死了近黑色的 SVG（适配器没动它）。
+ * 深色卡片上需要浅色衬底的图标：非 tile 的位图 / 外链图标（可能是透明底深色墨）。
+ * 内联 SVG 要么跟随文字色，要么自带彩色形状，不需要。
  */
 export function needsLightBacking(name?: string): boolean {
   if (!name) return false;
   const key = name.toLowerCase();
-  if (isTileIcon(key)) return false;
-  if (key in iconUrls) return true;
-  const svg = icons[key];
-  if (svg === undefined) return false;
-  return paintedColors(adaptSvgToTheme(svg)).some(isDarkInk);
+  return key in iconUrls && !isTileIcon(key);
 }
 
 export function isUrlIcon(name: string): boolean {

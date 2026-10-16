@@ -18,10 +18,18 @@ describe("isDarkInk", () => {
 });
 
 describe("adaptSvgToTheme", () => {
-  it("recolors near-black paints in multi-color icons", () => {
-    const out = adaptSvgToTheme(getIcon("huggingface"));
-    expect(out).toContain('fill="currentColor"');
-    expect(out).toContain("#FFD21E");
+  it("keeps near-black details on multi-color icons", () => {
+    const hf = getIcon("huggingface");
+    expect(adaptSvgToTheme(hf)).toBe(hf);
+    const lion = getIcon("lioncc");
+    expect(adaptSvgToTheme(lion)).toBe(lion);
+  });
+
+  it("recolors single-ink near-black icons", () => {
+    const svg = '<svg><path fill="#000000"/><path stroke="#111"/></svg>';
+    expect(adaptSvgToTheme(svg)).toBe(
+      '<svg><path fill="currentColor"/><path stroke="currentColor"/></svg>',
+    );
   });
 
   it("leaves saturated reds alone", () => {
@@ -46,6 +54,7 @@ describe("needsLightBacking", () => {
   it("is false for tile and themable icons, true for raster icons", () => {
     expect(needsLightBacking("sssaicode")).toBe(false);
     expect(needsLightBacking("huggingface")).toBe(false);
+    expect(needsLightBacking("openai")).toBe(false);
     expect(needsLightBacking("atlascloud")).toBe(true);
   });
 });
