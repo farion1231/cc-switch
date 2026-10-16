@@ -114,7 +114,7 @@ fn slug(text: &str) -> String {
 }
 
 /// Stack 模型 id。Claude 的上游是 1M 窗口时末尾带 `[1M]`，Claude Code 才按 1M 计算；Claude
-/// Desktop 的 1M 写在模型条目里（`supports1m`），id 不带标记。
+/// Desktop 的 1M 写在模型条目里（`supports1m` + `prefer1m`），id 不带标记。
 pub fn encode(app: &AppType, key: &str, model: &str, one_m: bool) -> String {
     match app {
         AppType::Codex => format!("{CODEX_PREFIX}{key}{CODEX_SEPARATOR}{model}"),
@@ -182,7 +182,7 @@ pub fn decode<'a>(app: &AppType, id: &'a str) -> Decoded<'a> {
             let Some(rest) = id.strip_prefix(DESKTOP_PREFIX) else {
                 return Decoded::Plain;
             };
-            // Desktop 给 `supports1m` 的条目多生成一行 `<id>[1m]`
+            // 1M 条目 Desktop 发请求时用 `<id>[1m]`（`prefer1m` 自动补；旧版另列一行）
             let code = strip_one_m_suffix_for_upstream(rest);
             return if code.len() == DESKTOP_CODE_DIGITS && code.bytes().all(|b| b.is_ascii_digit())
             {

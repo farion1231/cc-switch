@@ -378,6 +378,9 @@ fn inference_model_json(spec: &InferenceModelSpec) -> Value {
         }
         if spec.supports_1m {
             item["supports1m"] = json!(true);
+            // 只有 `supports1m` 时 Desktop 每个模型列两行（原名 + 「1M context window」）。
+            // 加上 `prefer1m`（1.21459.0 起）只列原名，交给内嵌 CLI 时自动补 `[1m]`。
+            item["prefer1m"] = json!(true);
         }
         item
     } else {
@@ -1844,7 +1847,7 @@ mod tests {
         );
         assert_eq!(
             profile["inferenceModels"],
-            json!([{ "name": "claude-sonnet-4-6", "supports1m": true }])
+            json!([{ "name": "claude-sonnet-4-6", "supports1m": true, "prefer1m": true }])
         );
     }
 
@@ -1887,7 +1890,7 @@ mod tests {
             .starts_with("ccs-"));
         assert_eq!(
             profile["inferenceModels"],
-            json!([{ "name": "claude-sonnet-4-6", "labelOverride": "Kimi K2", "supports1m": true }])
+            json!([{ "name": "claude-sonnet-4-6", "labelOverride": "Kimi K2", "supports1m": true, "prefer1m": true }])
         );
         assert!(!profile.to_string().contains("kimi-k2"));
     }
