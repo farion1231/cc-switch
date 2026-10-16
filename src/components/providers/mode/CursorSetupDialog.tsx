@@ -44,6 +44,17 @@ function cursorClientModelIds(provider: Provider): string[] {
   return ids.length > 0 ? ids : [...CURSOR_AUTO_MODEL_IDS];
 }
 
+/**
+ * 顺序无关地比较两个模型名列表（Cursor 侧数组顺序不保证）。
+ * 已写入列表非空 ≠ 目标已写入——换供应商但仍在同一条隧道时 baseUrl 不变，必须比集合。
+ */
+function sameModelSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const sortedA = [...a].sort();
+  const sortedB = [...b].sort();
+  return sortedA.every((id, index) => id === sortedB[index]);
+}
+
 /** 前提链的四个缺口，正好对应步骤条的四段。 */
 type Step = "localRoute" | "publicRoute" | "exitCursor" | "pasteKey";
 type Stage = "checking" | Step | "switching" | "writing" | "writeFailed";
@@ -204,7 +215,7 @@ export function CursorSetupDialog({
           fresh !== undefined &&
           fresh.baseUrl === baseUrl &&
           fresh.useOpenAIKey &&
-          fresh.modelCount > 0;
+          sameModelSet(fresh.modelIds, modelIds);
         if (!alreadyWritten) {
           await writeByokAsync({ baseUrl, modelIds });
         }
