@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
@@ -359,6 +360,19 @@ pub struct CodexLegacyOfficialHistoryBucketMigration {
     pub codex_config_dir: Option<String>,
 }
 
+/// 用量金额的显示方式。只影响显示：库里的费用一律是美元，按 `exchange_rates`
+/// 换算后显示；值的合法性（认不认得币种、汇率是否为正数）由前端兜底。
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageDisplaySettings {
+    /// 显示币种（"USD" / "CNY"），缺省为 USD
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    /// 1 美元折多少目标币种，按币种存：换回 USD 再换回来，填过的汇率还在
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub exchange_rates: BTreeMap<String, f64>,
+}
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -400,6 +414,9 @@ pub struct AppSettings {
     pub usage_confirmed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_dashboard_refresh_interval_ms: Option<u32>,
+    /// 用量金额的显示币种与汇率（只影响显示）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_display: Option<UsageDisplaySettings>,
     /// 会话用量自动扫描开关（默认开启=自动模式）。关闭后停止后台定时扫描
     /// 各客户端会话日志，仅在用户点击"立即同步"时手动扫描；只管扫描时机，
     /// 代理接管记账与启动费用回填（不读会话文件）不受此开关影响。
@@ -598,6 +615,7 @@ impl Default for AppSettings {
             proxy_confirmed: None,
             usage_confirmed: None,
             usage_dashboard_refresh_interval_ms: None,
+            usage_display: None,
             session_auto_sync_enabled: true,
             enable_failover_toggle: false,
             show_profile_switcher: false,
@@ -1374,6 +1392,28 @@ mod tests {
         let saved = serde_json::to_value(&off).expect("serialize");
         assert_eq!(saved["codexStackClassicTools"], false);
         assert!(saved.get("codexStackClassicSubagents").is_none());
+    }
+
+    #[test]
+    fn usage_display_round_trips_and_stays_out_of_old_files() {
+        let old: AppSettings = serde_json::from_value(serde_json::json!({})).expect("old settings");
+        assert!(old.usage_display.is_none());
+        assert!(serde_json::to_value(&old)
+            .expect("serialize")
+            .get("usageDisplay")
+            .is_none());
+
+        let saved: AppSettings = serde_json::from_value(serde_json::json!({
+            "usageDisplay": { "currency": "CNY", "exchangeRates": { "CNY": 6.8 } }
+        }))
+        .expect("usage display");
+        let display = saved.usage_display.as_ref().expect("usage display");
+        assert_eq!(display.currency.as_deref(), Some("CNY"));
+        assert_eq!(display.exchange_rates.get("CNY"), Some(&6.8));
+        assert_eq!(
+            serde_json::to_value(&saved).expect("serialize")["usageDisplay"],
+            serde_json::json!({ "currency": "CNY", "exchangeRates": { "CNY": 6.8 } })
+        );
     }
 
     #[test]

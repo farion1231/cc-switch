@@ -6,11 +6,13 @@ import {
   formatFirstTokenSeconds,
   formatMoney,
   formatMoneyCompact,
+  formatMoneyShort,
   formatMoneyTick,
   formatOutputTokensPerSecond,
   formatTokensCompact,
   formatTokensPerSecond,
   formatTokensShort,
+  resolveMoneyDisplay,
   getAggregateTokensPerSecond,
   getEstimatedTokensPerSecond,
   getOutputTokensPerSecond,
@@ -252,5 +254,70 @@ describe("usage money formatting", () => {
   it("formats axis ticks without fixing decimals", () => {
     expect(formatMoneyTick(0.5, USD_DISPLAY)).toBe("$0.5");
     expect(formatMoneyTick(undefined, USD_DISPLAY)).toBe("$0");
+  });
+});
+
+describe("display currency", () => {
+  it("falls back to USD and the preset rate for unusable settings", () => {
+    expect(resolveMoneyDisplay(undefined)).toEqual(USD_DISPLAY);
+    expect(resolveMoneyDisplay({ currency: "GBP" })).toEqual(USD_DISPLAY);
+    // 汇率只在显示非美元时生效
+    expect(
+      resolveMoneyDisplay({ currency: "USD", exchangeRates: { CNY: 7 } }),
+    ).toEqual(USD_DISPLAY);
+    expect(resolveMoneyDisplay({ currency: "CNY" })).toEqual({
+      currency: "CNY",
+      rate: 6.8,
+    });
+    for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(
+        resolveMoneyDisplay({ currency: "CNY", exchangeRates: { CNY: bad } })
+          .rate,
+      ).toBe(6.8);
+    }
+    expect(
+      resolveMoneyDisplay({ currency: "CNY", exchangeRates: { CNY: 7.25 } }),
+    ).toEqual({ currency: "CNY", rate: 7.25 });
+  });
+
+  it("marks converted amounts with ≈ but leaves zero and axis ticks plain", () => {
+    const cny = { currency: "CNY" as const, rate: 7 };
+    expect(formatMoney(1.5, 2, cny)).toBe("≈¥10.50");
+    expect(formatMoney(0, 2, cny)).toBe("¥0.00");
+    expect(formatMoney(null, 2, cny)).toBe("--");
+    expect(formatMoneyCompact(0.001, cny)).toBe("≈¥0.007");
+    expect(formatMoneyCompact(0.0015, cny)).toBe("≈¥0.011");
+    // 刻度值画图前已换算，只加符号
+    expect(formatMoneyTick(50, cny)).toBe("¥50");
+  });
+
+  it("writes each currency with its own symbol and groups thousands", () => {
+    expect(formatMoney(30470.55, 2, USD_DISPLAY)).toBe("$30,470.55");
+    expect(formatMoney(-1234, 0, USD_DISPLAY)).toBe("$-1,234");
+    expect(formatMoney(2, 2, { currency: "EUR", rate: 0.87 })).toBe("≈€1.74");
+    expect(formatMoney(2, 2, { currency: "TWD", rate: 32 })).toBe("≈NT$64.00");
+    expect(formatMoney(100, 2, { currency: "TRY", rate: 48 })).toBe(
+      "≈₺4,800.00",
+    );
+    expect(formatMoneyTick(20000, { currency: "JPY", rate: 158 })).toBe(
+      "¥20,000",
+    );
+  });
+
+  it("shows yen with two fewer decimals", () => {
+    const jpy = { currency: "JPY" as const, rate: 158 };
+    expect(formatMoney(0.0012, 4, jpy)).toBe("≈¥0.19");
+    expect(formatMoney(30470.55, 2, jpy)).toBe("≈¥4,814,347");
+    expect(formatMoney(1.5, 1, jpy)).toBe("≈¥237");
+    expect(formatMoneyShort(0.5, jpy)).toBe("≈¥79");
+  });
+
+  it("drops the decimals in narrow spots once the amount reaches 100", () => {
+    const cny = { currency: "CNY" as const, rate: 6.8 };
+    expect(formatMoneyShort(41.2, USD_DISPLAY)).toBe("$41.20");
+    expect(formatMoneyShort(123.456, USD_DISPLAY)).toBe("$123");
+    expect(formatMoneyShort(41.2, cny)).toBe("≈¥280");
+    expect(formatMoneyShort(14.5, cny)).toBe("≈¥98.60");
+    expect(formatMoneyShort(undefined, cny)).toBe("--");
   });
 });

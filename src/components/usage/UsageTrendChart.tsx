@@ -175,7 +175,7 @@ export function UsageTrendChart({
   refreshIntervalMs,
 }: UsageTrendChartProps) {
   const { t, i18n } = useTranslation();
-  const { money, moneyTick } = useMoneyFormat();
+  const { money, moneyTick, rate } = useMoneyFormat();
   const [metric, setMetric] = useState<TrendMetric>("tokens");
   const { startDate, endDate } = resolveUsageRange(range);
   const { data: trends, isLoading } = useUsageTrends(
@@ -320,7 +320,13 @@ export function UsageTrendChart({
                 cursor={{ fill: "var(--bg-subtle)" }}
               />
               <Bar
-                dataKey={metric}
+                // 成本先换算成显示币种再画，Y 轴才会按这个币种挑整齐的刻度
+                dataKey={
+                  metric === "cost"
+                    ? (point: UsageTrendChartPoint) =>
+                        point.cost == null ? null : point.cost * rate
+                    : metric
+                }
                 name={metricLabel}
                 fill="var(--chart-1)"
                 radius={[3, 3, 0, 0]}

@@ -2374,6 +2374,14 @@
       "seconds": "{{seconds}}s"
     },
     "dataSources": "Data sources",
+    "display": {
+      "title": "Amount display",
+      "currency": "Currency",
+      "rate": "Exchange rate",
+      "rateHint": "Entered by hand and used only for display; costs are still recorded in USD.",
+      "rateInvalid": "Enter a number greater than 0",
+      "approxNote": "Converted amounts are marked with ≈. Hover to see the USD value."
+    },
     "providerFilter": {
       "label": "Provider",
       "all": "All providers",
@@ -2412,7 +2420,8 @@
       "label": "Details",
       "providers": "Providers",
       "models": "Models",
-      "pricing": "Pricing"
+      "pricing": "Pricing",
+      "settings": "Settings"
     },
     "sortedByRequests": "Sorted by requests",
     "app": "App",
@@ -2440,7 +2449,7 @@
     },
     "detail": {
       "tokensTitle": "Token usage",
-      "costTitle": "Cost breakdown (USD)",
+      "costTitle": "Cost breakdown ({{currency}})",
       "performance": "Performance",
       "source": "Source",
       "sourceProxy": "Routing service · status {{code}}",

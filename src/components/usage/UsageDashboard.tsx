@@ -51,6 +51,8 @@ import { ModelStatsTable } from "./ModelStatsTable";
 import { PricingConfigPanel } from "./PricingConfigPanel";
 import { RequestDetailPanel } from "./RequestDetailPanel";
 import { UsageDataSourcesSheet } from "./UsageDataSourcesSheet";
+import { UsageDisplaySection } from "./UsageDisplaySection";
+import type { UsageDisplaySettings } from "@/types";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { UsageHeatmap } from "./UsageHeatmap";
 import { fmtInt, formatRelativeTime, getLocaleFromLanguage } from "./format";
@@ -71,8 +73,9 @@ const normalizeRefreshInterval = (value: number | undefined) =>
 
 const STATUS_CODE_OPTIONS = [200, 400, 401, 429, 500] as const;
 
-type UsageTab = "logs" | "providers" | "models" | "pricing";
-const TABS: UsageTab[] = ["logs", "providers", "models", "pricing"];
+// 「设置」放显示币种和模型定价（原「定价」页签并进来）
+type UsageTab = "logs" | "providers" | "models" | "settings";
+const TABS: UsageTab[] = ["logs", "providers", "models", "settings"];
 
 /**
  * 手动「立即同步」的时间，离开页面再回来也还在。后端也会记下最近一次扫描（后台定时和
@@ -146,6 +149,11 @@ interface UsageDashboardProps {
   initialAppType?: AppTypeFilter;
   /** 「数据来源」里的「修改记录请求用量」：打开设置 → 本地路由 */
   onOpenRoutingSettings?: () => void;
+  /** 金额显示币种与汇率（设备级设置） */
+  usageDisplay?: UsageDisplaySettings;
+  onUsageDisplayChange?: (
+    next: UsageDisplaySettings,
+  ) => Promise<boolean> | boolean | void;
 }
 
 /**
@@ -159,6 +167,8 @@ export function UsageDashboard({
   onSessionAutoSyncEnabledChange,
   initialAppType = "all",
   onOpenRoutingSettings,
+  usageDisplay,
+  onUsageDisplayChange,
 }: UsageDashboardProps = {}) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
@@ -636,7 +646,7 @@ export function UsageDashboard({
     logs: t("usage.requestLogs"),
     providers: t("usage.tabs.providers"),
     models: t("usage.tabs.models"),
-    pricing: t("usage.tabs.pricing"),
+    settings: t("usage.tabs.settings"),
   };
   const statusLabel =
     statusCode == null
@@ -735,7 +745,25 @@ export function UsageDashboard({
             refreshIntervalMs={0}
           />
         )}
-        {tab === "pricing" && <PricingConfigPanel />}
+        {tab === "settings" && (
+          <div className="flex flex-col gap-5 pt-3">
+            {onUsageDisplayChange && (
+              <UsageDisplaySection
+                value={usageDisplay}
+                onChange={onUsageDisplayChange}
+              />
+            )}
+            <section aria-labelledby="usage-pricing-title">
+              <h3
+                id="usage-pricing-title"
+                className="m-0 text-strong font-semibold text-fg-1"
+              >
+                {t("usage.tabs.pricing")}
+              </h3>
+              <PricingConfigPanel />
+            </section>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -779,7 +807,7 @@ export function UsageDashboard({
             variant="quiet"
             size="regular"
             onClick={() => {
-              setTab("pricing");
+              setTab("settings");
               setPricingWhileEmpty(true);
             }}
           >

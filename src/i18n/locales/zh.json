@@ -2374,6 +2374,14 @@
       "seconds": "{{seconds}} 秒"
     },
     "dataSources": "数据来源",
+    "display": {
+      "title": "金额显示",
+      "currency": "币种",
+      "rate": "汇率",
+      "rateHint": "手动填写，只用于换算显示；费用仍按美元记录。",
+      "rateInvalid": "请输入大于 0 的数字",
+      "approxNote": "换算后的金额前面带「≈」，悬停可看美元原值。"
+    },
     "providerFilter": {
       "label": "供应商",
       "all": "全部供应商",
@@ -2412,7 +2420,8 @@
       "label": "明细",
       "providers": "供应商",
       "models": "模型",
-      "pricing": "定价"
+      "pricing": "定价",
+      "settings": "设置"
     },
     "sortedByRequests": "按请求数排序",
     "app": "应用",
@@ -2440,7 +2449,7 @@
     },
     "detail": {
       "tokensTitle": "Tokens 用量",
-      "costTitle": "成本明细（USD）",
+      "costTitle": "成本明细（{{currency}}）",
       "performance": "性能",
       "source": "来源",
       "sourceProxy": "路由服务 · 状态码 {{code}}",

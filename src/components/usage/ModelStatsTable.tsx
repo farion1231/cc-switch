@@ -30,7 +30,7 @@ export function ModelStatsTable({
   refreshIntervalMs,
 }: ModelStatsTableProps) {
   const { t, i18n } = useTranslation();
-  const { money } = useMoneyFormat();
+  const { money, moneyTitle } = useMoneyFormat();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const { data: stats, isLoading } = useModelStats(
     range,
@@ -98,7 +98,7 @@ export function ModelStatsTable({
                   </td>
                   <td
                     className={cn(usageTable.td, "font-medium")}
-                    title={`${money(stat.totalCost, 6)} · ${t("usage.avgCost")} ${money(stat.avgCostPerRequest, 4)}`}
+                    title={`${moneyTitle(stat.totalCost, 6)} · ${t("usage.avgCost")} ${money(stat.avgCostPerRequest, 4)}`}
                   >
                     {money(stat.totalCost, 2)}
                   </td>

@@ -85,7 +85,7 @@ function DetailSection({ title, rows }: { title: string; rows: DetailRow[] }) {
 
 function useDetailSections(request: RequestLog) {
   const { t, i18n } = useTranslation();
-  const { money } = useMoneyFormat();
+  const { money, moneyTitle } = useMoneyFormat();
   const usd = (value: string) => money(value, 4);
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const freshInput = getFreshInputTokens(request);
@@ -218,7 +218,7 @@ function useDetailSections(request: RequestLog) {
     value: unpriced ? t("usage.unpriced") : usd(request.totalCostUsd),
     strong: !unpriced,
     muted: unpriced,
-    title: unpriced ? undefined : money(request.totalCostUsd, 6),
+    title: unpriced ? undefined : moneyTitle(request.totalCostUsd, 6),
   });
 
   let performance: DetailRow[];
@@ -317,6 +317,7 @@ function useDetailSections(request: RequestLog) {
 
 function RequestDetailBody({ request }: { request: RequestLog }) {
   const { t } = useTranslation();
+  const { currency } = useMoneyFormat();
   const sections = useDetailSections(request);
   return (
     <div className="flex flex-col gap-4">
@@ -325,7 +326,10 @@ function RequestDetailBody({ request }: { request: RequestLog }) {
         title={t("usage.detail.tokensTitle")}
         rows={sections.tokens}
       />
-      <DetailSection title={t("usage.detail.costTitle")} rows={sections.cost} />
+      <DetailSection
+        title={t("usage.detail.costTitle", { currency })}
+        rows={sections.cost}
+      />
       <DetailSection
         title={t("usage.detail.performance")}
         rows={sections.performance}

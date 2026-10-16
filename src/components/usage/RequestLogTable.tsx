@@ -112,7 +112,7 @@ export function RequestLogTable({
   onOpenDetail,
 }: RequestLogTableProps) {
   const { t, i18n } = useTranslation();
-  const { money } = useMoneyFormat();
+  const { money, usdHint } = useMoneyFormat();
   const [page, setPage] = useState(0);
   const pageSize = 20;
 
@@ -300,9 +300,14 @@ export function RequestLogTable({
             unpriced && "font-normal text-fg-3",
           )}
           title={
-            multiplier != null && multiplier !== 1
-              ? `${t("usage.costMultiplier")} ×${multiplier.toFixed(2)}`
-              : undefined
+            [
+              unpriced ? undefined : usdHint(log.totalCostUsd),
+              multiplier != null && multiplier !== 1
+                ? `${t("usage.costMultiplier")} ×${multiplier.toFixed(2)}`
+                : undefined,
+            ]
+              .filter(Boolean)
+              .join(" · ") || undefined
           }
         >
           {unpriced ? t("usage.unpriced") : money(log.totalCostUsd, 4)}

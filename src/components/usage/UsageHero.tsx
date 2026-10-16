@@ -158,7 +158,7 @@ export function UsageHero({
   compact = false,
 }: UsageHeroProps) {
   const { t, i18n } = useTranslation();
-  const { money } = useMoneyFormat();
+  const { money, moneyTitle } = useMoneyFormat();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const [moreOpen, setMoreOpen] = useState(false);
 
@@ -218,7 +218,7 @@ export function UsageHero({
               value={
                 placeholder ?? (totalCost == null ? "--" : money(totalCost, 2))
               }
-              title={totalCost == null ? undefined : money(totalCost, 6)}
+              title={totalCost == null ? undefined : moneyTitle(totalCost, 6)}
             />
             <MetricCard
               label={t("usage.totalRequests")}

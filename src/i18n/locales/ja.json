@@ -2374,6 +2374,14 @@
       "seconds": "{{seconds}} 秒"
     },
     "dataSources": "データソース",
+    "display": {
+      "title": "金額の表示",
+      "currency": "通貨",
+      "rate": "為替レート",
+      "rateHint": "手動で入力し、表示の換算にのみ使います。費用は引き続き米ドルで記録されます。",
+      "rateInvalid": "0 より大きい数値を入力してください",
+      "approxNote": "換算した金額には「≈」が付きます。ホバーで米ドルの値を確認できます。"
+    },
     "providerFilter": {
       "label": "プロバイダー",
       "all": "すべてのプロバイダー",
@@ -2412,7 +2420,8 @@
       "label": "明細",
       "providers": "プロバイダー",
       "models": "モデル",
-      "pricing": "料金"
+      "pricing": "料金",
+      "settings": "設定"
     },
     "sortedByRequests": "リクエスト数順",
     "app": "アプリ",
@@ -2440,7 +2449,7 @@
     },
     "detail": {
       "tokensTitle": "トークン使用量",
-      "costTitle": "コスト内訳（USD）",
+      "costTitle": "コスト内訳（{{currency}}）",
       "performance": "パフォーマンス",
       "source": "ソース",
       "sourceProxy": "ルーティングサービス · ステータス {{code}}",

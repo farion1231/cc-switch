@@ -2375,6 +2375,14 @@
       "seconds": "{{seconds}} 秒"
     },
     "dataSources": "資料來源",
+    "display": {
+      "title": "金額顯示",
+      "currency": "幣別",
+      "rate": "匯率",
+      "rateHint": "手動填寫，只用於換算顯示；費用仍以美元記錄。",
+      "rateInvalid": "請輸入大於 0 的數字",
+      "approxNote": "換算後的金額前面帶「≈」，滑鼠移上去可看美元原值。"
+    },
     "providerFilter": {
       "label": "供應商",
       "all": "全部供應商",
@@ -2413,7 +2421,8 @@
       "label": "明細",
       "providers": "供應商",
       "models": "模型",
-      "pricing": "定價"
+      "pricing": "定價",
+      "settings": "設定"
     },
     "sortedByRequests": "依請求數排序",
     "app": "應用程式",
@@ -2441,7 +2450,7 @@
     },
     "detail": {
       "tokensTitle": "Tokens 用量",
-      "costTitle": "成本明細（USD）",
+      "costTitle": "成本明細（{{currency}}）",
       "performance": "效能",
       "source": "來源",
       "sourceProxy": "路由服務 · 狀態碼 {{code}}",

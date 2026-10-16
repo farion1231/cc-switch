@@ -461,11 +461,35 @@ describe("UsageDashboard", () => {
       ),
     );
 
-    await user.click(screen.getByRole("tab", { name: "usage.tabs.pricing" }));
+    await user.click(screen.getByRole("tab", { name: "usage.tabs.settings" }));
     expect(screen.getByTestId("pricing-config-panel")).toBeInTheDocument();
     expect(
-      screen.getByRole("tab", { name: "usage.tabs.pricing" }),
+      screen.getByRole("tab", { name: "usage.tabs.settings" }),
     ).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("puts the amount display above pricing in the settings tab", async () => {
+    const user = userEvent.setup();
+    renderDashboard({
+      usageDisplay: { currency: "CNY" },
+      onUsageDisplayChange: vi.fn(),
+    });
+
+    // 头部不再有单独的显示按钮
+    expect(
+      screen.queryByRole("button", { name: "usage.display.title" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "usage.tabs.settings" }));
+    const display = screen.getByRole("heading", {
+      name: "usage.display.title",
+    });
+    const pricing = screen.getByRole("heading", { name: "usage.tabs.pricing" });
+    expect(
+      display.compareDocumentPosition(pricing) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.getByRole("textbox")).toHaveValue("6.8");
+    expect(screen.getByTestId("pricing-config-panel")).toBeInTheDocument();
   });
 
   it("wires the tabs to the tabpanel and supports arrow / Home / End keys", async () => {
@@ -494,13 +518,13 @@ describe("UsageDashboard", () => {
 
     await user.keyboard("{End}");
     expect(
-      screen.getByRole("tab", { name: "usage.tabs.pricing" }),
+      screen.getByRole("tab", { name: "usage.tabs.settings" }),
     ).toHaveFocus();
     await user.keyboard("{ArrowRight}");
     expect(logsTab).toHaveAttribute("aria-selected", "true");
     await user.keyboard("{ArrowLeft}");
     expect(
-      screen.getByRole("tab", { name: "usage.tabs.pricing" }),
+      screen.getByRole("tab", { name: "usage.tabs.settings" }),
     ).toHaveAttribute("aria-selected", "true");
     await user.keyboard("{Home}");
     expect(logsTab).toHaveFocus();
@@ -548,7 +572,7 @@ describe("UsageDashboard", () => {
       await screen.findByTestId("pricing-config-panel"),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("tab", { name: "usage.tabs.pricing" }),
+      screen.getByRole("tab", { name: "usage.tabs.settings" }),
     ).toHaveAttribute("aria-selected", "true");
     // 空库里没有可看的概览，不画全是 0 的卡
     expect(screen.queryByTestId("usage-hero")).not.toBeInTheDocument();

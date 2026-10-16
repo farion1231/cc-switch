@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import { renderWithQueryClient as render } from "../../../utils/testQueryClient";
 import { describe, expect, it } from "vitest";
 import { getAgentReaderStyle } from "@/components/sessions/reader/agentStyles";
 import { transcriptToMarkdown } from "@/components/sessions/reader/exportMarkdown";
