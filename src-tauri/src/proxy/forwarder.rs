@@ -1847,6 +1847,15 @@ impl RequestForwarder {
                 mapped_body,
                 reasoning_config.as_ref(),
             )?;
+            let signature_fallbacks =
+                super::providers::codex_chat_common::fill_gemini_thought_signature_fallback(
+                    &mut chat_body,
+                );
+            if signature_fallbacks > 0 {
+                log::debug!(
+                    "[Codex] Filled {signature_fallbacks} missing Gemini thought signature(s) with the skip placeholder"
+                );
+            }
             super::providers::inject_codex_chat_prompt_cache_key(
                 provider,
                 &mut chat_body,
