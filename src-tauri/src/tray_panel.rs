@@ -4,9 +4,10 @@
 //! - macOS：窗口透明，按前端回报的卡片位置在网页下面垫原生玻璃——macOS 26 用
 //!   `NSGlassEffectView`（Liquid Glass），更早的系统用 `NSVisualEffectView` 的 Popover 材质。
 //!   两块卡片各垫一块，中间留缝。
-//! - Windows：整窗 Acrylic（Win11 22H2+ 走系统背景，更早走合成属性），Win11 圆角；两块卡片并成两栏。
+//! - Windows：Win11 22H2+ 整窗系统 Acrylic，更早的系统没有可用的玻璃材质，网页画兼容的毛玻璃；
+//!   Win11 圆角；两块卡片并成两栏。
 //! - Linux：AppIndicator 不派发点击事件，点图标仍是原生菜单，菜单最上面一项打开面板；没有原生模糊，
-//!   网页自己画接近不透明的底色。
+//!   网页画兼容的毛玻璃。
 //!
 //! 面板只换了外观：每一行沿用原生菜单的事件 id，点击走 `tray::handle_tray_menu_event`，
 //! 切换、路由、故障转移的行为和原生菜单一致。窗口懒创建，之后只隐藏不销毁；失焦即隐藏。
@@ -51,14 +52,14 @@ mod style {
 #[cfg(target_os = "windows")]
 mod style {
     pub const LAYOUT: &str = "joined";
-    pub const GLASS: &str = "native";
     pub const CARD_GAP: f64 = 0.0;
     pub const RADIUS: f64 = 8.0;
 }
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 mod style {
     pub const LAYOUT: &str = "joined";
-    pub const GLASS: &str = "none";
+    /// 没有原生模糊：网页自己画兼容的毛玻璃
+    pub const GLASS: &str = "frosted";
     pub const CARD_GAP: f64 = 0.0;
     pub const RADIUS: f64 = 12.0;
 }
@@ -182,7 +183,8 @@ pub struct PanelPlacement {
     pub radius: f64,
     /// `floating`：两块卡片分开、子面板对齐到行；`joined`：并成两栏（整窗一块背景的平台）
     pub layout: &'static str,
-    /// `native`：背后有系统玻璃，网页只叠一层淡色；`none`：网页自己画底色
+    /// `native`：背后有系统玻璃，网页只叠一层淡色；`frosted`：系统没有可用的玻璃材质，
+    /// 网页自己画兼容的毛玻璃（半透明底色 + 高光描边）
     pub glass: &'static str,
 }
 
@@ -253,7 +255,7 @@ fn place(icon: (f64, f64, f64, f64), work: Area, seq: u64) -> (f64, f64, PanelPl
         gap,
         radius: style::RADIUS,
         layout: style::LAYOUT,
-        glass: style::GLASS,
+        glass: platform::glass(),
     };
     (x, y, placement)
 }
@@ -443,6 +445,8 @@ pub fn notify_changed(app: &AppHandle) {
 /// 卡片在窗口里的位置（逻辑像素，左上角为原点）。
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "camelCase")]
+// 只有 macOS 按卡片位置垫玻璃；其它平台整窗一块背景，用不到这些字段
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub struct CardRect {
     pub x: f64,
     pub y: f64,
@@ -476,6 +480,10 @@ mod platform {
     use tauri::WebviewWindow;
 
     use super::{style, CardRect, Frame};
+
+    pub fn glass() -> &'static str {
+        style::GLASS
+    }
 
     thread_local! {
         /// 垫在网页下面的玻璃，一块卡片一块（只在主线程上碰）。
@@ -634,15 +642,42 @@ mod platform {
 
     use super::{CardRect, Frame};
 
-    /// 整窗 Acrylic + Win11 圆角（Win10 忽略圆角，保持直角）。
+    /// 系统背景材质（`DWMWA_SYSTEMBACKDROP_TYPE`）从这个版本号起可用，和 window-vibrancy
+    /// 走系统 Acrylic 的门槛一致。更早的系统只能用旧的合成属性，改窗口尺寸时卡顿。
+    const SYSTEM_BACKDROP_BUILD: u32 = 22523;
+
+    fn os_build() -> Option<u32> {
+        use winreg::enums::HKEY_LOCAL_MACHINE;
+        use winreg::RegKey;
+        let key = RegKey::predef(HKEY_LOCAL_MACHINE)
+            .open_subkey(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
+            .ok()?;
+        let build: String = key.get_value("CurrentBuildNumber").ok()?;
+        build.trim().parse().ok()
+    }
+
+    /// Win11 22H2+ 用系统 Acrylic；更早的系统没有可用的玻璃材质，网页画兼容的毛玻璃。
+    pub fn glass() -> &'static str {
+        static GLASS: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+        GLASS.get_or_init(|| {
+            if os_build().is_some_and(|build| build >= SYSTEM_BACKDROP_BUILD) {
+                "native"
+            } else {
+                "frosted"
+            }
+        })
+    }
+
+    /// 有系统材质时整窗 Acrylic；Win11 圆角（Win10 忽略，保持直角）。
     pub fn init(window: &WebviewWindow) {
-        let _ = window.set_effects(
-            EffectsBuilder::new()
-                .effect(Effect::Acrylic)
-                // Win10 的合成属性路径用这个底色；Win11 22H2+ 的系统背景忽略它
-                .color(Color(32, 32, 36, 96))
-                .build(),
-        );
+        if glass() == "native" {
+            let _ = window.set_effects(
+                EffectsBuilder::new()
+                    .effect(Effect::Acrylic)
+                    .color(Color(32, 32, 36, 96))
+                    .build(),
+            );
+        }
         if let Ok(hwnd) = window.hwnd() {
             let preference = DWMWCP_ROUND;
             // SAFETY: hwnd 来自 tao，窗口存活；传入的是 4 字节的枚举值。
@@ -697,7 +732,11 @@ mod platform {
 mod platform {
     use tauri::{PhysicalPosition, PhysicalSize, WebviewWindow};
 
-    use super::{CardRect, Frame};
+    use super::{style, CardRect, Frame};
+
+    pub fn glass() -> &'static str {
+        style::GLASS
+    }
 
     pub fn init(_window: &WebviewWindow) {}
 

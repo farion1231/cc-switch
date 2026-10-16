@@ -45,14 +45,33 @@ html.dark[data-glass="native"][data-layout="joined"] .tp-card {
   background: rgba(30, 30, 33, 0.62);
 }
 
-/* Linux：没有原生模糊，自己画接近不透明的底色 */
-html[data-glass="none"] .tp-card {
-  background: rgba(250, 250, 251, 0.97);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+/* 兼容毛玻璃：系统没有可用的玻璃材质（Linux、Win11 22H2 之前的 Windows），网页自己画——
+   半透明底色 + 背景模糊（只作用于网页内容）+ 顶部高光和细描边，看起来像磨砂玻璃 */
+html[data-glass="frosted"] .tp-card {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.55),
+      rgba(255, 255, 255, 0) 120px
+    ),
+    rgba(244, 244, 247, 0.9);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
-html.dark[data-glass="none"] .tp-card {
-  background: rgba(30, 30, 33, 0.97);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+html.dark[data-glass="frosted"] .tp-card {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.06),
+      rgba(255, 255, 255, 0) 120px
+    ),
+    rgba(36, 36, 40, 0.9);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
 /* 两栏时子面板和主面板之间一条分隔线 */

@@ -92,7 +92,7 @@ export interface PanelPlacement {
   gap: number;
   radius: number;
   layout: "floating" | "joined";
-  glass: "native" | "none";
+  glass: "native" | "frosted";
 }
 
 export interface CardRect {
