@@ -1,5 +1,6 @@
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -248,32 +249,39 @@ describe("AppsPage concurrent CLI upgrades", () => {
   });
 
   it("recovers a transient missing-tool result automatically without rechecking healthy tools", async () => {
-    missing.add("grok");
-    await renderApps();
-    expect(mocks.getToolVersions).toHaveBeenCalledTimes(9);
-    missing.delete("grok");
-    mocks.listToolInstallations.mockResolvedValueOnce([
-      report("grok", {
-        installs: [
-          {
-            path: "C:/tools/grok.exe",
-            version: "2.0.0",
-            runnable: true,
-            error: null,
-            source: "system",
-            is_path_default: true,
-          },
-        ],
-      }),
-    ]);
+    const { AppsPage } = await import("@/components/apps/AppsPage");
+    vi.useFakeTimers();
+    try {
+      missing.add("grok");
+      mountApps(AppsPage);
+      await act(async () => {});
+      expect(mocks.getToolVersions).toHaveBeenCalledTimes(9);
+      missing.delete("grok");
+      mocks.listToolInstallations.mockResolvedValueOnce([
+        report("grok", {
+          installs: [
+            {
+              path: "C:/tools/grok.exe",
+              version: "2.0.0",
+              runnable: true,
+              error: null,
+              source: "system",
+              is_path_default: true,
+            },
+          ],
+        }),
+      ]);
 
-    await waitFor(() => expect(isReady("Grok Build")).toBe(true), {
-      timeout: 4000,
-    });
-    expect(mocks.getToolVersions).toHaveBeenCalledTimes(10);
-    expect(mocks.getToolVersions).toHaveBeenLastCalledWith(["grok"], {});
-    expect(card("Grok Build").getByText("C:/tools/grok.exe")).toBeVisible();
-    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+      await act(async () => vi.advanceTimersByTimeAsync(2000));
+      expect(isReady("Grok Build")).toBe(true);
+      expect(mocks.getToolVersions).toHaveBeenCalledTimes(10);
+      expect(mocks.getToolVersions).toHaveBeenLastCalledWith(["grok"], {});
+      expect(card("Grok Build").getByText("C:/tools/grok.exe")).toBeVisible();
+      expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
   });
 
   it("rechecks only expired failures on remount while keeping successful versions cached", async () => {

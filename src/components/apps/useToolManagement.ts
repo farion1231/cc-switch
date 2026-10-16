@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -214,6 +215,8 @@ const EMPTY_TOOL_VERSIONS: ToolVersion[] = [];
 let toolVersionRequestSequence = 0;
 const latestToolVersionRequests = new Map<string, number>();
 const pendingToolVersionRequests = new Map<string, number>();
+let toolInstallationRequestSequence = 0;
+const appliedToolInstallationRequests = new Map<string, number>();
 
 interface ToolManagementState {
   toolVersionsCache: { data: ToolVersion[]; at: number } | null;
@@ -309,20 +312,28 @@ function cacheToolVersions(current: ToolVersion[], complete = false): string[] {
   return recovered;
 }
 
-async function refreshRecoveredInstallations(
-  names: string[],
-  requestId: number,
-) {
+async function loadToolInstallationReports(names: string[], diagnose = false) {
+  const requestId = ++toolInstallationRequestSequence;
+  const reports = await (diagnose
+    ? settingsApi.probeToolInstallations(names)
+    : settingsApi.listToolInstallations(names));
+  const next = { ...toolManagementState.installReports };
+  for (const report of reports) {
+    // 安装报告独立排序：版本重试不会使有效路径失效；迟到的旧扫描不能覆盖新报告。
+    // 只记录已提交的报告，较新的请求失败或仍在等待时，旧报告仍可提供有效信息。
+    if (requestId > (appliedToolInstallationRequests.get(report.tool) ?? 0)) {
+      appliedToolInstallationRequests.set(report.tool, requestId);
+      next[report.tool as ToolName] = report;
+    }
+  }
+  updateToolManagementState({ installReports: next });
+  return reports;
+}
+
+async function refreshRecoveredInstallations(names: string[]) {
   if (names.length === 0) return;
   try {
-    const reports = await settingsApi.listToolInstallations(names);
-    const next = { ...toolManagementState.installReports };
-    for (const report of reports) {
-      if (latestToolVersionRequests.get(report.tool) === requestId) {
-        next[report.tool as ToolName] = report;
-      }
-    }
-    updateToolManagementState({ installReports: next });
+    await loadToolInstallationReports(names);
   } catch (error) {
     console.error(
       "[useToolManagement] Recovery installation check failed",
@@ -353,7 +364,7 @@ export async function checkToolUpdatesInBackground(): Promise<void> {
     );
     if (current.length === 0) return;
     const recovered = cacheToolVersions(current, refreshCacheTime);
-    await refreshRecoveredInstallations(recovered, requestId);
+    await refreshRecoveredInstallations(recovered);
   } catch (error) {
     console.error("[useToolManagement] Background update check failed", error);
   } finally {
@@ -395,6 +406,7 @@ export function useToolManagement() {
   const [isLoadingTools, setIsLoadingTools] = useState(
     () => toolVersionsCache === null,
   );
+  const pendingVersionLoads = useRef(0);
 
   const [wslShellByTool, setWslShellByTool] = useState<
     Record<string, WslShellPreference>
@@ -402,9 +414,17 @@ export function useToolManagement() {
   const [loadingTools, setLoadingTools] = useState<Record<string, boolean>>({});
   // 多处安装冲突诊断结果：按工具存储，有冲突的工具会在其卡片下方展示。
   // 来源两路：顶部「诊断安装冲突」按钮一次性扫全部，或升级后版本未变时自动补诊。
-  const [toolDiagnostics, setToolDiagnostics] = useState<
-    Partial<Record<ToolName, ToolInstallation[]>>
-  >({});
+  const [diagnosedTools, setDiagnosedTools] = useState<ReadonlySet<ToolName>>(
+    () => new Set(),
+  );
+  const toolDiagnostics = useMemo(() => {
+    const diagnostics: Partial<Record<ToolName, ToolInstallation[]>> = {};
+    for (const name of diagnosedTools) {
+      const report = installReports?.[name];
+      if (report?.is_conflict) diagnostics[name] = report.installs;
+    }
+    return diagnostics;
+  }, [diagnosedTools, installReports]);
   const [isDiagnosingAll, setIsDiagnosingAll] = useState(false);
   // 每个工具独立锁定，覆盖预检、等待确认、执行与版本刷新。
   // 共享状态同步加锁，避免重复点击或重挂后的页面重复提交同一工具。
@@ -465,7 +485,7 @@ export function useToolManagement() {
         if (current.length === 0) return [];
 
         const recovered = cacheToolVersions(current);
-        await refreshRecoveredInstallations(recovered, requestId);
+        await refreshRecoveredInstallations(recovered);
 
         // 返回刷新结果，调用方可据此判断版本是否真的探到（避免读 state 撞 stale closure）。
         return current;
@@ -504,9 +524,10 @@ export function useToolManagement() {
           !options?.skipPending || !pendingToolVersionRequests.has(name),
       );
       if (names.length === 0) {
-        if (!options?.skipPending) setIsLoadingTools(false);
+        if (pendingVersionLoads.current === 0) setIsLoadingTools(false);
         return;
       }
+      pendingVersionLoads.current += 1;
       setIsLoadingTools(true);
       try {
         // 逐工具并发刷新过期项，各行独立显示结果。忙碌工具由自身生命周期结束后刷新。
@@ -523,7 +544,8 @@ export function useToolManagement() {
             toolVersionsCache: { ...latestCache, at: Date.now() },
           });
         }
-        setIsLoadingTools(false);
+        pendingVersionLoads.current -= 1;
+        setIsLoadingTools(pendingVersionLoads.current > 0);
       }
     },
     [wslShellByTool, refreshToolVersions],
@@ -556,22 +578,8 @@ export function useToolManagement() {
   const loadInstallations = useCallback(
     async (options?: { force?: boolean }) => {
       if (!options?.force && toolManagementState.installReports) return;
-      const versionRequests = new Map(latestToolVersionRequests);
       try {
-        const reports = await settingsApi.listToolInstallations([
-          ...TOOL_NAMES,
-        ]);
-        const next = { ...toolManagementState.installReports };
-        for (const report of reports) {
-          // 较早的全量扫描不能盖掉后续重试恢复或生命周期刷新得到的安装路径。
-          if (
-            latestToolVersionRequests.get(report.tool) ===
-            versionRequests.get(report.tool)
-          ) {
-            next[report.tool as ToolName] = report;
-          }
-        }
-        updateToolManagementState({ installReports: next });
+        await loadToolInstallationReports([...TOOL_NAMES]);
       } catch (error) {
         console.error(
           "[useToolManagement] probeToolInstallations failed",
@@ -593,7 +601,7 @@ export function useToolManagement() {
 
   useEffect(() => {
     const recheck = () => {
-      if (!document.hidden && !isLoadingTools) {
+      if (!document.hidden) {
         void loadAllToolVersions({ skipPending: true });
       }
     };
@@ -603,7 +611,7 @@ export function useToolManagement() {
       window.removeEventListener("focus", recheck);
       document.removeEventListener("visibilitychange", recheck);
     };
-  }, [isLoadingTools, loadAllToolVersions]);
+  }, [loadAllToolVersions]);
 
   useEffect(() => {
     // 每次失败过程只做一次短延迟重试；真正没装的工具不会被持续轮询。
@@ -646,7 +654,9 @@ export function useToolManagement() {
             return true;
           });
           updateToolManagementState({ failedToolProbes: failures });
-          void refreshToolVersions(retry, wslShellByTool);
+          void Promise.all(
+            retry.map((name) => refreshToolVersions([name], wslShellByTool)),
+          );
         },
         Math.max(0, due - Date.now()),
       );
@@ -690,25 +700,15 @@ export function useToolManagement() {
   // 不报错打扰——与用户主动点的全量诊断区别对待。
   const diagnoseToolSilently = useCallback(async (toolName: ToolName) => {
     try {
-      const [report] = await settingsApi.probeToolInstallations([toolName]);
+      const reports = await loadToolInstallationReports([toolName], true);
+      if (!reports.some((report) => report.tool === toolName)) return false;
+      const report = toolManagementState.installReports?.[toolName];
       // 没拿到报告代表状态未知，不能把它当成「没有其他安装」。
       if (!report) return false;
-      // 同一份报告也是行上的路径 / 来源 / 「另有 N 处安装」：装完、升级完就刷新，
-      // 不用等手动「检查更新」
-      updateToolManagementState({
-        installReports: {
-          ...(toolManagementState.installReports ?? {}),
-          [toolName]: report,
-        },
-      });
-      setToolDiagnostics((prev) => {
-        if (report.is_conflict) {
-          return { ...prev, [toolName]: report.installs };
-        }
-        // 无冲突：清掉残留;无旧结果则返回同引用，避免无谓 re-render。
-        if (!(toolName in prev)) return prev;
-        const next = { ...prev };
-        delete next[toolName];
+      setDiagnosedTools((prev) => {
+        const next = new Set(prev);
+        if (report.is_conflict) next.add(toolName);
+        else next.delete(toolName);
         return next;
       });
       return true;
@@ -726,20 +726,17 @@ export function useToolManagement() {
   const handleDiagnoseAll = useCallback(async () => {
     setIsDiagnosingAll(true);
     try {
-      const reports = await settingsApi.probeToolInstallations([...TOOL_NAMES]);
-      const next: Partial<Record<ToolName, ToolInstallation[]>> = {};
-      const installReports: Partial<Record<ToolName, ToolInstallationReport>> =
-        {};
-      let conflicts = 0;
-      for (const report of reports) {
-        installReports[report.tool as ToolName] = report;
+      await loadToolInstallationReports([...TOOL_NAMES], true);
+      const next = new Set<ToolName>();
+      for (const report of Object.values(
+        toolManagementState.installReports ?? {},
+      )) {
         if (report.is_conflict) {
-          next[report.tool as ToolName] = report.installs;
-          conflicts += 1;
+          next.add(report.tool as ToolName);
         }
       }
-      updateToolManagementState({ installReports });
-      setToolDiagnostics(next);
+      setDiagnosedTools(next);
+      const conflicts = next.size;
       if (conflicts === 0) {
         toast.info(t("settings.toolDiagnoseNoConflict"), { closeButton: true });
       } else {
@@ -805,12 +802,16 @@ export function useToolManagement() {
               );
             }
             if (action === "uninstall") {
+              appliedToolInstallationRequests.set(
+                toolName,
+                ++toolInstallationRequestSequence,
+              );
               const nextReports = { ...toolManagementState.installReports };
               delete nextReports[toolName];
               updateToolManagementState({ installReports: nextReports });
-              setToolDiagnostics((prev) => {
-                const next = { ...prev };
-                delete next[toolName];
+              setDiagnosedTools((prev) => {
+                const next = new Set(prev);
+                next.delete(toolName);
                 return next;
               });
             }
