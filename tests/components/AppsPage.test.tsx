@@ -341,6 +341,90 @@ describe("AppsPage concurrent CLI upgrades", () => {
     ).toBeEnabled();
   });
 
+  it("keeps WSL installation available when only a Windows installation is found", async () => {
+    missing.add("grok");
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+      ((await getVersions(tools)) as ToolVersions).map((tool) =>
+        tool.name === "grok"
+          ? { ...tool, env_type: "wsl", wsl_distro: "Ubuntu-22.04" }
+          : tool,
+      ),
+    );
+    mocks.listToolInstallations.mockResolvedValueOnce([
+      report("grok", { installs: [candidate(uninstallPlan("grok"))] }),
+    ]);
+    await renderApps();
+    expect(card("Grok Build").getByText(/Ubuntu-22.04/)).toBeVisible();
+    expect(
+      card("Grok Build").getByRole("button", { name: "settings.toolInstall" }),
+    ).toBeEnabled();
+  });
+
+  it.each(["focus", "remount"])(
+    "restores installation after an external uninstall on %s",
+    async (trigger) => {
+      mocks.listToolInstallations.mockResolvedValueOnce([
+        report("grok", { installs: [candidate(uninstallPlan("grok"))] }),
+      ]);
+      const view = await renderApps();
+      expect(
+        card("Grok Build").getByText(uninstallPlan("grok").path),
+      ).toBeVisible();
+      missing.add("grok");
+      mocks.listToolInstallations.mockResolvedValueOnce([report("grok")]);
+      const now = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 600_001);
+      try {
+        if (trigger === "focus") {
+          await act(async () => window.dispatchEvent(new Event("focus")));
+        } else {
+          view.unmount();
+          await renderApps();
+        }
+        await waitFor(() =>
+          expect(
+            card("Grok Build").getByRole("button", {
+              name: "settings.toolInstall",
+            }),
+          ).toBeEnabled(),
+        );
+        expect(
+          card("Grok Build").queryByText(uninstallPlan("grok").path),
+        ).toBeNull();
+        expect(mocks.listToolInstallations).toHaveBeenCalledTimes(2);
+        expect(mocks.listToolInstallations).toHaveBeenLastCalledWith(["grok"]);
+      } finally {
+        now.mockRestore();
+      }
+    },
+  );
+
+  it("rechecks a cached path on manual retry when the tool is still not detected", async () => {
+    missing.add("grok");
+    mocks.listToolInstallations.mockResolvedValueOnce([
+      report("grok", { installs: [candidate(uninstallPlan("grok"))] }),
+    ]);
+    await renderApps();
+    mocks.listToolInstallations.mockResolvedValueOnce([report("grok")]);
+    fireEvent.click(
+      card("Grok Build").getByRole("button", { name: "common.retry" }),
+    );
+    await waitFor(() =>
+      expect(
+        card("Grok Build").getByRole("button", {
+          name: "settings.toolInstall",
+        }),
+      ).toBeEnabled(),
+    );
+    expect(
+      card("Grok Build").queryByText(uninstallPlan("grok").path),
+    ).toBeNull();
+    expect(mocks.listToolInstallations).toHaveBeenCalledTimes(2);
+    expect(mocks.listToolInstallations).toHaveBeenLastCalledWith(["grok"]);
+    expect(mocks.getToolVersions).toHaveBeenLastCalledWith(["grok"], {});
+    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+  });
+
   it("copies only the selected application's manual command and switches installation methods", async () => {
     const getVersions = mocks.getToolVersions.getMockImplementation()!;
     mocks.getToolVersions.mockImplementation(async (tools: string[]) =>

@@ -468,6 +468,62 @@ describe("tool detection recovery", () => {
     expect(view.result.current.toolDiagnostics.grok).toEqual(fresh.installs);
   });
 
+  it.each(["present", "scan failure"])(
+    "retains a cached path when failed detection is followed by %s",
+    async (result) => {
+      api.getToolVersions.mockImplementation(async (names: string[]) =>
+        names.map((name) => version(name)),
+      );
+      const report = installationReport();
+      api.listToolInstallations.mockResolvedValueOnce([report]);
+      const view = await mountTools();
+      api.getToolVersions.mockResolvedValueOnce([version("grok", false)]);
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      if (result === "present")
+        api.listToolInstallations.mockResolvedValueOnce([report]);
+      else
+        api.listToolInstallations.mockRejectedValueOnce(
+          new Error("scan failed"),
+        );
+      await act(async () => view.result.current.retryToolDetection("grok"));
+      expect(
+        view.result.current.toolVersionByName.get("grok")?.version,
+      ).toBeNull();
+      expect(view.result.current.installReports?.grok).toEqual(report);
+      expect(api.listToolInstallations).toHaveBeenCalledTimes(2);
+      expect(api.listToolInstallations).toHaveBeenLastCalledWith(["grok"]);
+      expect(view.result.current.loadingTools.grok).toBe(false);
+      if (result === "scan failure") expect(log).toHaveBeenCalled();
+    },
+  );
+
+  it("refreshes a stale installation path when background detection loses the version", async () => {
+    api.getToolVersions.mockImplementation(async (names: string[]) =>
+      names.map((name) => version(name)),
+    );
+    api.listToolInstallations.mockResolvedValueOnce([installationReport()]);
+    const view = await mountTools();
+    await advance(600_001);
+    api.getToolVersions.mockImplementation(async (names: string[]) =>
+      names.map((name) => version(name, name !== "grok")),
+    );
+    api.listToolInstallations.mockResolvedValueOnce([
+      { ...installationReport(), installs: [] },
+    ]);
+    const { checkToolUpdatesInBackground } = await import(
+      "@/components/apps/useToolManagement"
+    );
+    await act(async () => checkToolUpdatesInBackground());
+    expect(
+      view.result.current.toolVersionByName.get("grok")?.version,
+    ).toBeNull();
+    expect(view.result.current.installReports?.grok?.installs).toEqual([]);
+    expect(api.listToolInstallations).toHaveBeenCalledTimes(2);
+    expect(api.listToolInstallations).toHaveBeenLastCalledWith(["grok"]);
+    await advance(3000);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(11);
+  });
+
   it("does not resurrect an uninstalled path from an earlier scan", async () => {
     api.getToolVersions.mockImplementation(async (names: string[]) =>
       names.map((name) => version(name)),
@@ -499,5 +555,102 @@ describe("tool detection recovery", () => {
     });
     expect(view.result.current.installReports?.grok).toBeUndefined();
     expect(view.result.current.busyTools.has("grok")).toBe(false);
+  });
+  it("schedules short retry after a background failure and delayed installation scan", async () => {
+    api.getToolVersions.mockImplementation(async (names: string[]) =>
+      names.map((name) => version(name)),
+    );
+    api.listToolInstallations.mockResolvedValueOnce([installationReport()]);
+    const view = await mountTools();
+    await advance(600_001);
+    api.getToolVersions.mockImplementation(async (names: string[]) =>
+      names.map((name) => version(name, name !== "grok")),
+    );
+    let finishScan!: (reports: ToolInstallationReport[]) => void;
+    api.listToolInstallations.mockImplementationOnce(
+      () =>
+        new Promise<ToolInstallationReport[]>(
+          (resolve) => (finishScan = resolve),
+        ),
+    );
+    const { checkToolUpdatesInBackground } = await import(
+      "@/components/apps/useToolManagement"
+    );
+    let background!: Promise<void>;
+    await act(async () => {
+      background = checkToolUpdatesInBackground();
+    });
+    expect(
+      view.result.current.toolVersionByName.get("grok")?.version,
+    ).toBeNull();
+    await advance(3000);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(10);
+    await act(async () => {
+      finishScan([installationReport()]);
+      await background;
+    });
+    await advance(3000);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(11);
+  });
+  it("schedules short retry when mounting between background failure and scan completion", async () => {
+    api.getToolVersions.mockImplementation(async (names: string[]) =>
+      names.map((name) => version(name)),
+    );
+    api.listToolInstallations.mockResolvedValueOnce([installationReport()]);
+    const first = await mountTools();
+    first.unmount();
+    await advance(600_001);
+    api.getToolVersions.mockImplementation(async (names: string[]) =>
+      names.map((name) => version(name, name !== "grok")),
+    );
+    let finishScan!: (reports: ToolInstallationReport[]) => void;
+    api.listToolInstallations.mockImplementationOnce(
+      () =>
+        new Promise<ToolInstallationReport[]>(
+          (resolve) => (finishScan = resolve),
+        ),
+    );
+    const { checkToolUpdatesInBackground } = await import(
+      "@/components/apps/useToolManagement"
+    );
+    let background!: Promise<void>;
+    await act(async () => {
+      background = checkToolUpdatesInBackground();
+    });
+    const second = await mountTools();
+    expect(
+      second.result.current.toolVersionByName.get("grok")?.version,
+    ).toBeNull();
+    expect(api.getToolVersions).toHaveBeenCalledTimes(10);
+    await act(async () => {
+      finishScan([installationReport()]);
+      await background;
+    });
+    await advance(3000);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(11);
+  });
+  it("does not suppress reinstall with an initial scan older than the latest failed retry", async () => {
+    let finishInitial!: (reports: ToolInstallationReport[]) => void;
+    api.listToolInstallations.mockImplementationOnce(
+      () =>
+        new Promise<ToolInstallationReport[]>(
+          (resolve) => (finishInitial = resolve),
+        ),
+    );
+    const view = await mountTools();
+    await advance(2000);
+    // A fresh single-tool scan confirms the file was removed externally.
+    api.listToolInstallations.mockResolvedValueOnce([
+      { ...installationReport(), installs: [] },
+    ]);
+    await act(async () => view.result.current.retryToolDetection("grok"));
+    expect(
+      view.result.current.toolVersionByName.get("grok")?.version,
+    ).toBeNull();
+    await act(async () => finishInitial([installationReport()]));
+    await advance(10_000);
+    expect(view.result.current.installReports?.grok?.installs).toEqual([]);
+    expect(api.listToolInstallations).toHaveBeenCalledTimes(2);
+    expect(api.listToolInstallations).toHaveBeenLastCalledWith(["grok"]);
   });
 });

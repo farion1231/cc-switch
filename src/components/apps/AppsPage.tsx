@@ -556,9 +556,11 @@ function ToolRow({
   const isBusy = tools.busyTools.has(tool);
   const busyAction = tools.busyTools.get(tool);
   const canUninstall = Boolean(info?.version || broken || defaultInstall);
+  // 安装报告只枚举本机路径，不能据此判断 WSL 中是否已安装。
+  const hasLocalInstall = Boolean(defaultInstall) && info?.env_type !== "wsl";
   const action: Exclude<ToolLifecycleAction, "uninstall"> | null =
     (busyAction !== "uninstall" ? busyAction : undefined) ??
-    (isVersionLoading || broken || (!info?.version && defaultInstall)
+    (isVersionLoading || broken || (!info?.version && hasLocalInstall)
       ? null
       : !info?.version
         ? "install"
