@@ -15,7 +15,7 @@ use crate::services::usage_stats::find_model_pricing;
 use rust_decimal::Decimal;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -49,6 +49,8 @@ const PI_LEGACY_SEMANTIC_DEDUP_SQL: &str = "SELECT EXISTS(
          SELECT 1 FROM session_usage_dedup
          WHERE data_source = ?1 AND semantic_id = ?2 AND has_entry_id = 0
      )";
+// Reserved session_log_sync row; unlike `settings`, it stays on this device.
+const CHILD_CUTOFF_KEY: &str = "pi:child-cutoff";
 
 #[derive(Debug, Clone, Copy, Default)]
 struct PiCosts {
@@ -79,7 +81,6 @@ impl PiCosts {
 
 #[derive(Debug)]
 struct PiUsageRecord {
-    kind: &'static str,
     request_id: String,
     semantic_id: String,
     has_entry_id: bool,
@@ -101,15 +102,8 @@ struct PiUsageRecord {
 #[derive(Debug)]
 struct ParsedPiFile {
     records: Vec<PiUsageRecord>,
-    parent_session: Option<String>,
     last_complete_line: i64,
     incomplete_tail: bool,
-}
-
-#[derive(Debug)]
-struct ParentProjection {
-    canonical_links: Vec<PathBuf>,
-    record: PiUsageRecord,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,6 +136,33 @@ struct PiRequestIdentity {
     has_entry_id: bool,
 }
 
+#[derive(Default)]
+struct ChildScope {
+    /// Canonical paths of every file in this round.
+    imported: HashSet<PathBuf>,
+    /// Extension-less session paths; a file below one of them is a nested subagent or fork session.
+    stems: HashSet<PathBuf>,
+    /// Unix seconds of this build's first Pi import.
+    cutoff: i64,
+}
+
+impl ChildScope {
+    fn new(files: &[PathBuf], cutoff: i64) -> Self {
+        Self {
+            imported: files
+                .iter()
+                .filter_map(|file| fs::canonicalize(file).ok())
+                .collect(),
+            stems: files.iter().map(|file| file.with_extension("")).collect(),
+            cutoff,
+        }
+    }
+
+    fn is_nested(&self, file: &Path) -> bool {
+        file.ancestors().skip(1).any(|dir| self.stems.contains(dir))
+    }
+}
+
 /// Import usage from every Pi session file under the session browser's current
 /// root and layout rules, including nested subagent sessions.
 pub fn sync_pi_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
@@ -165,19 +186,18 @@ fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
         }
     };
 
-    let imported_sessions: HashSet<PathBuf> = files
-        .iter()
-        .filter_map(|file| fs::canonicalize(file).ok())
-        .collect();
-    let mut parent_projections = HashMap::new();
+    let cutoff = match child_cutoff(db, &cursors) {
+        Ok(cutoff) => cutoff,
+        Err(error) => {
+            result
+                .errors
+                .push(format!("记录 Pi 子会话起算时间失败: {error}"));
+            return result;
+        }
+    };
+    let scope = ChildScope::new(files, cutoff);
     for file_path in files {
-        match sync_single_pi_file(
-            db,
-            file_path,
-            &cursors,
-            &imported_sessions,
-            &mut parent_projections,
-        ) {
+        match sync_single_pi_file(db, file_path, &cursors, &scope) {
             Ok(file_result) => result.merge(file_result),
             Err(error) => {
                 let message = format!("{}: {error}", file_path.display());
@@ -198,12 +218,29 @@ fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
     result
 }
 
+fn child_cutoff(
+    db: &Database,
+    cursors: &std::collections::HashMap<String, crate::services::session_usage::SyncCursor>,
+) -> Result<i64, AppError> {
+    if let Some(cursor) = cursors.get(CHILD_CUTOFF_KEY) {
+        return Ok(cursor.last_synced_at);
+    }
+    let now = chrono::Utc::now().timestamp();
+    let conn = lock_conn!(db.conn);
+    conn.execute(
+        "INSERT INTO session_log_sync (file_path, last_modified, last_line_offset, last_synced_at)
+         VALUES (?1, 0, 0, ?2)",
+        rusqlite::params![CHILD_CUTOFF_KEY, now],
+    )
+    .map_err(|error| AppError::Database(format!("写入 Pi 子会话起算时间失败: {error}")))?;
+    Ok(now)
+}
+
 fn sync_single_pi_file(
     db: &Database,
     file_path: &Path,
-    cursors: &HashMap<String, crate::services::session_usage::SyncCursor>,
-    imported_sessions: &HashSet<PathBuf>,
-    parent_projections: &mut HashMap<PathBuf, Vec<ParentProjection>>,
+    cursors: &std::collections::HashMap<String, crate::services::session_usage::SyncCursor>,
+    scope: &ChildScope,
 ) -> Result<SessionSyncResult, AppError> {
     let metadata = fs::symlink_metadata(file_path)
         .map_err(|error| AppError::Config(format!("无法读取 Pi 会话文件元数据: {error}")))?;
@@ -249,28 +286,15 @@ fn sync_single_pi_file(
         start_at_byte,
         revision.file_size,
         modified,
-        imported_sessions,
+        scope,
     )?;
-    let from_header = start_after_line == 0;
-    let projections: &[ParentProjection] = match parsed.parent_session.as_deref().map(Path::new) {
-        Some(parent) if from_header && parent.is_absolute() => parent_projections
-            .entry(parent.to_path_buf())
-            .or_insert_with(|| read_parent_projections(parent)),
-        _ => &[],
-    };
     let conn = lock_conn!(db.conn);
     let tx = conn
         .unchecked_transaction()
         .map_err(|error| AppError::Database(format!("启动 Pi 用量导入事务失败: {error}")))?;
-    let counted_until = parent_counted_until(&tx, file_path, projections)?;
     let mut result = SessionSyncResult::default();
     for record in &parsed.records {
-        if record.kind == "assistant"
-            && counted_until.is_some_and(|until| record.created_at <= until)
-        {
-            mark_pi_record_seen(&tx, record)?;
-            result.skipped = result.skipped.saturating_add(1);
-        } else if insert_pi_record(&tx, record)? {
+        if insert_pi_record(&tx, record)? {
             result.imported = result.imported.saturating_add(1);
         } else {
             result.skipped = result.skipped.saturating_add(1);
@@ -284,29 +308,6 @@ fn sync_single_pi_file(
         result.deferred_files = 1;
     }
     Ok(result)
-}
-
-fn parent_counted_until(
-    conn: &rusqlite::Connection,
-    file_path: &Path,
-    projections: &[ParentProjection],
-) -> Result<Option<i64>, AppError> {
-    if projections.is_empty() {
-        return Ok(None);
-    }
-    let Ok(file) = fs::canonicalize(file_path) else {
-        return Ok(None);
-    };
-    let mut counted_until = None;
-    for projection in projections
-        .iter()
-        .filter(|projection| projection.canonical_links.contains(&file))
-    {
-        if pi_record_seen(conn, &projection.record)? {
-            counted_until = counted_until.max(Some(projection.record.created_at));
-        }
-    }
-    Ok(counted_until)
 }
 
 /// 从批量预取的游标解码 Pi 同步状态（revision 编码在 `last_synced_at`）。
@@ -407,7 +408,7 @@ fn parse_pi_file(
     start_at_byte: Option<u64>,
     snapshot_size: u64,
     file_modified_nanos: i64,
-    imported_sessions: &HashSet<PathBuf>,
+    scope: &ChildScope,
 ) -> Result<ParsedPiFile, AppError> {
     let file = File::open(file_path)
         .map_err(|error| AppError::Config(format!("无法打开 Pi 会话文件: {error}")))?;
@@ -417,9 +418,9 @@ fn parse_pi_file(
     let mut bytes_read = 0u64;
     let mut session_id = None;
     let mut session_timestamp = None;
-    let mut parent_session = None;
     let mut records = Vec::new();
     let mut incomplete_tail = false;
+    let nested = scope.is_nested(file_path);
 
     loop {
         buffer.clear();
@@ -488,10 +489,6 @@ fn parse_pi_file(
             }
             let header_timestamp_millis = value.get("timestamp").and_then(parse_timestamp_millis);
             session_timestamp = header_timestamp_millis.map(|timestamp| timestamp / 1000);
-            parent_session = value
-                .get("parentSession")
-                .and_then(Value::as_str)
-                .map(str::to_string);
             if let Some(byte_offset) = start_at_byte.filter(|offset| *offset >= bytes_read) {
                 reader.seek(SeekFrom::Start(byte_offset)).map_err(|error| {
                     AppError::Config(format!("无法定位 Pi 会话增量边界: {error}"))
@@ -501,17 +498,22 @@ fn parse_pi_file(
             }
             continue;
         }
-        if duplicates_imported_sessions(&value, imported_sessions) {
-            continue;
-        }
-        if let Some(record) = parse_usage_record(
+        let Some(record) = parse_usage_record(
             &value,
             session_id.as_deref().unwrap_or_default(),
             session_timestamp,
             file_modified_nanos / 1_000_000_000,
-        ) {
-            records.push(record);
+        ) else {
+            continue;
+        };
+        // Before the cutoff the parent's projections carry child usage; from it on, the child files do.
+        let from_cutoff = record.created_at >= scope.cutoff;
+        if (nested && !from_cutoff)
+            || (from_cutoff && duplicates_imported_sessions(&value, &scope.imported))
+        {
+            continue;
         }
+        records.push(record);
     }
 
     if session_id.is_none() && !incomplete_tail {
@@ -519,7 +521,6 @@ fn parse_pi_file(
     }
     Ok(ParsedPiFile {
         records,
-        parent_session,
         last_complete_line: line_number,
         incomplete_tail,
     })
@@ -564,34 +565,6 @@ fn collect_session_files<'a>(value: &'a Value, links: &mut Vec<&'a str>) {
         }
         _ => {}
     }
-}
-
-fn read_parent_projections(parent: &Path) -> Vec<ParentProjection> {
-    let Some(file) = File::open(parent).ok().filter(|file| {
-        file.metadata().is_ok_and(|metadata| {
-            metadata.len() <= crate::session_manager::providers::pi::MAX_SESSION_BYTES
-        })
-    }) else {
-        return Vec::new();
-    };
-    BufReader::new(file)
-        .lines()
-        .map_while(Result::ok)
-        .filter(|line| line.contains("\"sessionFile\""))
-        .filter_map(|line| {
-            let entry = serde_json::from_str::<Value>(&line).ok()?;
-            let record = parse_usage_record(&entry, "", None, 0)
-                .filter(|record| record.kind == "tool_result")?;
-            let canonical_links: Vec<PathBuf> = projection_session_files(&entry)
-                .into_iter()
-                .filter_map(|link| fs::canonicalize(link).ok())
-                .collect();
-            (!canonical_links.is_empty()).then_some(ParentProjection {
-                canonical_links,
-                record,
-            })
-        })
-        .collect()
 }
 
 fn parse_usage_record(
@@ -710,7 +683,6 @@ fn parse_usage_record(
         .unwrap_or(0);
 
     Some(PiUsageRecord {
-        kind,
         request_id: identity.request_id,
         semantic_id: identity.semantic_id,
         has_entry_id: identity.has_entry_id,
@@ -916,7 +888,7 @@ fn hash_field(hasher: &mut Sha256, value: &[u8]) {
     hasher.update(value);
 }
 
-fn pi_record_seen(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Result<bool, AppError> {
+fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Result<bool, AppError> {
     let request_seen: bool = conn
         .query_row(
             PI_REQUEST_DEDUP_SQL,
@@ -924,25 +896,21 @@ fn pi_record_seen(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Result
             |row| row.get(0),
         )
         .map_err(|error| AppError::Database(format!("查询 Pi 用量去重账本失败: {error}")))?;
-    if request_seen {
-        return Ok(true);
+    let already_seen = request_seen
+        || conn
+            .query_row(
+                if record.has_entry_id {
+                    PI_LEGACY_SEMANTIC_DEDUP_SQL
+                } else {
+                    PI_SEMANTIC_DEDUP_SQL
+                },
+                rusqlite::params![DATA_SOURCE, record.semantic_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| AppError::Database(format!("查询 Pi 用量去重账本失败: {error}")))?;
+    if already_seen {
+        return Ok(false);
     }
-    conn.query_row(
-        if record.has_entry_id {
-            PI_LEGACY_SEMANTIC_DEDUP_SQL
-        } else {
-            PI_SEMANTIC_DEDUP_SQL
-        },
-        rusqlite::params![DATA_SOURCE, record.semantic_id],
-        |row| row.get(0),
-    )
-    .map_err(|error| AppError::Database(format!("查询 Pi 用量去重账本失败: {error}")))
-}
-
-fn mark_pi_record_seen(
-    conn: &rusqlite::Connection,
-    record: &PiUsageRecord,
-) -> Result<(), AppError> {
     conn.execute(
         "INSERT OR IGNORE INTO session_usage_dedup
          (data_source, request_id, semantic_id, has_entry_id)
@@ -955,14 +923,6 @@ fn mark_pi_record_seen(
         ],
     )
     .map_err(|error| AppError::Database(format!("写入 Pi 用量去重账本失败: {error}")))?;
-    Ok(())
-}
-
-fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Result<bool, AppError> {
-    if pi_record_seen(conn, record)? {
-        return Ok(false);
-    }
-    mark_pi_record_seen(conn, record)?;
 
     let usage = TokenUsage {
         input_tokens: record.input_tokens,
@@ -1122,6 +1082,17 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         Ok(totals)
+    }
+
+    fn set_child_cutoff(db: &Database, seconds: i64) -> Result<(), AppError> {
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT OR REPLACE INTO session_log_sync
+             (file_path, last_modified, last_line_offset, last_synced_at)
+             VALUES (?1, 0, 0, ?2)",
+            rusqlite::params![CHILD_CUTOFF_KEY, seconds],
+        )?;
+        Ok(())
     }
 
     fn assistant_line(id: &str, timestamp: &str, input: u32) -> String {
@@ -1756,7 +1727,14 @@ mod tests {
             writeln!(file, "{second}").expect("append second record");
         }
 
-        let parsed = parse_pi_file(&path, 0, None, snapshot_size, modified, &HashSet::new())?;
+        let parsed = parse_pi_file(
+            &path,
+            0,
+            None,
+            snapshot_size,
+            modified,
+            &ChildScope::default(),
+        )?;
         assert_eq!(parsed.records.len(), 1);
         assert_eq!(parsed.last_complete_line, 2);
         Ok(())
@@ -2088,6 +2066,7 @@ mod tests {
         );
 
         let db = Database::memory()?;
+        set_child_cutoff(&db, 1_700_000_000)?;
         let result = sync_pi_usage(&db)?;
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         assert_eq!(pi_rows_input_and_unknown(&db)?, (6, 257, 0));
@@ -2099,34 +2078,29 @@ mod tests {
     }
 
     #[test]
-    fn projections_counted_before_children_were_discovered_are_not_counted_twice(
+    fn usage_before_the_cutoff_stays_as_projections_and_later_usage_comes_from_the_children(
     ) -> Result<(), AppError> {
         let temp = tempfile::tempdir().expect("tempdir");
         let parent = session_path(temp.path(), "parent");
         let stem = parent.with_extension("");
         let child_a = run_session(&stem, "run-a");
         let child_c = run_session(&stem, "run-c");
+        let parent_call = assistant_line("p1", "2023-11-14T22:13:21Z", 100);
+        let projection_a = projection_line(
+            "t-a",
+            "2023-11-14T22:13:30Z",
+            "subagent",
+            json!({"results": [{"sessionFile": child_a.to_string_lossy()}]}),
+            10,
+        );
         write_lines(
             &parent,
             &[
                 &session_header("session-parent", None),
-                &assistant_line("p1", "2023-11-14T22:13:21Z", 100),
-                &projection_line(
-                    "t-a",
-                    "2023-11-14T22:13:30Z",
-                    "subagent",
-                    json!({"results": [{"sessionFile": child_a.to_string_lossy()}]}),
-                    10,
-                ),
+                &parent_call,
+                &projection_a,
             ],
         );
-
-        let db = Database::memory()?;
-        let first = sync_pi_files(&db, std::slice::from_ref(&parent));
-        assert!(first.errors.is_empty(), "{:?}", first.errors);
-        assert_eq!(first.imported, 2);
-        assert_eq!(pi_rows_input_and_unknown(&db)?, (2, 110, 1));
-
         write_nested_lines(
             &child_a,
             &[
@@ -2142,21 +2116,43 @@ mod tests {
                 &assistant_line("c1", "2023-11-14T22:13:35Z", 40),
             ],
         );
-        let second = sync_pi_files(&db, &[parent.clone(), child_a.clone(), child_c.clone()]);
-        assert!(second.errors.is_empty(), "{:?}", second.errors);
-        assert_eq!((second.imported, second.skipped), (2, 1));
-        assert_eq!(pi_rows_input_and_unknown(&db)?, (4, 155, 1));
 
-        fs::remove_file(&parent).expect("remove parent");
-        let modified = fs::metadata(&child_a)
-            .expect("child metadata")
-            .modified()
-            .expect("child mtime");
-        set_modified(&child_a, modified + std::time::Duration::from_secs(2));
-        let rescan = sync_pi_files(&db, std::slice::from_ref(&child_a));
+        let db = Database::memory()?;
+        set_child_cutoff(&db, 1_700_000_020)?;
+        let files = [parent.clone(), child_a.clone(), child_c.clone()];
+        let first = sync_pi_files(&db, &files);
+        assert!(first.errors.is_empty(), "{:?}", first.errors);
+        assert_eq!(first.imported, 3);
+        assert_eq!(pi_rows_input_and_unknown(&db)?, (3, 115, 1));
+
+        write_lines(
+            &parent,
+            &[
+                &session_header("session-parent", None),
+                &parent_call,
+                &projection_a,
+                &projection_line(
+                    "t-a2",
+                    "2023-11-14T22:14:05Z",
+                    "subagent",
+                    json!({"results": [{"sessionFile": child_a.to_string_lossy()}]}),
+                    15,
+                ),
+            ],
+        );
+        let second = sync_pi_files(&db, &files);
+        assert!(second.errors.is_empty(), "{:?}", second.errors);
+        assert_eq!((second.imported, second.skipped), (0, 0));
+        assert_eq!(pi_rows_input_and_unknown(&db)?, (3, 115, 1));
+
+        lock_conn!(db.conn).execute(
+            "DELETE FROM session_log_sync WHERE file_path = ?1",
+            [parent.to_string_lossy().to_string()],
+        )?;
+        let rescan = sync_pi_files(&db, &files);
         assert!(rescan.errors.is_empty(), "{:?}", rescan.errors);
         assert_eq!((rescan.imported, rescan.skipped), (0, 2));
-        assert_eq!(pi_rows_input_and_unknown(&db)?, (4, 155, 1));
+        assert_eq!(pi_rows_input_and_unknown(&db)?, (3, 115, 1));
         Ok(())
     }
 
@@ -2201,9 +2197,33 @@ mod tests {
         );
 
         let db = Database::memory()?;
+        set_child_cutoff(&db, 1_700_000_000)?;
         let result = sync_pi_files(&db, &[parent.clone(), inside.clone()]);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         assert_eq!(pi_rows_input_and_unknown(&db)?, (2, 50, 2));
+        Ok(())
+    }
+
+    #[test]
+    fn the_first_import_records_the_cutoff_once() -> Result<(), AppError> {
+        let recorded = |db: &Database| -> Result<i64, AppError> {
+            let conn = lock_conn!(db.conn);
+            Ok(conn.query_row(
+                "SELECT last_synced_at FROM session_log_sync WHERE file_path = ?1",
+                [CHILD_CUTOFF_KEY],
+                |row| row.get(0),
+            )?)
+        };
+        let db = Database::memory()?;
+        let before = chrono::Utc::now().timestamp();
+        let first = sync_pi_files(&db, &[]);
+        assert!(first.errors.is_empty(), "{:?}", first.errors);
+        assert!(recorded(&db)? >= before);
+
+        set_child_cutoff(&db, 42)?;
+        let second = sync_pi_files(&db, &[]);
+        assert!(second.errors.is_empty(), "{:?}", second.errors);
+        assert_eq!(recorded(&db)?, 42);
         Ok(())
     }
 }

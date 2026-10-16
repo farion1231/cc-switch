@@ -720,8 +720,10 @@ fn push_jsonl_file(entry: &fs::DirEntry, output: &mut Vec<PathBuf>, enforce_size
 }
 
 /// Subagent runs and forks nest under their parent session's extension-less
-/// path, and grandchildren under the child's own. `DirEntry::file_type` does
-/// not follow symlinks, so the walk cannot loop.
+/// path, and grandchildren under the child's own. `subagent-artifacts`
+/// directories hold transcripts and audit logs without a session header, so
+/// they are skipped. `DirEntry::file_type` does not follow symlinks, so the
+/// walk cannot loop.
 fn collect_child_session_files(dir: &Path, output: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -731,7 +733,9 @@ fn collect_child_session_files(dir: &Path, output: &mut Vec<PathBuf>) {
             continue;
         };
         if file_type.is_dir() {
-            collect_child_session_files(&entry.path(), output);
+            if entry.file_name() != "subagent-artifacts" {
+                collect_child_session_files(&entry.path(), output);
+            }
         } else if file_type.is_file() {
             push_jsonl_file(&entry, output, false);
         }
@@ -1064,12 +1068,22 @@ mod tests {
             ] {
                 write_session_header(path, id);
             }
-            let transcript = base
-                .join("subagent-artifacts")
-                .join("run-a_worker_0_transcript.jsonl");
-            fs::create_dir_all(transcript.parent().expect("artifact parent"))
-                .expect("create artifact parent");
-            fs::write(&transcript, "{\"recordType\":\"message\"}\n").expect("write transcript");
+            let nested_artifacts = run.join("subagent-artifacts");
+            let fork_artifacts = base.join("parent").join("forks").join("subagent-artifacts");
+            for artifact in [
+                base.join("subagent-artifacts")
+                    .join("run-a_worker_0_transcript.jsonl"),
+                nested_artifacts.join("run-b_worker_0_transcript.jsonl"),
+                nested_artifacts.join("run-b.jsonl"),
+                nested_artifacts
+                    .join("permission-audit")
+                    .join("audit.jsonl"),
+                fork_artifacts.join("fork_worker_0_transcript.jsonl"),
+            ] {
+                fs::create_dir_all(artifact.parent().expect("artifact parent"))
+                    .expect("create artifact parent");
+                fs::write(&artifact, "{\"recordType\":\"message\"}\n").expect("write artifact");
+            }
 
             let mut expected = vec![parent, child, fork, grandchild];
             expected.sort();
