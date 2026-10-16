@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { UsageTrendChart } from "@/components/usage/UsageTrendChart";
@@ -53,6 +54,23 @@ describe("UsageTrendChart (single metric)", () => {
     );
     expect(screen.getByTestId("usage-trend-legend")).toHaveTextContent(
       "usage.trend.requestsLegend",
+    );
+  });
+
+  it("reopens on the metric picked last time", async () => {
+    const user = userEvent.setup();
+    const props = {
+      range: { preset: "7d" as const },
+      rangeLabel: "7d",
+      refreshIntervalMs: 0,
+    };
+    const first = render(<UsageTrendChart {...props} />);
+    await user.click(screen.getByRole("button", { name: "usage.trend.cost" }));
+    first.unmount();
+
+    render(<UsageTrendChart {...props} />);
+    expect(screen.getByTestId("usage-trend-legend")).toHaveTextContent(
+      "usage.trend.cost",
     );
   });
 });

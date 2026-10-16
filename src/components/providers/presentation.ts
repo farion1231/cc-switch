@@ -95,6 +95,35 @@ export function blockedFromRouting(app: AppId, provider: Provider): boolean {
 
 // ─── 切换式应用（Claude Code / Codex / Gemini CLI / Grok Build）──────────────
 
+/**
+ * 故障转移队列里把一家上移 / 下移一格后，各家要写回的 sortIndex。队列顺序就是供应商的排序：
+ * 按队列成员原来占着的位置重新分配。位置必须两两不同，否则换位后并列、顺序看起来没动——
+ * 两家 sortIndex 相同，或新加的供应商没有 sortIndex、拿下标兜底时撞上别家的值，都会这样。
+ * 移不动（不在队列 / 已到头）返回 null。
+ */
+export function queueMoveSortUpdates(
+  items: { providerId: string; sortIndex?: number }[],
+  providers: Record<string, Pick<Provider, "sortIndex">>,
+  providerId: string,
+  delta: -1 | 1,
+): { id: string; sortIndex: number }[] | null {
+  const index = items.findIndex((item) => item.providerId === providerId);
+  const target = index + delta;
+  if (index < 0 || target < 0 || target >= items.length) return null;
+  const order = items.map((item) => item.providerId);
+  order.splice(index, 1);
+  order.splice(target, 0, providerId);
+  const slots = items
+    .map(
+      (item, i) => item.sortIndex ?? providers[item.providerId]?.sortIndex ?? i,
+    )
+    .sort((a, b) => a - b);
+  for (let i = 1; i < slots.length; i++) {
+    if (slots[i] <= slots[i - 1]) slots[i] = slots[i - 1] + 1;
+  }
+  return order.map((id, i) => ({ id, sortIndex: slots[i] }));
+}
+
 export interface SwitchModeInput {
   app: AppId;
   t: TFunction;
@@ -129,22 +158,30 @@ export function buildSwitchSections(input: SwitchModeInput): ProviderSection[] {
   const { t, active, directId, routeId } = input;
   // 后端 is_referenced：直连指针指着的、路由 / 聚合模式下正在路由的，都删不掉。
   // 不管当前看的是哪个视图都要标出来，否则确认后后端拒绝、确认框还卡在原地
-  const inUse = (id: string) =>
-    id === directId || (active !== "direct" && id === routeId);
-  const inUseReason = t("providerCard.reason.inUseCannotDelete");
+  // 路由 / 聚合时直连那家不算「正在用」，路由页卡上也不标，单独说明为什么删不掉
+  const deleteBlockedReason = (id: string) => {
+    if (active !== "direct" && id === routeId)
+      return t("providerCard.reason.inUseCannotDelete");
+    if (id === directId)
+      return active === "direct"
+        ? t("providerCard.reason.inUseCannotDelete")
+        : t("providerCard.reason.directDefaultCannotDelete");
+    return undefined;
+  };
   return buildSwitchSectionsByView(input).map((section) => ({
     ...section,
-    items: section.items.map((item) =>
-      inUse(item.provider.id)
+    items: section.items.map((item) => {
+      const reason = deleteBlockedReason(item.provider.id);
+      return reason
         ? {
             ...item,
             presentation: {
               ...item.presentation,
-              deleteDisabledReason: inUseReason,
+              deleteDisabledReason: reason,
             },
           }
-        : item,
-    ),
+        : item;
+    }),
   }));
 }
 

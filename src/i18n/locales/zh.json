@@ -2378,6 +2378,25 @@
       "seconds": "{{seconds}} 秒"
     },
     "dataSources": "数据来源",
+    "display": {
+      "title": "显示",
+      "currency": "币种",
+      "rate": "汇率",
+      "rateHint": "手动填写，只用于换算显示；费用仍按美元记录。",
+      "rateInvalid": "请输入大于 0 的数字",
+      "approxNote": "换算后的金额悬停可看美元原值。",
+      "sidebarToday": "侧栏「今日」",
+      "sidebarTodayItems": {
+        "cost": "金额",
+        "tokens": "Token",
+        "requests": "请求数",
+        "hitRate": "缓存命中率",
+        "none": "不显示"
+      },
+      "sidebarTodayLimit": "最多选 {{count}} 项",
+      "logColumns": "请求日志的列",
+      "logColumnsSummary": "{{shown}} / {{total}} 列"
+    },
     "providerFilter": {
       "label": "供应商",
       "all": "全部供应商",
@@ -2416,7 +2435,8 @@
       "label": "明细",
       "providers": "供应商",
       "models": "模型",
-      "pricing": "定价"
+      "pricing": "定价",
+      "settings": "设置"
     },
     "sortedByRequests": "按请求数排序",
     "app": "应用",
@@ -2436,6 +2456,13 @@
     "estimatedTimingTip": "耗时约 {{duration}}s（按会话日志的时间戳估算，含首字等待）",
     "estimatedTimingTipWithFirstToken": "耗时约 {{duration}}s · 首字约 {{ttft}}s（按会话日志的时间戳估算）",
     "cacheTip": "缓存命中 {{read}} · 缓存写入 {{write}}",
+    "logColumns": {
+      "reset": "恢复默认",
+      "cacheWrite": "缓存写入",
+      "hitRate": "命中率",
+      "hitRateTip": "缓存命中 {{read}} / 可缓存输入 {{total}}",
+      "duration": "总耗时"
+    },
     "openRequestDetail": "查看请求详情：{{time}} {{provider}}",
     "prevPage": "上一页",
     "nextPage": "下一页",
@@ -2444,7 +2471,7 @@
     },
     "detail": {
       "tokensTitle": "Tokens 用量",
-      "costTitle": "成本明细（USD）",
+      "costTitle": "成本明细（{{currency}}）",
       "performance": "性能",
       "source": "来源",
       "sourceProxy": "路由服务 · 状态码 {{code}}",
@@ -3247,6 +3274,7 @@
       "emptyArchive": "下载的压缩包为空",
       "invalidRepoRef": "仓库地址不合法：{{owner}}/{{name}}",
       "archiveTooLarge": "压缩包解压后超过 {{limit_mb}} MB 上限，已中止",
+      "archiveDownloadTooLarge": "仓库压缩包下载超过 {{limit_mb}} MB 上限，已中止",
       "archiveTooManyEntries": "压缩包条目过多（{{count}}），上限 {{limit}}",
       "downloadFailed": "下载失败：HTTP {{status}}",
       "allBranchesFailed": "所有分支下载失败，尝试了：{{branches}}",
@@ -4084,7 +4112,9 @@
     "expandSidebar": "展开侧栏",
     "collapseSidebar": "收起侧栏",
     "appsGroup": "应用",
-    "todayCost": "今日 {{cost}}",
+    "today": "今日 {{value}}",
+    "todayRequests": "{{value}} 次",
+    "todayHitRate": "命中 {{value}}",
     "usage": "用量统计",
     "auth": "授权中心",
     "authNeedsReauth": "有账号需要重新登录",
@@ -4307,6 +4337,7 @@
       "defaultCannotRemove": "默认那家不能移除，先把别家设为默认。",
       "currentCannotRemove": "正在用的这家不能移除，先启用别家。",
       "inUseCannotDelete": "正在用的这家不能删除，先切到别家。",
+      "directDefaultCannotDelete": "退出路由后会回到这家，所以不能删除。先在直连页对别家点「回到直连并使用」，再删除。",
       "noFailover": "官方账号不进故障转移队列：它用客户端自己的登录，不能和别家轮换。"
     },
     "section": {

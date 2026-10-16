@@ -5,7 +5,6 @@ import { TablePagination, useClientPagination } from "./TablePagination";
 import { cn } from "@/lib/utils";
 import {
   fmtInt,
-  fmtUsd,
   formatTokensCompact,
   getLocaleFromLanguage,
   getResolvedLang,
@@ -14,6 +13,7 @@ import { usageTable } from "./usageTable";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
 import { PerformanceCells, PerformanceHeaders } from "./statsColumns";
 import type { UsageRangeSelection } from "@/types/usage";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 
 interface ProviderStatsTableProps {
   range: UsageRangeSelection;
@@ -31,6 +31,7 @@ export function ProviderStatsTable({
   refreshIntervalMs,
 }: ProviderStatsTableProps) {
   const { t, i18n } = useTranslation();
+  const { money, moneyTitle } = useMoneyFormat();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const { data: stats, isLoading } = useProviderStats(
     range,
@@ -104,9 +105,9 @@ export function ProviderStatsTable({
                     </td>
                     <td
                       className={cn(usageTable.td, "font-medium")}
-                      title={fmtUsd(stat.totalCost, 6)}
+                      title={moneyTitle(stat.totalCost, 6)}
                     >
-                      {fmtUsd(stat.totalCost, 2)}
+                      {money(stat.totalCost, 2)}
                     </td>
                     <PerformanceCells stat={stat} />
                   </tr>

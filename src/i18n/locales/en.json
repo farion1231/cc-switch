@@ -2378,6 +2378,25 @@
       "seconds": "{{seconds}}s"
     },
     "dataSources": "Data sources",
+    "display": {
+      "title": "Display",
+      "currency": "Currency",
+      "rate": "Exchange rate",
+      "rateHint": "Entered by hand and used only for display; costs are still recorded in USD.",
+      "rateInvalid": "Enter a number greater than 0",
+      "approxNote": "Hover a converted amount to see the USD value.",
+      "sidebarToday": "Sidebar \"Today\"",
+      "sidebarTodayItems": {
+        "cost": "Cost",
+        "tokens": "Tokens",
+        "requests": "Requests",
+        "hitRate": "Cache hit rate",
+        "none": "Hidden"
+      },
+      "sidebarTodayLimit": "Pick up to {{count}}",
+      "logColumns": "Request log columns",
+      "logColumnsSummary": "{{shown}} of {{total}} columns"
+    },
     "providerFilter": {
       "label": "Provider",
       "all": "All providers",
@@ -2416,7 +2435,8 @@
       "label": "Details",
       "providers": "Providers",
       "models": "Models",
-      "pricing": "Pricing"
+      "pricing": "Pricing",
+      "settings": "Settings"
     },
     "sortedByRequests": "Sorted by requests",
     "app": "App",
@@ -2436,6 +2456,13 @@
     "estimatedTimingTip": "About {{duration}}s (estimated from session-log timestamps, including the wait for the first token)",
     "estimatedTimingTipWithFirstToken": "About {{duration}}s · first token about {{ttft}}s (estimated from session-log timestamps)",
     "cacheTip": "Cache hits {{read}} · cache writes {{write}}",
+    "logColumns": {
+      "reset": "Reset to default",
+      "cacheWrite": "Cache Write",
+      "hitRate": "Hit Rate",
+      "hitRateTip": "Cache hits {{read}} of {{total}} cacheable input",
+      "duration": "Total Time"
+    },
     "openRequestDetail": "View request details: {{time}} {{provider}}",
     "prevPage": "Previous page",
     "nextPage": "Next page",
@@ -2444,7 +2471,7 @@
     },
     "detail": {
       "tokensTitle": "Token usage",
-      "costTitle": "Cost breakdown (USD)",
+      "costTitle": "Cost breakdown ({{currency}})",
       "performance": "Performance",
       "source": "Source",
       "sourceProxy": "Routing service · status {{code}}",
@@ -3247,6 +3274,7 @@
       "emptyArchive": "Downloaded archive is empty",
       "invalidRepoRef": "Invalid repository reference: {{owner}}/{{name}}",
       "archiveTooLarge": "Archive exceeds the {{limit_mb}} MB extraction limit; aborted",
+      "archiveDownloadTooLarge": "Repository archive download exceeds the {{limit_mb}} MB limit; aborted",
       "archiveTooManyEntries": "Archive has too many entries ({{count}}); the limit is {{limit}}",
       "downloadFailed": "Download failed: HTTP {{status}}",
       "allBranchesFailed": "All branches failed, tried: {{branches}}",
@@ -4084,7 +4112,9 @@
     "expandSidebar": "Expand sidebar",
     "collapseSidebar": "Collapse sidebar",
     "appsGroup": "Apps",
-    "todayCost": "Today {{cost}}",
+    "today": "Today {{value}}",
+    "todayRequests": "{{value}} req",
+    "todayHitRate": "Hit {{value}}",
     "usage": "Usage",
     "auth": "Accounts",
     "authNeedsReauth": "An account needs to sign in again",
@@ -4307,6 +4337,7 @@
       "defaultCannotRemove": "The default can't be removed. Make another provider the default first.",
       "currentCannotRemove": "The provider in use can't be removed. Enable another one first.",
       "inUseCannotDelete": "The provider in use can't be deleted. Switch to another one first.",
+      "directDefaultCannotDelete": "Leaving routing switches back to this provider, so it can't be deleted. On the direct page, choose \"Back to direct and use\" on another provider first.",
       "noFailover": "Official accounts can't join the failover queue: they use the client's own login and can't rotate with other providers."
     },
     "section": {

@@ -2378,6 +2378,25 @@
       "seconds": "{{seconds}} 秒"
     },
     "dataSources": "データソース",
+    "display": {
+      "title": "表示",
+      "currency": "通貨",
+      "rate": "為替レート",
+      "rateHint": "手動で入力し、表示の換算にのみ使います。費用は引き続き米ドルで記録されます。",
+      "rateInvalid": "0 より大きい数値を入力してください",
+      "approxNote": "換算した金額はホバーで米ドルの値を確認できます。",
+      "sidebarToday": "サイドバーの「今日」",
+      "sidebarTodayItems": {
+        "cost": "金額",
+        "tokens": "トークン",
+        "requests": "リクエスト数",
+        "hitRate": "キャッシュヒット率",
+        "none": "非表示"
+      },
+      "sidebarTodayLimit": "最大 {{count}} 項目まで",
+      "logColumns": "リクエストログの列",
+      "logColumnsSummary": "{{shown}} / {{total}} 列"
+    },
     "providerFilter": {
       "label": "プロバイダー",
       "all": "すべてのプロバイダー",
@@ -2416,7 +2435,8 @@
       "label": "明細",
       "providers": "プロバイダー",
       "models": "モデル",
-      "pricing": "料金"
+      "pricing": "料金",
+      "settings": "設定"
     },
     "sortedByRequests": "リクエスト数順",
     "app": "アプリ",
@@ -2436,6 +2456,13 @@
     "estimatedTimingTip": "所要 約 {{duration}}s（セッションログのタイムスタンプから推定、最初のトークンまでの待ち時間を含む）",
     "estimatedTimingTipWithFirstToken": "所要 約 {{duration}}s · 最初のトークン 約 {{ttft}}s（セッションログのタイムスタンプから推定）",
     "cacheTip": "キャッシュヒット {{read}} · キャッシュ書き込み {{write}}",
+    "logColumns": {
+      "reset": "既定に戻す",
+      "cacheWrite": "キャッシュ書き込み",
+      "hitRate": "ヒット率",
+      "hitRateTip": "キャッシュヒット {{read}} / キャッシュ対象の入力 {{total}}",
+      "duration": "合計時間"
+    },
     "openRequestDetail": "リクエストの詳細を表示：{{time}} {{provider}}",
     "prevPage": "前のページ",
     "nextPage": "次のページ",
@@ -2444,7 +2471,7 @@
     },
     "detail": {
       "tokensTitle": "トークン使用量",
-      "costTitle": "コスト内訳（USD）",
+      "costTitle": "コスト内訳（{{currency}}）",
       "performance": "パフォーマンス",
       "source": "ソース",
       "sourceProxy": "ルーティングサービス · ステータス {{code}}",
@@ -3247,6 +3274,7 @@
       "emptyArchive": "ダウンロードしたアーカイブが空です",
       "invalidRepoRef": "リポジトリの指定が不正です：{{owner}}/{{name}}",
       "archiveTooLarge": "アーカイブが展開上限 {{limit_mb}} MB を超えたため中止しました",
+      "archiveDownloadTooLarge": "リポジトリのアーカイブがダウンロード上限 {{limit_mb}} MB を超えたため中止しました",
       "archiveTooManyEntries": "アーカイブのエントリ数が多すぎます（{{count}}）。上限は {{limit}} です",
       "downloadFailed": "ダウンロードに失敗しました: HTTP {{status}}",
       "allBranchesFailed": "すべてのブランチで失敗しました。試行: {{branches}}",
@@ -4084,7 +4112,9 @@
     "expandSidebar": "サイドバーを展開",
     "collapseSidebar": "サイドバーを折りたたむ",
     "appsGroup": "アプリ",
-    "todayCost": "今日 {{cost}}",
+    "today": "今日 {{value}}",
+    "todayRequests": "{{value}} 回",
+    "todayHitRate": "ヒット {{value}}",
     "usage": "使用量",
     "auth": "アカウント",
     "authNeedsReauth": "再ログインが必要なアカウントがあります",
@@ -4307,6 +4337,7 @@
       "defaultCannotRemove": "既定のプロバイダーは削除できません。先にほかを既定にしてください。",
       "currentCannotRemove": "使用中のプロバイダーは削除できません。先にほかを有効にしてください。",
       "inUseCannotDelete": "使用中のプロバイダーは削除できません。先にほかへ切り替えてください。",
+      "directDefaultCannotDelete": "ルーティングを終了するとこのプロバイダーに戻るため、削除できません。先に直接接続ページでほかのプロバイダーの「直接接続に戻して使う」を選んでください。",
       "noFailover": "公式アカウントはフェイルオーバーキューに入れられません。クライアント自身のログインを使うため、ほかと交代できません。"
     },
     "section": {
