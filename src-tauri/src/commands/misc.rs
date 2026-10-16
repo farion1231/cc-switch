@@ -3935,15 +3935,22 @@ fn is_windows_npm_claude_install(bin_path: &str, real_target: &str) -> bool {
 fn claude_npm_windows_primary_update_command(bin_path: &str) -> String {
     let path = windows_shell_compatible_path(Path::new(bin_path));
     let path = path.to_string_lossy().replace('\'', "''");
+    // Own the process handle through exit-code collection. Start-Process -Wait
+    // can race a fast-exiting cmd and fail before returning its Process object.
     let script = format!(
         "$ErrorActionPreference = 'Stop'; \
          $env:npm_config_allow_scripts = '@anthropic-ai/claude-code'; \
          $env:npm_config_ignore_scripts = 'false'; \
          $env:npm_config_include = 'optional'; \
          $env:CC_SWITCH_CLAUDE_UPDATE_PATH = '{path}'; \
-         $process = Start-Process -FilePath $env:ComSpec \
-         -ArgumentList '/D /V:OFF /S /C \"\"%CC_SWITCH_CLAUDE_UPDATE_PATH%\" update\"' \
-         -NoNewWindow -Wait -PassThru; exit $process.ExitCode"
+         $process = New-Object System.Diagnostics.Process; \
+         $process.StartInfo.FileName = $env:ComSpec; \
+         $process.StartInfo.Arguments = '/D /V:OFF /S /C \"\"%CC_SWITCH_CLAUDE_UPDATE_PATH%\" update\"'; \
+         $process.StartInfo.UseShellExecute = $false; \
+         $process.StartInfo.CreateNoWindow = $true; \
+         try {{ [void]$process.Start(); $process.WaitForExit(); \
+         $exitCode = $process.ExitCode; }} finally {{ $process.Dispose(); }}; \
+         exit $exitCode"
     );
     format!(
         "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {}",
