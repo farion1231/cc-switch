@@ -4,11 +4,11 @@ import { APP_IDS } from "@/config/appConfig";
 
 /**
  * 回归：后端 `prompt_files::prompt_file_path` 对 Cursor 有完整支持
- * （`AppType::Cursor => ~/.cursor/AGENTS.md`），但前端 `PROMPT_APP_IDS` 漏了它 ——
+ * （`AppType::Cursor => ~/.cursor/rules/cc-switch.mdc`），但前端 `PROMPT_APP_IDS` 漏了它 ——
  * 结果提示词页的应用下拉里没有 Cursor，Cursor 应用页页头也没有「提示词 ›」入口。
  */
 describe("PROMPT_APP_IDS", () => {
-  it("包含 cursor（后端支持 ~/.cursor/AGENTS.md）", () => {
+  it("包含 cursor（后端写 ~/.cursor/rules/cc-switch.mdc）", () => {
     expect(PROMPT_APP_IDS).toContain("cursor");
   });
 
