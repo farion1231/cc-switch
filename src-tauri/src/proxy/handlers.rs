@@ -41,7 +41,7 @@ use super::{
         strip_hop_by_hop_response_headers, usage_logging_enabled, SseUsageCollector,
     },
     server::ProxyState,
-    sse::{strip_sse_field, take_sse_block},
+    sse::{body_looks_like_sse, strip_sse_field, take_sse_block},
     types::*,
     usage::parser::TokenUsage,
     ProxyError,
@@ -2670,18 +2670,6 @@ fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
     Ok(response)
 }
 
-/// 判断响应体是否"看起来像" SSE 文本（#2234 兜底嗅探）。
-///
-/// 仅在 JSON 解析已失败后调用：合法 JSON 不可能以这些前缀开头，误判面为零。
-/// 覆盖 SSE 规范的全部四种字段行；包含 ":" 是因为 OpenRouter 等会在流前发
-/// `: PROCESSING` 注释行。
-fn body_looks_like_sse(body: &str) -> bool {
-    let trimmed = body.trim_start_matches('\u{feff}').trim_start();
-    ["data:", "event:", "id:", "retry:", ":"]
-        .iter()
-        .any(|prefix| trimmed.starts_with(prefix))
-}
-
 /// 构造带现场诊断的上游解析错误：只附结构化分类与元数据，
 /// 避免响应正文经错误链间接进入持久化日志。
 fn upstream_body_parse_error(
@@ -3264,6 +3252,81 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
+
+    #[tokio::test]
+    async fn mislabeled_sse_tool_aliases_preserve_aggregation_fallback() {
+        use crate::proxy::{hyper_client::ProxyResponse, tool_aliases};
+        use axum::http::{HeaderMap, HeaderValue, StatusCode};
+        use serde_json::json;
+        use std::{io::Write, time::Duration};
+
+        let chat = concat!(
+            "\u{feff}: PROCESSING\r\n\r\n",
+            "data: {\"id\":\"c1\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call1\",\"type\":\"function\",\"function\":{\"name\":\"ccs_\"}}]}}]}\r\n\r\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"Bash\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+        let responses = concat!(
+            "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"id\":\"fc1\",\"call_id\":\"call1\",\"name\":\"ccs_Bash\",\"arguments\":\"{}\"}}\n\n",
+            "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp1\",\"status\":\"completed\",\"model\":\"m\",\"output\":[]}}"
+        );
+        for (sse, is_responses) in [(chat, false), (responses, true)] {
+            for gzip in [false, true] {
+                for request_is_streaming in [false, true] {
+                    let aliases = tool_aliases::adapt_request(
+                        &mut json!({"tools":[{"type":"function","name":"Bash"}]}),
+                    );
+                    let mut headers = HeaderMap::new();
+                    headers.insert("content-type", HeaderValue::from_static("application/json"));
+                    headers.insert("x-request-id", HeaderValue::from_static("req1"));
+                    let mut bytes = sse.as_bytes().to_vec();
+                    if gzip {
+                        let mut encoder = flate2::write::GzEncoder::new(
+                            Vec::new(),
+                            flate2::Compression::default(),
+                        );
+                        encoder.write_all(&bytes).unwrap();
+                        bytes = encoder.finish().unwrap();
+                        headers.insert("content-encoding", HeaderValue::from_static("gzip"));
+                    }
+                    headers.insert(
+                        "content-length",
+                        HeaderValue::from_str(&bytes.len().to_string()).unwrap(),
+                    );
+                    let restored = tool_aliases::restore_response(
+                        ProxyResponse::buffered(StatusCode::OK, headers, Bytes::from(bytes)),
+                        aliases,
+                        request_is_streaming,
+                        Duration::ZERO,
+                    )
+                    .await
+                    .unwrap();
+                    assert_eq!(restored.status(), StatusCode::OK);
+                    assert_eq!(restored.headers()["content-type"], "application/json");
+                    assert_eq!(restored.headers()["x-request-id"], "req1");
+                    assert!(!restored.headers().contains_key("content-length"));
+                    assert!(!restored.headers().contains_key("content-encoding"));
+                    let body =
+                        String::from_utf8(restored.bytes_with_limit(8192).await.unwrap().to_vec())
+                            .unwrap();
+                    assert!(body_looks_like_sse(&body));
+                    assert!(serde_json::from_str::<serde_json::Value>(&body).is_err());
+                    let aggregated = if is_responses {
+                        responses_sse_to_response_value(&body).unwrap()
+                    } else {
+                        chat_sse_to_response_value(&body).unwrap()
+                    };
+                    let function = if is_responses {
+                        &aggregated["output"][0]
+                    } else {
+                        &aggregated["choices"][0]["message"]["tool_calls"][0]["function"]
+                    };
+                    assert_eq!(function["name"], "Bash");
+                    assert_eq!(function["arguments"], "{}");
+                }
+            }
+        }
+    }
 
     /// 补发了压缩条目的 SSE 比上游声明的长：留着上游的 Content-Length，客户端读到那个
     /// 长度就停，补上的 compaction 条目和 response.completed 都收不到。

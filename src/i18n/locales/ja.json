@@ -1662,6 +1662,8 @@
     "customUserAgent": "カスタム User-Agent",
     "customUserAgentInvalid": "User-Agent に制御文字（改行など）を含めることはできません。含まれている場合は無視されます。",
     "customUserAgentPresets": "プリセット",
+    "stripClaudeCodeFingerprint": "Claude Code フィンガープリントの除去",
+    "stripClaudeCodeFingerprintHint": "既定では無効です。OpenAI Chat、Responses、Gemini への変換時にクライアント識別ヘッダーと anthropic-* ヘッダーを除去し、ツール名を別名に変換して応答時に復元します。パラメータは保持されます。Chat のシステムメッセージは先頭に移動します。Anthropic の直接転送には影響しません。",
     "localProxyRequestOverrides": "ローカルプロキシのリクエスト上書き",
     "localProxyRequestOverridesInvalid": "ローカルプロキシのリクエスト上書き形式エラー: {{error}}",
     "localProxyHeaderOverrides": "Header 上書き",
