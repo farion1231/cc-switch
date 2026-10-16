@@ -338,7 +338,8 @@ pub fn is_official_provider(provider: &Provider) -> bool {
 /// （模式在 `live-state.json`，见 `mode::controller`）。
 pub fn needs_routing(provider: &Provider) -> bool {
     !is_official_provider(provider)
-        && (matches!(provider_mode(provider), ClaudeDesktopMode::Proxy)
+        && (crate::aggregate::is_aggregate_provider(provider)
+            || matches!(provider_mode(provider), ClaudeDesktopMode::Proxy)
             || is_managed_oauth_proxy_provider(provider))
 }
 
