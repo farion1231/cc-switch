@@ -2945,7 +2945,12 @@ function ProviderFormFull({
                 </Label>
                 <JsonEditor
                   value={form.getValues("settingsConfig")}
-                  onChange={(config) => form.setValue("settingsConfig", config)}
+                  onChange={(config) => {
+                    form.setValue("settingsConfig", config);
+                    if (appId === "openclaw") {
+                      openclawForm.syncOpenclawUserAgentFromConfig(config);
+                    }
+                  }}
                   placeholder={
                     appId === "hermes"
                       ? `{
