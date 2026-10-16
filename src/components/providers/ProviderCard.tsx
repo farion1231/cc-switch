@@ -164,6 +164,8 @@ interface ConfiguredModel {
   label: string;
 }
 
+const MODEL_BADGE_LIMIT = 3;
+
 // 与后端 codex_published_specs 保持一致：有目录就发目录，目录为空才发顶层 model。
 const extractConfiguredModels = (provider: Provider): ConfiguredModel[] => {
   const rawModels = provider.settingsConfig?.modelCatalog?.models;
@@ -250,8 +252,10 @@ export function ProviderCard({
   const displayUrl = useMemo(() => {
     return extractApiUrl(provider, fallbackUrlText);
   }, [provider, fallbackUrlText]);
-  const configuredModels =
-    appId === "codex" ? extractConfiguredModels(provider) : [];
+  const configuredModels = useMemo(
+    () => (appId === "codex" ? extractConfiguredModels(provider) : []),
+    [appId, provider],
+  );
 
   const isClickableUrl = useMemo(() => {
     if (provider.notes?.trim()) {
@@ -474,14 +478,13 @@ export function ProviderCard({
           ) : null}
 
           {configuredModels.length > 0 && (
-            <div className="mt-1.5 flex flex-wrap items-center gap-1">
-              <span className="text-badge text-fg-3">
-                {t("providerCard.chip.models", {
-                  count: configuredModels.length,
-                  defaultValue: "{{count}} 个模型",
-                })}
-              </span>
-              {configuredModels.map((model) => (
+            <div
+              className={cn(
+                "mt-1.5 flex flex-wrap items-center gap-1",
+                presentation.dim && "opacity-60",
+              )}
+            >
+              {configuredModels.slice(0, MODEL_BADGE_LIMIT).map((model) => (
                 <CardChipBadge
                   key={model.model}
                   chip={{
@@ -493,6 +496,15 @@ export function ProviderCard({
                   }}
                 />
               ))}
+              {configuredModels.length > MODEL_BADGE_LIMIT && (
+                <CardChipBadge
+                  chip={{
+                    key: "more-models",
+                    label: `+${configuredModels.length - MODEL_BADGE_LIMIT}`,
+                    tone: "outline",
+                  }}
+                />
+              )}
             </div>
           )}
         </div>
