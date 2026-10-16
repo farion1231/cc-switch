@@ -622,7 +622,7 @@ function ToolRow({
     </Button>
   ) : null;
 
-  const installHint = t("appsPage.retryDetectionHint");
+  const installHint = t(`appsPage.installHint.${tool}`, { defaultValue: "" });
   const meta = defaultInstall ? (
     <>
       <span className="min-w-0 truncate font-mono" title={defaultInstall.path}>

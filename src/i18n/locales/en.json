@@ -4117,7 +4117,6 @@
     "desktopConnected": "Connected",
     "desktopNotConnected": "Not connected",
     "newVersion": "{{version}} available",
-    "retryDetectionHint": "Already installed? Retry detection before installing another copy.",
     "notDetected": "Not detected",
     "notRunnable": "Can't run",
     "updateNeedsNode": "{{version}} requires Node {{required}}, but this installation runs on Node {{current}}. Upgrade Node first.",
