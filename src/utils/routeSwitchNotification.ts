@@ -41,7 +41,10 @@ export function routeSwitchNotification(
   if (
     result.kind !== "remembered" &&
     result.clientConfigChanged &&
-    (app === "codex" || app === "gemini" || app === "grokbuild")
+    (app === "codex" ||
+      app === "gemini" ||
+      app === "grokbuild" ||
+      app === "claude-desktop")
   ) {
     message += t("mode.toast.clientConfigChanged", {
       app: APP_DISPLAY_NAME[app],

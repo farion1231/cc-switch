@@ -204,7 +204,7 @@ describe("useProviderActions", () => {
     );
   });
 
-  it.each(["codex", "gemini", "grokbuild"] as const)(
+  it.each(["codex", "gemini", "grokbuild", "claude-desktop"] as const)(
     "reports a %s route switch without a restart when the client config is unchanged",
     async (app) => {
       switchProviderMutateAsync.mockResolvedValueOnce({

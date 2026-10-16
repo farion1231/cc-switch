@@ -6097,6 +6097,39 @@ model_provider = "c"
         assert_eq!(profile["inferenceModels"], json!(["claude-sonnet-5"]));
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
 
+        let result = ProviderService::switch(&state, desktop.clone(), "map").expect("same profile");
+        assert_eq!(
+            result.route,
+            Some(RouteSwitchResult {
+                kind: RouteSwitchKind::Route,
+                client_config_changed: false,
+            })
+        );
+        let mut changed = state
+            .db
+            .get_provider_by_id("map", desktop.as_str())
+            .unwrap()
+            .unwrap();
+        for route in changed
+            .meta
+            .as_mut()
+            .unwrap()
+            .claude_desktop_model_routes
+            .values_mut()
+        {
+            route.label_override = Some("Updated model".to_string());
+        }
+        state.db.save_provider(desktop.as_str(), &changed).unwrap();
+        let result =
+            ProviderService::switch(&state, desktop.clone(), "map").expect("changed profile");
+        assert_eq!(
+            result.route,
+            Some(RouteSwitchResult {
+                kind: RouteSwitchKind::Route,
+                client_config_changed: true,
+            })
+        );
+
         // Claude Code 退出路由时，Desktop 还在路由模式，服务不能跟着停。
         enter(&state, &AppType::Claude, false).await.expect("enter");
         exit(&state, &AppType::Claude).await.expect("exit");
