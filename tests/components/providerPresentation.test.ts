@@ -4,8 +4,8 @@ import type { Provider } from "@/types";
 import type { AppMode } from "@/types/proxy";
 import {
   buildAdditiveSections,
-  buildDesktopSections,
   buildSwitchSections,
+  queueMoveSortUpdates,
   type ProviderSection,
   type SwitchModeInput,
 } from "@/components/providers/presentation";
@@ -139,8 +139,13 @@ describe("buildSwitchSections — delete guard", () => {
       view: "direct",
       routeId: "backup",
     });
-    expect(item(sections, "relay").deleteDisabledReason).toBeTruthy();
-    expect(item(sections, "backup").deleteDisabledReason).toBeTruthy();
+    // 直连那家此时不算在用，原因要说清是「退出路由后会回到它」（#8277）
+    expect(item(sections, "relay").deleteDisabledReason).toBe(
+      "providerCard.reason.directDefaultCannotDelete",
+    );
+    expect(item(sections, "backup").deleteDisabledReason).toBe(
+      "providerCard.reason.inUseCannotDelete",
+    );
     expect(item(sections, "converted").deleteDisabledReason).toBeUndefined();
 
     // 直连时 routeId 只是上次的路由，不算在用
@@ -467,29 +472,6 @@ describe("buildSwitchSections — stack", () => {
   });
 });
 
-describe("buildDesktopSections", () => {
-  it("colors the current card by whether it uses model mapping", () => {
-    const mapped = provider("mapped", { meta: { claudeDesktopMode: "proxy" } });
-    const onSwitch = vi.fn();
-    const sections = buildDesktopSections({
-      t,
-      providers: [mapped, relay],
-      currentId: "mapped",
-      onSwitch,
-    });
-
-    expect(item(sections, "mapped")).toMatchObject({
-      tone: "route",
-      status: { label: "providerCard.status.inUse", dot: "route" },
-      deleteDisabledReason: "providerCard.reason.inUseCannotDelete",
-    });
-    expect(item(sections, "relay").chips.map((c) => c.key)).toEqual(["direct"]);
-    expect(item(sections, "relay").deleteDisabledReason).toBeUndefined();
-    button(sections, "relay", "switch").onClick();
-    expect(onSwitch).toHaveBeenCalledWith(relay);
-  });
-});
-
 describe("buildAdditiveSections", () => {
   const additiveActions = () => ({
     add: vi.fn(),
@@ -612,5 +594,66 @@ describe("buildAdditiveSections", () => {
     expect(item(sections, "relay").deleteDisabledReason).toBe(
       "pi.current.stateUnavailableHint",
     );
+  });
+});
+
+describe("queueMoveSortUpdates", () => {
+  it("swaps the two positions of a sorted queue", () => {
+    expect(
+      queueMoveSortUpdates(
+        [
+          { providerId: "a", sortIndex: 1 },
+          { providerId: "b", sortIndex: 4 },
+        ],
+        {},
+        "b",
+        -1,
+      ),
+    ).toEqual([
+      { id: "b", sortIndex: 1 },
+      { id: "a", sortIndex: 4 },
+    ]);
+  });
+
+  it("keeps positions distinct when sort indexes tie", () => {
+    expect(
+      queueMoveSortUpdates(
+        [
+          { providerId: "a", sortIndex: 2 },
+          { providerId: "b", sortIndex: 2 },
+        ],
+        {},
+        "b",
+        -1,
+      ),
+    ).toEqual([
+      { id: "b", sortIndex: 2 },
+      { id: "a", sortIndex: 3 },
+    ]);
+  });
+
+  it("keeps positions distinct when an unsorted provider falls back onto a used index", () => {
+    // b 没有 sortIndex，用下标 1 兜底，正好撞上 a 的 1
+    expect(
+      queueMoveSortUpdates(
+        [{ providerId: "a", sortIndex: 1 }, { providerId: "b" }],
+        {},
+        "b",
+        -1,
+      ),
+    ).toEqual([
+      { id: "b", sortIndex: 1 },
+      { id: "a", sortIndex: 2 },
+    ]);
+  });
+
+  it("returns null when the move would leave the queue", () => {
+    const items = [
+      { providerId: "a", sortIndex: 0 },
+      { providerId: "b", sortIndex: 1 },
+    ];
+    expect(queueMoveSortUpdates(items, {}, "a", -1)).toBeNull();
+    expect(queueMoveSortUpdates(items, {}, "b", 1)).toBeNull();
+    expect(queueMoveSortUpdates(items, {}, "x", 1)).toBeNull();
   });
 });

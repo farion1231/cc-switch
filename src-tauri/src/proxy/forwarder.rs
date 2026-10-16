@@ -1459,9 +1459,14 @@ impl RequestForwarder {
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
+        // 聚合模型的请求已经解出了上游名，不再查映射表（查不到会报错，按档位回落会发错模型）。
         let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
-            crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
-                .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+            if self.keeps_resolved_model() {
+                crate::claude_desktop_config::normalize_upstream_request(body.clone(), provider)
+            } else {
+                crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
+                    .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+            }
         } else if self.keeps_resolved_model() {
             body.clone()
         } else {
@@ -1842,6 +1847,15 @@ impl RequestForwarder {
                 mapped_body,
                 reasoning_config.as_ref(),
             )?;
+            let signature_fallbacks =
+                super::providers::codex_chat_common::fill_gemini_thought_signature_fallback(
+                    &mut chat_body,
+                );
+            if signature_fallbacks > 0 {
+                log::debug!(
+                    "[Codex] Filled {signature_fallbacks} missing Gemini thought signature(s) with the skip placeholder"
+                );
+            }
             super::providers::inject_codex_chat_prompt_cache_key(
                 provider,
                 &mut chat_body,
@@ -2707,8 +2721,8 @@ impl RequestForwarder {
             self.non_streaming_timeout
         };
 
-        // 获取全局代理 URL
-        let upstream_proxy_url: Option<String> = super::http_client::get_current_proxy_url();
+        // 获取全局代理 URL（上游是本机地址时直连，不送进代理）
+        let upstream_proxy_url: Option<String> = super::http_client::proxy_url_for(&url);
 
         // SOCKS5 代理不支持 CONNECT 隧道，需要用 reqwest
         let is_socks_proxy = upstream_proxy_url
@@ -2730,7 +2744,7 @@ impl RequestForwarder {
             log::debug!(
                 "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
             );
-            let client = super::http_client::get();
+            let client = super::http_client::get_for_url(&url);
             let mut request = client.request(method.clone(), &url);
             if request_is_streaming {
                 // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
@@ -4228,12 +4242,15 @@ fn should_force_identity_encoding(
 }
 
 fn map_reqwest_send_error(error: reqwest::Error) -> ProxyError {
-    if error.is_timeout() {
-        ProxyError::Timeout(format!("上游请求超时: {}", error.without_url()))
-    } else if error.is_connect() {
-        ProxyError::ForwardFailed(format!("上游连接失败: {}", error.without_url()))
+    let is_timeout = error.is_timeout();
+    let is_connect = error.is_connect();
+    let detail = super::error::describe_reqwest_error(error);
+    if is_timeout {
+        ProxyError::Timeout(format!("上游请求超时: {detail}"))
+    } else if is_connect {
+        ProxyError::ForwardFailed(format!("上游连接失败: {detail}"))
     } else {
-        ProxyError::ForwardFailed(format!("上游请求发送失败: {}", error.without_url()))
+        ProxyError::ForwardFailed(format!("上游请求发送失败: {detail}"))
     }
 }
 
@@ -8450,6 +8467,55 @@ mod tests {
             send(&stack_forwarder(), vec![kimi], body)
                 .await
                 .map_err(|e| e.error)
+                .expect("stack mode");
+
+            let requests = up.requests.lock().await;
+            assert_eq!(requests[0]["model"], "kimi-k2");
+            assert_eq!(requests[1]["model"], "kimi-k3");
+        }
+
+        #[tokio::test]
+        async fn claude_desktop_stacked_requests_skip_the_mapping_table() {
+            let up = upstream(vec![ok(), ok()]).await;
+            let mut kimi = provider("kimi", &up);
+            kimi.meta = Some(crate::provider::ProviderMeta {
+                claude_desktop_model_routes: [(
+                    "claude-sonnet-5".to_string(),
+                    crate::provider::ClaudeDesktopModelRoute {
+                        model: "kimi-k2".to_string(),
+                        label_override: None,
+                        supports_1m: None,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            });
+            let send_desktop = |fwd: RequestForwarder, model: &'static str| {
+                let kimi = kimi.clone();
+                async move {
+                    let mut body = plain_body();
+                    body["model"] = json!(model);
+                    fwd.forward_with_retry(
+                        &AppType::ClaudeDesktop,
+                        http::Method::POST,
+                        "/v1/messages",
+                        body,
+                        HeaderMap::new(),
+                        Extensions::new(),
+                        vec![kimi],
+                    )
+                    .await
+                    .map_err(|e| e.error)
+                }
+            };
+
+            // 对照：路由请求按映射表换成上游名；聚合请求体里已经是上游名，映射表里没有它也照发。
+            send_desktop(forwarder(1, "kimi"), "claude-sonnet-5")
+                .await
+                .expect("routed");
+            send_desktop(stack_forwarder(), "kimi-k3")
+                .await
                 .expect("stack mode");
 
             let requests = up.requests.lock().await;
