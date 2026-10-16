@@ -2448,6 +2448,14 @@
     "estimatedTimingTip": "所要 約 {{duration}}s（セッションログのタイムスタンプから推定、最初のトークンまでの待ち時間を含む）",
     "estimatedTimingTipWithFirstToken": "所要 約 {{duration}}s · 最初のトークン 約 {{ttft}}s（セッションログのタイムスタンプから推定）",
     "cacheTip": "キャッシュヒット {{read}} · キャッシュ書き込み {{write}}",
+    "logColumns": {
+      "menu": "表示する列",
+      "reset": "既定に戻す",
+      "cacheWrite": "キャッシュ書き込み",
+      "hitRate": "ヒット率",
+      "hitRateTip": "キャッシュヒット {{read}} / キャッシュ対象の入力 {{total}}",
+      "duration": "合計時間"
+    },
     "openRequestDetail": "リクエストの詳細を表示：{{time}} {{provider}}",
     "prevPage": "前のページ",
     "nextPage": "次のページ",

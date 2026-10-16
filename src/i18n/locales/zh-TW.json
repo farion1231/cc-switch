@@ -2449,6 +2449,14 @@
     "estimatedTimingTip": "耗時約 {{duration}}s（按工作階段日誌的時間戳記估算，含首字等待）",
     "estimatedTimingTipWithFirstToken": "耗時約 {{duration}}s · 首字約 {{ttft}}s（按工作階段日誌的時間戳記估算）",
     "cacheTip": "快取命中 {{read}} · 快取寫入 {{write}}",
+    "logColumns": {
+      "menu": "顯示的欄位",
+      "reset": "還原預設",
+      "cacheWrite": "快取寫入",
+      "hitRate": "命中率",
+      "hitRateTip": "快取命中 {{read}} / 可快取輸入 {{total}}",
+      "duration": "總耗時"
+    },
     "openRequestDetail": "查看請求詳情：{{time}} {{provider}}",
     "prevPage": "上一頁",
     "nextPage": "下一頁",

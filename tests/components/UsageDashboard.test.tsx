@@ -468,6 +468,62 @@ describe("UsageDashboard", () => {
     ).toHaveAttribute("aria-selected", "true");
   });
 
+  it("shows and hides request log columns from the columns menu", async () => {
+    const user = userEvent.setup();
+    const onUsageDisplayChange = vi.fn().mockResolvedValue(true);
+    renderDashboard({
+      usageDisplay: { currency: "CNY", requestLogColumns: { app: false } },
+      onUsageDisplayChange,
+    });
+
+    // 改过的列按设置走，没改过的按默认（新列默认不显示），时间列总在
+    const initial = requestLogTableMock.mock.lastCall?.[0].columns;
+    expect(initial).toContain("time");
+    expect(initial).not.toContain("app");
+    expect(initial).not.toContain("statusCode");
+
+    await user.click(
+      screen.getByRole("button", { name: "usage.logColumns.menu" }),
+    );
+    expect(
+      screen.queryByRole("menuitemcheckbox", { name: "usage.time" }),
+    ).not.toBeInTheDocument();
+    const status = await screen.findByRole("menuitemcheckbox", {
+      name: "usage.statusCode",
+    });
+    expect(status).toHaveAttribute("aria-checked", "false");
+    await user.click(status);
+
+    // 菜单不关，可以接着勾；保存时其它显示设置原样带上，只存改过的列
+    expect(onUsageDisplayChange).toHaveBeenLastCalledWith({
+      currency: "CNY",
+      requestLogColumns: { app: false, statusCode: true },
+    });
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: "usage.statusCode" }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(requestLogTableMock.mock.lastCall?.[0].columns).toContain(
+      "statusCode",
+    );
+
+    // 勾回默认值的列不再写进设置
+    await user.click(
+      screen.getByRole("menuitemcheckbox", { name: "usage.app" }),
+    );
+    expect(onUsageDisplayChange).toHaveBeenLastCalledWith({
+      currency: "CNY",
+      requestLogColumns: { statusCode: true },
+    });
+
+    await user.click(
+      screen.getByRole("menuitem", { name: "usage.logColumns.reset" }),
+    );
+    expect(onUsageDisplayChange).toHaveBeenLastCalledWith({
+      currency: "CNY",
+      requestLogColumns: {},
+    });
+  });
+
   it("puts the amount display above pricing in the settings tab", async () => {
     const user = userEvent.setup();
     renderDashboard({

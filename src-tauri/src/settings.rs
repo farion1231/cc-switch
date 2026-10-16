@@ -374,6 +374,10 @@ pub struct UsageDisplaySettings {
     /// 侧栏「今日」显示什么（"cost" / "tokens" / "both" / "hidden"），缺省为 cost
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sidebar_today: Option<String>,
+    /// 请求日志的列显隐：只存用户改过的列（列 id → 是否显示），没写的按各列默认值，
+    /// 以后新加的列也按它自己的默认值出现
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub request_log_columns: BTreeMap<String, bool>,
 }
 
 /// 应用设置结构
@@ -1410,7 +1414,8 @@ mod tests {
             "usageDisplay": {
                 "currency": "CNY",
                 "exchangeRates": { "CNY": 6.8 },
-                "sidebarToday": "both"
+                "sidebarToday": "both",
+                "requestLogColumns": { "statusCode": true, "app": false }
             }
         }))
         .expect("usage display");
@@ -1418,12 +1423,14 @@ mod tests {
         assert_eq!(display.currency.as_deref(), Some("CNY"));
         assert_eq!(display.exchange_rates.get("CNY"), Some(&6.8));
         assert_eq!(display.sidebar_today.as_deref(), Some("both"));
+        assert_eq!(display.request_log_columns.get("app"), Some(&false));
         assert_eq!(
             serde_json::to_value(&saved).expect("serialize")["usageDisplay"],
             serde_json::json!({
                 "currency": "CNY",
                 "exchangeRates": { "CNY": 6.8 },
-                "sidebarToday": "both"
+                "sidebarToday": "both",
+                "requestLogColumns": { "app": false, "statusCode": true }
             })
         );
     }

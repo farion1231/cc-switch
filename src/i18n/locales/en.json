@@ -2448,6 +2448,14 @@
     "estimatedTimingTip": "About {{duration}}s (estimated from session-log timestamps, including the wait for the first token)",
     "estimatedTimingTipWithFirstToken": "About {{duration}}s · first token about {{ttft}}s (estimated from session-log timestamps)",
     "cacheTip": "Cache hits {{read}} · cache writes {{write}}",
+    "logColumns": {
+      "menu": "Columns",
+      "reset": "Reset to default",
+      "cacheWrite": "Cache Write",
+      "hitRate": "Hit Rate",
+      "hitRateTip": "Cache hits {{read}} of {{total}} cacheable input",
+      "duration": "Total Time"
+    },
     "openRequestDetail": "View request details: {{time}} {{provider}}",
     "prevPage": "Previous page",
     "nextPage": "Next page",

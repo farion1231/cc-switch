@@ -2448,6 +2448,14 @@
     "estimatedTimingTip": "耗时约 {{duration}}s（按会话日志的时间戳估算，含首字等待）",
     "estimatedTimingTipWithFirstToken": "耗时约 {{duration}}s · 首字约 {{ttft}}s（按会话日志的时间戳估算）",
     "cacheTip": "缓存命中 {{read}} · 缓存写入 {{write}}",
+    "logColumns": {
+      "menu": "显示的列",
+      "reset": "恢复默认",
+      "cacheWrite": "缓存写入",
+      "hitRate": "命中率",
+      "hitRateTip": "缓存命中 {{read}} / 可缓存输入 {{total}}",
+      "duration": "总耗时"
+    },
     "openRequestDetail": "查看请求详情：{{time}} {{provider}}",
     "prevPage": "上一页",
     "nextPage": "下一页",
