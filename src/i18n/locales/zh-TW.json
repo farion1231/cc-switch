@@ -4839,9 +4839,6 @@
     "form": {
       "modelsToggle": "設定模型列表",
       "modelsHiddenHint": "未啟用模型列表：儲存後將以 override-only 型態寫入（不寫 models 鍵）",
-      "thinking": "思考設定",
-      "imageInputDecoder": "影像輸入解碼器",
-      "cost": "價格",
       "configYaml": "配置 YAML",
       "fixYamlFirst": "請先修正下方的設定 YAML，再編輯結構化欄位。",
       "providerKeyDuplicate": "此標識已被使用，請更換",

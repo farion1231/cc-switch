@@ -4838,9 +4838,6 @@
     "form": {
       "modelsToggle": "モデルリストを設定",
       "modelsHiddenHint": "モデルリスト無効：保存時は override-only 形式で書き込みます（models キーを書きません）",
-      "thinking": "思考設定",
-      "imageInputDecoder": "画像入力デコーダー",
-      "cost": "コスト",
       "configYaml": "設定YAML",
       "fixYamlFirst": "下の設定 YAML を修正してから、構造化フィールドを編集してください。",
       "providerKeyDuplicate": "このキーは既に使用されています",

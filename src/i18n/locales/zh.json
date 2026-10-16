@@ -4838,9 +4838,6 @@
     "form": {
       "modelsToggle": "配置模型列表",
       "modelsHiddenHint": "未启用模型列表：保存后将以 override-only 形态写入（不写 models 键）",
-      "thinking": "思考配置",
-      "imageInputDecoder": "图像输入解码器",
-      "cost": "价格",
       "configYaml": "配置 YAML",
       "fixYamlFirst": "请先修复下方配置 YAML，再编辑结构化字段。",
       "providerKeyDuplicate": "此标识已被使用，请更换",

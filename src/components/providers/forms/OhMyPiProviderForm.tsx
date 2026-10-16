@@ -76,12 +76,9 @@ const MODEL_CONTROLLED_KEYS: Record<string, true> = {
   id: true,
   name: true,
   reasoning: true,
-  thinking: true,
   input: true,
-  imageInputDecoder: true,
   contextWindow: true,
   maxTokens: true,
-  cost: true,
 };
 
 interface OhMyPiModelDraft {
@@ -91,18 +88,12 @@ interface OhMyPiModelDraft {
   hasName: boolean;
   reasoning: boolean;
   hasReasoning: boolean;
-  thinking: string;
-  hasThinking: boolean;
   input: string[];
   hasInput: boolean;
-  imageInputDecoder: string;
-  hasImageInputDecoder: boolean;
   contextWindow: string;
   hasContextWindow: boolean;
   maxTokens: string;
   hasMaxTokens: boolean;
-  cost: string;
-  hasCost: boolean;
   passthrough: Record<string, unknown>;
 }
 
@@ -117,13 +108,18 @@ class OhMyPiFormValidationError extends Error {
   }
 }
 
-function validateOhMyPiField<T>(operation: () => T, fieldSelector: string): T {
+function validateOhMyPiField<T>(
+  operation: () => T,
+  fieldSelector: string,
+  modelKey?: string,
+): T {
   try {
     return operation();
   } catch (error) {
     throw new OhMyPiFormValidationError(
       error instanceof Error ? error.message : String(error),
       fieldSelector,
+      modelKey,
     );
   }
 }
@@ -173,23 +169,6 @@ function parseYamlObjectWithoutKeyLine(
     return parseYamlObject(rest);
   }
   return parseYamlObject(value);
-}
-
-function parseOptionValue(value: string): unknown {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
-}
-
-function formatOptionValue(value: unknown): string {
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
 }
 
 function optionalText(value: unknown): string {
@@ -260,16 +239,8 @@ function modelDraft(
     hasName: hasOwn(model, "name"),
     reasoning: model.reasoning === true,
     hasReasoning: hasOwn(model, "reasoning"),
-    thinking: hasOwn(model, "thinking")
-      ? formatOptionValue(model.thinking)
-      : "",
-    hasThinking: hasOwn(model, "thinking"),
     input: Array.isArray(model.input) ? [...model.input] : ["text"],
     hasInput: hasOwn(model, "input"),
-    imageInputDecoder: hasOwn(model, "imageInputDecoder")
-      ? formatOptionValue(model.imageInputDecoder)
-      : "",
-    hasImageInputDecoder: hasOwn(model, "imageInputDecoder"),
     contextWindow:
       typeof model.contextWindow === "number" &&
       Number.isFinite(model.contextWindow)
@@ -281,8 +252,6 @@ function modelDraft(
         ? String(model.maxTokens)
         : "",
     hasMaxTokens: hasOwn(model, "maxTokens"),
-    cost: hasOwn(model, "cost") ? formatOptionValue(model.cost) : "",
-    hasCost: hasOwn(model, "cost"),
     passthrough: objectWithout(model, MODEL_CONTROLLED_KEYS),
   };
 }
@@ -295,18 +264,12 @@ function newModel(): OhMyPiModelDraft {
     hasName: true,
     reasoning: false,
     hasReasoning: true,
-    thinking: "",
-    hasThinking: true,
     input: ["text"],
     hasInput: true,
-    imageInputDecoder: "",
-    hasImageInputDecoder: true,
     contextWindow: "",
     hasContextWindow: true,
     maxTokens: "",
     hasMaxTokens: true,
-    cost: "",
-    hasCost: true,
     passthrough: {},
   };
 }
@@ -326,22 +289,13 @@ function modelPreview(model: OhMyPiModelDraft): Record<string, unknown> {
     id: model.id,
     ...(model.hasName && displayName ? { name: displayName } : {}),
     ...(model.hasReasoning ? { reasoning: model.reasoning } : {}),
-    ...(model.hasThinking && model.thinking.trim()
-      ? { thinking: parseOptionValue(model.thinking.trim()) }
-      : {}),
     ...(model.hasInput
       ? { input: withImageInput(model.input, supportsImageInput(model.input)) }
-      : {}),
-    ...(model.hasImageInputDecoder && model.imageInputDecoder.trim()
-      ? { imageInputDecoder: model.imageInputDecoder.trim() }
       : {}),
     ...(model.hasContextWindow && contextWindow !== undefined
       ? { contextWindow }
       : {}),
     ...(model.hasMaxTokens && maxTokens !== undefined ? { maxTokens } : {}),
-    ...(model.hasCost && model.cost.trim()
-      ? { cost: parseOptionValue(model.cost.trim()) }
-      : {}),
   };
 }
 
@@ -785,6 +739,7 @@ export function OhMyPiProviderForm({
   }, []);
 
   const handleDisplayYamlChange = (value: string) => {
+    if (value === displayYaml) return;
     // YAML → 控件：受管键行同步回表单控件（displayYaml 的受管块由控件
     // 派生，改动会立即反映回来）；非受管部分原样保留。
     const parsed = parseYamlObjectWithoutKeyLine(value, providerKey);
@@ -807,8 +762,43 @@ export function OhMyPiProviderForm({
       includeCompatRef.current = hasOwn(parsed, "compat");
       setIncludeModels(hasOwn(parsed, "models"));
       if (Array.isArray(parsed.models)) {
-        setModels(parsed.models.map((model) => modelDraft(model)));
-        setExpandedModelKeys(new Set());
+        // 尽量沿用现有模型行的 key（先按 id 匹配，数量一致时按位置兜底），
+        // 只在真正增删/换行时生成新 key，避免编辑 YAML 收起已展开的模型详情。
+        const previousDrafts = models;
+        const configModels = parsed.models;
+        const reservedPreviousIndexes = new Set<number>();
+        const matchedPreviousIndexes = configModels.map((model) => {
+          const id = optionalText(asObject(model).id);
+          const previousIndex = previousDrafts.findIndex(
+            (candidate, candidateIndex) =>
+              !reservedPreviousIndexes.has(candidateIndex) &&
+              candidate.id === id,
+          );
+          if (previousIndex >= 0) reservedPreviousIndexes.add(previousIndex);
+          return previousIndex;
+        });
+        const usedPreviousIndexes = new Set(reservedPreviousIndexes);
+        const canUsePositionalFallback =
+          configModels.length === previousDrafts.length;
+        const nextModels = configModels.map((model, index) => {
+          let previousIndex = matchedPreviousIndexes[index];
+          if (
+            previousIndex < 0 &&
+            canUsePositionalFallback &&
+            !usedPreviousIndexes.has(index)
+          ) {
+            previousIndex = index;
+            usedPreviousIndexes.add(index);
+          }
+          const previousDraft =
+            previousIndex >= 0 ? previousDrafts[previousIndex] : undefined;
+          return modelDraft(model, { key: previousDraft?.key });
+        });
+        setModels(nextModels);
+        const nextKeys = new Set(nextModels.map((model) => model.key));
+        setExpandedModelKeys(
+          (current) => new Set([...current].filter((key) => nextKeys.has(key))),
+        );
       } else {
         setModels([]);
       }
@@ -965,7 +955,12 @@ export function OhMyPiProviderForm({
           );
         }
         seen.add(id);
-        if (model.contextWindow.trim() !== "") {
+        // models.yml 拒绝非正的 contextWindow/maxTokens（docs/models.md
+        // "Model value checks"）。CC Switch 创建的模型行始终写入这两个键，
+        // 因此保存前必须填好；导入的行若本来就没带（override 场景）则跳过。
+        const includeContextWindow = !isEdit || model.hasContextWindow;
+        const includeMaxTokens = !isEdit || model.hasMaxTokens;
+        if (includeContextWindow) {
           validateOhMyPiField(
             () =>
               positiveNumber(
@@ -976,9 +971,10 @@ export function OhMyPiProviderForm({
                 `#ohmypi-model-context-window-${model.key}`,
               ),
             `#ohmypi-model-context-window-${model.key}`,
+            model.key,
           );
         }
-        if (model.maxTokens.trim() !== "") {
+        if (includeMaxTokens) {
           validateOhMyPiField(
             () =>
               positiveNumber(
@@ -989,6 +985,7 @@ export function OhMyPiProviderForm({
                 `#ohmypi-model-max-tokens-${model.key}`,
               ),
             `#ohmypi-model-max-tokens-${model.key}`,
+            model.key,
           );
         }
       }
@@ -1424,43 +1421,17 @@ export function OhMyPiProviderForm({
                               </div>
                             </div>
                             <Field
-                              label={<>{t("ohmypi.form.thinking")}</>}
-                              htmlFor={`ohmypi-model-thinking-${model.key}`}
-                            >
-                              <Input
-                                id={`ohmypi-model-thinking-${model.key}`}
-                                aria-label={t("ohmypi.form.thinking")}
-                                value={model.thinking}
-                                onChange={(event) =>
-                                  updateModelOverride(model.key, {
-                                    thinking: event.target.value,
-                                    hasThinking: true,
-                                  })
-                                }
-                                placeholder='{"mode":"effort"}'
-                                className="font-mono text-xs"
-                              />
-                            </Field>
-                            <Field
-                              label={t("ohmypi.form.imageInputDecoder")}
-                              htmlFor={`ohmypi-model-image-input-decoder-${model.key}`}
-                            >
-                              <Input
-                                id={`ohmypi-model-image-input-decoder-${model.key}`}
-                                aria-label={t("ohmypi.form.imageInputDecoder")}
-                                value={model.imageInputDecoder}
-                                onChange={(event) =>
-                                  updateModelOverride(model.key, {
-                                    imageInputDecoder: event.target.value,
-                                    hasImageInputDecoder: true,
-                                  })
-                                }
-                                placeholder="hex"
-                                className="font-mono text-xs"
-                              />
-                            </Field>
-                            <Field
-                              label={t("ohmypi.form.contextWindow")}
+                              label={
+                                <>
+                                  {t("ohmypi.form.contextWindow")}
+                                  <span
+                                    aria-hidden="true"
+                                    className="ml-1 text-destructive"
+                                  >
+                                    *
+                                  </span>
+                                </>
+                              }
                               htmlFor={`ohmypi-model-context-window-${model.key}`}
                             >
                               <Input
@@ -1469,6 +1440,7 @@ export function OhMyPiProviderForm({
                                 type="number"
                                 step="any"
                                 min="1"
+                                required={!isEdit || model.hasContextWindow}
                                 inputMode="decimal"
                                 value={model.contextWindow}
                                 onChange={(event) =>
@@ -1481,7 +1453,17 @@ export function OhMyPiProviderForm({
                               />
                             </Field>
                             <Field
-                              label={t("ohmypi.form.maxTokens")}
+                              label={
+                                <>
+                                  {t("ohmypi.form.maxTokens")}
+                                  <span
+                                    aria-hidden="true"
+                                    className="ml-1 text-destructive"
+                                  >
+                                    *
+                                  </span>
+                                </>
+                              }
                               htmlFor={`ohmypi-model-max-tokens-${model.key}`}
                             >
                               <Input
@@ -1491,6 +1473,7 @@ export function OhMyPiProviderForm({
                                 step="any"
                                 min="1"
                                 inputMode="decimal"
+                                required={!isEdit || model.hasMaxTokens}
                                 value={model.maxTokens}
                                 onChange={(event) =>
                                   updateModelOverride(model.key, {
@@ -1499,24 +1482,6 @@ export function OhMyPiProviderForm({
                                   })
                                 }
                                 placeholder="16384"
-                              />
-                            </Field>
-                            <Field
-                              label={t("ohmypi.form.cost")}
-                              htmlFor={`ohmypi-model-cost-${model.key}`}
-                            >
-                              <Input
-                                id={`ohmypi-model-cost-${model.key}`}
-                                aria-label={t("ohmypi.form.cost")}
-                                value={model.cost}
-                                onChange={(event) =>
-                                  updateModelOverride(model.key, {
-                                    cost: event.target.value,
-                                    hasCost: true,
-                                  })
-                                }
-                                placeholder='{"input":0.15,"output":0.25,"cacheRead":0,"cacheWrite":0}'
-                                className="font-mono text-xs"
                               />
                             </Field>
                           </div>
