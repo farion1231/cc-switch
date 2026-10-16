@@ -930,7 +930,7 @@ fn append_responses_item_as_chat_message(
                     pending_reasoning,
                     messages,
                     *last_assistant_index,
-                );
+                )?;
                 update_last_assistant_index(messages, &message, last_assistant_index);
                 messages.push(message);
             } else if pending_media.is_empty() {
@@ -960,7 +960,7 @@ fn append_responses_item_as_chat_message(
                     pending_reasoning,
                     messages,
                     *last_assistant_index,
-                );
+                )?;
                 update_last_assistant_index(messages, &message, last_assistant_index);
                 messages.push(message);
             } else if pending_media.is_empty() {
@@ -1185,7 +1185,24 @@ fn responses_message_item_to_chat_message(
     pending_reasoning: &mut Option<String>,
     messages: &mut [Value],
     last_assistant_index: Option<usize>,
-) -> Value {
+) -> Result<Value, ProxyError> {
+    // The Codex protocol does not mark plaintext compatibility payloads. Even
+    // a NEW_TASK envelope can carry real ciphertext requiring Responses-side
+    // decryption. Reject unsupported tasks instead of leaking or dropping them.
+    if item.get("type").and_then(Value::as_str) == Some("agent_message")
+        && item
+            .get("content")
+            .and_then(Value::as_array)
+            .is_some_and(|parts| {
+                parts.iter().any(|part| {
+                    part.get("type").and_then(Value::as_str) == Some("encrypted_content")
+                })
+            })
+    {
+        return Err(ProxyError::TransformError(
+            "Cannot convert encrypted agent_message content to Chat Completions; use a Responses upstream that supports agent-message decryption".to_string(),
+        ));
+    }
     let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
     let chat_role = responses_role_to_chat_role(role);
     let content = item
@@ -1212,7 +1229,7 @@ fn responses_message_item_to_chat_message(
         );
     }
 
-    message
+    Ok(message)
 }
 
 fn responses_role_to_chat_role(role: &str) -> &'static str {
@@ -2368,6 +2385,44 @@ mod tests {
 
     fn result_messages(result: &Value) -> &[Value] {
         result["messages"].as_array().unwrap()
+    }
+
+    #[test]
+    fn responses_agent_message_rejects_unproven_encrypted_content() {
+        // Reviewer requested opaque-task coverage. The policy deliberately does
+        // not infer provenance from the payload's appearance or text alias.
+        for part in [
+            json!({"type": "encrypted_content", "encrypted_content": "gAAAA-real-opaque-task"}),
+            json!({"type": "encrypted_content", "encrypted_content": "只回复 PONG，不做别的。"}),
+            json!({"type": "encrypted_content", "text": "PONG"}),
+            json!({"type": "encrypted_content"}),
+        ] {
+            let input = json!({"model": "glm-5.2", "input": [{
+                "type": "agent_message", "content": [
+                    {"type": "input_text", "text": "Message Type: NEW_TASK\nPayload:\n"},
+                    part
+                ]
+            }]});
+            let err = responses_to_chat_completions(input).unwrap_err();
+            assert!(matches!(err, ProxyError::TransformError(_)));
+            assert_eq!(err.to_string(),
+                "格式转换错误: Cannot convert encrypted agent_message content to Chat Completions; use a Responses upstream that supports agent-message decryption");
+        }
+    }
+
+    #[test]
+    fn responses_agent_message_preserves_explicit_input_text() {
+        let result = convert_test_input(vec![json!({
+            "type": "agent_message", "content": [
+                {"type": "input_text", "text": "Message Type: NEW_TASK\nPayload:\n"},
+                {"type": "input_text", "text": "只回复 PONG，不做别的。"}
+            ]
+        })]);
+        assert_eq!(result["messages"][0]["role"], "user");
+        assert_eq!(
+            result["messages"][0]["content"],
+            "Message Type: NEW_TASK\nPayload:\n\n只回复 PONG，不做别的。"
+        );
     }
 
     /// 回归：没有配对 function_call、call_id 为空的工具结果（Codex 桌面端
