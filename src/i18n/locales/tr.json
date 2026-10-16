@@ -2167,6 +2167,22 @@
       "syncCompleted": "Eşitleme tamamlandı: {{imported}} içe aktarıldı, {{files}} dosyaları tarandı, {{errors}} hataları",
       "syncFailed": "Oturum kullanımı eşitlemeu başarısız oldu: {{error}}"
     },
+    "singleSession": {
+      "select": "Bir görüşme seçin",
+      "search": "Görüşmelerde ara",
+      "loadingSessions": "Görüşmeler yükleniyor…",
+      "sessionsError": "Görüşmeler yüklenemedi",
+      "noSessions": "Kullanılabilir görüşme yok",
+      "noMatches": "Eşleşen görüşme yok",
+      "selectHint": "Kullanım özetini görmek için bir görüşme seçin.",
+      "loading": "Kullanım yükleniyor…",
+      "error": "Kullanım sorgusu başarısız.",
+      "retry": "Yeniden dene",
+      "noUsage": "Bu görüşme için kullanım verisi yok.",
+      "totalTokens": "Toplam Token",
+      "successRate": "Başarı Oranı",
+      "dataScopeHint": "Yalnızca son 30 güne ait ayrıntıları tutulan oturum günlükleri dahil edilir; yönlendirilen istekler ve daha eski özetlenmiş veriler görüşmeye göre sorgulanamaz."
+    },
     "rebuildCodex": {
       "title": "Codex Kullanım Bakımı",
       "description": "Yerel kullanıma sunma günlüklerinden Codex oturum kullanımını yeniden oluşturun",
@@ -2364,7 +2380,8 @@
       "label": "Ayrıntılar",
       "providers": "Sağlayıcılar",
       "models": "Modeller",
-      "pricing": "Fiyatlandırma"
+      "pricing": "Fiyatlandırma",
+      "sessions": "Tek Görüşme"
     },
     "sortedByRequests": "İsteklere göre sıralandı",
     "app": "Uygulama",
@@ -2421,7 +2438,8 @@
     "empty": {
       "title": "Henüz kullanım verisi yok",
       "body": "Oturum günlüklerinden ve yönlendirme hizmeti aracılığıyla gelen isteklerden kullanım burada gösterilir.",
-      "configurePricing": "Model fiyatlandırmasını yapılandırma"
+      "configurePricing": "Model fiyatlandırmasını yapılandırma",
+      "querySingleSession": "Tek Görüşmeyi Sorgula"
     },
     "pricing": {
       "modelsDevTitle": "modeller.dev eşitlemeu · {{status}}",

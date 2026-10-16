@@ -55,6 +55,7 @@ import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { UsageHeatmap } from "./UsageHeatmap";
 import { fmtInt, formatRelativeTime, getLocaleFromLanguage } from "./format";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
+import { SingleSessionUsagePanel } from "./SingleSessionUsagePanel";
 
 // 用量页打开时扫描会话日志的间隔；旧版存过的「关」(0) 等无效值回落到默认
 const DEFAULT_REFRESH_INTERVAL_MS = 60000;
@@ -71,8 +72,8 @@ const normalizeRefreshInterval = (value: number | undefined) =>
 
 const STATUS_CODE_OPTIONS = [200, 400, 401, 429, 500] as const;
 
-type UsageTab = "logs" | "providers" | "models" | "pricing";
-const TABS: UsageTab[] = ["logs", "providers", "models", "pricing"];
+type UsageTab = "logs" | "providers" | "models" | "sessions" | "pricing";
+const TABS: UsageTab[] = ["logs", "providers", "models", "sessions", "pricing"];
 
 /**
  * 手动「立即同步」的时间，离开页面再回来也还在。后端也会记下最近一次扫描（后台定时和
@@ -172,8 +173,8 @@ export function UsageDashboard({
   const [model, setModel] = useState<string | undefined>(undefined);
   const [statusCode, setStatusCode] = useState<number | undefined>(undefined);
   const [tab, setTab] = useState<UsageTab>("logs");
-  // 没有用量时也能进定价页：新装的人往往先配好 models.dev 同步再开始用
-  const [pricingWhileEmpty, setPricingWhileEmpty] = useState(false);
+  // 没有用量时仍可打开定价或单个会话查询页
+  const [showTabsWhileEmpty, setShowTabsWhileEmpty] = useState(false);
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(() =>
     normalizeRefreshInterval(savedRefreshIntervalMs),
   );
@@ -636,6 +637,7 @@ export function UsageDashboard({
     logs: t("usage.requestLogs"),
     providers: t("usage.tabs.providers"),
     models: t("usage.tabs.models"),
+    sessions: t("usage.tabs.sessions"),
     pricing: t("usage.tabs.pricing"),
   };
   const statusLabel =
@@ -735,14 +737,15 @@ export function UsageDashboard({
             refreshIntervalMs={0}
           />
         )}
+        {tab === "sessions" && <SingleSessionUsagePanel />}
         {tab === "pricing" && <PricingConfigPanel />}
       </div>
     </section>
   );
 
   const body =
-    isEmpty && pricingWhileEmpty ? (
-      // 空库里只有定价可配：不画全是 0 的概览和趋势，直接给页签
+    isEmpty && showTabsWhileEmpty ? (
+      // 空库里不画全是 0 的概览和趋势，直接给页签
       <div
         id="main-content"
         className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto scroll-stable px-6 pb-6 pt-1"
@@ -780,10 +783,21 @@ export function UsageDashboard({
             size="regular"
             onClick={() => {
               setTab("pricing");
-              setPricingWhileEmpty(true);
+              setShowTabsWhileEmpty(true);
             }}
           >
             {t("usage.empty.configurePricing")}
+          </Button>
+          <Button
+            type="button"
+            variant="quiet"
+            size="regular"
+            onClick={() => {
+              setTab("sessions");
+              setShowTabsWhileEmpty(true);
+            }}
+          >
+            {t("usage.empty.querySingleSession")}
           </Button>
         </div>
       </div>
@@ -834,7 +848,7 @@ export function UsageDashboard({
         }
         actions={headerActions}
       />
-      {filterRow}
+      {tab === "sessions" ? null : filterRow}
       {body}
 
       <RequestDetailPanel

@@ -584,7 +584,7 @@
                                     <button type="button" class="btn neutral compact" onclick="fillUsageTemplate('sub2api')">填入 Sub2API 模板</button>
                                 </div>
                                 <textarea class="input mono" id="usageScript" rows="10" placeholder="点上面的按钮填入模板，或者粘贴自己的脚本"></textarea>
-                                <span class="hint">占位符：<code>{{baseUrl}}</code> <code>{{apiKey}}</code> <code>{{accessToken}}</code> <code>{{userId}}</code></span>
+                                <span class="hint">占位符：<code>{{baseUrl}}</code> <code>{{apiKey}}</code>（NewAPI 使用 API Key）<code>{{accessToken}}</code> <code>{{userId}}</code></span>
                             </div>
                             <div class="field">
                                 <label for="usageEnabled">启用用量查询</label>
@@ -1018,39 +1018,57 @@ model=example-chat</pre>
 
                     <article class="ex">
                         <div class="ex-head"><span class="chip app" style="--dot: var(--agent-codex)"><i class="d"></i>Codex</span><h3>NewAPI / OneAPI 系的站</h3></div>
-                        <p class="ex-desc">这类站的余额接口用系统访问令牌和用户 ID，不用 API Key。供应商地址带 <code>/v1</code>，余额接口在根路径下，所以用 <code>usageBaseUrl</code> 指向根地址。</p>
+                        <p class="ex-desc">NewAPI 的余额接口使用 API Key，不需要网页登录态的系统访问令牌或 User ID。供应商地址带 <code>/v1</code> 时，脚本会自动回退到站点根地址。</p>
                         <dl class="params">
-                            <dt>必需</dt><dd><code>usageScript</code> <code>usageAccessToken</code> <code>usageUserId</code></dd>
-                            <dt>可选</dt><dd><code>usageBaseUrl</code>（这里是 https://api.example.com）<code>usageAutoInterval</code>（这里是 30）</dd>
+                            <dt>必需</dt><dd><code>usageScript</code> <code>apiKey</code>（或 <code>usageApiKey</code>）</dd>
+                            <dt>可选</dt><dd><code>usageBaseUrl</code> <code>usageAutoInterval</code>（这里是 30）</dd>
                         </dl>
                         <figure class="code">
                             <figcaption>查询脚本（链接里是它的 Base64）</figcaption>
                             <pre>({
   request: {
-    url: "{{baseUrl}}/api/user/self",
+    url: "{{baseUrl}}".replace(/\/+$/, "").replace(/\/v1$/, "") + "/api/usage/token/",
     method: "GET",
     headers: {
-      "Authorization": "Bearer {{accessToken}}",
-      "New-Api-User": "{{userId}}"
+      "Content-Type": "application/json",
+      "Authorization": "Bearer {{apiKey}}",
+      "User-Agent": "cc-switch/1.0"
     }
   },
   extractor: function (response) {
-    if (response.success &amp;&amp; response.data) {
+    if (response.code === true &amp;&amp; response.data) {
+      var userAvailable = response.data.user_quota &amp;&amp; response.data.user_quota.total_available;
+      if (typeof userAvailable === "number") {
+        return {
+          planName: response.data.name || "NewAPI",
+          remaining: response.data.unlimited_quota ? userAvailable : Math.min(response.data.total_available, userAvailable),
+          unit: "quota"
+        };
+      }
+      if (response.data.unlimited_quota) {
+        return {
+          planName: response.data.name || "NewAPI",
+          used: response.data.total_used,
+          unit: "quota",
+          extra: "unlimited"
+        };
+      }
       return {
-        planName: response.data.group,
-        remaining: response.data.quota / 500000,
-        used: response.data.used_quota / 500000,
-        unit: "USD"
+        planName: response.data.name || "NewAPI",
+        remaining: response.data.total_available,
+        used: response.data.total_used,
+        total: response.data.total_granted,
+        unit: "quota"
       };
     }
     return { isValid: false, invalidMessage: String(response.message || "查询失败") };
   }
 })</pre>
-                            <div class="foot"><code>500000</code> 是 NewAPI 默认的额度换算比例，改过的话按自己的值写。系统访问令牌的权限比 API Key 大，只在用户本人登录后生成的链接里放。</div>
+                            <div class="foot">NewAPI 的 Token API Key 查询接口返回额度字段；旧的 <code>/api/user/self</code> 需要网页登录态，不能用于这里的 API Key 余额查询。</div>
                         </figure>
                         <div class="actions">
-                            <a class="btn solid compact" href="ccswitch://v1/import?resource=provider&amp;app=codex&amp;name=Example+AI&amp;endpoint=https%3A%2F%2Fapi.example.com%2Fv1&amp;apiKey=sk-test-key123&amp;usageScript=KHsKICByZXF1ZXN0OiB7CiAgICB1cmw6ICJ7e2Jhc2VVcmx9fS9hcGkvdXNlci9zZWxmIiwKICAgIG1ldGhvZDogIkdFVCIsCiAgICBoZWFkZXJzOiB7CiAgICAgICJBdXRob3JpemF0aW9uIjogIkJlYXJlciB7e2FjY2Vzc1Rva2VufX0iLAogICAgICAiTmV3LUFwaS1Vc2VyIjogInt7dXNlcklkfX0iCiAgICB9CiAgfSwKICBleHRyYWN0b3I6IGZ1bmN0aW9uIChyZXNwb25zZSkgewogICAgaWYgKHJlc3BvbnNlLnN1Y2Nlc3MgJiYgcmVzcG9uc2UuZGF0YSkgewogICAgICByZXR1cm4gewogICAgICAgIHBsYW5OYW1lOiByZXNwb25zZS5kYXRhLmdyb3VwLAogICAgICAgIHJlbWFpbmluZzogcmVzcG9uc2UuZGF0YS5xdW90YSAvIDUwMDAwMCwKICAgICAgICB1c2VkOiByZXNwb25zZS5kYXRhLnVzZWRfcXVvdGEgLyA1MDAwMDAsCiAgICAgICAgdW5pdDogIlVTRCIKICAgICAgfTsKICAgIH0KICAgIHJldHVybiB7IGlzVmFsaWQ6IGZhbHNlLCBpbnZhbGlkTWVzc2FnZTogU3RyaW5nKHJlc3BvbnNlLm1lc3NhZ2UgfHwgIuafpeivouWksei0pSIpIH07CiAgfQp9KQ&amp;usageBaseUrl=https%3A%2F%2Fapi.example.com&amp;usageAccessToken=test-access-token&amp;usageUserId=1&amp;usageAutoInterval=30"><svg class="i sm"><use href="#i-import" /></svg>在 CC Switch 中打开</a>
-                            <button type="button" class="btn neutral compact" data-link="ccswitch://v1/import?resource=provider&amp;app=codex&amp;name=Example+AI&amp;endpoint=https%3A%2F%2Fapi.example.com%2Fv1&amp;apiKey=sk-test-key123&amp;usageScript=KHsKICByZXF1ZXN0OiB7CiAgICB1cmw6ICJ7e2Jhc2VVcmx9fS9hcGkvdXNlci9zZWxmIiwKICAgIG1ldGhvZDogIkdFVCIsCiAgICBoZWFkZXJzOiB7CiAgICAgICJBdXRob3JpemF0aW9uIjogIkJlYXJlciB7e2FjY2Vzc1Rva2VufX0iLAogICAgICAiTmV3LUFwaS1Vc2VyIjogInt7dXNlcklkfX0iCiAgICB9CiAgfSwKICBleHRyYWN0b3I6IGZ1bmN0aW9uIChyZXNwb25zZSkgewogICAgaWYgKHJlc3BvbnNlLnN1Y2Nlc3MgJiYgcmVzcG9uc2UuZGF0YSkgewogICAgICByZXR1cm4gewogICAgICAgIHBsYW5OYW1lOiByZXNwb25zZS5kYXRhLmdyb3VwLAogICAgICAgIHJlbWFpbmluZzogcmVzcG9uc2UuZGF0YS5xdW90YSAvIDUwMDAwMCwKICAgICAgICB1c2VkOiByZXNwb25zZS5kYXRhLnVzZWRfcXVvdGEgLyA1MDAwMDAsCiAgICAgICAgdW5pdDogIlVTRCIKICAgICAgfTsKICAgIH0KICAgIHJldHVybiB7IGlzVmFsaWQ6IGZhbHNlLCBpbnZhbGlkTWVzc2FnZTogU3RyaW5nKHJlc3BvbnNlLm1lc3NhZ2UgfHwgIuafpeivouWksei0pSIpIH07CiAgfQp9KQ&amp;usageBaseUrl=https%3A%2F%2Fapi.example.com&amp;usageAccessToken=test-access-token&amp;usageUserId=1&amp;usageAutoInterval=30" onclick="copyDeepLink(this.dataset.link, this)"><svg class="i sm"><use href="#i-copy" /></svg><span>复制链接</span></button>
+                            <a class="btn solid compact" href="ccswitch://v1/import?resource=provider&amp;app=codex&amp;name=Example+AI&amp;endpoint=https%3A%2F%2Fapi.example.com%2Fv1&amp;apiKey=sk-test-key123&amp;usageScript=KHsKICByZXF1ZXN0OiB7CiAgICB1cmw6ICJ7e2Jhc2VVcmx9fSIucmVwbGFjZSgvXC8rJC8sICIiKS5yZXBsYWNlKC9cL3YxJC8sICIiKSArICIvYXBpL3VzYWdlL3Rva2VuLyIsCiAgICBtZXRob2Q6ICJHRVQiLAogICAgaGVhZGVyczogewogICAgICAiQ29udGVudC1UeXBlIjogImFwcGxpY2F0aW9uL2pzb24iLAogICAgICAiQXV0aG9yaXphdGlvbiI6ICJCZWFyZXIge3thcGlLZXl9fSIsCiAgICAgICJVc2VyLUFnZW50IjogImNjLXN3aXRjaC8xLjAiCiAgICB9CiAgfSwKICBleHRyYWN0b3I6IGZ1bmN0aW9uIChyZXNwb25zZSkgewogICAgaWYgKHJlc3BvbnNlLmNvZGUgPT09IHRydWUgJiYgcmVzcG9uc2UuZGF0YSkgewogICAgICB2YXIgdXNlckF2YWlsYWJsZSA9IHJlc3BvbnNlLmRhdGEudXNlcl9xdW90YSAmJiByZXNwb25zZS5kYXRhLnVzZXJfcXVvdGEudG90YWxfYXZhaWxhYmxlOwogICAgICBpZiAodHlwZW9mIHVzZXJBdmFpbGFibGUgPT09ICJudW1iZXIiKSB7CiAgICAgICAgcmV0dXJuIHsKICAgICAgICAgIHBsYW5OYW1lOiByZXNwb25zZS5kYXRhLm5hbWUgfHwgIk5ld0FQSSIsCiAgICAgICAgICByZW1haW5pbmc6IHJlc3BvbnNlLmRhdGEudW5saW1pdGVkX3F1b3RhID8gdXNlckF2YWlsYWJsZSA6IE1hdGgubWluKHJlc3BvbnNlLmRhdGEudG90YWxfYXZhaWxhYmxlLCB1c2VyQXZhaWxhYmxlKSwKICAgICAgICAgIHVuaXQ6ICJxdW90YSIKICAgICAgICB9OwogICAgICB9CiAgICAgIGlmIChyZXNwb25zZS5kYXRhLnVubGltaXRlZF9xdW90YSkgewogICAgICAgIHJldHVybiB7CiAgICAgICAgICBwbGFuTmFtZTogcmVzcG9uc2UuZGF0YS5uYW1lIHx8ICJOZXdBUEkiLAogICAgICAgICAgdXNlZDogcmVzcG9uc2UuZGF0YS50b3RhbF91c2VkLAogICAgICAgICAgdW5pdDogInF1b3RhIiwKICAgICAgICAgIGV4dHJhOiAidW5saW1pdGVkIgogICAgICAgIH07CiAgICAgIH0KICAgICAgcmV0dXJuIHsKICAgICAgICBwbGFuTmFtZTogcmVzcG9uc2UuZGF0YS5uYW1lIHx8ICJOZXdBUEkiLAogICAgICAgIHJlbWFpbmluZzogcmVzcG9uc2UuZGF0YS50b3RhbF9hdmFpbGFibGUsCiAgICAgICAgdXNlZDogcmVzcG9uc2UuZGF0YS50b3RhbF91c2VkLAogICAgICAgIHRvdGFsOiByZXNwb25zZS5kYXRhLnRvdGFsX2dyYW50ZWQsCiAgICAgICAgdW5pdDogInF1b3RhIgogICAgICB9OwogICAgfQogICAgcmV0dXJuIHsgaXNWYWxpZDogZmFsc2UsIGludmFsaWRNZXNzYWdlOiBTdHJpbmcocmVzcG9uc2UubWVzc2FnZSB8fCAi5p-l6K-i5aSx6LSlIikgfTsKICB9Cn0p&amp;usageBaseUrl=https%3A%2F%2Fapi.example.com&amp;usageAutoInterval=30"><svg class="i sm"><use href="#i-import" /></svg>在 CC Switch 中打开</a>
+                            <button type="button" class="btn neutral compact" data-link="ccswitch://v1/import?resource=provider&amp;app=codex&amp;name=Example+AI&amp;endpoint=https%3A%2F%2Fapi.example.com%2Fv1&amp;apiKey=sk-test-key123&amp;usageScript=KHsKICByZXF1ZXN0OiB7CiAgICB1cmw6ICJ7e2Jhc2VVcmx9fSIucmVwbGFjZSgvXC8rJC8sICIiKS5yZXBsYWNlKC9cL3YxJC8sICIiKSArICIvYXBpL3VzYWdlL3Rva2VuLyIsCiAgICBtZXRob2Q6ICJHRVQiLAogICAgaGVhZGVyczogewogICAgICAiQ29udGVudC1UeXBlIjogImFwcGxpY2F0aW9uL2pzb24iLAogICAgICAiQXV0aG9yaXphdGlvbiI6ICJCZWFyZXIge3thcGlLZXl9fSIsCiAgICAgICJVc2VyLUFnZW50IjogImNjLXN3aXRjaC8xLjAiCiAgICB9CiAgfSwKICBleHRyYWN0b3I6IGZ1bmN0aW9uIChyZXNwb25zZSkgewogICAgaWYgKHJlc3BvbnNlLmNvZGUgPT09IHRydWUgJiYgcmVzcG9uc2UuZGF0YSkgewogICAgICB2YXIgdXNlckF2YWlsYWJsZSA9IHJlc3BvbnNlLmRhdGEudXNlcl9xdW90YSAmJiByZXNwb25zZS5kYXRhLnVzZXJfcXVvdGEudG90YWxfYXZhaWxhYmxlOwogICAgICBpZiAodHlwZW9mIHVzZXJBdmFpbGFibGUgPT09ICJudW1iZXIiKSB7CiAgICAgICAgcmV0dXJuIHsKICAgICAgICAgIHBsYW5OYW1lOiByZXNwb25zZS5kYXRhLm5hbWUgfHwgIk5ld0FQSSIsCiAgICAgICAgICByZW1haW5pbmc6IHJlc3BvbnNlLmRhdGEudW5saW1pdGVkX3F1b3RhID8gdXNlckF2YWlsYWJsZSA6IE1hdGgubWluKHJlc3BvbnNlLmRhdGEudG90YWxfYXZhaWxhYmxlLCB1c2VyQXZhaWxhYmxlKSwKICAgICAgICAgIHVuaXQ6ICJxdW90YSIKICAgICAgICB9OwogICAgICB9CiAgICAgIGlmIChyZXNwb25zZS5kYXRhLnVubGltaXRlZF9xdW90YSkgewogICAgICAgIHJldHVybiB7CiAgICAgICAgICBwbGFuTmFtZTogcmVzcG9uc2UuZGF0YS5uYW1lIHx8ICJOZXdBUEkiLAogICAgICAgICAgdXNlZDogcmVzcG9uc2UuZGF0YS50b3RhbF91c2VkLAogICAgICAgICAgdW5pdDogInF1b3RhIiwKICAgICAgICAgIGV4dHJhOiAidW5saW1pdGVkIgogICAgICAgIH07CiAgICAgIH0KICAgICAgcmV0dXJuIHsKICAgICAgICBwbGFuTmFtZTogcmVzcG9uc2UuZGF0YS5uYW1lIHx8ICJOZXdBUEkiLAogICAgICAgIHJlbWFpbmluZzogcmVzcG9uc2UuZGF0YS50b3RhbF9hdmFpbGFibGUsCiAgICAgICAgdXNlZDogcmVzcG9uc2UuZGF0YS50b3RhbF91c2VkLAogICAgICAgIHRvdGFsOiByZXNwb25zZS5kYXRhLnRvdGFsX2dyYW50ZWQsCiAgICAgICAgdW5pdDogInF1b3RhIgogICAgICB9OwogICAgfQogICAgcmV0dXJuIHsgaXNWYWxpZDogZmFsc2UsIGludmFsaWRNZXNzYWdlOiBTdHJpbmcocmVzcG9uc2UubWVzc2FnZSB8fCAi5p-l6K-i5aSx6LSlIikgfTsKICB9Cn0p&amp;usageBaseUrl=https%3A%2F%2Fapi.example.com&amp;usageAutoInterval=30" onclick="copyDeepLink(this.dataset.link, this)"><svg class="i sm"><use href="#i-copy" /></svg><span>复制链接</span></button>
                         </div>
                     </article>
                     <article class="ex">
@@ -1286,7 +1304,7 @@ model=example-chat</pre>
         // 用量查询脚本模板（与页面上「用量查询脚本示例」一致）
         const USAGE_TEMPLATES = {
             generic: "({\n  request: {\n    url: \"{{baseUrl}}/user/balance\",\n    method: \"GET\",\n    headers: {\n      \"Authorization\": \"Bearer {{apiKey}}\"\n    }\n  },\n  extractor: function (response) {\n    if (response.error) {\n      return { isValid: false, invalidMessage: String(response.error.message || response.error) };\n    }\n    return {\n      remaining: Number(response.balance),\n      unit: \"USD\"\n    };\n  }\n})",
-            newapi: "({\n  request: {\n    url: \"{{baseUrl}}/api/user/self\",\n    method: \"GET\",\n    headers: {\n      \"Authorization\": \"Bearer {{accessToken}}\",\n      \"New-Api-User\": \"{{userId}}\"\n    }\n  },\n  extractor: function (response) {\n    if (response.success && response.data) {\n      return {\n        planName: response.data.group,\n        remaining: response.data.quota / 500000,\n        used: response.data.used_quota / 500000,\n        unit: \"USD\"\n      };\n    }\n    return { isValid: false, invalidMessage: String(response.message || \"查询失败\") };\n  }\n})",
+            newapi: "({\n  request: {\n    url: \"{{baseUrl}}\".replace(/\\/+$/, \"\").replace(/\\/v1$/, \"\") + \"/api/usage/token/\",\n    method: \"GET\",\n    headers: {\n      \"Content-Type\": \"application/json\",\n      \"Authorization\": \"Bearer {{apiKey}}\",\n      \"User-Agent\": \"cc-switch/1.0\"\n    }\n  },\n  extractor: function (response) {\n    if (response.code === true && response.data) {\n      var userAvailable = response.data.user_quota && response.data.user_quota.total_available;\n      if (typeof userAvailable === \"number\") {\n        return {\n          planName: response.data.name || \"NewAPI\",\n          remaining: response.data.unlimited_quota ? userAvailable : Math.min(response.data.total_available, userAvailable),\n          unit: \"quota\"\n        };\n      }\n      if (response.data.unlimited_quota) {\n        return {\n          planName: response.data.name || \"NewAPI\",\n          used: response.data.total_used,\n          unit: \"quota\",\n          extra: \"unlimited\"\n        };\n      }\n      return {\n        planName: response.data.name || \"NewAPI\",\n        remaining: response.data.total_available,\n        used: response.data.total_used,\n        total: response.data.total_granted,\n        unit: \"quota\"\n      };\n    }\n    return { isValid: false, invalidMessage: String(response.message || \"查询失败\") };\n  }\n})",
             sub2api: "({\n  request: {\n    url: \"{{baseUrl}}\".replace(/\\/+$/, \"\").replace(/\\/v1$/, \"\") + \"/v1/usage\",\n    method: \"GET\",\n    headers: {\n      \"Authorization\": \"Bearer {{apiKey}}\",\n      \"User-Agent\": \"cc-switch/1.0\"\n    }\n  },\n  extractor: function (response) {\n    var quota = response.quota || {};\n    var result = {\n      isValid: response.isValid !== false,\n      unit: response.unit || quota.unit || \"USD\"\n    };\n    if (typeof response.planName === \"string\") result.planName = response.planName;\n    if (typeof response.remaining === \"number\" && response.remaining >= 0) {\n      result.remaining = response.remaining;\n    }\n    if (quota.limit > 0) {\n      result.used = quota.used;\n      result.total = quota.limit;\n    }\n    if (!result.isValid) {\n      result.invalidMessage = response.status\n        ? String(response.status)\n        : \"查询失败\";\n    }\n    return result;\n  },\n})"
         };
 
@@ -1295,7 +1313,7 @@ model=example-chat</pre>
             if (textarea.value.trim() && !confirm('替换当前的脚本？')) return;
             textarea.value = USAGE_TEMPLATES[kind];
             if (kind === 'newapi') {
-                notify('NewAPI 模板还需要填写下方的 Access Token（系统访问令牌）和 User ID；供应商地址带 /v1 时，把「查询地址」填成站点根地址。', 'info');
+                notify('NewAPI 模板使用供应商 API Key；供应商地址带 /v1 时，脚本会自动查询站点根地址。', 'info');
             }
         }
 
