@@ -3937,6 +3937,8 @@ fn claude_npm_windows_primary_update_command(bin_path: &str) -> String {
     let path = path.to_string_lossy().replace('\'', "''");
     // Own the process handle through exit-code collection. Start-Process -Wait
     // can race a fast-exiting cmd and fail before returning its Process object.
+    // Drain both pipes concurrently as bytes to preserve the caller's encoding
+    // and avoid blocking on a full stderr pipe while stdout is being read.
     let script = format!(
         "$ErrorActionPreference = 'Stop'; \
          $env:npm_config_allow_scripts = '@anthropic-ai/claude-code'; \
@@ -3948,7 +3950,13 @@ fn claude_npm_windows_primary_update_command(bin_path: &str) -> String {
          $process.StartInfo.Arguments = '/D /V:OFF /S /C \"\"%CC_SWITCH_CLAUDE_UPDATE_PATH%\" update\"'; \
          $process.StartInfo.UseShellExecute = $false; \
          $process.StartInfo.CreateNoWindow = $true; \
-         try {{ [void]$process.Start(); $process.WaitForExit(); \
+         $process.StartInfo.RedirectStandardOutput = $true; \
+         $process.StartInfo.RedirectStandardError = $true; \
+         try {{ [void]$process.Start(); \
+         $stdout = $process.StandardOutput.BaseStream.CopyToAsync([Console]::OpenStandardOutput()); \
+         $stderr = $process.StandardError.BaseStream.CopyToAsync([Console]::OpenStandardError()); \
+         $process.WaitForExit(); \
+         [void]$stdout.GetAwaiter().GetResult(); [void]$stderr.GetAwaiter().GetResult(); \
          $exitCode = $process.ExitCode; }} finally {{ $process.Dispose(); }}; \
          exit $exitCode"
     );
