@@ -1359,7 +1359,11 @@ export function OhMyPiProviderForm({
                     ))}
                     {!DISCOVERY_TYPES.some(
                       (type) => type.value === discoveryType,
-                    ) && <SelectItem value={discoveryType}>{discoveryType}</SelectItem>}
+                    ) && (
+                      <SelectItem value={discoveryType}>
+                        {discoveryType}
+                      </SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-fg-2">
