@@ -876,8 +876,12 @@ fn parse_settings_lenient(content: &str) -> (AppSettings, bool) {
         Ok(settings) => return (settings, false),
         Err(err) => err,
     };
-    let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(content)
-    else {
+    // 旧版在个别 Windows 环境下保存时文件没被截短（#8429），新内容后面残留着旧内容的尾巴；
+    // 开头那个完整的对象就是最后一次保存的内容，只取它，不因尾巴把整份设置丢掉。
+    let first = serde_json::Deserializer::from_str(content)
+        .into_iter::<serde_json::Value>()
+        .next();
+    let Some(Ok(serde_json::Value::Object(map))) = first else {
         log::warn!("设置文件不是合法的 JSON 对象，本次使用默认设置: {err}");
         return (AppSettings::default(), true);
     };
@@ -1623,6 +1627,30 @@ mod tests {
         assert!(!visible.pi);
         assert_eq!(settings.language.as_deref(), Some("zh"));
         assert!(settings.backup_interval_hours.is_none());
+    }
+
+    #[test]
+    fn lenient_parse_keeps_first_object_when_old_tail_is_left_behind() {
+        // #8429：保存较短内容时文件没被截短，合法 JSON 后面跟着旧内容的尾巴。
+        let content = format!(
+            "{}\n}}\n  \"tail\": true\n}}",
+            serde_json::json!({
+                "claudeConfigDir": "/tmp/claude",
+                "visibleApps": { "claude-desktop": false, "gemini": false }
+            })
+        );
+        assert!(serde_json::from_str::<AppSettings>(&content).is_err());
+
+        let (settings, lossy) = parse_settings_lenient(&content);
+        assert!(
+            lossy,
+            "trailing data still counts as lossy so the file is backed up"
+        );
+        assert_eq!(settings.claude_config_dir.as_deref(), Some("/tmp/claude"));
+        let visible = settings.visible_apps.expect("visible apps kept");
+        assert!(!visible.claude_desktop);
+        assert!(!visible.gemini);
+        assert!(visible.codex);
     }
 
     #[test]
