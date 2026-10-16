@@ -81,6 +81,7 @@ pub fn view(
     shown.insert("env".to_string(), Value::Object(env.clone()));
     shown.insert("config".to_string(), config.clone());
     Ok(EditorView {
+        codex_snapshot: None,
         inactive: inactive_fields(settings_config, &env, &config),
         settings: Value::Object(shown),
     })

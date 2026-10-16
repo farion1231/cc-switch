@@ -142,6 +142,9 @@ pub enum LiveWriteError {
     /// 编辑器打开之后，这些键在文件里被别的程序改过，和编辑器里的改动冲突。
     #[error("{path} 里的 {keys:?} 在编辑期间被其他程序修改过")]
     EditConflict { path: PathBuf, keys: Vec<String> },
+    /// An active compatibility definition cannot be overridden by conflict resolution.
+    #[error("{path} 的旧官方代理定义仍被引用，不能删除或覆盖")]
+    ProtectedRoute { path: PathBuf },
     /// 写完之后客户端实际走的路由不是目标供应商：当前生效的 profile 覆盖了选路。
     #[error("Codex 当前生效的 profile \"{profile}\" 覆盖了 {key}")]
     Route { profile: String, key: String },
@@ -199,6 +202,11 @@ impl From<LiveWriteError> for crate::error::AppError {
                 format!(
                     "The active Codex profile \"{profile}\" ([profiles.{profile}]) sets {key}, so requests would keep following it instead of the target provider. Remove {key} from that profile or change the top-level profile. Nothing was written"
                 ),
+            ),
+            LiveWriteError::ProtectedRoute { .. } => AppError::localized(
+                "provider.codex.editor.official_route_in_use",
+                "旧官方代理定义仍被当前选择器或配置档引用，不能删除或覆盖。请先取消引用后重新打开编辑器",
+                "The legacy official proxy definition is still referenced by the current selector or a profile. Remove those references and reopen the editor before deleting or replacing it",
             ),
             LiveWriteError::EditConflict { path, keys } => AppError::Message(
                 serde_json::json!({
