@@ -425,6 +425,10 @@ export const handlers = [
       codex: false,
       gemini: false,
       grokbuild: false,
+      opencode: false,
+      openclaw: false,
+      hermes: false,
+      cursor: false,
     }),
   ),
 

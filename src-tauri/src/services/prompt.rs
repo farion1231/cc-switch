@@ -5,7 +5,7 @@ use crate::app_config::AppType;
 use crate::config::write_text_file;
 use crate::error::AppError;
 use crate::prompt::Prompt;
-use crate::prompt_files::{prompt_file_path, validate_prompt_content};
+use crate::prompt_files::{prompt_file_body, prompt_file_path, validate_prompt_content};
 use crate::services::pi_prompt_files::PiAgentsFileGuard;
 use crate::store::AppState;
 
@@ -20,6 +20,7 @@ fn get_unix_timestamp() -> Result<i64, AppError> {
 pub struct PromptService;
 
 fn project_prompt_set_to_path(
+    app: &AppType,
     prompts: &IndexMap<String, Prompt>,
     target_path: &Path,
 ) -> Result<Option<String>, AppError> {
@@ -29,7 +30,7 @@ fn project_prompt_set_to_path(
         .collect();
 
     if let Some((_, prompt)) = enabled.first() {
-        write_text_file(target_path, &prompt.content)?;
+        write_text_file(target_path, &prompt_file_body(app, &prompt.content))?;
     }
     // With nothing enabled, leave the target file untouched. This projection
     // only runs after a database restore, and the live file is not part of
@@ -111,7 +112,7 @@ impl PromptService {
 
         if prompt.enabled {
             let target_path = prompt_file_path(&app)?;
-            write_text_file(&target_path, &prompt.content)?;
+            write_text_file(&target_path, &prompt_file_body(&app, &prompt.content))?;
         } else if clear_live {
             let target_path = prompt_file_path(&app)?;
             if target_path.exists() {
@@ -214,7 +215,7 @@ impl PromptService {
         if let Some(prompt) = prompts.get_mut(id) {
             validate_prompt_content(&app, &prompt.content)?;
             prompt.enabled = true;
-            write_text_file(&target_path, &prompt.content)?; // 原子写入
+            write_text_file(&target_path, &prompt_file_body(&app, &prompt.content))?; // 原子写入
             state.db.save_prompt(app.as_str(), prompt)?;
         } else {
             return Err(AppError::InvalidInput(format!("提示词 {id} 不存在")));
@@ -299,7 +300,7 @@ impl PromptService {
         if let Some(prompt) = prompts.values().find(|prompt| prompt.enabled) {
             validate_prompt_content(&app, &prompt.content)?;
         }
-        if let Some(warning) = project_prompt_set_to_path(&prompts, &target_path)? {
+        if let Some(warning) = project_prompt_set_to_path(&app, &prompts, &target_path)? {
             return Err(AppError::Message(warning));
         }
         Ok(())
@@ -624,6 +625,7 @@ fn delete_pi_prompt(state: &AppState, id: &str) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::project_prompt_set_to_path;
+    use crate::app_config::AppType;
     use crate::prompt::Prompt;
     use indexmap::IndexMap;
     use tempfile::tempdir;
@@ -790,7 +792,8 @@ mod tests {
         prompts.insert("off".to_string(), prompt("off", "old", false));
         prompts.insert("on".to_string(), prompt("on", "restored", true));
 
-        let warning = project_prompt_set_to_path(&prompts, &path).expect("project prompt");
+        let warning = project_prompt_set_to_path(&AppType::Claude, &prompts, &path)
+            .expect("project prompt");
         assert!(warning.is_none());
         assert_eq!(
             std::fs::read_to_string(path).expect("read prompt"),
@@ -806,7 +809,8 @@ mod tests {
         let mut prompts = IndexMap::new();
         prompts.insert("off".to_string(), prompt("off", "managed", false));
 
-        let warning = project_prompt_set_to_path(&prompts, &path).expect("project prompt");
+        let warning = project_prompt_set_to_path(&AppType::Claude, &prompts, &path)
+            .expect("project prompt");
         assert!(warning.is_none());
         // The live file is not part of the sync payload, so a restore with no
         // enabled prompt must not wipe local content it never contained.
@@ -824,7 +828,7 @@ mod tests {
         prompts.insert("first".to_string(), prompt("first", "first body", true));
         prompts.insert("second".to_string(), prompt("second", "second body", true));
 
-        let warning = project_prompt_set_to_path(&prompts, &path)
+        let warning = project_prompt_set_to_path(&AppType::Claude, &prompts, &path)
             .expect("project prompt")
             .expect("duplicate enabled prompts should warn");
         assert!(warning.contains("first, second"));

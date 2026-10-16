@@ -44,14 +44,15 @@ use super::operation;
 use super::stack::{self, StackModel, StackView};
 use super::state::{op, Contract, Mode, ModeState, PendingTarget, StackState};
 
-/// 有路由模式的应用（[`AppType::has_route_mode`]）。Claude Desktop 也在内：它经同一个路由
-/// 服务转发，只是没有故障转移。
-pub const PROXY_APPS: [AppType; 5] = [
+/// 有路由模式的应用（[`AppType::has_route_mode`]）。Claude Desktop 与 Cursor 也在内：
+/// Desktop 经同一个路由服务转发，只是没有故障转移；Cursor 经公网路由接入。
+pub const PROXY_APPS: [AppType; 6] = [
     AppType::Claude,
     AppType::Codex,
     AppType::Gemini,
     AppType::GrokBuild,
     AppType::ClaudeDesktop,
+    AppType::Cursor,
 ];
 
 fn err(error: impl std::fmt::Display) -> String {
@@ -509,6 +510,17 @@ async fn write_proxy(
             .map_err(err)?;
             unchanged
         }
+        AppType::Cursor => {
+            // Cursor 的 Base URL / 模型走云端账户同步，本地写不进客户端文件（2026-08-05
+            // 实测确认，见 #6124），只有经 CC Switch 代理才实际可用 —— 接管本身只落模式状态。
+            // 公网路由（开关 / 密钥 / 隧道）**不在此静默开启**：Cursor 云端拒绝私网地址，
+            // 需由用户显式引导开启公网路由（对话框 / 设置页），否则会越权开一条公网隧道。
+            let contract = contract::cursor(route);
+            let unchanged = !force && live_now.has_contract(&contract.key);
+            target.contract = Some(contract);
+            commit_state(state, app, &pending(target))?;
+            unchanged
+        }
         _ => return Err(format!("{} 不支持本地路由", app.as_str())),
     };
     Ok(!unchanged)
@@ -613,6 +625,10 @@ fn write_direct(
                 None => DesktopTarget::Official,
             });
             claude_desktop_config::run(&state.db, op_name, write, pending_target).map_err(err)?;
+        }
+        AppType::Cursor => {
+            // Cursor 接管不写客户端文件，退出代理只需落定模式状态（写回直连指针）。
+            commit_state(state, app, &pending_target)?;
         }
         _ => return Err(format!("{} 不支持本地路由", app.as_str())),
     }

@@ -50,6 +50,10 @@ fn get_keywords_for_app(app: &str) -> Vec<EnvKeyword> {
             EnvKeyword::Exact("XAI_API_KEY"),
             EnvKeyword::Exact("GROK_DEFAULT_MODEL"),
         ],
+        "cursor" => vec![
+            EnvKeyword::Prefix("ANTHROPIC"),
+            EnvKeyword::Prefix("OPENAI"),
+        ],
         _ => vec![],
     }
 }
