@@ -3271,6 +3271,7 @@
       "emptyArchive": "下載的壓縮檔為空",
       "invalidRepoRef": "倉庫位址不合法：{{owner}}/{{name}}",
       "archiveTooLarge": "壓縮檔解壓後超過 {{limit_mb}} MB 上限，已中止",
+      "archiveDownloadTooLarge": "倉庫壓縮檔下載超過 {{limit_mb}} MB 上限，已中止",
       "archiveTooManyEntries": "壓縮檔項目過多（{{count}}），上限 {{limit}}",
       "downloadFailed": "下載失敗：HTTP {{status}}",
       "allBranchesFailed": "所有分支下載失敗，嘗試了：{{branches}}",
