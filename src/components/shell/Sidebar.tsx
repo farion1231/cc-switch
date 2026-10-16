@@ -30,6 +30,13 @@ import { SkillsIcon } from "@/components/BrandIcons";
 import { useUpdate } from "@/contexts/UpdateContext";
 import { sidebarWidth, useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
+import { useSettingsQuery } from "@/lib/query";
+import {
+  formatTokensCompact,
+  getLocaleFromLanguage,
+  getResolvedLang,
+  resolveSidebarToday,
+} from "@/components/usage/format";
 import { useSidebarStatus, type AppNavStatus } from "@/hooks/useSidebarStatus";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { DRAG_REGION_ATTR, DRAG_REGION_STYLE, isMac } from "@/lib/platform";
@@ -206,23 +213,42 @@ function MainDirectory({
   onSelectPage,
   appsUpdateAvailable = false,
 }: DirectoryProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { moneyShort } = useMoneyFormat();
+  const { data: settings } = useSettingsQuery();
   const { hasUpdate } = useUpdate();
-  const { appStatus, todayCost, authNeedsAttention } = useSidebarStatus();
+  const { appStatus, todayCost, todayTokens, authNeedsAttention } =
+    useSidebarStatus();
   const apps = APP_IDS.filter((app) => visibleApps[app]);
   const onAppPage = isAppPage(view);
 
-  const todayLabel =
-    todayCost > 0
-      ? t("nav.todayCost", { cost: moneyShort(todayCost) })
+  // 选了的项里是 0 的不写（没配定价时金额总是 0）；全是 0 就整个不显示。
+  // 两项都有时只写数、上下两行（「今日」放进悬停和读屏）：带上「今日」，
+  // 换成新台币这类长币种后一行放不下，会把「用量统计」挤成省略号
+  const todayMode = resolveSidebarToday(settings?.usageDisplay);
+  const todayValues = [
+    (todayMode === "cost" || todayMode === "both") && todayCost > 0
+      ? moneyShort(todayCost)
+      : null,
+    (todayMode === "tokens" || todayMode === "both") && todayTokens > 0
+      ? formatTokensCompact(
+          todayTokens,
+          getLocaleFromLanguage(getResolvedLang(i18n)),
+        )
+      : null,
+  ].filter((part): part is string => part != null);
+  const todayText =
+    todayValues.length > 0
+      ? t("nav.today", { value: todayValues.join(" · ") })
       : undefined;
+  const todayTrailing = todayValues.length > 1 ? todayValues : todayText;
 
   const globals: {
     page: GlobalPage;
     label: string;
     icon: IconComponent;
-    trailing?: string;
+    trailing?: string | string[];
+    trailingLabel?: string;
     alert?: string;
   }[] = [
     { page: "mcp", label: "MCP", icon: Server },
@@ -239,7 +265,8 @@ function MainDirectory({
       page: "usage",
       label: t("nav.usage"),
       icon: ChartColumn,
-      trailing: todayLabel,
+      trailing: todayTrailing,
+      trailingLabel: todayText,
     },
   ];
 
@@ -289,6 +316,7 @@ function MainDirectory({
             icon={item.icon}
             label={item.label}
             trailing={item.trailing}
+            trailingLabel={item.trailingLabel}
             alert={item.alert}
             onClick={() => onSelectPage(item.page)}
           />
@@ -486,6 +514,7 @@ function NavItem({
   label,
   title,
   trailing,
+  trailingLabel,
   alert,
   dot = false,
   dotTone = "neutral",
@@ -499,7 +528,10 @@ function NavItem({
   icon: IconComponent;
   label: string;
   title?: string;
-  trailing?: string;
+  /** 行尾的小字；放不下时在空格处折成两行，给数组时直接上下排 */
+  trailing?: string | string[];
+  /** 行尾小字的完整说法（读屏和悬停用），行尾只写了数时给 */
+  trailingLabel?: string;
   /** 红点：需要处理，内容是给读屏的说明 */
   alert?: string;
   /** 圆点：有更新 */
@@ -512,7 +544,15 @@ function NavItem({
 }) {
   const ring = selected ? "border-selected" : "border-sidebar";
   const dotFill = dotTone === "success" ? "bg-success" : "bg-fg-1";
-  const accessibleName = [label, trailing, alert].filter(Boolean).join(" · ");
+  const trailingLines =
+    trailing == null ? [] : Array.isArray(trailing) ? trailing : [trailing];
+  const accessibleName = [
+    label,
+    trailingLabel ?? trailingLines.join(" · "),
+    alert,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const glyph = (size: number) => (
     <span aria-hidden="true" className="relative flex shrink-0 text-fg-2">
       <Icon className={size === 20 ? "h-5 w-5" : "h-[18px] w-[18px]"} />
@@ -561,16 +601,24 @@ function NavItem({
     );
   }
 
-  // 展开时名字可见；只有 title 比名字多说了点什么（如「有可用更新」）才挂提示
+  // 展开时名字可见；只有 title 比名字多说了点什么（如「有可用更新」），
+  // 或行尾只写了数（完整说法在 trailingLabel）时才挂提示
+  const hoverContent =
+    title && title !== label
+      ? title
+      : trailingLabel
+        ? accessibleName
+        : undefined;
   return (
     <HoverTip
-      content={title !== label ? title : undefined}
+      content={hoverContent}
       side={compact ? "top" : "right"}
       disableHoverableContent
     >
       <button
         type="button"
         onClick={onClick}
+        aria-label={trailingLabel ? accessibleName : undefined}
         aria-current={selected ? "page" : undefined}
         className={cn(
           "flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
@@ -579,11 +627,27 @@ function NavItem({
         )}
       >
         {glyph(18)}
-        <span className="min-w-0 flex-1 truncate">{label}</span>
-        {trailing && (
-          <span className="shrink-0 text-caption tabular-nums text-fg-3">
-            {trailing}
-          </span>
+        {trailingLines.length === 0 ? (
+          <span className="min-w-0 flex-1 truncate">{label}</span>
+        ) : (
+          <>
+            {/* 有行尾小字时名字不让：放不下就让小字折行（两行正好塞进 28px 的行高） */}
+            <span className="shrink-0 grow">{label}</span>
+            <span className="min-w-0 text-end text-caption leading-[13px] tabular-nums text-fg-3">
+              {trailingLines.map((line) => (
+                <span
+                  key={line}
+                  className={
+                    trailingLines.length > 1
+                      ? "block whitespace-nowrap"
+                      : undefined
+                  }
+                >
+                  {line}
+                </span>
+              ))}
+            </span>
+          </>
         )}
         {alert && (
           <span

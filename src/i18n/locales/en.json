@@ -2375,12 +2375,19 @@
     },
     "dataSources": "Data sources",
     "display": {
-      "title": "Amount display",
+      "title": "Display",
       "currency": "Currency",
       "rate": "Exchange rate",
       "rateHint": "Entered by hand and used only for display; costs are still recorded in USD.",
       "rateInvalid": "Enter a number greater than 0",
-      "approxNote": "Converted amounts are marked with ≈. Hover to see the USD value."
+      "approxNote": "Converted amounts are marked with ≈. Hover to see the USD value.",
+      "sidebarToday": "Sidebar \"Today\"",
+      "sidebarTodayModes": {
+        "cost": "Cost",
+        "tokens": "Tokens",
+        "both": "Both",
+        "hidden": "Hidden"
+      }
     },
     "providerFilter": {
       "label": "Provider",
@@ -4089,7 +4096,7 @@
     "expandSidebar": "Expand sidebar",
     "collapseSidebar": "Collapse sidebar",
     "appsGroup": "Apps",
-    "todayCost": "Today {{cost}}",
+    "today": "Today {{value}}",
     "usage": "Usage",
     "auth": "Accounts",
     "authNeedsReauth": "An account needs to sign in again",

@@ -44,6 +44,25 @@ export const DEFAULT_EXCHANGE_RATES: Record<
   number
 > = { CNY: 6.8, EUR: 0.87, JPY: 158, TWD: 32, TRY: 48 };
 
+/** 侧栏「今日」：金额 / Token / 两者 / 不显示 */
+export const SIDEBAR_TODAY_MODES = [
+  "cost",
+  "tokens",
+  "both",
+  "hidden",
+] as const;
+
+export type SidebarTodayMode = (typeof SIDEBAR_TODAY_MODES)[number];
+
+/** 不认得的值按默认的「金额」 */
+export function resolveSidebarToday(
+  settings: UsageDisplaySettings | undefined,
+): SidebarTodayMode {
+  return (
+    SIDEBAR_TODAY_MODES.find((m) => m === settings?.sidebarToday) ?? "cost"
+  );
+}
+
 export interface MoneyDisplay {
   currency: DisplayCurrency;
   rate: number;

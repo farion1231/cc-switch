@@ -365,12 +365,15 @@ pub struct CodexLegacyOfficialHistoryBucketMigration {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageDisplaySettings {
-    /// 显示币种（"USD" / "CNY"），缺省为 USD
+    /// 显示币种（"USD" / "CNY" / "JPY" 等，见前端 `DISPLAY_CURRENCIES`），缺省为 USD
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub currency: Option<String>,
     /// 1 美元折多少目标币种，按币种存：换回 USD 再换回来，填过的汇率还在
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub exchange_rates: BTreeMap<String, f64>,
+    /// 侧栏「今日」显示什么（"cost" / "tokens" / "both" / "hidden"），缺省为 cost
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidebar_today: Option<String>,
 }
 
 /// 应用设置结构
@@ -1404,15 +1407,24 @@ mod tests {
             .is_none());
 
         let saved: AppSettings = serde_json::from_value(serde_json::json!({
-            "usageDisplay": { "currency": "CNY", "exchangeRates": { "CNY": 6.8 } }
+            "usageDisplay": {
+                "currency": "CNY",
+                "exchangeRates": { "CNY": 6.8 },
+                "sidebarToday": "both"
+            }
         }))
         .expect("usage display");
         let display = saved.usage_display.as_ref().expect("usage display");
         assert_eq!(display.currency.as_deref(), Some("CNY"));
         assert_eq!(display.exchange_rates.get("CNY"), Some(&6.8));
+        assert_eq!(display.sidebar_today.as_deref(), Some("both"));
         assert_eq!(
             serde_json::to_value(&saved).expect("serialize")["usageDisplay"],
-            serde_json::json!({ "currency": "CNY", "exchangeRates": { "CNY": 6.8 } })
+            serde_json::json!({
+                "currency": "CNY",
+                "exchangeRates": { "CNY": 6.8 },
+                "sidebarToday": "both"
+            })
         );
     }
 

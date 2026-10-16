@@ -2375,12 +2375,19 @@
     },
     "dataSources": "数据来源",
     "display": {
-      "title": "金额显示",
+      "title": "显示",
       "currency": "币种",
       "rate": "汇率",
       "rateHint": "手动填写，只用于换算显示；费用仍按美元记录。",
       "rateInvalid": "请输入大于 0 的数字",
-      "approxNote": "换算后的金额前面带「≈」，悬停可看美元原值。"
+      "approxNote": "换算后的金额前面带「≈」，悬停可看美元原值。",
+      "sidebarToday": "侧栏「今日」",
+      "sidebarTodayModes": {
+        "cost": "金额",
+        "tokens": "Token",
+        "both": "两者",
+        "hidden": "不显示"
+      }
     },
     "providerFilter": {
       "label": "供应商",
@@ -4089,7 +4096,7 @@
     "expandSidebar": "展开侧栏",
     "collapseSidebar": "收起侧栏",
     "appsGroup": "应用",
-    "todayCost": "今日 {{cost}}",
+    "today": "今日 {{value}}",
     "usage": "用量统计",
     "auth": "授权中心",
     "authNeedsReauth": "有账号需要重新登录",

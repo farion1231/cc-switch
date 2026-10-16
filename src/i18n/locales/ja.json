@@ -2375,12 +2375,19 @@
     },
     "dataSources": "データソース",
     "display": {
-      "title": "金額の表示",
+      "title": "表示",
       "currency": "通貨",
       "rate": "為替レート",
       "rateHint": "手動で入力し、表示の換算にのみ使います。費用は引き続き米ドルで記録されます。",
       "rateInvalid": "0 より大きい数値を入力してください",
-      "approxNote": "換算した金額には「≈」が付きます。ホバーで米ドルの値を確認できます。"
+      "approxNote": "換算した金額には「≈」が付きます。ホバーで米ドルの値を確認できます。",
+      "sidebarToday": "サイドバーの「今日」",
+      "sidebarTodayModes": {
+        "cost": "金額",
+        "tokens": "トークン",
+        "both": "両方",
+        "hidden": "非表示"
+      }
     },
     "providerFilter": {
       "label": "プロバイダー",
@@ -4089,7 +4096,7 @@
     "expandSidebar": "サイドバーを展開",
     "collapseSidebar": "サイドバーを折りたたむ",
     "appsGroup": "アプリ",
-    "todayCost": "今日 {{cost}}",
+    "today": "今日 {{value}}",
     "usage": "使用量",
     "auth": "アカウント",
     "authNeedsReauth": "再ログインが必要なアカウントがあります",

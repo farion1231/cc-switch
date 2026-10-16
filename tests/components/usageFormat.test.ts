@@ -13,6 +13,7 @@ import {
   formatTokensPerSecond,
   formatTokensShort,
   resolveMoneyDisplay,
+  resolveSidebarToday,
   getAggregateTokensPerSecond,
   getEstimatedTokensPerSecond,
   getOutputTokensPerSecond,
@@ -319,5 +320,14 @@ describe("display currency", () => {
     expect(formatMoneyShort(41.2, cny)).toBe("≈¥280");
     expect(formatMoneyShort(14.5, cny)).toBe("≈¥98.60");
     expect(formatMoneyShort(undefined, cny)).toBe("--");
+  });
+});
+
+describe("sidebar Today mode", () => {
+  it("defaults to cost and ignores unknown values", () => {
+    expect(resolveSidebarToday(undefined)).toBe("cost");
+    expect(resolveSidebarToday({ sidebarToday: "requests" })).toBe("cost");
+    expect(resolveSidebarToday({ sidebarToday: "tokens" })).toBe("tokens");
+    expect(resolveSidebarToday({ sidebarToday: "hidden" })).toBe("hidden");
   });
 });

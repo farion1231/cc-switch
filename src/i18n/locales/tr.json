@@ -4032,7 +4032,7 @@
     "expandSidebar": "Kenar çubuğunu genişlet",
     "collapseSidebar": "Kenar çubuğunu daralt",
     "appsGroup": "Uygulamalar",
-    "todayCost": "Bugün {{cost}}",
+    "today": "Bugün {{value}}",
     "usage": "Kullanım",
     "auth": "Hesaplar",
     "authNeedsReauth": "Bir hesapta tekrar oturum açılması gerekiyor",

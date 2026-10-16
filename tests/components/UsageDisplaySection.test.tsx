@@ -95,4 +95,27 @@ describe("UsageDisplaySection", () => {
     await user.type(screen.getByRole("textbox"), "{Enter}");
     expect(onChange).not.toHaveBeenCalled();
   });
+
+  it("saves what the sidebar Today label shows", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <UsageDisplaySection value={{ currency: "CNY" }} onChange={onChange} />,
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "usage.display.sidebarTodayModes.cost",
+      }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "usage.display.sidebarTodayModes.both",
+      }),
+    );
+    expect(onChange).toHaveBeenCalledWith({
+      currency: "CNY",
+      sidebarToday: "both",
+    });
+  });
 });
