@@ -13,6 +13,8 @@ import type {
   PublicRouteStatus,
   NamedTunnel,
   CursorByokStatus,
+  CursorByokBackup,
+  CursorRestoreByokResult,
   CursorWriteByokResult,
   PublicRouteConnectivityResult,
 } from "@/types/proxy";
@@ -212,6 +214,16 @@ export const proxyApi = {
     modelIds: string[];
   }): Promise<CursorWriteByokResult> {
     return invoke("cursor_write_byok", params);
+  },
+
+  // 最新的 BYOK 回滚点（没有则 null）。退出接管后据此决定是否提示「一键还原」
+  async cursorByokBackup(): Promise<CursorByokBackup | null> {
+    return invoke("cursor_byok_backup");
+  },
+
+  // 还原 BYOK 到最新回滚点（写前的原始行）。只提示不代劳，由用户在退出接管后显式点击
+  async cursorRestoreByok(): Promise<CursorRestoreByokResult> {
+    return invoke("cursor_restore_byok");
   },
 
   // 分层测公网路由连通性：local 打本机代理，public 打隧道公网地址，用来定位坏在哪一层

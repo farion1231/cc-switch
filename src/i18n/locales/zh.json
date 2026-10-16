@@ -3171,7 +3171,14 @@
       "modelHint": "可选。留空则使用供应商的默认模型。"
     },
     "needsPublicRoute": "需要公网路由",
-    "needsPublicRouteHint": "打开设置中的公网路由"
+    "needsPublicRouteHint": "打开设置中的公网路由",
+    "restore": {
+      "title": "还原 Cursor 设置？",
+      "message": "已退出路由接管，但 Cursor 里仍写着公网地址（已失效）。是否还原为写入前的设置？（快照：{{when}}）",
+      "confirm": "一键还原",
+      "cancel": "暂不",
+      "done": "已还原 Cursor 设置"
+    }
   },
   "cursorSetup": {
     "title": "接入 Cursor（{{provider}}）",
