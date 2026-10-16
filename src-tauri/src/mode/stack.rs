@@ -580,6 +580,37 @@ pub fn stack_mode_now(app: &AppType) -> bool {
     })
 }
 
+/// A default (unprefixed) parent can spawn any published Stack model. Decide
+/// task delivery from that topology, not just the parent's current provider.
+pub(crate) fn codex_agent_plaintext_required(
+    db: &Database,
+    store: &DeviceStore,
+) -> Result<bool, AppError> {
+    let live = state::load(store)?;
+    let Some(codex) = live.apps.get("codex") else {
+        return Ok(false);
+    };
+    if !codex.mode_state().is_proxy() || !codex.stack.enabled {
+        return Ok(false);
+    }
+    let route = codex
+        .proxy_route
+        .as_deref()
+        .ok_or_else(|| AppError::InvalidInput("Codex Stack has no default provider".to_string()))?;
+    let provider = db.get_provider_by_id(route, "codex")?.ok_or_else(|| {
+        AppError::InvalidInput("Codex Stack default provider is unavailable".to_string())
+    })?;
+    if !crate::proxy::providers::is_codex_official_provider(&provider) {
+        return Ok(true);
+    }
+    Ok(
+        published_members(db, &AppType::Codex, &codex.stack, Some(route))?
+            .iter()
+            .filter(|member| !member.model_ids.is_empty())
+            .any(|member| !crate::proxy::providers::is_codex_official_provider(&member.provider)),
+    )
+}
+
 /// 在 Stack 名单里（不管什么模式）。
 pub fn is_member(app: &AppType, provider_id: &str) -> Result<bool, AppError> {
     if !supports_stack(app) {
@@ -1181,6 +1212,91 @@ mod tests {
 
     fn resolve_in(fx: &Fixture, app: AppType, model: &str) -> Resolved {
         resolve(&fx.db, &fx.store, &app, model).unwrap()
+    }
+
+    #[test]
+    fn codex_plaintext_delivery_follows_the_whole_active_topology() {
+        let fx = fixture();
+        let mut official = provider("official", "Official", None, json!({}));
+        official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+        official.category = Some("official".to_string());
+        let mut custom = provider("custom", "Custom", None, json!({}));
+        custom.settings_config = json!({
+            "auth": {"OPENAI_API_KEY":"test-key"},
+            "config":"model_provider = \"custom\"\nmodel = \"child-model\"\n[model_providers.custom]\nbase_url = \"https://example.invalid/v1\"\nwire_api = \"responses\""
+        });
+        fx.db.save_provider("codex", &official).unwrap();
+        fx.db.save_provider("codex", &custom).unwrap();
+        state::update(&fx.store, |live| {
+            let codex = live.apps.get_mut("codex").unwrap();
+            codex.proxy_route = Some(official.id.clone());
+            codex.stack.members = vec![official.id.clone()];
+            codex
+                .stack
+                .keys
+                .insert("official".to_string(), official.id.clone());
+            codex
+                .stack
+                .keys
+                .insert("custom".to_string(), custom.id.clone());
+        })
+        .unwrap();
+        assert!(!codex_agent_plaintext_required(&fx.db, &fx.store).unwrap());
+
+        // An official default parent can select the published third-party child.
+        state::update(&fx.store, |live| {
+            live.apps
+                .get_mut("codex")
+                .unwrap()
+                .stack
+                .members
+                .push(custom.id.clone());
+        })
+        .unwrap();
+        assert!(codex_agent_plaintext_required(&fx.db, &fx.store).unwrap());
+
+        // A registered but unpublished member does not change the policy.
+        state::update(&fx.store, |live| {
+            live.apps
+                .get_mut("codex")
+                .unwrap()
+                .stack
+                .members
+                .retain(|id| id != &custom.id);
+        })
+        .unwrap();
+        assert!(!codex_agent_plaintext_required(&fx.db, &fx.store).unwrap());
+
+        // The third-party default is also reachable without a prefixed model.
+        state::update(&fx.store, |live| {
+            live.apps.get_mut("codex").unwrap().proxy_route = Some(custom.id.clone());
+        })
+        .unwrap();
+        assert!(codex_agent_plaintext_required(&fx.db, &fx.store).unwrap());
+        for direct in [false, true] {
+            state::update(&fx.store, |live| {
+                let codex = live.apps.get_mut("codex").unwrap();
+                codex.mode = Some(if direct {
+                    state::Mode::Direct
+                } else {
+                    state::Mode::Proxy
+                });
+                codex.stack.enabled = direct;
+            })
+            .unwrap();
+            assert!(!codex_agent_plaintext_required(&fx.db, &fx.store).unwrap());
+        }
+    }
+
+    #[test]
+    fn codex_plaintext_delivery_does_not_guess_a_missing_default() {
+        let fx = fixture();
+        assert!(codex_agent_plaintext_required(&fx.db, &fx.store).is_err());
+        state::update(&fx.store, |live| {
+            live.apps.get_mut("codex").unwrap().proxy_route = Some("deleted".to_string());
+        })
+        .unwrap();
+        assert!(codex_agent_plaintext_required(&fx.db, &fx.store).is_err());
     }
 
     fn hit(resolved: Resolved) -> (String, String, String) {

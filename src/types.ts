@@ -420,6 +420,8 @@ export interface Settings {
   // and its reasoning effort. Unset = sub-agents follow the main model.
   codexStackSubagentModel?: string;
   codexStackSubagentReasoningEffort?: string;
+  // Experimental, opt-in plain-text delivery for managed Codex sub-agents.
+  codexStackV2PlaintextDelivery?: boolean;
   // Codex aggregation: Auto Review (approval reviewer) model, a published
   // `ccs-<key>/<model>` id. Unset = Codex's default reviewer.
   codexStackAutoReviewModel?: string;

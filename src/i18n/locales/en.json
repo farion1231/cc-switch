@@ -845,6 +845,8 @@
     "codexStackClassicSubagents": "Classic sub-agent tools in aggregation",
     "codexStackClassicSubagentsDescription": "Must be on when the main agent and a sub-agent use different providers, or the sub-agent cannot receive its task.",
     "codexStackClassicSubagentsForcedV2": "Codex config.toml turns on [features] multi_agent_v2, which takes precedence over this setting, so it has no effect.",
+    "codexStackV2PlaintextDelivery": "V2 cross-provider plaintext delivery (experimental)",
+    "codexStackV2PlaintextDeliveryDescription": "Delivers only standard readable content; encrypted_content is rejected. reserved collaboration.* is unsupported. This experimental setting is off by default and does not switch V1/V2 or change the model, effort, or classic tools.",
     "codexSessionCompression": "Compress old Codex sessions",
     "codexSessionCompressionDescription": "When on, Codex compresses session files that haven't changed for 7 days in the background each time it starts, which saves a lot of disk space. Codex decompresses a session automatically when you continue it. CC Switch still lists and counts compressed sessions; the list just doesn't show a preview of their last reply. This is a Codex feature still under development: Codex shows a notice on every start while it's on. Requires a recent Codex version and takes effect after restarting Codex. Turning it off stops compressing; sessions already compressed stay as they are.",
     "codexSessionCompressionUsage": "Sessions currently use {{size}}",

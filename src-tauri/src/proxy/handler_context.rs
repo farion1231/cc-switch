@@ -73,6 +73,8 @@ pub struct RequestContext {
     pub copilot_optimizer_config: CopilotOptimizerConfig,
     /// Stack 模型的请求（`mode::stack`）：直达 Stack 里的那一家，不读也不写任何路由状态。
     pub is_stack: bool,
+    /// Request-scoped snapshot of the trusted Codex Stack delivery policy.
+    codex_plaintext_agent_delivery: bool,
 }
 
 impl RequestContext {
@@ -99,6 +101,15 @@ impl RequestContext {
         stack: Option<StackTarget>,
     ) -> Result<Self, ProxyError> {
         let start_time = Instant::now();
+
+        let codex_plaintext_agent_delivery = matches!(app_type, AppType::Codex)
+            && crate::settings::codex_stack_v2_plaintext_delivery()
+            && super::providers::codex_agent_delivery::has_codex_v2_agent_delivery(body)
+            && crate::mode::stack::codex_agent_plaintext_required(
+                &state.db,
+                &crate::live::engine::DeviceStore::for_device(),
+            )
+            .map_err(|error| ProxyError::InvalidRequest(error.to_string()))?;
 
         // 从数据库读取应用级代理配置（per-app）
         let mut app_config = state
@@ -221,6 +232,7 @@ impl RequestContext {
             optimizer_config,
             copilot_optimizer_config,
             is_stack,
+            codex_plaintext_agent_delivery,
         })
     }
 
@@ -291,6 +303,7 @@ impl RequestContext {
             max_retries,
         )
         .stack_request(self.is_stack)
+        .codex_plaintext_agent_delivery(self.codex_plaintext_agent_delivery)
     }
 
     /// 获取 Provider 列表（用于故障转移）

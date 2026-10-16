@@ -64,7 +64,8 @@ export function StackSettingsSheet({
     setSaving(true);
     try {
       const current = await settingsApi.get();
-      await settingsApi.save({ ...current, ...patch });
+      const saved = await settingsApi.save({ ...current, ...patch });
+      if (!saved) throw new Error("Settings were not saved");
     } catch (error) {
       console.error("[StackSettingsSheet] Failed to save", error);
       toast.error(
