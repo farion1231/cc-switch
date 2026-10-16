@@ -845,6 +845,8 @@
     "codexStackClassicSubagents": "聚合模式下子 agent 用经典工具",
     "codexStackClassicSubagentsDescription": "主、子 agent 不在同一家供应商时必须打开，否则子 agent 收不到任务。",
     "codexStackClassicSubagentsForcedV2": "Codex 的 config.toml 里打开了 [features] multi_agent_v2，它比这个开关优先，开关不会生效",
+    "codexStackV2PlaintextDelivery": "V2 跨供应商明文投递（实验）",
+    "codexStackV2PlaintextDeliveryDescription": "仅投递标准可读内容，encrypted_content 会被拒绝；reserved collaboration.* 不支持。此实验开关默认关闭，不切换 V1/V2，也不改模型、推理强度或经典工具。",
     "codexSessionCompression": "压缩 Codex 历史会话",
     "codexSessionCompressionDescription": "打开后，Codex 每次启动时会在后台把 7 天以上没动过的会话文件压缩保存，明显减少占用的磁盘空间；在这些会话上继续对话时 Codex 会自动解压。CC Switch 照常显示和统计压缩过的会话，只是列表里不显示它们最后一条回复的预览。这是 Codex 还在开发中的功能，打开后 Codex 每次启动会显示一条提示；需要较新版本的 Codex，重启 Codex 后生效。关闭后不再压缩，已压缩的会话保持原样",
     "codexSessionCompressionUsage": "会话目录当前占用 {{size}}",

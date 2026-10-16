@@ -440,6 +440,10 @@ pub struct AppSettings {
     /// 每次保存都会写下 `false`，分不清是不是用户关的：换了键名，旧键不再读，升级后一律按开。
     #[serde(default = "default_true")]
     pub codex_stack_classic_tools: bool,
+    /// Experimental opt-in for readable V2 tasks on mixed-provider Stack routes.
+    /// Does not enable V2 or change the classic-tools/model/effort settings.
+    #[serde(default)]
+    pub codex_stack_v2_plaintext_delivery: bool,
     /// Codex 聚合模式下子 agent 默认用的模型（合并目录里的 slug，`ccs-<key>/<model>`）。
     /// 不设时跟随主模型。只在这个 slug 还在合并目录里时写进 `[agents]`，否则照样跟随主模型
     /// （成员移除后保留设置，加回来自动恢复）。
@@ -607,6 +611,7 @@ impl Default for AppSettings {
             unify_codex_session_history: false,
             unify_codex_migrate_existing: None,
             codex_stack_classic_tools: true,
+            codex_stack_v2_plaintext_delivery: false,
             codex_stack_subagent_model: None,
             codex_stack_subagent_reasoning_effort: None,
             codex_stack_auto_review_model: None,
@@ -1125,6 +1130,16 @@ pub fn codex_stack_classic_tools() -> bool {
         .codex_stack_classic_tools
 }
 
+pub(crate) fn codex_stack_v2_plaintext_delivery() -> bool {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("Settings lock poisoned; using recovered value: {e}");
+            e.into_inner()
+        })
+        .codex_stack_v2_plaintext_delivery
+}
+
 /// Codex 聚合模式下的子 agent 设置：(模型 slug, 推理强度)，空串当作没设。
 pub fn codex_stack_subagent() -> (Option<String>, Option<String>) {
     let settings = settings_store().read().unwrap_or_else(|e| {
@@ -1374,6 +1389,36 @@ mod tests {
         let saved = serde_json::to_value(&off).expect("serialize");
         assert_eq!(saved["codexStackClassicTools"], false);
         assert!(saved.get("codexStackClassicSubagents").is_none());
+    }
+
+    #[test]
+    fn codex_stack_v2_delivery_is_an_independent_opt_in() {
+        assert!(!AppSettings::default().codex_stack_v2_plaintext_delivery);
+        let old: AppSettings = serde_json::from_value(serde_json::json!({
+            "codexStackClassicTools": false,
+            "codexStackSubagentModel": "ccs-custom/child",
+            "codexStackSubagentReasoningEffort": "high"
+        }))
+        .unwrap();
+        assert!(!old.codex_stack_v2_plaintext_delivery);
+        let mut enabled = old.clone();
+        enabled.codex_stack_v2_plaintext_delivery = true;
+        let saved = serde_json::to_value(&enabled).unwrap();
+        assert_eq!(saved["codexStackV2PlaintextDelivery"], true);
+        let restored: AppSettings = serde_json::from_value(saved).unwrap();
+        assert!(restored.codex_stack_v2_plaintext_delivery);
+        assert_eq!(
+            restored.codex_stack_classic_tools,
+            old.codex_stack_classic_tools
+        );
+        assert_eq!(
+            restored.codex_stack_subagent_model,
+            old.codex_stack_subagent_model
+        );
+        assert_eq!(
+            restored.codex_stack_subagent_reasoning_effort,
+            old.codex_stack_subagent_reasoning_effort
+        );
     }
 
     #[test]

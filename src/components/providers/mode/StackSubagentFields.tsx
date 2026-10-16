@@ -23,6 +23,7 @@ export interface StackSubagentValue {
   model?: string;
   effort?: string;
   classic: boolean;
+  plaintextDelivery: boolean;
 }
 
 /** 子代理设置 → settings.json 字段（未设置的键写 undefined，保存时去掉）。 */
@@ -33,6 +34,7 @@ export function stackSubagentSettings(
     codexStackSubagentModel: value.model,
     codexStackSubagentReasoningEffort: value.effort,
     codexStackClassicTools: value.classic,
+    codexStackV2PlaintextDelivery: value.plaintextDelivery,
   };
 }
 
@@ -42,6 +44,7 @@ export function stackSubagentValue(settings?: Settings): StackSubagentValue {
     model: settings?.codexStackSubagentModel || undefined,
     effort: settings?.codexStackSubagentReasoningEffort || undefined,
     classic: settings?.codexStackClassicTools ?? true,
+    plaintextDelivery: settings?.codexStackV2PlaintextDelivery ?? false,
   };
 }
 
@@ -50,7 +53,10 @@ export function sameStackSubagent(
   b: StackSubagentValue,
 ): boolean {
   return (
-    a.model === b.model && a.effort === b.effort && a.classic === b.classic
+    a.model === b.model &&
+    a.effort === b.effort &&
+    a.classic === b.classic &&
+    a.plaintextDelivery === b.plaintextDelivery
   );
 }
 
@@ -74,7 +80,7 @@ export function StackSubagentFields({
 }: StackSubagentFieldsProps) {
   const { t } = useTranslation();
   const [forcesMultiAgentV2, setForcesMultiAgentV2] = useState(false);
-  const { model, effort, classic } = value;
+  const { model, effort, classic, plaintextDelivery } = value;
   const selected = models.find((candidate) => candidate.id === model);
   // 选过的模型不在名单里了（成员移除、模型不再发布、成了默认那家）：后端不写，跟随主模型
   const unavailable = model !== undefined && selected === undefined;
@@ -215,6 +221,18 @@ export function StackSubagentFields({
         checked={classic}
         disabled={disabled}
         onCheckedChange={(next) => onChange({ ...value, classic: next })}
+      />
+      <SettingsSwitchRow
+        label={t("settings.codexStackV2PlaintextDelivery")}
+        help={{
+          title: t("settings.codexStackV2PlaintextDelivery"),
+          body: t("settings.codexStackV2PlaintextDeliveryDescription"),
+        }}
+        checked={plaintextDelivery}
+        disabled={disabled}
+        onCheckedChange={(next) =>
+          onChange({ ...value, plaintextDelivery: next })
+        }
       />
     </div>
   );

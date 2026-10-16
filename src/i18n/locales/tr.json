@@ -833,6 +833,8 @@
     "codexStackClassicSubagents": "Birleştirmedaki klasik alt ajan araçları",
     "codexStackClassicSubagentsDescription": "Ana ajan ile alt ajan farklı sağlayıcılar kullandığında açık olmalıdır; aksi halde alt ajan görevini alamaz.",
     "codexStackClassicSubagentsForcedV2": "Codex config.toml, bu ayara göre öncelikli olan [features] multi_agent_v2'yi açar, dolayısıyla hiçbir etkisi olmaz.",
+    "codexStackV2PlaintextDelivery": "V2 sağlayıcılar arası düz metin iletimi (deneysel)",
+    "codexStackV2PlaintextDeliveryDescription": "Yalnızca standart okunabilir içerik iletilir; encrypted_content reddedilir. Ayrılmış collaboration.* desteklenmez. Bu deneysel ayar varsayılan olarak kapalıdır; V1/V2'yi değiştirmez, modeli, akıl yürütme düzeyini veya klasik araçları etkilemez.",
     "codexSessionCompression": "Eski Codex oturumlarını sıkıştır",
     "codexSessionCompressionDescription": "Codex açıkken, her başlatıldığında arka planda 7 gün boyunca değişmeyen oturum dosyalarını sıkıştırır ve bu da çok fazla disk alanı tasarrufu sağlar. Codex, devam ettiğinizde oturumun sıkıştırmasını otomatik olarak açar. CC Switch hala sıkıştırılmış oturumları listeliyor ve sayıyor; liste yalnızca son yanıtlarının önizlemesini göstermiyor. Bu, halen geliştirilmekte olan bir Codex özelliğidir: Codex, açıkken her başlangıçta bir bildirim gösterir. Yeni bir Codex sürümü gerektirir ve Codex yeniden başlatıldıktan sonra etkili olur. Kapatıldığında sıkıştırma durdurulur; zaten sıkıştırılmış olan oturumlar olduğu gibi kalır.",
     "codexSessionCompressionUsage": "Oturumlar şu anda {{size}} kullanıyor",

@@ -31,6 +31,7 @@ const MODELS: ProxyStackSubagentModel[] = [
 const MODEL = "mode.stackSettings.subagentModel";
 const EFFORT = "mode.stackSettings.subagentEffort";
 const CLASSIC = "settings.codexStackClassicSubagents";
+const PLAINTEXT = "settings.codexStackV2PlaintextDelivery";
 const AUTO_REVIEW = "mode.stackSettings.autoReviewModel";
 
 // 真实的 save_settings 整份反序列化：前端不带的键（undefined）就是没设。MSW 默认是合并
@@ -80,6 +81,66 @@ describe("StackSettingsSheet", () => {
   it("treats the classic tools as on when the setting was never saved", async () => {
     renderSheet();
     expect(await screen.findByRole("switch", { name: CLASSIC })).toBeChecked();
+    expect(
+      await screen.findByRole("switch", { name: PLAINTEXT }),
+    ).not.toBeChecked();
+  });
+
+  it("saves and rolls back plaintext delivery without changing model, effort, or classic tools", async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderSheet({
+      codexStackClassicTools: true,
+      codexStackSubagentModel: "ccs-deepseek/deepseek-v4-flash",
+      codexStackSubagentReasoningEffort: "low",
+    });
+
+    const toggle = await screen.findByRole("switch", { name: PLAINTEXT });
+    expect(toggle).not.toBeChecked();
+    await user.click(toggle);
+    await waitFor(() =>
+      expect(getSettings().codexStackV2PlaintextDelivery).toBe(true),
+    );
+    expect(getSettings().codexStackSubagentModel).toBe(
+      "ccs-deepseek/deepseek-v4-flash",
+    );
+    expect(getSettings().codexStackSubagentReasoningEffort).toBe("low");
+    expect(getSettings().codexStackClassicTools).toBe(true);
+
+    unmount();
+    renderSheet(getSettings());
+    const reopenedToggle = await screen.findByRole("switch", {
+      name: PLAINTEXT,
+    });
+    await waitFor(() => expect(reopenedToggle).toBeChecked());
+
+    await user.click(reopenedToggle);
+    await waitFor(() =>
+      expect(getSettings().codexStackV2PlaintextDelivery).toBe(false),
+    );
+    expect(getSettings().codexStackSubagentModel).toBe(
+      "ccs-deepseek/deepseek-v4-flash",
+    );
+    expect(getSettings().codexStackSubagentReasoningEffort).toBe("low");
+    expect(getSettings().codexStackClassicTools).toBe(true);
+  });
+
+  it("does not retain a plaintext setting when save_settings returns false", async () => {
+    const user = userEvent.setup();
+    renderSheet();
+    let saveCalls = 0;
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/save_settings`, () => {
+        saveCalls += 1;
+        return HttpResponse.json(false);
+      }),
+    );
+
+    const toggle = await screen.findByRole("switch", { name: PLAINTEXT });
+    await user.click(toggle);
+
+    await waitFor(() => expect(saveCalls).toBe(1));
+    await waitFor(() => expect(toggle).not.toBeChecked());
+    expect(getSettings().codexStackV2PlaintextDelivery).toBeUndefined();
   });
 
   it("saves the picked sub-agent model and warns while classic tools are off", async () => {

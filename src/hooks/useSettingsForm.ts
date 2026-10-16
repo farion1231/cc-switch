@@ -123,6 +123,8 @@ export function useSettingsForm(): UseSettingsFormResult {
         data.preserveCodexOfficialAuthOnSwitch ?? false,
       unifyCodexSessionHistory: data.unifyCodexSessionHistory ?? false,
       codexStackClassicTools: data.codexStackClassicTools ?? true,
+      codexStackV2PlaintextDelivery:
+        data.codexStackV2PlaintextDelivery ?? false,
       claudeConfigDir: sanitizeDir(data.claudeConfigDir),
       codexConfigDir: sanitizeDir(data.codexConfigDir),
       geminiConfigDir: sanitizeDir(data.geminiConfigDir),
@@ -152,6 +154,7 @@ export function useSettingsForm(): UseSettingsFormResult {
             preserveCodexOfficialAuthOnSwitch: false,
             unifyCodexSessionHistory: false,
             codexStackClassicTools: true,
+            codexStackV2PlaintextDelivery: false,
             language: readPersistedLanguage(),
           } as SettingsFormState);
 
@@ -193,6 +196,8 @@ export function useSettingsForm(): UseSettingsFormResult {
           serverData.preserveCodexOfficialAuthOnSwitch ?? false,
         unifyCodexSessionHistory: serverData.unifyCodexSessionHistory ?? false,
         codexStackClassicTools: serverData.codexStackClassicTools ?? true,
+        codexStackV2PlaintextDelivery:
+          serverData.codexStackV2PlaintextDelivery ?? false,
         claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
         codexConfigDir: sanitizeDir(serverData.codexConfigDir),
         geminiConfigDir: sanitizeDir(serverData.geminiConfigDir),

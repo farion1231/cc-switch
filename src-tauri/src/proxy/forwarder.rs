@@ -375,6 +375,9 @@ pub struct RequestForwarder {
     /// Stack 模型的请求（`mode::stack`）：挂在结构体上，整流器重试再次调用 `forward()` 时照样
     /// 生效。见 [`Self::routing_state_enabled`]。
     stack_request: bool,
+    /// Trusted Stack topology requires readable tasks across providers. Keep
+    /// this snapshot across rectifier retries; never derive it from client JSON.
+    codex_plaintext_agent_delivery: bool,
 }
 
 impl RequestForwarder {
@@ -490,6 +493,7 @@ impl RequestForwarder {
             ),
             max_attempts,
             stack_request: false,
+            codex_plaintext_agent_delivery: false,
         }
     }
 
@@ -497,6 +501,38 @@ impl RequestForwarder {
     pub fn stack_request(mut self, stack_request: bool) -> Self {
         self.stack_request = stack_request;
         self
+    }
+
+    pub(crate) fn codex_plaintext_agent_delivery(mut self, enabled: bool) -> Self {
+        self.codex_plaintext_agent_delivery = enabled;
+        self
+    }
+
+    fn prepare_codex_agent_delivery(
+        &self,
+        app_type: &AppType,
+        endpoint: &str,
+        official: bool,
+        body: &mut Value,
+    ) -> Result<(), ProxyError> {
+        if !matches!(app_type, AppType::Codex)
+            || !matches!(
+                split_endpoint_and_query(endpoint).0,
+                "/responses" | "/v1/responses"
+            )
+            || !self.codex_plaintext_agent_delivery
+        {
+            return Ok(());
+        }
+        // Official parents may spawn third-party children, but their private
+        // input items must continue to pass through unchanged.
+        super::providers::codex_agent_delivery::make_codex_v2_agents_messages_plaintext(body);
+        if !official {
+            super::providers::codex_agent_delivery::project_codex_agent_messages_for_third_party(
+                body, true,
+            )?;
+        }
+        Ok(())
     }
 
     /// 这个请求读写路由状态吗：熔断器（许可、结果、健康度）、「正在使用」、代理统计
@@ -1477,6 +1513,13 @@ impl RequestForwarder {
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
+        // Must run before Chat/Anthropic conversion or namespace flattening.
+        self.prepare_codex_agent_delivery(
+            app_type,
+            endpoint,
+            codex_official_auth_passthrough,
+            &mut mapped_body,
+        )?;
         let is_copilot_codex_responses = matches!(app_type, AppType::Codex)
             && is_copilot
             && super::providers::is_codex_responses_endpoint(endpoint);
@@ -4714,6 +4757,7 @@ mod tests {
             streaming_first_byte_timeout,
             max_attempts: 1,
             stack_request: false,
+            codex_plaintext_agent_delivery: false,
         }
     }
 
@@ -7019,6 +7063,154 @@ mod tests {
                 .map_err(|error| error.error)
                 .expect("forward");
             upstream.seen.lock().await.pop().expect("upstream request")
+        }
+
+        fn v2_tools() -> Value {
+            json!([{"type":"namespace","name":"agents","tools":[
+                {"type":"function","name":"spawn_agent","description":"start a task",
+                 "parameters":{"type":"object","properties":{
+                    "message":{"type":"string","encrypted":true},
+                    "model":{"type":"string"},"reasoning_effort":{"type":"string"}
+                 },"required":["message"]}}
+            ]}])
+        }
+
+        #[test]
+        fn v2_agents_schema_policy_also_applies_to_the_unprefixed_official_default() {
+            let mut request = body("listed", v2_tools());
+            request["reasoning"] = json!({"effort":"high"});
+            request["input"] = json!([{"type":"agent_message","content":[
+                {"type":"encrypted_content","encrypted_content":"private-official-state"}
+            ]}]);
+            for managed in [false, true] {
+                let mut prepared = request.clone();
+                forwarder(false)
+                    .codex_plaintext_agent_delivery(managed)
+                    .prepare_codex_agent_delivery(
+                        &AppType::Codex,
+                        "/responses",
+                        true,
+                        &mut prepared,
+                    )
+                    .unwrap();
+                assert_eq!(prepared["input"], request["input"]);
+                assert_eq!(prepared["reasoning"], request["reasoning"]);
+                let message =
+                    &prepared["tools"][0]["tools"][0]["parameters"]["properties"]["message"];
+                assert_eq!(message.get("encrypted").is_none(), managed);
+                assert_eq!(
+                    prepared["tools"][0]["tools"][0]["parameters"]["properties"]["model"],
+                    request["tools"][0]["tools"][0]["parameters"]["properties"]["model"]
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn v2_readable_tasks_reach_every_third_party_transport_before_conversion() {
+            let upstream = upstream().await;
+            let task = "Inspect the repository and report the exact source of this error.";
+            for api_format in ["openai_responses", "openai_chat", "anthropic"] {
+                let mut request = body("listed", v2_tools());
+                request["reasoning"] = json!({"effort":"high"});
+                request["input"] = json!([{"type":"agent_message","author":"/root",
+                "recipient":"/root/child","content":[
+                    {"type":"input_text","text":"Message Type: NEW_TASK\nPayload:\n"},
+                    {"type":"input_text","text":task}
+                ]}]);
+                let seen = send(
+                    &forwarder(true).codex_plaintext_agent_delivery(true),
+                    &upstream,
+                    provider(&upstream, api_format),
+                    "/responses",
+                    request,
+                )
+                .await;
+                let encoded = serde_json::to_string(&seen.body).unwrap();
+                assert!(encoded.contains(task), "{api_format}: task was lost");
+                assert!(
+                    !encoded.contains("agent_message"),
+                    "{api_format}: private item survived"
+                );
+                assert!(
+                    !encoded.contains("encrypted_content"),
+                    "{api_format}: private part survived"
+                );
+                assert_eq!(seen.body["model"], "listed");
+                if api_format == "openai_responses" {
+                    assert_eq!(seen.body["reasoning"]["effort"], "high");
+                    assert_eq!(seen.body["input"][0]["role"], "user");
+                }
+            }
+        }
+
+        #[test]
+        fn v2_delivery_never_changes_other_apps_or_remote_compaction() {
+            for (app, endpoint) in [
+                (AppType::Claude, "/responses"),
+                (AppType::GrokBuild, "/responses"),
+                (AppType::Codex, "/responses/compact"),
+                (AppType::Codex, "/v1/responses/compact?trace=1"),
+            ] {
+                let original = body("listed", v2_tools());
+                let mut prepared = original.clone();
+                forwarder(true)
+                    .codex_plaintext_agent_delivery(true)
+                    .prepare_codex_agent_delivery(&app, endpoint, false, &mut prepared)
+                    .unwrap();
+                assert_eq!(prepared, original);
+            }
+        }
+
+        #[tokio::test]
+        async fn v2_plaintext_delivery_does_not_send_known_ciphertext_to_a_third_party() {
+            use base64::Engine as _;
+            let upstream = upstream().await;
+            let mut token = vec![0_u8; 89];
+            token[0] = 0x80;
+            let ciphertext = base64::engine::general_purpose::URL_SAFE.encode(token);
+            let mut request = body("listed", v2_tools());
+            request["input"] = json!([{"type":"agent_message","content":[
+                {"type":"input_text","text":"Message Type: NEW_TASK\nPayload:\n"},
+                {"type":"encrypted_content","encrypted_content":ciphertext}
+            ]}]);
+            for api_format in ["openai_responses", "openai_chat", "anthropic"] {
+                let error = forwarder(true)
+                    .codex_plaintext_agent_delivery(true)
+                    .forward_with_retry(
+                        &AppType::Codex,
+                        http::Method::POST,
+                        "/responses",
+                        request.clone(),
+                        chatgpt_headers(),
+                        Extensions::new(),
+                        vec![provider(&upstream, api_format)],
+                    )
+                    .await
+                    .err()
+                    .expect("opaque task must fail locally");
+                assert!(matches!(error.error, ProxyError::InvalidRequest(_)));
+                assert!(!error.error.to_string().contains(&ciphertext));
+            }
+            assert!(upstream.seen.lock().await.is_empty());
+        }
+
+        #[tokio::test]
+        async fn v2_delivery_without_the_managed_policy_preserves_native_items_and_schema() {
+            let upstream = upstream().await;
+            let mut request = body("listed", v2_tools());
+            request["input"] = json!([{"type":"agent_message","content":[
+                {"type":"input_text","text":"unmanaged task"}
+            ]}]);
+            let seen = send(
+                &forwarder(true),
+                &upstream,
+                provider(&upstream, "openai_responses"),
+                "/responses",
+                request.clone(),
+            )
+            .await;
+            assert_eq!(seen.body["tools"], request["tools"]);
+            assert_eq!(seen.body["input"], request["input"]);
         }
 
         #[tokio::test]

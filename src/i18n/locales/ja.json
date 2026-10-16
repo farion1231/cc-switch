@@ -845,6 +845,8 @@
     "codexStackClassicSubagents": "集約モードでサブエージェントにクラシックツールを使う",
     "codexStackClassicSubagentsDescription": "メインとサブのエージェントが別のプロバイダーを使う場合は必ずオンにしてください。オフだとサブエージェントにタスクが届きません。",
     "codexStackClassicSubagentsForcedV2": "Codex の config.toml で [features] multi_agent_v2 がオンになっています。こちらが優先されるため、この設定は効きません。",
+    "codexStackV2PlaintextDelivery": "V2 クロスプロバイダー平文配信（実験）",
+    "codexStackV2PlaintextDeliveryDescription": "標準の可読コンテンツのみを配信し、encrypted_content は拒否します。reserved collaboration.* は未対応です。この実験設定は既定でオフで、V1/V2を切り替えず、モデル、推論強度、クラシックツールも変更しません。",
     "codexSessionCompression": "Codex の古いセッションを圧縮",
     "codexSessionCompressionDescription": "オンにすると、Codex は起動するたびに 7 日以上更新のないセッションファイルをバックグラウンドで圧縮し、ディスク使用量を大きく減らします。圧縮したセッションで会話を続けると Codex が自動的に展開します。CC Switch は圧縮されたセッションも通常どおり表示・集計しますが、一覧には最後の返信のプレビューが表示されません。Codex でまだ開発中の機能のため、オンの間は Codex の起動時に毎回通知が表示されます。新しめの Codex が必要で、Codex を再起動すると有効になります。オフにすると圧縮は止まりますが、圧縮済みのセッションはそのまま残ります。",
     "codexSessionCompressionUsage": "セッションの現在の使用量: {{size}}",

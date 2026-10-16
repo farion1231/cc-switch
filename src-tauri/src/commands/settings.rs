@@ -87,6 +87,7 @@ pub async fn save_settings(
             log::warn!("Codex 聚合设置变更后重写客户端配置失败，回滚设置: {err}");
             let mut rollback = crate::settings::get_settings();
             rollback.codex_stack_classic_tools = existing.codex_stack_classic_tools;
+            rollback.codex_stack_v2_plaintext_delivery = existing.codex_stack_v2_plaintext_delivery;
             rollback.codex_stack_subagent_model = existing.codex_stack_subagent_model.clone();
             rollback.codex_stack_subagent_reasoning_effort =
                 existing.codex_stack_subagent_reasoning_effort.clone();
@@ -392,6 +393,31 @@ mod tests {
         CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
         WebDavSyncSettings,
     };
+
+    #[test]
+    fn saving_v2_delivery_keeps_other_stack_settings_and_can_disable_it_again() {
+        let existing = AppSettings {
+            codex_stack_subagent_model: Some("ccs-custom/child".to_string()),
+            codex_stack_subagent_reasoning_effort: Some("high".to_string()),
+            ..Default::default()
+        };
+        let mut incoming = existing.clone();
+        incoming.codex_stack_v2_plaintext_delivery = true;
+        let enabled = merge_settings_for_save(incoming, &existing);
+        assert!(enabled.codex_stack_v2_plaintext_delivery);
+        assert!(enabled.codex_stack_classic_tools);
+        assert_eq!(
+            enabled.codex_stack_subagent_model,
+            existing.codex_stack_subagent_model
+        );
+        assert_eq!(
+            enabled.codex_stack_subagent_reasoning_effort,
+            existing.codex_stack_subagent_reasoning_effort
+        );
+        let mut incoming = enabled.clone();
+        incoming.codex_stack_v2_plaintext_delivery = false;
+        assert!(!merge_settings_for_save(incoming, &enabled).codex_stack_v2_plaintext_delivery);
+    }
 
     #[test]
     fn save_settings_should_keep_the_existing_proxy_client_host() {
