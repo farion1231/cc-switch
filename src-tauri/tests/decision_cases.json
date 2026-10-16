@@ -1,0 +1,817 @@
+{
+  "fixture_version": 1,
+  "source": "synthetic_acceptance_vectors_not_live_capture",
+  "units": "used_percent: percentage points consumed; 0=full remaining; 100=exhausted",
+  "as_of_epoch_seconds": 1800000000,
+  "preconditions": [
+    "fresh successful automatic observation",
+    "opt_in_enabled",
+    "nonzero_effective_interval_and_due",
+    "history eligible and not claimed for this event",
+    "model/profile/token ready when a candidate reaches preflight"
+  ],
+  "notes": [
+    "Expected reason strings are semantic categories, not mandatory code enum spellings.",
+    "target_by_structure documents the unique target before permission blocking; an implementation may combine these steps.",
+    "max_posts is only an upper bound after all history, model, freshness and atomic-claim guards pass.",
+    "This file contains no credentials, endpoints to invoke, or live usage data.",
+    "Tests must run raw_response through the actual implementation rather than echo expected."
+  ],
+  "cases": [
+    {
+      "id": "SEL-01",
+      "description_zh": "双满：只选5h",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": "five_hour",
+        "decision": "candidate",
+        "reason": "target_raw_zero",
+        "max_posts_if_all_later_guards_pass": 1
+      }
+    },
+    {
+      "id": "SEL-02",
+      "description_zh": "5h满，周剩余50%",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 50,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": "five_hour",
+        "decision": "candidate",
+        "reason": "target_raw_zero",
+        "max_posts_if_all_later_guards_pass": 1
+      }
+    },
+    {
+      "id": "SEL-03",
+      "description_zh": "5h满，周剩余1%",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 99,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": "five_hour",
+        "decision": "candidate",
+        "reason": "target_raw_zero",
+        "max_posts_if_all_later_guards_pass": 1
+      }
+    },
+    {
+      "id": "SEL-04",
+      "description_zh": "5h满但周剩余0%",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 100,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": "five_hour",
+        "decision": "blocked",
+        "reason": "weekly_exhausted",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    },
+    {
+      "id": "SEL-05",
+      "description_zh": "周满不独立触发",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 20,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": "five_hour",
+        "decision": "observe_only",
+        "reason": "target_nonzero",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    },
+    {
+      "id": "SEL-06",
+      "description_zh": "5h耗尽不能回退周",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 100,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": "five_hour",
+        "decision": "observe_only",
+        "reason": "target_nonzero",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    },
+    {
+      "id": "SEL-07",
+      "description_zh": "双窗口有使用",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 40,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 60,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": "five_hour",
+        "decision": "observe_only",
+        "reason": "target_nonzero",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    },
+    {
+      "id": "SEL-08",
+      "description_zh": "weekly-only满额",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": null,
+          "secondary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": "weekly",
+        "decision": "candidate",
+        "reason": "target_raw_zero",
+        "max_posts_if_all_later_guards_pass": 1
+      }
+    },
+    {
+      "id": "SEL-09a",
+      "description_zh": "weekly-only未满额",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": null,
+          "secondary_window": {
+            "used_percent": 50,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": "weekly",
+        "decision": "observe_only",
+        "reason": "target_nonzero",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    },
+    {
+      "id": "SEL-09b",
+      "description_zh": "weekly-only耗尽",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": null,
+          "secondary_window": {
+            "used_percent": 100,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": "weekly",
+        "decision": "blocked",
+        "reason": "weekly_exhausted",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    },
+    {
+      "id": "PREC-02",
+      "description_zh": "原始0.001非零",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 0.001,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": "five_hour",
+        "decision": "observe_only",
+        "reason": "target_nonzero",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    },
+    {
+      "id": "PREC-03",
+      "description_zh": "原始0.1非零",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 0.1,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": "five_hour",
+        "decision": "observe_only",
+        "reason": "target_nonzero",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    },
+    {
+      "id": "PREC-07",
+      "description_zh": "周剩余0.1%未精确耗尽",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 99.9,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": "five_hour",
+        "decision": "candidate",
+        "reason": "target_raw_zero",
+        "max_posts_if_all_later_guards_pass": 1
+      }
+    },
+    {
+      "id": "SEL-11",
+      "description_zh": "5h对象存在但缺用量，禁止weekly回退",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": null,
+        "decision": "blocked",
+        "reason": "invalid_or_unknown_window",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    },
+    {
+      "id": "SEL-12",
+      "description_zh": "只有5h，不猜测周窗口状态",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": null
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": null,
+        "decision": "blocked",
+        "reason": "unsupported_shape",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    },
+    {
+      "id": "SEL-13",
+      "description_zh": "主次位置对调仍按时长识别",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          },
+          "secondary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": "five_hour",
+        "decision": "candidate",
+        "reason": "target_raw_zero",
+        "max_posts_if_all_later_guards_pass": 1
+      }
+    },
+    {
+      "id": "SEL-14",
+      "description_zh": "重复同长度主窗口",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": null,
+        "decision": "blocked",
+        "reason": "ambiguous_windows",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    },
+    {
+      "id": "SEL-15",
+      "description_zh": "5h加30day不在第一版形态中",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 2592000,
+            "reset_at": 1802592000,
+            "reset_after_seconds": 2592000
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": null,
+        "decision": "blocked",
+        "reason": "unsupported_shape",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    },
+    {
+      "id": "SEL-16a",
+      "description_zh": "明确不允许生成",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": false,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": "five_hour",
+        "decision": "blocked",
+        "reason": "not_allowed",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    },
+    {
+      "id": "SEL-16b",
+      "description_zh": "明确达到限制",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": true,
+          "primary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": "five_hour",
+        "decision": "blocked",
+        "reason": "limit_reached",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    },
+    {
+      "id": "SEL-17",
+      "description_zh": "缺少权限字段不能默认为true",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": "five_hour",
+        "decision": "blocked",
+        "reason": "permission_unknown",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    },
+    {
+      "id": "SEL-18",
+      "description_zh": "未知阻断原因",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": {
+          "type": "future_unknown_limit"
+        }
+      },
+      "expected": {
+        "target_by_structure": "five_hour",
+        "decision": "blocked",
+        "reason": "unknown_limit_reason",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    },
+    {
+      "id": "SEL-19",
+      "description_zh": "真实有5h的Pro仍以5h为目标",
+      "raw_response": {
+        "plan_type": "pro",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": "five_hour",
+        "decision": "candidate",
+        "reason": "target_raw_zero",
+        "max_posts_if_all_later_guards_pass": 1
+      }
+    },
+    {
+      "id": "SEL-20",
+      "description_zh": "存在credits不能绕过周耗尽",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 100,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null,
+        "credits": {
+          "has_credits": true,
+          "unlimited": false,
+          "balance": "62500"
+        }
+      },
+      "expected": {
+        "target_by_structure": "five_hour",
+        "decision": "blocked",
+        "reason": "weekly_exhausted",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    },
+    {
+      "id": "PREC-06a",
+      "description_zh": "字符串百分比不是经证实支持形态",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": "0",
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": null,
+        "decision": "blocked",
+        "reason": "invalid_or_unknown_window",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    },
+    {
+      "id": "PREC-06b",
+      "description_zh": "负用量不clamp成满额",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": -0.1,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": null,
+        "decision": "blocked",
+        "reason": "invalid_or_unknown_window",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    },
+    {
+      "id": "PREC-06c",
+      "description_zh": "超范围周用量不能修正后放行",
+      "raw_response": {
+        "plan_type": "plus",
+        "rate_limit": {
+          "allowed": true,
+          "limit_reached": false,
+          "primary_window": {
+            "used_percent": 0,
+            "limit_window_seconds": 18000,
+            "reset_at": 1800018000,
+            "reset_after_seconds": 18000
+          },
+          "secondary_window": {
+            "used_percent": 101,
+            "limit_window_seconds": 604800,
+            "reset_at": 1800604800,
+            "reset_after_seconds": 604800
+          }
+        },
+        "rate_limit_reached_type": null
+      },
+      "expected": {
+        "target_by_structure": null,
+        "decision": "blocked",
+        "reason": "invalid_or_unknown_window",
+        "max_posts_if_all_later_guards_pass": 0
+      }
+    }
+  ]
+}

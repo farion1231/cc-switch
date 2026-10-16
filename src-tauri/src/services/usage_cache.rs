@@ -13,8 +13,22 @@ use crate::services::subscription::SubscriptionQuota;
 #[derive(Default)]
 pub struct UsageCache {
     subscription: RwLock<HashMap<AppType, SubscriptionQuota>>,
-    codex_oauth: RwLock<HashMap<String, SubscriptionQuota>>,
+    codex_oauth: RwLock<HashMap<String, CodexOauthCacheEntry>>,
     script: RwLock<HashMap<(AppType, String), UsageResult>>,
+}
+
+#[derive(Default)]
+struct CodexOauthCacheEntry {
+    generation: u64,
+    quota: Option<SubscriptionQuota>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CodexOauthCachePublication {
+    Published,
+    Superseded,
+    Stale,
+    Unavailable,
 }
 
 impl UsageCache {
@@ -28,9 +42,74 @@ impl UsageCache {
         }
     }
 
-    pub fn put_codex_oauth(&self, account_id: String, quota: SubscriptionQuota) {
-        if let Ok(mut w) = self.codex_oauth.write() {
-            w.insert(account_id, quota);
+    pub fn put_codex_oauth(&self, account_id: String, quota: SubscriptionQuota) -> bool {
+        let generation = self.codex_oauth_generation(&account_id);
+        matches!(
+            self.put_codex_oauth_if_generation_result(account_id, generation, quota),
+            CodexOauthCachePublication::Published
+        )
+    }
+
+    pub fn codex_oauth_generation(&self, account_id: &str) -> u64 {
+        self.codex_oauth
+            .write()
+            .ok()
+            .map(|mut accounts| {
+                accounts
+                    .entry(account_id.to_string())
+                    .or_default()
+                    .generation
+            })
+            .unwrap_or(0)
+    }
+
+    /// Publish a quota only if no account lifecycle operation invalidated the
+    /// generation captured before the request started.
+    pub fn put_codex_oauth_if_generation(
+        &self,
+        account_id: String,
+        expected_generation: u64,
+        quota: SubscriptionQuota,
+    ) -> bool {
+        matches!(
+            self.put_codex_oauth_if_generation_result(account_id, expected_generation, quota),
+            CodexOauthCachePublication::Published
+        )
+    }
+
+    pub(crate) fn put_codex_oauth_if_generation_result(
+        &self,
+        account_id: String,
+        expected_generation: u64,
+        quota: SubscriptionQuota,
+    ) -> CodexOauthCachePublication {
+        if let Ok(mut accounts) = self.codex_oauth.write() {
+            let entry = accounts.entry(account_id).or_default();
+            if entry.generation != expected_generation {
+                return CodexOauthCachePublication::Superseded;
+            }
+            if let Some(previous) = entry.quota.as_ref() {
+                let is_older = match (previous.queried_at, quota.queried_at) {
+                    (Some(previous), Some(incoming)) => incoming < previous,
+                    (Some(_), None) => true,
+                    _ => false,
+                };
+                if is_older {
+                    return CodexOauthCachePublication::Stale;
+                }
+            }
+            entry.quota = Some(quota);
+            return CodexOauthCachePublication::Published;
+        }
+        CodexOauthCachePublication::Unavailable
+    }
+
+    /// Invalidate a single managed account's in-flight quota publication.
+    pub fn invalidate_codex_oauth(&self, account_id: &str) {
+        if let Ok(mut accounts) = self.codex_oauth.write() {
+            let entry = accounts.entry(account_id.to_string()).or_default();
+            entry.quota = None;
+            entry.generation = entry.generation.wrapping_add(1);
         }
     }
 
@@ -40,10 +119,10 @@ impl UsageCache {
         account_id: &str,
         f: impl FnOnce(&SubscriptionQuota) -> R,
     ) -> Option<R> {
-        self.codex_oauth
-            .read()
-            .ok()
-            .and_then(|r| r.get(account_id).map(f))
+        self.codex_oauth.read().ok().and_then(|r| {
+            r.get(account_id)
+                .and_then(|entry| entry.quota.as_ref().map(f))
+        })
     }
 
     pub fn put_script(&self, app_type: AppType, provider_id: String, result: UsageResult) {
@@ -111,7 +190,10 @@ impl UsageCache {
             scripts.clear();
         }
         if let Ok(mut accounts) = self.codex_oauth.write() {
-            accounts.clear();
+            for entry in accounts.values_mut() {
+                entry.quota = None;
+                entry.generation = entry.generation.wrapping_add(1);
+            }
         }
     }
 }
@@ -206,5 +288,74 @@ mod tests {
         assert!(cache
             .with_codex_oauth("account-1", |quota| quota.success)
             .is_none());
+    }
+
+    #[test]
+    fn codex_oauth_cache_rejects_late_older_observation() {
+        let cache = UsageCache::new();
+        let mut newer = fake_quota();
+        newer.queried_at = Some(20);
+        let mut older = fake_quota();
+        older.queried_at = Some(0);
+        assert!(cache.put_codex_oauth("account".to_string(), newer.clone()));
+        assert!(!cache.put_codex_oauth("account".to_string(), older));
+        assert_eq!(
+            cache.with_codex_oauth("account", |quota| quota.queried_at),
+            Some(Some(20))
+        );
+    }
+
+    #[test]
+    fn codex_oauth_generation_rejects_results_after_account_invalidation() {
+        let cache = UsageCache::new();
+        let generation = cache.codex_oauth_generation("account");
+        cache.invalidate_codex_oauth("account");
+        assert!(!cache.put_codex_oauth_if_generation(
+            "account".to_string(),
+            generation,
+            fake_quota(),
+        ));
+        assert!(cache.with_codex_oauth("account", |_| true).is_none());
+    }
+
+    #[test]
+    fn invalidate_all_rejects_an_inflight_account_seen_only_by_generation() {
+        let cache = UsageCache::new();
+        let generation = cache.codex_oauth_generation("inflight-only");
+        cache.invalidate_all();
+        assert!(!cache.put_codex_oauth_if_generation(
+            "inflight-only".to_string(),
+            generation,
+            fake_quota(),
+        ));
+    }
+
+    #[test]
+    fn invalidation_and_old_publisher_are_serialized_by_one_entry_lock() {
+        use std::sync::{Arc, Barrier};
+
+        let cache = Arc::new(UsageCache::new());
+        let generation = cache.codex_oauth_generation("account");
+        let barrier = Arc::new(Barrier::new(2));
+        let publisher_cache = cache.clone();
+        let publisher_barrier = barrier.clone();
+        let publisher = std::thread::spawn(move || {
+            publisher_barrier.wait();
+            publisher_cache.put_codex_oauth_if_generation(
+                "account".to_string(),
+                generation,
+                fake_quota(),
+            )
+        });
+        barrier.wait();
+        cache.invalidate_codex_oauth("account");
+        let _ = publisher.join().expect("publisher thread should finish");
+        assert!(cache.with_codex_oauth("account", |_| true).is_none());
+        let next_generation = cache.codex_oauth_generation("account");
+        assert!(cache.put_codex_oauth_if_generation(
+            "account".to_string(),
+            next_generation,
+            fake_quota(),
+        ));
     }
 }

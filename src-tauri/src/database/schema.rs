@@ -125,6 +125,28 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // Local-only account authorization and bounded activation state. The
+        // table is intentionally separate from syncable settings so a device
+        // import can never enable generation on another device.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_quota_activation_state (
+                account_id TEXT PRIMARY KEY,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                effective_interval_minutes INTEGER,
+                enabled_at_ms INTEGER,
+                last_polled_at_ms INTEGER,
+                last_attempt_at_ms INTEGER,
+                last_attempt_id TEXT,
+                last_attempt_status TEXT,
+                last_reason TEXT,
+                state_json TEXT NOT NULL,
+                 authorization_revision INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 8. Proxy Config 表（三行结构，app_type 主键）
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_config (
             app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
@@ -576,6 +598,40 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 20)?;
+                    }
+                    20 => {
+                        log::info!("迁移数据库从 v20 到 v21（Codex 额度自动激活本地状态）");
+                        conn.execute(
+                            "CREATE TABLE IF NOT EXISTS codex_quota_activation_state (
+                                account_id TEXT PRIMARY KEY,
+                                enabled INTEGER NOT NULL DEFAULT 0,
+                                effective_interval_minutes INTEGER,
+                                enabled_at_ms INTEGER,
+                                last_polled_at_ms INTEGER,
+                                last_attempt_at_ms INTEGER,
+                                last_attempt_id TEXT,
+                                last_attempt_status TEXT,
+                                last_reason TEXT,
+                                state_json TEXT NOT NULL,
+                                 authorization_revision INTEGER NOT NULL DEFAULT 0,
+                                updated_at INTEGER NOT NULL
+                            )",
+                            [],
+                        )
+                        .map_err(|e| AppError::Database(e.to_string()))?;
+                        Self::set_user_version(conn, 21)?;
+                    }
+                    21 => {
+                        log::info!("迁移数据库从 v21 到 v22（Codex 额度自动激活授权修订）");
+                        if Self::table_exists(conn, "codex_quota_activation_state")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "codex_quota_activation_state",
+                                "authorization_revision",
+                                "INTEGER NOT NULL DEFAULT 0",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 22)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -3852,6 +3908,33 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         assert_eq!(values, (1, 1, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v20_to_v21_adds_local_codex_activation_state() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::set_user_version(&conn, 20)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let table_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'codex_quota_activation_state'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(table_count, 1);
+        let enabled_default: i64 = conn.query_row(
+            "SELECT dflt_value = '0' FROM pragma_table_info('codex_quota_activation_state') WHERE name = 'enabled'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(enabled_default, 1);
+        let revision_default: i64 = conn.query_row(
+            "SELECT dflt_value = '0' FROM pragma_table_info('codex_quota_activation_state') WHERE name = 'authorization_revision'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(revision_default, 1);
         Ok(())
     }
 

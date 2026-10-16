@@ -1,6 +1,8 @@
 pub mod backup_storage;
 pub mod balance;
 pub mod codex_oauth_models;
+pub(crate) mod codex_quota_activation;
+pub(crate) mod codex_quota_activation_http;
 pub mod codex_session_compression;
 pub mod coding_plan;
 pub mod config;

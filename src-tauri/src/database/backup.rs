@@ -91,6 +91,7 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "codex_quota_activation_state",
 ];
 
 /// Tables whose local data is preserved from the live database during WebDAV import.
@@ -102,6 +103,7 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "codex_quota_activation_state",
 ];
 
 /// A database backup entry for the UI
@@ -226,6 +228,8 @@ impl Database {
         crate::services::provider::icon::strip_invalid_custom_icons(&temp_conn)?;
         on_staging_ready()?;
 
+        let restore_now = chrono::Utc::now().timestamp_millis();
+
         let backup_file_guard = lock_backup_file_operations()?;
         // Keep one main-DB guard across the safety snapshot, local-table read,
         // and final replacement so neither the rollback point nor preserved
@@ -236,6 +240,37 @@ impl Database {
                 Self::backup_database_file_from_conn(&backup_file_guard, &main_conn, &[])?;
             if !preserve_tables.is_empty() {
                 Self::restore_tables(&main_conn, &temp_conn, preserve_tables)?;
+                // The local-only rows have now reached their final staged
+                // form.  Invalidate an in-flight tick after that copy, or
+                // the next backup operation would overwrite the bump again.
+                crate::database::Database::bump_codex_quota_activation_revisions_on_conn(
+                    &temp_conn,
+                    restore_now,
+                )?;
+            } else {
+                // A full restore may carry an old revision.  Make the staged
+                // revision strictly newer than every live revision before it
+                // becomes visible, so pause + re-enable cannot ABA-match an
+                // in-flight task from the replaced database.
+                let live_max_revision: Option<i64> = main_conn
+                    .query_row(
+                        "SELECT MAX(authorization_revision)
+                         FROM codex_quota_activation_state",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+                crate::database::Database::ensure_codex_quota_activation_tombstones_on_conn(
+                    &main_conn,
+                    &temp_conn,
+                    restore_now,
+                    live_max_revision,
+                )?;
+                crate::database::Database::pause_codex_quota_activation_after_restore_on_conn(
+                    &temp_conn,
+                    restore_now,
+                    live_max_revision,
+                )?;
             }
             let backup = Backup::new(&temp_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
@@ -1076,9 +1111,29 @@ impl Database {
                 &[backup_path.as_path()],
             )?;
             before_replace(safety_backup.as_deref())?;
+            let live_max_revision: Option<i64> = main_conn
+                .query_row(
+                    "SELECT MAX(authorization_revision)
+                     FROM codex_quota_activation_state",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            crate::database::Database::ensure_codex_quota_activation_tombstones_on_conn(
+                &main_conn,
+                &staging_conn,
+                chrono::Utc::now().timestamp_millis(),
+                live_max_revision,
+            )?;
+            crate::database::Database::pause_codex_quota_activation_after_restore_on_conn(
+                &staging_conn,
+                chrono::Utc::now().timestamp_millis(),
+                live_max_revision,
+            )?;
             let backup = Backup::new(&staging_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
             Self::complete_backup(&backup, "恢复主数据库")?;
+            drop(backup);
             safety_backup
         };
         let safety_id = safety_backup
@@ -1184,6 +1239,7 @@ impl Database {
 mod tests {
     use super::{lock_backup_file_operations, Database};
     use crate::error::AppError;
+    use crate::provider::{AuthBinding, AuthBindingSource, Provider, ProviderMeta, UsageScript};
     use crate::settings::{get_settings, update_settings, AppSettings};
     use rusqlite::Connection;
     use serial_test::serial;
@@ -1292,6 +1348,45 @@ mod tests {
                 target.display()
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn binary_restore_tombstones_live_activation_accounts_missing_from_backup(
+    ) -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let db = Database::init()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('binary-provider', 'codex', 'Binary Provider', '{}', '{}')",
+                [],
+            )?;
+        }
+        let source_path = db
+            .backup_database_file()?
+            .expect("binary restore source should be created");
+        let source_filename = source_path
+            .file_name()
+            .expect("source backup filename")
+            .to_string_lossy()
+            .into_owned();
+
+        db.set_codex_quota_activation_enabled("account-a", true, Some(5), 1)?;
+        let old_revision = db.codex_quota_activation_revision("account-a")?.unwrap().1;
+        db.restore_from_backup(&source_filename)?;
+
+        let tombstone = db
+            .get_codex_quota_activation_state("account-a")?
+            .expect("binary restore must retain a live-only tombstone");
+        assert!(!tombstone.enabled);
+        assert!(matches!(
+            tombstone.state,
+            crate::services::codex_quota_activation::ActivationState::AwaitingBaseline
+        ));
+        assert!(tombstone.authorization_revision > old_revision);
         Ok(())
     }
 
@@ -2404,6 +2499,384 @@ mod tests {
             provider_health_count, 0,
             "同步导入应清除可重建的本地 provider_health 状态"
         );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn activation_sync_preserves_local_state_but_full_restore_pauses_it() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let remote_db = Database::memory()?;
+        remote_db.set_codex_quota_activation_enabled("remote", true, Some(5), 1)?;
+        let remote_sync = remote_db.export_sql_string_for_sync()?;
+        let remote_full = remote_db.export_sql_string()?;
+
+        let local_db = Database::memory()?;
+        local_db.set_codex_quota_activation_enabled("local", true, Some(3), 1)?;
+        {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            conn.execute(
+                "UPDATE codex_quota_activation_state
+                 SET authorization_revision=7, last_attempt_id='attempt-local',
+                     last_attempt_at_ms=2, last_attempt_status='unknown'
+                 WHERE account_id='local'",
+                [],
+            )?;
+        }
+        local_db.save_codex_quota_activation_state(
+            "local",
+            &crate::services::codex_quota_activation::ActivationState::Spent {
+                target: crate::services::codex_quota_activation::WindowKind::FiveHour,
+                event_key: "five_hour:event".to_string(),
+                attempt_id: "attempt-local".to_string(),
+                attempted_at_ms: 2,
+            },
+            2,
+        )?;
+        local_db.import_sql_string_for_sync(&remote_sync)?;
+        let after_sync = local_db
+            .get_codex_quota_activation_state("local")?
+            .expect("sync keeps local activation row");
+        assert!(after_sync.enabled);
+        assert!(after_sync.authorization_revision > 7);
+        assert_eq!(after_sync.last_attempt_at_ms, Some(2));
+        assert_eq!(after_sync.last_attempt_status.as_deref(), Some("unknown"));
+        assert!(matches!(
+            &after_sync.state,
+            crate::services::codex_quota_activation::ActivationState::Spent { .. }
+        ));
+        assert!(!local_db.save_codex_quota_activation_state_if_revision(
+            "local",
+            7,
+            &crate::services::codex_quota_activation::ActivationState::BootstrapPending,
+            3,
+        )?);
+        assert!(local_db
+            .claim_codex_quota_activation_if_revision("local", 7, "stale-claim", 3)?
+            .is_none());
+        assert!(!local_db.finish_codex_quota_activation_attempt_if_revision(
+            "local",
+            7,
+            "attempt-local",
+            "completed",
+            None,
+            3,
+        )?);
+        assert!(matches!(
+            local_db
+                .get_codex_quota_activation_state("local")?
+                .unwrap()
+                .state,
+            crate::services::codex_quota_activation::ActivationState::Spent { .. }
+        ));
+
+        // Full restore from an older backup is fenced by the live revision,
+        // not by the older value copied from the snapshot. Re-enable right
+        // after restore still cannot make an in-flight revision-5 task valid.
+        let old_backup = Database::memory()?;
+        old_backup.set_codex_quota_activation_enabled("local", true, Some(3), 1)?;
+        {
+            let conn = crate::database::lock_conn!(old_backup.conn);
+            conn.execute(
+                "UPDATE codex_quota_activation_state SET authorization_revision=3
+                 WHERE account_id='local'",
+                [],
+            )?;
+        }
+        let old_full = old_backup.export_sql_string()?;
+        local_db.import_sql_string(&remote_full)?;
+        let after_full = local_db
+            .get_codex_quota_activation_state("remote")?
+            .expect("full restore imports remote row");
+        assert!(!after_full.enabled);
+        assert!(matches!(
+            after_full.state,
+            crate::services::codex_quota_activation::ActivationState::AwaitingBaseline
+        ));
+        local_db.import_sql_string(&old_full)?;
+        let after_old_restore = local_db
+            .get_codex_quota_activation_state("local")?
+            .expect("old restore keeps the account row");
+        assert!(!after_old_restore.enabled);
+        assert!(after_old_restore.authorization_revision > 7);
+        let reenabled = local_db.set_codex_quota_activation_enabled("local", true, Some(3), 4)?;
+        assert_ne!(reenabled.authorization_revision, 5);
+        assert!(!local_db.save_codex_quota_activation_state_if_revision(
+            "local",
+            5,
+            &crate::services::codex_quota_activation::ActivationState::BootstrapPending,
+            5,
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn full_restore_tombstones_live_activation_accounts_missing_from_backup() -> Result<(), AppError>
+    {
+        let _test_home = TestHomeGuard::new();
+        let live = Database::memory()?;
+        live.set_codex_quota_activation_enabled("account-a", true, Some(5), 1)?;
+        live.save_codex_quota_activation_state(
+            "account-a",
+            &crate::services::codex_quota_activation::ActivationState::Eligible {
+                target: crate::services::codex_quota_activation::WindowKind::FiveHour,
+                event_key: "five_hour:18300".to_string(),
+            },
+            2,
+        )?;
+        let old_revision = live
+            .codex_quota_activation_revision("account-a")?
+            .unwrap()
+            .1;
+        let old_attempt = "restore-missing-row-attempt";
+        assert!(live
+            .claim_codex_quota_activation_if_revision("account-a", old_revision, old_attempt, 3,)?
+            .is_some());
+
+        let backup = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(backup.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('account-provider', 'codex', 'Account Provider', '{}', '{}')",
+                [],
+            )?;
+        }
+        let backup_sql = backup.export_sql_string()?;
+        live.import_sql_string(&backup_sql)?;
+
+        let tombstone = live
+            .get_codex_quota_activation_state("account-a")?
+            .expect("live-only account must retain a tombstone");
+        assert!(!tombstone.enabled);
+        assert!(matches!(
+            tombstone.state,
+            crate::services::codex_quota_activation::ActivationState::AwaitingBaseline
+        ));
+        assert!(tombstone.authorization_revision > old_revision);
+
+        let reenabled = live.set_codex_quota_activation_enabled("account-a", true, Some(5), 4)?;
+        assert!(reenabled.authorization_revision > old_revision);
+        assert!(!live.save_codex_quota_activation_state_if_revision(
+            "account-a",
+            old_revision,
+            &crate::services::codex_quota_activation::ActivationState::BootstrapPending,
+            5,
+        )?);
+        assert!(live
+            .claim_codex_quota_activation_if_revision(
+                "account-a",
+                old_revision,
+                "old-claim-after-restore",
+                5,
+            )?
+            .is_none());
+        assert!(!live.begin_codex_quota_activation_dispatch_if_revision(
+            "account-a",
+            old_revision,
+            old_attempt,
+            5,
+        )?);
+        assert!(!live.finish_codex_quota_activation_attempt_if_revision(
+            "account-a",
+            old_revision,
+            old_attempt,
+            "completed",
+            None,
+            5,
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn v01_full_restore_awaiting_baseline_rejects_expired_nonzero() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        const B: i64 = 1_800_000_000;
+        let source = Database::memory()?;
+        let mut provider_meta = ProviderMeta::default();
+        provider_meta.provider_type = Some("codex_oauth".to_string());
+        provider_meta.auth_binding = Some(AuthBinding {
+            source: AuthBindingSource::ManagedAccount,
+            auth_provider: Some("codex_oauth".to_string()),
+            account_id: Some("account-a".to_string()),
+        });
+        provider_meta.usage_script = Some(UsageScript {
+            enabled: true,
+            language: "javascript".to_string(),
+            code: "return {};".to_string(),
+            timeout: None,
+            api_key: None,
+            base_url: None,
+            access_token: None,
+            user_id: None,
+            template_type: Some("official_subscription".to_string()),
+            auto_query_interval: Some(5),
+            coding_plan_provider: None,
+            access_key_id: None,
+            secret_access_key: None,
+            team_organization_id: None,
+            team_project_id: None,
+        });
+        let mut provider = Provider::with_id(
+            "codex-provider".to_string(),
+            "Codex OAuth".to_string(),
+            serde_json::json!({}),
+            None,
+        );
+        provider.category = Some("official".to_string());
+        provider.meta = Some(provider_meta);
+        source.save_provider("codex", &provider)?;
+        let source_record =
+            source.set_codex_quota_activation_enabled("account-a", true, Some(5), 1)?;
+        let backup_sql = source.export_sql_string()?;
+
+        let live = Database::memory()?;
+        live.import_sql_string(&backup_sql)?;
+        let record = live
+            .get_codex_quota_activation_state("account-a")?
+            .expect("full restore must create the activation row");
+        assert!(!record.enabled);
+        assert!(matches!(
+            record.state,
+            crate::services::codex_quota_activation::ActivationState::AwaitingBaseline
+        ));
+        assert!(record.authorization_revision > source_record.authorization_revision);
+
+        let provider = live
+            .get_provider_by_id("codex-provider", "codex")?
+            .expect("full restore must preserve the explicit provider binding");
+        let meta = provider.meta.expect("provider metadata must be present");
+        assert_eq!(
+            meta.auth_binding
+                .as_ref()
+                .and_then(|binding| binding.account_id.as_deref()),
+            Some("account-a")
+        );
+        assert_eq!(
+            meta.auth_binding.as_ref().map(|binding| &binding.source),
+            Some(&AuthBindingSource::ManagedAccount)
+        );
+        assert_eq!(
+            meta.usage_script
+                .as_ref()
+                .and_then(|script| script.auto_query_interval),
+            Some(5)
+        );
+        assert_eq!(
+            meta.usage_script
+                .as_ref()
+                .and_then(|script| script.template_type.as_deref()),
+            Some("official_subscription")
+        );
+
+        let interval = live.derive_codex_quota_activation_interval("account-a", None)?;
+        assert_eq!(interval, Some(5));
+        let reenabled = live.set_codex_quota_activation_enabled("account-a", true, interval, B)?;
+        assert!(reenabled.enabled);
+        assert_eq!(reenabled.effective_interval_minutes, Some(5));
+        assert!(reenabled.authorization_revision > record.authorization_revision);
+        assert_ne!(
+            reenabled.authorization_revision,
+            source_record.authorization_revision
+        );
+        assert!(matches!(
+            reenabled.state,
+            crate::services::codex_quota_activation::ActivationState::AwaitingBaseline
+        ));
+        let revision = reenabled.authorization_revision;
+
+        let snapshot = |server_seconds: i64, used: f64| {
+            let raw = serde_json::json!({
+                "rate_limit": {
+                    "allowed": true,
+                    "limit_reached": false,
+                    "primary_window": {
+                        "used_percent": used,
+                        "limit_window_seconds": 18000,
+                        "reset_at": B,
+                        "reset_after_seconds": 0
+                    },
+                    "secondary_window": {
+                        "used_percent": 50,
+                        "limit_window_seconds": 604800,
+                        "reset_at": server_seconds + 604800,
+                        "reset_after_seconds": 604800
+                    }
+                }
+            });
+            let mut parsed = crate::services::codex_quota_activation::snapshot_from_value(
+                &raw,
+                server_seconds * 1000,
+                server_seconds * 1000,
+            )
+            .unwrap();
+            parsed.server_date_at_ms = Some(server_seconds * 1000);
+            parsed.cache_age_seconds = Some(0);
+            parsed
+        };
+
+        let mut state = reenabled.state;
+        let expired_nonzero = snapshot(B + 300, 20.0);
+        let prior_state = state.clone();
+        assert_eq!(
+            state.observe(&expired_nonzero, expired_nonzero.observed_at_ms),
+            crate::services::codex_quota_activation::ActivationDecision::Observe
+        );
+        assert!(matches!(
+            state,
+            crate::services::codex_quota_activation::ActivationState::AwaitingBaseline
+        ));
+        if state != prior_state {
+            assert!(live.save_codex_quota_activation_state_if_revision(
+                "account-a",
+                revision,
+                &state,
+                expired_nonzero.observed_at_ms,
+            )?);
+        }
+        let persisted_after_nonzero = live
+            .get_codex_quota_activation_state("account-a")?
+            .expect("reenabled activation row must remain readable");
+        assert!(persisted_after_nonzero.enabled);
+        assert_eq!(persisted_after_nonzero.authorization_revision, revision);
+        assert!(matches!(
+            persisted_after_nonzero.state,
+            crate::services::codex_quota_activation::ActivationState::AwaitingBaseline
+        ));
+
+        let expired_zero = snapshot(B + 600, 0.0);
+        let prior_state = state.clone();
+        assert!(!matches!(
+            state.observe(&expired_zero, expired_zero.observed_at_ms),
+            crate::services::codex_quota_activation::ActivationDecision::Candidate(_)
+        ));
+        if state != prior_state {
+            assert!(live.save_codex_quota_activation_state_if_revision(
+                "account-a",
+                revision,
+                &state,
+                expired_zero.observed_at_ms,
+            )?);
+        }
+        let persisted_after_zero = live
+            .get_codex_quota_activation_state("account-a")?
+            .expect("reenabled activation row must remain readable after zero");
+        assert!(persisted_after_zero.enabled);
+        assert_eq!(persisted_after_zero.authorization_revision, revision);
+        assert!(matches!(
+            persisted_after_zero.state,
+            crate::services::codex_quota_activation::ActivationState::AwaitingBaseline
+        ));
+        assert!(live
+            .claim_codex_quota_activation_if_revision(
+                "account-a",
+                revision,
+                "must-not-claim",
+                expired_zero.observed_at_ms,
+            )?
+            .is_none());
         Ok(())
     }
 

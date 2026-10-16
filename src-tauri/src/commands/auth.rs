@@ -376,6 +376,10 @@ pub(crate) async fn remove_codex_oauth_account_with_switch_lock(
     // Serialize Auth Center credential deletion with managed provider
     // add/update/switch/hot-switch. Otherwise a switch that already preflighted
     // a bundle could recreate auth.json after removal.
+    let _activation_guard = crate::services::codex_quota_activation::lock_account(account_id).await;
+    // Wait for a same-account activation tick before taking the global Codex
+    // switch lock. A long hello request must not hold that global lock while
+    // the account-specific guard is busy.
     let _switch_guard = app_state
         .proxy_service
         .lock_switch_for_app(AppType::Codex.as_str())
@@ -385,6 +389,16 @@ pub(crate) async fn remove_codex_oauth_account_with_switch_lock(
         .remove_account(account_id)
         .await
         .map_err(|error| error.to_string())?;
+    app_state
+        .db
+        .set_codex_quota_activation_enabled(
+            account_id,
+            false,
+            None,
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .map_err(|error| error.to_string())?;
+    app_state.usage_cache.invalidate_codex_oauth(account_id);
     app_state
         .db
         .unbind_codex_managed_accounts(&[account_id.to_string()])

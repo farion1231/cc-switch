@@ -1841,7 +1841,12 @@
     "retry": "Retry",
     "copyCode": "Copy code",
     "fastMode": "FAST mode",
-    "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate."
+    "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate.",
+    "quotaActivation": "Auto-activate after quota recovery",
+    "quotaActivationInterval": "every {{minutes}} min",
+    "quotaActivationPaused": "paused",
+    "quotaActivationLastAttempt": "{{status}} · {{time}}",
+    "quotaActivationWarning": "Automatic activation sends one small gpt-6-luna / Low / hello request and may run overnight. It prefers 5h and uses weekly only when 5h is absent; zero weekly remaining blocks activation. The first cycle may process an existing full window, and server timing is authoritative."
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth authentication",

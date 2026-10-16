@@ -1,11 +1,58 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { SubscriptionQuota } from "@/types/subscription";
 
+export interface CodexQuotaActivationState {
+  accountId: string;
+  enabled: boolean;
+  effectiveIntervalMinutes?: number | null;
+  enabledAtMs?: number | null;
+  lastPolledAtMs?: number | null;
+  lastPollStatus?: string | null;
+  lastPollReason?: string | null;
+  lastAttemptAtMs?: number | null;
+  lastAttemptStatus?: string | null;
+  lastReason?: string | null;
+  stateError?: string | null;
+  authorizationRevision: number;
+  state: { kind: string; target?: string; eventKey?: string };
+  updatedAt: number;
+}
+
 export const subscriptionApi = {
   getQuota: (tool: string): Promise<SubscriptionQuota> =>
     invoke("get_subscription_quota", { tool }),
   getCodexOauthQuota: (accountId: string | null): Promise<SubscriptionQuota> =>
     invoke("get_codex_oauth_quota", { accountId }),
+  getCodexQuotaActivationState: (
+    accountId: string,
+  ): Promise<CodexQuotaActivationState | null> =>
+    invoke("get_codex_quota_activation_state", { accountId }),
+  listCodexQuotaActivationStates: (): Promise<CodexQuotaActivationState[]> =>
+    invoke("list_codex_quota_activation_states"),
+  setCodexQuotaActivationEnabled: (
+    accountId: string,
+    enabled: boolean,
+    effectiveIntervalMinutes?: number,
+  ): Promise<CodexQuotaActivationState> =>
+    invoke("set_codex_quota_activation_enabled", {
+      accountId,
+      enabled,
+      effectiveIntervalMinutes,
+    }),
+  pollCodexOauthQuotaForActivation: (
+    accountId: string,
+  ): Promise<{
+    accountId: string;
+    polled: boolean;
+    attempted: boolean;
+    target?: string | null;
+    status: string;
+    reason?: string | null;
+    quota?: SubscriptionQuota | null;
+  }> =>
+    invoke("poll_codex_oauth_quota_for_activation", {
+      accountId,
+    }),
   getXaiOauthQuota: (accountId: string | null): Promise<SubscriptionQuota> =>
     invoke("get_xai_oauth_quota", { accountId }),
   getCodingPlanQuota: (

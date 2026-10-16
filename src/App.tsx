@@ -42,6 +42,7 @@ import { hermesApi } from "@/lib/api/hermes";
 import type { ProviderEditorSave } from "@/lib/api/providers";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
+import { useCodexQuotaAutoPolling } from "@/hooks/useCodexQuotaAutoPolling";
 import {
   useTrayAppPageSeen,
   useTrayNavigation,
@@ -200,6 +201,7 @@ function App() {
   }, [currentView]);
 
   const { data: settingsData } = useSettingsQuery();
+  useCodexQuotaAutoPolling();
   // Windows 一律去掉系统标题栏，用页头里的应用内窗口按钮；Linux 由设置决定
   const useAppWindowControls =
     isWindows() || (isLinux() && (settingsData?.useAppWindowControls ?? false));

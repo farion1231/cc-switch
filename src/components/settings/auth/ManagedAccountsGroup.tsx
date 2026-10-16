@@ -40,6 +40,8 @@ export interface GroupAccountRow {
   users: ManagedAccountUser[];
   /** 右侧的额度（AccountQuotaColumn）；需要重新登录的账号不传 */
   quota?: React.ReactNode;
+  /** Account-scoped opt-in control rendered before the quota. */
+  activation?: React.ReactNode;
 }
 
 export interface GroupLoginFlow {
@@ -563,6 +565,7 @@ function AccountRow({
       </div>
 
       {!account.needsReauth && account.quota}
+      {!account.needsReauth && account.activation}
 
       {account.needsReauth && canReauth && (
         <Button

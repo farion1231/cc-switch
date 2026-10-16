@@ -670,6 +670,13 @@ pub fn run() {
 
             let app_state = AppState::new(db);
 
+            if let Err(error) = app_state
+                .db
+                .mark_codex_quota_activation_inflight_unknown(chrono::Utc::now().timestamp_millis())
+            {
+                log::warn!("Codex activation startup recovery skipped: {error}");
+            }
+
             // 设置 AppHandle 用于代理故障转移时的 UI 更新
             app_state.proxy_service.set_app_handle(app.handle().clone());
 
@@ -1503,6 +1510,10 @@ pub fn run() {
             commands::get_subscription_quota,
             commands::get_codex_oauth_quota,
             commands::get_codex_oauth_models,
+            commands::get_codex_quota_activation_state,
+            commands::list_codex_quota_activation_states,
+            commands::set_codex_quota_activation_enabled,
+            commands::poll_codex_oauth_quota_for_activation,
             commands::get_xai_oauth_models,
             commands::get_xai_oauth_quota,
             commands::get_coding_plan_quota,

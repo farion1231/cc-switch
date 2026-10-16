@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useMemo, useState } from "react";
+import { QueryClientContext } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -20,6 +21,11 @@ import {
 import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
 import CodexOauthAccountQuota from "@/components/CodexOauthAccountQuota";
 import { cn } from "@/lib/utils";
+import { subscriptionApi } from "@/lib/api";
+import {
+  CODEX_QUOTA_ACTIVATION_STATES_QUERY_KEY,
+  useCodexQuotaActivationStates,
+} from "@/hooks/useCodexQuotaAutoPolling";
 import {
   ManagedAccountsGroup,
   type GroupAccountRow,
@@ -118,6 +124,52 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     refetchStatus,
   } = useCodexOauth();
   const accountUsers = useManagedAccountUsers("codex_oauth", defaultAccountId);
+  const queryClient = React.useContext(QueryClientContext);
+  const { data: activationStateList = [], isError: activationStateReadError } =
+    useCodexQuotaActivationStates();
+  const activationStates = useMemo(
+    () =>
+      Object.fromEntries(
+        activationStateList.map((state) => [state.accountId, state]),
+      ),
+    [activationStateList],
+  );
+  const [activationError, setActivationError] = useState<string | null>(null);
+
+  const setActivation = async (accountId: string, enabled: boolean) => {
+    try {
+      const next = await subscriptionApi.setCodexQuotaActivationEnabled(
+        accountId,
+        enabled,
+        undefined,
+      );
+      setActivationError(null);
+      // A toggle creates a new authorization revision.  Do not leave the
+      // previous generation's quota visible while a new read is pending.
+      void queryClient?.removeQueries({
+        queryKey: ["codex_oauth", "quota", accountId],
+      });
+      queryClient?.setQueryData(
+        CODEX_QUOTA_ACTIVATION_STATES_QUERY_KEY,
+        (current: typeof activationStateList | undefined) => {
+          const existing = current ?? [];
+          const withoutAccount = existing.filter(
+            (state) => state.accountId !== accountId,
+          );
+          return [...withoutAccount, next];
+        },
+      );
+    } catch (error) {
+      setActivationError(
+        error instanceof Error
+          ? error.message
+          : t(
+              "codexOauth.quotaActivationSaveFailed",
+              "保存额度自动激活设置失败",
+            ),
+      );
+    }
+  };
   const [removeTarget, setRemoveTarget] =
     React.useState<ManagedAccountRemoveTarget | null>(null);
 
@@ -414,6 +466,8 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   const rows: GroupAccountRow[] = accounts.map((account) => {
     const date = signedInDate(account.authenticated_at, i18n.language);
     const needsReauth = !!account.reauth_required;
+    const activationState = activationStates[account.id];
+    const activationStateCorrupt = Boolean(activationState?.stateError);
     return {
       id: account.id,
       login: account.login,
@@ -440,6 +494,82 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
             login={account.login}
           />
         ) : undefined,
+      activation: !needsReauth ? (
+        <div
+          className="flex items-center gap-1.5"
+          title={
+            activationStates[account.id]?.stateError ??
+            activationStates[account.id]?.lastPollReason ??
+            activationStates[account.id]?.lastReason ??
+            undefined
+          }
+        >
+          <span className="text-[10px] text-fg-3">
+            {activationStates[account.id]?.effectiveIntervalMinutes
+              ? t("codexOauth.quotaActivationInterval", {
+                  defaultValue: "{{minutes}} min",
+                  minutes:
+                    activationStates[account.id]?.effectiveIntervalMinutes,
+                })
+              : t("codexOauth.quotaActivationPaused", {
+                  defaultValue: "paused",
+                })}
+          </span>
+          {(activationState?.lastAttemptAtMs ||
+            activationState?.lastAttemptStatus ||
+            activationState?.lastReason ||
+            activationStates[account.id]?.stateError) && (
+            <span className="text-[10px] text-fg-3">
+              {t("codexOauth.quotaActivationLastAttempt", {
+                defaultValue: "{{status}} · {{time}}",
+                status: activationState?.stateError
+                  ? t("codexOauth.quotaActivationCorrupt", "corrupt / paused")
+                  : (activationState?.lastAttemptStatus ?? "unknown"),
+                time: activationState?.lastAttemptAtMs
+                  ? new Date(
+                      activationState.lastAttemptAtMs,
+                    ).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })
+                  : (activationState?.lastReason ??
+                    activationState?.stateError ??
+                    ""),
+              })}
+            </span>
+          )}
+          {activationState?.lastPollStatus && (
+            <span
+              className="text-[10px] text-fg-3"
+              title={activationState.lastPollReason ?? undefined}
+              data-testid={`codex-quota-last-poll-${account.id}`}
+            >
+              {`check: ${activationState.lastPollStatus}`}
+              {activationState.lastPollReason
+                ? ` · ${activationState.lastPollReason}`
+                : ""}
+            </span>
+          )}
+          <Switch
+            checked={activationState?.enabled === true}
+            disabled={activationStateReadError}
+            onCheckedChange={(checked) =>
+              void setActivation(
+                account.id,
+                activationStateCorrupt ? false : checked,
+              )
+            }
+            aria-label={t(
+              activationStateCorrupt
+                ? "codexOauth.quotaActivationDisableCorrupt"
+                : "codexOauth.quotaActivation",
+              activationStateCorrupt
+                ? "关闭损坏账号的自动激活"
+                : "额度恢复后自动激活",
+            )}
+          />
+        </div>
+      ) : undefined,
     };
   });
 
@@ -489,6 +619,21 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
         onRetry: retryAuth,
       }}
     >
+      <p className="mx-3 mt-2 text-xs leading-relaxed text-danger-text">
+        {t(
+          "codexOauth.quotaActivationWarning",
+          "自动激活会少量消耗订阅额度，可能在夜间执行；优先使用 5h，只有 weekly 时才使用 weekly。weekly 剩余为零会阻断；首次自动周期可能处理已有满额，实际计时以服务端为准。",
+        )}
+      </p>
+      {(activationStateReadError || activationError) && (
+        <p role="alert" className="mx-3 mt-1 text-xs text-danger-text">
+          {activationError ??
+            t(
+              "codexOauth.quotaActivationReadFailed",
+              "无法读取额度自动激活状态，未确认开关已关闭。",
+            )}
+        </p>
+      )}
       <ManagedAccountRemoveDialog
         target={removeTarget}
         serviceName="ChatGPT"

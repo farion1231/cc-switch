@@ -1841,7 +1841,12 @@
     "retry": "再試行",
     "copyCode": "コードをコピー",
     "fastMode": "FAST モード",
-    "fastModeDescription": "低遅延のため service_tier=\"priority\" を送信します。既定ではオフ——オンにすると ChatGPT のクォータがより速く消費されます。"
+    "fastModeDescription": "低遅延のため service_tier=\"priority\" を送信します。既定ではオフ——オンにすると ChatGPT のクォータがより速く消費されます。",
+    "quotaActivation": "クォータ回復後に自動アクティベート",
+    "quotaActivationInterval": "{{minutes}} 分ごと",
+    "quotaActivationPaused": "一時停止",
+    "quotaActivationLastAttempt": "{{status}} · {{time}}",
+    "quotaActivationWarning": "自動アクティベートは固定の gpt-6-luna / Low / hello リクエストを1回送り、少量の購読クォータを消費して夜間に実行される場合があります。5時間枠を優先し、5時間枠がない場合のみ weekly を使います。weekly の残りがゼロの場合は停止します。初回周期は既存の満額枠を処理することがあり、実際の時間はサーバーが基準です。"
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth 認証",

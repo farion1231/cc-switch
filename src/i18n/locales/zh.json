@@ -1841,7 +1841,12 @@
     "retry": "重试",
     "copyCode": "复制代码",
     "fastMode": "FAST 模式",
-    "fastModeDescription": "发送 service_tier=\"priority\" 换取更低延迟。默认关闭——开启后会按更高速率消耗 ChatGPT 配额。"
+    "fastModeDescription": "发送 service_tier=\"priority\" 换取更低延迟。默认关闭——开启后会按更高速率消耗 ChatGPT 配额。",
+    "quotaActivation": "额度恢复后自动激活",
+    "quotaActivationInterval": "每 {{minutes}} 分钟",
+    "quotaActivationPaused": "已暂停",
+    "quotaActivationLastAttempt": "{{status}} · {{time}}",
+    "quotaActivationWarning": "自动激活会发送一次固定的 gpt-6-luna / Low / hello 请求并少量消耗订阅额度，可能在夜间执行；优先使用 5h，只有 weekly 时才使用 weekly。weekly 剩余为零会阻断；首次自动周期可能处理已有满额，实际计时以服务端为准。"
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth 认证",

@@ -37,6 +37,13 @@ import {
   detectCodingPlanProvider,
 } from "@/config/codingPlanProviders";
 import { formatUsageDataSummary } from "@/utils/usageDisplay";
+import {
+  codexQuotaActivationStatesKey,
+  isCodexOauthQuotaSuperseded,
+  isCodexQuotaActivationRevisionCurrent,
+  publishCodexOauthQuota,
+} from "@/lib/query/subscription";
+import type { CodexQuotaActivationState } from "@/lib/api/subscription";
 
 /**
  * 火山引擎账号级 AccessKey 的密钥管理页（IAM）。
@@ -568,10 +575,32 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               PROVIDER_TYPES.CODEX_OAUTH,
             ) ?? null)
           : null;
+        const capturedRevision = accountId
+          ? queryClient
+              .getQueryData<
+                CodexQuotaActivationState[]
+              >(codexQuotaActivationStatesKey)
+              ?.find((state) => state.accountId === accountId)
+              ?.authorizationRevision
+          : undefined;
         const quota = isBoundCodexOfficial
           ? await subscriptionApi.getCodexOauthQuota(accountId)
           : await subscriptionApi.getQuota(appId);
+        if (isBoundCodexOfficial && isCodexOauthQuotaSuperseded(quota)) {
+          return;
+        }
         if (quota.success && quota.tiers.length > 0) {
+          if (
+            isBoundCodexOfficial &&
+            accountId &&
+            !isCodexQuotaActivationRevisionCurrent(
+              queryClient,
+              accountId,
+              capturedRevision,
+            )
+          ) {
+            return;
+          }
           const summary = quota.tiers
             .map((tier) => `${tier.name}: ${Math.round(tier.utilization)}%`)
             .join(",");
@@ -579,12 +608,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             duration: 3000,
             closeButton: true,
           });
-          queryClient.setQueryData(
-            isBoundCodexOfficial
-              ? ["codex_oauth", "quota", accountId ?? "default"]
-              : ["subscription", "quota", appId],
-            quota,
-          );
+          if (isBoundCodexOfficial) {
+            publishCodexOauthQuota(queryClient, accountId, quota);
+          } else {
+            queryClient.setQueryData(["subscription", "quota", appId], quota);
+          }
         } else {
           toast.error(
             `${t("usageScript.testFailed")}: ${quota.error || t("endpointTest.noResult")}`,

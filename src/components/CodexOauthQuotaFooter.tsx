@@ -3,6 +3,9 @@ import type { ProviderMeta } from "@/types";
 import { useCodexOauthQuota } from "@/lib/query/subscription";
 import { SubscriptionQuotaView } from "@/components/SubscriptionQuotaFooter";
 import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
+import { useCodexQuotaActivationStates } from "@/hooks/useCodexQuotaAutoPolling";
+import { resolveManagedAccountId } from "@/lib/authBinding";
+import { PROVIDER_TYPES } from "@/config/constants";
 
 interface CodexOauthQuotaFooterProps {
   meta?: ProviderMeta;
@@ -25,13 +28,21 @@ const CodexOauthQuotaFooter: React.FC<CodexOauthQuotaFooterProps> = ({
   autoQueryInterval = 5,
 }) => {
   const display = useQuotaDisplay();
+  const { data: activationStates = [] } = useCodexQuotaActivationStates();
+  const accountId = resolveManagedAccountId(meta, PROVIDER_TYPES.CODEX_OAUTH);
+  const rootPollingOwnsAccount = activationStates.some(
+    (state) =>
+      state.accountId === accountId &&
+      state.enabled &&
+      (state.effectiveIntervalMinutes ?? 0) > 0,
+  );
   const {
     data: quota,
     isFetching: loading,
     refetch,
   } = useCodexOauthQuota(meta, {
     enabled: true,
-    autoQuery: isCurrent && autoQueryInterval > 0,
+    autoQuery: isCurrent && autoQueryInterval > 0 && !rootPollingOwnsAccount,
     autoQueryIntervalMinutes: autoQueryInterval,
   });
 

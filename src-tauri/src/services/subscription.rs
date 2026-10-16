@@ -4,7 +4,7 @@
 //! 第一层：仅读取凭据，不实现登录/刷新。
 
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use std::collections::{HashMap, HashSet};
 
@@ -958,30 +958,59 @@ pub(crate) async fn query_codex_quota(
     tool_label: &str,
     expired_message: &str,
 ) -> Result<SubscriptionQuota, String> {
-    let (quota, reset_credits) = tokio::join!(
-        query_codex_usage(access_token, account_id, tool_label, expired_message),
-        query_codex_reset_credits(access_token, account_id),
-    );
-    let mut quota = quota?;
-    if quota.success {
-        quota.reset_credits = reset_credits;
-    }
-    Ok(quota)
+    query_codex_quota_with_snapshot(access_token, account_id, tool_label, expired_message)
+        .await
+        .map(|(quota, _)| quota)
 }
 
-async fn query_codex_usage(
+/// Query the normal quota once and retain its raw parsed windows only for the
+/// explicit automatic activation caller. The display API continues to expose
+/// only `SubscriptionQuota`.
+pub(crate) async fn query_codex_quota_with_snapshot(
     access_token: &str,
     account_id: Option<&str>,
     tool_label: &str,
     expired_message: &str,
-) -> Result<SubscriptionQuota, String> {
+) -> Result<
+    (
+        SubscriptionQuota,
+        Option<crate::services::codex_quota_activation::CodexQuotaSnapshot>,
+    ),
+    String,
+> {
+    let (quota_result, reset_credits) = tokio::join!(
+        query_codex_usage_with_snapshot(access_token, account_id, tool_label, expired_message),
+        query_codex_reset_credits(access_token, account_id),
+    );
+    let (mut quota, snapshot) = quota_result?;
+    if quota.success {
+        quota.reset_credits = reset_credits;
+    }
+    Ok((quota, snapshot))
+}
+
+async fn query_codex_usage_with_snapshot(
+    access_token: &str,
+    account_id: Option<&str>,
+    tool_label: &str,
+    expired_message: &str,
+) -> Result<
+    (
+        SubscriptionQuota,
+        Option<crate::services::codex_quota_activation::CodexQuotaSnapshot>,
+    ),
+    String,
+> {
     let client = crate::proxy::http_client::get();
+    let request_started_at_ms = now_millis();
+    let request_started_monotonic = Instant::now();
 
     let mut req = client
         .get("https://chatgpt.com/backend-api/wham/usage")
         .header("Authorization", format!("Bearer {access_token}"))
         .header("User-Agent", "codex-cli")
-        .header("Accept", "application/json");
+        .header("Accept", "application/json")
+        .header("Cache-Control", "no-cache");
 
     if let Some(id) = account_id {
         req = req.header("ChatGPT-Account-Id", id);
@@ -993,36 +1022,76 @@ async fn query_codex_usage(
     };
 
     let status = resp.status();
+    let server_date_at_ms = resp
+        .headers()
+        .get(reqwest::header::DATE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| chrono::DateTime::parse_from_rfc2822(value).ok())
+        .map(|value| value.timestamp_millis());
+    let cache_age_seconds = resp
+        .headers()
+        .get(reqwest::header::AGE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok());
 
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(SubscriptionQuota::error(
+        let mut quota = SubscriptionQuota::error(
             tool_label,
             CredentialStatus::Expired,
             format!("{expired_message} (HTTP {status})"),
-        ));
+        );
+        quota.queried_at = Some(request_started_at_ms);
+        return Ok((quota, None));
     }
 
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Ok(SubscriptionQuota::error(
+        let mut quota = SubscriptionQuota::error(
             tool_label,
             CredentialStatus::Valid,
             format!("API error (HTTP {status}): {body}"),
-        ));
+        );
+        quota.queried_at = Some(request_started_at_ms);
+        return Ok((quota, None));
     }
 
     let raw = match resp.bytes().await {
         Ok(b) => b,
         Err(e) => return Err(format!("Failed to read API response: {e}")),
     };
-    let body: CodexUsageResponse = match serde_json::from_slice(&raw) {
+    let value: serde_json::Value = match serde_json::from_slice(&raw) {
         Ok(v) => v,
         Err(e) => {
-            return Ok(SubscriptionQuota::error(
+            let mut quota = SubscriptionQuota::error(
                 tool_label,
                 CredentialStatus::Valid,
                 format!("Failed to parse API response: {e}"),
-            ));
+            );
+            quota.queried_at = Some(request_started_at_ms);
+            return Ok((quota, None));
+        }
+    };
+    let mut snapshot = crate::services::codex_quota_activation::snapshot_from_value(
+        &value,
+        request_started_at_ms,
+        now_millis(),
+    );
+    if let Some(snapshot) = &mut snapshot {
+        snapshot.request_started_monotonic = Some(request_started_monotonic);
+        snapshot.observed_monotonic = Some(Instant::now());
+        snapshot.server_date_at_ms = server_date_at_ms;
+        snapshot.cache_age_seconds = cache_age_seconds;
+    }
+    let body: CodexUsageResponse = match serde_json::from_value(value) {
+        Ok(v) => v,
+        Err(e) => {
+            let mut quota = SubscriptionQuota::error(
+                tool_label,
+                CredentialStatus::Valid,
+                format!("Failed to parse API response: {e}"),
+            );
+            quota.queried_at = Some(request_started_at_ms);
+            return Ok((quota, None));
         }
     };
 
@@ -1048,18 +1117,21 @@ async fn query_codex_usage(
         }
     }
 
-    Ok(SubscriptionQuota {
-        tool: tool_label.to_string(),
-        credential_status: CredentialStatus::Valid,
-        credential_message: None,
-        success: true,
-        tiers,
-        extra_usage: None,
-        reset_credits: None,
-        credits_balance: body.credits.as_ref().and_then(parse_codex_credits_balance),
-        error: None,
-        queried_at: Some(now_millis()),
-    })
+    Ok((
+        SubscriptionQuota {
+            tool: tool_label.to_string(),
+            credential_status: CredentialStatus::Valid,
+            credential_message: None,
+            success: true,
+            tiers,
+            extra_usage: None,
+            reset_credits: None,
+            credits_balance: body.credits.as_ref().and_then(parse_codex_credits_balance),
+            error: None,
+            queried_at: Some(request_started_at_ms),
+        },
+        snapshot,
+    ))
 }
 
 // ── Gemini 凭据读取 ──────────────────────────────────────

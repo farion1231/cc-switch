@@ -1842,7 +1842,12 @@
     "retry": "重試",
     "copyCode": "複製程式碼",
     "fastMode": "FAST 模式",
-    "fastModeDescription": "發送 service_tier=\"priority\" 換取更低延遲。預設關閉——開啟後會以更高速率消耗 ChatGPT 配額。"
+    "fastModeDescription": "發送 service_tier=\"priority\" 換取更低延遲。預設關閉——開啟後會以更高速率消耗 ChatGPT 配額。",
+    "quotaActivation": "額度恢復後自動啟用",
+    "quotaActivationInterval": "每 {{minutes}} 分鐘",
+    "quotaActivationPaused": "已暫停",
+    "quotaActivationLastAttempt": "{{status}} · {{time}}",
+    "quotaActivationWarning": "自動啟用會固定發送一次 gpt-6-luna / Low / hello 請求並少量消耗訂閱額度，可能在夜間執行；優先使用 5h，只有沒有 5h 時才使用 weekly。weekly 剩餘為零會阻擋；首次週期可能處理已有滿額，實際計時以伺服器為準。"
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth 驗證",

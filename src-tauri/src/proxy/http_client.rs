@@ -12,6 +12,9 @@ use std::time::Duration;
 
 /// 全局 HTTP 客户端实例
 static GLOBAL_CLIENT: OnceCell<RwLock<Client>> = OnceCell::new();
+/// Dedicated client for activation POSTs. It shares the configured proxy but
+/// disables redirects so a generated request cannot be replayed at a new URL.
+static ACTIVATION_CLIENT: OnceCell<RwLock<Client>> = OnceCell::new();
 
 /// 不走任何代理的客户端：上游是本机地址（Ollama、LM Studio 等）时使用
 static DIRECT_CLIENT: OnceCell<Client> = OnceCell::new();
@@ -56,6 +59,7 @@ fn get_proxy_port() -> u16 {
 pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
     let client = build_client(effective_url)?;
+    let activation_client = build_client_with_redirect_policy(effective_url, true)?;
 
     // 尝试初始化全局客户端，如果已存在则记录警告并使用 apply_proxy 更新
     if GLOBAL_CLIENT.set(RwLock::new(client.clone())).is_err() {
@@ -68,6 +72,7 @@ pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
         // 已初始化，改用 apply_proxy 更新
         return apply_proxy(proxy_url);
     }
+    let _ = ACTIVATION_CLIENT.set(RwLock::new(activation_client));
 
     // 初始化代理 URL 记录
     let _ = CURRENT_PROXY_URL.set(RwLock::new(effective_url.map(|s| s.to_string())));
@@ -109,6 +114,7 @@ pub fn validate_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
     let new_client = build_client(effective_url)?;
+    let new_activation_client = build_client_with_redirect_policy(effective_url, true)?;
 
     // 更新客户端
     if let Some(lock) = GLOBAL_CLIENT.get() {
@@ -120,6 +126,15 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     } else {
         // 如果还没初始化，则初始化
         return init(proxy_url);
+    }
+
+    if let Some(lock) = ACTIVATION_CLIENT.get() {
+        let mut client = lock
+            .write()
+            .map_err(|e| format!("Failed to update activation HTTP client: {e}"))?;
+        *client = new_activation_client;
+    } else {
+        let _ = ACTIVATION_CLIENT.set(RwLock::new(new_activation_client));
     }
 
     // 更新代理 URL 记录
@@ -153,6 +168,7 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
     let new_client = build_client(effective_url)?;
+    let new_activation_client = build_client_with_redirect_policy(effective_url, true)?;
 
     // 更新客户端
     if let Some(lock) = GLOBAL_CLIENT.get() {
@@ -164,6 +180,15 @@ pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     } else {
         // 如果还没初始化，则初始化
         return init(proxy_url);
+    }
+
+    if let Some(lock) = ACTIVATION_CLIENT.get() {
+        let mut client = lock
+            .write()
+            .map_err(|e| format!("Failed to update activation HTTP client: {e}"))?;
+        *client = new_activation_client;
+    } else {
+        let _ = ACTIVATION_CLIENT.set(RwLock::new(new_activation_client));
     }
 
     // 更新代理 URL 记录
@@ -263,6 +288,19 @@ fn host_is_loopback(host: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Get the proxy-configured client reserved for the one-shot activation POST.
+pub(crate) fn get_for_single_post() -> Result<Client, String> {
+    if let Some(client) = ACTIVATION_CLIENT
+        .get()
+        .and_then(|lock| lock.read().ok())
+        .map(|client| client.clone())
+    {
+        return Ok(client);
+    }
+    let proxy = get_current_proxy_url();
+    build_client_with_redirect_policy(proxy.as_deref(), true)
+}
+
 /// 获取当前代理 URL
 ///
 /// 返回当前配置的代理 URL，None 表示直连。
@@ -296,7 +334,20 @@ fn base_builder() -> reqwest::ClientBuilder {
 
 /// 构建 HTTP 客户端
 fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
+    build_client_with_redirect_policy(proxy_url, false)
+}
+
+pub(crate) fn build_client_with_redirect_policy(
+    proxy_url: Option<&str>,
+    disable_redirects: bool,
+) -> Result<Client, String> {
     let mut builder = base_builder();
+
+    if disable_redirects {
+        builder = builder
+            .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never());
+    }
 
     // 有代理地址则使用代理，否则跟随系统代理
     if let Some(url) = proxy_url {

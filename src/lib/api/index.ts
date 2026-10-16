@@ -9,6 +9,7 @@ export { promptsApi } from "./prompts";
 export { skillsApi } from "./skills";
 export { usageApi } from "./usage";
 export { subscriptionApi } from "./subscription";
+export type { CodexQuotaActivationState } from "./subscription";
 export { vscodeApi } from "./vscode";
 export { proxyApi } from "./proxy";
 export { openclawApi } from "./openclaw";

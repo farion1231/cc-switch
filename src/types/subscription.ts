@@ -39,6 +39,8 @@ export interface SubscriptionQuota {
   resetCredits?: ResetCredits | null;
   /** ChatGPT 订阅买的 Codex Credits 余额（额度用完后才扣）；没有时缺省 */
   creditsBalance?: number | null;
+  /** Backend read completed after its cache generation was invalidated. */
+  lifecycle?: "superseded";
   error: string | null;
   queriedAt: number | null;
 }
