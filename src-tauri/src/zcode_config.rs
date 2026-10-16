@@ -326,9 +326,14 @@ fn read_provider_rules(doc: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-/// 在 doc 上以 read-modify-write 语义更新 providerRules / providerOrder。
+/// 在 doc 上以 read-modify-write 语义更新 providerRules。
 /// 只替换（或追加）`providerId == id` 的那条规则，用户的其余规则与
 /// modelConfigRules 等原样保留。
+///
+/// 不写 `providerOrder`：ZCode 会按 builtin 段 + 个人段自行重建该数组
+/// （create/delete/reorder 时），外部写入的残缺数组会让新 provider 在
+/// 有效顺序里跳到已有个人 provider 之前。字段缺省时 ZCode 按 rules
+/// 数组顺序推导，等价于「追加到末尾」。
 fn upsert_provider_rule(doc: &mut Value, id: &str, rule: Value) {
     if doc.get("schemaVersion").is_none() {
         doc["schemaVersion"] = json!(1);
@@ -340,13 +345,6 @@ fn upsert_provider_rule(doc: &mut Value, id: &str, rule: Value) {
         .get_mut("config")
         .and_then(Value::as_object_mut)
         .expect("config forced to object above");
-
-    let order = cfg.entry("providerOrder").or_insert_with(|| json!([]));
-    if let Some(arr) = order.as_array_mut() {
-        if !arr.iter().any(|v| v.as_str() == Some(id)) {
-            arr.push(json!(id));
-        }
-    }
 
     let rules_root = cfg
         .entry("providerConfigRules")
@@ -870,12 +868,32 @@ mod tests {
         // 用户的 coding-plan access 原样保留
         assert_eq!(rules[0]["config"]["access"]["apiKey"], json!("keep"));
         assert_eq!(rules[1]["providerId"], json!("uuid-1"));
-        assert_eq!(
-            doc["config"]["providerOrder"],
-            json!(["bigmodel-api", "uuid-1"])
-        );
+        // 已有的 providerOrder 原样保留：ZCode 自行重建该数组，外部只追加
+        // 会产生残缺列表，让新 provider 跳到已有个人 provider 之前
+        assert_eq!(doc["config"]["providerOrder"], json!(["bigmodel-api"]));
         // 无关段不动
         assert!(doc["config"]["modelConfigRules"].is_object());
+    }
+
+    #[test]
+    fn upsert_does_not_create_provider_order() {
+        let mut doc = json!({
+            "schemaVersion": 1,
+            "config": {
+                "providerConfigRules": {"providerRules": []},
+                "modelConfigRules": {"providerModelRules": [], "manualProviderModelRules": []}
+            }
+        });
+
+        upsert_provider_rule(
+            &mut doc,
+            "uuid-1",
+            json!({"providerId": "uuid-1", "config": {}}),
+        );
+
+        assert!(read_provider_rules(&doc).len() == 1);
+        // 字段缺省保持缺省：ZCode 的 encode 对 undefined 本就省略该键
+        assert!(doc["config"].get("providerOrder").is_none());
     }
 
     #[test]
