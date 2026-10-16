@@ -324,3 +324,50 @@ async fn cancellation_and_timeout_release_stdio_descendants() {
         assert_process_released_port(&marker.with_extension("child")).await;
     }
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn stdio_login_path_finds_bare_launchers_and_configured_path_wins() {
+    let dir = tempfile::tempdir().unwrap();
+    let launcher = dir.path().join("mcp-path-fixture");
+    std::fs::copy("/usr/bin/env", &launcher).unwrap();
+    let login_path = format!("{}:/usr/bin:/bin", dir.path().display());
+    for configured_path in [None, Some("/explicit/server/bin:/usr/bin")] {
+        let mut command = Command::new("mcp-path-fixture");
+        command.env_clear();
+        apply_login_shell_path(&mut command, Some(&login_path), "/usr/bin:/bin");
+        // The launcher is found using the injected login PATH. Use env's output
+        // to also verify the PATH seen by launcher subprocesses (e.g. env node).
+        let output = command.output().await.unwrap();
+        assert!(output.status.success());
+        let output = String::from_utf8(output.stdout).unwrap();
+        assert!(output
+            .lines()
+            .any(|line| line == format!("PATH={login_path}")));
+        if let Some(explicit) = configured_path {
+            let mut command = Command::new(&launcher);
+            apply_login_shell_path(&mut command, Some(&login_path), "/usr/bin:/bin");
+            command.envs([("PATH", explicit)]);
+            let output = command.output().await.unwrap();
+            assert!(output.status.success());
+            assert!(String::from_utf8(output.stdout)
+                .unwrap()
+                .lines()
+                .any(|line| line == format!("PATH={explicit}")));
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn stdio_keeps_inherited_path_when_login_shell_resolution_fails() {
+    let mut command = Command::new("/usr/bin/env");
+    command.env("PATH", "/inherited/bin:/usr/bin");
+    apply_login_shell_path(&mut command, None, "/inherited/bin:/usr/bin");
+    let output = command.output().await.unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .any(|line| line == "PATH=/inherited/bin:/usr/bin"));
+}

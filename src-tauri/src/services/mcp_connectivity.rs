@@ -24,6 +24,10 @@ use crate::app_config::McpServer;
 const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_CONCURRENT_CHECKS: usize = 3;
 static BATCHES: Lazy<std::sync::Mutex<HashMap<String, AbortHandle>>> = Lazy::new(Default::default);
+// GUI launches can inherit only launchd's minimal PATH. Resolve the user's shell
+// once, off the async executor, and share it across all page visits and probes.
+#[cfg(not(target_os = "windows"))]
+static LOGIN_SHELL_PATH: Lazy<Option<String>> = Lazy::new(crate::commands::login_shell_path);
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -111,6 +115,15 @@ async fn connect(value: serde_json::Value) -> Result<(), Box<dyn std::error::Err
             let mut command = Command::new(program);
             #[cfg(windows)]
             let mut command = Command::new(resolve_windows_command(program, &spec));
+            #[cfg(not(target_os = "windows"))]
+            if !spec.env.contains_key("PATH") {
+                let login_path = tokio::task::spawn_blocking(|| LOGIN_SHELL_PATH.clone())
+                    .await
+                    .ok()
+                    .flatten();
+                let inherited = std::env::var("PATH").unwrap_or_default();
+                apply_login_shell_path(&mut command, login_path.as_deref(), &inherited);
+            }
             command
                 .args(&spec.args)
                 .envs(&spec.env)
@@ -180,6 +193,17 @@ async fn connect(value: serde_json::Value) -> Result<(), Box<dyn std::error::Err
             }
         }
         _ => Err("Unsupported MCP transport".into()),
+    }
+}
+
+/// Inject before configured env so a server's explicit PATH always wins.
+#[cfg(not(target_os = "windows"))]
+fn apply_login_shell_path(command: &mut Command, login_path: Option<&str>, inherited: &str) {
+    if let Some(login_path) = login_path {
+        command.env(
+            "PATH",
+            crate::commands::merge_path_segments(login_path, inherited),
+        );
     }
 }
 
