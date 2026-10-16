@@ -693,7 +693,10 @@ describe("SwitchModePanel — mode layer", () => {
         const body = (await request.json()) as { providerId: string };
         routeCalls.push(body);
         route = body.providerId;
-        return HttpResponse.json(null);
+        return HttpResponse.json({
+          kind: "remembered",
+          clientConfigChanged: false,
+        });
       }),
     );
     const takeover = captureTakeover();
@@ -717,7 +720,7 @@ describe("SwitchModePanel — mode layer", () => {
     expect(onSwitch).not.toHaveBeenCalled();
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith(
-        "mode.toast.defaultRemembered",
+        "已记住供应商 kimi，客户端接入路由或聚合后使用。",
         expect.anything(),
       ),
     );

@@ -4194,6 +4194,11 @@
       "enteredStackLive": "{{app}} 已切换到聚合模式，聚合的模型已出现在 /model 里。",
       "enteredStackDesktop": "{{app}} 已切换到聚合模式。重启 {{app}} 后，聚合的模型出现在模型列表里。",
       "exited": "已回到直连：{{app}} 现在直接连接 {{provider}}。",
+      "routeRemembered": "已记住供应商 {{provider}}，客户端接入路由或聚合后使用。",
+      "routeTargetChanged": "路由目标已设为 {{provider}}。",
+      "routeSwitched": "路由已切换至 {{provider}}，后续新请求将使用该供应商。",
+      "stackDefaultChanged": "聚合默认供应商已设为 {{provider}}；已选聚合模型仍使用各自的供应商。",
+      "clientConfigChanged": "客户端配置也已更新；重启 {{app}} 以加载更新后的配置。",
       "defaultRemembered": "切换到聚合模式后，默认供应商是 {{provider}}。",
       "restartHint": "重启 {{app}} 后生效。",
       "failed": "切换失败：{{detail}}"

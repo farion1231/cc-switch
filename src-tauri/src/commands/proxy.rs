@@ -113,7 +113,7 @@ pub async fn set_proxy_route(
     state: tauri::State<'_, AppState>,
     app_type: String,
     provider_id: String,
-) -> Result<(), String> {
+) -> Result<crate::mode::controller::RouteSwitchResult, String> {
     let app = require_mode_app(&app_type)?;
     let result = crate::mode::controller::set_route(state.inner(), &app, &provider_id).await;
     // 已经在路由 / 聚合模式时换的是正在用的那家，托盘跟着变
