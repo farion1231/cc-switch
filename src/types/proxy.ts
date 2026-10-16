@@ -258,6 +258,11 @@ export interface CursorByokStatus {
   baseUrl: string | null;
   useOpenAIKey: boolean;
   modelCount: number;
+  /**
+   * 已写入 Cursor 的可用模型名列表。换供应商但仍在同一条隧道时 `baseUrl` 不变，
+   * 必须比对这份列表才能判断「目标模型真的已经写进去了」。顺序不保证，比较须与顺序无关。
+   */
+  modelIds: string[];
 }
 
 /** 写 Cursor BYOK 的结果（`cursor_write_byok`）：`backupPath` 是回滚点。 */

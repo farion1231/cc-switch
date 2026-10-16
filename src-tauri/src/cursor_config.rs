@@ -379,6 +379,9 @@ pub struct CursorByokState {
     pub base_url: Option<String>,
     pub use_openai_key: bool,
     pub model_count: usize,
+    /// 已写入 Cursor 的可用模型名列表。换供应商但仍在同一条隧道时 `baseUrl` 不变，
+    /// 前端只能靠这份列表判断「目标模型真的已经写进去了」。
+    pub model_ids: Vec<String>,
 }
 
 /// 写 BYOK 的结果（`cursor_write_byok` 的载荷）。`backup_path` 是回滚点。
@@ -399,40 +402,84 @@ struct AppUserRow {
 /// Cursor 主进程的 argv[0] 后缀。Electron 子进程叫 `Cursor Helper (…)`，不会命中。
 const CURSOR_MAIN_PROCESS_SUFFIX: &str = "Cursor.app/Contents/MacOS/Cursor";
 
-/// 判定一行进程命令行是否为 Cursor **主进程**（按 argv[0] 结尾精确匹配）。
+/// 判定一行进程命令行是否为 Cursor **主进程**。
+///
+/// `pgrep -fl` 输出是 `<pid> <完整命令行>`，光标在 **argv[0]**：带 `--new-window` / 工作区路径
+/// 启动时整行不再以可执行文件结尾，按「整行结尾」判定会把运行中的 Cursor 误判成「已退出」。
+/// 故先剥掉纯数字的 pid 前缀（既有单测会传不带 pid 的裸路径），再只对 argv[0] 做后缀匹配。
 pub(crate) fn is_cursor_main_process_line(line: &str) -> bool {
-    line.trim_end().ends_with(CURSOR_MAIN_PROCESS_SUFFIX)
+    let line = line.trim();
+    let rest = match line.split_once(' ') {
+        Some((first, rest)) if !first.is_empty() && first.bytes().all(|b| b.is_ascii_digit()) => {
+            rest
+        }
+        _ => line,
+    };
+    // argv[0]：到第一个空白为止（含空格的 helper 路径本就不会命中主进程后缀）。
+    let argv0 = rest.split_whitespace().next().unwrap_or("");
+    argv0.ends_with(CURSOR_MAIN_PROCESS_SUFFIX)
 }
 
-/// 取候选进程命令行：macOS 用 `pgrep -fl`（`-f` 全命令行，`-l` 带上命令行便于二次精确判定）。
-fn cursor_process_lines() -> Vec<String> {
+/// 进程探测的结果。`Undetectable` = 拿不到可靠的进程列表（平台不支持 / `pgrep` 不可用）。
+pub(crate) enum CursorProcessProbe {
+    Lines(Vec<String>),
+    Undetectable,
+}
+
+/// 真实探测：macOS 用 `pgrep -fl`（`-f` 全命令行，`-l` 带上命令行便于二次精确判定）。
+///
+/// `pgrep` 退出码 1 = 没匹配到（正常「没在跑」）；其它失败（找不到 `pgrep`、被信号打断等）
+/// 一律视为**探测不可用**，由上层保守地当成「运行中」。
+fn probe_cursor_processes() -> CursorProcessProbe {
     match std::process::Command::new("pgrep")
         .arg("-fl")
         .arg(CURSOR_MAIN_PROCESS_SUFFIX)
         .output()
     {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .map(str::to_string)
-            .collect(),
-        _ => Vec::new(),
+        Ok(out) if out.status.success() => CursorProcessProbe::Lines(
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(str::to_string)
+                .collect(),
+        ),
+        Ok(out) if out.status.code() == Some(1) => CursorProcessProbe::Lines(Vec::new()),
+        _ => CursorProcessProbe::Undetectable,
     }
 }
 
-/// 把「取候选命令行」注入进来，便于单测（不真的 pgrep 用户机器）。
-pub(crate) fn is_cursor_running_with(lines: impl FnOnce() -> Vec<String>) -> bool {
-    lines().iter().any(|line| is_cursor_main_process_line(line))
+/// 把「进程探测」注入进来，便于单测（不真的 pgrep 用户机器）。
+///
+/// `Undetectable` 保守地判为「运行中」——宁可不写 BYOK，也不能在 Cursor 运行时写。
+pub(crate) fn cursor_running_with(probe: impl FnOnce() -> CursorProcessProbe) -> bool {
+    match probe() {
+        CursorProcessProbe::Undetectable => true,
+        CursorProcessProbe::Lines(lines) => {
+            lines.iter().any(|line| is_cursor_main_process_line(line))
+        }
+    }
 }
 
-/// Cursor 是否正在运行。非 macOS 恒为 false。
+/// 保留既有「注入命令行列表」的单测入口（等价于 `Lines` 探测）。
+///
+/// 仅测试使用（生产路径走 `cursor_running_with` + 真实探测），故标 `#[cfg(test)]`：
+/// 否则它在非测试构建里是死代码，会让 CI 的 `clippy -- -D warnings` 失败。
+#[cfg(test)]
+pub(crate) fn is_cursor_running_with(lines: impl FnOnce() -> Vec<String>) -> bool {
+    cursor_running_with(|| CursorProcessProbe::Lines(lines()))
+}
+
+/// Cursor 是否正在运行。
 ///
 /// 运行中 Cursor 会在内存里持有 reactive storage 快照、退出时回写，因此读/写都必须在
 /// 它退出之后（2026-10-13 实测）。
+///
+/// **非 macOS 恒为 true**：那些平台没有可靠的进程探测方式，探测不可用时保守地视为「运行中」，
+/// 从而阻止自动写入（否则运行中写库会被 Cursor 退出时回写覆盖）。
 pub fn is_cursor_running() -> bool {
     if !cfg!(target_os = "macos") {
-        return false;
+        return true;
     }
-    is_cursor_running_with(cursor_process_lines)
+    cursor_running_with(probe_cursor_processes)
 }
 
 /// 把 applicationUser 行的原始 JSON 解析成 BYOK 现状。任何解析失败都降级为「读不到」。
@@ -443,6 +490,18 @@ pub(crate) fn parse_byok_state(raw: Option<&str>) -> CursorByokState {
     let Ok(value) = serde_json::from_str::<Value>(text) else {
         return CursorByokState::default();
     };
+    // 缺失 / 非数组 / 含非字符串 → 能取多少取多少（全失败则空数组），不 panic。
+    let model_ids: Vec<String> = value
+        .get("availableAPIKeyModels")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
     CursorByokState {
         base_url: value
             .get("openAIBaseUrl")
@@ -452,11 +511,8 @@ pub(crate) fn parse_byok_state(raw: Option<&str>) -> CursorByokState {
             .get("useOpenAIKey")
             .and_then(Value::as_bool)
             .unwrap_or(false),
-        model_count: value
-            .get("availableAPIKeyModels")
-            .and_then(Value::as_array)
-            .map(Vec::len)
-            .unwrap_or(0),
+        model_count: model_ids.len(),
+        model_ids,
     }
 }
 
@@ -961,6 +1017,35 @@ mod tests {
         );
     }
 
+    /// 回归（P2）：`cursor_byok_status` 必须暴露**具体** model id 列表。
+    ///
+    /// 同一公网隧道下换供应商时 `baseUrl` 不变，前端只比对 baseUrl + 数量会把「B 家的模型列表
+    /// 还没写」误判成「已写好」。这里断言序列化载荷（前端契约）里带 `modelIds`。
+    #[test]
+    fn parse_byok_state_exposes_model_ids() {
+        let raw = r#"{"openAIBaseUrl":"https://x/cursor/v1","useOpenAIKey":true,"availableAPIKeyModels":["a","b"]}"#;
+        let view = serde_json::to_value(parse_byok_state(Some(raw))).expect("serialize");
+        assert_eq!(view["modelIds"], json!(["a", "b"]));
+        assert_eq!(view["modelCount"], json!(2), "model_count 由列表派生");
+
+        // 非数组 / 含非字符串 / 缺失 → 能取多少取多少，全失败则空数组，不 panic
+        let mixed = r#"{"availableAPIKeyModels":["ok",1,null,"ok2"]}"#;
+        assert_eq!(
+            serde_json::to_value(parse_byok_state(Some(mixed))).expect("serialize")["modelIds"],
+            json!(["ok", "ok2"])
+        );
+        let not_array = r#"{"availableAPIKeyModels":"nope"}"#;
+        assert_eq!(
+            serde_json::to_value(parse_byok_state(Some(not_array))).expect("serialize")["modelIds"],
+            json!([])
+        );
+        assert_eq!(
+            serde_json::to_value(parse_byok_state(Some(r#"{"gamma":1}"#))).expect("serialize")
+                ["modelIds"],
+            json!([])
+        );
+    }
+
     #[test]
     fn is_cursor_running_matches_only_main_process() {
         // 注入「取候选命令行」：pgrep 已按子串预过滤，这里再按 argv[0] 结尾精确判定。
@@ -973,8 +1058,41 @@ mod tests {
         ]));
         // 空列表 / 只有 Electron 子进程 helper → 不算「Cursor 在跑」
         assert!(!is_cursor_running_with(Vec::<String>::new));
-        assert!(!is_cursor_running_with(|| vec![
-            "7 /Applications/Cursor.app/Contents/MacOS/Cursor Helper (Renderer)".to_string()
+        // 这条 fixture 必须是 helper 的**真实** argv[0] 形态：Electron 的 helper 可执行文件在
+        // `Contents/Frameworks/<Helper>.app/Contents/MacOS/…` 下，本来就命不中主进程后缀。
+        // 旧写法 `…/MacOS/Cursor Helper (Renderer)`（同一目录下）的 argv[0] 恰好就是主进程
+        // 可执行文件、`Helper (Renderer)` 落在 argv[1]，与主进程不可区分——那不是 pgrep -fl 会
+        // 产出的真实形态，只会诱导「遇到 Helper 就特判」的错修。
+        let real_helper = "7 /Applications/Cursor.app/Contents/Frameworks/Cursor Helper (Renderer).app/Contents/MacOS/Cursor Helper (Renderer)".to_string();
+        assert!(!is_cursor_running_with(|| vec![real_helper]));
+    }
+
+    /// 回归（P2）：Cursor 带参数（`--new-window` / 工作区路径）启动时仍必须判为「运行中」。
+    ///
+    /// `pgrep -fl` 输出是 `<pid> <完整命令行>`，带参数时整行不再以可执行文件结尾；旧实现按
+    /// 「整行结尾」判定会误判成「已退出」，于是在 Cursor 运行中仍然写状态库 → 被它退出时回写覆盖。
+    #[test]
+    fn is_cursor_running_matches_main_process_with_args() {
+        assert!(is_cursor_running_with(|| vec![
+            "4242 /Applications/Cursor.app/Contents/MacOS/Cursor --new-window".to_string()
         ]));
+        assert!(is_cursor_running_with(|| vec![
+            "4242 /Applications/Cursor.app/Contents/MacOS/Cursor /Users/x/proj".to_string()
+        ]));
+    }
+
+    /// 回归（P2）：探测不可用时必须**保守**判为「运行中」，阻止自动写入。
+    ///
+    /// 写 BYOK 必须等 Cursor 完全退出（运行中它持有内存快照、退出时回写会覆盖）。Windows/Linux
+    /// 没有可靠的进程探测方式，macOS 上 `pgrep` 也可能被 PATH/权限挡住——此时宁可不写。
+    #[test]
+    fn cursor_running_with_undetectable_probe_is_conservative() {
+        assert!(
+            cursor_running_with(|| CursorProcessProbe::Undetectable),
+            "探测不可用必须视为「运行中」（保守，阻止自动写入）"
+        );
+        assert!(!cursor_running_with(|| {
+            CursorProcessProbe::Lines(vec!["1 /usr/bin/something".to_string()])
+        }));
     }
 }
