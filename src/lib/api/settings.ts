@@ -396,6 +396,11 @@ export interface ToolInstallationReport {
 }
 
 export interface RectifierConfig {
+  requestSteerUserRole: boolean;
+  requestTokenReminderUserRole: boolean;
+  requestTodoReminderUserRole: boolean;
+  requestTaskNotificationUserRole: boolean;
+  requestAllSystemUserRole: boolean;
   enabled: boolean;
   requestThinkingSignature: boolean;
   requestThinkingBudget: boolean;

@@ -12,6 +12,11 @@ import {
 export function RectifierConfigPanel() {
   const { t } = useTranslation();
   const [config, setConfig] = useState<RectifierConfig>({
+    requestSteerUserRole: false,
+    requestTokenReminderUserRole: false,
+    requestTodoReminderUserRole: false,
+    requestTaskNotificationUserRole: false,
+    requestAllSystemUserRole: false,
     enabled: true,
     requestThinkingSignature: true,
     requestThinkingBudget: true,
@@ -143,6 +148,72 @@ export function RectifierConfigPanel() {
           />
         </div>
       </div>
+
+      <section
+        className="space-y-4"
+        aria-labelledby="response-system-conversion-title"
+      >
+        <div className="space-y-1">
+          <h4
+            id="response-system-conversion-title"
+            className="text-sm font-medium text-muted-foreground"
+          >
+            {t("settings.advanced.rectifier.responseSystemGroup")}
+          </h4>
+          <p className="text-xs text-muted-foreground">
+            {t("settings.advanced.rectifier.responseSystemDescription")}
+          </p>
+        </div>
+        {(
+          [
+            ["requestSteerUserRole", "steerUserRole", "steer-user-role"],
+            [
+              "requestTokenReminderUserRole",
+              "tokenReminderUserRole",
+              "token-reminder",
+            ],
+            [
+              "requestTodoReminderUserRole",
+              "todoReminderUserRole",
+              "todo-reminder",
+            ],
+            [
+              "requestTaskNotificationUserRole",
+              "taskNotificationUserRole",
+              "task-notification",
+            ],
+            ["requestAllSystemUserRole", "allSystemUserRole", "all-system"],
+          ] as const
+        ).map(([key, label, id]) => (
+          <div
+            key={key}
+            className="flex items-center justify-between gap-4 pl-4"
+          >
+            <div className="space-y-0.5">
+              <Label htmlFor={`rectifier-${id}`}>
+                {t(`settings.advanced.rectifier.${label}`)}
+              </Label>
+              <p
+                id={`rectifier-${id}-description`}
+                className="text-xs text-muted-foreground"
+              >
+                {t(`settings.advanced.rectifier.${label}Description`)}
+              </p>
+            </div>
+            <Switch
+              id={`rectifier-${id}`}
+              aria-describedby={`rectifier-${id}-description`}
+              checked={config[key] ?? false}
+              disabled={
+                !config.enabled ||
+                (key !== "requestAllSystemUserRole" &&
+                  config.requestAllSystemUserRole)
+              }
+              onCheckedChange={(checked) => handleChange({ [key]: checked })}
+            />
+          </div>
+        ))}
+      </section>
 
       <div className="border-t pt-6 mt-6">
         <div className="space-y-1 mb-4">
