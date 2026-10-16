@@ -2288,7 +2288,7 @@ impl SkillService {
             let skill_md = dest.join("SKILL.md");
             let (name, description) = Self::read_skill_name_desc(&skill_md, &dir_name);
 
-            // 其他应用保存用户选择；Pi 的 exists=active 必须直接来自原生目录。
+            // 其他应用保存用户选择；Pi、Omp 的 exists=active 必须直接来自原生目录。
             let mut apps = selection.apps;
             apps.pi = Self::skill_exists_in_app(&dir_name, &AppType::Pi);
             apps.omp = Self::skill_exists_in_app(&dir_name, &AppType::Omp);
@@ -6268,28 +6268,72 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn importing_a_native_pi_skill_returns_its_derived_active_state() {
+    fn importing_native_pi_and_omp_skills_returns_their_derived_active_state() {
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
         let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let _omp_dir = crate::omp_config::test_support::TestAgentDir::new();
         let db = std::sync::Arc::new(Database::memory().expect("memory db"));
-        let pi_skill = SkillService::get_app_skills_dir(&AppType::Pi)
-            .unwrap()
-            .join("native-skill");
-        write_skill(&pi_skill, "native");
+        for app in [AppType::Pi, AppType::Omp] {
+            let directory = format!("native-{}-skill", app.as_str());
+            let native_skill = SkillService::get_app_skills_dir(&app)
+                .unwrap()
+                .join(&directory);
+            write_skill(&native_skill, "native");
+            let imported = SkillService::import_from_apps(
+                &db,
+                vec![ImportSkillSelection {
+                    directory,
+                    apps: SkillApps::default(),
+                }],
+            )
+            .expect("import native skill");
 
+            assert_eq!(imported.len(), 1);
+            assert!(imported[0].apps.is_enabled_for(&app));
+            let installed = SkillService::get_all_installed(&db).unwrap();
+            assert!(installed
+                .iter()
+                .find(|skill| skill.id == imported[0].id)
+                .unwrap()
+                .apps
+                .is_enabled_for(&app));
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn import_selection_does_not_enable_absent_pi_or_omp_skills() {
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let _omp_dir = crate::omp_config::test_support::TestAgentDir::new();
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        write_skill(
+            &SkillService::get_ssot_dir().unwrap().join("test-skill"),
+            "managed",
+        );
         let imported = SkillService::import_from_apps(
             &db,
             vec![ImportSkillSelection {
-                directory: "native-skill".to_string(),
-                apps: SkillApps::default(),
+                directory: "test-skill".into(),
+                apps: SkillApps {
+                    pi: true,
+                    omp: true,
+                    ..Default::default()
+                },
             }],
         )
-        .expect("import native Pi skill");
+        .unwrap();
 
         assert_eq!(imported.len(), 1);
-        assert!(imported[0].apps.pi);
-        assert!(SkillService::get_all_installed(&db).unwrap()[0].apps.pi);
+        for app in [AppType::Pi, AppType::Omp] {
+            assert!(!imported[0].apps.is_enabled_for(&app));
+            assert!(!SkillService::get_app_skills_dir(&app)
+                .unwrap()
+                .join("test-skill")
+                .exists());
+        }
     }
 
     #[test]
