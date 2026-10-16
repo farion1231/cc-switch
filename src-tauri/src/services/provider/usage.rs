@@ -9,6 +9,59 @@ use crate::settings;
 use crate::store::AppState;
 use crate::usage_script;
 
+const LEGACY_NEWAPI_USAGE_SCRIPT: &str = r#"({
+  request: {
+    url: "{{baseUrl}}".replace(/\/+$/, "").replace(/\/v1$/, "") + "/api/usage/token/",
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer {{apiKey}}",
+      "User-Agent": "cc-switch/1.0"
+    }
+  },
+  extractor: function (response) {
+    if (response.code === true && response.data) {
+      var userAvailable = response.data.user_quota && response.data.user_quota.total_available;
+      if (typeof userAvailable === "number") {
+        return {
+          planName: response.data.name || "NewAPI",
+          remaining: response.data.unlimited_quota ? userAvailable : Math.min(response.data.total_available, userAvailable),
+          unit: "quota"
+        };
+      }
+      if (response.data.unlimited_quota) {
+        return {
+          planName: response.data.name || "NewAPI",
+          used: response.data.total_used,
+          unit: "quota",
+          extra: "unlimited"
+        };
+      }
+      return {
+        planName: response.data.name || "NewAPI",
+        remaining: response.data.total_available,
+        used: response.data.total_used,
+        total: response.data.total_granted,
+        unit: "quota"
+      };
+    }
+    return {
+      isValid: false,
+      invalidMessage: response.message || "Query failed"
+    };
+  }
+})"#;
+
+fn normalize_legacy_usage_script(script_code: &str, template_type: Option<&str>) -> &str {
+    if script_code.contains("/api/user/self")
+        && (template_type == Some("newapi") || script_code.contains("New-Api-User"))
+    {
+        LEGACY_NEWAPI_USAGE_SCRIPT
+    } else {
+        script_code
+    }
+}
+
 /// Execute usage script and format result (private helper method)
 pub(crate) async fn execute_and_format_usage_result(
     script_code: &str,
@@ -19,6 +72,8 @@ pub(crate) async fn execute_and_format_usage_result(
     user_id: Option<&str>,
     template_type: Option<&str>,
 ) -> Result<UsageResult, AppError> {
+    let script_code = normalize_legacy_usage_script(script_code, template_type);
+
     match usage_script::execute_usage_script(
         script_code,
         api_key,
@@ -247,7 +302,9 @@ pub(crate) fn validate_usage_script(script: &UsageScript) -> Result<(), AppError
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_script_credentials;
+    use super::{
+        normalize_legacy_usage_script, resolve_script_credentials, LEGACY_NEWAPI_USAGE_SCRIPT,
+    };
     use crate::app_config::AppType;
     use crate::provider::Provider;
     use serde_json::json;
@@ -315,5 +372,25 @@ base_url = "https://other.example.com/v1"
             resolve_script_credentials(&AppType::Codex, &provider, None, None);
         assert_eq!(api_key, "openai-key");
         assert_eq!(base_url, "https://azure.example.com/v1");
+    }
+
+    #[test]
+    fn legacy_newapi_script_uses_api_key_usage_endpoint() {
+        let script = normalize_legacy_usage_script(
+            r#"({ request: { url: "/api/user/self", headers: { "New-Api-User": "{{userId}}" } } })"#,
+            None,
+        );
+
+        assert!(std::ptr::eq(script, LEGACY_NEWAPI_USAGE_SCRIPT));
+        assert!(script.contains("/api/usage/token/"));
+        assert!(script.contains("Bearer {{apiKey}}"));
+        assert!(!script.contains("/api/user/self"));
+    }
+
+    #[test]
+    fn custom_script_using_user_self_is_not_rewritten() {
+        let script = r#"({ request: { url: "/api/user/self" } })"#;
+
+        assert_eq!(normalize_legacy_usage_script(script, Some("custom")), script);
     }
 }

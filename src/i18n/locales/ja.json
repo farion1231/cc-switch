@@ -2215,6 +2215,22 @@
       "syncCompleted": "同期完了：{{imported}} 件追加、{{files}} ファイルをスキャン、エラー {{errors}} 件",
       "syncFailed": "セッション使用量の同期に失敗しました：{{error}}"
     },
+    "singleSession": {
+      "select": "会話を選択",
+      "search": "会話を検索",
+      "loadingSessions": "会話を読み込み中…",
+      "sessionsError": "会話を読み込めませんでした",
+      "noSessions": "利用可能な会話はありません",
+      "noMatches": "一致する会話はありません",
+      "selectHint": "会話を選択すると使用量の概要を表示します。",
+      "loading": "使用量を読み込み中…",
+      "error": "使用量を取得できませんでした。",
+      "retry": "再試行",
+      "noUsage": "この会話の使用量データはありません。",
+      "totalTokens": "合計トークン",
+      "successRate": "成功率",
+      "dataScopeHint": "直近 30 日分の詳細が残っているセッションログのみ対象です。ルーティング経由のリクエストや集計済みの古いデータは会話ごとに照会できません。"
+    },
     "rebuildCodex": {
       "title": "Codex 使用量メンテナンス",
       "description": "ローカルの rollout ログから Codex セッション使用量を再構築します",
@@ -2412,7 +2428,8 @@
       "label": "明細",
       "providers": "プロバイダー",
       "models": "モデル",
-      "pricing": "料金"
+      "pricing": "料金",
+      "sessions": "単一の会話"
     },
     "sortedByRequests": "リクエスト数順",
     "app": "アプリ",
@@ -2475,7 +2492,8 @@
     "empty": {
       "title": "使用量データはまだありません",
       "body": "セッションログとルーティングサービス経由のリクエストの使用量がここに記録されます。",
-      "configurePricing": "モデル料金を設定"
+      "configurePricing": "モデル料金を設定",
+      "querySingleSession": "会話ごとの使用量を確認"
     },
     "pricing": {
       "modelsDevTitle": "models.dev 同期 · {{status}}",

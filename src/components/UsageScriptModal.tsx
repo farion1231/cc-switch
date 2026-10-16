@@ -94,23 +94,38 @@ const generatePresetTemplates = (
 
   [TEMPLATE_TYPES.NEW_API]: `({
   request: {
-    url: "{{baseUrl}}/api/user/self",
+    url: "{{baseUrl}}".replace(/\\/+$/, "").replace(/\\/v1$/, "") + "/api/usage/token/",
     method: "GET",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": "Bearer {{accessToken}}",
+      "Authorization": "Bearer {{apiKey}}",
       "User-Agent": "cc-switch/1.0",
-      "New-Api-User": "{{userId}}"
     },
   },
   extractor: function (response) {
-    if (response.success && response.data) {
+    if (response.code === true && response.data) {
+      var userAvailable = response.data.user_quota && response.data.user_quota.total_available;
+      if (typeof userAvailable === "number") {
+        return {
+          planName: response.data.name || "${t("usageScript.defaultPlan")}",
+          remaining: response.data.unlimited_quota ? userAvailable : Math.min(response.data.total_available, userAvailable),
+          unit: "quota",
+        };
+      }
+      if (response.data.unlimited_quota) {
+        return {
+          planName: response.data.name || "${t("usageScript.defaultPlan")}",
+          used: response.data.total_used,
+          unit: "quota",
+          extra: "∞",
+        };
+      }
       return {
-        planName: response.data.group || "${t("usageScript.defaultPlan")}",
-        remaining: response.data.quota / 500000,
-        used: response.data.used_quota / 500000,
-        total: (response.data.quota + response.data.used_quota) / 500000,
-        unit: "USD",
+        planName: response.data.name || "${t("usageScript.defaultPlan")}",
+        remaining: response.data.total_available,
+        used: response.data.total_used,
+        total: response.data.total_granted,
+        unit: "quota",
       };
     }
     return {
@@ -373,6 +388,20 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     if (savedScript) {
       const normalizedScript = createUsageScript(savedScript);
       if (
+        normalizedScript.code.includes("/api/user/self") &&
+        (normalizedScript.templateType === TEMPLATE_TYPES.NEW_API ||
+          normalizedScript.code.includes("New-Api-User"))
+      ) {
+        return {
+          ...normalizedScript,
+          code: PRESET_TEMPLATES[TEMPLATE_TYPES.NEW_API],
+          templateType: TEMPLATE_TYPES.NEW_API,
+          apiKey: undefined,
+          accessToken: undefined,
+          userId: undefined,
+        };
+      }
+      if (
         isOfficialSubscription &&
         normalizedScript.templateType !== TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION
       ) {
@@ -490,7 +519,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       }
       // 向后兼容：根据字段推断模板类型
       // 检测 NEW_API 模板（有 accessToken 或 userId）
-      if (existingScript?.accessToken || existingScript?.userId) {
+      if (
+        existingScript?.accessToken ||
+        existingScript?.userId ||
+        (existingScript?.code.includes("/api/user/self") &&
+          (existingScript.templateType === TEMPLATE_TYPES.NEW_API ||
+            existingScript.code.includes("New-Api-User")))
+      ) {
         return TEMPLATE_TYPES.NEW_API;
       }
       // 检测 GENERAL 模板（有 apiKey 或 baseUrl）
@@ -511,7 +546,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   );
 
   const [showApiKey, setShowApiKey] = useState(false);
-  const [showAccessToken, setShowAccessToken] = useState(false);
 
   const handleEnableToggle = (checked: boolean) => {
     if (checked && !settingsData?.usageConfirmed) {
@@ -805,6 +839,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         setScript({
           ...script,
           code: preset,
+          apiKey: undefined,
           accessToken: undefined,
           userId: undefined,
         });
@@ -813,6 +848,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           ...script,
           code: preset,
           apiKey: undefined,
+          accessToken: undefined,
+          userId: undefined,
         });
       } else if (presetName === TEMPLATE_TYPES.GITHUB_COPILOT) {
         // Copilot 模板不需要脚本和凭证，使用专用 API
@@ -1146,7 +1183,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
                 <div className="grid gap-4 md:grid-cols-2">
                   {(selectedTemplate === TEMPLATE_TYPES.GENERAL ||
-                    selectedTemplate === TEMPLATE_TYPES.SUB2API) && (
+                    selectedTemplate === TEMPLATE_TYPES.SUB2API ||
+                    selectedTemplate === TEMPLATE_TYPES.NEW_API) && (
                     <>
                       <div className="space-y-2">
                         <Label htmlFor="usage-api-key">
@@ -1188,26 +1226,29 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                         </div>
                       </div>
 
-                      <div className="space-y-2">
-                        <Label htmlFor="usage-base-url">
-                          {t("usageScript.baseUrl")}
-                          {""}
-                          <span className="text-xs text-fg-2 font-normal">
-                            ({t("usageScript.optional")})
-                          </span>
-                        </Label>
-                        <Input
-                          id="usage-base-url"
-                          type="text"
-                          value={script.baseUrl || ""}
-                          onChange={(e) =>
-                            setScript({ ...script, baseUrl: e.target.value })
-                          }
-                          placeholder={t("usageScript.baseUrlPlaceholder")}
-                          autoComplete="off"
-                          className="border-white/10"
-                        />
-                      </div>
+                      {(selectedTemplate === TEMPLATE_TYPES.GENERAL ||
+                        selectedTemplate === TEMPLATE_TYPES.SUB2API) && (
+                        <div className="space-y-2">
+                          <Label htmlFor="usage-base-url">
+                            {t("usageScript.baseUrl")}
+                            {""}
+                            <span className="text-xs text-fg-2 font-normal">
+                              ({t("usageScript.optional")})
+                            </span>
+                          </Label>
+                          <Input
+                            id="usage-base-url"
+                            type="text"
+                            value={script.baseUrl || ""}
+                            onChange={(e) =>
+                              setScript({ ...script, baseUrl: e.target.value })
+                            }
+                            placeholder={t("usageScript.baseUrlPlaceholder")}
+                            autoComplete="off"
+                            className="border-white/10"
+                          />
+                        </div>
+                      )}
                     </>
                   )}
 
@@ -1225,67 +1266,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                             setScript({ ...script, baseUrl: e.target.value })
                           }
                           placeholder="https://api.newapi.com"
-                          autoComplete="off"
-                          className="border-white/10"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="usage-access-token">
-                          {t("usageScript.accessToken")}
-                        </Label>
-                        <div className="relative">
-                          <Input
-                            id="usage-access-token"
-                            type={showAccessToken ? "text" : "password"}
-                            value={script.accessToken || ""}
-                            onChange={(e) =>
-                              setScript({
-                                ...script,
-                                accessToken: e.target.value,
-                              })
-                            }
-                            placeholder={t(
-                              "usageScript.accessTokenPlaceholder",
-                            )}
-                            autoComplete="off"
-                            className="border-white/10"
-                          />
-                          {script.accessToken && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setShowAccessToken(!showAccessToken)
-                              }
-                              className="absolute inset-y-0 right-0 flex items-center pr-3 text-fg-2 hover:text-fg-1 transition-colors"
-                              aria-label={
-                                showAccessToken
-                                  ? t("apiKeyInput.hide")
-                                  : t("apiKeyInput.show")
-                              }
-                            >
-                              {showAccessToken ? (
-                                <EyeOff size={16} />
-                              ) : (
-                                <Eye size={16} />
-                              )}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="usage-user-id">
-                          {t("usageScript.userId")}
-                        </Label>
-                        <Input
-                          id="usage-user-id"
-                          type="text"
-                          value={script.userId || ""}
-                          onChange={(e) =>
-                            setScript({ ...script, userId: e.target.value })
-                          }
-                          placeholder={t("usageScript.userIdPlaceholder")}
                           autoComplete="off"
                           className="border-white/10"
                         />
