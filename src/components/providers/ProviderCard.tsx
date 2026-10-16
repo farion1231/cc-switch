@@ -232,9 +232,9 @@ export function ProviderCard({
   const manualNote = provider.notes?.trim() || undefined;
   const providerNameIncludesAccountLogin = Boolean(
     managedCodexAccount?.login &&
-    (provider.name.trim() === managedCodexAccount.login ||
-      provider.name.trim() ===
-        `OpenAI Official (${managedCodexAccount.login})`),
+      (provider.name.trim() === managedCodexAccount.login ||
+        provider.name.trim() ===
+          `OpenAI Official (${managedCodexAccount.login})`),
   );
 
   const { data: health } = useProviderHealth(
