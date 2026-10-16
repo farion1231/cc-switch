@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 
 use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
@@ -402,6 +402,10 @@ const FILE_ENTRY_BUDGET_COST: u64 = DIRECTORY_BUDGET_COST;
 /// 曾经的 128 MiB 会把这类仓库挡在门外。响应体流式落到临时文件而不进内存，
 /// 上限对齐解压预算：压缩体超过解压后能容纳的总量，解压那一步也必然失败。
 const MAX_ARCHIVE_DOWNLOAD_BYTES: u64 = MAX_ARCHIVE_TOTAL_BYTES;
+/// 下载与解压一个大仓库允许占用的总时间。单次无数据进展由
+/// `SKILL_DOWNLOAD_IDLE_TIMEOUT_SECS` 单独限制。
+const SKILL_DOWNLOAD_TIMEOUT_SECS: u64 = 600;
+const SKILL_DOWNLOAD_IDLE_TIMEOUT_SECS: u64 = 30;
 
 /// 技能元数据 (从 SKILL.md 解析)
 #[derive(Debug, Clone, Deserialize)]
@@ -902,8 +906,9 @@ impl SkillService {
             };
 
             // 下载仓库
+            let timeout_secs = SKILL_DOWNLOAD_TIMEOUT_SECS.to_string();
             let (temp_guard, used_branch) = timeout(
-                std::time::Duration::from_secs(60),
+                Duration::from_secs(SKILL_DOWNLOAD_TIMEOUT_SECS),
                 self.download_repo(&repo),
             )
             .await
@@ -913,7 +918,7 @@ impl SkillService {
                     &[
                         ("owner", &repo.owner),
                         ("name", &repo.name),
-                        ("timeout", "60")
+                        ("timeout", &timeout_secs)
                     ],
                     Some("checkNetwork"),
                 ))
@@ -1370,7 +1375,7 @@ impl SkillService {
 
             // 下载仓库 ZIP
             let (temp_guard, _used_branch) = match timeout(
-                std::time::Duration::from_secs(60),
+                Duration::from_secs(SKILL_DOWNLOAD_TIMEOUT_SECS),
                 self.download_repo(&repo),
             )
             .await
@@ -1466,12 +1471,13 @@ impl SkillService {
     }
 
     fn download_timeout_error(repo: &SkillRepo) -> String {
+        let timeout_secs = SKILL_DOWNLOAD_TIMEOUT_SECS.to_string();
         format_skill_error(
             "DOWNLOAD_TIMEOUT",
             &[
                 ("owner", &repo.owner),
                 ("name", &repo.name),
-                ("timeout", "60"),
+                ("timeout", &timeout_secs),
             ],
             Some("checkNetwork"),
         )
@@ -1531,15 +1537,20 @@ impl SkillService {
         }
 
         // 下载仓库
+        let timeout_secs = SKILL_DOWNLOAD_TIMEOUT_SECS.to_string();
         let (temp_guard, used_branch) = timeout(
-            std::time::Duration::from_secs(60),
+            Duration::from_secs(SKILL_DOWNLOAD_TIMEOUT_SECS),
             self.download_repo(&repo),
         )
         .await
         .map_err(|_| {
             anyhow!(format_skill_error(
                 "DOWNLOAD_TIMEOUT",
-                &[("owner", &owner), ("name", &name), ("timeout", "60")],
+                &[
+                    ("owner", &owner),
+                    ("name", &name),
+                    ("timeout", &timeout_secs)
+                ],
                 Some("checkNetwork"),
             ))
         })??;
@@ -3023,10 +3034,12 @@ impl SkillService {
 
     /// 从仓库获取技能列表
     async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
-        let (temp_guard, resolved_branch) =
-            timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
-                .await
-                .map_err(|_| anyhow!(Self::download_timeout_error(repo)))??;
+        let (temp_guard, resolved_branch) = timeout(
+            Duration::from_secs(SKILL_DOWNLOAD_TIMEOUT_SECS),
+            self.download_repo(repo),
+        )
+        .await
+        .map_err(|_| anyhow!(Self::download_timeout_error(repo)))??;
 
         let mut skills = Vec::new();
         let scan_dir = temp_guard.path();
@@ -3589,7 +3602,7 @@ impl SkillService {
 
     /// 下载并解压 ZIP
     async fn download_and_extract(&self, url: &str, dest: &Path) -> Result<()> {
-        let client = crate::proxy::http_client::get();
+        let client = crate::proxy::http_client::get_for_url(url);
         let response = client.get(url).send().await?;
         if !response.status().is_success() {
             let status = response.status().as_u16().to_string();
@@ -3612,7 +3625,12 @@ impl SkillService {
         let mut response = response;
         let mut body = std::io::BufWriter::new(tempfile::tempfile()?);
         let mut received: u64 = 0;
-        while let Some(chunk) = response.chunk().await? {
+        while let Some(chunk) = Self::next_archive_chunk(
+            &mut response,
+            Duration::from_secs(SKILL_DOWNLOAD_IDLE_TIMEOUT_SECS),
+        )
+        .await?
+        {
             received = received.saturating_add(chunk.len() as u64);
             if received > MAX_ARCHIVE_DOWNLOAD_BYTES {
                 let limit_mb = (MAX_ARCHIVE_DOWNLOAD_BYTES / 1024 / 1024).to_string();
@@ -3628,6 +3646,21 @@ impl SkillService {
         let file = body.into_inner().map_err(|e| e.into_error())?;
         let archive = zip::ZipArchive::new(file)?;
         Self::extract_repo_archive(archive, dest)
+    }
+
+    async fn next_archive_chunk(
+        response: &mut reqwest::Response,
+        idle_timeout: Duration,
+    ) -> Result<Option<bytes::Bytes>> {
+        let timeout_secs = idle_timeout.as_secs().to_string();
+        let chunk = timeout(idle_timeout, response.chunk()).await.map_err(|_| {
+            anyhow!(format_skill_error(
+                "DOWNLOAD_TIMEOUT",
+                &[("timeout", &timeout_secs)],
+                Some("checkNetwork"),
+            ))
+        })?;
+        chunk.map_err(Into::into)
     }
 
     /// 按预算把单个归档条目写出，累计超限即中止。
@@ -4735,6 +4768,56 @@ mod tests {
         drop(second_reader);
         drop(first_reader);
         assert!(skill_state_lock().try_write().is_ok());
+    }
+
+    #[tokio::test]
+    async fn archive_chunk_timeout_reports_download_timeout() {
+        use std::io::Write;
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(connection) => break connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "timed out waiting for the test client"
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept failed: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut request = [0u8; 4096];
+            let request_len = std::io::Read::read(&mut stream, &mut request).unwrap();
+            assert!(request_len > 0, "the client must send an HTTP request");
+            stream
+                .write_all(b"HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(1100));
+        });
+
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let mut response = client
+            .get(format!("http://{address}/archive.zip"))
+            .send()
+            .await
+            .unwrap();
+        let error =
+            SkillService::next_archive_chunk(&mut response, std::time::Duration::from_secs(1))
+                .await
+                .expect_err("a stalled archive response must time out");
+        let structured: serde_json::Value = serde_json::from_str(&error.to_string()).unwrap();
+        assert_eq!(structured["code"], "DOWNLOAD_TIMEOUT");
+        assert_eq!(structured["context"]["timeout"], "1");
+        server.join().unwrap();
     }
 
     /// 构造一个模拟 GitHub 归档的 ZIP：带一层 `repo-main/` 根目录，
