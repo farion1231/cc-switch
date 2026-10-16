@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   fmtInt,
-  fmtUsd,
   formatTokensCompact,
   getLocaleFromLanguage,
   getResolvedLang,
@@ -19,6 +18,7 @@ import {
   type UsageSummary,
   type UsageSummaryByApp,
 } from "@/types/usage";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 
 interface UsageHeroProps {
   range: UsageRangeSelection;
@@ -158,6 +158,7 @@ export function UsageHero({
   compact = false,
 }: UsageHeroProps) {
   const { t, i18n } = useTranslation();
+  const { money } = useMoneyFormat();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const [moreOpen, setMoreOpen] = useState(false);
 
@@ -215,9 +216,9 @@ export function UsageHero({
             <MetricCard
               label={t("usage.totalCost")}
               value={
-                placeholder ?? (totalCost == null ? "--" : fmtUsd(totalCost, 2))
+                placeholder ?? (totalCost == null ? "--" : money(totalCost, 2))
               }
-              title={totalCost == null ? undefined : fmtUsd(totalCost, 6)}
+              title={totalCost == null ? undefined : money(totalCost, 6)}
             />
             <MetricCard
               label={t("usage.totalRequests")}

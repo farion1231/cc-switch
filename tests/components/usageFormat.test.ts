@@ -4,6 +4,9 @@ import {
   SPEED_MIN_OUTPUT_TOKENS,
   formatEstimatedTokensPerSecond,
   formatFirstTokenSeconds,
+  formatMoney,
+  formatMoneyCompact,
+  formatMoneyTick,
   formatOutputTokensPerSecond,
   formatTokensCompact,
   formatTokensPerSecond,
@@ -13,6 +16,7 @@ import {
   getOutputTokensPerSecond,
   getLocaleFromLanguage,
   sumSpeedTotals,
+  USD_DISPLAY,
 } from "@/components/usage/format";
 
 describe("usage format helpers", () => {
@@ -228,5 +232,25 @@ describe("usage format helpers", () => {
     expect(formatTokensCompact(18_200_000, "en-US")).toBe("18.2M");
     expect(formatTokensCompact(2_340_000_000, "en-US")).toBe("2.34B");
     expect(formatTokensCompact("x")).toBe("--");
+  });
+});
+
+describe("usage money formatting", () => {
+  it("keeps the USD output the old fmtUsd produced", () => {
+    expect(formatMoney(1.23456, 2, USD_DISPLAY)).toBe("$1.23");
+    expect(formatMoney("0.000123", 6, USD_DISPLAY)).toBe("$0.000123");
+    expect(formatMoney(null, 4, USD_DISPLAY)).toBe("--");
+    expect(formatMoney("x", 4, USD_DISPLAY, "")).toBe("");
+  });
+
+  it("trims compact amounts by magnitude", () => {
+    expect(
+      [0.0081, 0.0123, 1.25].map((usd) => formatMoneyCompact(usd, USD_DISPLAY)),
+    ).toEqual(["$0.0081", "$0.012", "$1.25"]);
+  });
+
+  it("formats axis ticks without fixing decimals", () => {
+    expect(formatMoneyTick(0.5, USD_DISPLAY)).toBe("$0.5");
+    expect(formatMoneyTick(undefined, USD_DISPLAY)).toBe("$0");
   });
 });

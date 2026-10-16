@@ -15,7 +15,6 @@ import {
 import { cn } from "@/lib/utils";
 import {
   fmtInt,
-  fmtUsd,
   formatEstimatedTokensPerSecond,
   formatFirstTokenSeconds,
   formatOutputTokensPerSecond,
@@ -26,6 +25,7 @@ import {
 } from "./format";
 import { usageTable } from "./usageTable";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 
 interface RequestLogTableProps {
   range: UsageRangeSelection;
@@ -112,6 +112,7 @@ export function RequestLogTable({
   onOpenDetail,
 }: RequestLogTableProps) {
   const { t, i18n } = useTranslation();
+  const { money } = useMoneyFormat();
   const [page, setPage] = useState(0);
   const pageSize = 20;
 
@@ -304,7 +305,7 @@ export function RequestLogTable({
               : undefined
           }
         >
-          {unpriced ? t("usage.unpriced") : fmtUsd(log.totalCostUsd, 4)}
+          {unpriced ? t("usage.unpriced") : money(log.totalCostUsd, 4)}
         </td>
         <td
           className={cn(usageTable.td, tps == null && usageTable.muted)}

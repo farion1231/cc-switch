@@ -21,14 +21,42 @@ export function fmtInt(
   return new Intl.NumberFormat(locale).format(Math.trunc(num));
 }
 
-export function fmtUsd(
-  value: unknown,
+/** 用量金额的显示币种。库里一律存美元，只在显示时按 `rate`（1 美元折多少）换算。 */
+export type DisplayCurrency = "USD";
+
+export interface MoneyDisplay {
+  currency: DisplayCurrency;
+  rate: number;
+}
+
+export const USD_DISPLAY: MoneyDisplay = { currency: "USD", rate: 1 };
+
+const CURRENCY_SYMBOL: Record<DisplayCurrency, string> = { USD: "$" };
+
+/** 固定小数位：`$1.23`。组件里用 `useMoneyFormat()`，别直接传 display。 */
+export function formatMoney(
+  usd: unknown,
   digits: number,
+  display: MoneyDisplay,
   fallback: string = "--",
 ): string {
-  const num = parseFiniteNumber(value);
+  const num = parseFiniteNumber(usd);
   if (num == null) return fallback;
-  return `$${num.toFixed(digits)}`;
+  return `${CURRENCY_SYMBOL[display.currency]}${(num * display.rate).toFixed(digits)}`;
+}
+
+/** 按大小取位数并去掉末尾的 0：`$0.0081` / `$0.012` / `$1.25` */
+export function formatMoneyCompact(usd: number, display: MoneyDisplay): string {
+  const value = usd * display.rate;
+  const symbol = CURRENCY_SYMBOL[display.currency];
+  if (value < 0.01) return `${symbol}${Number(value.toFixed(4))}`;
+  if (value < 1) return `${symbol}${Number(value.toFixed(3))}`;
+  return `${symbol}${value.toFixed(2)}`;
+}
+
+/** 坐标轴刻度：刻度值本身已经是整齐的数，不再定小数位 */
+export function formatMoneyTick(usd: unknown, display: MoneyDisplay): string {
+  return `${CURRENCY_SYMBOL[display.currency]}${(parseFiniteNumber(usd) ?? 0) * display.rate}`;
 }
 
 /** 输出少于这个数的请求（工具调用这类）不算速度：0.1 秒回 15 个 token 会算出离谱的数。 */

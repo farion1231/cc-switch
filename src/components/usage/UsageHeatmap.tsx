@@ -7,13 +7,13 @@ import { useUsageFirstDate, useUsageTrends } from "@/lib/query/usage";
 import { cn } from "@/lib/utils";
 import type { UsageRangeSelection } from "@/types/usage";
 import {
-  fmtUsd,
   formatTokensShort,
   getLocaleFromLanguage,
   parseFiniteNumber,
 } from "./format";
 import type { UsageTrendStatLike } from "./UsageTrendChart";
 import { UsageTooltipCard } from "./UsageTooltipCard";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 
 const WEEKS = 53;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -231,6 +231,7 @@ export function UsageHeatmap({
   refreshIntervalMs,
 }: UsageHeatmapProps) {
   const { t, i18n } = useTranslation();
+  const { money } = useMoneyFormat();
   const [metric, setMetric] = useState<HeatMetric>("tokens");
   const sectionRef = useRef<HTMLElement>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
@@ -343,7 +344,7 @@ export function UsageHeatmap({
                 {t("usage.heatmap.spanSummary", {
                   tokens: formatTokensShort(span.totals.tokens, language),
                   requests: formatTokensShort(span.totals.requests, language),
-                  cost: fmtUsd(span.totals.cost, 2),
+                  cost: money(span.totals.cost, 2),
                 })}
               </span>
             </div>

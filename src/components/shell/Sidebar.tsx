@@ -29,8 +29,8 @@ import { isAppPage } from "@/lib/navigation";
 import { SkillsIcon } from "@/components/BrandIcons";
 import { useUpdate } from "@/contexts/UpdateContext";
 import { sidebarWidth, useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { useSidebarStatus, type AppNavStatus } from "@/hooks/useSidebarStatus";
-import { fmtUsd } from "@/components/usage/format";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { DRAG_REGION_ATTR, DRAG_REGION_STYLE, isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
@@ -207,6 +207,7 @@ function MainDirectory({
   appsUpdateAvailable = false,
 }: DirectoryProps) {
   const { t } = useTranslation();
+  const { money } = useMoneyFormat();
   const { hasUpdate } = useUpdate();
   const { appStatus, todayCost, authNeedsAttention } = useSidebarStatus();
   const apps = APP_IDS.filter((app) => visibleApps[app]);
@@ -214,7 +215,7 @@ function MainDirectory({
 
   const todayLabel =
     todayCost > 0
-      ? t("nav.todayCost", { cost: fmtUsd(todayCost, 2) })
+      ? t("nav.todayCost", { cost: money(todayCost, 2) })
       : undefined;
 
   const globals: {
