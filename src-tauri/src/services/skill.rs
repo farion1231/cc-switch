@@ -3565,16 +3565,7 @@ impl SkillService {
             return Ok((temp_dir, repo.branch.clone()));
         }
 
-        let mut branches = Vec::new();
-        if !repo.branch.is_empty() && !repo.branch.eq_ignore_ascii_case("HEAD") {
-            branches.push(repo.branch.as_str());
-        }
-        if !branches.contains(&"main") {
-            branches.push("main");
-        }
-        if !branches.contains(&"master") {
-            branches.push("master");
-        }
+        let branches = Self::candidate_branches(repo);
 
         let mut last_error = None;
         for branch in branches {
@@ -3584,9 +3575,15 @@ impl SkillService {
             );
             Self::assert_github_archive_url(&url, &repo.owner, &repo.name)?;
 
-            match self.download_and_extract(&url, &temp_path).await {
-                Ok(_) => return Ok((temp_dir, branch.to_string())),
+            match self.download_and_extract(&url, &temp_path, repo).await {
+                Ok(_) => return Ok((temp_dir, branch)),
                 Err(e) => {
+                    // Only a missing branch is eligible for the main/master fallback.
+                    // Timeouts, rate limits, proxy errors, and invalid archives must
+                    // reach the caller instead of being hidden by a later branch.
+                    if !Self::is_missing_branch_error(&e) {
+                        return Err(e);
+                    }
                     // 每个分支各自重算预算，所以失败后必须把上一轮的残留清掉——
                     // 否则 N 个候选分支等于 N 倍的落盘量堆在同一个目录里。
                     let _ = fs::remove_dir_all(&temp_path);
@@ -3600,10 +3597,35 @@ impl SkillService {
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("所有分支下载失败")))
     }
 
+    fn candidate_branches(repo: &SkillRepo) -> Vec<String> {
+        if repo.branch.is_empty() || repo.branch.eq_ignore_ascii_case("HEAD") {
+            vec!["main".to_string(), "master".to_string()]
+        } else {
+            vec![repo.branch.clone()]
+        }
+    }
+
+    fn is_missing_branch_error(error: &anyhow::Error) -> bool {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&error.to_string()) else {
+            return false;
+        };
+        value.get("code").and_then(serde_json::Value::as_str) == Some("DOWNLOAD_FAILED")
+            && value
+                .pointer("/context/status")
+                .and_then(serde_json::Value::as_str)
+                == Some("404")
+    }
+
     /// 下载并解压 ZIP
-    async fn download_and_extract(&self, url: &str, dest: &Path) -> Result<()> {
+    async fn download_and_extract(&self, url: &str, dest: &Path, repo: &SkillRepo) -> Result<()> {
         let client = crate::proxy::http_client::get_for_url(url);
-        let response = client.get(url).send().await?;
+        let mut response = Self::send_archive_request(
+            &client,
+            url,
+            repo,
+            Duration::from_secs(SKILL_DOWNLOAD_IDLE_TIMEOUT_SECS),
+        )
+        .await?;
         if !response.status().is_success() {
             let status = response.status().as_u16().to_string();
             return Err(anyhow::anyhow!(format_skill_error(
@@ -3622,11 +3644,11 @@ impl SkillService {
         // 收进内存，之后才轮到 ZipArchive 和解压预算——那时候堆已经被吃光了。
         // 不能只信 Content-Length（可以撒谎或缺失），必须按实际收到的字节数算。
         // 归档写进匿名临时文件（关闭即删，失败路径也不留残留），内存只占一个块。
-        let mut response = response;
         let mut body = std::io::BufWriter::new(tempfile::tempfile()?);
         let mut received: u64 = 0;
         while let Some(chunk) = Self::next_archive_chunk(
             &mut response,
+            repo,
             Duration::from_secs(SKILL_DOWNLOAD_IDLE_TIMEOUT_SECS),
         )
         .await?
@@ -3650,17 +3672,46 @@ impl SkillService {
 
     async fn next_archive_chunk(
         response: &mut reqwest::Response,
+        repo: &SkillRepo,
         idle_timeout: Duration,
     ) -> Result<Option<bytes::Bytes>> {
+        Self::await_download_stage(response.chunk(), repo, idle_timeout).await
+    }
+
+    async fn send_archive_request(
+        client: &reqwest::Client,
+        url: &str,
+        repo: &SkillRepo,
+        idle_timeout: Duration,
+    ) -> Result<reqwest::Response> {
+        Self::await_download_stage(client.get(url).send(), repo, idle_timeout).await
+    }
+
+    async fn await_download_stage<T, F>(
+        future: F,
+        repo: &SkillRepo,
+        idle_timeout: Duration,
+    ) -> Result<T>
+    where
+        F: std::future::Future<Output = Result<T, reqwest::Error>>,
+    {
+        timeout(idle_timeout, future)
+            .await
+            .map_err(|_| Self::download_idle_timeout_error(repo, idle_timeout))?
+            .map_err(Into::into)
+    }
+
+    fn download_idle_timeout_error(repo: &SkillRepo, idle_timeout: Duration) -> anyhow::Error {
         let timeout_secs = idle_timeout.as_secs().to_string();
-        let chunk = timeout(idle_timeout, response.chunk()).await.map_err(|_| {
-            anyhow!(format_skill_error(
-                "DOWNLOAD_TIMEOUT",
-                &[("timeout", &timeout_secs)],
-                Some("checkNetwork"),
-            ))
-        })?;
-        chunk.map_err(Into::into)
+        anyhow!(format_skill_error(
+            "DOWNLOAD_TIMEOUT",
+            &[
+                ("owner", &repo.owner),
+                ("name", &repo.name),
+                ("timeout", &timeout_secs),
+            ],
+            Some("checkNetwork"),
+        ))
     }
 
     /// 按预算把单个归档条目写出，累计超限即中止。
@@ -4771,53 +4822,62 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn archive_chunk_timeout_reports_download_timeout() {
-        use std::io::Write;
-
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.set_nonblocking(true).unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = std::thread::spawn(move || {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            let (mut stream, _) = loop {
-                match listener.accept() {
-                    Ok(connection) => break connection,
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        assert!(
-                            std::time::Instant::now() < deadline,
-                            "timed out waiting for the test client"
-                        );
-                        std::thread::sleep(std::time::Duration::from_millis(5));
-                    }
-                    Err(error) => panic!("accept failed: {error}"),
-                }
-            };
-            stream
-                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
-                .unwrap();
-            let mut request = [0u8; 4096];
-            let request_len = std::io::Read::read(&mut stream, &mut request).unwrap();
-            assert!(request_len > 0, "the client must send an HTTP request");
-            stream
-                .write_all(b"HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n")
-                .unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(1100));
-        });
-
-        let client = reqwest::Client::builder().no_proxy().build().unwrap();
-        let mut response = client
-            .get(format!("http://{address}/archive.zip"))
-            .send()
-            .await
-            .unwrap();
-        let error =
-            SkillService::next_archive_chunk(&mut response, std::time::Duration::from_secs(1))
-                .await
-                .expect_err("a stalled archive response must time out");
+    async fn download_stage_timeout_reports_repository_context() {
+        let repo = SkillRepo {
+            owner: "owner".to_string(),
+            name: "repo".to_string(),
+            branch: "main".to_string(),
+            enabled: true,
+        };
+        let error = SkillService::await_download_stage(
+            async {
+                tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+                Ok::<(), reqwest::Error>(())
+            },
+            &repo,
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        .expect_err("a stalled download stage must time out");
         let structured: serde_json::Value = serde_json::from_str(&error.to_string()).unwrap();
         assert_eq!(structured["code"], "DOWNLOAD_TIMEOUT");
+        assert_eq!(structured["context"]["owner"], "owner");
+        assert_eq!(structured["context"]["name"], "repo");
         assert_eq!(structured["context"]["timeout"], "1");
-        server.join().unwrap();
+    }
+
+    #[test]
+    fn explicit_branch_does_not_fall_back_to_default_branches() {
+        let repo = SkillRepo {
+            owner: "owner".to_string(),
+            name: "repo".to_string(),
+            branch: "feature/slow".to_string(),
+            enabled: true,
+        };
+        assert_eq!(SkillService::candidate_branches(&repo), ["feature/slow"]);
+
+        let repo = SkillRepo {
+            branch: "HEAD".to_string(),
+            ..repo
+        };
+        assert_eq!(SkillService::candidate_branches(&repo), ["main", "master"]);
+    }
+
+    #[test]
+    fn only_missing_branch_errors_are_retryable() {
+        let not_found = anyhow!(format_skill_error(
+            "DOWNLOAD_FAILED",
+            &[("status", "404")],
+            Some("http404"),
+        ));
+        assert!(SkillService::is_missing_branch_error(&not_found));
+
+        let timeout = anyhow!(format_skill_error(
+            "DOWNLOAD_TIMEOUT",
+            &[("owner", "owner"), ("name", "repo"), ("timeout", "30"),],
+            Some("checkNetwork"),
+        ));
+        assert!(!SkillService::is_missing_branch_error(&timeout));
     }
 
     /// 构造一个模拟 GitHub 归档的 ZIP：带一层 `repo-main/` 根目录，
