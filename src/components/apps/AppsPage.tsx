@@ -107,17 +107,26 @@ const SOURCE_LABEL: Record<string, string> = {
   pip: "pip",
 };
 
-type Row = { kind: "tool"; tool: ToolName } | { kind: "desktop" };
+type Row =
+  | { kind: "tool"; tool: ToolName }
+  | { kind: "desktop" }
+  | { kind: "cursor" };
 
 const ROW_BY_APP = Object.fromEntries([
   ["claude-desktop", { kind: "desktop" }],
+  // Cursor 是桌面应用（没有 CLI 可安装/升级），但和 ToolRow 一样要能控制「在侧栏显示」。
+  ["cursor", { kind: "cursor" }],
   ...TOOL_NAMES.map((tool) => [TOOL_APP_IDS[tool], { kind: "tool", tool }]),
 ]) as Record<AppId, Row>;
 
 type RowSection = { key: string; title: string; rows: Row[] };
 
 const rowKey = (row: Row): AppId =>
-  row.kind === "desktop" ? "claude-desktop" : TOOL_APP_IDS[row.tool];
+  row.kind === "desktop"
+    ? "claude-desktop"
+    : row.kind === "cursor"
+      ? "cursor"
+      : TOOL_APP_IDS[row.tool];
 
 // 只上下拖，且停在本组的列表框里：列表框裁掉超出的部分，拖出去整行会看不见
 const verticalDragModifiers: Modifier[] = [
@@ -189,6 +198,8 @@ export function AppsPage() {
     if (row.kind === "desktop") {
       return isDesktopStatusPending ? null : Boolean(desktopStatus?.installed);
     }
+    // Cursor 没有 CLI 可探，固定归入「已安装」组，避免整行消失。
+    if (row.kind === "cursor") return true;
     const info = tools.toolVersionByName.get(row.tool);
     if (!info && tools.isLoadingTools) return null;
     return isToolPresent(info, tools.installReports?.[row.tool]);
@@ -356,6 +367,18 @@ export function AppsPage() {
           </span>
         }
         visibility={visibilitySwitch("claude-desktop")}
+      />
+    ) : row.kind === "cursor" ? (
+      <AppRow
+        key="cursor"
+        app="cursor"
+        name={<span className="truncate">{APP_DISPLAY_NAME.cursor}</span>}
+        version={
+          <span className="text-caption text-fg-2">
+            {t("appsPage.cursorHelp")}
+          </span>
+        }
+        visibility={visibilitySwitch("cursor")}
       />
     ) : (
       <ToolRow
