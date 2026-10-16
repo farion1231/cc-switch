@@ -825,6 +825,8 @@ jobs:
           VERSION="${TAG#v}"
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           base_url="https://github.com/$REPO/releases/download/$TAG"
+          # 摘要随更新清单一起到达；notes 是字符串，交给 jq 处理 JSON 转义。
+          notes_json=$(jq -c 'tojson' "src/whats-new/${VERSION}.json")
           # 初始化空平台映射
           mac_url=""; mac_sig=""
           win_x64_url=""; win_x64_sig=""
@@ -883,7 +885,7 @@ jobs:
           {
             echo '{'
             echo "  \"version\": \"$VERSION\",";
-            echo "  \"notes\": \"Release $TAG\",";
+            echo "  \"notes\": $notes_json,";
             echo "  \"pub_date\": \"$PUB_DATE\",";
             echo '  "platforms": {'
             first=1
@@ -940,16 +942,6 @@ jobs:
           } > "$tmp_json"
           echo "Generated latest.json:" && cat "$tmp_json"
           mv "$tmp_json" release-assets/latest.json
-
-      # 应用内更新摘要随包发布：近期更新窗口对还没装进来的新版本，会按 tag
-      # 取这份 JSON（dl.ccswitch.io 镜像在前、GitHub 在后，见 src/lib/whatsNew.ts）。
-      # whats-new-check 已在最前面验证过它的存在和结构，缺了会在编译前就失败。
-      - name: Add in-app what's new summary
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          cp "src/whats-new/${TAG#v}.json" "release-assets/whats-new-${TAG#v}.json"
 
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v3

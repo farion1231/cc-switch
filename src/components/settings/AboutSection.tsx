@@ -22,8 +22,7 @@ import { WhatsNewDialog } from "@/components/WhatsNewDialog";
 import {
   WHATS_NEW_ENTRIES,
   entriesUpTo,
-  fetchWhatsNewSummary,
-  type WhatsNewEntry,
+  parseWhatsNewNotes,
 } from "@/lib/whatsNew";
 import { compareVersions } from "@/lib/version";
 import appIcon from "@/assets/icons/app-icon.png";
@@ -61,16 +60,31 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   );
   const [isDownloading, setIsDownloading] = useState(false);
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
-  // 待更新版本的随包摘要（安装包里还没有，联网取，失败退回本地摘要）
-  const [pendingEntry, setPendingEntry] = useState<WhatsNewEntry | null>(null);
   const [starPromptDismissed, setStarPromptDismissed] = useState(
     readStarPromptDismissed,
   );
+  const { hasUpdate, updateInfo, checkUpdate, resetDismiss, isChecking } =
+    useUpdate();
+
+  // 待更新版本的摘要随更新检查结果到达，无有效摘要时只显示本地内容。
+  const pendingEntry = useMemo(() => {
+    const candidate = updateInfo?.availableVersion;
+    if (
+      !hasUpdate ||
+      !candidate ||
+      !version ||
+      compareVersions(candidate, version) <= 0
+    ) {
+      return null;
+    }
+    return parseWhatsNewNotes(updateInfo.notes, candidate);
+  }, [hasUpdate, updateInfo, version]);
+
   const recentEntries = useMemo(
     () => (version ? entriesUpTo(WHATS_NEW_ENTRIES, version) : []),
     [version],
   );
-  // 近期更新列表 = 已装版本的摘要 + 待更新版本的摘要（有更新才取，同一版本只取一次）
+  // 近期更新列表 = 已装版本的摘要 + 待更新版本的摘要
   const recentEntriesWithPending = useMemo(
     () =>
       pendingEntry
@@ -78,29 +92,6 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         : recentEntries,
     [pendingEntry, recentEntries],
   );
-
-  const { hasUpdate, updateInfo, checkUpdate, resetDismiss, isChecking } =
-    useUpdate();
-
-  const candidatePendingVersion = updateInfo?.availableVersion;
-  useEffect(() => {
-    let active = true;
-    const candidate = candidatePendingVersion;
-    if (!candidate || !version || compareVersions(candidate, version) <= 0) {
-      setPendingEntry(null);
-      return;
-    }
-    void fetchWhatsNewSummary(candidate)
-      .then((entry) => {
-        if (active) setPendingEntry(entry);
-      })
-      .catch(() => {
-        if (active) setPendingEntry(null);
-      });
-    return () => {
-      active = false;
-    };
-  }, [candidatePendingVersion, version]);
 
   useEffect(() => {
     let active = true;
@@ -293,9 +284,6 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
               version: updateInfo.availableVersion,
             })}
           </p>
-          {updateInfo.notes && (
-            <p className="line-clamp-3 text-fg-2">{updateInfo.notes}</p>
-          )}
           {isPortable && (
             <p className="text-fg-2">{t("settings.portableUpdateHint")}</p>
           )}

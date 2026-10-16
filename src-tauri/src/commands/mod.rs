@@ -36,7 +36,6 @@ mod lightweight;
 mod s3_sync;
 mod usage;
 mod webdav_sync;
-mod whats_new;
 mod workspace;
 
 pub use auth::*;
@@ -74,5 +73,4 @@ pub use lightweight::*;
 pub use s3_sync::*;
 pub use usage::*;
 pub use webdav_sync::*;
-pub use whats_new::*;
 pub use workspace::*;

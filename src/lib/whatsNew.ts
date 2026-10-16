@@ -1,5 +1,4 @@
 import { compareVersions } from "@/lib/version";
-import { settingsApi } from "@/lib/api/settings";
 
 /**
  * 更新摘要：每个版本一份 `src/whats-new/<version>.json`，构建时打进安装包。
@@ -21,7 +20,7 @@ export interface WhatsNewEntry {
   version: string;
   /** 空数组 = 这一版不弹窗（纯构建、CI 之类的版本） */
   items: WhatsNewItem[];
-  /** 待更新的远端版本（安装包里还没有这份摘要，联网取的） */
+  /** 待更新的远端版本（摘要来自更新清单） */
   pending?: boolean;
 }
 
@@ -91,40 +90,11 @@ export function resolveWhatsNewLanguage(language: string): WhatsNewLanguage {
     : "en";
 }
 
-/*
- * 待更新版本的随包摘要：安装包只带自己之前的摘要，新版本还没装进来，
- * 本地自然没有它的 JSON。发版时 release.yml 把 src/whats-new/<版本>.json
- * 附成发布资产（whats-new-<版本>.json），sync-r2 再镜像到 dl.ccswitch.io，
- * 后端按 tag 取摘要以避开 webview 的 CORS 限制，镜像在前、GitHub 在后。
- */
-/** 远端摘要缓存进 localStorage，同一版本只取一次（存不下就每次都取） */
-const REMOTE_CACHE_PREFIX = "ccswitch:whats-new:remote:";
 const REMOTE_MAX_ITEMS = 4;
 
-function readCachedRemoteEntry(version: string): WhatsNewEntry | null {
-  try {
-    const raw = localStorage.getItem(REMOTE_CACHE_PREFIX + version);
-    if (!raw) return null;
-    const entry = parseWhatsNewEntry(JSON.parse(raw) as unknown);
-    return entry && entry.version === version && entry.items.length > 0
-      ? entry
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function cacheRemoteEntry(version: string, entry: WhatsNewEntry): void {
-  try {
-    localStorage.setItem(REMOTE_CACHE_PREFIX + version, JSON.stringify(entry));
-  } catch {
-    // 存不下就只在本次会话里有效
-  }
-}
-
 /**
- * 对任意取回来的数据只判形状、不抛错：弹窗渲染直接读 item.type、item[语言]，
- * 结构不对不能进列表。空 items 也不算摘要（纯构建版本本来就不弹窗）。
+ * 对任意数据只判形状、不抛错：弹窗渲染直接读 item.type、item[语言]，
+ * 结构不对不能进列表。空 items 形状合法，是否显示由调用方决定。
  */
 export function parseWhatsNewEntry(data: unknown): WhatsNewEntry | null {
   if (typeof data !== "object" || data === null || Array.isArray(data)) {
@@ -163,29 +133,22 @@ export function parseWhatsNewEntry(data: unknown): WhatsNewEntry | null {
 }
 
 /**
- * 取待更新版本的摘要：同一版本先读 localStorage 缓存，没有才联网，
- * 逐个地址尝试（镜像在前）。失败、结构不对或版本不匹配一律返回 null，
- * 近期更新就退回只显示已装版本的摘要。
+ * release.yml 将摘要 JSON 序列化进 latest.json.notes，updater 映射到 Update.body。
+ * 旧清单的纯文本、无效结构、版本不匹配或空条目都返回 null，近期更新只显示本地摘要。
  */
-export async function fetchWhatsNewSummary(
+export function parseWhatsNewNotes(
+  notes: string | undefined,
   version: string,
-): Promise<WhatsNewEntry | null> {
-  const cached = readCachedRemoteEntry(version);
-  if (cached) return cached;
-
-  for (const source of ["mirror", "github"] as const) {
-    try {
-      const data = await settingsApi.fetchWhatsNewSummary(version, source);
-      const entry = parseWhatsNewEntry(data);
-      if (entry && entry.version === version && entry.items.length > 0) {
-        cacheRemoteEntry(version, entry);
-        return entry;
-      }
-    } catch {
-      // 网络失败就静默试下一个地址，最后退回本地摘要
-    }
+): WhatsNewEntry | null {
+  if (!notes) return null;
+  try {
+    const entry = parseWhatsNewEntry(JSON.parse(notes) as unknown);
+    return entry && entry.version === version && entry.items.length > 0
+      ? entry
+      : null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 /** 官网更新日志：不带版本是列表页。官网只有 zh / en / ja，繁中用简中页面 */

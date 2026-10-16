@@ -1,18 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { invoke } from "@tauri-apps/api/core";
+import { describe, expect, it } from "vitest";
 import {
   changelogUrl,
   entriesSince,
   entriesUpTo,
-  fetchWhatsNewSummary,
   isNewerThanSeen,
   markSeen,
   parseWhatsNewEntry,
+  parseWhatsNewNotes,
   resolveWhatsNewLanguage,
   type WhatsNewEntry,
 } from "@/lib/whatsNew";
-
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 const item = (text: string) => ({
   type: "fix" as const,
@@ -105,10 +102,6 @@ const REMOTE_ENTRY = {
   items: [{ type: "new", zh: "新", "zh-TW": "新", en: "new", ja: "新機能" }],
 };
 
-afterEach(() => {
-  localStorage.clear();
-});
-
 describe("parseWhatsNewEntry", () => {
   it("accepts a well-formed entry and keeps only the four languages", () => {
     const parsed = parseWhatsNewEntry(REMOTE_ENTRY);
@@ -155,7 +148,7 @@ describe("parseWhatsNewEntry", () => {
   });
 
   it("allows empty items and rejects more than four", () => {
-    // 纯构建版本本来就是空 items，形状合法；是否算摘要由 fetch 层判
+    // 纯构建版本本来就是空 items，形状合法；是否显示由调用方决定
     expect(parseWhatsNewEntry({ version: "4.0.13", items: [] })).toEqual({
       version: "4.0.13",
       items: [],
@@ -175,98 +168,25 @@ describe("parseWhatsNewEntry", () => {
   });
 });
 
-describe("fetchWhatsNewSummary", () => {
-  const invokeMock = vi.mocked(invoke);
-
-  beforeEach(() => {
-    invokeMock.mockReset();
-  });
-
-  it("fetches through the native command, trying the mirror first", async () => {
-    invokeMock.mockResolvedValue(REMOTE_ENTRY);
-
-    const entry = await fetchWhatsNewSummary("4.0.13");
-    expect(entry).toEqual(REMOTE_ENTRY);
-    expect(invokeMock).toHaveBeenCalledTimes(1);
-    expect(invokeMock).toHaveBeenCalledWith("fetch_whats_new_summary", {
-      version: "4.0.13",
-      source: "mirror",
-    });
-  });
-
-  it("falls back to GitHub when the mirror fails", async () => {
-    invokeMock
-      .mockRejectedValueOnce(new Error("404"))
-      .mockResolvedValueOnce(REMOTE_ENTRY);
-
-    await expect(fetchWhatsNewSummary("4.0.13")).resolves.toEqual(REMOTE_ENTRY);
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "fetch_whats_new_summary", {
-      version: "4.0.13",
-      source: "github",
-    });
+describe("parseWhatsNewNotes", () => {
+  it("reads the serialized summary from the updater body", () => {
+    expect(parseWhatsNewNotes(JSON.stringify(REMOTE_ENTRY), "4.0.13")).toEqual(
+      REMOTE_ENTRY,
+    );
   });
 
   it.each([
-    null,
-    { version: "4.0.13" },
-    { version: "4.0.11", items: REMOTE_ENTRY.items },
-    { version: "4.0.13", items: [] },
-  ])(
-    "falls back when the mirror returns an unusable summary: %j",
-    async (data) => {
-      invokeMock
-        .mockResolvedValueOnce(data)
-        .mockResolvedValueOnce(REMOTE_ENTRY);
-
-      await expect(fetchWhatsNewSummary("4.0.13")).resolves.toEqual(
-        REMOTE_ENTRY,
-      );
-      expect(invokeMock).toHaveBeenNthCalledWith(2, "fetch_whats_new_summary", {
-        version: "4.0.13",
-        source: "github",
-      });
-    },
-  );
-
-  it("returns null on network failure instead of throwing", async () => {
-    invokeMock.mockRejectedValue(new Error("offline"));
-    await expect(fetchWhatsNewSummary("4.0.13")).resolves.toBeNull();
-    expect(invokeMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("returns null when the fetched version mismatches or items are empty", async () => {
-    invokeMock.mockResolvedValue({
-      version: "4.0.11",
-      items: REMOTE_ENTRY.items,
-    });
-    await expect(fetchWhatsNewSummary("4.0.13")).resolves.toBeNull();
-    invokeMock.mockResolvedValue({ version: "4.0.13", items: [] });
-    await expect(fetchWhatsNewSummary("4.0.13")).resolves.toBeNull();
-  });
-
-  it("caches per version and only fetches once", async () => {
-    invokeMock.mockResolvedValue(REMOTE_ENTRY);
-
-    await expect(fetchWhatsNewSummary("4.0.13")).resolves.toEqual({
-      ...REMOTE_ENTRY,
-    });
-    await expect(fetchWhatsNewSummary("4.0.13")).resolves.toEqual({
-      ...REMOTE_ENTRY,
-    });
-    expect(invokeMock).toHaveBeenCalledTimes(1);
-    await expect(fetchWhatsNewSummary("4.0.14")).resolves.toBeNull();
-    expect(invokeMock).toHaveBeenCalledTimes(3);
-  });
-
-  it.each([
-    "not JSON",
+    undefined,
+    "",
+    "Release v4.0.13",
+    '{"version":',
+    "null",
+    "[]",
     JSON.stringify({ version: "4.0.13" }),
     JSON.stringify({ version: "4.0.11", items: REMOTE_ENTRY.items }),
     JSON.stringify({ version: "4.0.13", items: [] }),
-  ])("does not trust an unusable cached value: %s", async (cached) => {
-    localStorage.setItem("ccswitch:whats-new:remote:4.0.13", cached);
-    invokeMock.mockRejectedValue(new Error("404"));
-    await expect(fetchWhatsNewSummary("4.0.13")).resolves.toBeNull();
-    expect(invokeMock).toHaveBeenCalledTimes(2);
+    JSON.stringify({ version: "4.0.13", items: [{ type: "new" }] }),
+  ])("returns no remote summary for unusable notes: %s", (notes) => {
+    expect(parseWhatsNewNotes(notes, "4.0.13")).toBeNull();
   });
 });

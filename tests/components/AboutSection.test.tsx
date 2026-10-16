@@ -6,12 +6,11 @@ import {
   within,
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { http, HttpResponse } from "msw";
-import { server } from "../msw/server";
 import type { WhatsNewEntry } from "@/lib/whatsNew";
 
 const mocks = vi.hoisted(() => ({
   availableVersion: "4.0.14" as string | undefined,
+  notes: undefined as string | undefined,
 }));
 
 vi.mock("@tauri-apps/api/app", () => ({
@@ -21,7 +20,7 @@ vi.mock("@/contexts/UpdateContext", () => ({
   useUpdate: () => ({
     hasUpdate: Boolean(mocks.availableVersion),
     updateInfo: mocks.availableVersion
-      ? { availableVersion: mocks.availableVersion }
+      ? { availableVersion: mocks.availableVersion, notes: mocks.notes }
       : null,
     checkUpdate: vi.fn(),
     resetDismiss: vi.fn(),
@@ -43,84 +42,86 @@ const pendingEntry: WhatsNewEntry = {
     },
   ],
 };
-const cacheKey = "ccswitch:whats-new:remote:4.0.14";
-
 describe("AboutSection recent updates", () => {
   beforeEach(() => {
     localStorage.clear();
     mocks.availableVersion = "4.0.14";
+    mocks.notes = JSON.stringify(pendingEntry);
   });
 
-  it.each([false, true])(
-    "marks the pending version in the real dialog (cached: %s)",
-    async (cached) => {
-      if (cached) localStorage.setItem(cacheKey, JSON.stringify(pendingEntry));
-      const requests = vi.fn();
-      server.use(
-        http.post(
-          "http://tauri.local/fetch_whats_new_summary",
-          async ({ request }) => {
-            requests(await request.json());
-            return HttpResponse.json(pendingEntry);
-          },
-        ),
-      );
+  it("marks the pending summary from notes without another request", async () => {
+    const requests = vi.spyOn(globalThis, "fetch");
+    render(<AboutSection isPortable={false} />);
+    expect(screen.queryByText(mocks.notes!)).not.toBeInTheDocument();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "whatsNew.recentTitle" }),
+    );
 
+    const dialog = await screen.findByRole("dialog");
+    const badge = await within(dialog).findByText("whatsNew.pendingUpdate");
+    expect(badge.closest("h3")).toHaveTextContent("v4.0.14");
+    expect(within(dialog).getAllByText("whatsNew.pendingUpdate")).toHaveLength(
+      1,
+    );
+    expect(within(dialog).getByText("待安装版本的修复")).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("heading", { name: "v4.0.13" }),
+    ).toBeInTheDocument();
+    expect(requests).not.toHaveBeenCalled();
+    requests.mockRestore();
+  });
+
+  it.each([
+    undefined,
+    "Release v4.0.14",
+    '{"version":',
+    JSON.stringify({ ...pendingEntry, version: "4.0.15" }),
+    JSON.stringify({ version: "4.0.14", items: [] }),
+  ])(
+    "keeps local summaries when notes have no usable summary: %s",
+    async (notes) => {
+      mocks.notes = notes;
       render(<AboutSection isPortable={false} />);
-      await waitFor(() =>
-        expect(localStorage.getItem(cacheKey)).not.toBeNull(),
-      );
       fireEvent.click(
         await screen.findByRole("button", { name: "whatsNew.recentTitle" }),
       );
 
       const dialog = await screen.findByRole("dialog");
-      const badge = await within(dialog).findByText("whatsNew.pendingUpdate");
-      expect(badge.closest("h3")).toHaveTextContent("v4.0.14");
-      expect(
-        within(dialog).getAllByText("whatsNew.pendingUpdate"),
-      ).toHaveLength(1);
-      expect(within(dialog).getByText("待安装版本的修复")).toBeInTheDocument();
       expect(
         within(dialog).getByRole("heading", { name: "v4.0.13" }),
       ).toBeInTheDocument();
-      if (cached) {
-        expect(requests).not.toHaveBeenCalled();
-      } else {
-        expect(requests).toHaveBeenCalledTimes(1);
-        expect(requests).toHaveBeenCalledWith({
-          version: "4.0.14",
-          source: "mirror",
-        });
-      }
+      expect(
+        within(dialog).queryByText("whatsNew.pendingUpdate"),
+      ).not.toBeInTheDocument();
     },
   );
 
-  it("keeps installed summaries available when both remote sources fail", async () => {
-    const requests = vi.fn();
-    server.use(
-      http.post(
-        "http://tauri.local/fetch_whats_new_summary",
-        async ({ request }) => {
-          requests(await request.json());
-          return new HttpResponse("offline", { status: 503 });
-        },
-      ),
-    );
-
-    render(<AboutSection isPortable={false} />);
-    await waitFor(() => expect(requests).toHaveBeenCalledTimes(2));
+  it("updates the pending summary when the check result changes", async () => {
+    const { rerender } = render(<AboutSection isPortable={false} />);
     fireEvent.click(
-      screen.getByRole("button", { name: "whatsNew.recentTitle" }),
+      await screen.findByRole("button", { name: "whatsNew.recentTitle" }),
     );
-
     const dialog = await screen.findByRole("dialog");
     expect(
-      within(dialog).getByRole("heading", { name: "v4.0.13" }),
+      await within(dialog).findByText("待安装版本的修复"),
     ).toBeInTheDocument();
+
+    mocks.notes = "Release v4.0.14";
+    rerender(<AboutSection isPortable={false} />);
     expect(
-      within(dialog).queryByText("whatsNew.pendingUpdate"),
+      within(dialog).queryByText("待安装版本的修复"),
     ).not.toBeInTheDocument();
-    expect(localStorage.getItem(cacheKey)).toBeNull();
+
+    mocks.notes = JSON.stringify(pendingEntry);
+    rerender(<AboutSection isPortable={false} />);
+    expect(within(dialog).getByText("待安装版本的修复")).toBeInTheDocument();
+
+    mocks.availableVersion = undefined;
+    rerender(<AboutSection isPortable={false} />);
+    await waitFor(() =>
+      expect(
+        within(dialog).queryByText("whatsNew.pendingUpdate"),
+      ).not.toBeInTheDocument(),
+    );
   });
 });
