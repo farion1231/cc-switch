@@ -165,22 +165,49 @@ mod tests {
         );
     }
 
-    /// 重定向 APPDATA 到 `dir`（真实用户级 mcp.json 布景），返回原值。
-    struct RedirectedAppdata(Option<std::ffi::OsString>);
+    /// 测试夹具：把各平台的用户数据根重定向到 `root`，并给出 mcp.json
+    /// 在该根下的真实路径（`resolved`——测试只往这里布景，不自己拼路径）。
+    /// Windows 重定向 `APPDATA`；macOS/Linux 重定向
+    /// `CC_SWITCH_TEST_HOME`（`get_home_dir` 走它）并清掉
+    /// `XDG_CONFIG_HOME`（Linux 分支会先走它；XDG 优先的生产语义由
+    /// `user_config_path_resolves_per_platform` 单独钉住）。Drop 恢复原值。
+    struct RedirectedUserDir {
+        resolved: std::path::PathBuf,
+        saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
 
-    impl RedirectedAppdata {
-        fn to(dir: &std::path::Path) -> Self {
-            let previous = std::env::var_os("APPDATA");
-            std::env::set_var("APPDATA", dir);
-            Self(previous)
+    impl RedirectedUserDir {
+        fn to(root: &std::path::Path) -> Self {
+            let mut saved: Vec<(&'static str, Option<std::ffi::OsString>)> = Vec::new();
+            if cfg!(windows) {
+                saved.push(("APPDATA", std::env::var_os("APPDATA")));
+                std::env::set_var("APPDATA", root);
+            } else {
+                saved.push((
+                    "CC_SWITCH_TEST_HOME",
+                    std::env::var_os("CC_SWITCH_TEST_HOME"),
+                ));
+                std::env::set_var("CC_SWITCH_TEST_HOME", root);
+                saved.push(("XDG_CONFIG_HOME", std::env::var_os("XDG_CONFIG_HOME")));
+                std::env::remove_var("XDG_CONFIG_HOME");
+            }
+            let resolved = user_config_path().expect("resolve under redirected root");
+            assert!(
+                resolved.starts_with(root),
+                "resolved path must stay under the redirected root: {}",
+                resolved.display()
+            );
+            Self { resolved, saved }
         }
     }
 
-    impl Drop for RedirectedAppdata {
+    impl Drop for RedirectedUserDir {
         fn drop(&mut self) {
-            match self.0.take() {
-                Some(previous) => std::env::set_var("APPDATA", previous),
-                None => std::env::remove_var("APPDATA"),
+            for (name, previous) in self.saved.drain(..) {
+                match previous {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
             }
         }
     }
@@ -191,11 +218,12 @@ mod tests {
     #[test]
     #[serial]
     fn import_absorbs_real_shaped_user_mcp_json() {
-        let appdata = tempfile::tempdir().expect("temp APPDATA");
-        let user_dir = appdata.path().join("Code").join("User");
+        let root = tempfile::tempdir().expect("temp user-data root");
+        let _redirect = RedirectedUserDir::to(root.path());
+        let user_dir = _redirect.resolved.parent().expect("user dir").to_path_buf();
         std::fs::create_dir_all(&user_dir).expect("create user dir");
         std::fs::write(
-            user_dir.join("mcp.json"),
+            _redirect.resolved.clone(),
             serde_json::json!({
                 "servers": {
                     "microsoft/playwright-mcp": {
@@ -231,7 +259,6 @@ mod tests {
         let state = AppState::new(Arc::new(
             Database::memory().expect("create in-memory database"),
         ));
-        let _redirect = RedirectedAppdata::to(appdata.path());
         // 第一次导入：新增 2 条；transport 冲突为空，不该报错。
         let imported = import(&state).expect("import once");
         assert_eq!(imported, 2, "both servers are new");
@@ -289,11 +316,12 @@ mod tests {
     #[test]
     #[serial]
     fn import_reads_jsonc_user_mcp_json() {
-        let appdata = tempfile::tempdir().expect("temp APPDATA");
-        let user_dir = appdata.path().join("Code").join("User");
-        std::fs::create_dir_all(&user_dir).expect("create user dir");
+        let root = tempfile::tempdir().expect("temp user-data root");
+        let _redirect = RedirectedUserDir::to(root.path());
+        std::fs::create_dir_all(_redirect.resolved.parent().expect("user dir"))
+            .expect("create user dir");
         std::fs::write(
-            user_dir.join("mcp.json"),
+            _redirect.resolved.clone(),
             // 行注释 + 尾逗号：严格 JSON 解析会整份拒绝
             r#"{
                 "servers": {
@@ -311,7 +339,6 @@ mod tests {
         let state = AppState::new(Arc::new(
             Database::memory().expect("create in-memory database"),
         ));
-        let _redirect = RedirectedAppdata::to(appdata.path());
         let imported = import(&state).expect("import JSONC config");
         assert_eq!(imported, 1, "JSONC server imported");
         let servers = state.db.get_all_mcp_servers().expect("read servers");
@@ -343,45 +370,71 @@ mod tests {
     }
 
     /// 路径解析按平台走真实位置：Windows 用 APPDATA；macOS 用
-    /// ~/Library/Application Support；Linux 用 XDG_CONFIG_HOME（绝对时）
-    /// 否则 ~/.config。测试经 CC_SWITCH_TEST_HOME 隔离真实 home。
+    /// ~/Library/Application Support；Linux 优先走绝对路径的
+    /// XDG_CONFIG_HOME、清掉后回落 ~/.config（经 CC_SWITCH_TEST_HOME
+    /// 隔离真实 home——两条分支都钉住，不留暗病）。
     #[test]
     #[serial]
     fn user_config_path_resolves_per_platform() {
         let isolated_home = tempfile::tempdir().expect("isolated home");
-        let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
+        let saved_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        let saved_xdg = std::env::var_os("XDG_CONFIG_HOME");
         std::env::set_var("CC_SWITCH_TEST_HOME", isolated_home.path());
+        std::env::remove_var("XDG_CONFIG_HOME");
 
+        // 分支一：清掉 XDG 后各平台的用户数据目录。
         let resolved = user_config_path().expect("platform path resolves");
+        let user_data_dir = resolved
+            .parent()
+            .and_then(|dir| dir.parent())
+            .and_then(|dir| dir.parent())
+            .expect("user data dir");
         let expected = if cfg!(windows) {
             std::env::var_os("APPDATA")
                 .map(std::path::PathBuf::from)
                 .expect("APPDATA set on Windows runners")
-                .join("Code")
-                .join("User")
-                .join("mcp.json")
         } else if cfg!(target_os = "macos") {
             isolated_home
                 .path()
                 .join("Library")
                 .join("Application Support")
-                .join("Code")
-                .join("User")
-                .join("mcp.json")
         } else {
-            isolated_home
-                .path()
-                .join(".config")
-                .join("Code")
-                .join("User")
-                .join("mcp.json")
+            isolated_home.path().join(".config")
         };
+        assert_eq!(user_data_dir, expected);
+        assert!(
+            resolved.ends_with(std::path::Path::new("Code/User/mcp.json")),
+            "resolved path keeps the VS Code layout: {}",
+            resolved.display()
+        );
 
-        match previous {
+        // 分支二（仅 Linux）：绝对路径的 XDG_CONFIG_HOME 优先于 ~/.config。
+        let mut xdg_resolved: Option<std::path::PathBuf> = None;
+        let mut xdg_root: Option<tempfile::TempDir> = None;
+        if cfg!(all(unix, not(target_os = "macos"))) {
+            let root = tempfile::tempdir().expect("temp XDG root");
+            std::env::set_var("XDG_CONFIG_HOME", root.path());
+            xdg_resolved = Some(user_config_path().expect("resolve under XDG root"));
+            xdg_root = Some(root);
+        }
+
+        // 统一恢复：两个分支的环境变量一次清干净。
+        std::env::remove_var("XDG_CONFIG_HOME");
+        match saved_test_home {
             Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
             None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
         }
-        assert_eq!(resolved, expected);
+        match saved_xdg {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        if let (Some(resolved), Some(root)) = (xdg_resolved, xdg_root.as_ref()) {
+            assert!(
+                resolved.starts_with(root.path()),
+                "absolute XDG_CONFIG_HOME must win: {}",
+                resolved.display()
+            );
+        }
     }
 
     /// 库里存的隐式 stdio（缺 type，社区 .mcp.json 惯例）与 VS Code 里
@@ -389,11 +442,12 @@ mod tests {
     #[test]
     #[serial]
     fn import_treats_implicit_stdio_as_same_transport() {
-        let appdata = tempfile::tempdir().expect("temp APPDATA");
-        let user_dir = appdata.path().join("Code").join("User");
-        std::fs::create_dir_all(&user_dir).expect("create user dir");
+        let root = tempfile::tempdir().expect("temp user-data root");
+        let _redirect = RedirectedUserDir::to(root.path());
+        std::fs::create_dir_all(_redirect.resolved.parent().expect("user dir"))
+            .expect("create user dir");
         std::fs::write(
-            user_dir.join("mcp.json"),
+            _redirect.resolved.clone(),
             serde_json::json!({
                 "servers": {
                     "shared": {
@@ -419,7 +473,6 @@ mod tests {
             ))
             .expect("seed existing server");
 
-        let _redirect = RedirectedAppdata::to(appdata.path());
         // 同一条连接（隐式 stdio ≡ 显式 stdio）：Ok(0)、不报冲突、不新增条目。
         // 冲突路径返回 Err，这里 expect 就是最强的断言。
         let imported = import(&state).expect("same transport must not conflict");
