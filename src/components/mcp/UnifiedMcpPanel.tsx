@@ -45,6 +45,7 @@ import {
   extractErrorMessage,
   translateMcpBackendError,
 } from "@/utils/errorUtils";
+import { isMac, isWindows } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import McpFormModal from "./McpFormModal";
 import {
@@ -112,9 +113,16 @@ const IMPORT_SOURCE_FILES: Record<
   omp: { file: "~/.omp/agent/mcp.json" },
 };
 
-/** 导入时还会读取的非应用配置源（只做导入源，没有开关位） */
+/** 导入时还会读取的非应用配置源（只做导入源，没有开关位）。
+ * VS Code 的用户级 mcp.json 在各平台的用户数据目录里，按平台显示真实路径。 */
 const IMPORT_EXTRA_SOURCES: { file: string }[] = [
-  { file: "%APPDATA%/Code/User/mcp.json (VS Code)" },
+  {
+    file: isWindows()
+      ? "%APPDATA%/Code/User/mcp.json (VS Code)"
+      : isMac()
+        ? "~/Library/Application Support/Code/User/mcp.json (VS Code)"
+        : "~/.config/Code/User/mcp.json (VS Code)",
+  },
 ];
 
 /** 先写配置文件、成功后才入库的应用：写失败时开关没变，重试要逐行重写 */

@@ -1,9 +1,9 @@
 //! VS Code MCP 服务器导入。
 //!
-//! VS Code 不是 AppType：`%APPDATA%\Code\User\mcp.json` 只作为导入源，
+//! VS Code 不是 AppType：用户级 `mcp.json` 只作为导入源，
 //! 导入的条目按现有应用开关启用，cc-switch 不写回 VS Code 的配置。
-//! `${input:...}` 占位符原样保留（VS Code 启动时才弹窗解析），
-//! 用户在支持 promptString 的应用里启用时仍可解析。
+//! `${input:...}` 占位符原样保留在 headers 里——没有任何受管应用
+//! 解析 VS Code 的 input 变量，启用后按字面值发送。
 
 use serde_json::Value;
 
@@ -11,13 +11,39 @@ use crate::app_config::{McpApps, McpServer};
 use crate::error::AppError;
 use crate::store::AppState;
 
-/// 用户级 mcp.json 路径（`%APPDATA%\Code\User\mcp.json`）。
-/// 只在 Windows 存在；其他平台（没有 APPDATA）返回 None = 源不可用，
-/// 统一导入继续读其余来源，不因平台差异整体报错。
+/// 用户级 mcp.json 路径（VS Code 把它放在 settings.json 旁的用户数据目录）。
+/// Windows 缺 `APPDATA` 时返回 None = 源不可用，统一导入继续读其余来源。
 fn user_config_path() -> Option<std::path::PathBuf> {
-    std::env::var_os("APPDATA")
-        .map(std::path::PathBuf::from)
-        .map(|appdata| appdata.join("Code").join("User").join("mcp.json"))
+    let user_dir = user_data_dir()?;
+    Some(user_dir.join("Code").join("User").join("mcp.json"))
+}
+
+/// VS Code 的用户数据目录（按平台，与 settings.json 同目录的父目录）。
+#[cfg(windows)]
+fn user_data_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("APPDATA").map(std::path::PathBuf::from)
+}
+
+#[cfg(target_os = "macos")]
+fn user_data_dir() -> Option<std::path::PathBuf> {
+    Some(
+        crate::config::get_home_dir()
+            .join("Library")
+            .join("Application Support"),
+    )
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn user_data_dir() -> Option<std::path::PathBuf> {
+    // XDG_CONFIG_HOME 存在且为绝对路径时优先（与 Claude Desktop 的
+    // linux_config_dir_from_home 同一先例）；否则回落 ~/.config。
+    let config_home = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from);
+    let home = crate::config::get_home_dir();
+    let dir = match config_home {
+        Some(dir) if dir.is_absolute() => dir,
+        _ => home.join(".config"),
+    };
+    Some(dir)
 }
 
 /// `type` 缺省时按字段推断（与社区 .mcp.json 惯例一致）：有 url 无 command
@@ -38,11 +64,12 @@ fn unified_spec(native: &Value) -> Value {
     spec
 }
 
-/// 连接定义比对用的 transport 投影：只保留 type/command/args/url/headers/env。
-/// 先走 `unified_spec`（隐式 type 补成显式），再投影——两侧同样归一化，
-/// 否则「库里存的隐式 stdio」和「新导入补成显式 stdio」会被误报成冲突。
+/// 连接定义比对用的 transport 投影：只保留连接相关字段（含 cwd——
+/// 工作目录不同的 stdio 条目是不同连接）。先走 `unified_spec`（隐式
+/// type 补成显式）再投影——两侧同样归一化，否则「库里存的隐式 stdio」
+/// 和「新导入补成显式 stdio」会被误报成冲突。
 fn transport_spec(spec: &Value) -> Value {
-    const TRANSPORT_FIELDS: [&str; 6] = ["type", "command", "args", "url", "headers", "env"];
+    const TRANSPORT_FIELDS: [&str; 7] = ["type", "command", "args", "url", "headers", "env", "cwd"];
     let spec = unified_spec(spec);
     let mut fields = serde_json::Map::new();
     if let Some(object) = spec.as_object() {
@@ -57,9 +84,9 @@ fn transport_spec(spec: &Value) -> Value {
 
 /// 从 VS Code 的用户级 `mcp.json` 导入。同 transport 的已有条目只报告冲突并跳过；
 /// `inputs` 声明（`${input:...}` 占位符的解析来源）不导入——占位符原样保留在
-/// headers 里，仅对支持 promptString 的应用有效。
+/// headers 里，没有任何受管应用解析它，启用后按字面值发送。
 pub fn import(state: &AppState) -> Result<usize, AppError> {
-    // 非 Windows（没有 APPDATA）= 源不存在，不是错误：其余来源照常导入。
+    // 源不可用（Windows 缺 APPDATA）= 不是错误：其余来源照常导入。
     let Some(path) = user_config_path() else {
         return Ok(0);
     };
@@ -297,7 +324,7 @@ mod tests {
         );
     }
 
-    /// 非 Windows（没有 APPDATA）= 源不可用：导入返回 Ok(0) 而不是把
+    /// Windows 缺 APPDATA = 源不可用：导入返回 Ok(0) 而不是把
     /// 统一导入整体报成失败，其余来源照常工作。
     #[test]
     #[serial]
@@ -313,6 +340,48 @@ mod tests {
             None => std::env::remove_var("APPDATA"),
         }
         assert_eq!(imported.expect("no-source import"), 0);
+    }
+
+    /// 路径解析按平台走真实位置：Windows 用 APPDATA；macOS 用
+    /// ~/Library/Application Support；Linux 用 XDG_CONFIG_HOME（绝对时）
+    /// 否则 ~/.config。测试经 CC_SWITCH_TEST_HOME 隔离真实 home。
+    #[test]
+    #[serial]
+    fn user_config_path_resolves_per_platform() {
+        let isolated_home = tempfile::tempdir().expect("isolated home");
+        let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", isolated_home.path());
+
+        let resolved = user_config_path().expect("platform path resolves");
+        let expected = if cfg!(windows) {
+            std::env::var_os("APPDATA")
+                .map(std::path::PathBuf::from)
+                .expect("APPDATA set on Windows runners")
+                .join("Code")
+                .join("User")
+                .join("mcp.json")
+        } else if cfg!(target_os = "macos") {
+            isolated_home
+                .path()
+                .join("Library")
+                .join("Application Support")
+                .join("Code")
+                .join("User")
+                .join("mcp.json")
+        } else {
+            isolated_home
+                .path()
+                .join(".config")
+                .join("Code")
+                .join("User")
+                .join("mcp.json")
+        };
+
+        match previous {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        assert_eq!(resolved, expected);
     }
 
     /// 库里存的隐式 stdio（缺 type，社区 .mcp.json 惯例）与 VS Code 里
