@@ -182,6 +182,18 @@
     "openTerminal": "Open Terminal",
     "terminalOpened": "Terminal opened",
     "terminalOpenFailed": "Failed to open terminal",
+    "openTerminalDialog": {
+      "title": "Open a terminal in which folder?",
+      "description": "A terminal opens in the folder you pick and starts Claude Code with \"{{name}}\"'s settings. Usually you'd pick your project folder.",
+      "isolationTitle": "This terminal is isolated",
+      "isolationBody": "It stays on \"{{name}}\": switching providers in CC Switch later won't affect it, and it won't change the provider CC Switch is currently using.",
+      "noDir": "No folder selected",
+      "choose": "Choose Folder…",
+      "change": "Change…",
+      "recent": "Recent",
+      "forget": "Remove from recent",
+      "confirm": "Open Terminal"
+    },
     "name": "Name",
     "namePlaceholder": "e.g., Claude Official",
     "websiteUrl": "Website URL",

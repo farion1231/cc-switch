@@ -182,6 +182,18 @@
     "openTerminal": "打开终端",
     "terminalOpened": "终端已打开",
     "terminalOpenFailed": "打开终端失败",
+    "openTerminalDialog": {
+      "title": "在哪个目录打开终端？",
+      "description": "会在你选的目录里打开一个终端，并用「{{name}}」的配置启动 Claude Code。一般选你的项目文件夹。",
+      "isolationTitle": "这个终端是隔离的",
+      "isolationBody": "它固定使用「{{name}}」，之后在 CC Switch 里切换供应商不会影响它；它也不会改动 CC Switch 里正在使用的供应商。",
+      "noDir": "还没选目录",
+      "choose": "选择文件夹…",
+      "change": "更换…",
+      "recent": "最近用过",
+      "forget": "从最近用过里移除",
+      "confirm": "打开终端"
+    },
     "name": "名称",
     "namePlaceholder": "例如：Claude 官方",
     "websiteUrl": "官网链接",

@@ -182,6 +182,18 @@
     "openTerminal": "ターミナルを開く",
     "terminalOpened": "ターミナルを開きました",
     "terminalOpenFailed": "ターミナルを開けませんでした",
+    "openTerminalDialog": {
+      "title": "どのフォルダでターミナルを開きますか？",
+      "description": "選んだフォルダでターミナルを開き、「{{name}}」の設定で Claude Code を起動します。通常はプロジェクトのフォルダを選びます。",
+      "isolationTitle": "このターミナルは分離されています",
+      "isolationBody": "常に「{{name}}」を使います。あとで CC Switch でプロバイダーを切り替えても影響を受けず、CC Switch で使用中のプロバイダーも変更しません。",
+      "noDir": "フォルダが未選択です",
+      "choose": "フォルダを選択…",
+      "change": "変更…",
+      "recent": "最近使ったフォルダ",
+      "forget": "最近使ったフォルダから削除",
+      "confirm": "ターミナルを開く"
+    },
     "name": "名前",
     "namePlaceholder": "例: Claude Official",
     "websiteUrl": "Web サイト URL",

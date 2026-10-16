@@ -182,6 +182,18 @@
     "openTerminal": "開啟終端機",
     "terminalOpened": "終端機已開啟",
     "terminalOpenFailed": "開啟終端機失敗",
+    "openTerminalDialog": {
+      "title": "要在哪個目錄開啟終端機？",
+      "description": "會在你選的目錄裡開啟一個終端機，並用「{{name}}」的設定啟動 Claude Code。一般選你的專案資料夾。",
+      "isolationTitle": "這個終端機是隔離的",
+      "isolationBody": "它固定使用「{{name}}」，之後在 CC Switch 裡切換供應商不會影響它；它也不會改動 CC Switch 裡正在使用的供應商。",
+      "noDir": "還沒選目錄",
+      "choose": "選擇資料夾…",
+      "change": "更換…",
+      "recent": "最近用過",
+      "forget": "從最近用過中移除",
+      "confirm": "開啟終端機"
+    },
     "name": "名稱",
     "namePlaceholder": "例如：Claude 官方",
     "websiteUrl": "官網連結",
