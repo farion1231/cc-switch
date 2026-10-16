@@ -1651,6 +1651,10 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
+        piModel("minimax/minimax-m3.1-flash-preview", {
+          id: "MiniMax-M3.1-Flash-Preview",
+          maxTokens: 131072,
+        }),
         piModel("minimax/minimax-m3", {
           id: "MiniMax-M3",
           maxTokens: 131072,
@@ -1678,6 +1682,10 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
+        piModel("minimax/minimax-m3.1-flash-preview", {
+          id: "MiniMax-M3.1-Flash-Preview",
+          maxTokens: 131072,
+        }),
         piModel("minimax/minimax-m3", {
           id: "MiniMax-M3",
           maxTokens: 131072,

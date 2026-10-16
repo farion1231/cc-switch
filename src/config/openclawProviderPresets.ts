@@ -3962,46 +3962,17 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "MiniMax-M3",
-          name: "MiniMax M3",
+          id: "MiniMax-M3.1-Flash-Preview",
+          name: "MiniMax M3.1 Flash Preview",
           reasoning: true,
           input: ["text", "image"],
           contextWindow: 1000000,
           maxTokens: 131072,
-          cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
+          compat: {
+            supportsReasoningEffort: true,
+            supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+          },
         },
-      ],
-    },
-    category: "cn_official",
-    theme: {
-      backgroundColor: "#f64551",
-      textColor: "#FFFFFF",
-    },
-    icon: "minimax",
-    iconColor: "#FF6B6B",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: { primary: "minimax/MiniMax-M3" },
-      modelCatalog: { "minimax/MiniMax-M3": { alias: "MiniMax" } },
-    },
-  },
-  {
-    name: "MiniMax en",
-    family: "minimax",
-    regionKey: "intl",
-    websiteUrl: "https://platform.minimax.io",
-    apiKeyUrl: "https://platform.minimax.io/subscribe/coding-plan",
-    settingsConfig: {
-      baseUrl: "https://api.minimax.io/v1",
-      apiKey: "",
-      api: "openai-completions",
-      models: [
         {
           id: "MiniMax-M3",
           name: "MiniMax M3",
@@ -4028,8 +3999,65 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "minimax-en/MiniMax-M3" },
-      modelCatalog: { "minimax-en/MiniMax-M3": { alias: "MiniMax" } },
+      model: { primary: "minimax/MiniMax-M3.1-Flash-Preview" },
+      modelCatalog: {
+        "minimax/MiniMax-M3.1-Flash-Preview": { alias: "MiniMax" },
+      },
+    },
+  },
+  {
+    name: "MiniMax en",
+    family: "minimax",
+    regionKey: "intl",
+    websiteUrl: "https://platform.minimax.io",
+    apiKeyUrl: "https://platform.minimax.io/subscribe/coding-plan",
+    settingsConfig: {
+      baseUrl: "https://api.minimax.io/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "MiniMax-M3.1-Flash-Preview",
+          name: "MiniMax M3.1 Flash Preview",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 131072,
+          compat: {
+            supportsReasoningEffort: true,
+            supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+          },
+        },
+        {
+          id: "MiniMax-M3",
+          name: "MiniMax M3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 131072,
+          cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "cn_official",
+    theme: {
+      backgroundColor: "#f64551",
+      textColor: "#FFFFFF",
+    },
+    icon: "minimax",
+    iconColor: "#FF6B6B",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "minimax-en/MiniMax-M3.1-Flash-Preview" },
+      modelCatalog: {
+        "minimax-en/MiniMax-M3.1-Flash-Preview": { alias: "MiniMax" },
+      },
     },
   },
   {

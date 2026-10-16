@@ -938,12 +938,78 @@ pub fn apply_switch_defaults(
         .filter(|s| !s.is_empty());
 
     let current = get_model_config()?.unwrap_or_default();
+    let previous_provider = current.provider.clone();
     let merged = HermesModelConfig {
         default: first_model_id.or(current.default.clone()),
         provider: Some(provider_id.to_string()),
         ..current
     };
-    set_model_config(&merged)
+    let outcome = set_model_config(&merged)?;
+    if let Err(e) = sync_title_generation_model(previous_provider.as_deref(), settings_config) {
+        log::warn!("Failed to sync Hermes auxiliary.title_generation.model: {e}");
+    }
+    Ok(outcome)
+}
+
+/// Pin `auxiliary.title_generation.model` when the provider declares
+/// `title_generation_model` (e.g. MiniMax M3.1 rejects the `reasoning_effort: none`
+/// that Hermes' title request sends, so titles use a model that accepts it).
+///
+/// Switching to a provider without the field removes the pin only if it still
+/// equals the value declared by the previously active provider, so a pin the
+/// user set by hand is left alone.
+fn sync_title_generation_model(
+    previous_provider: Option<&str>,
+    settings_config: &serde_json::Value,
+) -> Result<(), AppError> {
+    let field = "title_generation_model";
+    let wanted = settings_config
+        .get(field)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let config = read_hermes_config()?;
+    let mut aux = config
+        .get("auxiliary")
+        .and_then(|v| v.as_mapping())
+        .cloned()
+        .unwrap_or_default();
+    let (k_title, k_model) = (
+        serde_yaml::Value::from("title_generation"),
+        serde_yaml::Value::from("model"),
+    );
+    let mut title = aux
+        .get(&k_title)
+        .and_then(|v| v.as_mapping())
+        .cloned()
+        .unwrap_or_default();
+    let current = title.get(&k_model).and_then(|v| v.as_str()).map(String::from);
+    match wanted {
+        Some(model) => {
+            if current.as_deref() == Some(model) {
+                return Ok(());
+            }
+            title.insert(k_model, serde_yaml::Value::from(model));
+        }
+        None => {
+            let owned = match (current.as_deref(), previous_provider) {
+                (Some(cur), Some(prev)) => get_provider(prev)?
+                    .and_then(|p| p.get(field).and_then(|v| v.as_str()).map(|s| s == cur))
+                    .unwrap_or(false),
+                _ => false,
+            };
+            if !owned {
+                return Ok(());
+            }
+            title.remove(&k_model);
+        }
+    }
+    if title.is_empty() {
+        aux.remove(&k_title);
+    } else {
+        aux.insert(k_title, serde_yaml::Value::Mapping(title));
+    }
+    write_yaml_section_to_config("auxiliary", &serde_yaml::Value::Mapping(aux)).map(|_| ())
 }
 
 // ============================================================================
@@ -2007,6 +2073,54 @@ custom_providers:
     }
 
     // ---- apply_switch_defaults ----
+
+    #[test]
+    #[serial]
+    fn title_generation_model_is_pinned_and_removed_only_when_owned() {
+        with_test_home(|| {
+            let mm = serde_json::json!({
+                "base_url": "https://api.minimax.cn/v1",
+                "models": [{ "id": "MiniMax-M3.1-Flash-Preview" }, { "id": "MiniMax-M3" }],
+                "title_generation_model": "MiniMax-M3",
+            });
+            let other = serde_json::json!({ "models": [{ "id": "x" }] });
+            set_provider("minimax", mm.clone()).unwrap();
+            set_provider("other", other.clone()).unwrap();
+            let read = || {
+                read_hermes_config()
+                    .unwrap()
+                    .get("auxiliary")
+                    .and_then(|a| a.get("title_generation"))
+                    .and_then(|t| t.get("model"))
+                    .and_then(|m| m.as_str().map(String::from))
+            };
+            // user's other auxiliary settings must survive
+            write_yaml_section_to_config(
+                "auxiliary",
+                &serde_yaml::from_str("title_generation:\n  timeout: 9\ncompression:\n  model: keep\n")
+                    .unwrap(),
+            )
+            .unwrap();
+
+            apply_switch_defaults("minimax", &mm).unwrap();
+            assert_eq!(read().as_deref(), Some("MiniMax-M3"));
+            apply_switch_defaults("other", &other).unwrap();
+            assert_eq!(read(), None);
+            let cfg = read_hermes_config().unwrap();
+            assert_eq!(cfg["auxiliary"]["title_generation"]["timeout"].as_i64(), Some(9));
+            assert_eq!(cfg["auxiliary"]["compression"]["model"].as_str(), Some("keep"));
+
+            // a pin the user set by hand is not removed
+            apply_switch_defaults("minimax", &mm).unwrap();
+            write_yaml_section_to_config(
+                "auxiliary",
+                &serde_yaml::from_str("title_generation:\n  model: mine\n").unwrap(),
+            )
+            .unwrap();
+            apply_switch_defaults("other", &other).unwrap();
+            assert_eq!(read().as_deref(), Some("mine"));
+        });
+    }
 
     #[test]
     #[serial]

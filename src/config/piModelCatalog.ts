@@ -264,6 +264,15 @@ export const piModelCatalog = {
       maxTokens: 128_000,
     },
   },
+  "minimax/minimax-m3.1-flash-preview": {
+    capabilities: {
+      name: "MiniMax-M3.1-Flash-Preview",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+    },
+  },
   "moonshotai/kimi-k2.5": {
     capabilities: {
       name: "Kimi K2.5",

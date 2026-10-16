@@ -3101,7 +3101,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "minimax",
       "https://api.minimax.cn/v1",
-      "MiniMax-M3",
+      "MiniMax-M3.1-Flash-Preview",
     ),
     endpointCandidates: ["https://api.minimax.cn/v1"],
     // MiniMax 官方 API 参考已列 /v1/responses 为正式端点（CN/intl 双区，POST /v1/responses），原生 Responses，无需路由接管转换
@@ -3112,6 +3112,16 @@ requires_openai_auth = true`,
     // 端点接受但与 high 行为完全等价，不给假差异档）。与模板默认一致故 Codex 侧
     // 零行为变化，显式声明只为表单可见（"未设置"误导性更大，Jason 2026-08-15 拍板）
     modelCatalog: modelCatalog([
+      {
+        model: "MiniMax-M3.1-Flash-Preview",
+        displayName: "MiniMax-M3.1-Flash-Preview",
+        contextWindow: 1000000,
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text", "image"],
+        baseInstructions:
+          "You are Codex, a coding agent based on MiniMax-M3.1-Flash-Preview. You and the user share the same workspace and collaborate to achieve the user's goals.",
+      },
       {
         model: "MiniMax-M3",
         displayName: "MiniMax-M3",
@@ -3141,7 +3151,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "minimax_en",
       "https://api.minimax.io/v1",
-      "MiniMax-M3",
+      "MiniMax-M3.1-Flash-Preview",
     ),
     endpointCandidates: ["https://api.minimax.io/v1"],
     // MiniMax 官方 API 参考已列 /v1/responses 为正式端点（CN/intl 双区，POST /v1/responses），原生 Responses，无需路由接管转换
@@ -3152,6 +3162,16 @@ requires_openai_auth = true`,
     // 端点接受但与 high 行为完全等价，不给假差异档）。与模板默认一致故 Codex 侧
     // 零行为变化，显式声明只为表单可见（"未设置"误导性更大，Jason 2026-08-15 拍板）
     modelCatalog: modelCatalog([
+      {
+        model: "MiniMax-M3.1-Flash-Preview",
+        displayName: "MiniMax-M3.1-Flash-Preview",
+        contextWindow: 1000000,
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text", "image"],
+        baseInstructions:
+          "You are Codex, a coding agent based on MiniMax-M3.1-Flash-Preview. You and the user share the same workspace and collaborate to achieve the user's goals.",
+      },
       {
         model: "MiniMax-M3",
         displayName: "MiniMax-M3",
