@@ -320,6 +320,24 @@ paru -S cc-switch-bin
 > **補足**: 初回起動時、CC Switch は Claude Code、Codex、Gemini CLI、Grok Build の既存設定を `default` という名前のプロバイダとして自動でインポートし、これらのツールと Claude Desktop に公式プロバイダを追加します。既存の設定が失われることはありません。
 
 各機能の詳しい使い方については、**[ユーザーマニュアル](docs/user-manual/ja/README.md)** をご覧ください。プロバイダ管理、MCP/プロンプト/Skills、ローカルルーティングとフェイルオーバーなど、すべての機能を網羅しています。
+### リモート管理
+
+同一ネットワーク内の任意のブラウザから CC Switch を制御できます。
+
+1. **有効化**: 設定 → リモート管理 → **有効** をオン
+2. **アクセス**: ブラウザで `http://localhost:4000` を開く（デフォルトポート。設定で変更可能）
+3. **Tailscale**: 必要に応じて Tailscale を有効化し、外部ネットワークからのアクセスを可能にする
+
+**API エンドポイント** (`http://localhost:4000/api/`)
+
+| メソッド | エンドポイント | 説明 |
+|----------|---------------|------|
+| GET | `/health` | サーバー状態 |
+| GET | `/providers` | プロバイダ一覧を取得 |
+| GET | `/current` | 現在アクティブなプロバイダを取得 |
+| POST | `/switch` | プロバイダを切り替え（リクエストボディ：`{ provider_id }`）|
+| GET | `/events` | SSE リアルタイム更新ストリーム |
+
 
 ## 特長
 
@@ -397,6 +415,7 @@ paru -S cc-switch-bin
 
 ### システム & プラットフォーム
 
+- **リモート管理** -- 内蔵 HTTP サーバー。Web UI と REST API を提供し、同一ネットワーク内の任意のデバイスからプロバイダを切り替え可能
 - **クラウド同期** — WebDAV（坚果云、Nextcloud、Synology NAS など）または S3 互換ストレージ（AWS S3、Cloudflare R2、Alibaba Cloud OSS、Tencent Cloud COS など）で複数のデバイス間を同期。CC Switch の設定ディレクトリを Dropbox、OneDrive、iCloud などのクラウドストレージのフォルダに置くことも可能
 - **CLI ツール管理** — サイドバーの「アプリ」ページで Claude Code、Codex などのコマンドラインツールの現在のバージョンと最新バージョンを確認し、ワンクリックでインストール、アップグレード、一括アップグレード。重複インストールの診断にも対応。Windows では WSL 内のツールも管理可能（よくある質問を参照）
 - **Deep Link**（`ccswitch://`）— リンクからプロバイダ、MCP サーバー、プロンプトをワンクリックでインポート、またはスキルリポジトリを追加。リンクは [オンライン生成ツール](https://ccswitch.io/deplink.html) で作成可能。サイトにインポートボタンを置きたい運営者は [連携ガイド](https://github.com/farion1231/cc-switch/blob/main/docs/guides/deeplink-site-integration-guide-ja.md) を参照

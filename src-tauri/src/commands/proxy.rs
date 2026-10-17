@@ -33,7 +33,17 @@ fn require_mode_app(app_type: &str) -> Result<crate::app_config::AppType, String
 pub async fn start_proxy_server(
     state: tauri::State<'_, AppState>,
 ) -> Result<ProxyServerInfo, String> {
-    state.proxy_service.start().await
+    let info = state.proxy_service.start().await?;
+    // 通知 SSE 订阅者：代理已启动。让 useProxyEventStream 触发 React Query invalidate，
+    // 远程浏览器（远程管理模式）与桌面 UI 立即刷新。
+    // 上游 4.0.14 把旧的 `start_with_takeover` 折进了 `mode::controller`，广播点随宿主
+    // 函数一起消失，这里把它重新挂到新入口上。
+    state.proxy_service.broadcast_event(serde_json::json!({
+        "type": "proxy_started",
+        "address": info.address,
+        "port": info.port,
+    }));
+    Ok(info)
 }
 
 /// 停止代理服务器（仅停止服务，不恢复/清理 Live 接管状态）
@@ -59,7 +69,14 @@ pub async fn stop_proxy_server(state: tauri::State<'_, AppState>) -> Result<(), 
 /// 关闭本地路由：所有应用退回直连，再停止代理服务器
 #[tauri::command]
 pub async fn stop_proxy_with_restore(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    crate::mode::controller::exit_all(state.inner()).await
+    let result = crate::mode::controller::exit_all(state.inner()).await;
+    if result.is_ok() {
+        // 与 start_proxy_server 对称：通知 SSE 订阅者代理已停止并恢复配置。
+        state
+            .proxy_service
+            .broadcast_event(serde_json::json!({"type": "proxy_stopped"}));
+    }
+    result
 }
 
 /// 获取各应用接管状态
@@ -82,7 +99,7 @@ pub async fn set_proxy_takeover_for_app(
     route: Option<String>,
 ) -> Result<(), String> {
     let app = require_mode_app(&app_type)?;
-    if enabled {
+    let result = if enabled {
         crate::mode::controller::enter_with_route(
             state.inner(),
             &app,
@@ -92,7 +109,21 @@ pub async fn set_proxy_takeover_for_app(
         .await
     } else {
         crate::mode::controller::exit(state.inner(), &app).await
+    };
+    // 通知 SSE 订阅者：这个 app 的接管状态变了，让 useProxyEventStream 触发 React Query
+    // invalidate（远程浏览器与桌面 UI 立即刷新）。上游 4.0.14 把唯一发这个事件的
+    // `set_all_apps_takeover_enabled` 删掉了，广播点随宿主函数一起消失，只剩前端
+    // `useProxyEventStream.ts` 还在收 —— 这里把它重新挂到新的「按 app 切接管」入口上，
+    // 载荷沿用原样 `{app_type, enabled}`（README 的路由表里也这么登记）。
+    // 只在成功时发：失败没有被改动的状态，发了只会让前端白刷一次。
+    if result.is_ok() {
+        state.proxy_service.broadcast_event(serde_json::json!({
+            "type": "takeover_changed",
+            "app_type": app.as_str(),
+            "enabled": enabled,
+        }));
     }
+    result
 }
 
 /// 应用页模式行用：生效的模式、路由目标（直连时是上次路由的那家）、直连那家。

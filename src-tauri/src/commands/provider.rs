@@ -170,6 +170,7 @@ pub async fn switch_provider(
 ) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     let handle = app_handle.clone();
+    let id_for_broadcast = id.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let state = handle
             .try_state::<AppState>()
@@ -178,6 +179,14 @@ pub async fn switch_provider(
     })
     .await
     .map_err(|e| format!("供应商切换任务执行失败: {e}"))??;
+
+    // 广播给远程浏览器（SSE）
+    let app_handle = app_handle.clone();
+    let app_type_str = app.as_str().to_string();
+    tauri::async_runtime::spawn(async move {
+        crate::remote::broadcast_provider_switch(&app_handle, &app_type_str, &id_for_broadcast)
+            .await;
+    });
     Ok(result)
 }
 
@@ -590,7 +599,7 @@ fn resolve_coding_plan_credentials(
     }
 }
 
-async fn query_provider_usage_inner(
+pub async fn query_provider_usage_inner(
     state: &AppState,
     copilot_state: &CopilotAuthState,
     xai_state: &XaiOAuthState,
