@@ -47,17 +47,19 @@ use tokio::sync::RwLock;
 
 const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
 
-/// Apply the route-target override only on the native Codex Responses route;
-/// official direct, resolved Stack, and converted requests use their own paths.
+/// Apply the route-target override only on the native Codex Responses route.
+/// Managed Copilot protocol selection is late, so those requests stay untouched.
 fn can_apply_codex_compaction_route_model_override(
     app_type: &AppType,
     endpoint: &str,
+    is_copilot: bool,
     official_auth_passthrough: bool,
     keeps_resolved_model: bool,
     converts_responses: bool,
 ) -> bool {
     matches!(app_type, AppType::Codex)
         && super::providers::is_codex_responses_endpoint(endpoint)
+        && !is_copilot
         && !official_auth_passthrough
         && !keeps_resolved_model
         && !converts_responses
@@ -1496,6 +1498,7 @@ impl RequestForwarder {
         if can_apply_codex_compaction_route_model_override(
             app_type,
             endpoint,
+            is_copilot,
             codex_official_auth_passthrough,
             self.keeps_resolved_model(),
             codex_responses_to_chat || codex_responses_to_anthropic,
@@ -4626,10 +4629,12 @@ mod tests {
     }
 
     #[test]
-    fn codex_compaction_route_model_override_gate_excludes_direct_stack_and_converted_routes() {
+    fn codex_compaction_route_model_override_gate_excludes_direct_stack_converted_and_copilot_routes(
+    ) {
         assert!(can_apply_codex_compaction_route_model_override(
             &AppType::Codex,
             "/v1/responses",
+            false,
             false,
             false,
             false,
@@ -4640,6 +4645,7 @@ mod tests {
             false,
             false,
             false,
+            false,
         ));
         assert!(!can_apply_codex_compaction_route_model_override(
             &AppType::Codex,
@@ -4647,12 +4653,6 @@ mod tests {
             false,
             false,
             false,
-        ));
-        assert!(!can_apply_codex_compaction_route_model_override(
-            &AppType::Codex,
-            "/v1/responses",
-            true,
-            false,
             false,
         ));
         assert!(!can_apply_codex_compaction_route_model_override(
@@ -4661,6 +4661,7 @@ mod tests {
             false,
             true,
             false,
+            false,
         ));
         assert!(!can_apply_codex_compaction_route_model_override(
             &AppType::Codex,
@@ -4668,6 +4669,30 @@ mod tests {
             false,
             false,
             true,
+            false,
+        ));
+        assert!(!can_apply_codex_compaction_route_model_override(
+            &AppType::Codex,
+            "/v1/responses",
+            false,
+            false,
+            false,
+            true,
+        ));
+
+        let copilot = test_provider_with_type(Some("github_copilot"));
+        assert!(is_managed_copilot_request(
+            &AppType::Codex,
+            &copilot,
+            "https://api.githubcopilot.com"
+        ));
+        assert!(!can_apply_codex_compaction_route_model_override(
+            &AppType::Codex,
+            "/v1/responses",
+            true,
+            false,
+            false,
+            false,
         ));
     }
 
@@ -7220,12 +7245,11 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn preturn_compaction_uses_resolved_route_target_only_for_native_route() {
+        async fn preturn_compaction_uses_catalog_aware_target_only_for_native_route() {
             let upstream = upstream().await;
             let mut provider = provider(&upstream, "openai_responses");
             provider.settings_config["modelCatalog"]["models"] = json!([
-                { "model": "row-model", "displayName": "Friendly route label" },
-                { "model": "gpt-6.1-sol", "displayName": "Old model label" }
+                { "model": "row-model", "displayName": "Friendly route label" }
             ]);
 
             let mut compaction = body("gpt-6.1-sol", json!([]));
@@ -7242,6 +7266,24 @@ mod tests {
             let mut expected = compaction;
             expected["model"] = json!("row-model");
             assert_eq!(seen.body, expected);
+
+            // An old model this same Provider advertises remains valid and is preserved.
+            let mut catalogued_provider = provider.clone();
+            catalogued_provider.settings_config["modelCatalog"]["models"] = json!([
+                { "model": "row-model", "displayName": "Friendly route label" },
+                { "model": "gpt-6.1-sol", "displayName": "Old model label" }
+            ]);
+            let mut catalogued_compaction = body("gpt-6.1-sol", json!([]));
+            mark_preturn_hash_changed_compaction(&mut catalogued_compaction);
+            let seen = send(
+                &forwarder(false),
+                &upstream,
+                catalogued_provider,
+                "/responses",
+                catalogued_compaction,
+            )
+            .await;
+            assert_eq!(seen.body["model"], "gpt-6.1-sol");
 
             // Matching A and the resolved route target requires no rewrite.
             let mut matching_compaction = body("row-model", json!([]));

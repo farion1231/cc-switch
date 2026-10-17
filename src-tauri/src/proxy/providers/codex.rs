@@ -532,11 +532,10 @@ pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> 
     Some(upstream_model)
 }
 
-/// For a recognized Codex PreTurn compaction request only, replace its stale
-/// request model with the active Codex provider route's resolved upstream
-/// target. Use the same provider-model resolver as normal Codex model
-/// substitution; do not infer the target from the request model or catalog UI
-/// labels. Catalog membership does not determine whether the route target wins.
+/// For a recognized Codex PreTurn compaction request only, apply the normal
+/// Codex upstream-model substitution policy. Models in the provider catalog
+/// remain selected; unknown request models fall back to the resolved provider
+/// route target.
 pub(crate) fn apply_codex_compaction_upstream_model(
     provider: &Provider,
     body: &mut JsonValue,
@@ -545,15 +544,14 @@ pub(crate) fn apply_codex_compaction_upstream_model(
         .get("model")
         .and_then(JsonValue::as_str)
         .map(str::trim)
-        .filter(|model| !model.is_empty())?;
-    let route_target_model = codex_provider_upstream_model(provider)?;
+        .filter(|model| !model.is_empty())
+        .map(ToString::to_string)?;
+    let route_target_model = apply_codex_upstream_model(provider, body)?;
     if route_target_model == request_model {
         return None;
     }
 
-    let previous_model = request_model.to_string();
-    body["model"] = JsonValue::String(route_target_model.clone());
-    Some((previous_model, route_target_model))
+    Some((request_model, route_target_model))
 }
 
 /// Stack 请求的上游拒收 Codex 的托管 `web_search`：按这家的地址和模型品牌判断，和它做
@@ -1923,7 +1921,7 @@ wire_api = "anthropic"
     }
 
     #[test]
-    fn preturn_compaction_rewrites_catalogued_old_model_to_resolved_route_target() {
+    fn preturn_compaction_preserves_catalogued_old_model_when_route_target_differs() {
         let provider = create_provider(json!({
             "config": r#"model_provider = "custom"
 model = "deepseek-flash"
@@ -1946,7 +1944,31 @@ wire_api = "responses"
         let mut stale = json!({ "model": "deepseek-v4-pro" });
         assert_eq!(
             apply_codex_compaction_upstream_model(&provider, &mut stale),
-            Some(("deepseek-v4-pro".to_string(), "deepseek-flash".to_string()))
+            None
+        );
+        assert_eq!(stale["model"], "deepseek-v4-pro");
+    }
+
+    #[test]
+    fn preturn_compaction_rewrites_uncatalogued_model_to_resolved_route_target() {
+        let provider = create_provider(json!({
+            "config": r#"model_provider = "custom"
+model = "deepseek-flash"
+
+[model_providers.custom]
+wire_api = "responses"
+"#,
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-flash", "displayName": "Flash route label" }
+                ]
+            }
+        }));
+
+        let mut stale = json!({ "model": "gpt-6.1-sol" });
+        assert_eq!(
+            apply_codex_compaction_upstream_model(&provider, &mut stale),
+            Some(("gpt-6.1-sol".to_string(), "deepseek-flash".to_string()))
         );
         assert_eq!(stale["model"], "deepseek-flash");
     }
