@@ -43,9 +43,11 @@ function Harness(props: Partial<ComponentProps<typeof GeminiFormFields>>) {
 
 describe("Antigravity model discovery", () => {
   beforeEach(() => {
+    // cmdk scrolls its selected option; jsdom does not implement this browser API.
+    Element.prototype.scrollIntoView ??= vi.fn();
     vi.clearAllMocks();
     api.fetchModelsForConfig.mockResolvedValue([{ id: "gemini-3.8-flash" }]);
-    api.getAgyModels.mockResolvedValue([{ id: "native-model" }]);
+    api.getAgyModels.mockResolvedValue([{ id: "Gemini 3.8 Flash (Low)" }]);
   });
 
   it("uses Google's default API when a key has no endpoint override", async () => {
@@ -91,5 +93,21 @@ describe("Antigravity model discovery", () => {
     );
     await waitFor(() => expect(api.getAgyModels).toHaveBeenCalledOnce());
     expect(api.fetchModelsForConfig).not.toHaveBeenCalled();
+  });
+  it("selects the native preference name rather than a CLI alias", async () => {
+    const onModelChange = vi.fn();
+    render(<Harness apiKey="" onModelChange={onModelChange} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Select model",
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Gemini 3.8 Flash (Low)" }),
+    );
+    expect(onModelChange).toHaveBeenCalledWith("Gemini 3.8 Flash (Low)");
   });
 });

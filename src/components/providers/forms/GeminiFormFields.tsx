@@ -209,7 +209,11 @@ export function GeminiFormFields({
             id="gemini-model"
             value={model}
             onChange={onModelChange}
-            placeholder="gemini-3.6-flash"
+            placeholder={
+              appId === "agy" && !apiKey
+                ? "Gemini 3.8 Flash (High)"
+                : "gemini-3.6-flash"
+            }
             fetchedModels={fetchedModels}
             isLoading={isFetchingModels}
           />

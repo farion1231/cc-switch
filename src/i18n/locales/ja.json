@@ -209,7 +209,7 @@
     "geminiConfigHint": ".env 形式で Gemini を設定してください",
     "form": {
       "agy": {
-        "connectionHint": "API Key と接続先を空欄にすると agy の Google ログインを使用します。Key のみを指定すると Google の標準 API を使用します。外部接続先は Gemini API に対応している必要があります。切替後は新しいターミナルを開くか agy を再起動してください。実行中のセッションは切り替わりません。ログイン時のモデル取得には現在の agy 設定を使用します。",
+        "connectionHint": "API Key と接続先を空欄にすると agy の Google ログインを使用します。Key のみを指定すると Google の標準 API を使用します。外部接続先は Gemini API に対応している必要があります。切替後は新しいターミナルを開くか agy を再起動してください。実行中のセッションは切り替わりません。ログイン時のモデル取得には現在の agy 設定を使用します。 ログイン時はモデル一覧の表示名を使用してください。API モードでは API のモデル ID を使用します。",
         "keyFieldsHint": "エンドポイント、キー、モデルはプロバイダーとともに切り替わります。Antigravity の他のネイティブ設定は保持されます。",
         "envFile": "起動時の環境変数",
         "envFileHint": "CC Switch は agy 起動時に API キー、エンドポイント、モデルを渡します。他の環境変数は適用されません。",

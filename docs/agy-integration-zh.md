@@ -141,3 +141,7 @@ ccswitch://v1/import?resource=provider&app=agy&name=Antigravity&endpoint=https%3
 ### 原生登录与 API 凭据
 
 Key 和自定义地址均留空时保留 agy 自身登录；仅修改模型不要求 API Key。填写 Key 时可留空地址以使用 Google 默认端点；自定义地址需要非空 Key。编辑器中的设置只投影 agy 支持的字段，不会改动 Gemini CLI 全局配置。
+
+### 原生登录模型名称
+
+原生登录模式应使用 `agy models` 输出第二列的显示名（例如 `Gemini 3.8 Flash (Low)`），模型列表会填入该值。第一列 CLI 别名适用于命令行 `--model`；直接把别名保存到原生 `settings.json.model` 可能静默回退默认模型。API 模式继续使用接口模型 ID。

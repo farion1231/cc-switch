@@ -44,7 +44,7 @@ function renderLogin(
           category: "custom",
           settingsConfig: {
             env,
-            config: { model: { name: "gemini-3.8-flash-high" } },
+            config: { model: { name: "Gemini 3.8 Flash (High)" } },
           },
         }}
       />
@@ -56,8 +56,8 @@ function renderLogin(
 describe("Antigravity login and API authentication", () => {
   it("saves an imported login after changing its model without a missing-key warning", async () => {
     const onSubmit = renderLogin();
-    fireEvent.change(screen.getByDisplayValue("gemini-3.8-flash-high"), {
-      target: { value: "gemini-3.8-flash-low" },
+    fireEvent.change(screen.getByDisplayValue("Gemini 3.8 Flash (High)"), {
+      target: { value: "Gemini 3.8 Flash (Low)" },
     });
     fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
@@ -65,7 +65,7 @@ describe("Antigravity login and API authentication", () => {
       screen.queryByRole("button", { name: "仍要保存" }),
     ).not.toBeInTheDocument();
     const settings = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
-    expect(settings.config.model.name).toBe("gemini-3.8-flash-low");
+    expect(settings.config.model.name).toBe("Gemini 3.8 Flash (Low)");
     expect(settings.env.GEMINI_API_KEY).toBeUndefined();
     expect(settings.env.GOOGLE_GEMINI_BASE_URL).toBeUndefined();
   });
