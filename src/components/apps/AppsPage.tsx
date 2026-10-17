@@ -11,10 +11,12 @@ import {
   Loader2,
   MoreHorizontal,
   RefreshCw,
+  Terminal,
   Trash2,
 } from "lucide-react";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
+import { settingsApi } from "@/lib/api/settings";
 import type { ToolInstallationReport } from "@/lib/api/settings";
 import type { VisibleApps } from "@/types";
 import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
@@ -50,6 +52,7 @@ import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ToolUpgradeConfirmDialog } from "@/components/settings/ToolUpgradeConfirmDialog";
 import { ToolInstallRow } from "@/components/settings/ToolInstallRow";
 import { ToolErrorMessage } from "@/components/settings/ToolErrorMessage";
+import { toast } from "@/lib/toast";
 import { ToolUninstallConfirmDialog } from "./ToolUninstallConfirmDialog";
 import { ManualUninstallDialog } from "./ManualUninstallDialog";
 import {
@@ -87,6 +90,8 @@ const ROWS: Row[] = [
     (tool): Row => ({ kind: "tool", tool }),
   ),
 ];
+
+const BOBOT_INSTALL_COMMAND = "npm i -g @bocloud/bobot-cli";
 
 // 表头和应用行共用列宽；操作列宽取各行按钮和表头量宽按钮的最大值，最后一列是行尾的「⋯」菜单。
 const APP_ROW_GRID =
@@ -391,6 +396,18 @@ export function AppsPage() {
                 />
               ),
             )}
+            <BobotRow
+              installCommand={BOBOT_INSTALL_COMMAND}
+              onLaunch={async () => {
+                try {
+                  await settingsApi.openBobotTerminal();
+                  toast.success(t("appsPage.bobot.launchSuccess"));
+                } catch (error) {
+                  console.error("[AppsPage] Failed to launch BoBot", error);
+                  toast.error(t("appsPage.bobot.launchFailed"));
+                }
+              }}
+            />
           </div>
         </div>
       </div>
@@ -460,6 +477,66 @@ export function AppsPage() {
         onCancel={tools.handleCancelUpgrade}
       />
     </>
+  );
+}
+
+function BobotRow({
+  installCommand,
+  onLaunch,
+}: {
+  installCommand: string;
+  onLaunch: () => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [launching, setLaunching] = useState(false);
+
+  return (
+    <div data-tool-row className="px-4 py-3">
+      <div className={cn(APP_ROW_GRID, "min-h-10")}>
+        <div className="flex min-w-0 items-center gap-4">
+          <span
+            aria-hidden="true"
+            className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-control bg-slate-500/10 text-slate-600 dark:text-slate-300"
+          >
+            <Terminal className="h-4 w-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-1.5 text-strong text-fg-1">
+              <span className="truncate">BoBot CLI</span>
+            </div>
+            <div className="mt-0.5 truncate font-mono text-caption text-fg-2">
+              {installCommand}
+            </div>
+          </div>
+        </div>
+        <div className="text-end text-caption text-fg-2">
+          {t("appsPage.bobot.installHint")}
+        </div>
+        <div
+          data-tool-actions
+          className="flex w-max items-center justify-self-end gap-2 [&>button]:shrink-0"
+        >
+          <Button
+            variant="neutral"
+            size="compact"
+            disabled={launching}
+            onClick={() => {
+              setLaunching(true);
+              void onLaunch().finally(() => setLaunching(false));
+            }}
+          >
+            {launching ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Terminal className="h-3.5 w-3.5" />
+            )}
+            {t("appsPage.bobot.launch")}
+          </Button>
+        </div>
+        <div className="flex justify-end" />
+        <div className="flex justify-end" />
+      </div>
+    </div>
   );
 }
 

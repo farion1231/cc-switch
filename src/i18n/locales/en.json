@@ -4162,6 +4162,12 @@
       "hermes": "Installs with the official script",
       "pi": "Installs with npm",
       "mcode": "Installs with the official script, falls back to npm"
+    },
+    "bobot": {
+      "installHint": "Install it first, then launch",
+      "launch": "Launch",
+      "launchSuccess": "BoBot started in a terminal",
+      "launchFailed": "Failed to start BoBot"
     }
   },
   "appPage": {

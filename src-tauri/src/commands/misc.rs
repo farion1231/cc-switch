@@ -1747,6 +1747,17 @@ fn build_exec_line(shell: &str, cwd: Option<&Path>) -> String {
     }
 }
 
+/// 通过用户 shell 的登录+交互模式执行命令，确保 GUI 启动的终端也加载用户 PATH。
+#[cfg_attr(windows, allow(dead_code))]
+fn build_user_shell_command_line(shell: &str, command: &str) -> String {
+    format!(
+        "{} {} {}",
+        shell_single_quote(shell),
+        provider_command_flag_for_shell(shell),
+        shell_single_quote(command)
+    )
+}
+
 /// 构建 provider 命令行：通过用户 shell 的交互模式执行，确保 GUI 启动的终端也加载用户 PATH。
 #[cfg_attr(windows, allow(dead_code))]
 fn build_provider_command_line(shell: &str, config_path: &str, cwd: Option<&Path>) -> String {
@@ -1761,19 +1772,17 @@ fn build_provider_command_line(shell: &str, config_path: &str, cwd: Option<&Path
         })
         .unwrap_or(claude_command);
 
-    format!(
-        "{} {} {}",
-        shell_single_quote(shell),
-        provider_command_flag_for_shell(shell),
-        shell_single_quote(&command)
-    )
+    build_user_shell_command_line(shell, &command)
 }
 
 #[cfg_attr(windows, allow(dead_code))]
 fn provider_command_flag_for_shell(shell: &str) -> &'static str {
     match shell.rsplit('/').next().unwrap_or(shell) {
         "dash" | "sh" => "-c",
-        "zsh" => "-lic",
+        // 登录+交互：同时覆盖 rc 文件（nvm 默认写 ~/.bashrc）与登录文件
+        // （Homebrew-on-Linux 官方指引写 ~/.profile，部分用户把 nvm 放
+        // ~/.bash_profile）。Debian 系默认 ~/.profile 会链入 ~/.bashrc。
+        "bash" | "zsh" => "-lic",
         _ => "-ic",
     }
 }
@@ -4600,6 +4609,30 @@ pub async fn open_provider_terminal(
     Ok(true)
 }
 
+/// 打开终端并启动 BoBot CLI。
+///
+/// BoBot 目前没有公开稳定的配置文件格式，先提供一个不改写用户配置的启动入口。
+#[tauri::command]
+pub async fn open_bobot_terminal() -> Result<bool, String> {
+    launch_terminal_running(&bobot_command_line(), "bobot")
+        .map_err(|e| format!("启动 BoBot 失败: {e}"))?;
+    Ok(true)
+}
+
+/// BoBot 启动命令行。POSIX 下与 provider 启动一致，经用户 shell 的登录+交互
+/// 模式执行，让 GUI 启动的终端也加载用户 PATH——nvm/fnm 默认写 rc 文件、
+/// Homebrew-on-Linux 指引写 ~/.profile，否则会 `bobot: command not found`。
+/// 残余边界：PATH 仅在 ~/.bashrc 且 ~/.bash_profile 不链入它的非典型配置，
+/// 任何单一 flag 都无法覆盖（bash 登录 shell 不读 rc）。Windows 的终端天然
+/// 继承用户 PATH，直接执行裸命令。
+fn bobot_command_line() -> String {
+    if cfg!(target_os = "windows") {
+        "bobot".to_string()
+    } else {
+        build_user_shell_command_line(&get_user_shell(), "bobot")
+    }
+}
+
 /// 从提供商配置中提取环境变量
 fn extract_env_vars_from_config(
     config: &serde_json::Value,
@@ -6043,7 +6076,7 @@ mod tests {
                 "/tmp/claude config.json",
                 Some(Path::new("/tmp/project"))
             ),
-            r#"'/bin/bash' -ic 'cd '"'"'/tmp/project'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
+            r#"'/bin/bash' -lic 'cd '"'"'/tmp/project'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
         );
         assert_eq!(
             build_provider_command_line(
@@ -6053,6 +6086,107 @@ mod tests {
             ),
             r#"'/bin/sh' -c 'cd '"'"'/tmp/project O'"'"'"'"'"'"'"'"'Brien'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
         );
+    }
+
+    #[test]
+    fn test_build_user_shell_command_line_uses_interactive_user_shell() {
+        // 登录+交互模式才会同时加载 rc 与登录文件，GUI 最小 PATH 下
+        // 才能找到 nvm（rc）/ Homebrew-on-Linux（~/.profile）等安装的 CLI
+        assert_eq!(
+            build_user_shell_command_line("/bin/zsh", "bobot"),
+            "'/bin/zsh' -lic 'bobot'"
+        );
+        assert_eq!(
+            build_user_shell_command_line("/bin/bash", "bobot"),
+            "'/bin/bash' -lic 'bobot'"
+        );
+        assert_eq!(
+            build_user_shell_command_line("/bin/dash", "bobot"),
+            "'/bin/dash' -c 'bobot'"
+        );
+    }
+
+    /// 固定 BoBot 入口与用户 shell 包装的接线：防止有人改回裸命令导致
+    /// GUI 最小 PATH 下的 `command not found` 回归（PR 审查 P2）。
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_bobot_command_line_routes_through_user_shell() {
+        assert_eq!(
+            bobot_command_line(),
+            build_user_shell_command_line(&get_user_shell(), "bobot")
+        );
+    }
+
+    /// Windows 分支直接执行裸命令：终端继承用户 PATH，无需 shell 包装
+    /// （包装行进了 .bat 反而会被 cmd 当字面量执行）。
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_bobot_command_line_windows_runs_bare_command() {
+        assert_eq!(bobot_command_line(), "bobot");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_user_shell_command_line_resolves_cli_missing_from_gui_path() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Command;
+
+        // 回归场景：GUI 进程的 PATH 不含 npm 全局 bin，CLI 只在用户 shell
+        // 初始化后可见。用假 zsh 模拟交互式 shell（先注入 PATH 再执行命令），
+        // 断言生成的命令行确实借道用户 shell 环境找到了 CLI，而非裸命令直跑。
+        let tmp = tempfile::tempdir().unwrap();
+        let npmbin = tmp.path().join("npmbin");
+        let shellbin = tmp.path().join("shellbin");
+        let emptybin = tmp.path().join("emptybin");
+        std::fs::create_dir_all(&npmbin).unwrap();
+        std::fs::create_dir_all(&shellbin).unwrap();
+        std::fs::create_dir_all(&emptybin).unwrap();
+
+        let marker = tmp.path().join("launched");
+        let bobot = npmbin.join("bobot");
+        // marker 用纯重定向创建：最小 PATH 环境下不依赖 touch 等外部命令
+        std::fs::write(&bobot, format!("#!/bin/sh\n> '{}'\n", marker.display())).unwrap();
+        std::fs::set_permissions(&bobot, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // 假 zsh：跳过 flag 参数，先把 npm bin 注入 PATH（相当于 rc 生效），
+        // 再用注入后的环境执行剩余命令参数。sh 用绝对路径，保证最小 PATH
+        // 环境下不依赖系统目录。
+        let fake_zsh = shellbin.join("zsh");
+        std::fs::write(
+            &fake_zsh,
+            format!(
+                "#!/bin/sh\nPATH='{}':$PATH\nexport PATH\ncmd=\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    -*) ;;\n    *) cmd=$arg ;;\n  esac\ndone\nexec /bin/sh -c \"$cmd\"\n",
+                npmbin.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_zsh, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // 前提：GUI 最小 PATH（空目录，与机器上是否装过 bobot 无关）下
+        // 裸命令找不到 CLI（这正是审查报告的 bug 场景）
+        let bare = Command::new("env")
+            .arg("-i")
+            .arg(format!("PATH={}", emptybin.display()))
+            .arg("/bin/sh")
+            .args(["-c", "bobot"])
+            .status()
+            .unwrap();
+        assert!(!bare.success(), "bare bobot must not resolve with GUI PATH");
+
+        // 生成的命令行经用户 shell 环境找到并执行了 CLI
+        let line = build_user_shell_command_line(&fake_zsh.to_string_lossy(), "bobot");
+        let via_shell = Command::new("env")
+            .arg("-i")
+            .arg(format!("PATH={}", emptybin.display()))
+            .arg("/bin/sh")
+            .args(["-c", &line])
+            .status()
+            .unwrap();
+        assert!(
+            via_shell.success(),
+            "wrapped bobot must resolve via user shell environment"
+        );
+        assert!(marker.exists(), "fake bobot should have actually run");
     }
 
     #[test]

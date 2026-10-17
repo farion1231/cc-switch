@@ -148,7 +148,9 @@ ${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/herm
 # Pi
 npm i -g @earendil-works/pi-coding-agent@latest
 # MiniMax Code
-${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}`;
+${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}
+# BoBot CLI
+npm i -g @bocloud/bobot-cli`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${CLAUDE_NPM_INSTALL_COMMAND}
@@ -167,7 +169,9 @@ ${HERMES_WINDOWS_INSTALL_COMMAND}
 # Pi
 npm i -g @earendil-works/pi-coding-agent@latest
 # MiniMax Code
-${MCODE_WINDOWS_INSTALL_COMMAND}`;
+${MCODE_WINDOWS_INSTALL_COMMAND}
+# BoBot CLI
+npm i -g @bocloud/bobot-cli`;
 
 export const ONE_CLICK_INSTALL_COMMANDS = isWindows()
   ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS

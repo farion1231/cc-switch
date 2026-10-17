@@ -4162,6 +4162,12 @@
       "hermes": "公式インストールスクリプトでインストール",
       "pi": "npm でインストール",
       "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います"
+    },
+    "bobot": {
+      "installHint": "先にインストールしてから起動",
+      "launch": "起動",
+      "launchSuccess": "BoBot をターミナルで起動しました",
+      "launchFailed": "BoBot の起動に失敗しました"
     }
   },
   "appPage": {
