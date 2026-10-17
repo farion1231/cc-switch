@@ -12,6 +12,7 @@
 //! - `session_meta` → 提取唯一 thread_id（子代理的 session_id 指向父线程）
 //! - `turn_context` / `event_msg` (type=thread_settings_applied) → 提取当前 model
 //! - `event_msg` (type=token_count) → 提取累计 token 用量，计算 delta
+//! - `token_usage_record` → 随后的 token_count last 为 0 时补记这次用量
 
 use crate::codex_config::get_codex_config_dir;
 use crate::codex_rollout_file;
@@ -205,6 +206,9 @@ struct ParsedTokenEvent {
     signature: TokenUsageSignature,
     delta: DeltaTokens,
     event_index: Option<u32>,
+    /// 不占用 `token_count` 序号的用量。远程压缩只写 `token_usage_record` 时用它，
+    /// 避免把后面每次请求的 `event_index` 都往后挤。
+    request_suffix: Option<String>,
     model: String,
     timestamp: Option<String>,
     /// 按事件时间戳估出来的请求耗时（含首字等待）和首字时间；估不出来为 None。
@@ -461,6 +465,8 @@ struct ParsedCodexFile {
     root_timestamp: Option<DateTime<Utc>>,
     parent: ParentResolution,
     token_events: Vec<ParsedTokenEvent>,
+    /// `token_usage_record` 后面紧跟 last 全 0 的 `token_count` 时补记的用量。
+    usage_record_events: Vec<ParsedTokenEvent>,
     line_offset: i64,
     /// Bytes actually read, including an incomplete final record. Persisted in
     /// `last_byte_offset` only to detect file changes, never used as a seek
@@ -755,12 +761,16 @@ fn token_snapshot_source(payload: &serde_json::Value) -> Option<String> {
 ///   不丢数据、不双算。
 /// - `pricing`：模型定价 pass 级缓存。定价表在 pass 进行中被修改时本 pass
 ///   仍用旧价，下一个同步 pass 生效。
+const CODEX_USAGE_RECORD_BACKFILL_KEY: &str = "codex_token_usage_record_backfill";
+
 struct CodexSyncPass {
     cursors: HashMap<String, (i64, i64)>,
     /// rollout 逻辑文件名（去掉 `.zst`）→ 记过游标的路径，供游标继承按名查找
     rollout_cursor_paths: HashMap<String, Vec<String>>,
     byte_offsets: HashMap<String, Option<i64>>,
     pricing: HashMap<String, Option<ModelPricing>>,
+    /// 升级前的游标已经扫过压缩行。第一次同步忽略未改文件的快路径，把这些行补上。
+    reread_unchanged: bool,
 }
 
 impl CodexSyncPass {
@@ -799,6 +809,7 @@ impl CodexSyncPass {
             rollout_cursor_paths,
             byte_offsets,
             pricing: HashMap::new(),
+            reread_unchanged: false,
         })
     }
 }
@@ -904,6 +915,72 @@ fn compute_delta(prev: &Option<CumulativeTokens>, current: &CumulativeTokens) ->
     }
 }
 
+fn usage_matches(last: &CumulativeTokens, usage: &CumulativeTokens) -> bool {
+    last.input == usage.input
+        && last.cached_input == usage.cached_input
+        && last.cache_write_input == usage.cache_write_input
+        && last.output == usage.output
+}
+
+fn usage_is_zero(usage: &CumulativeTokens) -> bool {
+    usage.input == 0 && usage.cached_input == 0 && usage.cache_write_input == 0 && usage.output == 0
+}
+
+fn delta_from_usage(usage: &CumulativeTokens) -> DeltaTokens {
+    let input = usage.input.min(u32::MAX as u64) as u32;
+    let cached_input = usage.cached_input.min(usage.input).min(u32::MAX as u64) as u32;
+    let fresh_input = input.saturating_sub(cached_input);
+    DeltaTokens {
+        input,
+        cached_input,
+        cache_write_input: (usage.cache_write_input.min(u32::MAX as u64) as u32).min(fresh_input),
+        output: usage.output.min(u32::MAX as u64) as u32,
+    }
+}
+
+fn signature_for_last_usage(usage: &CumulativeTokens) -> TokenUsageSignature {
+    TokenUsageSignature {
+        total: None,
+        last: Some(TokenCountersSignature {
+            input: Some(usage.input),
+            cached_input: Some(usage.cached_input),
+            output: Some(usage.output),
+            reasoning_output: None,
+            total: Some(usage.input.saturating_add(usage.output)),
+        }),
+    }
+}
+
+struct PendingUsageRecord {
+    key: String,
+    usage: CumulativeTokens,
+    line_offset: i64,
+    timestamp: Option<String>,
+    model: String,
+}
+
+fn push_unmatched_usage(
+    events: &mut Vec<ParsedTokenEvent>,
+    pending: PendingUsageRecord,
+    has_billable_tokens: &mut bool,
+) {
+    let delta = delta_from_usage(&pending.usage);
+    if delta.is_zero() {
+        return;
+    }
+    *has_billable_tokens = true;
+    events.push(ParsedTokenEvent {
+        line_offset: pending.line_offset,
+        signature: signature_for_last_usage(&pending.usage),
+        delta,
+        event_index: None,
+        request_suffix: Some(format!("usage:{}", pending.key)),
+        model: pending.model,
+        timestamp: pending.timestamp,
+        timing: None,
+    });
+}
+
 fn update_high_water(high_water: &mut CumulativeTokens, current: &CumulativeTokens) {
     high_water.input = high_water.input.max(current.input);
     high_water.cached_input = high_water.cached_input.max(current.cached_input);
@@ -964,6 +1041,7 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let files = collect_codex_session_files(&codex_dir);
     let rollout_index = build_rollout_index(&files);
     let mut pass = CodexSyncPass::load(db)?;
+    arm_usage_record_backfill(&mut pass);
 
     let mut result = SessionSyncResult {
         imported: 0,
@@ -994,6 +1072,10 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         }
     }
 
+    if pass.reread_unchanged && result.errors.is_empty() {
+        mark_codex_usage_record_backfill(db)?;
+    }
+
     if result.imported > 0 || result.deferred_files > 0 {
         log::info!(
             "[CODEX-SYNC] 同步完成: 导入 {} 条, 跳过 {} 条, deferred {} 个, 扫描 {} 个文件",
@@ -1005,6 +1087,25 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     }
 
     Ok(result)
+}
+
+fn arm_usage_record_backfill(pass: &mut CodexSyncPass) {
+    pass.reread_unchanged = !pass.cursors.contains_key(CODEX_USAGE_RECORD_BACKFILL_KEY);
+}
+
+fn mark_codex_usage_record_backfill(db: &Database) -> Result<(), AppError> {
+    let conn = lock_conn!(db.conn);
+    conn.execute(
+        "INSERT OR IGNORE INTO session_log_sync
+            (file_path, last_modified, last_line_offset, last_synced_at)
+         VALUES (?1, 0, 0, ?2)",
+        rusqlite::params![
+            CODEX_USAGE_RECORD_BACKFILL_KEY,
+            Utc::now().timestamp_millis()
+        ],
+    )
+    .map_err(|e| AppError::Database(format!("记录 Codex 用量回读标记失败: {e}")))?;
+    Ok(())
 }
 
 /// 收集所有 Codex 会话 JSONL 文件
@@ -1191,6 +1292,8 @@ fn parse_codex_file_with_index(
     let mut history_base_thread_id = None;
     let mut event_index = 0u32;
     let mut token_events = Vec::new();
+    let mut usage_record_events = Vec::new();
+    let mut pending_usage: Option<PendingUsageRecord> = None;
     let mut line_offset = 0i64;
     let mut observed_bytes = 0i64;
     let mut has_billable_tokens = false;
@@ -1227,7 +1330,8 @@ fn parse_codex_file_with_index(
         let is_event_msg = line.contains("\"event_msg\"");
         let is_turn_context = line.contains("\"turn_context\"");
         let is_session_meta = line.contains("\"session_meta\"");
-        if !is_event_msg && !is_turn_context && !is_session_meta {
+        let is_usage_record = line.contains("\"token_usage_record\"");
+        if !is_event_msg && !is_turn_context && !is_session_meta && !is_usage_record {
             continue;
         }
         if is_event_msg
@@ -1395,6 +1499,21 @@ fn parse_codex_file_with_index(
                 let last = info
                     .get("last_token_usage")
                     .and_then(parse_cumulative_tokens);
+                if let Some(pending) = pending_usage.take() {
+                    // 对得上的 last 已经由这条 token_count 入账。last 为 0 是远程压缩
+                    // 把本次用量只写在 token_usage_record 里之后的空快照。其它对不上的
+                    // 记录只用于耗时，不能再记一行。
+                    let covered = last
+                        .as_ref()
+                        .is_some_and(|last| usage_matches(last, &pending.usage));
+                    if !covered && last.as_ref().is_some_and(usage_is_zero) {
+                        push_unmatched_usage(
+                            &mut usage_record_events,
+                            pending,
+                            &mut has_billable_tokens,
+                        );
+                    }
+                }
                 if total.is_none() && last.is_none() {
                     continue;
                 }
@@ -1499,9 +1618,41 @@ fn parse_codex_file_with_index(
                     signature,
                     delta,
                     event_index: nonzero_index,
+                    request_suffix: None,
                     model: current_model.clone(),
                     timestamp,
                     timing,
+                });
+            }
+            "token_usage_record" => {
+                pending_usage = None;
+                let Some(payload) = value.get("payload") else {
+                    continue;
+                };
+                let Some(usage) = payload.get("usage").and_then(parse_cumulative_tokens) else {
+                    continue;
+                };
+                if usage_is_zero(&usage) {
+                    continue;
+                }
+                let response_id = payload
+                    .get("response_id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let key = if response_id.is_empty() {
+                    format!("line{line_offset}")
+                } else {
+                    response_id.to_string()
+                };
+                pending_usage = Some(PendingUsageRecord {
+                    key,
+                    usage,
+                    line_offset,
+                    timestamp: value
+                        .get("timestamp")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned),
+                    model: current_model.clone(),
                 });
             }
             _ => {}
@@ -1515,6 +1666,7 @@ fn parse_codex_file_with_index(
         root_timestamp,
         parent,
         token_events,
+        usage_record_events,
         line_offset,
         observed_bytes: compressed_size
             .and_then(|size| i64::try_from(size).ok())
@@ -1877,7 +2029,10 @@ fn sync_single_codex_file(
     // Windows may keep mtime unchanged while Codex holds its write handle open.
     // Legacy cursors have no byte offset: rescan once to catch up and persist it.
     let last_byte_offset = pass.byte_offsets.get(&file_path_str).copied().flatten();
-    if file_modified == last_modified && last_byte_offset == i64::try_from(file_size).ok() {
+    if !pass.reread_unchanged
+        && file_modified == last_modified
+        && last_byte_offset == i64::try_from(file_size).ok()
+    {
         return Ok(CodexFileSyncResult::default());
     }
 
@@ -2046,7 +2201,7 @@ fn sync_single_codex_file(
     }
 
     let mut result = CodexFileSyncResult::default();
-    let mut to_insert: Vec<(&ParsedTokenEvent, u32)> = Vec::new();
+    let mut to_insert: Vec<(&ParsedTokenEvent, String)> = Vec::new();
     for (token_offset, event) in parsed.token_events.iter().enumerate() {
         let Some(event_index) = event.event_index else {
             continue;
@@ -2060,7 +2215,17 @@ fn sync_single_codex_file(
         if event.line_offset <= last_offset {
             continue;
         }
-        to_insert.push((event, event_index));
+        to_insert.push((event, event_index.to_string()));
+    }
+    for event in &parsed.usage_record_events {
+        let Some(suffix) = event.request_suffix.as_deref() else {
+            continue;
+        };
+        // 回读时游标已经越过这些行。请求号带 response_id，重复插入是空操作。
+        if !pass.reread_unchanged && event.line_offset <= last_offset {
+            continue;
+        }
+        to_insert.push((event, suffix.to_string()));
     }
 
     // 分批事务写库：逐行 autocommit（journal_mode=delete 下每行一整套
@@ -2084,9 +2249,8 @@ fn sync_single_codex_file(
         let mut batch_imported = 0u32;
         let mut batch_skipped = 0u32;
         let mut batch_suspected = 0u32;
-        for (event, event_index) in batch {
-            let request_id =
-                format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{root_thread_id}:{event_index}");
+        for (event, suffix) in batch {
+            let request_id = format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{root_thread_id}:{suffix}");
             match insert_codex_session_entry_on_conn(
                 &tx,
                 &request_id,
@@ -2625,6 +2789,60 @@ mod tests {
             rows[0].0,
             format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{PARENT_ID}:1")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn unchanged_file_backfills_compaction_usage_once() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let path = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &path,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_usage_record_at("resp_compact", 26_705, 0, 491, "2026-07-10T03:00:02Z"),
+                token_count_with_last_at(0, 0, 0, 0, 0, 0, "default", "2026-07-10T03:00:02Z"),
+            ],
+        );
+        let metadata = fs::metadata(&path).unwrap();
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO session_log_sync
+                    (file_path, last_modified, last_line_offset, last_byte_offset, last_synced_at)
+                 VALUES (?1, ?2, 100, ?3, 0)",
+                rusqlite::params![
+                    path.to_string_lossy().to_string(),
+                    metadata_modified_nanos(&metadata),
+                    i64::try_from(metadata.len()).unwrap()
+                ],
+            )
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        }
+
+        let skipped = sync_test_file(&db, &path, &[&path])?;
+        assert_eq!(skipped.imported, 0);
+        assert!(codex_usage_rows(&db)?.is_empty());
+
+        let files = vec![path.clone()];
+        let mut pass = CodexSyncPass::load(&db)?;
+        arm_usage_record_backfill(&mut pass);
+        let imported = sync_single_codex_file(&db, &path, &build_rollout_index(&files), &mut pass)?;
+        assert_eq!(imported.imported, 1);
+        let rows = codex_usage_rows(&db)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, 26_705);
+        assert_eq!(rows[0].2, 491);
+
+        mark_codex_usage_record_backfill(&db)?;
+        let mut pass = CodexSyncPass::load(&db)?;
+        arm_usage_record_backfill(&mut pass);
+        assert!(!pass.reread_unchanged);
+        let again = sync_single_codex_file(&db, &path, &build_rollout_index(&files), &mut pass)?;
+        assert_eq!(again.imported, 0);
+        assert_eq!(codex_usage_rows(&db)?.len(), 1);
         Ok(())
     }
 
