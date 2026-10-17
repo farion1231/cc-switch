@@ -59,16 +59,20 @@ const renderSidebar = (settings: Partial<Settings>) => {
 
 describe("sidebar Today label", () => {
   it.each([
-    [undefined, "nav.today:$47.20"],
-    [["tokens"], "nav.today:120M"],
-    [["requests"], "nav.today:nav.todayRequests:663"],
-    [["hitRate"], "nav.today:nav.todayHitRate:98.6%"],
-  ])("shows %s", (items, label) => {
+    [undefined, "$47.20"],
+    [["tokens"], "120M"],
+    [["requests"], "nav.todayRequests:663"],
+    [["hitRate"], "nav.todayHitRate:98.6%"],
+  ])("shows %s", (items, value) => {
+    // 行尾只写数，「今日」在读屏名字和悬停里
     status.todayCost = 47.2;
     status.todayTokens = 120_400_000;
     status.todayRequests = 663;
     renderSidebar({ usageDisplay: { sidebarTodayItems: items } });
-    expect(screen.getByText(label)).toBeInTheDocument();
+    expect(screen.getByText(value)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: `nav.usage · nav.today:${value}` }),
+    ).toBeInTheDocument();
   });
 
   it("stacks only the numbers when showing two items", async () => {
@@ -93,7 +97,9 @@ describe("sidebar Today label", () => {
 
   it("shows nothing when hidden", () => {
     renderSidebar({ usageDisplay: { sidebarTodayItems: [] } });
-    expect(screen.queryByText(/^nav\.today/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "nav.usage" }),
+    ).toBeInTheDocument();
   });
 
   it("skips the parts that are zero", () => {
@@ -101,7 +107,8 @@ describe("sidebar Today label", () => {
     status.todayCost = 0;
     status.todayTokens = 5_000;
     renderSidebar({ usageDisplay: { sidebarTodayItems: ["cost", "tokens"] } });
-    expect(screen.getByText("nav.today:5,000")).toBeInTheDocument();
+    expect(screen.getByText("5,000")).toBeInTheDocument();
+    expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
   });
 
   it("leaves out the hit rate before the first request of the day", () => {
@@ -109,13 +116,17 @@ describe("sidebar Today label", () => {
     status.todayTokens = 0;
     status.todayCost = 0;
     renderSidebar({ usageDisplay: { sidebarTodayItems: ["hitRate"] } });
-    expect(screen.queryByText(/^nav\.today/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "nav.usage" }),
+    ).toBeInTheDocument();
   });
 
   it("hides the cost-only label while nothing is priced", () => {
     status.todayCost = 0;
     status.todayTokens = 5_000;
     renderSidebar({});
-    expect(screen.queryByText(/^nav\.today/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "nav.usage" }),
+    ).toBeInTheDocument();
   });
 });

@@ -107,6 +107,10 @@ async fn query_deepseek(api_key: &str) -> Result<UsageResult, String> {
         Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
     };
 
+    Ok(parse_deepseek_balance(&body))
+}
+
+fn parse_deepseek_balance(body: &serde_json::Value) -> UsageResult {
     let is_available = body
         .get("is_available")
         .and_then(|v| v.as_bool())
@@ -138,11 +142,17 @@ async fn query_deepseek(api_key: &str) -> Result<UsageResult, String> {
         }
     }
 
-    Ok(UsageResult {
+    // 同一账号会列出 CNY / USD 两个币种钱包，扣费走有钱的那个。只要还有币种有余额，
+    // 就不再列出空钱包：否则空的那一行会显示「余额已用完」，两行还会让卡片自动展开（#8170）。
+    if data.iter().any(|d| d.remaining.is_some_and(|v| v > 0.0)) {
+        data.retain(|d| d.remaining.is_none_or(|v| v > 0.0));
+    }
+
+    UsageResult {
         success: true,
         data: if data.is_empty() { None } else { Some(data) },
         error: None,
-    })
+    }
 }
 
 // ── StepFun ─────────────────────────────────────────────────
@@ -535,6 +545,41 @@ mod tests {
             assert!(result.data.is_none());
             assert!(result.error.is_some());
         }
+    }
+
+    #[test]
+    fn deepseek_balance_hides_empty_wallets_when_another_has_funds() {
+        let result = parse_deepseek_balance(&json!({
+            "is_available": true,
+            "balance_infos": [
+                { "currency": "CNY", "total_balance": "0.00" },
+                { "currency": "USD", "total_balance": "12.34" }
+            ]
+        }));
+        assert!(result.success);
+        let data = result.data.unwrap();
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0].unit.as_deref(), Some("USD"));
+        assert_eq!(data[0].remaining, Some(12.34));
+    }
+
+    #[test]
+    fn deepseek_balance_keeps_every_wallet_when_none_or_all_have_funds() {
+        for (cny, usd, expected) in [("0.00", "0.00", 2), ("5.00", "1.00", 2)] {
+            let result = parse_deepseek_balance(&json!({
+                "is_available": cny != "0.00",
+                "balance_infos": [
+                    { "currency": "CNY", "total_balance": cny },
+                    { "currency": "USD", "total_balance": usd }
+                ]
+            }));
+            assert_eq!(result.data.unwrap().len(), expected);
+        }
+
+        let result = parse_deepseek_balance(&json!({
+            "balance_infos": [{ "currency": "CNY", "total_balance": "0.00" }]
+        }));
+        assert_eq!(result.data.unwrap()[0].remaining, Some(0.0));
     }
 
     #[test]

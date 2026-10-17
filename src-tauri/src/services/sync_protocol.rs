@@ -7,6 +7,7 @@ use std::fs;
 use std::future::Future;
 use std::process::Command;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,26 @@ pub(crate) const REMOTE_MANIFEST: &str = "manifest.json";
 pub(crate) const MAX_DEVICE_NAME_LEN: usize = 64;
 pub(crate) const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_SYNC_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
+
+// ─── Transfer timeouts ──────────────────────────────────────
+
+/// Floor of the overall timeout for large transfers (db.sql, skills.zip).
+const TRANSFER_BASE_TIMEOUT_SECS: u64 = 300;
+/// Slowest throughput the overall timeout still accommodates (16 KiB/s).
+const TRANSFER_MIN_BYTES_PER_SEC: u64 = 16 * 1024;
+/// A transfer that makes no progress for this long (waiting for response
+/// headers, or between two body chunks) is treated as stalled.
+pub(crate) const TRANSFER_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Overall timeout for transferring up to `len` bytes.
+///
+/// reqwest's request timeout covers the whole body, so a fixed 300 s cut off
+/// healthy-but-slow downloads of large skills.zip archives mid-stream (#8428).
+/// The budget now grows with the payload size; stalls are caught separately by
+/// [`TRANSFER_IDLE_TIMEOUT`] where the transport can observe progress.
+pub(crate) fn transfer_timeout(len: u64) -> Duration {
+    Duration::from_secs(TRANSFER_BASE_TIMEOUT_SECS.saturating_add(len / TRANSFER_MIN_BYTES_PER_SEC))
+}
 
 // ─── Sync operation lock ────────────────────────────────────
 
@@ -460,6 +481,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transfer_timeout_grows_with_payload_size() {
+        assert_eq!(transfer_timeout(0), Duration::from_secs(300));
+        // #8428: a ~90 MiB skills.zip took ~927 s at ~99 KiB/s; the budget must
+        // cover it with room to spare instead of cutting off at 300 s.
+        let skills_zip = transfer_timeout(94_218_061);
+        assert!(skills_zip > Duration::from_secs(927 * 2), "{skills_zip:?}");
+        assert!(transfer_timeout(MAX_SYNC_ARTIFACT_BYTES) > transfer_timeout(94_218_061));
+    }
 
     #[tokio::test]
     async fn webdav_and_s3_operations_share_one_sync_mutex() {
