@@ -218,10 +218,16 @@ fn uninstall(_cleanup_only: bool) -> Result<(), String> {
 #[cfg(target_os = "macos")]
 fn macos_installed_apps() -> Vec<PathBuf> {
     let home = crate::config::get_home_dir();
-    macos_app_candidates(&home)
-        .into_iter()
-        .filter(|app| is_chatgpt_desktop_bundle(app))
-        .collect()
+    let mut apps = Vec::new();
+    for candidate in macos_app_candidates(&home) {
+        let Some(app) = canonical_macos_app_path(&candidate) else {
+            continue;
+        };
+        if is_chatgpt_desktop_bundle(&app) && !apps.contains(&app) {
+            apps.push(app);
+        }
+    }
+    apps
 }
 
 #[cfg(target_os = "macos")]
@@ -242,9 +248,15 @@ fn is_macos_cli_path_with_verified_apps(path: &std::path::Path, apps: &[PathBuf]
 }
 
 #[cfg(any(target_os = "macos", test))]
+fn canonical_macos_app_path(app: &std::path::Path) -> Option<PathBuf> {
+    std::fs::canonicalize(app).ok()
+}
+
+#[cfg(any(target_os = "macos", test))]
 fn macos_path_is_within_app(path: &std::path::Path, app: &std::path::Path) -> bool {
+    let app = canonical_macos_app_path(app).unwrap_or_else(|| app.to_path_buf());
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     path.starts_with(app)
-        || std::fs::canonicalize(app).is_ok_and(|resolved| path.starts_with(resolved))
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -684,7 +696,11 @@ pub(crate) fn is_chatgpt_desktop_extracted_cli_path(path: &str) -> bool {
 fn is_extracted_cli_path_under_root(path: &str, local_data_dir: &str) -> bool {
     fn normalize(path: &str) -> String {
         let path = path.replace('\\', "/").to_ascii_lowercase();
-        path.strip_prefix("//?/").unwrap_or(&path).to_string()
+        if let Some(unc) = path.strip_prefix("//?/unc/") {
+            format!("//{unc}")
+        } else {
+            path.strip_prefix("//?/").unwrap_or(&path).to_string()
+        }
     }
 
     let path = normalize(path);
@@ -860,7 +876,7 @@ mod tests {
             let link = dir.path().join("bin/codex");
             std::fs::create_dir_all(link.parent().unwrap()).unwrap();
             std::os::unix::fs::symlink(&bundled_cli, &link).unwrap();
-            assert!(!is_macos_cli_path_with_verified_apps(
+            assert!(is_macos_cli_path_with_verified_apps(
                 &link,
                 std::slice::from_ref(&verified_app)
             ));
@@ -869,6 +885,29 @@ mod tests {
                 std::slice::from_ref(&verified_app)
             ));
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn macos_app_symlinks_are_resolved_before_trash_commands() {
+        let dir = tempfile::tempdir().unwrap();
+        let real_app = dir.path().join("real/ChatGPT.app");
+        let app_alias = dir.path().join("Applications/ChatGPT.app");
+        let bundled_cli = real_app.join("Contents/Resources/codex");
+        std::fs::create_dir_all(bundled_cli.parent().unwrap()).unwrap();
+        std::fs::write(&bundled_cli, b"placeholder").unwrap();
+        std::fs::create_dir_all(app_alias.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&real_app, &app_alias).unwrap();
+
+        let resolved_app = canonical_macos_app_path(&app_alias).unwrap();
+        assert_eq!(resolved_app, std::fs::canonicalize(&real_app).unwrap());
+        assert!(macos_path_is_within_app(
+            &app_alias.join("Contents/Resources/codex"),
+            &resolved_app
+        ));
+        let command = finder_trash_script(&resolved_app).unwrap();
+        assert!(command.contains(resolved_app.to_str().unwrap()));
+        assert!(!command.contains(app_alias.to_str().unwrap()));
     }
 
     #[test]
@@ -987,6 +1026,10 @@ mod tests {
                 "{path}"
             );
         }
+        assert!(is_extracted_cli_path_under_root(
+            r"\\?\UNC\server\share\Users\me\AppData\Local\OpenAI\Codex\bin\e78bad9887fa50cf\codex.exe",
+            r"\\server\share\Users\me\AppData\Local"
+        ));
         for path in [
             r"D:\Profiles\me\LocalAppData\OpenAI\Codex\bin\0123456789abcdef\codex.exe",
             r"C:\Users\me\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe",
