@@ -7,6 +7,11 @@ license = "MIT"
 repository = "https://github.com/farion1231/cc-switch"
 edition = "2021"
 rust-version = "1.85.0"
+default-run = "cc-switch"
+
+[[bin]]
+name = "cc-switch-cli"
+path = "src/bin/cc-switch-cli.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -23,6 +28,7 @@ test-hooks = []
 tauri-build = { version = "2.4.0", features = [] }
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"

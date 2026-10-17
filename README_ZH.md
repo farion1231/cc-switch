@@ -541,6 +541,8 @@ CC Switch 本身只提供需要图形界面的桌面版（系统要求见[下载
 
 CC Switch CLI 默认与桌面版共用数据目录 `~/.cc-switch`，也兼容桌面版的 WebDAV 同步。两个项目分别发版，CLI 版支持的数据库版本有时会落后于桌面版；遇到“数据库版本过新”的提示时，请升级 CLI 版，或等它跟进更新。
 
+如果需要日常控制已有的桌面版配置，本仓库还提供可选的源码构建目标 `cc-switch-cli`：查看供应商、配置摘要和状态，预览切换，或复用桌面版 Rust 服务切换 Claude Code、Codex 和 Gemini 供应商。构建方法、脱敏输出、备份和路由限制见[原生供应商 CLI 指南](docs/guides/native-provider-cli.md)。目前桌面版安装包尚未包含此 CLI。
+
 </details>
 
 <details>
