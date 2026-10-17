@@ -1663,6 +1663,77 @@ mod tests {
         assert_eq!(rows[0].1, 9);
     }
 
+    /// 升级前已经入库的子代理行，游标仍指向未改动的 updates.jsonl。
+    #[test]
+    fn already_imported_subagent_rows_are_removed_when_the_file_is_unchanged() {
+        let db = Database::memory().expect("memory db");
+        let temp = tempdir().expect("tempdir");
+        let child = write_session_file(
+            temp.path(),
+            "child-sess",
+            &[usage_event_line(
+                OLD_EPOCH,
+                "child-turn",
+                &model_counters("grok-4.5-build", 40, 4, 0, 1),
+            )],
+        );
+        assert_eq!(sync_file(&db, &child).imported, 1);
+
+        write_summary(&child, "subagent", Some("parent-sess"));
+        let again = sync_file(&db, &child);
+
+        assert_eq!(again.imported, 0);
+        assert!(
+            query_rows(&db).expect("rows").is_empty(),
+            "the child row was already inside the parent turn"
+        );
+    }
+
+    #[test]
+    fn already_imported_fork_prefix_is_removed_when_the_file_is_unchanged() {
+        let db = Database::memory().expect("memory db");
+        let temp = tempdir().expect("tempdir");
+        let parent = write_session_file(
+            temp.path(),
+            "parent-sess",
+            &[usage_event_line(
+                OLD_EPOCH,
+                "copied",
+                &model_counters("grok-4.5-build", 30, 3, 0, 1),
+            )],
+        );
+        let fork = write_session_file(
+            temp.path(),
+            "fork-sess",
+            &[
+                usage_event_line(
+                    OLD_EPOCH,
+                    "copied",
+                    &model_counters("grok-4.5-build", 30, 3, 0, 1),
+                ),
+                usage_event_line(
+                    OLD_EPOCH + 1,
+                    "after-fork",
+                    &model_counters("grok-4.5-build", 4, 1, 0, 1),
+                ),
+            ],
+        );
+        assert_eq!(sync_file(&db, &fork).imported, 2);
+        assert_eq!(sync_file(&db, &parent).imported, 1);
+
+        write_summary(&fork, "fork", Some("parent-sess"));
+        sync_file(&db, &fork);
+
+        let rows = query_rows(&db).expect("rows");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows.iter().filter(|row| row.0.contains(":copied:")).count(),
+            1,
+            "only the parent copy of the shared prompt_id remains"
+        );
+        assert!(rows.iter().any(|row| row.0.contains("after-fork")));
+    }
+
     #[test]
     fn headless_and_worktree_sessions_are_still_imported() {
         for kind in ["headless", "worktree"] {
