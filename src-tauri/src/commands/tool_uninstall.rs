@@ -17,6 +17,7 @@ pub(super) fn candidates(
             version: None,
             runnable: true,
             error: None,
+            exited_with_error: false,
             source: "wsl".into(),
             is_path_default: true,
         };

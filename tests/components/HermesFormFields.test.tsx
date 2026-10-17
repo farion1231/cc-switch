@@ -195,6 +195,28 @@ describe("HermesFormFields", () => {
     expect(screen.getByText(/第一个模型/)).toBeInTheDocument();
   });
 
+  it("declares image input per model and drops the key when turned off", () => {
+    const { props } = renderHermesForm({
+      models: [{ id: "model-a", name: "Model A", supports_vision: true }],
+    });
+    const onModelsChange = vi.mocked(props.onModelsChange);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "展开或收起模型详情" }),
+    );
+    const vision = screen.getByRole("switch", { name: "支持图片输入" });
+    expect(vision).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(vision);
+
+    const [next] = onModelsChange.mock.calls.at(-1)![0];
+    expect(next.supports_vision).toBeUndefined();
+    expect(JSON.parse(JSON.stringify(next))).toEqual({
+      id: "model-a",
+      name: "Model A",
+    });
+  });
+
   it("keeps model name composition local until the IME commits", () => {
     const onModelsChange = vi.fn();
     const { props, rerender } = renderHermesForm({ onModelsChange });
