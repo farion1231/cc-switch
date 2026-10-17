@@ -1,33 +1,37 @@
 #![allow(non_snake_case)]
 
+use cc_command_api::command_api;
+
 use tauri::ipc::{Channel, Response};
 use tauri_plugin_dialog::DialogExt;
 
+use crate::error::AppError;
 use crate::session_manager;
 use crate::session_manager::cache::chunk_ranges;
 use crate::session_manager::content::{self, BlockContent};
 use crate::session_manager::model::{ContentRef, ImageRef, TranscriptChunk};
 
-#[tauri::command]
-pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String> {
+#[command_api]
+pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, AppError> {
     let sessions = tauri::async_runtime::spawn_blocking(session_manager::scan_sessions)
         .await
-        .map_err(|e| format!("Failed to scan sessions: {e}"))?;
+        .map_err(|e| AppError::Config(format!("Failed to scan sessions: {e}")))?;
     Ok(sessions)
 }
 
 /// 一次性返回全部消息（兼容旧前端；「复制整段」等一次性场景也用它）。走解析缓存。
-#[tauri::command]
+#[command_api]
 pub async fn get_session_messages(
     providerId: String,
     sourcePath: String,
-) -> Result<Vec<session_manager::SessionMessage>, String> {
+) -> Result<Vec<session_manager::SessionMessage>, AppError> {
     tauri::async_runtime::spawn_blocking(move || {
         session_manager::load_transcript(&providerId, &sourcePath)
             .map(|loaded| loaded.transcript.messages.clone())
     })
     .await
-    .map_err(|e| format!("Failed to load session messages: {e}"))?
+    .map_err(|e| AppError::Config(format!("Failed to load session messages: {e}")))?
+    .map_err(|e| AppError::Config(e.to_string()))
 }
 
 /// 分块流式读取会话（§5.1，决策 D1）：依次发送 `Header` → 若干 `Messages` → `Done`。
@@ -73,18 +77,18 @@ pub async fn stream_session_messages(
         })
     })
     .await
-    .map_err(|e| format!("Failed to stream session messages: {e}"))?
+    .map_err(|e| format!("Failed to stream session messages: {e}"))? 
 }
 
 /// 按 [`ContentRef`] 取工具输出 / 参数 / 思考 / diff 全文，按字符分页（默认且最多 512K 字符一页）。
-#[tauri::command]
+#[command_api]
 pub async fn get_session_block_content(
     providerId: String,
     sourcePath: String,
     contentRef: ContentRef,
     offset: Option<u32>,
     limit: Option<u32>,
-) -> Result<BlockContent, String> {
+) -> Result<BlockContent, AppError> {
     tauri::async_runtime::spawn_blocking(move || {
         let source = content::validate_source(&providerId, &sourcePath)?;
         let full = content::resolve_content_ref(&source, &contentRef)?;
@@ -110,12 +114,12 @@ pub async fn get_session_image(
 }
 
 /// 在文件管理器中显示某个已存在的文件或目录（决策 D3）；不提供「用默认程序打开」。
-#[tauri::command]
-pub async fn reveal_session_path(path: String) -> Result<bool, String> {
+#[command_api]
+pub async fn reveal_session_path(path: String) -> Result<bool, AppError> {
     tauri::async_runtime::spawn_blocking(move || {
         let path = content::resolve_reveal_path(&path)?;
         tauri_plugin_opener::reveal_item_in_dir(&path)
-            .map_err(|_| "无法在文件管理器中显示该路径".to_string())?;
+            .map_err(|_| AppError::Config("无法在文件管理器中显示该路径".to_string()))?;
         Ok(true)
     })
     .await
@@ -156,12 +160,12 @@ pub async fn reveal_session_path(path: String) -> Result<bool, String> {
 /// 相比之下 `cwd` 的处理**不属于**这条豁免：它是磁盘上扫来的项目路径，正常使用
 /// 就可能含 `$(...)`，与 renderer 是否可信无关，因此在
 /// `session_manager::terminal::shell_escape` 里做了完整的单引号转义。
-#[tauri::command]
+#[command_api]
 pub async fn launch_session_terminal(
     command: String,
     cwd: Option<String>,
     custom_config: Option<String>,
-) -> Result<bool, String> {
+) -> Result<bool, AppError> {
     let command = command.clone();
     let cwd = cwd.clone();
     let custom_config = custom_config.clone();
@@ -190,12 +194,12 @@ pub async fn launch_session_terminal(
     Ok(true)
 }
 
-#[tauri::command]
+#[command_api]
 pub async fn delete_session(
     providerId: String,
     sessionId: String,
     sourcePath: String,
-) -> Result<bool, String> {
+) -> Result<bool, AppError> {
     let provider_id = providerId.clone();
     let session_id = sessionId.clone();
     let source_path = sourcePath.clone();
@@ -204,16 +208,17 @@ pub async fn delete_session(
         session_manager::delete_session(&provider_id, &session_id, &source_path)
     })
     .await
-    .map_err(|e| format!("Failed to delete session: {e}"))?
+    .map_err(|e| AppError::Config(format!("Failed to delete session: {e}")))?
+    .map_err(|e| AppError::Config(e.to_string()))
 }
 
-#[tauri::command]
+#[command_api]
 pub async fn delete_sessions(
     items: Vec<session_manager::DeleteSessionRequest>,
-) -> Result<Vec<session_manager::DeleteSessionOutcome>, String> {
+) -> Result<Vec<session_manager::DeleteSessionOutcome>, AppError> {
     tauri::async_runtime::spawn_blocking(move || session_manager::delete_sessions(&items))
         .await
-        .map_err(|e| format!("Failed to delete sessions: {e}"))
+        .map_err(|e| AppError::Config(format!("Failed to delete sessions: {e}")))
 }
 
 /// 把会话导出为 Markdown 文件：由后端弹出保存对话框并写入。写入路径只能是用户在

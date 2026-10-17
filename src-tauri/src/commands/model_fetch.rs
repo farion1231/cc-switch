@@ -2,6 +2,7 @@
 //!
 //! 提供 Tauri 命令，供前端在供应商表单中获取可用模型列表。
 
+use cc_command_api::command_api;
 use crate::services::model_fetch::{self, FetchedModel};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -19,7 +20,7 @@ const OPENCODE_MODELS_TIMEOUT: std::time::Duration = std::time::Duration::from_s
 ///
 /// 复用工具更新页的 CLI 定位逻辑执行 `opencode models`，因此会包含 OpenCode
 /// 已加载的 OAuth 模型与 Zen 免费模型，而不是只读取 opencode.json。
-#[tauri::command]
+#[command_api]
 pub async fn get_opencode_models() -> Result<Vec<OpenCodeModelRef>, String> {
     tokio::task::spawn_blocking(|| {
         // Align runtime discovery with the OpenCode config directory that
@@ -91,7 +92,7 @@ fn parse_opencode_models(output: &str) -> Vec<OpenCodeModelRef> {
 ///
 /// 使用 OpenAI 兼容的 GET /v1/models 端点。优先使用 `models_url` 精确覆写；
 /// 否则对 baseURL 生成候选列表（含「剥离 Anthropic 兼容子路径」兜底），按序尝试。
-#[tauri::command(rename_all = "camelCase")]
+#[command_api]
 pub async fn fetch_models_for_config(
     base_url: String,
     api_key: String,

@@ -2,6 +2,7 @@
 
 use serde_json::{json, Value};
 use tauri::State;
+use cc_command_api::command_api;
 
 use crate::commands::sync_support::{
     attach_warning, post_sync_warning_from_result, run_post_import_sync,
@@ -101,7 +102,7 @@ where
     }
 }
 
-#[tauri::command]
+#[command_api]
 pub async fn webdav_test_connection(
     settings: WebDavSyncSettings,
     #[allow(non_snake_case)] preserveEmptyPassword: Option<bool>,
@@ -121,8 +122,8 @@ pub async fn webdav_test_connection(
     }))
 }
 
-#[tauri::command]
-pub async fn webdav_sync_upload(state: State<'_, AppState>) -> Result<Value, String> {
+#[command_api]
+pub async fn webdav_sync_upload(state: &AppState) -> Result<Value, String> {
     let db = state.db.clone();
     let mut settings = require_enabled_webdav_settings()?;
 
@@ -132,10 +133,10 @@ pub async fn webdav_sync_upload(state: State<'_, AppState>) -> Result<Value, Str
     })
 }
 
-#[tauri::command]
-pub async fn webdav_sync_download(state: State<'_, AppState>) -> Result<Value, String> {
+#[command_api]
+pub async fn webdav_sync_download(state: &AppState) -> Result<Value, String> {
     let db = state.db.clone();
-    let app_state_for_sync = state.inner().clone();
+    let app_state_for_sync = state.clone();
     let mut settings = require_enabled_webdav_settings()?;
 
     // Keep the derived live configuration refresh in the same global sync
@@ -167,7 +168,7 @@ pub async fn webdav_sync_download(state: State<'_, AppState>) -> Result<Value, S
     Ok(result)
 }
 
-#[tauri::command]
+#[command_api]
 pub async fn webdav_sync_save_settings(
     settings: WebDavSyncSettings,
     #[allow(non_snake_case)] passwordTouched: Option<bool>,
@@ -188,7 +189,7 @@ pub async fn webdav_sync_save_settings(
     Ok(json!({ "success": true }))
 }
 
-#[tauri::command]
+#[command_api]
 pub async fn webdav_sync_fetch_remote_info() -> Result<Value, String> {
     let settings = require_enabled_webdav_settings()?;
     let info = webdav_sync_service::fetch_remote_info(&settings)

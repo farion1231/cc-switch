@@ -1,6 +1,9 @@
+use cc_command_api::command_api;
+
+use crate::error::AppError;
 use crate::services::subscription::SubscriptionQuota;
 
-#[tauri::command]
+#[command_api]
 pub async fn get_coding_plan_quota(
     base_url: String,
     api_key: String,
@@ -11,7 +14,7 @@ pub async fn get_coding_plan_quota(
     coding_plan_provider: Option<String>,
     team_organization_id: Option<String>,
     team_project_id: Option<String>,
-) -> Result<SubscriptionQuota, String> {
+) -> Result<SubscriptionQuota, AppError> {
     crate::services::coding_plan::get_coding_plan_quota(
         &base_url,
         &api_key,
@@ -22,4 +25,5 @@ pub async fn get_coding_plan_quota(
         team_project_id.as_deref(),
     )
     .await
+    .map_err(|e| AppError::Config(e))
 }

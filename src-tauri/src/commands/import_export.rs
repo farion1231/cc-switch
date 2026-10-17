@@ -1,8 +1,9 @@
 #![allow(non_snake_case)]
 
+use cc_command_api::command_api;
+
 use serde_json::{json, Value};
 use std::path::PathBuf;
-use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 
 use crate::commands::sync_support::{
@@ -16,7 +17,7 @@ use crate::services::skill::skill_state_write_guard;
 use crate::services::sync_protocol::sync_mutex;
 use crate::store::AppState;
 
-async fn run_with_database_restore_lock<T, Start, Fut>(start_operation: Start) -> T
+pub(crate) async fn run_with_database_restore_lock<T, Start, Fut>(start_operation: Start) -> T
 where
     Start: FnOnce() -> Fut,
     Fut: std::future::Future<Output = T>,
@@ -28,11 +29,11 @@ where
 // ─── File import/export ──────────────────────────────────────
 
 /// 导出数据库为 SQL 备份
-#[tauri::command]
+#[command_api]
 pub async fn export_config_to_file(
     #[allow(non_snake_case)] filePath: String,
-    state: State<'_, AppState>,
-) -> Result<Value, String> {
+    state: &AppState,
+) -> Result<Value, AppError> {
     let db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let target_path = PathBuf::from(&filePath);
@@ -44,17 +45,17 @@ pub async fn export_config_to_file(
         }))
     })
     .await
-    .map_err(|e| format!("导出配置失败: {e}"))?
-    .map_err(|e: AppError| e.to_string())
+    .map_err(|e| AppError::Config(format!("导出配置失败: {e}")))?
+    
 }
 
 /// 从 SQL 备份导入数据库
-#[tauri::command]
+#[command_api]
 pub async fn import_config_from_file(
     #[allow(non_snake_case)] filePath: String,
-    state: State<'_, AppState>,
-) -> Result<Value, String> {
-    let app_state_for_sync = state.inner().clone();
+    state: &AppState,
+) -> Result<Value, AppError> {
+    let app_state_for_sync = state.clone();
     let db = app_state_for_sync.db.clone();
     run_with_database_restore_lock(move || {
         tauri::async_runtime::spawn_blocking(move || {
@@ -74,12 +75,12 @@ pub async fn import_config_from_file(
         })
     })
     .await
-    .map_err(|e| format!("导入配置失败: {e}"))?
-    .map_err(|e: AppError| e.to_string())
+    .map_err(|e| AppError::Config(format!("导入配置失败: {e}")))?
+    
 }
 
-#[tauri::command]
-pub async fn sync_current_providers_live(state: State<'_, AppState>) -> Result<Value, String> {
+#[command_api]
+pub async fn sync_current_providers_live(state: &AppState) -> Result<Value, AppError> {
     let db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let app_state = AppState::new(db);
@@ -91,7 +92,7 @@ pub async fn sync_current_providers_live(state: State<'_, AppState>) -> Result<V
     })
     .await
     .map_err(|e| format!("同步当前供应商失败: {e}"))?
-    .map_err(|e: AppError| e.to_string())
+    
 }
 
 // ─── File dialogs ────────────────────────────────────────────
@@ -101,7 +102,7 @@ pub async fn sync_current_providers_live(state: State<'_, AppState>) -> Result<V
 pub async fn save_file_dialog<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     #[allow(non_snake_case)] defaultName: String,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, AppError> {
     let dialog = app.dialog();
     let result = dialog
         .file()
@@ -116,7 +117,7 @@ pub async fn save_file_dialog<R: tauri::Runtime>(
 #[tauri::command]
 pub async fn open_file_dialog<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, AppError> {
     let dialog = app.dialog();
     let result = dialog
         .file()
@@ -130,7 +131,7 @@ pub async fn open_file_dialog<R: tauri::Runtime>(
 #[tauri::command]
 pub async fn open_zip_file_dialog<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, AppError> {
     let dialog = app.dialog();
     let result = dialog
         .file()
@@ -143,8 +144,8 @@ pub async fn open_zip_file_dialog<R: tauri::Runtime>(
 // ─── Database backup management ─────────────────────────────
 
 /// Manually create a database backup
-#[tauri::command]
-pub async fn create_db_backup(state: State<'_, AppState>) -> Result<String, String> {
+#[command_api]
+pub async fn create_db_backup(state: &AppState) -> Result<String, AppError> {
     let db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || match db.backup_database_file()? {
         Some(path) => Ok(path
@@ -157,22 +158,22 @@ pub async fn create_db_backup(state: State<'_, AppState>) -> Result<String, Stri
     })
     .await
     .map_err(|e| format!("Backup failed: {e}"))?
-    .map_err(|e: AppError| e.to_string())
+    
 }
 
 /// List all database backup files
-#[tauri::command]
-pub fn list_db_backups() -> Result<Vec<BackupEntry>, String> {
-    Database::list_backups().map_err(|e| e.to_string())
+#[command_api]
+pub fn list_db_backups() -> Result<Vec<BackupEntry>, AppError> {
+    Database::list_backups().map_err(|e| AppError::Config(e.to_string()))
 }
 
 /// Restore database from a backup file
-#[tauri::command]
+#[command_api]
 pub async fn restore_db_backup(
-    state: State<'_, AppState>,
+    state: &AppState,
     filename: String,
-) -> Result<String, String> {
-    let app_state_for_sync = state.inner().clone();
+) -> Result<String, AppError> {
+    let app_state_for_sync = state.clone();
     let db = app_state_for_sync.db.clone();
     run_with_database_restore_lock(move || {
         tauri::async_runtime::spawn_blocking(move || {
@@ -192,51 +193,51 @@ pub async fn restore_db_backup(
     })
     .await
     .map_err(|e| format!("Restore failed: {e}"))?
-    .map_err(|e: AppError| e.to_string())
+    
 }
 
 /// Rename a database backup file
-#[tauri::command]
+#[command_api]
 pub fn rename_db_backup(
     #[allow(non_snake_case)] oldFilename: String,
     #[allow(non_snake_case)] newName: String,
-) -> Result<String, String> {
-    Database::rename_backup(&oldFilename, &newName).map_err(|e| e.to_string())
+) -> Result<String, AppError> {
+    Database::rename_backup(&oldFilename, &newName).map_err(|e| AppError::Config(e.to_string()))
 }
 
 /// Delete a database backup file
-#[tauri::command]
-pub fn delete_db_backup(filename: String) -> Result<(), String> {
-    Database::delete_backup(&filename).map_err(|e| e.to_string())
+#[command_api]
+pub fn delete_db_backup(filename: String) -> Result<(), AppError> {
+    Database::delete_backup(&filename).map_err(|e| AppError::Config(e.to_string()))
 }
 
 // ─── Backup storage overview ─────────────────────────────────
 
 /// 列出本机各类备份的位置与大小
-#[tauri::command]
+#[command_api]
 pub async fn list_backup_locations(
-) -> Result<Vec<crate::services::backup_storage::BackupLocation>, String> {
+) -> Result<Vec<crate::services::backup_storage::BackupLocation>, AppError> {
     tauri::async_runtime::spawn_blocking(crate::services::backup_storage::list_locations)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| AppError::Config(e.to_string()))
 }
 
 /// 删除一类备份（只认类别 id），返回释放的字节数
-#[tauri::command]
-pub async fn delete_backup_location(id: String) -> Result<u64, String> {
+#[command_api]
+pub async fn delete_backup_location(id: String) -> Result<u64, AppError> {
     tauri::async_runtime::spawn_blocking(move || {
         crate::services::backup_storage::delete_location(&id)
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())
+    .map_err(|e| AppError::Config(e.to_string()))?
+    .map_err(|e| AppError::Config(e.to_string()))
 }
 
 /// 在文件管理器中显示一类备份所在的目录
-#[tauri::command]
-pub async fn reveal_backup_location(id: String) -> Result<bool, String> {
-    let dir = crate::services::backup_storage::location_dir(&id).map_err(|e| e.to_string())?;
-    tauri_plugin_opener::reveal_item_in_dir(&dir).map_err(|e| format!("打开文件夹失败: {e}"))?;
+#[command_api]
+pub async fn reveal_backup_location(id: String) -> Result<bool, AppError> {
+    let dir = crate::services::backup_storage::location_dir(&id).map_err(|e| AppError::Config(e.to_string()))?;
+    tauri_plugin_opener::reveal_item_in_dir(&dir).map_err(|e| AppError::Config(format!("打开文件夹失败: {e}")))?;
     Ok(true)
 }
 

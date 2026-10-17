@@ -1,5 +1,6 @@
 //! 项目 Profile 管理命令
 
+use cc_command_api::command_api;
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
 
@@ -118,8 +119,8 @@ pub fn desktop_uses_mapping(state: &AppState, scope: ProfileScope) -> bool {
         && crate::claude_desktop_config::current_provider_uses_proxy(&state.db)
 }
 
-#[tauri::command]
-pub fn list_profiles(state: State<'_, AppState>) -> Result<ProfilesResponse, String> {
+#[command_api]
+pub fn list_profiles(state: &AppState) -> Result<ProfilesResponse, String> {
     let profiles = ProfileService::list(&state).map_err(|e| e.to_string())?;
     let current_ids = CurrentProfileIds {
         claude: state
@@ -141,9 +142,9 @@ pub fn list_profiles(state: State<'_, AppState>) -> Result<ProfilesResponse, Str
     })
 }
 
-#[tauri::command]
+#[command_api]
 pub fn create_profile(
-    state: State<'_, AppState>,
+    state: &AppState,
     name: String,
     scope: String,
 ) -> Result<ProfileDto, String> {
@@ -153,9 +154,9 @@ pub fn create_profile(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[command_api]
 pub fn update_profile(
-    state: State<'_, AppState>,
+    state: &AppState,
     id: String,
     name: Option<String>,
     resnapshot: Option<bool>,
@@ -170,13 +171,13 @@ pub fn update_profile(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn delete_profile(state: State<'_, AppState>, id: String) -> Result<(), String> {
+#[command_api]
+pub fn delete_profile(state: &AppState, id: String) -> Result<(), String> {
     ProfileService::delete(&state, &id).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn clear_current_profile(state: State<'_, AppState>, scope: String) -> Result<(), String> {
+#[command_api]
+pub fn clear_current_profile(state: &AppState, scope: String) -> Result<(), String> {
     let scope = ProfileScope::parse(&scope).map_err(|e| e.to_string())?;
     state
         .db
