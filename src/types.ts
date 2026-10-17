@@ -209,6 +209,10 @@ export interface ProviderMeta {
   apiKeyField?: ClaudeApiKeyField;
   // 是否将 base_url 视为完整 API 端点（代理直接使用此 URL，不拼接路径）
   isFullUrl?: boolean;
+  // Gemini Native 格式下上游提供 Gemini 服务所用的 API 版本
+  // - "v1beta"：Google 官方 API（/v1beta/models/{model}:generateContent），默认
+  // - "v1"：以 /v1 代理 Gemini 的网关
+  geminiApiVersion?: "v1beta" | "v1";
   // Prompt cache key for OpenAI Responses-compatible endpoints (improves cache hit rate)
   promptCacheKey?: string;
   // Session-based prompt-cache routing for Codex Responses -> Chat conversions.

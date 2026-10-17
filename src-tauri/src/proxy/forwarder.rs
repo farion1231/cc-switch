@@ -1396,6 +1396,9 @@ impl RequestForwarder {
             && !provider.is_xai_oauth()
             && !provider.is_github_copilot();
 
+        let gemini_api_version =
+            crate::provider::GeminiApiVersion::from_meta(provider.meta.as_ref());
+
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
         let is_copilot = is_managed_copilot_request(app_type, provider, &base_url);
 
@@ -1748,7 +1751,13 @@ impl RequestForwarder {
                 let api_format = resolved_claude_api_format
                     .as_deref()
                     .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
-                rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot, &mapped_body)
+                rewrite_claude_transform_endpoint(
+                    endpoint,
+                    api_format,
+                    is_copilot,
+                    &mapped_body,
+                    gemini_api_version,
+                )
             } else {
                 (
                     endpoint.to_string(),
@@ -3903,6 +3912,7 @@ fn rewrite_claude_transform_endpoint(
     api_format: &str,
     is_copilot: bool,
     body: &Value,
+    gemini_api_version: crate::provider::GeminiApiVersion,
 ) -> (String, Option<String>) {
     let (path, query) = split_endpoint_and_query(endpoint);
     let passthrough_query = if is_claude_messages_path(path) {
@@ -3926,10 +3936,11 @@ fn rewrite_claude_transform_endpoint(
             .get("stream")
             .and_then(|value| value.as_bool())
             .unwrap_or(false);
+        let api_version = gemini_api_version.segment();
         let target_path = if is_stream {
-            format!("/v1beta/models/{model}:streamGenerateContent")
+            format!("/{api_version}/models/{model}:streamGenerateContent")
         } else {
-            format!("/v1beta/models/{model}:generateContent")
+            format!("/{api_version}/models/{model}:generateContent")
         };
 
         let rewritten_query = merge_query_params(
@@ -4521,7 +4532,7 @@ fn value_for_log(value: &Value) -> String {
 mod tests {
     use super::*;
     use crate::database::Database;
-    use crate::provider::LocalProxyRequestOverrides;
+    use crate::provider::{GeminiApiVersion, LocalProxyRequestOverrides};
     use axum::http::header::{HeaderValue, ACCEPT};
     use axum::http::HeaderMap;
     use bytes::Bytes;
@@ -5243,6 +5254,7 @@ mod tests {
             "openai_chat",
             false,
             &json!({ "model": "gpt-5.4" }),
+            GeminiApiVersion::V1Beta,
         );
 
         assert_eq!(endpoint, "/v1/chat/completions?foo=bar");
@@ -5256,6 +5268,7 @@ mod tests {
             "openai_responses",
             false,
             &json!({ "model": "gpt-5.4" }),
+            GeminiApiVersion::V1Beta,
         );
 
         assert_eq!(endpoint, "/v1/responses?x-id=1");
@@ -5655,6 +5668,7 @@ mod tests {
             "anthropic",
             true,
             &json!({ "model": "claude-sonnet-4-6" }),
+            GeminiApiVersion::V1Beta,
         );
 
         assert_eq!(endpoint, "/chat/completions?x-id=1");
@@ -5668,6 +5682,7 @@ mod tests {
             "openai_responses",
             true,
             &json!({ "model": "gpt-5.4" }),
+            GeminiApiVersion::V1Beta,
         );
 
         assert_eq!(endpoint, "/v1/responses?x-id=1");
@@ -5681,6 +5696,7 @@ mod tests {
             "gemini_native",
             false,
             &json!({ "model": "gemini-2.5-pro" }),
+            GeminiApiVersion::V1Beta,
         );
 
         assert_eq!(
@@ -5700,6 +5716,7 @@ mod tests {
             "gemini_native",
             false,
             &json!({ "model": "models/gemini-2.5-pro" }),
+            GeminiApiVersion::V1Beta,
         );
 
         assert_eq!(endpoint, "/v1beta/models/gemini-2.5-pro:generateContent");
@@ -5712,6 +5729,7 @@ mod tests {
             "gemini_native",
             false,
             &json!({ "model": "gemini-2.5-flash", "stream": true }),
+            GeminiApiVersion::V1Beta,
         );
 
         assert_eq!(
