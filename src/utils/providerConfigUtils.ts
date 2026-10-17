@@ -479,7 +479,7 @@ const isCodexUnifiedSessionProjection = (configText: string): boolean => {
       Object.keys(custom).length === 4 &&
       custom.name === "OpenAI" &&
       custom.requires_openai_auth === true &&
-      custom.supports_websockets === true &&
+      typeof custom.supports_websockets === "boolean" &&
       custom.wire_api === "responses"
     );
   } catch {
