@@ -844,6 +844,7 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
     // 路由所属应用记账，app_type / provider_id 与 Pi 侧不相同，主键也不会
     // 碰撞，所以必须显式判定。命中即只记去重账本、不写用量行 —— 否则同一
     // 请求会在「代理」和「Pi 会话」两个桶里各记一次。
+    mark_pi_record_seen(conn, record)?;
     if has_matching_pi_proxy_usage_log(
         conn,
         &PiProxyDedupKey {
@@ -857,10 +858,8 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
             created_at: record.created_at,
         },
     )? {
-        mark_pi_record_seen(conn, record)?;
         return Ok(false);
     }
-    mark_pi_record_seen(conn, record)?;
 
     let usage = TokenUsage {
         input_tokens: record.input_tokens,

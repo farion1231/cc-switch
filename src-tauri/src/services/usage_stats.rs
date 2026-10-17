@@ -535,7 +535,8 @@ const PI_SESSION_DATA_SOURCE: &str = "pi_session";
 /// 读侧口径：Pi 会话行与代理直录行是否指向同一请求。
 ///
 /// 语义必须与 [`has_matching_pi_proxy_usage_log`] 的指纹部分保持一致 ——
-/// 写侧跳过什么，这里就应该隐藏什么。
+/// 写侧跳过什么，这里就应该隐藏什么。读侧没有写侧的精确键（Pi 行不存
+/// responseId）：Pi 行先于代理行入库且指纹又对不上时，这一对不会被隐藏。
 fn pi_proxy_dedup_predicate(log_alias: &str) -> String {
     let proxy_data_source = data_source_expr("proxy_dedup");
     format!(
@@ -574,6 +575,9 @@ fn pi_proxy_dedup_predicate(log_alias: &str) -> String {
 ///   主查询只做 `rowid NOT IN`，不再逐行关联。会话日志占绝大多数时快很多。
 /// - 会话日志更少：保留原来的逐行 `EXISTS`。
 ///
+/// Pi 会话行的代理对应行 app_type 不相等，接不进上面的 JOIN；快路径里用
+/// `UNION ALL` 单独对窗口内的 Pi 行逐行判定，不拖慢其余会话行。
+///
 /// 时间边界放宽 [`SESSION_PROXY_DEDUP_WINDOW_SECONDS`]，窗口外的代理行
 /// 不可能匹配窗口内的会话行；边界是整数，直接拼进 SQL。
 pub(crate) fn effective_usage_log_filter_for_range(
@@ -608,17 +612,14 @@ pub(crate) fn effective_usage_log_filter_for_range(
     if proxy_count == 0 || (session_count == 0 && pi_count == 0) {
         return Ok("1 = 1".to_string());
     }
-    if pi_count > 0 {
-        // Pi 会话行的代理对应行 app_type 不相等，下面的 JOIN 快路径按 app_type
-        // 连线，接不住 Pi；窗口里出现过 Pi 行就退回逐行 EXISTS。
-        return Ok(effective_usage_log_filter(log_alias));
-    }
-    if proxy_count > session_count {
+    if proxy_count > session_count + pi_count {
         return Ok(effective_usage_log_filter(log_alias));
     }
 
     let dp_source = data_source_expr("dedup_p");
     let ds_source = data_source_expr("dedup_s");
+    let pi_row_source = data_source_expr("dedup_pi");
+    let pi_dedup = pi_proxy_dedup_predicate("dedup_pi");
     Ok(format!(
         "{log_alias}.rowid NOT IN (
             SELECT dedup_s.rowid
@@ -656,6 +657,12 @@ pub(crate) fn effective_usage_log_filter_for_range(
               AND dedup_p.status_code >= 200
               AND dedup_p.status_code < 300
               AND dedup_p.created_at BETWEEN {lo} AND {hi}
+            UNION ALL
+            SELECT dedup_pi.rowid
+            FROM proxy_request_logs dedup_pi
+            WHERE {pi_row_source} = '{PI_SESSION_DATA_SOURCE}'
+              AND dedup_pi.created_at BETWEEN {lo} AND {hi}
+              AND {pi_dedup}
         )"
     ))
 }
@@ -3210,9 +3217,9 @@ mod tests {
         ];
         assert_eq!(select_ids(&effective_usage_log_filter("l"))?, expected);
 
-        // 区间快路径按 app_type JOIN，接不住 Pi：窗口里出现 Pi 行要退回 EXISTS。
+        // 区间快路径的 JOIN 按 app_type 连线，Pi 行走单独的 UNION ALL 分支。
         let ranged = effective_usage_log_filter_for_range(&conn, "l", Some(0), Some(10_000))?;
-        assert!(!ranged.contains("NOT IN"));
+        assert!(ranged.contains("NOT IN"));
         assert_eq!(select_ids(&ranged)?, expected);
 
         Ok(())
