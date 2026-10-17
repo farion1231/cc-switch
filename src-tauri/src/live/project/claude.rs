@@ -372,22 +372,25 @@ fn proxy_model_fields(env: &Map<String, Value>) -> Vec<(&'static str, String)> {
     fields
 }
 
-/// 上游是比代际别名更新的小版本时，客户端改用 Claude Code 目录里的那个 id。
+/// 上游是比代际别名更新的小版本（5.5）时，Claude Code 目录里对应的客户端 id。
 ///
 /// Claude Code 按客户端 id 查自己的模型表决定显示名和输出上限：`claude-opus-5` 是
 /// 「Opus 5」、64K 输出，`claude-opus-5-5` 才是「Opus 5.5」、128K。上游配的是 5.5 却
 /// 写代际别名，菜单显示错、长输出被截断。上游 id 的分隔符各家不同（`claude-opus-5.5`、
-/// `claude-opus-5-5`、`anthropic/claude-opus-5.5`），按版本号匹配；真实模型仍由代理映射。
-const POINT_RELEASE_ALIASES: &[(&str, &str, &str)] = &[
+/// `claude-opus-5-5`、`anthropic/claude-opus-5.5`、带日期的），按版本号匹配。
+///
+/// 这张表也供反向映射用：接管写出的目录 id 要能被 [`ModelMapping::map_model`] 认成
+/// 同一个子代理模型。
+const POINT_RELEASE_CLIENT_IDS: &[(&str, &str, &str)] = &[
     (PROXY_OPUS_ALIAS, "opus-5", "claude-opus-5-5"),
     (PROXY_SONNET_ALIAS, "sonnet-5", "claude-sonnet-5-5"),
 ];
 
-fn point_release_alias(family_alias: &str, upstream: &str) -> Option<&'static str> {
+pub(crate) fn point_release_client_id(family_alias: &str, upstream: &str) -> Option<&'static str> {
     let id = crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(upstream)
         .trim()
         .to_ascii_lowercase();
-    POINT_RELEASE_ALIASES
+    POINT_RELEASE_CLIENT_IDS
         .iter()
         .filter(|(alias, _, _)| *alias == family_alias)
         .find(|(_, stem, _)| {
@@ -402,14 +405,14 @@ fn point_release_alias(family_alias: &str, upstream: &str) -> Option<&'static st
 }
 
 fn client_alias_for_upstream<'a>(default_alias: &'a str, upstream: &str) -> &'a str {
-    point_release_alias(default_alias, upstream).unwrap_or(default_alias)
+    point_release_client_id(default_alias, upstream).unwrap_or(default_alias)
 }
 
 /// 子代理模型原样写给客户端；上游是 5.5 时同样换成目录 id，否则 Claude Code 不认识它。
-fn client_model_for_subagent(upstream: &str) -> String {
+pub(crate) fn client_model_for_subagent(upstream: &str) -> String {
     let Some(alias) = [PROXY_OPUS_ALIAS, PROXY_SONNET_ALIAS]
         .into_iter()
-        .find_map(|family| point_release_alias(family, upstream))
+        .find_map(|family| point_release_client_id(family, upstream))
     else {
         return upstream.to_string();
     };
@@ -847,7 +850,7 @@ mod tests {
     }
 
     #[test]
-    fn point_release_alias_matches_version_not_spelling() {
+    fn point_release_client_id_matches_version_not_spelling() {
         for upstream in [
             "claude-opus-5.5",
             "claude-opus-5-5",
@@ -884,5 +887,58 @@ mod tests {
             client_model_for_subagent("claude-sonnet-5.5"),
             "claude-sonnet-5-5"
         );
+    }
+
+    /// 接管写出的子代理 id 必须还能被代理映射回上游模型，包括 opus/sonnet 档没配行里
+    /// 没有对应档位、只能靠 `CLAUDE_CODE_SUBAGENT_MODEL` 兜底的情况。
+    #[test]
+    fn projected_subagent_id_round_trips_through_model_mapping() {
+        use crate::proxy::model_mapper::apply_model_mapping;
+
+        for env in [
+            json!({
+                "ANTHROPIC_MODEL": "glm-5",
+                "CLAUDE_CODE_SUBAGENT_MODEL": "claude-opus-5.5[1M]"
+            }),
+            json!({
+                "ANTHROPIC_MODEL": "glm-5",
+                "CLAUDE_CODE_SUBAGENT_MODEL": "anthropic/claude-opus-5.5"
+            }),
+            json!({
+                "ANTHROPIC_MODEL": "glm-5",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5.5[1M]",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5.5[1M]",
+                "CLAUDE_CODE_SUBAGENT_MODEL": "claude-opus-5.5[1M]"
+            }),
+        ] {
+            let row = json!({ "env": env });
+            let routed = proxy_projection(
+                &ClaudeProjection::of(&row),
+                "http://127.0.0.1:15721",
+                ProxyAuth::FollowRow,
+                None,
+            );
+            let client_id = routed.env["CLAUDE_CODE_SUBAGENT_MODEL"]
+                .as_str()
+                .expect("subagent id written");
+            assert_eq!(
+                crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(client_id),
+                "claude-opus-5-5",
+                "{env}"
+            );
+
+            let provider: crate::provider::Provider = serde_json::from_value(
+                json!({ "id": "p", "name": "P", "settingsConfig": { "env": env } }),
+            )
+            .expect("provider");
+            let (mapped, _, _) = apply_model_mapping(json!({ "model": client_id }), &provider);
+            let sent = mapped["model"].as_str().unwrap();
+            let configured = env["CLAUDE_CODE_SUBAGENT_MODEL"].as_str().unwrap();
+            assert_eq!(
+                crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(sent),
+                crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(configured),
+                "{env}"
+            );
+        }
     }
 }
