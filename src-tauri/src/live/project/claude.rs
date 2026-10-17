@@ -346,6 +346,7 @@ fn proxy_model_fields(env: &Map<String, Value>) -> Vec<(&'static str, String)> {
         let Some(upstream) = upstream else {
             continue;
         };
+        let alias = client_alias_for_upstream(alias, upstream);
         let mut client_model = alias.to_string();
         if supports_one_m && has_one_m_marker(upstream) {
             client_model.push_str(ONE_M_MARKER_FOR_CLIENT);
@@ -363,9 +364,63 @@ fn proxy_model_fields(env: &Map<String, Value>) -> Vec<(&'static str, String)> {
         }
     }
     if let Some(subagent) = env_string(env, "CLAUDE_CODE_SUBAGENT_MODEL") {
-        fields.push(("CLAUDE_CODE_SUBAGENT_MODEL", subagent.to_string()));
+        fields.push((
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+            client_model_for_subagent(subagent),
+        ));
     }
     fields
+}
+
+/// 上游是比代际别名更新的小版本（5.5）时，Claude Code 目录里对应的客户端 id。
+///
+/// Claude Code 按客户端 id 查自己的模型表决定显示名和输出上限：`claude-opus-5` 是
+/// 「Opus 5」、64K 输出，`claude-opus-5-5` 才是「Opus 5.5」、128K。上游配的是 5.5 却
+/// 写代际别名，菜单显示错、长输出被截断。上游 id 的分隔符各家不同（`claude-opus-5.5`、
+/// `claude-opus-5-5`、`anthropic/claude-opus-5.5`、带日期的），按版本号匹配。
+///
+/// 这张表也供反向映射用：接管写出的目录 id 要能被 [`ModelMapping::map_model`] 认成
+/// 同一个子代理模型。
+const POINT_RELEASE_CLIENT_IDS: &[(&str, &str, &str)] = &[
+    (PROXY_OPUS_ALIAS, "opus-5", "claude-opus-5-5"),
+    (PROXY_SONNET_ALIAS, "sonnet-5", "claude-sonnet-5-5"),
+];
+
+pub(crate) fn point_release_client_id(family_alias: &str, upstream: &str) -> Option<&'static str> {
+    let id = crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(upstream)
+        .trim()
+        .to_ascii_lowercase();
+    POINT_RELEASE_CLIENT_IDS
+        .iter()
+        .filter(|(alias, _, _)| *alias == family_alias)
+        .find(|(_, stem, _)| {
+            [".5", "-5"].iter().any(|minor| {
+                id.find(&format!("{stem}{minor}")).is_some_and(|at| {
+                    let rest = &id[at + stem.len() + minor.len()..];
+                    !rest.starts_with(|c: char| c.is_ascii_digit() || c == '.')
+                })
+            })
+        })
+        .map(|(_, _, client)| *client)
+}
+
+fn client_alias_for_upstream<'a>(default_alias: &'a str, upstream: &str) -> &'a str {
+    point_release_client_id(default_alias, upstream).unwrap_or(default_alias)
+}
+
+/// 子代理模型原样写给客户端；上游是 5.5 时同样换成目录 id，否则 Claude Code 不认识它。
+pub(crate) fn client_model_for_subagent(upstream: &str) -> String {
+    let Some(alias) = [PROXY_OPUS_ALIAS, PROXY_SONNET_ALIAS]
+        .into_iter()
+        .find_map(|family| point_release_client_id(family, upstream))
+    else {
+        return upstream.to_string();
+    };
+    let mut client_model = alias.to_string();
+    if has_one_m_marker(upstream) {
+        client_model.push_str(ONE_M_MARKER_FOR_CLIENT);
+    }
+    client_model
 }
 
 /// Stack 模式的四档：都写同一个 Stack id（1M 模型带 `[1M]` 标记），显示名也一样。haiku 档
@@ -753,5 +808,137 @@ mod tests {
             "claude-sonnet-5[1M]"
         );
         assert_eq!(routed.env["CLAUDE_CODE_SUBAGENT_MODEL"], "glm-4.7-air");
+    }
+
+    #[test]
+    fn point_release_upstream_uses_catalog_ids() {
+        let row = json!({ "env": {
+            "ANTHROPIC_AUTH_TOKEN": "sk",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-sonnet-5.5[1M]",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5.5[1M]",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5.5[1M]",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL": "claude-opus-5.5[1M]",
+            "CLAUDE_CODE_SUBAGENT_MODEL": "claude-opus-5.5[1M]"
+        }});
+        let routed = proxy_projection(
+            &ClaudeProjection::of(&row),
+            "http://127.0.0.1:15721",
+            ProxyAuth::FollowRow,
+            None,
+        );
+        let env = |key: &str| routed.env.get(key).and_then(Value::as_str);
+        assert_eq!(
+            env("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+            Some("claude-haiku-5-5")
+        );
+        assert_eq!(
+            env("ANTHROPIC_DEFAULT_SONNET_MODEL"),
+            Some("claude-sonnet-5-5[1M]")
+        );
+        assert_eq!(
+            env("ANTHROPIC_DEFAULT_OPUS_MODEL"),
+            Some("claude-opus-5-5[1M]")
+        );
+        assert_eq!(
+            env("ANTHROPIC_DEFAULT_FABLE_MODEL"),
+            Some("claude-fable-5[1M]")
+        );
+        assert_eq!(
+            env("CLAUDE_CODE_SUBAGENT_MODEL"),
+            Some("claude-opus-5-5[1M]")
+        );
+    }
+
+    #[test]
+    fn point_release_client_id_matches_version_not_spelling() {
+        for upstream in [
+            "claude-opus-5.5",
+            "claude-opus-5-5",
+            "CLAUDE-OPUS-5.5[1m]",
+            "anthropic/claude-opus-5.5",
+            "claude-opus-5-5-20261001",
+        ] {
+            assert_eq!(
+                client_alias_for_upstream(PROXY_OPUS_ALIAS, upstream),
+                "claude-opus-5-5",
+                "{upstream}"
+            );
+        }
+        for upstream in [
+            "claude-opus-5",
+            "claude-opus-5[1M]",
+            "claude-opus-5.55",
+            "claude-opus-4.5",
+            "glm-5.2",
+        ] {
+            assert_eq!(
+                client_alias_for_upstream(PROXY_OPUS_ALIAS, upstream),
+                PROXY_OPUS_ALIAS,
+                "{upstream}"
+            );
+        }
+        // 档位不串：opus 上游不会把 sonnet 档改名。
+        assert_eq!(
+            client_alias_for_upstream(PROXY_SONNET_ALIAS, "claude-opus-5.5"),
+            PROXY_SONNET_ALIAS
+        );
+        assert_eq!(client_model_for_subagent("glm-4.7-air"), "glm-4.7-air");
+        assert_eq!(
+            client_model_for_subagent("claude-sonnet-5.5"),
+            "claude-sonnet-5-5"
+        );
+    }
+
+    /// 接管写出的子代理 id 必须还能被代理映射回上游模型，包括 opus/sonnet 档没配行里
+    /// 没有对应档位、只能靠 `CLAUDE_CODE_SUBAGENT_MODEL` 兜底的情况。
+    #[test]
+    fn projected_subagent_id_round_trips_through_model_mapping() {
+        use crate::proxy::model_mapper::apply_model_mapping;
+
+        for env in [
+            json!({
+                "ANTHROPIC_MODEL": "glm-5",
+                "CLAUDE_CODE_SUBAGENT_MODEL": "claude-opus-5.5[1M]"
+            }),
+            json!({
+                "ANTHROPIC_MODEL": "glm-5",
+                "CLAUDE_CODE_SUBAGENT_MODEL": "anthropic/claude-opus-5.5"
+            }),
+            json!({
+                "ANTHROPIC_MODEL": "glm-5",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5.5[1M]",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5.5[1M]",
+                "CLAUDE_CODE_SUBAGENT_MODEL": "claude-opus-5.5[1M]"
+            }),
+        ] {
+            let row = json!({ "env": env });
+            let routed = proxy_projection(
+                &ClaudeProjection::of(&row),
+                "http://127.0.0.1:15721",
+                ProxyAuth::FollowRow,
+                None,
+            );
+            let client_id = routed.env["CLAUDE_CODE_SUBAGENT_MODEL"]
+                .as_str()
+                .expect("subagent id written");
+            assert_eq!(
+                crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(client_id),
+                "claude-opus-5-5",
+                "{env}"
+            );
+
+            let provider: crate::provider::Provider = serde_json::from_value(
+                json!({ "id": "p", "name": "P", "settingsConfig": { "env": env } }),
+            )
+            .expect("provider");
+            let (mapped, _, _) = apply_model_mapping(json!({ "model": client_id }), &provider);
+            let sent = mapped["model"].as_str().unwrap();
+            let configured = env["CLAUDE_CODE_SUBAGENT_MODEL"].as_str().unwrap();
+            assert_eq!(
+                crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(sent),
+                crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(configured),
+                "{env}"
+            );
+        }
     }
 }
