@@ -17,6 +17,10 @@ import {
   vi,
 } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import i18n from "i18next";
+import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
+import zh from "@/i18n/locales/zh.json";
+import type { ChatGptDesktopStatus } from "@/lib/api/providers";
 import type {
   settingsApi,
   ToolInstallationReport,
@@ -39,19 +43,55 @@ const mocks = vi.hoisted(() => ({
   error: vi.fn(),
 }));
 
+// 默认没装 ChatGPT Desktop；不能 resolve undefined，React Query 会为此打 console.error
+const chatgptDesktop = vi.hoisted(() => {
+  const notInstalled: ChatGptDesktopStatus = {
+    supported: true,
+    installed: false,
+    cleanupRequired: false,
+    appVersion: null,
+    bundledCliVersion: null,
+    bundledCliPath: null,
+    uninstallCommand: null,
+  };
+  return {
+    notInstalled,
+    getStatus: vi.fn(async (): Promise<ChatGptDesktopStatus> => notInstalled),
+    uninstall: vi.fn(async (): Promise<void> => {}),
+  };
+});
+
 vi.mock("@/lib/api", () => ({ settingsApi: mocks }));
 vi.mock("@/lib/api/providers", () => ({
   providersApi: {
     getClaudeDesktopStatus: async () => ({ supported: true, configured: true }),
+    getChatGptDesktopStatus: chatgptDesktop.getStatus,
+    uninstallChatGptDesktop: chatgptDesktop.uninstall,
   },
 }));
-vi.mock("@/hooks/useSettings", () => ({
-  useSettings: () => ({
-    settings: { visibleApps: undefined },
-    updateSettings: vi.fn(),
-    autoSaveSettings: vi.fn(async () => null),
-  }),
+// 显示开关的状态要真的会变，才看得出 Codex CLI 和 ChatGPT Desktop 两行的开关是不是联动；
+// visibleApps 为空时按默认（全部显示）
+const settingsMock = vi.hoisted(() => ({
+  visibleApps: undefined as Record<string, boolean> | undefined,
+  autoSaveSettings: vi.fn(async (_patch: unknown) => null),
 }));
+
+vi.mock("@/hooks/useSettings", async () => {
+  const { useState } = await import("react");
+  return {
+    useSettings: () => {
+      const [settings, setSettings] = useState({
+        visibleApps: settingsMock.visibleApps,
+      });
+      return {
+        settings,
+        updateSettings: (patch: Partial<typeof settings>) =>
+          setSettings((prev) => ({ ...prev, ...patch })),
+        autoSaveSettings: settingsMock.autoSaveSettings,
+      };
+    },
+  };
+});
 vi.mock("sonner", () => ({ toast: mocks }));
 vi.mock("@/lib/clipboard", () => ({ copyText: mocks.copyText }));
 
@@ -266,7 +306,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       }),
     );
     const dialog = within(screen.getByRole("dialog"));
-    const codex = () => within(dialog.getByText("Codex").closest("li")!);
+    const codex = () => within(dialog.getByText("Codex CLI").closest("li")!);
     expect(
       codex().getByText("npm uninstall -g @openai/codex"),
     ).toBeInTheDocument();
@@ -345,7 +385,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
         expect(
           within(dialog.getByRole("list")).getByText("Hermes"),
         ).toBeInTheDocument();
-        expect(dialog.queryByText("Codex")).not.toBeInTheDocument();
+        expect(dialog.queryByText("Codex CLI")).not.toBeInTheDocument();
         await user.click(
           dialog.getByRole("button", {
             name: "settings.copyToolUninstallCommand",
@@ -372,7 +412,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       }),
     );
     const dialog = within(screen.getByRole("dialog"));
-    const codex = within(dialog.getByText("Codex").closest("li")!);
+    const codex = within(dialog.getByText("Codex CLI").closest("li")!);
     await user.click(codex.getByRole("button"));
     expect(mocks.error).toHaveBeenCalledWith(
       "settings.uninstallCommandCopyFailed",
@@ -430,7 +470,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
         dialog.getByText("pnpm remove -g opencode-ai"),
       ).toBeInTheDocument();
       expect(dialog.getByText("pnpm remove -g openclaw")).toBeInTheDocument();
-      expect(dialog.queryByText("Codex")).not.toBeInTheDocument();
+      expect(dialog.queryByText("Codex CLI")).not.toBeInTheDocument();
       await chooseMethod("bun");
       expect(dialog.getAllByRole("listitem")).toHaveLength(1);
       expect(dialog.getByText("bun remove -g openclaw")).toBeInTheDocument();
@@ -602,12 +642,12 @@ describe("AppsPage concurrent CLI upgrades", () => {
       }),
     ).toBeEnabled();
     expect(
-      card("Codex").queryByRole("button", {
+      card("Codex CLI").queryByRole("button", {
         name: "appPage.moreActions",
       }),
     ).toBeNull();
     expect(
-      card("Codex").getByRole("button", { name: "settings.toolInstall" }),
+      card("Codex CLI").getByRole("button", { name: "settings.toolInstall" }),
     ).toBeEnabled();
   });
 
@@ -655,7 +695,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       new Error("Unverified Homebrew owner: mise"),
     );
     await renderApps();
-    await openUninstall("Codex");
+    await openUninstall("Codex CLI");
     const dialog = within(screen.getByRole("dialog"));
     expect(await dialog.findByRole("alert")).toHaveTextContent(
       "settings.toolUninstallManualRequired",
@@ -761,7 +801,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
         name: "common.cancel",
       }),
     );
-    await openUninstall("Codex");
+    await openUninstall("Codex CLI");
     const dialog = within(screen.getByRole("dialog"));
     expect(
       await dialog.findByText(uninstallPlan("codex").path),
@@ -806,7 +846,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(
       dialog.getByText("brew uninstall --formula anomalyco/tap/opencode"),
     ).toBeInTheDocument();
-    expect(dialog.queryByText("Codex")).toBeNull();
+    expect(dialog.queryByText("Codex CLI")).toBeNull();
     expect(dialog.queryByText("Claude Code")).toBeNull();
     expect(dialog.queryByText("Grok Build")).toBeNull();
   });
@@ -845,7 +885,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(uninstall()).toBeDisabled();
     expect(uninstall()).toHaveAttribute("aria-busy", "true");
     expect(updateButton("Claude Code")).toBeDisabled();
-    expect(updateButton("Codex")).toBeEnabled();
+    expect(updateButton("Codex CLI")).toBeEnabled();
     view.unmount();
     await renderApps();
     expect(uninstall()).toBeDisabled();
@@ -1134,8 +1174,8 @@ describe("AppsPage concurrent CLI upgrades", () => {
     fireEvent.click(updateButton("Claude Code"));
     fireEvent.click(updateButton("Claude Code"));
     expect(updateButton("Claude Code")).toBeDisabled();
-    expect(updateButton("Codex")).toBeEnabled();
-    fireEvent.click(updateButton("Codex"));
+    expect(updateButton("Codex CLI")).toBeEnabled();
+    fireEvent.click(updateButton("Codex CLI"));
     expect(mocks.probeToolInstallations.mock.calls).toEqual([
       [["claude"]],
       [["codex"]],
@@ -1147,11 +1187,11 @@ describe("AppsPage concurrent CLI upgrades", () => {
     });
     expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(2);
     expect(updateButton("Claude Code")).toBeDisabled();
-    expect(updateButton("Codex")).toBeDisabled();
+    expect(updateButton("Codex CLI")).toBeDisabled();
     expect(updateButton("Gemini CLI")).toBeEnabled();
 
     await act(async () => codexRun.resolve());
-    expect(isReady("Codex")).toBe(true);
+    expect(isReady("Codex CLI")).toBe(true);
     expect(updateButton("Claude Code")).toBeDisabled();
     await act(async () => claudeRun.resolve());
     expect(isReady("Claude Code")).toBe(true);
@@ -1192,7 +1232,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       runs.get("codex")!.resolve();
     });
     expect(isReady("Gemini CLI")).toBe(true);
-    expect(isReady("Codex")).toBe(true);
+    expect(isReady("Codex CLI")).toBe(true);
     expect(updateButton("Claude Code")).toBeDisabled();
     await act(async () => runs.get("claude")!.resolve());
   });
@@ -1224,7 +1264,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       const versionChecks = mocks.getToolVersions.mock.calls.length;
       expect(actionButton()).toBeDisabled();
       expect(actionButton()).toHaveAttribute("aria-busy", "true");
-      expect(updateButton("Codex")).toBeEnabled();
+      expect(updateButton("Codex CLI")).toBeEnabled();
       fireEvent.click(actionButton());
       expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(1);
       expect(mocks.getToolVersions).toHaveBeenCalledTimes(versionChecks);
@@ -1397,7 +1437,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     const updateAll = updateAllButton();
     expect(updateAll).toBeDisabled();
     expect(updateAll).toHaveAttribute("aria-busy", "true");
-    expect(isReady("Codex")).toBe(true);
+    expect(isReady("Codex CLI")).toBe(true);
     expect(updateButton("Claude Code")).toHaveAttribute("aria-busy", "true");
     expect(updateButton("Gemini CLI")).toBeDisabled();
 
@@ -1495,7 +1535,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     fireEvent.click(updateAllButton());
     await waitFor(() => expect(mocks.success).toHaveBeenCalledTimes(1));
     expect(mocks.info).toHaveBeenCalledTimes(1);
-    expect(isReady("Codex")).toBe(true);
+    expect(isReady("Codex CLI")).toBe(true);
     expect(isReady("Gemini CLI")).toBe(true);
     expect(mocks.warning).not.toHaveBeenCalled();
     expect(mocks.error).not.toHaveBeenCalled();
@@ -1516,7 +1556,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       await waitFor(() =>
         expect(mocks.warning).toHaveBeenCalledWith(
           "settings.toolActionPartial",
-          { description: "Codex: installer failed", closeButton: true },
+          { description: "Codex CLI: installer failed", closeButton: true },
         ),
       );
       expect(mocks.info).toHaveBeenCalledTimes(1);
@@ -1556,7 +1596,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     );
     await act(async () => firstRun.reject(new Error("upgrade failed")));
     expect(updateButton("Claude Code")).toBeEnabled();
-    expect(updateButton("Codex")).toBeDisabled();
+    expect(updateButton("Codex CLI")).toBeDisabled();
     fireEvent.click(updateButton("Claude Code"));
     await waitFor(() =>
       expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(4),
@@ -1590,7 +1630,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     );
     await renderApps();
     fireEvent.click(updateButton("Claude Code"));
-    fireEvent.click(updateButton("Codex"));
+    fireEvent.click(updateButton("Codex CLI"));
     await act(async () => {
       claudeProbe.resolve([report("claude", { needs_confirmation: true })]);
       codexProbe.resolve([report("codex", { needs_confirmation: true })]);
@@ -1599,14 +1639,14 @@ describe("AppsPage concurrent CLI upgrades", () => {
       within(screen.getByRole("dialog")).getByText("Claude Code"),
     ).toBeInTheDocument();
     expect(
-      within(screen.getByRole("dialog")).queryByText("Codex"),
+      within(screen.getByRole("dialog")).queryByText("Codex CLI"),
     ).not.toBeInTheDocument();
     expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
     fireEvent.click(
       screen.getByRole("button", { name: "settings.toolUpgradeConfirmBtn" }),
     );
     expect(
-      within(screen.getByRole("dialog")).getByText("Codex"),
+      within(screen.getByRole("dialog")).getByText("Codex CLI"),
     ).toBeInTheDocument();
     expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(1);
     expect(mocks.runToolLifecycleAction).toHaveBeenCalledWith(
@@ -1616,7 +1656,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "common.cancel" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(updateButton("Codex")).toBeEnabled();
+    expect(updateButton("Codex CLI")).toBeEnabled();
     expect(updateButton("Claude Code")).toBeDisabled();
     await act(async () => claudeRun.resolve());
   });
@@ -1634,7 +1674,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       const user = userEvent.setup();
       await renderApps();
       fireEvent.click(updateButton("Claude Code"));
-      fireEvent.click(updateButton("Codex"));
+      fireEvent.click(updateButton("Codex CLI"));
       await act(async () => {
         claudeProbe.resolve([report("claude", { needs_confirmation: true })]);
         codexProbe.resolve([report("codex", { needs_confirmation: true })]);
@@ -1654,7 +1694,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
         [["claude"], "update", {}],
       ]);
       expect(
-        within(screen.getByRole("dialog")).getByText("Codex"),
+        within(screen.getByRole("dialog")).getByText("Codex CLI"),
       ).toBeInTheDocument();
       if (gesture !== "double click") {
         expect(
@@ -1682,20 +1722,20 @@ describe("AppsPage concurrent CLI upgrades", () => {
     const user = userEvent.setup();
     await renderApps();
     fireEvent.click(updateButton("Claude Code"));
-    fireEvent.click(updateButton("Codex"));
+    fireEvent.click(updateButton("Codex CLI"));
     await act(async () => {
       claudeProbe.resolve([report("claude", { needs_confirmation: true })]);
       codexProbe.resolve([report("codex", { needs_confirmation: true })]);
     });
     await user.dblClick(screen.getByRole("button", { name: "common.cancel" }));
     expect(
-      within(screen.getByRole("dialog")).getByText("Codex"),
+      within(screen.getByRole("dialog")).getByText("Codex CLI"),
     ).toBeInTheDocument();
     expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "common.cancel" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(updateButton("Claude Code")).toBeEnabled();
-    expect(updateButton("Codex")).toBeEnabled();
+    expect(updateButton("Codex CLI")).toBeEnabled();
   });
 
   it("does not block another installation submission while an upgrade is running", async () => {
@@ -1713,12 +1753,12 @@ describe("AppsPage concurrent CLI upgrades", () => {
     await waitFor(() =>
       expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(1),
     );
-    const install = card("Codex").getByRole("button", {
+    const install = card("Codex CLI").getByRole("button", {
       name: "settings.toolInstall",
     });
     expect(install).toBeEnabled();
     fireEvent.click(install);
-    await waitFor(() => expect(isReady("Codex")).toBe(true));
+    await waitFor(() => expect(isReady("Codex CLI")).toBe(true));
     expect(mocks.runToolLifecycleAction).toHaveBeenCalledWith(
       ["codex"],
       "install",
@@ -1760,7 +1800,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     // 缓存过期，重新挂载时别的工具会重新探测版本；等探测完、按钮出来再点「全部更新」，
     // 不然机器慢时这几行还在加载
     await waitFor(() => {
-      expect(updateButton("Codex")).toBeEnabled();
+      expect(updateButton("Codex CLI")).toBeEnabled();
       expect(updateButton("Gemini CLI")).toBeEnabled();
     });
     fireEvent.click(updateAllButton());
@@ -1794,7 +1834,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     );
     await renderApps();
     fireEvent.click(updateAllButton());
-    await waitFor(() => expect(isReady("Codex")).toBe(true));
+    await waitFor(() => expect(isReady("Codex CLI")).toBe(true));
     expect(isReady("Gemini CLI")).toBe(true);
     expect(updateButton("Claude Code")).toBeEnabled();
     expect(
@@ -1857,7 +1897,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       }),
     ).toBeNull();
     fireEvent.click(updateAllButton());
-    await waitFor(() => expect(isReady("Codex")).toBe(true));
+    await waitFor(() => expect(isReady("Codex CLI")).toBe(true));
     expect(isReady("Gemini CLI")).toBe(true);
     expect(
       mocks.runToolLifecycleAction.mock.calls.map(([tools]) => tools),
@@ -1926,5 +1966,349 @@ describe("AppsPage visibility column", () => {
       expect(element).toHaveAttribute("data-size", "sm");
       expect(element).not.toHaveAttribute("data-tone");
     }
+  });
+});
+
+describe("AppsPage ChatGPT Desktop row", () => {
+  const installed: ChatGptDesktopStatus = {
+    supported: true,
+    installed: true,
+    cleanupRequired: false,
+    appVersion: "26.1013.3656.0",
+    bundledCliVersion: "0.163.0-alpha.10.2",
+    bundledCliPath:
+      "C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.1013.3656.0_x64__2p2nqsd0c76g0\\app\\resources\\codex.exe",
+    uninstallCommand:
+      "Remove-AppxPackage -Package 'OpenAI.Codex_26.1013.3656.0_x64__2p2nqsd0c76g0'",
+  };
+
+  beforeEach(() => {
+    vi.resetModules();
+    upgraded.clear();
+    outdated.clear();
+    missing.clear();
+    mocks.getToolVersions
+      .mockReset()
+      .mockImplementation(async (tools: string[]) =>
+        tools.map((name) => ({
+          name,
+          version:
+            upgraded.has(name) || !outdated.has(name) ? "2.0.0" : "1.0.0",
+          latest_version: "2.0.0",
+          error: null,
+          installed_but_broken: false,
+          env_type: "windows",
+          wsl_distro: null,
+        })),
+      );
+    mocks.listToolInstallations
+      .mockReset()
+      .mockImplementation(async (tools: string[]) =>
+        tools.map((tool) => report(tool)),
+      );
+    mocks.probeToolInstallations
+      .mockReset()
+      .mockImplementation(async (tools: string[]) =>
+        tools.map((tool) => report(tool)),
+      );
+    mocks.runToolLifecycleAction
+      .mockReset()
+      .mockImplementation(async ([tool]: string[]) => {
+        upgraded.add(tool);
+      });
+    chatgptDesktop.getStatus.mockImplementation(
+      async () => chatgptDesktop.notInstalled,
+    );
+    chatgptDesktop.uninstall.mockReset().mockResolvedValue(undefined);
+    settingsMock.visibleApps = undefined;
+    settingsMock.autoSaveSettings.mockClear();
+  });
+
+  const row = (name: string) =>
+    screen
+      .getByText(name, { selector: "span" })
+      .closest("[data-tool-row]") as HTMLElement;
+
+  it("sits right after Codex CLI and tells the two apart by the badge", async () => {
+    await renderApps();
+    const codex = row("Codex CLI");
+    const desktop = row("ChatGPT Desktop");
+    expect(codex.nextElementSibling).toBe(desktop);
+    expect(codex.querySelector(".lucide-terminal")).not.toBeNull();
+    expect(codex.querySelector(".lucide-monitor")).toBeNull();
+    expect(desktop.querySelector(".lucide-monitor")).not.toBeNull();
+    expect(desktop.querySelector(".lucide-terminal")).toBeNull();
+  });
+
+  it("gives both rows a sidebar switch, even when ChatGPT Desktop isn't installed", async () => {
+    await renderApps();
+    expect(
+      await within(row("ChatGPT Desktop")).findByText("common.notInstalled"),
+    ).toBeInTheDocument();
+    const switches = [row("Codex CLI"), row("ChatGPT Desktop")].map((element) =>
+      within(element).getByRole("switch"),
+    );
+    expect(switches).toHaveLength(2);
+    for (const element of switches) expect(element).toBeChecked();
+  });
+
+  it("turns both switches on and off together, whichever one is clicked", async () => {
+    await renderApps();
+    const user = userEvent.setup();
+    const codex = within(row("Codex CLI")).getByRole("switch");
+    const desktop = within(row("ChatGPT Desktop")).getByRole("switch");
+
+    await user.click(desktop);
+    expect(codex).not.toBeChecked();
+    expect(desktop).not.toBeChecked();
+    expect(settingsMock.autoSaveSettings).toHaveBeenLastCalledWith({
+      visibleApps: expect.objectContaining({ codex: false, claude: true }),
+    });
+
+    await user.click(codex);
+    expect(codex).toBeChecked();
+    expect(desktop).toBeChecked();
+    expect(settingsMock.autoSaveSettings).toHaveBeenLastCalledWith({
+      visibleApps: expect.objectContaining({ codex: true, claude: true }),
+    });
+
+    await user.click(codex);
+    expect(codex).not.toBeChecked();
+    expect(desktop).not.toBeChecked();
+    expect(settingsMock.autoSaveSettings).toHaveBeenCalledTimes(3);
+  });
+
+  it("starts both switches off when Codex is hidden", async () => {
+    settingsMock.visibleApps = { codex: false };
+    await renderApps();
+    expect(within(row("Codex CLI")).getByRole("switch")).not.toBeChecked();
+    expect(
+      within(row("ChatGPT Desktop")).getByRole("switch"),
+    ).not.toBeChecked();
+  });
+
+  it("locks both switches while Codex is the only app shown in the sidebar", async () => {
+    settingsMock.visibleApps = Object.fromEntries(
+      Object.keys(DEFAULT_VISIBLE_APPS).map((app) => [app, app === "codex"]),
+    );
+    await renderApps();
+    expect(within(row("Codex CLI")).getByRole("switch")).toBeDisabled();
+    expect(within(row("ChatGPT Desktop")).getByRole("switch")).toBeDisabled();
+  });
+
+  it("shows the app version and the bundled Codex CLI version, with uninstall as the only action", async () => {
+    chatgptDesktop.getStatus.mockResolvedValue(installed);
+    i18n.addResourceBundle("zh", "translation", {
+      appsPage: { chatgptDesktop: zh.appsPage.chatgptDesktop },
+    });
+    try {
+      await renderApps();
+      const desktop = within(row("ChatGPT Desktop"));
+      expect(await desktop.findByText("26.1013.3656.0")).toBeInTheDocument();
+      expect(
+        desktop.getByText(
+          "随附 Codex CLI 0.163.0-alpha.10.2 · 随 ChatGPT Desktop 更新，不能单独升级",
+        ),
+      ).toHaveAttribute("title", installed.bundledCliPath);
+      // 按钮只有版本旁的说明「?」和行尾的「⋯」（卸载），没有安装和升级；显示开关不是按钮
+      expect(
+        desktop
+          .getAllByRole("button")
+          .map((button) => button.getAttribute("aria-label")),
+      ).toEqual(["ChatGPT Desktop", "appPage.moreActions"]);
+      expect(desktop.getByRole("switch")).toBeInTheDocument();
+    } finally {
+      i18n.removeResourceBundle("zh", "translation");
+    }
+  });
+
+  it("says when the bundled Codex CLI version can't be read", async () => {
+    chatgptDesktop.getStatus.mockResolvedValue({
+      ...installed,
+      bundledCliVersion: null,
+      bundledCliPath: null,
+    });
+    await renderApps();
+    expect(
+      await within(row("ChatGPT Desktop")).findByText(
+        "appsPage.chatgptDesktop.bundledCliUnknown",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it.each<[string, () => Promise<ChatGptDesktopStatus>, string, string | null]>(
+    [
+      [
+        "not installed",
+        async () => chatgptDesktop.notInstalled,
+        "common.notInstalled",
+        "appsPage.chatgptDesktop.installHint",
+      ],
+      [
+        "not available on this system",
+        async () => ({ ...chatgptDesktop.notInstalled, supported: false }),
+        "appsPage.desktopUnsupported",
+        null,
+      ],
+      [
+        "unknown because detection failed",
+        async () => {
+          throw new Error("probe failed");
+        },
+        "common.unknown",
+        null,
+      ],
+    ],
+  )("shows ChatGPT Desktop as %s", async (_state, status, label, hint) => {
+    chatgptDesktop.getStatus.mockImplementation(status);
+    await renderApps();
+    const desktop = within(row("ChatGPT Desktop"));
+    expect(await desktop.findByText(label)).toBeInTheDocument();
+    if (hint) {
+      expect(desktop.getByText(hint)).toBeInTheDocument();
+    } else {
+      expect(desktop.queryByText(/chatgptDesktop\.installHint/)).toBeNull();
+    }
+    expect(desktop.queryByText(/chatgptDesktop\.bundledCli/)).toBeNull();
+    expect(
+      desktop.queryByRole("button", { name: "appPage.moreActions" }),
+    ).toBeNull();
+  });
+
+  it("points Mac users to the OpenAI website", async () => {
+    const platform = vi
+      .spyOn(navigator, "userAgent", "get")
+      .mockReturnValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)");
+    try {
+      await renderApps();
+      expect(
+        await within(row("ChatGPT Desktop")).findByText(
+          "appsPage.chatgptDesktop.installHintMac",
+        ),
+      ).toBeInTheDocument();
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
+  async function openDesktopUninstall(actionLabel = "settings.toolUninstall") {
+    const user = userEvent.setup();
+    const desktop = within(row("ChatGPT Desktop"));
+    await user.click(
+      await desktop.findByRole("button", { name: "appPage.moreActions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: actionLabel }),
+    );
+    return { user, desktop, dialog: within(await screen.findByRole("dialog")) };
+  }
+
+  it("uninstalls ChatGPT Desktop after showing the command, then checks it again", async () => {
+    chatgptDesktop.getStatus.mockResolvedValue(installed);
+    await renderApps();
+    const { user, desktop, dialog } = await openDesktopUninstall();
+    expect(dialog.getByText(installed.uninstallCommand!)).toBeInTheDocument();
+    expect(chatgptDesktop.uninstall).not.toHaveBeenCalled();
+
+    chatgptDesktop.getStatus.mockResolvedValue(chatgptDesktop.notInstalled);
+    await user.click(
+      dialog.getByRole("button", { name: "settings.toolUninstall" }),
+    );
+    await waitFor(() =>
+      expect(mocks.success).toHaveBeenCalledWith(
+        "appsPage.chatgptDesktop.uninstalled",
+        { closeButton: true },
+      ),
+    );
+    expect(chatgptDesktop.uninstall).toHaveBeenCalledTimes(1);
+    expect(chatgptDesktop.uninstall).toHaveBeenCalledWith(false);
+    expect(await desktop.findByText("common.notInstalled")).toBeInTheDocument();
+    expect(
+      desktop.queryByRole("button", { name: "appPage.moreActions" }),
+    ).toBeNull();
+  });
+
+  it("offers cleanup when only an extracted Codex cache remains", async () => {
+    const cleanupOnly: ChatGptDesktopStatus = {
+      ...chatgptDesktop.notInstalled,
+      cleanupRequired: true,
+      bundledCliVersion: "0.163.0-alpha.10.2",
+    };
+    chatgptDesktop.getStatus.mockResolvedValue(cleanupOnly);
+    await renderApps();
+    const desktop = within(row("ChatGPT Desktop"));
+    expect(
+      await desktop.findByText("appsPage.chatgptDesktop.cleanupRequiredHint"),
+    ).toBeInTheDocument();
+
+    const { user, dialog } = await openDesktopUninstall(
+      "appsPage.chatgptDesktop.cleanupAction",
+    );
+    expect(
+      dialog.getByText("appsPage.chatgptDesktop.cleanupConfirmTitle"),
+    ).toBeInTheDocument();
+    expect(
+      dialog.getByText("appsPage.chatgptDesktop.cleanupHint"),
+    ).toBeInTheDocument();
+    expect(dialog.queryByText("settings.toolUpgradeWillRun")).toBeNull();
+
+    await user.click(
+      dialog.getByRole("button", {
+        name: "appsPage.chatgptDesktop.cleanupAction",
+      }),
+    );
+    await waitFor(() =>
+      expect(mocks.success).toHaveBeenCalledWith(
+        "appsPage.chatgptDesktop.cacheCleaned",
+        { closeButton: true },
+      ),
+    );
+    expect(chatgptDesktop.uninstall).toHaveBeenCalledTimes(1);
+    expect(chatgptDesktop.uninstall).toHaveBeenCalledWith(true);
+  });
+
+  it("leaves ChatGPT Desktop alone when the confirmation is cancelled", async () => {
+    chatgptDesktop.getStatus.mockResolvedValue(installed);
+    await renderApps();
+    const { user, dialog } = await openDesktopUninstall();
+    await user.click(dialog.getByRole("button", { name: "common.cancel" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(chatgptDesktop.uninstall).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed uninstall and lets it be retried", async () => {
+    chatgptDesktop.getStatus.mockResolvedValue(installed);
+    chatgptDesktop.uninstall.mockRejectedValueOnce(
+      new Error("Remove-AppxPackage failed"),
+    );
+    await renderApps();
+    const { user, desktop, dialog } = await openDesktopUninstall();
+    await user.click(
+      dialog.getByRole("button", { name: "settings.toolUninstall" }),
+    );
+    await waitFor(() =>
+      expect(mocks.error).toHaveBeenCalledWith("settings.toolUninstallFailed", {
+        description: "Remove-AppxPackage failed",
+        closeButton: true,
+      }),
+    );
+    expect(mocks.success).not.toHaveBeenCalled();
+    expect(desktop.getByText("26.1013.3656.0")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        desktop.getByRole("button", { name: "appPage.moreActions" }),
+      ).toBeEnabled(),
+    );
+  });
+
+  it("checks ChatGPT Desktop again with the other apps", async () => {
+    await renderApps();
+    const desktop = within(row("ChatGPT Desktop"));
+    expect(await desktop.findByText("common.notInstalled")).toBeInTheDocument();
+    chatgptDesktop.getStatus.mockResolvedValue(installed);
+    fireEvent.click(
+      screen.getByRole("button", { name: "appsPage.checkUpdates" }),
+    );
+    expect(await desktop.findByText("26.1013.3656.0")).toBeInTheDocument();
   });
 });

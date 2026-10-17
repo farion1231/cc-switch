@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   AlertTriangle,
   ArrowUpCircle,
@@ -14,11 +15,13 @@ import {
   Trash2,
 } from "lucide-react";
 import type { AppId } from "@/lib/api";
-import { providersApi } from "@/lib/api/providers";
+import { providersApi, type ChatGptDesktopStatus } from "@/lib/api/providers";
 import type { ToolInstallationReport } from "@/lib/api/settings";
 import type { VisibleApps } from "@/types";
 import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 import { useSettings } from "@/hooks/useSettings";
+import { isMac } from "@/lib/platform";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import { isUpdateAvailable } from "@/lib/version";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -46,11 +49,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
-import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
+import {
+  APP_DISPLAY_NAME,
+  AppGlyph,
+  CHATGPT_DESKTOP_NAME,
+  type AppGlyphBadge,
+} from "@/components/shell/AppGlyph";
 import { ToolUpgradeConfirmDialog } from "@/components/settings/ToolUpgradeConfirmDialog";
 import { ToolInstallRow } from "@/components/settings/ToolInstallRow";
 import { ToolErrorMessage } from "@/components/settings/ToolErrorMessage";
 import { ToolUninstallConfirmDialog } from "./ToolUninstallConfirmDialog";
+import { ChatgptDesktopUninstallDialog } from "./ChatgptDesktopUninstallDialog";
 import { ManualUninstallDialog } from "./ManualUninstallDialog";
 import {
   ENV_BADGE_CONFIG,
@@ -78,15 +87,18 @@ const SOURCE_LABEL: Record<string, string> = {
   pip: "pip",
 };
 
-type Row = { kind: "tool"; tool: ToolName } | { kind: "desktop" };
+type Row =
+  | { kind: "tool"; tool: ToolName }
+  | { kind: "desktop" }
+  | { kind: "chatgpt-desktop" };
 
-const ROWS: Row[] = [
-  { kind: "tool", tool: "claude" },
-  { kind: "desktop" },
-  ...TOOL_NAMES.filter((tool) => tool !== "claude").map(
-    (tool): Row => ({ kind: "tool", tool }),
-  ),
-];
+// 桌面版紧跟在同一家的命令行版后面：Claude Code → Claude Desktop，Codex CLI → ChatGPT Desktop
+const ROWS: Row[] = TOOL_NAMES.flatMap((tool): Row[] => {
+  const row: Row = { kind: "tool", tool };
+  if (tool === "claude") return [row, { kind: "desktop" }];
+  if (tool === "codex") return [row, { kind: "chatgpt-desktop" }];
+  return [row];
+});
 
 // 表头和应用行共用列宽；操作列宽取各行按钮和表头量宽按钮的最大值，最后一列是行尾的「⋯」菜单。
 const APP_ROW_GRID =
@@ -159,6 +171,41 @@ export function AppsPage() {
     queryFn: () => providersApi.getClaudeDesktopStatus(),
     staleTime: 30_000,
   });
+  const chatgptDesktop = useQuery({
+    queryKey: ["chatgpt-desktop-status"],
+    queryFn: () => providersApi.getChatGptDesktopStatus(),
+    staleTime: 30_000,
+  });
+  const queryClient = useQueryClient();
+  const [confirmDesktopUninstall, setConfirmDesktopUninstall] = useState<{
+    cleanupOnly: boolean;
+    command: string | null;
+  } | null>(null);
+  const uninstallDesktop = useMutation({
+    mutationFn: async (cleanupOnly: boolean) => {
+      await providersApi.uninstallChatGptDesktop(cleanupOnly);
+      return cleanupOnly;
+    },
+    onSuccess: (cleanupOnly) =>
+      toast.success(
+        t(
+          cleanupOnly
+            ? "appsPage.chatgptDesktop.cacheCleaned"
+            : "appsPage.chatgptDesktop.uninstalled",
+        ),
+        {
+          closeButton: true,
+        },
+      ),
+    onError: (error) =>
+      toast.error(t("settings.toolUninstallFailed"), {
+        description: extractErrorMessage(error),
+        closeButton: true,
+      }),
+    // 成败都重查一次：失败也可能卸掉了一部分
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: ["chatgpt-desktop-status"] }),
+  });
 
   const visibleApps: VisibleApps = {
     ...DEFAULT_VISIBLE_APPS,
@@ -178,13 +225,15 @@ export function AppsPage() {
     );
   };
 
-  const visibilitySwitch = (app: AppId) => (
+  // 一个应用可以占几行（Codex CLI 和 ChatGPT Desktop 共用侧栏的 Codex 入口）：这几行的开关
+  // 读写同一个设置，所以一起开、一起关。`name` 只是让每个开关的无障碍名称对上自己那一行。
+  const visibilitySwitch = (app: AppId, name = APP_DISPLAY_NAME[app]) => (
     <Switch
       size="sm"
       checked={visibleApps[app]}
       disabled={!settings || (visibleApps[app] && visibleCount <= 1)}
       onCheckedChange={(checked) => setVisible(app, checked)}
-      aria-label={t("appsPage.showInSidebar", { name: APP_DISPLAY_NAME[app] })}
+      aria-label={t("appsPage.showInSidebar", { name })}
     />
   );
 
@@ -245,7 +294,10 @@ export function AppsPage() {
               variant="neutral"
               size="regular"
               disabled={tools.isLoadingTools || tools.isAnyBusy}
-              onClick={() => void tools.checkForUpdates()}
+              onClick={() => {
+                void tools.checkForUpdates();
+                void chatgptDesktop.refetch();
+              }}
             >
               <RefreshCw
                 className={cn(
@@ -347,50 +399,73 @@ export function AppsPage() {
           </div>
 
           <div className="divide-y divide-border overflow-hidden rounded-panel border border-border bg-surface">
-            {ROWS.map((row) =>
-              row.kind === "desktop" ? (
-                <AppRow
-                  key="claude-desktop"
-                  app="claude-desktop"
-                  name={
-                    <span className="truncate">
-                      {APP_DISPLAY_NAME["claude-desktop"]}
-                    </span>
-                  }
-                  version={
-                    <span className="inline-flex items-center gap-1 text-caption text-fg-2">
-                      {desktopStatus?.supported === false
-                        ? t("appsPage.desktopUnsupported")
-                        : desktopStatus?.configured
-                          ? t("appsPage.desktopConnected")
-                          : t("appsPage.desktopNotConnected")}
-                      <HelpTip
-                        title={APP_DISPLAY_NAME["claude-desktop"]}
-                        align="end"
-                      >
-                        {t("appsPage.desktopHelp")}
-                      </HelpTip>
-                    </span>
-                  }
-                  visibility={visibilitySwitch("claude-desktop")}
-                />
-              ) : (
-                <ToolRow
-                  key={row.tool}
-                  tool={row.tool}
-                  tools={tools}
-                  onUninstall={() => setPendingUninstall(row.tool)}
-                  expanded={expanded[row.tool] ?? false}
-                  onToggleExpanded={() =>
-                    setExpanded((prev) => ({
-                      ...prev,
-                      [row.tool]: !prev[row.tool],
-                    }))
-                  }
-                  visibility={visibilitySwitch(TOOL_APP_IDS[row.tool])}
-                />
-              ),
-            )}
+            {ROWS.map((row) => {
+              switch (row.kind) {
+                case "desktop":
+                  return (
+                    <AppRow
+                      key="claude-desktop"
+                      app="claude-desktop"
+                      name={
+                        <span className="truncate">
+                          {APP_DISPLAY_NAME["claude-desktop"]}
+                        </span>
+                      }
+                      version={
+                        <span className="inline-flex items-center gap-1 text-caption text-fg-2">
+                          {desktopStatus?.supported === false
+                            ? t("appsPage.desktopUnsupported")
+                            : desktopStatus?.configured
+                              ? t("appsPage.desktopConnected")
+                              : t("appsPage.desktopNotConnected")}
+                          <HelpTip
+                            title={APP_DISPLAY_NAME["claude-desktop"]}
+                            align="end"
+                          >
+                            {t("appsPage.desktopHelp")}
+                          </HelpTip>
+                        </span>
+                      }
+                      visibility={visibilitySwitch("claude-desktop")}
+                    />
+                  );
+                case "chatgpt-desktop":
+                  return (
+                    <ChatgptDesktopRow
+                      key="chatgpt-desktop"
+                      status={chatgptDesktop.data}
+                      isPending={chatgptDesktop.isPending}
+                      isError={chatgptDesktop.isError}
+                      uninstalling={uninstallDesktop.isPending}
+                      onUninstall={setConfirmDesktopUninstall}
+                      visibility={visibilitySwitch(
+                        "codex",
+                        CHATGPT_DESKTOP_NAME,
+                      )}
+                    />
+                  );
+                case "tool":
+                  return (
+                    <ToolRow
+                      key={row.tool}
+                      tool={row.tool}
+                      tools={tools}
+                      onUninstall={() => setPendingUninstall(row.tool)}
+                      expanded={expanded[row.tool] ?? false}
+                      onToggleExpanded={() =>
+                        setExpanded((prev) => ({
+                          ...prev,
+                          [row.tool]: !prev[row.tool],
+                        }))
+                      }
+                      visibility={visibilitySwitch(
+                        TOOL_APP_IDS[row.tool],
+                        toolDisplayName(row.tool),
+                      )}
+                    />
+                  );
+              }
+            })}
           </div>
         </div>
       </div>
@@ -452,6 +527,19 @@ export function AppsPage() {
         />
       )}
 
+      {confirmDesktopUninstall && (
+        <ChatgptDesktopUninstallDialog
+          command={confirmDesktopUninstall.command}
+          cleanupOnly={confirmDesktopUninstall.cleanupOnly}
+          onConfirm={() => {
+            const cleanupOnly = confirmDesktopUninstall.cleanupOnly;
+            setConfirmDesktopUninstall(null);
+            uninstallDesktop.mutate(cleanupOnly);
+          }}
+          onCancel={() => setConfirmDesktopUninstall(null)}
+        />
+      )}
+
       <ToolUpgradeConfirmDialog
         isOpen={tools.pendingUpgrade !== null}
         plans={tools.pendingUpgrade?.plans ?? []}
@@ -465,6 +553,7 @@ export function AppsPage() {
 
 function AppRow({
   app,
+  badge,
   name,
   meta,
   version,
@@ -474,11 +563,13 @@ function AppRow({
   footer,
 }: {
   app: AppId;
+  /** 换掉应用默认的角标（Codex CLI / ChatGPT Desktop 两行共用 OpenAI 图标，靠它区分） */
+  badge?: AppGlyphBadge;
   name: React.ReactNode;
   meta?: React.ReactNode;
   version?: React.ReactNode;
   action?: React.ReactNode;
-  visibility: React.ReactNode;
+  visibility?: React.ReactNode;
   menu?: React.ReactNode;
   footer?: React.ReactNode;
 }) {
@@ -486,7 +577,12 @@ function AppRow({
     <div data-tool-row className="px-4 py-3">
       <div className={cn(APP_ROW_GRID, "min-h-10")}>
         <div className="flex min-w-0 items-center gap-4">
-          <AppGlyph app={app} size={20} badgeClassName="bg-surface" />
+          <AppGlyph
+            app={app}
+            badge={badge}
+            size={20}
+            badgeClassName="bg-surface"
+          />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5 text-strong text-fg-1">
               {name}
@@ -510,6 +606,122 @@ function AppRow({
       </div>
       {footer && <div className="ms-9 mt-2">{footer}</div>}
     </div>
+  );
+}
+
+/**
+ * ChatGPT Desktop：和 Codex CLI 共用配置和侧栏入口，所以显示开关也是同一个设置，两行的开关一起开、一起关；
+ * 不能在这里安装或升级。
+ * 它随附的 Codex CLI 只列在这一行（Codex CLI 那一行只算单独安装的），卸载桌面版时一起卸掉。
+ */
+function ChatgptDesktopRow({
+  status,
+  isPending,
+  isError,
+  uninstalling,
+  onUninstall,
+  visibility,
+}: {
+  status: ChatGptDesktopStatus | undefined;
+  isPending: boolean;
+  isError: boolean;
+  uninstalling: boolean;
+  onUninstall: (confirmation: {
+    cleanupOnly: boolean;
+    command: string | null;
+  }) => void;
+  visibility: React.ReactNode;
+}) {
+  const { t } = useTranslation();
+  const help = (
+    <HelpTip title={CHATGPT_DESKTOP_NAME} align="end">
+      {t("appsPage.chatgptDesktop.help")}
+    </HelpTip>
+  );
+  const cleanupOnly = status?.cleanupRequired === true && !status.installed;
+
+  const version = isPending ? (
+    <span
+      role="status"
+      aria-label={t("common.loading")}
+      className="inline-flex justify-end"
+    >
+      <Loader2 className="h-4 w-4 animate-spin text-fg-3" />
+    </span>
+  ) : status?.installed ? (
+    <span className="inline-flex items-center gap-1">
+      {status.appVersion ? (
+        <span className="font-mono text-body font-medium tabular-nums text-fg-1">
+          {status.appVersion}
+        </span>
+      ) : (
+        <span className="text-caption text-fg-2">
+          {t("appsPage.chatgptDesktop.installed")}
+        </span>
+      )}
+      {help}
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-1 text-caption text-fg-2">
+      {isError || !status
+        ? t("common.unknown")
+        : status.supported
+          ? t("common.notInstalled")
+          : t("appsPage.desktopUnsupported")}
+      {help}
+    </span>
+  );
+
+  // 不截断：随附 CLI 的版本和「不能单独升级」是这一行要说清楚的事，窄的时候换行
+  const meta = cleanupOnly ? (
+    <span>{t("appsPage.chatgptDesktop.cleanupRequiredHint")}</span>
+  ) : status?.installed ? (
+    <span title={status.bundledCliPath ?? undefined}>
+      {status.bundledCliVersion
+        ? t("appsPage.chatgptDesktop.bundledCli", {
+            version: status.bundledCliVersion,
+          })
+        : t("appsPage.chatgptDesktop.bundledCliUnknown")}
+    </span>
+  ) : status?.supported ? (
+    <span>
+      {t(
+        isMac()
+          ? "appsPage.chatgptDesktop.installHintMac"
+          : "appsPage.chatgptDesktop.installHint",
+      )}
+    </span>
+  ) : null;
+
+  return (
+    <AppRow
+      app="codex"
+      badge="desktop"
+      name={<span className="truncate">{CHATGPT_DESKTOP_NAME}</span>}
+      meta={meta}
+      version={version}
+      visibility={visibility}
+      menu={
+        status?.uninstallCommand || status?.cleanupRequired || uninstalling ? (
+          <RowUninstallMenu
+            name={CHATGPT_DESKTOP_NAME}
+            disabled={uninstalling}
+            busy={uninstalling}
+            actionLabel={
+              cleanupOnly
+                ? t("appsPage.chatgptDesktop.cleanupAction")
+                : undefined
+            }
+            onUninstall={() =>
+              onUninstall({
+                cleanupOnly,
+                command: status?.uninstallCommand ?? null,
+              })
+            }
+          />
+        ) : null
+      }
+    />
   );
 }
 
@@ -743,6 +955,7 @@ function ToolRow({
   return (
     <AppRow
       app={TOOL_APP_IDS[tool]}
+      badge={tool === "codex" ? "terminal" : undefined}
       name={
         <>
           <span className="truncate">{toolDisplayName(tool)}</span>
@@ -756,39 +969,62 @@ function ToolRow({
       visibility={visibility}
       menu={
         (canUninstall || busyAction === "uninstall") && (
-          <DropdownMenu>
-            <HoverTip content={t("common.more")}>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="quiet"
-                  size="icon-compact"
-                  aria-label={t("appPage.moreActions", {
-                    name: toolDisplayName(tool),
-                  })}
-                  disabled={isVersionLoading || isBusy}
-                  aria-busy={busyAction === "uninstall"}
-                >
-                  {busyAction === "uninstall" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />
-                  )}
-                </Button>
-              </DropdownMenuTrigger>
-            </HoverTip>
-            <DropdownMenuContent align="end" className="min-w-[160px]">
-              <DropdownMenuItem
-                onSelect={onUninstall}
-                className="text-danger-text focus:text-danger-text"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                {t("settings.toolUninstall")}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <RowUninstallMenu
+            name={toolDisplayName(tool)}
+            disabled={isVersionLoading || isBusy}
+            busy={busyAction === "uninstall"}
+            onUninstall={onUninstall}
+          />
         )
       }
       footer={footer}
     />
+  );
+}
+
+/** 行尾的「⋯」菜单，里面是「卸载」；卸载进行中按钮转圈。 */
+function RowUninstallMenu({
+  name,
+  disabled,
+  busy,
+  actionLabel,
+  onUninstall,
+}: {
+  name: string;
+  disabled: boolean;
+  busy: boolean;
+  actionLabel?: string;
+  onUninstall: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <DropdownMenu>
+      <HoverTip content={t("common.more")}>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="quiet"
+            size="icon-compact"
+            aria-label={t("appPage.moreActions", { name })}
+            disabled={disabled}
+            aria-busy={busy}
+          >
+            {busy ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />
+            )}
+          </Button>
+        </DropdownMenuTrigger>
+      </HoverTip>
+      <DropdownMenuContent align="end" className="min-w-[160px]">
+        <DropdownMenuItem
+          onSelect={onUninstall}
+          className="text-danger-text focus:text-danger-text"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          {actionLabel ?? t("settings.toolUninstall")}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
