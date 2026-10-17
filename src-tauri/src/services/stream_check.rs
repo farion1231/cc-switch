@@ -171,6 +171,12 @@ impl StreamCheckService {
                 let npm = Self::extract_opencode_npm(provider);
                 Self::resolve_opencode_base_url(provider, npm.as_deref())
             }
+            // DevEco Code is an OpenCode fork and shares its provider shape
+            // (`npm` + `options.baseURL`), so it resolves the same way.
+            AppType::DevEco => {
+                let npm = Self::extract_opencode_npm(provider);
+                Self::resolve_opencode_base_url(provider, npm.as_deref())
+            }
             AppType::OpenClaw => Self::extract_openclaw_base_url(provider),
             AppType::Hermes => Self::extract_hermes_base_url(provider),
             AppType::Pi => crate::pi_config::provider_base_url(&provider.settings_config),
@@ -514,5 +520,39 @@ mod tests {
         official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
         official.category = Some("official".to_string());
         assert!(StreamCheckService::resolve_base_url(&AppType::Codex, &official).is_err());
+    }
+
+    /// DevEco Code 与 OpenCode 同构（`options.baseURL` + `npm`），必须走同一条
+    /// 解析路径。此前它掉进 `get_adapter` 兜底，点「检查」会报
+    /// `deveco does not support proxy adapters`。
+    #[test]
+    fn resolve_base_url_supports_deveco_like_opencode() {
+        let explicit = make_provider(serde_json::json!({
+            "npm": "@ai-sdk/openai-compatible",
+            "options": { "baseURL": "https://relay.example/v1" }
+        }));
+        assert_eq!(
+            StreamCheckService::resolve_base_url(&AppType::DevEco, &explicit).unwrap(),
+            "https://relay.example/v1"
+        );
+
+        // 无显式 baseURL 时按 npm 回退到该 SDK 的默认端点，与 OpenCode 一致。
+        let by_npm = make_provider(serde_json::json!({
+            "npm": "@ai-sdk/anthropic",
+            "options": {}
+        }));
+        assert_eq!(
+            StreamCheckService::resolve_base_url(&AppType::DevEco, &by_npm).unwrap(),
+            "https://api.anthropic.com"
+        );
+
+        // 既无 baseURL 也无已知 npm → 报「缺地址」而不是「不支持适配器」。
+        let empty = make_provider(serde_json::json!({ "options": {} }));
+        let err = StreamCheckService::resolve_base_url(&AppType::DevEco, &empty)
+            .expect_err("missing base URL must fail");
+        assert!(
+            !err.to_string().contains("does not support proxy adapters"),
+            "DevEco must resolve through its own branch, got: {err}"
+        );
     }
 }

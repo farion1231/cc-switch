@@ -16,6 +16,7 @@ export const SESSION_APP_IDS = [
   "grokbuild",
   "openclaw",
   "mcode",
+  "deveco",
 ] as const satisfies readonly AppId[];
 
 export type SessionAppId = (typeof SESSION_APP_IDS)[number];
@@ -34,11 +35,18 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   hermes: ["~/.hermes/state.db", "~/.hermes/sessions"],
   pi: ["~/.pi/agent/sessions"],
   mcode: ["~/.minimax"],
+  deveco: ["~/.local/share/deveco/deveco.db"],
 };
 
-/** MiniMax Code 的会话只能在 MiniMax Code 里删（后端也会拒绝）。 */
+/**
+ * MiniMax Code 与 DevEco Code 的会话只能在各自的工具里删（后端也会拒绝）：
+ * 它们与运行态表（event / todos / projections）耦合，直接删行会留下悬挂状态。
+ */
+export const NO_DELETE_SESSION_APPS: readonly string[] = ["mcode", "deveco"];
+
 export const canDeleteSession = (session: SessionMeta) =>
-  Boolean(session.sourcePath) && session.providerId !== "mcode";
+  Boolean(session.sourcePath) &&
+  !NO_DELETE_SESSION_APPS.includes(session.providerId);
 
 export interface SessionProjectGroup {
   key: string;

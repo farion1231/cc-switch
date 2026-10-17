@@ -218,6 +218,13 @@ impl McpService {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
             AppType::Mcode => mcp::mcode::sync(&server.id, Some(&server.server))?,
+            AppType::DevEco => {
+                mcp::deveco::sync_single_server_to_deveco(
+                    &Default::default(),
+                    &server.id,
+                    &server.server,
+                )?;
+            }
             AppType::Pi => mcp::pi::sync(&server.id, Some(&server.server))?,
         }
         Ok(())
@@ -259,6 +266,7 @@ impl McpService {
                 mcp::remove_server_from_hermes(id)?;
             }
             AppType::Mcode => mcp::mcode::sync(id, None)?,
+            AppType::DevEco => mcp::deveco::remove_server_from_deveco(id)?,
             AppType::Pi => mcp::pi::sync(id, None)?,
         }
         Ok(())
@@ -669,7 +677,7 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 8] = [
+        let results: [(&str, Result<usize, AppError>); 9] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
@@ -678,6 +686,7 @@ impl McpService {
             ("hermes", Self::import_from_hermes(state)),
             ("mcode", mcp::mcode::import(state)),
             ("pi", mcp::pi::import(state)),
+            ("deveco", mcp::deveco::import(state)),
         ];
         for (app, result) in results {
             match result {

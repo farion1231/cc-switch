@@ -48,6 +48,7 @@ export const TOOL_NAMES = [
   "hermes",
   "pi",
   "mcode",
+  "deveco",
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 export type ToolLifecycleAction = "install" | "update" | "uninstall";
@@ -183,6 +184,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   hermes: "Hermes",
   pi: "Pi",
   mcode: "MiniMax Code",
+  deveco: "DevEco Code",
 };
 
 // 后端返回的 tool 是 string；这里收敛唯一的 ToolName 断言与兜底，供升级确认
@@ -201,6 +203,7 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   hermes: "hermes",
   pi: "pi",
   mcode: "mcode",
+  deveco: "deveco",
 };
 
 // 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。
