@@ -4305,6 +4305,7 @@
       "enable": "启用",
       "disable": "停用",
       "edit": "编辑 {{name}}",
+      "visitWebsite": "访问官网 · {{host}}",
       "more": "{{name}} 的更多操作",
       "moveUp": "{{name}} 上移一位",
       "moveDown": "{{name}} 下移一位"
