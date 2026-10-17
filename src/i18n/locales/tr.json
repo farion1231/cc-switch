@@ -3089,6 +3089,7 @@
       "modelName": "Görünen ad",
       "modelNamePlaceholder": "Claude Opus 5",
       "contextLength": "Bağlam uzunluğu",
+      "supportsVision": "Görüntü girişini destekler",
       "toggleModelDetails": "Model ayrıntılarını genişletin veya daraltın",
       "removeModel": "Modeli kaldır",
       "modelsHint": "Etkinleştirildiğinde ilk model Hermes varsayılanı olur.",

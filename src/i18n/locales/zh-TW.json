@@ -3140,6 +3140,7 @@
       "modelName": "顯示名稱",
       "modelNamePlaceholder": "Claude Opus 5",
       "contextLength": "上下文長度",
+      "supportsVision": "支援圖片輸入",
       "toggleModelDetails": "展開或收合模型詳細資訊",
       "removeModel": "移除模型",
       "modelsHint": "啟用為目前供應商時，第一個模型會設為 Hermes 預設模型。",

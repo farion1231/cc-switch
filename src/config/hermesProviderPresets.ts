@@ -52,6 +52,12 @@ export interface HermesModel {
   name?: string;
   /** Override the auto-detected context window. */
   context_length?: number;
+  /**
+   * Declares that the model accepts image input. Hermes reads it per model
+   * (`agent/image_routing.py`, `vision` is an alias); when absent it falls
+   * back to its own catalog and treats unknown models as text-only.
+   */
+  supports_vision?: boolean;
 }
 
 /**

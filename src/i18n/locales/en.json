@@ -3139,6 +3139,7 @@
       "modelName": "Display name",
       "modelNamePlaceholder": "Claude Opus 5",
       "contextLength": "Context length",
+      "supportsVision": "Supports image input",
       "toggleModelDetails": "Expand or collapse model details",
       "removeModel": "Remove model",
       "modelsHint": "When activated, the first model becomes the Hermes default.",
