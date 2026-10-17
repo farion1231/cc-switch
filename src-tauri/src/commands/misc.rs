@@ -19,6 +19,7 @@ mod tool_node_requirement;
 #[path = "tool_uninstall.rs"]
 mod tool_uninstall;
 
+#[cfg(not(target_os = "macos"))]
 use super::chatgpt_desktop::{
     is_chatgpt_desktop_codex_path, is_chatgpt_desktop_extracted_cli_path,
 };
