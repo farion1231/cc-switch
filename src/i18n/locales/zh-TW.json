@@ -2718,7 +2718,7 @@
       "jsonConfig": "完整的 JSON 設定",
       "jsonConfigOrPrefix": "完整的 JSON 設定或者使用",
       "tomlConfigOrPrefix": "完整的 TOML 設定或者使用",
-      "jsonPlaceholder": "{\n    \"type\": \"stdio\",\n    \"command\": \"uvx\",\n    \"args\": [\"mcp-server-fetch\"]\n}",
+      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
       "tomlConfig": "完整的 TOML 設定",
       "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
       "useWizard": "設定精靈",
@@ -4455,6 +4455,12 @@
     }
   },
   "mcpPage": {
+    "connection": {
+      "connected": "連線成功",
+      "disconnected": "連線失敗",
+      "checking": "正在檢查連線",
+      "disabled": "未啟用"
+    },
     "noun": "MCP",
     "listSeparator": "、",
     "helpTitle": "MCP 怎麼同步",

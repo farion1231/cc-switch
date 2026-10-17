@@ -2809,7 +2809,7 @@ fn path_line_from_env_output(raw: &str) -> Option<&str> {
 /// 合并两段 PATH：`primary` 全部保留在前，`extra` 中未出现过的段按序追加。
 /// 空段直接丢弃（`a::b` 里的空段在 POSIX 下语义是"当前目录"，注入时不该带上）。
 #[cfg(not(target_os = "windows"))]
-fn merge_path_segments(primary: &str, extra: &str) -> String {
+pub(crate) fn merge_path_segments(primary: &str, extra: &str) -> String {
     let mut seen = std::collections::HashSet::new();
     let mut merged: Vec<&str> = Vec::new();
     for segment in primary.split(':').chain(extra.split(':')) {
@@ -2844,7 +2844,7 @@ fn merge_path_segments(primary: &str, extra: &str) -> String {
 ///
 /// 解析不到时返回 `None`，调用方保持原有行为（不注入），不引入新的失败模式。
 #[cfg(not(target_os = "windows"))]
-fn login_shell_path() -> Option<String> {
+pub(crate) fn login_shell_path() -> Option<String> {
     use std::process::Command;
     let shell = std::env::var("SHELL")
         .ok()
