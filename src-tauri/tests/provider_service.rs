@@ -3601,3 +3601,38 @@ fn claude_editor_never_leaves_the_row_and_live_apart() {
         json!("sk-old")
     );
 }
+
+/// #7724：官方卡编辑器的后端契约。前端给 Grok Official 开配置入口后，编辑器显示的
+/// 应是「切到官方之后」的 live 投影：官方态激活拿走 `models.default`，用户的其余
+/// 内容（含自己的 `[model.*]` 表）原样显示；官方行的空快照不进视图。
+#[test]
+fn grok_editor_view_for_official_card_projects_live_without_models_default() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let grok_dir = home.join(".grok");
+    std::fs::create_dir_all(&grok_dir).expect("create grok dir");
+    let live = "# mine\n[ui]\ntheme = \"dark\"\n\n[models]\ndefault = \"mine\"\n\n[model.mine]\nmodel = \"m\"\nname = \"Mine\"\n";
+    std::fs::write(grok_dir.join("config.toml"), live).expect("seed live config");
+
+    let state = create_test_state().expect("create test state");
+    let view = ProviderService::editor_view(
+        &state,
+        AppType::GrokBuild,
+        &json!({ "config": "" }),
+        Some("official"),
+    )
+    .expect("official editor view");
+
+    let shown = view.settings["config"].as_str().expect("config text");
+    assert!(
+        shown.starts_with("# mine\n[ui]\ntheme = \"dark\"\n"),
+        "{shown}"
+    );
+    assert!(shown.contains("[model.mine]"), "{shown}");
+    assert!(
+        !shown.contains("default"),
+        "official state takes models.default away: {shown}"
+    );
+}
