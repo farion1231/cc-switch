@@ -516,6 +516,7 @@ pub(crate) fn is_chatgpt_desktop_extracted_cli_path(path: &str) -> bool {
     }
 }
 
+#[cfg(any(windows, test))]
 fn is_extracted_cli_path_under_root(path: &str, local_data_dir: &str) -> bool {
     fn normalize(path: &str) -> String {
         let path = path.replace('\\', "/").to_ascii_lowercase();
