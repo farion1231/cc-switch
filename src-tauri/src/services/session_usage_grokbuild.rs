@@ -1420,4 +1420,269 @@ mod tests {
             "only the real updates.jsonl should be collected; symlink cycle must not crash"
         );
     }
+
+    fn write_summary(updates_path: &Path, kind: &str, parent_id: Option<&str>) {
+        let session_dir = updates_path.parent().expect("session dir");
+        let parent_field = match parent_id {
+            Some(id) => format!(r#","parent_session_id":"{id}""#),
+            None => String::new(),
+        };
+        std::fs::write(
+            session_dir.join("summary.json"),
+            format!(r#"{{"session_kind":"{kind}"{parent_field}}}"#),
+        )
+        .expect("write summary.json");
+    }
+
+    fn sync_file(db: &Database, path: &Path) -> SessionSyncResult {
+        sync_single_grok_file(
+            db,
+            path,
+            &crate::services::session_usage::load_sync_cursors(db).unwrap(),
+        )
+        .expect("sync")
+    }
+
+    /// 父轮 `turn_completed` 已经含有子代理用量。先同步子文件，证明去重不依赖父行已入库。
+    #[test]
+    fn subagent_turns_already_folded_into_the_parent_are_not_imported_twice() {
+        let db = Database::memory().expect("memory db");
+        let temp = tempdir().expect("tempdir");
+        let parent = write_session_file(
+            temp.path(),
+            "parent-sess",
+            &[usage_event_line(
+                OLD_EPOCH,
+                "parent-turn",
+                &model_counters("grok-4.5-build", 100, 10, 0, 2),
+            )],
+        );
+        let child = write_session_file(
+            temp.path(),
+            "child-sess",
+            &[usage_event_line(
+                OLD_EPOCH,
+                "child-turn",
+                &model_counters("grok-4.5-build", 40, 4, 0, 1),
+            )],
+        );
+        write_summary(&child, "subagent", Some("parent-sess"));
+
+        let child_result = sync_file(&db, &child);
+        let parent_result = sync_file(&db, &parent);
+
+        assert_eq!(
+            child_result.imported, 0,
+            "folded subagent file must not be imported"
+        );
+        assert_eq!(parent_result.imported, 1);
+        let rows = query_rows(&db).expect("rows");
+        assert_eq!(rows.len(), 1, "parent and child must not both land");
+        assert_eq!(
+            rows[0].0,
+            "grok_session:parent-sess:parent-turn:grok-4.5-build"
+        );
+        assert_eq!(rows[0].1, 100);
+    }
+
+    #[test]
+    fn subagent_fork_and_resume_are_not_imported_on_top_of_the_parent() {
+        for kind in ["subagent_fork", "subagent_resume"] {
+            let db = Database::memory().expect("memory db");
+            let temp = tempdir().expect("tempdir");
+            let parent = write_session_file(
+                temp.path(),
+                "parent-sess",
+                &[usage_event_line(
+                    OLD_EPOCH,
+                    "parent-turn",
+                    &model_counters("grok-4.5-build", 80, 8, 0, 2),
+                )],
+            );
+            let child = write_session_file(
+                temp.path(),
+                "child-sess",
+                &[usage_event_line(
+                    OLD_EPOCH,
+                    "child-turn",
+                    &model_counters("grok-4.5-build", 20, 2, 0, 1),
+                )],
+            );
+            write_summary(&child, kind, Some("parent-sess"));
+
+            let child_result = sync_file(&db, &child);
+            sync_file(&db, &parent);
+
+            assert_eq!(child_result.imported, 0, "{kind}");
+            assert_eq!(query_rows(&db).expect("rows").len(), 1, "{kind}");
+        }
+    }
+
+    /// fork 逐行复制父会话的 `prompt_id`，之后追加的轮次是新用量。
+    #[test]
+    fn user_fork_drops_the_copied_prefix_and_keeps_turns_appended_after_it() {
+        let db = Database::memory().expect("memory db");
+        let temp = tempdir().expect("tempdir");
+        let parent = write_session_file(
+            temp.path(),
+            "parent-sess",
+            &[
+                usage_event_line(
+                    OLD_EPOCH,
+                    "copied-a",
+                    &model_counters("grok-4.5-build", 100, 10, 0, 1),
+                ),
+                usage_event_line(
+                    OLD_EPOCH + 1,
+                    "copied-b",
+                    &model_counters("grok-4.5-build", 50, 5, 0, 1),
+                ),
+            ],
+        );
+        let fork = write_session_file(
+            temp.path(),
+            "fork-sess",
+            &[
+                usage_event_line(
+                    OLD_EPOCH,
+                    "copied-a",
+                    &model_counters("grok-4.5-build", 100, 10, 0, 1),
+                ),
+                usage_event_line(
+                    OLD_EPOCH + 1,
+                    "copied-b",
+                    &model_counters("grok-4.5-build", 50, 5, 0, 1),
+                ),
+                usage_event_line(
+                    OLD_EPOCH + 2,
+                    "new-turn",
+                    &model_counters("grok-4.5-build", 7, 1, 0, 1),
+                ),
+            ],
+        );
+        write_summary(&fork, "fork", Some("parent-sess"));
+
+        let fork_result = sync_file(&db, &fork);
+        let parent_result = sync_file(&db, &parent);
+
+        assert_eq!(
+            fork_result.imported, 1,
+            "only the turn written after the fork"
+        );
+        assert_eq!(parent_result.imported, 2);
+        let rows = query_rows(&db).expect("rows");
+        assert_eq!(rows.len(), 3);
+        assert_eq!(
+            rows.iter().filter(|row| row.0.contains("copied-a")).count(),
+            1
+        );
+        assert_eq!(
+            rows.iter().filter(|row| row.0.contains("copied-b")).count(),
+            1
+        );
+        assert!(rows.iter().any(|row| {
+            row.0.contains("fork-sess") && row.0.contains("new-turn") && row.1 == 7
+        }));
+    }
+
+    /// 父会话可以已经归档，和 fork 不在同一个 `<enc-cwd>` 下。
+    #[test]
+    fn user_fork_drops_prompt_ids_copied_from_an_archived_parent() {
+        let db = Database::memory().expect("memory db");
+        let temp = tempdir().expect("tempdir");
+        let parent_dir = temp
+            .path()
+            .join("archived_sessions")
+            .join("enc-old")
+            .join("parent-sess");
+        std::fs::create_dir_all(&parent_dir).expect("archived parent dir");
+        let parent = parent_dir.join("updates.jsonl");
+        std::fs::write(
+            &parent,
+            format!(
+                "{}\n",
+                usage_event_line(
+                    OLD_EPOCH,
+                    "copied",
+                    &model_counters("grok-4.5-build", 30, 3, 0, 1),
+                )
+            ),
+        )
+        .expect("write archived parent");
+        let fork = write_session_file(
+            temp.path(),
+            "fork-sess",
+            &[
+                usage_event_line(
+                    OLD_EPOCH,
+                    "copied",
+                    &model_counters("grok-4.5-build", 30, 3, 0, 1),
+                ),
+                usage_event_line(
+                    OLD_EPOCH + 1,
+                    "after-fork",
+                    &model_counters("grok-4.5-build", 4, 1, 0, 1),
+                ),
+            ],
+        );
+        write_summary(&fork, "fork", Some("parent-sess"));
+
+        let fork_result = sync_file(&db, &fork);
+        let parent_result = sync_file(&db, &parent);
+
+        assert_eq!(fork_result.imported, 1);
+        assert_eq!(parent_result.imported, 1);
+        let rows = query_rows(&db).expect("rows");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows.iter().filter(|row| row.0.contains("copied")).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn fork_whose_parent_file_is_missing_keeps_the_only_remaining_copy() {
+        let db = Database::memory().expect("memory db");
+        let temp = tempdir().expect("tempdir");
+        let fork = write_session_file(
+            temp.path(),
+            "fork-sess",
+            &[usage_event_line(
+                OLD_EPOCH,
+                "only-copy",
+                &model_counters("grok-4.5-build", 9, 1, 0, 1),
+            )],
+        );
+        write_summary(&fork, "fork", Some("missing-parent"));
+
+        let result = sync_file(&db, &fork);
+
+        assert_eq!(result.imported, 1);
+        let rows = query_rows(&db).expect("rows");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, 9);
+    }
+
+    #[test]
+    fn headless_and_worktree_sessions_are_still_imported() {
+        for kind in ["headless", "worktree"] {
+            let db = Database::memory().expect("memory db");
+            let temp = tempdir().expect("tempdir");
+            let path = write_session_file(
+                temp.path(),
+                "sess",
+                &[usage_event_line(
+                    OLD_EPOCH,
+                    "turn",
+                    &model_counters("grok-4.5-build", 11, 1, 0, 1),
+                )],
+            );
+            write_summary(&path, kind, None);
+
+            let result = sync_file(&db, &path);
+
+            assert_eq!(result.imported, 1, "{kind}");
+            assert_eq!(query_rows(&db).expect("rows").len(), 1, "{kind}");
+        }
+    }
 }
