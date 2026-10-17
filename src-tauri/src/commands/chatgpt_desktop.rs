@@ -288,6 +288,15 @@ fn extracted_cli_paths_under(bin: &std::path::Path) -> Result<Vec<PathBuf>, Stri
                 bin.display()
             )
         })?;
+        let file_type = entry.file_type().map_err(|error| {
+            format!(
+                "Could not inspect ChatGPT Desktop CLI cache {}: {error}",
+                entry.path().display()
+            )
+        })?;
+        if !file_type.is_dir() && !file_type.is_symlink() {
+            continue;
+        }
         let exe = entry.path().join("codex.exe");
         match std::fs::metadata(&exe) {
             Ok(metadata) if metadata.is_file() => paths.push(exe),
