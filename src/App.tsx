@@ -404,9 +404,11 @@ function App() {
       try {
         const off = await providersApi.onSwitched(
           async (event: ProviderSwitchEvent) => {
-            if (event.appType === activeApp) {
-              await refetch();
-            }
+            // 按前缀失效：故障转移只改路由指针，「路由中」标记读的是
+            // ["providers", app, "mode"]，只 refetch 列表会让它停在旧那家
+            await queryClient.invalidateQueries({
+              queryKey: ["providers", event.appType],
+            });
             if (event.appType === "pi") {
               await invalidatePiProviderCaches(queryClient);
             }
@@ -427,7 +429,7 @@ function App() {
       active = false;
       unsubscribe?.();
     };
-  }, [activeApp, queryClient, refetch]);
+  }, [queryClient]);
 
   useTauriEvent("universal-provider-synced", async () => {
     await queryClient.invalidateQueries({ queryKey: ["providers"] });

@@ -864,7 +864,7 @@ export function UsageDashboard({
           compact={compact}
         />
 
-        {/* 「全部」看长期分布用热力图；24 小时到 30 天这类短范围用柱状图 */}
+        {/* 「全部」看长期分布用热力图；24 小时到 30 天这类短范围用趋势图 */}
         {range.preset === "all" ? (
           <UsageHeatmap
             appType={appType}

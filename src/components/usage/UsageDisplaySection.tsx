@@ -24,10 +24,13 @@ import {
   isValidExchangeRate,
   resolveMoneyDisplay,
   resolveSidebarToday,
+  resolveTrendChartType,
   type DisplayCurrency,
   SIDEBAR_TODAY_ITEMS,
   SIDEBAR_TODAY_MAX_ITEMS,
   type SidebarTodayItem,
+  TREND_CHART_TYPES,
+  type TrendChartType,
 } from "./format";
 import {
   REQUEST_LOG_COLUMN_LABEL_KEYS,
@@ -152,7 +155,7 @@ function ChecklistMenu({
 
 /**
  * 用量「设置」页签顶部的「显示」：币种与手填汇率（只改显示，库里照旧存美元）、
- * 侧栏「今日」显示什么、请求日志显示哪些列。
+ * 侧栏「今日」显示什么、请求日志显示哪些列、趋势图用柱形图还是曲线面积图。
  */
 export function UsageDisplaySection({
   value,
@@ -217,6 +220,17 @@ export function UsageDisplaySection({
     }
   };
 
+  const savedChartType = resolveTrendChartType(value);
+  const [chartType, setChartType] = useState<TrendChartType>(savedChartType);
+  useEffect(() => setChartType(savedChartType), [savedChartType]);
+
+  const changeChartType = async (next: TrendChartType) => {
+    setChartType(next);
+    if ((await save({ trendChartType: next })) === false) {
+      setChartType(savedChartType);
+    }
+  };
+
   const changeCurrency = async (next: DisplayCurrency) => {
     setCurrency(next);
     // 保存失败（useSettings 已提示）就退回原来的币种
@@ -257,120 +271,145 @@ export function UsageDisplaySection({
         {t("usage.display.title")}
       </h3>
       <div className="rounded-panel bg-subtle px-4 py-2.5">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-          <div className="flex items-center gap-2">
-            <span className="text-body text-fg-2">
-              {t("usage.display.currency")}
-            </span>
-            <Select
-              value={currency}
-              onValueChange={(next) => {
-                // Radix Select 偶尔回报空串，忽略
-                const picked = DISPLAY_CURRENCIES.find((c) => c === next);
-                if (picked && picked !== currency) {
-                  void changeCurrency(picked);
-                }
-              }}
+        {/* 两列「标签 + 控件」：标签列取各自最宽的标签，控件一律同宽，上下左右都对齐 */}
+        <div className="grid grid-cols-[max-content_11rem] items-center gap-x-3 gap-y-2 md:grid-cols-[max-content_11rem_max-content_11rem]">
+          <span className="text-body text-fg-2">
+            {t("usage.display.currency")}
+          </span>
+          <Select
+            value={currency}
+            onValueChange={(next) => {
+              // Radix Select 偶尔回报空串，忽略
+              const picked = DISPLAY_CURRENCIES.find((c) => c === next);
+              if (picked && picked !== currency) {
+                void changeCurrency(picked);
+              }
+            }}
+          >
+            <SelectTrigger
+              className="h-7 w-full text-body"
+              aria-label={t("usage.display.currency")}
             >
-              <SelectTrigger
-                className="h-7 w-48 text-body"
-                aria-label={t("usage.display.currency")}
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {DISPLAY_CURRENCIES.map((code) => (
-                  <SelectItem key={code} value={code}>
-                    {optionLabel(code)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {DISPLAY_CURRENCIES.map((code) => (
+                <SelectItem key={code} value={code}>
+                  {optionLabel(code)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span className="text-body text-fg-2 md:ps-5">
+            {t("usage.display.trendChartType")}
+          </span>
+          <Select
+            value={chartType}
+            onValueChange={(next) => {
+              // Radix Select 偶尔回报空串，忽略
+              const picked = TREND_CHART_TYPES.find((c) => c === next);
+              if (picked && picked !== chartType) {
+                void changeChartType(picked);
+              }
+            }}
+          >
+            <SelectTrigger
+              className="h-7 w-full text-body"
+              aria-label={t("usage.display.trendChartType")}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {TREND_CHART_TYPES.map((type) => (
+                <SelectItem key={type} value={type}>
+                  {t(`usage.display.trendChartTypes.${type}`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {currency !== "USD" && (
-            <div className="flex items-center gap-2 text-body tabular-nums text-fg-2">
-              <label htmlFor={rateId} className="shrink-0">
+            <>
+              <label htmlFor={rateId} className="text-body text-fg-2">
                 {t("usage.display.rate")}
               </label>
-              <span className="shrink-0">1 USD =</span>
-              <Input
-                id={rateId}
-                inputMode="decimal"
-                className="h-7 w-24 tabular-nums"
-                value={rateDraft}
-                aria-invalid={rateInvalid}
-                onChange={(event) => {
-                  setRateDraft(event.target.value);
-                  setRateInvalid(false);
-                }}
-                onBlur={commitRate}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") commitRate();
-                }}
-              />
-              <span className="shrink-0">{currency}</span>
-            </div>
+              {/* 汇率紧跟币种单占一行，跨过后面所有列 */}
+              <div className="col-span-1 flex items-center gap-2 text-body tabular-nums text-fg-2 md:col-span-3">
+                <span className="shrink-0">1 USD =</span>
+                <Input
+                  id={rateId}
+                  inputMode="decimal"
+                  className="h-7 w-24 tabular-nums"
+                  value={rateDraft}
+                  aria-invalid={rateInvalid}
+                  onChange={(event) => {
+                    setRateDraft(event.target.value);
+                    setRateInvalid(false);
+                  }}
+                  onBlur={commitRate}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") commitRate();
+                  }}
+                />
+                <span className="shrink-0">{currency}</span>
+              </div>
+            </>
           )}
-          <div className="flex items-center gap-2">
-            <span className="text-body text-fg-2">
-              {t("usage.display.sidebarToday")}
-            </span>
-            <ChecklistMenu
-              label={t("usage.display.sidebarToday")}
-              className="w-44"
-              summary={
-                todayItems.length > 0
-                  ? todayItems.map(todayLabel).join(" + ")
-                  : t("usage.display.sidebarTodayItems.none")
-              }
-              items={SIDEBAR_TODAY_ITEMS.map((item) => {
-                const checked = todayItems.includes(item);
-                return {
-                  id: item,
-                  label: todayLabel(item),
-                  checked,
-                  disabled: todayFull && !checked,
-                };
-              })}
-              note={t("usage.display.sidebarTodayLimit", {
-                count: SIDEBAR_TODAY_MAX_ITEMS,
-              })}
-              onToggle={(id) => void toggleTodayItem(id as SidebarTodayItem)}
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-body text-fg-2">
-              {t("usage.display.logColumns")}
-            </span>
-            <ChecklistMenu
-              label={t("usage.display.logColumns")}
-              className="w-36"
-              summary={t("usage.display.logColumnsSummary", {
-                shown: shownToggleable,
-                total: TOGGLEABLE_REQUEST_LOG_COLUMNS.length,
-              })}
-              items={TOGGLEABLE_REQUEST_LOG_COLUMNS.map(({ id }) => ({
-                id,
-                label: t(REQUEST_LOG_COLUMN_LABEL_KEYS[id]),
-                checked: logColumns.includes(id),
-              }))}
-              onToggle={(id) => {
-                const column = id as RequestLogColumnId;
-                void saveColumnOverrides(
-                  setRequestLogColumn(
-                    columnOverrides,
-                    column,
-                    !logColumns.includes(column),
-                  ),
-                );
-              }}
-              onReset={
-                Object.keys(columnOverrides).length > 0
-                  ? () => void saveColumnOverrides({})
-                  : undefined
-              }
-            />
-          </div>
+          <span className="text-body text-fg-2">
+            {t("usage.display.sidebarToday")}
+          </span>
+          <ChecklistMenu
+            label={t("usage.display.sidebarToday")}
+            className="w-full"
+            summary={
+              todayItems.length > 0
+                ? todayItems.map(todayLabel).join(" + ")
+                : t("usage.display.sidebarTodayItems.none")
+            }
+            items={SIDEBAR_TODAY_ITEMS.map((item) => {
+              const checked = todayItems.includes(item);
+              return {
+                id: item,
+                label: todayLabel(item),
+                checked,
+                disabled: todayFull && !checked,
+              };
+            })}
+            note={t("usage.display.sidebarTodayLimit", {
+              count: SIDEBAR_TODAY_MAX_ITEMS,
+            })}
+            onToggle={(id) => void toggleTodayItem(id as SidebarTodayItem)}
+          />
+          <span className="text-body text-fg-2 md:ps-5">
+            {t("usage.display.logColumns")}
+          </span>
+          <ChecklistMenu
+            label={t("usage.display.logColumns")}
+            className="w-full"
+            summary={t("usage.display.logColumnsSummary", {
+              shown: shownToggleable,
+              total: TOGGLEABLE_REQUEST_LOG_COLUMNS.length,
+            })}
+            items={TOGGLEABLE_REQUEST_LOG_COLUMNS.map(({ id }) => ({
+              id,
+              label: t(REQUEST_LOG_COLUMN_LABEL_KEYS[id]),
+              checked: logColumns.includes(id),
+            }))}
+            onToggle={(id) => {
+              const column = id as RequestLogColumnId;
+              void saveColumnOverrides(
+                setRequestLogColumn(
+                  columnOverrides,
+                  column,
+                  !logColumns.includes(column),
+                ),
+              );
+            }}
+            onReset={
+              Object.keys(columnOverrides).length > 0
+                ? () => void saveColumnOverrides({})
+                : undefined
+            }
+          />
         </div>
         {currency !== "USD" && (
           <p
