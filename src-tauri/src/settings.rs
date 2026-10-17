@@ -49,6 +49,8 @@ pub struct VisibleApps {
     #[serde(default = "default_true")]
     pub pi: bool,
     #[serde(default = "default_true")]
+    pub rpi: bool,
+    #[serde(default = "default_true")]
     pub mcode: bool,
 }
 
@@ -64,6 +66,7 @@ impl Default for VisibleApps {
             openclaw: true,
             hermes: false, // 默认不显示，需用户手动启用
             pi: true,
+            rpi: true,
             mcode: true,
         }
     }
@@ -81,7 +84,8 @@ impl VisibleApps {
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => self.openclaw,
             AppType::Hermes => self.hermes,
-            AppType::Pi | AppType::Rpi => self.pi,
+            AppType::Pi => self.pi,
+            AppType::Rpi => self.rpi,
             AppType::Mcode => self.mcode,
         }
     }
@@ -1375,6 +1379,24 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+
+    #[test]
+    fn rpi_visibility_is_independent_and_roundtrips() {
+        let legacy: VisibleApps = serde_json::from_value(serde_json::json!({"pi": false})).unwrap();
+        assert!(!legacy.is_visible(&AppType::Pi));
+        assert!(legacy.is_visible(&AppType::Rpi));
+        let apps = VisibleApps {
+            pi: true,
+            rpi: false,
+            ..VisibleApps::default()
+        };
+        let saved = serde_json::to_value(&apps).unwrap();
+        assert_eq!(saved["pi"], true);
+        assert_eq!(saved["rpi"], false);
+        let loaded: VisibleApps = serde_json::from_value(saved).unwrap();
+        assert!(loaded.is_visible(&AppType::Pi));
+        assert!(!loaded.is_visible(&AppType::Rpi));
+    }
 
     #[test]
     fn codex_stack_classic_tools_default_on_and_ignore_the_old_off_key() {
