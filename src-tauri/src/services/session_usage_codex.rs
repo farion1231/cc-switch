@@ -48,7 +48,7 @@ use windows_sys::Win32::Storage::FileSystem::{
 const CODEX_THREAD_REQUEST_ID_PREFIX: &str = "codex_session:thread-v1";
 
 /// 累计 token 用量（跟踪 total_token_usage 字段）
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct CumulativeTokens {
     input: u64,
     cached_input: u64,
@@ -150,6 +150,7 @@ struct ParentTokenTimeline {
     events: Vec<TimestampedTokenSignature>,
     max_timestamp: Option<DateTime<Utc>>,
     has_token_without_timestamp: bool,
+    high_water: Option<CumulativeTokens>,
 }
 
 impl ParentTokenTimeline {
@@ -439,10 +440,14 @@ impl RequestTimer {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ParentResolution {
     None,
     Parent(String),
+    Continuation {
+        ancestor_parent_id: Option<String>,
+        history_base_id: Option<String>,
+    },
     Deferred(String),
 }
 
@@ -1067,9 +1072,87 @@ fn collect_jsonl_recursive(dir: &Path, files: &mut Vec<PathBuf>, depth: u32, max
     }
 }
 
+/// 为翻页续写页解析其上一分段的截止累计高水位基线。
+///
+/// 当续写页中的 `token_count` 缺少有效的 `last_token_usage` 时，代码依赖
+/// `compute_delta(&total_high_water, total)` 计算增量。若续写页不恢复前序分段高水位，
+/// 首条记录会误将整段历史累计值作为增量计费。通过当前逻辑线程的候选文件列表（按时间排序）
+/// 或 `history_base_id`，定位到紧邻前序分段并提取其最终高水位；若前序分段缺失或无法读取，
+/// 必须返回错误以触发防御性暂缓导入（deferred），防止重复记账。
+fn resolve_continuation_baseline(
+    file_path: &Path,
+    meta_thread_id: &str,
+    history_base_id: Option<&str>,
+    rollout_index: Option<&RolloutIndex>,
+) -> Result<Option<CumulativeTokens>, String> {
+    let Some(rollout_index) = rollout_index else {
+        return Err("缺少 rollout_index 无法解析续写页基线".to_string());
+    };
+
+    let current_file_name = file_path.file_name();
+
+    // 1. 优先在当前逻辑线程关联的候选文件中，按文件名时间自然序倒序寻找早于当前分段的前序页
+    if let Some(candidates) = rollout_index.get(meta_thread_id) {
+        for prev_path in candidates.iter().rev() {
+            if prev_path.file_name() < current_file_name {
+                let timeline = load_parent_timeline(prev_path).map_err(|e| {
+                    format!(
+                        "无法读取续写页前序分段 {}: {}",
+                        prev_path.display(),
+                        e.reason
+                    )
+                })?;
+                if let Some(hw) = timeline.high_water.clone() {
+                    return Ok(Some(hw));
+                }
+            }
+        }
+    }
+
+    // 2. 若当前线程候选列表未找到且 history_base_id 指向独立 UUID，
+    // 尝试从该独立候选列表中查找早于当前分段的文件
+    if let Some(hb_id) = history_base_id {
+        if hb_id != meta_thread_id {
+            if let Some(candidates) = rollout_index.get(hb_id) {
+                for prev_path in candidates.iter().rev() {
+                    if prev_path.file_name() < current_file_name {
+                        let timeline = load_parent_timeline(prev_path).map_err(|e| {
+                            format!(
+                                "无法读取续写页前序分段 {}: {}",
+                                prev_path.display(),
+                                e.reason
+                            )
+                        })?;
+                        if let Some(hw) = timeline.high_water.clone() {
+                            return Ok(Some(hw));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if history_base_id.is_some() {
+        return Err(format!(
+            "找不到续写页 history_base 对应的前序分段文件 (meta: {meta_thread_id})"
+        ));
+    }
+
+    Ok(None)
+}
+
+#[cfg(test)]
 fn parse_codex_file(
     file_path: &Path,
     root_thread_id: Option<String>,
+) -> Result<ParsedCodexFile, AppError> {
+    parse_codex_file_with_index(file_path, root_thread_id, None)
+}
+
+fn parse_codex_file_with_index(
+    file_path: &Path,
+    root_thread_id: Option<String>,
+    rollout_index: Option<&RolloutIndex>,
 ) -> Result<ParsedCodexFile, AppError> {
     #[cfg(test)]
     tests::record_codex_parse(file_path);
@@ -1104,6 +1187,8 @@ fn parse_codex_file(
     // those stale signatures can legitimately recur after a counter reset.
     let mut last_signature_by_source: HashMap<Option<String>, TokenUsageSignature> = HashMap::new();
     let mut previous_token_signature = None;
+    let mut is_continuation = false;
+    let mut history_base_thread_id = None;
     let mut event_index = 0u32;
     let mut token_events = Vec::new();
     let mut line_offset = 0i64;
@@ -1178,10 +1263,10 @@ fn parse_codex_file(
                         .map(|value| value.hyphenated().to_string())
                         .unwrap_or(id)
                 });
+                let leading_id = leading_thread_id_from_filename(file_path);
                 if let (Some(filename_id), Some(meta_id)) =
                     (&root_thread_id, meta_thread_id.as_ref())
                 {
-                    let leading_id = leading_thread_id_from_filename(file_path);
                     let matches =
                         filename_id == meta_id || leading_id.as_deref() == Some(meta_id.as_str());
                     if !matches {
@@ -1189,6 +1274,50 @@ fn parse_codex_file(
                             "文件名线程 ID ({filename_id}) 与 root meta ID ({meta_id}) 不一致"
                         ));
                     }
+                }
+
+                // 分支线程翻页产生的续写页（`<branchId>_<pageId>`）以及带有指向本线程
+                // history_base 的延续分段，其 session_meta 仍保留所属分支会话的
+                // forked_from_id / parent_thread_id；但续写页是在本线程之后实时追加的，
+                // 记录的是翻页后的新事件，新格式续写页不复制父会话用量。如果将其作为
+                // 新 fork 处理，其 session_meta 时间戳是翻页时刻（晚于原始父线程末尾），
+                // 会因父线程无法达到 child cutoff 而被永久 deferred。
+                // 识别为本线程延续后，将其标为 Continuation，不剔除父重放（无需对齐父时间线）。
+                history_base_thread_id = non_empty_string(
+                    payload
+                        .get("history_base")
+                        .and_then(|hb| hb.get("thread_id")),
+                )
+                .map(|id| {
+                    uuid::Uuid::parse_str(&id)
+                        .map(|value| value.hyphenated().to_string())
+                        .unwrap_or(id)
+                });
+                let is_paginated = payload
+                    .get("history_mode")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("paginated");
+                let has_history_base = history_base_thread_id.is_some();
+                let has_parent = matches!(parent, ParentResolution::Parent(_));
+                is_continuation = match (leading_id.as_deref(), meta_thread_id.as_deref()) {
+                    (Some(leading), Some(meta)) if leading == meta => {
+                        is_paginated || has_history_base || has_parent
+                    }
+                    _ => {
+                        has_history_base
+                            && history_base_thread_id.as_deref() == meta_thread_id.as_deref()
+                    }
+                };
+
+                if is_continuation {
+                    let ancestor_parent_id = match &parent {
+                        ParentResolution::Parent(p) => Some(p.clone()),
+                        _ => None,
+                    };
+                    parent = ParentResolution::Continuation {
+                        ancestor_parent_id,
+                        history_base_id: history_base_thread_id.clone(),
+                    };
                 }
 
                 if let ParentResolution::Parent(parent_id) = &mut parent {
@@ -1297,6 +1426,36 @@ fn parse_codex_file(
                         output: last.output as u32,
                     }
                 } else if let Some(total) = total.as_ref() {
+                    if is_continuation && total_high_water.is_none() {
+                        let meta_id = meta_thread_id.as_deref().unwrap_or_default();
+                        match resolve_continuation_baseline(
+                            file_path,
+                            meta_id,
+                            history_base_thread_id.as_deref(),
+                            rollout_index,
+                        ) {
+                            Ok(Some(baseline)) => {
+                                if total.input < baseline.input {
+                                    // 续写页计数器重置（从 0 或较小值起算），以当前快照为首轮基线
+                                    total_high_water = None;
+                                } else {
+                                    // 继承上一分段截止高水位基线
+                                    total_high_water = Some(baseline);
+                                }
+                            }
+                            Ok(None) => {
+                                total_high_water = None;
+                            }
+                            Err(err) => {
+                                // 防御机制：前序分段无法读取或基线无法可靠恢复，必须暂缓导入
+                                parent = ParentResolution::Deferred(format!(
+                                    "续写页缺少有效的前序累计用量基线: {err}"
+                                ));
+                                has_billable_tokens = true;
+                                break;
+                            }
+                        }
+                    }
                     compute_delta(&total_high_water, total)
                 } else {
                     continue;
@@ -1423,25 +1582,36 @@ fn load_parent_timeline(
     let mut events = Vec::new();
     let mut max_timestamp: Option<DateTime<Utc>> = None;
     let mut has_token_without_timestamp = false;
+    let mut high_water: Option<CumulativeTokens> = None;
 
     // 必须扫描完整父文件，不能在首个未来时间戳处 break：rollout 写入顺序
     // 不承诺时间戳严格单调。缓存完整时间线后，不同 child cutoff 只需内存过滤。
-    let reader = codex_rollout_file::reader_from_file(parent_path, file).map_err(|error| {
+    let mut reader = codex_rollout_file::reader_from_file(parent_path, file).map_err(|error| {
         ParentSignatureError::transient(format!(
             "无法打开父 rollout {}: {error}",
             parent_path.display()
         ))
     })?;
-    for line in reader.lines() {
+    let mut bytes = Vec::new();
+    loop {
+        bytes.clear();
         // I/O/decompression failures are not evidence of stable content. Do
         // not cache a partial timeline or suppress its next resolution attempt.
-        let line = line.map_err(|error| {
+        let read = reader.read_until(b'\n', &mut bytes).map_err(|error| {
             ParentSignatureError::transient(format!(
                 "无法读取父 rollout {}: {error}",
                 parent_path.display()
             ))
         })?;
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+        if read == 0 {
+            break;
+        }
+        // Decode separately from reading: malformed UTF-8 is a skipped record,
+        // just like malformed JSON, rather than a retryable reader failure.
+        let Ok(line) = std::str::from_utf8(&bytes) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
         let timestamp = parse_timestamp(value.get("timestamp"));
@@ -1475,12 +1645,24 @@ fn load_parent_timeline(
             timestamp,
             signature,
         });
+
+        if let Some(total) = info
+            .get("total_token_usage")
+            .and_then(parse_cumulative_tokens)
+        {
+            if let Some(hw) = high_water.as_mut() {
+                update_high_water(hw, &total);
+            } else {
+                high_water = Some(total);
+            }
+        }
     }
 
     let timeline = Arc::new(ParentTokenTimeline {
         events,
         max_timestamp,
         has_token_without_timestamp,
+        high_water,
     });
     if let (Some(stamp), Ok(mut caches)) = (stamp, replay_caches().lock()) {
         caches.parent_timelines.insert(
@@ -1524,6 +1706,7 @@ fn resolve_parent_signatures(
         events: Vec::new(),
         max_timestamp: None,
         has_token_without_timestamp: false,
+        high_water: None,
     };
     let mut segments: Vec<ParentSegment> = Vec::new();
     let mut latest_path: Option<&Path> = None;
@@ -1734,7 +1917,11 @@ fn sync_single_codex_file(
         }
     }
 
-    let parsed = parse_codex_file(file_path, thread_id_from_filename(file_path))?;
+    let parsed = parse_codex_file_with_index(
+        file_path,
+        thread_id_from_filename(file_path),
+        Some(rollout_index),
+    )?;
     if !parsed.has_billable_tokens {
         update_codex_sync_state(db, &file_path_str, file_modified, &parsed)?;
         return Ok(CodexFileSyncResult::default());
@@ -1757,13 +1944,27 @@ fn sync_single_codex_file(
     }
 
     let replay_prefix = match &parsed.parent {
-        ParentResolution::None => 0,
+        ParentResolution::None | ParentResolution::Continuation { .. } => 0,
         ParentResolution::Deferred(reason) => {
+            let pending_reason = if let Some(meta_id) = parsed.meta_thread_id.as_deref() {
+                if rollout_index.contains_key(meta_id) {
+                    PendingReason::Retryable {
+                        reason: reason.clone(),
+                        parent_id: meta_id.to_string(),
+                        child_file,
+                        parent_files: parent_dependency_stamp(meta_id, rollout_index),
+                    }
+                } else {
+                    PendingReason::Stable(reason.clone())
+                }
+            } else {
+                PendingReason::Stable(reason.clone())
+            };
             return Ok(mark_deferred(
                 file_path,
                 file_modified,
                 file_size,
-                PendingReason::Stable(reason.clone()),
+                pending_reason,
             ));
         }
         ParentResolution::Parent(parent_id) => {
@@ -2098,6 +2299,8 @@ mod tests {
     const CHILD_A_ID: &str = "00000000-0000-4000-8000-000000000002";
     const CHILD_B_ID: &str = "00000000-0000-4000-8000-000000000003";
     const PARENT_PAGE_ID: &str = "00000000-0000-4000-8000-000000000004";
+    const CHILD_A_PAGE_ID: &str = "00000000-0000-4000-8000-000000000005";
+    const CHILD_A_PAGE_2_ID: &str = "00000000-0000-4000-8000-000000000006";
 
     thread_local! {
         static CODEX_PARSE_COUNTS: std::cell::RefCell<HashMap<PathBuf, usize>> =
@@ -2155,6 +2358,43 @@ mod tests {
 
     fn rollout_path(dir: &Path, thread_id: &str) -> PathBuf {
         dir.join(format!("rollout-2026-07-10T03-00-00-{thread_id}.jsonl"))
+    }
+
+    fn paginated_session_meta_at(
+        thread_id: &str,
+        forked_from_id: Option<&str>,
+        spawned_from_id: Option<&str>,
+        history_base_thread_id: Option<&str>,
+        timestamp: &str,
+    ) -> serde_json::Value {
+        let source = spawned_from_id.map_or_else(
+            || serde_json::Value::String("cli".to_string()),
+            |parent| {
+                serde_json::json!({
+                    "subagent": {
+                        "thread_spawn": { "parent_thread_id": parent }
+                    }
+                })
+            },
+        );
+        let mut payload = serde_json::json!({
+            "id": thread_id,
+            "forked_from_id": forked_from_id,
+            "source": source,
+            "history_mode": "paginated",
+        });
+        if let Some(hb_id) = history_base_thread_id {
+            payload["history_base"] = serde_json::json!({
+                "thread_id": hb_id,
+                "end_ordinal_exclusive": 100,
+                "end_byte_offset": 5000,
+            });
+        }
+        serde_json::json!({
+            "timestamp": timestamp,
+            "type": "session_meta",
+            "payload": payload
+        })
     }
 
     fn session_meta_at(
@@ -2501,6 +2741,56 @@ mod tests {
         );
         assert_eq!(parsed.root_thread_id.as_deref(), Some(CHILD_A_ID));
         assert!(parsed.has_billable_tokens);
+        Ok(())
+    }
+
+    /// 分支线程翻页产生的双段文件名带有残留的 forked_from_id，
+    /// 解析时应被识别为本线程延续（Continuation），并恢复上一页基线计算增量。
+    #[test]
+    fn test_parse_codex_file_recognizes_branch_thread_paginated_continuation(
+    ) -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let root = rollout_path(dir.path(), CHILD_A_ID);
+        write_jsonl(
+            &root,
+            &[
+                session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-08-26T09:18:00Z"),
+                token_count_at(50, 25, 10, "2026-08-26T09:18:05Z"),
+            ],
+        );
+        let file = dir.path().join(format!(
+            "rollout-2026-08-26T17-18-13-{CHILD_A_ID}_{CHILD_A_PAGE_ID}.jsonl"
+        ));
+        write_jsonl(
+            &file,
+            &[
+                paginated_session_meta_at(
+                    CHILD_A_ID,
+                    Some(PARENT_ID),
+                    None,
+                    Some(CHILD_A_ID),
+                    "2026-08-26T09:18:20Z",
+                ),
+                turn_context(),
+                token_count_at(100, 50, 20, "2026-08-26T09:18:21Z"),
+            ],
+        );
+
+        let index = build_rollout_index(&[root, file.clone()]);
+        let parsed =
+            parse_codex_file_with_index(&file, thread_id_from_filename(&file), Some(&index))?;
+
+        assert!(
+            matches!(parsed.parent, ParentResolution::Continuation { .. }),
+            "分支线程续写页应被识别为 Continuation，实际: {:?}",
+            parsed.parent
+        );
+        assert_eq!(parsed.root_thread_id.as_deref(), Some(CHILD_A_PAGE_ID));
+        assert_eq!(parsed.meta_thread_id.as_deref(), Some(CHILD_A_ID));
+        assert!(parsed.has_billable_tokens);
+        // 验证前序基线恢复：100 - 50 = 50 增量
+        assert_eq!(parsed.token_events[0].delta.input, 50);
+        assert_eq!(parsed.token_events[0].delta.output, 10);
         Ok(())
     }
 
@@ -3468,6 +3758,71 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn test_parent_malformed_lines_do_not_defer_child_or_prevent_warm_skip() -> Result<(), AppError>
+    {
+        let cases: &[(&[u8], &[u8], bool)] = &[
+            // A bad record must not hide subsequent valid records, including
+            // a complete final record without a trailing newline.
+            (b"\xff\n", b"", true),
+            (b"", b"\xff\n", false),
+            (b"", b"\xff", false),
+            // Keep the existing malformed-JSON/blank-line behavior too.
+            (b"{malformed\n \t\r\n", b"{malformed", false),
+        ];
+        for compressed in [false, true] {
+            for &(prefix, suffix, remove_final_newline) in cases {
+                clear_codex_replay_caches();
+                let db = Database::memory()?;
+                let temp = tempdir().unwrap();
+                let (parent, child) = retryable_parent_and_child(temp.path());
+                append_jsonl(&parent, turn_context_at("2026-07-10T03:00:10Z"));
+                let mut contents = fs::read(&parent).unwrap();
+                if remove_final_newline {
+                    assert_eq!(contents.pop(), Some(b'\n'));
+                }
+                fs::write(&parent, [prefix, contents.as_slice(), suffix].concat()).unwrap();
+                let parent = if compressed {
+                    compress_rollout(&parent)
+                } else {
+                    parent
+                };
+
+                let result = sync_test_file(&db, &child, &[&parent, &child])?;
+                assert_eq!(
+                    (result.imported, result.skipped, result.deferred),
+                    (1, 1, false)
+                );
+                let timeline = load_parent_timeline(&parent).unwrap();
+                assert_eq!(timeline.events.len(), 1);
+                assert_eq!(
+                    timeline.max_timestamp,
+                    Some("2026-07-10T03:00:10Z".parse::<DateTime<Utc>>().unwrap())
+                );
+                for _ in 0..3 {
+                    let warm = sync_test_file(&db, &child, &[&parent, &child])?;
+                    assert_eq!((warm.imported, warm.deferred), (0, false));
+                }
+                assert_eq!(codex_parse_count(&child), 1);
+                if parent_cache_supported(&parent) {
+                    assert!(Arc::ptr_eq(
+                        &timeline,
+                        &load_parent_timeline(&parent).unwrap()
+                    ));
+                }
+                let conn = lock_conn!(db.conn);
+                let usage: (i64, i64, i64) = conn.query_row(
+                    "SELECT input_tokens, cache_read_tokens, output_tokens FROM proxy_request_logs",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?;
+                assert_eq!(usage, (300, 150, 50));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn test_parent_rollout_is_cached_once_across_fork_cutoffs() -> Result<(), AppError> {
         clear_codex_replay_caches();
         let temp = tempdir().unwrap();
@@ -3866,6 +4221,516 @@ mod tests {
         Ok(())
     }
 
+    /// #8161: 分支线程翻页产生的续写页（`<branchId>_<pageId>` 双段文件名），
+    /// 其 session_meta 仍保留所属分支会话的 forked_from_id，但翻页时间晚于原始父线程末尾。
+    /// 续写页应被识别为分支线程自身的延续，不剔除父重放（新格式续写页不复制父用量），
+    /// 避免因父线程无法达到翻页时刻而被永久 deferred。
+    #[test]
+    #[serial_test::serial]
+    fn test_paginated_continuation_pages_for_forked_branch_thread_are_imported(
+    ) -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+
+        // 1. 父线程在 03:00:20 结束
+        let parent_root = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &parent_root,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(1_000, 900, 100, "2026-07-10T03:00:01Z"),
+                turn_context_at("2026-07-10T03:00:20Z"),
+            ],
+        );
+
+        // 2. 分支线程 CHILD_A 首页在 03:00:15 fork 自 PARENT_ID
+        // 首页重放了父线程的 1000 tokens，并新产生了 500 tokens
+        let branch_root = temp
+            .path()
+            .join(format!("rollout-2026-07-10T03-00-15-{CHILD_A_ID}.jsonl"));
+        write_jsonl(
+            &branch_root,
+            &[
+                session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:00:15Z"),
+                turn_context(),
+                token_count_at(1_000, 900, 100, "2026-07-10T03:00:16Z"),
+                token_count_at(1_500, 1_300, 150, "2026-07-10T03:00:20Z"),
+            ],
+        );
+
+        // 3. 分支线程 CHILD_A 翻页，产生双段续写页，时间戳为 03:01:00（远晚于父线程末尾 03:00:10）
+        // session_meta 仍带 forked_from_id: PARENT_ID，新产生 200 tokens
+        let branch_page = temp.path().join(format!(
+            "rollout-2026-07-10T03-01-00-{CHILD_A_ID}_{CHILD_A_PAGE_ID}.jsonl"
+        ));
+        write_jsonl(
+            &branch_page,
+            &[
+                paginated_session_meta_at(
+                    CHILD_A_ID,
+                    Some(PARENT_ID),
+                    None,
+                    Some(CHILD_A_ID),
+                    "2026-07-10T03:01:00Z",
+                ),
+                turn_context_at("2026-07-10T03:01:01Z"),
+                token_count_at(200, 150, 50, "2026-07-10T03:01:05Z"),
+            ],
+        );
+
+        let files = [
+            parent_root.as_path(),
+            branch_root.as_path(),
+            branch_page.as_path(),
+        ];
+
+        // 同步分支线程首页：成功导入 1 条（500 tokens），跳过 1 条重放（1000 tokens）
+        let root_result = sync_test_file(&db, &branch_root, &files)?;
+        assert_eq!(
+            (
+                root_result.imported,
+                root_result.skipped,
+                root_result.deferred
+            ),
+            (1, 1, false)
+        );
+
+        // 同步分支线程续写页：识别为自身延续，直接导入 1 条（200 tokens），绝不 deferred！
+        let page_result = sync_test_file(&db, &branch_page, &files)?;
+        assert_eq!(
+            (
+                page_result.imported,
+                page_result.skipped,
+                page_result.deferred
+            ),
+            (1, 0, false)
+        );
+
+        // 验证数据库：session_id 统一为 CHILD_A_ID，且两条记录用量准确
+        let conn = lock_conn!(db.conn);
+        let mut stmt = conn.prepare(
+            "SELECT request_id, session_id, input_tokens, output_tokens
+             FROM proxy_request_logs
+             WHERE session_id = ?1
+             ORDER BY created_at ASC",
+        )?;
+        let rows = stmt
+            .query_map([CHILD_A_ID], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        assert_eq!(rows.len(), 2);
+        // 首页记录
+        assert_eq!(
+            rows[0].0,
+            format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{CHILD_A_ID}:2")
+        );
+        assert_eq!(rows[0].1, CHILD_A_ID);
+        assert_eq!(rows[0].2, 500); // 1500 - 1000
+        assert_eq!(rows[0].3, 50); // 150 - 100
+                                   // 续写页记录
+        assert_eq!(
+            rows[1].0,
+            format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{CHILD_A_PAGE_ID}:1")
+        );
+        assert_eq!(rows[1].1, CHILD_A_ID);
+        assert_eq!(rows[1].2, 200); // 1700 - 1500
+        assert_eq!(rows[1].3, 50); // 200 - 150
+
+        Ok(())
+    }
+
+    /// 测试分支线程多次翻页（第 3 页续写页，其 history_base 指向上一页 rollout ID），
+    /// 以及在分支线程多页续写之后再派生子代理的完整链条。
+    #[test]
+    #[serial_test::serial]
+    fn test_paginated_continuation_multiple_pages_and_subagent_on_branch() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+
+        let parent_root = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &parent_root,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(1_000, 900, 100, "2026-07-10T03:00:01Z"),
+                turn_context_at("2026-07-10T03:00:20Z"),
+            ],
+        );
+
+        // 分支线程 CHILD_A 首页
+        let branch_root = temp
+            .path()
+            .join(format!("rollout-2026-07-10T03-00-15-{CHILD_A_ID}.jsonl"));
+        write_jsonl(
+            &branch_root,
+            &[
+                session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:00:15Z"),
+                turn_context(),
+                token_count_at(1_000, 900, 100, "2026-07-10T03:00:16Z"),
+                token_count_at(1_500, 1_300, 150, "2026-07-10T03:00:20Z"),
+            ],
+        );
+
+        // 分支线程第 2 页（续写页 1）
+        let branch_page_1 = temp.path().join(format!(
+            "rollout-2026-07-10T03-01-00-{CHILD_A_ID}_{CHILD_A_PAGE_ID}.jsonl"
+        ));
+        write_jsonl(
+            &branch_page_1,
+            &[
+                paginated_session_meta_at(
+                    CHILD_A_ID,
+                    Some(PARENT_ID),
+                    None,
+                    Some(CHILD_A_ID),
+                    "2026-07-10T03:01:00Z",
+                ),
+                turn_context_at("2026-07-10T03:01:01Z"),
+                token_count_at(1_700, 1_450, 200, "2026-07-10T03:01:05Z"),
+            ],
+        );
+
+        // 分支线程第 3 页（续写页 2），history_base 指向第 2 页的 rollout ID
+        let branch_page_2 = temp.path().join(format!(
+            "rollout-2026-07-10T03-02-00-{CHILD_A_ID}_{CHILD_A_PAGE_2_ID}.jsonl"
+        ));
+        write_jsonl(
+            &branch_page_2,
+            &[
+                paginated_session_meta_at(
+                    CHILD_A_ID,
+                    Some(PARENT_ID),
+                    None,
+                    Some(CHILD_A_PAGE_ID),
+                    "2026-07-10T03:02:00Z",
+                ),
+                turn_context_at("2026-07-10T03:02:01Z"),
+                token_count_at(2_000, 1_650, 250, "2026-07-10T03:02:10Z"),
+                turn_context_at("2026-07-10T03:02:30Z"),
+            ],
+        );
+
+        // 在分支线程翻页写完后，从分支线程派生子代理 CHILD_B（fork 时刻 03:02:30）
+        let subagent = temp
+            .path()
+            .join(format!("rollout-2026-07-10T03-02-30-{CHILD_B_ID}.jsonl"));
+        write_jsonl(
+            &subagent,
+            &[
+                session_meta_at(
+                    CHILD_B_ID,
+                    Some(CHILD_A_ID),
+                    Some(CHILD_A_ID),
+                    "2026-07-10T03:02:30Z",
+                ),
+                turn_context(),
+                // 重放 CHILD_A 从头到尾（包括多页）的 token
+                token_count_at(1_000, 900, 100, "2026-07-10T03:02:31Z"),
+                token_count_at(1_500, 1_300, 150, "2026-07-10T03:02:32Z"),
+                token_count_at(1_700, 1_450, 200, "2026-07-10T03:02:33Z"),
+                token_count_at(2_000, 1_650, 250, "2026-07-10T03:02:34Z"),
+                // 子代理自己消耗 150 tokens
+                token_count_at(2_150, 1_750, 280, "2026-07-10T03:02:40Z"),
+            ],
+        );
+
+        let files = [
+            parent_root.as_path(),
+            branch_root.as_path(),
+            branch_page_1.as_path(),
+            branch_page_2.as_path(),
+            subagent.as_path(),
+        ];
+
+        // 先同步分支线程首页：成功导入 500 tokens（跳过父 1000 重放）
+        let r_res = sync_test_file(&db, &branch_root, &files)?;
+        assert_eq!(
+            (r_res.imported, r_res.skipped, r_res.deferred),
+            (1, 1, false)
+        );
+
+        // 验证续写页 1 成功导入：基线继承首页 1500，增量仅为 200（1700 - 1500）
+        let p1_res = sync_test_file(&db, &branch_page_1, &files)?;
+        assert_eq!((p1_res.imported, p1_res.deferred), (1, false));
+
+        // 验证续写页 2 成功导入：基线继承第 2 页 1700，增量仅为 300（2000 - 1700）
+        let p2_res = sync_test_file(&db, &branch_page_2, &files)?;
+        assert_eq!((p2_res.imported, p2_res.deferred), (1, false));
+
+        // 验证子代理解析父线程 CHILD_A 的时间线时，能合并 CHILD_A 的首页 + 两页续写页，
+        // 成功达到 03:02:30 并剔除全部 4 条重放，导入子代理自身的 1 条用量（150 tokens）
+        let sub_res = sync_test_file(&db, &subagent, &files)?;
+        assert_eq!(
+            (sub_res.imported, sub_res.skipped, sub_res.deferred),
+            (1, 4, false)
+        );
+
+        let conn = lock_conn!(db.conn);
+        // 精确断言续写页 1 的入库用量（防止将 1700 历史累计值算为增量）
+        let p1_usage: (i64, i64, i64) = conn.query_row(
+            "SELECT input_tokens, cache_read_tokens, output_tokens
+             FROM proxy_request_logs WHERE request_id = ?1",
+            [format!(
+                "{CODEX_THREAD_REQUEST_ID_PREFIX}:{CHILD_A_PAGE_ID}:1"
+            )],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(p1_usage, (200, 150, 50));
+
+        // 精确断言续写页 2 的入库用量（防止将 2000 历史累计值算为增量）
+        let p2_usage: (i64, i64, i64) = conn.query_row(
+            "SELECT input_tokens, cache_read_tokens, output_tokens
+             FROM proxy_request_logs WHERE request_id = ?1",
+            [format!(
+                "{CODEX_THREAD_REQUEST_ID_PREFIX}:{CHILD_A_PAGE_2_ID}:1"
+            )],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(p2_usage, (300, 200, 50));
+
+        // 断言子代理用量
+        let sub_usage: (i64, i64, i64) = conn.query_row(
+            "SELECT input_tokens, cache_read_tokens, output_tokens
+             FROM proxy_request_logs WHERE request_id = ?1",
+            [format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{CHILD_B_ID}:5")],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(sub_usage, (150, 100, 30));
+
+        // 精确断言分支线程 CHILD_A 的全生命周期总 input 用量：
+        // 首页 500 + 第 2 页 200 + 第 3 页 300 = 1000 tokens
+        let branch_total_input: i64 = conn.query_row(
+            "SELECT sum(input_tokens) FROM proxy_request_logs WHERE session_id = ?1",
+            [CHILD_A_ID],
+            |row| row.get(0),
+        )?;
+        assert_eq!(branch_total_input, 1_000);
+
+        Ok(())
+    }
+
+    /// 确保防御性：单段文件名的新 fork 首页即使其 history_base 指向父会话某页，
+    /// 也不会被误判为延续页，父线程未达到 cutoff 时依然必须被 deferred。
+    #[test]
+    #[serial_test::serial]
+    fn test_single_segment_fork_is_not_treated_as_continuation() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+
+        let parent_root = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &parent_root,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(1_000, 900, 100, "2026-07-10T03:00:01Z"),
+                // 父线程在 03:00:05 结束
+                turn_context_at("2026-07-10T03:00:05Z"),
+            ],
+        );
+
+        // 子会话首页 fork 时刻是 03:00:20（晚于父线程结束时间 03:00:05）
+        // 单段文件名，history_base 指向 PARENT_ID（父会话某页）
+        let child = temp
+            .path()
+            .join(format!("rollout-2026-07-10T03-00-20-{CHILD_A_ID}.jsonl"));
+        write_jsonl(
+            &child,
+            &[
+                paginated_session_meta_at(
+                    CHILD_A_ID,
+                    Some(PARENT_ID),
+                    None,
+                    Some(PARENT_ID),
+                    "2026-07-10T03:00:20Z",
+                ),
+                turn_context_at("2026-07-10T03:00:21Z"),
+                token_count_at(1_200, 1_000, 120, "2026-07-10T03:00:25Z"),
+            ],
+        );
+
+        let files = [parent_root.as_path(), child.as_path()];
+        let result = sync_test_file(&db, &child, &files)?;
+        assert!(
+            result.deferred,
+            "单段文件名的新 fork 首页在父线程未达到 cutoff 时必须被 deferred"
+        );
+
+        Ok(())
+    }
+
+    /// 对照测试 1：带有有效 last_token_usage 的续写页直接使用 last 计费，无需回溯基线。
+    #[test]
+    #[serial_test::serial]
+    fn test_paginated_continuation_with_valid_last_token_usage() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+
+        let branch_page = temp.path().join(format!(
+            "rollout-2026-07-10T03-01-00-{CHILD_A_ID}_{CHILD_A_PAGE_ID}.jsonl"
+        ));
+        write_jsonl(
+            &branch_page,
+            &[
+                paginated_session_meta_at(
+                    CHILD_A_ID,
+                    Some(PARENT_ID),
+                    None,
+                    Some(CHILD_A_ID),
+                    "2026-07-10T03:01:00Z",
+                ),
+                turn_context_at("2026-07-10T03:01:01Z"),
+                // 带有显式的 last_token_usage
+                token_count_with_last_at(
+                    1_700,
+                    1_450,
+                    200,
+                    120,
+                    80,
+                    30,
+                    "codex",
+                    "2026-07-10T03:01:05Z",
+                ),
+            ],
+        );
+
+        let files = [branch_page.as_path()];
+        let result = sync_test_file(&db, &branch_page, &files)?;
+        assert_eq!((result.imported, result.deferred), (1, false));
+
+        let conn = lock_conn!(db.conn);
+        let usage: (i64, i64, i64) = conn.query_row(
+            "SELECT input_tokens, cache_read_tokens, output_tokens
+             FROM proxy_request_logs WHERE request_id = ?1",
+            [format!(
+                "{CODEX_THREAD_REQUEST_ID_PREFIX}:{CHILD_A_PAGE_ID}:1"
+            )],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(usage, (120, 80, 30));
+        Ok(())
+    }
+
+    /// 对照测试 2：防御机制——当续写页缺少 last_token_usage 且上一分段缺失无法恢复基线时，
+    /// 必须安全 deferred，绝对不能将累计总值直接当作增量入库。
+    #[test]
+    #[serial_test::serial]
+    fn test_paginated_continuation_deferred_when_prev_segment_missing() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+
+        // 仅存在续写页，其前序首页文件缺失
+        let branch_page = temp.path().join(format!(
+            "rollout-2026-07-10T03-01-00-{CHILD_A_ID}_{CHILD_A_PAGE_ID}.jsonl"
+        ));
+        write_jsonl(
+            &branch_page,
+            &[
+                paginated_session_meta_at(
+                    CHILD_A_ID,
+                    Some(PARENT_ID),
+                    None,
+                    Some(CHILD_A_ID),
+                    "2026-07-10T03:01:00Z",
+                ),
+                turn_context_at("2026-07-10T03:01:01Z"),
+                token_count_at(1_700, 1_450, 200, "2026-07-10T03:01:05Z"),
+            ],
+        );
+
+        let files = [branch_page.as_path()];
+        let result = sync_test_file(&db, &branch_page, &files)?;
+        assert!(
+            result.deferred,
+            "前序分段缺失且无 last_token_usage 时必须 deferred"
+        );
+
+        // 验证数据库中绝无错误写入
+        let count: i64 = {
+            let conn = lock_conn!(db.conn);
+            conn.query_row(
+                "SELECT count(*) FROM proxy_request_logs WHERE session_id = ?1",
+                [CHILD_A_ID],
+                |row| row.get(0),
+            )?
+        };
+        assert_eq!(count, 0, "缺失前序基线时绝不应有数据入库");
+
+        // 验证游标未推进
+        let sync_state = get_sync_state(&db, &branch_page.to_string_lossy())?;
+        assert_eq!(sync_state, (0, 0), "deferred 时游标不应推进");
+        Ok(())
+    }
+
+    /// 对照测试 3：续写页计数器重置场景——新页 total_token_usage 从较小数值起算，
+    /// 自动识别为计数器重置，以当前值作为增量计费，未被饱和减法吞为 0。
+    #[test]
+    #[serial_test::serial]
+    fn test_paginated_continuation_with_counter_reset() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+
+        // 首页结束于累计 1500
+        let branch_root = rollout_path(temp.path(), CHILD_A_ID);
+        write_jsonl(
+            &branch_root,
+            &[
+                session_meta(CHILD_A_ID),
+                token_count_at(1_500, 1_300, 150, "2026-07-10T03:00:20Z"),
+            ],
+        );
+
+        // 续写页计数器重置为 180 (180 < 1500)
+        let branch_page = temp.path().join(format!(
+            "rollout-2026-07-10T03-01-00-{CHILD_A_ID}_{CHILD_A_PAGE_ID}.jsonl"
+        ));
+        write_jsonl(
+            &branch_page,
+            &[
+                paginated_session_meta_at(
+                    CHILD_A_ID,
+                    None,
+                    None,
+                    Some(CHILD_A_ID),
+                    "2026-07-10T03:01:00Z",
+                ),
+                turn_context_at("2026-07-10T03:01:01Z"),
+                token_count_at(180, 100, 25, "2026-07-10T03:01:05Z"),
+            ],
+        );
+
+        let files = [branch_root.as_path(), branch_page.as_path()];
+        let root_res = sync_test_file(&db, &branch_root, &files)?;
+        assert_eq!((root_res.imported, root_res.deferred), (1, false));
+
+        let page_res = sync_test_file(&db, &branch_page, &files)?;
+        assert_eq!((page_res.imported, page_res.deferred), (1, false));
+
+        let conn = lock_conn!(db.conn);
+        let usage: (i64, i64, i64) = conn.query_row(
+            "SELECT input_tokens, cache_read_tokens, output_tokens
+             FROM proxy_request_logs WHERE request_id = ?1",
+            [format!(
+                "{CODEX_THREAD_REQUEST_ID_PREFIX}:{CHILD_A_PAGE_ID}:1"
+            )],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(usage, (180, 100, 25), "计数器重置时应以新页数值作为增量");
+        Ok(())
+    }
+
     #[test]
     #[serial_test::serial]
     fn test_missing_parent_is_deferred_and_recovered_without_child_change() -> Result<(), AppError>
@@ -3907,11 +4772,14 @@ mod tests {
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
         let (parent, child) = retryable_parent_and_child(temp.path());
+        let cached = parent_cache_supported(&parent);
 
         for _ in 0..4 {
             assert!(sync_test_file(&db, &child, &[&parent, &child])?.deferred);
         }
-        assert_eq!(codex_parse_count(&child), 1);
+        if cached {
+            assert_eq!(codex_parse_count(&child), 1);
+        }
         assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
 
         append_jsonl(&parent, turn_context_at("2026-07-10T03:00:10Z"));
@@ -3920,9 +4788,13 @@ mod tests {
             (recovered.imported, recovered.skipped, recovered.deferred),
             (1, 1, false)
         );
-        assert_eq!(codex_parse_count(&child), 2);
+        if cached {
+            assert_eq!(codex_parse_count(&child), 2);
+        }
         assert_eq!(sync_test_file(&db, &child, &[&parent, &child])?.imported, 0);
-        assert_eq!(codex_parse_count(&child), 2);
+        if cached {
+            assert_eq!(codex_parse_count(&child), 2);
+        }
         let conn = lock_conn!(db.conn);
         let usage: (i64, i64, i64) = conn.query_row(
             "SELECT input_tokens, cache_read_tokens, output_tokens FROM proxy_request_logs",
@@ -3940,6 +4812,7 @@ mod tests {
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
         let (parent, child) = retryable_parent_and_child(temp.path());
+        let cached = parent_cache_supported(&parent);
         assert!(sync_test_file(&db, &child, &[&parent, &child])?.deferred);
         append_jsonl(
             &child,
@@ -3948,14 +4821,18 @@ mod tests {
         for _ in 0..3 {
             assert!(sync_test_file(&db, &child, &[&parent, &child])?.deferred);
         }
-        assert_eq!(codex_parse_count(&child), 2);
+        if cached {
+            assert_eq!(codex_parse_count(&child), 2);
+        }
         append_jsonl(&parent, turn_context_at("2026-07-10T03:00:10Z"));
         let recovered = sync_test_file(&db, &child, &[&parent, &child])?;
         assert_eq!(
             (recovered.imported, recovered.skipped, recovered.deferred),
             (2, 1, false)
         );
-        assert_eq!(codex_parse_count(&child), 3);
+        if cached {
+            assert_eq!(codex_parse_count(&child), 3);
+        }
         Ok(())
     }
 
@@ -3966,6 +4843,7 @@ mod tests {
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
         let (parent, child) = retryable_parent_and_child(temp.path());
+        let cached = parent_cache_supported(&parent);
         assert!(sync_test_file(&db, &child, &[&parent, &child])?.deferred);
         let archived_dir = temp.path().join("archived_sessions");
         fs::create_dir(&archived_dir).unwrap();
@@ -3973,16 +4851,22 @@ mod tests {
         fs::copy(&parent, &archived_parent).unwrap();
         append_jsonl(&archived_parent, turn_context_at("2026-07-10T03:00:10Z"));
         assert!(sync_test_file(&db, &child, &[&parent, &archived_parent, &child])?.deferred);
-        assert_eq!(codex_parse_count(&child), 2, "new candidate must retry");
+        if cached {
+            assert_eq!(codex_parse_count(&child), 2, "new candidate must retry");
+        }
         assert!(sync_test_file(&db, &child, &[&parent, &archived_parent, &child])?.deferred);
-        assert_eq!(codex_parse_count(&child), 2);
+        if cached {
+            assert_eq!(codex_parse_count(&child), 2);
+        }
         fs::remove_file(&parent).unwrap();
         let recovered = sync_test_file(&db, &child, &[&archived_parent, &child])?;
         assert_eq!(
             (recovered.imported, recovered.skipped, recovered.deferred),
             (1, 1, false)
         );
-        assert_eq!(codex_parse_count(&child), 3, "removed candidate must retry");
+        if cached {
+            assert_eq!(codex_parse_count(&child), 3, "removed candidate must retry");
+        }
         Ok(())
     }
 
@@ -4069,6 +4953,63 @@ mod tests {
             .unwrap()
             .parent_timelines
             .contains_key(&compressed_parent));
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_parent_decompression_error_after_valid_prefix_does_not_cache_partial_timeline(
+    ) -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let (parent, child) = retryable_parent_and_child(temp.path());
+        append_jsonl(&parent, turn_context_at("2026-07-10T03:00:10Z"));
+        let mut contents = fs::read(&parent).unwrap();
+        // Fill the rollout reader's buffer before it reaches a corrupt second
+        // frame, so valid token events are read before decompression fails.
+        contents.extend(vec![b'\n'; 2 << 20]);
+        fs::write(&parent, contents).unwrap();
+        let compressed_parent = compress_rollout(&parent);
+        let valid_frame = fs::read(&compressed_parent).unwrap();
+        let mut corrupt_frames = valid_frame.clone();
+        corrupt_frames.extend_from_slice(b"invalid zstd bytes");
+        fs::write(&compressed_parent, corrupt_frames).unwrap();
+        let mut reader = codex_rollout_file::open_reader(&compressed_parent).unwrap();
+        let mut first_line = Vec::new();
+        assert!(reader.read_until(b'\n', &mut first_line).unwrap() > 0);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&first_line).unwrap(),
+            session_meta(PARENT_ID)
+        );
+        drop(reader);
+
+        for _ in 0..2 {
+            let error = load_parent_timeline(&compressed_parent).unwrap_err();
+            assert!(!error.cacheable);
+            assert!(error.reason.contains("无法读取父 rollout"));
+            assert!(sync_test_file(&db, &child, &[&compressed_parent, &child])?.deferred);
+            assert!(!replay_caches()
+                .lock()
+                .unwrap()
+                .parent_timelines
+                .contains_key(&compressed_parent));
+        }
+        assert_eq!(codex_parse_count(&child), 2);
+        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
+
+        fs::write(&compressed_parent, valid_frame).unwrap();
+        let recovered = sync_test_file(&db, &child, &[&compressed_parent, &child])?;
+        assert_eq!(
+            (recovered.imported, recovered.skipped, recovered.deferred),
+            (1, 1, false)
+        );
+        assert_eq!(codex_parse_count(&child), 3);
+        assert_eq!(
+            sync_test_file(&db, &child, &[&compressed_parent, &child])?.imported,
+            0
+        );
+        assert_eq!(codex_parse_count(&child), 3);
         Ok(())
     }
 

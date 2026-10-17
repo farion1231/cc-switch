@@ -2,7 +2,6 @@ import { formatMessageTime } from "../utils";
 import type { AgentReaderStyle } from "./agentStyles";
 import { describeEvent } from "./SessionEventRow";
 import {
-  formatCost,
   formatDuration,
   formatMergedTitle,
   formatStepMeta,
@@ -25,10 +24,12 @@ export interface MarkdownExportOptions {
   youLabel: string;
   projectDir?: string;
   t: Translate;
+  /** 费用按用户选的显示币种写，和界面上看到的一致 */
+  formatCost: (usd: number) => string;
   includeThinking?: boolean;
 }
 
-const metaText = (meta: StepMeta, t: Translate) => {
+const metaText = (meta: StepMeta, { t, formatCost }: MarkdownExportOptions) => {
   const parts: string[] = [];
   if (isFailureStatus(meta.status)) parts.push(t(`status.${meta.status}`));
   if (meta.exitCode !== undefined) {
@@ -62,13 +63,13 @@ const stepLines = (
     case "tool": {
       const title = formatStepTitle(step, style, { projectDir, t });
       const meta = formatStepMeta(step, style);
-      return [`${pad}- ${meta.glyph} ${title.text}${metaText(meta, t)}`];
+      return [`${pad}- ${meta.glyph} ${title.text}${metaText(meta, options)}`];
     }
     case "merged": {
       const title = formatMergedTitle(step);
       const meta = formatStepMeta(step, style);
       return [
-        `${pad}- ${meta.glyph} ${title.text}${metaText(meta, t)}`,
+        `${pad}- ${meta.glyph} ${title.text}${metaText(meta, options)}`,
         ...step.children.flatMap((child) =>
           stepLines(child, options, depth + 1),
         ),

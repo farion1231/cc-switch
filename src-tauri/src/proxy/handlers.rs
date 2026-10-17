@@ -172,8 +172,8 @@ fn claude_model_discovery(state: &ProxyState) -> Value {
 /// `model` 换成上游名。解不出来（成员已移除、供应商已删除、key 没登记）就按客户端的协议
 /// 直接返回错误，不回落到默认路由。
 ///
-/// 只对 Claude Code 和 Codex 生效：同一个 handler 也服务 Claude Desktop、Grok Build，
-/// 它们的模型名不解码。普通模型名不读任何状态，路由请求的路径不变。
+/// 对 Claude Code、Codex、Claude Desktop 生效：同一个 handler 也服务 Grok Build，它的模型名
+/// 不解码。普通模型名不读任何状态，路由请求的路径不变。
 ///
 /// `Err` 是在进入路由之前就拒绝的请求，直接返回给客户端（装箱：`Response` 太大）。
 fn resolve_stack_target(
@@ -214,10 +214,11 @@ fn resolve_stack_target(
     }
 }
 
-/// Stack 模型解不出来时的错误体：Claude 用 Anthropic 的错误信封，Codex 用 OpenAI 的。
+/// Stack 模型解不出来时的错误体：Claude Code、Claude Desktop 用 Anthropic 的错误信封，Codex 用
+/// OpenAI 的。
 fn stack_miss_body(app_type: &AppType, message: &str) -> Value {
     match app_type {
-        AppType::Claude => json!({
+        AppType::Claude | AppType::ClaudeDesktop => json!({
             "type": "error",
             "error": { "type": "invalid_request_error", "message": message },
         }),
@@ -275,8 +276,31 @@ pub async fn handle_claude_desktop_models(
         .await
         .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
     let provider = providers.first().ok_or(ProxyError::NoAvailableProvider)?;
-    let response = crate::claude_desktop_config::model_list_response(provider)
+    let mut response = crate::claude_desktop_config::model_list_response(provider)
         .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
+    // 聚合模式下 profile 里关了模型发现，这里补上聚合的模型只是让两边一致
+    let stacked = crate::mode::stack::desktop_published_now(&state.db).unwrap_or_else(|error| {
+        log::warn!("[Claude Desktop] 读取聚合模型失败，只返回路由那家的: {error}");
+        Vec::new()
+    });
+    if let Some(data) = response.get_mut("data").and_then(Value::as_array_mut) {
+        data.extend(stacked.into_iter().map(|model| {
+            let mut item = json!({
+                "type": "model",
+                "id": model.id,
+                "display_name": model.label,
+                "created_at": crate::claude_desktop_config::DEFAULT_CREATED_AT,
+            });
+            if model.supports_1m {
+                item["supports1m"] = json!(true);
+            }
+            item
+        }));
+        let last_id = data.last().and_then(|item| item.get("id")).cloned();
+        if let Some(last_id) = last_id {
+            response["last_id"] = last_id;
+        }
+    }
     Ok(Json(response))
 }
 

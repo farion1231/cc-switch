@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { describe, expect, it, vi } from "vitest";
 import { ProviderStatsTable } from "@/components/usage/ProviderStatsTable";
 import {

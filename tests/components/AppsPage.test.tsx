@@ -163,10 +163,12 @@ async function renderApps() {
   // 安装 / 升级的状态放在模块级 store 里，跨挂载保留。
   const { AppsPage } = await import("@/components/apps/AppsPage");
   const view = mountApps(AppsPage);
+  // Both header labels stay mounted to reserve their width. Wait for the idle
+  // label to be shown, including when a pending dialog hides the page itself.
   await waitFor(() =>
     expect(
       within(view.container).getByText("appsPage.checkUpdates"),
-    ).toBeInTheDocument(),
+    ).toHaveAttribute("aria-hidden", "false"),
   );
   return view;
 }
@@ -1755,7 +1757,12 @@ describe("AppsPage concurrent CLI upgrades", () => {
     }
     expect(updateButton("Claude Code")).toBeDisabled();
     expect(updateButton("Claude Code")).toHaveAttribute("aria-busy", "true");
-    expect(updateButton("Codex")).toBeEnabled();
+    // 缓存过期，重新挂载时别的工具会重新探测版本；等探测完、按钮出来再点「全部更新」，
+    // 不然机器慢时这几行还在加载
+    await waitFor(() => {
+      expect(updateButton("Codex")).toBeEnabled();
+      expect(updateButton("Gemini CLI")).toBeEnabled();
+    });
     fireEvent.click(updateAllButton());
     await waitFor(() =>
       expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(3),
