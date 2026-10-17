@@ -53,6 +53,7 @@ import { ToolErrorMessage } from "@/components/settings/ToolErrorMessage";
 import { ToolUninstallConfirmDialog } from "./ToolUninstallConfirmDialog";
 import { ManualUninstallDialog } from "./ManualUninstallDialog";
 import {
+  DESKTOP_ONLY_TOOLS,
   ENV_BADGE_CONFIG,
   ONE_CLICK_INSTALL_COMMANDS,
   TOOL_APP_IDS,
@@ -556,15 +557,19 @@ function ToolRow({
   const isBusy = tools.busyTools.has(tool);
   const busyAction = tools.busyTools.get(tool);
   const canUninstall = Boolean(info?.version || broken || defaultInstall);
-  const action: Exclude<ToolLifecycleAction, "uninstall"> | null =
-    (busyAction !== "uninstall" ? busyAction : undefined) ??
-    (isVersionLoading || broken
-      ? null
-      : !info?.version
-        ? "install"
-        : isOutdated && !nodeGap
-          ? "update"
-          : null);
+  // 桌面分发的工具（ZCode）应用内自更新、由安装器管理卸载：
+  // 不提供安装/升级动作，也不提供 npm 卸载
+  const isDesktopOnly = DESKTOP_ONLY_TOOLS.has(tool);
+  const action: Exclude<ToolLifecycleAction, "uninstall"> | null = isDesktopOnly
+    ? null
+    : ((busyAction !== "uninstall" ? busyAction : undefined) ??
+      (isVersionLoading || broken
+        ? null
+        : !info?.version
+          ? "install"
+          : isOutdated && !nodeGap
+            ? "update"
+            : null));
   const sourceLabel = defaultInstall
     ? SOURCE_LABEL[defaultInstall.source]
     : undefined;
@@ -646,9 +651,22 @@ function ToolRow({
       )}
     </>
   ) : !info?.version && !isVersionLoading ? (
-    <span className="truncate" title={installHint}>
-      {installHint}
-    </span>
+    isDesktopOnly ? (
+      <a
+        href="https://dev.zcode.app"
+        target="_blank"
+        rel="noreferrer"
+        className="underline decoration-dotted underline-offset-2 hover:text-fg-1"
+      >
+        {t("appsPage.downloadFromSite", {
+          defaultValue: "Download from website",
+        })}
+      </a>
+    ) : (
+      <span className="truncate" title={installHint}>
+        {installHint}
+      </span>
+    )
   ) : null;
 
   const wslControls =
@@ -755,6 +773,7 @@ function ToolRow({
       action={actionButton}
       visibility={visibility}
       menu={
+        !isDesktopOnly &&
         (canUninstall || busyAction === "uninstall") && (
           <DropdownMenu>
             <HoverTip content={t("common.more")}>

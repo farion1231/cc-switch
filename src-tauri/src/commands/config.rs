@@ -156,6 +156,15 @@ pub async fn get_config_status(
                 path,
             })
         }
+        AppType::ZCode => {
+            let config_path = crate::zcode_config::get_zcode_provider_config_path();
+            let exists = config_path.exists();
+            let path = crate::zcode_config::get_zcode_dir()
+                .to_string_lossy()
+                .to_string();
+
+            Ok(ConfigStatus { exists, path })
+        }
     }
 }
 
@@ -182,6 +191,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
             .parent()
             .unwrap()
             .to_path_buf(),
+        AppType::ZCode => crate::zcode_config::get_zcode_dir(),
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -205,6 +215,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
             .parent()
             .unwrap()
             .to_path_buf(),
+        AppType::ZCode => crate::zcode_config::get_zcode_dir(),
     };
 
     if !config_dir.exists() {

@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use rusqlite::{params, OptionalExtension, Row};
 
 const MCP_SERVER_SELECT: &str =
-    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi FROM mcp_servers";
+    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_zcode FROM mcp_servers";
 
 fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     let id: String = row.get(0)?;
@@ -25,6 +25,9 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     let enabled_grokbuild: bool = row.get(10)?;
     let enabled_opencode: bool = row.get(11)?;
     let enabled_hermes: bool = row.get(12)?;
+    let enabled_mcode: bool = row.get(13)?;
+    let enabled_pi: bool = row.get(14)?;
+    let enabled_zcode: bool = row.get(15)?;
 
     let server = serde_json::from_str(&server_config_str).unwrap_or_default();
     let tags = serde_json::from_str(&tags_str).unwrap_or_default();
@@ -42,8 +45,9 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
                 grokbuild: enabled_grokbuild,
                 opencode: enabled_opencode,
                 hermes: enabled_hermes,
-                mcode: row.get(13)?,
-                pi: row.get(14)?,
+                mcode: enabled_mcode,
+                pi: enabled_pi,
+                zcode: enabled_zcode,
             },
             description,
             homepage,
@@ -96,6 +100,7 @@ impl Database {
             AppType::Mcode => Some("enabled_mcode"),
             AppType::Pi => Some("enabled_pi"),
             AppType::ClaudeDesktop | AppType::OpenClaw => None,
+            AppType::ZCode => Some("enabled_zcode"),
         };
 
         if let Some(column) = column {
@@ -124,8 +129,8 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO mcp_servers (
                 id, name, server_config, description, homepage, docs, tags,
-                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_zcode
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 server.id,
                 server.name,
@@ -145,6 +150,7 @@ impl Database {
                 server.apps.hermes,
                 server.apps.mcode,
                 server.apps.pi,
+                server.apps.zcode,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

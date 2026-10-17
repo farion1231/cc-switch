@@ -48,6 +48,7 @@ export const TOOL_NAMES = [
   "hermes",
   "pi",
   "mcode",
+  "zcode",
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 export type ToolLifecycleAction = "install" | "update" | "uninstall";
@@ -55,6 +56,12 @@ export type ToolLifecycleAction = "install" | "update" | "uninstall";
 export function hermesUninstallMayLeaveFiles(plan: ToolUninstallPlan) {
   return isWindows() && plan.tool === "hermes" && !plan.wsl_distro;
 }
+
+/**
+ * 只有桌面分发、没有 CLI 安装包的工具：不提供安装/升级按钮（应用自带更新器），
+ * 未安装时行内给官网下载链接。后端 probe 对它们走专属探测（版本来自安装目录）。
+ */
+export const DESKTOP_ONLY_TOOLS: ReadonlySet<ToolName> = new Set(["zcode"]);
 
 interface PendingUpgrade {
   toolNames: ToolName[];
@@ -148,7 +155,8 @@ ${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/herm
 # Pi
 npm i -g @earendil-works/pi-coding-agent@latest
 # MiniMax Code
-${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}`;
+${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}
+# ZCode: desktop app, download from https://dev.zcode.app`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${CLAUDE_NPM_INSTALL_COMMAND}
@@ -167,7 +175,8 @@ ${HERMES_WINDOWS_INSTALL_COMMAND}
 # Pi
 npm i -g @earendil-works/pi-coding-agent@latest
 # MiniMax Code
-${MCODE_WINDOWS_INSTALL_COMMAND}`;
+${MCODE_WINDOWS_INSTALL_COMMAND}
+# ZCode: desktop app, download from https://dev.zcode.app`;
 
 export const ONE_CLICK_INSTALL_COMMANDS = isWindows()
   ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
@@ -183,6 +192,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   hermes: "Hermes",
   pi: "Pi",
   mcode: "MiniMax Code",
+  zcode: "ZCode",
 };
 
 // 后端返回的 tool 是 string；这里收敛唯一的 ToolName 断言与兜底，供升级确认
@@ -201,6 +211,7 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   hermes: "hermes",
   pi: "pi",
   mcode: "mcode",
+  zcode: "zcode",
 };
 
 // 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。

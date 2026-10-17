@@ -161,6 +161,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         hermes: false,
         mcode: false,
         pi: false,
+        zcode: false,
     };
 
     for app in apps_str.split(',') {
