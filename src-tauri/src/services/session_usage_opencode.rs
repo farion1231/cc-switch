@@ -81,7 +81,7 @@ fn sqlite_table_exists(conn: &rusqlite::Connection, table: &str) -> Result<bool,
     .map_err(|error| AppError::Database(format!("查询表 {table} 失败: {error}")))
 }
 
-const OPENCODE_HISTORY_REPAIRED_KEY: &str = "opencode_history_rollups_repaired_v1";
+const OPENCODE_HISTORY_REPAIRED_KEY: &str = "opencode_history_rollups_repaired_v3";
 
 /// 同步 OpenCode 使用数据
 pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
@@ -637,6 +637,10 @@ pub(crate) fn repair_opencode_history_rollups(
 
     let mut daily_stats: std::collections::HashMap<(String, String), RealDayStats> =
         std::collections::HashMap::new();
+    let mut session_daily_stats: std::collections::HashMap<
+        (String, String),
+        std::collections::HashMap<String, RealDayStats>,
+    > = std::collections::HashMap::new();
     let mut date_model_req_ids: std::collections::HashMap<(String, String), Vec<String>> =
         std::collections::HashMap::new();
 
@@ -731,13 +735,27 @@ pub(crate) fn repair_opencode_history_rollups(
             }
         };
 
-        let stat = daily_stats.entry((date_str, model_id)).or_default();
+        let stat = daily_stats
+            .entry((date_str.clone(), model_id.clone()))
+            .or_default();
         stat.count += 1;
         stat.input_tokens += msg_data.input_tokens as i64;
         stat.output_tokens += output_with_reasoning;
         stat.cache_read_tokens += msg_data.cache_read_tokens as i64;
         stat.cache_creation_tokens += msg_data.cache_write_tokens as i64;
         stat.total_cost += cost_dec;
+
+        let sess_stat = session_daily_stats
+            .entry((date_str, model_id))
+            .or_default()
+            .entry(session_id)
+            .or_default();
+        sess_stat.count += 1;
+        sess_stat.input_tokens += msg_data.input_tokens as i64;
+        sess_stat.output_tokens += output_with_reasoning;
+        sess_stat.cache_read_tokens += msg_data.cache_read_tokens as i64;
+        sess_stat.cache_creation_tokens += msg_data.cache_write_tokens as i64;
+        sess_stat.total_cost += cost_dec;
     }
 
     cc_conn
@@ -789,23 +807,109 @@ pub(crate) fn repair_opencode_history_rollups(
             if let Some((curr_count, curr_in, curr_out, curr_cr, curr_cc)) = curr_row {
                 // 必须能区分「重复累加」与「源数据被删除」：
                 // 如果用户删除了会话，源数据会变少，但已记录的历史汇总用量是真实的，绝对不能下调。
-                // 仅当能确凿判定为死循环重复叠加（请求数是现存消息数的整数倍 k >= 2，且
-                // 所有的 Token 指标 input/output/cache_read/cache_creation 均严格呈 k 倍放大）时，
-                // 才确认为重复累加导致的虚高并进行校准，避免误伤已删除会话的正常历史。
-                if real.count > 0 && curr_count > real.count && curr_count % real.count == 0 {
-                    let k = curr_count / real.count;
-                    let tokens_match = (real.input_tokens == 0 && curr_in == 0
-                        || (real.input_tokens > 0 && curr_in == k * real.input_tokens))
-                        && (real.output_tokens == 0 && curr_out == 0
-                            || (real.output_tokens > 0 && curr_out == k * real.output_tokens))
-                        && (real.cache_read_tokens == 0 && curr_cr == 0
-                            || (real.cache_read_tokens > 0
-                                && curr_cr == k * real.cache_read_tokens))
-                        && (real.cache_creation_tokens == 0 && curr_cc == 0
-                            || (real.cache_creation_tokens > 0
-                                && curr_cc == k * real.cache_creation_tokens));
+                //
+                // 确凿判定为「死循环重复累加」的两种情形：
+                // 1. 全天整数倍放大：全天各维度 (in/out/cr/cc) 均严格呈整倍数 (k >= 2) 放大；
+                // 2. 单会话重复累加：部分异常会话因未完成消息卡住游标被重复扫描，导致汇总虚高。
+                //    此时超出源库的差额 (diff = curr - real) 会在多个 Token 维度 (in/out/cr/cc) 上，
+                //    与现存某个会话当天的真实用量精确 100% 吻合（或成 m >= 1 倍）。
+                //    数学上，多个 Token 维度（动辄数十万至数千万数值）与现存会话完全重合，
+                //    绝不可能是已删除未知会话的巧合，确凿证明是该现存会话发生了重复累加。
+                //
+                // 若两者均不匹配（如作者测试用例中删除了未记录在库的会话），则判定为「源数据被删除」，严禁改写。
+                if real.count > 0 && curr_count > real.count {
+                    let mut is_amplified = false;
 
-                    if tokens_match {
+                    // 情形 1：全天整数倍放大
+                    if curr_count % real.count == 0 {
+                        let k = curr_count / real.count;
+                        if k >= 2 {
+                            let tokens_match = (real.input_tokens == 0 && curr_in == 0
+                                || (real.input_tokens > 0 && curr_in == k * real.input_tokens))
+                                && (real.output_tokens == 0 && curr_out == 0
+                                    || (real.output_tokens > 0
+                                        && curr_out == k * real.output_tokens))
+                                && (real.cache_read_tokens == 0 && curr_cr == 0
+                                    || (real.cache_read_tokens > 0
+                                        && curr_cr == k * real.cache_read_tokens))
+                                && (real.cache_creation_tokens == 0 && curr_cc == 0
+                                    || (real.cache_creation_tokens > 0
+                                        && curr_cc == k * real.cache_creation_tokens));
+                            if tokens_match {
+                                is_amplified = true;
+                            }
+                        }
+                    }
+
+                    // 情形 2：单会话重复累加
+                    if !is_amplified {
+                        let diff_in = curr_in - real.input_tokens;
+                        let diff_out = curr_out - real.output_tokens;
+                        let diff_cr = curr_cr - real.cache_read_tokens;
+                        let diff_cc = curr_cc - real.cache_creation_tokens;
+
+                        if diff_in >= 0
+                            && diff_out >= 0
+                            && diff_cr >= 0
+                            && diff_cc >= 0
+                            && (diff_in + diff_out + diff_cr + diff_cc) > 0
+                        {
+                            if let Some(sessions) =
+                                session_daily_stats.get(&(date.clone(), model.clone()))
+                            {
+                                for s in sessions.values() {
+                                    let s_tokens = s.input_tokens
+                                        + s.output_tokens
+                                        + s.cache_read_tokens
+                                        + s.cache_creation_tokens;
+                                    if s_tokens == 0 {
+                                        continue;
+                                    }
+                                    let m_candidate = if s.input_tokens > 0
+                                        && diff_in % s.input_tokens == 0
+                                    {
+                                        Some(diff_in / s.input_tokens)
+                                    } else if s.cache_read_tokens > 0
+                                        && diff_cr % s.cache_read_tokens == 0
+                                    {
+                                        Some(diff_cr / s.cache_read_tokens)
+                                    } else if s.output_tokens > 0 && diff_out % s.output_tokens == 0
+                                    {
+                                        Some(diff_out / s.output_tokens)
+                                    } else if s.cache_creation_tokens > 0
+                                        && diff_cc % s.cache_creation_tokens == 0
+                                    {
+                                        Some(diff_cc / s.cache_creation_tokens)
+                                    } else {
+                                        None
+                                    };
+
+                                    if let Some(m) = m_candidate {
+                                        if m >= 1 {
+                                            let sess_match = (s.input_tokens == 0 && diff_in == 0
+                                                || (s.input_tokens > 0
+                                                    && diff_in == m * s.input_tokens))
+                                                && (s.output_tokens == 0 && diff_out == 0
+                                                    || (s.output_tokens > 0
+                                                        && diff_out == m * s.output_tokens))
+                                                && (s.cache_read_tokens == 0 && diff_cr == 0
+                                                    || (s.cache_read_tokens > 0
+                                                        && diff_cr == m * s.cache_read_tokens))
+                                                && (s.cache_creation_tokens == 0 && diff_cc == 0
+                                                    || (s.cache_creation_tokens > 0
+                                                        && diff_cc == m * s.cache_creation_tokens));
+                                            if sess_match {
+                                                is_amplified = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if is_amplified {
                         update_stmt
                             .execute(rusqlite::params![
                                 real.count,
@@ -830,7 +934,7 @@ pub(crate) fn repair_opencode_history_rollups(
                         }
 
                         log::info!(
-                            "[OPENCODE-REPAIR] 已校准 {date} {model} (放大 {k} 倍): 请求数 {curr_count} -> {}, Tokens(In={}, Out={}, CR={})",
+                            "[OPENCODE-REPAIR] 已校准 {date} {model}: 请求数 {curr_count} -> {}, Tokens(In={}, Out={}, CR={})",
                             real.count,
                             real.input_tokens,
                             real.output_tokens,
@@ -1525,6 +1629,114 @@ mod tests {
                 |r| r.get(0),
             )?;
             assert!(dedup_exists, "导入后应登记到持久去重账本");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_repair_opencode_history_rollups_repairs_single_session_amplification(
+    ) -> Result<(), AppError> {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let opencode_db_path = temp_dir.path().join("opencode.db");
+
+        // 1. 初始化 opencode.db，包含 2 个不同会话
+        {
+            let oc_conn = rusqlite::Connection::open(&opencode_db_path).unwrap();
+            oc_conn.execute_batch(
+                "CREATE TABLE session_v2 (id TEXT PRIMARY KEY, time_updated INTEGER);
+                 CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
+                 INSERT INTO session_v2 VALUES ('ses_a', 1788750000000);
+                 INSERT INTO session_v2 VALUES ('ses_b', 1788750000000);"
+            ).unwrap();
+
+            let msg_a = serde_json::json!({
+                "model": { "id": "gemini-3.8-flash-high" },
+                "cost": 0.05,
+                "tokens": {
+                    "input": 1000,
+                    "output": 200,
+                    "reasoning": 50,
+                    "cache": { "read": 5000, "write": 0 }
+                },
+                "time": {
+                    "created": 1788750000000i64,
+                    "completed": 1788750005000i64
+                }
+            })
+            .to_string();
+
+            let msg_b = serde_json::json!({
+                "model": { "id": "gemini-3.8-flash-high" },
+                "cost": 0.15,
+                "tokens": {
+                    "input": 3000,
+                    "output": 150,
+                    "reasoning": 0,
+                    "cache": { "read": 30000, "write": 0 }
+                },
+                "time": {
+                    "created": 1788750000000i64,
+                    "completed": 1788750005000i64
+                }
+            })
+            .to_string();
+
+            oc_conn.execute(
+                "INSERT INTO session_message VALUES ('msg_a', 'ses_a', 'assistant', 1788750000000, 1788750000000, ?1)",
+                [msg_a],
+            ).unwrap();
+            oc_conn.execute(
+                "INSERT INTO session_message VALUES ('msg_b', 'ses_b', 'assistant', 1788750000000, 1788750000000, ?1)",
+                [msg_b],
+            ).unwrap();
+        }
+
+        // 2. 初始化 cc-switch 数据库：
+        // 历史上因为 ses_b 被死循环重复累加了 1 次，使得总用量变成：
+        // count: 2 + 1 = 3（非整天整倍数放大）
+        // input: 4000 + 3000 = 7000
+        // output: 400 + 150 = 550
+        // cache_read: 35000 + 30000 = 65000
+        let db = Database::memory().unwrap();
+        let date_str = Local
+            .timestamp_opt(1788750000, 0)
+            .single()
+            .unwrap()
+            .format("%Y-%m-%d")
+            .to_string();
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model, request_count, success_count,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, avg_latency_ms
+                ) VALUES (?1, 'opencode', '_opencode_session', 'gemini-3.8-flash-high', 3, 3, 7000, 550, 65000, 0, '0.35', 100)",
+                [&date_str],
+            ).unwrap();
+        }
+
+        // 3. 执行自愈校准：必须精准识别出超出部分是 ses_b 的单会话重复累加，予以校准
+        let repaired = repair_opencode_history_rollups(&db, &opencode_db_path).unwrap();
+        assert_eq!(repaired, 1, "单会话重复累加必须被成功识别并校准");
+
+        // 4. 验证 usage_daily_rollups 中的数值已被精准校准恢复为源库真实的 2 次请求总计
+        {
+            let conn = lock_conn!(db.conn);
+            let (req_count, input, output, cache_read): (i64, i64, i64, i64) = conn.query_row(
+                "SELECT request_count, input_tokens, output_tokens, cache_read_tokens
+                 FROM usage_daily_rollups
+                 WHERE date = ?1 AND app_type = 'opencode' AND provider_id = '_opencode_session' AND model = 'gemini-3.8-flash-high'",
+                [&date_str],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            ).unwrap();
+
+            assert_eq!(req_count, 2, "校准后请求数恢复为真实 2 次");
+            assert_eq!(input, 4000, "校准后 input_tokens 恢复为 4000");
+            assert_eq!(output, 400, "校准后 output_tokens 恢复为 400");
+            assert_eq!(cache_read, 35000, "校准后 cache_read_tokens 恢复为 35000");
         }
 
         Ok(())
