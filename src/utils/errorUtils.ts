@@ -71,6 +71,26 @@ export const translateMcpBackendError = (
   if (!message) return "";
   const msg = String(message).trim();
 
+  // Pi 的 MCP 规则（src-tauri/src/mcp/pi.rs）
+  if (msg.includes("Pi 不支持 SSE")) {
+    return t("mcp.error.piSseUnsupported");
+  }
+  const piName = msg.match(
+    /Pi 的 MCP 服务器名只能包含字母、数字、_ 和 -：(.*)$/,
+  );
+  if (piName) {
+    return t("mcp.error.piInvalidName", { id: piName[1] });
+  }
+  const piConflict = msg.match(
+    /Pi 把只差 - 和 _ 的服务器名视为同一个：(.+) 与已有的 (.+) 冲突/,
+  );
+  if (piConflict) {
+    return t("mcp.error.piNameConflict", {
+      id: piConflict[1],
+      other: piConflict[2],
+    });
+  }
+
   // 基础字段与结构校验相关
   if (msg.includes("MCP 服务器 ID 不能为空")) {
     return t("mcp.error.idRequired");
