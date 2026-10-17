@@ -409,6 +409,29 @@ fn dedup_app_type_match_sql(left: &str, right: &str) -> String {
     )
 }
 
+/// SQL 片段：代理行 `proxy` 与会话行（`session_app_type` / `session_model`）
+/// 的应用与模型匹配条件，写入侧与读取侧共用。
+///
+/// Pi 没有自己的代理入口：Pi provider 的 baseUrl 指向本地代理时，代理行按
+/// 借用的入口记为 claude/codex 等 app_type，而会话导入行是 pi，所以 pi 会话行
+/// 与任意 app_type 的代理行比对；模型也接受代理侧的 `request_model`（客户端
+/// 请求的模型，路由映射之前）。
+fn session_proxy_match_sql(proxy: &str, session_app_type: &str, session_model: &str) -> String {
+    let app_type_match = dedup_app_type_match_sql(&format!("{proxy}.app_type"), session_app_type);
+    format!(
+        "({app_type_match} OR {session_app_type} = 'pi')
+         AND (
+             LOWER({proxy}.model) = LOWER({session_model})
+             OR LOWER({proxy}.model) = 'unknown'
+             OR LOWER({session_model}) = 'unknown'
+             OR (
+                 {session_app_type} = 'pi'
+                 AND LOWER({proxy}.request_model) = LOWER({session_model})
+             )
+         )"
+    )
+}
+
 /// SQL 标量表达式：把 Claude Desktop 网关的 `claude-desktop` app_type 在“展示口径”
 /// 上折叠进 `claude`，其余 app_type 原样返回。
 ///
@@ -477,16 +500,19 @@ fn push_provider_model_filters(
 pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     let data_source = data_source_expr(log_alias);
     let proxy_data_source = data_source_expr("proxy_dedup");
-    let app_type_match =
-        dedup_app_type_match_sql("proxy_dedup.app_type", &format!("{log_alias}.app_type"));
+    let proxy_match = session_proxy_match_sql(
+        "proxy_dedup",
+        &format!("{log_alias}.app_type"),
+        &format!("{log_alias}.model"),
+    );
     format!(
         "NOT (
-            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
+            {data_source} IN ({DEDUP_SESSION_SOURCES_SQL})
             AND EXISTS (
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
                 WHERE {proxy_data_source} = 'proxy'
-                  AND {app_type_match}
+                  AND {proxy_match}
                   AND proxy_dedup.status_code >= 200
                   AND proxy_dedup.status_code < 300
                   AND proxy_dedup.input_tokens = {log_alias}.input_tokens
@@ -507,11 +533,6 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                   AND proxy_dedup.created_at BETWEEN
                       {log_alias}.created_at - {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
                       AND {log_alias}.created_at + {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
-                  AND (
-                      LOWER(proxy_dedup.model) = LOWER({log_alias}.model)
-                      OR LOWER(proxy_dedup.model) = 'unknown'
-                      OR LOWER({log_alias}.model) = 'unknown'
-                  )
             )
         )"
     )
@@ -519,7 +540,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
 
 /// 参与跨源去重的会话日志来源（和 [`effective_usage_log_filter`] 同口径）。
 const DEDUP_SESSION_SOURCES_SQL: &str =
-    "'session_log', 'codex_session', 'gemini_session', 'opencode_session'";
+    "'session_log', 'codex_session', 'gemini_session', 'opencode_session', 'pi_session'";
 
 /// Dashboard 读路径用的去重条件：语义和 [`effective_usage_log_filter`] 完全一致，
 /// 只是先看时间窗口里两类日志各有多少，再挑便宜的写法。
@@ -567,15 +588,13 @@ pub(crate) fn effective_usage_log_filter_for_range(
 
     let dp_source = data_source_expr("dedup_p");
     let ds_source = data_source_expr("dedup_s");
+    let proxy_match = session_proxy_match_sql("dedup_p", "dedup_s.app_type", "dedup_s.model");
     Ok(format!(
         "{log_alias}.rowid NOT IN (
             SELECT dedup_s.rowid
             FROM proxy_request_logs dedup_p
             JOIN proxy_request_logs dedup_s
-              ON dedup_s.app_type IN (
-                     dedup_p.app_type,
-                     CASE WHEN dedup_p.app_type = 'claude-desktop' THEN 'claude' ELSE dedup_p.app_type END
-                 )
+              ON {proxy_match}
              AND {ds_source} IN ({DEDUP_SESSION_SOURCES_SQL})
              AND dedup_s.input_tokens = dedup_p.input_tokens
              AND dedup_s.output_tokens = dedup_p.output_tokens
@@ -594,11 +613,6 @@ pub(crate) fn effective_usage_log_filter_for_range(
                      AND dedup_p.input_token_semantics = {INPUT_TOKEN_SEMANTICS_LEGACY}
                      AND {ds_source} = 'codex_session'
                  )
-             )
-             AND (
-                 LOWER(dedup_p.model) = LOWER(dedup_s.model)
-                 OR LOWER(dedup_p.model) = 'unknown'
-                 OR LOWER(dedup_s.model) = 'unknown'
              )
             WHERE {dp_source} = 'proxy'
               AND dedup_p.status_code >= 200
@@ -711,13 +725,13 @@ fn proxy_request_id_exists(conn: &Connection, request_id: &str) -> Result<bool, 
 // prepare_cached 稳定命中，也省掉每行的 format! 分配。
 static MATCHING_PROXY_USAGE_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
     let l_data_source = data_source_expr("l");
-    let app_type_match = dedup_app_type_match_sql("l.app_type", "?1");
+    let proxy_match = session_proxy_match_sql("l", "?1", "?2");
     format!(
         "SELECT EXISTS (
             SELECT 1
             FROM proxy_request_logs l
             WHERE {l_data_source} = 'proxy'
-              AND {app_type_match}
+              AND {proxy_match}
               AND l.status_code >= 200
               AND l.status_code < 300
               AND l.input_tokens = ?3
@@ -733,11 +747,6 @@ static MATCHING_PROXY_USAGE_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
                   )
               )
               AND l.created_at BETWEEN ?7 - ?8 AND ?7 + ?8
-              AND (
-                  LOWER(l.model) = LOWER(?2)
-                  OR LOWER(l.model) = 'unknown'
-                  OR LOWER(?2) = 'unknown'
-              )
         )"
     )
 });
@@ -2991,6 +3000,7 @@ mod tests {
                 request_id TEXT PRIMARY KEY,
                 app_type TEXT NOT NULL,
                 model TEXT NOT NULL,
+                request_model TEXT,
                 input_tokens INTEGER NOT NULL,
                 output_tokens INTEGER NOT NULL,
                 cache_read_tokens INTEGER NOT NULL,
@@ -3391,6 +3401,64 @@ mod tests {
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
         assert_eq!(request_ids, vec!["desktop-proxy"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_pi_session_dedups_against_proxy_of_any_app() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        create_legacy_nullable_logs_table(&conn)?;
+        conn.execute_batch(
+            "INSERT INTO proxy_request_logs (
+                request_id, app_type, model, request_model, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, status_code, created_at, data_source
+            ) VALUES
+                -- Pi 借用 claude 代理入口：上游真实模型与 Pi 记录一致
+                ('claude-proxy', 'claude', 'deepseek-v4', 'claude-opus-5', 16746, 4, 0, 0, 200, 1000, 'proxy'),
+                ('pi-session', 'pi', 'deepseek-v4', 'deepseek-v4', 16746, 4, 0, 0, 200, 1000, 'pi_session'),
+                -- 代理做了模型映射：Pi 记录的是客户端请求的模型
+                ('codex-proxy', 'codex', 'gpt-5.5', 'pi-alias', 300, 30, 10, 0, 200, 2000, 'proxy'),
+                ('pi-mapped', 'pi', 'pi-alias', 'pi-alias', 300, 30, 10, 0, 200, 2001, 'pi_session'),
+                -- 非 Pi 会话仍要求 app_type 一致
+                ('gemini-session', 'gemini', 'deepseek-v4', 'deepseek-v4', 16746, 4, 0, 0, 200, 1001, 'gemini_session'),
+                -- 指纹不同：保留
+                ('pi-other', 'pi', 'deepseek-v4', 'deepseek-v4', 16747, 4, 0, 0, 200, 1002, 'pi_session');",
+        )?;
+
+        let ids = |filter: &str| -> Result<Vec<String>, AppError> {
+            let sql = format!(
+                "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
+            );
+            let rows = conn
+                .prepare(&sql)?
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        };
+        let expected = vec!["claude-proxy", "codex-proxy", "gemini-session", "pi-other"];
+        assert_eq!(ids(&effective_usage_log_filter("l"))?, expected);
+        let ranged = effective_usage_log_filter_for_range(&conn, "l", None, None)?;
+        assert!(ranged.contains("NOT IN"));
+        assert_eq!(ids(&ranged)?, expected);
+
+        let key = DedupKey {
+            app_type: "pi",
+            model: "pi-alias",
+            input_tokens: 300,
+            output_tokens: 30,
+            cache_read_tokens: 10,
+            cache_creation_tokens: 0,
+            created_at: 2001,
+        };
+        assert!(has_matching_proxy_usage_log(&conn, &key)?);
+        assert!(!has_matching_proxy_usage_log(
+            &conn,
+            &DedupKey {
+                app_type: "gemini",
+                ..key
+            }
+        )?);
 
         Ok(())
     }

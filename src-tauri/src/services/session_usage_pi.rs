@@ -11,7 +11,7 @@ use crate::services::session_usage::{
     estimated_latency_ms, metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
 };
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
-use crate::services::usage_stats::find_model_pricing;
+use crate::services::usage_stats::{find_model_pricing, has_matching_proxy_usage_log, DedupKey};
 use rust_decimal::Decimal;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -812,6 +812,20 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
         ],
     )
     .map_err(|error| AppError::Database(format!("写入 Pi 用量去重账本失败: {error}")))?;
+    // Pi provider 指向本地代理时，同一请求已由代理记账。账本照记，这样代理明细
+    // 被剪枝后重扫会话也不会再导入。
+    let proxy_key = DedupKey {
+        app_type: APP_TYPE,
+        model: &record.model,
+        input_tokens: record.input_tokens,
+        output_tokens: record.output_tokens,
+        cache_read_tokens: record.cache_read_tokens,
+        cache_creation_tokens: record.cache_write_tokens,
+        created_at: record.created_at,
+    };
+    if has_matching_proxy_usage_log(conn, &proxy_key)? {
+        return Ok(false);
+    }
 
     let usage = TokenUsage {
         input_tokens: record.input_tokens,
@@ -1095,6 +1109,57 @@ mod tests {
 
         let db = Database::memory()?;
         assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn requests_already_logged_by_the_local_proxy_are_not_imported_twice() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = session_path(temp.path(), "via-proxy");
+        let proxied = assistant_line("proxied", "2023-11-14T22:13:21Z", 16746);
+        let direct = assistant_line("direct", "2023-11-14T22:13:22Z", 7);
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"session-proxy","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#,
+                &proxied,
+                &direct,
+            ],
+        );
+
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            // Pi provider 指向 claude 的本地代理入口：代理行按 claude 记账
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    latency_ms, status_code, created_at, data_source
+                ) VALUES ('session:proxied', 'live-route', 'claude', 'fixture-model',
+                    'claude-opus-5', 16746, 2, 5, 2, 100, 200, 1700000001, 'proxy')",
+                [],
+            )?;
+        }
+
+        let result = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert_eq!((result.imported, result.skipped), (1, 1));
+
+        let conn = lock_conn!(db.conn);
+        let pi_inputs: Vec<i64> = conn
+            .prepare(
+                "SELECT input_tokens FROM proxy_request_logs WHERE data_source = 'pi_session'",
+            )?
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        assert_eq!(pi_inputs, vec![7]);
+        // 跳过的请求也进账本：代理明细剪枝后重扫不会再导入
+        let ledger: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM session_usage_dedup WHERE data_source = 'pi_session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(ledger, 2);
         Ok(())
     }
 
