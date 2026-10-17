@@ -158,21 +158,24 @@ impl ParentTokenTimeline {
         &self,
         parent_path: &Path,
         cutoff: DateTime<Utc>,
-    ) -> Result<Vec<TokenUsageSignature>, String> {
+    ) -> Result<Vec<TokenUsageSignature>, ParentSignatureError> {
         if self.has_token_without_timestamp {
-            return Err(format!(
+            return Err(ParentSignatureError::content(format!(
                 "父 rollout {} 的 token_count 缺少有效 timestamp",
                 parent_path.display()
-            ));
+            )));
         }
+        // 父最后记录早于 fork 时刻：父可能仍在写入（#8255），用 cacheable 错误
+        // 触发可重试 deferred。cacheable=true 让 pending 缓存记录 parent_files
+        // 快照，父文件变化时自动失效重扫；去重靠 request_id 兜底。
         if self
             .max_timestamp
             .is_none_or(|timestamp| timestamp < cutoff)
         {
-            return Err(format!(
+            return Err(ParentSignatureError::content(format!(
                 "父 rollout {} 尚未写到 child fork 时刻",
                 parent_path.display()
-            ));
+            )));
         }
         Ok(self.signatures_at(cutoff))
     }
@@ -1550,9 +1553,7 @@ fn parent_signatures_before(
     parent_path: &Path,
     cutoff: DateTime<Utc>,
 ) -> Result<Vec<TokenUsageSignature>, ParentSignatureError> {
-    load_parent_timeline(parent_path)?
-        .signatures_before(parent_path, cutoff)
-        .map_err(ParentSignatureError::content)
+    load_parent_timeline(parent_path)?.signatures_before(parent_path, cutoff)
 }
 
 /// 读取（或命中缓存）父 rollout 单个文件的完整 token 时间线。
@@ -1749,9 +1750,7 @@ fn resolve_parent_signatures(
             "找不到父 rollout: {parent_id}"
         )));
     };
-    merged
-        .signatures_before(latest_path, cutoff)
-        .map_err(ParentSignatureError::content)
+    merged.signatures_before(latest_path, cutoff)
 }
 
 /// Metadata-only dependency snapshot; opening a file checks accessibility and
@@ -4519,7 +4518,8 @@ mod tests {
     }
 
     /// 确保防御性：单段文件名的新 fork 首页即使其 history_base 指向父会话某页，
-    /// 也不会被误判为延续页，父线程未达到 cutoff 时依然必须被 deferred。
+    /// 也不会被误判为延续页，父线程未达到 cutoff 时必须被 deferred（#8255 用
+    /// transient 错误触发可重试 deferred，而非永久 content 错误）。
     #[test]
     #[serial_test::serial]
     fn test_single_segment_fork_is_not_treated_as_continuation() -> Result<(), AppError> {
@@ -4560,10 +4560,78 @@ mod tests {
 
         let files = [parent_root.as_path(), child.as_path()];
         let result = sync_test_file(&db, &child, &files)?;
+        // #8255：父最后记录早于 fork 时刻时，用 transient 错误触发可重试
+        // deferred（而非永久 content 错误），下轮 pass 随文件变化重扫。
         assert!(
             result.deferred,
-            "单段文件名的新 fork 首页在父线程未达到 cutoff 时必须被 deferred"
+            "父线程未达到 fork 时刻时必须被 deferred（可重试）"
         );
+
+        Ok(())
+    }
+
+    /// #8255: fork 发生在父会话仍活跃时（父最后记录早于 fork 时刻，父可能继续
+    /// 写入）。子会话用 transient 错误触发可重试 deferred，父追加写入后恢复导入。
+    #[test]
+    #[serial_test::serial]
+    fn test_fork_while_parent_still_active_is_imported() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+
+        // 父线程最后记录在 03:00:01，fork 时刻 03:00:05 时父仍可能继续写入
+        let parent_root = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &parent_root,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(1_000, 900, 100, "2026-07-10T03:00:01Z"),
+            ],
+        );
+
+        // 子会话在 03:00:05 fork，重放父的 1000 tokens 后新产生 300 tokens
+        let child = temp
+            .path()
+            .join(format!("rollout-2026-07-10T03-00-05-{CHILD_A_ID}.jsonl"));
+        write_jsonl(
+            &child,
+            &[
+                session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:00:05Z"),
+                turn_context(),
+                token_count_at(1_000, 900, 100, "2026-07-10T03:00:06Z"),
+                token_count_at(1_300, 1_050, 150, "2026-07-10T03:00:07Z"),
+            ],
+        );
+
+        let files = [parent_root.as_path(), child.as_path()];
+        // 父 max_ts=03:00:01 < cutoff=03:00:05 → transient deferred
+        let result = sync_test_file(&db, &child, &files)?;
+        assert!(
+            result.deferred,
+            "父最后记录早于 fork 时刻时必须被 deferred（可重试，#8255）"
+        );
+
+        // 父追加写入，max_ts 推进到 >= cutoff
+        append_jsonl(&parent_root, turn_context_at("2026-07-10T03:00:10Z"));
+        let recovered = sync_test_file(&db, &child, &files)?;
+        assert!(
+            !recovered.deferred,
+            "父追加写入后应恢复导入"
+        );
+        assert_eq!(
+            (recovered.imported, recovered.skipped),
+            (1, 1),
+            "重放父的 1000 tokens，导入增量 300 tokens"
+        );
+
+        let conn = lock_conn!(db.conn);
+        let usage: (i64, i64, i64) = conn.query_row(
+            "SELECT input_tokens, cache_read_tokens, output_tokens
+             FROM proxy_request_logs WHERE request_id = ?1",
+            [format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{CHILD_A_ID}:2")],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(usage, (300, 150, 50));
 
         Ok(())
     }
