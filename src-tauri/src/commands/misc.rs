@@ -1298,6 +1298,10 @@ fn is_bundled_with_desktop_paths(tool: &str, path: &Path, real_path: Option<&Pat
     if tool != "codex" || real_path.is_some_and(|real| is_codex_standalone_install_at(path, real)) {
         return false;
     }
+    #[cfg(target_os = "macos")]
+    let is_desktop_copy =
+        |path: &Path| super::chatgpt_desktop::is_chatgpt_desktop_macos_cli_path(path);
+    #[cfg(not(target_os = "macos"))]
     let is_desktop_copy = |path: &Path| {
         let path = path.to_string_lossy();
         is_chatgpt_desktop_codex_path(&path) || is_chatgpt_desktop_extracted_cli_path(&path)
@@ -7769,6 +7773,7 @@ mod tests {
             );
         }
 
+        #[cfg(not(target_os = "macos"))]
         #[test]
         fn fallback_scan_skips_bundled_codex_candidate() {
             let dir = tempfile::tempdir().unwrap();

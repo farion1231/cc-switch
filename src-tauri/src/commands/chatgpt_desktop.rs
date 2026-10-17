@@ -32,7 +32,7 @@ pub struct ChatGptDesktopStatus {
 pub async fn get_chatgpt_desktop_status() -> Result<ChatGptDesktopStatus, String> {
     tokio::task::spawn_blocking(detect)
         .await
-        .map_err(|e| format!("ChatGPT Desktop probe task join error: {e}"))
+        .map_err(|e| format!("ChatGPT Desktop probe task join error: {e}"))?
 }
 
 /// 卸载 ChatGPT Desktop，它随附的 Codex CLI 一起没了。`~/.codex` 里的配置和会话不动，
@@ -49,12 +49,12 @@ pub async fn uninstall_chatgpt_desktop(cleanup_only: bool) -> Result<(), String>
 const UNINSTALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
 #[cfg(windows)]
-fn detect() -> ChatGptDesktopStatus {
+fn detect() -> Result<ChatGptDesktopStatus, String> {
     let mut status = ChatGptDesktopStatus {
         supported: true,
         ..Default::default()
     };
-    let names = windows_package::full_names(WINDOWS_PACKAGE_FAMILY);
+    let names = windows_package::full_names(WINDOWS_PACKAGE_FAMILY)?;
     let Some(full_name) = newest_main_package(&names) else {
         if let Some(bin) = extracted_cli_bin() {
             match extracted_cli_paths_under(&bin) {
@@ -68,7 +68,7 @@ fn detect() -> ChatGptDesktopStatus {
                 _ => {}
             }
         }
-        return status;
+        return Ok(status);
     };
     status.installed = true;
     status.app_version = parse_package_full_name(full_name).map(|parsed| parsed.version);
@@ -82,11 +82,11 @@ fn detect() -> ChatGptDesktopStatus {
     // 包内那份跑不起来（例如组策略禁止直接执行 WindowsApps 里的程序）时，退到桌面版运行时解出的副本。
     candidates.extend(extracted_cli_candidates());
     probe_bundled_cli(&mut status, &candidates);
-    status
+    Ok(status)
 }
 
 #[cfg(target_os = "macos")]
-fn detect() -> ChatGptDesktopStatus {
+fn detect() -> Result<ChatGptDesktopStatus, String> {
     let mut status = ChatGptDesktopStatus {
         supported: true,
         ..Default::default()
@@ -98,24 +98,24 @@ fn detect() -> ChatGptDesktopStatus {
         .or_else(|| apps.first())
         .cloned()
     else {
-        return status;
+        return Ok(status);
     };
     status.installed = true;
     status.app_version = macos_bundle_version(&app);
     status.uninstall_command = finder_trash_commands(&apps).map(|commands| commands.join("\n"));
     probe_bundled_cli(&mut status, &macos_cli_candidates(&app));
-    status
+    Ok(status)
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-fn detect() -> ChatGptDesktopStatus {
-    ChatGptDesktopStatus::default()
+fn detect() -> Result<ChatGptDesktopStatus, String> {
+    Ok(ChatGptDesktopStatus::default())
 }
 
 #[cfg(windows)]
 fn uninstall(cleanup_only: bool) -> Result<(), String> {
     // 执行时重新查：确认框开着的时候桌面版可能自己更新过，包全名会变
-    let names = windows_package::full_names(WINDOWS_PACKAGE_FAMILY);
+    let names = windows_package::full_names(WINDOWS_PACKAGE_FAMILY)?;
     let bin = extracted_cli_bin();
     if cleanup_only {
         ensure_cache_only_mode_has_no_installed_package(&names)?;
@@ -152,7 +152,7 @@ fn uninstall(cleanup_only: bool) -> Result<(), String> {
             UNINSTALL_TIMEOUT,
         )?;
     }
-    if newest_main_package(&windows_package::full_names(WINDOWS_PACKAGE_FAMILY)).is_some() {
+    if newest_main_package(&windows_package::full_names(WINDOWS_PACKAGE_FAMILY)?).is_some() {
         return Err("ChatGPT Desktop is still installed after Remove-AppxPackage".to_string());
     }
     Ok(())
@@ -222,6 +222,29 @@ fn macos_installed_apps() -> Vec<PathBuf> {
         .into_iter()
         .filter(|app| is_chatgpt_desktop_bundle(app))
         .collect()
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn is_chatgpt_desktop_macos_cli_path(path: &std::path::Path) -> bool {
+    is_macos_cli_path_with_verified_apps(path, &macos_installed_apps())
+}
+
+/// `apps` must come from `macos_installed_apps`, which only returns bundles with the expected
+/// bundle identifier and a valid OpenAI signature.
+#[cfg(any(target_os = "macos", test))]
+fn is_macos_cli_path_with_verified_apps(path: &std::path::Path, apps: &[PathBuf]) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            name.eq_ignore_ascii_case("codex") || name.eq_ignore_ascii_case("codex.exe")
+        })
+        && apps.iter().any(|app| macos_path_is_within_app(path, app))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_path_is_within_app(path: &std::path::Path, app: &std::path::Path) -> bool {
+    path.starts_with(app)
+        || std::fs::canonicalize(app).is_ok_and(|resolved| path.starts_with(resolved))
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -625,6 +648,7 @@ fn finder_trash_commands(apps: &[PathBuf]) -> Option<Vec<String>> {
 ///
 /// 官方独立安装器的 `Programs\OpenAI\Codex\bin\codex.exe`（入口直接在 bin 下）、
 /// npm 的 `@openai/codex/bin/codex.js` 都不算。
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub(crate) fn is_chatgpt_desktop_codex_path(path: &str) -> bool {
     let normalized = path.replace('\\', "/").to_ascii_lowercase();
     let file_name = normalized.rsplit('/').next().unwrap_or_default();
@@ -641,6 +665,7 @@ pub(crate) fn is_chatgpt_desktop_codex_path(path: &str) -> bool {
 }
 
 /// 只在 Windows 当前用户的 LocalAppData 下识别桌面版解出的缓存 CLI。
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub(crate) fn is_chatgpt_desktop_extracted_cli_path(path: &str) -> bool {
     #[cfg(windows)]
     {
@@ -687,60 +712,78 @@ mod windows_package {
             .collect()
     }
 
-    /// 当前用户在这个包族下注册的所有包全名；没装时为空。
-    pub(super) fn full_names(family: &str) -> Vec<String> {
+    /// 当前用户在这个包族下注册的所有包全名；没装时为空，查询失败时返回错误。
+    pub(super) fn full_names(family: &str) -> Result<Vec<String>, String> {
         let family = wide(family);
-        let mut count = 0u32;
-        let mut buffer_len = 0u32;
-        // SAFETY: `family` is a NUL-terminated UTF-16 buffer alive for the call; `count` and
-        // `buffer_len` point to locals. Null output buffers only query the required sizes.
-        let rc = unsafe {
-            GetPackagesByPackageFamily(
-                family.as_ptr(),
-                &mut count,
-                std::ptr::null_mut(),
-                &mut buffer_len,
-                std::ptr::null_mut(),
-            )
-        };
-        // 没装：返回 ERROR_SUCCESS 且 count 为 0。
-        if rc == ERROR_SUCCESS || count == 0 {
-            return Vec::new();
+        for _ in 0..3 {
+            let mut count = 0u32;
+            let mut buffer_len = 0u32;
+            // SAFETY: `family` is a NUL-terminated UTF-16 buffer alive for the call; `count` and
+            // `buffer_len` point to locals. Null output buffers only query the required sizes.
+            let rc = unsafe {
+                GetPackagesByPackageFamily(
+                    family.as_ptr(),
+                    &mut count,
+                    std::ptr::null_mut(),
+                    &mut buffer_len,
+                    std::ptr::null_mut(),
+                )
+            };
+            // 没装：返回 ERROR_SUCCESS 且 count 为 0。其它错误不能当成“没装”。
+            if rc == ERROR_SUCCESS {
+                if count == 0 {
+                    return Ok(Vec::new());
+                }
+                return Err(format!(
+                    "GetPackagesByPackageFamily returned {count} packages without an output buffer"
+                ));
+            }
+            if rc != ERROR_INSUFFICIENT_BUFFER {
+                return Err(format!("GetPackagesByPackageFamily failed with error {rc}"));
+            }
+            if count == 0 || buffer_len == 0 {
+                return Err("GetPackagesByPackageFamily reported an empty required buffer".into());
+            }
+
+            let mut names = vec![std::ptr::null_mut::<u16>(); count as usize];
+            let mut buffer = vec![0u16; buffer_len as usize];
+            // SAFETY: `names` holds `count` pointer slots and `buffer` holds `buffer_len` UTF-16
+            // units, the sizes returned by the previous call. The API writes the names into
+            // `buffer` and points each slot into it.
+            let rc = unsafe {
+                GetPackagesByPackageFamily(
+                    family.as_ptr(),
+                    &mut count,
+                    names.as_mut_ptr(),
+                    &mut buffer_len,
+                    buffer.as_mut_ptr(),
+                )
+            };
+            if rc == ERROR_INSUFFICIENT_BUFFER {
+                // 包注册状态可能在两次查询间变化；重新计算所需缓冲区。
+                continue;
+            }
+            if rc != ERROR_SUCCESS {
+                return Err(format!("GetPackagesByPackageFamily failed with error {rc}"));
+            }
+            if count == 0 {
+                return Ok(Vec::new());
+            }
+
+            // 指针都指向 `buffer` 内部：换算成下标在 `buffer` 里读，不解引用裸指针。
+            let base = buffer.as_ptr() as usize;
+            return Ok(names
+                .iter()
+                .take(count as usize)
+                .filter_map(|&ptr| {
+                    let start = (ptr as usize).checked_sub(base)? / std::mem::size_of::<u16>();
+                    let rest = buffer.get(start..)?;
+                    let end = rest.iter().position(|&unit| unit == 0)?;
+                    Some(String::from_utf16_lossy(&rest[..end]))
+                })
+                .collect());
         }
-        if rc != ERROR_INSUFFICIENT_BUFFER {
-            log::warn!("GetPackagesByPackageFamily failed with error {rc}");
-            return Vec::new();
-        }
-        let mut names = vec![std::ptr::null_mut::<u16>(); count as usize];
-        let mut buffer = vec![0u16; buffer_len as usize];
-        // SAFETY: `names` holds `count` pointer slots and `buffer` holds `buffer_len` UTF-16
-        // units, the sizes returned by the previous call. The API writes the names into
-        // `buffer` and points each slot into it.
-        let rc = unsafe {
-            GetPackagesByPackageFamily(
-                family.as_ptr(),
-                &mut count,
-                names.as_mut_ptr(),
-                &mut buffer_len,
-                buffer.as_mut_ptr(),
-            )
-        };
-        if rc != ERROR_SUCCESS {
-            log::warn!("GetPackagesByPackageFamily failed with error {rc}");
-            return Vec::new();
-        }
-        // 指针都指向 `buffer` 内部：换算成下标在 `buffer` 里读，不解引用裸指针。
-        let base = buffer.as_ptr() as usize;
-        names
-            .iter()
-            .take(count as usize)
-            .filter_map(|&ptr| {
-                let start = (ptr as usize).checked_sub(base)? / std::mem::size_of::<u16>();
-                let rest = buffer.get(start..)?;
-                let end = rest.iter().position(|&unit| unit == 0)?;
-                Some(String::from_utf16_lossy(&rest[..end]))
-            })
-            .collect()
+        Err("GetPackagesByPackageFamily kept changing while reading packages".into())
     }
 
     /// 包的安装目录（`C:\Program Files\WindowsApps\<全名>`）。
@@ -785,6 +828,31 @@ mod tests {
                 PathBuf::from("/Users/me/Applications/Codex.app"),
             ]
         );
+    }
+
+    #[test]
+    fn macos_cli_filter_requires_a_verified_app_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let verified_app = dir.path().join("ChatGPT.app");
+        let unverified_app = dir.path().join("Other.app");
+        std::fs::create_dir_all(&verified_app).unwrap();
+        std::fs::create_dir_all(&unverified_app).unwrap();
+        let bundled_cli = verified_app.join("Contents/Resources/codex");
+        let unrelated_executable = verified_app.join("Contents/Resources/codex-command-runner");
+        let unrelated_cli = unverified_app.join("Contents/Resources/codex");
+
+        assert!(is_macos_cli_path_with_verified_apps(
+            &bundled_cli,
+            std::slice::from_ref(&verified_app)
+        ));
+        assert!(!is_macos_cli_path_with_verified_apps(
+            &unrelated_cli,
+            std::slice::from_ref(&verified_app)
+        ));
+        assert!(!is_macos_cli_path_with_verified_apps(
+            &unrelated_executable,
+            std::slice::from_ref(&verified_app)
+        ));
     }
 
     #[test]
@@ -1129,7 +1197,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_detection_reports_supported_without_panicking() {
-        let status = detect();
+        let status = detect().unwrap();
         assert!(status.supported);
         if status.installed {
             assert!(status
