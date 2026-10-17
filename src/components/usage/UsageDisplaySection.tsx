@@ -24,10 +24,13 @@ import {
   isValidExchangeRate,
   resolveMoneyDisplay,
   resolveSidebarToday,
+  resolveTrendChartType,
   type DisplayCurrency,
   SIDEBAR_TODAY_ITEMS,
   SIDEBAR_TODAY_MAX_ITEMS,
   type SidebarTodayItem,
+  TREND_CHART_TYPES,
+  type TrendChartType,
 } from "./format";
 import {
   REQUEST_LOG_COLUMN_LABEL_KEYS,
@@ -152,7 +155,7 @@ function ChecklistMenu({
 
 /**
  * 用量「设置」页签顶部的「显示」：币种与手填汇率（只改显示，库里照旧存美元）、
- * 侧栏「今日」显示什么、请求日志显示哪些列。
+ * 侧栏「今日」显示什么、请求日志显示哪些列、趋势图用柱形图还是曲线面积图。
  */
 export function UsageDisplaySection({
   value,
@@ -214,6 +217,17 @@ export function UsageDisplaySection({
     setColumnOverrides(next);
     if ((await save({ requestLogColumns: next })) === false) {
       setColumnOverrides(savedColumns ?? {});
+    }
+  };
+
+  const savedChartType = resolveTrendChartType(value);
+  const [chartType, setChartType] = useState<TrendChartType>(savedChartType);
+  useEffect(() => setChartType(savedChartType), [savedChartType]);
+
+  const changeChartType = async (next: TrendChartType) => {
+    setChartType(next);
+    if ((await save({ trendChartType: next })) === false) {
+      setChartType(savedChartType);
     }
   };
 
@@ -370,6 +384,35 @@ export function UsageDisplaySection({
                   : undefined
               }
             />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-body text-fg-2">
+              {t("usage.display.trendChartType")}
+            </span>
+            <Select
+              value={chartType}
+              onValueChange={(next) => {
+                // Radix Select 偶尔回报空串，忽略
+                const picked = TREND_CHART_TYPES.find((c) => c === next);
+                if (picked && picked !== chartType) {
+                  void changeChartType(picked);
+                }
+              }}
+            >
+              <SelectTrigger
+                className="h-7 w-32 text-body"
+                aria-label={t("usage.display.trendChartType")}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {TREND_CHART_TYPES.map((type) => (
+                  <SelectItem key={type} value={type}>
+                    {t(`usage.display.trendChartTypes.${type}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
         {currency !== "USD" && (

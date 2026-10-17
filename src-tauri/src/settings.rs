@@ -381,6 +381,9 @@ pub struct UsageDisplaySettings {
     /// 以后新加的列也按它自己的默认值出现
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub request_log_columns: BTreeMap<String, bool>,
+    /// 用量趋势图的样式（"bar" / "area"），缺省为柱形图
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trend_chart_type: Option<String>,
 }
 
 /// 应用设置结构
@@ -1534,7 +1537,8 @@ mod tests {
                 "currency": "CNY",
                 "exchangeRates": { "CNY": 6.8 },
                 "sidebarTodayItems": ["cost", "requests"],
-                "requestLogColumns": { "statusCode": true, "app": false }
+                "requestLogColumns": { "statusCode": true, "app": false },
+                "trendChartType": "area"
             }
         }))
         .expect("usage display");
@@ -1546,13 +1550,15 @@ mod tests {
             Some(&["cost".to_string(), "requests".to_string()][..])
         );
         assert_eq!(display.request_log_columns.get("app"), Some(&false));
+        assert_eq!(display.trend_chart_type.as_deref(), Some("area"));
         assert_eq!(
             serde_json::to_value(&saved).expect("serialize")["usageDisplay"],
             serde_json::json!({
                 "currency": "CNY",
                 "exchangeRates": { "CNY": 6.8 },
                 "sidebarTodayItems": ["cost", "requests"],
-                "requestLogColumns": { "app": false, "statusCode": true }
+                "requestLogColumns": { "app": false, "statusCode": true },
+                "trendChartType": "area"
             })
         );
 

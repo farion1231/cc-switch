@@ -1,10 +1,13 @@
-import type { ComponentProps } from "react";
-import { screen, within } from "@testing-library/react";
-import { renderWithQueryClient as render } from "../utils/testQueryClient";
+import type { ComponentProps, ReactNode } from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { render as rtlRender, screen } from "@testing-library/react";
+import {
+  createTestQueryClient,
+  renderWithQueryClient as render,
+} from "../utils/testQueryClient";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { UsageTrendChart } from "@/components/usage/UsageTrendChart";
-import { USAGE_CHOICE_KEYS } from "@/components/usage/rememberedChoice";
 
 vi.mock("recharts", async (importOriginal) => {
   const recharts = await importOriginal<typeof import("recharts")>();
@@ -95,76 +98,53 @@ describe("UsageTrendChart styles", () => {
     refreshIntervalMs: 0,
   };
 
+  // 样式在用量「设置」里选，存在 settings.usageDisplay.trendChartType
+  const renderWithChartType = (trendChartType?: string) => {
+    const client = createTestQueryClient();
+    // 不让挂载时的重新拉取用 mock 后端的默认设置覆盖掉这里给的值
+    client.setDefaultOptions({
+      queries: { retry: false, staleTime: Infinity },
+    });
+    client.setQueryData(["settings"], { usageDisplay: { trendChartType } });
+    return rtlRender(<UsageTrendChart {...props} />, {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      ),
+    });
+  };
+
+  it("draws a bar chart by default without a style switch on the chart", () => {
+    const { container } = renderWithChartType(undefined);
+    expect(container.querySelector(".recharts-bar-rectangle")).not.toBeNull();
+    expect(container.querySelector(".recharts-area")).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: "usage.display.trendChartTypes.area",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
   it.each(["tokens", "requests", "cost"] as const)(
-    "switches between bar and area charts while keeping the %s metric",
+    "draws the saved area style for the %s metric",
     async (metric) => {
       const user = userEvent.setup();
-      const { container } = render(<UsageTrendChart {...props} />);
+      const { container } = renderWithChartType("area");
       await user.click(
         screen.getByRole("button", { name: `usage.trend.${metric}` }),
       );
-      const controls = within(
-        screen.getByRole("group", { name: "usage.trend.chartTypeLabel" }),
-      );
-      const bar = controls.getByRole("button", { name: "usage.trend.bar" });
-      const area = controls.getByRole("button", { name: "usage.trend.area" });
-      const legend = screen.getByTestId("usage-trend-legend").textContent;
-
-      expect(bar).toHaveAttribute("aria-pressed", "true");
-      expect(container.querySelector(".recharts-bar-rectangle")).not.toBeNull();
-
-      await user.click(area);
-      expect(area).toHaveAttribute("aria-pressed", "true");
-      expect(bar).toHaveAttribute("aria-pressed", "false");
       expect(container.querySelector(".recharts-area")).not.toBeNull();
       // A one-bucket range must still show a point in area mode.
       expect(container.querySelector(".recharts-area-dot")).not.toBeNull();
       expect(container.querySelector(".recharts-bar-rectangle")).toBeNull();
-      expect(screen.getByTestId("usage-trend-legend").textContent).toBe(legend);
-
-      await user.click(bar);
-      expect(bar).toHaveAttribute("aria-pressed", "true");
-      expect(container.querySelector(".recharts-bar-rectangle")).not.toBeNull();
-      expect(container.querySelector(".recharts-area")).toBeNull();
-      expect(screen.getByTestId("usage-trend-legend").textContent).toBe(legend);
+      expect(screen.getByTestId("usage-trend-legend")).toHaveTextContent(
+        `usage.trend.${metric === "requests" ? "requestsLegend" : metric}`,
+      );
     },
   );
 
-  it("remembers the chart style independently of the metric and filters", async () => {
-    const user = userEvent.setup();
-    const first = render(<UsageTrendChart {...props} />);
-    await user.click(screen.getByRole("button", { name: "usage.trend.area" }));
-    await user.click(screen.getByRole("button", { name: "usage.trend.cost" }));
-
-    first.rerender(
-      <UsageTrendChart
-        {...props}
-        range={{ preset: "1d" }}
-        appType="codex"
-        model="gpt-5"
-      />,
-    );
-    expect(
-      screen.getByRole("button", { name: "usage.trend.area" }),
-    ).toHaveAttribute("aria-pressed", "true");
-    first.unmount();
-
-    render(<UsageTrendChart {...props} />);
-    expect(
-      screen.getByRole("button", { name: "usage.trend.area" }),
-    ).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByTestId("usage-trend-legend")).toHaveTextContent(
-      "usage.trend.cost",
-    );
-  });
-
   it("falls back to a bar chart for an unknown saved style", () => {
-    localStorage.setItem(USAGE_CHOICE_KEYS.trendChartType, "unknown");
-    const { container } = render(<UsageTrendChart {...props} />);
-
-    expect(
-      screen.getByRole("button", { name: "usage.trend.bar" }),
-    ).toHaveAttribute("aria-pressed", "true");
+    const { container } = renderWithChartType("unknown");
     expect(container.querySelector(".recharts-bar-rectangle")).not.toBeNull();
+    expect(container.querySelector(".recharts-area")).toBeNull();
   });
 });

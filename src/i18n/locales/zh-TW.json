@@ -2392,7 +2392,12 @@
       },
       "sidebarTodayLimit": "最多選 {{count}} 項",
       "logColumns": "請求日誌的欄位",
-      "logColumnsSummary": "{{shown}} / {{total}} 欄"
+      "logColumnsSummary": "{{shown}} / {{total}} 欄",
+      "trendChartType": "趨勢圖樣式",
+      "trendChartTypes": {
+        "bar": "長條圖",
+        "area": "曲線面積圖"
+      }
     },
     "providerFilter": {
       "label": "供應商",
@@ -2423,9 +2428,6 @@
     "trend": {
       "title": "使用趨勢 · {{range}}",
       "metricLabel": "趨勢指標",
-      "chartTypeLabel": "圖表樣式",
-      "bar": "柱狀圖",
-      "area": "曲線面積圖",
       "requests": "請求",
       "tokens": "Tokens",
       "cost": "成本",

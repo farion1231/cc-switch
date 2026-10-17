@@ -2391,7 +2391,12 @@
       },
       "sidebarTodayLimit": "Pick up to {{count}}",
       "logColumns": "Request log columns",
-      "logColumnsSummary": "{{shown}} of {{total}} columns"
+      "logColumnsSummary": "{{shown}} of {{total}} columns",
+      "trendChartType": "Trend chart",
+      "trendChartTypes": {
+        "bar": "Bar",
+        "area": "Area"
+      }
     },
     "providerFilter": {
       "label": "Provider",
@@ -2422,9 +2427,6 @@
     "trend": {
       "title": "Usage trend · {{range}}",
       "metricLabel": "Trend metric",
-      "chartTypeLabel": "Chart style",
-      "bar": "Bar",
-      "area": "Area",
       "requests": "Requests",
       "tokens": "Tokens",
       "cost": "Cost",

@@ -1,14 +1,13 @@
 import { useState } from "react";
 
 /**
- * 用量页「上次的选择」（页签、时间范围、图表样式、趋势 / 热力图指标）记在本机 localStorage：
+ * 用量页「上次的选择」（页签、时间范围、趋势 / 热力图指标）记在本机 localStorage：
  * 只是界面偏好，不进 settings.json、不随云同步。读不到、写不了（隐私模式）或值认不出时按默认值。
  */
 export const USAGE_CHOICE_KEYS = {
   tab: "cc-switch.usage.tab",
   range: "cc-switch.usage.rangePreset",
   trendMetric: "cc-switch.usage.trendMetric",
-  trendChartType: "cc-switch.usage.trendChartType",
   heatmapMetric: "cc-switch.usage.heatmapMetric",
 } as const;
 

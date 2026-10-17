@@ -14,10 +14,16 @@ import {
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useUsageTrends } from "@/lib/query/usage";
 import { Loader2 } from "lucide-react";
-import { fmtInt, getLocaleFromLanguage, parseFiniteNumber } from "./format";
+import {
+  fmtInt,
+  getLocaleFromLanguage,
+  parseFiniteNumber,
+  resolveTrendChartType,
+} from "./format";
 import { resolveUsageRange } from "@/lib/usageRange";
 import type { UsageRangeSelection } from "@/types/usage";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
+import { useSettingsQuery } from "@/lib/query";
 import { USAGE_CHOICE_KEYS, useRememberedChoice } from "./rememberedChoice";
 
 interface UsageTrendChartProps {
@@ -167,8 +173,6 @@ export function formatUsageTrendTokenTickLabel(
 
 const TREND_METRICS = ["requests", "tokens", "cost"] as const;
 type TrendMetric = (typeof TREND_METRICS)[number];
-const CHART_TYPES = ["bar", "area"] as const;
-type ChartType = (typeof CHART_TYPES)[number];
 
 const AXIS_TICK = { fill: "var(--text-3)", fontSize: 11 };
 
@@ -187,11 +191,9 @@ export function UsageTrendChart({
     TREND_METRICS,
     "tokens",
   );
-  const [chartType, setChartType] = useRememberedChoice<ChartType>(
-    USAGE_CHOICE_KEYS.trendChartType,
-    CHART_TYPES,
-    "bar",
-  );
+  // 柱形图 / 曲线面积图在用量「设置」里选
+  const { data: settings } = useSettingsQuery();
+  const chartType = resolveTrendChartType(settings?.usageDisplay);
   const { startDate, endDate } = resolveUsageRange(range);
   const { data: trends, isLoading } = useUsageTrends(
     range,
@@ -297,16 +299,6 @@ export function UsageTrendChart({
             { value: "tokens", label: t("usage.trend.tokens") },
             { value: "requests", label: t("usage.trend.requests") },
             { value: "cost", label: t("usage.trend.cost") },
-          ]}
-        />
-        <SegmentedControl<ChartType>
-          size="sm"
-          aria-label={t("usage.trend.chartTypeLabel")}
-          value={chartType}
-          onValueChange={setChartType}
-          items={[
-            { value: "bar", label: t("usage.trend.bar") },
-            { value: "area", label: t("usage.trend.area") },
           ]}
         />
       </div>
