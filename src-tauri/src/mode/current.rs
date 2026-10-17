@@ -21,9 +21,9 @@ pub enum Purpose {
     InUse,
 }
 
-/// 这个应用的模式状态；不支持本地路由的应用恒为直连。
+/// 这个应用的模式状态；没有路由模式的应用恒为直连。
 pub fn mode_state(app: &AppType) -> ModeState {
-    if !app.supports_local_proxy() {
+    if !app.has_route_mode() {
         return ModeState::default();
     }
     state::mode_state(&DeviceStore::for_device(), app.as_str()).unwrap_or_else(|err| {
@@ -40,9 +40,7 @@ pub fn is_proxy(app: &AppType) -> bool {
 pub fn proxy_flags<const N: usize>(apps: [AppType; N]) -> [bool; N] {
     let names = apps.each_ref().map(AppType::as_str);
     match state::mode_states(&DeviceStore::for_device(), names) {
-        Ok(states) => {
-            std::array::from_fn(|i| apps[i].supports_local_proxy() && states[i].is_proxy())
-        }
+        Ok(states) => std::array::from_fn(|i| apps[i].has_route_mode() && states[i].is_proxy()),
         Err(err) => {
             log::warn!("读取模式状态失败，按直连处理: {err}");
             [false; N]

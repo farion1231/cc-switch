@@ -185,7 +185,23 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     config: grokPresetConfig("OpenModel", "https://api.openmodel.ai/v1"),
     category: "aggregator",
     isPartner: true,
+    partnerPromotionKey: "openmodel",
     icon: "openmodel",
+  },
+  {
+    name: "GrooRoute Pro",
+    websiteUrl: "https://grooroute.pro",
+    apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
+    auth: grokAuth(),
+    config: grokPresetConfig(
+      "GrooRoute Pro",
+      "https://grooroute.pro/v1",
+      "grok-4.7",
+    ),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "grooroute",
+    icon: "grooroute",
   },
   {
     name: "Shengsuanyun",
@@ -205,11 +221,14 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.app",
-    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.net",
+    apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
     auth: grokAuth(),
-    config: grokPresetConfig("AIGoCode", "https://api.aigocode.app"),
-    endpointCandidates: ["https://api.aigocode.app"],
+    config: grokPresetConfig("AIGoCode", "https://api.aigocode.dev"),
+    endpointCandidates: [
+      "https://api.aigocode.dev",
+      "https://api.aigocode.app",
+    ],
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "aigocode",
@@ -301,8 +320,6 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     config: grokPresetConfig("Code0", "https://code0.ai/v1"),
     endpointCandidates: ["https://code0.ai/v1"],
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "code0",
     icon: "code0",
   },
   {
@@ -522,6 +539,24 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     isPartner: true,
     icon: "sudocode-us",
   },
+  {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    auth: grokAuth(),
+    // 官方 Grok Build 文档（docs.modelflare.dev/guides/clients/grok-build，
+    // 2026-10-15 核对）：Responses + /v1、grok-4.5
+    config: grokPresetConfig("Modelflare", "https://modelflare.dev/v1"),
+    endpointCandidates: [
+      "https://modelflare.dev/v1",
+      "https://origin.modelflare.dev/v1",
+    ],
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",
@@ -721,5 +756,14 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     config: grokPresetConfig("TokenFlux", "https://tokenflux.dev/v1"),
     category: "aggregator",
     icon: "tokenflux",
+  },
+  {
+    name: "AIComing",
+    websiteUrl: "https://aicoming.top",
+    apiKeyUrl: "https://aicoming.top/console#keys",
+    auth: grokAuth(),
+    config: grokPresetConfig("AIComing", "https://api.aicoming.top/v1"),
+    category: "aggregator",
+    icon: "aicoming",
   },
 ];

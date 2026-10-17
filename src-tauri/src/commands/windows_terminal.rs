@@ -10,6 +10,8 @@ use super::misc::{
     PARENT_CLAUDE_SESSION_ENV_VARS, WINDOWS_BATCH_PATH_ENV, WINDOWS_CONFIG_PATH_ENV,
     WINDOWS_CWD_ENV,
 };
+#[cfg(any(target_os = "windows", test))]
+use indexmap::IndexSet;
 use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "windows")]
@@ -934,7 +936,7 @@ fn wt_version_from_path(path: &Path) -> Option<(u16, u16, u16, u16)> {
 }
 
 #[cfg(any(target_os = "windows", test))]
-fn append_scoop_wt_settings_paths(paths: &mut Vec<PathBuf>, root: &Path, package: &str) {
+fn append_scoop_wt_settings_paths(paths: &mut IndexSet<PathBuf>, root: &Path, package: &str) {
     let persist = root.join("persist").join(package);
     // Scoop persists a settings subdirectory; files at the persist root are not
     // the active WT config.
@@ -981,7 +983,7 @@ fn build_wt_settings_paths(
     settings_executable: &Path,
     local_appdata: Option<&Path>,
 ) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
+    let mut paths = IndexSet::new();
 
     if is_wt_portable_install(settings_executable) {
         if let Some(dir) = settings_executable.parent() {
@@ -992,7 +994,7 @@ fn build_wt_settings_paths(
         if let Some((root, package)) = scoop_wt_install_context(settings_executable) {
             append_scoop_wt_settings_paths(&mut paths, &root, &package);
         }
-        return paths;
+        return paths.into_iter().collect();
     }
 
     if let Some((preview, _)) = store_wt_package_dir(settings_executable) {
@@ -1003,7 +1005,7 @@ fn build_wt_settings_paths(
         push_unique_path(&mut paths, unpackaged_wt_settings_path(local));
     }
 
-    paths
+    paths.into_iter().collect()
 }
 
 /// Parse the real executable path from a Scoop `.shim`.

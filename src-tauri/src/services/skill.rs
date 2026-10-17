@@ -396,10 +396,12 @@ const DIRECTORY_BUDGET_COST: u64 = 4096;
 /// 文件同理：空文件与不足一块的小文件照样占 inode 和一个磁盘块。只按内容字节
 /// 计费时，一个全是空文件的归档能让预算读数一直停在 0，条目上限就成了唯一防线。
 const FILE_ENTRY_BUDGET_COST: u64 = DIRECTORY_BUDGET_COST;
-/// 压缩体上限。解压预算只有在 ZipArchive 建起来之后才生效，而那时整个响应体
-/// 已经在内存里了，所以下载这一步需要自己的上限。技能仓库是 Markdown，
-/// 128 MiB 的压缩包已经远超正常规模。
-const MAX_ARCHIVE_DOWNLOAD_BYTES: u64 = 128 * 1024 * 1024;
+/// 压缩体上限。解压预算只有在 ZipArchive 建起来之后才生效，所以下载这一步需要
+/// 自己的上限。下载的是整个仓库归档，`docs/` 里的图片、GIF 常常比技能本身大
+/// 一个数量级（#8421：scientific-agent-skills 压缩包 235 MiB，技能只有 20 MiB），
+/// 曾经的 128 MiB 会把这类仓库挡在门外。响应体流式落到临时文件而不进内存，
+/// 上限对齐解压预算：压缩体超过解压后能容纳的总量，解压那一步也必然失败。
+const MAX_ARCHIVE_DOWNLOAD_BYTES: u64 = MAX_ARCHIVE_TOTAL_BYTES;
 
 /// 技能元数据 (从 SKILL.md 解析)
 #[derive(Debug, Clone, Deserialize)]
@@ -2601,6 +2603,14 @@ impl SkillService {
         }
 
         let sync_method = Self::get_sync_method();
+        // WSL targets reject directory symlinks outright (ERROR_ACCESS_DENIED),
+        // so Auto skips the doomed symlink attempt and goes straight to copy.
+        let sync_method =
+            if matches!(sync_method, SyncMethod::Auto) && crate::config::is_wsl_path(&dest) {
+                SyncMethod::Copy
+            } else {
+                sync_method
+            };
 
         match sync_method {
             SyncMethod::Auto => {
@@ -3598,22 +3608,25 @@ impl SkillService {
         // 逐块读并卡住压缩体大小：`response.bytes()` 会先把攻击者控制的整个归档
         // 收进内存，之后才轮到 ZipArchive 和解压预算——那时候堆已经被吃光了。
         // 不能只信 Content-Length（可以撒谎或缺失），必须按实际收到的字节数算。
+        // 归档写进匿名临时文件（关闭即删，失败路径也不留残留），内存只占一个块。
         let mut response = response;
-        let mut body: Vec<u8> = Vec::new();
+        let mut body = std::io::BufWriter::new(tempfile::tempfile()?);
+        let mut received: u64 = 0;
         while let Some(chunk) = response.chunk().await? {
-            if body.len().saturating_add(chunk.len()) as u64 > MAX_ARCHIVE_DOWNLOAD_BYTES {
+            received = received.saturating_add(chunk.len() as u64);
+            if received > MAX_ARCHIVE_DOWNLOAD_BYTES {
                 let limit_mb = (MAX_ARCHIVE_DOWNLOAD_BYTES / 1024 / 1024).to_string();
                 return Err(anyhow::anyhow!(format_skill_error(
-                    "ARCHIVE_TOO_LARGE",
+                    "ARCHIVE_DOWNLOAD_TOO_LARGE",
                     &[("limit_mb", &limit_mb)],
-                    Some("checkZipContent"),
+                    None,
                 )));
             }
-            body.extend_from_slice(&chunk);
+            std::io::Write::write_all(&mut body, &chunk)?;
         }
 
-        let cursor = std::io::Cursor::new(body);
-        let archive = zip::ZipArchive::new(cursor)?;
+        let file = body.into_inner().map_err(|e| e.into_error())?;
+        let archive = zip::ZipArchive::new(file)?;
         Self::extract_repo_archive(archive, dest)
     }
 

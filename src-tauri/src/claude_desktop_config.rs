@@ -14,6 +14,7 @@ use crate::live::floor;
 use crate::live::patch::json::{self as patch_json, ClearScope, JsonPatch};
 use crate::live::patch::{KeyPath, LivePatch, LiveWriteError};
 use crate::mode::operation::{self, FileChange};
+use crate::mode::stack::DesktopStackModel;
 use crate::mode::state::{self, PendingTarget};
 use crate::provider::{ClaudeDesktopMode, Provider};
 
@@ -26,7 +27,9 @@ const CONFIG_FILE: &str = "claude_desktop_config.json";
 const CONFIG_LIBRARY_DIR: &str = "configLibrary";
 const GATEWAY_TOKEN_SETTING_KEY: &str = "claude_desktop_gateway_token";
 const CLAUDE_DESKTOP_PROXY_PREFIX: &str = "/claude-desktop";
-const DEFAULT_CREATED_AT: &str = "2024-01-01T00:00:00Z";
+pub const DEFAULT_CREATED_AT: &str = "2024-01-01T00:00:00Z";
+/// `inferenceModels` 的上限（Desktop 的 schema 写着 `maxItems: 200`）。
+const MAX_INFERENCE_MODELS: usize = 200;
 const MIMO_REDACTED_THINKING_PLACEHOLDER: &str = "[redacted thinking]";
 const MIMO_TOOL_CALL_THINKING_PLACEHOLDER: &str = "tool call";
 
@@ -127,9 +130,84 @@ struct InferenceModelSpec {
     supports_1m: bool,
 }
 
+/// 直连模式下把 `provider` 写进 Desktop 的配置（同步、编辑当前那家）。模型映射卡要经路由，
+/// 直连写不进去（见 [`needs_routing`]）。
 pub fn apply_provider(db: &Database, provider: &Provider) -> Result<(), AppError> {
+    write_direct(
+        db,
+        state::op::APPLY,
+        Some(provider),
+        PendingTarget::default(),
+    )
+}
+
+/// 写进 Desktop 配置的内容。
+pub enum DesktopTarget<'a> {
+    /// 官方：两个配置文件改回 `1p`，摘掉 CC Switch 的 profile。
+    Official,
+    /// 第三方网关 profile（直连那家的，或指向本地路由的）。
+    Profile(&'a Value),
+}
+
+/// 直连模式下要写的东西：`None` 和官方卡写回官方。
+pub fn direct_target(provider: Option<&Provider>) -> Result<Option<Value>, AppError> {
+    match provider {
+        Some(provider) if !is_official_provider(provider) => direct_profile(provider).map(Some),
+        _ => Ok(None),
+    }
+}
+
+/// 直连写入：`provider` 为 `None` 或官方卡时写回官方。文件和 `target`（指针、模式状态）在
+/// 同一个操作里提交。
+pub fn write_direct(
+    db: &Database,
+    op: &str,
+    provider: Option<&Provider>,
+    target: PendingTarget,
+) -> Result<(), AppError> {
+    let profile = direct_target(provider)?;
+    let write = match &profile {
+        Some(profile) => DesktopTarget::Profile(profile),
+        None => DesktopTarget::Official,
+    };
+    run(db, op, Some(write), target)
+}
+
+/// 写 Desktop 的配置文件，和 `target` 在同一个操作里提交。`write` 为 `None` 时只落定
+/// `target`（契约没变，客户端文件不用动）。
+pub fn run(
+    db: &Database,
+    op: &str,
+    write: Option<DesktopTarget<'_>>,
+    target: PendingTarget,
+) -> Result<(), AppError> {
+    if write.is_none() {
+        // 不碰文件，平台不支持时也能落定模式。
+        return operation::commit_target(
+            db,
+            &DeviceStore::for_device(),
+            AppType::ClaudeDesktop.as_str(),
+            &target,
+        );
+    }
     let paths = current_platform_paths()?;
-    apply_provider_to_paths(db, provider, &paths)
+    run_at_paths(db, &paths, op, write, target)
+}
+
+fn run_at_paths(
+    db: &Database,
+    paths: &ClaudeDesktopPaths,
+    op: &str,
+    write: Option<DesktopTarget<'_>>,
+    target: PendingTarget,
+) -> Result<(), AppError> {
+    match write {
+        None => write_desktop_files(db, paths, op, &[], target),
+        Some(DesktopTarget::Official) => restore_official_at_paths(db, paths, op, target),
+        Some(DesktopTarget::Profile(profile)) => {
+            write_profile_at_paths(db, paths, op, profile.clone(), target)
+        }
+    }
 }
 
 pub fn get_status(db: &Database, proxy_running: bool) -> Result<ClaudeDesktopStatus, AppError> {
@@ -176,11 +254,17 @@ pub fn get_status(db: &Database, proxy_running: bool) -> Result<ClaudeDesktopSta
         .ok()
         .flatten()
         .is_some_and(|token| !token.trim().is_empty());
-    let current_provider =
-        crate::mode::current::direct_provider(db, &crate::app_config::AppType::ClaudeDesktop)
-            .ok()
-            .flatten();
-    let mode = current_provider.as_ref().map(provider_mode);
+    // 路由模式下看路由那家，直连模式下看直连那家。
+    let routed = crate::mode::current::is_proxy(&AppType::ClaudeDesktop);
+    let current_provider = crate::mode::current::provider_in_use(db, &AppType::ClaudeDesktop)
+        .ok()
+        .flatten()
+        .filter(|provider| !is_official_provider(provider));
+    let mode = if routed {
+        Some(ClaudeDesktopMode::Proxy)
+    } else {
+        current_provider.as_ref().map(|_| ClaudeDesktopMode::Direct)
+    };
     let expected_base_url = match mode {
         Some(ClaudeDesktopMode::Proxy) => proxy_gateway_base_url_from_db(db).ok(),
         Some(ClaudeDesktopMode::Direct) => current_provider
@@ -189,10 +273,10 @@ pub fn get_status(db: &Database, proxy_running: bool) -> Result<ClaudeDesktopSta
             .map(|credentials| credentials.base_url),
         None => None,
     };
-    let missing_route_mappings = current_provider.as_ref().is_some_and(|provider| {
-        matches!(provider_mode(provider), ClaudeDesktopMode::Proxy)
-            && proxy_model_routes(provider).is_err()
-    });
+    let missing_route_mappings = routed
+        && current_provider
+            .as_ref()
+            .is_some_and(|provider| proxy_model_routes(provider).is_err());
 
     Ok(ClaudeDesktopStatus {
         supported: true,
@@ -226,17 +310,28 @@ pub fn is_official_provider(provider: &Provider) -> bool {
     provider.id == CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID
 }
 
-/// 当前供应商是不是模型映射卡：Claude Desktop 的请求要经本地路由服务转发，服务得一直在跑。
-pub fn current_provider_uses_proxy(db: &Database) -> bool {
+/// 这张卡在直连模式下写不进去，要经本地路由：模型映射卡（上游模型名 Desktop 不认）、托管
+/// OAuth（凭据由路由注入）。和前端 `providerNeedsRouting`、托盘的 `provider_needs_routing`
+/// 是同一条规则。卡片上的 `claudeDesktopMode` 只说明这张卡是哪种，不再决定 Desktop 的模式
+/// （模式在 `live-state.json`，见 `mode::controller`）。
+pub fn needs_routing(provider: &Provider) -> bool {
+    !is_official_provider(provider)
+        && (matches!(provider_mode(provider), ClaudeDesktopMode::Proxy)
+            || is_managed_oauth_proxy_provider(provider))
+}
+
+/// 升级前旧版的状态：直连指针是模型映射卡（旧版按卡片决定模式，这张卡生效时 Desktop 指着
+/// 本地路由）。启动时据此把 Desktop 定为路由模式、路由到这张卡。
+pub fn legacy_mapping_card(db: &Database) -> Option<Provider> {
     if current_platform_paths().is_err() {
-        return false;
+        return None;
     }
-    crate::mode::current::direct_provider(db, &crate::app_config::AppType::ClaudeDesktop)
+    crate::mode::current::direct_provider(db, &AppType::ClaudeDesktop)
         .ok()
         .flatten()
-        .is_some_and(|provider| {
-            !is_official_provider(&provider)
-                && matches!(provider_mode(&provider), ClaudeDesktopMode::Proxy)
+        .filter(|provider| {
+            !is_official_provider(provider)
+                && matches!(provider_mode(provider), ClaudeDesktopMode::Proxy)
         })
 }
 
@@ -283,6 +378,9 @@ fn inference_model_json(spec: &InferenceModelSpec) -> Value {
         }
         if spec.supports_1m {
             item["supports1m"] = json!(true);
+            // 只有 `supports1m` 时 Desktop 每个模型列两行（原名 + 「1M context window」）。
+            // 加上 `prefer1m`（1.21459.0 起）只列原名，交给内嵌 CLI 时自动补 `[1m]`。
+            item["prefer1m"] = json!(true);
         }
         item
     } else {
@@ -572,7 +670,40 @@ fn direct_inference_model_specs(provider: &Provider) -> Result<Vec<InferenceMode
     Ok(result)
 }
 
+fn uses_default_proxy_routes(provider: &Provider) -> bool {
+    !is_official_provider(provider)
+        && !needs_routing(provider)
+        && provider
+            .meta
+            .as_ref()
+            .is_none_or(|meta| meta.claude_desktop_model_routes.is_empty())
+}
+
 pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>, AppError> {
+    // 原生直连卡允许留空模型列表。先用同名角色路由进入代理，之后才能保存模型映射，
+    // 否则「先开路由」和「先存映射」会互相阻挡。显式映射卡仍须配置模型。
+    if uses_default_proxy_routes(provider) {
+        validate_direct_provider(provider)?;
+        let mut routes = DEFAULT_PROXY_ROUTES
+            .iter()
+            .map(|route| ResolvedModelRoute {
+                route_id: route.route_id.to_string(),
+                upstream_model: route.route_id.to_string(),
+                label_override: None,
+                supports_1m: false,
+            })
+            .collect::<Vec<_>>();
+        routes.sort_by(|a, b| a.route_id.cmp(&b.route_id));
+        return Ok(routes);
+    }
+
+    configured_proxy_model_routes(provider)
+}
+
+/// 聚合成员只能发布用户配置过的模型，不能把路由引导用的默认角色当成上游目录。
+pub(crate) fn configured_proxy_model_routes(
+    provider: &Provider,
+) -> Result<Vec<ResolvedModelRoute>, AppError> {
     let routes = provider
         .meta
         .as_ref()
@@ -715,6 +846,11 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
     let requested = strip_one_m_suffix_for_route_lookup(&requested_raw);
 
     let routes = proxy_model_routes(provider)?;
+    // 默认列表只提供进入路由时的角色菜单，不把原生的日期后缀或版本别名改成默认 ID。
+    if uses_default_proxy_routes(provider) && is_claude_safe_model_id(requested) {
+        body["model"] = json!(requested);
+        return Ok(normalize_upstream_request(body, provider));
+    }
     let upstream_model = routes
         .iter()
         .find(|r| r.route_id == requested)
@@ -762,10 +898,21 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
         })?;
 
     body["model"] = json!(upstream_model);
+    Ok(normalize_upstream_request(body, provider))
+}
+
+/// 请求体的 `model` 已经是上游名（路由映射过，或聚合模型直接解出了上游名）之后，按上游的
+/// 怪癖做的整理：目前只有 MiMo 的 Anthropic 接口要补 thinking 历史。
+pub fn normalize_upstream_request(mut body: Value, provider: &Provider) -> Value {
+    let upstream_model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
     if should_normalize_mimo_anthropic_thinking_history(provider, &upstream_model) {
         normalize_mimo_anthropic_thinking_history(&mut body);
     }
-    Ok(body)
+    body
 }
 
 fn strip_one_m_suffix_for_route_lookup(model: &str) -> &str {
@@ -946,47 +1093,92 @@ pub fn proxy_gateway_base_url_from_db(db: &Database) -> Result<String, AppError>
     ))
 }
 
-fn apply_provider_to_paths(
+/// 直连那家的网关 profile：地址和 Key 直接写进去。模型映射卡、托管 OAuth 要经路由，拒绝。
+fn direct_profile(provider: &Provider) -> Result<Value, AppError> {
+    validate_direct_provider(provider)?;
+    let credentials = direct_gateway_credentials(provider)?;
+    let model_specs = direct_inference_model_specs(provider)?;
+    Ok(build_gateway_profile(
+        &credentials.base_url,
+        &credentials.api_key,
+        (!model_specs.is_empty()).then_some(model_specs.as_slice()),
+    ))
+}
+
+/// 本地路由的 `/claude-desktop` 入口。`proxy_url` 是路由服务的地址（不带路径）。
+pub fn gateway_base_url(proxy_url: &str) -> String {
+    format!(
+        "{}{}",
+        proxy_url.trim_end_matches('/'),
+        CLAUDE_DESKTOP_PROXY_PREFIX
+    )
+}
+
+/// 路由模式的网关 profile：指向本地路由、带 gateway token，模型列表是路由那家的模型表
+/// （模型映射卡的映射表，直连卡的模型列表）。换路由那家，模型列表跟着变，要重写文件、
+/// 重启 Desktop。
+///
+/// 聚合模式下 `stack` 是其他几家发布的模型，排在路由那家后面（第一项是默认模型，仍是路由
+/// 那家的），并关掉模型发现：列表完全由这里决定。Desktop 最多收 200 条，多出的不写。
+pub fn route_profile(
     db: &Database,
-    provider: &Provider,
-    paths: &ClaudeDesktopPaths,
-) -> Result<(), AppError> {
-    if is_official_provider(provider) {
-        return restore_official_at_paths(paths);
+    route: &Provider,
+    proxy_url: &str,
+    stack: &[DesktopStackModel],
+) -> Result<Value, AppError> {
+    if is_official_provider(route) {
+        return Err(AppError::localized(
+            "claude_desktop.provider.official_not_routable",
+            "Claude Desktop 官方账号不经过本地路由",
+            "The Claude Desktop official account does not go through local routing",
+        ));
     }
+    validate_proxy_provider(route)?;
+    let mut model_specs = proxy_model_routes(route)?
+        .into_iter()
+        .map(|route| InferenceModelSpec {
+            name: route.route_id,
+            label_override: route.label_override,
+            supports_1m: route.supports_1m,
+        })
+        .chain(stack.iter().map(|model| InferenceModelSpec {
+            name: model.id.clone(),
+            label_override: Some(model.label.clone()),
+            supports_1m: model.supports_1m,
+        }))
+        .collect::<Vec<_>>();
+    if model_specs.len() > MAX_INFERENCE_MODELS {
+        log::warn!(
+            "Claude Desktop 最多 {MAX_INFERENCE_MODELS} 个模型，聚合的模型共 {} 个，多出的不写入",
+            model_specs.len()
+        );
+        model_specs.truncate(MAX_INFERENCE_MODELS);
+    }
+    let mut profile = build_gateway_profile(
+        &gateway_base_url(proxy_url),
+        &get_or_create_gateway_token(db)?,
+        Some(model_specs.as_slice()),
+    );
+    if !stack.is_empty() {
+        profile["modelDiscoveryEnabled"] = json!(false);
+    }
+    Ok(profile)
+}
 
-    validate_provider(provider)?;
-    let profile = match provider_mode(provider) {
-        ClaudeDesktopMode::Direct => {
-            let credentials = direct_gateway_credentials(provider)?;
-            let model_specs = direct_inference_model_specs(provider)?;
-            build_gateway_profile(
-                &credentials.base_url,
-                &credentials.api_key,
-                (!model_specs.is_empty()).then_some(model_specs.as_slice()),
-            )
-        }
-        ClaudeDesktopMode::Proxy => {
-            let base_url = proxy_gateway_base_url_from_db(db)?;
-            let api_key = get_or_create_gateway_token(db)?;
-            let routes = proxy_model_routes(provider)?;
-            let model_specs = routes
-                .iter()
-                .map(|route| InferenceModelSpec {
-                    name: route.route_id.clone(),
-                    label_override: route.label_override.clone(),
-                    supports_1m: route.supports_1m,
-                })
-                .collect::<Vec<_>>();
-            build_gateway_profile(&base_url, &api_key, Some(model_specs.as_slice()))
-        }
-    };
-
+fn write_profile_at_paths(
+    db: &Database,
+    paths: &ClaudeDesktopPaths,
+    op: &str,
+    profile: Value,
+    target: PendingTarget,
+) -> Result<(), AppError> {
     let deployment = deployment_mode_patch("3p");
     let profile = gateway_profile_patch(profile);
     let meta = MetaPatch { applied: true };
     write_desktop_files(
+        db,
         paths,
+        op,
         &[
             FileChange {
                 file: LiveFile::shared(&paths.normal_config_path),
@@ -1005,6 +1197,7 @@ fn apply_provider_to_paths(
                 patch: &meta,
             },
         ],
+        target,
     )
 }
 
@@ -1014,7 +1207,12 @@ fn apply_provider_to_paths(
 /// profile 文件本身保留、只清关键字段：用户在 Desktop 里对这个 profile 改的设置
 /// （#4774 的 auto 模式）下次切回第三方时还在，Key 也从磁盘上清掉了。Desktop 只按
 /// `_meta.json` 的条目读 profile，摘掉条目后这个文件不会被列出。
-fn restore_official_at_paths(paths: &ClaudeDesktopPaths) -> Result<(), AppError> {
+fn restore_official_at_paths(
+    db: &Database,
+    paths: &ClaudeDesktopPaths,
+    op: &str,
+    target: PendingTarget,
+) -> Result<(), AppError> {
     let normal = deployment_mode_patch("1p");
     let mut threep = deployment_mode_patch("1p");
     threep.remove = LEGACY_ENTERPRISE_GATEWAY_KEYS
@@ -1051,24 +1249,23 @@ fn restore_official_at_paths(paths: &ClaudeDesktopPaths) -> Result<(), AppError>
             patch: &profile,
         });
     }
-    write_desktop_files(paths, &changes)
+    write_desktop_files(db, paths, op, &changes, target)
 }
 
-/// Desktop 的几个文件作为一次操作写入：任何一个解析失败都不写；写到一半失败或崩溃，
-/// 下次写入或启动时按写前意图补完。
+/// Desktop 的几个文件作为一次操作写入，`target`（直连指针、模式状态）在文件都写完之后
+/// 落定：任何一个解析失败都不写；写到一半失败或崩溃，下次写入或启动时按写前意图补完。
 fn write_desktop_files(
+    db: &Database,
     paths: &ClaudeDesktopPaths,
+    op: &str,
     changes: &[FileChange<'_>],
+    target: PendingTarget,
 ) -> Result<(), AppError> {
-    let guard = lock_app(AppType::ClaudeDesktop.as_str());
-    operation::run(
-        &paths.device,
-        &guard,
-        state::op::APPLY,
-        changes,
-        PendingTarget::default(),
-        &|_| Ok(()),
-    )?;
+    let app = AppType::ClaudeDesktop.as_str();
+    let guard = lock_app(app);
+    operation::run(&paths.device, &guard, op, changes, target, &|target| {
+        operation::commit_target(db, &paths.device, app, target)
+    })?;
     Ok(())
 }
 
@@ -1414,6 +1611,45 @@ mod tests {
         paths
     }
 
+    /// 按卡片写一次：模型映射卡写成路由 profile（路由模式下路由到它），其余直连。
+    fn apply_provider_to_paths(
+        db: &Database,
+        provider: &Provider,
+        paths: &ClaudeDesktopPaths,
+    ) -> Result<(), AppError> {
+        let profile = if is_official_provider(provider) {
+            None
+        } else if needs_routing(provider) {
+            let gateway = proxy_gateway_base_url_from_db(db)?;
+            let origin = gateway
+                .strip_suffix(CLAUDE_DESKTOP_PROXY_PREFIX)
+                .unwrap_or(&gateway);
+            Some(route_profile(db, provider, origin, &[])?)
+        } else {
+            Some(direct_profile(provider)?)
+        };
+        let write = match &profile {
+            Some(profile) => DesktopTarget::Profile(profile),
+            None => DesktopTarget::Official,
+        };
+        run_at_paths(
+            db,
+            paths,
+            state::op::APPLY,
+            Some(write),
+            PendingTarget::default(),
+        )
+    }
+
+    fn restore_official(paths: &ClaudeDesktopPaths) -> Result<(), AppError> {
+        restore_official_at_paths(
+            &test_db(),
+            paths,
+            state::op::APPLY,
+            PendingTarget::default(),
+        )
+    }
+
     #[cfg(any(target_os = "linux", all(test, unix)))]
     #[test]
     fn linux_config_dir_uses_absolute_xdg_config_home_outside_flatpak() {
@@ -1649,7 +1885,7 @@ mod tests {
         );
         assert_eq!(
             profile["inferenceModels"],
-            json!([{ "name": "claude-sonnet-4-6", "supports1m": true }])
+            json!([{ "name": "claude-sonnet-4-6", "supports1m": true, "prefer1m": true }])
         );
     }
 
@@ -1667,6 +1903,97 @@ mod tests {
 
         let err = validate_provider(&provider).expect_err("direct mapping should fail");
         assert!(err.to_string().contains("本地路由模式"));
+    }
+
+    #[test]
+    fn claude_desktop_native_provider_without_catalog_can_start_routing() {
+        for with_meta in [false, true] {
+            let mut provider = direct_provider("native");
+            if !with_meta {
+                provider.meta = None;
+            } else {
+                provider.meta.as_mut().unwrap().claude_desktop_mode =
+                    Some(ClaudeDesktopMode::Direct);
+            }
+            let before = serde_json::to_value(&provider).expect("provider snapshot");
+            let db = test_db();
+            let profile = route_profile(&db, &provider, "http://127.0.0.1:15721", &[])
+                .expect("native provider should not need a pre-existing mapping");
+
+            assert_eq!(
+                profile["inferenceGatewayBaseUrl"],
+                json!("http://127.0.0.1:15721/claude-desktop")
+            );
+            assert_eq!(
+                profile["inferenceModels"],
+                json!([
+                    "claude-fable-5",
+                    "claude-haiku-4-5",
+                    "claude-opus-5",
+                    "claude-sonnet-5"
+                ])
+            );
+            let models = model_list_response(&provider).expect("local model discovery");
+            configured_proxy_model_routes(&provider)
+                .expect_err("bootstrap defaults must not become a configured catalog");
+            assert_eq!(models["data"].as_array().expect("models").len(), 4);
+            assert!(models["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|model| model.get("supports1m").is_none()));
+            assert_eq!(serde_json::to_value(&provider).unwrap(), before);
+            assert!(direct_profile(&provider)
+                .expect("direct profile remains valid")
+                .get("inferenceModels")
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn claude_desktop_native_default_routes_preserve_requested_model_versions() {
+        let provider = direct_provider("native");
+        for model in [
+            "claude-haiku-4-5-20251001",
+            "claude-opus-4-8",
+            "anthropic/claude-sonnet-4-6",
+        ] {
+            let mapped = map_proxy_request_model(
+                json!({"model": format!("{model} [1M]"), "messages": []}),
+                &provider,
+            )
+            .expect("native model should pass through without a version rewrite");
+            assert_eq!(mapped["model"], json!(model));
+        }
+        map_proxy_request_model(json!({"model": "unconfigured-model"}), &provider)
+            .expect_err("default native routes must not accept arbitrary model names");
+    }
+
+    #[test]
+    fn claude_desktop_mapping_provider_still_requires_explicit_routes() {
+        let mut provider = proxy_provider("mapping");
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes
+            .clear();
+
+        let error = validate_proxy_provider(&provider).expect_err("mapping is required");
+        assert!(error.to_string().contains("至少需要一个模型路由映射"));
+        route_profile(&test_db(), &provider, "http://127.0.0.1:15721", &[])
+            .expect_err("an empty mapping must not silently become native defaults");
+    }
+
+    #[test]
+    fn claude_desktop_default_routes_do_not_bypass_native_provider_validation() {
+        let mut provider = direct_provider("invalid-native");
+        provider.meta.as_mut().expect("meta").api_format = Some("openai_chat".to_string());
+        proxy_model_routes(&provider).expect_err("native defaults require native API format");
+
+        provider.meta.as_mut().expect("meta").api_format = Some("anthropic".to_string());
+        provider.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"] = json!("");
+        proxy_model_routes(&provider).expect_err("native defaults require credentials");
     }
 
     #[test]
@@ -1692,7 +2019,7 @@ mod tests {
             .starts_with("ccs-"));
         assert_eq!(
             profile["inferenceModels"],
-            json!([{ "name": "claude-sonnet-4-6", "labelOverride": "Kimi K2", "supports1m": true }])
+            json!([{ "name": "claude-sonnet-4-6", "labelOverride": "Kimi K2", "supports1m": true, "prefer1m": true }])
         );
         assert!(!profile.to_string().contains("kimi-k2"));
     }
@@ -2249,7 +2576,7 @@ mod tests {
         let db = test_db();
 
         apply_provider_to_paths(&db, &provider, &paths).expect("apply provider");
-        restore_official_at_paths(&paths).expect("restore official");
+        restore_official(&paths).expect("restore official");
 
         let normal: Value = read_json_file(&paths.normal_config_path).expect("read normal config");
         let threep: Value = read_json_file(&paths.threep_config_path).expect("read 3p config");
@@ -2288,7 +2615,7 @@ mod tests {
         .unwrap();
 
         apply_provider_to_paths(&db, &direct_provider_with_models("b"), &paths).expect("apply b");
-        restore_official_at_paths(&paths).expect("restore official");
+        restore_official(&paths).expect("restore official");
         apply_provider_to_paths(&db, &direct_provider("a"), &paths).expect("apply a again");
 
         let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
@@ -2332,7 +2659,7 @@ mod tests {
         );
         assert_eq!(meta["appliedId"], json!(PROFILE_ID));
 
-        restore_official_at_paths(&paths).expect("restore");
+        restore_official(&paths).expect("restore");
         let meta: Value = read_json_file(&paths.meta_path).expect("read meta");
         assert_eq!(
             meta["entries"],

@@ -95,6 +95,35 @@ export function blockedFromRouting(app: AppId, provider: Provider): boolean {
 
 // ─── 切换式应用（Claude Code / Codex / Gemini CLI / Grok Build）──────────────
 
+/**
+ * 故障转移队列里把一家上移 / 下移一格后，各家要写回的 sortIndex。队列顺序就是供应商的排序：
+ * 按队列成员原来占着的位置重新分配。位置必须两两不同，否则换位后并列、顺序看起来没动——
+ * 两家 sortIndex 相同，或新加的供应商没有 sortIndex、拿下标兜底时撞上别家的值，都会这样。
+ * 移不动（不在队列 / 已到头）返回 null。
+ */
+export function queueMoveSortUpdates(
+  items: { providerId: string; sortIndex?: number }[],
+  providers: Record<string, Pick<Provider, "sortIndex">>,
+  providerId: string,
+  delta: -1 | 1,
+): { id: string; sortIndex: number }[] | null {
+  const index = items.findIndex((item) => item.providerId === providerId);
+  const target = index + delta;
+  if (index < 0 || target < 0 || target >= items.length) return null;
+  const order = items.map((item) => item.providerId);
+  order.splice(index, 1);
+  order.splice(target, 0, providerId);
+  const slots = items
+    .map(
+      (item, i) => item.sortIndex ?? providers[item.providerId]?.sortIndex ?? i,
+    )
+    .sort((a, b) => a - b);
+  for (let i = 1; i < slots.length; i++) {
+    if (slots[i] <= slots[i - 1]) slots[i] = slots[i - 1] + 1;
+  }
+  return order.map((id, i) => ({ id, sortIndex: slots[i] }));
+}
+
 export interface SwitchModeInput {
   app: AppId;
   t: TFunction;
@@ -129,22 +158,30 @@ export function buildSwitchSections(input: SwitchModeInput): ProviderSection[] {
   const { t, active, directId, routeId } = input;
   // 后端 is_referenced：直连指针指着的、路由 / 聚合模式下正在路由的，都删不掉。
   // 不管当前看的是哪个视图都要标出来，否则确认后后端拒绝、确认框还卡在原地
-  const inUse = (id: string) =>
-    id === directId || (active !== "direct" && id === routeId);
-  const inUseReason = t("providerCard.reason.inUseCannotDelete");
+  // 路由 / 聚合时直连那家不算「正在用」，路由页卡上也不标，单独说明为什么删不掉
+  const deleteBlockedReason = (id: string) => {
+    if (active !== "direct" && id === routeId)
+      return t("providerCard.reason.inUseCannotDelete");
+    if (id === directId)
+      return active === "direct"
+        ? t("providerCard.reason.inUseCannotDelete")
+        : t("providerCard.reason.directDefaultCannotDelete");
+    return undefined;
+  };
   return buildSwitchSectionsByView(input).map((section) => ({
     ...section,
-    items: section.items.map((item) =>
-      inUse(item.provider.id)
+    items: section.items.map((item) => {
+      const reason = deleteBlockedReason(item.provider.id);
+      return reason
         ? {
             ...item,
             presentation: {
               ...item.presentation,
-              deleteDisabledReason: inUseReason,
+              deleteDisabledReason: reason,
             },
           }
-        : item,
-    ),
+        : item;
+    }),
   }));
 }
 
@@ -177,7 +214,7 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
       tone: "outline",
       title: input.routingReason(p),
     }),
-    // 只在直连页上标：那里的「回到直连」一步生效、不写名字，要靠它看出会落到哪家。
+    // 只在直连页上标：不用点开「回到直连」的确认框，在列表里就看得出会落到哪家。
     // 路由页上没有跟直连那家有关的操作，不标
     directWhenDirect: (): CardChip => ({
       key: "direct",
@@ -575,7 +612,11 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
         : t("providerCard.section.stackDefaultAfterSwitch"),
       help: {
         title: t("providerCard.section.stackDefault"),
-        body: t("providerCard.section.stackDefaultHelp"),
+        body: t(
+          app === "claude-desktop"
+            ? "providerCard.section.stackDefaultHelpDesktop"
+            : "providerCard.section.stackDefaultHelp",
+        ),
       },
       emptyText: t("providerCard.section.stackNoDefault"),
       items: defaultItems,
@@ -590,79 +631,6 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
       key: "available",
       title: t("providerCard.section.available", { count: availItems.length }),
       items: availItems,
-    },
-  ];
-}
-
-// ─── Claude Desktop ─────────────────────────────────────────────────────────
-
-export function buildDesktopSections({
-  t,
-  providers,
-  currentId,
-  onSwitch,
-}: {
-  t: TFunction;
-  providers: Provider[];
-  currentId: string;
-  onSwitch: (provider: Provider) => void;
-}): ProviderSection[] {
-  return [
-    {
-      key: "all",
-      items: providers.map((p) => {
-        const mapping = providerNeedsRouting("claude-desktop", p);
-        const chips: CardChip[] = [];
-        if (isOfficialAccount("claude-desktop", p)) {
-          chips.push({
-            key: "official",
-            label: t("providerCard.chip.official"),
-            tone: "outline",
-          });
-        }
-        const current = p.id === currentId;
-        chips.push(
-          mapping
-            ? {
-                key: "mapping",
-                label: t("providerCard.chip.mapping"),
-                tone: current ? "outline" : "route",
-              }
-            : {
-                key: "direct",
-                label: t("providerCard.chip.direct"),
-                tone: current ? "outline" : "direct",
-              },
-        );
-        if (current) {
-          return {
-            provider: p,
-            presentation: {
-              tone: mapping ? "route" : "direct",
-              status: {
-                label: t("providerCard.status.inUse"),
-                dot: mapping ? "route" : "direct",
-              },
-              chips,
-              buttons: [],
-              deleteDisabledReason: t("providerCard.reason.inUseCannotDelete"),
-            },
-          };
-        }
-        return {
-          provider: p,
-          presentation: {
-            chips,
-            buttons: [
-              {
-                key: "switch",
-                label: t("providerCard.action.switch"),
-                onClick: () => onSwitch(p),
-              },
-            ],
-          },
-        };
-      }),
     },
   ];
 }
