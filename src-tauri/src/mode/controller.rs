@@ -1202,7 +1202,8 @@ fn check_stack_member(app: &AppType, provider: &Provider) -> Result<(), String> 
         AppType::Codex => codex_direct::check_stack_member(provider).map_err(err)?,
         // 映射表不完整的卡发布不出模型，做默认时写入也会失败
         AppType::ClaudeDesktop => {
-            claude_desktop_config::validate_proxy_provider(provider).map_err(err)?
+            claude_desktop_config::validate_proxy_provider(provider).map_err(err)?;
+            claude_desktop_config::configured_proxy_model_routes(provider).map_err(err)?;
         }
         _ => {}
     }
@@ -5958,6 +5959,117 @@ model_provider = "c"
             Some("map"),
             "the route is kept for next time"
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn claude_desktop_native_direct_card_can_enter_routing_before_becoming_a_mapping_card() {
+        let home = Home::new();
+        let _dirs = DesktopDirs::under(&home);
+        seed_settings(USER_SETTINGS);
+        let desktop = AppType::ClaudeDesktop;
+        let mut native = desktop_card("native", false);
+        // This is the provider state that gets stuck: a native direct card with no saved catalog.
+        native.meta = None;
+        let state = state_with(desktop.clone(), &[native.clone()], &native.id).await;
+        let before = state
+            .db
+            .get_provider_by_id(&native.id, desktop.as_str())
+            .expect("read native Desktop card before routing")
+            .expect("native Desktop card is saved");
+
+        check_stack_member(&desktop, &native)
+            .expect_err("bootstrap defaults are not an explicit aggregation catalog");
+        assert!(stack::desktop_models("native", &native).is_empty());
+
+        enter_with_route(&state, &desktop, false, Some(&native.id))
+            .await
+            .expect("enter routing with the current native provider");
+        assert!(current::is_proxy(&desktop));
+        let profile = desktop_profile();
+        assert!(profile["inferenceGatewayBaseUrl"]
+            .as_str()
+            .is_some_and(|url| url.ends_with("/claude-desktop")));
+        let models = profile["inferenceModels"]
+            .as_array()
+            .expect("default native model routes");
+        assert_eq!(
+            profile["inferenceModels"],
+            json!([
+                "claude-fable-5",
+                "claude-haiku-4-5",
+                "claude-opus-5",
+                "claude-sonnet-5"
+            ])
+        );
+        assert!(models.iter().all(Value::is_string), "no synthetic 1M claim");
+
+        let stored_native = state
+            .db
+            .get_provider_by_id(&native.id, desktop.as_str())
+            .expect("read native Desktop card")
+            .expect("native Desktop card remains saved");
+        assert_eq!(stored_native.settings_config, native.settings_config);
+        assert_eq!(
+            serde_json::to_value(&stored_native.meta).expect("metadata after routing"),
+            serde_json::to_value(&before.meta).expect("metadata before routing"),
+            "routing must not persist its bootstrap catalog"
+        );
+        let dated_native_model = "claude-sonnet-5-20250929";
+        let passthrough = crate::claude_desktop_config::map_proxy_request_model(
+            json!({ "model": dated_native_model, "messages": [] }),
+            &stored_native,
+        )
+        .expect("preserve native dated model ID");
+        assert_eq!(passthrough["model"], json!(dated_native_model));
+
+        let mut mapped = stored_native;
+        let meta = mapped.meta.get_or_insert_with(Default::default);
+        meta.claude_desktop_mode = Some(crate::provider::ClaudeDesktopMode::Proxy);
+        meta.claude_desktop_model_routes = [(
+            "claude-sonnet-5".to_string(),
+            crate::provider::ClaudeDesktopModelRoute {
+                model: "edited-native-model".to_string(),
+                label_override: None,
+                supports_1m: None,
+            },
+        )]
+        .into_iter()
+        .collect();
+
+        let update_state = state.clone();
+        let update_app = desktop.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::services::provider::ProviderService::update(
+                &update_state,
+                update_app,
+                None,
+                mapped,
+            )
+        })
+        .await
+        .expect("join provider update")
+        .expect("save mapping on the same routed provider");
+
+        let stored_mapping = state
+            .db
+            .get_provider_by_id(&native.id, desktop.as_str())
+            .expect("read updated Desktop card")
+            .expect("updated Desktop card remains saved");
+        let profile = desktop_profile();
+        assert_eq!(profile["inferenceModels"], json!(["claude-sonnet-5"]));
+        let mapped_request = crate::claude_desktop_config::map_proxy_request_model(
+            json!({ "model": dated_native_model, "messages": [] }),
+            &stored_mapping,
+        )
+        .expect("resolve the new mapping");
+        assert_eq!(mapped_request["model"], json!("edited-native-model"));
+
+        state
+            .proxy_service
+            .stop()
+            .await
+            .expect("stop proxy service");
     }
 
     #[tokio::test]
