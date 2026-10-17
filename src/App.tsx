@@ -41,6 +41,7 @@ import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
 import { hermesApi } from "@/lib/api/hermes";
 import type { ProviderEditorSave } from "@/lib/api/providers";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
+import { useProxyEventStream } from "@/hooks/useProxyEventStream";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
 import {
   useTrayAppPageSeen,
@@ -107,6 +108,7 @@ import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { WhatsNewNotice } from "@/components/WhatsNewDialog";
 import { Badge } from "@/components/ui/badge";
+import ApprovalPrompt from "@/components/settings/ApprovalPrompt";
 import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -298,6 +300,7 @@ function App() {
   }, [activeApp, currentView]);
 
   const { isRunning: isProxyRunning, takeoverStatus } = useProxyStatus();
+  useProxyEventStream();
   const modeAppId = isModeAppId(activeApp) ? activeApp : null;
   // 换了应用、新面板还没报上来时为 undefined：表单按应用实际生效的模式
   const currentModeView =
@@ -1670,6 +1673,8 @@ function App() {
       <FirstRunNoticeDialog />
       <NewLayoutDialog />
       <WhatsNewNotice />
+      {/* 配对审批：挂在 App 这一层，与当前停在哪个页面无关。 */}
+      <ApprovalPrompt />
     </WindowControlsContext.Provider>
   );
 }

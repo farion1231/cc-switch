@@ -837,6 +837,17 @@
     "enableClaudePluginIntegrationDescription": "オンにすると VS Code の Claude Code 拡張のプロバイダーも同期します",
     "skipClaudeOnboarding": "Claude Code の初回確認をスキップ",
     "skipClaudeOnboardingDescription": "Claude Code は初回起動時にオンボーディングを行い、テーマの選択と Anthropic アカウントへのログインを求めます。サードパーティのプロバイダーを使う場合は公式アカウントへのログインが不要なため、オンにするとこの手順を飛ばしてすぐに使えます。仕組みとしては ~/.claude.json に hasCompletedOnboarding: true を書き込みます。オフにするとこのフィールドを削除し、次回起動時に再びオンボーディングが表示されます。",
+    "remoteEnabled": "リモート管理サーバーを有効にする",
+    "remoteManagement": "リモート管理",
+    "remoteEnabledDescription": "ブラウザからプロバイダーを切り替え。",
+    "remotePort": "サーバーポート",
+    "remotePortDescription": "リモート管理 HTTP サーバーのリスニングポート（1024-65535）。",
+    "remoteRestart": "サーバーを再起動",
+    "remoteRestarting": "再起動中...",
+    "remoteRestartSuccess": "リモート管理サーバーが再起動されました。",
+    "remoteRestartFailed": "リモート管理サーバーの再起動に失敗しました。",
+    "remoteStatusRunning": "稼働中",
+    "remoteStatusStopped": "停止中",
     "codexAuth": "Codex アプリ拡張",
     "preserveCodexOfficialAuthOnSwitch": "直接切替時に公式ログインを保持",
     "preserveCodexOfficialAuthOnSwitchDescription": "ローカルルーティングが無効な場合のサードパーティ切替を制御します。ルーティング接管中は常に Codex の公式ログインを保持します。",
@@ -4102,6 +4113,73 @@
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
+  },
+  "remote": {
+    "approval": {
+      "title": "デバイスの承認が必要です",
+      "evidence": {
+        "tailnet": "テイルネット",
+        "loopback": "ループバック",
+        "unavailable": "利用できません",
+        "nodeName": "ノード",
+        "nodeStableId": "安定 ID",
+        "loginName": "アカウント",
+        "peerAddr": "接続元アドレス",
+        "loopbackDescription": "このマシン上のプロセスからのリクエストです。",
+        "notInTailnet": "テイルネット外",
+        "notInTailnetDescription": "このリクエストのアドレスは現在のテイルネットに含まれていません。",
+        "unavailableDescription": "このリクエストの発信元を確認できませんでした。",
+        "degradedAck": "発信元を確認できないことを理解しました。"
+      },
+      "userCode": {
+        "label": "確認コード",
+        "empty": "コードがまだありません。この端末でリンクを開いて続行してください。"
+      },
+      "foreignAccount": {
+        "warning": "この端末は別のアカウントでサインインしています。承認前にアカウントを切り替えてください。",
+        "ack": "別の端末でアカウントを確認しました。"
+      },
+      "approve": "承認",
+      "reject": "拒否",
+      "close": "閉じる",
+      "failed": "承認リクエストを完了できませんでした。",
+      "client": {
+        "label": "リクエスト元の端末"
+      },
+      "defaultAction": {
+        "approve": "推奨アクション: 承認",
+        "reject": "推奨アクション: 拒否"
+      }
+    },
+    "settings": {
+      "bindScope": {
+        "label": "バインド範囲",
+        "confirm": "バインド範囲を確認",
+        "description": "リモート管理サーバーがリッスンするネットワークインターフェース。",
+        "loopback": "このマシンのみ",
+        "loopbackDescription": "127.0.0.1 のみでリッスンします。他のデバイスは接続できません。",
+        "tailscale": "Tailscale のみ",
+        "tailscaleDescription": "127.0.0.1 と Tailscale IP でリッスンします。テイルネット内のデバイスが接続できます。",
+        "allInterfaces": "すべてのネットワークインターフェース",
+        "allInterfacesDescription": "0.0.0.0 でリッスンします。このマシンの LAN または Tailscale アドレスに到達できる任意のデバイスが接続できます。",
+        "widenTitle": "バインド範囲を広げますか？",
+        "widenTransition": "現在：{{current}} → 対象：{{target}}",
+        "newAddresses": "新たに到達可能になるアドレス：",
+        "allInterfacesAddress": "すべてのネットワークインターフェース（0.0.0.0）、ポート {{port}}",
+        "credentialNote": "非ループバック送信元からのリクエストには引き続きペアリング資格情報が必要です。",
+        "cancel": "キャンセル",
+        "applied": "バインド範囲を更新しました。",
+        "notApplied": "バインド範囲は変更されていません。",
+        "failed": "バインド範囲の変更に失敗しました。",
+        "tailscaleUnavailable": "Tailscale がインストールされていないか実行されていません。先に Tailscale をインストールしてください。"
+      },
+      "cors": {
+        "mode": "CORS モード"
+      },
+      "origin": {
+        "whitelist": "オリジン許可リスト"
+      }
+    }
   },
   "nav": {
     "mainLabel": "メインナビゲーション",

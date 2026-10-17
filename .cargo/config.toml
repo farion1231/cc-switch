@@ -1,0 +1,28 @@
+# 让每一次 `cargo test` 都落在隔离的 home 下，而不是真实的 ~/.cc-switch。
+#
+# 背景：测试隔离原本靠每个测试文件自己 set_var("CC_SWITCH_TEST_HOME")。
+# `src-tauri/src/**` 的单元测试和调 `tests/support.rs::ensure_test_home()` 的集成测试
+# 都这么做了，但漏设的文件在**开发者本机**会直接读写真实用户数据（provider 配置、
+# 凭据、用量库），而 CI 发现不了这类缺陷 —— runner 的 $HOME 是一次性的，
+# 同样的代码在 CI 上只会写进临时目录然后随机器销毁。
+#
+# 放在 cargo 配置里是因为它是唯一对**所有**跑法生效的位置：谁跑、怎么跑、
+# 记不记得设，都不影响。这正好覆盖了「新写的代码路径解析到真实配置目录」
+# 这一类失效 —— 它已经真实发生过一次，而那时没有任何东西拦得住。
+#
+# `relative = true`：值是相对本文件所在 `.cargo/` 的父目录（仓根）解析，
+# 交给测试二进制的是绝对路径，与 cwd 和机器路径无关。
+# 指向 `src-tauri/target/` 下：那一层已被 `src-tauri/.gitignore` 的 `/target/` 覆盖。
+# `force = false`（默认值，显式写出来是为了表明这是刻意的）：父进程或测试自己
+# 设过 `CC_SWITCH_TEST_HOME` 时以它为准，所以 `ensure_test_home()` 之类的
+# 显式覆盖行为完全不变，调试时也可以 `CC_SWITCH_TEST_HOME=/tmp/x cargo test` 压过去。
+#
+# 目录不需要预置任何内容：`Database::init()` 会 `create_dir_all` 父目录、
+# 建库文件并 `create_tables()`，配置写入点也各自兜了 `create_dir_all`。
+# 空目录就是完整契约。
+#
+# 这个目录**不会**在每次运行前被清空（`ensure_test_home()` 会清它自己那份，
+# 但不会清这份）。依赖「全新安装」语义的测试应该在第二次运行时失败 —— 那是
+# 一个响亮的信号，不是静默污染；`cargo clean` 或直接删掉该目录即可复位。
+[env]
+CC_SWITCH_TEST_HOME = { value = "src-tauri/target/cc-switch-test-home", relative = true, force = false }

@@ -2554,8 +2554,19 @@ mod tests {
         Ok(())
     }
 
+    /// 这条会经 `sync_test_file` → 生产同步链路 → `resolve_continuation_baseline`
+    /// → `load_parent_timeline`，也就是**会往进程级全局 `parent_timelines` 里写**。
+    ///
+    /// 因此它和另外 4 个 `parent_signatures_before` 的调用方一样必须 serial + 清场：
+    /// 它没有 serial 时，`cargo test`（多线程、共享一个进程）下它与
+    /// `test_parent_rollout_nanosecond_cutoffs_are_exact` 并发跑，把自己 tempdir 的
+    /// 路径塞进同一个 map，于是对方那句
+    /// `assert_eq!(parent_timelines.len(), expected_entries)` 看到 2 而不是 1。
+    /// nextest 每测试一进程、共享不到那个 map，所以只在 `cargo test` 下红。
     #[test]
+    #[serial_test::serial]
     fn test_unchanged_incomplete_tail_is_skipped_after_cursor_reload() -> Result<(), AppError> {
+        clear_codex_replay_caches();
         use std::io::Write;
         for has_usage in [false, true] {
             for tail in ["{\"type\":\"event_msg\"", "  "] {

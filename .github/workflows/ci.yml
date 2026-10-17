@@ -26,6 +26,7 @@ jobs:
       # 定时 / 手动运行不过滤（过滤步骤被跳过、输出为空），一律当作两边都有改动
       frontend: ${{ steps.filter.outputs.frontend || 'true' }}
       backend: ${{ steps.filter.outputs.backend || 'true' }}
+      remote_auth: ${{ steps.filter.outputs.remote_auth }}
     steps:
       # On pull_request the filter reads changed files via the API (no checkout);
       # on push it needs a local git history to diff against.
@@ -38,9 +39,17 @@ jobs:
         if: github.event_name == 'pull_request' || github.event_name == 'push'
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
+          # 触发按**改动面**分层，不按测试类型分层：
+          # - `remote_auth`（remote / auth / pairing 及其门禁用例）→ Rust 全套
+          #   （fmt + clippy -D warnings + 默认 cargo test）与全部静态门禁，
+          #   外加需要真实网络环境的 `remote-auth-e2e` 专用 job；
+          # - `frontend`（`src/**`，含 `src/i18n/**` 与 `tests/**`，locale 门禁
+          #   就在后者里）→ vitest；
+          # - 两边都改 → 两边都跑；push 到 main → 无条件全跑，维持缓存温度。
           filters: |
             frontend:
               - "src/**"
+              - "src/i18n/**"
               - "tests/**"
               - "index.html"
               - "package.json"
@@ -58,6 +67,16 @@ jobs:
               - "src-tauri/**"
               - "rust-toolchain.toml"
               - ".github/workflows/**"
+            remote_auth:
+              - "src-tauri/src/remote/**"
+              - "src-tauri/src/remote/auth/**"
+              - "src-tauri/src/remote/pairing/**"
+              - "src-tauri/tests/auth_*.rs"
+              - "src-tauri/tests/route_scope_gate.rs"
+              - "src-tauri/tests/route_scope_prereq_gate.rs"
+              - "src-tauri/tests/events_sink_gate.rs"
+              - "src-tauri/tests/privacy_gate.rs"
+              - "src-tauri/tests/ci_workflow_gate.rs"
 
   frontend:
     name: Frontend Checks
@@ -177,6 +196,64 @@ jobs:
       # ignored，nextest 不跑 doctest 也不漏。
       - name: Run tests
         run: cargo nextest run --manifest-path src-tauri/Cargo.toml --profile ci
+
+  remote-auth-e2e:
+    name: Remote Auth E2E (tailnet required)
+    runs-on: macos-latest
+    needs: changes
+    # 改动面分层：只有 remote/auth/pairing 动过才跑这一侧。
+    # push 到 main 一律跑完 —— 缓存要靠它养热。
+    if: github.event_name != 'pull_request' || needs.changes.outputs.remote_auth == 'true'
+    env:
+      # 非 loopback / tailnet 那一侧的用例需要一块可绑定的真实网卡地址。
+      # 缺环境时它们只打印一行 `SKIP:`；本 job 把跳过升级成失败 —— 它的全部
+      # 意义就是跑这一侧，静默跳过等于把整条锁摘掉，而报告里看不出来。
+      CC_SWITCH_REQUIRE_TAILNET: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo registry and build
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Create frontend dist placeholder
+        shell: bash
+        run: mkdir -p dist
+
+      # 默认 `cargo test`：不加测试名过滤、不加 `--ignored`。本轮新增的用例必须
+      # 由默认套件覆盖 —— 一个被收窄掉的用例等于不存在。
+      # `--nocapture` 是为了让 `SKIP:` 行进得了日志（通过用例的 stdout 默认被吞）。
+      - name: Run tests (a skip counts as a failure here)
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml -- --nocapture 2>&1 | tee /tmp/remote-auth-e2e.log
+
+      # 报告里 skip 与 fail 分列，读者不必去猜「没跑」还是「跑了没过」。
+      - name: Report skips and failures separately
+        if: always()
+        shell: bash
+        run: |
+          echo "== fail =="
+          grep -E '^(failures:|error: test failed)' /tmp/remote-auth-e2e.log || echo "(none)"
+          echo "== skip =="
+          grep -E '^SKIP: ' /tmp/remote-auth-e2e.log || echo "(none)"
+          if grep -qE '^SKIP: ' /tmp/remote-auth-e2e.log; then
+            echo "::error::remote-auth-e2e 出现 SKIP —— 远端认证这一侧没有真跑"
+            exit 1
+          fi
 
   backend-windows-wsl2:
     name: Backend Checks (Windows + WSL2 home)

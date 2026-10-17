@@ -8,6 +8,7 @@ use cc_switch_lib::{update_settings, AppSettings, AppState, Database, MultiAppCo
 /// cargo test 下每个测试二进制一个进程、二进制之间顺序执行，共用一个固定目录即可。
 /// nextest 每个测试一个进程、多个进程并发，各自启动时都会清空目录，所以按槽位分开：
 /// 槽位号在同时运行的测试之间唯一、测试结束后复用，目录数不超过并发数。
+#[allow(dead_code)]
 pub fn ensure_test_home() -> &'static Path {
     static HOME: OnceLock<PathBuf> = OnceLock::new();
     HOME.get_or_init(|| {
@@ -37,6 +38,7 @@ pub fn ensure_test_home() -> &'static Path {
 }
 
 /// 清理测试目录中生成的配置文件与缓存。
+#[allow(dead_code)]
 pub fn reset_test_fs() {
     let home = ensure_test_home();
     for sub in [
