@@ -88,6 +88,9 @@ pub(crate) struct SyncCursor {
     /// 外部重写；NULL 表示无指纹可校验。
     pub last_tail_fingerprint: Option<i64>,
     pub last_synced_at: i64,
+    /// Pi 的分支思考强度上下文是否已保存；正文仅在追加解析时按需读取。
+    pub has_pi_usage_context: bool,
+    pub reasoning_effort_synced: bool,
 }
 
 /// 一次性预取 session_log_sync 全表游标。
@@ -101,7 +104,7 @@ pub(crate) fn load_sync_cursors(db: &Database) -> Result<HashMap<String, SyncCur
     let mut stmt = conn
         .prepare(
             "SELECT file_path, last_modified, last_line_offset, last_synced_at, last_byte_offset,
-                    last_tail_fingerprint
+                    last_tail_fingerprint, pi_usage_context IS NOT NULL, reasoning_effort_synced
              FROM session_log_sync",
         )
         .map_err(|e| AppError::Database(format!("预取同步游标失败: {e}")))?;
@@ -114,6 +117,8 @@ pub(crate) fn load_sync_cursors(db: &Database) -> Result<HashMap<String, SyncCur
                 last_synced_at: row.get(3)?,
                 last_byte_offset: row.get(4)?,
                 last_tail_fingerprint: row.get(5)?,
+                has_pi_usage_context: row.get(6)?,
+                reasoning_effort_synced: row.get(7)?,
             },
         ))
     });
@@ -192,6 +197,7 @@ pub struct DataSourceSummary {
 struct ParsedAssistantUsage {
     message_id: String,
     model: String,
+    reasoning_effort: Option<String>,
     input_tokens: u32,
     output_tokens: u32,
     cache_read_tokens: u32,
@@ -200,6 +206,91 @@ struct ParsedAssistantUsage {
     stop_reason: Option<String>,
     timestamp: Option<String>,
     session_id: Option<String>,
+}
+
+/// Claude 的逐轮覆盖优先于请求默认值；不读取当前配置或 thinking token 数。
+fn claude_reasoning_effort(value: &serde_json::Value) -> Option<String> {
+    ["perTurnEffort", "effort"]
+        .iter()
+        .filter_map(|key| value.get(key).and_then(serde_json::Value::as_str))
+        .map(str::trim)
+        .find(|effort| !effort.is_empty())
+        .map(str::to_owned)
+}
+
+/// 仅补已有会话明细的缺失字段，不能创建已被 rollup 清理的请求，也不覆盖路由记录。
+pub(crate) fn backfill_reasoning_effort_on_conn(
+    conn: &rusqlite::Connection,
+    request_id: &str,
+    data_source: &str,
+    effort: Option<&str>,
+) -> Result<usize, AppError> {
+    let Some(effort) = effort else { return Ok(0) };
+    conn.prepare_cached(
+        "UPDATE proxy_request_logs SET reasoning_effort = ?1
+         WHERE request_id = ?2 AND data_source = ?3 AND reasoning_effort IS NULL",
+    )?
+    .execute(rusqlite::params![effort, request_id, data_source])
+    .map_err(|e| AppError::Database(format!("补录会话思考强度失败: {e}")))
+}
+
+pub(crate) fn mark_reasoning_effort_synced(
+    conn: &rusqlite::Connection,
+    file_path: &str,
+) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE session_log_sync SET reasoning_effort_synced = 1 WHERE file_path = ?1",
+        [file_path],
+    )?;
+    Ok(())
+}
+
+fn backfill_claude_reasoning_effort(db: &Database, file_path: &Path) -> Result<(), AppError> {
+    let file = fs::File::open(file_path)
+        .map_err(|e| AppError::Config(format!("无法打开 Claude 会话: {e}")))?;
+    let mut reader = BufReader::new(file);
+    let mut buf = Vec::new();
+    let mut efforts = HashMap::new();
+    loop {
+        buf.clear();
+        reader
+            .read_until(b'\n', &mut buf)
+            .map_err(|e| AppError::Config(format!("读取 Claude 会话失败: {e}")))?;
+        if buf.is_empty() {
+            break;
+        }
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&buf) else {
+            continue;
+        };
+        if value.get("type").and_then(serde_json::Value::as_str) != Some("assistant") {
+            continue;
+        }
+        if let (Some(id), Some(effort)) = (
+            value
+                .pointer("/message/id")
+                .and_then(serde_json::Value::as_str),
+            claude_reasoning_effort(&value),
+        ) {
+            efforts.insert(id.to_owned(), effort);
+        }
+    }
+    let conn = lock_conn!(db.conn);
+    let tx = conn.unchecked_transaction()?;
+    let mut updated = 0;
+    for (id, effort) in efforts {
+        let request_id = format!(
+            "{}{id}",
+            crate::proxy::usage::parser::SESSION_REQUEST_ID_PREFIX
+        );
+        updated +=
+            backfill_reasoning_effort_on_conn(&tx, &request_id, "session_log", Some(&effort))?;
+    }
+    mark_reasoning_effort_synced(&tx, &file_path.to_string_lossy())?;
+    tx.commit()?;
+    if updated > 0 {
+        crate::usage_events::notify_log_recorded();
+    }
+    Ok(())
 }
 
 /// 估算出的请求耗时短于这个毫秒数就不要：真实请求不可能这么快，多半是起点取错了。
@@ -631,6 +722,11 @@ fn sync_single_file(
     let last_byte_offset = cursor.and_then(|c| c.last_byte_offset);
     let last_fingerprint = cursor.and_then(|c| c.last_tail_fingerprint);
 
+    // 升级补录只 UPDATE 明细，不重置游标：被汇总删除的旧请求绝不能重新导入。
+    if cursor.is_some_and(|c| !c.reasoning_effort_synced) {
+        backfill_claude_reasoning_effort(db, file_path)?;
+    }
+
     // 文件未变化则跳过
     if file_modified <= last_modified {
         return Ok(ClaudeFileSync::default());
@@ -783,8 +879,9 @@ fn sync_single_file(
             None => continue,
         };
 
-        let parsed = ParsedAssistantUsage {
+        let mut parsed = ParsedAssistantUsage {
             message_id: msg_id.clone(),
+            reasoning_effort: claude_reasoning_effort(&value),
             model: message
                 .get("model")
                 .and_then(|v| v.as_str())
@@ -817,6 +914,15 @@ fn sync_single_file(
                 .map(|s| s.to_string()),
             session_id: current_session_id.clone(),
         };
+
+        // 各流式块共享请求设置；最终块缺字段时保留先前块的强度。
+        if let Some(existing) = messages.get_mut(&msg_id) {
+            if parsed.reasoning_effort.is_none() {
+                parsed.reasoning_effort = existing.reasoning_effort.clone();
+            } else if existing.reasoning_effort.is_none() {
+                existing.reasoning_effort = parsed.reasoning_effort.clone();
+            }
+        }
 
         // 按 message.id 去重：优先保留有 stop_reason 的条目，否则保留最新的
         let should_replace = match messages.get(&msg_id) {
@@ -952,8 +1058,8 @@ fn update_claude_sync_state_on_conn(
     conn.prepare_cached(
         "INSERT OR REPLACE INTO session_log_sync
              (file_path, last_modified, last_line_offset, last_synced_at, last_byte_offset,
-              last_tail_fingerprint)
-         VALUES (?1, ?2, 0, ?3, ?4, ?5)",
+              last_tail_fingerprint, reasoning_effort_synced)
+         VALUES (?1, ?2, 0, ?3, ?4, ?5, 1)",
     )
     .and_then(|mut stmt| {
         stmt.execute(rusqlite::params![
@@ -1023,10 +1129,20 @@ pub(crate) fn update_sync_state_on_conn(
         .unwrap_or(0);
 
     conn.prepare_cached(
-        "INSERT OR REPLACE INTO session_log_sync (file_path, last_modified, last_line_offset, last_synced_at)
-         VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO session_log_sync (file_path, last_modified, last_line_offset, last_synced_at)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(file_path) DO UPDATE SET last_modified = excluded.last_modified,
+             last_line_offset = excluded.last_line_offset, last_synced_at = excluded.last_synced_at,
+             last_byte_offset = NULL, last_tail_fingerprint = NULL",
     )
-    .and_then(|mut stmt| stmt.execute(rusqlite::params![file_path, last_modified, last_offset, now]))
+    .and_then(|mut stmt| {
+        stmt.execute(rusqlite::params![
+            file_path,
+            last_modified,
+            last_offset,
+            now
+        ])
+    })
     .map_err(|e| AppError::Database(format!("更新同步状态失败: {e}")))?;
     Ok(())
 }
@@ -1125,6 +1241,12 @@ fn refresh_session_log_entry_on_conn(
     if stored.data_source != "session_log" {
         return Ok(SessionRowOutcome::Skipped);
     }
+    let effort_updated = backfill_reasoning_effort_on_conn(
+        conn,
+        request_id,
+        "session_log",
+        msg.reasoning_effort.as_deref(),
+    )? > 0;
     let output_grew = i64::from(msg.output_tokens) > stored.output_tokens;
     let latency_ms = timing.map_or(stored.latency_ms, |timing| {
         timing.latency_ms.max(stored.latency_ms)
@@ -1134,7 +1256,11 @@ fn refresh_session_log_entry_on_conn(
         .first_token_ms
         .or(timing.and_then(|timing| timing.first_token_ms));
     if !output_grew && latency_ms == stored.latency_ms && first_token_ms == stored.first_token_ms {
-        return Ok(SessionRowOutcome::Skipped);
+        return Ok(if effort_updated {
+            SessionRowOutcome::Updated
+        } else {
+            SessionRowOutcome::Skipped
+        });
     }
 
     if !output_grew {
@@ -1240,8 +1366,8 @@ fn upsert_session_log_entry_on_conn(
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
-            provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+            provider_type, is_streaming, cost_multiplier, created_at, data_source, reasoning_effort
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
             rusqlite::params![
                 request_id,
                 "_session",         // provider_id: 标记为会话来源
@@ -1267,6 +1393,7 @@ fn upsert_session_log_entry_on_conn(
                 "1.0",              // cost_multiplier
                 created_at,
                 "session_log",      // data_source
+                msg.reasoning_effort,
             ],
         )
         .map_err(|e| AppError::Database(format!("插入会话日志失败: {e}")))?;
@@ -1397,6 +1524,7 @@ mod tests {
 
         // 中间条目（无 stop_reason）
         let intermediate = ParsedAssistantUsage {
+            reasoning_effort: None,
             message_id: "msg_1".to_string(),
             model: "claude-opus-4-6".to_string(),
             input_tokens: 3,
@@ -1412,6 +1540,7 @@ mod tests {
 
         // 最终条目（有 stop_reason）
         let final_entry = ParsedAssistantUsage {
+            reasoning_effort: None,
             message_id: "msg_1".to_string(),
             model: "claude-opus-4-6".to_string(),
             input_tokens: 3,
@@ -1464,6 +1593,7 @@ mod tests {
         }
 
         let msg = ParsedAssistantUsage {
+            reasoning_effort: None,
             message_id: "msg_1".to_string(),
             model: "claude-sonnet-4-5".to_string(),
             input_tokens: 100,
@@ -1576,6 +1706,120 @@ mod tests {
         let file = fs::OpenOptions::new().append(true).open(path).unwrap();
         file.set_times(fs::FileTimes::new().set_modified(later))
             .unwrap();
+    }
+
+    #[test]
+    fn test_claude_reasoning_effort_per_request_and_streaming_blocks() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("session.jsonl");
+        let mut first: serde_json::Value = serde_json::from_str(&assistant_line("a", 1)).unwrap();
+        first["effort"] = serde_json::json!("high");
+        first["perTurnEffort"] = serde_json::json!("max");
+        first["message"]["stop_reason"] = serde_json::Value::Null;
+        fs::write(
+            &file,
+            format!(
+                "{first}\n{}\n{}\n",
+                assistant_line("a", 20),
+                assistant_line("b", 30)
+            ),
+        )
+        .unwrap();
+        assert_eq!(sync_with_cursor(&db, &file)?.imported, 2);
+        let a = db.get_request_detail("session:a")?.unwrap();
+        assert_eq!(a.reasoning_effort.as_deref(), Some("max"));
+        assert_eq!(a.output_tokens, 20);
+        assert_eq!(
+            db.get_request_detail("session:b")?
+                .unwrap()
+                .reasoning_effort,
+            None
+        );
+
+        // 同一请求稍后补元数据，即使 tokens 不增长也应补录并刷新 UI。
+        let mut last: serde_json::Value = serde_json::from_str(&assistant_line("b", 30)).unwrap();
+        last["effort"] = serde_json::json!("low");
+        last["perTurnEffort"] = serde_json::Value::Null;
+        use std::io::Write;
+        writeln!(
+            fs::OpenOptions::new().append(true).open(&file).unwrap(),
+            "{last}"
+        )
+        .unwrap();
+        bump_mtime(&file);
+        assert_eq!(sync_with_cursor(&db, &file)?.imported, 1);
+        assert_eq!(
+            db.get_request_detail("session:b")?
+                .unwrap()
+                .reasoning_effort
+                .as_deref(),
+            Some("low")
+        );
+        assert_eq!(
+            claude_reasoning_effort(
+                &serde_json::json!({"thinkingMetadata": {"maxThinkingTokens": 10000}, "effort": " "})
+            ),
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_claude_reasoning_effort_backfill_keeps_cursor_and_pruned_rows() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("session.jsonl");
+        let mut lines = Vec::new();
+        for id in ["kept", "pruned", "known", "proxy"] {
+            let mut value: serde_json::Value =
+                serde_json::from_str(&assistant_line(id, 10)).unwrap();
+            value["effort"] = serde_json::json!("high");
+            lines.push(value.to_string());
+        }
+        fs::write(&file, format!("{}\n", lines.join("\n"))).unwrap();
+        assert_eq!(sync_with_cursor(&db, &file)?.imported, 4);
+        let before = db.get_request_detail("session:kept")?.unwrap();
+        let cursor = load_sync_cursors(&db)?[file.to_string_lossy().as_ref()];
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute_batch("UPDATE proxy_request_logs SET reasoning_effort = NULL;
+                DELETE FROM proxy_request_logs WHERE request_id = 'session:pruned';
+                UPDATE proxy_request_logs SET reasoning_effort = 'low' WHERE request_id = 'session:known';
+                UPDATE proxy_request_logs SET data_source = 'proxy' WHERE request_id = 'session:proxy';
+                UPDATE session_log_sync SET reasoning_effort_synced = 0;")?;
+        }
+        for _ in 0..2 {
+            assert_eq!(sync_with_cursor(&db, &file)?.imported, 0);
+        }
+        let after = db.get_request_detail("session:kept")?.unwrap();
+        assert_eq!(after.reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(after.total_cost_usd, before.total_cost_usd);
+        assert_eq!(after.output_tokens, before.output_tokens);
+        assert!(db.get_request_detail("session:pruned")?.is_none());
+        assert_eq!(
+            db.get_request_detail("session:known")?
+                .unwrap()
+                .reasoning_effort
+                .as_deref(),
+            Some("low")
+        );
+        assert_eq!(
+            db.get_request_detail("session:proxy")?
+                .unwrap()
+                .reasoning_effort,
+            None
+        );
+        let after_cursor = load_sync_cursors(&db)?[file.to_string_lossy().as_ref()];
+        assert!(after_cursor.reasoning_effort_synced);
+        assert_eq!(after_cursor.last_modified, cursor.last_modified);
+        assert_eq!(after_cursor.last_byte_offset, cursor.last_byte_offset);
+        assert_eq!(
+            after_cursor.last_tail_fingerprint,
+            cursor.last_tail_fingerprint
+        );
+        Ok(())
     }
 
     #[test]

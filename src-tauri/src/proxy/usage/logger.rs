@@ -89,11 +89,20 @@ pub struct RequestLog {
 /// 使用量记录器
 pub struct UsageLogger<'a> {
     db: &'a Database,
+    reasoning_effort: Option<&'a str>,
 }
 
 impl<'a> UsageLogger<'a> {
     pub fn new(db: &'a Database) -> Self {
-        Self { db }
+        Self {
+            db,
+            reasoning_effort: None,
+        }
+    }
+
+    pub fn with_reasoning_effort(mut self, effort: Option<&'a str>) -> Self {
+        self.reasoning_effort = effort;
+        self
     }
 
     /// 记录成功的请求
@@ -172,8 +181,8 @@ impl<'a> UsageLogger<'a> {
                 input_token_semantics,
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                 latency_ms, first_token_ms, status_code, error_message, session_id,
-                provider_type, is_streaming, cost_multiplier, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)"
+                provider_type, is_streaming, cost_multiplier, created_at, reasoning_effort
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)"
         );
         let affected_rows = conn
             .execute(
@@ -204,6 +213,7 @@ impl<'a> UsageLogger<'a> {
                     log.is_streaming as i64,
                     log.cost_multiplier,
                     created_at,
+                    self.reasoning_effort,
                 ],
             )
             .map_err(|e| AppError::Database(format!("记录请求日志失败: {e}")))?;
@@ -459,6 +469,32 @@ mod tests {
             is_streaming: true,
             cost_multiplier: "1".to_string(),
         }
+    }
+
+    #[test]
+    fn test_reasoning_effort_round_trips_through_usage_queries() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        UsageLogger::new(&db)
+            .with_reasoning_effort(Some("xhigh"))
+            .log_request(&request_log("with-effort", 10))?;
+        UsageLogger::new(&db).log_request(&request_log("without-effort", 20))?;
+
+        let logs =
+            db.get_request_logs(&crate::services::usage_stats::LogFilters::default(), 0, 20)?;
+        assert_eq!(logs.total, 2);
+        for log in logs.data {
+            let expected = (log.request_id == "with-effort").then_some("xhigh");
+            assert_eq!(log.reasoning_effort.as_deref(), expected);
+            let detail = db.get_request_detail(&log.request_id)?.unwrap();
+            assert_eq!(detail.reasoning_effort.as_deref(), expected);
+            let json = serde_json::to_value(&detail).unwrap();
+            assert_eq!(
+                json.get("reasoningEffort")
+                    .and_then(serde_json::Value::as_str),
+                expected
+            );
+        }
+        Ok(())
     }
 
     #[test]
