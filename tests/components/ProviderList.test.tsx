@@ -195,6 +195,110 @@ describe("ProviderList Component", () => {
     expect(container.querySelectorAll(".border-dashed")).toHaveLength(3);
   });
 
+  it.each([
+    [true, "codexDesktop.switchAndRestart"],
+    [false, "codexDesktop.switchAndOpen"],
+  ])(
+    "uses the desktop running state for the combined switch menu (%s)",
+    async (running, label) => {
+      const provider = createProvider({ id: "next", name: "Next account" });
+      const action = vi.fn();
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [provider],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      renderWithQueryClient(
+        <ProviderList
+          {...baseProps}
+          providers={{ next: provider }}
+          appId="codex"
+          switchMode={switchMode()}
+          onSwitchAndRestart={action}
+          desktopRunning={running}
+        />,
+      );
+      await waitFor(() => expect(lastProps("next")).toBeDefined());
+      const menu = lastProps("next").presentation.menuItems.find(
+        (item: any) => item.key === "switchAndRestart",
+      );
+      expect(menu.label).toBe(label);
+      menu.onSelect();
+      expect(action).toHaveBeenCalledWith(provider);
+    },
+  );
+
+  it.each([
+    ["current direct card", { directId: "next" }, {}],
+    ["needs routing", {}, { meta: { apiFormat: "openai_chat" } }],
+    ["route mode", { active: "route", view: "route" }, {}],
+    ["direct preview while routing", { active: "route", view: "direct" }, {}],
+    ["route preview", { active: "direct", view: "route" }, {}],
+    ["Stack mode", { active: "stack", view: "stack" }, {}],
+    [
+      "blocked routing card",
+      { active: "route", view: "route" },
+      {
+        category: "official",
+        settingsConfig: { auth: { OPENAI_API_KEY: "fixture-key" } },
+      },
+    ],
+  ] as const)(
+    "does not offer a combined desktop action for %s",
+    async (_name, mode, changes) => {
+      const provider = createProvider({ id: "next", ...changes });
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [provider],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      renderWithQueryClient(
+        <ProviderList
+          {...baseProps}
+          providers={{ next: provider }}
+          appId="codex"
+          switchMode={switchMode(mode)}
+          onSwitchAndRestart={vi.fn()}
+        />,
+      );
+      await waitFor(() => expect(lastProps("next")).toBeDefined());
+      expect(
+        lastProps("next").presentation.menuItems?.some(
+          (item: any) => item.key === "switchAndRestart",
+        ) ?? false,
+      ).toBe(false);
+    },
+  );
+
+  it("keeps the original needs-routing dialog action", async () => {
+    const provider = createProvider({
+      id: "next",
+      meta: { apiFormat: "openai_chat" },
+    });
+    const mode = switchMode();
+    const desktop = vi.fn();
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        providers={{ next: provider }}
+        appId="codex"
+        switchMode={mode}
+        onSwitchAndRestart={desktop}
+      />,
+    );
+    await waitFor(() => expect(lastProps("next")).toBeDefined());
+    lastProps("next")
+      .presentation.buttons.find((item: any) => item.key === "switch")
+      .onClick();
+    expect(mode.actions.needsRouteDialog).toHaveBeenCalledWith(provider);
+    expect(desktop).not.toHaveBeenCalled();
+  });
+
   it("should show empty state and trigger create callback when no providers exist", () => {
     const handleCreate = vi.fn();
 

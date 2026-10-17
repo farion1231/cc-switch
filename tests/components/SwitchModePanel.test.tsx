@@ -54,6 +54,13 @@ vi.mock("@/hooks/useStreamCheck", () => ({
 
 const TAURI_ENDPOINT = "http://tauri.local";
 
+vi.mock("@/hooks/useCodexDesktopStatus", () => ({
+  useCodexDesktopStatus: () => ({
+    data: { supported: true, installed: true, running: true },
+    isError: false,
+  }),
+}));
+
 const provider = (id: string): Provider => ({
   id,
   name: id,

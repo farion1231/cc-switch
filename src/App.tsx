@@ -77,6 +77,7 @@ import { WindowControls } from "@/components/shell/WindowControls";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
+import { CodexDesktopRestartButton } from "@/components/providers/CodexDesktopRestartButton";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import {
   hasOpencodeDefinition,
@@ -1149,6 +1150,9 @@ function App() {
       }
       actions={
         <>
+          {activeApp === "codex" &&
+            currentView === "providers" &&
+            isWindows() && <CodexDesktopRestartButton />}
           {currentView === "providers" &&
             activeApp !== "mcode" &&
             (settingsData?.showProfileSwitcher ?? false) && (

@@ -7,6 +7,8 @@ import type { AppMode, StartupAttachFailure } from "@/types/proxy";
 import type { ModeAppId } from "@/config/appConfig";
 import { isProxyAppId, isStackAppId } from "@/config/appConfig";
 import { settingsApi } from "@/lib/api";
+import { isWindows } from "@/lib/platform";
+import { useCodexDesktopStatus } from "@/hooks/useCodexDesktopStatus";
 import { providersApi } from "@/lib/api/providers";
 import { proxyApi } from "@/lib/api/proxy";
 import { useSettingsQuery } from "@/lib/query";
@@ -72,7 +74,7 @@ interface SwitchModePanelProps extends ListCallbacks {
   scrollRef?: RefObject<HTMLDivElement>;
   onSwitch: (
     provider: Provider,
-    options?: { acknowledgedRouting?: boolean },
+    options?: { acknowledgedRouting?: boolean; restartDesktop?: boolean },
   ) => unknown;
   onOpenRoutingSettings: () => void;
   startupFailure?: StartupAttachFailure;
@@ -109,6 +111,7 @@ export function SwitchModePanel({
 }: SwitchModePanelProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const desktopStatus = useCodexDesktopStatus(app === "codex");
   const appName = APP_DISPLAY_NAME[app];
   const modes = modesFor(app);
 
@@ -580,6 +583,18 @@ export function SwitchModePanel({
           appId={app}
           isLoading={isLoading}
           onSwitch={(provider) => void onSwitch(provider)}
+          onSwitchAndRestart={
+            app === "codex" &&
+            isWindows() &&
+            !desktopStatus.isError &&
+            desktopStatus.data?.supported &&
+            desktopStatus.data.installed &&
+            active === "direct" &&
+            view === "direct"
+              ? (provider) => void onSwitch(provider, { restartDesktop: true })
+              : undefined
+          }
+          desktopRunning={desktopStatus.data?.running}
           switchMode={switchMode}
           searchSlot={searchSlot}
         />
