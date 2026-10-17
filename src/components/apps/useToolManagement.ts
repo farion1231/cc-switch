@@ -133,7 +133,7 @@ const MCODE_NPM_INSTALL_COMMAND =
 
 const POSIX_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${posixScriptInstallCommand("https://claude.ai/install.sh")} || ${CLAUDE_NPM_INSTALL_COMMAND}
-# Codex
+# Codex CLI
 npm i -g @openai/codex@latest
 # Gemini CLI
 npm i -g @google/gemini-cli@latest
@@ -152,7 +152,7 @@ ${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} |
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${CLAUDE_NPM_INSTALL_COMMAND}
-# Codex
+# Codex CLI
 npm i -g @openai/codex@latest
 # Gemini CLI
 npm i -g @google/gemini-cli@latest
@@ -175,7 +175,7 @@ export const ONE_CLICK_INSTALL_COMMANDS = isWindows()
 
 export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   claude: "Claude Code",
-  codex: "Codex",
+  codex: "Codex CLI",
   gemini: "Gemini CLI",
   grok: "Grok Build",
   opencode: "OpenCode",
