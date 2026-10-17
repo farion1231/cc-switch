@@ -3588,12 +3588,15 @@ fn package_manager_anchored_command_from_paths(
         return Some(format!("{} upgrade {formula}", quote_path_if_spaced(&brew)));
     }
     if tool == "omp" {
-        return sibling_bin(bin_path, "bun").map(|bun| {
-            format!(
-                "{} install -g @oh-my-pi/pi-coding-agent@latest",
-                quote_path_if_spaced(&bun)
-            )
-        });
+        // 独立二进制旁边不一定有 Bun；无法确认安装来源时交给原生安装的手动升级提示。
+        return sibling_bin(bin_path, "bun")
+            .filter(|bun| Path::new(bun).is_file())
+            .map(|bun| {
+                format!(
+                    "{} install -g @oh-my-pi/pi-coding-agent@latest",
+                    quote_path_if_spaced(&bun)
+                )
+            });
     }
     let pkg = npm_package_for(tool)?;
     match infer_install_source(Path::new(bin_path)) {
@@ -3621,10 +3624,9 @@ fn package_manager_anchored_command_from_paths(
 }
 
 /// 给定工具、原始 bin 路径（命令行命中的入口）、canonicalize 后的真身路径，
-/// 推断"写回同一处"的锚定升级命令。**POSIX 版是纯函数（不碰 FS）**——真实 canonicalize
-/// 由调用方做（`installs_anchored_command` 复用 enumerate 时算出的 `inst.real`),
-/// 便于单测覆盖各包管理器分支。Windows 版同名函数因 sibling 扩展名歧义必须读 fs,
-/// 是刻意保留的平台差异(详见 Windows 版本 doc)。
+/// 推断"写回同一处"的锚定升级命令。POSIX 版仅 Omp 分支检查同级 Bun 是否存在；真实
+/// canonicalize 由调用方做（`installs_anchored_command` 复用 enumerate 时算出的 `inst.real`）。
+/// Windows 版同名函数因 sibling 扩展名歧义也需要读 fs（详见 Windows 版本 doc）。
 ///
 /// **关键不变量：返回的命令必须用绝对路径调用执行体；若执行体通过
 /// `#!/usr/bin/env` 查找解释器，还必须把其同级 bin 目录显式放到 PATH 首位**。
@@ -6431,15 +6433,6 @@ mod tests {
             static_fallback_command("omp"),
             "bun install -g @oh-my-pi/pi-coding-agent@latest"
         );
-        #[cfg(not(target_os = "windows"))]
-        assert_eq!(
-            anchored_command_from_paths(
-                "omp",
-                "/home/test/.bun/bin/omp",
-                "/home/test/.bun/install/global/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js"
-            ),
-            Some("/home/test/.bun/bin/bun install -g @oh-my-pi/pi-coding-agent@latest".into())
-        );
     }
 
     #[test]
@@ -8115,6 +8108,38 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some("/Users/me/.volta/bin/volta install @openai/codex")
+            );
+        }
+
+        #[test]
+        fn omp_with_sibling_bun_uses_bun_install() {
+            let dir = tempfile::tempdir().unwrap();
+            let bin_dir = dir.path().join(".bun/bin");
+            std::fs::create_dir_all(&bin_dir).unwrap();
+            let bun = bin_dir.join("bun");
+            std::fs::write(&bun, b"").unwrap();
+            let omp = bin_dir.join("omp").to_string_lossy().into_owned();
+            assert_eq!(
+                anchored_command_from_paths("omp", &omp, &omp),
+                Some(format!(
+                    "{} install -g @oh-my-pi/pi-coding-agent@latest",
+                    bun.display()
+                ))
+            );
+        }
+
+        #[test]
+        fn omp_without_sibling_bun_requires_manual_update() {
+            let dir = tempfile::tempdir().unwrap();
+            let bin_dir = dir.path().join(".local/bin");
+            std::fs::create_dir_all(&bin_dir).unwrap();
+            let omp = bin_dir.join("omp");
+            std::fs::write(&omp, b"\x7fELF").unwrap();
+            let omp = omp.to_string_lossy().into_owned();
+            assert_eq!(anchored_command_from_paths("omp", &omp, &omp), None);
+            assert_eq!(
+                resolve_update_command("omp", &[inst(&omp, true)]),
+                UpdateCommand::Unmanaged
             );
         }
 
