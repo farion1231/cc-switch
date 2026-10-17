@@ -5,6 +5,7 @@
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::ModelPricing;
+use crate::proxy::usage::parser::SESSION_REQUEST_ID_PREFIX;
 use crate::services::sql_helpers::{
     fresh_input_sql, real_total_tokens_sql, INPUT_TOKEN_SEMANTICS_FRESH,
     INPUT_TOKEN_SEMANTICS_LEGACY, INPUT_TOKEN_SEMANTICS_TOTAL,
@@ -537,8 +538,14 @@ const PI_SESSION_DATA_SOURCE: &str = "pi_session";
 /// 语义必须与 [`has_matching_pi_proxy_usage_log`] 的指纹部分保持一致 ——
 /// 写侧跳过什么，这里就应该隐藏什么。读侧没有写侧的精确键（Pi 行不存
 /// responseId）：Pi 行先于代理行入库且指纹又对不上时，这一对不会被隐藏。
+///
+/// `input_tokens` 两侧口径不同：Pi 导入行按 FRESH 入库（pi-ai 的
+/// `input = prompt_tokens - cacheRead - cacheWrite`），而经过 codex / gemini /
+/// grokbuild 路由的代理行是 TOTAL 口径（`prompt_tokens` 含缓存）。
+/// 所以代理侧必须先经 [`fresh_input_sql`] 归一，否则只要命中缓存就永远比不上。
 fn pi_proxy_dedup_predicate(log_alias: &str) -> String {
     let proxy_data_source = data_source_expr("proxy_dedup");
+    let proxy_fresh_input = fresh_input_sql("proxy_dedup");
     format!(
         "EXISTS (
             SELECT 1
@@ -546,7 +553,7 @@ fn pi_proxy_dedup_predicate(log_alias: &str) -> String {
             WHERE {proxy_data_source} = 'proxy'
               AND proxy_dedup.status_code >= 200
               AND proxy_dedup.status_code < 300
-              AND proxy_dedup.input_tokens = {log_alias}.input_tokens
+              AND {proxy_fresh_input} = {log_alias}.input_tokens
               AND proxy_dedup.output_tokens = {log_alias}.output_tokens
               AND proxy_dedup.cache_read_tokens = {log_alias}.cache_read_tokens
               AND proxy_dedup.cache_creation_tokens = {log_alias}.cache_creation_tokens
@@ -839,10 +846,10 @@ pub(crate) fn has_matching_proxy_usage_log(
 /// 永远不命中），指纹只落在 token 四项 + 模型 + 时间窗上。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PiProxyDedupKey<'a> {
-    /// 代理侧的精确 request_id（`session:{message_id}` 形式）。Pi 会话保留了
-    /// 上游响应 id（`message.responseId`），而 claude / claude-desktop 记账不加
-    /// app/provider 作用域，键就等于 `session:{该 id}`，命中即同一请求。
-    pub proxy_request_id: Option<&'a str>,
+    /// 上游响应 id（`message.responseId`）。代理侧 claude / claude-desktop 的
+    /// request_id 就是 `session:{该 id}`，codex / gemini / grokbuild 是
+    /// `session:{app}:{provider}:{该 id}`，两种都能精确匹配。
+    pub response_id: Option<&'a str>,
     /// 会话行记录的实际模型（`message.responseModel`），与代理行的 `model` 同源。
     pub model: &'a str,
     /// 会话行记录的请求模型（`message.model`）。代理行也记录客户端请求的模型，
@@ -855,9 +862,47 @@ pub(crate) struct PiProxyDedupKey<'a> {
     pub created_at: i64,
 }
 
+// 精确键查询：`request_id` 是主键，`session:` 前缀让 LIKE 仍然走主键范围扫描，
+// 再用时间窗把作用域形式的扫描限制在本次请求附近。
+const PI_PROXY_EXACT_KEY_SQL: &str = "SELECT EXISTS (
+    SELECT 1
+    FROM proxy_request_logs
+    WHERE request_id = ?1
+       OR (request_id LIKE ?2
+           AND created_at BETWEEN ?3 - ?4 AND ?3 + ?4)
+)";
+
+/// 精确键：`session:{响应 id}`（claude / claude-desktop 记账）或
+/// `session:{app}:{provider}:{响应 id}`（codex / gemini / grokbuild 记账）。
+///
+/// 作用域形式的键里同样带着上游响应 id，所以一并匹配，这样带 `responseId`
+/// 的记录根本不用落到指纹比较，也就绕开了两侧 `input_tokens` 口径不同的问题。
+pub(crate) fn pi_proxy_exact_key_exists(
+    conn: &Connection,
+    response_id: &str,
+    created_at: i64,
+) -> Result<bool, AppError> {
+    let exact = format!("{SESSION_REQUEST_ID_PREFIX}{response_id}");
+    let scoped = format!("{SESSION_REQUEST_ID_PREFIX}%:{response_id}");
+    conn.prepare_cached(PI_PROXY_EXACT_KEY_SQL)
+        .and_then(|mut stmt| {
+            stmt.query_row(
+                params![
+                    exact,
+                    scoped,
+                    created_at,
+                    SESSION_PROXY_DEDUP_WINDOW_SECONDS
+                ],
+                |row| row.get::<_, bool>(0),
+            )
+        })
+        .map_err(|e| AppError::Database(format!("查询 Pi 代理精确键失败: {e}")))
+}
+
 // Pi 会话重导时每个 token 事件都要跑一次；SQL 静态化让 prepare_cached 稳定命中。
 static MATCHING_PI_PROXY_USAGE_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
     let l_data_source = data_source_expr("l");
+    let l_fresh_input = fresh_input_sql("l");
     format!(
         "SELECT EXISTS (
             SELECT 1
@@ -865,7 +910,7 @@ static MATCHING_PI_PROXY_USAGE_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
             WHERE {l_data_source} = 'proxy'
               AND l.status_code >= 200
               AND l.status_code < 300
-              AND l.input_tokens = ?2
+              AND {l_fresh_input} = ?2
               AND l.output_tokens = ?3
               AND l.cache_read_tokens = ?4
               AND l.cache_creation_tokens = ?5
@@ -890,19 +935,19 @@ static MATCHING_PI_PROXY_USAGE_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
 /// 不会碰撞，所以必须显式判定；命中即跳过导入，否则同一请求会在「代理」与
 /// 「Pi 会话」两个桶里各记一次。判定分两级：
 ///
-/// 1. 精确键：`session:{message.responseId}` 已经存在于 `proxy_request_logs`
-///    （claude / claude-desktop 路由的记账形式，见
-///    `proxy::usage::parser::dedup_scope_for_app`）。
-/// 2. 指纹：路由属于 codex / gemini / grokbuild 时代理键带 app/provider
-///    作用域，精确键对不上，退化为 token 四项 + 模型 + ±窗口的匹配。
+/// 1. 精确键：`session:{message.responseId}`，也匹配带 app/provider 作用域的
+///    `session:{app}:{provider}:{该 id}`（见 [`pi_proxy_exact_key_exists`]）。
+/// 2. 指纹：没有 `responseId` 的记录退化为 token 四项 + 模型 + ±窗口的匹配。
+///    代理侧 `input_tokens` 先经 [`fresh_input_sql`] 归一成 FRESH 口径，否则
+///    codex / gemini / grokbuild 路由的 TOTAL 口径永远比不上 Pi 的 FRESH 值。
 ///
 /// 读侧 [`effective_usage_log_filter`] 用同一指纹隐藏历史重复行。
 pub(crate) fn has_matching_pi_proxy_usage_log(
     conn: &Connection,
     key: &PiProxyDedupKey<'_>,
 ) -> Result<bool, AppError> {
-    if let Some(request_id) = key.proxy_request_id {
-        if proxy_request_id_exists(conn, request_id)? {
+    if let Some(response_id) = key.response_id {
+        if pi_proxy_exact_key_exists(conn, response_id, key.created_at)? {
             return Ok(true);
         }
     }
@@ -3196,6 +3241,18 @@ mod tests {
                 ('pi_session:failed', 'pi', 'deepseek-chat', 'claude-opus-5', 100, 20, 10, 5, 500, 1000, 'pi_session')",
         )?;
 
+        // codex 路由的代理行是 TOTAL 口径（6 = 1 fresh + 5 cache read，无写入），
+        // Pi 导入行是 FRESH 口径；读侧归一后才能把这对隐藏掉。
+        conn.execute_batch(
+            "INSERT INTO proxy_request_logs (
+                request_id, app_type, model, request_model, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, status_code, created_at, data_source,
+                input_token_semantics
+            ) VALUES
+                ('session:codex:route:total', 'codex', 'gpt-5.5', 'gpt-5.5', 6, 20, 5, 0, 200, 1000, 'proxy', 1),
+                ('pi_session:total', 'pi', 'gpt-5.5', 'gpt-5.5', 1, 20, 5, 0, 200, 1002, 'pi_session', 2)",
+        )?;
+
         let select_ids = |filter: &str| -> Result<Vec<String>, AppError> {
             let sql = format!(
                 "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
@@ -3214,6 +3271,7 @@ mod tests {
             "pi_session:direct".to_string(),
             "pi_session:other-counts".to_string(),
             "session:abc".to_string(),
+            "session:codex:route:total".to_string(),
         ];
         assert_eq!(select_ids(&effective_usage_log_filter("l"))?, expected);
 
@@ -3232,14 +3290,19 @@ mod tests {
         conn.execute_batch(
             "INSERT INTO proxy_request_logs (
                 request_id, app_type, model, request_model, input_tokens, output_tokens,
-                cache_read_tokens, cache_creation_tokens, status_code, created_at, data_source
+                cache_read_tokens, cache_creation_tokens, status_code, created_at, data_source,
+                input_token_semantics
             ) VALUES
-                ('session:exact', 'claude', 'unrelated-model', 'unrelated-model', 9, 9, 9, 9, 200, 1000, 'proxy'),
-                ('session:codex:route:scoped', 'codex', 'deepseek-chat', 'claude-opus-5', 100, 20, 10, 5, 200, 1000, 'proxy')",
+                ('session:exact', 'claude', 'unrelated-model', 'unrelated-model', 9, 9, 9, 9, 200, 1000, 'proxy', 2),
+                ('session:codex:route:scoped', 'codex', 'deepseek-chat', 'claude-opus-5', 115, 20, 10, 5, 200, 1000, 'proxy', 1),
+                ('session:codex:route:collected', 'codex', 'gpt-5.5', 'gpt-5.5', 115, 20, 10, 5, 200, 1000, 'proxy', 1),
+                ('session:codex:route:scoped-id', 'codex', 'unrelated-model', 'unrelated-model', 9, 9, 9, 9, 200, 1000, 'proxy', 1)",
         )?;
+        // codex 路由的代理行是 TOTAL 口径（115 = 100 fresh + 10 read + 5 write），
+        // Pi 导入行是 FRESH 口径（100），指纹必须先归一才能对上。
 
-        let key = |proxy_request_id: Option<&'static str>| PiProxyDedupKey {
-            proxy_request_id,
+        let key = |response_id: Option<&'static str>| PiProxyDedupKey {
+            response_id,
             model: "deepseek-chat",
             request_model: "claude-opus-5",
             input_tokens: 100,
@@ -3250,13 +3313,25 @@ mod tests {
         };
 
         // 精确键命中：即使计数与模型都对不上也判为同一请求。
+        assert!(has_matching_pi_proxy_usage_log(&conn, &key(Some("exact")))?);
+        // 作用域键 `session:{app}:{provider}:{响应 id}` 同样能精确命中。
         assert!(has_matching_pi_proxy_usage_log(
             &conn,
-            &key(Some("session:exact"))
+            &key(Some("scoped-id"))
         )?);
-        // codex / gemini / grokbuild 路由的键带作用域，只能靠指纹。
+        // 响应 id 对不上且模型对不上时不判重（精确键与指纹都落空）。
+        let mut unknown_id = key(Some("some-other-id"));
+        unknown_id.model = "no-such-model";
+        unknown_id.request_model = "no-such-model";
+        assert!(!has_matching_pi_proxy_usage_log(&conn, &unknown_id)?);
+        // 没有响应 id 时退化为指纹（同一 codex 作用域键）。
         assert!(has_matching_pi_proxy_usage_log(&conn, &key(None))?);
-        // 缺少响应 id 且计数不同 → 不判重（避免把直连用量并进路由用量）。
+        // codex 路由的代理行是 TOTAL 口径，指纹必须归一成 FRESH 才比得上。
+        let mut collected = key(None);
+        collected.model = "gpt-5.5";
+        collected.request_model = "gpt-5.5";
+        assert!(has_matching_pi_proxy_usage_log(&conn, &collected)?);
+        // 缺失响应 id + 计数不同 → 不判重（避免把直连用量并进路由用量）。
         let mut different = key(None);
         different.cache_creation_tokens = 6;
         assert!(!has_matching_pi_proxy_usage_log(&conn, &different)?);

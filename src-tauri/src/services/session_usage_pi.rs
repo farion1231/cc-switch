@@ -6,7 +6,7 @@
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::CostCalculator;
-use crate::proxy::usage::parser::{TokenUsage, SESSION_REQUEST_ID_PREFIX};
+use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
     estimated_latency_ms, metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
 };
@@ -83,9 +83,9 @@ struct PiUsageRecord {
     request_id: String,
     semantic_id: String,
     has_entry_id: bool,
-    /// 上游响应 id 对应的代理记账键（`session:{message.responseId}`）。仅有
-    /// responseId 的 assistant 条目才有；用于匹配本地路由的直录行。
-    proxy_request_id: Option<String>,
+    /// 上游响应 id（`message.responseId`）。仅有 responseId 的 assistant 条目
+    /// 才有；用于匹配本地路由的直录行（代理键可能带 app/provider 作用域）。
+    response_id: Option<String>,
     provider_id: String,
     model: String,
     request_model: String,
@@ -562,18 +562,13 @@ fn parse_usage_record(
     };
 
     // Pi 保留了上游响应的 message id（assistant 消息的 `responseId`）。
-    // claude / claude-desktop 的路由记账不带 app/provider 作用域，代理行
-    // request_id 就是 `session:{该 id}`，可与会话行精确对应。
-    let proxy_request_id = if kind == "assistant" {
-        message
-            .and_then(|value| nonempty_string(value.get("responseId")))
-            .map(|response_id| {
-                let prefix = SESSION_REQUEST_ID_PREFIX;
-                format!("{prefix}{response_id}")
-            })
-    } else {
-        None
-    };
+    // 代理行 request_id 是 `session:{该 id}`（claude / claude-desktop）或
+    // `session:{app}:{provider}:{该 id}`（codex / gemini / grokbuild），
+    // 两种形式在 SQL 侧一并匹配，这里保留原始 id。
+    let response_id = (kind == "assistant")
+        .then(|| message.and_then(|value| nonempty_string(value.get("responseId"))))
+        .flatten()
+        .map(str::to_string);
 
     let identity = pi_request_identity(entry, kind, usage_value, message);
 
@@ -594,7 +589,7 @@ fn parse_usage_record(
         request_id: identity.request_id,
         semantic_id: identity.semantic_id,
         has_entry_id: identity.has_entry_id,
-        proxy_request_id,
+        response_id,
         provider_id,
         model,
         request_model,
@@ -848,7 +843,7 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
     if has_matching_pi_proxy_usage_log(
         conn,
         &PiProxyDedupKey {
-            proxy_request_id: record.proxy_request_id.as_deref(),
+            response_id: record.response_id.as_deref(),
             model: &record.model,
             request_model: &record.request_model,
             input_tokens: record.input_tokens,
@@ -941,6 +936,7 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_TOTAL;
     use std::fs::FileTimes;
     use std::io::Write;
 
@@ -956,8 +952,18 @@ mod tests {
     }
 
     fn assistant_line(id: &str, timestamp: &str, input: u32) -> String {
+        assistant_line_with_usage(id, timestamp, input, 5, 2)
+    }
+
+    fn assistant_line_with_usage(
+        id: &str,
+        timestamp: &str,
+        input: u32,
+        cache_read: u32,
+        cache_write: u32,
+    ) -> String {
         format!(
-            r#"{{"type":"message","id":"{id}","parentId":null,"timestamp":"{timestamp}","message":{{"role":"assistant","content":[{{"type":"text","text":"ok"}}],"provider":"fixture-provider","model":"fixture-model","responseId":"reused-response-id","timestamp":1700000000000,"usage":{{"input":{input},"output":2,"cacheRead":5,"cacheWrite":2,"totalTokens":999,"cost":{{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}}},"stopReason":"stop"}}}}"#
+            r#"{{"type":"message","id":"{id}","parentId":null,"timestamp":"{timestamp}","message":{{"role":"assistant","content":[{{"type":"text","text":"ok"}}],"provider":"fixture-provider","model":"fixture-model","responseId":"reused-response-id","timestamp":1700000000000,"usage":{{"input":{input},"output":2,"cacheRead":{cache_read},"cacheWrite":{cache_write},"totalTokens":999,"cost":{{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}}},"stopReason":"stop"}}}}"#
         )
     }
 
@@ -978,6 +984,7 @@ mod tests {
         model: &str,
         request_model: &str,
         tokens: (i64, i64, i64, i64),
+        input_token_semantics: i64,
         created_at: i64,
         status_code: i64,
     ) -> Result<(), AppError> {
@@ -985,8 +992,8 @@ mod tests {
             "INSERT INTO proxy_request_logs (
                 request_id, provider_id, app_type, model, request_model,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                latency_ms, status_code, created_at, data_source
-            ) VALUES (?1, 'route-provider', ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, 'proxy')",
+                latency_ms, status_code, created_at, data_source, input_token_semantics
+            ) VALUES (?1, 'route-provider', ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, 'proxy', ?11)",
             rusqlite::params![
                 request_id,
                 app_type,
@@ -998,6 +1005,7 @@ mod tests {
                 tokens.3,
                 status_code,
                 created_at,
+                input_token_semantics,
             ],
         )
         .map_err(|error| AppError::Database(format!("插入代理用量失败: {error}")))?;
@@ -1029,6 +1037,7 @@ mod tests {
                 "unrelated-model",
                 "unrelated-model",
                 (9, 9, 9, 9),
+                INPUT_TOKEN_SEMANTICS_FRESH,
                 0,
                 200,
             )?;
@@ -1054,6 +1063,42 @@ mod tests {
         Ok(())
     }
 
+    /// 带 app/provider 作用域的代理键（codex / gemini / grokbuild 路由）里也带着
+    /// 上游响应 id，精确后缀就能认出，不用落到指纹。
+    #[test]
+    fn scoped_proxy_request_ids_are_matched_by_the_exact_key() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = session_path(temp.path(), "scoped-exact");
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"session-scoped-exact","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#,
+                &assistant_line("scoped-exact", "2023-11-14T22:13:21Z", 1),
+            ],
+        );
+
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            // 计数与模型都对不上也能认出：键尾就是装配用的 `reused-response-id`。
+            insert_proxy_usage_row(
+                &conn,
+                "session:codex:route-provider:reused-response-id",
+                "codex",
+                "unrelated-model",
+                "unrelated-model",
+                (9, 9, 9, 9),
+                INPUT_TOKEN_SEMANTICS_TOTAL,
+                1_700_000_001,
+                200,
+            )?;
+        }
+
+        let result = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert_eq!((result.imported, result.skipped), (0, 1));
+        Ok(())
+    }
+
     #[test]
     fn scoped_proxy_request_ids_are_matched_by_the_usage_fingerprint() -> Result<(), AppError> {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -1069,16 +1114,71 @@ mod tests {
         let db = Database::memory()?;
         {
             let conn = lock_conn!(db.conn);
-            // codex / gemini / grokbuild 的路由记账带 app/provider 作用域，
-            // 精确键对不上，退化为 token 四项 + 模型 + ±窗口。（夹具：
-            // input=1 output=2 cacheRead=5 cacheWrite=2，created_at=1700000001）
+            // codex 路由的键是 `session:{app}:{provider}:{请求 id}`，与响应 id 不同源，
+            // 只能靠指纹。（夹具：input=1 fresh + cacheRead=5 + cacheWrite=2，codex 的
+            // 代理行按 TOTAL 口径记 8；output=2；created_at=1700000001）
             insert_proxy_usage_row(
                 &conn,
                 "session:codex:route-provider:msg-1",
                 "codex",
                 "fixture-model",
                 "fixture-model",
-                (1, 2, 5, 2),
+                (8, 2, 5, 2),
+                INPUT_TOKEN_SEMANTICS_TOTAL,
+                1_700_000_001,
+                200,
+            )?;
+        }
+
+        let result = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert_eq!((result.imported, result.skipped), (0, 1));
+        Ok(())
+    }
+
+    /// 维护者复现的现场：codex 路由的代理行来自 `usage.prompt_tokens`（含缓存），
+    /// Pi 会话行按 FRESH 入库。TOTAL 口径不归一就永远对不上，命中缓存即双算。
+    #[test]
+    fn codex_total_semantics_proxy_row_is_matched_after_normalization() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = session_path(temp.path(), "codex-total");
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"session-codex-total","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#,
+                &assistant_line_with_usage("codex-total", "2023-11-14T22:13:21Z", 1, 5, 0),
+            ],
+        );
+
+        let body = serde_json::json!({
+            "model": "fixture-model",
+            "usage": {
+                "input_tokens": 6,
+                "output_tokens": 2,
+                "input_tokens_details": { "cached_tokens": 5 }
+            }
+        });
+        let parsed = TokenUsage::from_codex_response_auto(&body).expect("codex usage");
+        // 代理侧把缓存计入 input；Pi 侧已经是 1 个 fresh token。
+        assert_eq!(parsed.input_tokens, 6);
+        assert_eq!(parsed.cache_read_tokens, 5);
+        assert_eq!(parsed.cache_creation_tokens, 0);
+
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_proxy_usage_row(
+                &conn,
+                "session:codex:route-provider:msg-codex",
+                "codex",
+                "fixture-model",
+                "fixture-model",
+                (
+                    i64::from(parsed.input_tokens),
+                    i64::from(parsed.output_tokens),
+                    i64::from(parsed.cache_read_tokens),
+                    i64::from(parsed.cache_creation_tokens),
+                ),
+                INPUT_TOKEN_SEMANTICS_TOTAL,
                 1_700_000_001,
                 200,
             )?;
@@ -1111,6 +1211,7 @@ mod tests {
                 "fixture-model",
                 "fixture-model",
                 (1, 2, 5, 3),
+                INPUT_TOKEN_SEMANTICS_TOTAL,
                 1_700_000_001,
                 200,
             )?;
