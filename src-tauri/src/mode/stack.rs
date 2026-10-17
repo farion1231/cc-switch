@@ -394,7 +394,7 @@ pub struct DesktopStackModel {
 /// Claude Desktop 行发布的模型：映射表的目标模型，按模型名去重（任何一条标了 1M 就按 1M），
 /// 显示名取映射表里的，没有是模型名。映射表不完整（不能做路由）的行什么都不发布。
 pub fn desktop_models(key: &str, provider: &Provider) -> Vec<DesktopStackModel> {
-    let Ok(routes) = crate::claude_desktop_config::proxy_model_routes(provider) else {
+    let Ok(routes) = crate::claude_desktop_config::configured_proxy_model_routes(provider) else {
         return Vec::new();
     };
     let mut models: Vec<DesktopStackModel> = Vec::new();
