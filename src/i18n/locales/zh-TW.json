@@ -1767,6 +1767,8 @@
     "directModeFormatSwitch": "直連模式下用不了這種格式，切到路由或聚合後才能用這張卡。"
   },
   "copilot": {
+    "automaticFormat": "由路由依模型自動選擇",
+    "automaticFormatHint": "Copilot 的上游格式由路由依模型自動選擇，手選格式不生效。",
     "authSection": "GitHub Copilot 驗證",
     "authStatus": "驗證狀態",
     "authenticated": "已驗證: {{username}}",
