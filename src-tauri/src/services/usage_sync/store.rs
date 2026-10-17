@@ -129,6 +129,25 @@ pub(crate) fn commit_nonce(conn: &Connection, nonce: &str, seq: u64) -> Result<(
     Ok(())
 }
 
+/// Whether this database's identity already takes part in cross-device
+/// sync: it published (in any remote namespace) or descends from a published
+/// identity. Such a database keeps recording rollup identities even while
+/// usage sync is switched off: a copy of it splits off with an inherited
+/// snapshot of everything rolled up without identities, and history rolled
+/// up later without identities would then be taken for the parent's.
+pub(crate) fn identity_takes_part_in_sync(conn: &Connection) -> Result<bool, AppError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM usage_sync_identity
+                       WHERE committed_nonce IS NOT NULL OR pending_nonce IS NOT NULL
+                          OR manifest_seq > 0 OR parent_device_id IS NOT NULL)
+             OR EXISTS(SELECT 1 FROM usage_sync_namespaces
+                       WHERE committed_nonce IS NOT NULL OR pending_nonce IS NOT NULL
+                          OR manifest_seq > 0)",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
 /// Make `namespace` (see `UsageTransport::namespace_key`) the active remote
 /// namespace. Returns `true` when it changed.
 ///
@@ -382,10 +401,11 @@ pub(crate) fn plan_export_skip(
     detail_level: UsageSyncDetailLevel,
     remote: &BTreeMap<String, PartitionMeta>,
 ) -> Result<BTreeSet<String>, AppError> {
+    // Only triggers with the current (monotonic) body count.
     let triggers: i64 = conn.query_row(
         "SELECT COUNT(*) FROM sqlite_master
-         WHERE type = 'trigger' AND name LIKE 'usage_sync_version_%'",
-        [],
+         WHERE type = 'trigger' AND name LIKE 'usage_sync_version_%' AND instr(sql, ?1) > 0",
+        [crate::database::VERSION_TRIGGER_MARKER],
         |row| row.get(0),
     )?;
     if triggers != VERSION_TRIGGER_COUNT {

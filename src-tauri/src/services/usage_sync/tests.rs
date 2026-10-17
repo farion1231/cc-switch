@@ -34,8 +34,12 @@ struct Device {
 
 impl Device {
     fn new(name: &'static str) -> Self {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        // Setup (R4): these devices have usage sync enabled; the identity
+        // ledger is only written once a device enables it.
+        db.set_usage_sync_enabled_for_test(true);
         Self {
-            db: Arc::new(Database::memory().expect("memory db")),
+            db,
             name,
             detail_level: UsageSyncDetailLevel::Records,
             now: NOW,
@@ -3553,4 +3557,565 @@ async fn hide_and_restore_during_a_download_never_loses_unchanged_partitions() {
     assert_eq!(v.total_requests(UsageDeviceScope::All), 3);
     v.sync(&cloud).await;
     assert_eq!(v.total_requests(UsageDeviceScope::All), 3);
+}
+
+// ─── R4 (maintainer review at 845addf5) ──────────────────────
+
+fn month_version(device: &Device, key: &str) -> i64 {
+    let conn = device.db.conn.lock().unwrap();
+    conn.query_row(
+        "SELECT COALESCE((SELECT version FROM usage_sync_partition_versions
+                          WHERE partition_key = ?1), 0)",
+        [key],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+/// Two local-noon timestamps on consecutive days of one calendar month that
+/// lies entirely past the 30-day detail window.
+fn two_days_in_one_old_month() -> (i64, i64, String) {
+    use chrono::{Datelike, Local, TimeZone};
+    let base = Local::now() - chrono::Duration::days(75);
+    let day = |d: u32| {
+        Local
+            .with_ymd_and_hms(base.year(), base.month(), d, 12, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp()
+    };
+    (
+        day(10),
+        day(11),
+        format!("m-{:04}-{:02}", base.year(), base.month()),
+    )
+}
+
+#[test]
+fn month_version_counts_up_under_every_write_policy() {
+    // The maintainer's reproducer on the real tables and triggers: an
+    // aggregate `INSERT OR REPLACE` and a ledger `INSERT OR IGNORE` on two
+    // days of one month must keep counting up (it used to stay at 2).
+    let a = Device::new("A");
+    let version = || month_version(&a, "m-2026-09");
+    let insert_rollup = |date: &str| {
+        exec(
+            &a,
+            &format!(
+                "INSERT OR REPLACE INTO usage_daily_rollups (date, app_type, provider_id, model,
+                    request_count) VALUES ('{date}', 'claude', 'p', 'm', 1)"
+            ),
+        )
+    };
+    let insert_ledger = |id: &str, date: &str| {
+        exec(
+            &a,
+            &format!(
+                "INSERT OR IGNORE INTO usage_rollup_ledger (request_id, data_source, date,
+                    app_type, provider_id, model, rolled_up_at)
+                 VALUES ('{id}', 'proxy', '{date}', 'claude', 'p', 'm', 0)"
+            ),
+        )
+    };
+    insert_rollup("2026-09-01");
+    insert_ledger("a", "2026-09-01");
+    let after_first = version();
+    insert_rollup("2026-09-02");
+    insert_ledger("b", "2026-09-02");
+    let after_second = version();
+    assert!(after_second > after_first, "{after_first} → {after_second}");
+
+    // Every other statement shape that writes these tables also bumps.
+    let mut last = after_second;
+    for sql in [
+        "INSERT OR REPLACE INTO usage_daily_rollups (date, app_type, provider_id, model,
+            request_count) VALUES ('2026-09-01', 'claude', 'p', 'm', 2)",
+        "UPDATE usage_daily_rollups SET total_cost_usd = '0.5' WHERE date = '2026-09-01'",
+        "UPDATE OR REPLACE usage_daily_rollups SET request_count = 3 WHERE date = '2026-09-02'",
+        "INSERT INTO usage_daily_rollups (date, app_type, provider_id, model, request_count)
+            VALUES ('2026-09-03', 'claude', 'p', 'm', 1)
+            ON CONFLICT DO UPDATE SET request_count = request_count + 1",
+        "INSERT INTO usage_daily_rollups (date, app_type, provider_id, model, request_count)
+            VALUES ('2026-09-03', 'claude', 'p', 'm', 1)
+            ON CONFLICT DO UPDATE SET request_count = request_count + 1",
+        "INSERT OR ABORT INTO usage_rollup_ledger (request_id, data_source, date, app_type,
+            provider_id, model, rolled_up_at) VALUES ('c', 'proxy', '2026-09-04', 'claude',
+            'p', 'm', 0)",
+        "INSERT OR FAIL INTO usage_sync_inherited (date, app_type, provider_id, model)
+            VALUES ('2026-09-05', 'claude', 'p', 'm')",
+        "DELETE FROM usage_rollup_ledger WHERE request_id = 'a'",
+    ] {
+        exec(&a, sql);
+        let now = version();
+        assert!(
+            now > last,
+            "version did not count up after {sql}: {last} → {now}"
+        );
+        last = now;
+    }
+}
+
+#[tokio::test]
+async fn two_equal_rollups_in_one_month_are_both_published() {
+    let cloud = remote();
+    let a = Device::new("A");
+    let b = Device::new("B");
+    let (day1, day2, month) = two_days_in_one_old_month();
+
+    // Day 1: one request, rolled up, published and seen by B.
+    a.log("r1", "proxy", day1, "m", 100, 10, "0.10", 200);
+    a.db.rollup_and_prune(30).unwrap();
+    a.sync(&cloud).await;
+    b.sync(&cloud).await;
+    assert_eq!(b.total_requests(UsageDeviceScope::All), 1);
+    let v1 = month_version(&a, &month);
+
+    // Day 2 of the same month: same row count as day 1. First published as a
+    // detail (day) partition, then rolled up: the day partition goes away and
+    // the month partition must carry the request instead.
+    a.log("r2", "proxy", day2, "m", 100, 10, "0.10", 200);
+    a.sync(&cloud).await;
+    b.sync(&cloud).await;
+    assert_eq!(b.total_requests(UsageDeviceScope::All), 2);
+    let day_key = {
+        let conn = a.db.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT 'd-' || date(?1, 'unixepoch', 'localtime')",
+            [day2],
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap()
+    };
+    assert!(read_manifest(&cloud, &a.id())
+        .partitions
+        .contains_key(&day_key));
+
+    a.db.rollup_and_prune(30).unwrap();
+    let v2 = month_version(&a, &month);
+    assert!(v2 > v1, "month version must count up: {v1} → {v2}");
+    let report = a.sync(&cloud).await;
+    assert!(report.uploaded_partitions >= 1, "{report:?}");
+    assert_manifest_is_full_export(&a, &cloud);
+    let manifest = read_manifest(&cloud, &a.id());
+    assert!(
+        !manifest.partitions.contains_key(&day_key),
+        "pruned day partition retired"
+    );
+    assert!(manifest.partitions.contains_key(&month));
+
+    b.sync(&cloud).await;
+    assert_eq!(
+        b.total_requests(UsageDeviceScope::All),
+        2,
+        "not lost, not doubled"
+    );
+    assert_eq!(a.total_requests(UsageDeviceScope::All), 2);
+
+    // A third equal rollup in the same month keeps counting.
+    let day3 = day2 + 86_400;
+    a.log("r3", "proxy", day3, "m", 100, 10, "0.10", 200);
+    a.db.rollup_and_prune(30).unwrap();
+    assert!(month_version(&a, &month) > v2);
+    a.sync(&cloud).await;
+    assert_manifest_is_full_export(&a, &cloud);
+    b.sync(&cloud).await;
+    assert_eq!(b.total_requests(UsageDeviceScope::All), 3);
+}
+
+/// The trigger body shipped up to 845addf5 (INSERT OR IGNORE + UPDATE).
+fn install_pre_r4_version_triggers(device: &Device) {
+    let conn = device.db.conn.lock().unwrap();
+    let names: Vec<String> = conn
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'usage_sync_version_%'")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(names.len(), 12);
+    let bump = |key: &str| {
+        format!(
+            "INSERT OR IGNORE INTO usage_sync_partition_versions (partition_key, version)
+                VALUES ({key}, 0);
+             UPDATE usage_sync_partition_versions SET version = version + 1
+                WHERE partition_key = {key};"
+        )
+    };
+    let mut sql = String::new();
+    for name in &names {
+        sql.push_str(&format!("DROP TRIGGER \"{name}\";"));
+    }
+    for table in [
+        "usage_daily_rollups",
+        "usage_rollup_ledger",
+        "usage_sync_inherited",
+    ] {
+        let (n, o) = (
+            "'m-' || substr(NEW.date, 1, 7)",
+            "'m-' || substr(OLD.date, 1, 7)",
+        );
+        sql.push_str(&format!(
+            "CREATE TRIGGER usage_sync_version_{table}_ins AFTER INSERT ON {table} BEGIN {} END;
+             CREATE TRIGGER usage_sync_version_{table}_upd AFTER UPDATE ON {table} BEGIN {} {} END;
+             CREATE TRIGGER usage_sync_version_{table}_del AFTER DELETE ON {table} BEGIN {} END;",
+            bump(n),
+            bump(n),
+            bump(o),
+            bump(o)
+        ));
+    }
+    for (suffix, event) in [
+        ("ins", "INSERT"),
+        ("upd", "UPDATE OF id, app_type, name"),
+        ("del", "DELETE"),
+    ] {
+        sql.push_str(&format!(
+            "CREATE TRIGGER usage_sync_version_providers_{suffix} AFTER {event} ON providers
+             BEGIN {} END;",
+            bump("'*names'")
+        ));
+    }
+    conn.execute_batch(&sql).unwrap();
+}
+
+fn trigger_state(device: &Device) -> (i64, i64) {
+    let conn = device.db.conn.lock().unwrap();
+    conn.query_row(
+        "SELECT COUNT(*), SUM(instr(sql, ?1) > 0) FROM sqlite_master
+         WHERE type = 'trigger' AND name LIKE 'usage_sync_version_%'",
+        [crate::database::VERSION_TRIGGER_MARKER],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .unwrap()
+}
+
+fn export_cache_rows(device: &Device) -> i64 {
+    let conn = device.db.conn.lock().unwrap();
+    conn.query_row("SELECT COUNT(*) FROM usage_sync_export_cache", [], |r| {
+        r.get(0)
+    })
+    .unwrap()
+}
+
+#[tokio::test]
+async fn existing_v21_databases_get_repaired_triggers_and_a_one_time_cache_reset() {
+    let cloud = remote();
+    let a = Device::new("A");
+    let b = Device::new("B");
+    let (day1, day2, month) = two_days_in_one_old_month();
+
+    // A v21 database from before the fix: old trigger body, populated cache.
+    install_pre_r4_version_triggers(&a);
+    assert_eq!(trigger_state(&a), (12, 0));
+    a.log("r1", "proxy", day1, "m", 100, 10, "0.10", 200);
+    a.db.rollup_and_prune(30).unwrap();
+    a.sync(&cloud).await;
+    // While old triggers are installed the export cache is not trusted.
+    assert_eq!(a.sync(&cloud).await.cached_partitions, 0);
+    exec(
+        &a,
+        "INSERT OR REPLACE INTO usage_sync_export_cache
+            (partition_key, device_id, detail_level, version, names_version, content_sha256)
+         VALUES ('m-1999-01', 'x', 'records', 1, 0, 'stale')",
+    );
+    assert!(export_cache_rows(&a) > 0);
+
+    // Re-opening the database (startup runs create_usage_sync_tables).
+    {
+        let conn = a.db.conn.lock().unwrap();
+        Database::create_usage_sync_tables(&conn).unwrap();
+    }
+    assert_eq!(trigger_state(&a), (12, 12), "all triggers replaced");
+    assert_eq!(export_cache_rows(&a), 0, "cache forgotten once");
+
+    // Idempotent: a later start changes nothing and keeps the cache.
+    a.sync(&cloud).await;
+    let cached = export_cache_rows(&a);
+    assert!(cached > 0);
+    {
+        let conn = a.db.conn.lock().unwrap();
+        Database::create_usage_sync_tables(&conn).unwrap();
+    }
+    assert_eq!(trigger_state(&a), (12, 12));
+    assert_eq!(export_cache_rows(&a), cached, "no reset on a normal start");
+    assert_eq!(a.sync(&cloud).await.cached_partitions, month_count(&a));
+
+    // The repaired database now handles the equal-rollup case correctly.
+    let v1 = month_version(&a, &month);
+    a.log("r2", "proxy", day2, "m", 100, 10, "0.10", 200);
+    a.db.rollup_and_prune(30).unwrap();
+    assert!(month_version(&a, &month) > v1);
+    a.sync(&cloud).await;
+    assert_manifest_is_full_export(&a, &cloud);
+    b.sync(&cloud).await;
+    assert_eq!(b.total_requests(UsageDeviceScope::All), 2);
+}
+
+fn ledger_rows(device: &Device) -> i64 {
+    let conn = device.db.conn.lock().unwrap();
+    conn.query_row("SELECT COUNT(*) FROM usage_rollup_ledger", [], |r| r.get(0))
+        .unwrap()
+}
+
+fn detail_rows(device: &Device) -> i64 {
+    let conn = device.db.conn.lock().unwrap();
+    conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |r| r.get(0))
+        .unwrap()
+}
+
+#[test]
+fn rollup_without_usage_sync_writes_no_ledger_and_keeps_local_statistics() {
+    let enabled = Device::new("Enabled");
+    let disabled = Device::new("Disabled");
+    disabled.db.set_usage_sync_enabled_for_test(false);
+    for device in [&enabled, &disabled] {
+        for i in 0..20 {
+            device.log(
+                &format!("r{i}"),
+                if i % 4 == 0 { "session_log" } else { "proxy" },
+                days_ago(40 + i % 3) + i * 7,
+                if i % 2 == 0 { "m1" } else { "m2" },
+                100 + i,
+                10 + i,
+                "0.01",
+                if i % 5 == 0 { 500 } else { 200 },
+            );
+        }
+        device.log("recent", "proxy", days_ago(2), "m1", 1, 1, "0.01", 200);
+    }
+    let before = disabled.summary(UsageDeviceScope::Local);
+    for device in [&enabled, &disabled] {
+        device.db.rollup_and_prune(30).unwrap();
+    }
+    // Plain rollup behaviour is unchanged: old details pruned, recent kept.
+    assert_eq!(detail_rows(&disabled), 1);
+    assert_eq!(detail_rows(&enabled), 1);
+    assert_eq!(
+        ledger_rows(&disabled),
+        0,
+        "no identities without usage sync"
+    );
+    assert_eq!(ledger_rows(&enabled), 20);
+    // Local statistics are identical either way, and equal to the pre-rollup view.
+    let after_disabled = disabled.summary(UsageDeviceScope::Local);
+    let after_enabled = enabled.summary(UsageDeviceScope::Local);
+    for after in [&after_disabled, &after_enabled] {
+        assert_eq!(after.total_requests, before.total_requests);
+        assert_eq!(after.total_cost, before.total_cost);
+        assert_eq!(after.total_input_tokens, before.total_input_tokens);
+        assert_eq!(after.total_output_tokens, before.total_output_tokens);
+        assert_eq!(after.success_rate, before.success_rate);
+    }
+    let models = |d: &Device| {
+        d.db.get_model_stats_scoped(None, None, None, None, None, &UsageDeviceScope::Local)
+            .unwrap()
+            .into_iter()
+            .map(|m| (m.model, m.request_count))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(models(&disabled), models(&enabled));
+    // No cross-device state was derived for the disabled device.
+    let conn = disabled.db.conn.lock().unwrap();
+    for table in [
+        "usage_sync_ledger_suppressed",
+        "usage_sync_inherited_effective",
+    ] {
+        let rows: i64 = conn
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 0, "{table}");
+    }
+}
+
+#[test]
+#[serial]
+fn ledger_follows_the_device_usage_sync_setting_including_manual_mode() {
+    use crate::settings::{get_usage_sync_settings, set_usage_sync_settings};
+    let original = get_usage_sync_settings();
+    let a = Device::new("A");
+    // Use the real device setting, not the per-test stand-in.
+    *a.db.usage_sync_enabled_override.lock().unwrap() = None;
+    let rollup_one = |id: &str, days: i64| {
+        a.log(id, "proxy", days_ago(days), "m", 1, 1, "0.01", 200);
+        a.db.rollup_and_prune(30).unwrap();
+    };
+    let mut settings = original.clone();
+
+    settings.enabled = false;
+    set_usage_sync_settings(settings.clone()).unwrap();
+    rollup_one("off", 40);
+    assert_eq!(ledger_rows(&a), 0);
+
+    // Manual mode (enabled, no automatic sync) still records identities.
+    settings.enabled = true;
+    settings.auto_sync = false;
+    set_usage_sync_settings(settings.clone()).unwrap();
+    rollup_one("manual", 41);
+    assert_eq!(ledger_rows(&a), 1);
+
+    settings.auto_sync = true;
+    set_usage_sync_settings(settings.clone()).unwrap();
+    rollup_one("auto", 42);
+    assert_eq!(ledger_rows(&a), 2);
+
+    // Disabling again stops new identities; existing ones stay until retention.
+    settings.enabled = false;
+    set_usage_sync_settings(settings.clone()).unwrap();
+    rollup_one("off-again", 43);
+    assert_eq!(ledger_rows(&a), 2);
+
+    set_usage_sync_settings(original).unwrap();
+}
+
+#[tokio::test]
+async fn history_rolled_up_while_disabled_is_reported_not_faked_as_exact() {
+    let cloud = remote();
+    let a = Device::new("A");
+    let b = Device::new("B");
+    // The same session record on both devices.
+    for device in [&a, &b] {
+        device.log(
+            "session:shared-1",
+            "session_log",
+            days_ago(40),
+            "m",
+            100,
+            10,
+            "0.05",
+            200,
+        );
+    }
+    // A had usage sync off while its copy was rolled up; B had it on.
+    a.db.set_usage_sync_enabled_for_test(false);
+    a.db.rollup_and_prune(30).unwrap();
+    b.db.rollup_and_prune(30).unwrap();
+    assert_eq!(ledger_rows(&a), 0);
+    assert_eq!(ledger_rows(&b), 1);
+
+    // A enables usage sync afterwards: no identity is invented for history
+    // rolled up meanwhile, so the shared request cannot be proven to be the
+    // same one and is counted on both devices and reported as such.
+    a.db.set_usage_sync_enabled_for_test(true);
+    a.log(
+        "session:shared-2",
+        "session_log",
+        days_ago(35),
+        "m",
+        100,
+        10,
+        "0.05",
+        200,
+    );
+    b.log(
+        "session:shared-2",
+        "session_log",
+        days_ago(35),
+        "m",
+        100,
+        10,
+        "0.05",
+        200,
+    );
+    for device in [&a, &b] {
+        device.db.rollup_and_prune(30).unwrap();
+    }
+    assert_eq!(
+        ledger_rows(&a),
+        1,
+        "only the request rolled up after enabling"
+    );
+    sync_all(&cloud, &[&a, &b]).await;
+    for viewer in [&a, &b] {
+        // shared-1: no identity on A → 2; shared-2: identities on both → 1.
+        assert_eq!(
+            viewer.total_requests(UsageDeviceScope::All),
+            3,
+            "{}",
+            viewer.name
+        );
+    }
+    let local = {
+        let conn = a.db.conn.lock().unwrap();
+        store::local_unverified(&conn).unwrap()
+    };
+    assert_eq!(local.requests, 1, "A reports its id-less history");
+    assert_eq!(b.remote_device(&a.id()).unwrap().unverified.requests, 1);
+}
+
+/// Independent R4 review: a copy of a published installation with usage sync
+/// switched off rolls up its own new requests; enabling sync later and taking
+/// a new identity must not attribute them to the parent and drop them.
+async fn copy_then_rollup_with_sync_setting(clone_enabled: bool) -> (u64, i64) {
+    let cloud = remote();
+    let a = Device::new("Original");
+    let viewer = Device::new("Viewer");
+    seed_history(&a); // 6 requests, 5 rolled up with ledger
+    a.sync(&cloud).await;
+    let clone = Device::new("Clone");
+    copy_installation(&a, &clone);
+    clone.db.set_usage_sync_enabled_for_test(clone_enabled);
+    // Both devices work after the copy, same day and group, then those days
+    // age past the 30-day window and are rolled up.
+    let day = days_ago(35);
+    a.log("a-post", "proxy", day, "m", 10, 1, "0.01", 200);
+    clone.log("c-post", "proxy", day + 10, "m", 10, 1, "0.01", 200);
+    a.db.rollup_and_prune(30).unwrap();
+    clone.db.rollup_and_prune(30).unwrap();
+    // The clone enables usage sync, hits the identity conflict and forks.
+    clone.db.set_usage_sync_enabled_for_test(true);
+    fork_after_conflict(&cloud, &a, &clone).await;
+    sync_all(&cloud, &[&a, &clone, &viewer]).await;
+    let unverified = {
+        let conn = clone.db.conn.lock().unwrap();
+        store::local_unverified(&conn).unwrap().requests
+    };
+    (all_summary(&viewer).total_requests, unverified)
+}
+
+#[tokio::test]
+#[serial]
+async fn copied_published_installation_with_sync_off_keeps_its_own_history() {
+    let enabled = copy_then_rollup_with_sync_setting(true).await;
+    let disabled = copy_then_rollup_with_sync_setting(false).await;
+    // 6 seed + one request on the original + one on the copy after the copy.
+    assert_eq!(enabled.0, 8);
+    assert_eq!(
+        disabled.0, 8,
+        "copy's own request lost; unverified={}",
+        disabled.1
+    );
+}
+
+#[tokio::test]
+async fn identities_keep_being_recorded_only_where_the_identity_already_published() {
+    let cloud = remote();
+    let published = Device::new("Published");
+    let never = Device::new("Never");
+    published.log("p0", "proxy", days_ago(40), "m", 1, 1, "0.01", 200);
+    published.db.rollup_and_prune(30).unwrap();
+    published.sync(&cloud).await;
+    assert_eq!(ledger_rows(&published), 1);
+
+    // Both switch usage sync off.
+    published.db.set_usage_sync_enabled_for_test(false);
+    never.db.set_usage_sync_enabled_for_test(false);
+    for device in [&published, &never] {
+        device.log("x1", "proxy", days_ago(41), "m", 1, 1, "0.01", 200);
+        device.db.rollup_and_prune(30).unwrap();
+    }
+    assert_eq!(
+        ledger_rows(&published),
+        2,
+        "a published identity keeps its ledger complete"
+    );
+    assert_eq!(ledger_rows(&never), 0, "never published: no identities");
+    // The never-published device did not even create an identity row.
+    let identities: i64 = never
+        .db
+        .conn
+        .lock()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM usage_sync_identity", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(identities, 0);
 }

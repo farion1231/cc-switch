@@ -27,6 +27,9 @@ impl Dev {
     /// `fixed_id` pins the device id so the "smallest id wins" rule is deterministic.
     fn new(name: &'static str, fixed_id: &str) -> Self {
         let db = Arc::new(Database::memory().unwrap());
+        // Setup (R4): these devices have usage sync enabled; the identity
+        // ledger is only written once a device enables it.
+        db.set_usage_sync_enabled_for_test(true);
         {
             let conn = db.conn.lock().unwrap();
             conn.execute(

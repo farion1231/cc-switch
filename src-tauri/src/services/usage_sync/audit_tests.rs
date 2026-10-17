@@ -27,8 +27,12 @@ struct Device {
 
 impl Device {
     fn new(name: &'static str) -> Self {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        // Setup (R4): these devices have usage sync enabled; the identity
+        // ledger is only written once a device enables it.
+        db.set_usage_sync_enabled_for_test(true);
         Self {
-            db: Arc::new(Database::memory().expect("memory db")),
+            db,
             name,
             detail_level: UsageSyncDetailLevel::Records,
             now: NOW,

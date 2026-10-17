@@ -146,7 +146,18 @@ triggers; changes to provider ids or names bump a `*names` version (provider
 names are embedded in every partition). The triggers fire for every write
 path — rollup, cost back-fill, Codex rebuild, retention, manual SQL — so
 same-row-count price corrections, deletes and identical rebuilds all
-invalidate, without relying on timestamps or row counts.
+invalidate, without relying on timestamps or row counts. The trigger body is
+an UPSERT (`INSERT … ON CONFLICT(partition_key) DO UPDATE SET version =
+version + 1`): SQLite applies the conflict policy of the statement that fired
+a trigger to the statements in its body, so an `INSERT OR IGNORE` + `UPDATE`
+body would be reset to 0 by the rollup's `INSERT OR REPLACE`. The version
+therefore only ever counts up.
+
+Databases created by an earlier v21 build carry the old trigger body. At
+start-up, triggers without the UPSERT body are replaced and the export cache
+is cleared once, so the next sync re-encodes every month (objects are
+uploaded only where the content hash changed). Later starts find the current
+body and change nothing.
 
 After an export, `usage_sync_export_cache` records each month partition's
 content hash with the versions it was read at (under the same lock as the
@@ -155,7 +166,8 @@ rows). A month is skipped on the next sync only if all of these hold:
 - the cache entry is for this device id and detail level;
 - its month version and the `*names` version equal the current ones;
 - the own remote manifest still references the same `contentSha256`;
-- all 12 version triggers exist (otherwise the cache is disabled).
+- all 12 version triggers exist with the current body (otherwise the cache is
+  disabled).
 
 Skipped months are neither read nor encoded; their manifest entries are kept
 and they still bound `coverage`. Months are discovered by one index seek per
@@ -282,10 +294,19 @@ chooses:
 | `usage_sync_namespaces`          | Writer nonces, `seq` and hidden devices of the inactive remote namespaces                 |
 | `usage_rollup_ledger`            | Identity ledger of this device's rolled-up requests                                       |
 
-- `usage_rollup_ledger` is written by `rollup_and_prune` in the same savepoint
-  as the rollup itself, for every pruned row (counted or alias), whether or
-  not usage sync is enabled, so enabling sync later does not lose the ability
-  to de-duplicate history. Entries older than **365 days** are deleted at every
+- `usage_rollup_ledger` is written by `rollup_and_prune` only on devices where
+  usage sync is enabled (automatic or manual mode), in the same savepoint as
+  the rollup and before the detail rows are deleted, for every pruned row
+  (counted or alias); if writing it fails, the whole rollup rolls back and the
+  detail rows stay. Devices that never enable usage sync write no ledger and
+  keep the 30-day detail retention as their only footprint. History rolled up
+  while usage sync was off has no identities: after enabling, it is counted
+  per device and shown as not de-duplicable, never as exact. Switching usage
+  sync off stops new entries, except on a database whose identity already
+  published (or descends from one): there the ledger stays complete, because
+  a copy of that database splits off with an inherited snapshot of everything
+  rolled up without identities, and its own later history would otherwise be
+  taken for the parent's and dropped. Entries older than **365 days** are deleted at every
   rollup run, also when there is nothing to roll up (a device that was offline
   for a long time expires its entries on the first run); expiring entries
   refreshes the suppression. The Codex usage rebuild deletes the ledger
@@ -340,10 +361,11 @@ milliseconds of lock time; one corrected month costs only that month.
   "database version too new" check; restore the pre-migration backup instead.
 - Usage protocol: unknown fields are ignored within v1; newer-version
   manifests/segments are reported and never overwritten by an older client.
-- Lazy table creation without a schema bump was considered and rejected: the
-  ledger is written by the core rollup path on every installation, and
-  creating it on demand would leave its existence and the snapshot
-  skip/preserve lists dependent on whether usage sync was ever enabled.
+- Lazy table creation without a schema bump was considered and rejected:
+  creating the tables on demand would leave their existence and the snapshot
+  skip/preserve lists dependent on whether usage sync was ever enabled. The
+  tables always exist (empty unless usage sync is used); only the ledger rows
+  depend on the setting.
 
 ## Statistics semantics
 

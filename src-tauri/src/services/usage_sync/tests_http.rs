@@ -366,6 +366,7 @@ fn s3_settings(endpoint: &str) -> S3SyncSettings {
 
 fn device_with_logs(prefix: &str, count: usize) -> Arc<Database> {
     let db = Arc::new(Database::memory().unwrap());
+    db.set_usage_sync_enabled_for_test(true);
     {
         let conn = db.conn.lock().unwrap();
         for i in 0..count {
@@ -629,6 +630,9 @@ mod live {
         let a = Arc::new(Database::memory().unwrap());
         let b = Arc::new(Database::memory().unwrap());
         let c = Arc::new(Database::memory().unwrap());
+        for db in [&a, &b, &c] {
+            db.set_usage_sync_enabled_for_test(true);
+        }
         // Distinct token counts keep the local proxy/session heuristic out of
         // the picture. Data is 40 days old in real time: past the 30-day detail
         // window, inside the 365-day ledger retention.

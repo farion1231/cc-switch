@@ -59,13 +59,60 @@ fn compute_local_midnight_cutoff(
     Ok(local_dt.timestamp())
 }
 
+/// Whether this database holds any cross-device usage state (a remote cache,
+/// inherited history or identity ledger), i.e. whether the materialized
+/// cross-device subtraction depends on local rollups at all.
+fn has_usage_sync_state(conn: &rusqlite::Connection) -> Result<bool, AppError> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM usage_rollup_ledger)
+             OR EXISTS(SELECT 1 FROM usage_sync_remote_partitions)
+             OR EXISTS(SELECT 1 FROM usage_sync_inherited)",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(|e| AppError::Database(format!("Reading usage sync state failed: {e}")))
+}
+
 impl Database {
+    /// Whether rollups record per-request identities (the ledger used by
+    /// cross-device usage sync): only after usage sync was enabled on this
+    /// device, in automatic or manual mode.
+    pub(crate) fn usage_identity_ledger_enabled(&self) -> bool {
+        #[cfg(test)]
+        if let Some(enabled) = *self
+            .usage_sync_enabled_override
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+        {
+            return enabled;
+        }
+        crate::settings::get_usage_sync_settings().enabled
+    }
+
+    /// Test stand-in for enabling / disabling usage sync on this device.
+    #[cfg(test)]
+    pub(crate) fn set_usage_sync_enabled_for_test(&self, enabled: bool) {
+        *self
+            .usage_sync_enabled_override
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(enabled);
+    }
+
     /// Aggregate proxy_request_logs older than `retain_days` into usage_daily_rollups,
     /// then delete the aggregated detail rows.
     /// Returns the number of deleted detail rows.
     pub fn rollup_and_prune(&self, retain_days: i64) -> Result<u64, AppError> {
         let cutoff = compute_local_midnight_cutoff(Local::now(), retain_days)?;
+        // Read before taking the connection lock (settings have their own lock).
+        let sync_enabled = self.usage_identity_ledger_enabled();
         let conn = lock_conn!(self.conn);
+        // Identities are recorded once usage sync is enabled, and also while
+        // it is off on a database whose identity already published (see
+        // `identity_takes_part_in_sync`). Installations that never published
+        // record nothing. On a read error, record (the safe side).
+        let record_identities = sync_enabled
+            || crate::services::usage_sync::store::identity_takes_part_in_sync(&conn)
+                .unwrap_or(true);
 
         // Identity-ledger retention runs on every call, also on an idle device
         // with nothing to roll up, so the 365-day bound holds everywhere.
@@ -107,7 +154,7 @@ impl Database {
         conn.execute("SAVEPOINT rollup_prune;", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        let result = Self::do_rollup_and_prune(&conn, cutoff);
+        let result = Self::do_rollup_and_prune(&conn, cutoff, record_identities);
 
         match result {
             Ok(deleted) => {
@@ -117,10 +164,16 @@ impl Database {
                     log::info!(
                         "Rolled up and pruned {deleted} proxy_request_logs (retain={retain_days}d)"
                     );
-                    if let Err(e) =
-                        crate::services::usage_sync::store::refresh_ledger_suppression(&conn)
-                    {
-                        log::warn!("Refreshing cross-device ledger suppression failed: {e}");
+                    // Only databases that take part in usage sync need the
+                    // cross-device state re-derived; for everyone else it is empty.
+                    // The rollup is already committed here: on a read error, refresh.
+                    let refresh = record_identities || has_usage_sync_state(&conn).unwrap_or(true);
+                    if refresh {
+                        if let Err(e) =
+                            crate::services::usage_sync::store::refresh_ledger_suppression(&conn)
+                        {
+                            log::warn!("Refreshing cross-device ledger suppression failed: {e}");
+                        }
                     }
                     // 归档触发了表结构变化，前端 30 天前的统计可能跟着变，
                     // 通知一次让 UsageDashboard 重拉数据
@@ -136,7 +189,11 @@ impl Database {
         }
     }
 
-    fn do_rollup_and_prune(conn: &rusqlite::Connection, cutoff: i64) -> Result<u64, AppError> {
+    fn do_rollup_and_prune(
+        conn: &rusqlite::Connection,
+        cutoff: i64,
+        record_identities: bool,
+    ) -> Result<u64, AppError> {
         // Aggregate old logs, merging with any pre-existing rollup rows via LEFT JOIN.
         let effective_filter = effective_usage_log_filter("l");
         let fresh_detail_input = fresh_input_sql("l");
@@ -193,6 +250,29 @@ impl Database {
         conn.execute(&aggregation_sql, [cutoff])
             .map_err(|e| AppError::Database(format!("Rollup aggregation failed: {e}")))?;
 
+        // Usage sync only: record identities before the detail rows go, in the
+        // same savepoint, so a failure here keeps the detail rows.
+        if record_identities {
+            Self::record_rollup_identities(conn, cutoff)?;
+        }
+
+        // INSERT uses the effective-log filter to exclude duplicate session rows.
+        // DELETE intentionally prunes all old details so those duplicates are discarded.
+        let deleted = conn
+            .execute(
+                "DELETE FROM proxy_request_logs WHERE created_at < ?1",
+                [cutoff],
+            )
+            .map_err(|e| AppError::Database(format!("Pruning old logs failed: {e}")))?;
+
+        Ok(deleted as u64)
+    }
+
+    /// Write the identity ledger for the rows about to be pruned (cross-device
+    /// usage sync). Runs inside the rollup savepoint, before the DELETE.
+    fn record_rollup_identities(conn: &rusqlite::Connection, cutoff: i64) -> Result<(), AppError> {
+        let effective_filter = effective_usage_log_filter("l");
+
         // Keep the identity of every rolled-up row (what it added to which rollup
         // group), so cross-device statistics can still de-duplicate it after its
         // detail row is gone. Rows the effective filter drops are recorded as
@@ -241,17 +321,7 @@ impl Database {
             [format!("-{ROLLUP_LEDGER_RETENTION_DAYS} days")],
         )
         .map_err(|e| AppError::Database(format!("Rollup ledger retention failed: {e}")))?;
-
-        // INSERT uses the effective-log filter to exclude duplicate session rows.
-        // DELETE intentionally prunes all old details so those duplicates are discarded.
-        let deleted = conn
-            .execute(
-                "DELETE FROM proxy_request_logs WHERE created_at < ?1",
-                [cutoff],
-            )
-            .map_err(|e| AppError::Database(format!("Pruning old logs failed: {e}")))?;
-
-        Ok(deleted as u64)
+        Ok(())
     }
 }
 

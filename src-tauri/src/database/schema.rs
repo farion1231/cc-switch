@@ -13,6 +13,10 @@ struct LegacySkillMigrationRow {
     app_type: String,
 }
 
+/// Part of every current usage-sync version trigger body (see
+/// `create_usage_sync_tables`); triggers without it predate the UPSERT fix.
+pub(crate) const VERSION_TRIGGER_MARKER: &str = "ON CONFLICT(partition_key) DO UPDATE";
+
 impl Database {
     /// 创建所有数据库表
     pub(crate) fn create_tables(&self) -> Result<(), AppError> {
@@ -1862,12 +1866,17 @@ impl Database {
              ) WITHOUT ROWID;",
         )
         .map_err(|error| AppError::Database(format!("创建用量导出缓存表失败: {error}")))?;
+        // An UPSERT, not `INSERT OR IGNORE` + `UPDATE`: SQLite applies the
+        // conflict policy of the statement that fired the trigger to the
+        // statements in its body, so under the rollup's `INSERT OR REPLACE`
+        // the `OR IGNORE` became `OR REPLACE` and reset the version to 0 on
+        // every rollup. An UPSERT's DO UPDATE is not overridden that way, so
+        // the version only ever counts up.
         let bump = |key: &str| {
             format!(
-                "INSERT OR IGNORE INTO usage_sync_partition_versions (partition_key, version)
-                    VALUES ({key}, 0);
-                 UPDATE usage_sync_partition_versions SET version = version + 1
-                    WHERE partition_key = {key};"
+                "INSERT INTO usage_sync_partition_versions (partition_key, version)
+                    VALUES ({key}, 1)
+                    ON CONFLICT(partition_key) DO UPDATE SET version = version + 1;"
             )
         };
         // Old-schema databases being migrated may not have every table yet;
@@ -1923,8 +1932,46 @@ impl Database {
                 bump("'*names'"),
             ));
         }
-        conn.execute_batch(&triggers)
-            .map_err(|error| AppError::Database(format!("创建用量版本触发器失败: {error}")))?;
+        // v21 databases created before this fix carry the old trigger body,
+        // which `CREATE TRIGGER IF NOT EXISTS` would keep. Replace exactly those
+        // triggers, and since their versions may have repeated, forget the
+        // export cache once so the next sync re-encodes every month (upload
+        // still happens only where the content hash changed). Once replaced,
+        // later starts find the new body and change nothing.
+        let outdated: Vec<String> = conn
+            .prepare(
+                "SELECT name FROM sqlite_master
+                 WHERE type = 'trigger' AND name LIKE 'usage_sync_version_%'
+                   AND instr(sql, ?1) = 0",
+            )
+            .and_then(|mut stmt| {
+                stmt.query_map([VERSION_TRIGGER_MARKER], |row| row.get(0))?
+                    .collect::<Result<_, _>>()
+            })
+            .map_err(|error| AppError::Database(format!("读取用量版本触发器失败: {error}")))?;
+        let mut batch = String::from("SAVEPOINT usage_sync_version_triggers;");
+        for name in &outdated {
+            batch.push_str(&format!("DROP TRIGGER IF EXISTS \"{name}\";"));
+        }
+        batch.push_str(&triggers);
+        if !outdated.is_empty() {
+            batch.push_str("DELETE FROM usage_sync_export_cache;");
+        }
+        batch.push_str("RELEASE usage_sync_version_triggers;");
+        if let Err(error) = conn.execute_batch(&batch) {
+            let _ = conn.execute_batch(
+                "ROLLBACK TO usage_sync_version_triggers; RELEASE usage_sync_version_triggers;",
+            );
+            return Err(AppError::Database(format!(
+                "创建用量版本触发器失败: {error}"
+            )));
+        }
+        if !outdated.is_empty() {
+            log::info!(
+                "[UsageSync] replaced {} outdated version triggers; export cache cleared once",
+                outdated.len()
+            );
+        }
         // Columns added after the first v21 candidate (never released); keep
         // databases created by that candidate compatible.
         for (table, column, ty) in [
