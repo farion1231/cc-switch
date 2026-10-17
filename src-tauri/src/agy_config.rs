@@ -6,7 +6,7 @@
 //! 1. 按键补丁写入 `~/.gemini/antigravity-cli/settings.json`，其余键不动。
 //! 2. 把 Key 和地址写进同目录的 `env`（权限 0600）。
 //! 3. 安装 `bin/agy` 包装脚本，启动时注入这些变量再执行真正的 `agy`。
-//! 4. 把包装目录放到 `~/.zshenv` 的 `PATH` 最前面，这样终端里的 `agy` 会走到包装。
+//! 4. 在 zsh 的各启动阶段把包装目录放到 `PATH` 最前面，避免后续启动文件覆盖。
 //!
 //! 只有当前供应商带 Key 或自定义端点（第三方）时才接管启动器和 shell 配置；
 //! 官方登录模式、删除供应商或空配置都不会安装它们，且会清掉此前由 CC Switch
@@ -473,7 +473,17 @@ fn ensure_wrapper_on_path(bin_dir: &Path) -> Result<(), AppError> {
 
 fn ensure_wrapper_on_path_in(home: &Path, shell: &str, bin_dir: &Path) -> Result<(), AppError> {
     match Path::new(shell).file_name().and_then(|name| name.to_str()) {
-        Some("zsh") => append_path_entry(&home.join(".zshenv"), bin_dir),
+        Some("zsh") => {
+            // macOS path_helper and user startup files can reset PATH after .zshenv.
+            for name in [".zshenv", ".zprofile", ".zshrc"] {
+                append_path_entry(&home.join(name), bin_dir)?;
+            }
+            let login = home.join(".zlogin");
+            if login.exists() {
+                append_path_entry(&login, bin_dir)?;
+            }
+            Ok(())
+        }
         Some("bash") => {
             append_path_entry(&home.join(".bashrc"), bin_dir)?;
             let login = [".bash_profile", ".bash_login", ".profile"]
@@ -494,6 +504,9 @@ fn ensure_wrapper_on_path_in(home: &Path, shell: &str, bin_dir: &Path) -> Result
 fn shell_profiles(home: &Path) -> Vec<PathBuf> {
     [
         ".zshenv",
+        ".zprofile",
+        ".zshrc",
+        ".zlogin",
         ".bashrc",
         ".bash_profile",
         ".bash_login",
@@ -504,41 +517,25 @@ fn shell_profiles(home: &Path) -> Vec<PathBuf> {
     .collect()
 }
 
-/// 删除 `append_path_entry` 写入的片段（标记行、紧随其后的 `export PATH=` 行以及
-/// 它前面补的那个空行）；其余内容原样保留。
+fn path_entry_block(bin_dir: &Path) -> String {
+    format!(
+        "\n# {PATH_MARK}\nexport PATH={}:\"$PATH\"\n",
+        shell_quote(&bin_dir.to_string_lossy())
+    )
+}
+
+/// Only remove the exact block for our wrapper directory, preserving all other bytes.
 fn remove_path_entry(profile: &Path) -> Result<(), AppError> {
     if !profile.is_file() {
         return Ok(());
     }
     let existing = fs::read_to_string(profile).map_err(|e| AppError::io(profile, e))?;
-    if !existing.contains(PATH_MARK) {
+    let block = path_entry_block(&agy_dir().join("bin"));
+    if !existing.contains(&block) {
         return Ok(());
     }
-    let marker = format!("# {PATH_MARK}");
-    let mut kept: Vec<&str> = Vec::new();
-    let mut lines = existing.split_inclusive('\n').peekable();
-    let mut removed = false;
-    while let Some(line) = lines.next() {
-        if line.trim_end() != marker {
-            kept.push(line);
-            continue;
-        }
-        removed = true;
-        if lines
-            .peek()
-            .is_some_and(|next| next.starts_with("export PATH=") && next.contains("$PATH"))
-        {
-            lines.next();
-        }
-        if kept.last().is_some_and(|prev| prev.trim().is_empty()) {
-            kept.pop();
-        }
-    }
-    if !removed {
-        return Ok(());
-    }
-    let next = kept.concat();
-    if next.trim().is_empty() {
+    let next = existing.replace(&block, "");
+    if next.is_empty() {
         fs::remove_file(profile).map_err(|e| AppError::io(profile, e))
     } else {
         write_text_file(profile, &next)
@@ -551,17 +548,12 @@ fn append_path_entry(zshenv: &Path, bin_dir: &Path) -> Result<(), AppError> {
     } else {
         String::new()
     };
-    if existing.contains(PATH_MARK) {
+    let line = path_entry_block(bin_dir);
+    if existing.contains(&line) {
         return Ok(());
     }
-    let line = format!(
-        "\n# {PATH_MARK}\nexport PATH={}:\"$PATH\"\n",
-        shell_quote(&bin_dir.to_string_lossy())
-    );
+    // The block includes its separator; another newline would remain after cleanup.
     let mut next = existing;
-    if !next.is_empty() && !next.ends_with('\n') {
-        next.push('\n');
-    }
     next.push_str(&line);
     write_text_file(zshenv, &next)
 }
@@ -1029,6 +1021,89 @@ mod launcher_lifecycle_tests {
         remove_launcher().unwrap();
         assert!(!home.dir.path().join(".bashrc").exists());
         assert!(!home.dir.path().join(".profile").exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[serial]
+    fn agy_fresh_zsh_keeps_launcher_after_path_resets_and_restores_profiles() {
+        let home = Home::new();
+        let profiles = [".zshenv", ".zprofile", ".zshrc", ".zlogin"];
+        let original = "# user PATH reset\nexport PATH=\"$HOME/.local/bin:/usr/bin:/bin\"";
+        for name in profiles {
+            fs::write(home.dir.path().join(name), original).unwrap();
+        }
+        let real = fake_agy(&home.dir.path().join(".local/bin"));
+        fs::write(
+            &real,
+            "#!/bin/sh\nprintf '%s\\n' \"$GEMINI_API_KEY\" \"$GOOGLE_GEMINI_BASE_URL\" \"$@\"\n",
+        )
+        .unwrap();
+        let db = Database::memory().unwrap();
+        let relay = managed("relay");
+        db.save_provider("agy", &relay).unwrap();
+        agy_direct::switch_to(&db, &relay).unwrap();
+        agy_direct::reapply(&db, &relay).unwrap();
+        let wrapper = agy_dir().join("bin/agy");
+        for flags in ["-lc", "-lic"] {
+            let output = Command::new("/bin/zsh")
+                .args([flags, "command -v agy; agy --print fixture"])
+                .env("HOME", home.dir.path())
+                .env("ZDOTDIR", home.dir.path())
+                .env("AGY_REAL_BIN", &real)
+                .env_remove("GEMINI_API_KEY")
+                .env_remove("GOOGLE_GEMINI_BASE_URL")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            assert_eq!(
+                String::from_utf8(output.stdout).unwrap(),
+                format!(
+                    "{}\nfixture\nhttps://example.test\n--model\nm\n--print\nfixture\n",
+                    wrapper.display()
+                ),
+                "launcher must survive {flags} startup"
+            );
+        }
+        for name in profiles {
+            assert_eq!(
+                fs::read_to_string(home.dir.path().join(name))
+                    .unwrap()
+                    .matches(&format!("# {PATH_MARK}"))
+                    .count(),
+                1
+            );
+        }
+        let login = provider("login", json!({"env":{},"config":{}}), true);
+        db.save_provider("agy", &login).unwrap();
+        agy_direct::switch_to(&db, &login).unwrap();
+        for name in profiles {
+            assert_eq!(
+                fs::read_to_string(home.dir.path().join(name)).unwrap(),
+                original
+            );
+        }
+        assert!(!wrapper.exists());
+    }
+
+    #[test]
+    #[serial]
+    fn cleanup_preserves_whitespace_and_foreign_marked_path_entries() {
+        let home = Home::new();
+        let bin = agy_dir().join("bin");
+        for original in [
+            "# user without final newline",
+            " \n\t\n",
+            "\n# cc-switch agy wrapper\nexport PATH='/some/other/bin':\"$PATH\"\n",
+        ] {
+            fs::write(home.zshenv(), original).unwrap();
+            append_path_entry(&home.zshenv(), &bin).unwrap();
+            assert!(fs::read_to_string(home.zshenv())
+                .unwrap()
+                .contains(&shell_quote(&bin.to_string_lossy())));
+            remove_launcher().unwrap();
+            assert_eq!(fs::read_to_string(home.zshenv()).unwrap(), original);
+        }
     }
 
     fn fake_agy(dir: &Path) -> PathBuf {
