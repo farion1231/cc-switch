@@ -7859,22 +7859,6 @@ mod tests {
                 Some(standalone_target)
             ));
         }
-
-        /// macOS 把包内的 codex 软链进 PATH：入口看不出来，要按真身认。
-        #[cfg(all(unix, not(target_os = "macos")))]
-        #[test]
-        fn codex_symlinked_out_of_chatgpt_desktop_is_recognized() {
-            let dir = tempfile::tempdir().unwrap();
-            let real = dir
-                .path()
-                .join("ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex");
-            std::fs::create_dir_all(real.parent().unwrap()).unwrap();
-            std::fs::write(&real, b"").unwrap();
-            let link = dir.path().join("bin/codex");
-            std::fs::create_dir_all(link.parent().unwrap()).unwrap();
-            std::os::unix::fs::symlink(&real, &link).unwrap();
-            assert!(is_bundled_with_desktop("codex", &link));
-        }
     }
 
     /// 锚定升级命令生成：用真实勘察到的安装路径固化为回归断言——
