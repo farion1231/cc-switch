@@ -1,0 +1,3 @@
+{
+  "defaultTools": ["read", "bash", "edit", "write", "docs"]
+}
