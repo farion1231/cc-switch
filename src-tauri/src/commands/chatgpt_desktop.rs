@@ -104,6 +104,10 @@ fn uninstall() -> Result<(), String> {
     let names = windows_package::full_names(WINDOWS_PACKAGE_FAMILY);
     let commands = remove_main_package_commands(&names)
         .ok_or_else(|| "ChatGPT Desktop is not installed".to_string())?;
+    // 先清理缓存：如果 CLI 正在运行或文件被占用，保留 MSIX 包，用户关闭进程后还能重试。
+    if let Some(bin) = extracted_cli_bin() {
+        remove_extracted_cli_copies_under(&bin)?;
+    }
     for command in commands {
         super::misc::run_hidden_command(
             "powershell.exe",
@@ -115,12 +119,6 @@ fn uninstall() -> Result<(), String> {
             ],
             UNINSTALL_TIMEOUT,
         )?;
-    }
-    if newest_main_package(&windows_package::full_names(WINDOWS_PACKAGE_FAMILY)).is_some() {
-        return Err("ChatGPT Desktop is still installed after Remove-AppxPackage".to_string());
-    }
-    if let Some(bin) = extracted_cli_bin() {
-        remove_extracted_cli_copies_under(&bin)?;
     }
     if newest_main_package(&windows_package::full_names(WINDOWS_PACKAGE_FAMILY)).is_some() {
         return Err("ChatGPT Desktop is still installed after Remove-AppxPackage".to_string());
@@ -187,8 +185,57 @@ fn macos_installed_apps() -> Vec<PathBuf> {
     let home = crate::config::get_home_dir();
     macos_app_candidates(&home)
         .into_iter()
-        .filter(|app| app.join("Contents").join("Info.plist").is_file())
+        .filter(|app| is_chatgpt_desktop_bundle(app))
         .collect()
+}
+
+#[cfg(any(target_os = "macos", test))]
+const MACOS_CHATGPT_DESKTOP_BUNDLE_IDENTIFIER: &str = "com.openai.codex";
+
+#[cfg(target_os = "macos")]
+const MACOS_OPENAI_TEAM_IDENTIFIER: &str = "2DC432GLL2";
+
+#[cfg(any(target_os = "macos", test))]
+fn is_chatgpt_desktop_bundle_identifier(bundle_identifier: &str) -> bool {
+    bundle_identifier == MACOS_CHATGPT_DESKTOP_BUNDLE_IDENTIFIER
+}
+
+#[cfg(target_os = "macos")]
+fn is_chatgpt_desktop_bundle(app: &std::path::Path) -> bool {
+    if !app.is_dir() || !app.join("Contents").join("Info.plist").is_file() {
+        return false;
+    }
+    let Some(bundle_identifier) = macos_bundle_identifier(app) else {
+        return false;
+    };
+    is_chatgpt_desktop_bundle_identifier(&bundle_identifier) && macos_openai_signature_is_valid(app)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_bundle_identifier(app: &std::path::Path) -> Option<String> {
+    let output = std::process::Command::new("/usr/bin/plutil")
+        .args(["-extract", "CFBundleIdentifier", "raw", "-o", "-"])
+        .arg(app.join("Contents").join("Info.plist"))
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let bundle_identifier = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!bundle_identifier.is_empty()).then_some(bundle_identifier)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_openai_signature_is_valid(app: &std::path::Path) -> bool {
+    let requirement = format!(
+        "identifier \"{MACOS_CHATGPT_DESKTOP_BUNDLE_IDENTIFIER}\" and anchor apple generic and certificate leaf[subject.OU] = \"{MACOS_OPENAI_TEAM_IDENTIFIER}\""
+    );
+    std::process::Command::new("/usr/bin/codesign")
+        .args(["--verify", "--deep", "--strict"])
+        .arg(format!("-R={requirement}"))
+        .arg(app)
+        .output()
+        .is_ok_and(|output| output.status.success())
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -655,6 +702,21 @@ mod tests {
                 PathBuf::from("/Users/me/Applications/Codex.app"),
             ]
         );
+    }
+
+    #[test]
+    fn only_the_unified_openai_codex_bundle_identifier_is_accepted() {
+        assert!(is_chatgpt_desktop_bundle_identifier("com.openai.codex"));
+        for bundle_identifier in [
+            "com.openai.chat",
+            "com.example.codex",
+            "com.openai.codex.helper",
+        ] {
+            assert!(
+                !is_chatgpt_desktop_bundle_identifier(bundle_identifier),
+                "{bundle_identifier}"
+            );
+        }
     }
 
     #[test]
