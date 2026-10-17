@@ -694,10 +694,11 @@ pub(crate) struct DedupKey<'a> {
 /// ③ 时间窗口内存在与 `key` 匹配的 proxy 日志（指纹去重）。
 pub(crate) fn should_skip_session_insert(
     conn: &Connection,
+    data_source: &str,
     request_id: &str,
     key: &DedupKey,
 ) -> Result<bool, AppError> {
-    if session_dedup_request_id_exists(conn, request_id)? {
+    if session_dedup_request_id_exists(conn, data_source, request_id)? {
         return Ok(true);
     }
     if proxy_request_id_exists(conn, request_id)? {
@@ -706,10 +707,16 @@ pub(crate) fn should_skip_session_insert(
     has_matching_proxy_usage_log(conn, key)
 }
 
-fn session_dedup_request_id_exists(conn: &Connection, request_id: &str) -> Result<bool, AppError> {
-    conn.prepare_cached("SELECT EXISTS(SELECT 1 FROM session_usage_dedup WHERE request_id = ?1)")
-        .and_then(|mut stmt| stmt.query_row(params![request_id], |row| row.get::<_, bool>(0)))
-        .map_err(|e| AppError::Database(format!("查询 session_usage_dedup 失败: {e}")))
+fn session_dedup_request_id_exists(
+    conn: &Connection,
+    data_source: &str,
+    request_id: &str,
+) -> Result<bool, AppError> {
+    conn.prepare_cached(
+        "SELECT EXISTS(SELECT 1 FROM session_usage_dedup WHERE data_source = ?1 AND request_id = ?2)",
+    )
+    .and_then(|mut stmt| stmt.query_row(params![data_source, request_id], |row| row.get::<_, bool>(0)))
+    .map_err(|e| AppError::Database(format!("查询 session_usage_dedup 失败: {e}")))
 }
 
 /// 登记会话消息到持久化去重账本。即使 30 天后明细从 proxy_request_logs 剪枝删除，

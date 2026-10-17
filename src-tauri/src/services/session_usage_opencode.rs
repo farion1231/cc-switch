@@ -85,8 +85,13 @@ const OPENCODE_HISTORY_REPAIRED_KEY: &str = "opencode_history_rollups_repaired_v
 
 /// 同步 OpenCode 使用数据
 pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    let db_path = get_opencode_db_path();
+    sync_opencode_usage_with_path(db, &get_opencode_db_path())
+}
 
+pub(crate) fn sync_opencode_usage_with_path(
+    db: &Database,
+    db_path: &Path,
+) -> Result<SessionSyncResult, AppError> {
     if !db_path.exists() {
         return Ok(SessionSyncResult {
             imported: 0,
@@ -100,7 +105,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
 
     // 针对死循环导致的被重复累加的历史聚合数据进行一次性自愈校准，并补齐去重账本
     if !db.get_bool_flag(OPENCODE_HISTORY_REPAIRED_KEY)? {
-        match repair_opencode_history_rollups(db, &db_path) {
+        match repair_opencode_history_rollups(db, db_path) {
             Ok(count) => {
                 if count > 0 {
                     log::info!(
@@ -121,7 +126,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     // opencode 的数据库运行在 WAL 模式：新提交先落在 -wal 文件里，
     // 主库文件只有在 checkpoint 时才更新。因此必须同时考虑 -wal 的
     // mtime，否则会在 checkpoint 之前漏掉刚写入的会话。
-    let metadata = fs::metadata(&db_path)
+    let metadata = fs::metadata(db_path)
         .map_err(|e| AppError::Config(format!("无法读取 opencode.db 元数据: {e}")))?;
     let mut file_modified = metadata_modified_nanos(&metadata);
 
@@ -147,7 +152,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
 
     // 打开 opencode 的 SQLite 数据库（只读）
     let opencode_conn =
-        rusqlite::Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        rusqlite::Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| AppError::Database(format!("无法打开 opencode.db: {e}")))?;
 
     let mut result = SessionSyncResult {
@@ -488,7 +493,7 @@ fn insert_opencode_message(
         cache_creation_tokens: msg.cache_write_tokens,
         created_at,
     };
-    if should_skip_session_insert(&conn, request_id, &dedup_key)? {
+    if should_skip_session_insert(&conn, "opencode_session", request_id, &dedup_key)? {
         return Ok(false);
     }
 
@@ -632,7 +637,8 @@ pub(crate) fn repair_opencode_history_rollups(
 
     let mut daily_stats: std::collections::HashMap<(String, String), RealDayStats> =
         std::collections::HashMap::new();
-    let mut request_ids: Vec<String> = Vec::new();
+    let mut date_model_req_ids: std::collections::HashMap<(String, String), Vec<String>> =
+        std::collections::HashMap::new();
 
     let cc_conn = lock_conn!(db.conn);
     let mut pricing_cache: std::collections::HashMap<String, Option<ModelPricing>> =
@@ -684,7 +690,6 @@ pub(crate) fn repair_opencode_history_rollups(
         };
 
         let request_id = format!("opencode_session:{session_id}:{message_id}");
-        request_ids.push(request_id);
         let created_at_sec = msg_data.timestamp_ms / 1000;
         let date_str = match Local.timestamp_opt(created_at_sec, 0) {
             chrono::LocalResult::Single(dt) => dt.format("%Y-%m-%d").to_string(),
@@ -698,6 +703,10 @@ pub(crate) fn repair_opencode_history_rollups(
 
         let output_with_reasoning = (msg_data.output_tokens + msg_data.reasoning_tokens) as i64;
         let model_id = msg_data.model_id.clone();
+        date_model_req_ids
+            .entry((date_str.clone(), model_id.clone()))
+            .or_default()
+            .push(request_id);
 
         let cost_dec = if msg_data.cost > 0.0 {
             Decimal::try_from(msg_data.cost).unwrap_or(Decimal::ZERO)
@@ -736,21 +745,25 @@ pub(crate) fn repair_opencode_history_rollups(
         .map_err(|e| AppError::Database(e.to_string()))?;
 
     let repair_res = (|| -> Result<u32, AppError> {
-        // 1. 批量将历史已完成消息的 request_id 归档到 session_usage_dedup
-        {
-            let mut dedup_stmt = cc_conn.prepare_cached(
-                "INSERT OR IGNORE INTO session_usage_dedup (data_source, request_id, semantic_id, has_entry_id)
-                 VALUES ('opencode_session', ?1, ?1, 0)",
-            )?;
-            for req_id in &request_ids {
-                dedup_stmt.execute([req_id])?;
-            }
-        }
+        // 1. 将 proxy_request_logs 中已实际计入统计的 OpenCode 会话日志 request_id 回填到持久化账本 session_usage_dedup。
+        // 切勿盲目将源库 opencode.db 里的全部消息提前入账，否则未导入的新消息与断线积压消息会被误拦截丢弃。
+        cc_conn.execute(
+            "INSERT OR IGNORE INTO session_usage_dedup (data_source, request_id, semantic_id, has_entry_id)
+             SELECT data_source, request_id, request_id, 0
+             FROM proxy_request_logs
+             WHERE data_source = 'opencode_session' AND request_id IS NOT NULL",
+            [],
+        )?;
 
-        // 2. 遍历真实聚合值，仅纠正被放大的行（current_count > real_count）
+        // 2. 遍历真实聚合值，精准纠正确凿发生重复叠加放大的行
         let mut repaired_count = 0u32;
+        let mut dedup_stmt = cc_conn.prepare_cached(
+            "INSERT OR IGNORE INTO session_usage_dedup (data_source, request_id, semantic_id, has_entry_id)
+             VALUES ('opencode_session', ?1, ?1, 0)",
+        )?;
         let mut check_stmt = cc_conn.prepare_cached(
-            "SELECT request_count FROM usage_daily_rollups
+            "SELECT request_count, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
+             FROM usage_daily_rollups
              WHERE date = ?1 AND app_type = 'opencode' AND provider_id = '_opencode_session' AND model = ?2",
         )?;
         let mut update_stmt = cc_conn.prepare_cached(
@@ -765,34 +778,65 @@ pub(crate) fn repair_opencode_history_rollups(
              WHERE date = ?7 AND app_type = 'opencode' AND provider_id = '_opencode_session' AND model = ?8",
         )?;
 
-        for ((date, model), real) in daily_stats {
-            let current_count: Option<i64> = check_stmt
-                .query_row(rusqlite::params![date, model], |r| r.get(0))
+        for ((date, model), real) in &daily_stats {
+            let curr_row: Option<(i64, i64, i64, i64, i64)> = check_stmt
+                .query_row(rusqlite::params![date, model], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                })
                 .optional()
                 .map_err(|e| AppError::Database(e.to_string()))?;
 
-            if let Some(curr) = current_count {
-                if curr > real.count {
-                    update_stmt
-                        .execute(rusqlite::params![
+            if let Some((curr_count, curr_in, curr_out, curr_cr, curr_cc)) = curr_row {
+                // 必须能区分「重复累加」与「源数据被删除」：
+                // 如果用户删除了会话，源数据会变少，但已记录的历史汇总用量是真实的，绝对不能下调。
+                // 仅当能确凿判定为死循环重复叠加（请求数是现存消息数的整数倍 k >= 2，且
+                // 所有的 Token 指标 input/output/cache_read/cache_creation 均严格呈 k 倍放大）时，
+                // 才确认为重复累加导致的虚高并进行校准，避免误伤已删除会话的正常历史。
+                if real.count > 0 && curr_count > real.count && curr_count % real.count == 0 {
+                    let k = curr_count / real.count;
+                    let tokens_match = (real.input_tokens == 0 && curr_in == 0
+                        || (real.input_tokens > 0 && curr_in == k * real.input_tokens))
+                        && (real.output_tokens == 0 && curr_out == 0
+                            || (real.output_tokens > 0 && curr_out == k * real.output_tokens))
+                        && (real.cache_read_tokens == 0 && curr_cr == 0
+                            || (real.cache_read_tokens > 0
+                                && curr_cr == k * real.cache_read_tokens))
+                        && (real.cache_creation_tokens == 0 && curr_cc == 0
+                            || (real.cache_creation_tokens > 0
+                                && curr_cc == k * real.cache_creation_tokens));
+
+                    if tokens_match {
+                        update_stmt
+                            .execute(rusqlite::params![
+                                real.count,
+                                real.input_tokens,
+                                real.output_tokens,
+                                real.cache_read_tokens,
+                                real.cache_creation_tokens,
+                                real.total_cost.to_string(),
+                                date,
+                                model,
+                            ])
+                            .map_err(|e| AppError::Database(e.to_string()))?;
+                        repaired_count += 1;
+
+                        // 将这批已在汇总中修复且明细已被 prune 的历史消息 request_id 登记入账本，防止后续再次重复重扫
+                        if let Some(req_ids) =
+                            date_model_req_ids.get(&(date.clone(), model.clone()))
+                        {
+                            for req_id in req_ids {
+                                dedup_stmt.execute([req_id])?;
+                            }
+                        }
+
+                        log::info!(
+                            "[OPENCODE-REPAIR] 已校准 {date} {model} (放大 {k} 倍): 请求数 {curr_count} -> {}, Tokens(In={}, Out={}, CR={})",
                             real.count,
                             real.input_tokens,
                             real.output_tokens,
                             real.cache_read_tokens,
-                            real.cache_creation_tokens,
-                            real.total_cost.to_string(),
-                            date,
-                            model,
-                        ])
-                        .map_err(|e| AppError::Database(e.to_string()))?;
-                    repaired_count += 1;
-                    log::info!(
-                        "[OPENCODE-REPAIR] 已校准 {date} {model}: 请求数 {curr} -> {}, Tokens(In={}, Out={}, CR={})",
-                        real.count,
-                        real.input_tokens,
-                        real.output_tokens,
-                        real.cache_read_tokens,
-                    );
+                        );
+                    }
                 }
             }
         }
@@ -1314,13 +1358,173 @@ mod tests {
             ).unwrap();
             assert_eq!(real_proxy_count, 5, "正常代理记录不应受影响");
 
-            // 5. 验证 request_id 已被登记到持久去重账本 session_usage_dedup
+            // 5. 验证被校准的历史消息 request_id 已被登记到持久去重账本 session_usage_dedup
             let dedup_exists: bool = conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM session_usage_dedup WHERE request_id = 'opencode_session:ses_1:msg_1')",
+                "SELECT EXISTS(SELECT 1 FROM session_usage_dedup WHERE data_source = 'opencode_session' AND request_id = 'opencode_session:ses_1:msg_1')",
                 [],
                 |r| r.get(0),
             ).unwrap();
-            assert!(dedup_exists, "历史消息 ID 必须补录到 session_usage_dedup");
+            assert!(
+                dedup_exists,
+                "被校准的历史消息 ID 必须补录到 session_usage_dedup"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_repair_opencode_history_rollups_preserves_deleted_session_dates() -> Result<(), AppError>
+    {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let opencode_db_path = temp_dir.path().join("opencode.db");
+
+        // 1. 初始化 opencode.db：用户原本发了 2 次请求，后来在 OpenCode 删除了其中 1 个会话，现存库里只剩 1 条消息
+        {
+            let oc_conn = rusqlite::Connection::open(&opencode_db_path).unwrap();
+            oc_conn.execute_batch(
+                "CREATE TABLE session_v2 (id TEXT PRIMARY KEY, time_updated INTEGER);
+                 CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, time_updated INTEGER, data TEXT);
+                 INSERT INTO session_v2 VALUES ('ses_remained', 1788750000000);"
+            ).unwrap();
+
+            let msg_data = serde_json::json!({
+                "model": { "id": "gemini-3.8-flash-high" },
+                "cost": 0.05,
+                "tokens": {
+                    "input": 1000,
+                    "output": 200,
+                    "reasoning": 50,
+                    "cache": { "read": 5000, "write": 0 }
+                },
+                "time": {
+                    "created": 1788750000000i64,
+                    "completed": 1788750005000i64
+                }
+            })
+            .to_string();
+
+            oc_conn.execute(
+                "INSERT INTO session_message VALUES ('msg_remained', 'ses_remained', 'assistant', 1788750000000, ?1)",
+                [msg_data],
+            ).unwrap();
+        }
+
+        // 2. 初始化 cc-switch 数据库：
+        // 历史上实际记录过 2 次请求（总共 2500 input tokens，与剩下来的 1000 并非整数倍放大关系）
+        let db = Database::memory().unwrap();
+        let date_str = Local
+            .timestamp_opt(1788750000, 0)
+            .single()
+            .unwrap()
+            .format("%Y-%m-%d")
+            .to_string();
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model, request_count, success_count,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, avg_latency_ms
+                ) VALUES (?1, 'opencode', '_opencode_session', 'gemini-3.8-flash-high', 2, 2, 2500, 450, 8000, 0, '0.12', 100)",
+                [&date_str],
+            ).unwrap();
+        }
+
+        // 3. 执行自愈校准
+        let repaired = repair_opencode_history_rollups(&db, &opencode_db_path).unwrap();
+        assert_eq!(
+            repaired, 0,
+            "删过会话导致的源数据减少不应被误判为死循环放大，校准数为 0"
+        );
+
+        // 4. 验证 usage_daily_rollups 中的数值未被篡改，依然保持 2 次真实请求
+        {
+            let conn = lock_conn!(db.conn);
+            let (req_count, input): (i64, i64) = conn.query_row(
+                "SELECT request_count, input_tokens
+                 FROM usage_daily_rollups
+                 WHERE date = ?1 AND app_type = 'opencode' AND provider_id = '_opencode_session' AND model = 'gemini-3.8-flash-high'",
+                [&date_str],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            ).unwrap();
+
+            assert_eq!(
+                req_count, 2,
+                "删过会话的历史用量是真实的，请求数必须保持 2 次"
+            );
+            assert_eq!(
+                input, 2500,
+                "input_tokens 必须保持原本记录的 2500，不能被覆盖缩小"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_sync_opencode_usage_empty_db_first_sync() -> Result<(), AppError> {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let opencode_db_path = temp_dir.path().join("opencode.db");
+
+        // 1. 初始化 opencode.db，包含 1 条已完成消息
+        {
+            let oc_conn = rusqlite::Connection::open(&opencode_db_path).unwrap();
+            oc_conn.execute_batch(
+                "CREATE TABLE session_v2 (id TEXT PRIMARY KEY, time_updated INTEGER);
+                 CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
+                 INSERT INTO session_v2 VALUES ('ses_first', 1788750000000);"
+            ).unwrap();
+
+            let msg_data = serde_json::json!({
+                "model": { "id": "gemini-3.8-flash-high" },
+                "cost": 0.05,
+                "tokens": {
+                    "input": 1000,
+                    "output": 200,
+                    "reasoning": 50,
+                    "cache": { "read": 5000, "write": 0 }
+                },
+                "time": {
+                    "created": 1788750000000i64,
+                    "completed": 1788750005000i64
+                }
+            })
+            .to_string();
+
+            oc_conn.execute(
+                "INSERT INTO session_message VALUES ('msg_first', 'ses_first', 'assistant', 1788750000000, 1788750000000, ?1)",
+                [msg_data],
+            ).unwrap();
+        }
+
+        // 2. 空的 cc-switch 数据库进行首次同步
+        let db = Database::memory().unwrap();
+        let result = sync_opencode_usage_with_path(&db, &opencode_db_path)?;
+
+        // 3. 验证首次同步成功导入 1 条，跳过 0 条
+        assert_eq!(result.imported, 1, "空库首次同步应成功导入 1 条消息");
+        assert_eq!(
+            result.skipped, 0,
+            "空库首次同步跳过数应为 0，不能被账本误跳过"
+        );
+
+        {
+            let conn = lock_conn!(db.conn);
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'opencode_session'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(count, 1, "明细表应成功写入 1 条");
+
+            let dedup_exists: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM session_usage_dedup WHERE data_source = 'opencode_session' AND request_id = 'opencode_session:ses_first:msg_first')",
+                [],
+                |r| r.get(0),
+            )?;
+            assert!(dedup_exists, "导入后应登记到持久去重账本");
         }
 
         Ok(())
