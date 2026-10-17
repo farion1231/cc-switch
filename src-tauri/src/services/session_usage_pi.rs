@@ -6,12 +6,14 @@
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::CostCalculator;
-use crate::proxy::usage::parser::TokenUsage;
+use crate::proxy::usage::parser::{TokenUsage, SESSION_REQUEST_ID_PREFIX};
 use crate::services::session_usage::{
     estimated_latency_ms, metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
 };
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
-use crate::services::usage_stats::find_model_pricing;
+use crate::services::usage_stats::{
+    find_model_pricing, has_matching_pi_proxy_usage_log, PiProxyDedupKey,
+};
 use rust_decimal::Decimal;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -81,6 +83,9 @@ struct PiUsageRecord {
     request_id: String,
     semantic_id: String,
     has_entry_id: bool,
+    /// 上游响应 id 对应的代理记账键（`session:{message.responseId}`）。仅有
+    /// responseId 的 assistant 条目才有；用于匹配本地路由的直录行。
+    proxy_request_id: Option<String>,
     provider_id: String,
     model: String,
     request_model: String,
@@ -556,6 +561,20 @@ fn parse_usage_record(
         (200, None)
     };
 
+    // Pi 保留了上游响应的 message id（assistant 消息的 `responseId`）。
+    // claude / claude-desktop 的路由记账不带 app/provider 作用域，代理行
+    // request_id 就是 `session:{该 id}`，可与会话行精确对应。
+    let proxy_request_id = if kind == "assistant" {
+        message
+            .and_then(|value| nonempty_string(value.get("responseId")))
+            .map(|response_id| {
+                let prefix = SESSION_REQUEST_ID_PREFIX;
+                format!("{prefix}{response_id}")
+            })
+    } else {
+        None
+    };
+
     let identity = pi_request_identity(entry, kind, usage_value, message);
 
     // Pi initializes an assistant message's timestamp before the request and
@@ -575,6 +594,7 @@ fn parse_usage_record(
         request_id: identity.request_id,
         semantic_id: identity.semantic_id,
         has_entry_id: identity.has_entry_id,
+        proxy_request_id,
         provider_id,
         model,
         request_model,
@@ -777,6 +797,26 @@ fn hash_field(hasher: &mut Sha256, value: &[u8]) {
     hasher.update(value);
 }
 
+/// 记录 Pi 用量去重账本：命中过的身份（request id + 语义指纹）不再重导。
+fn mark_pi_record_seen(
+    conn: &rusqlite::Connection,
+    record: &PiUsageRecord,
+) -> Result<(), AppError> {
+    conn.execute(
+        "INSERT OR IGNORE INTO session_usage_dedup
+         (data_source, request_id, semantic_id, has_entry_id)
+         VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![
+            DATA_SOURCE,
+            record.request_id,
+            record.semantic_id,
+            i64::from(record.has_entry_id),
+        ],
+    )
+    .map_err(|error| AppError::Database(format!("写入 Pi 用量去重账本失败: {error}")))?;
+    Ok(())
+}
+
 fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Result<bool, AppError> {
     let request_seen: bool = conn
         .query_row(
@@ -800,18 +840,27 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
     if already_seen {
         return Ok(false);
     }
-    conn.execute(
-        "INSERT OR IGNORE INTO session_usage_dedup
-         (data_source, request_id, semantic_id, has_entry_id)
-         VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![
-            DATA_SOURCE,
-            record.request_id,
-            record.semantic_id,
-            i64::from(record.has_entry_id),
-        ],
-    )
-    .map_err(|error| AppError::Database(format!("写入 Pi 用量去重账本失败: {error}")))?;
+    // 经本地路由转发的请求已经由代理直录（见 `PiProxyDedupKey`）：代理行按
+    // 路由所属应用记账，app_type / provider_id 与 Pi 侧不相同，主键也不会
+    // 碰撞，所以必须显式判定。命中即只记去重账本、不写用量行 —— 否则同一
+    // 请求会在「代理」和「Pi 会话」两个桶里各记一次。
+    if has_matching_pi_proxy_usage_log(
+        conn,
+        &PiProxyDedupKey {
+            proxy_request_id: record.proxy_request_id.as_deref(),
+            model: &record.model,
+            request_model: &record.request_model,
+            input_tokens: record.input_tokens,
+            output_tokens: record.output_tokens,
+            cache_read_tokens: record.cache_read_tokens,
+            cache_creation_tokens: record.cache_write_tokens,
+            created_at: record.created_at,
+        },
+    )? {
+        mark_pi_record_seen(conn, record)?;
+        return Ok(false);
+    }
+    mark_pi_record_seen(conn, record)?;
 
     let usage = TokenUsage {
         input_tokens: record.input_tokens,
@@ -920,6 +969,156 @@ mod tests {
             .expect("open session for timestamp restore")
             .set_times(FileTimes::new().set_modified(modified))
             .expect("restore session timestamp");
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_proxy_usage_row(
+        conn: &rusqlite::Connection,
+        request_id: &str,
+        app_type: &str,
+        model: &str,
+        request_model: &str,
+        tokens: (i64, i64, i64, i64),
+        created_at: i64,
+        status_code: i64,
+    ) -> Result<(), AppError> {
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                latency_ms, status_code, created_at, data_source
+            ) VALUES (?1, 'route-provider', ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, 'proxy')",
+            rusqlite::params![
+                request_id,
+                app_type,
+                model,
+                request_model,
+                tokens.0,
+                tokens.1,
+                tokens.2,
+                tokens.3,
+                status_code,
+                created_at,
+            ],
+        )
+        .map_err(|error| AppError::Database(format!("插入代理用量失败: {error}")))?;
+        Ok(())
+    }
+
+    /// 本地路由转发的请求由代理记账，Pi 会话导入不再重复入库（issue #8415）。
+    #[test]
+    fn proxy_logged_request_is_not_reimported_from_the_session_file() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = session_path(temp.path(), "routed");
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"session-routed","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#,
+                &assistant_line("routed", "2023-11-14T22:13:21Z", 1),
+            ],
+        );
+
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            // claude / claude-desktop 的路由记账没有 app/provider 作用域，
+            // request_id 就是 `session:{响应 id}`；计数与模型都对不上也能认出来。
+            insert_proxy_usage_row(
+                &conn,
+                "session:reused-response-id",
+                "claude",
+                "unrelated-model",
+                "unrelated-model",
+                (9, 9, 9, 9),
+                0,
+                200,
+            )?;
+        }
+
+        let result = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert_eq!((result.imported, result.skipped), (0, 1));
+
+        let conn = lock_conn!(db.conn);
+        let pi_rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'pi_session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(pi_rows, 0);
+        // 跳过时仍要写去重账本，代理行被剪掉后也不能重导。
+        let ledger: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM session_usage_dedup WHERE data_source = 'pi_session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(ledger, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn scoped_proxy_request_ids_are_matched_by_the_usage_fingerprint() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = session_path(temp.path(), "scoped");
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"session-scoped","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#,
+                &assistant_line("scoped", "2023-11-14T22:13:21Z", 1),
+            ],
+        );
+
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            // codex / gemini / grokbuild 的路由记账带 app/provider 作用域，
+            // 精确键对不上，退化为 token 四项 + 模型 + ±窗口。（夹具：
+            // input=1 output=2 cacheRead=5 cacheWrite=2，created_at=1700000001）
+            insert_proxy_usage_row(
+                &conn,
+                "session:codex:route-provider:msg-1",
+                "codex",
+                "fixture-model",
+                "fixture-model",
+                (1, 2, 5, 2),
+                1_700_000_001,
+                200,
+            )?;
+        }
+
+        let result = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert_eq!((result.imported, result.skipped), (0, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn direct_pi_usage_is_still_imported_when_the_proxy_row_differs() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = session_path(temp.path(), "direct");
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"session-direct","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#,
+                &assistant_line("direct", "2023-11-14T22:13:21Z", 1),
+            ],
+        );
+
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_proxy_usage_row(
+                &conn,
+                "session:codex:route-provider:msg-2",
+                "codex",
+                "fixture-model",
+                "fixture-model",
+                (1, 2, 5, 3),
+                1_700_000_001,
+                200,
+            )?;
+        }
+
+        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 1);
+        Ok(())
     }
 
     #[test]

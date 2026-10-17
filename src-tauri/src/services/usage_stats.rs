@@ -479,9 +479,12 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     let proxy_data_source = data_source_expr("proxy_dedup");
     let app_type_match =
         dedup_app_type_match_sql("proxy_dedup.app_type", &format!("{log_alias}.app_type"));
+    let pi_source = PI_SESSION_DATA_SOURCE;
+    let pi_dedup = pi_proxy_dedup_predicate(log_alias);
     format!(
         "NOT (
-            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
+            (
+            {data_source} IN ({DEDUP_SESSION_SOURCES_SQL})
             AND EXISTS (
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
@@ -513,13 +516,55 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                       OR LOWER({log_alias}.model) = 'unknown'
                   )
             )
+            )
+            OR ({data_source} = '{pi_source}' AND {pi_dedup})
         )"
     )
 }
 
 /// 参与跨源去重的会话日志来源（和 [`effective_usage_log_filter`] 同口径）。
+///
+/// 不含 `pi_session`：Pi 经本地路由转发时由**路由所属应用**记账（见
+/// [`PiProxyDedupKey`]），app_type 与 Pi 侧不相等，需要单独的口径。
 const DEDUP_SESSION_SOURCES_SQL: &str =
     "'session_log', 'codex_session', 'gemini_session', 'opencode_session'";
+
+/// Pi 会话行的 data_source 取值（和 `session_usage_pi::DATA_SOURCE` 一致）。
+const PI_SESSION_DATA_SOURCE: &str = "pi_session";
+
+/// 读侧口径：Pi 会话行与代理直录行是否指向同一请求。
+///
+/// 语义必须与 [`has_matching_pi_proxy_usage_log`] 的指纹部分保持一致 ——
+/// 写侧跳过什么，这里就应该隐藏什么。
+fn pi_proxy_dedup_predicate(log_alias: &str) -> String {
+    let proxy_data_source = data_source_expr("proxy_dedup");
+    format!(
+        "EXISTS (
+            SELECT 1
+            FROM proxy_request_logs proxy_dedup
+            WHERE {proxy_data_source} = 'proxy'
+              AND proxy_dedup.status_code >= 200
+              AND proxy_dedup.status_code < 300
+              AND proxy_dedup.input_tokens = {log_alias}.input_tokens
+              AND proxy_dedup.output_tokens = {log_alias}.output_tokens
+              AND proxy_dedup.cache_read_tokens = {log_alias}.cache_read_tokens
+              AND proxy_dedup.cache_creation_tokens = {log_alias}.cache_creation_tokens
+              AND proxy_dedup.created_at BETWEEN
+                  {log_alias}.created_at - {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
+                  AND {log_alias}.created_at + {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
+              AND (
+                  LOWER(proxy_dedup.model) = LOWER({log_alias}.model)
+                  OR LOWER(proxy_dedup.model) = 'unknown'
+                  OR LOWER({log_alias}.model) = 'unknown'
+              )
+              AND (
+                  LOWER(proxy_dedup.request_model) = LOWER({log_alias}.request_model)
+                  OR COALESCE(proxy_dedup.request_model, '') = ''
+                  OR LOWER({log_alias}.request_model) = 'unknown'
+              )
+        )"
+    )
+}
 
 /// Dashboard 读路径用的去重条件：语义和 [`effective_usage_log_filter`] 完全一致，
 /// 只是先看时间窗口里两类日志各有多少，再挑便宜的写法。
@@ -544,22 +589,29 @@ pub(crate) fn effective_usage_log_filter_for_range(
         .map(|v| v.saturating_add(SESSION_PROXY_DEDUP_WINDOW_SECONDS))
         .unwrap_or(i64::MAX / 2);
     let data_source = data_source_expr("c");
-    let (proxy_count, session_count): (i64, i64) = conn.query_row(
+    let (proxy_count, session_count, pi_count): (i64, i64, i64) = conn.query_row(
         &format!(
             "SELECT
                 COALESCE(SUM(CASE WHEN {data_source} = 'proxy'
                     AND c.status_code >= 200 AND c.status_code < 300 THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN {data_source} IN ({DEDUP_SESSION_SOURCES_SQL})
+                    THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN {data_source} = '{PI_SESSION_DATA_SOURCE}'
                     THEN 1 ELSE 0 END), 0)
              FROM proxy_request_logs c
              WHERE c.created_at BETWEEN ?1 AND ?2"
         ),
         rusqlite::params![lo, hi],
-        |row| Ok((row.get(0)?, row.get(1)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
 
-    if proxy_count == 0 || session_count == 0 {
+    if proxy_count == 0 || (session_count == 0 && pi_count == 0) {
         return Ok("1 = 1".to_string());
+    }
+    if pi_count > 0 {
+        // Pi 会话行的代理对应行 app_type 不相等，下面的 JOIN 快路径按 app_type
+        // 连线，接不住 Pi；窗口里出现过 Pi 行就退回逐行 EXISTS。
+        return Ok(effective_usage_log_filter(log_alias));
     }
     if proxy_count > session_count {
         return Ok(effective_usage_log_filter(log_alias));
@@ -769,6 +821,101 @@ pub(crate) fn has_matching_proxy_usage_log(
             )
         })
         .map_err(|e| AppError::Database(format!("查询重复代理用量日志失败: {e}")))
+}
+
+/// Pi 会话用量相对代理直录行的匹配键。
+///
+/// Pi 经本地路由转发时，代理行按**路由所属应用**记账：`app_type` 是
+/// `claude` / `codex` / `gemini` / `grokbuild`，`provider_id` 是路由 provider，
+/// 而会话行是 `app_type='pi'` + Pi 侧 provider 名。两边都不相等，所以这里
+/// 不收敛 app_type（[`has_matching_proxy_usage_log`] 的 app_type 收敛版本对 Pi
+/// 永远不命中），指纹只落在 token 四项 + 模型 + 时间窗上。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PiProxyDedupKey<'a> {
+    /// 代理侧的精确 request_id（`session:{message_id}` 形式）。Pi 会话保留了
+    /// 上游响应 id（`message.responseId`），而 claude / claude-desktop 记账不加
+    /// app/provider 作用域，键就等于 `session:{该 id}`，命中即同一请求。
+    pub proxy_request_id: Option<&'a str>,
+    /// 会话行记录的实际模型（`message.responseModel`），与代理行的 `model` 同源。
+    pub model: &'a str,
+    /// 会话行记录的请求模型（`message.model`）。代理行也记录客户端请求的模型，
+    /// 要求两者相等，避免把同一时刻的直连用量并进路由用量。
+    pub request_model: &'a str,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub cache_read_tokens: u32,
+    pub cache_creation_tokens: u32,
+    pub created_at: i64,
+}
+
+// Pi 会话重导时每个 token 事件都要跑一次；SQL 静态化让 prepare_cached 稳定命中。
+static MATCHING_PI_PROXY_USAGE_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
+    let l_data_source = data_source_expr("l");
+    format!(
+        "SELECT EXISTS (
+            SELECT 1
+            FROM proxy_request_logs l
+            WHERE {l_data_source} = 'proxy'
+              AND l.status_code >= 200
+              AND l.status_code < 300
+              AND l.input_tokens = ?2
+              AND l.output_tokens = ?3
+              AND l.cache_read_tokens = ?4
+              AND l.cache_creation_tokens = ?5
+              AND l.created_at BETWEEN ?6 - ?7 AND ?6 + ?7
+              AND (
+                  LOWER(l.model) = LOWER(?1)
+                  OR LOWER(l.model) = 'unknown'
+                  OR LOWER(?1) = 'unknown'
+              )
+              AND (
+                  LOWER(l.request_model) = LOWER(?8)
+                  OR COALESCE(l.request_model, '') = ''
+                  OR LOWER(?8) = 'unknown'
+              )
+        )"
+    )
+});
+
+/// Pi 会话导入的跨源去重判定（写侧）。
+///
+/// Pi 行的 request_id 由 entry id 派生，与代理行的 `session:{响应 id}` 主键
+/// 不会碰撞，所以必须显式判定；命中即跳过导入，否则同一请求会在「代理」与
+/// 「Pi 会话」两个桶里各记一次。判定分两级：
+///
+/// 1. 精确键：`session:{message.responseId}` 已经存在于 `proxy_request_logs`
+///    （claude / claude-desktop 路由的记账形式，见
+///    `proxy::usage::parser::dedup_scope_for_app`）。
+/// 2. 指纹：路由属于 codex / gemini / grokbuild 时代理键带 app/provider
+///    作用域，精确键对不上，退化为 token 四项 + 模型 + ±窗口的匹配。
+///
+/// 读侧 [`effective_usage_log_filter`] 用同一指纹隐藏历史重复行。
+pub(crate) fn has_matching_pi_proxy_usage_log(
+    conn: &Connection,
+    key: &PiProxyDedupKey<'_>,
+) -> Result<bool, AppError> {
+    if let Some(request_id) = key.proxy_request_id {
+        if proxy_request_id_exists(conn, request_id)? {
+            return Ok(true);
+        }
+    }
+    conn.prepare_cached(&MATCHING_PI_PROXY_USAGE_LOG_SQL)
+        .and_then(|mut stmt| {
+            stmt.query_row(
+                params![
+                    key.model,
+                    key.input_tokens as i64,
+                    key.output_tokens as i64,
+                    key.cache_read_tokens as i64,
+                    key.cache_creation_tokens as i64,
+                    key.created_at,
+                    SESSION_PROXY_DEDUP_WINDOW_SECONDS,
+                    key.request_model,
+                ],
+                |row| row.get::<_, bool>(0),
+            )
+        })
+        .map_err(|e| AppError::Database(format!("查询 Pi 重复代理用量日志失败: {e}")))
 }
 
 /// grokbuild 会话导入的接管活动守卫：给定时刻 ±窗口内存在任何 grokbuild
@@ -2991,6 +3138,7 @@ mod tests {
                 request_id TEXT PRIMARY KEY,
                 app_type TEXT NOT NULL,
                 model TEXT NOT NULL,
+                request_model TEXT,
                 input_tokens INTEGER NOT NULL,
                 output_tokens INTEGER NOT NULL,
                 cache_read_tokens INTEGER NOT NULL,
@@ -3021,6 +3169,94 @@ mod tests {
         let sql = format!("SELECT COUNT(*) FROM proxy_request_logs l WHERE {filter}");
         let count: i64 = conn.query_row(&sql, [], |row| row.get(0))?;
         assert_eq!(count, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_effective_filter_hides_pi_rows_logged_by_the_local_route() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        create_legacy_nullable_logs_table(&conn)?;
+        conn.execute_batch(
+            "INSERT INTO proxy_request_logs (
+                request_id, app_type, model, request_model, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, status_code, created_at, data_source
+            ) VALUES
+                ('session:abc', 'claude', 'deepseek-chat', 'claude-opus-5', 100, 20, 10, 5, 200, 1000, 'proxy'),
+                ('pi_session:routed', 'pi', 'deepseek-chat', 'claude-opus-5', 100, 20, 10, 5, 200, 1003, 'pi_session'),
+                ('pi_session:direct', 'pi', 'deepseek-chat', 'claude-opus-5', 100, 20, 10, 5, 200, 4000, 'pi_session'),
+                ('pi_session:other-counts', 'pi', 'deepseek-chat', 'claude-opus-5', 100, 20, 10, 6, 200, 1000, 'pi_session'),
+                ('pi_session:failed', 'pi', 'deepseek-chat', 'claude-opus-5', 100, 20, 10, 5, 500, 1000, 'pi_session')",
+        )?;
+
+        let select_ids = |filter: &str| -> Result<Vec<String>, AppError> {
+            let sql = format!(
+                "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let ids = stmt
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ids)
+        };
+
+        // app_type 不相等（代理行是路由所属应用），只有指纹能连线：
+        // 四项计数相等 + 模型相等 + ±窗口内 2xx。`pi_session:failed` 也会被隐藏 ——
+        // 中转链路可能命中断流（客户端 abort）而代理仍记 200，两侧都不看会话行的状态码。
+        let expected = vec![
+            "pi_session:direct".to_string(),
+            "pi_session:other-counts".to_string(),
+            "session:abc".to_string(),
+        ];
+        assert_eq!(select_ids(&effective_usage_log_filter("l"))?, expected);
+
+        // 区间快路径按 app_type JOIN，接不住 Pi：窗口里出现 Pi 行要退回 EXISTS。
+        let ranged = effective_usage_log_filter_for_range(&conn, "l", Some(0), Some(10_000))?;
+        assert!(!ranged.contains("NOT IN"));
+        assert_eq!(select_ids(&ranged)?, expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_pi_dedup_key_matches_exact_request_id_and_fingerprint() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        create_legacy_nullable_logs_table(&conn)?;
+        conn.execute_batch(
+            "INSERT INTO proxy_request_logs (
+                request_id, app_type, model, request_model, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, status_code, created_at, data_source
+            ) VALUES
+                ('session:exact', 'claude', 'unrelated-model', 'unrelated-model', 9, 9, 9, 9, 200, 1000, 'proxy'),
+                ('session:codex:route:scoped', 'codex', 'deepseek-chat', 'claude-opus-5', 100, 20, 10, 5, 200, 1000, 'proxy')",
+        )?;
+
+        let key = |proxy_request_id: Option<&'static str>| PiProxyDedupKey {
+            proxy_request_id,
+            model: "deepseek-chat",
+            request_model: "claude-opus-5",
+            input_tokens: 100,
+            output_tokens: 20,
+            cache_read_tokens: 10,
+            cache_creation_tokens: 5,
+            created_at: 1000,
+        };
+
+        // 精确键命中：即使计数与模型都对不上也判为同一请求。
+        assert!(has_matching_pi_proxy_usage_log(
+            &conn,
+            &key(Some("session:exact"))
+        )?);
+        // codex / gemini / grokbuild 路由的键带作用域，只能靠指纹。
+        assert!(has_matching_pi_proxy_usage_log(&conn, &key(None))?);
+        // 缺少响应 id 且计数不同 → 不判重（避免把直连用量并进路由用量）。
+        let mut different = key(None);
+        different.cache_creation_tokens = 6;
+        assert!(!has_matching_pi_proxy_usage_log(&conn, &different)?);
+        // 窗口外不判重。
+        let mut outside = key(None);
+        outside.created_at = 1000 + SESSION_PROXY_DEDUP_WINDOW_SECONDS + 1;
+        assert!(!has_matching_pi_proxy_usage_log(&conn, &outside)?);
 
         Ok(())
     }
