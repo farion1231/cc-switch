@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
-use toml_edit::{DocumentMut, Item};
+use toml_edit::{DocumentMut, Item, Table};
 
 use crate::app_config::AppType;
 use crate::codex_config::get_codex_config_path;
@@ -26,7 +26,8 @@ use crate::live::engine::{read_current, LiveFile};
 use crate::live::floor;
 use crate::live::patch::toml::parse;
 use crate::live::project::codex::{
-    is_keyless_fallback, CodexProjection, Route, RowInput, OFFICIAL_PROXY_ROUTE_ID, ROUTE_ID,
+    is_keyless_fallback, official_websocket_preference, CodexProjection, Route, RowInput,
+    OFFICIAL_PROXY_ROUTE_ID, ROUTE_ID,
 };
 use crate::mode::operation::{AppWrite, FileChange};
 use crate::mode::state::{op, PendingTarget};
@@ -343,6 +344,17 @@ pub(crate) fn plan_save(
         proxy_injected_oauth,
     })?;
 
+    // 投影里默认显示 true 不等于用户显式选择了 true。未编辑这项时保留行里的偏好，
+    // 包括关闭统一历史后编辑名字的场景；在镜像里删除这一项则恢复默认值。
+    if official
+        && projection.official_supports_websockets == official_websocket_preference(&base_doc)
+    {
+        projection.official_supports_websockets = match origin {
+            Origin::Row(row) => official_websocket_preference(row),
+            Origin::Live(_) => None,
+        };
+    }
+
     let rendered = |doc: &DocumentMut, key: &str| doc.get(key).map(render);
     let from_live: Vec<Entry> = exclusive_entries(&base_doc)
         .into_iter()
@@ -454,7 +466,18 @@ fn store_into_row(
                 );
             }
         }
-        Route::Official | Route::Default => {}
+        Route::Official => {
+            if let Some(enabled) = projection.official_supports_websockets {
+                let mut table = Table::new();
+                table.insert("supports_websockets", toml_edit::value(enabled));
+                insert_at(
+                    &mut doc,
+                    &["model_providers".to_string(), ROUTE_ID.to_string()],
+                    Item::Table(table),
+                );
+            }
+        }
+        Route::Default => {}
     }
     row["config"] = Value::String(doc.to_string());
     Ok(row)
@@ -536,6 +559,55 @@ mod tests {
     }
 
     const LIVE: &str = "approval_policy = \"on-request\"\nmodel = \"gpt-a\"\n\n[agents]\ndefault_subagent_model = \"mini\"\nmax_threads = 4\n\n[mcp_servers.fs]\ncommand = \"fs\"\n";
+
+    #[test]
+    fn official_transport_edits_only_store_an_explicit_boolean() {
+        let mirror = |preference: Option<bool>| {
+            let mut text = "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\nmodel_provider = \"custom\"\n\n[model_providers.custom]\nname = \"OpenAI\"\nwire_api = \"responses\"\nrequires_openai_auth = true\nbase_url = \"https://not-owned.example/v1\"\n".to_string();
+            if let Some(enabled) = preference {
+                text.push_str(&format!("supports_websockets = {enabled}\n"));
+            }
+            json!({ "auth": {}, "config": text })
+        };
+        for (stored, base, edited, expected) in [
+            (None, Some(true), Some(true), None),
+            (None, Some(true), Some(false), Some(false)),
+            (Some(false), Some(false), Some(false), Some(false)),
+            (Some(false), Some(false), Some(true), Some(true)),
+            (Some(false), Some(false), None, None),
+            (Some(false), None, None, Some(false)),
+        ] {
+            let stored = json!({
+                "auth": {},
+                "config": stored.map(|enabled| format!("[model_providers.custom]\nsupports_websockets = {enabled}\n")).unwrap_or_default(),
+            });
+            let plan = plan_save(
+                Some(&stored),
+                &mirror(edited),
+                &mirror(base),
+                &Origin::row(&stored).unwrap(),
+                true,
+                false,
+                ConflictPolicy::Refuse,
+            )
+            .unwrap();
+            assert!(
+                plan.edits.is_empty(),
+                "transport belongs to the official card"
+            );
+            let row = doc(config_text(&plan.row_settings));
+            assert_eq!(official_websocket_preference(&row), expected);
+            assert!(row.get("model_provider").is_none());
+            assert!(row.get("approval_policy").is_none());
+            assert!(row.get("sandbox_mode").is_none());
+            if let Some(table) = row
+                .get("model_providers")
+                .and_then(|providers| providers.get(ROUTE_ID))
+            {
+                assert_eq!(table.as_table_like().unwrap().len(), 1);
+            }
+        }
+    }
 
     #[test]
     fn global_changes_skip_key_fields_and_nested_model_names() {
