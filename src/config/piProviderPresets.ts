@@ -748,6 +748,28 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "teamorouter",
   },
   {
+    name: "TeamoRouter Claude",
+    providerKey: "cc-switch-teamo-router-claude",
+    websiteUrl: "https://teamorouter.cn",
+    apiKeyUrl:
+      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+    settingsConfig: {
+      name: "TeamoRouter Claude",
+      baseUrl: "https://api.teamorouter.cn",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+        piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "teamorouter",
+    icon: "teamorouter",
+  },
+  {
     name: "PPIO",
     providerKey: "cc-switch-ppio",
     websiteUrl: "https://ppio.com",
