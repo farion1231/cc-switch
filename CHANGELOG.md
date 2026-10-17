@@ -5,6 +5,53 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.15] - 2026-10-17
+
+This release is mainly fixes. On Windows, settings such as hidden apps and config dir overrides no longer reset to defaults after an update, and updating Codex no longer removes a healthy install when `--version` is slow. The macOS app icon gets a white rounded-square background so macOS 26 stops placing it in a grey tile. Requests through the local route keep Claude Code's session identity again, which restores the stable cache key on the Codex OAuth path and the Gemini signature replay for Claude Desktop. Codex through Chat upstreams recovers from a malformed tool call in history, and DeepSeek no longer rejects replayed tool history. Other fixes cover slow WebDAV/S3 transfers cut off at 300 seconds, "'claude' is not recognized" in Windows provider terminals, Hermes sessions in WSL, unconditional restart prompts on routed switches, the routing marker after failover, and drag sorting. New: a bar / area style for the usage trend chart, an image input switch per Hermes model, and model fetching for managed OAuth providers in the Claude Desktop form.
+
+**Stats**: 31 commits | 86 files changed | +5214 insertions | -380 deletions
+
+### Added
+
+- **Usage Trend Chart Style** (#8439, fixes #8406): The Display section of the usage Settings tab adds a trend chart style, bar (default) or area. It is stored with the other display settings as `usageDisplay.trendChartType` in `~/.cc-switch/settings.json` (bar when unset or unknown). Both styles share the metrics, axes, tooltip and currency conversion; the area chart draws a dot for a single data point. The Display controls are now laid out as an aligned two-pair grid, with the exchange rate on its own row under the currency.
+- **Hermes Per-model Image Input** (refs #8464): The expanded model details get a "Supports image input" switch. On writes `supports_vision: true`; off removes the key so Hermes falls back to its own detection instead of being forced to text-only. Picking a fetched model whose metadata lists image input pre-fills `true` (never `false`), and an explicit value is left alone.
+- **Claude Desktop Fetches Models for Managed OAuth Providers** (refs #8426): The "Fetch models" button now shows for GitHub Copilot, Codex OAuth and xAI OAuth providers and calls the account-scoped model APIs, asking to log in first when needed. The fetched list is reset and in-flight results are dropped when the provider type or account changes.
+
+### Changed
+
+- **Routed Switch Messages** (#8378, fixes #8347): Route switches report what was applied (remembered, route target, routed, or aggregation default) and whether client files were rewritten. The success toast follows that, and Codex / Gemini CLI / Grok Build are asked to restart only when their configuration actually changed. Direct switches are unchanged.
+- **Sidebar Today Badge Shows Only the Numbers**: The "Today" prefix is dropped even when a single item is shown; the full wording stays in the tooltip and accessible name.
+- **Claude Usage Import Caches Pricing per Transaction** (#8226, fixes #8224): Resolved and missing model prices are reused within one session-log import transaction and dropped before the next, so price edits still apply.
+- **Turkish**: New uninstall and plan quota strings are translated (#8291).
+- **Presets**: EveryAPI and AllTokens join as sponsor presets.
+
+### Fixed
+
+- **Windows Settings Reset to Defaults After Updates** (refs #8429): An older non-atomic save could leave leftover bytes after a shorter `settings.json`, and a failed load silently used defaults that the next full save (for example the What's New dialog) wrote back. Saves now go through a temp file and rename; reads retry transient errors, strip a UTF-8 BOM, keep every field that still deserializes, and read only the first JSON value when a trailing tail is present. A file that did not fully load is backed up to `settings.json.broken-<time>.bak`, and saving is refused until that backup succeeds.
+- **Updating Codex Could Remove a Working Install**: The uninstall-then-install repair ran whenever the pre-update probe marked Codex as not runnable, including when `--version` timed out or failed to spawn; if the reinstall then failed, Codex showed as not installed. Repair now runs only when `--version` really exited with an error, and other cases take the normal npm upgrade.
+- **macOS 26 Grey Icon Tile** (refs #8401): `icon.icns` now bakes in a white 824px rounded square on Apple's 1024px grid, so macOS 26 and 15 show the same white tile. Windows and Linux icons stay transparent.
+- **Claude Session Identity Lost in the Proxy** (#8236, fixes #8235; refs #8234, #8418): Claude Code now sends `metadata.user_id` as a JSON string with `session_id`, which the proxy did not parse, so every request got a generated ID. JSON session ids are parsed first (legacy `_session_` still works), and `claude-desktop` also honors the Claude session headers. This restores the session-derived `prompt_cache_key` and session headers on the Codex OAuth path, and the Gemini signature replay for Claude Desktop routing to Gemini.
+- **Codex History With a Malformed Tool Call Broke Chat Upstreams** (#8241, fixes #5197): A historical `function_call` whose arguments are not a JSON object (for example truncated output) is turned into assistant text with its results folded into the same message when converting to Chat; valid history is byte-identical.
+- **DeepSeek Rejected Replayed Codex Tool History** (#8351, refs #8331): Empty assistant messages, progress text or reasoning between a `function_call` and its results became standalone assistant messages after conversion, and DeepSeek returned 400. For explicit DeepSeek model ids only, they are folded into the open tool-call message; well-formed history is unchanged.
+- **Codex Aggregation Stripped `x-codex-beta-features`** (#8437, fixes #8435): Aggregation mode removed every `x-codex-*` header before forwarding. The non-identity beta marker is kept for native Responses upstreams; identity headers are still stripped.
+- **Claude Desktop Mapping Loop for Native Providers** (#8444, fixes #8441): Saving a mapping required routing, and routing required a mapping. A native provider without a model list can now enter routing with the default route set, so the mapping can be saved on the same card.
+- **Slow WebDAV / S3 Transfers Cut Off at 300 s** (refs #8428): The fixed per-request timeout covered the whole body, so a large `skills.zip` on a slow link failed with "error decoding response body". The overall timeout now scales with the payload (300 s plus time at 16 KiB/s), and GET adds a 120 s idle timeout for headers and each body chunk.
+- **Windows Provider Terminals Could Not Find `claude`** (refs #8446): The `cmd /C start` launch inherited CC Switch's process PATH, which can miss user-level entries after the MSI auto-update relaunch or when the CLI was installed later. The terminal now gets the restored user + machine PATH; CC Switch's own environment is unchanged.
+- **Hermes Sessions in WSL** (#8254, fixes #8205): For `wsl.localhost` / `wsl$` Hermes paths, the live WAL database is read inside its distribution via `wsl.exe` and Python SQLite (read-only, one short transaction). Requires `python3` (3.7+) and `timeout` in the distribution; other paths are unchanged.
+- **Routing Marker Stayed on the Old Provider After Failover** (refs #7998): `provider-switched` now invalidates the whole `["providers", app]` query prefix, so the marker reads the new route.
+- **Pi Subagent Usage Missing or Recorded as `unknown`** (#8318, fixes #8298): Each pi-subagents child session file (including nested runs and forked contexts) is imported with its real model and provider; `subagent-artifacts` directories are skipped, and the parent's summary is dropped when all linked children are imported. Counting starts from the first import on this version; history is not backfilled.
+- **Provider Cards Stretched and Overlapped While Dragging** (#8315, fixes #8283): Dragged cards keep their size, the drag layer sits on the positioned wrapper, and movement is locked to the vertical axis.
+- **Skills Download Errors Masked by Branch Fallback**: Falling back from the configured branch to `main` and `master` now happens only on 404, so a timeout, oversized archive or extraction error is reported instead of "repository or branch not found"; errors also fill in the repo owner and name.
+- **DeepSeek Balance Showed an Empty Wallet as Used Up** (refs #8170): When any currency wallet still has funds, wallets at or below zero are hidden, so the card no longer shows a red "used up" row or reopens the plan panel on every launch.
+- **Codex Thinking Level Picker Cut Off in Short Windows** (refs #8094): The popover is capped at the available height, the level list scrolls, and the default-level section keeps its full height.
+
+### Upgrade notes
+
+- **No database schema change** (still 20).
+- On Windows, a `settings.json` that already carries a trailing tail is recovered on first launch and the original is kept as `settings.json.broken-<time>.bak`. Settings already reset by an earlier update are not restored.
+- Pi subagent usage is counted from the first import on this version; earlier subagent usage keeps its old `unknown` rows.
+- Reading Hermes sessions in WSL needs `python3` (3.7+) inside the distribution.
+
 ## [4.0.14] - 2026-10-16
 
 This release adds a wide range of customization options to the usage dashboard: a new Settings tab, amounts in a chosen currency with an editable exchange rate, a choice of what the sidebar Today label shows, selectable request log columns with new cache write, hit rate, total time and status code columns, and the last tab, range and chart metrics remembered. "Open Terminal" on a Claude card now explains what the folder is for and remembers recent folders. Fixes cover Codex through the local route to Gemini failing on the second tool-call turn, Codex retry and stream timeout keys dropped in routing mode, Skills repos over 128 MiB, custom pricing for model ids with capital letters, OpenCode speed estimates and deep-link imports, Hermes dev builds always showing an update, failover queue reordering, and Windows session groups split by path case.
