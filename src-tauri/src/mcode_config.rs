@@ -43,7 +43,13 @@ pub(crate) fn write_and_commit<T>(
         Err(error) => {
             let rollback = match previous {
                 Some(bytes) => atomic_write_private(path, &bytes),
-                None => fs::remove_file(path).map_err(|error| AppError::io(path, error)),
+                None => match fs::remove_file(path) {
+                    Ok(()) => Ok(()),
+                    // Disable/remove may be a no-op on a missing file. Restoring
+                    // the missing snapshot is already complete in that case.
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    Err(error) => Err(AppError::io(path, error)),
+                },
             };
             if let Err(rollback_error) = rollback {
                 return Err(AppError::Message(format!(

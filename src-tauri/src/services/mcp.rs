@@ -36,42 +36,23 @@ impl McpService {
             .unwrap_or_default();
 
         // MCode / Pi / RPI 的文件和数据库一起提交：任一步失败都恢复原样
+        let changes = [
+            (server.apps.pi || prev_apps.pi).then_some((
+                &AppType::Pi,
+                mcp::pi::PiChange::from_enabled(server.apps.pi.then_some(&server.server)),
+            )),
+            (server.apps.rpi || prev_apps.rpi).then_some((
+                &AppType::Rpi,
+                mcp::pi::PiChange::from_enabled(server.apps.rpi.then_some(&server.server)),
+            )),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
         let save_with_pi = || {
-            if server.apps.rpi || prev_apps.rpi {
-                let apps = if server.apps.rpi {
-                    Some(&server.server)
-                } else {
-                    None
-                };
-                mcp::pi::sync_and_commit(
-                    &AppType::Rpi,
-                    &server.id,
-                    mcp::pi::PiChange::from_enabled(apps),
-                    || {
-                        if server.apps.pi || prev_apps.pi {
-                            mcp::pi::sync_and_commit(
-                                &AppType::Pi,
-                                &server.id,
-                                mcp::pi::PiChange::from_enabled(
-                                    server.apps.pi.then_some(&server.server),
-                                ),
-                                || state.db.save_mcp_server(&server),
-                            )
-                        } else {
-                            state.db.save_mcp_server(&server)
-                        }
-                    },
-                )
-            } else if server.apps.pi || prev_apps.pi {
-                mcp::pi::sync_and_commit(
-                    &AppType::Pi,
-                    &server.id,
-                    mcp::pi::PiChange::from_enabled(server.apps.pi.then_some(&server.server)),
-                    || state.db.save_mcp_server(&server),
-                )
-            } else {
+            mcp::pi::sync_many_and_commit(&changes, &server.id, || {
                 state.db.save_mcp_server(&server)
-            }
+            })
         };
         if server.apps.mcode || prev_apps.mcode {
             mcp::mcode::sync_and_commit(
@@ -114,35 +95,21 @@ impl McpService {
         let server = state.db.get_all_mcp_servers()?.shift_remove(id);
 
         if let Some(server) = server {
-            let delete_with_pi = || {
-                if server.apps.pi || server.apps.rpi {
-                    // Pi 与 RPI 各写各的 mcp.json，逐个提交并最终落到数据库删除
-                    let delete_from_rpi = || {
-                        if server.apps.pi {
-                            mcp::pi::sync_and_commit(
-                                &AppType::Pi,
-                                id,
-                                mcp::pi::PiChange::Remove,
-                                || state.db.delete_mcp_server(id),
-                            )
-                        } else {
-                            state.db.delete_mcp_server(id)
-                        }
-                    };
-                    if server.apps.rpi {
-                        mcp::pi::sync_and_commit(
-                            &AppType::Rpi,
-                            id,
-                            mcp::pi::PiChange::Remove,
-                            delete_from_rpi,
-                        )
-                    } else {
-                        delete_from_rpi()
-                    }
-                } else {
-                    state.db.delete_mcp_server(id)
-                }
-            };
+            let changes = [
+                server
+                    .apps
+                    .pi
+                    .then_some((&AppType::Pi, mcp::pi::PiChange::Remove)),
+                server
+                    .apps
+                    .rpi
+                    .then_some((&AppType::Rpi, mcp::pi::PiChange::Remove)),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+            let delete_with_pi =
+                || mcp::pi::sync_many_and_commit(&changes, id, || state.db.delete_mcp_server(id));
             if server.apps.mcode {
                 mcp::mcode::sync_and_commit(id, None, delete_with_pi)?;
             } else {
