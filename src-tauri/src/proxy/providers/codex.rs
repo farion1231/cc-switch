@@ -553,6 +553,12 @@ pub(crate) fn apply_codex_compaction_upstream_model(
     provider: &Provider,
     body: &mut JsonValue,
 ) -> Option<(String, String)> {
+    if provider_needs_responses_namespace_flatten(provider) {
+        // The later xAI sanitizer knows both catalogued IDs and valid Grok
+        // SKUs absent from the catalog; let it preserve or remap this model.
+        return None;
+    }
+
     let request_model = body
         .get("model")
         .and_then(JsonValue::as_str)
@@ -1987,6 +1993,37 @@ wire_api = "responses"
             );
             assert_eq!(stale["model"], model);
         }
+    }
+
+    #[test]
+    fn preturn_compaction_defers_xai_model_choice_to_native_sanitizer() {
+        let provider = create_provider(json!({
+            "config": r#"model_provider = "custom"
+model = "grok-4.6"
+
+[model_providers.custom]
+base_url = "https://api.x.ai/v1"
+wire_api = "responses"
+"#,
+            "modelCatalog": { "models": [{ "slug": "grok-4.6" }] }
+        }));
+        assert!(provider_needs_responses_namespace_flatten(&provider));
+
+        let mut compaction = json!({ "model": "grok-4.7-fast", "input": [] });
+        assert_eq!(
+            apply_codex_compaction_upstream_model(&provider, &mut compaction),
+            None
+        );
+        assert_eq!(compaction["model"], "grok-4.7-fast");
+
+        let upstream_model = codex_provider_upstream_model(&provider).unwrap();
+        crate::proxy::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
+            &mut compaction,
+            &provider.id,
+            Some(&upstream_model),
+            &provider.settings_config,
+        );
+        assert_eq!(compaction["model"], "grok-4.7-fast");
     }
 
     #[test]
