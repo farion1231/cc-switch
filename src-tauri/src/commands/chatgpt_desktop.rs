@@ -215,7 +215,7 @@ fn macos_installed_apps() -> Vec<PathBuf> {
 #[cfg(any(target_os = "macos", test))]
 const MACOS_CHATGPT_DESKTOP_BUNDLE_IDENTIFIER: &str = "com.openai.codex";
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 const MACOS_OPENAI_TEAM_IDENTIFIER: &str = "2DC432GLL2";
 
 #[cfg(any(target_os = "macos", test))]
@@ -248,14 +248,18 @@ fn macos_bundle_identifier(app: &std::path::Path) -> Option<String> {
     (!bundle_identifier.is_empty()).then_some(bundle_identifier)
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn macos_openai_signature_requirement() -> String {
+    format!(
+        "=identifier \"{MACOS_CHATGPT_DESKTOP_BUNDLE_IDENTIFIER}\" and anchor apple generic and certificate leaf[subject.OU] = \"{MACOS_OPENAI_TEAM_IDENTIFIER}\""
+    )
+}
+
 #[cfg(target_os = "macos")]
 fn macos_openai_signature_is_valid(app: &std::path::Path) -> bool {
-    let requirement = format!(
-        "identifier \"{MACOS_CHATGPT_DESKTOP_BUNDLE_IDENTIFIER}\" and anchor apple generic and certificate leaf[subject.OU] = \"{MACOS_OPENAI_TEAM_IDENTIFIER}\""
-    );
     std::process::Command::new("/usr/bin/codesign")
-        .args(["--verify", "--deep", "--strict"])
-        .arg(format!("-R={requirement}"))
+        .args(["--verify", "--deep", "--strict", "-R"])
+        .arg(macos_openai_signature_requirement())
         .arg(app)
         .output()
         .is_ok_and(|output| output.status.success())
@@ -725,6 +729,11 @@ mod tests {
                 PathBuf::from("/Users/me/Applications/Codex.app"),
             ]
         );
+    }
+
+    #[test]
+    fn codesign_requirement_uses_inline_expression_syntax() {
+        assert!(macos_openai_signature_requirement().starts_with('='));
     }
 
     #[test]
