@@ -648,7 +648,7 @@ fn finder_trash_commands(apps: &[PathBuf]) -> Option<Vec<String>> {
 ///
 /// 官方独立安装器的 `Programs\OpenAI\Codex\bin\codex.exe`（入口直接在 bin 下）、
 /// npm 的 `@openai/codex/bin/codex.js` 都不算。
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn is_chatgpt_desktop_codex_path(path: &str) -> bool {
     let normalized = path.replace('\\', "/").to_ascii_lowercase();
     let file_name = normalized.rsplit('/').next().unwrap_or_default();
@@ -665,7 +665,7 @@ pub(crate) fn is_chatgpt_desktop_codex_path(path: &str) -> bool {
 }
 
 /// 只在 Windows 当前用户的 LocalAppData 下识别桌面版解出的缓存 CLI。
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn is_chatgpt_desktop_extracted_cli_path(path: &str) -> bool {
     #[cfg(windows)]
     {
