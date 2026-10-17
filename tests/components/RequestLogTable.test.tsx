@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   RequestLogTable,
   appShortName,
+  appDisplayName,
   formatHitPercent,
   formatLogTime,
 } from "@/components/usage/RequestLogTable";
@@ -311,6 +312,8 @@ describe("RequestLogTable", () => {
     const appCell = screen.getByTitle("Claude Code");
     expect(appCell).toHaveTextContent("Claude");
     expect(appShortName("claude-desktop")).toBe("Desktop");
+    expect(appShortName("omp")).toBe("OMP");
+    expect(appDisplayName("omp")).toBe("Oh My Pi");
     expect(appShortName("unknown-app")).toBe("unknown-app");
   });
 });

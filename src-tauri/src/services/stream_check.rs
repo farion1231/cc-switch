@@ -173,7 +173,9 @@ impl StreamCheckService {
             }
             AppType::OpenClaw => Self::extract_openclaw_base_url(provider),
             AppType::Hermes => Self::extract_hermes_base_url(provider),
-            AppType::Pi => crate::pi_config::provider_base_url(&provider.settings_config),
+            AppType::Pi | AppType::Omp => {
+                crate::pi_config::provider_base_url(&provider.settings_config)
+            }
             AppType::ClaudeDesktop => ClaudeAdapter::new()
                 .extract_base_url(provider)
                 .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}"))),
@@ -492,6 +494,24 @@ mod tests {
             StreamCheckService::extract_openclaw_base_url(&p2).unwrap(),
             "https://api.deepseek.com/v1"
         );
+    }
+
+    #[test]
+    fn test_resolve_pi_and_omp_base_url() {
+        let provider = make_provider(serde_json::json!({
+            "baseUrl": "https://relay.example/v1",
+            "apiKey": "!must-not-execute",
+            "api": "openai-completions",
+            "models": [{"id": "test"}],
+        }));
+        let empty = make_provider(serde_json::json!({}));
+        for app in [AppType::Pi, AppType::Omp] {
+            assert_eq!(
+                StreamCheckService::resolve_base_url(&app, &provider).unwrap(),
+                "https://relay.example/v1"
+            );
+            assert!(StreamCheckService::resolve_base_url(&app, &empty).is_err());
+        }
     }
 
     #[test]

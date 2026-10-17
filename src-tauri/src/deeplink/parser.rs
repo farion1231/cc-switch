@@ -91,7 +91,15 @@ fn parse_provider_deeplink(
     // Validate app type
     if !matches!(
         app.as_str(),
-        "claude" | "codex" | "gemini" | "grokbuild" | "opencode" | "openclaw" | "hermes" | "pi"
+        "claude"
+            | "codex"
+            | "gemini"
+            | "grokbuild"
+            | "opencode"
+            | "openclaw"
+            | "hermes"
+            | "pi"
+            | "omp"
     ) {
         return Err(AppError::InvalidInput(format!(
             "Invalid provider app type: '{app}'"
@@ -126,6 +134,9 @@ fn parse_provider_deeplink(
 
     // Extract optional fields
     let model = params.get("model").cloned();
+    if app == "omp" && model.as_deref().is_none_or(|model| model.trim().is_empty()) {
+        return Err(AppError::Config("omp.errors.deeplinkModel".into()));
+    }
     // Pi 的节点没有模型就选不到任何模型（见 `provider::build_pi_settings`）
     if app == "pi" && model.as_deref().is_none_or(|model| model.trim().is_empty()) {
         return Err(AppError::InvalidInput(
@@ -330,9 +341,10 @@ fn parse_mcp_deeplink(
                 | "hermes"
                 | "pi"
                 | "mcode"
+                | "omp"
         ) {
             return Err(AppError::InvalidInput(format!(
-                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'grokbuild', 'opencode', 'hermes', 'pi', or 'mcode', got '{trimmed}'"
+                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'grokbuild', 'opencode', 'hermes', 'pi', 'mcode', or 'omp', got '{trimmed}'"
             )));
         }
     }

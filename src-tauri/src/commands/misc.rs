@@ -170,8 +170,8 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 9] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode",
+const VALID_TOOLS: [&str; 10] = [
+    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "omp",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -625,6 +625,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "openclaw" => "OpenClaw",
         "hermes" => "Hermes",
         "pi" => "Pi",
+        "omp" => "Oh My Pi",
         "mcode" => "MiniMax Code",
         _ => "Unknown",
     }
@@ -840,6 +841,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "opencode" => Some("npm i -g opencode-ai@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
         "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
+        "omp" => Some("bun install -g @oh-my-pi/pi-coding-agent@latest"),
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
@@ -1211,6 +1213,7 @@ async fn get_single_tool_version_impl(
         "pi" => {
             fetch_npm_latest_for_tool(&client, "@earendil-works/pi-coding-agent", tool, local).await
         }
+        "omp" => fetch_npm_latest_for_tool(&client, "@oh-my-pi/pi-coding-agent", tool, local).await,
         "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
         _ => None,
     };
@@ -3119,6 +3122,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "opencode" => Some("opencode-ai"),
         "openclaw" => Some("openclaw"),
         "pi" => Some("@earendil-works/pi-coding-agent"),
+        "omp" => Some("@oh-my-pi/pi-coding-agent"),
         "mcode" => Some("@minimax-ai/code"),
         _ => None,
     }
@@ -3583,6 +3587,17 @@ fn package_manager_anchored_command_from_paths(
         let brew = sibling_bin(bin_path, "brew")?;
         return Some(format!("{} upgrade {formula}", quote_path_if_spaced(&brew)));
     }
+    if tool == "omp" {
+        // 独立二进制旁边不一定有 Bun；无法确认安装来源时交给原生安装的手动升级提示。
+        return sibling_bin(bin_path, "bun")
+            .filter(|bun| Path::new(bun).is_file())
+            .map(|bun| {
+                format!(
+                    "{} install -g @oh-my-pi/pi-coding-agent@latest",
+                    quote_path_if_spaced(&bun)
+                )
+            });
+    }
     let pkg = npm_package_for(tool)?;
     match infer_install_source(Path::new(bin_path)) {
         "volta" => {
@@ -3609,10 +3624,9 @@ fn package_manager_anchored_command_from_paths(
 }
 
 /// 给定工具、原始 bin 路径（命令行命中的入口）、canonicalize 后的真身路径，
-/// 推断"写回同一处"的锚定升级命令。**POSIX 版是纯函数（不碰 FS）**——真实 canonicalize
-/// 由调用方做（`installs_anchored_command` 复用 enumerate 时算出的 `inst.real`),
-/// 便于单测覆盖各包管理器分支。Windows 版同名函数因 sibling 扩展名歧义必须读 fs,
-/// 是刻意保留的平台差异(详见 Windows 版本 doc)。
+/// 推断"写回同一处"的锚定升级命令。POSIX 版仅 Omp 分支检查同级 Bun 是否存在；真实
+/// canonicalize 由调用方做（`installs_anchored_command` 复用 enumerate 时算出的 `inst.real`）。
+/// Windows 版同名函数因 sibling 扩展名歧义也需要读 fs（详见 Windows 版本 doc）。
 ///
 /// **关键不变量：返回的命令必须用绝对路径调用执行体；若执行体通过
 /// `#!/usr/bin/env` 查找解释器，还必须把其同级 bin 目录显式放到 PATH 首位**。
@@ -3698,6 +3712,14 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
 
 #[cfg(target_os = "windows")]
 fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Option<String> {
+    if tool == "omp" {
+        return sibling_bin_with_ext(bin_path, "bun", &["exe", "cmd"]).map(|bun| {
+            format!(
+                "{} install -g @oh-my-pi/pi-coding-agent@latest",
+                win_quote_path_for_batch(&bun)
+            )
+        });
+    }
     let pkg = npm_package_for(tool)?;
 
     match infer_install_source(Path::new(bin_path)) {
@@ -6399,6 +6421,21 @@ mod tests {
     }
 
     #[test]
+    fn omp_lifecycle_uses_bun_and_the_official_package() {
+        assert_eq!(tool_display_name("omp"), "Oh My Pi");
+        assert_eq!(extract_version("omp/18.10.4"), "18.10.4");
+        assert_eq!(npm_package_for("omp"), Some("@oh-my-pi/pi-coding-agent"));
+        assert_eq!(
+            npm_install_command_for("omp"),
+            Some("bun install -g @oh-my-pi/pi-coding-agent@latest")
+        );
+        assert_eq!(
+            static_fallback_command("omp"),
+            "bun install -g @oh-my-pi/pi-coding-agent@latest"
+        );
+    }
+
+    #[test]
     fn mcode_lifecycle_metadata_skips_non_tty_self_update() {
         let requested = vec!["unsupported".to_string(), "mcode".to_string()];
         assert_eq!(normalize_requested_tools(&requested), vec!["mcode"]);
@@ -8071,6 +8108,38 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some("/Users/me/.volta/bin/volta install @openai/codex")
+            );
+        }
+
+        #[test]
+        fn omp_with_sibling_bun_uses_bun_install() {
+            let dir = tempfile::tempdir().unwrap();
+            let bin_dir = dir.path().join(".bun/bin");
+            std::fs::create_dir_all(&bin_dir).unwrap();
+            let bun = bin_dir.join("bun");
+            std::fs::write(&bun, b"").unwrap();
+            let omp = bin_dir.join("omp").to_string_lossy().into_owned();
+            assert_eq!(
+                anchored_command_from_paths("omp", &omp, &omp),
+                Some(format!(
+                    "{} install -g @oh-my-pi/pi-coding-agent@latest",
+                    bun.display()
+                ))
+            );
+        }
+
+        #[test]
+        fn omp_without_sibling_bun_requires_manual_update() {
+            let dir = tempfile::tempdir().unwrap();
+            let bin_dir = dir.path().join(".local/bin");
+            std::fs::create_dir_all(&bin_dir).unwrap();
+            let omp = bin_dir.join("omp");
+            std::fs::write(&omp, b"\x7fELF").unwrap();
+            let omp = omp.to_string_lossy().into_owned();
+            assert_eq!(anchored_command_from_paths("omp", &omp, &omp), None);
+            assert_eq!(
+                resolve_update_command("omp", &[inst(&omp, true)]),
+                UpdateCommand::Unmanaged
             );
         }
 

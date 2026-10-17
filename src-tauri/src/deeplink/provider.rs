@@ -119,6 +119,9 @@ pub fn import_provider_from_deeplink(
             .to_lowercase();
         format!("{sanitized_name}-{timestamp}")
     };
+    if app_type == AppType::Omp {
+        provider.id = format!("cc-switch-{}", provider.id);
+    }
 
     let provider_id = provider.id.clone();
 
@@ -213,10 +216,18 @@ impl ApiFormat {
             (AppType::OpenCode, OpenAiChat) => Some("@ai-sdk/openai-compatible"),
             (AppType::OpenCode, OpenAiResponses) => Some("@ai-sdk/openai"),
             (AppType::OpenCode, GeminiNative) => Some("@ai-sdk/google"),
-            (AppType::OpenClaw | AppType::Pi, Anthropic) => Some("anthropic-messages"),
-            (AppType::OpenClaw | AppType::Pi, OpenAiChat) => Some("openai-completions"),
-            (AppType::OpenClaw | AppType::Pi, OpenAiResponses) => Some("openai-responses"),
-            (AppType::OpenClaw | AppType::Pi, GeminiNative) => Some("google-generative-ai"),
+            (AppType::OpenClaw | AppType::Pi | AppType::Omp, Anthropic) => {
+                Some("anthropic-messages")
+            }
+            (AppType::OpenClaw | AppType::Pi | AppType::Omp, OpenAiChat) => {
+                Some("openai-completions")
+            }
+            (AppType::OpenClaw | AppType::Pi | AppType::Omp, OpenAiResponses) => {
+                Some("openai-responses")
+            }
+            (AppType::OpenClaw | AppType::Pi | AppType::Omp, GeminiNative) => {
+                Some("google-generative-ai")
+            }
             (AppType::Hermes, Anthropic) => Some("anthropic_messages"),
             (AppType::Hermes, OpenAiChat) => Some("chat_completions"),
             (AppType::Hermes, OpenAiResponses) => Some("codex_responses"),
@@ -273,6 +284,9 @@ fn native_protocol(app_type: &AppType, api_format: Option<ApiFormat>) -> &'stati
 /// 累加式应用读配置时会解释的字符串写法，链接带了就拒绝导入。
 ///
 /// - Pi：`apiKey` 以 `!` 开头会被当成 shell 命令执行；`$NAME`、`${NAME}` 会换成环境变量。
+/// - Omp：`apiKey` 也会执行 `!` 命令，并优先把整个值当环境变量名查找；拒绝纯变量名
+///   （`[A-Za-z_][A-Za-z0-9_]*`，保守地去掉首尾空白再查），也保留 Pi 的 `$` 引用检查。
+///   `baseUrl` 不走此解析；请求头会解析，但链接不会导入请求头。
 /// - OpenCode：`{env:NAME}` 读环境变量，`{file:path}` 读本机文件。
 /// - OpenClaw、Hermes：`${NAME}` 读环境变量。
 ///
@@ -286,7 +300,7 @@ pub(super) fn check_link_values(
     if !app_type.is_additive_mode() {
         return Ok(());
     }
-    let is_pi = matches!(app_type, AppType::Pi);
+    let is_pi = matches!(app_type, AppType::Pi | AppType::Omp);
     let fields = [
         ("name", request.name.as_deref()),
         ("endpoint", request.endpoint.as_deref()),
@@ -296,7 +310,14 @@ pub(super) fn check_link_values(
     for (field, value) in fields {
         let Some(value) = value else { continue };
         let command = is_pi && field == "apiKey" && value.trim_start().starts_with('!');
-        if command || has_dynamic_reference(value, is_pi) {
+        let omp_env_key = matches!(app_type, AppType::Omp) && field == "apiKey" && {
+            let mut chars = value.trim().chars();
+            chars
+                .next()
+                .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+                && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+        };
+        if command || omp_env_key || has_dynamic_reference(value, is_pi) {
             return Err(AppError::InvalidInput(format!(
                 "The link's '{field}' uses syntax that {} would expand into a command, an \
                  environment variable or a local file; it cannot be imported from a link. Add the \
@@ -331,7 +352,7 @@ pub(crate) fn build_provider_from_request(
 ) -> Result<Provider, AppError> {
     let api_format = link_api_format(app_type, request)?;
     check_link_values(app_type, request)?;
-    let settings_config = match app_type {
+    let mut settings_config = match app_type {
         AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
         AppType::Codex => build_codex_settings(request)?,
         AppType::Gemini => build_gemini_settings(request),
@@ -339,13 +360,19 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenCode => build_opencode_settings(request, api_format),
         AppType::OpenClaw => build_additive_app_settings(request, api_format),
         AppType::Hermes => build_hermes_settings(request, api_format),
-        AppType::Pi => build_pi_settings(request, api_format)?,
+        AppType::Pi | AppType::Omp => build_pi_settings(request, api_format)?,
         AppType::Mcode => {
             return Err(AppError::InvalidInput(
                 "Add MCode providers from the MCode page".into(),
             ))
         }
     };
+
+    if *app_type == AppType::Omp {
+        if let Some(config) = settings_config.as_object_mut() {
+            config.remove("name");
+        }
+    }
 
     // Build usage script configuration if provided
     let mut meta = build_provider_meta(app_type, request)?;
@@ -976,7 +1003,7 @@ pub fn parse_and_merge_config(
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
         "grokbuild" => merge_grokbuild_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is
-        "openclaw" | "opencode" | "hermes" | "pi" => {
+        "openclaw" | "opencode" | "hermes" | "pi" | "omp" => {
             merge_additive_config(&mut merged, &config_value)?;
             // 从 config 里补来的地址和 Key 同样要查，让确认框当场报错
             if let Ok(app_type) = AppType::from_str(request.app.as_deref().unwrap_or("")) {
@@ -1299,6 +1326,60 @@ mod tests {
             model: Some("anthropic/claude-opus-4-8".to_string()),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn omp_deeplinks_accept_literal_keys_and_reject_dynamic_credentials() {
+        let mut request = hermes_request();
+        request.app = Some("omp".into());
+        let provider = build_provider_from_request(&AppType::Omp, &request).unwrap();
+        assert!(provider.settings_config.get("name").is_none());
+        crate::omp_config::validate_provider("cc-switch-import", &provider.settings_config)
+            .unwrap();
+        for key in ["sk-test", "sk-abc123", "123abc", "literal.key"] {
+            request.api_key = Some(key.into());
+            assert!(
+                build_provider_from_request(&AppType::Omp, &request).is_ok(),
+                "{key}"
+            );
+        }
+        for key in [
+            "PRIVATE_API_KEY",
+            "private_api_key",
+            "abc123",
+            "_123_key",
+            "  PRIVATE_API_KEY\t",
+            "$PRIVATE_API_KEY",
+            "${PRIVATE_API_KEY}",
+            "!secret-command",
+            "  !secret-command",
+        ] {
+            request.api_key = Some(key.into());
+            assert!(
+                build_provider_from_request(&AppType::Omp, &request).is_err(),
+                "{key}"
+            );
+        }
+        request.api_key = Some("PRIVATE_API_KEY".into());
+        assert!(check_link_values(&AppType::Pi, &request).is_ok());
+    }
+
+    #[test]
+    fn omp_deeplinks_check_inline_keys_and_do_not_import_headers() {
+        use base64::prelude::*;
+
+        let mut request = hermes_request();
+        request.app = Some("omp".into());
+        request.api_key = None;
+        request.config = Some(BASE64_STANDARD.encode(r#"{"apiKey":"PRIVATE_API_KEY"}"#));
+        assert!(parse_and_merge_config(&request).is_err());
+
+        request.config = Some(BASE64_STANDARD.encode(
+            r#"{"apiKey":"sk-test","headers":{"Authorization":"PRIVATE_API_KEY","X-Test":"!secret-command"}}"#,
+        ));
+        let merged = parse_and_merge_config(&request).unwrap();
+        let provider = build_provider_from_request(&AppType::Omp, &merged).unwrap();
+        assert!(provider.settings_config.get("headers").is_none());
     }
 
     /// deeplink 同时声明 `api_key` 与 `env_key` 时，导入结果只保留用户可见的

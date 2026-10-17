@@ -69,6 +69,7 @@ export function AddProviderDialog({
     appId !== "openclaw" &&
     appId !== "hermes" &&
     appId !== "pi" &&
+    appId !== "omp" &&
     appId !== "mcode" &&
     appId !== "grokbuild" &&
     appId !== "claude-desktop";
@@ -289,6 +290,7 @@ export function AddProviderDialog({
           appId === "openclaw" ||
           appId === "hermes" ||
           appId === "pi" ||
+          appId === "omp" ||
           appId === "mcode") &&
         values.providerKey
       ) {
@@ -555,7 +557,7 @@ export function AddProviderDialog({
       contentClassName={
         step === "pick"
           ? "flex h-full flex-col space-y-0 p-0"
-          : appId === "pi"
+          : appId === "pi" || appId === "omp"
             ? "pb-0 pt-4"
             : "pt-4"
       }

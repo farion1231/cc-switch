@@ -219,6 +219,28 @@ fn test_parse_rejects_config_url_up_front() {
     assert!(err.to_string().contains("configUrl"), "{err}");
 }
 
+#[test]
+fn omp_provider_and_mcp_links_are_accepted_but_prompt_links_are_not() {
+    let provider = "ccswitch://v1/import?resource=provider&app=omp&name=Test&endpoint=https%3A%2F%2Fexample.com%2Fv1&apiKey=sk-test&model=model-a";
+    let request = parse_deeplink_url(provider).unwrap();
+    assert_eq!(request.app.as_deref(), Some("omp"));
+    assert!(parse_deeplink_url(&provider.replace("&model=model-a", "")).is_err());
+    let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fetch":{"command":"uvx"}}}"#);
+    let request = parse_deeplink_url(&format!(
+        "ccswitch://v1/import?resource=mcp&apps=omp&config={config}"
+    ))
+    .unwrap();
+    assert!(
+        parse_mcp_apps(request.apps.as_deref().unwrap())
+            .unwrap()
+            .omp
+    );
+    assert!(parse_deeplink_url(
+        "ccswitch://v1/import?resource=prompt&app=omp&name=Rules&content=IyBoaQ%3D%3D"
+    )
+    .is_err());
+}
+
 /// 下游 parse_mcp_apps 与 McpService 都支持 Pi / MiniMax Code，解析层不能先把它们拦掉
 #[test]
 fn test_parse_mcp_deeplink_accepts_pi_and_mcode() {

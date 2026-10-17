@@ -916,6 +916,8 @@
     "hermesConfigDir": "Hermes 設定目錄",
     "hermesConfigDirDescription": "覆寫 Hermes 設定目錄 (config.yaml)。",
     "piConfigDir": "Pi 設定目錄",
+    "ompConfigDir": "Oh My Pi",
+    "browsePlaceholderOmp": "~/.omp/agent",
     "piConfigDirDescription": "覆寫 Pi 設定目錄（models.json、指示檔案、提示、Skills 與工作階段）。",
     "browsePlaceholderClaude": "例如：/home/<您的帳號>/.claude",
     "browsePlaceholderCodex": "例如：/home/<您的帳號>/.codex",
@@ -4852,6 +4854,37 @@
       "loading": "正在查詢額度…",
       "refresh": "重新整理額度",
       "refreshAria": "重新整理 {{login}} 的額度"
+    }
+  },
+  "omp": {
+    "empty": {
+      "title": "尚未新增 API Key 供應商",
+      "description": "點擊右上角的 +，從預設或自訂設定新增供應商。"
+    },
+    "provider": {
+      "enabled": "已在 Oh My Pi 中啟用",
+      "enableFailed": "無法在 Oh My Pi 中啟用此供應商",
+      "removed": "已從 Oh My Pi 移除"
+    },
+    "current": {
+      "readFailed": "無法讀取 Oh My Pi 供應商設定",
+      "stateUnavailableHint": "CC Switch 讀取到 Oh My Pi 供應商設定前，供應商變更會暫時停用。"
+    },
+    "errors": {
+      "deeplinkModel": "Oh My Pi 供應商連結需要指定模型，請在連結中新增 model 參數。",
+      "mcpImportConflict": "部分 Oh My Pi MCP 伺服器定義無效或與現有伺服器衝突，未能匯入。原生設定已保留。",
+      "directory": "Oh My Pi 設定目錄必須是絕對路徑。",
+      "fileTooLarge": "Oh My Pi 設定超過 1 MiB 大小限制。",
+      "externalChange": "Oh My Pi 設定已被其他程式修改，請重新整理後重試。",
+      "rollbackConflict": "資料庫儲存失敗，且 Oh My Pi 設定已被其他程式修改，請手動還原。",
+      "invalidMcp": "Oh My Pi MCP JSON 格式無效，根節點和 mcpServers 必須為物件。",
+      "invalidYaml": "Oh My Pi YAML 無效，根節點和 providers 必須是映射。",
+      "invalidProvider": "Oh My Pi 供應商設定無效，請檢查必填欄位、API 格式和欄位類型。",
+      "manualEdit": "此 YAML 使用了 CC Switch 無法安全編輯的格式或語法，請手動編輯 models.yml。",
+      "duplicateProvider": "此 Oh My Pi 供應商識別碼已存在。",
+      "renameProvider": "Oh My Pi 供應商識別碼不能重新命名。",
+      "providerMissing": "此 Oh My Pi 供應商已不在儲存的清單中。",
+      "mcpName": "MCP 名稱允許字母、數字、_、-、.、: 和單個空格，最多 100 個字元。"
     }
   }
 }
