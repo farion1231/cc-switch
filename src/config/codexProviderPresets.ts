@@ -1492,6 +1492,26 @@ requires_openai_auth = true`,
     partnerPromotionKey: "modelflare",
     icon: "modelflare",
   },
+  {
+    name: "EveryAPI",
+    websiteUrl: "https://everyapi.ai",
+    apiKeyUrl:
+      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "everyapi",
+      "https://api.everyapi.ai/v1",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: [
+      "https://api.everyapi.ai/v1",
+      "https://api-cn.everyapi.ai/v1",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "everyapi",
+    icon: "everyapi",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",

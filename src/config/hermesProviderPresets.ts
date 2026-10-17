@@ -1469,6 +1469,32 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     partnerPromotionKey: "modelflare",
     icon: "modelflare",
   },
+  {
+    name: "EveryAPI",
+    websiteUrl: "https://everyapi.ai",
+    apiKeyUrl:
+      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
+    settingsConfig: {
+      name: "everyapi",
+      // GPT 系列只开放 Responses（api.everyapi.ai/api/pricing 的
+      // supported_endpoint_types 为 openai-response，2026-10-17 核对）
+      base_url: "https://api.everyapi.ai/v1",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: [
+        { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", context_length: 272000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "gpt-5.6-sol", provider: "everyapi" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "everyapi",
+    icon: "everyapi",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",

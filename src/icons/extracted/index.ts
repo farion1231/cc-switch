@@ -17,6 +17,7 @@ import _code0 from "./code0.png";
 import _dmxapi from "./dmxapi.png";
 import _eflowcode from "./eflowcode.png";
 import _etok from "./etok.png";
+import _everyapi from "./everyapi.svg?url";
 import _fenno from "./fenno-icon.png";
 import _fluxa from "./fluxa.png";
 import _grooroute from "./grooroute.jpg";
@@ -164,6 +165,7 @@ export const iconUrls: Record<string, string> = {
   dmxapi: _dmxapi,
   eflowcode: _eflowcode,
   etok: _etok,
+  everyapi: _everyapi,
   fenno: _fenno,
   fluxa: _fluxa,
   grooroute: _grooroute,
