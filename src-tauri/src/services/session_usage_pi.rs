@@ -11,7 +11,9 @@ use crate::services::session_usage::{
     estimated_latency_ms, metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
 };
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
-use crate::services::usage_stats::find_model_pricing;
+use crate::services::usage_stats::{
+    find_model_pricing, has_matching_pi_proxy_usage_log, PiProxyDedupKey,
+};
 use rust_decimal::Decimal;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -81,6 +83,9 @@ struct PiUsageRecord {
     request_id: String,
     semantic_id: String,
     has_entry_id: bool,
+    /// 上游响应 id（`message.responseId`）。仅有 responseId 的 assistant 条目
+    /// 才有；用于匹配本地路由的直录行（代理键可能带 app/provider 作用域）。
+    response_id: Option<String>,
     provider_id: String,
     model: String,
     request_model: String,
@@ -556,6 +561,15 @@ fn parse_usage_record(
         (200, None)
     };
 
+    // Pi 保留了上游响应的 message id（assistant 消息的 `responseId`）。
+    // 代理行 request_id 是 `session:{该 id}`（claude / claude-desktop）或
+    // `session:{app}:{provider}:{该 id}`（codex / gemini / grokbuild），
+    // 两种形式在 SQL 侧一并匹配，这里保留原始 id。
+    let response_id = (kind == "assistant")
+        .then(|| message.and_then(|value| nonempty_string(value.get("responseId"))))
+        .flatten()
+        .map(str::to_string);
+
     let identity = pi_request_identity(entry, kind, usage_value, message);
 
     // Pi initializes an assistant message's timestamp before the request and
@@ -575,6 +589,7 @@ fn parse_usage_record(
         request_id: identity.request_id,
         semantic_id: identity.semantic_id,
         has_entry_id: identity.has_entry_id,
+        response_id,
         provider_id,
         model,
         request_model,
@@ -777,6 +792,26 @@ fn hash_field(hasher: &mut Sha256, value: &[u8]) {
     hasher.update(value);
 }
 
+/// 记录 Pi 用量去重账本：命中过的身份（request id + 语义指纹）不再重导。
+fn mark_pi_record_seen(
+    conn: &rusqlite::Connection,
+    record: &PiUsageRecord,
+) -> Result<(), AppError> {
+    conn.execute(
+        "INSERT OR IGNORE INTO session_usage_dedup
+         (data_source, request_id, semantic_id, has_entry_id)
+         VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![
+            DATA_SOURCE,
+            record.request_id,
+            record.semantic_id,
+            i64::from(record.has_entry_id),
+        ],
+    )
+    .map_err(|error| AppError::Database(format!("写入 Pi 用量去重账本失败: {error}")))?;
+    Ok(())
+}
+
 fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Result<bool, AppError> {
     let request_seen: bool = conn
         .query_row(
@@ -800,18 +835,26 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
     if already_seen {
         return Ok(false);
     }
-    conn.execute(
-        "INSERT OR IGNORE INTO session_usage_dedup
-         (data_source, request_id, semantic_id, has_entry_id)
-         VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![
-            DATA_SOURCE,
-            record.request_id,
-            record.semantic_id,
-            i64::from(record.has_entry_id),
-        ],
-    )
-    .map_err(|error| AppError::Database(format!("写入 Pi 用量去重账本失败: {error}")))?;
+    // 经本地路由转发的请求已经由代理直录（见 `PiProxyDedupKey`）：代理行按
+    // 路由所属应用记账，app_type / provider_id 与 Pi 侧不相同，主键也不会
+    // 碰撞，所以必须显式判定。命中即只记去重账本、不写用量行 —— 否则同一
+    // 请求会在「代理」和「Pi 会话」两个桶里各记一次。
+    mark_pi_record_seen(conn, record)?;
+    if has_matching_pi_proxy_usage_log(
+        conn,
+        &PiProxyDedupKey {
+            response_id: record.response_id.as_deref(),
+            model: &record.model,
+            request_model: &record.request_model,
+            input_tokens: record.input_tokens,
+            output_tokens: record.output_tokens,
+            cache_read_tokens: record.cache_read_tokens,
+            cache_creation_tokens: record.cache_write_tokens,
+            created_at: record.created_at,
+        },
+    )? {
+        return Ok(false);
+    }
 
     let usage = TokenUsage {
         input_tokens: record.input_tokens,
@@ -893,6 +936,7 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_TOTAL;
     use std::fs::FileTimes;
     use std::io::Write;
 
@@ -908,8 +952,18 @@ mod tests {
     }
 
     fn assistant_line(id: &str, timestamp: &str, input: u32) -> String {
+        assistant_line_with_usage(id, timestamp, input, 5, 2)
+    }
+
+    fn assistant_line_with_usage(
+        id: &str,
+        timestamp: &str,
+        input: u32,
+        cache_read: u32,
+        cache_write: u32,
+    ) -> String {
         format!(
-            r#"{{"type":"message","id":"{id}","parentId":null,"timestamp":"{timestamp}","message":{{"role":"assistant","content":[{{"type":"text","text":"ok"}}],"provider":"fixture-provider","model":"fixture-model","responseId":"reused-response-id","timestamp":1700000000000,"usage":{{"input":{input},"output":2,"cacheRead":5,"cacheWrite":2,"totalTokens":999,"cost":{{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}}},"stopReason":"stop"}}}}"#
+            r#"{{"type":"message","id":"{id}","parentId":null,"timestamp":"{timestamp}","message":{{"role":"assistant","content":[{{"type":"text","text":"ok"}}],"provider":"fixture-provider","model":"fixture-model","responseId":"reused-response-id","timestamp":1700000000000,"usage":{{"input":{input},"output":2,"cacheRead":{cache_read},"cacheWrite":{cache_write},"totalTokens":999,"cost":{{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}}},"stopReason":"stop"}}}}"#
         )
     }
 
@@ -920,6 +974,251 @@ mod tests {
             .expect("open session for timestamp restore")
             .set_times(FileTimes::new().set_modified(modified))
             .expect("restore session timestamp");
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_proxy_usage_row(
+        conn: &rusqlite::Connection,
+        request_id: &str,
+        app_type: &str,
+        model: &str,
+        request_model: &str,
+        tokens: (i64, i64, i64, i64),
+        input_token_semantics: i64,
+        created_at: i64,
+        status_code: i64,
+    ) -> Result<(), AppError> {
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                latency_ms, status_code, created_at, data_source, input_token_semantics
+            ) VALUES (?1, 'route-provider', ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, 'proxy', ?11)",
+            rusqlite::params![
+                request_id,
+                app_type,
+                model,
+                request_model,
+                tokens.0,
+                tokens.1,
+                tokens.2,
+                tokens.3,
+                status_code,
+                created_at,
+                input_token_semantics,
+            ],
+        )
+        .map_err(|error| AppError::Database(format!("插入代理用量失败: {error}")))?;
+        Ok(())
+    }
+
+    /// 本地路由转发的请求由代理记账，Pi 会话导入不再重复入库（issue #8415）。
+    #[test]
+    fn proxy_logged_request_is_not_reimported_from_the_session_file() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = session_path(temp.path(), "routed");
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"session-routed","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#,
+                &assistant_line("routed", "2023-11-14T22:13:21Z", 1),
+            ],
+        );
+
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            // claude / claude-desktop 的路由记账没有 app/provider 作用域，
+            // request_id 就是 `session:{响应 id}`；计数与模型都对不上也能认出来。
+            insert_proxy_usage_row(
+                &conn,
+                "session:reused-response-id",
+                "claude",
+                "unrelated-model",
+                "unrelated-model",
+                (9, 9, 9, 9),
+                INPUT_TOKEN_SEMANTICS_FRESH,
+                0,
+                200,
+            )?;
+        }
+
+        let result = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert_eq!((result.imported, result.skipped), (0, 1));
+
+        let conn = lock_conn!(db.conn);
+        let pi_rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'pi_session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(pi_rows, 0);
+        // 跳过时仍要写去重账本，代理行被剪掉后也不能重导。
+        let ledger: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM session_usage_dedup WHERE data_source = 'pi_session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(ledger, 1);
+        Ok(())
+    }
+
+    /// 带 app/provider 作用域的代理键（codex / gemini / grokbuild 路由）里也带着
+    /// 上游响应 id，精确后缀就能认出，不用落到指纹。
+    #[test]
+    fn scoped_proxy_request_ids_are_matched_by_the_exact_key() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = session_path(temp.path(), "scoped-exact");
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"session-scoped-exact","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#,
+                &assistant_line("scoped-exact", "2023-11-14T22:13:21Z", 1),
+            ],
+        );
+
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            // 计数与模型都对不上也能认出：键尾就是装配用的 `reused-response-id`。
+            insert_proxy_usage_row(
+                &conn,
+                "session:codex:route-provider:reused-response-id",
+                "codex",
+                "unrelated-model",
+                "unrelated-model",
+                (9, 9, 9, 9),
+                INPUT_TOKEN_SEMANTICS_TOTAL,
+                1_700_000_001,
+                200,
+            )?;
+        }
+
+        let result = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert_eq!((result.imported, result.skipped), (0, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn scoped_proxy_request_ids_are_matched_by_the_usage_fingerprint() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = session_path(temp.path(), "scoped");
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"session-scoped","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#,
+                &assistant_line("scoped", "2023-11-14T22:13:21Z", 1),
+            ],
+        );
+
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            // codex 路由的键是 `session:{app}:{provider}:{请求 id}`，与响应 id 不同源，
+            // 只能靠指纹。（夹具：input=1 fresh + cacheRead=5 + cacheWrite=2，codex 的
+            // 代理行按 TOTAL 口径记 8；output=2；created_at=1700000001）
+            insert_proxy_usage_row(
+                &conn,
+                "session:codex:route-provider:msg-1",
+                "codex",
+                "fixture-model",
+                "fixture-model",
+                (8, 2, 5, 2),
+                INPUT_TOKEN_SEMANTICS_TOTAL,
+                1_700_000_001,
+                200,
+            )?;
+        }
+
+        let result = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert_eq!((result.imported, result.skipped), (0, 1));
+        Ok(())
+    }
+
+    /// 维护者复现的现场：codex 路由的代理行来自 `usage.prompt_tokens`（含缓存），
+    /// Pi 会话行按 FRESH 入库。TOTAL 口径不归一就永远对不上，命中缓存即双算。
+    #[test]
+    fn codex_total_semantics_proxy_row_is_matched_after_normalization() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = session_path(temp.path(), "codex-total");
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"session-codex-total","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#,
+                &assistant_line_with_usage("codex-total", "2023-11-14T22:13:21Z", 1, 5, 0),
+            ],
+        );
+
+        let body = serde_json::json!({
+            "model": "fixture-model",
+            "usage": {
+                "input_tokens": 6,
+                "output_tokens": 2,
+                "input_tokens_details": { "cached_tokens": 5 }
+            }
+        });
+        let parsed = TokenUsage::from_codex_response_auto(&body).expect("codex usage");
+        // 代理侧把缓存计入 input；Pi 侧已经是 1 个 fresh token。
+        assert_eq!(parsed.input_tokens, 6);
+        assert_eq!(parsed.cache_read_tokens, 5);
+        assert_eq!(parsed.cache_creation_tokens, 0);
+
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_proxy_usage_row(
+                &conn,
+                "session:codex:route-provider:msg-codex",
+                "codex",
+                "fixture-model",
+                "fixture-model",
+                (
+                    i64::from(parsed.input_tokens),
+                    i64::from(parsed.output_tokens),
+                    i64::from(parsed.cache_read_tokens),
+                    i64::from(parsed.cache_creation_tokens),
+                ),
+                INPUT_TOKEN_SEMANTICS_TOTAL,
+                1_700_000_001,
+                200,
+            )?;
+        }
+
+        let result = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert_eq!((result.imported, result.skipped), (0, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn direct_pi_usage_is_still_imported_when_the_proxy_row_differs() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = session_path(temp.path(), "direct");
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"session-direct","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#,
+                &assistant_line("direct", "2023-11-14T22:13:21Z", 1),
+            ],
+        );
+
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_proxy_usage_row(
+                &conn,
+                "session:codex:route-provider:msg-2",
+                "codex",
+                "fixture-model",
+                "fixture-model",
+                (1, 2, 5, 3),
+                INPUT_TOKEN_SEMANTICS_TOTAL,
+                1_700_000_001,
+                200,
+            )?;
+        }
+
+        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 1);
+        Ok(())
     }
 
     #[test]
