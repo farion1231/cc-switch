@@ -25,6 +25,7 @@ export interface SkillApps {
   openclaw: boolean;
   hermes: boolean;
   pi: boolean;
+  rpi?: boolean;
   mcode?: boolean;
 }
 

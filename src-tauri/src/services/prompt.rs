@@ -56,8 +56,8 @@ impl PromptService {
         state: &AppState,
         app: AppType,
     ) -> Result<IndexMap<String, Prompt>, AppError> {
-        if matches!(app, AppType::Pi) {
-            return get_pi_prompts(state);
+        if matches!(app, AppType::Pi | AppType::Rpi) {
+            return get_pi_prompts(state, &app);
         }
         // A restore replaces the DB before projecting it to live files. Keep
         // backfill outside that window, including calls outside the UI command.
@@ -90,8 +90,8 @@ impl PromptService {
         id: &str,
         prompt: Prompt,
     ) -> Result<(), AppError> {
-        if matches!(app, AppType::Pi) {
-            return upsert_pi_prompt(state, id, prompt);
+        if matches!(app, AppType::Pi | AppType::Rpi) {
+            return upsert_pi_prompt(state, &app, id, prompt);
         }
 
         if app == AppType::Mcode {
@@ -123,8 +123,8 @@ impl PromptService {
     }
 
     pub fn delete_prompt(state: &AppState, app: AppType, id: &str) -> Result<(), AppError> {
-        if matches!(app, AppType::Pi) {
-            return delete_pi_prompt(state, id);
+        if matches!(app, AppType::Pi | AppType::Rpi) {
+            return delete_pi_prompt(state, &app, id);
         }
         let _guard = if app == AppType::Mcode {
             Some(
@@ -148,8 +148,8 @@ impl PromptService {
     }
 
     pub fn enable_prompt(state: &AppState, app: AppType, id: &str) -> Result<(), AppError> {
-        if matches!(app, AppType::Pi) {
-            return enable_pi_prompt(state, id);
+        if matches!(app, AppType::Pi | AppType::Rpi) {
+            return enable_pi_prompt(state, &app, id);
         }
         if app == AppType::Mcode {
             return enable_mcode_prompt(state, id, &prompt_file_path(&app)?);
@@ -229,8 +229,8 @@ impl PromptService {
     }
 
     pub fn import_from_file(state: &AppState, app: AppType) -> Result<String, AppError> {
-        let content = if matches!(app, AppType::Pi) {
-            PiAgentsFileGuard::acquire()?
+        let content = if matches!(app, AppType::Pi | AppType::Rpi) {
+            PiAgentsFileGuard::acquire(&app)?
                 .read()?
                 .content
                 .ok_or_else(|| AppError::Message("提示词文件不存在".to_string()))?
@@ -262,8 +262,8 @@ impl PromptService {
     }
 
     pub fn get_current_file_content(app: AppType) -> Result<Option<String>, AppError> {
-        if matches!(app, AppType::Pi) {
-            return Ok(PiAgentsFileGuard::acquire()?.read()?.content);
+        if matches!(app, AppType::Pi | AppType::Rpi) {
+            return Ok(PiAgentsFileGuard::acquire(&app)?.read()?.content);
         }
         let file_path = prompt_file_path(&app)?;
         if !file_path.exists() {
@@ -279,9 +279,10 @@ impl PromptService {
     /// This deliberately does not call `enable_prompt`: restore paths must not
     /// read stale live content and write it back into the freshly imported DB.
     pub fn sync_to_live(state: &AppState, app: AppType) -> Result<(), AppError> {
-        // Pi derives activation from its native AGENTS.md; its persisted prompt
-        // rows are intentionally disabled and must not drive generic projection.
-        if matches!(app, AppType::ClaudeDesktop | AppType::Pi) {
+        // Pi and RPI derive activation from their native AGENTS.md; their
+        // persisted prompt rows are intentionally disabled and must not drive
+        // generic projection.
+        if matches!(app, AppType::ClaudeDesktop | AppType::Pi | AppType::Rpi) {
             return Ok(());
         }
 
@@ -343,8 +344,8 @@ impl PromptService {
         let file_path = prompt_file_path(&app)?;
 
         // 读取文件内容。Pi 与交互式管理路径共用限长读取和协调锁。
-        let content = if matches!(app, AppType::Pi) {
-            match PiAgentsFileGuard::acquire().and_then(|guard| guard.read()) {
+        let content = if matches!(app, AppType::Pi | AppType::Rpi) {
+            match PiAgentsFileGuard::acquire(&app).and_then(|guard| guard.read()) {
                 Ok(snapshot) => match snapshot.content {
                     Some(content) => content,
                     None => return Ok(0),
@@ -388,7 +389,7 @@ impl PromptService {
             description: Some("Automatically imported on first launch".to_string()),
             // Pi derives active state from AGENTS.md. Other apps retain their
             // established persisted prompt selection.
-            enabled: !matches!(app, AppType::Pi),
+            enabled: !matches!(app, AppType::Pi | AppType::Rpi),
             created_at: Some(timestamp),
             updated_at: Some(timestamp),
         };
@@ -509,9 +510,9 @@ fn unique_pi_backup_id(prompts: &IndexMap<String, Prompt>, timestamp: i64) -> St
     unreachable!("the backup suffix space is finite only after u64 exhaustion")
 }
 
-fn get_pi_prompts(state: &AppState) -> Result<IndexMap<String, Prompt>, AppError> {
-    let guard = PiAgentsFileGuard::acquire()?;
-    let mut prompts = state.db.get_prompts(AppType::Pi.as_str())?;
+fn get_pi_prompts(state: &AppState, app: &AppType) -> Result<IndexMap<String, Prompt>, AppError> {
+    let guard = PiAgentsFileGuard::acquire(app)?;
+    let mut prompts = state.db.get_prompts(app.as_str())?;
     let snapshot = guard.read()?;
     let active_id = pi_active_prompt_id(&prompts, snapshot.content.as_deref());
 
@@ -521,15 +522,21 @@ fn get_pi_prompts(state: &AppState) -> Result<IndexMap<String, Prompt>, AppError
     Ok(prompts)
 }
 
-fn upsert_pi_prompt(state: &AppState, id: &str, prompt: Prompt) -> Result<(), AppError> {
+fn upsert_pi_prompt(
+    state: &AppState,
+    app: &AppType,
+    id: &str,
+    prompt: Prompt,
+) -> Result<(), AppError> {
     if prompt.id != id {
-        return Err(AppError::InvalidInput(
-            "Pi prompt id does not match the requested id".to_string(),
-        ));
+        return Err(AppError::InvalidInput(format!(
+            "{} prompt id does not match the requested id",
+            crate::pi_config::display_name(app)
+        )));
     }
 
-    let guard = PiAgentsFileGuard::acquire()?;
-    let prompts = state.db.get_prompts(AppType::Pi.as_str())?;
+    let guard = PiAgentsFileGuard::acquire(app)?;
+    let prompts = state.db.get_prompts(app.as_str())?;
     let snapshot = guard.read()?;
     let was_active =
         pi_active_prompt_id(&prompts, snapshot.content.as_deref()).as_deref() == Some(id);
@@ -539,12 +546,13 @@ fn upsert_pi_prompt(state: &AppState, id: &str, prompt: Prompt) -> Result<(), Ap
     stored.enabled = false;
 
     if requested_active && !was_active {
-        return Err(AppError::Conflict(
-            "Pi AGENTS.md changed outside CC Switch; reload before editing it".to_string(),
-        ));
+        return Err(AppError::Conflict(format!(
+            "{} AGENTS.md changed outside CC Switch; reload before editing it",
+            crate::pi_config::display_name(app)
+        )));
     }
 
-    persist_pi_prompt_with_native_update(state, id, &stored, previous.as_ref(), || {
+    persist_pi_prompt_with_native_update(state, app, id, &stored, previous.as_ref(), || {
         if requested_active {
             guard.replace(&snapshot.revision, &stored.content)
         } else if was_active {
@@ -557,20 +565,22 @@ fn upsert_pi_prompt(state: &AppState, id: &str, prompt: Prompt) -> Result<(), Ap
 
 fn persist_pi_prompt_with_native_update(
     state: &AppState,
+    app: &AppType,
     id: &str,
     stored: &Prompt,
     previous: Option<&Prompt>,
     update_native: impl FnOnce() -> Result<(), AppError>,
 ) -> Result<(), AppError> {
-    state.db.save_prompt(AppType::Pi.as_str(), stored)?;
+    state.db.save_prompt(app.as_str(), stored)?;
     if let Err(native_error) = update_native() {
         let rollback = match previous {
-            Some(previous) => state.db.save_prompt(AppType::Pi.as_str(), previous),
-            None => state.db.delete_prompt(AppType::Pi.as_str(), id),
+            Some(previous) => state.db.save_prompt(app.as_str(), previous),
+            None => state.db.delete_prompt(app.as_str(), id),
         };
         if let Err(rollback_error) = rollback {
             return Err(AppError::Message(format!(
-                "Pi prompt update failed ({native_error}); database rollback also failed: {rollback_error}"
+                "{} prompt update failed ({native_error}); database rollback also failed: {rollback_error}",
+                crate::pi_config::display_name(app)
             )));
         }
         return Err(native_error);
@@ -578,9 +588,9 @@ fn persist_pi_prompt_with_native_update(
     Ok(())
 }
 
-fn enable_pi_prompt(state: &AppState, id: &str) -> Result<(), AppError> {
-    let guard = PiAgentsFileGuard::acquire()?;
-    let prompts = state.db.get_prompts(AppType::Pi.as_str())?;
+fn enable_pi_prompt(state: &AppState, app: &AppType, id: &str) -> Result<(), AppError> {
+    let guard = PiAgentsFileGuard::acquire(app)?;
+    let prompts = state.db.get_prompts(app.as_str())?;
     let target = prompts
         .get(id)
         .cloned()
@@ -603,21 +613,21 @@ fn enable_pi_prompt(state: &AppState, id: &str) -> Result<(), AppError> {
                 created_at: Some(timestamp),
                 updated_at: Some(timestamp),
             };
-            state.db.save_prompt(AppType::Pi.as_str(), &backup)?;
+            state.db.save_prompt(app.as_str(), &backup)?;
         }
     }
 
     guard.replace(&snapshot.revision, &target.content)
 }
 
-fn delete_pi_prompt(state: &AppState, id: &str) -> Result<(), AppError> {
-    let guard = PiAgentsFileGuard::acquire()?;
-    let prompts = state.db.get_prompts(AppType::Pi.as_str())?;
+fn delete_pi_prompt(state: &AppState, app: &AppType, id: &str) -> Result<(), AppError> {
+    let guard = PiAgentsFileGuard::acquire(app)?;
+    let prompts = state.db.get_prompts(app.as_str())?;
     let snapshot = guard.read()?;
     if pi_active_prompt_id(&prompts, snapshot.content.as_deref()).as_deref() == Some(id) {
         return Err(AppError::InvalidInput("无法删除已启用的提示词".to_string()));
     }
-    state.db.delete_prompt(AppType::Pi.as_str(), id)?;
+    state.db.delete_prompt(app.as_str(), id)?;
     Ok(())
 }
 
@@ -973,6 +983,7 @@ mod pi_prompt_tests {
 
         let result = persist_pi_prompt_with_native_update(
             &state,
+            &AppType::Pi,
             &edited.id,
             &edited,
             Some(&previous),

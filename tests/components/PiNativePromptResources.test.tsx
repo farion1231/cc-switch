@@ -61,7 +61,7 @@ function TemplateHarness() {
       <button type="button" onClick={() => ref.current?.openCreate()}>
         open-create
       </button>
-      <PiPromptTemplates ref={ref} />
+      <PiPromptTemplates app="pi" ref={ref} />
     </>
   );
 }
@@ -76,7 +76,7 @@ describe("Pi native prompt resources", () => {
     toastMocks.success.mockReset();
     toastMocks.error.mockReset();
     vi.spyOn(promptsApi, "getPiPromptFile").mockImplementation(
-      async (kind: PiPromptFileKind) => ({
+      async (_app, kind: PiPromptFileKind) => ({
         exists: kind === "system_append",
         revision: kind === "system_append" ? "append-revision" : "missing",
         content: kind === "system_append" ? "append" : "",
@@ -95,7 +95,7 @@ describe("Pi native prompt resources", () => {
       revision: "created-revision",
     });
     vi.spyOn(promptsApi, "replacePiPromptFile").mockImplementation(
-      async (_kind, _revision, content) => ({
+      async (_app, _kind, _revision, content) => ({
         exists: true,
         revision: "saved-revision",
         content,
@@ -104,7 +104,7 @@ describe("Pi native prompt resources", () => {
   });
 
   it("shows file configuration state and edits the recommended append file", async () => {
-    renderWithQueryClient(<PiSystemPromptFiles />);
+    renderWithQueryClient(<PiSystemPromptFiles app="pi" />);
 
     await screen.findByText("pi.prompts.configuredSize");
     expect(screen.getByText("pi.prompts.notConfigured")).toBeInTheDocument();
@@ -120,6 +120,7 @@ describe("Pi native prompt resources", () => {
 
     await waitFor(() =>
       expect(promptsApi.replacePiPromptFile).toHaveBeenCalledWith(
+        "pi",
         "system_append",
         "append-revision",
         "new append",
@@ -128,7 +129,9 @@ describe("Pi native prompt resources", () => {
   });
 
   it("keeps the open draft and its base revision when the query refreshes", async () => {
-    const { queryClient } = renderWithQueryClient(<PiSystemPromptFiles />);
+    const { queryClient } = renderWithQueryClient(
+      <PiSystemPromptFiles app="pi" />,
+    );
 
     await screen.findByText("pi.prompts.configuredSize");
     fireEvent.click(
@@ -151,6 +154,7 @@ describe("Pi native prompt resources", () => {
     fireEvent.click(screen.getByRole("button", { name: "common.save" }));
     await waitFor(() =>
       expect(promptsApi.replacePiPromptFile).toHaveBeenCalledWith(
+        "pi",
         "system_append",
         "append-revision",
         "local draft",
@@ -159,7 +163,7 @@ describe("Pi native prompt resources", () => {
   });
 
   it("explains a blank system file only after a save attempt", async () => {
-    renderWithQueryClient(<PiSystemPromptFiles />);
+    renderWithQueryClient(<PiSystemPromptFiles app="pi" />);
 
     await screen.findByText("pi.prompts.notConfigured");
     fireEvent.click(
@@ -179,7 +183,7 @@ describe("Pi native prompt resources", () => {
   });
 
   it("requires confirmation before creating SYSTEM.md", async () => {
-    renderWithQueryClient(<PiSystemPromptFiles />);
+    renderWithQueryClient(<PiSystemPromptFiles app="pi" />);
 
     await screen.findByText("pi.prompts.notConfigured");
     fireEvent.click(
@@ -208,6 +212,7 @@ describe("Pi native prompt resources", () => {
 
     await waitFor(() =>
       expect(promptsApi.replacePiPromptFile).toHaveBeenCalledWith(
+        "pi",
         "system_override",
         "missing",
         "replace the system prompt",
@@ -217,7 +222,7 @@ describe("Pi native prompt resources", () => {
 
   it("deletes SYSTEM.md without a confirmation and writes it back on undo", async () => {
     vi.spyOn(promptsApi, "getPiPromptFile").mockImplementation(
-      async (kind: PiPromptFileKind) => ({
+      async (_app, kind: PiPromptFileKind) => ({
         exists: kind === "system_override",
         revision: kind === "system_override" ? "system-revision" : "missing",
         content: kind === "system_override" ? "custom system prompt" : "",
@@ -226,7 +231,7 @@ describe("Pi native prompt resources", () => {
     const remove = vi
       .spyOn(promptsApi, "deletePiPromptFile")
       .mockResolvedValue(true);
-    renderWithQueryClient(<PiSystemPromptFiles />);
+    renderWithQueryClient(<PiSystemPromptFiles app="pi" />);
 
     await screen.findByText("pi.prompts.configuredSize");
     fireEvent.click(
@@ -237,7 +242,11 @@ describe("Pi native prompt resources", () => {
     );
 
     await waitFor(() =>
-      expect(remove).toHaveBeenCalledWith("system_override", "system-revision"),
+      expect(remove).toHaveBeenCalledWith(
+        "pi",
+        "system_override",
+        "system-revision",
+      ),
     );
     await waitFor(() =>
       expect(toastMocks.success).toHaveBeenCalledWith(
@@ -248,6 +257,7 @@ describe("Pi native prompt resources", () => {
     act(() => lastUndo()?.());
     await waitFor(() =>
       expect(promptsApi.replacePiPromptFile).toHaveBeenCalledWith(
+        "pi",
         "system_override",
         "missing",
         "custom system prompt",
@@ -257,14 +267,14 @@ describe("Pi native prompt resources", () => {
 
   it("offers no undo when the deleted file was blank", async () => {
     vi.spyOn(promptsApi, "getPiPromptFile").mockImplementation(
-      async (kind: PiPromptFileKind) => ({
+      async (_app, kind: PiPromptFileKind) => ({
         exists: kind === "system_append",
         revision: kind === "system_append" ? "blank-revision" : "missing",
         content: kind === "system_append" ? "  \n" : "",
       }),
     );
     vi.spyOn(promptsApi, "deletePiPromptFile").mockResolvedValue(true);
-    renderWithQueryClient(<PiSystemPromptFiles />);
+    renderWithQueryClient(<PiSystemPromptFiles app="pi" />);
 
     await screen.findByText("pi.prompts.configuredEmpty");
     fireEvent.click(
@@ -299,6 +309,7 @@ describe("Pi native prompt resources", () => {
 
     await waitFor(() =>
       expect(promptsApi.upsertPiPromptTemplate).toHaveBeenCalledWith(
+        "pi",
         "new-empty",
         "missing",
         "",
@@ -326,6 +337,7 @@ describe("Pi native prompt resources", () => {
 
     await waitFor(() =>
       expect(promptsApi.upsertPiPromptTemplate).toHaveBeenCalledWith(
+        "pi",
         "renamed",
         "empty-revision",
         "",
@@ -369,6 +381,7 @@ describe("Pi native prompt resources", () => {
 
     await waitFor(() =>
       expect(promptsApi.upsertPiPromptTemplate).toHaveBeenCalledWith(
+        "pi",
         "review",
         "review-revision",
         '---\ndescription: "Updated note"\nargument-hint: "<target>"\n---\nReview $1',
@@ -405,6 +418,7 @@ describe("Pi native prompt resources", () => {
     fireEvent.click(create);
     await waitFor(() =>
       expect(promptsApi.upsertPiPromptTemplate).toHaveBeenCalledWith(
+        "pi",
         "release.v2",
         "missing",
         "",
@@ -429,7 +443,7 @@ describe("Pi native prompt resources", () => {
     );
 
     await waitFor(() =>
-      expect(remove).toHaveBeenCalledWith("empty", "empty-revision"),
+      expect(remove).toHaveBeenCalledWith("pi", "empty", "empty-revision"),
     );
     await waitFor(() =>
       expect(toastMocks.success).toHaveBeenCalledWith(
@@ -440,6 +454,7 @@ describe("Pi native prompt resources", () => {
     act(() => lastUndo()?.());
     await waitFor(() =>
       expect(promptsApi.upsertPiPromptTemplate).toHaveBeenCalledWith(
+        "pi",
         "empty",
         "missing",
         "",

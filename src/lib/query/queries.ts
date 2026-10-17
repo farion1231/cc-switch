@@ -51,6 +51,7 @@ export const providersQueryOptions = (appId: AppId) => ({
   queryKey: ["providers", appId] as const,
   // 列表很小：没人订阅时也一直留在缓存里，过了默认的 5 分钟再切过去也不画骨架
   gcTime: Infinity,
+  refetchOnMount: appId === "rpi" ? ("always" as const) : true,
   queryFn: async (): Promise<ProvidersQueryData> => {
     let providers: Record<string, Provider> = {};
     let currentProviderId = "";

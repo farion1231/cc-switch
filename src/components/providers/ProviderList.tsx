@@ -164,6 +164,8 @@ export function ProviderList({
           return openclawLiveIds?.includes(provider.id) ?? false;
         case "hermes":
           return hermesLiveIds?.includes(provider.id) ?? false;
+        case "rpi":
+          return provider.meta?.liveConfigManaged !== false;
         case "pi":
           return isPiStateReady
             ? (piCurrentState?.enabledProviderIds.includes(provider.id) ??
@@ -413,9 +415,9 @@ export function ProviderList({
         {piStateErrorNotice}
         <ProviderEmptyState
           appId={appId}
-          onCreate={appId === "pi" ? undefined : onCreate}
+          onCreate={appId === "pi" || appId === "rpi" ? undefined : onCreate}
           onImport={
-            appId === "pi" || appId === "mcode"
+            appId === "pi" || appId === "rpi" || appId === "mcode"
               ? undefined
               : () => importMutation.mutate()
           }
@@ -426,7 +428,7 @@ export function ProviderList({
 
   // 「当前」只用来决定额度自动刷新：Pi 没有当前项，OMO / Hermes 各看自己的当前项
   const isCurrentFor = (provider: Provider) => {
-    if (appId === "pi") return false;
+    if (appId === "pi" || appId === "rpi") return false;
     if (provider.category === "omo") return provider.id === currentOmoId;
     if (provider.category === "omo-slim")
       return provider.id === currentOmoSlimId;

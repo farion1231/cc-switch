@@ -93,6 +93,7 @@ const APP_SHORT_NAME: Record<AppId, string> = {
   openclaw: "OpenClaw",
   hermes: "Hermes",
   pi: "Pi",
+  rpi: "RPI",
   mcode: "MiniMax",
 };
 

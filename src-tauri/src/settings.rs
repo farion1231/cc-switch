@@ -81,7 +81,7 @@ impl VisibleApps {
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => self.openclaw,
             AppType::Hermes => self.hermes,
-            AppType::Pi => self.pi,
+            AppType::Pi | AppType::Rpi => self.pi,
             AppType::Mcode => self.mcode,
         }
     }
@@ -496,6 +496,8 @@ pub struct AppSettings {
     pub hermes_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pi_config_dir: Option<String>,
+    #[serde(default)]
+    pub rpi_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -626,6 +628,7 @@ impl Default for AppSettings {
             openclaw_config_dir: None,
             hermes_config_dir: None,
             pi_config_dir: None,
+            rpi_config_dir: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
@@ -715,6 +718,13 @@ impl AppSettings {
 
         self.pi_config_dir = self
             .pi_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.rpi_config_dir = self
+            .rpi_config_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -1095,6 +1105,14 @@ pub fn get_pi_override_dir() -> Option<PathBuf> {
         .map(|path| resolve_override_path(path))
 }
 
+pub fn get_rpi_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .rpi_config_dir
+        .as_ref()
+        .map(|path| resolve_override_path(path))
+}
+
 pub fn preserve_codex_official_auth_on_switch() -> bool {
     settings_store()
         .read()
@@ -1176,7 +1194,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenCode => settings.current_provider_opencode.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
-        AppType::Pi | AppType::Mcode => None,
+        AppType::Pi | AppType::Rpi | AppType::Mcode => None,
     }
 }
 
@@ -1195,7 +1213,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
-        AppType::Pi | AppType::Mcode => {}
+        AppType::Pi | AppType::Rpi | AppType::Mcode => {}
     })
 }
 

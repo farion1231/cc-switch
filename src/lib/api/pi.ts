@@ -34,6 +34,16 @@ export const piApi = {
     });
   },
 
+  async updateRpiProviderUsageScript(
+    id: string,
+    usageScript: UsageScript,
+  ): Promise<boolean> {
+    return await invoke("update_rpi_provider_usage_script", {
+      id,
+      usageScript,
+    });
+  },
+
   async getSessionDiscovery(): Promise<PiSessionDiscovery> {
     return await invoke("get_pi_session_discovery");
   },

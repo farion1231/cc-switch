@@ -123,7 +123,7 @@ export function usePromptActions(
           toast.success(t("prompts.saveSuccess"), {
             closeButton: true,
             description:
-              appId === "pi" && prompt.enabled
+              (appId === "pi" || appId === "rpi") && prompt.enabled
                 ? t("pi.prompts.reloadNotice")
                 : undefined,
           });
@@ -188,7 +188,7 @@ export function usePromptActions(
 
   const toggleEnabled = useCallback(
     async (id: string, enabled: boolean) => {
-      if (appId === "pi") {
+      if (appId === "pi" || appId === "rpi") {
         setTogglingId(id);
         try {
           if (enabled) {

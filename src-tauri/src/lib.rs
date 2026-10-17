@@ -913,6 +913,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No Pi provider changes from native config"),
                 Err(e) => log::warn!("✗ Failed to import Pi providers: {e}"),
             }
+            match crate::services::provider::import_rpi_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} RPI provider(s) from native config");
+                }
+                Ok(_) => log::debug!("○ No RPI provider changes from native config"),
+                Err(e) => log::warn!("✗ Failed to import RPI providers: {e}"),
+            }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
@@ -1536,6 +1543,7 @@ pub fn run() {
             // Pi native provider and session views
             commands::get_pi_current_state,
             commands::update_pi_provider_usage_script,
+            commands::update_rpi_provider_usage_script,
             commands::get_pi_session_discovery,
             // Profile management (项目配置方案)
             commands::list_profiles,

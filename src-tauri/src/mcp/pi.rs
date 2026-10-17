@@ -8,7 +8,7 @@
 //!
 //! 项目级 `.pi/mcp.json` 不在这里管。
 
-use crate::app_config::{McpApps, McpServer};
+use crate::app_config::{AppType, McpApps, McpServer};
 use crate::config::atomic_write_private;
 use crate::error::AppError;
 use crate::store::AppState;
@@ -49,8 +49,8 @@ impl<'a> PiChange<'a> {
     }
 }
 
-pub(crate) fn config_path() -> Result<PathBuf, AppError> {
-    Ok(crate::pi_config::get_pi_agent_dir()?.join("mcp.json"))
+pub(crate) fn config_path(app: &AppType) -> Result<PathBuf, AppError> {
+    Ok(crate::pi_config::agent_dir(app)?.join("mcp.json"))
 }
 
 fn read(path: &Path) -> Result<Value, AppError> {
@@ -102,20 +102,24 @@ fn native_transport(spec: &Value) -> Result<Value, AppError> {
     Ok(native)
 }
 
-pub fn sync(id: &str, spec: Option<&Value>) -> Result<(), AppError> {
+pub fn sync(app: &AppType, id: &str, spec: Option<&Value>) -> Result<(), AppError> {
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
-    sync_file(&config_path()?, id, PiChange::from_enabled(spec))
+    sync_file(&config_path(app)?, id, PiChange::from_enabled(spec))
 }
 
 /// 删除服务器时清掉 Pi 里由 CC Switch 写入、后来被取消勾选的条目：
 /// 只删 `enabled: false` 且连接方式和这个服务器一致的同名条目，用户自己的同名条目不动
-pub(crate) fn remove_disabled_if_managed(id: &str, spec: &Value) -> Result<(), AppError> {
+pub(crate) fn remove_disabled_if_managed(
+    app: &AppType,
+    id: &str,
+    spec: &Value,
+) -> Result<(), AppError> {
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
-    let path = config_path()?;
+    let path = config_path(app)?;
     if !path.exists() {
         return Ok(());
     }
@@ -130,6 +134,7 @@ pub(crate) fn remove_disabled_if_managed(id: &str, spec: &Value) -> Result<(), A
 
 /// 先写 Pi 的 `mcp.json` 再提交数据库；数据库失败就把文件恢复原样
 pub(crate) fn sync_and_commit<T>(
+    app: &AppType,
     id: &str,
     change: PiChange<'_>,
     commit: impl FnOnce() -> Result<T, AppError>,
@@ -137,7 +142,7 @@ pub(crate) fn sync_and_commit<T>(
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
-    let path = config_path()?;
+    let path = config_path(app)?;
     crate::mcode_config::write_and_commit(&path, || sync_file(&path, id, change), commit)
 }
 
@@ -195,8 +200,8 @@ fn sync_file(path: &Path, id: &str, change: PiChange<'_>) -> Result<(), AppError
 
 /// 从 Pi 的 `mcp.json` 导入。Pi 自己的字段（`timeout`、`exposure` 等）留在连接定义里原样保存；
 /// `enabled: false` 的条目导入后不勾选 Pi。和已有服务器连接方式不同的同名条目跳过并报告。
-pub fn import(state: &AppState) -> Result<usize, AppError> {
-    let document = read(&config_path()?)?;
+pub fn import(state: &AppState, app: &AppType) -> Result<usize, AppError> {
+    let document = read(&config_path(app)?)?;
     let mut existing = state.db.get_all_mcp_servers()?;
     let mut count = 0;
     let mut skipped = Vec::new();
@@ -216,7 +221,7 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
                 skipped.push(format!("'{id}': conflicts with an existing server"));
                 continue;
             }
-            server.apps.pi = enabled;
+            server.apps.set_enabled_for(app, enabled);
             server
         } else {
             count += 1;
@@ -224,10 +229,7 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
                 id: id.clone(),
                 name: id.clone(),
                 server: spec,
-                apps: McpApps {
-                    pi: enabled,
-                    ..Default::default()
-                },
+                apps: pi_family_apps(app, enabled),
                 description: None,
                 homepage: None,
                 docs: None,
@@ -244,6 +246,13 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
             skipped.join("; ")
         )))
     }
+}
+
+/// The MCP flags of a freshly imported entry: only the importing app is on.
+fn pi_family_apps(app: &AppType, enabled: bool) -> McpApps {
+    let mut apps = McpApps::default();
+    apps.set_enabled_for(app, enabled);
+    apps
 }
 
 fn transport_spec(spec: &Value) -> Value {

@@ -14,6 +14,10 @@ export function resolveProviderIcon(
   const normalizedIcon = icon?.trim();
   if (!normalizedIcon) return undefined;
 
+  if (appId === "rpi" && normalizedIcon === "pi") {
+    return "rpi";
+  }
+
   if (
     appId === "grokbuild" &&
     normalizedIcon === "grok" &&

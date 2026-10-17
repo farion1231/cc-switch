@@ -1,8 +1,12 @@
-//! Pi-native instruction files and slash-command templates.
+//! Pi-family native instruction files and slash-command templates.
+//!
+//! Pi and RPI share this layout but not the directory: every entry point takes
+//! the [`AppType`] so RPI writes land in `~/.rpi/agent` instead of `~/.pi/agent`.
 
+use crate::app_config::AppType;
 use crate::config::atomic_write;
 use crate::error::AppError;
-use crate::pi_config::get_pi_agent_dir;
+use crate::pi_config::agent_dir;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -29,24 +33,27 @@ pub(crate) struct PiAgentsFileSnapshot {
 pub(crate) struct PiAgentsFileGuard {
     _guard: MutexGuard<'static, ()>,
     path: PathBuf,
+    label: &'static str,
 }
 
 impl PiAgentsFileGuard {
-    pub(crate) fn acquire() -> Result<Self, AppError> {
+    pub(crate) fn acquire(app: &AppType) -> Result<Self, AppError> {
         Ok(Self {
             _guard: lock_prompt_files()?,
-            path: get_pi_agent_dir()?.join("AGENTS.md"),
+            path: agent_dir(app)?.join("AGENTS.md"),
+            label: crate::pi_config::display_name(app),
         })
     }
 
     pub(crate) fn read(&self) -> Result<PiAgentsFileSnapshot, AppError> {
         let (content, file_revision) = match fs::File::open(&self.path) {
             Ok(file) => {
-                let bytes = read_open_file_limited(file, &self.path, "Pi AGENTS.md")?;
+                let bytes = read_open_file_limited(file, &self.path, self.label)?;
                 let file_revision = revision(&bytes);
                 let content = String::from_utf8(bytes).map_err(|error| {
                     AppError::InvalidInput(format!(
-                        "Pi AGENTS.md must be UTF-8 ({}): {error}",
+                        "{} AGENTS.md must be UTF-8 ({}): {error}",
+                        self.label,
                         self.path.display()
                     ))
                 })?;
@@ -64,13 +71,13 @@ impl PiAgentsFileGuard {
     }
 
     pub(crate) fn replace(&self, expected_revision: &str, content: &str) -> Result<(), AppError> {
-        validate_content_size(content, "Pi AGENTS.md")?;
-        ensure_revision(&self.path, expected_revision, "Pi AGENTS.md")?;
+        validate_content_size(content, self.label)?;
+        ensure_revision(&self.path, expected_revision, self.label)?;
         atomic_write(&self.path, content.as_bytes())
     }
 
     pub(crate) fn delete(&self, expected_revision: &str) -> Result<(), AppError> {
-        ensure_revision(&self.path, expected_revision, "Pi AGENTS.md")?;
+        ensure_revision(&self.path, expected_revision, self.label)?;
         match fs::remove_file(&self.path) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -106,12 +113,13 @@ pub struct PiPromptFileSnapshot {
 pub struct PiPromptFileService;
 
 impl PiPromptFileService {
-    pub fn read(kind: PiPromptFileKind) -> Result<PiPromptFileSnapshot, AppError> {
+    pub fn read(app: &AppType, kind: PiPromptFileKind) -> Result<PiPromptFileSnapshot, AppError> {
         let _guard = lock_prompt_files()?;
-        read_prompt_file(&get_pi_agent_dir()?, kind)
+        read_prompt_file(&agent_dir(app)?, kind)
     }
 
     pub fn replace(
+        app: &AppType,
         kind: PiPromptFileKind,
         expected_revision: &str,
         content: &str,
@@ -119,17 +127,26 @@ impl PiPromptFileService {
         validate_instruction_content(content)?;
 
         let _guard = lock_prompt_files()?;
-        let root = get_pi_agent_dir()?;
+        let root = agent_dir(app)?;
         let path = root.join(kind.filename());
-        ensure_revision(&path, expected_revision, "Pi prompt file")?;
+        let label = crate::pi_config::display_name(app);
+        ensure_revision(&path, expected_revision, label)?;
         atomic_write(&path, content.as_bytes())?;
         read_prompt_file(&root, kind)
     }
 
-    pub fn delete(kind: PiPromptFileKind, expected_revision: &str) -> Result<bool, AppError> {
+    pub fn delete(
+        app: &AppType,
+        kind: PiPromptFileKind,
+        expected_revision: &str,
+    ) -> Result<bool, AppError> {
         let _guard = lock_prompt_files()?;
-        let path = get_pi_agent_dir()?.join(kind.filename());
-        ensure_revision(&path, expected_revision, "Pi prompt file")?;
+        let path = agent_dir(app)?.join(kind.filename());
+        ensure_revision(
+            &path,
+            expected_revision,
+            crate::pi_config::display_name(app),
+        )?;
         match fs::remove_file(&path) {
             Ok(()) => Ok(true),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -149,9 +166,9 @@ pub struct PiPromptTemplate {
 pub struct PiPromptTemplateService;
 
 impl PiPromptTemplateService {
-    pub fn list() -> Result<Vec<PiPromptTemplate>, AppError> {
+    pub fn list(app: &AppType) -> Result<Vec<PiPromptTemplate>, AppError> {
         let _guard = lock_prompt_files()?;
-        let dir = get_pi_agent_dir()?.join("prompts");
+        let dir = agent_dir(app)?.join("prompts");
         let entries = match fs::read_dir(&dir) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -189,6 +206,7 @@ impl PiPromptTemplateService {
     }
 
     pub fn upsert(
+        app: &AppType,
         slug: &str,
         original_slug: Option<&str>,
         expected_revision: &str,
@@ -200,7 +218,7 @@ impl PiPromptTemplateService {
         }
         validate_content_size(content, "Pi prompt template")?;
         let _guard = lock_prompt_files()?;
-        let dir = get_pi_agent_dir()?.join("prompts");
+        let dir = agent_dir(app)?.join("prompts");
         let path = template_path(&dir, slug);
 
         if let Some(original_slug) = original_slug.filter(|value| *value != slug) {
@@ -230,10 +248,10 @@ impl PiPromptTemplateService {
         })
     }
 
-    pub fn delete(slug: &str, expected_revision: &str) -> Result<bool, AppError> {
+    pub fn delete(app: &AppType, slug: &str, expected_revision: &str) -> Result<bool, AppError> {
         validate_template_slug(slug)?;
         let _guard = lock_prompt_files()?;
-        let path = template_path(&get_pi_agent_dir()?.join("prompts"), slug);
+        let path = template_path(&agent_dir(app)?.join("prompts"), slug);
         ensure_revision(&path, expected_revision, "Pi prompt template")?;
         match fs::remove_file(&path) {
             Ok(()) => Ok(true),
@@ -396,7 +414,9 @@ fn validate_template_slug(slug: &str) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pi_config::get_pi_agent_dir;
     use crate::pi_config::test_support::TestAgentDir;
+    use crate::pi_config::test_support::TestRpiAgentDir;
     use serial_test::serial;
 
     #[test]
@@ -423,10 +443,10 @@ mod tests {
     #[serial]
     fn empty_prompt_template_round_trips() {
         let _agent = TestAgentDir::new();
-        PiPromptTemplateService::upsert("empty", None, MISSING_REVISION, "")
+        PiPromptTemplateService::upsert(&AppType::Pi, "empty", None, MISSING_REVISION, "")
             .expect("create empty template");
         assert_eq!(
-            PiPromptTemplateService::list().expect("list templates"),
+            PiPromptTemplateService::list(&AppType::Pi).expect("list templates"),
             vec![PiPromptTemplate {
                 slug: "empty".to_string(),
                 content: String::new(),
@@ -439,17 +459,28 @@ mod tests {
     #[serial]
     fn prompt_template_can_be_renamed_and_updated_together() {
         let _agent = TestAgentDir::new();
-        let created = PiPromptTemplateService::upsert("draft", None, MISSING_REVISION, "before")
-            .expect("create template");
+        let created = PiPromptTemplateService::upsert(
+            &AppType::Pi,
+            "draft",
+            None,
+            MISSING_REVISION,
+            "before",
+        )
+        .expect("create template");
 
-        let renamed =
-            PiPromptTemplateService::upsert("review", Some("draft"), &created.revision, "after")
-                .expect("rename template");
+        let renamed = PiPromptTemplateService::upsert(
+            &AppType::Pi,
+            "review",
+            Some("draft"),
+            &created.revision,
+            "after",
+        )
+        .expect("rename template");
 
         assert_eq!(renamed.slug, "review");
         assert_eq!(renamed.content, "after");
         assert_eq!(
-            PiPromptTemplateService::list().expect("list renamed template"),
+            PiPromptTemplateService::list(&AppType::Pi).expect("list renamed template"),
             vec![renamed]
         );
         assert!(!get_pi_agent_dir()
@@ -472,7 +503,8 @@ mod tests {
         file.set_len(MAX_PROMPT_FILE_BYTES + 1)
             .expect("make sparse oversized prompt");
 
-        let error = PiPromptTemplateService::list().expect_err("oversized prompt must be rejected");
+        let error = PiPromptTemplateService::list(&AppType::Pi)
+            .expect_err("oversized prompt must be rejected");
         assert!(error.to_string().contains("1 MiB limit"));
     }
 
@@ -480,7 +512,7 @@ mod tests {
     #[serial]
     fn agents_file_revision_rejects_an_external_edit() {
         let _agent = TestAgentDir::new();
-        let guard = PiAgentsFileGuard::acquire().expect("lock AGENTS.md");
+        let guard = PiAgentsFileGuard::acquire(&AppType::Pi).expect("lock AGENTS.md");
         let snapshot = guard.read().expect("read missing AGENTS.md");
         assert!(snapshot.content.is_none());
 
@@ -512,10 +544,43 @@ mod tests {
         file.set_len(MAX_PROMPT_FILE_BYTES + 1)
             .expect("make sparse oversized AGENTS.md");
 
-        let guard = PiAgentsFileGuard::acquire().expect("lock AGENTS.md");
+        let guard = PiAgentsFileGuard::acquire(&AppType::Pi).expect("lock AGENTS.md");
         let error = guard
             .read()
             .expect_err("oversized AGENTS.md must be rejected");
         assert!(error.to_string().contains("1 MiB limit"));
+    }
+
+    #[test]
+    #[serial]
+    fn rpi_prompt_files_are_written_outside_the_pi_tree() {
+        let _pi_agent = TestAgentDir::new();
+        let _rpi_agent = TestRpiAgentDir::new();
+
+        PiPromptTemplateService::upsert(&AppType::Rpi, "rpi-only", None, MISSING_REVISION, "rpi")
+            .expect("create RPI template");
+        PiPromptTemplateService::upsert(&AppType::Pi, "pi-only", None, MISSING_REVISION, "pi")
+            .expect("create Pi template");
+
+        let rpi_templates = PiPromptTemplateService::list(&AppType::Rpi).expect("list RPI");
+        let pi_templates = PiPromptTemplateService::list(&AppType::Pi).expect("list Pi");
+        assert_eq!(rpi_templates.len(), 1);
+        assert_eq!(rpi_templates[0].slug, "rpi-only");
+        assert_eq!(pi_templates.len(), 1);
+        assert_eq!(pi_templates[0].slug, "pi-only");
+
+        {
+            let rpi_guard = PiAgentsFileGuard::acquire(&AppType::Rpi).expect("lock RPI AGENTS.md");
+            let snapshot = rpi_guard.read().expect("read RPI AGENTS.md");
+            rpi_guard
+                .replace(&snapshot.revision, "rpi instructions")
+                .expect("write RPI AGENTS.md");
+        }
+        let pi_guard = PiAgentsFileGuard::acquire(&AppType::Pi).expect("lock Pi AGENTS.md");
+        assert!(pi_guard
+            .read()
+            .expect("read Pi AGENTS.md")
+            .content
+            .is_none());
     }
 }

@@ -905,6 +905,8 @@
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
     "piConfigDir": "Pi Configuration Directory",
     "piConfigDirDescription": "Override the Pi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
+    "rpiConfigDir": "RPI Configuration Directory",
+    "rpiConfigDirDescription": "Override the RPI configuration directory (models.json, instruction files, prompts, skills, and sessions).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
@@ -913,6 +915,7 @@
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
     "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
+    "browsePlaceholderRpi": "e.g., /home/<your-username>/.rpi/agent",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",
@@ -1070,6 +1073,7 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
+    "rpi": "RPI",
     "mcode": "MiniMax Code"
   },
   "mcode": {

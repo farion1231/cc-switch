@@ -905,6 +905,8 @@
     "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
     "piConfigDir": "Pi 設定ディレクトリ",
     "piConfigDirDescription": "Pi の設定ディレクトリ（models.json、指示ファイル、プロンプト、Skills、セッション）を上書きします。",
+    "rpiConfigDir": "RPI 設定ディレクトリ",
+    "rpiConfigDirDescription": "RPI の設定ディレクトリ（models.json、指示ファイル、プロンプト、Skills、セッション）を上書きします。",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
@@ -913,6 +915,7 @@
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
     "browsePlaceholderPi": "例: /home/<your-username>/.pi/agent",
+    "browsePlaceholderRpi": "例: /home/<your-username>/.rpi/agent",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
     "checkForUpdates": "アップデートを確認",
@@ -1070,6 +1073,7 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
+    "rpi": "RPI",
     "mcode": "MiniMax Code"
   },
   "mcode": {
