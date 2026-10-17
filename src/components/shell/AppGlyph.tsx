@@ -8,7 +8,7 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   claude: "Claude Code",
   "claude-desktop": "Claude Desktop",
   codex: "Codex",
-  gemini: "Antigravity CLI",
+  gemini: "Gemini CLI",
   grokbuild: "Grok Build",
   opencode: "OpenCode",
   openclaw: "OpenClaw",

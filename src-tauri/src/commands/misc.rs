@@ -938,6 +938,7 @@ fn tool_action_shell_command_for_shell(
         });
     }
 
+    #[cfg(target_os = "windows")]
     if matches!(action, ToolLifecycleAction::Install)
         && matches!(shell, LifecycleCommandShell::WindowsBatch)
     {
@@ -2154,7 +2155,7 @@ fn mcode_extra_search_paths(
 /// 官方二进制叫 `agy`（`~/.local/bin/agy`，Windows 在 `%LOCALAPPDATA%\agy\bin`），
 /// 不是旧 npm 包的 `gemini`。应用页这一行继续用内部 id `gemini`，但探测、安装
 /// 和升级都对准 `agy`。供应商、MCP 与 `~/.gemini` 配置仍走原来的 Gemini 路径。
-fn tool_executable_name(tool: &str) -> &'static str {
+fn tool_executable_name(tool: &str) -> &str {
     match tool {
         "gemini" => "agy",
         _ => tool,
@@ -2940,10 +2941,7 @@ fn resolve_path_default(
     let flag = default_flag_for_shell(&shell);
     let mut cmd = Command::new(shell);
     cmd.arg(flag)
-        .arg(format!(
-            "command -v {}",
-            tool_executable_name(tool)
-        ))
+        .arg(format!("command -v {}", tool_executable_name(tool)))
         // 改 spawn 后 stdin 不再像 output() 那样默认置 null，须显式关闭：
         // 继承来的 stdin 可能是终端/管道，交互式 rc 里的读操作会永久阻塞。
         .stdin(Stdio::null())
@@ -6944,6 +6942,7 @@ mod tests {
             }
         }
 
+        #[test]
         fn agy_native_binary_updates_in_place() {
             // `agy` 是官方安装器落下的原生二进制，升级必须写回这一处，
             // 不能另装一份已停服的 npm Gemini CLI。
@@ -6964,9 +6963,9 @@ mod tests {
         #[test]
         fn native_binary_outside_node_modules_is_unmanaged() {
             let dir = tempfile::tempdir().unwrap();
-            let gemini = installed(&dir, "nix-profile/bin/gemini", &MACH_O_64, true);
+            let codex = installed(&dir, "nix-profile/bin/codex", &MACH_O_64, true);
             assert_eq!(
-                resolve_update_command("gemini", &[gemini]),
+                resolve_update_command("codex", &[codex]),
                 UpdateCommand::Unmanaged
             );
             let pi = installed(&dir, "bin/pi", b"\x7fELF\x02\x01\x01", true);
@@ -6982,13 +6981,13 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let shim = installed(
                 &dir,
-                ".asdf/shims/gemini",
-                b"#!/usr/bin/env bash\nexec asdf exec gemini \"$@\"\n",
+                ".asdf/shims/pi",
+                b"#!/usr/bin/env bash\nexec asdf exec pi \"$@\"\n",
                 true,
             );
             assert_eq!(
-                resolve_update_command("gemini", &[shim]),
-                UpdateCommand::Static(static_fallback_command("gemini"))
+                resolve_update_command("pi", &[shim]),
+                UpdateCommand::Static(static_fallback_command("pi"))
             );
         }
 
@@ -6998,13 +6997,13 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let bundled = installed(
                 &dir,
-                "prefix/lib/node_modules/@google/gemini-cli/bin/gemini",
+                "prefix/lib/node_modules/@earendil-works/pi-coding-agent/bin/pi",
                 &MACH_O_64,
                 true,
             );
             assert_eq!(
-                resolve_update_command("gemini", &[bundled]),
-                UpdateCommand::Static(static_fallback_command("gemini"))
+                resolve_update_command("pi", &[bundled]),
+                UpdateCommand::Static(static_fallback_command("pi"))
             );
         }
 
@@ -7824,10 +7823,7 @@ mod tests {
                 "/opt/homebrew/Cellar/gemini-cli/0.13.0/libexec/lib/node_modules/@google/gemini-cli/dist/index.js",
             );
             let cmd = cmd.expect("agy update should still be anchored");
-            assert!(
-                cmd.starts_with("/Users/me/.local/bin/agy update"),
-                "{cmd}"
-            );
+            assert!(cmd.starts_with("/Users/me/.local/bin/agy update"), "{cmd}");
             assert!(!cmd.contains("brew"), "{cmd}");
             assert!(!cmd.contains("gemini-cli"), "{cmd}");
         }
@@ -7883,8 +7879,14 @@ mod tests {
                 "/Users/me/.local/bin/agy",
             );
             let cmd = cmd.expect("agy should have an anchored update");
-            assert!(cmd.starts_with("/Users/me/.local/bin/agy update || "), "{cmd}");
-            assert!(cmd.contains("https://antigravity.google/cli/install.sh"), "{cmd}");
+            assert!(
+                cmd.starts_with("/Users/me/.local/bin/agy update || "),
+                "{cmd}"
+            );
+            assert!(
+                cmd.contains("https://antigravity.google/cli/install.sh"),
+                "{cmd}"
+            );
             assert!(!cmd.contains("npm") && !cmd.contains("gemini-cli"), "{cmd}");
         }
 
