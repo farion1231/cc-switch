@@ -2155,7 +2155,7 @@ fn mcode_extra_search_paths(
 /// 官方二进制叫 `agy`（`~/.local/bin/agy`，Windows 在 `%LOCALAPPDATA%\agy\bin`），
 /// 不是旧 npm 包的 `gemini`。应用页这一行继续用内部 id `gemini`，但探测、安装
 /// 和升级都对准 `agy`。供应商、MCP 与 `~/.gemini` 配置仍走原来的 Gemini 路径。
-fn tool_executable_name(tool: &str) -> &str {
+pub(crate) fn tool_executable_name(tool: &str) -> &str {
     match tool {
         "gemini" => "agy",
         _ => tool,
@@ -6953,10 +6953,15 @@ mod tests {
                 other => panic!("expected an anchored agy update, got {other:?}"),
             };
             assert!(command.contains("agy update"), "{command}");
+            // Windows fallback is the PowerShell installer passed as -EncodedCommand,
+            // so the POSIX install.sh URL is not visible in the command string.
+            #[cfg(not(target_os = "windows"))]
             assert!(
                 command.contains("https://antigravity.google/cli/install.sh"),
                 "{command}"
             );
+            #[cfg(target_os = "windows")]
+            assert!(command.contains("-EncodedCommand"), "{command}");
             assert!(!command.contains("npm"), "{command}");
         }
 

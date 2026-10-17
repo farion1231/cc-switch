@@ -798,8 +798,8 @@ describe("AppsPage concurrent CLI upgrades", () => {
       await screen.findByRole("option", { name: "Homebrew (formula)" }),
     );
     expect(
-      dialog.getByText("brew uninstall --formula gemini-cli"),
-    ).toBeInTheDocument();
+      dialog.queryByText("brew uninstall --formula gemini-cli"),
+    ).not.toBeInTheDocument();
     expect(
       dialog.getByText("brew uninstall --formula opencode"),
     ).toBeInTheDocument();

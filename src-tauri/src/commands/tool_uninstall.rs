@@ -415,6 +415,12 @@ fn known_native_install(tool: &str, inst: &ToolInstallation) -> bool {
             normalized.ends_with("/.opencode/bin/opencode")
                 || normalized.ends_with("/.opencode/bin/opencode.exe")
         }
+        // Antigravity CLI 官方安装器只落下这一个二进制：POSIX `~/.local/bin/agy`，
+        // Windows `%LOCALAPPDATA%\agy\bin\agy.exe`。只删这个文件，旁边的配置不动。
+        "gemini" => {
+            normalized.ends_with("/.local/bin/agy")
+                || normalized.ends_with("/appdata/local/agy/bin/agy.exe")
+        }
         _ => false,
     }
 }
@@ -612,7 +618,8 @@ fn wsl_probe_script(tool: &str) -> String {
     format!(
         "sh -c {}",
         shell_single_quote(&format!(
-            "entry=$(command -v {tool}) && real=$(readlink -f -- \"$entry\") && [ -f \"$real\" ] && printf '__CC_SWITCH_UNINSTALL__\\n%s\\n%s\\n' \"$entry\" \"$real\""
+            "entry=$(command -v {}) && real=$(readlink -f -- \"$entry\") && [ -f \"$real\" ] && printf '__CC_SWITCH_UNINSTALL__\\n%s\\n%s\\n' \"$entry\" \"$real\"",
+            tool_executable_name(tool)
         ))
     )
 }
@@ -1527,12 +1534,17 @@ mod tests {
                 ".codex/packages/standalone/releases/0.150.0-linux/codex",
             ),
             ("opencode", ".opencode/bin/opencode"),
+            ("gemini", ".local/bin/agy"),
+            ("gemini", "AppData/Local/agy/bin/agy.exe"),
         ] {
             let path = temp.path().join(binary);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, b"\x7fELF").unwrap();
             assert!(known_native_install(tool, &installation(&path)));
         }
+        let unrelated = temp.path().join("agy");
+        std::fs::write(&unrelated, b"\x7fELF").unwrap();
+        assert!(!known_native_install("gemini", &installation(&unrelated)));
         assert!(executable.exists());
     }
 
