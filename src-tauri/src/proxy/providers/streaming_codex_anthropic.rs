@@ -9,8 +9,9 @@
 use super::codex_compaction;
 use super::codex_responses_sse as sse;
 use super::transform_codex_anthropic::{
-    build_responses_usage_from_anthropic, map_anthropic_stop_reason_to_status,
-    responses_reasoning_item_from_anthropic_block,
+    anthropic_tool_uses_wrapped_arguments, build_responses_usage_from_anthropic,
+    map_anthropic_stop_reason_to_status, responses_reasoning_item_from_anthropic_block,
+    unwrap_anthropic_tool_arguments,
 };
 #[cfg(test)]
 use super::transform_codex_anthropic::{
@@ -47,6 +48,7 @@ struct BlockState {
     /// used as a fallback when the gateway sends the full input in the start event and
     /// emits no `input_json_delta`. Empty otherwise.
     start_input: String,
+    input_delta_seen: bool,
     source_block: Value,
     has_visible_summary: bool,
     done: bool,
@@ -194,6 +196,7 @@ impl AnthropicToResponsesState {
                             .unwrap_or("")
                             .to_string(),
                         start_input: String::new(),
+                        input_delta_seen: false,
                         source_block: block.clone(),
                         has_visible_summary: false,
                         done: false,
@@ -233,6 +236,7 @@ impl AnthropicToResponsesState {
                         name: name.to_string(),
                         accum: String::new(),
                         start_input,
+                        input_delta_seen: false,
                         source_block: block.clone(),
                         has_visible_summary: false,
                         done: false,
@@ -261,6 +265,7 @@ impl AnthropicToResponsesState {
                             .unwrap_or("")
                             .to_string(),
                         start_input: String::new(),
+                        input_delta_seen: false,
                         source_block: block.clone(),
                         has_visible_summary,
                         done: false,
@@ -293,13 +298,18 @@ impl AnthropicToResponsesState {
                 vec![sse::output_text_delta(output_index, &item_id, text)]
             }
             "input_json_delta" => {
+                block.input_delta_seen = true;
                 let partial = delta
                     .get("partial_json")
                     .and_then(|t| t.as_str())
                     .unwrap_or("");
                 block.accum.push_str(partial);
-                // The Read tool needs to be sanitized at close time, to avoid emitting pages:"" deltas mid-stream
-                if block.name == "Read" || self.tool_context.is_custom_tool_chat_name(&block.name) {
+                // These tools need complete JSON before their arguments can be adapted;
+                // in particular, never expose the Anthropic-only schema wrapper to Codex.
+                if block.name == "Read"
+                    || self.tool_context.is_custom_tool_chat_name(&block.name)
+                    || anthropic_tool_uses_wrapped_arguments(&block.name, &self.tool_context)
+                {
                     return Vec::new();
                 }
                 vec![sse::function_call_arguments_delta(
@@ -332,10 +342,10 @@ impl AnthropicToResponsesState {
         let Some(index) = data.get("index").and_then(|v| v.as_u64()) else {
             return Vec::new();
         };
-        self.close_block(index)
+        self.close_block(index, true)
     }
 
-    fn close_block(&mut self, index: u64) -> Vec<Bytes> {
+    fn close_block(&mut self, index: u64, block_stopped: bool) -> Vec<Bytes> {
         let Some(block) = self.blocks.get_mut(&index) else {
             return Vec::new();
         };
@@ -362,10 +372,37 @@ impl AnthropicToResponsesState {
                 // Prefer streamed input_json_delta; fall back to the input carried on
                 // content_block_start when the gateway emitted no deltas (mirrors the
                 // non-streaming aggregator's precedence in transform_codex_anthropic).
-                let raw_input = if text.trim().is_empty() {
-                    block.start_input.clone()
-                } else {
+                let raw_input = if block.input_delta_seen {
                     text
+                } else {
+                    block.start_input.clone()
+                };
+                let uses_wrapped_arguments =
+                    anthropic_tool_uses_wrapped_arguments(&name, &self.tool_context);
+                let raw_input = if uses_wrapped_arguments {
+                    // A live wrapped tool commits only at content_block_stop, never at
+                    // a message terminal or EOF, even if its JSON is already complete.
+                    // Previously committed tools remain committed if a later block fails.
+                    let input = if !block_stopped || self.stream_truncated {
+                        None
+                    } else {
+                        serde_json::from_str(&raw_input).ok().and_then(|input| {
+                            unwrap_anthropic_tool_arguments(&name, input, &self.tool_context).ok()
+                        })
+                    };
+                    let Some(input) = input else {
+                        return self
+                            .failed_event(
+                                "Upstream returned invalid or incomplete wrapped tool arguments"
+                                    .to_string(),
+                                Some("invalid_tool_arguments".to_string()),
+                            )
+                            .into_iter()
+                            .collect();
+                    };
+                    input.to_string()
+                } else {
+                    raw_input
                 };
                 let arguments = if raw_input.trim().is_empty() {
                     "{}".to_string()
@@ -398,6 +435,13 @@ impl AnthropicToResponsesState {
                             input,
                         ));
                     } else {
+                        if uses_wrapped_arguments {
+                            events.push(sse::function_call_arguments_delta(
+                                output_index,
+                                &item_id,
+                                &arguments,
+                            ));
+                        }
                         events.push(sse::function_call_arguments_done(
                             output_index,
                             &item_id,
@@ -468,7 +512,10 @@ impl AnthropicToResponsesState {
             .map(|(index, _)| *index)
             .collect();
         for index in open {
-            events.extend(self.close_block(index));
+            events.extend(self.close_block(index, false));
+            if self.completed {
+                return events;
+            }
         }
 
         if self.tool_context.is_compaction_request() {
@@ -570,6 +617,9 @@ fn process_anthropic_sse_block(
     state: &mut AnthropicToResponsesState,
     block: &str,
 ) -> (Vec<Bytes>, bool) {
+    if state.completed {
+        return (Vec::new(), true);
+    }
     if block.trim().is_empty() {
         return (Vec::new(), false);
     }
@@ -615,7 +665,7 @@ fn process_anthropic_sse_block(
         }
         _ => Vec::new(),
     };
-    (events, false)
+    (events, state.completed)
 }
 
 fn json_document_candidate(input: &str) -> Option<&str> {
@@ -662,6 +712,29 @@ pub(crate) fn responses_sse_events_from_anthropic_message(
     }));
 
     if let Some(content) = body.get("content").and_then(Value::as_array) {
+        // Unlike a live stream, this entire message is already available. Validate
+        // every wrapper before emitting any tool arguments or completed item, so
+        // this fallback has the same all-or-error boundary as non-streaming JSON.
+        for block in content {
+            if block.get("type").and_then(Value::as_str) != Some("tool_use") {
+                continue;
+            }
+            let name = block.get("name").and_then(Value::as_str).unwrap_or("");
+            if anthropic_tool_uses_wrapped_arguments(name, &state.tool_context)
+                && unwrap_anthropic_tool_arguments(
+                    name,
+                    block.get("input").cloned().unwrap_or(Value::Null),
+                    &state.tool_context,
+                )
+                .is_err()
+            {
+                events.extend(state.failed_event(
+                    "Upstream returned invalid or incomplete wrapped tool arguments".to_string(),
+                    Some("invalid_tool_arguments".to_string()),
+                ));
+                return events;
+            }
+        }
         for (index, block) in content.iter().enumerate() {
             let block_type = block.get("type").and_then(Value::as_str).unwrap_or("");
             let mut start_block = block.clone();
@@ -702,6 +775,9 @@ pub(crate) fn responses_sse_events_from_anthropic_message(
                 "type": "content_block_stop",
                 "index": index
             })));
+            if state.completed {
+                return events;
+            }
         }
     }
 
@@ -862,6 +938,388 @@ mod tests {
             .into_iter()
             .map(|chunk| String::from_utf8_lossy(&chunk).to_string())
             .collect()
+    }
+
+    fn issue_7459_context(combinator: &str) -> CodexToolContext {
+        let mut parameters = json!({"type": "object"});
+        parameters[combinator] = json!([
+            {"properties": {"query": {"type": "string"}}, "required": ["query"]},
+            {"properties": {"path": {"type": "string"}}, "required": ["path"]}
+        ]);
+        super::super::transform_codex_chat::build_codex_tool_context_from_request(&json!({
+            "tools": [{"type": "function", "name": "lookup", "parameters": parameters}]
+        }))
+    }
+
+    fn issue_7459_events(chunks: Vec<Bytes>) -> Vec<Value> {
+        chunks
+            .iter()
+            .flat_map(|chunk| {
+                std::str::from_utf8(chunk)
+                    .unwrap()
+                    .lines()
+                    .filter_map(|line| line.strip_prefix("data: "))
+                    .map(|data| serde_json::from_str(data).unwrap())
+            })
+            .collect()
+    }
+
+    fn issue_7459_start(state: &mut AnthropicToResponsesState, name: &str, input: Value) {
+        state.handle_content_block_start(&json!({
+            "index": 0,
+            "content_block": {"type": "tool_use", "id": "call_7459", "name": name, "input": input}
+        }));
+    }
+
+    fn issue_7459_assert_unwrapped(events: &[Value], expected: &Value) {
+        for event_type in [
+            "response.function_call_arguments.delta",
+            "response.function_call_arguments.done",
+            "response.output_item.done",
+            "response.completed",
+        ] {
+            let event = events
+                .iter()
+                .find(|event| event["type"] == event_type)
+                .unwrap();
+            let arguments = match event_type {
+                "response.function_call_arguments.delta" => &event["delta"],
+                "response.function_call_arguments.done" => &event["arguments"],
+                "response.output_item.done" => &event["item"]["arguments"],
+                _ => &event["response"]["output"][0]["arguments"],
+            };
+            assert_eq!(
+                serde_json::from_str::<Value>(arguments.as_str().unwrap()).unwrap(),
+                *expected,
+                "{event_type} must expose the original tool arguments"
+            );
+        }
+    }
+
+    #[test]
+    fn issue_7459_wrapped_stream_buffers_every_split_and_unwraps_all_events() {
+        let original = json!({"query": "escaped \"quote\", backslash \\ and 工具", "nested": {"values": [1, 2]}});
+        let wrapped = json!({"__cc_switch_args": original}).to_string();
+        for combinator in ["oneOf", "anyOf", "allOf"] {
+            for split in (0..wrapped.len()).filter(|index| wrapped.is_char_boundary(*index)) {
+                let mut state =
+                    AnthropicToResponsesState::with_tool_context(issue_7459_context(combinator));
+                issue_7459_start(&mut state, "lookup", json!({}));
+                for part in [&wrapped[..split], &wrapped[split..]] {
+                    let events = state.handle_content_block_delta(&json!({
+                        "index": 0,
+                        "delta": {"type": "input_json_delta", "partial_json": part}
+                    }));
+                    assert!(
+                        events.is_empty(),
+                        "wrapped arguments leaked before close at split {split}"
+                    );
+                }
+                let mut chunks = state.handle_content_block_stop(&json!({"index": 0}));
+                chunks.extend(state.finalize());
+                issue_7459_assert_unwrapped(&issue_7459_events(chunks), &original);
+            }
+        }
+    }
+
+    #[test]
+    fn issue_7459_start_input_fallback_unwraps_for_json_and_sse_responses() {
+        let original = json!({"path": "/tmp/read.txt"});
+        for combinator in ["oneOf", "anyOf", "allOf"] {
+            let chunks = responses_sse_events_from_anthropic_message(
+                &json!({
+                    "type": "message", "id": "msg_7459", "model": "claude",
+                    "content": [{"type": "tool_use", "id": "call_7459", "name": "lookup",
+                        "input": {"__cc_switch_args": original}}],
+                    "stop_reason": "tool_use"
+                }),
+                issue_7459_context(combinator),
+            );
+            issue_7459_assert_unwrapped(&issue_7459_events(chunks), &original);
+        }
+    }
+
+    #[test]
+    fn issue_7459_streamed_input_takes_precedence_over_wrapped_start_input() {
+        let mut state = AnthropicToResponsesState::with_tool_context(issue_7459_context("oneOf"));
+        issue_7459_start(
+            &mut state,
+            "lookup",
+            json!({"__cc_switch_args": {"query": "stale"}}),
+        );
+        state.handle_content_block_delta(&json!({
+            "index": 0, "delta": {"type": "input_json_delta",
+                "partial_json": "{\"__cc_switch_args\":{\"query\":\"current\"}}"}
+        }));
+        let mut chunks = state.handle_content_block_stop(&json!({"index": 0}));
+        chunks.extend(state.finalize());
+        issue_7459_assert_unwrapped(&issue_7459_events(chunks), &json!({"query": "current"}));
+    }
+
+    #[test]
+    fn issue_7459_ordinary_tool_keeps_live_deltas_and_same_named_property() {
+        let context =
+            super::super::transform_codex_chat::build_codex_tool_context_from_request(&json!({
+                "tools": [{"type": "function", "name": "lookup", "parameters": {
+                    "type": "object", "properties": {"__cc_switch_args": {"type": "string"}}
+                }}]
+            }));
+        let mut state = AnthropicToResponsesState::with_tool_context(context);
+        issue_7459_start(&mut state, "lookup", json!({}));
+        let arguments = "{\"__cc_switch_args\":\"user-defined property\"}";
+        let mut chunks = state.handle_content_block_delta(&json!({
+            "index": 0, "delta": {"type": "input_json_delta", "partial_json": arguments}
+        }));
+        assert_eq!(issue_7459_events(chunks.clone())[0]["delta"], arguments);
+        chunks.extend(state.handle_content_block_stop(&json!({"index": 0})));
+        chunks.extend(state.finalize());
+        issue_7459_assert_unwrapped(
+            &issue_7459_events(chunks),
+            &serde_json::from_str(arguments).unwrap(),
+        );
+    }
+
+    #[test]
+    fn issue_7459_malformed_wrapped_arguments_fail_without_executable_tool_output() {
+        for arguments in [
+            "{\"__cc_switch_args\":",
+            "{\"query\":\"missing wrapper\"}",
+            "{\"__cc_switch_args\":{},\"extra\":true}",
+        ] {
+            let mut state =
+                AnthropicToResponsesState::with_tool_context(issue_7459_context("oneOf"));
+            issue_7459_start(&mut state, "lookup", json!({}));
+            let mut chunks = state.handle_content_block_delta(&json!({
+                "index": 0, "delta": {"type": "input_json_delta", "partial_json": arguments}
+            }));
+            chunks.extend(state.handle_content_block_stop(&json!({"index": 0})));
+            chunks.extend(state.finalize());
+            let events = issue_7459_events(chunks);
+            assert_eq!(
+                events.len(),
+                1,
+                "invalid tool arguments must emit only the failure"
+            );
+            assert_eq!(events[0]["type"], "response.failed");
+            assert_eq!(events[0]["response"]["output"], json!([]));
+        }
+    }
+
+    #[test]
+    fn issue_7459_wrapped_argument_failure_stops_json_response_conversion() {
+        let events = issue_7459_events(responses_sse_events_from_anthropic_message(
+            &json!({
+                "type": "message", "id": "msg_7459", "content": [
+                    {"type": "tool_use", "id": "invalid_call", "name": "lookup", "input": {"query": "missing wrapper"}},
+                    {"type": "tool_use", "id": "later_call", "name": "ordinary", "input": {"value": 1}}
+                ], "stop_reason": "tool_use"
+            }),
+            issue_7459_context("oneOf"),
+        ));
+        assert_eq!(events.last().unwrap()["type"], "response.failed");
+        assert!(!events
+            .iter()
+            .any(|event| event["type"] == "response.output_item.done"));
+        assert!(!events
+            .iter()
+            .any(|event| event.pointer("/item/call_id") == Some(&json!("later_call"))));
+    }
+
+    #[tokio::test]
+    async fn issue_7459_truncated_wrapped_stream_does_not_expose_arguments() {
+        for arguments in [
+            "{\"__cc_switch_args\":{\"query\":",
+            "{\"__cc_switch_args\":{\"query\":\"complete JSON without a stop event\"}}",
+        ] {
+            let input = format!(
+                "data: {}\n\ndata: {}\n\n",
+                json!({"type": "content_block_start", "index": 0,
+                    "content_block": {"type": "tool_use", "id": "call_7459", "name": "lookup", "input": {}}}),
+                json!({"type": "content_block_delta", "index": 0,
+                    "delta": {"type": "input_json_delta", "partial_json": arguments}})
+            );
+            let merged = run_with_context(&input, issue_7459_context("oneOf")).await;
+            assert!(merged.contains("event: response.failed"));
+            assert!(!merged.contains("__cc_switch_args"));
+            assert!(!merged.contains("event: response.function_call_arguments.done"));
+            assert!(!merged.contains("event: response.output_item.done"));
+            assert!(!merged.contains("event: response.completed"));
+        }
+    }
+
+    #[test]
+    fn issue_7459_f1_json_preflights_all_wrappers_before_any_tool_output() {
+        for first in [
+            json!({"type": "tool_use", "id": "call_valid", "name": "lookup",
+                "input": {"__cc_switch_args": {"query": "valid-before-error"}}}),
+            json!({"type": "tool_use", "id": "call_ordinary", "name": "ordinary",
+                "input": {"query": "ordinary-before-error"}}),
+        ] {
+            for bad_input in [
+                json!({"query": "missing-wrapper"}),
+                json!({"__cc_switch_args": {}, "extra": true}),
+                Value::Null,
+            ] {
+                let body = json!({"type": "message", "id": "msg_preflight", "content": [
+                    first,
+                    {"type": "tool_use", "id": "call_invalid", "name": "lookup", "input": bad_input}
+                ], "stop_reason": "tool_use"});
+                let context = issue_7459_context("oneOf");
+                assert!(super::super::transform_codex_anthropic::anthropic_response_to_responses_with_context(
+                    body.clone(), &context
+                ).is_err());
+                let events =
+                    issue_7459_events(responses_sse_events_from_anthropic_message(&body, context));
+                assert!(!events.iter().any(|event| matches!(event["type"].as_str(),
+                    Some("response.function_call_arguments.delta" | "response.function_call_arguments.done" |
+                        "response.custom_tool_call_input.done" | "response.output_item.done"))),
+                    "a complete JSON response must validate every wrapper before producing executable events: {events:?}");
+                let failed = events.last().unwrap();
+                assert_eq!(failed["type"], "response.failed");
+                assert_eq!(
+                    failed["response"]["error"]["type"],
+                    "invalid_tool_arguments"
+                );
+                assert_eq!(failed["response"]["output"], json!([]));
+            }
+        }
+    }
+
+    #[test]
+    fn issue_7459_f1_live_stream_commits_each_closed_tool_before_later_failure() {
+        let mut state = AnthropicToResponsesState::with_tool_context(issue_7459_context("oneOf"));
+        issue_7459_start(
+            &mut state,
+            "lookup",
+            json!({"__cc_switch_args": {"query": "valid-before-error"}}),
+        );
+        assert!(state.output_items.is_empty());
+        let committed = issue_7459_events(state.handle_content_block_stop(&json!({"index": 0})));
+        assert!(committed
+            .iter()
+            .any(|event| event["type"] == "response.output_item.done"
+                && event["item"]["status"] == "completed"));
+        // Live streams commit at block_stop; a later block cannot revoke an earlier call.
+        state.handle_content_block_start(&json!({"index": 1, "content_block": {
+            "type": "tool_use", "id": "call_invalid", "name": "lookup", "input": {"query": "missing-wrapper"}
+        }}));
+        let failed = issue_7459_events(state.handle_content_block_stop(&json!({"index": 1})));
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0]["type"], "response.failed");
+        assert_eq!(failed[0]["response"]["output"].as_array().unwrap().len(), 1);
+        assert_eq!(failed[0]["response"]["output"][0]["call_id"], "call_7459");
+        assert!(state.finalize().is_empty());
+    }
+
+    #[test]
+    fn issue_7459_f1_pending_wrapper_does_not_buffer_ordinary_tool() {
+        let mut state = AnthropicToResponsesState::with_tool_context(issue_7459_context("oneOf"));
+        issue_7459_start(&mut state, "lookup", json!({}));
+        state.handle_content_block_start(&json!({"index": 1, "content_block": {
+            "type": "tool_use", "id": "ordinary_call", "name": "ordinary", "input": {}
+        }}));
+        let events = issue_7459_events(state.handle_content_block_delta(&json!({"index": 1,
+            "delta": {"type": "input_json_delta", "partial_json": "{\"query\":\"live\"}"}
+        })));
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["type"], "response.function_call_arguments.delta");
+        let events = issue_7459_events(state.handle_content_block_stop(&json!({"index": 1})));
+        assert!(events
+            .iter()
+            .any(|event| event["type"] == "response.output_item.done"
+                && event["item"]["call_id"] == "ordinary_call"));
+        assert!(!state.blocks[&0].done);
+    }
+
+    #[tokio::test]
+    async fn issue_7459_f1_message_terminal_does_not_commit_unclosed_wrapper() {
+        for terminal in [
+            json!({"type": "message_stop"}),
+            json!({"type": "message_delta", "delta": {"stop_reason": "max_tokens"}}),
+            json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}}),
+        ] {
+            let input = format!(
+                "data: {}\n\ndata: {}\n\n",
+                json!({"type": "content_block_start", "index": 0, "content_block": {
+                    "type": "tool_use", "id": "call_unclosed", "name": "lookup",
+                    "input": {"__cc_switch_args": {"query": "complete-but-uncommitted"}}
+                }}),
+                terminal
+            );
+            let merged = run_with_context(&input, issue_7459_context("oneOf")).await;
+            assert!(merged.contains("event: response.failed"), "{merged}");
+            assert!(!merged.contains("event: response.function_call_arguments.done"));
+            assert!(!merged.contains("event: response.output_item.done"));
+            assert!(!merged.contains("complete-but-uncommitted"));
+        }
+    }
+
+    #[test]
+    fn issue_7459_f1_empty_delta_does_not_restore_stale_start_arguments() {
+        for partial in ["", " "] {
+            let mut state =
+                AnthropicToResponsesState::with_tool_context(issue_7459_context("oneOf"));
+            issue_7459_start(
+                &mut state,
+                "lookup",
+                json!({"__cc_switch_args": {"query": "STALE"}}),
+            );
+            state.handle_content_block_delta(&json!({"index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": partial}}));
+            let events = issue_7459_events(state.handle_content_block_stop(&json!({"index": 0})));
+            assert_eq!(
+                events.len(),
+                1,
+                "empty delta must not restore start input: {events:?}"
+            );
+            assert_eq!(events[0]["type"], "response.failed");
+            assert_eq!(events[0]["response"]["output"], json!([]));
+        }
+    }
+
+    #[tokio::test]
+    async fn issue_7459_dynamic_namespace_unwraps_across_transport_byte_boundaries() {
+        let context = super::super::transform_codex_chat::build_codex_tool_context_from_request(
+            &json!({
+                "input": [{"type": "tool_search_output", "call_id": "search_7459", "tools": [{
+                    "type": "namespace", "name": "mcp_docs", "tools": [{
+                        "type": "function", "name": "lookup", "parameters": {
+                            "oneOf": [{"type": "object", "required": ["query"]}, {"type": "object", "required": ["path"]}]
+                        }
+                    }]
+                }]}]
+            }),
+        );
+        let original = json!({"query": "工具"});
+        let frames = [
+            json!({"type": "content_block_start", "index": 0, "content_block": {
+                "type": "tool_use", "id": "call_7459", "name": "mcp_docs__lookup", "input": {}}}),
+            json!({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta",
+                "partial_json": json!({"__cc_switch_args": original}).to_string()}}),
+            json!({"type": "content_block_stop", "index": 0}),
+            json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}}),
+            json!({"type": "message_stop"}),
+        ];
+        let wire: String = frames
+            .iter()
+            .map(|frame| format!("data: {frame}\n\n"))
+            .collect();
+        let chunks: Vec<_> = wire
+            .bytes()
+            .map(|byte| Ok::<_, std::io::Error>(Bytes::from(vec![byte])))
+            .collect();
+        let converted =
+            create_responses_sse_stream_from_anthropic_with_context(stream::iter(chunks), context)
+                .collect::<Vec<_>>()
+                .await;
+        let events = issue_7459_events(converted.into_iter().map(Result::unwrap).collect());
+        issue_7459_assert_unwrapped(&events, &original);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        assert_eq!(completed["response"]["output"][0]["name"], "lookup");
+        assert_eq!(completed["response"]["output"][0]["namespace"], "mcp_docs");
     }
 
     #[test]
