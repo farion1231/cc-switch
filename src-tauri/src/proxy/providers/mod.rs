@@ -27,6 +27,7 @@ pub(crate) mod gemini_schema;
 pub mod gemini_shadow;
 pub(crate) mod inline_think;
 pub mod models;
+pub(crate) mod opencode_chat_reasoning;
 pub(crate) mod reasoning_bridge;
 pub(crate) mod responses_late_arguments;
 pub mod streaming;

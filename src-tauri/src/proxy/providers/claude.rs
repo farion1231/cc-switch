@@ -424,10 +424,32 @@ pub fn transform_claude_request_for_api_format(
         "openai_chat" => {
             let preserve_reasoning_content =
                 should_preserve_reasoning_content_for_openai_chat(provider, &body);
+            // OpenCode 网关的档位必须在这里先取出来：`body` 随后会被 move 进转换函数，
+            // 而转换函数只在模型名命中 OpenAI/Grok 白名单时才写 `reasoning_effort`，
+            // `deepseek-*` / `glm-*` 的档位会在那里被静默丢弃（见
+            // `super::opencode_chat_reasoning`）。
+            let effort_intent = super::transform::resolve_reasoning_effort(&body);
             let mut result = super::transform::anthropic_to_openai_with_reasoning_content(
                 body,
                 preserve_reasoning_content,
             )?;
+            // 平台优先：OpenCode 网关接受顶层 `reasoning_effort`，合法档位逐模型声明，
+            // 与模型厂商无关。命中平台规则时以它为准（覆盖白名单可能写入的值）；
+            // 未命中平台或模型无档位表时一切照旧。映射后的上游模型名由转换函数写回
+            // `result["model"]`，无需另行克隆。
+            let platform_effort = effort_intent.and_then(|effort| {
+                result
+                    .get("model")
+                    .and_then(|m| m.as_str())
+                    .and_then(|model| {
+                        super::opencode_chat_reasoning::resolve_opencode_effort(
+                            provider, model, effort,
+                        )
+                    })
+            });
+            if let Some(mapped) = platform_effort {
+                result["reasoning_effort"] = json!(mapped);
+            }
             // Inject prompt_cache_key only if explicitly configured in meta
             if let Some(key) = provider
                 .meta
@@ -2877,5 +2899,148 @@ mod tests {
         assert!(changed);
         assert_eq!(body["thinking"]["type"], "disabled");
         assert!(body.get("output_config").is_none());
+    }
+
+    // ---------- OpenCode 网关：客户端档位到达 Chat 上游（#7546 / #7397 同类） ----------
+
+    /// Claude Desktop 打到 OpenCode 网关的真实请求体形态（2026-10-16 抓包）：
+    /// 档位编码在 `thinking` + `output_config.effort` 里（另有旧的
+    /// `thinking:{type:"enabled",budget_tokens}` 形态）。
+    fn opencode_desktop_body(effort: &str) -> serde_json::Value {
+        json!({
+            "model": "deepseek-v4.1-flash",
+            "max_tokens": 64000,
+            "stream": true,
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": effort},
+            "messages": [{"role": "user", "content": "hi"}]
+        })
+    }
+
+    fn opencode_go_provider() -> Provider {
+        create_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go/v1" }
+        }))
+    }
+
+    #[test]
+    fn openai_chat_opencode_desktop_effort_reaches_upstream() {
+        // `deepseek-v4.1-flash` 不在 supports_reasoning_effort 白名单里：改前档位被丢弃。
+        for (effort, expected) in [("max", "max"), ("low", "low")] {
+            let converted = transform_claude_request_for_api_format(
+                opencode_desktop_body(effort),
+                &opencode_go_provider(),
+                "openai_chat",
+                None,
+                None,
+            )
+            .expect("conversion should succeed");
+
+            assert_eq!(
+                converted["reasoning_effort"],
+                json!(expected),
+                "effort={effort}"
+            );
+        }
+    }
+
+    #[test]
+    fn openai_chat_opencode_legacy_budget_and_medium_are_clamped() {
+        // 旧形态：thinking enabled + 预算 31999 → 高于 16000 → high（表内合法）。
+        let mut legacy = opencode_desktop_body("high");
+        legacy["thinking"] = json!({"type": "enabled", "budget_tokens": 31999});
+        legacy.as_object_mut().unwrap().remove("output_config");
+        let converted = transform_claude_request_for_api_format(
+            legacy,
+            &opencode_go_provider(),
+            "openai_chat",
+            None,
+            None,
+        )
+        .expect("conversion should succeed");
+        assert_eq!(converted["reasoning_effort"], json!("high"));
+
+        // medium 不在网关这些模型的档位表里（low/high/max），抬到最近合法档。
+        let converted = transform_claude_request_for_api_format(
+            opencode_desktop_body("medium"),
+            &opencode_go_provider(),
+            "openai_chat",
+            None,
+            None,
+        )
+        .expect("conversion should succeed");
+        assert_eq!(converted["reasoning_effort"], json!("high"));
+    }
+
+    #[test]
+    fn openai_chat_opencode_thinking_off_floors_to_lowest_legal_tier() {
+        // 客户端显式关思考：既有语义是降到最低档（这些模型不能真正关思考，low 最接近）。
+        let mut body = opencode_desktop_body("high");
+        body["thinking"] = json!({"type": "disabled"});
+        let converted = transform_claude_request_for_api_format(
+            body,
+            &opencode_go_provider(),
+            "openai_chat",
+            None,
+            None,
+        )
+        .expect("conversion should succeed");
+        assert_eq!(converted["reasoning_effort"], json!("low"));
+    }
+
+    #[test]
+    fn openai_chat_opencode_model_without_declared_levels_sends_nothing() {
+        // mimo-v2.5-pro 在网关侧没有 effort 档位声明：宁可保持上游默认，也不猜一个值。
+        let mut body = opencode_desktop_body("max");
+        body["model"] = json!("mimo-v2.5-pro");
+        let converted = transform_claude_request_for_api_format(
+            body,
+            &opencode_go_provider(),
+            "openai_chat",
+            None,
+            None,
+        )
+        .expect("conversion should succeed");
+        assert!(converted.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn openai_chat_opencode_unlisted_deepseek_model_uses_the_family_fallback() {
+        // 网关新发布的同族模型（未在精确表里）：仍能拿到档位，low/medium 按家族交集抬到
+        // high，不必等 cc-switch 发版。
+        for (effort, expected) in [("low", "high"), ("max", "max")] {
+            let mut body = opencode_desktop_body(effort);
+            body["model"] = json!("deepseek-v5-flash");
+            let converted = transform_claude_request_for_api_format(
+                body,
+                &opencode_go_provider(),
+                "openai_chat",
+                None,
+                None,
+            )
+            .expect("conversion should succeed");
+            assert_eq!(
+                converted["reasoning_effort"],
+                json!(expected),
+                "effort={effort}"
+            );
+        }
+    }
+
+    #[test]
+    fn openai_chat_other_platforms_keep_previous_behavior() {
+        // 非 OpenCode 平台的第三方模型 id：与改动前一致，不发档位（白名单未命中）。
+        let other = create_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic" }
+        }));
+        let converted = transform_claude_request_for_api_format(
+            opencode_desktop_body("max"),
+            &other,
+            "openai_chat",
+            None,
+            None,
+        )
+        .expect("conversion should succeed");
+        assert!(converted.get("reasoning_effort").is_none());
     }
 }
