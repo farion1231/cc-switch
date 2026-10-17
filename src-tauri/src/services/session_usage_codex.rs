@@ -2280,6 +2280,8 @@ fn insert_codex_session_entry_on_conn(
             ]))
         .map_err(|e| AppError::Database(format!("插入 Codex 会话日志失败: {e}")))?;
 
+    crate::services::usage_stats::record_session_usage_dedup(conn, "codex_session", request_id)?;
+
     Ok(inserted_rows > 0)
 }
 

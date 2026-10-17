@@ -187,8 +187,17 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
             continue;
         }
 
+        // 如果存在未完成消息（如流式生成中），且该会话最近（5 分钟内）仍有更新，
+        // 则暂时不推进会话游标，等待生成完成；若会话早已静止（> 5 分钟），说明是历史中断或异常悬挂，
+        // 应当推进游标避免每次文件更新都无休止地全量重扫该会话（已导入消息已有持久去重账本保护）。
         if session_has_incomplete_usage {
-            continue;
+            let now_ms = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            if now_ms.saturating_sub(*time_updated) < 300_000 {
+                continue;
+            }
         }
 
         // 更新会话级同步状态。失败时不要推进文件级状态，确保下次可重试。
@@ -548,6 +557,13 @@ fn insert_opencode_message(
         ],
     )
     .map_err(|e| AppError::Database(format!("插入 OpenCode 会话日志失败: {e}")))?;
+
+    // 登记持久化去重账本：防止后续 30 天明细 prune 导致重扫时重复导入
+    crate::services::usage_stats::record_session_usage_dedup(
+        &conn,
+        "opencode_session",
+        request_id,
+    )?;
 
     Ok(inserted_rows > 0)
 }
