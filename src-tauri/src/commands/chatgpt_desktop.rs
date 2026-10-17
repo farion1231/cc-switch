@@ -77,12 +77,18 @@ fn detect() -> ChatGptDesktopStatus {
         supported: true,
         ..Default::default()
     };
-    let Some(app) = macos_installed_app() else {
+    let apps = macos_installed_apps();
+    let Some(app) = apps
+        .iter()
+        .find(|app| macos_cli_candidates(app).iter().any(|cli| cli.is_file()))
+        .or_else(|| apps.first())
+        .cloned()
+    else {
         return status;
     };
     status.installed = true;
     status.app_version = macos_bundle_version(&app);
-    status.uninstall_command = finder_trash_command(&app);
+    status.uninstall_command = finder_trash_commands(&apps).map(|commands| commands.join("\n"));
     probe_bundled_cli(&mut status, &macos_cli_candidates(&app));
     status
 }
@@ -118,18 +124,50 @@ fn uninstall() -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn uninstall() -> Result<(), String> {
-    let app =
-        macos_installed_app().ok_or_else(|| "ChatGPT Desktop is not installed".to_string())?;
-    let script = finder_trash_script(&app)
-        .ok_or_else(|| format!("Unexpected ChatGPT Desktop path: {}", app.display()))?;
-    super::misc::run_hidden_command("/usr/bin/osascript", &["-e", &script], UNINSTALL_TIMEOUT)?;
-    if app.exists() {
-        return Err(format!(
-            "{} is still there after moving it to the Trash",
-            app.display()
-        ));
+    let apps = macos_installed_apps();
+    if apps.is_empty() {
+        return Err("ChatGPT Desktop is not installed".to_string());
     }
-    Ok(())
+    let actions: Vec<(PathBuf, String)> = apps
+        .iter()
+        .map(|app| {
+            finder_trash_script(app)
+                .map(|script| (app.clone(), script))
+                .ok_or_else(|| format!("Unexpected ChatGPT Desktop path: {}", app.display()))
+        })
+        .collect::<Result<_, _>>()?;
+
+    for (app, script) in actions {
+        if let Err(error) = super::misc::run_hidden_command(
+            "/usr/bin/osascript",
+            &["-e", &script],
+            UNINSTALL_TIMEOUT,
+        ) {
+            log::warn!(
+                "Could not move ChatGPT Desktop at {} to the Trash: {error}",
+                app.display()
+            );
+        }
+    }
+
+    let mut remaining = macos_installed_apps();
+    for app in &apps {
+        if app.exists() && !remaining.contains(app) {
+            remaining.push(app.clone());
+        }
+    }
+    if remaining.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "ChatGPT Desktop uninstall was incomplete; still installed: {}",
+            remaining
+                .iter()
+                .map(|app| app.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    }
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
@@ -137,18 +175,14 @@ fn uninstall() -> Result<(), String> {
     Err("ChatGPT Desktop is not available on this system".to_string())
 }
 
-/// 装着的那个 ChatGPT Desktop：优先选真带着 Codex CLI 的那个包，都没有就按顺序取第一个。
+/// 找出 /Applications 和 ~/Applications 下已安装的 ChatGPT.app / Codex.app。
 #[cfg(target_os = "macos")]
-fn macos_installed_app() -> Option<PathBuf> {
+fn macos_installed_apps() -> Vec<PathBuf> {
     let home = crate::config::get_home_dir();
-    let apps: Vec<PathBuf> = macos_app_candidates(&home)
+    macos_app_candidates(&home)
         .into_iter()
         .filter(|app| app.join("Contents").join("Info.plist").is_file())
-        .collect();
-    apps.iter()
-        .find(|app| macos_cli_candidates(app).iter().any(|cli| cli.is_file()))
-        .or_else(|| apps.first())
-        .cloned()
+        .collect()
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -345,6 +379,11 @@ fn finder_trash_command(app: &std::path::Path) -> Option<String> {
         "/usr/bin/osascript -e {}",
         shell_single_quote(&script)
     ))
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn finder_trash_commands(apps: &[PathBuf]) -> Option<Vec<String>> {
+    apps.iter().map(|app| finder_trash_command(app)).collect()
 }
 
 /// 这处 codex 是不是 ChatGPT Desktop 随附的那份。纯字符串判断、不碰文件系统，
@@ -639,6 +678,28 @@ mod tests {
             Some(
                 r#"/usr/bin/osascript -e 'tell application "Finder" to delete (POSIX file "/Users/O'\''Brien/Applications/ChatGPT.app")'"#
             )
+        );
+    }
+
+    #[test]
+    fn finder_trash_commands_list_every_installed_bundle() {
+        let apps = [
+            PathBuf::from("/Applications/ChatGPT.app"),
+            PathBuf::from("/Users/me/Applications/Codex.app"),
+        ];
+        assert_eq!(
+            finder_trash_commands(&apps),
+            Some(vec![
+                r#"/usr/bin/osascript -e 'tell application "Finder" to delete (POSIX file "/Applications/ChatGPT.app")'"#.to_string(),
+                r#"/usr/bin/osascript -e 'tell application "Finder" to delete (POSIX file "/Users/me/Applications/Codex.app")'"#.to_string(),
+            ])
+        );
+        assert_eq!(
+            finder_trash_commands(&[
+                PathBuf::from("/Applications/ChatGPT.app"),
+                PathBuf::from("/Applications/Unsafe\nPath.app"),
+            ]),
+            None
         );
     }
 
