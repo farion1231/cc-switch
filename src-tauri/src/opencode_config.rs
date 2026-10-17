@@ -517,9 +517,21 @@ pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
 
 pub fn set_provider_with_format(
     id: &str,
-    config: Value,
+    mut config: Value,
     format: OpenCodeConfigFormat,
 ) -> Result<(), AppError> {
+    // Explicit blank display names must fall back to the model ID in both
+    // formats. Leave missing/non-string names and unrelated fields untouched.
+    if let Some(models) = config.get_mut("models").and_then(Value::as_object_mut) {
+        for (model_id, model) in models {
+            if let Some(name) = model.get_mut("name") {
+                if name.as_str().is_some_and(|name| name.trim().is_empty()) {
+                    *name = Value::String(model_id.clone());
+                }
+            }
+        }
+    }
+
     try_edit_config(get_opencode_config_path, |full_config| {
         let key = match format {
             OpenCodeConfigFormat::V1 => {
@@ -687,6 +699,8 @@ mod tests {
             std::env::set_var("CC_SWITCH_TEST_HOME", home);
             let guard = Self(previous_env, crate::settings::get_settings());
             crate::settings::update_settings(Default::default()).unwrap();
+            // A cached directory override must never redirect test writes outside the fixture.
+            assert_eq!(get_opencode_dir(), home.join(".config").join("opencode"));
             guard
         }
     }
@@ -1116,6 +1130,215 @@ mod tests {
             config["model"], "keep-me",
             "unrelated user config must be preserved"
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn set_provider_falls_back_to_model_id_only_for_blank_names() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+        for (key, format) in [
+            ("provider", OpenCodeConfigFormat::V1),
+            ("providers", OpenCodeConfigFormat::V2),
+        ] {
+            let mut expected = json!({
+                "model": "custom/vendor/model",
+                "theme": "dark",
+                "provider": {
+                    "unmanaged": {"models": {"leave-alone": {"name": ""}}}
+                },
+                "providers": {
+                    "unmanaged": {"models": {"leave-alone": {"name": ""}}}
+                }
+            });
+            write_config(temp.path(), &expected.to_string());
+            let mut provider = json!({
+                "name": "",
+                "models": {
+                    "vendor/model": {
+                        "name": "",
+                        "limit": {"context": 65536, "output": 4096},
+                        "extension": {"name": ""}
+                    },
+                    "whitespace": {"name": " \t\r\n\u{3000}"},
+                    "custom-name": {"name": "  自定义 Model  "},
+                    "unnamed": {"extension": {"name": ""}}
+                }
+            });
+            match format {
+                OpenCodeConfigFormat::V1 => {
+                    provider["npm"] = json!("@ai-sdk/openai-compatible");
+                    provider["options"] =
+                        json!({"baseURL": "https://example.com/v1", "setCacheKey": true});
+                    provider["models"]["vendor/model"]["variants"] = json!({"fast": {"name": ""}});
+                }
+                OpenCodeConfigFormat::V2 => {
+                    provider["package"] = json!("@opencode/ai/providers/openai-compatible");
+                    provider["settings"] = json!({"baseURL": "https://example.com/v1"});
+                    provider["models"]["vendor/model"]["modelID"] = json!("upstream/model");
+                    provider["models"]["vendor/model"]["variants"] =
+                        json!([{"id": "fast", "name": ""}]);
+                }
+            }
+
+            set_provider_with_format("custom", provider.clone(), format).expect("write provider");
+
+            expected[key]["custom"] = provider;
+            expected[key]["custom"]["models"]["vendor/model"]["name"] = json!("vendor/model");
+            expected[key]["custom"]["models"]["whitespace"]["name"] = json!("whitespace");
+            assert_eq!(read_opencode_config().expect("reload"), expected);
+            assert_eq!(
+                get_providers_with_format().expect("import providers")["custom"],
+                (expected[key]["custom"].clone(), format)
+            );
+
+            let path = get_opencode_config_path().unwrap();
+            let contents = std::fs::read(&path).expect("read contents");
+            set_provider_with_format("custom", expected[key]["custom"].clone(), format)
+                .expect("rewrite provider");
+            assert_eq!(std::fs::read(&path).expect("reread contents"), contents);
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn legacy_provider_blank_names_remain_importable() {
+        use crate::provider::OpenCodeProviderConfig;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+        let raw = json!({
+            "npm": "@ai-sdk/openai-compatible",
+            "models": {
+                "deepseek/deepseek-v4-pro": {"name": ""},
+                "z-ai/glm-5.3-flash": {"name": " \t"},
+                "named": {"name": "Custom display name"}
+            }
+        });
+        let provider: OpenCodeProviderConfig =
+            serde_json::from_value(raw.clone()).expect("parse provider");
+        let serialized = serde_json::to_value(&provider).unwrap();
+        // The type now omits empty names. Keep that absence distinct from a raw
+        // explicit empty name, as the live writer does after typed validation.
+        assert!(serialized["models"]["deepseek/deepseek-v4-pro"]
+            .get("name")
+            .is_none());
+        for (config, expected_name) in [(raw, Some("deepseek/deepseek-v4-pro")), (serialized, None)]
+        {
+            set_provider_with_format("custom", config, OpenCodeConfigFormat::V1)
+                .expect("write provider");
+            let providers = get_providers().expect("reload providers");
+            assert_eq!(
+                providers["custom"]["models"]["deepseek/deepseek-v4-pro"]
+                    .get("name")
+                    .and_then(Value::as_str),
+                expected_name
+            );
+            let imported: OpenCodeProviderConfig =
+                serde_json::from_value(providers["custom"].clone())
+                    .expect("provider remains importable");
+            assert_eq!(
+                imported.models["deepseek/deepseek-v4-pro"].name,
+                expected_name.unwrap_or_default()
+            );
+            assert_eq!(
+                imported.models["z-ai/glm-5.3-flash"].name,
+                "z-ai/glm-5.3-flash"
+            );
+            assert_eq!(imported.models["named"].name, "Custom display name");
+        }
+        assert_eq!(provider.models["deepseek/deepseek-v4-pro"].name, "");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn set_provider_preserves_missing_or_non_string_model_names() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        for provider in [
+            json!({}),
+            json!({"models": null}),
+            json!({"models": []}),
+            json!({"models": "invalid"}),
+            json!({"models": {
+                "missing": {},
+                "null-name": {"name": null},
+                "number-name": {"name": 42},
+                "object-name": {"name": {"name": ""}},
+                "null-model": null,
+                "array-model": [],
+                "string-model": "invalid"
+            }}),
+        ] {
+            set_provider_with_format("custom", provider.clone(), OpenCodeConfigFormat::V1)
+                .expect("write raw provider");
+            assert_eq!(
+                read_opencode_config().expect("reload")["provider"]["custom"],
+                provider
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn blank_model_names_preserve_jsonc_and_the_unselected_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let _guard = TestHomeGuard::set(temp.path());
+        let unselected = r#"{"model":"keep-this-file"}"#;
+        write_config(temp.path(), unselected);
+        let path = get_opencode_dir().join("opencode.jsonc");
+        for (key, format) in [
+            ("provider", OpenCodeConfigFormat::V1),
+            ("providers", OpenCodeConfigFormat::V2),
+        ] {
+            let source = format!(
+                r#"{{
+    // 用户配置
+    "theme": "dark",
+    "{key}": {{
+        "custom": {{"models": {{"alias": {{"name": "", /* keep */ "modelID": "upstream"}}}}}},
+        "other": {{"models": {{"keep": {{"name": "Custom name"}}}}}},
+    }},
+}}
+"#
+            );
+            std::fs::write(&path, &source).unwrap();
+            let provider = get_providers_with_format().unwrap()["custom"].0.clone();
+            set_provider_with_format("custom", provider, format).unwrap();
+            let expected = source.replace("\"name\": \"\"", "\"name\": \"alias\"");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+            let imported = get_providers_with_format().unwrap()["custom"].clone();
+            assert_eq!(imported.1, format);
+            set_provider_with_format("custom", imported.0, imported.1).unwrap();
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+            assert_eq!(
+                std::fs::read_to_string(get_opencode_dir().join("opencode.json")).unwrap(),
+                unselected
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn blank_model_names_do_not_bypass_native_validation() {
+        let temp = tempfile::tempdir().unwrap();
+        let _guard = TestHomeGuard::set(temp.path());
+        let original = r#"{"providers":{"custom":{"models":{"old":{"name":""}}}}}"#;
+        write_config(temp.path(), original);
+        for provider in [
+            json!({"models": {"blank": {"name": ""}, "invalid": {"name": null}}}),
+            json!({"models": {"blank": {"name": ""}, "invalid": []}}),
+            json!({"settings": {"timeout": "invalid"}, "models": {"blank": {"name": ""}}}),
+        ] {
+            assert!(
+                set_provider_with_format("custom", provider, OpenCodeConfigFormat::V2).is_err()
+            );
+            assert_eq!(
+                std::fs::read_to_string(get_opencode_config_path().unwrap()).unwrap(),
+                original
+            );
+        }
     }
 
     #[test]
