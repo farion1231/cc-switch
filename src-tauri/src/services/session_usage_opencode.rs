@@ -17,14 +17,17 @@
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::opencode_config::get_opencode_db_path;
-use crate::proxy::usage::calculator::CostCalculator;
+use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
     metadata_modified_nanos, update_sync_state, SessionSyncResult,
 };
 use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
+use chrono::{Local, TimeZone};
+use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use std::fs;
+use std::path::Path;
 use std::time::SystemTime;
 
 /// 从 opencode message.data JSON 中提取的 token 和费用数据
@@ -78,6 +81,8 @@ fn sqlite_table_exists(conn: &rusqlite::Connection, table: &str) -> Result<bool,
     .map_err(|error| AppError::Database(format!("查询表 {table} 失败: {error}")))
 }
 
+const OPENCODE_HISTORY_REPAIRED_KEY: &str = "opencode_history_rollups_repaired_v1";
+
 /// 同步 OpenCode 使用数据
 pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let db_path = get_opencode_db_path();
@@ -91,6 +96,23 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
             deferred_files: 0,
             errors: vec![],
         });
+    }
+
+    // 针对死循环导致的被重复累加的历史聚合数据进行一次性自愈校准，并补齐去重账本
+    if !db.get_bool_flag(OPENCODE_HISTORY_REPAIRED_KEY)? {
+        match repair_opencode_history_rollups(db, &db_path) {
+            Ok(count) => {
+                if count > 0 {
+                    log::info!(
+                        "[OPENCODE-SYNC] 历史聚合数据自愈完成：成功校准 {count} 条被放大的聚合记录"
+                    );
+                }
+                db.set_setting(OPENCODE_HISTORY_REPAIRED_KEY, "true")?;
+            }
+            Err(e) => {
+                log::warn!("[OPENCODE-SYNC] 历史聚合数据自愈校准失败: {e}");
+            }
+        }
     }
 
     let db_path_str = db_path.to_string_lossy().to_string();
@@ -568,6 +590,234 @@ fn insert_opencode_message(
     Ok(inserted_rows > 0)
 }
 
+#[derive(Default)]
+struct RealDayStats {
+    count: i64,
+    input_tokens: i64,
+    output_tokens: i64,
+    cache_read_tokens: i64,
+    cache_creation_tokens: i64,
+    total_cost: Decimal,
+}
+
+/// 对 OpenCode 历史聚合数据进行自愈校准：
+///
+/// 当因为 30 天清理与会话重扫发生死循环放大时，`usage_daily_rollups` 中受影响日期的
+/// 聚合数据（请求数与 Tokens）会被重复叠加。本函数直接从 `opencode.db` 重新聚合
+/// 真实数值，仅对虚高的日期行进行原子校准纠正，并将历史消息 ID 全量补录到 `session_usage_dedup`。
+pub(crate) fn repair_opencode_history_rollups(
+    db: &Database,
+    opencode_db_path: &Path,
+) -> Result<u32, AppError> {
+    let opencode_conn = rusqlite::Connection::open_with_flags(
+        opencode_db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .map_err(|e| AppError::Database(format!("打开 opencode.db 失败: {e}")))?;
+
+    let schema = detect_schema(&opencode_conn)?;
+
+    let sql = match schema {
+        OpenCodeSchema::V1 => {
+            "SELECT session_id, id, data, NULL FROM message WHERE time_created > 0"
+        }
+        OpenCodeSchema::V2 => {
+            "SELECT session_id, id, data, type FROM session_message WHERE type IN ('assistant', 'compaction')"
+        }
+    };
+
+    let mut stmt = opencode_conn
+        .prepare(sql)
+        .map_err(|e| AppError::Database(format!("准备历史消息查询失败: {e}")))?;
+
+    let mut daily_stats: std::collections::HashMap<(String, String), RealDayStats> =
+        std::collections::HashMap::new();
+    let mut request_ids: Vec<String> = Vec::new();
+
+    let cc_conn = lock_conn!(db.conn);
+    let mut pricing_cache: std::collections::HashMap<String, Option<ModelPricing>> =
+        std::collections::HashMap::new();
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })
+        .map_err(|e| AppError::Database(format!("查询历史消息失败: {e}")))?;
+
+    for row in rows {
+        let (session_id, message_id, data_json, message_type) = match row {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        let value: serde_json::Value = match serde_json::from_str(&data_json) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        if schema == OpenCodeSchema::V1
+            && value.get("role").and_then(|r| r.as_str()) != Some("assistant")
+        {
+            continue;
+        }
+
+        let is_completed = if message_type.as_deref() == Some("compaction") {
+            matches!(
+                value.get("status").and_then(|s| s.as_str()),
+                Some("completed") | Some("failed")
+            )
+        } else {
+            value.get("time").and_then(|t| t.get("completed")).is_some()
+        };
+        if !is_completed {
+            continue;
+        }
+
+        let msg_data = match parse_message_data(&value) {
+            Some(d) => d,
+            None => continue,
+        };
+
+        let request_id = format!("opencode_session:{session_id}:{message_id}");
+        request_ids.push(request_id);
+        let created_at_sec = msg_data.timestamp_ms / 1000;
+        let date_str = match Local.timestamp_opt(created_at_sec, 0) {
+            chrono::LocalResult::Single(dt) => dt.format("%Y-%m-%d").to_string(),
+            chrono::LocalResult::Ambiguous(earliest, _) => earliest.format("%Y-%m-%d").to_string(),
+            chrono::LocalResult::None => String::new(),
+        };
+
+        if date_str.is_empty() {
+            continue;
+        }
+
+        let output_with_reasoning = (msg_data.output_tokens + msg_data.reasoning_tokens) as i64;
+        let model_id = msg_data.model_id.clone();
+
+        let cost_dec = if msg_data.cost > 0.0 {
+            Decimal::try_from(msg_data.cost).unwrap_or(Decimal::ZERO)
+        } else {
+            let pricing = pricing_cache
+                .entry(model_id.clone())
+                .or_insert_with(|| find_model_pricing(&cc_conn, &model_id));
+            if let Some(p) = pricing {
+                let usage = TokenUsage {
+                    input_tokens: msg_data.input_tokens,
+                    output_tokens: output_with_reasoning as u32,
+                    cache_read_tokens: msg_data.cache_read_tokens,
+                    cache_creation_tokens: msg_data.cache_write_tokens,
+                    cache_creation_1h_tokens: 0,
+                    model: Some(model_id.clone()),
+                    message_id: None,
+                };
+                let cost = CostCalculator::calculate_for_app("opencode", &usage, p, Decimal::ONE);
+                cost.total_cost
+            } else {
+                Decimal::ZERO
+            }
+        };
+
+        let stat = daily_stats.entry((date_str, model_id)).or_default();
+        stat.count += 1;
+        stat.input_tokens += msg_data.input_tokens as i64;
+        stat.output_tokens += output_with_reasoning;
+        stat.cache_read_tokens += msg_data.cache_read_tokens as i64;
+        stat.cache_creation_tokens += msg_data.cache_write_tokens as i64;
+        stat.total_cost += cost_dec;
+    }
+
+    cc_conn
+        .execute("SAVEPOINT opencode_repair;", [])
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+    let repair_res = (|| -> Result<u32, AppError> {
+        // 1. 批量将历史已完成消息的 request_id 归档到 session_usage_dedup
+        {
+            let mut dedup_stmt = cc_conn.prepare_cached(
+                "INSERT OR IGNORE INTO session_usage_dedup (data_source, request_id, semantic_id, has_entry_id)
+                 VALUES ('opencode_session', ?1, ?1, 0)",
+            )?;
+            for req_id in &request_ids {
+                dedup_stmt.execute([req_id])?;
+            }
+        }
+
+        // 2. 遍历真实聚合值，仅纠正被放大的行（current_count > real_count）
+        let mut repaired_count = 0u32;
+        let mut check_stmt = cc_conn.prepare_cached(
+            "SELECT request_count FROM usage_daily_rollups
+             WHERE date = ?1 AND app_type = 'opencode' AND provider_id = '_opencode_session' AND model = ?2",
+        )?;
+        let mut update_stmt = cc_conn.prepare_cached(
+            "UPDATE usage_daily_rollups
+             SET request_count = ?1,
+                 success_count = ?1,
+                 input_tokens = ?2,
+                 output_tokens = ?3,
+                 cache_read_tokens = ?4,
+                 cache_creation_tokens = ?5,
+                 total_cost_usd = ?6
+             WHERE date = ?7 AND app_type = 'opencode' AND provider_id = '_opencode_session' AND model = ?8",
+        )?;
+
+        for ((date, model), real) in daily_stats {
+            let current_count: Option<i64> = check_stmt
+                .query_row(rusqlite::params![date, model], |r| r.get(0))
+                .optional()
+                .map_err(|e| AppError::Database(e.to_string()))?;
+
+            if let Some(curr) = current_count {
+                if curr > real.count {
+                    update_stmt
+                        .execute(rusqlite::params![
+                            real.count,
+                            real.input_tokens,
+                            real.output_tokens,
+                            real.cache_read_tokens,
+                            real.cache_creation_tokens,
+                            real.total_cost.to_string(),
+                            date,
+                            model,
+                        ])
+                        .map_err(|e| AppError::Database(e.to_string()))?;
+                    repaired_count += 1;
+                    log::info!(
+                        "[OPENCODE-REPAIR] 已校准 {date} {model}: 请求数 {curr} -> {}, Tokens(In={}, Out={}, CR={})",
+                        real.count,
+                        real.input_tokens,
+                        real.output_tokens,
+                        real.cache_read_tokens,
+                    );
+                }
+            }
+        }
+
+        Ok(repaired_count)
+    })();
+
+    match repair_res {
+        Ok(count) => {
+            cc_conn
+                .execute("RELEASE opencode_repair;", [])
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            if count > 0 {
+                crate::usage_events::notify_log_recorded();
+            }
+            Ok(count)
+        }
+        Err(e) => {
+            cc_conn.execute("ROLLBACK TO opencode_repair;", []).ok();
+            cc_conn.execute("RELEASE opencode_repair;", []).ok();
+            Err(e)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -964,5 +1214,115 @@ mod tests {
         assert_eq!(result.messages[0].1.model_id, "deepseek-v4.1-flash");
         assert_eq!(result.messages[1].1.input_tokens, 300);
         assert!(result.has_incomplete_usage);
+    }
+
+    #[test]
+    fn test_repair_opencode_history_rollups() -> Result<(), AppError> {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let opencode_db_path = temp_dir.path().join("opencode.db");
+
+        // 1. 初始化模拟的 opencode.db (V2 架构)
+        {
+            let oc_conn = rusqlite::Connection::open(&opencode_db_path).unwrap();
+            oc_conn.execute_batch(
+                "CREATE TABLE session_v2 (id TEXT PRIMARY KEY, time_updated INTEGER);
+                 CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, time_updated INTEGER, data TEXT);
+                 INSERT INTO session_v2 VALUES ('ses_1', 1788750000000);"
+            ).unwrap();
+
+            // 构造一条 2026-09-06 (时间戳 1788750000000 毫秒) 的 assistant 消息
+            let msg_data = serde_json::json!({
+                "model": { "id": "gemini-3.8-flash-high" },
+                "cost": 0.05,
+                "tokens": {
+                    "input": 1000,
+                    "output": 200,
+                    "reasoning": 50,
+                    "cache": { "read": 5000, "write": 0 }
+                },
+                "time": {
+                    "created": 1788750000000i64,
+                    "completed": 1788750005000i64
+                }
+            })
+            .to_string();
+
+            oc_conn.execute(
+                "INSERT INTO session_message VALUES ('msg_1', 'ses_1', 'assistant', 1788750000000, ?1)",
+                [msg_data],
+            ).unwrap();
+        }
+
+        // 2. 初始化 cc-switch 内存数据库，并注入一条被死循环放大的虚高记录，以及一条正常代理记录
+        let db = Database::memory().unwrap();
+        let date_str = Local
+            .timestamp_opt(1788750000, 0)
+            .single()
+            .unwrap()
+            .format("%Y-%m-%d")
+            .to_string();
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model, request_count, success_count,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, avg_latency_ms
+                ) VALUES (?1, 'opencode', '_opencode_session', 'gemini-3.8-flash-high', 25000, 25000, 25000000, 6250000, 125000000, 0, '125.0', 100)",
+                [&date_str],
+            ).unwrap();
+
+            // 注入正常代理渠道产生的记录，验证不会被自愈误伤
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model, request_count, success_count,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, avg_latency_ms
+                ) VALUES (?1, 'opencode', 'real_proxy', 'gemini-3.8-flash-high', 5, 5, 500, 50, 0, 0, '0.01', 80)",
+                [&date_str],
+            ).unwrap();
+        }
+
+        // 3. 执行自愈校准
+        let repaired = repair_opencode_history_rollups(&db, &opencode_db_path).unwrap();
+        assert_eq!(repaired, 1, "应成功校准 1 条被放大的行");
+
+        // 4. 验证 usage_daily_rollups 中的数值已被精准纠正回真实值
+        {
+            let conn = lock_conn!(db.conn);
+            let (req_count, input, output, cache_read, cost): (i64, i64, i64, i64, String) = conn.query_row(
+                "SELECT request_count, input_tokens, output_tokens, cache_read_tokens, total_cost_usd
+                 FROM usage_daily_rollups
+                 WHERE date = ?1 AND app_type = 'opencode' AND provider_id = '_opencode_session' AND model = 'gemini-3.8-flash-high'",
+                [&date_str],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            ).unwrap();
+
+            assert_eq!(req_count, 1, "请求数应被校准回真实的 1 次");
+            assert_eq!(input, 1000, "input_tokens 应为真实 1000");
+            assert_eq!(output, 250, "output_tokens 应为 200 + 50 = 250");
+            assert_eq!(cache_read, 5000, "cache_read 应为 5000");
+            assert_eq!(cost, "0.05", "费用应为真实的 0.05");
+
+            // 验证真实代理记录未被篡改
+            let real_proxy_count: i64 = conn.query_row(
+                "SELECT request_count FROM usage_daily_rollups
+                 WHERE date = ?1 AND app_type = 'opencode' AND provider_id = 'real_proxy' AND model = 'gemini-3.8-flash-high'",
+                [&date_str],
+                |r| r.get(0),
+            ).unwrap();
+            assert_eq!(real_proxy_count, 5, "正常代理记录不应受影响");
+
+            // 5. 验证 request_id 已被登记到持久去重账本 session_usage_dedup
+            let dedup_exists: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM session_usage_dedup WHERE request_id = 'opencode_session:ses_1:msg_1')",
+                [],
+                |r| r.get(0),
+            ).unwrap();
+            assert!(dedup_exists, "历史消息 ID 必须补录到 session_usage_dedup");
+        }
+
+        Ok(())
     }
 }
