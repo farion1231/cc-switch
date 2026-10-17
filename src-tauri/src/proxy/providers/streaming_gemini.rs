@@ -72,8 +72,8 @@ fn extract_tool_calls(
                     .get("args")
                     .cloned()
                     .unwrap_or_else(|| json!({})),
-                part.get("thoughtSignature")
-                    .or_else(|| part.get("thought_signature"))
+                part.get("thought_signature")
+                    .or_else(|| part.get("thoughtSignature"))
                     .and_then(|value| value.as_str()),
             ))
         })
@@ -85,8 +85,8 @@ fn extract_text_thought_signature(parts: &[Value]) -> Option<String> {
         .iter()
         .filter(|part| part.get("text").is_some() && part.get("functionCall").is_none())
         .filter_map(|part| {
-            part.get("thoughtSignature")
-                .or_else(|| part.get("thought_signature"))
+            part.get("thought_signature")
+                .or_else(|| part.get("thoughtSignature"))
                 .and_then(|value| value.as_str())
         })
         .next_back()
