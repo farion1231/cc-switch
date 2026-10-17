@@ -1038,6 +1038,22 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     partnerPromotionKey: "everyapi",
     icon: "everyapi",
   },
+  {
+    name: "AllTokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    category: "aggregator",
+    baseUrl: "https://alltokens.cc",
+    // Sub2API 网关：Key 绑定单个分组，须用 Claude 分组的 Key（分组与模型见
+    // alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+    // Claude 分组直接提供 claude-sonnet-5 / claude-opus-5 / claude-haiku-4-5，直连透传
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(true),
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",

@@ -1223,6 +1223,29 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "everyapi",
   },
   {
+    name: "AllTokens",
+    providerKey: "cc-switch-alltokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    // Sub2API 网关：Key 绑定单个分组，须用 GPT 分组的 Key；GPT 账号池原生走
+    // Responses（分组与模型见 alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+    settingsConfig: {
+      name: "AllTokens",
+      baseUrl: "https://alltokens.cc/v1",
+      api: "openai-responses",
+      apiKey: "",
+      models: [
+        piModel("openai/gpt-5.6-sol", { id: "gpt-5.6-sol" }),
+        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
+        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
+  },
+  {
     name: "Amux",
     providerKey: "cc-switch-amux",
     websiteUrl: "https://amux.ai",

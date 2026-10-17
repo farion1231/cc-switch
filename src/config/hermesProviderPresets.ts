@@ -1495,6 +1495,31 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     partnerPromotionKey: "everyapi",
     icon: "everyapi",
   },
+  {
+    name: "AllTokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    settingsConfig: {
+      name: "alltokens",
+      // Sub2API 网关：Key 绑定单个分组，须用 GPT 分组的 Key；GPT 账号池原生走
+      // Responses（分组与模型见 alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+      base_url: "https://alltokens.cc/v1",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: [
+        { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", context_length: 272000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "gpt-5.6-sol", provider: "alltokens" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",

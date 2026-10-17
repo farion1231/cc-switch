@@ -1066,6 +1066,23 @@ export const providerPresets: ProviderPreset[] = [
     partnerPromotionKey: "everyapi",
     icon: "everyapi",
   },
+  {
+    name: "AllTokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    // Sub2API 网关：Key 绑定单个分组，须用 Claude 分组的 Key（分组与模型见
+    // alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://alltokens.cc",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",
