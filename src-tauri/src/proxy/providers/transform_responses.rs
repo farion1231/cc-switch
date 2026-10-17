@@ -2316,6 +2316,7 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                     "input_text"
                 };
                 input.push(json!({
+                    "type": "message",
                     "role": role,
                     "content": [{ "type": content_type, "text": text }]
                 }));
@@ -2379,6 +2380,7 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                             // 先刷新已累积的消息内容
                             if !message_content.is_empty() {
                                 input.push(json!({
+                                    "type": "message",
                                     "role": role,
                                     "content": message_content.clone()
                                 }));
@@ -2402,6 +2404,7 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                             // 先刷新已累积的消息内容
                             if !message_content.is_empty() {
                                 input.push(json!({
+                                    "type": "message",
                                     "role": role,
                                     "content": message_content.clone()
                                 }));
@@ -2435,6 +2438,7 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                             if let Some(web_search_call) = web_search_call {
                                 if !message_content.is_empty() {
                                     input.push(json!({
+                                        "type": "message",
                                         "role": role,
                                         "content": message_content.clone()
                                     }));
@@ -2455,6 +2459,7 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                             {
                                 if !message_content.is_empty() {
                                     input.push(json!({
+                                        "type": "message",
                                         "role": role,
                                         "content": message_content.clone()
                                     }));
@@ -2471,6 +2476,7 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                 // 刷新剩余的消息内容
                 if !message_content.is_empty() {
                     input.push(json!({
+                        "type": "message",
                         "role": role,
                         "content": message_content
                     }));
@@ -2479,7 +2485,7 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
 
             _ => {
                 // 无内容或 null
-                input.push(json!({ "role": role }));
+                input.push(json!({ "type": "message", "role": role }));
             }
         }
 
@@ -3222,6 +3228,39 @@ mod tests {
         assert_eq!(result["input"][0]["content"][0]["text"], "Hello");
         // stop_sequences should not appear
         assert!(result.get("stop_sequences").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_message_items_carry_type() {
+        // Regression: strict upstream Responses backends (e.g. Volcengine Ark's
+        // deepseek-v4-flash endpoint) reject message input items without the
+        // top-level `type` field with 400 MissingParameter: input.type.
+        // Every role-based message item must carry `"type": "message"`.
+        let input = json!({
+            "model": "gpt-5.6",
+            "max_tokens": 1024,
+            "tools": [{
+                "name": "get_time",
+                "description": "Get the current time",
+                "input_schema": {"type": "object", "properties": {}}
+            }],
+            "messages": [
+                {"role": "user", "content": "what time is it?"},
+                {"role": "assistant", "content": [{"type": "text", "text": "Let me check."}]},
+                {"role": "user", "content": "and tomorrow?"}
+            ]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        let input_arr = result["input"].as_array().unwrap();
+        assert_eq!(input_arr.len(), 3);
+        for item in input_arr {
+            assert_eq!(item["type"], "message", "message item must carry type");
+            assert!(item.get("role").is_some());
+        }
+        assert_eq!(input_arr[0]["content"][0]["type"], "input_text");
+        assert_eq!(input_arr[1]["content"][0]["type"], "output_text");
+        assert_eq!(input_arr[2]["content"][0]["type"], "input_text");
     }
 
     #[test]
