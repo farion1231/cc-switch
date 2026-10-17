@@ -5558,7 +5558,7 @@ impl ProviderService {
         provider: Provider,
         add_to_live: bool,
     ) -> Result<bool, AppError> {
-        if app_type == AppType::Pi {
+        if matches!(app_type, AppType::Pi | AppType::Rpi) {
             return pi::add(state, &app_type, provider, add_to_live);
         }
 
@@ -6114,7 +6114,7 @@ impl ProviderService {
         original_id: Option<&str>,
         provider: Provider,
     ) -> Result<bool, AppError> {
-        if app_type == AppType::Pi {
+        if matches!(app_type, AppType::Pi | AppType::Rpi) {
             return pi::update(state, &app_type, original_id, provider);
         }
 
@@ -6402,7 +6402,7 @@ impl ProviderService {
     /// 同时检查本地 settings 和数据库的当前供应商，防止删除任一端正在使用的供应商。
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
-        if app_type == AppType::Pi {
+        if matches!(app_type, AppType::Pi | AppType::Rpi) {
             return pi::delete(state, &app_type, id);
         }
 
@@ -6484,7 +6484,7 @@ impl ProviderService {
         app_type: AppType,
         id: &str,
     ) -> Result<(), AppError> {
-        if app_type == AppType::Pi {
+        if matches!(app_type, AppType::Pi | AppType::Rpi) {
             return pi::remove(state, &app_type, id);
         }
 
@@ -6577,7 +6577,7 @@ impl ProviderService {
         app_type: AppType,
         id: &str,
     ) -> Result<SwitchResult, AppError> {
-        if app_type == AppType::Pi {
+        if matches!(app_type, AppType::Pi | AppType::Rpi) {
             return pi::enable(state, &app_type, id);
         }
 
