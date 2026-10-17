@@ -100,6 +100,13 @@ fn scan_roots() -> [PathBuf; 2] {
 /// Reported relative to `src-tauri/`, so a violation names `tests/foo.rs` and
 /// not an absolute path — the report is read on machines other than the one
 /// that produced it.
+///
+/// The `\` to `/` fold happens here, at the single point where the relative
+/// label is built. Everything downstream (`contains("tests/x.rs")`,
+/// `starts_with("src/")`) is written against POSIX separators, so a native
+/// Windows label would match nothing and the containment assertions below
+/// would fail on a walk that had in fact reached everything. Same spelling as
+/// `privacy_gate::label`.
 fn scan_surface() -> Vec<(String, PathBuf)> {
     let base = crate_root();
     let mut out = Vec::new();
@@ -109,7 +116,8 @@ fn scan_surface() -> Vec<(String, PathBuf)> {
                 .strip_prefix(&base)
                 .unwrap_or(file.as_path())
                 .display()
-                .to_string();
+                .to_string()
+                .replace('\\', "/");
             out.push((relative, file));
         }
     }

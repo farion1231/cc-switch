@@ -256,36 +256,62 @@ mod tests {
         fs::create_dir_all(dir).unwrap();
         let path = dir.join(SECRET_FILE);
         fs::write(&path, contents).unwrap();
+        // 非 unix 没有 POSIX 权限位可设，`mode` 在那条路上没人读；显式收掉，
+        // 否则 `-D warnings` 会把它算成未使用参数。
+        #[cfg(not(unix))]
+        let _ = mode;
         #[cfg(unix)]
         fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
     }
 
     // --- 规格 ---
 
+    /// 一个 0644 的 secret 文件必须让远程服务拒绝启动 —— 但**只在有 POSIX 权限位
+    /// 的平台上可判定**。
+    ///
+    /// [`file_mode`] 在非 unix 平台一律返回 [`SECRET_MODE`]（见它上面的注释），
+    /// 所以同一个 0644 文件在两个平台上的**正确**结论是相反的：unix 拒绝，非 unix
+    /// 接受。两个分支都写在这里，而不是用 `#[cfg(unix)]` 把整条用例在 Windows 上
+    /// 删掉 —— 后者会把这个门禁在那个平台上变成 0 条断言，而「非 unix 一律合规」
+    /// 恰恰是最需要在那边被钉住的那条契约。
     #[test]
     fn refuses_to_start_when_secret_is_0644() {
         let tmp = tempdir().unwrap();
         let dir = tmp.path().join(AUTH_SUBDIR);
         write_secret_file(&dir, &[9u8; 32], 0o644);
 
-        match load_or_create(tmp.path()) {
-            Err(SecretError::BadPermissions { path, mode }) => {
-                assert_eq!(path, dir.join(SECRET_FILE));
-                assert_eq!(mode, 0o644);
+        #[cfg(unix)]
+        {
+            match load_or_create(tmp.path()) {
+                Err(SecretError::BadPermissions { path, mode }) => {
+                    assert_eq!(path, dir.join(SECRET_FILE));
+                    assert_eq!(mode, 0o644);
+                }
+                other => panic!("expected BadPermissions, got {other:?}"),
             }
-            other => panic!("expected BadPermissions, got {other:?}"),
+
+            // 关键：不自动 chmod 修复，文件保持原样，让「谁改宽的」可追。
+            assert_eq!(
+                fs::metadata(dir.join(SECRET_FILE))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o644
+            );
         }
 
-        // 关键：不自动 chmod 修复，文件保持原样，让「谁改宽的」可追。
-        #[cfg(unix)]
-        assert_eq!(
-            fs::metadata(dir.join(SECRET_FILE))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o644
-        );
+        #[cfg(not(unix))]
+        {
+            // 无 POSIX 权限位 → 没有「过宽」这回事，必须放行并原样读回那 32 字节。
+            // 若这里哪天改成拒绝，`file_mode` 的「一律按合规处理」与本用例就会
+            // 互相矛盾；这条断言就是拦住那种漂移的。
+            assert_eq!(
+                load_or_create(tmp.path()).unwrap(),
+                [9u8; 32],
+                "非 unix 平台没有 POSIX 权限位可校验，secret 必须一律按合规放行"
+            );
+        }
     }
 
     #[test]
@@ -335,15 +361,27 @@ mod tests {
         );
     }
 
+    /// 0666 与 0644 同属「过宽」，但它自己带一条断言，证明这条判定不是只对 0644
+    /// 那一个数字成立。平台契约与 `refuses_to_start_when_secret_is_0644` 完全一致：
+    /// unix 拒绝，非 unix 一律合规。
     #[test]
     fn mode_0666_is_also_refused() {
         let tmp = tempdir().unwrap();
         let dir = tmp.path().join(AUTH_SUBDIR);
         write_secret_file(&dir, &[1u8; 32], 0o666);
+
+        #[cfg(unix)]
         assert!(matches!(
             load_or_create(tmp.path()),
             Err(SecretError::BadPermissions { mode: 0o666, .. })
         ));
+
+        #[cfg(not(unix))]
+        assert_eq!(
+            load_or_create(tmp.path()).unwrap(),
+            [1u8; 32],
+            "非 unix 平台没有 POSIX 权限位可校验，0666 与 0600 同样按合规放行"
+        );
     }
 
     #[test]

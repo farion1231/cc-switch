@@ -750,12 +750,16 @@ mod tests {
     /// 注意断言形态：`verify_credential` 返回 [`ClientDigest`]，所以这里
     /// **只能**用 `ct_eq` 比 —— 上一版写的是 `assert_eq!(…, Some(hash))`，
     /// 那条写法在类型换掉之后直接编译不过，正是「由构造保证」的意思。
+    ///
+    /// **不按平台门控整条用例**：0600 只是最后一步的搭建/复核，被测主体
+    /// （`verify_credential` 只认库里那条 digest、错明文换不出、fail-closed）
+    /// 与 POSIX 权限位毫无关系。整条 `#[cfg(unix)]` 会让 Windows 上凭据核验一条
+    /// 断言都没有 —— 而那恰恰是最该在那边也被钉住的契约。两个分支都写在这里，
+    /// 各自断言该平台的真实契约。
     #[test]
     fn verify_credential_uses_the_stored_digest_only() {
-        use super::super::secret::{save_clients, CLIENTS_FILE, SECRET_MODE};
+        use super::super::secret::{save_clients, CLIENTS_FILE};
         use super::super::ClientToken;
-        use std::fs;
-        use std::os::unix::fs::PermissionsExt;
 
         let dir = tempfile::tempdir().expect("isolated config dir");
         let secret = super::super::secret::load_or_create(dir.path()).expect("secret");
@@ -784,16 +788,53 @@ mod tests {
         );
         let secret_path = empty.path().join(AUTH_SUBDIR).join(SECRET_FILE);
         assert!(!secret_path.exists(), "读凭据不得顺手创建 secret 文件");
-        save_clients(empty.path(), std::slice::from_ref(&client)).expect("persist");
-        assert_eq!(
-            fs::metadata(empty.path().join(AUTH_SUBDIR).join(CLIENTS_FILE))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            SECRET_MODE,
-            "凭据库同样必须是 0600"
+
+        // 落盘再读回：证明上面比的是**从 clients 文件读回来的**那条，而不是内存里
+        // 那一份。放在 `dir`（有 secret）而不是 `empty` —— `verify_credential` 先
+        // `read_secret`，没有 secret 文件时它恒返回 None，那是 fail-closed 的另一
+        // 条断言（上面已经单独验过），拿它来验「读回」只会恒红。
+        assert!(
+            verify_credential(dir.path(), "plain-token", CredentialChannel::Header)
+                .expect("落盘后的凭据仍必须换得出摘要")
+                .ct_eq(&expected),
+            "落盘再读回的摘要必须与库里那条一致"
         );
+        save_clients(empty.path(), std::slice::from_ref(&client)).expect("persist");
+
+        #[cfg(unix)]
+        {
+            use super::super::secret::SECRET_MODE;
+            use std::fs;
+            use std::os::unix::fs::PermissionsExt;
+
+            assert_eq!(
+                fs::metadata(empty.path().join(AUTH_SUBDIR).join(CLIENTS_FILE))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                SECRET_MODE,
+                "凭据库同样必须是 0600"
+            );
+        }
+
+        #[cfg(not(unix))]
+        {
+            // 没有 POSIX 权限位 → 没有「过宽」这回事，`save_clients` 必须照常把库
+            // 写出来，而且上面那条「落盘再读回仍换得出摘要」已经证明了它可读。
+            // 这里再钉一次落盘事实本身：文件在、且不是空的。哪天 `save_clients`
+            // 在这个平台上静默不写文件，上面那条会先红，但那时它红的原因会被
+            // 误读成「verify_credential 的问题」—— 这一条把原因指回写盘那一步。
+            let clients_path = empty.path().join(AUTH_SUBDIR).join(CLIENTS_FILE);
+            let meta = std::fs::metadata(&clients_path).expect("非 unix 平台也必须写出凭据库");
+            assert!(meta.is_file(), "凭据库必须是普通文件，实得 {meta:?}");
+            assert!(
+                !std::fs::read(&clients_path)
+                    .expect("凭据库必须可读")
+                    .is_empty(),
+                "凭据库被写成了空文件"
+            );
+        }
     }
 
     /// 通道表：`Protected` 两条且顺序固定，`BrowserSafe` 一条，`Public` 空。

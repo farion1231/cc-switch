@@ -925,10 +925,12 @@ pub fn is_tailscale_available() -> bool {
 /// 长着哪些脸」，用于让用户在放宽之前看见暴露面。
 ///
 /// 走 `getifaddrs(3)` 而不是新增依赖：依赖树零新增是本仓库的既有约束，
-/// `libc` 已经在列。
+/// `libc` 已经在列。Windows 走同目录下的 `GetAdaptersAddresses` 实现，
+/// 过滤规则与这里一致。
 ///
 /// 过滤掉的地址：回环（不是「对外暴露」）、链路本地 `169.254/16`（APIPA
 /// 只说明没拿到 DHCP）、未指定 / 组播 / 广播。
+#[cfg(not(target_os = "windows"))]
 pub fn local_ipv4_addresses() -> Vec<(String, std::net::Ipv4Addr)> {
     use std::ffi::CStr;
     use std::net::Ipv4Addr;
@@ -988,6 +990,110 @@ pub fn local_ipv4_addresses() -> Vec<(String, std::net::Ipv4Addr)> {
 
     // SAFETY: `list` 由 `getifaddrs` 分配，这里只释放一次。
     unsafe { libc::freeifaddrs(list) };
+
+    out.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    out.dedup();
+    out
+}
+
+/// Windows 版：`GetAdaptersAddresses` 枚举本机所有非回环 IPv4 地址，
+/// 过滤规则与 Unix 版一致，输出也按（网卡名, 地址）排序去重。
+#[cfg(target_os = "windows")]
+pub fn local_ipv4_addresses() -> Vec<(String, std::net::Ipv4Addr)> {
+    use std::net::Ipv4Addr;
+    use windows_sys::Win32::Foundation::ERROR_BUFFER_OVERFLOW;
+    use windows_sys::Win32::NetworkManagement::IpHelper::{
+        GetAdaptersAddresses, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER,
+        GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH,
+    };
+    use windows_sys::Win32::Networking::WinSock::{AF_INET, AF_UNSPEC, SOCKADDR_IN};
+
+    fn wide_to_string(ptr: *const u16) -> String {
+        if ptr.is_null() {
+            return String::new();
+        }
+        let mut len = 0usize;
+        // SAFETY: `GetAdaptersAddresses` 返回的 PWSTR 以 NUL 结尾。
+        while unsafe { *ptr.add(len) } != 0 {
+            len += 1;
+        }
+        // SAFETY: 上面已量出 NUL 之前的长度，区间有效。
+        String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(ptr, len) })
+    }
+
+    let flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+
+    // 第一次调用只问所需缓冲区大小；ERROR_BUFFER_OVERFLOW 是预期结果。
+    let mut size: u32 = 0;
+    let rc = unsafe {
+        GetAdaptersAddresses(
+            AF_UNSPEC as u32,
+            flags,
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            &mut size,
+        )
+    };
+    if rc != ERROR_BUFFER_OVERFLOW || size == 0 {
+        return Vec::new();
+    }
+
+    // 用 u64 承载缓冲区，保证满足 `IP_ADAPTER_ADDRESSES_LH` 的对齐要求。
+    let mut buf = vec![0u64; (size as usize).div_ceil(8)];
+    let rc = unsafe {
+        GetAdaptersAddresses(
+            AF_UNSPEC as u32,
+            flags,
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut IP_ADAPTER_ADDRESSES_LH,
+            &mut size,
+        )
+    };
+    if rc != 0 {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    let mut adapter = buf.as_ptr() as *const IP_ADAPTER_ADDRESSES_LH;
+    while !adapter.is_null() {
+        // SAFETY: `adapter` 指向 GetAdaptersAddresses 填好的链表节点。
+        let (name, mut unicast, next) = unsafe {
+            let a = &*adapter;
+            (a.FriendlyName, a.FirstUnicastAddress, a.Next)
+        };
+
+        while !unicast.is_null() {
+            // SAFETY: 同一链表，节点由系统分配。
+            let (addr_ptr, addr_len, next_unicast) = unsafe {
+                let u = &*unicast;
+                (u.Address.lpSockaddr, u.Address.iSockaddrLength, u.Next)
+            };
+            unicast = next_unicast;
+
+            if addr_ptr.is_null() || addr_len < std::mem::size_of::<SOCKADDR_IN>() as i32 {
+                continue;
+            }
+            // SAFETY: 长度已覆盖 SOCKADDR_IN，且下面先核对 family。
+            let (family, addr) = unsafe {
+                let sin = &*(addr_ptr as *const SOCKADDR_IN);
+                // `sin_addr` 是网络字节序的 4 个字节，直接按字节构造最省事。
+                let octets = *(std::ptr::addr_of!(sin.sin_addr) as *const [u8; 4]);
+                (sin.sin_family, Ipv4Addr::from(octets))
+            };
+            if family != AF_INET
+                || addr.is_loopback()
+                || addr.is_link_local()
+                || addr.is_unspecified()
+                || addr.is_multicast()
+                || addr.is_broadcast()
+            {
+                continue;
+            }
+            out.push((wide_to_string(name), addr));
+        }
+
+        adapter = next;
+    }
 
     out.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
     out.dedup();

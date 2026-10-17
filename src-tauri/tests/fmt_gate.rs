@@ -4,7 +4,7 @@
 //! a single judgement. A failing `cargo test` (exit 101) then buried a passing
 //! `cargo fmt --check` (exit 0), so a green gate read as red in the report.
 //! This file makes the format fact independently executable and independently
-//! readable: [`fmt_check_clean_under_sh`] asserts exactly one thing — that
+//! readable: [`fmt_check_clean`] asserts exactly one thing — that
 //! `cargo fmt --check` exits 0 — and asserts nothing whatsoever about test
 //! outcomes, port conflicts, or the two deliberately-red gates. Those are
 //! separate facts with separate evidence, deliberately not wired together here.
@@ -15,11 +15,17 @@
 //! into the deletion-irrelevance proof task 3-3-2 established.
 //!
 //! Every path is anchored at `CARGO_MANIFEST_DIR`, never at a literal
-//! machine-local path, and the command runs through `/bin/sh` with an explicit
-//! `PATH=` prefix so it survives the harness's `/bin/sh -c` invocation (a bare
-//! `cargo` under that shell would exit 127 rather than checking anything).
+//! machine-local path. The command is spawned directly, with the rustup shim
+//! directory written onto the child's `PATH` via `.env`, so it survives a
+//! harness environment that never loaded a profile — the same reason the
+//! sibling gates carry that shim. No shell is involved: the previous version
+//! ran the command through a POSIX shell as a `PATH=`-prefixed script string,
+//! which is why this file used to sit behind `#![cfg(unix)]` and assert nothing
+//! at all on Windows. Naming the program by absolute path leaves no shell
+//! syntax to evaluate, so the gate runs everywhere.
 
-use std::path::Path;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Extract the violation headings from `cargo fmt --check` output.
@@ -42,7 +48,7 @@ fn fmt_violations(diff: &str) -> Vec<String> {
 
 /// The failure message this gate reports, with the parsed violations named.
 ///
-/// Before this existed, [`fmt_check_clean_under_sh`] pasted `output` — the raw
+/// Before this existed, [`fmt_check_clean`] pasted `output` — the raw
 /// unified diff — into its panic and nothing else. That output *contains* the
 /// `Diff in <path>:<line>:` headings, so nothing was strictly missing… except
 /// that the heading has to be found by eye, several screens into a diff full of
@@ -90,34 +96,50 @@ fn fmt_failure_message(output: &str) -> String {
 /// The cargo binary that is building this very test, as an absolute path.
 ///
 /// Cargo exports `CARGO` to the build, so this never depends on the caller's
-/// `PATH` — which is what lets the command below stay bare-`cargo` while still
-/// resolving. Only its parent directory is borrowed, to seed `PATH=`.
-fn cargo_bin() -> &'static str {
-    env!("CARGO")
+/// `PATH` — which is what lets the command below be spawned by absolute path.
+/// Only its parent directory is borrowed, to seed the child's `PATH`.
+fn cargo_bin() -> &'static Path {
+    Path::new(env!("CARGO"))
 }
 
-/// Run `cargo fmt --manifest-path <crate>/Cargo.toml --check` through
-/// `/bin/sh`, returning the exit code and the combined output.
-fn run_fmt_check() -> (i32, String) {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
-    let cargo_dir = Path::new(cargo_bin())
+/// The rustup shim directory that goes in front of the inherited `PATH`.
+///
+/// Prepended, never substituted: `rustfmt` still needs the rest of the PATH
+/// (the linker, `cc`, …). `join_paths` handles the separator, which is `;` on
+/// Windows rather than `:`.
+fn shimmed_path() -> OsString {
+    let cargo_dir = cargo_bin()
         .parent()
         .expect("CARGO must have a parent directory")
-        .display()
-        .to_string();
+        .to_path_buf();
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
 
-    // `$PATH` is expanded by the shell, not by us; the literal `$PATH` here is
-    // deliberate. The quotes keep a path containing spaces intact.
-    let script = format!(
-        "PATH=\"{cargo_dir}:$PATH\" cargo fmt --manifest-path {} --check",
-        manifest.display()
-    );
+    let mut dirs = vec![cargo_dir];
+    dirs.extend(std::env::split_paths(&inherited));
+    std::env::join_paths(dirs).expect("PATH entries must be joinable")
+}
 
-    let out = Command::new("/bin/sh")
-        .arg("-c")
-        .arg(&script)
+/// Run `cargo fmt --manifest-path <crate>/Cargo.toml --check`, returning the
+/// exit code and the combined output.
+///
+/// Spawned directly rather than through a shell: the program is named by
+/// absolute path and the PATH shim is written onto the child's environment as
+/// data, so there is no shell syntax left to evaluate and the gate behaves the
+/// same on Windows as on unix. The working directory is pinned to
+/// `CARGO_MANIFEST_DIR` because a test binary's cwd depends on whatever
+/// launched it.
+fn run_fmt_check() -> (i32, String) {
+    let manifest: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+
+    let out = Command::new(cargo_bin())
+        .arg("fmt")
+        .arg("--manifest-path")
+        .arg(&manifest)
+        .arg("--check")
+        .env("PATH", shimmed_path())
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
-        .expect("running /bin/sh must succeed");
+        .expect("running cargo fmt must succeed");
 
     let combined = format!(
         "{}{}",
@@ -133,7 +155,7 @@ fn run_fmt_check() -> (i32, String) {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn fmt_check_clean_under_sh() {
+fn fmt_check_clean() {
     let (code, output) = run_fmt_check();
 
     assert_eq!(code, 0, "{}", fmt_failure_message(&output));
@@ -215,7 +237,7 @@ fn fmt_violation_scanner_is_not_vacuous() {
 
 /// The gate's failure message must name *where to look*, not just dump the diff.
 ///
-/// [`fmt_check_clean_under_sh`] used to put the raw `cargo fmt --check` output
+/// [`fmt_check_clean`] used to put the raw `cargo fmt --check` output
 /// straight into its panic message. That output does contain the
 /// `Diff in <path>:<line>:` headings, but they sit inside a wall of `+`/`-`/`@@`
 /// lines that read as equally structural — so the one fact a reader needs (which

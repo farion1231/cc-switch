@@ -50,7 +50,20 @@ const BIN_NAME: &str = "tailscale";
 pub const BIN_OVERRIDE_ENV: &str = "CC_SWITCH_TAILSCALE_BIN";
 
 /// 绝对候选路径。本机装的是 GUI 变体，CLI shim 在这两个位置。
+#[cfg(not(windows))]
 const DEFAULT_CANDIDATES: [&str; 2] = ["/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale"];
+
+/// Windows 上的绝对候选路径。
+///
+/// 阶梯②排在 PATH 之前的原因与 unix 侧完全一致：GUI 启动的进程常常不带
+/// `C:\Program Files\Tailscale` 的 PATH 项，那不是罕见情况而是每次都会发生。
+/// 路径写死成默认值而不是拼 `ProgramFiles` 环境变量：与 unix 侧同构，且
+/// Program Files 被重定向时仍是同一个可执行文件。
+#[cfg(windows)]
+const DEFAULT_CANDIDATES: [&str; 2] = [
+    r"C:\Program Files\Tailscale\tailscale.exe",
+    r"C:\Program Files (x86)\Tailscale\tailscale.exe",
+];
 
 /// `tailscale whois --json` 提取出的对端身份字段。
 ///
@@ -426,12 +439,73 @@ pub fn tailscale_bin(
         }
     }
     for dir in path_dirs {
-        let path = dir.join(BIN_NAME);
-        if is_executable(&path) {
-            return Some(path);
+        for candidate in bin_candidates_in_dir(dir) {
+            if is_executable(&candidate) {
+                return Some(candidate);
+            }
         }
     }
     None
+}
+
+/// 一个 `PATH` 目录里、为 `tailscale` 应当依次尝试的文件。
+///
+/// unix 上只有裸名，行为与从前逐字节一致。Windows 上可执行文件必带扩展名、且
+/// 扩展名由 `PATHEXT` 决定（装出来是 `tailscale.exe`），所以光 `dir.join("tailscale")`
+/// 永远探不到，`resolve_bin` 恒 `None`、`BindScope::Tailscale` 静默降级 —— 这就是
+/// 本函数存在的理由。裸名放在最后兜底：万一装出来的是一个无扩展名的可执行文件，
+/// 多试一次的成本是一次 `metadata`，省掉它则整条阶梯失效。
+fn bin_candidates_in_dir(dir: &Path) -> Vec<PathBuf> {
+    #[cfg(windows)]
+    {
+        let mut names: Vec<String> = path_extensions(&path_ext_env())
+            .into_iter()
+            .map(|ext| format!("{BIN_NAME}{ext}"))
+            .collect();
+        names.push(BIN_NAME.to_string());
+        names.into_iter().map(|name| dir.join(name)).collect()
+    }
+    #[cfg(not(windows))]
+    {
+        vec![dir.join(BIN_NAME)]
+    }
+}
+
+/// 读出来的 `PATHEXT` 原值。
+#[cfg(windows)]
+fn path_ext_env() -> String {
+    std::env::var("PATHEXT").unwrap_or_default()
+}
+
+/// 把 `PATHEXT`（形如 `.COM;.EXE;.BAT`）解析成带前导点的扩展名列表。
+///
+/// 分隔符是 `;`，与 Windows 的 `PATH` 分隔符一致 —— 不是 `:`，所以这里不做任何
+/// 平台分支。`EXE` 这种没有前导点的写法也接受，补一个点：不同工具写出来的
+/// `PATHEXT` 大小写、前导点并不统一。
+///
+/// **读不到 / 解析不出任何一项时退回 `.exe`**，这是承重的兜底：tailscale 的
+/// Windows 安装包装出来的就是 `tailscale.exe`，缺了这一条，缺 `PATHEXT` 的环境
+/// （服务、被裁剪的环境、定时任务）上 `BindScope::Tailscale` 会静默降级。
+#[cfg(any(windows, test))]
+fn path_extensions(raw: &str) -> Vec<String> {
+    let parsed: Vec<String> = raw
+        .split(';')
+        .map(str::trim)
+        .filter(|ext| !ext.is_empty())
+        .map(|ext| {
+            if ext.starts_with('.') {
+                ext.to_string()
+            } else {
+                format!(".{ext}")
+            }
+        })
+        .collect();
+
+    if parsed.is_empty() {
+        vec![".exe".to_string()]
+    } else {
+        parsed
+    }
 }
 
 fn is_executable(path: &Path) -> bool {
@@ -470,12 +544,40 @@ pub fn resolve_bin_with(override_env: Option<OsString>) -> Option<PathBuf> {
     tailscale_bin(override_env, &candidates, &path_dirs)
 }
 
+// 只有两条用例真的依赖 POSIX 语义（`sh` 脚本 + `libc::kill` 探活），它们各自
+// 单独门控。**不是**给整个模块加 `#[cfg(unix)]`：那会让 Windows 上这 8 条一条
+// 都不编译，而新增的 PATHEXT / 候选路径逻辑恰恰只在那条路上有分支 —— 那等于
+// 把新代码的断言数量降到 0。「在那个平台上不测」不是让门禁变绿的理由。
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::Ipv4Addr;
-    use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
+
+    // 只有 unix 那条端到端用例构造 `IpAddr::V4`；Windows 上没有别的用例碰它，
+    // 留在模块级会被 `-D warnings` 当成未使用 import。
+    #[cfg(unix)]
+    use std::net::Ipv4Addr;
+
+    /// 写一个「可执行文件」，内容只是占位 —— 用到它的阶梯用例**从不执行**它，
+    /// 只让 [`is_executable`] 认。
+    ///
+    /// 权限位那一半是 unix 独有的：`set_mode` 来自 `PermissionsExt`，Windows 上
+    /// 不存在；而 [`is_executable`] 在非 unix 平台只判 `is_file()`（见它自己的
+    /// `cfg(not(unix))` 分支），所以不设权限位照样会被认成可执行 —— 阶梯用例在
+    /// Windows 上因此断言的是同一个契约：**阶梯的顺序**，不是权限位。
+    fn write_exe(path: &Path, body: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, body).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(path, perms).unwrap();
+        }
+    }
 
     /// `timeout_kills_subprocess_and_reaps` 用的被测截止时间。
     ///
@@ -484,22 +586,63 @@ mod tests {
     /// 截止时间一到就 `kill()`，而一个尚未被调度的子进程拿到信号后连脚本的第一条
     /// 命令都执行不到，pidfile 永远不会出现 —— 原用例的 500ms 就是在机器满载
     /// （三个并发任务）时这样偶发挂掉的。
+    #[cfg(unix)]
     const RUN_DEADLINE: Duration = Duration::from_secs(3);
 
     /// pidfile 的有限等待预算，与 [`RUN_DEADLINE`] 解耦。
     ///
     /// pidfile 是子进程留在磁盘上的文件、不随进程一起消失，所以这一路不必赶在
     /// kill 之前读：预算耗尽仍读不到，判的是「子进程真的从头到尾没写」这个真问题。
+    #[cfg(unix)]
     const PIDFILE_WAIT: Duration = Duration::from_secs(2);
 
-    fn write_exe(path: &Path, body: &str) {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
-        std::fs::write(path, body).unwrap();
-        let mut perms = std::fs::metadata(path).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(path, perms).unwrap();
+    /// 阶梯③在一个 `PATH` 目录里的候选，末位必须仍是裸名 `dir/tailscale`。
+    ///
+    /// unix 上候选恰好只有这一个（`.exe`/PATHEXT 那套被 `cfg` 掉，老行为逐字节不变）；
+    /// Windows 上它是 `PATHEXT` 各项在前、裸名在后的兜底。这条断言跨平台都成立，
+    /// 因此它能同时钉住两件事：新逻辑没有泄漏回 unix，以及 Windows 侧没有为了加
+    /// `.exe` 把裸名那条路整个删掉。
+    #[test]
+    fn path_dir_candidates_always_end_with_the_bare_name() {
+        let dir = Path::new("/usr/local/bin");
+        let candidates = bin_candidates_in_dir(dir);
+        assert_eq!(
+            candidates.last(),
+            Some(&dir.join(BIN_NAME)),
+            "候选列表末位必须是裸名，实际: {candidates:?}"
+        );
+    }
+
+    /// unix 上候选必须**只有**裸名一个：多拼任何东西都会让阶梯③的探测次数漂移。
+    #[cfg(not(windows))]
+    #[test]
+    fn path_dir_candidates_are_the_bare_name_alone_on_unix() {
+        let dir = Path::new("/usr/local/bin");
+        assert_eq!(bin_candidates_in_dir(dir), vec![dir.join(BIN_NAME)]);
+    }
+
+    /// `PATHEXT` 缺失时的兜底必须是 `.exe`。
+    ///
+    /// tailscale 的 Windows 安装包装出来的就是 `tailscale.exe`。兜底一旦没了，
+    /// 缺 `PATHEXT` 的环境（Windows 服务、被裁剪的环境、计划任务）上
+    /// `resolve_bin` 恒 `None`，`BindScope::Tailscale` 静默降级成「没装 tailscale」。
+    #[test]
+    fn missing_pathext_still_offers_exe() {
+        assert_eq!(path_extensions(""), vec![".exe".to_string()]);
+        assert_eq!(path_extensions(";;"), vec![".exe".to_string()]);
+    }
+
+    /// `PATHEXT` 的分隔符是 `;`，没有前导点的写法也要补一个点。
+    ///
+    /// 不做大小写归一：Windows 文件系统不区分大小写，`tailscale.EXE` 与
+    /// `tailscale.exe` 是同一个文件，而 `PATHEXT` 写成什么大小写由装它的那个
+    /// 工具决定，改写它反而会让「保留原样」这一层凭空多出一个失配面。
+    #[test]
+    fn pathext_entries_are_normalized() {
+        assert_eq!(
+            path_extensions(".COM;.EXE;BAT; ;"),
+            vec![".COM", ".EXE", ".BAT"]
+        );
     }
 
     /// 阶梯①：覆盖变量命中，且**不再查 PATH**。
@@ -552,6 +695,7 @@ mod tests {
     /// PID 不变，所以 pidfile 里记下的恰好是被 kill 的那个**直接子进程**，不会记成
     /// exec 之后的 `sleep`，更不会记到孙进程上。旁路证据由被测子进程自己产生，
     /// 不需要给 `Run` 塞载荷，也不需要改 `run_with_deadline` 的控制流。
+    #[cfg(unix)]
     fn write_self_reporting_slow(path: &Path, pidfile: &Path) {
         write_exe(
             path,
@@ -576,6 +720,7 @@ mod tests {
     /// pidfile 是被测子进程留在磁盘上的文件，不随进程一起消失，所以这里**不必**
     /// 与被测的截止时间赛跑：读到的那份 PID 必然属于那个已被 kill 的进程，两者
     /// 之间没有时序耦合。
+    #[cfg(unix)]
     async fn wait_for_pidfile(path: &Path, budget: Duration) -> Result<String, std::io::Error> {
         let deadline = Instant::now() + budget;
         loop {
@@ -596,6 +741,7 @@ mod tests {
     /// 探针本身的可靠性也进断言：只有 `ESRCH` 才算「已消失」，`EPERM` 之类的返回
     /// 说明探针给不出可信结论，直接判失败——否则一个恒返回 ESRCH 的坏探针就能让
     /// 调用方把任何进程都判成已死。
+    #[cfg(unix)]
     fn pid_alive(pid: i32) -> bool {
         // SAFETY: signal 0 只做存在性/权限探测，不投递任何信号，也不解引用指针。
         let rc = unsafe { libc::kill(pid, 0) };
@@ -627,6 +773,13 @@ mod tests {
     /// `echo` 都执行不到，pidfile 于是永远不出现。故截止时间取 [`RUN_DEADLINE`]
     /// （离 `sleep 30` 仍有两个数量级的余量，超时分支照样被走到），pidfile 那一路
     /// 走 [`wait_for_pidfile`] 的有限重试 —— 不再靠「读一次就一定读得到」。
+    ///
+    /// 门控在 unix，理由是**证据形态**而不是被测行为：它依赖 `#!/bin/sh` 真的跑
+    /// 起来、`exec sleep 30` 保住 PID，以及 `kill(pid, 0)` 探进程表 —— Windows 上
+    /// 这三样都不成立（没有 POSIX `sh`、没有 `kill(2)` 探针）。「超时后子进程必须
+    /// 被杀掉」这个契约在 Windows 上同样成立，但本仓库选用的这套旁路证据无法在那边
+    /// 复现。真正跨平台的那一半在 `timeout_reaps_without_leaking_child` 里。
+    #[cfg(unix)]
     #[tokio::test]
     async fn timeout_kills_subprocess_and_reaps() {
         // 正对照：同一个探针作用于测试进程自身必须判「活着」。没有这一条，探针恒假
@@ -689,7 +842,55 @@ mod tests {
         assert!(fields.is_none());
     }
 
+    /// 慢脚进程：**一条一定会待够久的系统自带件**。
+    ///
+    /// unix 是 `sleep`，Windows 是 `ping -n 60`（`-n` 是次数不是间隔，靠超时参数
+    /// 定挂多久）。两者都不需要仓库里有可执行文件，因此
+    /// [`run_with_deadline`] 拿到的 argv 在两边都是「可执行文件路径 + 参数」这一种
+    /// 形状 —— 换句话说，被测代码路径逐字���相同，只有**怎么把慢脚造出来**分平台。
+    #[cfg(unix)]
+    fn slow_helper() -> (&'static Path, Vec<&'static str>) {
+        (Path::new("sleep"), vec!["30"])
+    }
+
+    /// 见 unix 那条 `slow_helper`。`ping` 在 Windows 上是 `ping.exe`，由 PATHEXT 解析，
+    /// 这里给绝对目录里的裸名即可 —— [`is_executable`] 在非 unix 平台只判 `is_file`。
+    #[cfg(windows)]
+    fn slow_helper() -> (&'static Path, Vec<&'static str>) {
+        (Path::new("ping"), vec!["-n", "60", "127.0.0.1"])
+    }
+
+    /// 超时分支，**两个平台上都跑**的那一半。
+    ///
+    /// 被测的是 [`run_with_deadline`] 的 kill + wait 路径，而它只用
+    /// `std::process::Command`、没有一处 POSIX 依赖 —— 所以「超时后必须收尸」这个
+    /// 契约在所有平台上都成立、也都该被断言。只有造慢脚的方式分平台（见
+    /// [`slow_helper`]），没有「Windows 上不测」这回事。
+    ///
+    /// `reaped` 是这里唯一能跨平台断言的收尸证据：`run_with_deadline` 先 `wait()`
+    /// 同一个 `Child` 再读回退出状态，属于自证。unix 那条
+    /// `timeout_kills_subprocess_and_reaps` 额外用 `kill(pid, 0)` 探进程表补了旁路
+    /// 证据 —— 那套证据形态在 Windows 上不成立（没有 `kill(2)`），所以这条只到
+    /// `reaped` 为止。这是**证据形态**的平台限制，被测行为本身不是。
+    #[tokio::test]
+    async fn timeout_reaps_without_leaking_child() {
+        let (slow, args) = slow_helper();
+
+        let run = run_with_deadline(slow, &args, Duration::from_secs(3)).await;
+        match run {
+            Run::TimedOut { reaped } => assert!(
+                reaped,
+                "超时后必须由同一任务显式 kill() + wait()，且 try_wait() 应为 Ok(Some(_))；\
+                 只让外层 future 返回会把子进程留到测试进程退出为止"
+            ),
+            other => panic!("慢脚进程应判超时，实得 {other:?}（argv: {slow:?} {args:?}）"),
+        }
+    }
+
     /// exit 0 + 合法 JSON → Tailnet；exit 1 + `peer not found` → NotInTailnet。
+    ///
+    /// [`classify`] 拿到的 [`Run`] 已经在 [`run_with_deadline`] 那一层构造好了 ——
+    /// 这条用例因此完全不碰文件系统、进程和平台，两边逐字节同构。
     #[test]
     fn classify_covers_the_three_states() {
         let tailnet = classify(Run::Exited {

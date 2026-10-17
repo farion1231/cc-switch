@@ -18,6 +18,7 @@
 //! Source paths are anchored with `CARGO_MANIFEST_DIR`, never cwd-relative:
 //! the cwd of a test binary depends on the harness that launched it.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
@@ -268,44 +269,78 @@ fn scan_is_not_vacuous() {
 }
 
 // ---------------------------------------------------------------------------
-// Harness-shell executability gate.
+// Harness-executability gate.
 //
-// The CI harness runs every task's `test_commands` through `/bin/sh -c`. A
-// non-interactive `/bin/sh` does not load the user's profile, so `cargo` —
-// which is a rustup shim living in `$HOME/.cargo/bin` — is NOT on PATH there.
-// A bare `cargo test ...` therefore exits 127 no matter how healthy the code
-// under test is. The gate below pins the PATH-immunity shim so the command
-// form stays executable, and proves the seam by *running* the target test
-// rather than by scanning source text.
+// The CI harness runs every task's `test_commands` in a non-interactive shell
+// that never loads the user's profile, so `cargo` — which is a rustup shim
+// living in `$HOME/.cargo/bin` — is not guaranteed to be resolvable there. A
+// bare `cargo test ...` can then fail with "command not found" no matter how
+// healthy the code under test is. The gate below pins the PATH-immune
+// invocation so the command form stays executable, and proves the seam by
+// *running* the target test rather than by scanning source text.
+//
+// **No shell is involved.** The previous version drove cargo through a POSIX
+// shell, passing a `PATH=` prefix assignment and a bare `cargo` as script text,
+// which forced the whole file behind `#![cfg(unix)]` — Windows has no such
+// shell, so the gate silently became zero assertions there, which is the one
+// place it most needs to run. The shell was only ever doing two things:
+// expanding the `PATH=` prefix assignment, and resolving the bare name `cargo`
+// against PATH. Both are native now (`.env("PATH", …)` and an absolute program
+// path plus the OS's own resolver), so nothing is left for a shell to do and
+// the file builds and runs on every platform.
 // ---------------------------------------------------------------------------
 
-/// Path prefix that puts the rustup shim ahead of whatever the harness's
-/// non-interactive shell starts with.
+/// The cargo binary that is building this very test, as an absolute path.
 ///
-/// `$HOME` is used rather than a literal path: the repo is cloned onto many
-/// machines. Prepending is idempotent — if `$HOME/.cargo/bin` does not exist,
+/// Cargo exports `CARGO` at build time, so this is the path on the *target*
+/// machine — `cargo.exe` under `.cargo/bin` on a Windows runner — and never
+/// depends on the caller's PATH.
+fn cargo_bin() -> &'static Path {
+    Path::new(env!("CARGO"))
+}
+
+/// The rustup shim directory — the entry the PATH shim puts ahead of whatever
+/// the harness starts with.
+///
+/// `$HOME` is never written down as a literal path: the repo is cloned onto
+/// many machines. Prepending is idempotent — if the directory does not exist,
 /// the entry is simply never matched and `cargo` still resolves from the
 /// inherited PATH, exactly as before.
-const CARGO_PATH_SHIM: &str = r#"PATH="$HOME/.cargo/bin:$PATH""#;
+fn cargo_bin_dir() -> PathBuf {
+    cargo_bin()
+        .parent()
+        .expect("CARGO must have a parent directory")
+        .to_path_buf()
+}
+
+/// PATH with the rustup shim directory prepended to everything inherited.
+///
+/// `join_paths` is what makes this correct on Windows, where the separator is
+/// `;` and not `:`.
+fn shimmed_path() -> OsString {
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let mut dirs = vec![cargo_bin_dir()];
+    dirs.extend(std::env::split_paths(&inherited));
+    std::env::join_paths(dirs).expect("PATH entries must be joinable")
+}
 
 /// `PATH` with every directory that resolves a `cargo` binary removed.
 ///
-/// This is what makes the gate non-vacuous. `cargo test` PREPENDS
-/// `$HOME/.cargo/bin` to `PATH` for the test binary it spawns, so a child
-/// `/bin/sh` would inherit a `PATH` that already resolves `cargo` — and
-/// `CARGO_PATH_SHIM` would be decorative, passing no matter what it contained.
-/// Scrubbing restores the harness's actual starting state (a non-interactive
-/// `/bin/sh` that never loaded a profile), which is the only state in which
-/// the shim is load-bearing.
-///
-/// `HOME` is preserved: the shim expands `$HOME` inside the child shell, so
-/// removing it would break the thing under test rather than harden it.
-fn harness_path() -> String {
-    let inherited = std::env::var("PATH").unwrap_or_default();
-    let kept: Vec<&str> = inherited
-        .split(':')
-        .filter(|dir| !dir.is_empty())
-        .filter(|dir| !Path::new(dir).join("cargo").exists())
+/// This is what makes the negative fixture non-vacuous. `cargo test` PREPENDS
+/// the rustup shim directory to `PATH` for the test binary it spawns, so a
+/// child process would otherwise inherit a PATH that already resolves `cargo` —
+/// and the shim would be decorative, passing no matter what it contained.
+/// Scrubbing restores the harness's actual starting state, which is the only
+/// state in which the shim is load-bearing.
+fn scrubbed_path() -> OsString {
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let shim_dir = cargo_bin_dir();
+    let kept: Vec<PathBuf> = std::env::split_paths(&inherited)
+        .filter(|dir| dir != &shim_dir)
+        .filter(|dir| !dir.join("cargo").exists())
+        // Windows resolves `cargo` through PATHEXT, so a `.exe` copy in some
+        // other directory would keep the scrub from taking effect there.
+        .filter(|dir| !dir.join("cargo.exe").exists())
         .collect();
 
     assert!(
@@ -313,18 +348,31 @@ fn harness_path() -> String {
         "every PATH entry contained a cargo binary; the scrubbed environment \
          would be unusable"
     );
-    kept.join(":")
+    std::env::join_paths(kept).expect("PATH entries must be joinable")
 }
 
-/// Run a command the way the CI harness does: through a non-interactive
-/// `/bin/sh -c`, starting from the scrubbed PATH above.
-fn run_in_harness_shell(script: &str) -> Output {
-    Command::new("/bin/sh")
-        .arg("-c")
-        .arg(script)
-        .env("PATH", harness_path())
+/// Run a command with the shimmed PATH above.
+///
+/// The working directory is pinned to `CARGO_MANIFEST_DIR` rather than
+/// inherited: the cwd of a test binary depends on whatever launched it.
+fn run_with_shimmed_path(program: &Path, args: &[&str], path: OsString) -> Output {
+    Command::new(program)
+        .args(args)
+        .env("PATH", &path)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
-        .expect("cannot spawn /bin/sh")
+        .unwrap_or_else(|e| panic!("cannot spawn {}: {e}", program.display()))
+}
+
+/// Spawn without asserting on failure — the negative fixture needs to observe
+/// "could not be started at all", which is what a launcher reports when it
+/// cannot resolve the program.
+fn try_spawn_with_path(program: &Path, args: &[&str], path: OsString) -> std::io::Result<Output> {
+    Command::new(program)
+        .args(args)
+        .env("PATH", &path)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
 }
 
 /// stdout + stderr merged, so assertions work regardless of which stream
@@ -337,56 +385,65 @@ fn merged(out: &Output) -> String {
     )
 }
 
-/// `cargo` must be resolvable inside the harness's shell once the shim is
-/// applied. This is the precondition every Rust test command depends on, and
-/// the seam shared with the source-level gate above.
+fn manifest_file() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")
+}
+
+/// `cargo` must be reachable with only the shimmed PATH applied. This is the
+/// precondition every Rust test command depends on, and the seam shared with
+/// the source-level gate above.
 #[test]
-fn cargo_is_resolvable_in_sh() {
-    let out = run_in_harness_shell(&format!("{CARGO_PATH_SHIM} command -v cargo"));
+fn cargo_is_reachable_with_the_shim() {
+    // Cross-platform stand-in for `command -v cargo`: hand the child only the
+    // shimmed PATH and let the OS resolve the bare name (unix: PATH; Windows:
+    // PATH + PATHEXT).
+    let probe = Path::new("cargo");
+    let out = run_with_shimmed_path(probe, &["--version"], shimmed_path());
     let text = merged(&out);
 
     assert!(
         out.status.success(),
-        "`command -v cargo` failed in /bin/sh even with the PATH shim ({CARGO_PATH_SHIM}).\n{text}"
+        "spawning a bare `cargo` failed even with the rustup shim directory on \
+         PATH.\n{text}"
     );
     assert!(
-        !text.trim().is_empty(),
-        "`command -v cargo` succeeded but printed nothing — nothing was resolved"
-    );
-    assert!(
-        text.trim_end().ends_with("cargo"),
-        "expected `command -v cargo` to resolve to a cargo binary, got: {}",
+        text.to_lowercase().contains("cargo"),
+        "expected the resolved binary to identify as cargo, got: {}",
         text.trim()
     );
 }
 
-/// The actual target command, executed end-to-end under the harness shell.
+/// The actual target command, executed end-to-end with the PATH shim.
 ///
 /// A source scan cannot prove a seam is *usable* — only running it can. So
-/// this shells out exactly as CI does and requires a green run of the four
-/// `remote::events` cases, not merely a zero exit from a shell that could not
-/// find the binary at all.
+/// this spawns exactly what CI does and requires a green run of the four
+/// `remote::events` cases, not merely a zero exit from a launcher that could
+/// not find the binary at all.
 #[test]
-fn remote_events_target_test_passes_under_sh_with_path_shim() {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
-    let script = format!(
-        r#"{CARGO_PATH_SHIM} cargo test --manifest-path "{}" --lib remote::events"#,
-        manifest.display()
+fn remote_events_target_test_passes_with_path_shim() {
+    let manifest = manifest_file().display().to_string();
+    let out = run_with_shimmed_path(
+        cargo_bin(),
+        &[
+            "test",
+            "--manifest-path",
+            &manifest,
+            "--lib",
+            "remote::events",
+        ],
+        shimmed_path(),
     );
-
-    let out = run_in_harness_shell(&script);
     let text = merged(&out);
 
     assert!(
         out.status.success(),
-        "target command must exit 0 under the harness's /bin/sh.\n\
-         command: {script}\noutput:\n{text}"
+        "target command must exit 0.\noutput:\n{text}"
     );
     assert!(
         text.contains("test result: ok."),
-        "target command exited 0 without a green libtest summary — a shell that \
-         cannot find `cargo` also exits non-zero, so the summary is the proof \
-         the four cases really ran.\noutput:\n{text}"
+        "target command exited 0 without a green libtest summary — a launcher \
+         that cannot find `cargo` also exits non-zero, so the summary is the \
+         proof the four cases really ran.\noutput:\n{text}"
     );
     assert!(
         text.contains("4 passed"),
@@ -400,30 +457,40 @@ fn remote_events_target_test_passes_under_sh_with_path_shim() {
 
 /// Negative fixture: the failure mode this gate exists to catch.
 ///
-/// Without the shim, the harness shell cannot resolve `cargo` at all. This
-/// proves the shim is load-bearing rather than decorative — if the shim were
-/// dropped from `test_commands`, the assertion below would still hold while
-/// the real command returned 127, and the gate would be protecting nothing.
+/// Without the shim, the harness cannot resolve `cargo` at all. This proves
+/// the shim is load-bearing rather than decorative — if the shim were dropped
+/// from `test_commands`, the assertion below would still hold while the real
+/// command returned command-not-found, and the gate would be protecting
+/// nothing.
 #[test]
-fn bare_cargo_is_not_resolvable_in_shell_without_shim() {
+fn bare_cargo_is_unreachable_without_the_shim() {
     static BASE_PATH_HAS_CARGO: OnceLock<bool> = OnceLock::new();
-    let base_has_cargo = *BASE_PATH_HAS_CARGO
-        .get_or_init(|| run_in_harness_shell("command -v cargo").status.success());
+    let base_has_cargo = *BASE_PATH_HAS_CARGO.get_or_init(|| {
+        matches!(
+            try_spawn_with_path(Path::new("cargo"), &["--version"], scrubbed_path()),
+            Ok(out) if out.status.success()
+        )
+    });
 
     if base_has_cargo {
         // Some environments export cargo onto PATH directly (CI images, shell
         // profiles). The shim is then redundant but harmless; asserting the
-        // failure here would be asserting a property of the machine, not of
-        // the command form.
+        // failure here would be asserting a property of the machine, not of the
+        // invocation shape.
         return;
     }
 
-    let out = run_in_harness_shell("cargo test --lib remote::events");
+    let out = try_spawn_with_path(
+        Path::new("cargo"),
+        &["test", "--lib", "remote::events"],
+        scrubbed_path(),
+    );
     assert!(
-        !out.status.success(),
-        "bare `cargo` unexpectedly resolved in /bin/sh; this environment does \
-         not reproduce the 127 the shim defends against, so the negative \
-         fixture is vacuous here"
+        !matches!(&out, Ok(child) if child.status.success()),
+        "bare `cargo` unexpectedly resolved on a PATH that had every cargo \
+         directory removed; this environment does not reproduce the \
+         command-not-found the shim defends against, so the negative fixture \
+         is vacuous here"
     );
 }
 
@@ -474,14 +541,32 @@ fn has_compile_error(output: &str) -> bool {
         .any(|line| line.trim_start().starts_with("error[E") || line.contains("could not compile"))
 }
 
-/// Run the exact lint command this gate is about, through the harness shell.
-fn run_events_rs_clippy() -> Output {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
-    let script = format!(
-        r#"{CARGO_PATH_SHIM} cargo clippy --manifest-path "{}" --lib"#,
-        manifest.display()
-    );
-    run_in_harness_shell(&script)
+/// Run the exact lint command this gate is about, with the PATH shim applied.
+///
+/// **整个测试进程只跑一次**，结果由所有断言共享。
+///
+/// 两条用例（`clippy_reports_no_warning_for_events_rs` 和
+/// `crate_still_compiles_under_clippy`）问的是**同一条命令的同一次输出**的不同侧面：
+/// 一条看 events.rs 的诊断条数，一条看有没有编译错误。它们此前各自 spawn 一次
+/// `cargo clippy`，在 nextest 下就是两个进程各跑一遍完整 lint —— 实测同一批里
+/// 并发时把 package cache 锁排成队，单条从 0.7s 涨到 70s，CI 上两条合计 220s
+/// 直接撞穿 180s 的门禁上限。而它们断言的其实是**一个事实**：这次 lint 跑过了、
+/// 且 events.rs 干净。把一次运行的输出共享出去，既省掉整轮重跑，也让两条断言
+/// 不再可能因为「各自那次跑出来的结果不一样」而互相矛盾。
+///
+/// `OnceLock` 而非每测一次：门禁要检的是**这次 lint 的输出**，不是「每个测试
+/// 进程各自 lint 一遍」。`std::sync::OnceLock` 的 `get_or_init` 在并发下只跑一次
+/// 初始化，因此即使两条用例被排到不同线程上也只有一次 spawn。
+fn run_events_rs_clippy() -> &'static Output {
+    static CLIPPY: OnceLock<Output> = OnceLock::new();
+    CLIPPY.get_or_init(|| {
+        let manifest = manifest_file().display().to_string();
+        run_with_shimmed_path(
+            cargo_bin(),
+            &["clippy", "--manifest-path", &manifest, "--lib"],
+            shimmed_path(),
+        )
+    })
 }
 
 /// `AppHandleSink` really wraps `AppHandle::emit` → clippy reports nothing for
@@ -493,7 +578,7 @@ fn run_events_rs_clippy() -> Output {
 #[test]
 fn clippy_reports_no_warning_for_events_rs() {
     let out = run_events_rs_clippy();
-    let text = merged(&out);
+    let text = merged(out);
 
     // The lint really ran. Two shapes are legitimate and BOTH must be accepted:
     //   - `Checking`/`Compiling cc-switch` — the lib unit was dirty, clippy
@@ -532,7 +617,7 @@ fn clippy_reports_no_warning_for_events_rs() {
 #[test]
 fn crate_still_compiles_under_clippy() {
     let out = run_events_rs_clippy();
-    let text = merged(&out);
+    let text = merged(out);
 
     assert!(
         !has_compile_error(&text),

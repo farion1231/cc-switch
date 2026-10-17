@@ -455,7 +455,11 @@ fn remote_rust_sources() -> Vec<(String, String)> {
             } else if path.extension().is_some_and(|e| e == "rs") {
                 let src = std::fs::read_to_string(&path)
                     .unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
-                out.push((path.display().to_string(), src));
+                // `\` -> `/` at the point the label is built: the consumers below
+                // match on `/`-separated suffixes such as `pairing/handlers.rs`,
+                // and Windows would otherwise emit `pairing\handlers.rs` and
+                // match nothing. Same spelling as `privacy_gate::label`.
+                out.push((path.display().to_string().replace('\\', "/"), src));
             }
         }
     }
@@ -580,7 +584,11 @@ fn scope_rust_sources() -> Vec<(String, String)> {
             } else if path.extension().is_some_and(|e| e == "rs") {
                 let src = std::fs::read_to_string(&path)
                     .unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
-                out.push((path.display().to_string(), src));
+                // `\` -> `/` at the point the label is built: the consumers below
+                // match on `/`-separated suffixes such as `pairing/handlers.rs`,
+                // and Windows would otherwise emit `pairing\handlers.rs` and
+                // match nothing. Same spelling as `privacy_gate::label`.
+                out.push((path.display().to_string().replace('\\', "/"), src));
             }
         }
     }
