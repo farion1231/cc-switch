@@ -68,6 +68,12 @@ export interface ClaudeDesktopProviderPreset extends PresetFamilyFields {
   iconColor?: string;
 }
 
+/**
+ * Claude Haiku 4.x 只有 200K 窗口：声明 1M 的预设里这一档也不能跟着标 1M，
+ * 否则 Claude Desktop 会攒到 200K 以上才压缩，上游先报超长。
+ */
+const isClaudeHaiku4 = (model: string) => /claude-haiku-4[-.]/i.test(model);
+
 const passthroughRoutes = (supports1m = false): ClaudeDesktopRoutePreset[] => [
   {
     routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
@@ -82,7 +88,8 @@ const passthroughRoutes = (supports1m = false): ClaudeDesktopRoutePreset[] => [
   {
     routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku,
     upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku,
-    supports1m,
+    supports1m:
+      supports1m && !isClaudeHaiku4(CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku),
   },
 ];
 
@@ -105,7 +112,7 @@ const mappedRoutes = (
   {
     routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.haiku,
     upstreamModel: haiku,
-    supports1m,
+    supports1m: supports1m && !isClaudeHaiku4(haiku),
   },
 ];
 
@@ -237,7 +244,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://www.packyapi.ai",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: [
       "https://www.packyapi.ai",
       "https://cf.api.fan",
@@ -256,7 +263,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.zetaapi.ai",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     isPartner: true,
     partnerPromotionKey: "zetaapi",
     icon: "zetaapi",
@@ -269,7 +276,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://apinebula.ai",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: ["https://apinebula.ai"],
     isPartner: true,
     partnerPromotionKey: "apinebula",
@@ -283,7 +290,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.aicodemirror.ai/api/claudecode",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: ["https://api.aicodemirror.ai/api/claudecode"],
     isPartner: true,
     partnerPromotionKey: "aicodemirror",
@@ -298,7 +305,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.pateway.ai",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     isPartner: true,
     partnerPromotionKey: "patewayai",
     icon: "pateway",
@@ -312,7 +319,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.fenno.ai",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     isPartner: true,
     partnerPromotionKey: "fenno",
     icon: "fenno",
@@ -325,7 +332,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://runapi.host",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: ["https://runapi.host", "https://runapi.co"],
     isPartner: true,
     partnerPromotionKey: "runapi",
@@ -343,14 +350,16 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "claude-sonnet-5-5",
       "claude-opus-5-5",
       "claude-haiku-4-5-20251001",
+      true,
     ),
     isPartner: true,
+    partnerPromotionKey: "openmodel",
     icon: "openmodel",
   },
   {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
-    apiKeyUrl: "https://grooroute.xyz/sign-up?aff=qqm9",
+    apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
     category: "aggregator",
     baseUrl: "https://grooroute.pro",
     mode: "direct",
@@ -359,10 +368,32 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "claude-sonnet-5-5",
       "claude-opus-5-5",
       "claude-sonnet-5-5",
+      true,
     ),
     endpointCandidates: ["https://grooroute.pro", "https://grooroute.xyz"],
     isPartner: true,
+    partnerPromotionKey: "grooroute",
     icon: "grooroute",
+  },
+  {
+    name: "TokenFactory",
+    nameKey: "providerForm.presets.tokenfactory",
+    websiteUrl: "https://tokenfactory.cn",
+    apiKeyUrl: "https://console.tokenfactory.cn/login",
+    category: "aggregator",
+    baseUrl: "https://api.tokenfactory.cn/anthropic",
+    // 模型名与 Claude 角色无对应关系，走 proxy + brandedRoutes；角色分配同
+    // Claude Code 预设。三个模型窗口均为 1M（api.tokenfactory.cn/v1/public/models）
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "glm-5.3",
+      "kimi-k3",
+      "deepseek-v4.1-flash",
+      true,
+    ),
+    endpointCandidates: ["https://api.tokenfactory.cn/anthropic"],
+    icon: "tokenfactory",
   },
   {
     name: "Shengsuanyun",
@@ -377,6 +408,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "anthropic/claude-sonnet-5",
       "anthropic/claude-opus-5",
       "anthropic/claude-haiku-4.5",
+      true,
     ),
     isPartner: true,
     partnerPromotionKey: "shengsuanyun",
@@ -390,7 +422,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.aigocode.dev",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: [
       "https://api.aigocode.dev",
       "https://api.aigocode.app",
@@ -409,7 +441,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.qnaigc.com",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: ["https://api.qnaigc.com", "https://api.modelink.ai"],
     isPartner: true,
     partnerPromotionKey: "qiniu",
@@ -423,7 +455,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.aicoding.inc",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: ["https://api.aicoding.inc"],
     isPartner: true,
     partnerPromotionKey: "aicoding",
@@ -486,6 +518,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "claude-sonnet-5-5",
       "claude-opus-5-5",
       "claude-haiku-4-5",
+      true,
     ),
     endpointCandidates: ["https://api.88api.ai", "https://88api.ai"],
     isPartner: true,
@@ -500,7 +533,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.apikey.fan",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: [
       "https://api.apikey.fan",
       "https://api.apikey.fun",
@@ -518,7 +551,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://9527.codes",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: [
       "https://9527.codes",
       "https://api.9527.codes",
@@ -536,7 +569,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://gw.apito.ai",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     icon: "claudeapi",
   },
   {
@@ -547,7 +580,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://code0.ai",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     icon: "code0",
   },
   {
@@ -559,7 +592,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.teamorouter.cn",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     isPartner: true,
     partnerPromotionKey: "teamorouter",
     endpointCandidates: [
@@ -596,7 +629,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://claudecn.top",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     isPartner: true,
     partnerPromotionKey: "claudecn",
     icon: "claudecn",
@@ -698,10 +731,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.siliconflow.cn",
     mode: "proxy",
     apiFormat: "anthropic",
+    // 国内站 M2.5 已于 2026-09-11 下线，与 Codex/OpenCode 同换 V4 Flash（1M）
     modelRoutes: brandedRoutes(
-      "Pro/MiniMaxAI/MiniMax-M2.5",
-      "Pro/MiniMaxAI/MiniMax-M2.5",
-      "Pro/MiniMaxAI/MiniMax-M2.5",
+      "deepseek-ai/DeepSeek-V4-Flash",
+      "deepseek-ai/DeepSeek-V4-Flash",
+      "deepseek-ai/DeepSeek-V4-Flash",
+      true,
     ),
     isPartner: true,
     partnerPromotionKey: "siliconflow",
@@ -722,6 +757,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "MiniMaxAI/MiniMax-M3",
       "MiniMaxAI/MiniMax-M3",
       "MiniMaxAI/MiniMax-M3",
+      true,
     ),
     isPartner: true,
     partnerPromotionKey: "siliconflow",
@@ -736,7 +772,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.a6api.com",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     isPartner: true,
     partnerPromotionKey: "a6api",
     icon: "a6api",
@@ -753,7 +789,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.modelverse.cn",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: ["https://api.modelverse.cn"],
     isPartner: true,
     partnerPromotionKey: "ucloud",
@@ -772,7 +808,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://cp.compshare.cn",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: ["https://cp.compshare.cn"],
     isPartner: true,
     partnerPromotionKey: "ucloud",
@@ -800,7 +836,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://node-hk.sssaicodeapi.com/api",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: [
       "https://node-hk.sssaicodeapi.com/api",
       "https://node-hk.sssaiapi.com/api",
@@ -825,6 +861,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "claude-sonnet-5",
       "claude-opus-5",
       "claude-haiku-4-5-20251001",
+      true,
     ),
     endpointCandidates: ["https://soleapi.com"],
     isPartner: true,
@@ -839,7 +876,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://www.micuapi.ai",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: ["https://www.micuapi.ai"],
     isPartner: true,
     partnerPromotionKey: "micu",
@@ -854,7 +891,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://www.rightapi.ai/claude",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     isPartner: true,
     partnerPromotionKey: "rightcode",
     icon: "rc",
@@ -868,7 +905,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.cubence.com",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: [
       "https://api.cubence.com",
       "https://api-cf.cubence.com",
@@ -888,7 +925,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://cn.crazyrouter.com",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: ["https://cn.crazyrouter.com"],
     isPartner: true,
     partnerPromotionKey: "crazyrouter",
@@ -903,7 +940,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://www.dmxapi.cn",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: ["https://www.dmxapi.cn", "https://api.dmxapi.cn"],
     isPartner: true,
     partnerPromotionKey: "dmxapi",
@@ -919,7 +956,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.sudocode.chat",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: [
       "https://api.sudocode.chat",
       "https://api.sudorelay.com",
@@ -937,7 +974,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://sudocode.us",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
     isPartner: true,
     icon: "sudocode-us",
@@ -950,11 +987,31 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://apicdn.xycai.us",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: ["https://apicdn.xycai.us", "https://apicdn.xyc.ai"],
     isPartner: true,
     partnerPromotionKey: "xycai",
     icon: "xycai",
+  },
+  {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    category: "aggregator",
+    baseUrl: "https://modelflare.dev",
+    // 网关直接提供 claude-sonnet-5 / claude-opus-5 / claude-haiku-4-5 三个
+    // 路由 ID（modelflare.dev/api/pricing，2026-10-15），直连透传即可
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(true),
+    endpointCandidates: [
+      "https://modelflare.dev",
+      "https://origin.modelflare.dev",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
@@ -966,7 +1023,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.tu-zi.com",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: [
       "https://api.tu-zi.com",
       "https://api.ourzhishi.top",
@@ -983,7 +1040,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.amux.ai",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     icon: "amux",
   },
   {
@@ -1012,12 +1069,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       {
         routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
         upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.sonnet,
-        supports1m: false,
+        supports1m: true,
       },
       {
         routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
         upstreamModel: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.opus,
-        supports1m: false,
+        supports1m: true,
       },
     ],
     icon: "soshow",
@@ -1270,7 +1327,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://open.bigmodel.cn/api/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("glm-5.3", "glm-5.3", "glm-5.3"),
+    modelRoutes: brandedRoutes("glm-5.3", "glm-5.3", "glm-5.3", true),
     icon: "zhipu",
     iconColor: "#0F62FE",
   },
@@ -1284,7 +1341,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.z.ai/api/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("glm-5.3", "glm-5.3", "glm-5.3"),
+    modelRoutes: brandedRoutes("glm-5.3", "glm-5.3", "glm-5.3", true),
     icon: "zhipu",
     iconColor: "#0F62FE",
   },
@@ -1347,7 +1404,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://dashscope.aliyuncs.com/apps/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("qwen3.7-plus", "qwen3.8-max", "qwen3.8-flash"),
+    modelRoutes: brandedRoutes(
+      "qwen3.7-plus",
+      "qwen3.8-max",
+      "qwen3.8-flash",
+      true,
+    ),
     icon: "qianwenai",
     iconColor: "#624AFF",
   },
@@ -1376,7 +1438,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("qwen3.7-plus", "qwen3.8-max", "qwen3.8-flash"),
+    modelRoutes: brandedRoutes(
+      "qwen3.7-plus",
+      "qwen3.8-max",
+      "qwen3.8-flash",
+      true,
+    ),
     icon: "qianwenai",
     iconColor: "#624AFF",
   },
@@ -1396,7 +1463,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiFormat: "anthropic",
     // 不挂 [1m]：qwen3.8 系官方窗口是 983616，不足 1M，
     // Desktop 对模型能力校验是精确的，误标会被上游拒绝
-    modelRoutes: brandedRoutes("qwen3.7-plus", "qwen3.8-max", "qwen3.8-flash"),
+    modelRoutes: brandedRoutes(
+      "qwen3.7-plus",
+      "qwen3.8-max",
+      "qwen3.8-flash",
+      true,
+    ),
     icon: "qwencloud",
     iconColor: "#6336E7",
   },
@@ -1434,7 +1506,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiFormat: "anthropic",
     // 不挂 [1m]：qwen3.8 系官方窗口是 983616，不足 1M，
     // Desktop 对模型能力校验是精确的，误标会被上游拒绝
-    modelRoutes: brandedRoutes("qwen3.7-plus", "qwen3.8-max", "qwen3.8-flash"),
+    modelRoutes: brandedRoutes(
+      "qwen3.7-plus",
+      "qwen3.8-max",
+      "qwen3.8-flash",
+      true,
+    ),
     icon: "qwencloud",
     iconColor: "#6336E7",
   },
@@ -1487,6 +1564,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "ZhipuAI/GLM-5.2",
       "ZhipuAI/GLM-5.2",
       "ZhipuAI/GLM-5.2",
+      true,
     ),
     icon: "modelscope",
     iconColor: "#624AFF",
@@ -1499,7 +1577,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.longcat.chat/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("LongCat-2.0", "LongCat-2.0", "LongCat-2.0"),
+    modelRoutes: brandedRoutes(
+      "LongCat-2.0",
+      "LongCat-2.0",
+      "LongCat-2.0",
+      true,
+    ),
     icon: "longcat",
     iconColor: "#29E154",
   },
@@ -1559,7 +1642,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiKeyField: "ANTHROPIC_API_KEY",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: ["https://aihubmix.com", "https://api.aihubmix.com"],
     icon: "aihubmix",
     iconColor: "#006FFB",
@@ -1576,6 +1659,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "anthropic/claude-sonnet-5",
       "anthropic/claude-opus-5",
       "anthropic/claude-haiku-4.5",
+      true,
     ),
     endpointCandidates: ["https://open.cherryin.net"],
     icon: "cherryin",
@@ -1588,7 +1672,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://www.relaxycode.com",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     icon: "relaxcode",
   },
   {
@@ -1599,7 +1683,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://e-flowcode.cc",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     endpointCandidates: ["https://e-flowcode.cc"],
     icon: "eflowcode",
     iconColor: "#000000",
@@ -1643,6 +1727,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     websiteUrl: "https://www.baseten.co",
     apiKeyUrl: "https://app.baseten.co/settings/api_keys",
     category: "aggregator",
+    icon: "baseten",
     // 同 Claude Code 预设：Messages 端点（beta）只认 Bearer，路由按
     // ANTHROPIC_AUTH_TOKEN 发 Bearer；三个模型窗口均为 1M（docs.baseten.co/
     // development/model-apis/overview，2026-10-14 核对）。Claude Code 若改走
@@ -1691,6 +1776,85 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "ollama",
   },
   {
+    name: "Ollama",
+    websiteUrl: "https://ollama.com",
+    category: "local",
+    // 同 Claude Code 预设：本机 /v1/messages（v0.14.0 起，docs.ollama.com/api/
+    // anthropic-compatibility，2026-10-14 核对）。服务端不校验 Key，但表单要求
+    // 必填，选预设后手填 ollama 即可。模型名不是 Claude，只能走路由；qwen3.5 是
+    // 官方示例，换成自己已下载的模型或用「获取模型」拉取。原生窗口 262144
+    // 小于 1M，不开 1M
+    baseUrl: "http://localhost:11434",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes("qwen3.5", "qwen3.5", "qwen3.5"),
+    endpointCandidates: ["http://localhost:11434", "http://127.0.0.1:11434"],
+    icon: "ollama",
+  },
+  {
+    name: "LM Studio",
+    websiteUrl: "https://lmstudio.ai",
+    category: "local",
+    icon: "lmstudio",
+    // 同 Claude Code 预设：本机 /v1/messages（0.4.1 起，lmstudio.ai/docs/
+    // developer/anthropic-compat，2026-10-14 核对）。默认不鉴权，但表单要求
+    // 必填，选预设后手填 lmstudio 即可（开启鉴权后填 API Token）。模型名不是
+    // Claude，只能走路由；openai/gpt-oss-20b 是官方示例，换成自己已下载的模型
+    // 或用「获取模型」拉取。原生窗口 131072 小于 1M，不开 1M
+    baseUrl: "http://localhost:1234",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "openai/gpt-oss-20b",
+      "openai/gpt-oss-20b",
+      "openai/gpt-oss-20b",
+    ),
+    endpointCandidates: ["http://localhost:1234", "http://127.0.0.1:1234"],
+  },
+  {
+    name: "llama.cpp",
+    websiteUrl: "https://github.com/ggml-org/llama.cpp",
+    category: "local",
+    icon: "llamacpp",
+    // 同 Claude Code 预设：本机 llama-server 的 /v1/messages（b7187 起，
+    // github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md，
+    // 2026-10-14 核对），默认端口 b11521 起为 9931，旧版 / Homebrew / Docker 为
+    // 8080。不带 --api-key 时不校验，但表单要求必填，选预设后手填 no-key 即可
+    //（带了 --api-key 就填那个值）。模型名不是 Claude，只能走路由；默认模型
+    // 换成自己已下载的或用「获取模型」拉取。Qwen3-Coder 原生窗口 262144 小于
+    // 1M，不开 1M
+    baseUrl: "http://127.0.0.1:9931",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+      "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+      "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+    ),
+    endpointCandidates: ["http://127.0.0.1:9931", "http://127.0.0.1:8080"],
+  },
+  {
+    name: "vLLM",
+    websiteUrl: "https://vllm.ai",
+    category: "local",
+    icon: "vllm",
+    // 同 Claude Code 预设：本机 vllm serve 的 /v1/messages（v0.11.1 起，
+    // docs.vllm.ai/en/stable/serving/integrations/claude_code，2026-10-14 核对），
+    // 要求 vLLM ≥ 0.23.0，默认端口 8000。不带 --api-key 时不校验，但表单要求
+    // 必填，选预设后手填 dummy 即可（带了 --api-key 就填那个值，只认 Bearer）。
+    // 模型名不是 Claude，只能走路由；默认模型换成自己已下载的或用「获取模型」
+    // 拉取。Qwen3.6-27B 原生窗口 262144 小于 1M，不开 1M
+    baseUrl: "http://localhost:8000",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "Qwen/Qwen3.6-27B",
+      "Qwen/Qwen3.6-27B",
+      "Qwen/Qwen3.6-27B",
+    ),
+    endpointCandidates: ["http://localhost:8000", "http://127.0.0.1:8000"],
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",
@@ -1717,6 +1881,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     websiteUrl: "https://deepinfra.com",
     apiKeyUrl: "https://deepinfra.com/dash/api_keys",
     category: "aggregator",
+    icon: "deepinfra",
     // 同 Claude Code 预设：Anthropic 兼容端点（docs.deepinfra.com/integrations/
     // anthropic.md，2026-10-14 核对）；模型名非 Claude，只能走路由。窗口取
     // https://api.deepinfra.com/models/<id> 同日元数据：两款 DeepSeek 1M、
@@ -1773,6 +1938,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     websiteUrl: "https://nebius.com/token-factory",
     apiKeyUrl: "https://tokenfactory.nebius.com/project/api-keys",
     category: "aggregator",
+    icon: "nebius",
     // 同 Claude Code 预设：官方没有 Anthropic 端点（/v1/messages 实测 404，
     // api.tokenfactory.nebius.com/openapi.json，2026-10-14 核对），走
     // openai_chat 路由。GLM-5.3 与 GLM-5.3-Flash 在官方目录
@@ -1793,6 +1959,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     websiteUrl: "https://groq.com",
     apiKeyUrl: "https://console.groq.com/keys",
     category: "aggregator",
+    icon: "groq",
     // 同 Claude Code 预设：没有可用的 Anthropic 端点（/anthropic/v1/messages
     // 实测 404，2026-10-14），走 openai_chat 路由。gpt-oss 两款窗口均为
     // 131072（console.groq.com/docs/models），不标 1M
@@ -1811,6 +1978,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     websiteUrl: "https://sambanova.ai",
     apiKeyUrl: "https://cloud.sambanova.ai/apis",
     category: "cloud_provider",
+    icon: "sambanova",
     // 同 Claude Code 预设：Anthropic 兼容端点，base 不带 /v1（docs.sambanova.ai/
     // docs/en/integrations/claude-code，2026-10-14 核对）；模型名非 Claude，只能
     // 走路由。MiniMax-M3 窗口 1048576（公开 /v1/models 同日），标 1M。Messages
@@ -1827,6 +1995,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     websiteUrl: "https://www.digitalocean.com/products/ai-platform",
     apiKeyUrl: "https://cloud.digitalocean.com/model-studio/manage-keys",
     category: "cloud_provider",
+    icon: "digitalocean",
     // 同 Claude Code 预设：Anthropic 端点 base 不带 /v1，接受 Bearer 与 Claude
     // 原生模型 ID（docs.digitalocean.com/products/inference/how-to/
     // use-with-coding-agents 与 reference/api/reference/serverless-inference，
@@ -1911,6 +2080,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     websiteUrl: "https://fireworks.ai",
     apiKeyUrl: "https://app.fireworks.ai/settings/users/api-keys",
     category: "cloud_provider",
+    icon: "fireworks",
     // 同 Claude Code 预设：Anthropic 端点 base 不带 /v1，Bearer 鉴权，模型写全名
     //（docs.fireworks.ai/tools-sdks/anthropic-compatibility，2026-10-14 核对）；
     // 模型名非 Claude，只能走路由。官方给 Desktop 的只有本机网关 FireConnect
@@ -1966,7 +2136,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "https://gateway.ai.cloudflare.com/v1/YOUR_ACCOUNT_ID/default/anthropic",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     icon: "cloudflare",
   },
   {
@@ -1981,6 +2151,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "moonshotai/kimi-k3",
       "moonshotai/kimi-k3",
       "moonshotai/kimi-k3",
+      true,
     ),
     icon: "nvidia",
     iconColor: "#000000",
@@ -1993,7 +2164,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://cc-api.pipellm.ai",
     mode: "direct",
     apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(),
+    modelRoutes: passthroughRoutes(true),
     icon: "pipellm",
   },
   {
@@ -2010,6 +2181,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "mimo-v2.6-pro",
       "mimo-v2.6-pro",
       "mimo-v2.6-pro",
+      true,
     ),
     icon: "xiaomimimo",
     iconColor: "#000000",
@@ -2028,6 +2200,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "mimo-v2.6-pro",
       "mimo-v2.6-pro",
       "mimo-v2.6-pro",
+      true,
     ),
     icon: "xiaomimimo",
     iconColor: "#000000",
@@ -2065,6 +2238,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "claude-sonnet-5",
       "claude-opus-5",
       "claude-haiku-4-5-20251001",
+      true,
     ),
     endpointCandidates: ["https://api.aicodewith.ai"],
     icon: "aicodewith",
@@ -2082,6 +2256,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "claude-sonnet-5-5",
       "claude-opus-5-5",
       "claude-haiku-4-5-20251001",
+      true,
     ),
     endpointCandidates: [
       "https://ai.soruxgpt.com",
@@ -2104,6 +2279,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "claude-sonnet-5-5",
       "claude-opus-5-5",
       "claude-haiku-4-5-20251001",
+      true,
     ),
     endpointCandidates: ["https://api.ikuncode.ai", "https://api.ikuncode.cc"],
     icon: "ikuncode",
@@ -2120,6 +2296,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "claude-sonnet-5-5",
       "claude-opus-5-5",
       "claude-haiku-4-5-20251001",
+      true,
     ),
     endpointCandidates: ["https://www.runtoken.ai", "https://fast.runtoken.ai"],
     icon: "runtoken",
@@ -2136,6 +2313,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "claude-sonnet-5-5",
       "claude-opus-5-5",
       "claude-haiku-4-5-20251001",
+      true,
     ),
     icon: "botcf",
   },
@@ -2152,6 +2330,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "claude-sonnet-5",
       "claude-opus-5-5",
       "claude-haiku-4-5-20251001",
+      true,
     ),
     endpointCandidates: [
       "https://app.yylx.io",
@@ -2172,6 +2351,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "claude-sonnet-5-5",
       "claude-opus-5-5",
       "claude-haiku-4-5",
+      true,
     ),
     icon: "tokenflux",
   },
@@ -2187,6 +2367,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "claude-sonnet-5-5",
       "claude-opus-5-5",
       "claude-haiku-4-5-20251001",
+      true,
     ),
     icon: "nekocode",
   },
@@ -2202,6 +2383,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "claude-sonnet-5-5",
       "claude-opus-5-5",
       "claude-haiku-4-5-20251001",
+      true,
     ),
     icon: "aicoming",
   },

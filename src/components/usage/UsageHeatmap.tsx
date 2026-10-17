@@ -7,20 +7,22 @@ import { useUsageFirstDate, useUsageTrends } from "@/lib/query/usage";
 import { cn } from "@/lib/utils";
 import type { UsageRangeSelection } from "@/types/usage";
 import {
-  fmtUsd,
   formatTokensShort,
   getLocaleFromLanguage,
   parseFiniteNumber,
 } from "./format";
 import type { UsageTrendStatLike } from "./UsageTrendChart";
 import { UsageTooltipCard } from "./UsageTooltipCard";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
+import { USAGE_CHOICE_KEYS, useRememberedChoice } from "./rememberedChoice";
 
 const WEEKS = 53;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** 0 档用底色，1–4 档是 --heat-1…4（与趋势图同一色相，色阶在 index.css 按深浅色分别定） */
 const LEVELS = [0, 1, 2, 3, 4];
 
-type HeatMetric = "tokens" | "requests" | "cost";
+const HEAT_METRICS = ["tokens", "requests", "cost"] as const;
+type HeatMetric = (typeof HEAT_METRICS)[number];
 
 interface UsageHeatmapProps {
   appType?: string;
@@ -231,7 +233,12 @@ export function UsageHeatmap({
   refreshIntervalMs,
 }: UsageHeatmapProps) {
   const { t, i18n } = useTranslation();
-  const [metric, setMetric] = useState<HeatMetric>("tokens");
+  const { money } = useMoneyFormat();
+  const [metric, setMetric] = useRememberedChoice<HeatMetric>(
+    USAGE_CHOICE_KEYS.heatmapMetric,
+    HEAT_METRICS,
+    "tokens",
+  );
   const sectionRef = useRef<HTMLElement>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
   // 默认只画最近 53 周，点「显示更多」才把更早的段全部展开；不记住，每次进来都是收起
@@ -343,7 +350,7 @@ export function UsageHeatmap({
                 {t("usage.heatmap.spanSummary", {
                   tokens: formatTokensShort(span.totals.tokens, language),
                   requests: formatTokensShort(span.totals.requests, language),
-                  cost: fmtUsd(span.totals.cost, 2),
+                  cost: money(span.totals.cost, 2),
                 })}
               </span>
             </div>

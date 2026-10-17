@@ -26,10 +26,11 @@ describe("MoArk (模力方舟) provider presets", () => {
     const env = (preset?.settingsConfig as { env: Record<string, string> }).env;
     expect(env.ANTHROPIC_BASE_URL).toBe("https://moark.com/anthropic");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("");
-    expect(env.ANTHROPIC_MODEL).toBe(DEFAULT_MODEL);
-    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe(DEFAULT_MODEL);
-    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(DEFAULT_MODEL);
-    expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe(DEFAULT_MODEL);
+    // 各档预勾 1M（模型名带 [1M] 标记）
+    expect(env.ANTHROPIC_MODEL).toBe(`${DEFAULT_MODEL}[1M]`);
+    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe(`${DEFAULT_MODEL}[1M]`);
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(`${DEFAULT_MODEL}[1M]`);
+    expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe(`${DEFAULT_MODEL}[1M]`);
   });
 
   it("uses the OpenAI-compatible Responses endpoint for Codex", () => {

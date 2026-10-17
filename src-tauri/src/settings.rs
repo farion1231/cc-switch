@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
@@ -359,6 +360,27 @@ pub struct CodexLegacyOfficialHistoryBucketMigration {
     pub codex_config_dir: Option<String>,
 }
 
+/// 用量金额的显示方式。只影响显示：库里的费用一律是美元，按 `exchange_rates`
+/// 换算后显示；值的合法性（认不认得币种、汇率是否为正数）由前端兜底。
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageDisplaySettings {
+    /// 显示币种（"USD" / "CNY" / "JPY" 等，见前端 `DISPLAY_CURRENCIES`），缺省为 USD
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    /// 1 美元折多少目标币种，按币种存：换回 USD 再换回来，填过的汇率还在
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub exchange_rates: BTreeMap<String, f64>,
+    /// 侧栏「今日」显示哪几项（"cost" / "tokens" / "requests" / "hitRate"，最多两项），
+    /// 缺省只显示金额；空列表＝不显示，所以空列表也要写进文件
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidebar_today_items: Option<Vec<String>>,
+    /// 请求日志的列显隐：只存用户改过的列（列 id → 是否显示），没写的按各列默认值，
+    /// 以后新加的列也按它自己的默认值出现
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub request_log_columns: BTreeMap<String, bool>,
+}
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -400,6 +422,9 @@ pub struct AppSettings {
     pub usage_confirmed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_dashboard_refresh_interval_ms: Option<u32>,
+    /// 用量金额的显示币种与汇率（只影响显示）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_display: Option<UsageDisplaySettings>,
     /// 会话用量自动扫描开关（默认开启=自动模式）。关闭后停止后台定时扫描
     /// 各客户端会话日志，仅在用户点击"立即同步"时手动扫描；只管扫描时机，
     /// 代理接管记账与启动费用回填（不读会话文件）不受此开关影响。
@@ -438,9 +463,24 @@ pub struct AppSettings {
     pub unify_codex_migrate_existing: Option<bool>,
     /// Codex 聚合模式下，合并目录里的每个模型都改用经典子 agent 工具（`multi_agent_version`
     /// 写 `"v1"`）。新版工具（v2）把派给子 agent 的任务加密，只有主 agent 那家后端解得开，
-    /// 主、子 agent 不在同一家时子 agent 读不到任务。默认关：保持官方目录的值。
-    #[serde(default)]
-    pub codex_stack_classic_subagents: bool,
+    /// 主、子 agent 不在同一家时子 agent 读不到任务。默认开（代价是没有新版工具的
+    /// followup_task 等功能）。v4.0.10–4.0.12 用的是默认关的 `codexStackClassicSubagents`，
+    /// 每次保存都会写下 `false`，分不清是不是用户关的：换了键名，旧键不再读，升级后一律按开。
+    #[serde(default = "default_true")]
+    pub codex_stack_classic_tools: bool,
+    /// Codex 聚合模式下子 agent 默认用的模型（合并目录里的 slug，`ccs-<key>/<model>`）。
+    /// 不设时跟随主模型。只在这个 slug 还在合并目录里时写进 `[agents]`，否则照样跟随主模型
+    /// （成员移除后保留设置，加回来自动恢复）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_stack_subagent_model: Option<String>,
+    /// 上面那个模型的推理强度。不在它支持的档位里时不写，用模型的默认档。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_stack_subagent_reasoning_effort: Option<String>,
+    /// Codex 聚合模式下自动审批（Auto Review）用的模型（合并目录里的 slug）。不设时用 Codex
+    /// 的默认：官方做默认那家时是官方的 `codex-auto-review`，否则由主模型自己审批。只在这个
+    /// slug 还在合并目录里时写进目录行，规则同子 agent 模型。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_stack_auto_review_model: Option<String>,
     /// User has confirmed the failover toggle first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failover_confirmed: Option<bool>,
@@ -590,6 +630,7 @@ impl Default for AppSettings {
             proxy_confirmed: None,
             usage_confirmed: None,
             usage_dashboard_refresh_interval_ms: None,
+            usage_display: None,
             session_auto_sync_enabled: true,
             session_content_search_enabled: true,
             enable_failover_toggle: false,
@@ -599,7 +640,10 @@ impl Default for AppSettings {
             preserve_codex_official_auth_on_switch: false,
             unify_codex_session_history: false,
             unify_codex_migrate_existing: None,
-            codex_stack_classic_subagents: false,
+            codex_stack_classic_tools: true,
+            codex_stack_subagent_model: None,
+            codex_stack_subagent_reasoning_effort: None,
+            codex_stack_auto_review_model: None,
             failover_confirmed: None,
             first_run_notice_confirmed: None,
             new_layout_notice_confirmed: None,
@@ -1105,14 +1149,48 @@ pub fn unify_codex_session_history() -> bool {
         .unify_codex_session_history
 }
 
-pub fn codex_stack_classic_subagents() -> bool {
+pub fn codex_stack_classic_tools() -> bool {
     settings_store()
         .read()
         .unwrap_or_else(|e| {
             log::warn!("设置锁已毒化，使用恢复值: {e}");
             e.into_inner()
         })
-        .codex_stack_classic_subagents
+        .codex_stack_classic_tools
+}
+
+/// Codex 聚合模式下的子 agent 设置：(模型 slug, 推理强度)，空串当作没设。
+pub fn codex_stack_subagent() -> (Option<String>, Option<String>) {
+    let settings = settings_store().read().unwrap_or_else(|e| {
+        log::warn!("设置锁已毒化，使用恢复值: {e}");
+        e.into_inner()
+    });
+    let non_empty = |value: &Option<String>| {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    (
+        non_empty(&settings.codex_stack_subagent_model),
+        non_empty(&settings.codex_stack_subagent_reasoning_effort),
+    )
+}
+
+/// Codex 聚合模式下的自动审批模型 slug，空串当作没设。
+pub fn codex_stack_auto_review_model() -> Option<String> {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .codex_stack_auto_review_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(str::to_string)
 }
 
 // ===== 当前供应商管理函数 =====
@@ -1313,6 +1391,70 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+
+    #[test]
+    fn codex_stack_classic_tools_default_on_and_ignore_the_old_off_key() {
+        // v4.0.10–4.0.12 每次保存都写下默认关的旧键：不再读它，升级后按开。
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "codexStackClassicSubagents": false }))
+                .expect("old settings");
+        assert!(old.codex_stack_classic_tools);
+        assert!(AppSettings::default().codex_stack_classic_tools);
+
+        let off: AppSettings =
+            serde_json::from_value(serde_json::json!({ "codexStackClassicTools": false }))
+                .expect("new settings");
+        assert!(!off.codex_stack_classic_tools);
+        let saved = serde_json::to_value(&off).expect("serialize");
+        assert_eq!(saved["codexStackClassicTools"], false);
+        assert!(saved.get("codexStackClassicSubagents").is_none());
+    }
+
+    #[test]
+    fn usage_display_round_trips_and_stays_out_of_old_files() {
+        let old: AppSettings = serde_json::from_value(serde_json::json!({})).expect("old settings");
+        assert!(old.usage_display.is_none());
+        assert!(serde_json::to_value(&old)
+            .expect("serialize")
+            .get("usageDisplay")
+            .is_none());
+
+        let saved: AppSettings = serde_json::from_value(serde_json::json!({
+            "usageDisplay": {
+                "currency": "CNY",
+                "exchangeRates": { "CNY": 6.8 },
+                "sidebarTodayItems": ["cost", "requests"],
+                "requestLogColumns": { "statusCode": true, "app": false }
+            }
+        }))
+        .expect("usage display");
+        let display = saved.usage_display.as_ref().expect("usage display");
+        assert_eq!(display.currency.as_deref(), Some("CNY"));
+        assert_eq!(display.exchange_rates.get("CNY"), Some(&6.8));
+        assert_eq!(
+            display.sidebar_today_items.as_deref(),
+            Some(&["cost".to_string(), "requests".to_string()][..])
+        );
+        assert_eq!(display.request_log_columns.get("app"), Some(&false));
+        assert_eq!(
+            serde_json::to_value(&saved).expect("serialize")["usageDisplay"],
+            serde_json::json!({
+                "currency": "CNY",
+                "exchangeRates": { "CNY": 6.8 },
+                "sidebarTodayItems": ["cost", "requests"],
+                "requestLogColumns": { "app": false, "statusCode": true }
+            })
+        );
+
+        // 侧栏「今日」一项都不勾＝不显示：空列表要原样写回，不能当成没设置
+        let hidden: UsageDisplaySettings =
+            serde_json::from_value(serde_json::json!({ "sidebarTodayItems": [] }))
+                .expect("hidden today label");
+        assert_eq!(
+            serde_json::to_value(&hidden).expect("serialize"),
+            serde_json::json!({ "sidebarTodayItems": [] })
+        );
+    }
 
     #[test]
     fn visible_apps_old_settings_default_claude_desktop_visible() {

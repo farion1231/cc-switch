@@ -5,8 +5,9 @@
 //! OpenAI-compatible Chat Completions endpoint.
 
 use super::codex_chat_common::{
-    append_reasoning_content, extract_reasoning_field_text, extract_reasoning_summary_text,
-    response_function_call_item, response_function_call_item_with_namespace,
+    append_reasoning_content, copy_tool_call_extra_content, extract_reasoning_field_text,
+    extract_reasoning_summary_text, response_function_call_item,
+    response_function_call_item_with_namespace,
 };
 use super::codex_compaction;
 use super::inline_think::split_leading_think_block;
@@ -716,19 +717,22 @@ fn append_responses_item_as_chat_message(
     match item_type {
         Some("function_call") => {
             append_unique_pending_reasoning(pending_reasoning, responses_item_reasoning_text(item));
-            let tool_call = responses_function_call_to_chat_tool_call(item, tool_context);
+            let mut tool_call = responses_function_call_to_chat_tool_call(item, tool_context);
+            copy_tool_call_extra_content(&mut tool_call, item);
             register_known_tool_call_id(known_tool_call_ids, &tool_call);
             pending_tool_calls.push(tool_call);
         }
         Some("custom_tool_call") => {
             append_unique_pending_reasoning(pending_reasoning, responses_item_reasoning_text(item));
-            let tool_call = responses_custom_tool_call_to_chat_tool_call(item);
+            let mut tool_call = responses_custom_tool_call_to_chat_tool_call(item);
+            copy_tool_call_extra_content(&mut tool_call, item);
             register_known_tool_call_id(known_tool_call_ids, &tool_call);
             pending_tool_calls.push(tool_call);
         }
         Some("tool_search_call") => {
             append_unique_pending_reasoning(pending_reasoning, responses_item_reasoning_text(item));
-            let tool_call = responses_tool_search_call_to_chat_tool_call(item);
+            let mut tool_call = responses_tool_search_call_to_chat_tool_call(item);
+            copy_tool_call_extra_content(&mut tool_call, item);
             register_known_tool_call_id(known_tool_call_ids, &tool_call);
             pending_tool_calls.push(tool_call);
         }
@@ -1974,7 +1978,7 @@ fn chat_tool_call_to_response_item(
     let arguments = canonicalize_tool_arguments(function.get("arguments"));
 
     let item_id = response_tool_call_item_id_from_chat_name(&call_id, name, tool_context);
-    response_tool_call_item_from_chat_name(
+    let mut item = response_tool_call_item_from_chat_name(
         &item_id,
         "completed",
         &call_id,
@@ -1982,7 +1986,9 @@ fn chat_tool_call_to_response_item(
         &arguments,
         reasoning,
         tool_context,
-    )
+    );
+    copy_tool_call_extra_content(&mut item, tool_call);
+    item
 }
 
 fn chat_legacy_function_call_to_response_item(
