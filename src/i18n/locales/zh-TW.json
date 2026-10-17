@@ -208,6 +208,9 @@
     "geminiConfig": "Gemini 設定",
     "geminiConfigHint": "使用 .env 格式設定 Gemini",
     "form": {
+      "agy": {
+        "connectionHint": "Antigravity 官方供應商使用 agy 自身登入；第三方需支援 Gemini API。切換後請開啟新終端機或重新啟動 agy，已執行的工作階段不會自動切換。官方模型列表讀取目前 agy 設定。"
+      },
       "gemini": {
         "model": "模型",
         "oauthTitle": "OAuth 驗證模式",
@@ -1083,7 +1086,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "agy": "Antigravity"
   },
   "mcode": {
     "empty": {
@@ -1323,6 +1327,7 @@
     "deleteEllipsis": "刪除",
     "selectSessionLabel": "選擇 {{title}}",
     "mcodeDeleteHint": "請在 MiniMax Code 中刪除",
+    "agyDeleteHint": "請在 Antigravity 中刪除工作階段，以同步清理執行狀態",
     "groupMeta": "{{count}} 個工作階段 · {{time}}",
     "bucketToday": "今天",
     "bucketYesterday": "昨天",
