@@ -7,10 +7,11 @@ import type { AppId } from "@/lib/api";
  * `provider_name_coalesce`）。这些名字同时是供应商筛选的取值，原样回传后端
  * 精确匹配，所以只在显示时翻译，不能改动传给后端的值。
  */
-const SESSION_PROVIDER_APPS: Record<string, AppId> = {
+const SESSION_PROVIDER_APPS: Record<string, AppId | string> = {
   "Claude (Session)": "claude",
   "Codex (Session)": "codex",
   "Gemini (Session)": "gemini",
+  "Antigravity (Session)": "Antigravity",
   "OpenCode (Session)": "opencode",
   "Grok Build (Session)": "grokbuild",
   "MiniMax Code (Session)": "mcode",
@@ -36,8 +37,12 @@ export function getUsageProviderLabel(
   }
   const app = SESSION_PROVIDER_APPS[name];
   if (!app) return { label: name, shortLabel: name };
+  const appName =
+    typeof app === "string" && app in APP_DISPLAY_NAME
+      ? APP_DISPLAY_NAME[app as AppId]
+      : app;
   return {
-    label: t("usage.sessionProvider.label", { app: APP_DISPLAY_NAME[app] }),
+    label: t("usage.sessionProvider.label", { app: appName }),
     shortLabel: t("usage.sessionProvider.short"),
     hint: t("usage.sessionProvider.hint"),
   };

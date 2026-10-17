@@ -30,6 +30,8 @@ pub struct Transcript {
     pub approx_bytes: usize,
     /// 每条消息序列化后的字节数，流式分块时按它切包，避免重复序列化
     pub message_bytes: Vec<usize>,
+    /// 可选元数据读取失败时仍返回正文，但下次读取必须重试。
+    pub(super) skip_cache: bool,
 }
 
 impl Transcript {
@@ -45,6 +47,7 @@ impl Transcript {
             turns,
             approx_bytes,
             message_bytes,
+            skip_cache: false,
         }
     }
 }
@@ -95,16 +98,18 @@ pub fn fingerprint(location: &SourceLocation) -> io::Result<Fingerprint> {
             }
             Ok(fp)
         }
-        SourceLocation::Sqlite { db, .. } => {
-            let mut fp = Fingerprint::of_metadata(&fs::metadata(db)?);
-            if let Some(wal) = sqlite_wal_path(db) {
-                if let Ok(meta) = fs::metadata(wal) {
-                    fp.merge(Fingerprint::of_metadata(&meta));
-                }
-            }
-            Ok(fp)
+        SourceLocation::Sqlite { db, .. } => sqlite_fingerprint(db),
+    }
+}
+
+fn sqlite_fingerprint(db: &Path) -> io::Result<Fingerprint> {
+    let mut fp = Fingerprint::of_metadata(&fs::metadata(db)?);
+    if let Some(wal) = sqlite_wal_path(db) {
+        if let Ok(meta) = fs::metadata(wal) {
+            fp.merge(Fingerprint::of_metadata(&meta));
         }
     }
+    Ok(fp)
 }
 
 /// 会话源的指纹：在 [`fingerprint`] 的基础上补上「正文不在 sourcePath 里」的情况。
@@ -113,6 +118,8 @@ pub fn fingerprint(location: &SourceLocation) -> io::Result<Fingerprint> {
 ///   而 `summary.json` 只在一轮结束时改写——只看它的话，一轮进行中刷新会命中旧缓存。
 /// - OpenCode 旧版 storage 的 sourcePath 是 `storage/message/{sessionID}/`，正文在
 ///   `storage/part/{messageID}/` 下，流式输出时只改写 part 文件，消息文件不动。
+/// - Antigravity 的正文在 transcript，消息用量与耗时在同根的 conversations DB；
+///   元数据更新和 WAL 写入也必须使缓存失效。
 pub fn source_fingerprint(source: &ValidatedSource) -> io::Result<Fingerprint> {
     let mut fp = fingerprint(&source.location)?;
     let SourceLocation::Path { path, .. } = &source.location else {
@@ -126,6 +133,11 @@ pub fn source_fingerprint(source: &ValidatedSource) -> io::Result<Fingerprint> {
             }
         }
         "opencode" if path.is_dir() => merge_opencode_parts(path, &mut fp),
+        "gemini" => {
+            if let Some(db) = super::providers::gemini::find_antigravity_db_path(path) {
+                fp.merge(sqlite_fingerprint(&db)?);
+            }
+        }
         _ => {}
     }
     Ok(fp)
@@ -226,7 +238,10 @@ impl TranscriptCache {
     pub fn insert(&self, key: CacheKey, fingerprint: Fingerprint, transcript: Arc<Transcript>) {
         let mut entries = self.lock();
         entries.retain(|entry| entry.key != key);
-        if transcript.approx_bytes > self.max_bytes || self.max_entries == 0 {
+        if transcript.skip_cache
+            || transcript.approx_bytes > self.max_bytes
+            || self.max_entries == 0
+        {
             return;
         }
         entries.push_back(Entry {
@@ -243,7 +258,8 @@ impl TranscriptCache {
         }
     }
 
-    /// 命中返回 `(缓存, true)`；否则调用 `load` 解析并写入，返回 `(新值, false)`。
+    /// 命中返回 `(缓存, true)`；否则调用 `load`，返回 `(新值, false)`。
+    /// 仅缓存完整结果；可选元数据失败的降级结果保留给本次读取，下次重试。
     /// 解析在锁外进行，同一会话并发打开时可能重复解析一次，但不会互相阻塞。
     pub fn get_or_load<F>(
         &self,
@@ -540,6 +556,31 @@ mod tests {
             grok_before
         );
         assert_eq!(source_fingerprint(&source("claude")).unwrap(), other_before);
+    }
+
+    #[test]
+    fn antigravity_fingerprint_follows_database_creation_and_removal() {
+        let dir = tempdir().unwrap();
+        let path = dir
+            .path()
+            .join("brain/session/.system_generated/logs/transcript.jsonl");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "{}\n").unwrap();
+        let source = ValidatedSource {
+            provider_id: "gemini".into(),
+            raw: path.to_string_lossy().into_owned(),
+            location: SourceLocation::Path {
+                path,
+                root: dir.path().to_path_buf(),
+            },
+        };
+        let before = source_fingerprint(&source).unwrap();
+        let db = dir.path().join("conversations/session.db");
+        fs::create_dir_all(db.parent().unwrap()).unwrap();
+        fs::write(&db, "metadata").unwrap();
+        assert_ne!(source_fingerprint(&source).unwrap(), before);
+        fs::remove_file(&db).unwrap();
+        assert_eq!(source_fingerprint(&source).unwrap(), before);
     }
 
     #[test]
