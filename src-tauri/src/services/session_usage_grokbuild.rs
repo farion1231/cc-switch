@@ -184,16 +184,9 @@ fn collect_files_named(root: &Path, name: &str, files: &mut Vec<PathBuf>, depth:
     }
 }
 
-/// 这份 `updates.jsonl` 和父会话用量的关系。
 enum GrokUsageSource {
-    /// 交互会话、headless、worktree，或没有可读 summary 时，用量记在本文件。
     Own,
-    /// `session_kind` 为 subagent、subagent_fork、subagent_resume。
-    /// grok-build 的 `UsageLedger::record_subagent` 把子用量折进父轮，
-    /// 父会话的 `turn_completed` 已经包含它。子代理尚未折完时父轮不含这部分，
-    /// 跳过整文件会少计；CLI 自己把那种情况标成少计。
     FoldedIntoParent,
-    /// 用户 fork 逐行复制父会话的 `prompt_id`，再追加新轮次。
     Forked {
         copied_prompt_ids: std::collections::HashSet<String>,
     },
@@ -261,7 +254,6 @@ fn forked_usage_source(
     GrokUsageSource::Forked { copied_prompt_ids }
 }
 
-/// 布局是 `{grok_home}/{sessions|archived_sessions}/{enc-cwd}/{session_id}/updates.jsonl`。
 fn find_parent_updates(child_updates: &Path, parent_id: &str) -> Option<PathBuf> {
     let session_dir = child_updates.parent()?;
     let project_dir = session_dir.parent()?;
@@ -396,8 +388,6 @@ fn sync_single_grok_file(
     // 唯一性押在该 UUIDv7 全局唯一上：同 ID 的归档/活跃副本经 UPSERT 幂等
     // 收敛（有意），不同 <enc-cwd> 下撞 ID 视为不可能。
     let session_id = session_id_from_updates(file_path);
-    // 游标只看 updates.jsonl 的 mtime。升级前已经入库的重复行，文件本身不再变化，
-    // 仍要靠 summary.json 把它们清掉。30 天 rollup 已经剪掉的明细不在这张表里，清不掉。
     let source = grok_usage_source(file_path);
     let file_changed = file_modified > last_modified;
 
@@ -1656,7 +1646,6 @@ mod tests {
         .expect("sync")
     }
 
-    /// 父轮 `turn_completed` 已经含有子代理用量。先同步子文件，证明去重不依赖父行已入库。
     #[test]
     fn subagent_turns_already_folded_into_the_parent_are_not_imported_twice() {
         let db = Database::memory().expect("memory db");
@@ -1731,7 +1720,6 @@ mod tests {
         }
     }
 
-    /// fork 逐行复制父会话的 `prompt_id`，之后追加的轮次是新用量。
     #[test]
     fn user_fork_drops_the_copied_prefix_and_keeps_turns_appended_after_it() {
         let db = Database::memory().expect("memory db");
@@ -1798,7 +1786,6 @@ mod tests {
         }));
     }
 
-    /// 父会话可以已经归档，和 fork 不在同一个 `<enc-cwd>` 下。
     #[test]
     fn user_fork_drops_prompt_ids_copied_from_an_archived_parent() {
         let db = Database::memory().expect("memory db");
@@ -1876,7 +1863,6 @@ mod tests {
         assert_eq!(rows[0].1, 9);
     }
 
-    /// 升级前已经入库的子代理行，游标仍指向未改动的 updates.jsonl。
     #[test]
     fn already_imported_subagent_rows_are_removed_when_the_file_is_unchanged() {
         let db = Database::memory().expect("memory db");
