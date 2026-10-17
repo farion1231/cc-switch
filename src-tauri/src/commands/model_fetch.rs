@@ -17,7 +17,12 @@ pub struct OpenCodeModelRef {
 #[tauri::command]
 pub async fn get_agy_models() -> Result<Vec<FetchedModel>, String> {
     let settings = crate::agy_config::read_live_settings().map_err(|e| e.to_string())?;
-    let path = crate::agy_config::real_agy_bin(&crate::agy_config::agy_dir().join("bin/agy"));
+    let path = tokio::task::spawn_blocking(|| {
+        crate::agy_config::real_agy_bin(&crate::agy_config::agy_dir().join("bin/agy"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .ok_or_else(|| "Antigravity CLI not found; install agy first".to_string())?;
     let mut command = tokio::process::Command::new(path);
     command
         .arg("models")

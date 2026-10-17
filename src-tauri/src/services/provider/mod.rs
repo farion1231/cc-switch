@@ -6465,7 +6465,13 @@ impl ProviderService {
             .map_err(|error| AppError::Message(error.message))?;
         }
 
-        state.db.delete_provider(app_type.as_str(), id)
+        state.db.delete_provider(app_type.as_str(), id)?;
+        if matches!(app_type, AppType::Agy) {
+            if let Err(error) = agy_direct::release_launcher_if_unmanaged(state.db.as_ref()) {
+                log::warn!("清理 agy 启动器失败: {error}");
+            }
+        }
+        Ok(())
     }
 
     /// Remove provider from live config only (for additive mode apps like OpenCode, OpenClaw)

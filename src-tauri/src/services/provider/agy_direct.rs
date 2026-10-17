@@ -68,7 +68,26 @@ pub(crate) fn switch_to(db: &Database, target: &Provider) -> Result<OperationRep
 
 pub(crate) fn reapply(db: &Database, target: &Provider) -> Result<OperationReport, AppError> {
     let settings = live_settings(target)?;
+    // 全量同步（导入、云同步）会对每个当前供应商调用这里。没有真实内容的供应商
+    // 不能借机接管用户的启动器或 shell，也不应在 Windows 上报错。
+    if !agy_config::has_managed_content(&settings) {
+        return Ok(OperationReport::default());
+    }
     agy_config::apply_managed(db, &settings, op::APPLY, PendingTarget::default())
+}
+
+/// 删除供应商后调用：如果已经没有需要启动器的当前供应商，就撤掉 CC Switch 的启动器和 PATH 片段。
+pub(crate) fn release_launcher_if_unmanaged(db: &Database) -> Result<(), AppError> {
+    use crate::app_config::AppType;
+    use crate::mode::current::{provider_for, Purpose};
+    if let Some(id) = provider_for(db, &AppType::Agy, Purpose::Direct)? {
+        if let Some(current) = db.get_provider_by_id(&id, "agy")? {
+            if live_settings(&current).is_ok_and(|s| agy_config::needs_launcher(&s)) {
+                return Ok(());
+            }
+        }
+    }
+    agy_config::remove_launcher()
 }
 
 #[cfg(test)]

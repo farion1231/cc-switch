@@ -564,7 +564,9 @@ mod tests {
                 let mut buf = [0u8; 1024];
                 let _ = socket.read(&mut buf).await;
                 let _ = socket
-                    .write_all(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                    .write_all(
+                        b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                    )
                     .await;
             }
         });

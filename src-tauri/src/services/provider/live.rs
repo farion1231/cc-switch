@@ -1101,7 +1101,15 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
-        AppType::Agy => crate::agy_config::read_live_settings()?,
+        AppType::Agy => {
+            let live = crate::agy_config::read_live_settings()?;
+            // agy 首次启动就会写出空的 settings.json；没有 Key、端点、模型的配置
+            // 不是用户的供应商，导入它只会让后续全量同步接管启动器和 shell。
+            if !crate::agy_config::has_managed_content(&live) {
+                return Ok(false);
+            }
+            live
+        }
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode => {
             unreachable!("additive mode apps are handled by early return")
