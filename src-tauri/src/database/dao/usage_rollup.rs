@@ -170,6 +170,19 @@ impl Database {
         conn.execute(&aggregation_sql, [cutoff])
             .map_err(|e| AppError::Database(format!("Rollup aggregation failed: {e}")))?;
 
+        // 防御死循环放大 Bug：在剪枝删除明细前，将即将删除的所有行的 request_id
+        // 归档到持久化账本 session_usage_dedup。这样即使明细被彻底删除，
+        // 外部会话同步（如 OpenCode/Gemini/Codex）扫描到历史消息时，仍能命中去重拦截，
+        // 避免再次插入被归档累加器二次计算。
+        conn.execute(
+            "INSERT OR IGNORE INTO session_usage_dedup (data_source, request_id, semantic_id, has_entry_id)
+             SELECT COALESCE(data_source, 'proxy'), request_id, request_id, 0
+             FROM proxy_request_logs
+             WHERE created_at < ?1 AND request_id IS NOT NULL",
+            [cutoff],
+        )
+        .map_err(|e| AppError::Database(format!("Archiving request IDs before prune failed: {e}")))?;
+
         // INSERT uses the effective-log filter to exclude duplicate session rows.
         // DELETE intentionally prunes all old details so those duplicates are discarded.
         let deleted = conn
@@ -568,6 +581,72 @@ mod tests {
         )?;
         assert_eq!(count, 13, "10 existing + 3 new");
         assert_eq!(input, 1300, "1000 existing + 300 new");
+        Ok(())
+    }
+
+    #[test]
+    fn test_prune_archives_to_session_usage_dedup_and_prevents_reimport() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let now = chrono::Utc::now().timestamp();
+        let old_ts = now - 40 * 86400;
+
+        let req_id = "opencode_session:ses_1:msg_1";
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, total_cost_usd,
+                    latency_ms, status_code, created_at, data_source
+                ) VALUES (?1, '_opencode_session', 'opencode', 'gemini-3.8-flash-high', 100, 50, '0.01', 100, 200, ?2, 'opencode_session')",
+                rusqlite::params![req_id, old_ts],
+            )?;
+        }
+
+        // 执行归档剪枝：明细被删除
+        let deleted = db.rollup_and_prune(30)?;
+        assert_eq!(deleted, 1);
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+
+            // 1. 验证 proxy_request_logs 中已被删除
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = ?1",
+                [req_id],
+                |row| row.get(0),
+            )?;
+            assert_eq!(count, 0, "明细行应已被 prune 删除");
+
+            // 2. 验证 session_usage_dedup 中被持久化归档
+            let dedup_exists: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM session_usage_dedup WHERE request_id = ?1)",
+                [req_id],
+                |row| row.get(0),
+            )?;
+            assert!(
+                dedup_exists,
+                "request_id 必须已被归档到 session_usage_dedup"
+            );
+
+            // 3. 验证 should_skip_session_insert 拦截该消息二次导入
+            let key = crate::services::usage_stats::DedupKey {
+                app_type: "opencode",
+                model: "gemini-3.8-flash-high",
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_read_tokens: 0,
+                cache_creation_tokens: 0,
+                created_at: old_ts,
+            };
+            let should_skip =
+                crate::services::usage_stats::should_skip_session_insert(&conn, req_id, &key)?;
+            assert!(
+                should_skip,
+                "即使明细被 prune，已归档的 request_id 必须命中去重跳过"
+            );
+        }
+
         Ok(())
     }
 }
