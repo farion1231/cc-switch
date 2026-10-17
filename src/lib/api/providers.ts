@@ -188,8 +188,8 @@ export const providersApi = {
   },
 
   /** 卸载 ChatGPT Desktop（连同它随附的 Codex CLI）；~/.codex 和单独安装的 Codex CLI 不动。 */
-  async uninstallChatGptDesktop(): Promise<void> {
-    await invoke("uninstall_chatgpt_desktop");
+  async uninstallChatGptDesktop(cleanupOnly: boolean): Promise<void> {
+    await invoke("uninstall_chatgpt_desktop", { cleanupOnly });
   },
 
   async getClaudeDesktopDefaultRoutes(): Promise<ClaudeDesktopDefaultRoute[]> {

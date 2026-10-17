@@ -2191,9 +2191,7 @@ describe("AppsPage ChatGPT Desktop row", () => {
     }
   });
 
-  async function openDesktopUninstall(
-    actionLabel = "settings.toolUninstall",
-  ) {
+  async function openDesktopUninstall(actionLabel = "settings.toolUninstall") {
     const user = userEvent.setup();
     const desktop = within(row("ChatGPT Desktop"));
     await user.click(
@@ -2223,6 +2221,7 @@ describe("AppsPage ChatGPT Desktop row", () => {
       ),
     );
     expect(chatgptDesktop.uninstall).toHaveBeenCalledTimes(1);
+    expect(chatgptDesktop.uninstall).toHaveBeenCalledWith(false);
     expect(await desktop.findByText("common.notInstalled")).toBeInTheDocument();
     expect(
       desktop.queryByRole("button", { name: "appPage.moreActions" }),
@@ -2265,6 +2264,7 @@ describe("AppsPage ChatGPT Desktop row", () => {
       ),
     );
     expect(chatgptDesktop.uninstall).toHaveBeenCalledTimes(1);
+    expect(chatgptDesktop.uninstall).toHaveBeenCalledWith(true);
   });
 
   it("leaves ChatGPT Desktop alone when the confirmation is cancelled", async () => {

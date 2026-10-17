@@ -177,13 +177,13 @@ export function AppsPage() {
     staleTime: 30_000,
   });
   const queryClient = useQueryClient();
-  const [confirmDesktopUninstall, setConfirmDesktopUninstall] = useState(false);
+  const [confirmDesktopUninstall, setConfirmDesktopUninstall] = useState<{
+    cleanupOnly: boolean;
+    command: string | null;
+  } | null>(null);
   const uninstallDesktop = useMutation({
-    mutationFn: async () => {
-      const cleanupOnly =
-        chatgptDesktop.data?.cleanupRequired === true &&
-        chatgptDesktop.data.installed === false;
-      await providersApi.uninstallChatGptDesktop();
+    mutationFn: async (cleanupOnly: boolean) => {
+      await providersApi.uninstallChatGptDesktop(cleanupOnly);
       return cleanupOnly;
     },
     onSuccess: (cleanupOnly) =>
@@ -437,7 +437,7 @@ export function AppsPage() {
                       isPending={chatgptDesktop.isPending}
                       isError={chatgptDesktop.isError}
                       uninstalling={uninstallDesktop.isPending}
-                      onUninstall={() => setConfirmDesktopUninstall(true)}
+                      onUninstall={setConfirmDesktopUninstall}
                       visibility={visibilitySwitch(
                         "codex",
                         CHATGPT_DESKTOP_NAME,
@@ -527,23 +527,18 @@ export function AppsPage() {
         />
       )}
 
-      {confirmDesktopUninstall &&
-        chatgptDesktop.data &&
-        (chatgptDesktop.data.uninstallCommand ||
-          chatgptDesktop.data.cleanupRequired) && (
-          <ChatgptDesktopUninstallDialog
-            command={chatgptDesktop.data.uninstallCommand}
-            cleanupOnly={
-              chatgptDesktop.data.cleanupRequired &&
-              !chatgptDesktop.data.installed
-            }
-            onConfirm={() => {
-              setConfirmDesktopUninstall(false);
-              uninstallDesktop.mutate();
-            }}
-            onCancel={() => setConfirmDesktopUninstall(false)}
-          />
-        )}
+      {confirmDesktopUninstall && (
+        <ChatgptDesktopUninstallDialog
+          command={confirmDesktopUninstall.command}
+          cleanupOnly={confirmDesktopUninstall.cleanupOnly}
+          onConfirm={() => {
+            const cleanupOnly = confirmDesktopUninstall.cleanupOnly;
+            setConfirmDesktopUninstall(null);
+            uninstallDesktop.mutate(cleanupOnly);
+          }}
+          onCancel={() => setConfirmDesktopUninstall(null)}
+        />
+      )}
 
       <ToolUpgradeConfirmDialog
         isOpen={tools.pendingUpgrade !== null}
@@ -631,7 +626,10 @@ function ChatgptDesktopRow({
   isPending: boolean;
   isError: boolean;
   uninstalling: boolean;
-  onUninstall: () => void;
+  onUninstall: (confirmation: {
+    cleanupOnly: boolean;
+    command: string | null;
+  }) => void;
   visibility: React.ReactNode;
 }) {
   const { t } = useTranslation();
@@ -714,7 +712,12 @@ function ChatgptDesktopRow({
                 ? t("appsPage.chatgptDesktop.cleanupAction")
                 : undefined
             }
-            onUninstall={onUninstall}
+            onUninstall={() =>
+              onUninstall({
+                cleanupOnly,
+                command: status?.uninstallCommand ?? null,
+              })
+            }
           />
         ) : null
       }

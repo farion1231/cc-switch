@@ -38,8 +38,8 @@ pub async fn get_chatgpt_desktop_status() -> Result<ChatGptDesktopStatus, String
 /// 卸载 ChatGPT Desktop，它随附的 Codex CLI 一起没了。`~/.codex` 里的配置和会话不动，
 /// 单独安装的 Codex CLI 也不动。
 #[tauri::command]
-pub async fn uninstall_chatgpt_desktop() -> Result<(), String> {
-    tokio::task::spawn_blocking(uninstall)
+pub async fn uninstall_chatgpt_desktop(cleanup_only: bool) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || uninstall(cleanup_only))
         .await
         .map_err(|e| format!("ChatGPT Desktop uninstall task join error: {e}"))?
 }
@@ -113,12 +113,21 @@ fn detect() -> ChatGptDesktopStatus {
 }
 
 #[cfg(windows)]
-fn uninstall() -> Result<(), String> {
+fn uninstall(cleanup_only: bool) -> Result<(), String> {
     // 执行时重新查：确认框开着的时候桌面版可能自己更新过，包全名会变
     let names = windows_package::full_names(WINDOWS_PACKAGE_FAMILY);
-    let commands = remove_main_package_commands(&names);
     let bin = extracted_cli_bin();
-    let Some(commands) = commands else {
+    if cleanup_only {
+        ensure_cache_only_mode_has_no_installed_package(&names)?;
+        let Some(bin) = bin else {
+            return Err("Could not locate the ChatGPT Desktop CLI cache directory".to_string());
+        };
+        if extracted_cli_paths_under(&bin)?.is_empty() {
+            return Err("No extracted ChatGPT Desktop CLI cache remains".to_string());
+        }
+        return remove_extracted_cli_copies_under(&bin);
+    }
+    let Some(commands) = remove_main_package_commands(&names) else {
         let Some(bin) = bin else {
             return Err("ChatGPT Desktop is not installed".to_string());
         };
@@ -150,7 +159,10 @@ fn uninstall() -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn uninstall() -> Result<(), String> {
+fn uninstall(cleanup_only: bool) -> Result<(), String> {
+    if cleanup_only {
+        return Err("Cache-only cleanup is only supported on Windows".to_string());
+    }
     let apps = macos_installed_apps();
     if apps.is_empty() {
         return Err("ChatGPT Desktop is not installed".to_string());
@@ -198,7 +210,7 @@ fn uninstall() -> Result<(), String> {
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-fn uninstall() -> Result<(), String> {
+fn uninstall(_cleanup_only: bool) -> Result<(), String> {
     Err("ChatGPT Desktop is not available on this system".to_string())
 }
 
@@ -362,6 +374,13 @@ fn extracted_cli_paths_under(bin: &std::path::Path) -> Result<Vec<PathBuf>, Stri
                 bin.display()
             )
         })?;
+        if !entry
+            .file_name()
+            .to_str()
+            .is_some_and(is_extracted_cli_cache_hash)
+        {
+            continue;
+        }
         let file_type = entry.file_type().map_err(|error| {
             format!(
                 "Could not inspect ChatGPT Desktop CLI cache {}: {error}",
@@ -385,6 +404,13 @@ fn extracted_cli_paths_under(bin: &std::path::Path) -> Result<Vec<PathBuf>, Stri
         }
     }
     Ok(paths)
+}
+
+/// Current Windows Desktop cache IDs use 16 hexadecimal characters; names like `stable` may
+/// belong to a separately installed CLI.
+#[cfg(any(windows, test))]
+fn is_extracted_cli_cache_hash(name: &str) -> bool {
+    name.len() == 16 && name.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 #[cfg(any(windows, test))]
@@ -531,6 +557,15 @@ fn newest_main_package(full_names: &[String]) -> Option<&String> {
         .map(|(name, _)| name)
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
+fn ensure_cache_only_mode_has_no_installed_package(full_names: &[String]) -> Result<(), String> {
+    if newest_main_package(full_names).is_some() {
+        Err("ChatGPT Desktop is now installed; refresh and confirm its uninstall again".to_string())
+    } else {
+        Ok(())
+    }
+}
+
 /// 每个已注册的主包都要卸载；返回的命令列表也会原样展示在确认框中。
 #[cfg_attr(not(windows), allow(dead_code))]
 fn remove_main_package_commands(full_names: &[String]) -> Option<Vec<String>> {
@@ -610,7 +645,7 @@ fn is_extracted_cli_path_under_root(path: &str, local_data_dir: &str) -> bool {
     let root = normalize(local_data_dir);
     let prefix = format!("{}/openai/codex/bin/", root.trim_end_matches('/'));
     path.strip_prefix(&prefix).is_some_and(|rest| {
-        matches!(rest.split('/').collect::<Vec<_>>().as_slice(), [version, exe] if !version.is_empty() && *exe == "codex.exe")
+        matches!(rest.split('/').collect::<Vec<_>>().as_slice(), [version, exe] if is_extracted_cli_cache_hash(version) && *exe == "codex.exe")
     })
 }
 
@@ -826,6 +861,15 @@ mod tests {
     }
 
     #[test]
+    fn cache_only_mode_refuses_a_newly_registered_desktop_package() {
+        assert!(ensure_cache_only_mode_has_no_installed_package(&[]).is_ok());
+        assert!(ensure_cache_only_mode_has_no_installed_package(&[
+            "OpenAI.Codex_26.1013.3656.0_x64__2p2nqsd0c76g0".to_string()
+        ])
+        .is_err());
+    }
+
+    #[test]
     fn extracted_cli_cache_paths_are_anchored_to_localappdata() {
         let local_data_dir = r"C:\Users\me\AppData\Local";
         for path in [
@@ -840,6 +884,7 @@ mod tests {
         for path in [
             r"D:\Profiles\me\LocalAppData\OpenAI\Codex\bin\0123456789abcdef\codex.exe",
             r"C:\Users\me\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe",
+            r"C:\Users\me\AppData\Local\OpenAI\Codex\bin\stable\codex.exe",
             r"C:\Users\me\AppData\Local\OpenAI\Codex\bin\stable\current\codex.exe",
             "/opt/OpenAI/Codex/bin/stable/codex",
         ] {
@@ -873,13 +918,16 @@ mod tests {
     fn extracted_cli_cache_cleanup_removes_only_cli_executables() {
         let temp = tempfile::tempdir().unwrap();
         let bin = temp.path().join("OpenAI/Codex/bin");
-        let first = bin.join("first-hash");
-        let second = bin.join("second-hash");
+        let first = bin.join("e78bad9887fa50cf");
+        let second = bin.join("0123456789abcdef");
+        let standalone = bin.join("stable");
         std::fs::create_dir_all(&first).unwrap();
         std::fs::create_dir_all(&second).unwrap();
+        std::fs::create_dir_all(&standalone).unwrap();
         std::fs::write(first.join("codex.exe"), b"bundled cli").unwrap();
         std::fs::write(first.join("codex-command-runner.exe"), b"helper").unwrap();
         std::fs::write(second.join("codex.exe"), b"old bundled cli").unwrap();
+        std::fs::write(standalone.join("codex.exe"), b"standalone cli").unwrap();
         std::fs::write(bin.join("codex.exe"), b"not a versioned cache").unwrap();
 
         remove_extracted_cli_copies_under(&bin).unwrap();
@@ -887,6 +935,7 @@ mod tests {
         assert!(!first.join("codex.exe").exists());
         assert!(first.join("codex-command-runner.exe").is_file());
         assert!(!second.join("codex.exe").exists());
+        assert!(standalone.join("codex.exe").is_file());
         assert!(bin.join("codex.exe").is_file());
     }
 
