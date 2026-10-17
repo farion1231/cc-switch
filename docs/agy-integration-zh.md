@@ -136,3 +136,8 @@ ccswitch://v1/import?resource=provider&app=agy&name=Antigravity&endpoint=https%3
 ```
 
 深链接供应商沿用现有 API Key 导入规则，需要密钥和端点；不通过链接导入或接管 OAuth 登录。会话预览、Token 统计和会话恢复不是导入资源，没有新增对应 `resource` 类型。
+
+
+### 原生登录与 API 凭据
+
+Key 和自定义地址均留空时保留 agy 自身登录；仅修改模型不要求 API Key。填写 Key 时可留空地址以使用 Google 默认端点；自定义地址需要非空 Key。编辑器中的设置只投影 agy 支持的字段，不会改动 Gemini CLI 全局配置。

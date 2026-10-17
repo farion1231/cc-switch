@@ -209,7 +209,12 @@
     "geminiConfigHint": "Use .env format to configure Gemini",
     "form": {
       "agy": {
-        "connectionHint": "Official Antigravity providers use the agy sign-in. Third-party providers must support the Gemini API. Open a new terminal or restart agy after switching; running sessions keep their configuration. Official model discovery uses the current agy configuration."
+        "connectionHint": "Leave the API key and endpoint empty to use agy's Google sign-in. A key without an endpoint uses Google's default API; third-party endpoints must support the Gemini API. Open a new terminal or restart agy after switching. Running sessions keep their configuration. Login-mode model discovery uses the current agy configuration.",
+        "keyFieldsHint": "The endpoint, key and model follow the provider; other native Antigravity settings are preserved.",
+        "envFile": "Launcher environment variables",
+        "envFileHint": "CC Switch passes the API key, endpoint and model when starting agy. Other environment variables are not applied.",
+        "configJson": "Model configuration (CC Switch format)",
+        "configJsonHint": "Only model settings are supported here. Change other Antigravity options in agy; manage MCP in the MCP panel."
       },
       "gemini": {
         "model": "Model",

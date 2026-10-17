@@ -21,9 +21,6 @@ pub(crate) fn is_official(provider: &Provider) -> bool {
 
 fn live_settings(provider: &Provider) -> Result<Value, AppError> {
     crate::gemini_config::validate_gemini_settings(&provider.settings_config)?;
-    if !is_official(provider) {
-        crate::gemini_config::validate_gemini_settings_strict(&provider.settings_config)?;
-    }
     let mut settings = provider.settings_config.clone();
     if is_official(provider) {
         if let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) {
@@ -44,6 +41,11 @@ fn live_settings(provider: &Provider) -> Result<Value, AppError> {
     .into_iter()
     .flatten()
     {
+        if !value.is_null() && !value.is_string() {
+            return Err(AppError::Config(
+                "Antigravity credentials, endpoint and model must be strings".into(),
+            ));
+        }
         if value
             .as_str()
             .is_some_and(|text| text.chars().any(char::is_control))
@@ -52,6 +54,22 @@ fn live_settings(provider: &Provider) -> Result<Value, AppError> {
                 "Antigravity credentials, endpoint and model must be single-line values".into(),
             ));
         }
+    }
+    // A model-only environment still uses native login. Gemini CLI's generic
+    // validator treats any nonempty env as API authentication, which rejects
+    // GEMINI_MODEL written by the shared editor when no key is needed.
+    let has_key = settings["env"]["GEMINI_API_KEY"]
+        .as_str()
+        .is_some_and(|value| !value.trim().is_empty());
+    let has_endpoint = settings["env"]["GOOGLE_GEMINI_BASE_URL"]
+        .as_str()
+        .is_some_and(|value| !value.trim().is_empty());
+    if has_endpoint && !has_key {
+        return Err(AppError::localized(
+            "gemini.validation.missing_api_key",
+            "Gemini 配置缺少必需字段: GEMINI_API_KEY",
+            "Gemini config missing required field: GEMINI_API_KEY",
+        ));
     }
     Ok(settings)
 }
@@ -116,6 +134,36 @@ mod tests {
         assert!(config["env"].get("GOOGLE_GEMINI_BASE_URL").is_none());
         assert_eq!(config["config"]["model"]["name"], "test-model");
     }
+    #[test]
+    fn agy_model_only_login_does_not_require_api_key() {
+        let mut row = provider("Imported login");
+        row.settings_config["env"] = json!({"GEMINI_MODEL":"gemini-3.8-flash-low"});
+        assert!(live_settings(&row).is_ok());
+    }
+
+    #[test]
+    fn agy_endpoint_requires_a_nonempty_key() {
+        for key in [Value::Null, json!(""), json!("   ")] {
+            let mut row = provider("Relay");
+            row.settings_config["env"]["GEMINI_API_KEY"] = key;
+            assert!(live_settings(&row).is_err());
+        }
+    }
+
+    #[test]
+    fn agy_key_can_use_the_default_google_endpoint() {
+        let mut row = provider("Google API key");
+        row.settings_config["env"] = json!({"GEMINI_API_KEY":"fixture"});
+        assert!(live_settings(&row).is_ok());
+    }
+
+    #[test]
+    fn agy_rejects_non_string_credentials_before_writing() {
+        let mut row = provider("Relay");
+        row.settings_config["env"]["GEMINI_API_KEY"] = json!(123);
+        assert!(live_settings(&row).is_err());
+    }
+
     #[test]
     fn agy_invalid_credentials_fail_before_writing() {
         let mut row = provider("Relay");

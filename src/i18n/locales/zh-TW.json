@@ -209,7 +209,12 @@
     "geminiConfigHint": "使用 .env 格式設定 Gemini",
     "form": {
       "agy": {
-        "connectionHint": "Antigravity 官方供應商使用 agy 自身登入；第三方需支援 Gemini API。切換後請開啟新終端機或重新啟動 agy，已執行的工作階段不會自動切換。官方模型列表讀取目前 agy 設定。"
+        "connectionHint": "不填 API Key 和請求位址時使用 agy 本身的 Google 登入。填寫 Key 但不填位址時使用 Google 預設 API；第三方位址須相容 Gemini API。切換後請開啟新終端或重新啟動 agy，執行中的工作階段不會自動切換。登入模式的模型清單讀取目前的 agy 設定。",
+        "keyFieldsHint": "位址、Key 和模型隨供應商切換；Antigravity 的其他原生設定保持不變。",
+        "envFile": "啟動環境變數",
+        "envFileHint": "CC Switch 會在啟動 agy 時傳入 API Key、請求位址和模型。其他環境變數不會套用。",
+        "configJson": "模型設定（CC Switch 格式）",
+        "configJsonHint": "這裡僅支援模型設定，其他 Antigravity 選項請在 agy 中調整；MCP 在 MCP 面板中管理。"
       },
       "gemini": {
         "model": "模型",

@@ -1627,14 +1627,19 @@ function ProviderFormFull({
         }
       }
       if (usesGeminiStyleForm(appId)) {
-        if (!geminiBaseUrl.trim()) {
+        // agy uses its own login when both fields are empty; an API key may
+        // use Google's default endpoint without a custom base URL.
+        if (appId !== "agy" && !geminiBaseUrl.trim()) {
           issues.push(
             t("providerForm.endpointRequired", {
               defaultValue: "非官方供应商请填写 API 端点",
             }),
           );
         }
-        if (!geminiApiKey.trim()) {
+        if (
+          !geminiApiKey.trim() &&
+          (appId !== "agy" || Boolean(geminiBaseUrl.trim()))
+        ) {
           issues.push(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -2885,6 +2890,7 @@ function ProviderFormFull({
           ) : usesGeminiStyleForm(appId) ? (
             <>
               <GeminiConfigEditor
+                isAgy={appId === "agy"}
                 envValue={geminiEnv}
                 configValue={geminiConfig}
                 onEnvChange={handleGeminiEnvChange}

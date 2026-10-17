@@ -159,7 +159,7 @@ export function GeminiFormFields({
           value={apiKey}
           onChange={onApiKeyChange}
           category={category}
-          required
+          required={appId !== "agy" || Boolean(baseUrl.trim())}
           shouldShowLink={shouldShowApiKeyLink}
           websiteUrl={websiteUrl}
           isPartner={isPartner}
@@ -171,6 +171,7 @@ export function GeminiFormFields({
       {shouldShowSpeedTest && (
         <EndpointField
           id="baseUrl"
+          required={appId !== "agy"}
           label={t("providerForm.apiEndpoint", { defaultValue: "API 端点" })}
           value={baseUrl}
           onChange={onBaseUrlChange}
