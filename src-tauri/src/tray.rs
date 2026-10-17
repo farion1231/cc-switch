@@ -2176,15 +2176,7 @@ fn panel_rows(
 ) -> (Option<String>, Vec<PanelRow>) {
     let app = snapshot.app.as_str();
     let header_id = format!("info:{app}:header");
-    let page_id = format!("nav:app:{app}");
-    let mut children = app_children(texts, snapshot, now);
-    // 面板的子面板不放「打开应用页」（和它前面的分隔线）；要去主界面用面板底部的「打开主窗口」。
-    if matches!(children.last(), Some(TrayEntry::Item { id, .. }) if *id == page_id) {
-        children.pop();
-        if matches!(children.last(), Some(TrayEntry::Separator)) {
-            children.pop();
-        }
-    }
+    let children = app_children(texts, snapshot, now);
     let mut header = None;
     let rows = children
         .into_iter()
