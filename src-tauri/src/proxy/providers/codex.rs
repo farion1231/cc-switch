@@ -481,22 +481,35 @@ pub fn codex_provider_upstream_model(provider: &Provider) -> Option<String> {
         })
 }
 
-fn codex_provider_catalog_model_ids(provider: &Provider) -> HashSet<String> {
-    provider
-        .settings_config
+/// Collect upstream model identifiers from a Codex provider's explicit catalog.
+/// Catalog entries may store the identifier under `model`, `slug`, or `id`.
+pub(crate) fn collect_codex_catalog_model_ids(settings: &JsonValue) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    let Some(models) = settings
         .get("modelCatalog")
         .and_then(|catalog| catalog.get("models"))
         .and_then(|models| models.as_array())
-        .map(|models| {
-            models
-                .iter()
-                .filter_map(|model| model.get("model").and_then(|value| value.as_str()))
+    else {
+        return ids;
+    };
+
+    for entry in models {
+        for key in ["model", "slug", "id"] {
+            if let Some(id) = entry
+                .get(key)
+                .and_then(JsonValue::as_str)
                 .map(str::trim)
-                .filter(|model| !model.is_empty())
-                .map(ToString::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
+                .filter(|id| !id.is_empty())
+            {
+                ids.insert(id.to_string());
+            }
+        }
+    }
+    ids
+}
+
+fn codex_provider_catalog_model_ids(provider: &Provider) -> HashSet<String> {
+    collect_codex_catalog_model_ids(&provider.settings_config)
 }
 
 /// For Codex Chat providers, ensure the request uses the configured upstream
@@ -1947,6 +1960,33 @@ wire_api = "responses"
             None
         );
         assert_eq!(stale["model"], "deepseek-v4-pro");
+    }
+
+    #[test]
+    fn preturn_compaction_preserves_model_listed_by_catalog_slug() {
+        let provider = create_provider(json!({
+            "config": r#"model_provider = "custom"
+model = "grok-4.6"
+
+[model_providers.custom]
+wire_api = "responses"
+"#,
+            "modelCatalog": {
+                "models": [
+                    { "slug": "grok-4.5" },
+                    { "id": "grok-4.4" }
+                ]
+            }
+        }));
+
+        for model in ["grok-4.5", "grok-4.4"] {
+            let mut stale = json!({ "model": model });
+            assert_eq!(
+                apply_codex_compaction_upstream_model(&provider, &mut stale),
+                None
+            );
+            assert_eq!(stale["model"], model);
+        }
     }
 
     #[test]
