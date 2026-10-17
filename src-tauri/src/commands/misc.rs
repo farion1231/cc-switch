@@ -786,6 +786,10 @@ fn codex_standalone_install(bin_path: &str, real_target: &str) -> Option<CodexSt
         })
 }
 
+pub(crate) fn is_codex_standalone_install_at(bin_path: &Path, real_target: &Path) -> bool {
+    codex_standalone_install(&bin_path.to_string_lossy(), &real_target.to_string_lossy()).is_some()
+}
+
 /// 重跑官方 installer 升级独立安装那一处。显式传 `CODEX_INSTALL_DIR` / `CODEX_HOME`
 /// 写回探测到的位置（实测自定义目录时会原地升级、不在默认目录多装一份）；
 /// `CODEX_NON_INTERACTIVE=1` 与 `codex update` 自己重跑 installer 时的做法一致。
@@ -1286,13 +1290,19 @@ fn path_default_is_bundled_with_desktop(tool: &str) -> bool {
 
 /// 这处 codex 是 ChatGPT Desktop 随附的（入口本身，或软链指向的真身在桌面版里）。
 fn is_bundled_with_desktop(tool: &str, path: &Path) -> bool {
+    let real_path = std::fs::canonicalize(path).ok();
+    is_bundled_with_desktop_paths(tool, path, real_path.as_deref())
+}
+
+fn is_bundled_with_desktop_paths(tool: &str, path: &Path, real_path: Option<&Path>) -> bool {
+    if tool != "codex" || real_path.is_some_and(|real| is_codex_standalone_install_at(path, real)) {
+        return false;
+    }
     let is_desktop_copy = |path: &Path| {
         let path = path.to_string_lossy();
         is_chatgpt_desktop_codex_path(&path) || is_chatgpt_desktop_extracted_cli_path(&path)
     };
-    tool == "codex"
-        && (is_desktop_copy(path)
-            || std::fs::canonicalize(path).is_ok_and(|real| is_desktop_copy(&real)))
+    is_desktop_copy(path) || real_path.is_some_and(is_desktop_copy)
 }
 
 /// 该工具在 npm 上的预发布通道 tag(靠前者优先)。仅当本地版本已**严格领先**
@@ -7808,6 +7818,21 @@ mod tests {
             assert!(!is_bundled_with_desktop(
                 "claude",
                 Path::new("/Applications/ChatGPT.app/Contents/Resources/codex"),
+            ));
+        }
+
+        #[test]
+        fn numeric_custom_codex_install_is_not_classified_as_desktop_when_its_target_is_standalone()
+        {
+            let custom_install =
+                Path::new("/Users/me/AppData/Local/OpenAI/Codex/bin/1.2.3/codex.exe");
+            let standalone_target = Path::new(
+                "/Users/me/.codex/packages/standalone/releases/1.2.3-x86_64-pc-windows-msvc/bin/codex.exe",
+            );
+            assert!(!is_bundled_with_desktop_paths(
+                "codex",
+                custom_install,
+                Some(standalone_target)
             ));
         }
 

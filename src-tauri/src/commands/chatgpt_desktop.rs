@@ -392,7 +392,12 @@ fn extracted_cli_paths_under(bin: &std::path::Path) -> Result<Vec<PathBuf>, Stri
         }
         let exe = entry.path().join("codex.exe");
         match std::fs::metadata(&exe) {
-            Ok(metadata) if metadata.is_file() => paths.push(exe),
+            Ok(metadata) if metadata.is_file() => {
+                let real_path = std::fs::canonicalize(&exe).unwrap_or_else(|_| exe.clone());
+                if is_extracted_cli_candidate_owned(&exe, &real_path) {
+                    paths.push(exe);
+                }
+            }
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
@@ -417,6 +422,16 @@ fn is_extracted_cli_cache_dir_name(name: &str) -> bool {
             .iter()
             .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()));
     is_hash || is_legacy_version
+}
+
+#[cfg(any(windows, test))]
+fn is_extracted_cli_candidate_owned(path: &std::path::Path, real_path: &std::path::Path) -> bool {
+    let is_cache_directory = path
+        .parent()
+        .and_then(std::path::Path::file_name)
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(is_extracted_cli_cache_dir_name);
+    is_cache_directory && !super::misc::is_codex_standalone_install_at(path, real_path)
 }
 
 #[cfg(any(windows, test))]
@@ -916,6 +931,26 @@ mod tests {
             ".staging-247581e40ee272fb-random"
         ));
         assert!(!is_extracted_cli_cache_dir_name("0.162.0-alpha.1"));
+    }
+
+    #[test]
+    fn numeric_custom_standalone_install_is_not_owned_by_desktop_cache() {
+        let custom_install =
+            std::path::Path::new("/Users/me/AppData/Local/OpenAI/Codex/bin/1.2.3/codex.exe");
+        let standalone_target = std::path::Path::new(
+            "/Users/me/.codex/packages/standalone/releases/1.2.3-x86_64-pc-windows-msvc/bin/codex.exe",
+        );
+        assert!(!is_extracted_cli_candidate_owned(
+            custom_install,
+            standalone_target
+        ));
+
+        let legacy_desktop_cache =
+            std::path::Path::new("/Users/me/AppData/Local/OpenAI/Codex/bin/0.162.0/codex.exe");
+        assert!(is_extracted_cli_candidate_owned(
+            legacy_desktop_cache,
+            legacy_desktop_cache
+        ));
     }
 
     #[cfg(windows)]
