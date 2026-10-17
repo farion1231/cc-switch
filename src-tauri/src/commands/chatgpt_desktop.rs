@@ -141,18 +141,24 @@ fn uninstall() -> Result<(), String> {
 #[cfg(target_os = "macos")]
 fn macos_installed_app() -> Option<PathBuf> {
     let home = crate::config::get_home_dir();
-    let apps: Vec<PathBuf> = [
-        PathBuf::from("/Applications/ChatGPT.app"),
-        home.join("Applications").join("ChatGPT.app"),
-        PathBuf::from("/Applications/Codex.app"),
-    ]
-    .into_iter()
-    .filter(|app| app.join("Contents").join("Info.plist").is_file())
-    .collect();
+    let apps: Vec<PathBuf> = macos_app_candidates(&home)
+        .into_iter()
+        .filter(|app| app.join("Contents").join("Info.plist").is_file())
+        .collect();
     apps.iter()
         .find(|app| macos_cli_candidates(app).iter().any(|cli| cli.is_file()))
         .or_else(|| apps.first())
         .cloned()
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_app_candidates(home: &std::path::Path) -> [PathBuf; 4] {
+    [
+        PathBuf::from("/Applications/ChatGPT.app"),
+        home.join("Applications").join("ChatGPT.app"),
+        PathBuf::from("/Applications/Codex.app"),
+        home.join("Applications").join("Codex.app"),
+    ]
 }
 
 /// 卸载这个包的 PowerShell 命令。包全名只含字母、数字和 `._-`，放进单引号里不会被
@@ -474,6 +480,20 @@ mod tests {
     use super::*;
     use std::path::Path;
     use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn macos_app_candidates_cover_system_and_per_user_bundles() {
+        let home = Path::new("/Users/me");
+        assert_eq!(
+            macos_app_candidates(home),
+            [
+                PathBuf::from("/Applications/ChatGPT.app"),
+                PathBuf::from("/Users/me/Applications/ChatGPT.app"),
+                PathBuf::from("/Applications/Codex.app"),
+                PathBuf::from("/Users/me/Applications/Codex.app"),
+            ]
+        );
+    }
 
     #[test]
     fn parses_main_package_full_names_of_any_architecture() {
