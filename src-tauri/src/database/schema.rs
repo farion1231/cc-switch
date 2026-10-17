@@ -301,11 +301,14 @@ impl Database {
 
         // 18. Session Log Sync 表 (会话日志同步状态)
         //
-        // last_byte_offset：Claude 路径的字节游标（seek 增量读）；NULL 表示
-        // 尚无字节游标（旧行号游标或非 Claude 路径行），此时回退全量读。
+        // last_byte_offset：Claude 的 seek 游标；Codex 则记录已观察的文件大小
+        // （可能含未完成尾行），实际 seek 边界和解析状态保存在 codex_checkpoint。
+        // NULL 表示尚无字节信息，按持久行号水位回退完整解析。
         // last_tail_fingerprint：游标边界前尾部字节的指纹，用于识别文件被
         // 外部重写（同尺寸/更大的替换无法靠 size 检测）；NULL 表示无指纹
         // 可校验，按纯追加处理。
+        // codex_checkpoint：带独立格式版本的 Codex 解析检查点；与游标及
+        // 导入记录在同一事务提交。NULL/不兼容时仍保留行号水位以避免重复计费。
         conn.execute(
             "CREATE TABLE IF NOT EXISTS session_log_sync (
                 file_path TEXT PRIMARY KEY,
@@ -313,7 +316,8 @@ impl Database {
                 last_line_offset INTEGER NOT NULL DEFAULT 0,
                 last_synced_at INTEGER NOT NULL,
                 last_byte_offset INTEGER,
-                last_tail_fingerprint INTEGER
+                last_tail_fingerprint INTEGER,
+                codex_checkpoint TEXT
             )",
             [],
         )
@@ -576,6 +580,20 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 20)?;
+                    }
+                    20 => {
+                        // Existing line/byte watermarks remain authoritative.
+                        // NULL means one full parse before a Codex checkpoint
+                        // can be established; never reset imported usage here.
+                        if Self::table_exists(conn, "session_log_sync")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "session_log_sync",
+                                "codex_checkpoint",
+                                "TEXT",
+                            )?;
+                        }
+                        Self::set_user_version(conn, 21)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -3999,6 +4017,61 @@ mod tests {
         )?;
         assert_eq!(byte_offset, None, "存量行的字节游标必须为 NULL");
         assert_eq!(fingerprint, None, "存量行的尾部指纹必须为 NULL");
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v20_to_v21_preserves_sync_watermarks_and_checkpoint() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE session_log_sync (
+                file_path TEXT PRIMARY KEY,
+                last_modified INTEGER NOT NULL,
+                last_line_offset INTEGER NOT NULL DEFAULT 0,
+                last_synced_at INTEGER NOT NULL,
+                last_byte_offset INTEGER,
+                last_tail_fingerprint INTEGER
+             );
+             INSERT INTO session_log_sync VALUES ('codex.jsonl', 12, 300, 13, 4096, NULL);
+             INSERT INTO session_log_sync VALUES ('claude.jsonl', 14, 400, 15, 8192, 123);",
+        )?;
+        Database::set_user_version(&conn, 20)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let codex: (i64, i64, i64, i64, Option<String>) = conn.query_row(
+            "SELECT last_modified, last_line_offset, last_synced_at, last_byte_offset,
+                    codex_checkpoint FROM session_log_sync WHERE file_path = 'codex.jsonl'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )?;
+        assert_eq!(codex, (12, 300, 13, 4096, None));
+        let claude: (i64, i64, i64, Option<String>) = conn.query_row(
+            "SELECT last_line_offset, last_byte_offset, last_tail_fingerprint,
+                    codex_checkpoint FROM session_log_sync WHERE file_path = 'claude.jsonl'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(claude, (400, 8192, 123, None));
+
+        conn.execute(
+            "UPDATE session_log_sync SET codex_checkpoint = ?1 WHERE file_path = 'codex.jsonl'",
+            [r#"{"version":1}"#],
+        )?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        let checkpoint: String = conn.query_row(
+            "SELECT codex_checkpoint FROM session_log_sync WHERE file_path = 'codex.jsonl'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(checkpoint, r#"{"version":1}"#);
         Ok(())
     }
 }

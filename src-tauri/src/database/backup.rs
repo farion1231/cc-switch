@@ -2182,6 +2182,7 @@ mod tests {
     fn full_sql_backup_still_round_trips_session_cursors() -> Result<(), AppError> {
         let _test_home = TestHomeGuard::new();
         let source = Database::memory()?;
+        let checkpoint = r#"{"version":1,"proof":"local-codex-checkpoint"}"#;
         {
             let conn = crate::database::lock_conn!(source.conn);
             conn.execute_batch(
@@ -2191,8 +2192,15 @@ mod tests {
                      file_path, last_modified, last_line_offset, last_synced_at
                  ) VALUES ('/local/sessions/manual-backup.jsonl', 11, 22, 33);",
             )?;
+            conn.execute(
+                "UPDATE session_log_sync SET last_byte_offset = 4096, codex_checkpoint = ?1",
+                [checkpoint],
+            )?;
         }
 
+        assert!(!source
+            .export_sql_string_for_sync()?
+            .contains("local-codex-checkpoint"));
         let sql = source.export_sql_string()?;
         let target = Database::memory()?;
         target.import_sql_string(&sql)?;
@@ -2208,6 +2216,12 @@ mod tests {
             cursor,
             ("/local/sessions/manual-backup.jsonl".into(), 11, 22, 33,)
         );
+        let resumed: (i64, String) = conn.query_row(
+            "SELECT last_byte_offset, codex_checkpoint FROM session_log_sync",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(resumed, (4096, checkpoint.to_string()));
         Ok(())
     }
 
