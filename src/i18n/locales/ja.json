@@ -1841,7 +1841,12 @@
     "retry": "再試行",
     "copyCode": "コードをコピー",
     "fastMode": "FAST モード",
-    "fastModeDescription": "低遅延のため service_tier=\"priority\" を送信します。既定ではオフ——オンにすると ChatGPT のクォータがより速く消費されます。"
+    "fastModeDescription": "低遅延のため service_tier=\"priority\" を送信します。既定ではオフ——オンにすると ChatGPT のクォータがより速く消費されます。",
+    "loginMethod": "ログイン方法",
+    "browserLogin": "ブラウザでログイン",
+    "deviceCodeLogin": "デバイスコードでログイン",
+    "openBrowserLogin": "ブラウザのログイン画面を開く",
+    "loginExpired": "ログインの有効期限が切れました。もう一度お試しください。"
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth 認証",

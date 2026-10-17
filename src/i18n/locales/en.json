@@ -1841,7 +1841,12 @@
     "retry": "Retry",
     "copyCode": "Copy code",
     "fastMode": "FAST mode",
-    "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate."
+    "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate.",
+    "loginMethod": "Login method",
+    "browserLogin": "Browser login",
+    "deviceCodeLogin": "Device-code login",
+    "openBrowserLogin": "Open browser login",
+    "loginExpired": "Login expired. Please try again."
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth authentication",

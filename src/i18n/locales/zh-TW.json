@@ -1842,7 +1842,12 @@
     "retry": "重試",
     "copyCode": "複製程式碼",
     "fastMode": "FAST 模式",
-    "fastModeDescription": "發送 service_tier=\"priority\" 換取更低延遲。預設關閉——開啟後會以更高速率消耗 ChatGPT 配額。"
+    "fastModeDescription": "發送 service_tier=\"priority\" 換取更低延遲。預設關閉——開啟後會以更高速率消耗 ChatGPT 配額。",
+    "loginMethod": "登入方式",
+    "browserLogin": "瀏覽器登入",
+    "deviceCodeLogin": "裝置代碼登入",
+    "openBrowserLogin": "開啟瀏覽器登入",
+    "loginExpired": "登入已過期，請重試。"
   },
   "xaiOauth": {
     "authStatus": "xAI OAuth 驗證",
