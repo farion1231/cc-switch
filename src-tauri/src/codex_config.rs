@@ -2290,14 +2290,14 @@ fn find_codex_official_model<'a>(model: &str, candidates: &'a [Value]) -> Option
     })
 }
 
-/// 第三方供应商上命中官方的 GPT 行：官方条目整条照搬（提示词、工具、档位、窗口都以官方
-/// 为准，不接受行里的覆盖值；窗口不同时在 `config.toml` 里设 `model_context_window`），
-/// 只改掉属于官方账号或官方后端的字段。
+/// 第三方供应商上命中官方的 GPT 行：保留官方的提示词、工具和档位，窗口接受显式覆盖，
+/// 未配置时保持官方默认。其余只改掉属于官方账号或官方后端的字段。
 fn codex_official_model_entry(
     official: &Value,
     model: &str,
     priority: usize,
     profile: CodexCatalogToolProfile,
+    context_window: Option<u64>,
 ) -> Value {
     let mut entry = official.clone();
     let Some(obj) = entry.as_object_mut() else {
@@ -2309,6 +2309,12 @@ fn codex_official_model_entry(
     }
     obj.insert("slug".to_string(), json!(model));
     obj.insert("priority".to_string(), json!(1000 + priority));
+    if let Some(window) = context_window {
+        obj.insert("context_window".to_string(), json!(window));
+        // Codex clamps model_context_window to max_context_window. A stale
+        // official maximum would silently cap the user's explicit window.
+        obj.insert("max_context_window".to_string(), json!(window));
+    }
     // 官方隐藏的条目用户明确写了，也要出现在选择器里。
     obj.insert("visibility".to_string(), json!("list"));
     // 速度档、升级提示归官方账号。
@@ -2325,14 +2331,18 @@ fn codex_official_model_entry(
     entry
 }
 
-/// 目录里的一行是不是按 `official` 原样镜像出来的：反向解析会保留的几项（显示名、窗口、
-/// 模态、并行工具调用）都和重新镜像的结果相同，只还原模型名才不丢东西。
+/// 除窗口外，反向解析会保留的显示名、模态、并行工具调用是否和官方镜像一致。
+/// 镜像的官方能力不用存回表单，显式窗口另行还原。
 fn is_codex_official_mirror(entry: &Value, model: &str, official: &Value) -> bool {
-    let expected =
-        codex_official_model_entry(official, model, 0, CodexCatalogToolProfile::NativeResponses);
+    let expected = codex_official_model_entry(
+        official,
+        model,
+        0,
+        CodexCatalogToolProfile::NativeResponses,
+        None,
+    );
     [
         "display_name",
-        "context_window",
         "input_modalities",
         "supports_parallel_tool_calls",
     ]
@@ -2361,8 +2371,9 @@ fn codex_catalog_from_specs_for_row(
         return Ok(json!({ "models": entries }));
     }
 
-    let default_context_window =
-        extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
+    let configured_context_window =
+        extract_codex_top_level_u64(config_text, "model_context_window");
+    let default_context_window = configured_context_window.unwrap_or(128_000);
 
     // Native providers use the bundled clean template (no freeform apply_patch);
     // ProxyChat and Copilot clone the bundled classic tool template so their
@@ -2390,7 +2401,15 @@ fn codex_catalog_from_specs_for_row(
         .enumerate()
         .map(
             |(index, spec)| match find_codex_official_model(&spec.model, &official) {
-                Some(found) => codex_official_model_entry(found, &spec.model, index, profile),
+                Some(found) => codex_official_model_entry(
+                    found,
+                    &spec.model,
+                    index,
+                    profile,
+                    // Match Codex's global override and Stack's sink_row_windows:
+                    // a provider-wide window takes precedence over a model's.
+                    configured_context_window.or(spec.context_window),
+                ),
                 None => codex_catalog_model_entry(
                     &template,
                     spec,
@@ -2838,7 +2857,7 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
         ) {
             continue;
         }
-        // 照搬官方的行只还原模型名，不能把官方值当成用户填的存回库里。通用模板没有
+        // 官方镜像只还原模型名和显式窗口，不能把官方能力当成用户填的存回库里。通用模板没有
         // `model_messages`（走 Anthropic 的行不照搬）；旧版 ProxyChat 克隆的 gpt-5.5 模板
         // 有，但带着用户填的显示名、窗口，下面逐项比对不上，照旧还原。
         if entry
@@ -2847,10 +2866,21 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
             .is_some()
         {
             let official = official.get_or_insert_with(codex_openai_official_models);
-            if find_codex_official_model(model, official)
-                .is_some_and(|found| is_codex_official_mirror(entry, model, found))
+            if let Some(found) = find_codex_official_model(model, official)
+                .filter(|found| is_codex_official_mirror(entry, model, found))
             {
-                entries.push(json!({ "model": model }));
+                let mut restored = json!({ "model": model });
+                let fallback_window =
+                    extract_codex_top_level_u64(config_text, "model_context_window")
+                        .or_else(|| found.get("context_window").and_then(Value::as_u64));
+                if let Some(window) = entry
+                    .get("context_window")
+                    .and_then(Value::as_u64)
+                    .filter(|window| *window > 0 && Some(*window) != fallback_window)
+                {
+                    restored["contextWindow"] = json!(window);
+                }
+                entries.push(restored);
                 continue;
             }
         }
@@ -5051,6 +5081,7 @@ wire_api = "responses"
                 "upgrade": { "model": "gpt-next" },
                 "context_window": 272_000,
                 "max_context_window": 872_000,
+                "effective_context_window_percent": 95,
                 "supports_image_detail_original": true,
                 "supported_reasoning_levels": [
                     { "effort": "low", "description": "l" },
@@ -5109,8 +5140,8 @@ wire_api = "responses"
         let models = with_official_models(official_gpt_rows(), || {
             catalog_for(
                 json!([
-                    // 行里的覆盖值对官方行不生效。
-                    { "model": "gpt-6-sol", "contextWindow": 128_000, "reasoningLevels": ["none"] },
+                    // 提示词、工具和思考档位保持官方值；未填窗口时也保留官方默认。
+                    { "model": "gpt-6-sol", "reasoningLevels": ["none"] },
                     { "model": "glm-5" }
                 ]),
                 "",
@@ -5148,6 +5179,145 @@ wire_api = "responses"
         assert!(glm.get("model_messages").is_none());
         assert!(glm.get("apply_patch_tool_type").is_none());
         assert_eq!(glm["shell_type"], "shell_command");
+    }
+
+    #[test]
+    fn official_gpt_rows_honor_explicit_context_windows() {
+        with_official_models(official_gpt_rows(), || {
+            for profile in [
+                CodexCatalogToolProfile::NativeResponses,
+                CodexCatalogToolProfile::ProxyChat,
+            ] {
+                let models = catalog_for(
+                    json!([
+                        { "model": "gpt-6-sol", "contextWindow": 1_050_000 },
+                        { "model": "openai/gpt-5.5", "contextWindow": "512000" },
+                        { "model": "gpt-6-sol-high", "contextWindow": 128_000 },
+                        { "model": "gpt-6", "contextWindow": "" }
+                    ]),
+                    "",
+                    profile,
+                );
+                for (model, window) in models.iter().zip([1_050_000, 512_000, 128_000]) {
+                    assert_eq!(model["context_window"], window);
+                    assert_eq!(model["max_context_window"], window);
+                    assert_eq!(model["effective_context_window_percent"], 95);
+                    assert_eq!(model["apply_patch_tool_type"], "freeform");
+                }
+                assert_eq!(
+                    models[0]["model_messages"]["instructions_template"],
+                    "GPT-6 Sol prompt"
+                );
+                assert_eq!(models[3]["context_window"], 272_000);
+                assert_eq!(models[3]["max_context_window"], 872_000);
+            }
+        });
+    }
+
+    #[test]
+    fn official_gpt_rows_honor_global_context_window_overrides() {
+        with_official_models(official_gpt_rows(), || {
+            let models = catalog_for(
+                json!([
+                    { "model": "gpt-6-sol" },
+                    { "model": "gpt-5.5", "contextWindow": 512_000 }
+                ]),
+                "model_context_window = 1000000\nmodel_auto_compact_token_limit = 900000\n",
+                CodexCatalogToolProfile::NativeResponses,
+            );
+            for model in models {
+                // Codex clamps config overrides to max_context_window, so both must match.
+                assert_eq!(model["context_window"], 1_000_000);
+                assert_eq!(model["max_context_window"], 1_000_000);
+            }
+        });
+    }
+
+    #[test]
+    fn official_gpt_context_windows_survive_catalog_round_trip() {
+        with_official_models(official_gpt_rows(), || {
+            for window in [128_000, 512_000, 1_050_000] {
+                let input = json!([{ "model": "gpt-6-sol", "contextWindow": window }]);
+                let catalog = json!({ "models": catalog_for(
+                    input.clone(), "", CodexCatalogToolProfile::NativeResponses,
+                ) });
+                let simplified =
+                    build_simplified_catalog_from_texts("", &catalog.to_string()).unwrap();
+                // Only the user's window is restored, without sticky official capabilities.
+                assert_eq!(simplified["models"], input);
+                let regenerated = codex_model_catalog_from_settings(
+                    &json!({ "modelCatalog": simplified }),
+                    "",
+                    CodexCatalogToolProfile::NativeResponses,
+                )
+                .unwrap()
+                .unwrap();
+                assert_eq!(regenerated, catalog);
+            }
+        });
+    }
+
+    #[test]
+    fn official_gpt_global_context_windows_do_not_become_per_model_overrides() {
+        with_official_models(official_gpt_rows(), || {
+            let config = "model_context_window = 1000000\n";
+            let catalog = json!({ "models": catalog_for(
+                json!([{ "model": "gpt-6-sol" }]),
+                config,
+                CodexCatalogToolProfile::NativeResponses,
+            ) });
+            let simplified =
+                build_simplified_catalog_from_texts(config, &catalog.to_string()).unwrap();
+            assert_eq!(simplified["models"], json!([{ "model": "gpt-6-sol" }]));
+            let regenerated = codex_model_catalog_from_settings(
+                &json!({ "modelCatalog": simplified }),
+                config,
+                CodexCatalogToolProfile::NativeResponses,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(regenerated, catalog);
+        });
+    }
+
+    #[test]
+    fn stacked_official_gpt_rows_keep_each_providers_context_window() {
+        with_official_models(official_gpt_rows(), || {
+            let route = json!({ "modelCatalog": { "models": [
+                { "model": "gpt-6-sol", "contextWindow": 1_050_000 }
+            ] } });
+            let member = json!({ "modelCatalog": { "models": [
+                { "model": "gpt-6-sol", "contextWindow": 512_000 }
+            ] } });
+            let catalog = plan_codex_stack_catalog(
+                CodexStackRoute::ThirdParty(CodexCatalogRow {
+                    settings: &route,
+                    config_text: "",
+                    profile: CodexCatalogToolProfile::NativeResponses,
+                }),
+                &[CodexStackCatalogMember {
+                    key: "relay",
+                    provider_name: "Relay",
+                    row: CodexCatalogRow {
+                        settings: &member,
+                        config_text: "",
+                        profile: CodexCatalogToolProfile::ProxyChat,
+                    },
+                }],
+                false,
+            )
+            .unwrap();
+            let models = catalog["models"].as_array().unwrap();
+            for (model, window) in models.iter().zip([1_050_000, 512_000]) {
+                assert_eq!(model["context_window"], window);
+                assert_eq!(model["max_context_window"], window);
+                assert_eq!(model["auto_compact_token_limit"], window * 9 / 10);
+                assert_eq!(
+                    model["model_messages"]["instructions_template"],
+                    "GPT-6 Sol prompt"
+                );
+            }
+        });
     }
 
     #[test]
