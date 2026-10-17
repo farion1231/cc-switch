@@ -73,17 +73,19 @@ describe("extractBaseUrlForUsageDetection", () => {
     ).toBe("https://opencode.ai/zen/go/v1");
   });
 
-  it("reads options.baseURL for opencode and baseUrl for pi", () => {
+  it("reads options.baseURL for opencode and baseUrl for pi and omp", () => {
     expect(
       extractBaseUrlForUsageDetection("opencode", {
         options: { baseURL: "https://opencode.ai/zen/go/v1" },
       }),
     ).toBe("https://opencode.ai/zen/go/v1");
-    expect(
-      extractBaseUrlForUsageDetection("pi", {
-        baseUrl: "https://opencode.ai/zen/go/v1",
-      }),
-    ).toBe("https://opencode.ai/zen/go/v1");
+    for (const app of ["pi", "omp"]) {
+      expect(
+        extractBaseUrlForUsageDetection(app, {
+          baseUrl: "https://opencode.ai/zen/go/v1",
+        }),
+      ).toBe("https://opencode.ai/zen/go/v1");
+    }
   });
 
   it("reads the remaining apps' native base URL fields", () => {
@@ -159,11 +161,13 @@ describe("injectCodingPlanUsageScript", () => {
         },
       }),
     );
-    expectInjected(
-      inject("pi", {
-        settingsConfig: { baseUrl: "https://opencode.ai/zen/go/v1" },
-      }),
-    );
+    for (const app of ["pi", "omp"]) {
+      expectInjected(
+        inject(app, {
+          settingsConfig: { baseUrl: "https://opencode.ai/zen/go/v1" },
+        }),
+      );
+    }
   });
 
   it("keeps the existing claude behavior for other coding plans", () => {

@@ -325,8 +325,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey: (config as any).api_key,
             baseUrl: (config as any).base_url,
           };
-        } else if (appId === "pi") {
-          // Pi: provider values are camelCase; a model may override baseUrl.
+        } else if (appId === "pi" || appId === "omp") {
+          // Pi、Omp：供应商字段用 camelCase，模型可覆盖 baseUrl。
           const root = config as any;
           const firstModel = Array.isArray(root.models)
             ? root.models[0]

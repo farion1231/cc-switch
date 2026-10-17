@@ -154,3 +154,50 @@ describe("UsageScriptModal official subscription hint", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+it.each([
+  ["pi", undefined],
+  ["omp", undefined],
+  ["omp", "https://model.example.com/v1/"],
+] as const)(
+  "reads %s credentials with model base URL %s",
+  async (appId, modelBaseUrl) => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <UsageScriptModal
+          provider={{
+            ...provider,
+            settingsConfig: {
+              apiKey: "sk-provider-test",
+              baseUrl: "https://provider.example.com/v1/",
+              models: [{ id: "test", baseUrl: modelBaseUrl }],
+            },
+          }}
+          appId={appId}
+          isOpen
+          onClose={() => {}}
+          onSave={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "usageScript.templateCustom" }),
+    );
+    expect(
+      screen.getByText(
+        (modelBaseUrl || "https://provider.example.com/v1/").replace(
+          /\/+$/,
+          "",
+        ),
+      ),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "apiKeyInput.show" }),
+    );
+    expect(screen.getByText("sk-provider-test")).toBeInTheDocument();
+  },
+);
