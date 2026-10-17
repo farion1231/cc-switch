@@ -53,6 +53,16 @@ const createSettings = (
   ...overrides,
 });
 
+const deferredDirectory = () => {
+  let resolve!: (directory: string) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<string>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
+
 describe("useDirectorySettings", () => {
   const onUpdateSettings = vi.fn();
 
@@ -140,6 +150,98 @@ describe("useDirectorySettings", () => {
 
       rerender({ settings: { ...initialSettings, [field]: "/saved/config" } });
       expect(result.current.resolvedDirs[app]).toBe("/saved/config");
+    },
+  );
+
+  it.each([
+    ["claude", "claudeConfigDir", ".claude"],
+    ["codex", "codexConfigDir", ".codex"],
+    ["gemini", "geminiConfigDir", ".gemini"],
+    ["grokbuild", "grokConfigDir", ".grok"],
+    ["opencode", "opencodeConfigDir", ".config/opencode"],
+    ["openclaw", "openclawConfigDir", ".openclaw"],
+    ["hermes", "hermesConfigDir", ".hermes"],
+    ["pi", "piConfigDir", ".pi/agent"],
+  ] as const)(
+    "keeps the computed %s default visible while resolving a cleared override and on failure",
+    async (app, field, defaultFolder) => {
+      const settings = createSettings({ [field]: "/saved/config" });
+      const { result, rerender } = renderHook(
+        ({ settings }) => useDirectorySettings({ settings, onUpdateSettings }),
+        { initialProps: { settings } },
+      );
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      const resolution = deferredDirectory();
+      getConfigDirMock.mockReturnValueOnce(resolution.promise);
+
+      rerender({ settings: { ...settings, [field]: undefined } });
+      expect(getConfigDirMock).toHaveBeenLastCalledWith(app);
+      expect(result.current.resolvedDirs[app]).toBe(
+        `/home/mock/${defaultFolder}`,
+      );
+      await act(async () => resolution.reject(new Error("resolution failed")));
+      expect(result.current.resolvedDirs[app]).toBe(
+        `/home/mock/${defaultFolder}`,
+      );
+      expect(onUpdateSettings).not.toHaveBeenCalled();
+    },
+  );
+
+  it("uses the computed picker path until backend resolution succeeds without changing a canceled draft", async () => {
+    const settings = createSettings();
+    const { result, rerender } = renderHook(
+      ({ settings }) => useDirectorySettings({ settings, onUpdateSettings }),
+      { initialProps: { settings } },
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    const resolution = deferredDirectory();
+    getConfigDirMock.mockReturnValueOnce(resolution.promise);
+    selectConfigDirectoryMock.mockResolvedValue(null);
+    rerender({ settings: { ...settings, claudeConfigDir: undefined } });
+
+    await act(() => result.current.browseDirectory("claude"));
+    expect(selectConfigDirectoryMock).toHaveBeenLastCalledWith(
+      "/home/mock/.claude",
+    );
+    expect(result.current.resolvedDirs.claude).toBe("/home/mock/.claude");
+    expect(onUpdateSettings).not.toHaveBeenCalled();
+
+    await act(async () => resolution.resolve("/environment/claude"));
+    expect(result.current.resolvedDirs.claude).toBe("/environment/claude");
+    await act(() => result.current.browseDirectory("claude"));
+    expect(selectConfigDirectoryMock).toHaveBeenLastCalledWith(
+      "/environment/claude",
+    );
+    expect(onUpdateSettings).not.toHaveBeenCalled();
+  });
+
+  it.each(["pending", "failed"] as const)(
+    "does not invent a fallback when the initial directory load is %s",
+    async (initialLoad) => {
+      const initialDirectory = deferredDirectory();
+      getConfigDirMock.mockReturnValueOnce(initialDirectory.promise);
+      const settings = createSettings();
+      const { result, rerender, unmount } = renderHook(
+        ({ settings }) => useDirectorySettings({ settings, onUpdateSettings }),
+        { initialProps: { settings } },
+      );
+      if (initialLoad === "failed") {
+        await act(async () =>
+          initialDirectory.reject(new Error("initial load failed")),
+        );
+        expect(result.current.isLoading).toBe(false);
+      }
+      const resolution = deferredDirectory();
+      getConfigDirMock.mockReturnValueOnce(resolution.promise);
+      rerender({ settings: { ...settings, claudeConfigDir: undefined } });
+      expect(result.current.resolvedDirs.claude).toBe("");
+      await act(async () => resolution.reject(new Error("resolution failed")));
+      expect(result.current.resolvedDirs.claude).toBe("");
+      expect(onUpdateSettings).not.toHaveBeenCalled();
+      unmount();
+      if (initialLoad === "pending") {
+        await act(async () => initialDirectory.resolve("/saved/claude"));
+      }
     },
   );
 
