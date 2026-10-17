@@ -38,6 +38,8 @@ import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
 import { AboutSection } from "@/components/settings/AboutSection";
 import { RoutingSection } from "@/components/settings/sections/RoutingSection";
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
+import { RestApiSettings } from "@/components/settings/RestApiSettings";
+import { useRestAvailable } from "@/hooks/useRest";
 import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
 import { GeneralSection } from "@/components/settings/sections/GeneralSection";
 import { AppConfigSection } from "@/components/settings/sections/AppConfigSection";
@@ -108,6 +110,7 @@ export function SettingsPage({
     acknowledgeRestart,
   } = useSettings();
   const { data: savedSettings } = useSettingsQuery();
+  const { data: restAvailable } = useRestAvailable();
 
   const {
     selectedFile,
@@ -393,17 +396,32 @@ export function SettingsPage({
         return <RoutingSection onOpenApp={onOpenApp} />;
       case "network":
         return (
-          <SettingsBlock
-            title={t("settings.advanced.globalProxy.title")}
-            help={{
-              title: t("settings.advanced.globalProxy.title"),
-              body: t("settings.advanced.globalProxy.description"),
-            }}
-          >
-            <div className="rounded-panel border border-border bg-surface p-5">
-              <GlobalProxySettings />
-            </div>
-          </SettingsBlock>
+          <>
+            <SettingsBlock
+              title={t("settings.advanced.globalProxy.title")}
+              help={{
+                title: t("settings.advanced.globalProxy.title"),
+                body: t("settings.advanced.globalProxy.description"),
+              }}
+            >
+              <div className="rounded-panel border border-border bg-surface p-5">
+                <GlobalProxySettings />
+              </div>
+            </SettingsBlock>
+            {restAvailable && (
+              <SettingsBlock
+                title={t("settings.restApi.title")}
+                help={{
+                  title: t("settings.restApi.title"),
+                  body: t("settings.restApi.description"),
+                }}
+              >
+                <div className="rounded-panel border border-border bg-surface p-5">
+                  <RestApiSettings />
+                </div>
+              </SettingsBlock>
+            )}
+          </>
         );
       case "data":
         return (

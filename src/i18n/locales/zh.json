@@ -1055,6 +1055,19 @@
     },
     "data": {
       "location": "存储位置"
+    },
+    "restApi": {
+      "title": "REST 控制面",
+      "description": "REST API 控制面允许外部 HTTP 客户端远程切换 provider 与控制代理。",
+      "hint": "REST 控制面允许外部 HTTP 客户端远程切换 provider 与控制代理，默认仅本机访问。",
+      "enable": "启用 REST 控制面",
+      "saved": "REST 配置已保存",
+      "saveFailed": "REST 配置保存失败: {{error}}",
+      "tokenPlaceholder": "Bearer token（留空启用时自动生成）",
+      "copy": "复制 token",
+      "regenerate": "重新生成 token",
+      "tokenRegenerated": "Token 已重新生成",
+      "regenerateFailed": "Token 重新生成失败: {{error}}"
     }
   },
   "apps": {
