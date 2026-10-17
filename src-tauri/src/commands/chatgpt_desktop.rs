@@ -60,7 +60,6 @@ fn detect() -> ChatGptDesktopStatus {
             match extracted_cli_paths_under(&bin) {
                 Ok(paths) if !paths.is_empty() => {
                     status.cleanup_required = true;
-                    probe_bundled_cli(&mut status, &extracted_cli_candidates());
                 }
                 Err(error) => {
                     log::warn!("Could not inspect ChatGPT Desktop CLI cache: {error}");
