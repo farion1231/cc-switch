@@ -119,6 +119,12 @@ fn uninstall() -> Result<(), String> {
     if newest_main_package(&windows_package::full_names(WINDOWS_PACKAGE_FAMILY)).is_some() {
         return Err("ChatGPT Desktop is still installed after Remove-AppxPackage".to_string());
     }
+    if let Some(bin) = extracted_cli_bin() {
+        remove_extracted_cli_copies_under(&bin)?;
+    }
+    if newest_main_package(&windows_package::full_names(WINDOWS_PACKAGE_FAMILY)).is_some() {
+        return Err("ChatGPT Desktop is still installed after Remove-AppxPackage".to_string());
+    }
     Ok(())
 }
 
@@ -240,23 +246,109 @@ fn probe_bundled_cli(status: &mut ChatGptDesktopStatus, candidates: &[PathBuf]) 
 /// 桌面版运行时把随附 CLI 解到 `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\`，新的优先。
 #[cfg(windows)]
 fn extracted_cli_candidates() -> Vec<PathBuf> {
-    let Some(bin) = dirs::data_local_dir().map(|dir| dir.join("OpenAI").join("Codex").join("bin"))
-    else {
+    let Some(bin) = extracted_cli_bin() else {
         return Vec::new();
     };
-    let Ok(entries) = std::fs::read_dir(bin) else {
+    let Ok(paths) = extracted_cli_paths_under(&bin) else {
         return Vec::new();
     };
     newest_first(
-        entries
-            .flatten()
-            .filter_map(|entry| {
-                let exe = entry.path().join("codex.exe");
+        paths
+            .into_iter()
+            .filter_map(|exe| {
                 let modified = exe.metadata().ok()?.modified().ok()?;
                 Some((exe, modified))
             })
             .collect(),
     )
+}
+
+#[cfg(windows)]
+fn extracted_cli_bin() -> Option<PathBuf> {
+    dirs::data_local_dir().map(|dir| dir.join("OpenAI").join("Codex").join("bin"))
+}
+
+#[cfg(any(windows, test))]
+fn extracted_cli_paths_under(bin: &std::path::Path) -> Result<Vec<PathBuf>, String> {
+    let entries = match std::fs::read_dir(bin) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(format!(
+                "Could not inspect ChatGPT Desktop CLI cache {}: {error}",
+                bin.display()
+            ));
+        }
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "Could not inspect ChatGPT Desktop CLI cache {}: {error}",
+                bin.display()
+            )
+        })?;
+        let exe = entry.path().join("codex.exe");
+        match std::fs::metadata(&exe) {
+            Ok(metadata) if metadata.is_file() => paths.push(exe),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "Could not inspect ChatGPT Desktop CLI cache {}: {error}",
+                    exe.display()
+                ));
+            }
+        }
+    }
+    Ok(paths)
+}
+
+#[cfg(any(windows, test))]
+fn remove_extracted_cli_copies_under(bin: &std::path::Path) -> Result<(), String> {
+    let paths = extracted_cli_paths_under(bin)?;
+    let mut failures = Vec::new();
+    for exe in paths {
+        let Some(version_dir) = exe.parent() else {
+            failures.push(format!("Unexpected cache path: {}", exe.display()));
+            continue;
+        };
+        let parent_is_directory = std::fs::symlink_metadata(version_dir).is_ok_and(|metadata| {
+            metadata.file_type().is_dir() && !metadata.file_type().is_symlink()
+        });
+        if !parent_is_directory {
+            failures.push(format!(
+                "Refusing to remove a cache CLI outside a regular version directory: {}",
+                exe.display()
+            ));
+            continue;
+        }
+        if let Err(error) = std::fs::remove_file(&exe) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                failures.push(format!("Could not remove {}: {error}", exe.display()));
+            }
+        }
+    }
+
+    let remaining = extracted_cli_paths_under(bin)?;
+    if !failures.is_empty() || !remaining.is_empty() {
+        let mut details = failures;
+        if !remaining.is_empty() {
+            details.push(format!(
+                "CLI copies still remain: {}",
+                remaining
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        return Err(format!(
+            "ChatGPT Desktop CLI cache cleanup was incomplete: {}",
+            details.join("; ")
+        ));
+    }
+    Ok(())
 }
 
 /// 解出的副本可能有好几份（每个版本一个 hash 目录，旧的不一定清掉），按修改时间从新到旧。
@@ -389,8 +481,7 @@ fn finder_trash_commands(apps: &[PathBuf]) -> Option<Vec<String>> {
 /// 这处 codex 是不是 ChatGPT Desktop 随附的那份。纯字符串判断、不碰文件系统，
 /// 各平台的路径都能在任一平台单测。
 ///
-/// - Windows：运行时解出的 `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe`，
-///   或包内的 `WindowsApps\OpenAI.Codex_*\…\codex.exe`；
+/// - Windows：包内的 `WindowsApps\OpenAI.Codex_*\…\codex.exe`；
 /// - macOS：`ChatGPT.app` / `Codex.app` 包内的 `codex`。
 ///
 /// 官方独立安装器的 `Programs\OpenAI\Codex\bin\codex.exe`（入口直接在 bin 下）、
@@ -407,13 +498,35 @@ pub(crate) fn is_chatgpt_desktop_codex_path(path: &str) -> bool {
     {
         return true;
     }
-    const EXTRACTED_BIN: &str = "/openai/codex/bin/";
-    if normalized.contains("/programs/openai/codex/bin/") {
-        return false;
+    false
+}
+
+/// 只在 Windows 当前用户的 LocalAppData 下识别桌面版解出的缓存 CLI。
+pub(crate) fn is_chatgpt_desktop_extracted_cli_path(path: &str) -> bool {
+    #[cfg(windows)]
+    {
+        dirs::data_local_dir().is_some_and(|local_data_dir| {
+            is_extracted_cli_path_under_root(path, &local_data_dir.to_string_lossy())
+        })
     }
-    normalized.find(EXTRACTED_BIN).is_some_and(|start| {
-        let rest = &normalized[start + EXTRACTED_BIN.len()..];
-        matches!(rest.split('/').collect::<Vec<_>>().as_slice(), [dir, _] if !dir.is_empty())
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+fn is_extracted_cli_path_under_root(path: &str, local_data_dir: &str) -> bool {
+    fn normalize(path: &str) -> String {
+        let path = path.replace('\\', "/").to_ascii_lowercase();
+        path.strip_prefix("//?/").unwrap_or(&path).to_string()
+    }
+
+    let path = normalize(path);
+    let root = normalize(local_data_dir);
+    let prefix = format!("{}/openai/codex/bin/", root.trim_end_matches('/'));
+    path.strip_prefix(&prefix).is_some_and(|rest| {
+        matches!(rest.split('/').collect::<Vec<_>>().as_slice(), [version, exe] if !version.is_empty() && *exe == "codex.exe")
     })
 }
 
@@ -609,11 +722,73 @@ mod tests {
     }
 
     #[test]
-    fn recognizes_codex_bundled_with_chatgpt_desktop() {
+    fn extracted_cli_cache_paths_are_anchored_to_localappdata() {
+        let local_data_dir = r"C:\Users\me\AppData\Local";
         for path in [
             r"C:\Users\me\AppData\Local\OpenAI\Codex\bin\e78bad9887fa50cf\codex.exe",
             r"\\?\C:\Users\me\AppData\Local\OpenAI\Codex\bin\e78bad9887fa50cf\codex.exe",
+        ] {
+            assert!(
+                is_extracted_cli_path_under_root(path, local_data_dir),
+                "{path}"
+            );
+        }
+        for path in [
             r"D:\Profiles\me\LocalAppData\OpenAI\Codex\bin\0123456789abcdef\codex.exe",
+            r"C:\Users\me\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe",
+            r"C:\Users\me\AppData\Local\OpenAI\Codex\bin\stable\current\codex.exe",
+            "/opt/OpenAI/Codex/bin/stable/codex",
+        ] {
+            assert!(
+                !is_extracted_cli_path_under_root(path, local_data_dir),
+                "{path}"
+            );
+            assert!(!is_chatgpt_desktop_codex_path(path), "{path}");
+        }
+        assert!(!is_chatgpt_desktop_extracted_cli_path(
+            "/opt/OpenAI/Codex/bin/stable/codex"
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn extracted_cli_cache_path_uses_the_current_localappdata_root() {
+        let local_data_dir = dirs::data_local_dir().unwrap();
+        let path = local_data_dir
+            .join("OpenAI")
+            .join("Codex")
+            .join("bin")
+            .join("e78bad9887fa50cf")
+            .join("codex.exe");
+        assert!(is_chatgpt_desktop_extracted_cli_path(
+            &path.to_string_lossy()
+        ));
+    }
+
+    #[test]
+    fn extracted_cli_cache_cleanup_removes_only_cli_executables() {
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join("OpenAI/Codex/bin");
+        let first = bin.join("first-hash");
+        let second = bin.join("second-hash");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::write(first.join("codex.exe"), b"bundled cli").unwrap();
+        std::fs::write(first.join("codex-command-runner.exe"), b"helper").unwrap();
+        std::fs::write(second.join("codex.exe"), b"old bundled cli").unwrap();
+        std::fs::write(bin.join("codex.exe"), b"not a versioned cache").unwrap();
+
+        remove_extracted_cli_copies_under(&bin).unwrap();
+
+        assert!(!first.join("codex.exe").exists());
+        assert!(first.join("codex-command-runner.exe").is_file());
+        assert!(!second.join("codex.exe").exists());
+        assert!(bin.join("codex.exe").is_file());
+    }
+
+    #[test]
+    fn recognizes_codex_bundled_with_chatgpt_desktop() {
+        for path in [
             r"C:\Program Files\WindowsApps\OpenAI.Codex_26.1013.3656.0_x64__2p2nqsd0c76g0\app\resources\codex.exe",
             "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
             "/Users/me/Applications/ChatGPT.app/Contents/Resources/codex",
@@ -635,6 +810,7 @@ mod tests {
             "/Users/me/.nvm/versions/node/v22.0.0/lib/node_modules/@openai/codex/bin/codex.js",
             "/opt/homebrew/Caskroom/codex/0.146.0/bin/codex",
             "/usr/local/bin/codex",
+            "/opt/OpenAI/Codex/bin/stable/codex",
             // 桌面版目录里的其它程序不是 codex 本体。
             r"C:\Users\me\AppData\Local\OpenAI\Codex\bin\e78bad9887fa50cf\codex-command-runner.exe",
             // 插件自带的 app-server 副本不在 ChatGPT.app 里。

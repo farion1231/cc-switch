@@ -19,7 +19,9 @@ mod tool_node_requirement;
 #[path = "tool_uninstall.rs"]
 mod tool_uninstall;
 
-use super::chatgpt_desktop::is_chatgpt_desktop_codex_path;
+use super::chatgpt_desktop::{
+    is_chatgpt_desktop_codex_path, is_chatgpt_desktop_extracted_cli_path,
+};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -1264,15 +1266,18 @@ fn path_default_is_bundled_with_desktop(tool: &str) -> bool {
         )
         .ok()
         .flatten()
-        .is_some_and(|path| is_chatgpt_desktop_codex_path(&path.to_string_lossy()))
+        .is_some_and(|path| is_bundled_with_desktop(tool, &path))
 }
 
 /// 这处 codex 是 ChatGPT Desktop 随附的（入口本身，或软链指向的真身在桌面版里）。
 fn is_bundled_with_desktop(tool: &str, path: &Path) -> bool {
+    let is_desktop_copy = |path: &Path| {
+        let path = path.to_string_lossy();
+        is_chatgpt_desktop_codex_path(&path) || is_chatgpt_desktop_extracted_cli_path(&path)
+    };
     tool == "codex"
-        && (is_chatgpt_desktop_codex_path(&path.to_string_lossy())
-            || std::fs::canonicalize(path)
-                .is_ok_and(|real| is_chatgpt_desktop_codex_path(&real.to_string_lossy())))
+        && (is_desktop_copy(path)
+            || std::fs::canonicalize(path).is_ok_and(|real| is_desktop_copy(&real)))
 }
 
 /// 该工具在 npm 上的预发布通道 tag(靠前者优先)。仅当本地版本已**严格领先**
@@ -7738,10 +7743,22 @@ mod tests {
 
         #[test]
         fn codex_bundled_with_chatgpt_desktop_is_not_a_codex_cli_install() {
-            // ChatGPT Desktop 运行时解出的副本：归桌面版那一行，不算 Codex CLI 的安装。
-            assert!(is_bundled_with_desktop(
+            #[cfg(windows)]
+            {
+                // 只把当前用户 LocalAppData 下桌面版解出的副本归给桌面版。
+                let extracted = dirs::data_local_dir()
+                    .unwrap()
+                    .join("OpenAI")
+                    .join("Codex")
+                    .join("bin")
+                    .join("e78bad9887fa50cf")
+                    .join("codex.exe");
+                assert!(is_bundled_with_desktop("codex", &extracted));
+            }
+            // Linux 上即使自定义安装路径与缓存目录结构相似，也不能误认成桌面版副本。
+            assert!(!is_bundled_with_desktop(
                 "codex",
-                Path::new(r"C:\Users\me\AppData\Local\OpenAI\Codex\bin\e78bad9887fa50cf\codex.exe"),
+                Path::new("/opt/OpenAI/Codex/bin/stable/codex"),
             ));
             // 官方独立安装器那份照旧算；也只认 codex。
             assert!(!is_bundled_with_desktop(
