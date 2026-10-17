@@ -1102,6 +1102,10 @@ async fn handle_responses_for_app(
 
     let connection_guard = result.connection_guard.take();
     let codex_upstream_format = result.codex_upstream_format;
+    let codex_tool_context = result
+        .codex_tool_context
+        .take()
+        .unwrap_or(codex_tool_context);
     ctx.outbound_model = result.outbound_model.take();
     ctx.provider = result.provider;
     let response = result.response;
@@ -1431,6 +1435,10 @@ async fn handle_responses_compact_for_app(
 
     let connection_guard = result.connection_guard.take();
     let codex_upstream_format = result.codex_upstream_format;
+    let codex_tool_context = result
+        .codex_tool_context
+        .take()
+        .unwrap_or(codex_tool_context);
     ctx.outbound_model = result.outbound_model.take();
     ctx.provider = result.provider;
     let response = result.response;
@@ -4205,5 +4213,257 @@ mod stack_tests {
         .await
         .expect("models");
         assert_eq!(body, json!({ "data": [], "has_more": false }));
+    }
+}
+
+#[cfg(test)]
+mod tool_search_handler_tests {
+    use super::*;
+    use crate::{database::Database, provider::Provider};
+    use std::{ffi::OsString, sync::Arc, time::Duration};
+
+    // RequestContext reads device settings before selecting the in-memory provider.
+    // Isolate that read (and any stale-pointer cleanup) from the real user home.
+    struct TestHome {
+        _dir: tempfile::TempDir,
+        previous: Option<OsString>,
+    }
+
+    impl TestHome {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            crate::settings::reload_settings().unwrap();
+            Self {
+                _dir: dir,
+                previous,
+            }
+        }
+    }
+
+    impl Drop for TestHome {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            let _ = crate::settings::reload_settings();
+        }
+    }
+
+    fn upstream_tool_search_response(api_format: &str, streaming: bool) -> String {
+        let arguments = json!({"query": "Find the email search tool", "limit": 2});
+        let encoded = arguments.to_string();
+        let (first, last) = encoded.split_at(encoded.len() / 2);
+        if api_format == "anthropic" {
+            if !streaming {
+                return json!({
+                    "id": "msg_search", "type": "message", "role": "assistant",
+                    "model": "test-model", "stop_reason": "tool_use",
+                    "content": [{"type": "tool_use", "id": "call_search", "name": "tool_search", "input": arguments}]
+                }).to_string();
+            }
+            return [
+                json!({"type": "message_start", "message": {"id": "msg_search", "type": "message", "role": "assistant", "model": "test-model", "content": []}}),
+                json!({"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "call_search", "name": "tool_search", "input": {}}}),
+                json!({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": first}}),
+                json!({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": last}}),
+                json!({"type": "content_block_stop", "index": 0}),
+                json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}}),
+                json!({"type": "message_stop"}),
+            ].iter().map(|event| format!("event: {}\ndata: {event}\n\n", event["type"].as_str().unwrap())).collect();
+        }
+        if !streaming {
+            return json!({
+                "id": "chatcmpl_search", "object": "chat.completion", "model": "test-model",
+                "choices": [{"index": 0, "finish_reason": "tool_calls", "message": {
+                    "role": "assistant", "content": null,
+                    "tool_calls": [{"id": "call_search", "type": "function", "function": {"name": "tool_search", "arguments": encoded}}]
+                }}]
+            }).to_string();
+        }
+        let events = [
+            json!({"id": "chatcmpl_search", "model": "test-model", "choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [{"index": 0, "id": "call_search", "type": "function", "function": {"name": "tool_search", "arguments": first}}]}}]}),
+            json!({"id": "chatcmpl_search", "model": "test-model", "choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "function": {"arguments": last}}]}, "finish_reason": "tool_calls"}]}),
+        ];
+        let mut body: String = events
+            .iter()
+            .map(|event| format!("data: {event}\n\n"))
+            .collect();
+        body.push_str("data: [DONE]\n\n");
+        body
+    }
+
+    fn assert_tool_search_call(item: &Value) {
+        assert_eq!(item["type"], "tool_search_call", "{item}");
+        assert_eq!(item["call_id"], "call_search");
+        assert_eq!(item["execution"], "client");
+        assert_eq!(item["status"], "completed");
+        assert_eq!(
+            item["arguments"],
+            json!({"query": "Find the email search tool", "limit": 2})
+        );
+    }
+
+    async fn assert_injected_tool_search_roundtrip(api_format: &str, streaming: bool) {
+        let _home = TestHome::new();
+        // Never send this fixture or its fake credentials through a configured proxy.
+        assert!(super::super::http_client::get_current_proxy_url().is_none());
+        let captured = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let response_body = upstream_tool_search_response(api_format, streaming);
+        let content_type = if streaming {
+            "text/event-stream"
+        } else {
+            "application/json"
+        };
+        let app = axum::Router::new().fallback(axum::routing::post({
+            let captured = captured.clone();
+            move |uri: axum::http::Uri, Json(body): Json<Value>| {
+                let captured = captured.clone();
+                let response_body = response_body.clone();
+                async move {
+                    captured.lock().await.push((uri, body));
+                    ([("content-type", content_type)], response_body)
+                }
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let db = Arc::new(Database::memory().unwrap());
+        let provider = Provider::with_id(
+            "tool-search-handler-test".to_string(),
+            "Local ToolSearch test".to_string(),
+            json!({
+                "base_url": format!("http://{address}/v1"), "api_format": api_format,
+                "auth": {"OPENAI_API_KEY": "fake-local-test-key"}
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider).unwrap();
+        db.set_current_provider("codex", &provider.id).unwrap();
+        let state = ProxyState::for_test(db);
+        // The client did not advertise tool_search. Only the successful forwarder's
+        // effective context can restore its native item type in the handler.
+        let mut body = json!({
+            "model": "test-model", "input": "Find an available tool", "stream": streaming,
+            "tools": [{"type": "function", "name": "existing_tool", "parameters": {"type": "object"}}]
+        });
+        if streaming {
+            body["tool_choice"] = json!("auto");
+        }
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri(if streaming {
+                "/responses"
+            } else {
+                "/v1/responses"
+            })
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body.to_string()))
+            .unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(5), async {
+            let response = handle_responses(State(state), request).await.unwrap();
+            let status = response.status();
+            let media_type = response.headers()["content-type"]
+                .to_str()
+                .unwrap()
+                .to_string();
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            (status, media_type, bytes)
+        })
+        .await;
+        server.abort();
+        let (status, media_type, bytes) = result.expect("local handler roundtrip timed out");
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{}",
+            String::from_utf8_lossy(&bytes)
+        );
+        assert!(media_type.starts_with(content_type));
+        let captured = captured.lock().await;
+        assert_eq!(captured.len(), 1);
+        assert_eq!(
+            captured[0].0.path(),
+            if api_format == "anthropic" {
+                "/v1/messages"
+            } else {
+                "/v1/chat/completions"
+            }
+        );
+        let upstream = &captured[0].1;
+        assert_eq!(upstream["stream"], streaming);
+        let tools = upstream["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2, "existing tools must survive: {upstream}");
+        assert_eq!(
+            tools
+                .iter()
+                .filter(|tool| tool["name"] == "tool_search"
+                    || tool["function"]["name"] == "tool_search")
+                .count(),
+            1
+        );
+        if streaming {
+            let text = String::from_utf8(bytes.to_vec()).unwrap();
+            let events: Vec<Value> = text
+                .lines()
+                .filter_map(|line| line.strip_prefix("data: "))
+                .filter(|data| *data != "[DONE]")
+                .map(|data| serde_json::from_str(data).unwrap())
+                .collect();
+            assert!(
+                !events
+                    .iter()
+                    .any(|event| event["type"] == "response.failed"),
+                "{text}"
+            );
+            let completed: Vec<_> = events
+                .iter()
+                .filter(|event| event["type"] == "response.completed")
+                .collect();
+            assert_eq!(completed.len(), 1, "{text}");
+            let output = completed[0]["response"]["output"].as_array().unwrap();
+            assert_eq!(output.len(), 1);
+            assert_tool_search_call(&output[0]);
+            let done: Vec<_> = events
+                .iter()
+                .filter(|event| event["type"] == "response.output_item.done")
+                .collect();
+            assert_eq!(done.len(), 1, "{text}");
+            assert_tool_search_call(&done[0]["item"]);
+        } else {
+            let response: Value = serde_json::from_slice(&bytes).unwrap();
+            let output = response["output"].as_array().unwrap();
+            assert_eq!(output.len(), 1);
+            assert_tool_search_call(&output[0]);
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn managed_codex_chat_json_restores_injected_tool_search() {
+        assert_injected_tool_search_roundtrip("openai_chat", false).await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn managed_codex_chat_sse_restores_injected_tool_search() {
+        assert_injected_tool_search_roundtrip("openai_chat", true).await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn managed_codex_anthropic_json_restores_injected_tool_search() {
+        assert_injected_tool_search_roundtrip("anthropic", false).await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn managed_codex_anthropic_sse_restores_injected_tool_search() {
+        assert_injected_tool_search_roundtrip("anthropic", true).await;
     }
 }
