@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { createElement } from "react";
 import type { AppId } from "@/lib/api";
-import type { SessionMeta } from "@/types";
+import type { SessionMeta, SessionTextRange } from "@/types";
 
 export const UNKNOWN_PROJECT_DIR_KEY = "__unknown_project_dir__";
 
@@ -256,23 +256,132 @@ export const groupSessionsByTime = (
 export const buildCdResumeCommand = (projectDir: string, command: string) =>
   `cd '${projectDir.replace(/'/g, `'\\''`)}' && ${command}`;
 
-export const highlightText = (text: string, query: string): ReactNode => {
-  if (!query) return text;
-  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const parts = text.split(new RegExp(`(${escaped})`, "gi"));
-  if (parts.length === 1) return text;
-  return parts.map((part, i) =>
-    i % 2 === 1
-      ? createElement(
-          "mark",
-          {
-            key: i,
-            className: "rounded-sm bg-warning-soft px-0.5 text-inherit",
-          },
-          part,
-        )
-      : part,
-  );
+/** 非重叠的小写字符串匹配，位置映射回原文的 UTF-16 偏移。 */
+export function* findTextMatches(text: string, query: string) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return;
+  const haystack = text.toLowerCase();
+  let at = haystack.indexOf(needle);
+  if (at < 0) return;
+
+  // ASCII 小写长度不变；大段日志不需要逐码点构建偏移数组。
+  if (!/[^\x00-\x7f]/.test(text)) {
+    while (at >= 0) {
+      yield { start: at, end: at + needle.length };
+      at = haystack.indexOf(needle, at + needle.length);
+    }
+    return;
+  }
+
+  // 内容必须整串小写以保留词尾 Σ → ς；逐码点小写只用于计算偏移长度。
+  // 默认 Unicode 小写的上下文规则不会改变长度，İ → i + ◌̇ 则映射回同一码点。
+  const offsets: number[] = [];
+  let originalAt = 0;
+  for (const point of text) {
+    const length = point.toLowerCase().length;
+    for (let i = 0; i < length; i += 1) {
+      offsets.push(originalAt);
+    }
+    originalAt += point.length;
+  }
+
+  while (at >= 0) {
+    const last = offsets[at + needle.length - 1];
+    yield {
+      start: offsets[at],
+      end: last + (text.codePointAt(last)! > 0xffff ? 2 : 1),
+    };
+    at = haystack.indexOf(needle, at + needle.length);
+  }
+}
+
+/** 只渲染纯文本和已验证的原文范围，不重新匹配截断后的上下文。 */
+export const highlightTextRanges = (
+  text: string,
+  ranges: readonly SessionTextRange[],
+): ReactNode => {
+  if (!Array.isArray(ranges)) return text;
+  const valid = ranges
+    .filter(
+      (range) =>
+        range &&
+        Number.isInteger(range.start) &&
+        Number.isInteger(range.end) &&
+        range.start >= 0 &&
+        range.start < range.end &&
+        range.end <= text.length &&
+        !(range.start > 0 && text.codePointAt(range.start - 1)! > 0xffff) &&
+        !(text.codePointAt(range.end - 1)! > 0xffff),
+    )
+    .map(({ start, end }) => ({ start, end }))
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+  const matches: SessionTextRange[] = [];
+  for (const match of valid) {
+    const previous = matches[matches.length - 1];
+    // 小写扩展中的不同匹配可能覆盖同一原文码点；合并，避免重复显示原文。
+    if (previous && match.start < previous.end) {
+      previous.end = Math.max(previous.end, match.end);
+    } else {
+      matches.push(match);
+    }
+  }
+  if (!matches.length) return text;
+
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  for (const { start, end } of matches) {
+    parts.push(
+      text.slice(cursor, start),
+      createElement(
+        "mark",
+        {
+          key: start,
+          className: "rounded-sm bg-warning-soft px-0.5 text-inherit",
+        },
+        text.slice(start, end),
+      ),
+    );
+    cursor = end;
+  }
+  parts.push(text.slice(cursor));
+  return parts;
+};
+
+export const highlightText = (text: string, query: string): ReactNode =>
+  highlightTextRanges(text, [...findTextMatches(text, query)]);
+
+/** 截取并压缩空白，把完整原文的命中范围映射到最终摘录的 UTF-16 坐标。 */
+export const createHighlightedSnippet = (
+  text: string,
+  matches: readonly SessionTextRange[],
+  start = 0,
+  end = text.length,
+): { text: string; highlights: SessionTextRange[] } => {
+  const source = text.slice(start, end);
+  const starts: number[] = [];
+  const ends: number[] = [];
+  let snippet = start > 0 ? "…" : "";
+  for (const part of source.matchAll(/\s+|\S+/g)) {
+    const value = part[0];
+    const whitespace = /^\s/.test(value);
+    const offset = snippet.length;
+    snippet += whitespace ? " " : value;
+    for (let i = 0; i < value.length; i += 1) {
+      starts[part.index + i] = offset + (whitespace ? 0 : i);
+      ends[part.index + i] = offset + (whitespace ? 1 : i + 1);
+    }
+  }
+  const highlights = matches.flatMap((match) => {
+    const left = Math.max(start, match.start);
+    const right = Math.min(end, match.end);
+    return left < right
+      ? [{ start: starts[left - start], end: ends[right - start - 1] }]
+      : [];
+  });
+  return {
+    text: snippet + (end < text.length ? "…" : ""),
+    highlights,
+  };
 };
 
 export const countMatches = (text: string, query: string) => {

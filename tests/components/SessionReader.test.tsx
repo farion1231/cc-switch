@@ -452,6 +452,98 @@ describe("SessionReader", () => {
     expect(screen.getByText(/^1 \/ \d+$/)).toBeInTheDocument();
   });
 
+  it("Unicode 查找数量、高亮与上下处导航保持一致", async () => {
+    renderReader("claude", [
+      msg("user", [text("İstanbul")], { turnId: "t1" }),
+      msg("assistant", [text("İZMİR")], { turnId: "t1" }),
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "在会话中查找" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "查找内容" }), {
+      target: { value: "i\u0307" },
+    });
+
+    expect(await screen.findByText("1 / 3")).toBeInTheDocument();
+    expect(
+      Array.from(
+        conversation().querySelectorAll("mark"),
+        (mark) => mark.textContent,
+      ),
+    ).toEqual(["İ", "İ", "İ"]);
+    fireEvent.click(screen.getByRole("button", { name: "下一个匹配" }));
+    expect(await screen.findByText("2 / 3")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "上一个匹配" }));
+    expect(await screen.findByText("1 / 3")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["İ".repeat(100) + "/NEEDLE/" + "x".repeat(200), "needle", "NEEDLE"],
+    ["x".repeat(80) + "/İ/" + "x".repeat(80), "i\u0307", "İ"],
+    ["A" + "\u0301".repeat(100) + "Σ", "ς", "Σ"],
+    [
+      "😀" + "a".repeat(59) + "NEEDLE" + "b".repeat(59) + "😀",
+      "needle",
+      "NEEDLE",
+    ],
+  ])(
+    "原文片段把 Unicode 小写偏移映射回原文：%s",
+    async (path, query, expected) => {
+      renderReader("claude", [
+        msg("user", [text("查看链接")], { turnId: "t1" }),
+        msg("assistant", [text(`[docs](https://example.test/${path})`)], {
+          turnId: "t1",
+        }),
+      ]);
+      fireEvent.click(screen.getByRole("button", { name: "在会话中查找" }));
+      fireEvent.change(screen.getByRole("textbox", { name: "查找内容" }), {
+        target: { value: query },
+      });
+
+      expect(await screen.findByText("1 / 1")).toBeInTheDocument();
+      const rawMatch =
+        within(conversation()).getByText("原文中的匹配").parentElement!;
+      expect(
+        Array.from(
+          rawMatch.querySelectorAll("mark"),
+          (mark) => mark.textContent,
+        ),
+      ).toEqual([expected]);
+      if (path.includes("😀")) {
+        expect(rawMatch.textContent?.match(/😀/gu)).toHaveLength(2);
+      }
+      expect(
+        within(conversation()).getByRole("link", { name: "docs" }),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it("保留相邻原文片段重叠区域里的全部高亮", async () => {
+    const path = "x" + "a".repeat(49) + "x" + "a".repeat(49) + "x";
+    renderReader("claude", [
+      msg("user", [text("查看链接")], { turnId: "t1" }),
+      msg("assistant", [text(`[docs](https://host.test/${path})`)], {
+        turnId: "t1",
+      }),
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "在会话中查找" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "查找内容" }), {
+      target: { value: "x" },
+    });
+
+    expect(await screen.findByText("1 / 3")).toBeInTheDocument();
+    const rawMatch =
+      within(conversation()).getByText("原文中的匹配").parentElement!;
+    const snippets = rawMatch.querySelectorAll("p");
+    expect(snippets).toHaveLength(2);
+    for (const snippet of snippets) {
+      expect(
+        Array.from(
+          snippet.querySelectorAll("mark"),
+          (mark) => mark.textContent,
+        ),
+      ).toEqual(["x", "x"]);
+    }
+  });
+
   it("右侧对话目录区分人和 Agent，可开关", () => {
     renderReader("claude", fixtures.claude);
     const outline = screen.getByRole("navigation", { name: "对话目录" });
