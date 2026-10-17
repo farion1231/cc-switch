@@ -12,6 +12,21 @@ import { parseOpencodeConfigStrict } from "../helpers/opencodeFormUtils";
 const EMPTY_DISCOVERED_MODELS: Awaited<ReturnType<typeof getOpenCodeModels>> =
   [];
 
+function enabledVariantKeys(variants: object): string[] {
+  return Object.entries(variants as Record<string, unknown>)
+    .filter(
+      ([key, variant]) =>
+        Boolean(key) &&
+        !(
+          variant &&
+          typeof variant === "object" &&
+          "disabled" in variant &&
+          variant.disabled === true
+        ),
+    )
+    .map(([key]) => key);
+}
+
 interface UseOmoModelSourceParams {
   isOmoCategory: boolean;
   providerId?: string;
@@ -193,12 +208,12 @@ export function useOmoModelSource({
           if (
             rawVariants &&
             typeof rawVariants === "object" &&
-            !Array.isArray(rawVariants)
+            !Array.isArray(rawVariants) &&
+            Object.keys(rawVariants).some(Boolean)
           ) {
-            const variantKeys = Object.keys(rawVariants).filter(Boolean);
-            if (variantKeys.length > 0) {
-              variantsMap[value] = variantKeys;
-            }
+            // Keep an empty entry when all configured variants are disabled so
+            // the preset fallback cannot make them selectable again.
+            variantsMap[value] = enabledVariantKeys(rawVariants);
           }
         }
 
@@ -214,7 +229,7 @@ export function useOmoModelSource({
 
             // Variant fallback
             if (!variantsMap[fullKey] && preset.variants) {
-              const presetKeys = Object.keys(preset.variants).filter(Boolean);
+              const presetKeys = enabledVariantKeys(preset.variants);
               if (presetKeys.length > 0) {
                 variantsMap[fullKey] = presetKeys;
               }
