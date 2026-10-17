@@ -329,7 +329,7 @@ fn probe_bundled_cli(status: &mut ChatGptDesktopStatus, candidates: &[PathBuf]) 
     }
 }
 
-/// 桌面版运行时把随附 CLI 解到 `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\`，新的优先。
+/// 桌面版运行时把随附 CLI 解到 `%LOCALAPPDATA%\OpenAI\Codex\bin\` 下的哈希或旧版版本目录，新的优先。
 #[cfg(windows)]
 fn extracted_cli_candidates() -> Vec<PathBuf> {
     let Some(bin) = extracted_cli_bin() else {
@@ -377,7 +377,7 @@ fn extracted_cli_paths_under(bin: &std::path::Path) -> Result<Vec<PathBuf>, Stri
         if !entry
             .file_name()
             .to_str()
-            .is_some_and(is_extracted_cli_cache_hash)
+            .is_some_and(is_extracted_cli_cache_dir_name)
         {
             continue;
         }
@@ -406,11 +406,17 @@ fn extracted_cli_paths_under(bin: &std::path::Path) -> Result<Vec<PathBuf>, Stri
     Ok(paths)
 }
 
-/// Current Windows Desktop cache IDs use 16 hexadecimal characters; names like `stable` may
-/// belong to a separately installed CLI.
+/// 新版缓存目录是 16 位十六进制 ID；旧版用三段纯数字版本号。其它名字（如 `stable`）
+/// 可能是单独安装的 CLI，不能当作桌面版缓存清理。
 #[cfg(any(windows, test))]
-fn is_extracted_cli_cache_hash(name: &str) -> bool {
-    name.len() == 16 && name.bytes().all(|byte| byte.is_ascii_hexdigit())
+fn is_extracted_cli_cache_dir_name(name: &str) -> bool {
+    let is_hash = name.len() == 16 && name.bytes().all(|byte| byte.is_ascii_hexdigit());
+    let parts = name.split('.').collect::<Vec<_>>();
+    let is_legacy_version = parts.len() == 3
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()));
+    is_hash || is_legacy_version
 }
 
 #[cfg(any(windows, test))]
@@ -645,7 +651,7 @@ fn is_extracted_cli_path_under_root(path: &str, local_data_dir: &str) -> bool {
     let root = normalize(local_data_dir);
     let prefix = format!("{}/openai/codex/bin/", root.trim_end_matches('/'));
     path.strip_prefix(&prefix).is_some_and(|rest| {
-        matches!(rest.split('/').collect::<Vec<_>>().as_slice(), [version, exe] if is_extracted_cli_cache_hash(version) && *exe == "codex.exe")
+        matches!(rest.split('/').collect::<Vec<_>>().as_slice(), [version, exe] if is_extracted_cli_cache_dir_name(version) && *exe == "codex.exe")
     })
 }
 
@@ -874,6 +880,7 @@ mod tests {
         let local_data_dir = r"C:\Users\me\AppData\Local";
         for path in [
             r"C:\Users\me\AppData\Local\OpenAI\Codex\bin\e78bad9887fa50cf\codex.exe",
+            r"C:\Users\me\AppData\Local\OpenAI\Codex\bin\0.162.0\codex.exe",
             r"\\?\C:\Users\me\AppData\Local\OpenAI\Codex\bin\e78bad9887fa50cf\codex.exe",
         ] {
             assert!(
@@ -899,6 +906,18 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn extracted_cli_cache_directory_names_are_specific() {
+        assert!(is_extracted_cli_cache_dir_name("e78bad9887fa50cf"));
+        assert!(is_extracted_cli_cache_dir_name("0.162.0"));
+        assert!(!is_extracted_cli_cache_dir_name("26.1013.3656.0"));
+        assert!(!is_extracted_cli_cache_dir_name("stable"));
+        assert!(!is_extracted_cli_cache_dir_name(
+            ".staging-247581e40ee272fb-random"
+        ));
+        assert!(!is_extracted_cli_cache_dir_name("0.162.0-alpha.1"));
+    }
+
     #[cfg(windows)]
     #[test]
     fn extracted_cli_cache_path_uses_the_current_localappdata_root() {
@@ -920,13 +939,16 @@ mod tests {
         let bin = temp.path().join("OpenAI/Codex/bin");
         let first = bin.join("e78bad9887fa50cf");
         let second = bin.join("0123456789abcdef");
+        let legacy = bin.join("0.162.0");
         let standalone = bin.join("stable");
         std::fs::create_dir_all(&first).unwrap();
         std::fs::create_dir_all(&second).unwrap();
+        std::fs::create_dir_all(&legacy).unwrap();
         std::fs::create_dir_all(&standalone).unwrap();
         std::fs::write(first.join("codex.exe"), b"bundled cli").unwrap();
         std::fs::write(first.join("codex-command-runner.exe"), b"helper").unwrap();
         std::fs::write(second.join("codex.exe"), b"old bundled cli").unwrap();
+        std::fs::write(legacy.join("codex.exe"), b"legacy bundled cli").unwrap();
         std::fs::write(standalone.join("codex.exe"), b"standalone cli").unwrap();
         std::fs::write(bin.join("codex.exe"), b"not a versioned cache").unwrap();
 
@@ -935,6 +957,7 @@ mod tests {
         assert!(!first.join("codex.exe").exists());
         assert!(first.join("codex-command-runner.exe").is_file());
         assert!(!second.join("codex.exe").exists());
+        assert!(!legacy.join("codex.exe").exists());
         assert!(standalone.join("codex.exe").is_file());
         assert!(bin.join("codex.exe").is_file());
     }
