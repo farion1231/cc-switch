@@ -1475,6 +1475,67 @@ impl RequestForwarder {
             mapped_body
         };
 
+        // Model selection must precede protocol selection. Keep legacy providers on
+        // their existing path; overrides also apply to native Responses models.
+        let model_protocols_enabled = matches!(app_type, AppType::Claude | AppType::Codex)
+            && (!matches!(app_type, AppType::Codex)
+                || super::providers::is_codex_responses_endpoint(endpoint))
+            && super::providers::model_api_format::has_model_api_formats(provider)
+            && !(matches!(app_type, AppType::Codex)
+                && super::providers::is_codex_official_provider(provider));
+        if model_protocols_enabled && is_full_url {
+            return Err(ProxyError::ConfigError(
+                "Model protocol overrides require a base URL, not a full endpoint URL".to_string(),
+            ));
+        }
+        let mut mapped_body = mapped_body;
+        if model_protocols_enabled
+            && matches!(app_type, AppType::Codex)
+            && super::providers::is_codex_responses_endpoint(endpoint)
+            && !self.keeps_resolved_model()
+        {
+            let explicit_override = mapped_body
+                .get("model")
+                .and_then(Value::as_str)
+                .and_then(|model| {
+                    super::providers::model_api_format::model_api_format(provider, model)
+                })
+                .is_some();
+            if codex_responses_to_chat || codex_responses_to_anthropic || explicit_override {
+                super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+            } else if super::providers::provider_needs_responses_namespace_flatten(provider) {
+                // Native xAI already remaps unknown client models. Do that before
+                // selecting the mapped model's protocol, preserving catalog aliases.
+                if let Some(upstream_model) =
+                    super::providers::codex_provider_upstream_model(provider)
+                {
+                    let allowed = super::providers::transform_codex_responses_xai_sanitize::collect_xai_catalog_model_ids(&provider.settings_config);
+                    super::providers::transform_codex_responses_xai_sanitize::rewrite_xai_unknown_request_model(
+                        &mut mapped_body, &upstream_model, &allowed);
+                }
+            }
+            // Other native Responses gateways keep unlisted model IDs unchanged.
+        }
+        let effective_provider = model_protocols_enabled
+            .then(|| {
+                mapped_body
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .and_then(|model| {
+                        super::providers::model_api_format::provider_for_model(provider, model)
+                    })
+            })
+            .flatten();
+        let provider = effective_provider.as_ref().unwrap_or(provider);
+        if model_protocols_enabled {
+            codex_responses_to_chat = matches!(app_type, AppType::Codex)
+                && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
+            codex_responses_to_anthropic = matches!(app_type, AppType::Codex)
+                && super::providers::should_convert_codex_responses_to_anthropic(
+                    provider, endpoint,
+                );
+        }
+
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
         let is_copilot_codex_responses = matches!(app_type, AppType::Codex)
@@ -1838,7 +1899,10 @@ impl RequestForwarder {
                     "[Codex] Restored or enriched {restored} cached function call item(s) for Chat upstream"
                 );
             }
-            if !self.keeps_resolved_model() && !is_copilot_codex_responses {
+            if !model_protocols_enabled
+                && !self.keeps_resolved_model()
+                && !is_copilot_codex_responses
+            {
                 super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
             }
             let reasoning_config =
@@ -1866,7 +1930,7 @@ impl RequestForwarder {
             chat_body
         } else if codex_responses_to_anthropic {
             let mut mapped_body = mapped_body;
-            if !self.keeps_resolved_model() {
+            if !model_protocols_enabled && !self.keeps_resolved_model() {
                 super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
             }
             // Per-provider output ceiling override. Codex does not forward its
@@ -1998,7 +2062,7 @@ impl RequestForwarder {
                 );
             }
             // Stack 请求只做字段兼容。
-            let upstream_model = if self.keeps_resolved_model() {
+            let upstream_model = if self.keeps_resolved_model() || model_protocols_enabled {
                 None
             } else {
                 super::providers::codex_provider_upstream_model(provider)
@@ -8543,6 +8607,498 @@ mod tests {
             assert!(!requests[1].to_string().contains("\"signature\""));
             assert_eq!(books(&fwd).await, untouched());
             assert!(breaker_untouched(&fwd, "kimi").await);
+        }
+    }
+    mod model_api_formats {
+        use super::*;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use tokio::sync::Mutex;
+
+        struct Seen {
+            path: String,
+            headers: HeaderMap,
+            body: Value,
+        }
+
+        async fn upstream(fail_first: bool) -> (String, Arc<Mutex<Vec<Seen>>>) {
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let fail = Arc::new(AtomicBool::new(fail_first));
+            let app = axum::Router::new().fallback({
+                let seen = seen.clone();
+                move |uri: http::Uri, headers: HeaderMap, bytes: Bytes| {
+                    let seen = seen.clone();
+                    let fail = fail.clone();
+                    async move {
+                        let body: Value = serde_json::from_slice(&bytes).unwrap();
+                        let model = body["model"].as_str().unwrap_or("model").to_string();
+                        let stream = body["stream"].as_bool().unwrap_or(false);
+                        seen.lock().await.push(Seen { path: uri.path().into(), headers, body });
+                        if fail.swap(false, Ordering::SeqCst) {
+                            return (StatusCode::SERVICE_UNAVAILABLE, [(http::header::CONTENT_TYPE, "application/json")], json!({"error":{"message":"temporarily unavailable"}}).to_string());
+                        }
+                        let response = if uri.path().ends_with("chat/completions") {
+                            json!({"id":"chat-1","object":"chat.completion","model":model,"choices":[{"index":0,"message":{"role":"assistant","content":"hello","tool_calls":[{"id":"call-next","type":"function","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1,"completion_tokens":1}})
+                        } else if uri.path().ends_with("messages") {
+                            json!({"id":"msg-1","type":"message","role":"assistant","model":model,"content":[{"type":"text","text":"hello"},{"type":"tool_use","id":"call-next","name":"lookup","input":{}}],"stop_reason":"tool_use","usage":{"input_tokens":1,"output_tokens":1}})
+                        } else {
+                            json!({"id":"resp-1","object":"response","status":"completed","model":model,"output":[{"id":"msg-1","type":"message","role":"assistant","content":[{"type":"output_text","text":"hello","annotations":[]}]},{"id":"fc-next","type":"function_call","call_id":"call-next","name":"lookup","arguments":"{}","status":"completed"}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}})
+                        };
+                        if !stream {
+                            return (StatusCode::OK, [(http::header::CONTENT_TYPE, "application/json")], response.to_string());
+                        }
+                        let sse = if uri.path().ends_with("chat/completions") {
+                            format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+                                json!({"id":"chat-1","object":"chat.completion.chunk","model":model,"choices":[{"index":0,"delta":{"role":"assistant","content":"hello"},"finish_reason":null}]}),
+                                json!({"id":"chat-1","object":"chat.completion.chunk","model":model,"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}))
+                        } else if uri.path().ends_with("messages") {
+                            format!("event: message_start\ndata: {}\n\nevent: content_block_start\ndata: {}\n\nevent: content_block_delta\ndata: {}\n\nevent: content_block_stop\ndata: {}\n\nevent: message_delta\ndata: {}\n\nevent: message_stop\ndata: {}\n\n",
+                                json!({"type":"message_start","message":{"id":"msg-1","type":"message","role":"assistant","model":model,"content":[],"usage":{"input_tokens":1,"output_tokens":0}}}),
+                                json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+                                json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}),
+                                json!({"type":"content_block_stop","index":0}),
+                                json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}),
+                                json!({"type":"message_stop"}))
+                        } else {
+                            format!("event: response.created\ndata: {}\n\nevent: response.completed\ndata: {}\n\n",
+                                json!({"type":"response.created","response":{"id":"resp-1","object":"response","status":"in_progress","output":[]}}),
+                                json!({"type":"response.completed","response":response}))
+                        };
+                        (StatusCode::OK, [(http::header::CONTENT_TYPE, "text/event-stream")], sse)
+                    }
+                }
+            });
+            (serve_upstream(app).await, seen)
+        }
+
+        fn provider(app: &AppType, base: &str) -> Provider {
+            let mut provider = test_provider_with_type(None);
+            provider.category = Some("third_party".into());
+            provider.settings_config = if matches!(app, AppType::Claude) {
+                json!({"env":{"ANTHROPIC_BASE_URL":format!("{base}/v1"),"ANTHROPIC_API_KEY":"sk-shared"}})
+            } else {
+                json!({"auth":{"OPENAI_API_KEY":"sk-shared"},"config": format!("model_provider = \"mixed\"\nmodel = \"default-model\"\n[model_providers.mixed]\nname = \"Mixed\"\nbase_url = \"{base}/v1\"\nwire_api = \"responses\"\n")})
+            };
+            provider.meta = Some(crate::provider::ProviderMeta {
+                api_format: Some("openai_chat".into()),
+                api_key_field: Some("ANTHROPIC_API_KEY".into()),
+                model_api_formats: Some(HashMap::from([
+                    ("messages-model".into(), "anthropic".into()),
+                    ("responses-model".into(), "openai_responses".into()),
+                    ("chat-model".into(), "openai_chat".into()),
+                ])),
+                ..Default::default()
+            });
+            provider
+        }
+        fn body(app: &AppType, model: &str, stream: bool) -> Value {
+            if matches!(app, AppType::Claude) {
+                json!({"model":model,"messages":[{"role":"user","content":"hello"},{"role":"assistant","content":[{"type":"tool_use","id":"call-previous","name":"lookup","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"call-previous","content":"found"}]}],"max_tokens":1024,"stream":stream,"tools":[{"name":"lookup","description":"lookup","input_schema":{"type":"object","properties":{}}}]})
+            } else {
+                json!({"model":model,"input":[{"role":"user","content":[{"type":"input_text","text":"hello"}]},{"type":"function_call","call_id":"call-previous","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call-previous","output":"found"}],"stream":stream,"tools":[{"type":"function","name":"lookup","description":"lookup","parameters":{"type":"object","properties":{}}}]})
+            }
+        }
+        fn forwarder(stack: bool) -> RequestForwarder {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            test_forwarder(Duration::from_secs(5), Duration::from_secs(5)).stack_request(stack)
+        }
+        async fn send(
+            fwd: &RequestForwarder,
+            app: &AppType,
+            providers: Vec<Provider>,
+            model: &str,
+            stream: bool,
+        ) -> ForwardResult {
+            fwd.forward_with_retry(
+                app,
+                http::Method::POST,
+                if matches!(app, AppType::Claude) {
+                    "/v1/messages"
+                } else {
+                    "/responses"
+                },
+                body(app, model, stream),
+                HeaderMap::new(),
+                Extensions::new(),
+                providers,
+            )
+            .await
+            .map_err(|error| error.error)
+            .expect("forward")
+        }
+
+        #[tokio::test]
+        async fn model_api_formats_forward_all_client_protocol_and_stream_combinations() {
+            let (base, seen) = upstream(false).await;
+            for app in [AppType::Claude, AppType::Codex] {
+                let provider = provider(&app, &base);
+                let fwd = forwarder(true);
+                for (model, format, path, codex_format) in [
+                    (
+                        "messages-model[1M]",
+                        "anthropic",
+                        "/v1/messages",
+                        CodexUpstreamFormat::Anthropic,
+                    ),
+                    (
+                        "responses-model",
+                        "openai_responses",
+                        "/v1/responses",
+                        CodexUpstreamFormat::NativeResponses,
+                    ),
+                    (
+                        "chat-model",
+                        "openai_chat",
+                        "/v1/chat/completions",
+                        CodexUpstreamFormat::ChatCompletions,
+                    ),
+                ] {
+                    for stream in [false, true] {
+                        let result = send(&fwd, &app, vec![provider.clone()], model, stream).await;
+                        if matches!(app, AppType::Claude) {
+                            assert_eq!(result.claude_api_format.as_deref(), Some(format));
+                        } else {
+                            assert_eq!(result.codex_upstream_format, Some(codex_format));
+                        }
+                        assert_eq!(
+                            result.provider.meta.as_ref().unwrap().api_format.as_deref(),
+                            Some("openai_chat")
+                        );
+                        // Run the actual response handlers too: clients must see their
+                        // own protocol even when the stored default differs.
+                        let state = super::super::super::server::ProxyState::for_test(Arc::new(
+                            Database::memory().unwrap(),
+                        ));
+                        let original = body(&app, model, stream);
+                        let target = crate::mode::stack::StackTarget {
+                            provider: result.provider.clone(),
+                            upstream_model: model.into(),
+                            original_model: model.into(),
+                        };
+                        let mut ctx = super::super::super::handler_context::RequestContext::new(
+                            &state,
+                            &original,
+                            &HeaderMap::new(),
+                            app.clone(),
+                            "test",
+                            if matches!(app, AppType::Claude) {
+                                "claude"
+                            } else {
+                                "codex"
+                            },
+                            Some(target),
+                        )
+                        .await
+                        .unwrap();
+                        ctx.outbound_model = result.outbound_model;
+                        let response = if matches!(app, AppType::Claude) {
+                            super::super::super::handlers::finish_claude_response(
+                                result.response,
+                                &ctx,
+                                &state,
+                                &original,
+                                stream,
+                                result.claude_api_format.as_deref().unwrap(),
+                                result.connection_guard,
+                            )
+                            .await
+                            .unwrap()
+                        } else {
+                            let tool_context = super::super::super::providers::transform_codex_chat::build_codex_tool_context_from_request(&original);
+                            match result.codex_upstream_format.unwrap() {
+                                CodexUpstreamFormat::Anthropic => super::super::super::handlers::handle_codex_anthropic_to_responses_transform(
+                                    result.response, &ctx, &state, stream, result.connection_guard, tool_context).await.unwrap(),
+                                CodexUpstreamFormat::ChatCompletions => super::super::super::handlers::handle_codex_chat_to_responses_transform(
+                                    result.response, &ctx, &state, stream, result.connection_guard, tool_context).await.unwrap(),
+                                CodexUpstreamFormat::NativeResponses => super::super::super::response_processor::process_response(
+                                    result.response, &ctx, &state, &super::super::super::handler_config::CODEX_PARSER_CONFIG, stream, result.connection_guard).await.unwrap(),
+                            }
+                        };
+                        use http_body_util::BodyExt;
+                        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+                        let text = String::from_utf8(bytes.to_vec()).unwrap();
+                        if stream {
+                            assert!(
+                                text.contains(if matches!(app, AppType::Claude) {
+                                    "message_stop"
+                                } else {
+                                    "response.completed"
+                                }),
+                                "{app:?}/{format}: {text}"
+                            );
+                        } else {
+                            let response: Value = serde_json::from_str(&text).unwrap();
+                            if matches!(app, AppType::Claude) {
+                                assert_eq!(response["type"], "message");
+                                assert_eq!(response["content"][0]["text"], "hello");
+                                assert_eq!(response["content"][1]["type"], "tool_use");
+                                assert_eq!(response["content"][1]["name"], "lookup");
+                            } else {
+                                assert_eq!(response["object"], "response");
+                                assert_eq!(response["output"][0]["content"][0]["text"], "hello");
+                                assert_eq!(response["output"][1]["type"], "function_call");
+                                assert_eq!(response["output"][1]["name"], "lookup");
+                            }
+                        }
+                        let seen = seen.lock().await.pop().unwrap();
+                        assert_eq!(seen.path, path, "{app:?}/{format}/{stream}");
+                        assert_eq!(seen.body["model"], model.trim_end_matches("[1M]"));
+                        if format == "anthropic" {
+                            assert_eq!(seen.headers["x-api-key"], "sk-shared");
+                            assert!(seen.headers.get("authorization").is_none());
+                            assert_eq!(seen.body["tools"][0]["name"], "lookup");
+                            assert!(seen.body.get("messages").is_some());
+                        } else {
+                            assert_eq!(seen.headers["authorization"], "Bearer sk-shared");
+                            assert!(seen.headers.get("x-api-key").is_none());
+                            assert!(seen
+                                .body
+                                .get(if format == "openai_chat" {
+                                    "messages"
+                                } else {
+                                    "input"
+                                })
+                                .is_some());
+                            assert_eq!(
+                                if format == "openai_chat" {
+                                    &seen.body["tools"][0]["function"]["name"]
+                                } else {
+                                    &seen.body["tools"][0]["name"]
+                                },
+                                "lookup"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        #[tokio::test]
+        async fn model_api_formats_share_protocol_settings_but_keep_requested_model_effort() {
+            let (base, seen) = upstream(false).await;
+            let mut provider = provider(&AppType::Codex, &base);
+            let meta = provider.meta.as_mut().unwrap();
+            meta.max_output_tokens = Some(2048);
+            meta.codex_chat_reasoning = Some(
+                serde_json::from_value(json!({
+                    "supportsThinking":true,"supportsEffort":true,"thinkingParam":"thinking",
+                    "effortParam":"reasoning_effort","effortValueMode":"passthrough"
+                }))
+                .unwrap(),
+            );
+            meta.model_api_formats.as_mut().unwrap().extend([
+                ("chat-b".into(), "openai_chat".into()),
+                ("messages-b".into(), "anthropic".into()),
+            ]);
+            let saved = serde_json::to_value(&provider).unwrap();
+            for stream in [false, true] {
+                for (model, effort) in [
+                    ("chat-model", "low"),
+                    ("chat-b", "high"),
+                    ("messages-model", "medium"),
+                    ("messages-b", "high"),
+                    ("responses-model", "high"),
+                ] {
+                    let mut request = body(&AppType::Codex, model, stream);
+                    request["reasoning"] = json!({"effort":effort});
+                    let result = forwarder(true)
+                        .forward_with_retry(
+                            &AppType::Codex,
+                            http::Method::POST,
+                            "/responses",
+                            request,
+                            HeaderMap::new(),
+                            Extensions::new(),
+                            vec![provider.clone()],
+                        )
+                        .await
+                        .map_err(|e| e.error)
+                        .unwrap();
+                    let captured = seen.lock().await.pop().unwrap();
+                    if model.starts_with("chat") {
+                        assert_eq!(captured.path, "/v1/chat/completions");
+                        assert_eq!(captured.body["reasoning_effort"], effort);
+                        assert_eq!(captured.body["thinking"]["type"], "enabled");
+                        assert_ne!(captured.body.get("max_tokens"), Some(&json!(2048)));
+                    } else if model.starts_with("messages") {
+                        assert_eq!(captured.path, "/v1/messages");
+                        assert_eq!(captured.headers["x-api-key"], "sk-shared");
+                        assert_eq!(captured.body["max_tokens"], 2048);
+                        assert!(captured.body.get("reasoning_effort").is_none());
+                    } else {
+                        assert_eq!(captured.path, "/v1/responses");
+                        assert_eq!(captured.body["reasoning"]["effort"], effort);
+                        assert!(captured.body.get("thinking").is_none());
+                        assert!(captured.body.get("max_tokens").is_none());
+                    }
+                    assert_eq!(serde_json::to_value(&result.provider).unwrap(), saved);
+                }
+            }
+        }
+
+        #[tokio::test]
+        async fn model_api_formats_resolve_after_mapping_and_default_fallback() {
+            let (base, seen) = upstream(false).await;
+            let mut claude = provider(&AppType::Claude, &base);
+            claude.settings_config["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"] =
+                json!("responses-model");
+            send(
+                &forwarder(false),
+                &AppType::Claude,
+                vec![claude],
+                "claude-sonnet",
+                false,
+            )
+            .await;
+            let request = seen.lock().await.pop().unwrap();
+            assert_eq!(request.path, "/v1/responses");
+            assert_eq!(request.body["model"], "responses-model");
+            let codex = provider(&AppType::Codex, &base);
+            send(
+                &forwarder(false),
+                &AppType::Codex,
+                vec![codex.clone()],
+                "client-alias",
+                false,
+            )
+            .await;
+            let request = seen.lock().await.pop().unwrap();
+            assert_eq!(request.path, "/v1/chat/completions");
+            assert_eq!(request.body["model"], "default-model");
+            send(
+                &forwarder(false),
+                &AppType::Codex,
+                vec![codex],
+                "messages-model[1M]",
+                false,
+            )
+            .await;
+            let request = seen.lock().await.pop().unwrap();
+            assert_eq!(request.path, "/v1/messages");
+            assert_eq!(request.body["model"], "messages-model");
+            assert!(request.headers["anthropic-beta"]
+                .to_str()
+                .unwrap()
+                .contains("context-1m"));
+            let mut native = provider(&AppType::Codex, &base);
+            native.meta.as_mut().unwrap().api_format = Some("openai_responses".into());
+            send(
+                &forwarder(false),
+                &AppType::Codex,
+                vec![native],
+                "unlisted-native-model",
+                false,
+            )
+            .await;
+            let request = seen.lock().await.pop().unwrap();
+            assert_eq!(request.path, "/v1/responses");
+            assert_eq!(request.body["model"], "unlisted-native-model");
+        }
+
+        #[tokio::test]
+        async fn model_api_formats_preserve_default_protocol_catalog_model_with_one_m() {
+            let (base, seen) = upstream(false).await;
+            // Only another model has an override. The selected catalog model
+            // must keep its identity while falling back to the default protocol.
+            for (format, path) in [
+                ("openai_chat", "/v1/chat/completions"),
+                ("anthropic", "/v1/messages"),
+            ] {
+                for (catalog_model, requested_model) in [
+                    ("selected-model", "selected-model[1M]"),
+                    ("selected-model[1m]", "selected-model[1M]"),
+                    ("selected-model[1M]", "selected-model"),
+                ] {
+                    let mut provider = provider(&AppType::Codex, &base);
+                    provider.meta.as_mut().unwrap().api_format = Some(format.into());
+                    provider.meta.as_mut().unwrap().model_api_formats =
+                        Some([("other-model".into(), "openai_responses".into())].into());
+                    provider.settings_config["modelCatalog"] =
+                        json!({ "models": [{ "model": catalog_model }] });
+                    send(
+                        &forwarder(false),
+                        &AppType::Codex,
+                        vec![provider],
+                        requested_model,
+                        false,
+                    )
+                    .await;
+                    let request = seen.lock().await.pop().unwrap();
+                    assert_eq!(request.path, path);
+                    assert_eq!(request.body["model"], "selected-model");
+                    let has_context_beta = request
+                        .headers
+                        .get("anthropic-beta")
+                        .is_some_and(|value| value.to_str().unwrap().contains("context-1m"));
+                    assert_eq!(
+                        has_context_beta,
+                        format == "anthropic" && requested_model.contains("[1M]")
+                    );
+                }
+            }
+        }
+
+        #[tokio::test]
+        async fn model_api_formats_reject_imported_full_url_conflicts() {
+            let (base, seen) = upstream(false).await;
+            for app in [AppType::Claude, AppType::Codex] {
+                let mut provider = provider(&app, &base);
+                provider.meta.as_mut().unwrap().is_full_url = Some(true);
+                let error = forwarder(true)
+                    .forward_with_retry(
+                        &app,
+                        http::Method::POST,
+                        if matches!(app, AppType::Claude) {
+                            "/v1/messages"
+                        } else {
+                            "/responses"
+                        },
+                        body(&app, "chat-model", false),
+                        HeaderMap::new(),
+                        Extensions::new(),
+                        vec![provider],
+                    )
+                    .await
+                    .err()
+                    .unwrap();
+                assert!(matches!(error.error, ProxyError::ConfigError(_)));
+            }
+            assert!(seen.lock().await.is_empty());
+        }
+
+        #[tokio::test]
+        async fn model_api_formats_reselect_for_failover_provider() {
+            let (base, seen) = upstream(true).await;
+            let mut first = provider(&AppType::Codex, &base);
+            first.id = "first".into();
+            let mut second = first.clone();
+            second.id = "second".into();
+            second
+                .meta
+                .as_mut()
+                .unwrap()
+                .model_api_formats
+                .as_mut()
+                .unwrap()
+                .insert("chat-model".into(), "anthropic".into());
+            let mut fwd = forwarder(true);
+            fwd.max_attempts = 2;
+            let result = send(
+                &fwd,
+                &AppType::Codex,
+                vec![first, second],
+                "chat-model",
+                false,
+            )
+            .await;
+            assert_eq!(result.provider.id, "second");
+            assert_eq!(
+                result.codex_upstream_format,
+                Some(CodexUpstreamFormat::Anthropic)
+            );
+            let requests = seen.lock().await;
+            assert_eq!(requests.len(), 2);
+            assert_eq!(requests[0].path, "/v1/chat/completions");
+            assert_eq!(requests[1].path, "/v1/messages");
         }
     }
 }

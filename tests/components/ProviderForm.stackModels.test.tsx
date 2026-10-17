@@ -65,7 +65,12 @@ function renderForm(
   options: {
     meta?: ProviderMeta;
     category?: ProviderCategory;
-    codexCatalog?: Array<{ model: string; displayName?: string }>;
+    codexCatalog?: Array<{
+      model: string;
+      displayName?: string;
+      reasoningLevels?: string[];
+      defaultReasoningLevel?: string;
+    }>;
     modeView?: AppMode;
     onStackLayoutChange?: (stackLayout: boolean) => void;
   } = {},
@@ -128,7 +133,9 @@ describe("ProviderForm Stack layout (Claude Code)", () => {
     expect(screen.getByDisplayValue("m-s")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Model S")).toBeInTheDocument();
     // 没有 ★：第一行是默认模型，写在「模型列表」后面的「?」里。
-    expect(screen.getByRole("button", { name: "模型列表" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "模型列表" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("providerForm.modelMappingLabel")).toBeNull();
     expect(screen.queryByText("默认兜底模型")).toBeNull();
   });
@@ -136,11 +143,18 @@ describe("ProviderForm Stack layout (Claude Code)", () => {
   it("简化面板的说明收进「?」，高级选项折叠时不挂说明", () => {
     renderForm("claude", vi.fn());
 
-    expect(screen.getByRole("button", { name: "上游格式" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "providerForm.modelApiFormats.defaultProtocol",
+      }),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/一般无需修改/)).toBeNull();
     fireEvent.click(
-      screen.getByRole("button", { name: "providerForm.advancedOptionsToggle" }),
+      screen.getByRole("button", {
+        name: "providerForm.advancedOptionsToggle",
+      }),
     );
+    fireEvent.click(screen.getByText("providerForm.protocolSettings.shared"));
     expect(
       screen.getByText("以下两项只在路由、聚合模式下生效。"),
     ).toBeVisible();
@@ -295,7 +309,9 @@ describe("ProviderForm Stack layout (Codex)", () => {
       ],
     });
 
-    expect(screen.getByRole("button", { name: "模型列表" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "模型列表" }),
+    ).toBeInTheDocument();
     // 有列表时第一行就是默认模型，不再单独显示默认模型框。
     expect(document.getElementById("codexDefaultModel")).toBeNull();
     fireEvent.change(screen.getByDisplayValue("m-1"), {
@@ -388,5 +404,180 @@ describe("ProviderForm Stack layout (Codex)", () => {
     renderForm("codex", vi.fn(), { modeView: "stack" });
     expect(screen.getByText("模型列表")).toBeInTheDocument();
     expect(screen.queryByTestId("codex-config-editor")).toBeNull();
+  });
+});
+
+describe("ProviderForm model protocol metadata", () => {
+  beforeEach(() => {
+    settingsState.enableStackMode = true;
+  });
+  for (const appId of ["claude", "codex"] as const) {
+    it(`${appId}: loads, edits and removes saved model protocol overrides`, async () => {
+      const onSubmit = vi.fn();
+      renderForm(appId, onSubmit, {
+        meta: { modelApiFormats: { "m-a": "anthropic" } },
+      });
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: /高级选项|providerForm.advancedOptionsToggle/,
+        }),
+      );
+      const input = screen.getByRole("textbox", {
+        name: "providerForm.modelApiFormats.model 1",
+      });
+      expect(input).toHaveValue("m-a");
+      fireEvent.change(input, { target: { value: "m-new[1M]" } });
+      const { values } = await save(onSubmit);
+      expect(values.meta?.modelApiFormats).toEqual({ "m-new": "anthropic" });
+      onSubmit.mockClear();
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "providerForm.modelApiFormats.remove 1",
+        }),
+      );
+      expect(
+        (await save(onSubmit)).values.meta?.modelApiFormats,
+      ).toBeUndefined();
+    });
+    it(`${appId}: blocks saving full URL conflicts`, async () => {
+      const onSubmit = vi.fn();
+      renderForm(appId, onSubmit, {
+        meta: { isFullUrl: true, modelApiFormats: { "m-a": "anthropic" } },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+    it(`${appId}: hides overrides for official cards`, () => {
+      renderForm(appId, vi.fn(), {
+        category: "official",
+        meta: { modelApiFormats: { "m-a": "anthropic" } },
+      });
+      expect(
+        screen.queryByText("providerForm.modelApiFormats.title"),
+      ).toBeNull();
+    });
+    it(`${appId}: rejects duplicate models and incomplete protocols`, async () => {
+      const onSubmit = vi.fn();
+      renderForm(appId, onSubmit, {
+        meta: { modelApiFormats: { "m-a": "anthropic", "m-b": "openai_chat" } },
+      });
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: /高级选项|providerForm.advancedOptionsToggle/,
+        }),
+      );
+      fireEvent.mouseDown(
+        screen.getByRole("tab", { name: /Chat Completions · 1/ }),
+        {
+          button: 0,
+          ctrlKey: false,
+        },
+      );
+      fireEvent.change(
+        screen.getByRole("textbox", {
+          name: "providerForm.modelApiFormats.model 2",
+        }),
+        { target: { value: "m-a[1M]" } },
+      );
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "providerForm.modelApiFormats.duplicate",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+  }
+  for (const stack of [true, false]) {
+    it(`codex ${stack ? "stack" : "standard"}: groups existing settings by protocol and retains each model's depth`, async () => {
+      settingsState.enableStackMode = stack;
+      const onSubmit = vi.fn();
+      const codexCatalog = [
+        {
+          model: "chat-a",
+          reasoningLevels: ["low", "high"],
+          defaultReasoningLevel: "high",
+        },
+        {
+          model: "chat-b",
+          reasoningLevels: ["low", "medium"],
+          defaultReasoningLevel: "low",
+        },
+        {
+          model: "messages",
+          reasoningLevels: ["low", "medium", "high"],
+          defaultReasoningLevel: "medium",
+        },
+      ];
+      renderForm("codex", onSubmit, {
+        codexCatalog,
+        meta: {
+          apiFormat: "openai_responses",
+          modelApiFormats: {
+            "chat-a": "openai_chat",
+            "chat-b": "openai_chat",
+            messages: "anthropic",
+          },
+          apiKeyField: "ANTHROPIC_API_KEY",
+          maxOutputTokens: 4096,
+          codexChatReasoning: { supportsThinking: true, supportsEffort: true },
+        },
+      });
+      if (stack)
+        fireEvent.click(
+          screen.getByRole("button", {
+            name: /高级选项|providerForm.advancedOptionsToggle/,
+          }),
+        );
+      expect(
+        screen.getByRole("tab", { name: /Chat Completions · 2/ }),
+      ).toHaveAttribute("aria-selected", "true");
+      expect(
+        screen.getByRole("switch", { name: "支持思考等级" }),
+      ).toBeChecked();
+      expect(screen.queryByDisplayValue("4096")).toBeNull();
+      fireEvent.mouseDown(
+        screen.getByRole("tab", { name: /Anthropic Messages · 1/ }),
+        {
+          button: 0,
+          ctrlKey: false,
+        },
+      );
+      expect(screen.getByDisplayValue("4096")).toBeInTheDocument();
+      fireEvent.change(screen.getByDisplayValue("4096"), {
+        target: { value: "8192" },
+      });
+      expect(screen.queryByRole("switch", { name: "支持思考等级" })).toBeNull();
+      fireEvent.mouseDown(screen.getByRole("tab", { name: /Responses · 0/ }), {
+        button: 0,
+        ctrlKey: false,
+      });
+      expect(
+        screen.getByRole("group", { name: "Responses" }),
+      ).toHaveTextContent("providerForm.protocolSettings.responsesHint");
+      expect(
+        screen.getByText("providerForm.protocolSettings.shared"),
+      ).toBeInTheDocument();
+      const { values, settings } = await save(onSubmit);
+      expect(settings.modelCatalog.models).toEqual(codexCatalog);
+      expect(values.meta?.maxOutputTokens).toBe(8192);
+      expect(values.meta?.codexChatReasoning?.supportsEffort).toBe(true);
+      expect(values.meta).not.toHaveProperty("modelApiOptions");
+    });
+  }
+
+  it("opens protocol tabs without changing existing settings when overrides are absent", () => {
+    renderForm("codex", vi.fn(), {
+      meta: { apiFormat: "anthropic", maxOutputTokens: 4096 },
+    });
+    expect(
+      screen.queryByRole("group", {
+        name: "providerForm.protocolSettings.messages",
+      }),
+    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /高级选项|providerForm.advancedOptionsToggle/,
+      }),
+    );
+    expect(screen.getByDisplayValue("4096")).toBeInTheDocument();
   });
 });

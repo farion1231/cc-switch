@@ -201,7 +201,9 @@ describe("完整表单按实际模式提示（Claude Code）", () => {
       screen.queryAllByText(text).filter((el) => !el.closest(".sr-only"));
 
     expect(
-      screen.getByRole("button", { name: "上游格式" }),
+      screen.getByRole("button", {
+        name: /默认上游协议|providerForm.modelApiFormats.defaultProtocol/,
+      }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "认证字段" }),

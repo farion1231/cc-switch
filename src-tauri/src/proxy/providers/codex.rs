@@ -522,7 +522,22 @@ pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> 
         .map(str::trim)
         .filter(|model| !model.is_empty())
     {
-        if catalog_model_ids.contains(request_model) {
+        let model_protocols_enabled = super::model_api_format::has_model_api_formats(provider);
+        // Overrides select the model before the forwarder strips [1M]. Compare
+        // catalog IDs without the marker, but preserve it in the request so a
+        // selected Messages upstream can still emit its context-1m beta.
+        let matches_catalog = catalog_model_ids.contains(request_model)
+            || (model_protocols_enabled
+                && catalog_model_ids.iter().any(|catalog_model| {
+                    super::super::model_mapper::strip_one_m_suffix_for_upstream(catalog_model)
+                        == super::super::model_mapper::strip_one_m_suffix_for_upstream(
+                            request_model,
+                        )
+                }));
+        if matches_catalog
+            || (model_protocols_enabled
+                && super::model_api_format::model_api_format(provider, request_model).is_some())
+        {
             return Some(request_model.to_string());
         }
     }
