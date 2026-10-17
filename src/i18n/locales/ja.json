@@ -4512,6 +4512,7 @@
       "sameName": "同名の MCP は該当アプリのスイッチをオンにしただけで、設定は CC Switch のものが優先されます。",
       "failedTitle": "読み込めなかったアプリがあります",
       "filesTitle": "読み込んだファイル",
+      "extraSourceLabel": "その他のソース",
       "claudeNote": "（トップレベルの mcpServers）",
       "ok": "OK"
     },
