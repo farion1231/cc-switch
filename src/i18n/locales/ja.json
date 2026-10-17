@@ -4237,6 +4237,11 @@
       "enteredStackLive": "{{app}} を集約に切り替えました。集約したモデルが /model に表示されます。",
       "enteredStackDesktop": "{{app}} を集約に切り替えました。{{app}} を再起動すると、集約したモデルがモデル一覧に表示されます。",
       "exited": "直接接続に戻しました：{{app}} は {{provider}} に直接接続しています。",
+      "routeRemembered": "プロバイダー {{provider}} を保存しました。クライアントがルーティングまたは集約に接続すると使用されます。",
+      "routeTargetChanged": "ルーティング先を {{provider}} に設定しました。",
+      "routeSwitched": "ルーティング先を {{provider}} に切り替えました。以降の新しいリクエストはこのプロバイダーを使用します。",
+      "stackDefaultChanged": "集約のデフォルトを {{provider}} に設定しました。選択済みの集約モデルは引き続き各モデルのプロバイダーを使用します。",
+      "clientConfigChanged": "クライアント設定も更新されました。更新後の設定を読み込むには {{app}} を再起動してください。",
       "defaultRemembered": "集約に切り替えると、{{provider}} が既定のプロバイダーになります。",
       "restartHint": "{{app}} の再起動後に反映されます。",
       "failed": "切り替えに失敗しました：{{detail}}"

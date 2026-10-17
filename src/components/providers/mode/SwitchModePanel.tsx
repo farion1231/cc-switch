@@ -28,6 +28,7 @@ import {
 import { useModeActions } from "@/hooks/useModeActions";
 import { getRoutingReason } from "@/utils/routingReason";
 import { CODEX_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
+import { routeSwitchNotification } from "@/utils/routeSwitchNotification";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
@@ -214,12 +215,11 @@ export function SwitchModePanel({
 
   const rememberDefault = async (provider: Provider) => {
     try {
-      await proxyApi.setProxyRoute(app, provider.id);
+      const result = await proxyApi.setProxyRoute(app, provider.id);
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
-      toast.success(
-        t("mode.toast.defaultRemembered", { provider: provider.name }),
-        { closeButton: true },
-      );
+      toast.success(routeSwitchNotification(result, app, provider.name, t), {
+        closeButton: true,
+      });
     } catch (error) {
       toast.error(
         t("mode.toast.failed", {

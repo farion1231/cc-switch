@@ -4237,6 +4237,11 @@
       "enteredStackLive": "{{app}} switched to Aggregation. The aggregated models are now in /model.",
       "enteredStackDesktop": "{{app}} switched to Aggregation. Restart {{app}} to see the aggregated models in its model list.",
       "exited": "Back to direct: {{app}} now connects to {{provider}} directly.",
+      "routeRemembered": "Provider {{provider}} saved for when the client connects through routing or aggregation.",
+      "routeTargetChanged": "Route target set to {{provider}}.",
+      "routeSwitched": "Route switched to {{provider}}. New requests will use this provider.",
+      "stackDefaultChanged": "Aggregation default set to {{provider}}. Selected aggregated models still use their respective providers.",
+      "clientConfigChanged": " Client configuration also changed. Restart {{app}} to load the updated configuration.",
       "defaultRemembered": "{{provider}} will be the default provider once you switch to Aggregation.",
       "restartHint": " Restart {{app}} to apply.",
       "failed": "Couldn't switch: {{detail}}"

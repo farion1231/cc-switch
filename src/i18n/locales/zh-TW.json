@@ -4238,6 +4238,11 @@
       "enteredStackLive": "{{app}} 已切換到聚合模式，聚合的模型已出現在 /model 裡。",
       "enteredStackDesktop": "{{app}} 已切換到聚合模式。重新啟動 {{app}} 後，聚合的模型會出現在模型清單裡。",
       "exited": "已回到直連：{{app}} 現在直接連線 {{provider}}。",
+      "routeRemembered": "已記住供應商 {{provider}}，用戶端接入路由或聚合後使用。",
+      "routeTargetChanged": "路由目標已設為 {{provider}}。",
+      "routeSwitched": "路由已切換至 {{provider}}，後續新請求將使用此供應商。",
+      "stackDefaultChanged": "聚合預設供應商已設為 {{provider}}；已選聚合模型仍使用各自的供應商。",
+      "clientConfigChanged": "用戶端設定也已更新；重新啟動 {{app}} 以載入更新後的設定。",
       "defaultRemembered": "切換到聚合模式後，預設供應商是 {{provider}}。",
       "restartHint": "重新啟動 {{app}} 後生效。",
       "failed": "切換失敗：{{detail}}"
