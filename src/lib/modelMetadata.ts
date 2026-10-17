@@ -50,6 +50,29 @@ export interface PresetModelSource {
   models: ReadonlyMap<string, KnownModelMetadata>;
 }
 
+/**
+ * GPT 模型的窗口上限：Codex 官方目录给 GPT-5.5 以后各款的默认窗口。OpenAI API
+ * 写的是 1.05M，但很多中转站的 GPT 是从 ChatGPT 订阅分发的，按订阅的窗口卡；
+ * 只看地址分不出是哪种。窗口写大了客户端不压缩，直到上游拒收、这一轮失败；
+ * 写小只是提前压缩，所以一律按订阅的窗口封顶。预设里的 GPT 窗口同样遵守。
+ */
+export const GPT_CONTEXT_WINDOW_CAP = 272_000;
+
+/** 是不是 OpenAI 的 GPT 模型（`gpt-6-astra`、`openai/gpt-5.6-sol`、`openai-gpt-6-1-sol`）。 */
+export function isGptModelId(modelId: string): boolean {
+  return /(?:^|[^a-z0-9])gpt-/.test(normalizeModelsDevModelId(modelId));
+}
+
+/** GPT 模型的窗口按 {@link GPT_CONTEXT_WINDOW_CAP} 封顶，本来就小的不动。 */
+export function capGptContextWindow(
+  modelId: string,
+  contextWindow: number,
+): number {
+  return isGptModelId(modelId)
+    ? Math.min(contextWindow, GPT_CONTEXT_WINDOW_CAP)
+    : contextWindow;
+}
+
 const VERSION_SEGMENT = /^v\d+(?:(?:alpha|beta)\d*)?$/;
 const REQUEST_SEGMENTS = new Set(["responses", "messages"]);
 
@@ -315,6 +338,7 @@ function fieldCount(metadata: KnownModelMetadata): number {
  * 3. models.dev 里的原厂条目（不带价格：转售价不等于原厂价；思考档位照用，
  *    中转站绝大多数与原厂一致），
  *    认出了供应商也照样用它补供应商条目里没写的字段。
+ * GPT 模型的窗口不论来源都按 {@link GPT_CONTEXT_WINDOW_CAP} 封顶。
  * 都查不到返回 null。
  */
 export function resolveModelMetadata(
@@ -362,5 +386,9 @@ export function resolveModelMetadata(
     }
   }
 
-  return sources.length > 0 ? { ...metadata, sources } : null;
+  if (sources.length === 0) return null;
+  if (metadata.contextWindow !== undefined) {
+    metadata.contextWindow = capGptContextWindow(id, metadata.contextWindow);
+  }
+  return { ...metadata, sources };
 }

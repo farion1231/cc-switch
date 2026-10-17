@@ -132,6 +132,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     description: "OpenModel",
     category: "aggregator",
     isPartner: true,
+    partnerPromotionKey: "openmodel",
     icon: "openmodel",
   },
   {
@@ -155,21 +156,24 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.app",
-    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.net",
+    apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
     settingsConfig: {
       env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.aigocode.app",
+        GOOGLE_GEMINI_BASE_URL: "https://api.aigocode.dev",
         GEMINI_MODEL: "gemini-3.6-flash",
       },
     },
-    baseURL: "https://api.aigocode.app",
+    baseURL: "https://api.aigocode.dev",
     model: "gemini-3.6-flash",
     description: "AIGoCode",
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "aigocode",
-    endpointCandidates: ["https://api.aigocode.app"],
+    endpointCandidates: [
+      "https://api.aigocode.dev",
+      "https://api.aigocode.app",
+    ],
     icon: "aigocode",
     iconColor: "#5B7FFF",
   },
@@ -317,8 +321,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     model: "gemini-3.6-flash",
     description: "Code0",
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "code0",
     icon: "code0",
   },
   {
@@ -466,6 +468,29 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     partnerPromotionKey: "xycai",
     endpointCandidates: ["https://apicdn.xycai.us", "https://apicdn.xyc.ai"],
     icon: "xycai",
+  },
+  {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    // 官方 Gemini CLI 文档（docs.modelflare.dev/guides/clients/gemini-cli，
+    // 2026-10-15 核对）：base 用站点根。Gemini CLI 走 /v1beta，只有
+    // modelflare.dev 提供，origin 子域不提供，故不加备用端点
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://modelflare.dev",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.6-flash",
+      },
+    },
+    baseURL: "https://modelflare.dev",
+    model: "gemini-3.6-flash",
+    description: "Modelflare",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
@@ -691,6 +716,22 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     description: "TokenFlux",
     category: "aggregator",
     icon: "tokenflux",
+  },
+  {
+    name: "AIComing",
+    websiteUrl: "https://aicoming.top",
+    apiKeyUrl: "https://aicoming.top/console#keys",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.aicoming.top",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://api.aicoming.top",
+    model: "gemini-3.1-pro-preview",
+    description: "AIComing",
+    category: "aggregator",
+    icon: "aicoming",
   },
 ];
 

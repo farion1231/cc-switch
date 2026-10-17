@@ -8,13 +8,14 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::CostCalculator;
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
+    estimated_latency_ms, metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
 };
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
 use crate::services::usage_stats::find_model_pricing;
 use rust_decimal::Decimal;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -31,7 +32,10 @@ const REVISION_TAIL_BYTES: u64 = 4096;
 const REVISION_MARKER_SHIFT: u32 = 61;
 const REVISION_COMPLETE_SHIFT: u32 = 60;
 const REVISION_SIZE_SHIFT: u32 = 32;
+// Keep the original cursor format so existing history stays incremental.
 const REVISION_MARKER: u64 = 0b101;
+// Earlier builds of the timing fix wrote this tag with the same cursor layout.
+const COMPAT_REVISION_MARKER: u64 = 0b110;
 const REVISION_SIZE_MASK: u64 = (1 << 28) - 1;
 const PI_REQUEST_DEDUP_SQL: &str = "SELECT EXISTS(
          SELECT 1 FROM session_usage_dedup
@@ -45,6 +49,8 @@ const PI_LEGACY_SEMANTIC_DEDUP_SQL: &str = "SELECT EXISTS(
          SELECT 1 FROM session_usage_dedup
          WHERE data_source = ?1 AND semantic_id = ?2 AND has_entry_id = 0
      )";
+// Reserved session_log_sync row; unlike `settings`, it stays on this device.
+const CHILD_CUTOFF_KEY: &str = "pi:child-cutoff";
 
 #[derive(Debug, Clone, Copy, Default)]
 struct PiCosts {
@@ -86,6 +92,7 @@ struct PiUsageRecord {
     cache_read_tokens: u32,
     cache_write_tokens: u32,
     costs: PiCosts,
+    latency_ms: i64,
     status_code: i64,
     error_message: Option<String>,
     created_at: i64,
@@ -129,8 +136,35 @@ struct PiRequestIdentity {
     has_entry_id: bool,
 }
 
-/// Import usage from every Pi session file discoverable by the session
-/// browser's current root and layout rules.
+#[derive(Default)]
+struct ChildScope {
+    /// Canonical paths of every file in this round.
+    imported: HashSet<PathBuf>,
+    /// Extension-less session paths; a file below one of them is a nested subagent or fork session.
+    stems: HashSet<PathBuf>,
+    /// Unix seconds of this build's first Pi import.
+    cutoff: i64,
+}
+
+impl ChildScope {
+    fn new(files: &[PathBuf], cutoff: i64) -> Self {
+        Self {
+            imported: files
+                .iter()
+                .filter_map(|file| fs::canonicalize(file).ok())
+                .collect(),
+            stems: files.iter().map(|file| file.with_extension("")).collect(),
+            cutoff,
+        }
+    }
+
+    fn is_nested(&self, file: &Path) -> bool {
+        file.ancestors().skip(1).any(|dir| self.stems.contains(dir))
+    }
+}
+
+/// Import usage from every Pi session file under the session browser's current
+/// root and layout rules, including nested subagent sessions.
 pub fn sync_pi_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let files = crate::session_manager::providers::pi::session_files()
         .map_err(|error| AppError::Config(format!("无法发现 Pi 会话: {error}")))?;
@@ -152,8 +186,18 @@ fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
         }
     };
 
+    let cutoff = match child_cutoff(db, &cursors) {
+        Ok(cutoff) => cutoff,
+        Err(error) => {
+            result
+                .errors
+                .push(format!("记录 Pi 子会话起算时间失败: {error}"));
+            return result;
+        }
+    };
+    let scope = ChildScope::new(files, cutoff);
     for file_path in files {
-        match sync_single_pi_file(db, file_path, &cursors) {
+        match sync_single_pi_file(db, file_path, &cursors, &scope) {
             Ok(file_result) => result.merge(file_result),
             Err(error) => {
                 let message = format!("{}: {error}", file_path.display());
@@ -174,10 +218,29 @@ fn sync_pi_files(db: &Database, files: &[PathBuf]) -> SessionSyncResult {
     result
 }
 
+fn child_cutoff(
+    db: &Database,
+    cursors: &std::collections::HashMap<String, crate::services::session_usage::SyncCursor>,
+) -> Result<i64, AppError> {
+    if let Some(cursor) = cursors.get(CHILD_CUTOFF_KEY) {
+        return Ok(cursor.last_synced_at);
+    }
+    let now = chrono::Utc::now().timestamp();
+    let conn = lock_conn!(db.conn);
+    conn.execute(
+        "INSERT INTO session_log_sync (file_path, last_modified, last_line_offset, last_synced_at)
+         VALUES (?1, 0, 0, ?2)",
+        rusqlite::params![CHILD_CUTOFF_KEY, now],
+    )
+    .map_err(|error| AppError::Database(format!("写入 Pi 子会话起算时间失败: {error}")))?;
+    Ok(now)
+}
+
 fn sync_single_pi_file(
     db: &Database,
     file_path: &Path,
     cursors: &std::collections::HashMap<String, crate::services::session_usage::SyncCursor>,
+    scope: &ChildScope,
 ) -> Result<SessionSyncResult, AppError> {
     let metadata = fs::symlink_metadata(file_path)
         .map_err(|error| AppError::Config(format!("无法读取 Pi 会话文件元数据: {error}")))?;
@@ -223,6 +286,7 @@ fn sync_single_pi_file(
         start_at_byte,
         revision.file_size,
         modified,
+        scope,
     )?;
     let conn = lock_conn!(db.conn);
     let tx = conn
@@ -253,7 +317,8 @@ fn decode_pi_sync_state(
     let cursor = cursor?;
     let last_line_offset = cursor.last_line_offset;
     let encoded_revision = cursor.last_synced_at as u64;
-    if encoded_revision >> REVISION_MARKER_SHIFT != REVISION_MARKER {
+    let marker = encoded_revision >> REVISION_MARKER_SHIFT;
+    if marker != REVISION_MARKER && marker != COMPAT_REVISION_MARKER {
         return None;
     }
     let file_size = (encoded_revision >> REVISION_SIZE_SHIFT) & REVISION_SIZE_MASK;
@@ -343,6 +408,7 @@ fn parse_pi_file(
     start_at_byte: Option<u64>,
     snapshot_size: u64,
     file_modified_nanos: i64,
+    scope: &ChildScope,
 ) -> Result<ParsedPiFile, AppError> {
     let file = File::open(file_path)
         .map_err(|error| AppError::Config(format!("无法打开 Pi 会话文件: {error}")))?;
@@ -354,6 +420,7 @@ fn parse_pi_file(
     let mut session_timestamp = None;
     let mut records = Vec::new();
     let mut incomplete_tail = false;
+    let nested = scope.is_nested(file_path);
 
     loop {
         buffer.clear();
@@ -431,14 +498,22 @@ fn parse_pi_file(
             }
             continue;
         }
-        if let Some(record) = parse_usage_record(
+        let Some(record) = parse_usage_record(
             &value,
             session_id.as_deref().unwrap_or_default(),
             session_timestamp,
             file_modified_nanos / 1_000_000_000,
-        ) {
-            records.push(record);
+        ) else {
+            continue;
+        };
+        // Before the cutoff the parent's projections carry child usage; from it on, the child files do.
+        let from_cutoff = record.created_at >= scope.cutoff;
+        if (nested && !from_cutoff)
+            || (from_cutoff && duplicates_imported_sessions(&value, &scope.imported))
+        {
+            continue;
         }
+        records.push(record);
     }
 
     if session_id.is_none() && !incomplete_tail {
@@ -449,6 +524,47 @@ fn parse_pi_file(
         last_complete_line: line_number,
         incomplete_tail,
     })
+}
+
+/// A pi-subagents projection sums the usage of the child sessions it links.
+fn duplicates_imported_sessions(entry: &Value, imported_sessions: &HashSet<PathBuf>) -> bool {
+    let links = projection_session_files(entry);
+    !links.is_empty()
+        && links
+            .into_iter()
+            .all(|link| fs::canonicalize(link).is_ok_and(|path| imported_sessions.contains(&path)))
+}
+
+fn projection_session_files(entry: &Value) -> Vec<&str> {
+    let mut links = Vec::new();
+    let message = entry.get("message").filter(|message| {
+        entry.get("type").and_then(Value::as_str) == Some("message")
+            && message.get("role").and_then(Value::as_str) == Some("toolResult")
+            && message.get("usage").is_some()
+    });
+    if let Some(details) = message.and_then(|message| message.get("details")) {
+        collect_session_files(details, &mut links);
+    }
+    links
+}
+
+fn collect_session_files<'a>(value: &'a Value, links: &mut Vec<&'a str>) {
+    match value {
+        Value::Object(fields) => {
+            for (key, field) in fields {
+                match field {
+                    Value::String(link) if key == "sessionFile" => links.push(link),
+                    _ => collect_session_files(field, links),
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_session_files(item, links);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn parse_usage_record(
@@ -553,6 +669,19 @@ fn parse_usage_record(
 
     let identity = pi_request_identity(entry, kind, usage_value, message);
 
+    // Pi initializes an assistant message's timestamp before the request and
+    // appends the entry on message_end. Their difference includes first-token
+    // waiting, so it is an estimate, not an exact generation time. Other usage
+    // carriers have no equivalent request-start timestamp.
+    let latency_ms = (kind == "assistant")
+        .then(|| {
+            let start = message?.get("timestamp").and_then(parse_timestamp_millis)?;
+            let end = entry.get("timestamp").and_then(parse_timestamp_millis)?;
+            estimated_latency_ms(start, end)
+        })
+        .flatten()
+        .unwrap_or(0);
+
     Some(PiUsageRecord {
         request_id: identity.request_id,
         semantic_id: identity.semantic_id,
@@ -565,6 +694,7 @@ fn parse_usage_record(
         cache_read_tokens,
         cache_write_tokens,
         costs,
+        latency_ms,
         status_code,
         error_message,
         created_at,
@@ -855,7 +985,7 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
             cache_read_cost.to_string(),
             cache_write_cost.to_string(),
             total_cost.to_string(),
-            0i64,
+            record.latency_ms,
             Option::<i64>::None,
             record.status_code,
             record.error_message,
@@ -874,6 +1004,7 @@ fn insert_pi_record(conn: &rusqlite::Connection, record: &PiUsageRecord) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::fs::FileTimes;
     use std::io::Write;
 
@@ -886,6 +1017,82 @@ mod tests {
         for line in lines {
             writeln!(file, "{line}").expect("write session line");
         }
+    }
+
+    fn write_nested_lines(path: &Path, lines: &[&str]) {
+        fs::create_dir_all(path.parent().expect("session parent")).expect("create session parent");
+        write_lines(path, lines);
+    }
+
+    fn session_header(id: &str, parent: Option<&Path>) -> String {
+        let mut header = json!({
+            "type": "session",
+            "version": 3,
+            "id": id,
+            "timestamp": "2023-11-14T22:13:20Z",
+            "cwd": "/work",
+        });
+        if let Some(parent) = parent {
+            header["parentSession"] = Value::from(parent.to_string_lossy());
+        }
+        header.to_string()
+    }
+
+    fn run_session(stem: &Path, run: &str) -> PathBuf {
+        stem.join(run).join("run-0").join("session.jsonl")
+    }
+
+    fn projection_line(
+        id: &str,
+        timestamp: &str,
+        tool_name: &str,
+        details: Value,
+        input: u32,
+    ) -> String {
+        json!({
+            "type": "message",
+            "id": id,
+            "parentId": null,
+            "timestamp": timestamp,
+            "message": {
+                "role": "toolResult",
+                "toolCallId": format!("call-{id}"),
+                "toolName": tool_name,
+                "content": [{"type": "text", "text": "done"}],
+                "details": details,
+                "usage": {
+                    "input": input,
+                    "output": 2,
+                    "cacheRead": 5,
+                    "cacheWrite": 2,
+                    "totalTokens": 999,
+                    "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0}
+                }
+            }
+        })
+        .to_string()
+    }
+
+    fn pi_rows_input_and_unknown(db: &Database) -> Result<(i64, i64, i64), AppError> {
+        let conn = lock_conn!(db.conn);
+        let totals = conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(model = 'unknown'), 0)
+             FROM proxy_request_logs WHERE data_source = 'pi_session'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        Ok(totals)
+    }
+
+    fn set_child_cutoff(db: &Database, seconds: i64) -> Result<(), AppError> {
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT OR REPLACE INTO session_log_sync
+             (file_path, last_modified, last_line_offset, last_synced_at)
+             VALUES (?1, 0, 0, ?2)",
+            rusqlite::params![CHILD_CUTOFF_KEY, seconds],
+        )?;
+        Ok(())
     }
 
     fn assistant_line(id: &str, timestamp: &str, input: u32) -> String {
@@ -1114,6 +1321,221 @@ mod tests {
     }
 
     #[test]
+    fn estimates_assistant_latency_from_its_own_timestamps() {
+        let mut entry: Value =
+            serde_json::from_str(&assistant_line("timed", "2023-11-14T22:13:22.250Z", 1))
+                .expect("assistant entry");
+        for start in [
+            Value::from(1_700_000_000_000i64),
+            Value::from(1_700_000_000i64),
+            Value::from("2023-11-14T22:13:20Z"),
+        ] {
+            entry["message"]["timestamp"] = start;
+            for end in [
+                Value::from("2023-11-14T22:13:22.250Z"),
+                Value::from(1_700_000_002_250i64),
+            ] {
+                entry["timestamp"] = end;
+                let record = parse_usage_record(&entry, "session", None, 0).expect("usage record");
+                assert_eq!(record.latency_ms, 2_250);
+                assert_eq!(record.created_at, 1_700_000_002);
+            }
+        }
+    }
+
+    #[test]
+    fn missing_or_implausible_timestamps_do_not_estimate_latency() {
+        let mut entry: Value =
+            serde_json::from_str(&assistant_line("untimed", "2023-11-14T22:13:22Z", 1))
+                .expect("assistant entry");
+        let start_ms = 1_700_000_000_000i64;
+        for (start, end) in [
+            (Value::Null, Value::from(start_ms + 2_000)),
+            (Value::from(start_ms), Value::Null),
+            (Value::from("invalid"), Value::from(start_ms + 2_000)),
+            (Value::from(start_ms), Value::from("invalid")),
+            (Value::from(start_ms), Value::from(start_ms)),
+            (Value::from(start_ms), Value::from(start_ms - 1_000)),
+            (Value::from(start_ms), Value::from(start_ms + 99)),
+            (Value::from(start_ms), Value::from(start_ms + 3_600_001)),
+            (Value::from(i64::MIN), Value::from(i64::MAX)),
+        ] {
+            entry["message"]["timestamp"] = start;
+            entry["timestamp"] = end;
+            // Header/mtime fallbacks are for created_at only, never latency.
+            let record = parse_usage_record(&entry, "session", Some(1_700_000_000), 1_700_000_000)
+                .expect("usage record");
+            assert_eq!(record.latency_ms, 0, "{entry}");
+        }
+    }
+
+    #[test]
+    fn non_assistant_usage_does_not_infer_request_timing() {
+        let mut entry: Value =
+            serde_json::from_str(&assistant_line("tool", "2023-11-14T22:13:22Z", 1))
+                .expect("assistant entry");
+        entry["message"]["role"] = Value::from("toolResult");
+        let record = parse_usage_record(&entry, "session", None, 0).expect("tool usage");
+        assert_eq!(record.latency_ms, 0);
+
+        entry["usage"] = entry["message"]["usage"].clone();
+        for kind in ["compaction", "branch_summary"] {
+            entry["type"] = Value::from(kind);
+            let record = parse_usage_record(&entry, "session", None, 0).expect("summary usage");
+            assert_eq!(record.latency_ms, 0);
+        }
+    }
+
+    #[test]
+    fn imports_timing_on_initial_and_incremental_sync_for_speed_stats() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = session_path(temp.path(), "timing");
+        let first = assistant_line("first", "2023-11-14T22:13:30Z", 1)
+            .replace(r#""output":2"#, r#""output":900"#);
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"session-timing","timestamp":"2023-11-14T22:00:00Z","cwd":"/work"}"#,
+                &first,
+            ],
+        );
+        let db = Database::memory()?;
+        let initial = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(initial.errors.is_empty());
+        assert_eq!(initial.imported, 1);
+
+        let second = assistant_line("second", "2023-11-14T22:14:20Z", 1)
+            .replace("1700000000000", &1_700_000_040_000i64.to_string())
+            .replace(r#""output":2"#, r#""output":600"#);
+        {
+            let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+            writeln!(file, "{second}").unwrap();
+        }
+        let appended = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(appended.errors.is_empty());
+        assert_eq!((appended.imported, appended.skipped), (1, 0));
+        {
+            let conn = lock_conn!(db.conn);
+            let mut statement = conn.prepare(
+                "SELECT latency_ms, first_token_ms FROM proxy_request_logs ORDER BY created_at",
+            )?;
+            let timings = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            assert_eq!(timings, vec![(10_000, None), (20_000, None)]);
+        }
+        let stats = db.get_provider_stats(None, None, Some(APP_TYPE), None, None)?;
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].est_speed_output_tokens, 1_500);
+        assert_eq!(stats[0].est_speed_duration_ms, 30_000);
+        assert_eq!(stats[0].speed_output_tokens, 0);
+        assert_eq!(stats[0].speed_generation_ms, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn compatible_cursors_stay_incremental_without_changing_history() -> Result<(), AppError> {
+        for marker in [0b101u64, 0b110] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = session_path(temp.path(), "compatible-cursor");
+            let header = r#"{"type":"session","version":3,"id":"compatible-cursor"}"#;
+            let first = assistant_line("untimed", "2023-11-14T22:13:30Z", 1);
+            let second = assistant_line("timed", "2023-11-14T22:13:40Z", 2);
+            write_lines(&path, &[header, &first, &second]);
+            let db = Database::memory()?;
+            assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 2);
+            lock_conn!(db.conn).execute(
+                "UPDATE proxy_request_logs SET latency_ms = CASE input_tokens WHEN 1 THEN 0 ELSE 1234 END,
+                    total_cost_usd = '0.42'",
+                [],
+            )?;
+            let cursors = crate::services::session_usage::load_sync_cursors(&db)?;
+            let cursor = cursors[path.to_string_lossy().as_ref()];
+            let revision = (cursor.last_synced_at as u64 & ((1 << REVISION_MARKER_SHIFT) - 1))
+                | (marker << REVISION_MARKER_SHIFT);
+            lock_conn!(db.conn).execute(
+                "UPDATE session_log_sync SET last_synced_at = ?1 WHERE file_path = ?2",
+                rusqlite::params![revision as i64, path.to_string_lossy()],
+            )?;
+
+            let unchanged = sync_pi_files(&db, std::slice::from_ref(&path));
+            assert!(unchanged.errors.is_empty());
+            assert_eq!((unchanged.imported, unchanged.skipped), (0, 0));
+
+            let third = assistant_line("new", "2023-11-14T22:13:50Z", 3);
+            {
+                let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+                writeln!(file, "{third}").unwrap();
+            }
+            let appended = sync_pi_files(&db, std::slice::from_ref(&path));
+            assert!(appended.errors.is_empty());
+            assert_eq!((appended.imported, appended.skipped), (1, 0));
+            let cursors = crate::services::session_usage::load_sync_cursors(&db)?;
+            let cursor = cursors[path.to_string_lossy().as_ref()];
+            assert_eq!(cursor.last_line_offset, 4);
+            assert_eq!(cursor.last_synced_at as u64 >> REVISION_MARKER_SHIFT, 0b101);
+
+            // A normal rewrite may revisit old requests, but deduplication must
+            // leave their missing or previously recorded timing untouched.
+            write_lines(&path, &[&format!("{header} "), &first, &second, &third]);
+            let rewritten = sync_pi_files(&db, std::slice::from_ref(&path));
+            assert!(rewritten.errors.is_empty());
+            assert_eq!((rewritten.imported, rewritten.skipped), (0, 3));
+            let conn = lock_conn!(db.conn);
+            let mut stmt = conn.prepare(
+                "SELECT latency_ms, total_cost_usd FROM proxy_request_logs ORDER BY input_tokens",
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            assert_eq!(
+                rows,
+                vec![
+                    (0, "0.42".into()),
+                    (1234, "0.42".into()),
+                    (30_000, "0".into())
+                ]
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_entry_id_migration_preserves_existing_timing() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = session_path(temp.path(), "legacy-timing");
+        let header = r#"{"type":"session","version":1,"id":"session-legacy","timestamp":"2023-11-14T22:13:20Z","cwd":"/work"}"#;
+        let migrated = assistant_line("generated", "2023-11-14T22:13:30Z", 1);
+        let legacy = migrated.replace(r#""id":"generated","parentId":null,"#, "");
+        write_lines(&path, &[header, &legacy]);
+        let db = Database::memory()?;
+        assert_eq!(sync_pi_files(&db, std::slice::from_ref(&path)).imported, 1);
+        lock_conn!(db.conn).execute("UPDATE proxy_request_logs SET latency_ms = 0", [])?;
+
+        write_lines(
+            &path,
+            &[
+                &header.replace(r#""version":1"#, r#""version":3"#),
+                &migrated,
+            ],
+        );
+        let migrated = sync_pi_files(&db, std::slice::from_ref(&path));
+        assert!(migrated.errors.is_empty());
+        assert_eq!((migrated.imported, migrated.skipped), (0, 1));
+        let totals: (i64, i64) = lock_conn!(db.conn).query_row(
+            "SELECT COUNT(*), SUM(latency_ms) FROM proxy_request_logs",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(totals, (1, 0));
+        Ok(())
+    }
+
+    #[test]
     fn forked_history_is_not_imported_twice() -> Result<(), AppError> {
         let temp = tempfile::tempdir().expect("tempdir");
         let parent = session_path(temp.path(), "parent");
@@ -1305,7 +1727,14 @@ mod tests {
             writeln!(file, "{second}").expect("append second record");
         }
 
-        let parsed = parse_pi_file(&path, 0, None, snapshot_size, modified)?;
+        let parsed = parse_pi_file(
+            &path,
+            0,
+            None,
+            snapshot_size,
+            modified,
+            &ChildScope::default(),
+        )?;
         assert_eq!(parsed.records.len(), 1);
         assert_eq!(parsed.last_complete_line, 2);
         Ok(())
@@ -1533,6 +1962,268 @@ mod tests {
         assert_eq!(result.files_scanned, 1);
         assert_eq!(result.errors.len(), 1);
         assert!(result.errors[0].contains("安全上限"));
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn subagent_usage_is_counted_once_from_the_child_sessions() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let agent_dir = temp.path().join("agent");
+        let _agent = crate::pi_config::test_support::TestAgentDir::at(&agent_dir);
+        let project = agent_dir.join("sessions").join("project");
+        let parent = session_path(&project, "parent");
+        let native_fork = session_path(&project, "native-fork");
+        let stem = parent.with_extension("");
+        let child_a = run_session(&stem, "run-a");
+        let grandchild = run_session(&child_a.with_extension(""), "run-g");
+        let child_b = run_session(&stem, "run-b");
+        let child_c = run_session(&stem, "run-c");
+        let fork = stem.join("forks").join("fork.jsonl");
+        let parent_call = assistant_line("p1", "2023-11-14T22:13:21Z", 100);
+        let projection_a = projection_line(
+            "t-a",
+            "2023-11-14T22:13:40Z",
+            "subagent",
+            json!({"results": [{"sessionFile": child_a.to_string_lossy()}]}),
+            10,
+        );
+
+        write_nested_lines(
+            &parent,
+            &[
+                &session_header("session-parent", None),
+                &parent_call,
+                &projection_a,
+                &projection_line(
+                    "t-b",
+                    "2023-11-14T22:13:41Z",
+                    "bg_wait",
+                    json!({"completions": [{"results": [{"sessionFile": child_b.to_string_lossy()}]}]}),
+                    20,
+                ),
+                r#"{"type":"custom_message","id":"notice","parentId":null,"timestamp":"2023-11-14T22:13:50Z","customType":"subagent-notify","content":"run-c finished","display":true}"#,
+                &projection_line(
+                    "t-f",
+                    "2023-11-14T22:13:55Z",
+                    "subagent",
+                    json!({"results": [{"sessionFile": fork.to_string_lossy()}]}),
+                    80,
+                ),
+            ],
+        );
+        write_nested_lines(
+            &child_a,
+            &[
+                &session_header("session-a", Some(&parent)),
+                &assistant_line("a1", "2023-11-14T22:13:25Z", 10),
+                &projection_line(
+                    "t-g",
+                    "2023-11-14T22:13:27Z",
+                    "subagent",
+                    json!({"results": [{"sessionFile": grandchild.to_string_lossy()}]}),
+                    7,
+                ),
+            ],
+        );
+        write_nested_lines(
+            &grandchild,
+            &[
+                &session_header("session-g", Some(&child_a)),
+                &assistant_line("g1", "2023-11-14T22:13:26Z", 7),
+            ],
+        );
+        write_nested_lines(
+            &child_b,
+            &[
+                &session_header("session-b", Some(&parent)),
+                &assistant_line("b1", "2023-11-14T22:13:32Z", 20),
+            ],
+        );
+        write_nested_lines(
+            &child_c,
+            &[
+                &session_header("session-c", Some(&parent)),
+                &assistant_line("c1", "2023-11-14T22:13:37Z", 40),
+            ],
+        );
+        write_nested_lines(
+            &fork,
+            &[
+                &session_header("session-fork", Some(&parent)),
+                &parent_call,
+                &projection_a,
+                &assistant_line("f1", "2023-11-14T22:13:47Z", 80),
+            ],
+        );
+        write_nested_lines(
+            &native_fork,
+            &[
+                &session_header("session-native-fork", Some(&parent)),
+                &parent_call,
+                &projection_a,
+            ],
+        );
+
+        let db = Database::memory()?;
+        set_child_cutoff(&db, 1_700_000_000)?;
+        let result = sync_pi_usage(&db)?;
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(pi_rows_input_and_unknown(&db)?, (6, 257, 0));
+
+        let again = sync_pi_usage(&db)?;
+        assert!(again.errors.is_empty(), "{:?}", again.errors);
+        assert_eq!(again.imported, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn usage_before_the_cutoff_stays_as_projections_and_later_usage_comes_from_the_children(
+    ) -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let parent = session_path(temp.path(), "parent");
+        let stem = parent.with_extension("");
+        let child_a = run_session(&stem, "run-a");
+        let child_c = run_session(&stem, "run-c");
+        let parent_call = assistant_line("p1", "2023-11-14T22:13:21Z", 100);
+        let projection_a = projection_line(
+            "t-a",
+            "2023-11-14T22:13:30Z",
+            "subagent",
+            json!({"results": [{"sessionFile": child_a.to_string_lossy()}]}),
+            10,
+        );
+        write_lines(
+            &parent,
+            &[
+                &session_header("session-parent", None),
+                &parent_call,
+                &projection_a,
+            ],
+        );
+        write_nested_lines(
+            &child_a,
+            &[
+                &session_header("session-a", Some(&parent)),
+                &assistant_line("a1", "2023-11-14T22:13:25Z", 10),
+                &assistant_line("a2", "2023-11-14T22:14:00Z", 5),
+            ],
+        );
+        write_nested_lines(
+            &child_c,
+            &[
+                &session_header("session-c", Some(&parent)),
+                &assistant_line("c1", "2023-11-14T22:13:35Z", 40),
+            ],
+        );
+
+        let db = Database::memory()?;
+        set_child_cutoff(&db, 1_700_000_020)?;
+        let files = [parent.clone(), child_a.clone(), child_c.clone()];
+        let first = sync_pi_files(&db, &files);
+        assert!(first.errors.is_empty(), "{:?}", first.errors);
+        assert_eq!(first.imported, 3);
+        assert_eq!(pi_rows_input_and_unknown(&db)?, (3, 115, 1));
+
+        write_lines(
+            &parent,
+            &[
+                &session_header("session-parent", None),
+                &parent_call,
+                &projection_a,
+                &projection_line(
+                    "t-a2",
+                    "2023-11-14T22:14:05Z",
+                    "subagent",
+                    json!({"results": [{"sessionFile": child_a.to_string_lossy()}]}),
+                    15,
+                ),
+            ],
+        );
+        let second = sync_pi_files(&db, &files);
+        assert!(second.errors.is_empty(), "{:?}", second.errors);
+        assert_eq!((second.imported, second.skipped), (0, 0));
+        assert_eq!(pi_rows_input_and_unknown(&db)?, (3, 115, 1));
+
+        lock_conn!(db.conn).execute(
+            "DELETE FROM session_log_sync WHERE file_path = ?1",
+            [parent.to_string_lossy().to_string()],
+        )?;
+        let rescan = sync_pi_files(&db, &files);
+        assert!(rescan.errors.is_empty(), "{:?}", rescan.errors);
+        assert_eq!((rescan.imported, rescan.skipped), (0, 2));
+        assert_eq!(pi_rows_input_and_unknown(&db)?, (3, 115, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn projections_of_children_outside_the_imported_files_are_still_counted() -> Result<(), AppError>
+    {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let parent = session_path(temp.path(), "parent");
+        let inside = run_session(&parent.with_extension(""), "run-a");
+        let relocated = session_path(&temp.path().join("moved"), "session");
+        write_nested_lines(&inside, &[&session_header("session-a", Some(&parent))]);
+        write_nested_lines(&relocated, &[&session_header("session-m", Some(&parent))]);
+        write_lines(
+            &parent,
+            &[
+                &session_header("session-parent", None),
+                &projection_line(
+                    "t-in",
+                    "2023-11-14T22:13:30Z",
+                    "subagent",
+                    json!({"results": [{"sessionFile": inside.to_string_lossy()}]}),
+                    10,
+                ),
+                &projection_line(
+                    "t-out",
+                    "2023-11-14T22:13:31Z",
+                    "subagent",
+                    json!({"results": [{"sessionFile": relocated.to_string_lossy()}]}),
+                    20,
+                ),
+                &projection_line(
+                    "t-mixed",
+                    "2023-11-14T22:13:32Z",
+                    "subagent",
+                    json!({"results": [
+                        {"sessionFile": inside.to_string_lossy()},
+                        {"sessionFile": relocated.to_string_lossy()}
+                    ]}),
+                    30,
+                ),
+            ],
+        );
+
+        let db = Database::memory()?;
+        set_child_cutoff(&db, 1_700_000_000)?;
+        let result = sync_pi_files(&db, &[parent.clone(), inside.clone()]);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(pi_rows_input_and_unknown(&db)?, (2, 50, 2));
+        Ok(())
+    }
+
+    #[test]
+    fn the_first_import_records_the_cutoff_once() -> Result<(), AppError> {
+        let recorded = |db: &Database| -> Result<i64, AppError> {
+            let conn = lock_conn!(db.conn);
+            Ok(conn.query_row(
+                "SELECT last_synced_at FROM session_log_sync WHERE file_path = ?1",
+                [CHILD_CUTOFF_KEY],
+                |row| row.get(0),
+            )?)
+        };
+        let db = Database::memory()?;
+        let before = chrono::Utc::now().timestamp();
+        let first = sync_pi_files(&db, &[]);
+        assert!(first.errors.is_empty(), "{:?}", first.errors);
+        assert!(recorded(&db)? >= before);
+
+        set_child_cutoff(&db, 42)?;
+        let second = sync_pi_files(&db, &[]);
+        assert!(second.errors.is_empty(), "{:?}", second.errors);
+        assert_eq!(recorded(&db)?, 42);
         Ok(())
     }
 }

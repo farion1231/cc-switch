@@ -8,7 +8,13 @@ import {
   opencodePresetModelSources,
   piPresetModelSources,
 } from "@/config/presetModelMetadata";
-import { resolveModelMetadata } from "@/lib/modelMetadata";
+import { OPENCODE_PRESET_MODEL_VARIANTS } from "@/config/opencodeProviderPresets";
+import { piModelCatalog } from "@/config/piModelCatalog";
+import {
+  GPT_CONTEXT_WINDOW_CAP,
+  isGptModelId,
+  resolveModelMetadata,
+} from "@/lib/modelMetadata";
 import type { ModelsDevResponse } from "@/lib/modelsDev";
 
 describe("preset model metadata sources", () => {
@@ -78,5 +84,45 @@ describe("preset model metadata sources", () => {
       maxOutputTokens: 262144,
       inputModalities: ["text", "image"],
     });
+  });
+
+  it("caps every GPT window in the presets at the subscription window", () => {
+    const windows: [string, number | undefined][] = [
+      ...[
+        codexPresetModelSources,
+        hermesPresetModelSources,
+        mcodePresetModelSources,
+        openclawPresetModelSources,
+        opencodePresetModelSources,
+        piPresetModelSources,
+      ].flatMap((sources) =>
+        sources().flatMap((source) =>
+          [...source.models].map(
+            ([id, metadata]) =>
+              [id, metadata.contextWindow] as [string, number | undefined],
+          ),
+        ),
+      ),
+      ...Object.values(OPENCODE_PRESET_MODEL_VARIANTS)
+        .flat()
+        .map(
+          (variant) =>
+            [variant.id, variant.contextLimit] as [string, number | undefined],
+        ),
+      ...Object.entries(piModelCatalog).map(
+        ([id, entry]) =>
+          [id, entry.capabilities.contextWindow] as [
+            string,
+            number | undefined,
+          ],
+      ),
+    ];
+    const gptWindows = windows.filter(([id]) => isGptModelId(id));
+    expect(gptWindows.length).toBeGreaterThan(0);
+    expect(
+      gptWindows.filter(
+        ([, window]) => window !== undefined && window > GPT_CONTEXT_WINDOW_CAP,
+      ),
+    ).toEqual([]);
   });
 });
