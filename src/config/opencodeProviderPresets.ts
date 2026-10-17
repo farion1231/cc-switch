@@ -135,7 +135,7 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
     {
       id: "gpt-5.6-sol",
       name: "GPT-5.6 Sol",
-      contextLimit: 400000,
+      contextLimit: 272000,
       outputLimit: 128000,
       modalities: { input: ["text", "image"], output: ["text"] },
       variants: {
@@ -545,7 +545,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
@@ -703,6 +703,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     isPartner: true,
+    partnerPromotionKey: "openmodel",
     icon: "openmodel",
   },
   {
@@ -741,7 +742,72 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     isPartner: true,
+    partnerPromotionKey: "grooroute",
     icon: "grooroute",
+  },
+  {
+    name: "TokenFactory",
+    nameKey: "providerForm.presets.tokenfactory",
+    websiteUrl: "https://tokenfactory.cn",
+    apiKeyUrl: "https://console.tokenfactory.cn/login",
+    // 官方 OpenCode 文档（docs.tokenfactory.cn/tools/opencode，2026-10-15
+    // 核对）：openai-compatible + /v1
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "TokenFactory",
+      options: {
+        baseURL: "https://api.tokenfactory.cn/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "glm-5.3": {
+          name: "GLM-5.3",
+          reasoning: true,
+          limit: { context: 1048576, output: 128000 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "kimi-k3": {
+          name: "Kimi K3",
+          reasoning: true,
+          limit: { context: 1048576, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "deepseek-v4-pro-0813": {
+          name: "DeepSeek V4 Pro",
+          reasoning: true,
+          limit: { context: 1048576, output: 384000 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "deepseek-v4.1-flash": {
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 384000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "glm-5.3-flash": {
+          name: "GLM-5.3-Flash",
+          reasoning: true,
+          limit: { context: 1048576, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "qwen3.8-flash": {
+          name: "Qwen3.8 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "tokenfactory",
   },
   {
     name: "Shengsuanyun",
@@ -835,7 +901,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
         "moonshotai/kimi-k3": {
@@ -917,7 +983,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
@@ -1117,7 +1183,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
@@ -1392,7 +1458,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
@@ -1425,7 +1491,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
         },
       },
     },
@@ -1677,19 +1743,19 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-sol": {
           name: "GPT-6 Sol",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
         "gpt-6-luna": {
           name: "GPT-6 Luna",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
@@ -1724,13 +1790,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-sol": {
           name: "GPT-6 Sol",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
@@ -1763,7 +1829,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
@@ -1779,6 +1845,54 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         editorValue: "",
       },
     },
+  },
+  {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    // 官方 OpenCode 文档（docs.modelflare.dev/guides/clients/opencode，
+    // 2026-10-15 核对）：openai-compatible + /v1、默认 gpt-5.6-sol
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Modelflare",
+      options: {
+        baseURL: "https://modelflare.dev/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-5.6-sol": {
+          name: "GPT-5.6 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-sol": {
+          name: "GPT-6 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
@@ -1827,7 +1941,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
@@ -3484,13 +3598,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "gpt-6-sol": {
           name: "GPT-6 Sol",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
         "gpt-6-astra": {
           name: "GPT-6 Astra",
           reasoning: true,
-          limit: { context: 1050000, output: 128000 },
+          limit: { context: 272000, output: 128000 },
           modalities: { input: ["text", "image"], output: ["text"] },
         },
       },

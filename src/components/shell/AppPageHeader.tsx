@@ -65,7 +65,7 @@ export function AppPageHeader({
         {icon && (
           <span
             aria-hidden="true"
-            className="flex h-[22px] w-[22px] shrink-0 items-center justify-center text-fg-1"
+            className="pointer-events-none flex h-[22px] w-[22px] shrink-0 items-center justify-center text-fg-1"
           >
             {icon}
           </span>

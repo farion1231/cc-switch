@@ -211,6 +211,10 @@ interface CodexFormFieldsProps {
   // Model Catalog
   catalogModels?: CodexCatalogModel[];
   onCatalogModelsChange?: (models: CodexCatalogModel[]) => void;
+  // Auto Review (approval reviewer) model: `modelCatalog.autoReviewModel`, one of
+  // the catalog rows. Codex only; the Stack layout omits it (aggregation settings apply).
+  autoReviewModel?: string;
+  onAutoReviewModelChange?: (model: string) => void;
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
@@ -317,6 +321,10 @@ const CODEX_REASONING_LEVELS = [
 // Select value standing for "don't write the effort key" (Radix Select items
 // can't use an empty string). Shared by the main and subagent effort pickers.
 const EFFORT_INHERIT = "__inherit__";
+// 自动审批模型下拉的「不写覆盖、用 Codex 的默认」（Radix Select 不收空值）。
+const AUTO_REVIEW_DEFAULT = "__codex_default__";
+// Codex 不写覆盖时用的审批模型（codex-rs `DEFAULT_APPROVAL_REVIEW_PREFERRED_MODEL`）。
+const CODEX_AUTO_REVIEW_MODEL = "codex-auto-review";
 
 // Trigger label for the picked levels, kept narrow for the catalog cell. Each
 // run of three or more adjacent canonical levels collapses to "first → last"
@@ -440,9 +448,13 @@ function ReasoningLevelsEditor({
         sideOffset={6}
         avoidCollisions
         collisionPadding={8}
-        className="z-[1000] w-[var(--radix-popover-trigger-width)] p-0 border-border"
+        // Flipping alone can't help when neither side of the trigger has
+        // room for the whole panel (short window, row mid-form): cap it to
+        // the space Radix measured and let the level list scroll instead of
+        // cutting off the bottom, including the default-level picker.
+        className="z-[1000] flex max-h-[var(--radix-popover-content-available-height)] w-[var(--radix-popover-trigger-width)] flex-col p-0 border-border"
       >
-        <Command>
+        <Command className="min-h-0 flex-1">
           <CommandInput
             placeholder={t("codexConfig.reasoningLevelsSearch", {
               defaultValue: "Search reasoning levels...",
@@ -474,7 +486,7 @@ function ReasoningLevelsEditor({
           </CommandList>
         </Command>
         {selected.length > 0 && (
-          <div className="border-t border-border p-2">
+          <div className="shrink-0 border-t border-border p-2">
             <span className="text-xs text-fg-2">
               {t("codexConfig.defaultReasoningLevelLabel", {
                 defaultValue: "Default level",
@@ -581,6 +593,8 @@ export function CodexFormFields({
   promptCacheRouting,
   onPromptCacheRoutingChange,
   catalogModels = [],
+  autoReviewModel = "",
+  onAutoReviewModelChange,
   onCatalogModelsChange,
   speedTestEndpoints,
   customUserAgent,
@@ -1146,6 +1160,32 @@ export function CodexFormFields({
     onCatalogModelsChange,
     trimmedDefaultModel,
   ]);
+
+  // 自动审批模型只能选列表里的：审批请求和主对话发给同一家，后端也只写目录里有的模型。
+  const autoReviewChoices = useMemo(() => {
+    const seen = new Set<string>();
+    const choices: { model: string; label: string }[] = [];
+    for (const row of catalogRows) {
+      const model = row.model.trim();
+      if (!model || seen.has(model)) continue;
+      seen.add(model);
+      choices.push({ model, label: row.displayName?.trim() || model });
+    }
+    return choices;
+  }, [catalogRows]);
+  const trimmedAutoReviewModel = autoReviewModel.trim();
+  const autoReviewSelectValue = autoReviewChoices.some(
+    (choice) => choice.model === trimmedAutoReviewModel,
+  )
+    ? trimmedAutoReviewModel
+    : AUTO_REVIEW_DEFAULT;
+  // 不写覆盖时 Codex 先找目录里的 codex-auto-review：没有列表（用 Codex 自带的列表）或列表里
+  // 就有它时用它，否则由主模型自己审批。
+  const autoReviewDefaultIsCodex =
+    autoReviewChoices.length === 0 ||
+    autoReviewChoices.some(
+      (choice) => choice.model === CODEX_AUTO_REVIEW_MODEL,
+    );
 
   // 子代理模型不在模型映射里：Codex 拿不到它的窗口和推理档位；经路由转成 Chat / Anthropic
   // 协议时还会被换成默认模型（转换路径只放行映射里的模型）。没有映射、走原生 Responses 的
@@ -2071,7 +2111,7 @@ export function CodexFormFields({
       {defaultModelField}
 
       {/* 子代理 —— config.toml 的 [agents] default_subagent_model / default_subagent_reasoning_effort。
-          留空删键，子代理跟随主模型；聚合模式下不写进 live。 */}
+          留空删键，子代理跟随主模型；聚合模式下不写进 live（改用聚合设置）。 */}
       {category !== "official" && onSubagentModelChange && (
         <div className="space-y-1.5">
           {labelWithHelp(
@@ -2080,7 +2120,7 @@ export function CodexFormFields({
             }),
             t("codexConfig.subagentModelHint", {
               defaultValue:
-                "Codex 派出的子代理默认用的模型和推理强度。留空时沿用主代理的；只填模型时用该模型自己的默认强度。聚合模式下不生效，子代理跟随主模型。",
+                "Codex 派出的子代理默认用的模型和推理强度。留空时沿用主代理的；只填模型时用该模型自己的默认强度。聚合模式下不生效，改用聚合页签「聚合设置」里的子代理模型。",
             }),
             "codexSubagentModel",
           )}
@@ -2132,6 +2172,66 @@ export function CodexFormFields({
                   })}
                 </Button>
               )}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* 自动审批 —— 写进模型目录每一行的 auto_review_model_override，Codex 按主模型那一行
+          选审批模型。只能选列表里的模型；聚合模式下不生效，改用聚合设置。 */}
+      {category !== "official" && onAutoReviewModelChange && (
+        <div className="space-y-1.5">
+          {labelWithHelp(
+            t("codexConfig.autoReviewModelLabel", {
+              defaultValue: "自动审批模型",
+            }),
+            t("codexConfig.autoReviewModelHint", {
+              defaultValue:
+                "Codex 开了自动审批（Approve for me）时，判断操作能不能放行用的模型。审批请求和主对话发给同一家，所以只能选这张卡模型列表里的。聚合模式下不生效，改用聚合页签「聚合设置」里的自动审批模型。改完需要重启 Codex。",
+            }),
+            "codexAutoReviewModel",
+          )}
+          <Select
+            value={autoReviewSelectValue}
+            onValueChange={(next) => {
+              // 表单里的 Radix Select 带一个隐藏的原生 select：编辑页加载时列表和已存的值同时
+              // 到达，值先于选项注册，它会回报一次空串。选项都不是空值，空串只能是这个，忽略。
+              if (!next) return;
+              onAutoReviewModelChange(next === AUTO_REVIEW_DEFAULT ? "" : next);
+            }}
+            disabled={autoReviewChoices.length === 0}
+          >
+            <SelectTrigger
+              id="codexAutoReviewModel"
+              aria-label={t("codexConfig.autoReviewModelLabel", {
+                defaultValue: "自动审批模型",
+              })}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={AUTO_REVIEW_DEFAULT}>
+                {autoReviewDefaultIsCodex
+                  ? t("codexConfig.autoReviewModelCodexDefault", {
+                      defaultValue: "Codex 默认（codex-auto-review）",
+                    })
+                  : t("codexConfig.autoReviewModelMainDefault", {
+                      defaultValue: "主模型自己审批（默认）",
+                    })}
+              </SelectItem>
+              {autoReviewChoices.map((choice) => (
+                <SelectItem key={choice.model} value={choice.model}>
+                  {choice.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {autoReviewChoices.length === 0 && (
+            <p className="text-xs leading-relaxed text-fg-2">
+              {t("codexConfig.autoReviewModelNoList", {
+                defaultValue:
+                  "这张卡没有模型列表：Codex 会用官方的 codex-auto-review 审批，只有部分转发 ChatGPT 账号的中转认它，不认就会报 404。在上面的模型列表里加上模型后就能选。",
+              })}
             </p>
           )}
         </div>
