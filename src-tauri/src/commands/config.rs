@@ -146,8 +146,21 @@ pub async fn get_config_status(
             })
         }
         AppType::Pi => {
-            let config_path = crate::pi_config::get_pi_models_path().map_err(|e| e.to_string())?;
-            let path = crate::pi_config::get_pi_agent_dir()
+            let config_path =
+                crate::pi_config::models_path(&AppType::Pi).map_err(|e| e.to_string())?;
+            let path = crate::pi_config::agent_dir(&AppType::Pi)
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .to_string();
+            Ok(ConfigStatus {
+                exists: config_path.exists(),
+                path,
+            })
+        }
+        AppType::Rpi => {
+            let config_path =
+                crate::pi_config::models_path(&AppType::Rpi).map_err(|e| e.to_string())?;
+            let path = crate::pi_config::agent_dir(&AppType::Rpi)
                 .map_err(|e| e.to_string())?
                 .to_string_lossy()
                 .to_string();
@@ -177,7 +190,8 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
-        AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
+        AppType::Pi => crate::pi_config::agent_dir(&AppType::Pi).map_err(|e| e.to_string())?,
+        AppType::Rpi => crate::pi_config::agent_dir(&AppType::Rpi).map_err(|e| e.to_string())?,
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()
             .unwrap()
@@ -200,7 +214,8 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
-        AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
+        AppType::Pi => crate::pi_config::agent_dir(&AppType::Pi).map_err(|e| e.to_string())?,
+        AppType::Rpi => crate::pi_config::agent_dir(&AppType::Rpi).map_err(|e| e.to_string())?,
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()
             .unwrap()

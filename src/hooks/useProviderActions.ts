@@ -308,6 +308,8 @@ export function useProviderActions(
 
         if (activeApp === "pi") {
           await piApi.updateProviderUsageScript(provider.id, script);
+        } else if (activeApp === "rpi") {
+          await piApi.updateRpiProviderUsageScript(provider.id, script);
         } else {
           await providersApi.update(updatedProvider, activeApp);
         }

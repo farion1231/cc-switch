@@ -14,7 +14,8 @@ type AppDirectoryKey =
   | "opencode"
   | "openclaw"
   | "hermes"
-  | "pi";
+  | "pi"
+  | "rpi";
 type DirectoryKey = "appConfig" | AppDirectoryKey;
 
 export interface ResolvedDirectories {
@@ -27,6 +28,7 @@ export interface ResolvedDirectories {
   openclaw: string;
   hermes: string;
   pi: string;
+  rpi: string;
 }
 
 // Single source of truth for per-app directory metadata.
@@ -42,6 +44,7 @@ const APP_DIRECTORY_META: Record<
   openclaw: { key: "openclaw", defaultFolder: ".openclaw" },
   hermes: { key: "hermes", defaultFolder: ".hermes" },
   pi: { key: "pi", defaultFolder: ".pi/agent" },
+  rpi: { key: "rpi", defaultFolder: ".rpi/agent" },
 };
 
 const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
@@ -56,6 +59,7 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
   openclaw: "openclawConfigDir",
   hermes: "hermesConfigDir",
   pi: "piConfigDir",
+  rpi: "rpiConfigDir",
 };
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -145,6 +149,7 @@ export function useDirectorySettings({
     openclaw: "",
     hermes: "",
     pi: "",
+    rpi: "",
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -158,6 +163,7 @@ export function useDirectorySettings({
     openclaw: "",
     hermes: "",
     pi: "",
+    rpi: "",
   });
   // 已保存的数据目录（保存按钮和「需要重启」都和它比）。ref 给回调用，state 让比较它的
   // 组件在保存后重渲染：保存成功要把它更新成刚存的值，否则保存按钮一直在、改回去存不了
@@ -187,6 +193,7 @@ export function useDirectorySettings({
           openclawDir,
           hermesDir,
           piDir,
+          rpiDir,
           defaultAppConfig,
           defaultClaudeDir,
           defaultCodexDir,
@@ -196,6 +203,7 @@ export function useDirectorySettings({
           defaultOpenclawDir,
           defaultHermesDir,
           defaultPiDir,
+          defaultRpiDir,
         ] = await Promise.all([
           settingsApi.getAppConfigDirOverride(),
           settingsApi.getConfigDir("claude"),
@@ -206,6 +214,7 @@ export function useDirectorySettings({
           settingsApi.getConfigDir("openclaw"),
           settingsApi.getConfigDir("hermes"),
           settingsApi.getConfigDir("pi"),
+          settingsApi.getConfigDir("rpi"),
           computeDefaultAppConfigDir(),
           computeDefaultConfigDir("claude"),
           computeDefaultConfigDir("codex"),
@@ -215,6 +224,7 @@ export function useDirectorySettings({
           computeDefaultConfigDir("openclaw"),
           computeDefaultConfigDir("hermes"),
           computeDefaultConfigDir("pi"),
+          computeDefaultConfigDir("rpi"),
         ]);
 
         if (!active) return;
@@ -231,6 +241,7 @@ export function useDirectorySettings({
           openclaw: defaultOpenclawDir ?? "",
           hermes: defaultHermesDir ?? "",
           pi: defaultPiDir ?? "",
+          rpi: defaultRpiDir ?? "",
         };
 
         setAppConfigDir(normalizedOverride);
@@ -246,6 +257,7 @@ export function useDirectorySettings({
           openclaw: openclawDir || defaultsRef.current.openclaw,
           hermes: hermesDir || defaultsRef.current.hermes,
           pi: piDir || defaultsRef.current.pi,
+          rpi: rpiDir || defaultsRef.current.rpi,
         });
       } catch (error) {
         console.error(
@@ -458,6 +470,7 @@ export function useDirectorySettings({
         openclaw: overrides?.openclaw ?? defaultsRef.current.openclaw,
         hermes: overrides?.hermes ?? defaultsRef.current.hermes,
         pi: overrides?.pi ?? defaultsRef.current.pi,
+        rpi: overrides?.rpi ?? defaultsRef.current.rpi,
       });
     },
     [],

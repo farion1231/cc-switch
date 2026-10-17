@@ -69,6 +69,7 @@ export const useAddProviderMutation = (appId: AppId) => {
         appId === "openclaw" ||
         appId === "hermes" ||
         appId === "pi" ||
+        appId === "rpi" ||
         appId === "mcode"
       ) {
         if (
@@ -147,7 +148,7 @@ export const useAddProviderMutation = (appId: AppId) => {
       if (parseLiveEditConflict(error)) return;
       const rawDetail = extractErrorMessage(error);
       const detail =
-        (appId === "pi"
+        (appId === "pi" || appId === "rpi"
           ? translatePiProviderMutationError(rawDetail, t)
           : "") ||
         rawDetail ||
@@ -160,7 +161,7 @@ export const useAddProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
-      if (appId === "pi") {
+      if (appId === "pi" || appId === "rpi") {
         await invalidatePiProviderCaches(queryClient);
       }
     },
@@ -215,7 +216,7 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       if (parseLiveEditConflict(error)) return;
       const rawDetail = extractErrorMessage(error);
       const detail =
-        (appId === "pi"
+        (appId === "pi" || appId === "rpi"
           ? translatePiProviderMutationError(rawDetail, t)
           : "") ||
         rawDetail ||
@@ -228,7 +229,7 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
-      if (appId === "pi") {
+      if (appId === "pi" || appId === "rpi") {
         await invalidatePiProviderCaches(queryClient);
       }
     },
@@ -291,7 +292,7 @@ export const useDeleteProviderMutation = (appId: AppId) => {
     onError: (error: Error) => {
       const rawDetail = extractErrorMessage(error);
       const detail =
-        (appId === "pi"
+        (appId === "pi" || appId === "rpi"
           ? translatePiProviderMutationError(rawDetail, t)
           : "") ||
         rawDetail ||
@@ -304,7 +305,7 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
-      if (appId === "pi") {
+      if (appId === "pi" || appId === "rpi") {
         await invalidatePiProviderCaches(queryClient);
       }
     },
@@ -387,7 +388,7 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
-      if (appId === "pi") {
+      if (appId === "pi" || appId === "rpi") {
         await invalidatePiProviderCaches(queryClient);
       }
     },

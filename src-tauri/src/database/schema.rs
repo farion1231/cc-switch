@@ -69,7 +69,8 @@ impl Database {
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
-            enabled_pi BOOLEAN NOT NULL DEFAULT 0
+            enabled_pi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_rpi BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -100,6 +101,8 @@ impl Database {
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_pi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_rpi BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0
@@ -576,6 +579,30 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 20)?;
+                    }
+                    20 => {
+                        log::info!("迁移数据库从 v20 到 v21（MCP 与 Skills 添加 RPI 支持）");
+                        // v20 Skills derived Pi state from disk and had no enabled_pi column.
+                        // CREATE TABLE IF NOT EXISTS cannot upgrade an existing table.
+                        if Self::table_exists(conn, "skills")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "skills",
+                                "enabled_pi",
+                                "BOOLEAN NOT NULL DEFAULT 0",
+                            )?;
+                        }
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_rpi",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        Self::set_user_version(conn, 21)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -3827,6 +3854,54 @@ mod tests {
         )?;
         assert_eq!(codex_values, (1, 9));
 
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v20_skills_supports_dao_without_losing_existing_state() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = db.conn.lock().unwrap();
+            // Actual v20 layout: neither enabled_pi nor enabled_rpi existed on Skills.
+            conn.execute_batch(
+                "DROP TABLE skills;
+                CREATE TABLE skills (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,
+                    directory TEXT NOT NULL, repo_owner TEXT, repo_name TEXT,
+                    repo_branch TEXT DEFAULT 'main', readme_url TEXT,
+                    enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+                    enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+                    enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+                    enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
+                    enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+                    enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+                    enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+                    installed_at INTEGER NOT NULL DEFAULT 0, content_hash TEXT,
+                    updated_at INTEGER NOT NULL DEFAULT 0
+                );
+                INSERT INTO skills (id, name, directory, enabled_claude, enabled_mcode,
+                                    installed_at, content_hash, updated_at)
+                VALUES ('existing', 'Existing', 'existing', 1, 1, 123, 'original-hash', 456);
+                ALTER TABLE mcp_servers DROP COLUMN enabled_rpi;",
+            )?;
+            Database::set_user_version(&conn, 20)?;
+            // Startup runs CREATE before migration; it must not mask missing columns.
+            Database::create_tables_on_conn(&conn)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            assert!(Database::has_column(&conn, "mcp_servers", "enabled_rpi")?);
+        }
+        let mut skill = db.get_installed_skill("existing")?.expect("existing skill");
+        assert!(skill.apps.claude && skill.apps.mcode);
+        assert!(!skill.apps.pi && !skill.apps.rpi);
+        assert_eq!(skill.installed_at, 123);
+        assert_eq!(skill.content_hash.as_deref(), Some("original-hash"));
+        assert_eq!(skill.updated_at, 456);
+        skill.apps.rpi = true;
+        db.update_skill_apps(&skill.id, &skill.apps)?;
+        assert!(db.get_all_installed_skills()?["existing"].apps.rpi);
+        db.save_skill(&skill)?;
+        assert_eq!(db.get_all_installed_skills()?.len(), 1);
         Ok(())
     }
 
