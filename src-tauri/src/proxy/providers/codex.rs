@@ -532,6 +532,30 @@ pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> 
     Some(upstream_model)
 }
 
+/// For a recognized Codex PreTurn compaction request only, replace its stale
+/// request model with the active Codex provider route's resolved upstream
+/// target. Use the same provider-model resolver as normal Codex model
+/// substitution; do not infer the target from the request model or catalog UI
+/// labels. Catalog membership does not determine whether the route target wins.
+pub(crate) fn apply_codex_compaction_upstream_model(
+    provider: &Provider,
+    body: &mut JsonValue,
+) -> Option<(String, String)> {
+    let request_model = body
+        .get("model")
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|model| !model.is_empty())?;
+    let route_target_model = codex_provider_upstream_model(provider)?;
+    if route_target_model == request_model {
+        return None;
+    }
+
+    let previous_model = request_model.to_string();
+    body["model"] = JsonValue::String(route_target_model.clone());
+    Some((previous_model, route_target_model))
+}
+
 /// Stack 请求的上游拒收 Codex 的托管 `web_search`：按这家的地址和模型品牌判断，和它做
 /// 路由时写 `web_search = "disabled"` 的依据相同（归一化后的配置，旧形态的行也认得出
 /// 地址）；另看这次请求的模型：行里配了多个模型时，选中的不一定是行的 `model`。
@@ -1896,6 +1920,74 @@ wire_api = "anthropic"
             body.get("model").and_then(|v| v.as_str()),
             Some("claude-opus-4-1[1m]")
         );
+    }
+
+    #[test]
+    fn preturn_compaction_rewrites_catalogued_old_model_to_resolved_route_target() {
+        let provider = create_provider(json!({
+            "config": r#"model_provider = "custom"
+model = "deepseek-flash"
+
+[model_providers.custom]
+wire_api = "responses"
+"#,
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-flash", "displayName": "Flash route label" },
+                    { "model": "deepseek-v4-pro", "displayName": "Previous model label" }
+                ]
+            }
+        }));
+        assert_eq!(
+            codex_provider_upstream_model(&provider).as_deref(),
+            Some("deepseek-flash")
+        );
+
+        let mut stale = json!({ "model": "deepseek-v4-pro" });
+        assert_eq!(
+            apply_codex_compaction_upstream_model(&provider, &mut stale),
+            Some(("deepseek-v4-pro".to_string(), "deepseek-flash".to_string()))
+        );
+        assert_eq!(stale["model"], "deepseek-flash");
+    }
+
+    #[test]
+    fn preturn_compaction_keeps_model_when_it_matches_resolved_route_target() {
+        let provider = create_provider(json!({
+            "config": r#"model = "deepseek-flash""#
+        }));
+        let mut body = json!({ "model": "deepseek-flash" });
+        assert_eq!(
+            apply_codex_compaction_upstream_model(&provider, &mut body),
+            None
+        );
+        assert_eq!(body["model"], "deepseek-flash");
+    }
+
+    #[test]
+    fn preturn_compaction_does_not_require_a_model_catalog() {
+        let provider = create_provider(json!({
+            "config": r#"model = "deepseek-flash""#
+        }));
+        let mut body = json!({ "model": "deepseek-v4-pro" });
+        assert_eq!(
+            apply_codex_compaction_upstream_model(&provider, &mut body),
+            Some(("deepseek-v4-pro".to_string(), "deepseek-flash".to_string()))
+        );
+        assert_eq!(body["model"], "deepseek-flash");
+    }
+
+    #[test]
+    fn preturn_compaction_stays_unchanged_without_a_resolved_route_target() {
+        let provider = create_provider(json!({
+            "modelCatalog": { "models": [{ "model": "deepseek-flash" }] }
+        }));
+        let mut body = json!({ "model": "deepseek-v4-pro" });
+        assert_eq!(
+            apply_codex_compaction_upstream_model(&provider, &mut body),
+            None
+        );
+        assert_eq!(body["model"], "deepseek-v4-pro");
     }
 
     #[test]
