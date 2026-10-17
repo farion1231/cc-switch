@@ -191,6 +191,30 @@ pub enum ErrorCategory {
     ClientAbort, // 客户端主动中断
 }
 
+/// 把错误连同 `source()` 原因链拼成一行。
+///
+/// reqwest / hyper 的外层文本只有「error sending request」「error decoding response body」
+/// 这类描述，真正能区分 DNS、TCP、TLS、连接被重置的信息都在原因链里。
+pub fn describe_error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        let cause_text = cause.to_string();
+        // 有的错误会把原因也写进自己的文本，重复的就不再追加
+        if !cause_text.is_empty() && !text.ends_with(&cause_text) {
+            text.push_str(": ");
+            text.push_str(&cause_text);
+        }
+        source = cause.source();
+    }
+    text
+}
+
+/// reqwest 错误的文本带完整 URL（查询参数里可能有 Key），先去掉 URL 再展开原因链。
+pub fn describe_reqwest_error(error: reqwest::Error) -> String {
+    describe_error_chain(&error.without_url())
+}
+
 /// 判断错误是否可重试
 #[allow(dead_code)]
 pub fn categorize_error(error: &reqwest::Error) -> ErrorCategory {
@@ -208,5 +232,58 @@ pub fn categorize_error(error: &reqwest::Error) -> ErrorCategory {
         }
     } else {
         ErrorCategory::Retryable
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug)]
+    struct Outer(std::io::Error);
+
+    impl std::fmt::Display for Outer {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("error sending request")
+        }
+    }
+
+    impl std::error::Error for Outer {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    #[test]
+    fn describe_error_chain_appends_every_cause() {
+        let error = Outer(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "tcp connect error",
+        ));
+        assert_eq!(
+            describe_error_chain(&error),
+            "error sending request: tcp connect error"
+        );
+    }
+
+    #[tokio::test]
+    async fn describe_reqwest_error_keeps_cause_and_drops_url() {
+        // 先占一个端口再释放，保证连接被拒绝
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let error = reqwest::Client::new()
+            .get(format!(
+                "http://127.0.0.1:{port}/v1/responses?key=secret-token"
+            ))
+            .send()
+            .await
+            .expect_err("connection should be refused");
+        assert!(error.is_connect());
+
+        let text = describe_reqwest_error(error);
+        assert!(text.starts_with("error sending request: "), "{text}");
+        assert!(!text.contains("secret-token"), "{text}");
     }
 }

@@ -395,13 +395,14 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     },
     category: "aggregator",
     isPartner: true,
+    partnerPromotionKey: "openmodel",
     icon: "openmodel",
   },
   {
     name: "GrooRoute Pro",
     providerKey: "cc-switch-grooroute-pro",
     websiteUrl: "https://grooroute.pro",
-    apiKeyUrl: "https://grooroute.xyz/sign-up?aff=qqm9",
+    apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
     settingsConfig: {
       name: "GrooRoute Pro",
       baseUrl: "https://grooroute.pro",
@@ -414,7 +415,48 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     },
     category: "aggregator",
     isPartner: true,
+    partnerPromotionKey: "grooroute",
     icon: "grooroute",
+  },
+  {
+    name: "TokenFactory",
+    nameKey: "providerForm.presets.tokenfactory",
+    providerKey: "cc-switch-tokenfactory",
+    websiteUrl: "https://tokenfactory.cn",
+    apiKeyUrl: "https://console.tokenfactory.cn/login",
+    settingsConfig: {
+      name: "TokenFactory",
+      // 官方 Pi 文档（docs.tokenfactory.cn/tools/pi，2026-10-15 核对）；
+      // 平台入口最大输出 128K，低于目录里的 131072，须覆盖
+      baseUrl: "https://api.tokenfactory.cn/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("zai/glm-5.3", { id: "glm-5.3", maxTokens: 128_000 }),
+        piModel("moonshotai/kimi-k3", { id: "kimi-k3" }),
+        piModel("deepseek/deepseek-v4-pro", {
+          id: "deepseek-v4-pro-0813",
+          contextWindow: 1_048_576,
+        }),
+        // V4.1 Flash 平台标注可看图，目录里的 V4 Flash 只收文本
+        piModel("deepseek/deepseek-v4-flash", {
+          id: "deepseek-v4.1-flash",
+          name: "DeepSeek V4.1 Flash",
+          input: ["text", "image"],
+          contextWindow: 1_048_576,
+        }),
+        piModel("zai/glm-5.3-flash", {
+          id: "glm-5.3-flash",
+          maxTokens: 128_000,
+        }),
+        piModel("qwen/qwen3.8-flash", {
+          id: "qwen3.8-flash",
+          maxTokens: 128_000,
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "tokenfactory",
   },
   {
     name: "Shengsuanyun",
@@ -1131,6 +1173,30 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "third_party",
     isPartner: true,
     icon: "sudocode-us",
+  },
+  {
+    name: "Modelflare",
+    providerKey: "cc-switch-modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    // Responses + /v1（docs.modelflare.dev/guides/endpoints，2026-10-15
+    // 核对）；阵容同 OpenCode
+    settingsConfig: {
+      name: "Modelflare",
+      baseUrl: "https://modelflare.dev/v1",
+      api: "openai-responses",
+      apiKey: "",
+      models: [
+        piModel("openai/gpt-5.6-sol", { id: "gpt-5.6-sol" }),
+        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
+        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
   },
   {
     name: "Amux",
@@ -1923,6 +1989,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "baseten",
   },
   {
     name: "Novita AI",
@@ -2002,6 +2069,84 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "ollama",
   },
   {
+    // Pi 运行时没有内置本机 Ollama provider，Pi 文档自己就用 models.json 写它
+    name: "Ollama",
+    providerKey: "cc-switch-ollama",
+    websiteUrl: "https://ollama.com",
+    settingsConfig: {
+      name: "Ollama",
+      // Pi 文档（pi-mono packages/coding-agent/docs/models.md，2026-10-14
+      // 核对）的本机写法：openai-completions + http://localhost:11434/v1。
+      // 服务端不校验 Key，但 Pi 文档说要填一个占位 Key 模型才会出现在列表里，
+      // 添加后手填 ollama。模型换成自己已下载的
+      baseUrl: "http://localhost:11434/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("qwen/qwen3.5", { id: "qwen3.5" }),
+        piModel("openai/gpt-oss-20b", { id: "gpt-oss:20b" }),
+      ],
+    },
+    category: "local",
+    icon: "ollama",
+  },
+  {
+    // Pi 运行时没有内置 LM Studio provider（pi-mono models.generated.ts 搜不到），
+    // Pi 文档自己就用 models.json 写它，不违反「勿写内置节点」契约
+    name: "LM Studio",
+    providerKey: "cc-switch-lmstudio",
+    websiteUrl: "https://lmstudio.ai",
+    settingsConfig: {
+      name: "LM Studio",
+      // 本机 OpenAI Chat base http://localhost:1234/v1（lmstudio.ai/docs/
+      // developer/openai-compat、pi-mono packages/coding-agent/docs/models.md，
+      // 2026-10-14 核对）。默认不鉴权，但 Pi 要填一个占位 Key 模型才会出现在
+      // 列表里，添加后手填 lmstudio。Chat 上的 reasoning_effort 未证实，同 Groq
+      // 先例不写 thinkingProfile，compat 按通用 OpenAI Completions 写；最大输出
+      // 取 models.dev 的 lmstudio 条目（目录里的 65536 来自 Groq）。模型换成
+      // 自己已下载的；实际窗口受 LM Studio 加载时的 context length 限制
+      baseUrl: "http://localhost:1234/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        {
+          ...piModel("openai/gpt-oss-20b", {
+            id: "openai/gpt-oss-20b",
+            maxTokens: 32_768,
+          }),
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
+        },
+      ],
+    },
+    category: "local",
+    icon: "lmstudio",
+  },
+  {
+    // Pi 运行时没有内置 vLLM provider（pi-mono models.generated.ts 搜不到），
+    // Pi 文档把 vLLM 列为用 models.json 配置兼容端点的场景，不违反「勿写内置
+    // 节点」契约
+    name: "vLLM",
+    providerKey: "cc-switch-vllm",
+    websiteUrl: "https://vllm.ai",
+    settingsConfig: {
+      name: "vLLM",
+      // 本机 vllm serve 的 OpenAI Chat base http://localhost:8000/v1
+      //（docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server、
+      // pi-mono packages/coding-agent/docs/models.md，2026-10-14 核对）。不带
+      // --api-key 时不校验，但 Pi 要填一个非空占位 Key 模型才会出现在列表里，
+      // 添加后手填 dummy（带了 --api-key 就填那个值）。工具调用要启动时加
+      // --enable-auto-tool-choice --tool-call-parser qwen3_coder。档位映射没有
+      // 逐模型证据，不写 thinkingProfile。默认模型须与 /v1/models 的 id 一致，
+      // 换成自己已下载的；实际窗口受 --max-model-len 限制
+      baseUrl: "http://localhost:8000/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [piModel("qwen/qwen3.6-27b", { id: "Qwen/Qwen3.6-27B" })],
+    },
+    category: "local",
+    icon: "vllm",
+  },
+  {
     name: "Meta Model API",
     providerKey: "cc-switch-meta",
     websiteUrl: "https://dev.meta.ai",
@@ -2078,6 +2223,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "deepinfra",
   },
   {
     name: "Vercel AI Gateway",
@@ -2153,6 +2299,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "nebius",
   },
   {
     name: "Groq",
@@ -2181,6 +2328,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "groq",
   },
   {
     name: "SambaNova",
@@ -2218,6 +2366,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "cloud_provider",
+    icon: "sambanova",
   },
   {
     name: "DigitalOcean",
@@ -2244,6 +2393,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "cloud_provider",
+    icon: "digitalocean",
   },
   {
     name: "Hugging Face",

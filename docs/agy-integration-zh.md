@@ -58,6 +58,8 @@ Skills 复用既有 SSOT、下载、链接/复制和备份机制，新增独立�
 
 ## 会话和 Token 语义
 
+会话同时扫描 CLI 的 `~/.gemini/antigravity-cli/brain` 与 Antigravity IDE 的 `~/.gemini/antigravity/brain`（布局相同，各自带同级 `conversation_summaries.db`）；缺失的目录会被忽略，同一会话 ID 只计一次。
+
 SQLite 以只读方式打开，仅读取 `conversation_summaries` 的标题、预览、工作目录和时间。列表优先使用索引，避免每次刷新都解析所有正文；没有索引时回退解析 JSONL。只有二进制记录、没有可读日志的会话仍可展示摘要和恢复命令，不伪造正文。
 
 JSONL 按 `step_index` 排序，同步骤重复写入取最后一条，容忍尾部未写完的数据。当前已实测 `USER_INPUT`、`PLANNER_RESPONSE`，其他步骤保留文本供预览。路径归属经过校验，目录中的链接不能将会话读取引向根目录外。

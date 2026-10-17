@@ -293,6 +293,14 @@ export function DeepLinkImportDialog() {
           await queryClient.invalidateQueries({
             queryKey: ["providers", request.app],
           });
+          if (request.app === "opencode") {
+            await queryClient.invalidateQueries({
+              queryKey: ["opencodeLiveProviderIds"],
+            });
+            await queryClient.invalidateQueries({
+              queryKey: ["opencode", "runtime-models"],
+            });
+          }
           await refreshTrayMenu();
           toast.success(t("deeplink.importSuccess"), {
             description: t("deeplink.importSuccessDescription", {

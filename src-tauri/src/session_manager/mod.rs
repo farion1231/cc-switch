@@ -232,7 +232,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "grokbuild" => grokbuild::session_roots(),
         "hermes" => vec![crate::hermes_config::get_hermes_dir().join("sessions")],
         "pi" => pi::session_roots(),
-        "agy" => vec![agy::session_root()],
+        "agy" => agy::session_roots(),
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
 

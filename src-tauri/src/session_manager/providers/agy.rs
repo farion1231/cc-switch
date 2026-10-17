@@ -13,8 +13,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub fn session_root() -> PathBuf {
-    crate::agy_config::agy_dir().join("brain")
+/// Antigravity CLI keeps sessions in `~/.gemini/antigravity-cli/brain`, while the IDE writes the
+/// same layout to `~/.gemini/antigravity/brain`. Both are scanned.
+pub fn session_roots() -> Vec<PathBuf> {
+    let cli = crate::agy_config::agy_dir();
+    let ide = cli.with_file_name("antigravity");
+    vec![cli.join("brain"), ide.join("brain")]
 }
 
 pub(crate) fn records(path: &Path) -> Result<Vec<Value>, String> {
@@ -35,7 +39,21 @@ pub(crate) fn records(path: &Path) -> Result<Vec<Value>, String> {
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    scan_root(&session_root())
+    scan_roots(&session_roots())
+}
+
+/// Missing roots are tolerated; a session id found in several roots is reported once (first wins).
+fn scan_roots(roots: &[PathBuf]) -> Vec<SessionMeta> {
+    let mut seen = std::collections::HashSet::new();
+    let mut sessions = Vec::new();
+    for root in roots {
+        for meta in scan_root(root) {
+            if seen.insert(meta.session_id.clone()) {
+                sessions.push(meta);
+            }
+        }
+    }
+    sessions
 }
 
 fn valid_session_id(id: &str) -> bool {
@@ -235,6 +253,39 @@ mod tests {
         );
         assert!(sessions[0].source_path.is_none());
         assert!(sessions[0].last_active_at.is_some());
+    }
+
+    #[test]
+    fn agy_scans_cli_and_ide_roots_deduplicating_and_tolerating_missing() {
+        let home = tempfile::tempdir().unwrap();
+        let write = |root: &str, id: &str| {
+            let logs = home
+                .path()
+                .join(root)
+                .join("brain")
+                .join(id)
+                .join(".system_generated/logs");
+            fs::create_dir_all(&logs).unwrap();
+            fs::write(
+                logs.join("transcript_full.jsonl"),
+                r#"{"step_index":0,"type":"USER_INPUT","content":"hi"}"#,
+            )
+            .unwrap();
+        };
+        write("antigravity-cli", "cli-1");
+        write("antigravity", "ide-1");
+        write("antigravity", "cli-1");
+        let roots = vec![
+            home.path().join("antigravity-cli/brain"),
+            home.path().join("antigravity/brain"),
+            home.path().join("missing/brain"),
+        ];
+        let mut ids: Vec<_> = scan_roots(&roots)
+            .into_iter()
+            .map(|s| s.session_id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, ["cli-1", "ide-1"]);
     }
 
     #[test]

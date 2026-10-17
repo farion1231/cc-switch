@@ -131,6 +131,19 @@ function isReady(name: string) {
   );
 }
 
+/** 行尾「⋯」菜单（卸载在里面）。 */
+function rowMenu(name: string) {
+  return card(name).getByRole("button", { name: "appPage.moreActions" });
+}
+
+async function openUninstall(name: string) {
+  const user = userEvent.setup();
+  await user.click(rowMenu(name));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "settings.toolUninstall" }),
+  );
+}
+
 function updateButton(name: string) {
   return card(name).getByRole("button", { name: "settings.toolUpdate" });
 }
@@ -150,10 +163,12 @@ async function renderApps() {
   // 安装 / 升级的状态放在模块级 store 里，跨挂载保留。
   const { AppsPage } = await import("@/components/apps/AppsPage");
   const view = mountApps(AppsPage);
+  // Both header labels stay mounted to reserve their width. Wait for the idle
+  // label to be shown, including when a pending dialog hides the page itself.
   await waitFor(() =>
     expect(
       within(view.container).getByText("appsPage.checkUpdates"),
-    ).toBeInTheDocument(),
+    ).toHaveAttribute("aria-hidden", "false"),
   );
   return view;
 }
@@ -578,14 +593,18 @@ describe("AppsPage concurrent CLI upgrades", () => {
     await renderApps();
     expect(
       card("Claude Code").getByRole("button", {
-        name: "settings.toolUninstall",
+        name: "appPage.moreActions",
       }),
     ).toBeEnabled();
     expect(
-      card("OpenCode").getByRole("button", { name: "settings.toolUninstall" }),
+      card("OpenCode").getByRole("button", {
+        name: "appPage.moreActions",
+      }),
     ).toBeEnabled();
     expect(
-      card("Codex").queryByRole("button", { name: "settings.toolUninstall" }),
+      card("Codex").queryByRole("button", {
+        name: "appPage.moreActions",
+      }),
     ).toBeNull();
     expect(
       card("Codex").getByRole("button", { name: "settings.toolInstall" }),
@@ -596,11 +615,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     const pending = deferred<ToolUninstallCandidate[]>();
     mocks.prepareToolUninstall.mockReturnValueOnce(pending.promise);
     await renderApps();
-    fireEvent.click(
-      card("Claude Code").getByRole("button", {
-        name: "settings.toolUninstall",
-      }),
-    );
+    await openUninstall("Claude Code");
     const dialog = within(screen.getByRole("dialog"));
     expect(dialog.getByRole("status")).toHaveTextContent(
       "settings.toolUninstallPreparing",
@@ -640,9 +655,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       new Error("Unverified Homebrew owner: mise"),
     );
     await renderApps();
-    fireEvent.click(
-      card("Codex").getByRole("button", { name: "settings.toolUninstall" }),
-    );
+    await openUninstall("Codex");
     const dialog = within(screen.getByRole("dialog"));
     expect(await dialog.findByRole("alert")).toHaveTextContent(
       "settings.toolUninstallManualRequired",
@@ -694,11 +707,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       }),
     ]);
     await renderApps();
-    fireEvent.click(
-      card("Grok Build").getByRole("button", {
-        name: "settings.toolUninstall",
-      }),
-    );
+    await openUninstall("Grok Build");
     const dialog = within(screen.getByRole("dialog"));
     const npmRadio = await dialog.findByRole("radio", { name: npm.path });
     const nativeRadio = dialog.getByRole("radio", { name: native.path });
@@ -746,19 +755,13 @@ describe("AppsPage concurrent CLI upgrades", () => {
     const first = deferred<ToolUninstallCandidate[]>();
     mocks.prepareToolUninstall.mockReturnValueOnce(first.promise);
     await renderApps();
-    fireEvent.click(
-      card("Claude Code").getByRole("button", {
-        name: "settings.toolUninstall",
-      }),
-    );
+    await openUninstall("Claude Code");
     fireEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", {
         name: "common.cancel",
       }),
     );
-    fireEvent.click(
-      card("Codex").getByRole("button", { name: "settings.toolUninstall" }),
-    );
+    await openUninstall("Codex");
     const dialog = within(screen.getByRole("dialog"));
     expect(
       await dialog.findByText(uninstallPlan("codex").path),
@@ -817,11 +820,8 @@ describe("AppsPage concurrent CLI upgrades", () => {
       },
     );
     const view = await renderApps();
-    const uninstall = () =>
-      card("Claude Code").getByRole("button", {
-        name: "settings.toolUninstall",
-      });
-    fireEvent.click(uninstall());
+    const uninstall = () => rowMenu("Claude Code");
+    await openUninstall("Claude Code");
     expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
     fireEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", {
@@ -829,7 +829,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       }),
     );
     expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
-    fireEvent.click(uninstall());
+    await openUninstall("Claude Code");
     fireEvent.click(
       await within(screen.getByRole("dialog")).findByRole("button", {
         name: "settings.toolUninstall",
@@ -853,7 +853,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     await act(async () => running.resolve());
     expect(
       card("Claude Code").queryByRole("button", {
-        name: "settings.toolUninstall",
+        name: "appPage.moreActions",
       }),
     ).toBeNull();
     expect(
@@ -882,7 +882,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     await renderApps();
     expect(
       card("Claude Code").getByRole("button", {
-        name: "settings.toolUninstall",
+        name: "appPage.moreActions",
       }),
     ).toBeEnabled();
     expect(
@@ -899,11 +899,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       await renderApps();
-      fireEvent.click(
-        card("Claude Code").getByRole("button", {
-          name: "settings.toolUninstall",
-        }),
-      );
+      await openUninstall("Claude Code");
       fireEvent.click(
         await within(screen.getByRole("dialog")).findByRole("button", {
           name: "settings.toolUninstall",
@@ -920,7 +916,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       );
       expect(
         card("Claude Code").getByRole("button", {
-          name: "settings.toolUninstall",
+          name: "appPage.moreActions",
         }),
       ).toBeEnabled();
       expect(updateButton("Claude Code")).toBeEnabled();
@@ -946,11 +942,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
             mocks.probeToolInstallations.mockResolvedValueOnce([]);
           }
         });
-        fireEvent.click(
-          card("Claude Code").getByRole("button", {
-            name: "settings.toolUninstall",
-          }),
-        );
+        await openUninstall("Claude Code");
         fireEvent.click(
           await within(screen.getByRole("dialog")).findByRole("button", {
             name: "settings.toolUninstall",
@@ -993,11 +985,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
             mocks.getToolVersions.mockResolvedValueOnce([]);
           }
         });
-        fireEvent.click(
-          card("Claude Code").getByRole("button", {
-            name: "settings.toolUninstall",
-          }),
-        );
+        await openUninstall("Claude Code");
         fireEvent.click(
           await within(screen.getByRole("dialog")).findByRole("button", {
             name: "settings.toolUninstall",
@@ -1016,7 +1004,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
         expect(mocks.success).not.toHaveBeenCalled();
         expect(
           card("Claude Code").getByRole("button", {
-            name: "settings.toolUninstall",
+            name: "appPage.moreActions",
           }),
         ).toBeEnabled();
       } finally {
@@ -1047,11 +1035,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
           missing.add("hermes");
         });
         await renderApps();
-        fireEvent.click(
-          card("Hermes").getByRole("button", {
-            name: "settings.toolUninstall",
-          }),
-        );
+        await openUninstall("Hermes");
         const dialog = within(screen.getByRole("dialog"));
         const confirm = await dialog.findByRole("button", {
           name: "settings.toolUninstall",
@@ -1105,11 +1089,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
         ],
       }),
     ]);
-    fireEvent.click(
-      card("Claude Code").getByRole("button", {
-        name: "settings.toolUninstall",
-      }),
-    );
+    await openUninstall("Claude Code");
     fireEvent.click(
       await within(screen.getByRole("dialog")).findByRole("button", {
         name: "settings.toolUninstall",
@@ -1129,7 +1109,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     ).toBeInTheDocument();
     expect(
       card("Claude Code").getByRole("button", {
-        name: "settings.toolUninstall",
+        name: "appPage.moreActions",
       }),
     ).toBeEnabled();
     expect(mocks.warning).not.toHaveBeenCalled();
@@ -1759,6 +1739,15 @@ describe("AppsPage concurrent CLI upgrades", () => {
         card("Claude Code").getAllByLabelText("common.loading").length,
       ).toBeGreaterThan(0),
     );
+    // 等原任务的版本刷新真正发出（初始探测 + 刷新共 2 次）再卸载，
+    // 否则机器慢时刷新可能落在重新挂载之后，计数就会抖
+    await waitFor(() =>
+      expect(
+        mocks.getToolVersions.mock.calls.filter(([tools]) =>
+          tools.includes("claude"),
+        ),
+      ).toHaveLength(2),
+    );
     view.unmount();
     const now = vi
       .spyOn(Date, "now")
@@ -1777,7 +1766,12 @@ describe("AppsPage concurrent CLI upgrades", () => {
     }
     expect(updateButton("Claude Code")).toBeDisabled();
     expect(updateButton("Claude Code")).toHaveAttribute("aria-busy", "true");
-    expect(updateButton("Codex")).toBeEnabled();
+    // 缓存过期，重新挂载时别的工具会重新探测版本；等探测完、按钮出来再点「全部更新」，
+    // 不然机器慢时这几行还在加载
+    await waitFor(() => {
+      expect(updateButton("Codex")).toBeEnabled();
+      expect(updateButton("Gemini CLI")).toBeEnabled();
+    });
     fireEvent.click(updateAllButton());
     await waitFor(() =>
       expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(3),
@@ -1823,6 +1817,30 @@ describe("AppsPage concurrent CLI upgrades", () => {
       expect.anything(),
     );
   });
+  it("keeps the header steady while checking for updates", async () => {
+    await renderApps();
+    expect(updateAllButton()).toBeEnabled();
+    const pending = deferred<void>();
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) => {
+      await pending.promise;
+      return getVersions(tools);
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "appsPage.checkUpdates" }),
+    );
+    // 检查期间各工具都在加载：「全部升级」保持显示（禁用），不先消失再出现
+    expect(
+      await screen.findByRole("button", { name: "appsPage.checking" }),
+    ).toBeDisabled();
+    expect(updateAllButton()).toBeDisabled();
+    await act(async () => pending.resolve());
+    expect(updateAllButton()).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "appsPage.checkUpdates" }),
+    ).toBeEnabled();
+  });
+
   it("withholds the upgrade when the new version needs a newer Node and leaves it out of update all", async () => {
     const defaultVersions = mocks.getToolVersions.getMockImplementation()!;
     mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
@@ -1838,10 +1856,14 @@ describe("AppsPage concurrent CLI upgrades", () => {
     );
     await renderApps();
     await waitFor(() =>
-      expect(card("Claude Code").getByText("appsPage.updateNeedsNode")).toBeInTheDocument(),
+      expect(
+        card("Claude Code").getByText("appsPage.updateNeedsNode"),
+      ).toBeInTheDocument(),
     );
     expect(
-      card("Claude Code").queryByRole("button", { name: "settings.toolUpdate" }),
+      card("Claude Code").queryByRole("button", {
+        name: "settings.toolUpdate",
+      }),
     ).toBeNull();
     fireEvent.click(updateAllButton());
     await waitFor(() => expect(isReady("Codex")).toBe(true));

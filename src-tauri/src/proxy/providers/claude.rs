@@ -346,7 +346,7 @@ pub fn transform_claude_request_for_api_format(
     let is_codex_oauth = provider.is_codex_oauth();
 
     // Copilot 场景：优先从 metadata.user_id 提取 session ID 作为 cache key
-    // 格式: "uuid_sessionId" → 提取 "_" 后面的部分作为 session 标识
+    // 支持 JSON 字符串中的 session_id 和旧版 _session_ 后缀
     // 同一会话的请求共享 cache key，提升 Copilot 缓存命中率
     let is_copilot = provider.is_github_copilot()
         || provider
@@ -357,7 +357,7 @@ pub fn transform_claude_request_for_api_format(
     let session_cache_key: Option<String> = if is_copilot {
         let metadata = body.get("metadata");
         // Session 提取优先级（与 forwarder 和 session.rs 统一）：
-        //   1. metadata.user_id 中的 _session_ 后缀
+        //   1. metadata.user_id 中的 JSON session_id 或旧版 _session_ 后缀
         //   2. metadata.session_id（直接字段）
         metadata
             .and_then(|m| m.get("user_id"))
@@ -1898,6 +1898,54 @@ mod tests {
         .unwrap();
 
         assert_eq!(transformed["prompt_cache_key"], "session-123");
+    }
+
+    #[test]
+    fn test_codex_oauth_cache_key_follows_claude_json_conversation() {
+        use crate::proxy::session::extract_session_id;
+        use axum::http::HeaderMap;
+
+        let provider = create_provider_with_meta(
+            json!({"env": {
+                "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+            }}),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                provider_type: Some("codex_oauth".to_string()),
+                ..ProviderMeta::default()
+            },
+        );
+        for client_format in ["claude", "claude-desktop"] {
+            for session_id in ["conversation-123", "conversation-456"] {
+                for turn in 0..3 {
+                    let body = json!({
+                        "model": "gpt-5.4",
+                        "max_tokens": 128,
+                        "messages": [{"role": "user", "content": format!("turn {turn}")}],
+                        "metadata": {"user_id": json!({
+                            "device_id": "same-device",
+                            "account_uuid": "same-account",
+                            "session_id": session_id
+                        }).to_string()}
+                    });
+                    let session = extract_session_id(&HeaderMap::new(), &body, client_format);
+                    // Match the forwarder's rule: generated IDs must not become cache keys.
+                    let cache_session = session
+                        .client_provided
+                        .then_some(session.session_id.as_str());
+                    let transformed = transform_claude_request_for_api_format(
+                        body,
+                        &provider,
+                        "openai_responses",
+                        cache_session,
+                        None,
+                    )
+                    .unwrap();
+                    assert_eq!(transformed["prompt_cache_key"], session_id);
+                    assert_eq!(transformed["store"], false);
+                }
+            }
+        }
     }
 
     #[test]

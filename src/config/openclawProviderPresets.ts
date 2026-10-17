@@ -399,7 +399,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
-          contextWindow: 400000,
+          contextWindow: 272000,
         },
       ],
     },
@@ -441,7 +441,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "GPT-6 Astra",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
         },
@@ -523,7 +523,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
-          contextWindow: 400000,
+          contextWindow: 272000,
         },
       ],
     },
@@ -665,12 +665,13 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     isPartner: true,
+    partnerPromotionKey: "openmodel",
     icon: "openmodel",
   },
   {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
-    apiKeyUrl: "https://grooroute.xyz/sign-up?aff=qqm9",
+    apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
     settingsConfig: {
       baseUrl: "https://grooroute.pro",
       apiKey: "",
@@ -713,7 +714,91 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     isPartner: true,
+    partnerPromotionKey: "grooroute",
     icon: "grooroute",
+  },
+  {
+    name: "TokenFactory",
+    nameKey: "providerForm.presets.tokenfactory",
+    websiteUrl: "https://tokenfactory.cn",
+    apiKeyUrl: "https://console.tokenfactory.cn/login",
+    // 官方 OpenClaw 文档（docs.tokenfactory.cn/tools/openclaw，2026-10-15
+    // 核对）：base 为 /v1、api 用 openai-completions。maxTokens 取平台模型
+    // 文档的「当前入口最大输出」，Kimi K3 取原厂默认 131072
+    settingsConfig: {
+      baseUrl: "https://api.tokenfactory.cn/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "glm-5.3",
+          name: "GLM-5.3",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 128000,
+        },
+        {
+          id: "kimi-k3",
+          name: "Kimi K3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+        },
+        {
+          id: "deepseek-v4-pro-0813",
+          name: "DeepSeek V4 Pro",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 384000,
+        },
+        {
+          id: "deepseek-v4.1-flash",
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 384000,
+        },
+        {
+          id: "glm-5.3-flash",
+          name: "GLM-5.3-Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 128000,
+        },
+        {
+          id: "qwen3.8-flash",
+          name: "Qwen3.8 Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "tokenfactory/glm-5.3",
+        fallbacks: ["tokenfactory/kimi-k3"],
+      },
+      modelCatalog: {
+        "tokenfactory/glm-5.3": { alias: "GLM-5.3" },
+        "tokenfactory/kimi-k3": { alias: "Kimi K3" },
+      },
+    },
+    icon: "tokenfactory",
   },
   {
     name: "Shengsuanyun",
@@ -840,7 +925,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "GPT-6 Astra",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
         },
@@ -948,14 +1033,14 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
-          contextWindow: 400000,
+          contextWindow: 272000,
         },
         {
           id: "gpt-6-astra",
           name: "GPT-6 Astra",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
         },
@@ -1272,14 +1357,14 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
-          contextWindow: 400000,
+          contextWindow: 272000,
         },
         {
           id: "gpt-6-astra",
           name: "GPT-6 Astra",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
         },
@@ -1316,7 +1401,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
-          contextWindow: 400000,
+          contextWindow: 272000,
         },
       ],
     },
@@ -1613,12 +1698,15 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       baseUrl: "https://api.siliconflow.cn/v1",
       apiKey: "",
       api: "openai-completions",
+      // 国内站 M2.5 已于 2026-09-11 下线，与 Codex/OpenCode 同换 V4 Flash
       models: [
         {
-          id: "Pro/MiniMaxAI/MiniMax-M2.5",
-          name: "MiniMax M2.5",
-          contextWindow: 196608,
-          cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 },
+          id: "deepseek-ai/DeepSeek-V4-Flash",
+          name: "DeepSeek V4 Flash",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 384000,
         },
       ],
     },
@@ -1635,9 +1723,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "siliconflow/Pro/MiniMaxAI/MiniMax-M2.5" },
+      model: { primary: "siliconflow/deepseek-ai/DeepSeek-V4-Flash" },
       modelCatalog: {
-        "siliconflow/Pro/MiniMaxAI/MiniMax-M2.5": { alias: "MiniMax" },
+        "siliconflow/deepseek-ai/DeepSeek-V4-Flash": { alias: "DeepSeek" },
       },
     },
   },
@@ -1691,14 +1779,14 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
-          contextWindow: 400000,
+          contextWindow: 272000,
         },
         {
           id: "gpt-6-astra",
           name: "GPT-6 Astra",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
         },
@@ -1820,7 +1908,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "gpt-6-astra",
           name: "GPT-6 Astra",
-          contextWindow: 1050000,
+          contextWindow: 272000,
           cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
           maxTokens: 128000,
         },
@@ -2191,7 +2279,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "GPT-6 Sol",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
         },
@@ -2200,7 +2288,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "GPT-6 Luna",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
         },
@@ -2209,7 +2297,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "GPT-6 Astra",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
         },
@@ -2251,7 +2339,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "GPT-6 Sol",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
         },
@@ -2260,7 +2348,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "GPT-6 Astra",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
         },
@@ -2294,14 +2382,14 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
-          contextWindow: 400000,
+          contextWindow: 272000,
         },
         {
           id: "gpt-6-astra",
           name: "GPT-6 Astra",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
         },
@@ -2326,6 +2414,66 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         "xycai/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
       },
     },
+  },
+  {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    // Chat Completions + /v1（docs.modelflare.dev/guides/endpoints，
+    // 2026-10-15 核对）；阵容同 OpenCode
+    settingsConfig: {
+      baseUrl: "https://modelflare.dev/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-6-sol",
+          name: "GPT-6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-6-astra",
+          name: "GPT-6 Astra",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "modelflare/gpt-5.6-sol",
+        fallbacks: ["modelflare/gpt-6-sol"],
+      },
+      modelCatalog: {
+        "modelflare/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
+        "modelflare/gpt-6-sol": { alias: "GPT-6 Sol" },
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
@@ -2388,14 +2536,14 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
-          contextWindow: 400000,
+          contextWindow: 272000,
         },
         {
           id: "gpt-6-astra",
           name: "GPT-6 Astra",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
         },
@@ -4355,13 +4503,13 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         {
           id: "openai/gpt-5.3-codex",
           name: "GPT-5.3 Codex",
-          contextWindow: 400000,
+          contextWindow: 272000,
           cost: { input: 5, output: 40, cacheRead: 0.5 },
         },
         {
           id: "openai/gpt-5.2",
           name: "GPT-5.2",
-          contextWindow: 400000,
+          contextWindow: 272000,
           cost: { input: 1.75, output: 14, cacheRead: 0.175 },
         },
         {
@@ -4489,6 +4637,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "baseten",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -4698,6 +4847,148 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "LM Studio",
+    websiteUrl: "https://lmstudio.ai",
+    // 本机 OpenAI Chat base http://localhost:1234/v1（docs.openclaw.ai/providers/
+    // lmstudio，2026-10-14 核对）。OpenClaw 自带 lmstudio 供应商，供应商名请
+    // 另取（下面示例用 lmstudio-local）。默认不鉴权，未开鉴权时 OpenClaw 也要
+    // 存一个非机密占位值，预填官方占位 Key lmstudio；开启鉴权后换成 API Token。
+    // 本地推理不计费，cost 记 0；maxTokens 取 models.dev 的 lmstudio 条目。
+    // 模型换成自己已下载的；实际窗口受 LM Studio 加载模型时的 context length
+    // 限制（UI 设置或 lms load --context-length），官方要求至少约 25K，加载
+    // 窗口更小时把 contextWindow 一起调小
+    settingsConfig: {
+      baseUrl: "http://localhost:1234/v1",
+      apiKey: "lmstudio",
+      api: "openai-completions",
+      models: [
+        {
+          id: "openai/gpt-oss-20b",
+          name: "GPT-OSS 20B",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 131072,
+          maxTokens: 32768,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "local",
+    icon: "lmstudio",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "lmstudio",
+        editorValue: "lmstudio",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "lmstudio-local/openai/gpt-oss-20b" },
+      modelCatalog: {
+        "lmstudio-local/openai/gpt-oss-20b": { alias: "GPT-OSS 20B" },
+      },
+    },
+  },
+  {
+    name: "llama.cpp",
+    websiteUrl: "https://github.com/ggml-org/llama.cpp",
+    // 本机 llama-server 的 OpenAI Chat base http://127.0.0.1:9931/v1（github.com/
+    // openclaw/openclaw/blob/main/docs/gateway/config-tools/provider-examples.md、
+    // docs/plugins/llama-cpp.md，2026-10-14 核对）。OpenClaw 自带 llama-cpp 插件
+    // 供应商，供应商名请另取（下面示例用 llamacpp-local）；自定义 ID 指向
+    // llama-server 时官方要求每个模型声明 compat.toolSchemaProfile=llamacpp，
+    // 清掉 GBNF 编译不了的 pattern / maxLength（影响 cron 工具）。默认端口
+    // b11521（PR #30159）起为 9931，v0.6.0 及更早、Homebrew 与 Docker 仍是 8080。
+    // 不带 --api-key 时不校验，预填占位值 no-key（官方示例用 llamacpp-no-key，
+    // 任意非空值都行）。本地推理不计费，cost 记 0。默认模型取 ggml-org 官方
+    // GGUF 的 Qwen3-Coder 30B A3B（窗口 / 输出取 Qwen 模型卡），换成自己已下载
+    // 的；本地实际窗口受 -c / --fit / -np 限制，更小时把 contextWindow 一起调小
+    settingsConfig: {
+      baseUrl: "http://127.0.0.1:9931/v1",
+      apiKey: "no-key",
+      api: "openai-completions",
+      models: [
+        {
+          id: "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+          name: "Qwen3-Coder 30B A3B",
+          reasoning: false,
+          input: ["text"],
+          contextWindow: 262144,
+          maxTokens: 65536,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          compat: { supportsTools: true, toolSchemaProfile: "llamacpp" },
+        },
+      ],
+    },
+    category: "local",
+    icon: "llamacpp",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "no-key",
+        editorValue: "no-key",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary:
+          "llamacpp-local/ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+      },
+      modelCatalog: {
+        "llamacpp-local/ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF": {
+          alias: "Qwen3-Coder 30B A3B",
+        },
+      },
+    },
+  },
+  {
+    name: "vLLM",
+    websiteUrl: "https://vllm.ai",
+    // 本机 vllm serve 的 OpenAI Chat base http://localhost:8000/v1（docs.openclaw.ai/
+    // providers/vllm、docs.vllm.ai/en/latest/serving/online_serving/
+    // openai_compatible_server，2026-10-14 核对）。OpenClaw 自带 vllm 供应商
+    //（设了 VLLM_API_KEY 时自动发现模型），供应商名请另取（下面示例用
+    // vllm-local）。默认端口 8000，不带 --host 时监听全部 IPv4 网卡，建议加
+    // --host 127.0.0.1；工具调用要启动时加 --enable-auto-tool-choice
+    // --tool-call-parser qwen3_coder，思考另加 --reasoning-parser qwen3。不带
+    // --api-key 时不校验，预填官方占位值 dummy（任意非空值都行，带了就填那个值）。
+    // 本地推理不计费，cost 记 0。默认模型取 vLLM Codex 接入页的示例
+    // Qwen/Qwen3.6-27B（窗口 / 输出取 Qwen 模型卡），须与 /v1/models 的 id 一致，
+    // 换成自己已下载的；本地实际窗口受 --max-model-len 限制，更小时把
+    // contextWindow 一起调小
+    settingsConfig: {
+      baseUrl: "http://localhost:8000/v1",
+      apiKey: "dummy",
+      api: "openai-completions",
+      models: [
+        {
+          id: "Qwen/Qwen3.6-27B",
+          name: "Qwen3.6 27B",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 262144,
+          maxTokens: 32768,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "local",
+    icon: "vllm",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "dummy",
+        editorValue: "dummy",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "vllm-local/Qwen/Qwen3.6-27B" },
+      modelCatalog: {
+        "vllm-local/Qwen/Qwen3.6-27B": { alias: "Qwen3.6 27B" },
+      },
+    },
+  },
+  {
     name: "Meta Model API",
     websiteUrl: "https://dev.meta.ai",
     apiKeyUrl: "https://dev.meta.ai",
@@ -4807,6 +5098,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "deepinfra",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -4871,7 +5163,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "GPT-6 Astra",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
         },
@@ -4880,7 +5172,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "GPT-6.1 Sol",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
         },
@@ -4977,6 +5269,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "nebius",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -5026,6 +5319,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "aggregator",
+    icon: "groq",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -5076,6 +5370,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "cloud_provider",
+    icon: "sambanova",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -5146,6 +5441,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "cloud_provider",
+    icon: "digitalocean",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -5366,6 +5662,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "cloud_provider",
+    icon: "fireworks",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -5461,7 +5758,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "GPT-6.1 Sol",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 2, output: 10, cacheRead: 0.1 },
         },
@@ -5470,7 +5767,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "GPT-6 Luna",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 0.1, output: 0.5, cacheRead: 0.01 },
         },
@@ -5593,7 +5890,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "GPT-6 Sol",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
         },
@@ -5602,7 +5899,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "GPT-6 Astra",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
         },
@@ -5738,7 +6035,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "GPT-6 Sol",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
         },
@@ -5747,7 +6044,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "GPT-6 Astra",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 1050000,
+          contextWindow: 272000,
           maxTokens: 128000,
           cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
         },

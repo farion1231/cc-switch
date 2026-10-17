@@ -203,6 +203,26 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["Ollama Cloud", "kimi-k3", ["low", "high", "max"]],
     ["Ollama Cloud", "deepseek-v4-pro:0813", ["low", "high", "max"]],
     ["Ollama Cloud", "deepseek-v4.1-flash", ["low", "high", "max"]],
+    // Ollama 本机（原生 Responses 直连）：gpt-oss 取 ollama.com/api/show 的
+    // thinking.values；qwen3.5 只支持开关，文档写 none 映射为关（2026-10-14）
+    ["Ollama", "gpt-oss:20b", ["low", "medium", "high"]],
+    ["Ollama", "gpt-oss:120b", ["low", "medium", "high"]],
+    ["Ollama", "qwen3.5", ["none", "high"]],
+    // LM Studio 本机（原生 Responses 直连）：取 LM Studio 声明的
+    // reasoning.effort 枚举（lmstudio.ai/blog/lmstudio-v0.3.29，2026-10-14）
+    ["LM Studio", "openai/gpt-oss-20b", ["low", "medium", "high"]],
+    // llama.cpp 本机（原生 Responses 直连）：Qwen3-Coder 不思考，llama-server 把
+    // reasoning_effort 交给模型模板（PR #26941，2026-10-14），该模板不读，照
+    // Nebius 先例只钉单档 high
+    [
+      "llama.cpp",
+      "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+      ["high"],
+    ],
+    // vLLM 本机（原生 Responses 直连）：vLLM 用户没设 enable_thinking 时按
+    // effort != "none" 开关思考（responses/protocol.py，v0.31.0，2026-10-14），
+    // Qwen3.6 模板只有开关，故两态
+    ["vLLM", "Qwen/Qwen3.6-27B", ["none", "high"]],
     // Baseten（Chat 路由，reasoning_effort 透传）：docs.baseten.co/inference/
     // model-apis/reasoning（2026-10-14）。GLM-5.3 系 none 按 low 处理（假关）
     // 故不列 none；V4.1 Flash 不支持 low；Kimi K3 API 默认 max，四款都显式
