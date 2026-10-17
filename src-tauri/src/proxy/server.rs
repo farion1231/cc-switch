@@ -1295,4 +1295,197 @@ mod tests {
             "full URL"
         );
     }
+
+    /// Claude Code Auto Mode 的服务端免费分类器要求网关原样透传请求体 `safeguards`
+    /// 与响应体 `safeguard_results`（Issue #7721，文档：
+    /// https://code.claude.com/docs/en/auto-mode-classifier-billing）。
+    /// 非 Anthropic Messages 格式的转换路径不在此列：字段在转换目标里没有对应物。
+    ///
+    /// 假 key 一律使用 `<REDACTED>` 占位，不复制真实凭证。
+    fn safeguards_test_body() -> Value {
+        json!({
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 64,
+            "safeguards": [{"type": "bash", "command": "echo hi"}],
+            "messages": [{"role": "user", "content": "hi"}]
+        })
+    }
+
+    async fn start_mock_anthropic_upstream(
+        captured: Arc<Mutex<Vec<CapturedRequest>>>,
+        response_content_type: &'static str,
+        response_body: &'static str,
+    ) -> (SocketAddr, JoinHandle<()>) {
+        let mock_app = Router::new().route(
+            "/v1/messages",
+            post(move |request: axum::extract::Request| {
+                let captured = captured.clone();
+                async move {
+                    let (parts, body) = request.into_parts();
+                    let body = axum::body::to_bytes(body, 1024 * 1024)
+                        .await
+                        .expect("read mock request body");
+                    captured.lock().await.push(CapturedRequest {
+                        path_and_query: parts
+                            .uri
+                            .path_and_query()
+                            .map(|value| value.as_str().to_string())
+                            .unwrap_or_else(|| parts.uri.path().to_string()),
+                        authorization: None,
+                        body: serde_json::from_slice(&body).unwrap_or(Value::Null),
+                    });
+                    (
+                        StatusCode::OK,
+                        [(header::CONTENT_TYPE, response_content_type)],
+                        response_body,
+                    )
+                }
+            }),
+        );
+        let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let mock_addr = mock_listener.local_addr().expect("mock upstream address");
+        let mock_handle = tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+        (mock_addr, mock_handle)
+    }
+
+    async fn start_proxy_with_claude_provider(
+        base_url: String,
+    ) -> (Arc<Database>, u16, ProxyServer) {
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let provider = Provider::with_id(
+            "claude-native".to_string(),
+            "claude-native".to_string(),
+            json!({
+                "base_url": base_url,
+                "auth": {"ANTHROPIC_API_KEY": "<REDACTED>"}
+            }),
+            None,
+        );
+        db.save_provider("claude", &provider)
+            .expect("save claude provider");
+        db.set_current_provider("claude", &provider.id)
+            .expect("select claude provider");
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                non_streaming_timeout: 10,
+                ..ProxyConfig::default()
+            },
+            db.clone(),
+            None,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        (db, proxy_info.port, proxy)
+    }
+
+    /// 非 Anthropic 格式转换会把请求体重建成另一种 wire format，`safeguards`
+    /// 在转换目标里没有对应物，不参与本单的透传验收。
+    #[tokio::test]
+    async fn claude_native_non_streaming_passthrough_keeps_safeguards_fields() {
+        let captured = Arc::new(Mutex::new(Vec::<CapturedRequest>::new()));
+        let upstream_body = r#"{
+            "id": "msg_test",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-5",
+            "content": [{"type": "text", "text": "ok"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "safeguard_results": [{"type": "bash", "verdict": "allow"}]
+        }"#;
+        let (mock_addr, mock_handle) =
+            start_mock_anthropic_upstream(captured.clone(), "application/json", upstream_body)
+                .await;
+        let (_db, port, proxy) =
+            start_proxy_with_claude_provider(format!("http://{mock_addr}")).await;
+        let client = reqwest::Client::new();
+
+        let mut request_body = safeguards_test_body();
+        request_body["stream"] = Value::Bool(false);
+        let response = client
+            .post(format!("http://127.0.0.1:{port}/v1/messages"))
+            .json(&request_body)
+            .send()
+            .await
+            .expect("send claude messages request");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let response_body: Value = response.json().await.expect("parse proxy response");
+        assert_eq!(
+            response_body.get("safeguard_results"),
+            Some(&json!([{"type": "bash", "verdict": "allow"}])),
+            "响应体必须原样携带 safeguard_results"
+        );
+
+        let request = captured
+            .lock()
+            .await
+            .pop()
+            .expect("upstream request captured");
+        assert_eq!(
+            request.body.get("safeguards"),
+            request_body.get("safeguards"),
+            "上游收到的请求体必须原样携带 safeguards"
+        );
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn claude_native_streaming_passthrough_keeps_safeguard_results() {
+        let captured = Arc::new(Mutex::new(Vec::<CapturedRequest>::new()));
+        let upstream_sse = "event: message_start\n\
+data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_test\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-sonnet-4-5\",\"content\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}},\"safeguard_results\":[{\"type\":\"bash\",\"verdict\":\"allow\"}]}\n\
+\n\
+event: message_stop\n\
+data: {\"type\":\"message_stop\"}\n\
+\n";
+        let (mock_addr, mock_handle) =
+            start_mock_anthropic_upstream(captured.clone(), "text/event-stream", upstream_sse)
+                .await;
+        let (_db, port, proxy) =
+            start_proxy_with_claude_provider(format!("http://{mock_addr}")).await;
+        let client = reqwest::Client::new();
+
+        let mut request_body = safeguards_test_body();
+        request_body["stream"] = Value::Bool(true);
+        let response = client
+            .post(format!("http://127.0.0.1:{port}/v1/messages"))
+            .json(&request_body)
+            .send()
+            .await
+            .expect("send claude streaming request");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let streamed = response.text().await.expect("read streamed body");
+        assert!(
+            streamed.contains("safeguard_results"),
+            "流式响应必须原样透传 safeguard_results，实际收到: {streamed}"
+        );
+        assert!(
+            streamed.contains("\"verdict\":\"allow\""),
+            "safeguard_results 内容不得被改写，实际收到: {streamed}"
+        );
+
+        let request = captured
+            .lock()
+            .await
+            .pop()
+            .expect("upstream request captured");
+        assert_eq!(
+            request.body.get("safeguards"),
+            request_body.get("safeguards"),
+            "上游收到的流式请求体必须原样携带 safeguards"
+        );
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+    }
 }
