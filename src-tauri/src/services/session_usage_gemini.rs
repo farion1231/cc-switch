@@ -272,7 +272,7 @@ fn insert_gemini_session_entry(
         cache_creation_tokens: 0,
         created_at,
     };
-    if should_skip_session_insert(&conn, request_id, &dedup_key)? {
+    if should_skip_session_insert(&conn, "gemini_session", request_id, &dedup_key)? {
         return Ok(false);
     }
 
