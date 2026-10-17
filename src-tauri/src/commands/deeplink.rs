@@ -3,7 +3,7 @@ use crate::deeplink::{
     import_skill_from_deeplink, parse_deeplink_url, DeepLinkImportRequest, PendingDeepLinkEntry,
 };
 use crate::store::AppState;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 /// Read the deep link waiting for the frontend without clearing it (see `PendingDeepLink`)
 #[tauri::command]
@@ -44,6 +44,7 @@ pub async fn fetch_deeplink_icon(url: String) -> Option<String> {
 /// Import a provider from a deep link request (legacy, kept for compatibility)
 #[tauri::command]
 pub fn import_from_deeplink(
+    app: AppHandle,
     state: State<AppState>,
     request: DeepLinkImportRequest,
 ) -> Result<String, String> {
@@ -55,6 +56,7 @@ pub fn import_from_deeplink(
 
     let provider_id = import_provider_from_deeplink(&state, request).map_err(|e| e.to_string())?;
 
+    crate::tray::refresh_tray_menu(&app);
     log::info!("Successfully imported provider with ID: {provider_id}");
 
     Ok(provider_id)
@@ -63,6 +65,7 @@ pub fn import_from_deeplink(
 /// Import resource from a deep link request (unified handler)
 #[tauri::command]
 pub async fn import_from_deeplink_unified(
+    app: AppHandle,
     state: State<'_, AppState>,
     request: DeepLinkImportRequest,
 ) -> Result<serde_json::Value, String> {
@@ -72,6 +75,7 @@ pub async fn import_from_deeplink_unified(
         "provider" => {
             let provider_id =
                 import_provider_from_deeplink(&state, request).map_err(|e| e.to_string())?;
+            crate::tray::refresh_tray_menu(&app);
             Ok(serde_json::json!({
                 "type": "provider",
                 "id": provider_id
