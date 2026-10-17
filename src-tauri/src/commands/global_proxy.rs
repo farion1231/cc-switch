@@ -3,6 +3,8 @@
 //! 提供获取、设置和测试全局代理的 Tauri 命令。
 
 use crate::proxy::http_client;
+use cc_command_api::command_api;
+use crate::error::AppError;
 use crate::store::AppState;
 use serde::Serialize;
 use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
@@ -11,9 +13,9 @@ use std::time::{Duration, Instant};
 /// 获取全局代理 URL
 ///
 /// 返回当前配置的代理 URL，null 表示直连。
-#[tauri::command]
-pub fn get_global_proxy_url(state: tauri::State<'_, AppState>) -> Result<Option<String>, String> {
-    let result = state.db.get_global_proxy_url().map_err(|e| e.to_string())?;
+#[command_api]
+pub fn get_global_proxy_url(state: &AppState) -> Result<Option<String>, AppError> {
+    let result = state.db.get_global_proxy_url()?;
     log::debug!(
         "[GlobalProxy] [GP-010] Read from database: {}",
         result
@@ -31,8 +33,8 @@ pub fn get_global_proxy_url(state: tauri::State<'_, AppState>) -> Result<Option<
 ///
 /// 执行顺序：先验证 → 写 DB → 再应用
 /// 这样确保 DB 写失败时不会出现运行态与持久化不一致的问题
-#[tauri::command]
-pub fn set_global_proxy_url(state: tauri::State<'_, AppState>, url: String) -> Result<(), String> {
+#[command_api(state = "state")]
+pub fn set_global_proxy_url(state: &AppState, url: String) -> Result<(), AppError> {
     // 调试：显示接收到的 URL 信息（不包含敏感内容）
     let has_auth = url.contains('@') && (url.starts_with("http://") || url.starts_with("socks"));
     log::debug!(
@@ -53,8 +55,7 @@ pub fn set_global_proxy_url(state: tauri::State<'_, AppState>, url: String) -> R
     // 2. 验证成功后保存到数据库
     state
         .db
-        .set_global_proxy_url(url_opt)
-        .map_err(|e| e.to_string())?;
+        .set_global_proxy_url(url_opt)?;
 
     // 3. DB 写入成功后再应用到运行态
     http_client::apply_proxy(url_opt)?;
@@ -85,7 +86,7 @@ pub struct ProxyTestResult {
 ///
 /// 通过指定的代理 URL 发送测试请求，返回连接结果和延迟。
 /// 使用多个测试目标，任一成功即认为代理可用。
-#[tauri::command]
+#[command_api]
 pub async fn test_proxy_url(url: String) -> Result<ProxyTestResult, String> {
     if url.trim().is_empty() {
         return Err("Proxy URL is empty".to_string());
@@ -160,7 +161,7 @@ pub async fn test_proxy_url(url: String) -> Result<ProxyTestResult, String> {
 /// 获取当前出站代理状态
 ///
 /// 返回当前是否启用了出站代理以及代理 URL。
-#[tauri::command]
+#[command_api]
 pub fn get_upstream_proxy_status() -> UpstreamProxyStatus {
     let url = http_client::get_current_proxy_url();
     UpstreamProxyStatus {
@@ -209,7 +210,7 @@ const PROXY_PORTS: &[(u16, &str, bool)] = &[
 ///
 /// 检测常见端口是否有代理服务在运行。
 /// 使用异步任务避免阻塞 UI 线程。
-#[tauri::command]
+#[command_api]
 pub async fn scan_local_proxies() -> Vec<DetectedProxy> {
     // 使用 spawn_blocking 避免阻塞主线程
     tokio::task::spawn_blocking(|| {

@@ -2,17 +2,17 @@
 
 mod auth;
 mod balance;
-mod codex_oauth;
+pub(crate) mod codex_oauth;
 mod coding_plan;
-mod config;
-mod copilot;
+pub(crate) mod config;
+pub(crate) mod copilot;
 mod custom_icon;
 mod deeplink;
 mod env;
 mod failover;
 mod global_proxy;
 mod hermes;
-mod import_export;
+pub(crate) mod import_export;
 mod mcp;
 mod misc;
 mod model_fetch;
@@ -25,12 +25,12 @@ mod prompt;
 mod provider;
 mod proxy;
 mod session_manager;
-mod settings;
+pub(crate) mod settings;
 pub mod skill;
 mod stream_check;
 mod subscription;
-mod sync_support;
-mod xai_oauth;
+pub(crate) mod sync_support;
+pub(crate) mod xai_oauth;
 
 mod lightweight;
 mod s3_sync;

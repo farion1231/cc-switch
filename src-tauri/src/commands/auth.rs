@@ -1,3 +1,4 @@
+use cc_command_api::command_api;
 use tauri::State;
 
 use crate::app_config::AppType;
@@ -107,14 +108,14 @@ fn map_device_code_response(
     }
 }
 
-#[tauri::command(rename_all = "camelCase")]
+#[command_api(state = "copilot_state, codex_state, xai_state")]
 pub async fn auth_start_login(
     auth_provider: String,
     github_domain: Option<String>,
     target_account_id: Option<String>,
-    copilot_state: State<'_, CopilotAuthState>,
-    codex_state: State<'_, CodexOAuthState>,
-    xai_state: State<'_, XaiOAuthState>,
+    copilot_state: &CopilotAuthState,
+    codex_state: &CodexOAuthState,
+    xai_state: &XaiOAuthState,
 ) -> Result<ManagedAuthDeviceCodeResponse, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -152,15 +153,15 @@ pub async fn auth_start_login(
     }
 }
 
-#[tauri::command(rename_all = "camelCase")]
+#[command_api(state = "app_state, copilot_state, codex_state, xai_state")]
 pub async fn auth_poll_for_account(
     auth_provider: String,
     device_code: String,
     github_domain: Option<String>,
-    app_state: State<'_, AppState>,
-    copilot_state: State<'_, CopilotAuthState>,
-    codex_state: State<'_, CodexOAuthState>,
-    xai_state: State<'_, XaiOAuthState>,
+    app_state: &AppState,
+    copilot_state: &CopilotAuthState,
+    codex_state: &CodexOAuthState,
+    xai_state: &XaiOAuthState,
 ) -> Result<Option<ManagedAuthAccount>, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -217,11 +218,11 @@ pub async fn auth_poll_for_account(
     }
 }
 
-#[tauri::command(rename_all = "camelCase")]
+#[command_api(state = "codex_state")]
 pub async fn auth_cancel_login(
     auth_provider: String,
     device_code: String,
-    codex_state: State<'_, CodexOAuthState>,
+    codex_state: &CodexOAuthState,
 ) -> Result<bool, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     if auth_provider != AUTH_PROVIDER_CODEX_OAUTH {
@@ -230,12 +231,12 @@ pub async fn auth_cancel_login(
     Ok(codex_state.0.cancel_device_flow(&device_code).await)
 }
 
-#[tauri::command(rename_all = "camelCase")]
+#[command_api(state = "copilot_state, codex_state, xai_state")]
 pub async fn auth_list_accounts(
     auth_provider: String,
-    copilot_state: State<'_, CopilotAuthState>,
-    codex_state: State<'_, CodexOAuthState>,
-    xai_state: State<'_, XaiOAuthState>,
+    copilot_state: &CopilotAuthState,
+    codex_state: &CodexOAuthState,
+    xai_state: &XaiOAuthState,
 ) -> Result<Vec<ManagedAuthAccount>, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -273,12 +274,12 @@ pub async fn auth_list_accounts(
     }
 }
 
-#[tauri::command(rename_all = "camelCase")]
+#[command_api(state = "copilot_state, codex_state, xai_state")]
 pub async fn auth_get_status(
     auth_provider: String,
-    copilot_state: State<'_, CopilotAuthState>,
-    codex_state: State<'_, CodexOAuthState>,
-    xai_state: State<'_, XaiOAuthState>,
+    copilot_state: &CopilotAuthState,
+    codex_state: &CodexOAuthState,
+    xai_state: &XaiOAuthState,
 ) -> Result<ManagedAuthStatus, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -338,13 +339,13 @@ pub async fn auth_get_status(
     }
 }
 
-#[tauri::command(rename_all = "camelCase")]
+#[command_api(state = "app_state, copilot_state, xai_state")]
 pub async fn auth_remove_account(
     auth_provider: String,
     account_id: String,
-    app_state: State<'_, AppState>,
-    copilot_state: State<'_, CopilotAuthState>,
-    xai_state: State<'_, XaiOAuthState>,
+    app_state: &AppState,
+    copilot_state: &CopilotAuthState,
+    xai_state: &XaiOAuthState,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -356,7 +357,7 @@ pub async fn auth_remove_account(
                 .map_err(|e| e.to_string())
         }
         AUTH_PROVIDER_CODEX_OAUTH => {
-            remove_codex_oauth_account_with_switch_lock(app_state.inner(), &account_id).await
+            remove_codex_oauth_account_with_switch_lock(app_state, &account_id).await
         }
         AUTH_PROVIDER_XAI_OAUTH => {
             let auth_manager = xai_state.0.write().await;
@@ -394,13 +395,13 @@ pub(crate) async fn remove_codex_oauth_account_with_switch_lock(
     Ok(())
 }
 
-#[tauri::command(rename_all = "camelCase")]
+#[command_api(state = "copilot_state, codex_state, xai_state")]
 pub async fn auth_set_default_account(
     auth_provider: String,
     account_id: String,
-    copilot_state: State<'_, CopilotAuthState>,
-    codex_state: State<'_, CodexOAuthState>,
-    xai_state: State<'_, XaiOAuthState>,
+    copilot_state: &CopilotAuthState,
+    codex_state: &CodexOAuthState,
+    xai_state: &XaiOAuthState,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -429,12 +430,12 @@ pub async fn auth_set_default_account(
     }
 }
 
-#[tauri::command(rename_all = "camelCase")]
+#[command_api(state = "app_state, copilot_state, xai_state")]
 pub async fn auth_logout(
     auth_provider: String,
-    app_state: State<'_, AppState>,
-    copilot_state: State<'_, CopilotAuthState>,
-    xai_state: State<'_, XaiOAuthState>,
+    app_state: &AppState,
+    copilot_state: &CopilotAuthState,
+    xai_state: &XaiOAuthState,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -442,7 +443,7 @@ pub async fn auth_logout(
             let auth_manager = copilot_state.0.write().await;
             auth_manager.clear_auth().await.map_err(|e| e.to_string())
         }
-        AUTH_PROVIDER_CODEX_OAUTH => logout_codex_oauth_with_switch_lock(app_state.inner()).await,
+        AUTH_PROVIDER_CODEX_OAUTH => logout_codex_oauth_with_switch_lock(app_state).await,
         AUTH_PROVIDER_XAI_OAUTH => {
             let auth_manager = xai_state.0.write().await;
             auth_manager.clear_auth().await.map_err(|e| e.to_string())

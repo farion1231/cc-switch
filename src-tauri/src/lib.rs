@@ -35,6 +35,10 @@ mod prompt;
 mod prompt_files;
 mod provider;
 mod proxy;
+#[cfg(feature = "rest_api")]
+mod rest;
+#[cfg(feature = "rest_api")]
+mod rest_registry;
 mod services;
 mod session_manager;
 mod settings;
@@ -1197,8 +1201,8 @@ pub fn run() {
             app.manage(app_state);
 
             // 初始化 SkillService
-            let skill_service = SkillService::new();
-            app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
+            let skill_service = Arc::new(SkillService::new());
+            app.manage(commands::skill::SkillServiceState(skill_service.clone()));
 
             // 初始化 CopilotAuthManager
             {
@@ -1232,6 +1236,26 @@ pub fn run() {
                 let xai_oauth_manager = XaiOAuthManager::new(app_config_dir);
                 app.manage(XaiOAuthState(Arc::new(RwLock::new(xai_oauth_manager))));
                 log::info!("✓ XaiOAuthManager initialized");
+            }
+
+            // REST 控制面
+            #[cfg(feature = "rest_api")]
+            {
+                use commands::{CopilotAuthState, XaiOAuthState};
+                let rest_state = crate::rest::service::RestState {
+                    app: app.state::<crate::store::AppState>().inner().clone(),
+                    skill: skill_service.clone(),
+                    copilot: app.state::<CopilotAuthState>().0.clone(),
+                    xai: app.state::<XaiOAuthState>().0.clone(),
+                };
+                let rest_service = crate::rest::service::RestService::new(rest_state);
+                app.manage(rest_service.clone());
+                let rs = rest_service.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = rs.start().await {
+                        log::warn!("[REST] 控制面启动失败: {e}");
+                    }
+                });
             }
 
             // 初始化全局出站代理 HTTP 客户端
@@ -1812,6 +1836,13 @@ pub fn run() {
             commands::enter_lightweight_mode,
             commands::exit_lightweight_mode,
             commands::is_lightweight_mode,
+            // REST 控制面配置命令（feature-gated）
+            #[cfg(feature = "rest_api")]
+            crate::rest::commands::get_rest_config,
+            #[cfg(feature = "rest_api")]
+            crate::rest::commands::set_rest_config,
+            #[cfg(feature = "rest_api")]
+            crate::rest::commands::regenerate_rest_token,
         ]);
 
     let app = builder

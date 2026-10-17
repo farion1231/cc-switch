@@ -1,5 +1,6 @@
 //! xAI OAuth state and xAI-specific commands.
 
+use cc_command_api::command_api;
 use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
 use crate::proxy::providers::XAI_API_BASE_URL;
 use crate::services::model_fetch::FetchedModel;
@@ -7,7 +8,6 @@ use crate::services::subscription::{CredentialStatus, SubscriptionQuota};
 use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::State;
 use tokio::sync::RwLock;
 
 pub struct XaiOAuthState(pub Arc<RwLock<XaiOAuthManager>>);
@@ -66,10 +66,10 @@ pub(crate) async fn query_xai_oauth_quota_for(
 }
 
 /// 查询 xAI OAuth (SuperGrok 反代) 订阅额度
-#[tauri::command(rename_all = "camelCase")]
+#[command_api]
 pub async fn get_xai_oauth_quota(
     account_id: Option<String>,
-    state: State<'_, XaiOAuthState>,
+    state: &XaiOAuthState,
 ) -> Result<SubscriptionQuota, String> {
     query_xai_oauth_quota_for(&state, account_id).await
 }
@@ -87,10 +87,10 @@ struct ModelEntry {
     owned_by: Option<String>,
 }
 
-#[tauri::command(rename_all = "camelCase")]
+#[command_api]
 pub async fn get_xai_oauth_models(
     account_id: Option<String>,
-    state: State<'_, XaiOAuthState>,
+    state: &XaiOAuthState,
 ) -> Result<Vec<FetchedModel>, String> {
     let manager = state.0.read().await;
     let resolved = match account_id
