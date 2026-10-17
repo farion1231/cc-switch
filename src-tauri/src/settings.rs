@@ -346,6 +346,21 @@ pub struct CodexOfficialHistoryUnifyMigration {
     pub codex_config_dir: Option<String>,
 }
 
+/// Claude Desktop display settings for the 3P panel's bottom-left corner:
+/// `deploymentDisplayName`, `deploymentDisplaySubtitle` and
+/// `endUserAttribution`. `None` = feature off - nothing is written, so whatever
+/// the user set in the Claude Desktop panel itself is left alone.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeDesktopDisplaySettings {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub subtitle: String,
+    #[serde(default)]
+    pub attribution: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodexLegacyOfficialHistoryBucketMigration {
@@ -500,6 +515,11 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_display: Option<String>,
 
+    // Claude Desktop 3P panel display (bottom-left name / subtitle / attribution).
+    // Unset = write nothing and keep whatever the panel holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_desktop_display: Option<ClaudeDesktopDisplaySettings>,
+
     // ===== 主页面显示的应用 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_apps: Option<VisibleApps>,
@@ -644,6 +664,7 @@ impl Default for AppSettings {
             language: None,
             quota_display: None,
             visible_apps: None,
+            claude_desktop_display: None,
             claude_config_dir: None,
             codex_config_dir: None,
             gemini_config_dir: None,
