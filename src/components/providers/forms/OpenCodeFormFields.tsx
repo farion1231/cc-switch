@@ -198,8 +198,11 @@ interface OpenCodeFormFieldsProps {
   onModelsChange: (models: Record<string, OpenCodeModel>) => void;
 
   // Extra Options
-  extraOptions: Record<string, string>;
-  onExtraOptionsChange: (options: Record<string, string>) => void;
+  extraOptions?: Record<string, string>;
+  onExtraOptionsChange?: (options: Record<string, string>) => void;
+
+  /** Apps without an SDK options bag (Command Code) hide this section. */
+  showExtraOptions?: boolean;
 }
 
 export function OpenCodeFormFields({
@@ -221,8 +224,9 @@ export function OpenCodeFormFields({
   onHeadersChange,
   models,
   onModelsChange,
-  extraOptions,
-  onExtraOptionsChange,
+  extraOptions = {},
+  onExtraOptionsChange = () => undefined,
+  showExtraOptions = true,
 }: OpenCodeFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -672,90 +676,92 @@ export function OpenCodeFormFields({
       />
 
       {/* Extra Options Editor */}
-      <div className="space-y-2 border-l border-border pl-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="space-y-1">
-            <FormLabel>
-              {t("opencode.extraOptions", {
-                defaultValue: "Extra SDK Options",
-              })}
-            </FormLabel>
-            <p className="text-xs text-fg-2">
-              {t("opencode.extraOptionsHint", {
-                defaultValue:
-                  "Advanced SDK options not exposed by the structured fields.",
-              })}
-            </p>
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleAddExtraOption}
-            className="h-7 gap-1"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            {t("opencode.addExtraOption", { defaultValue: "Add" })}
-          </Button>
-        </div>
-
-        <div>
-          {Object.keys(extraOptions).length === 0 ? (
-            <p className="text-sm text-fg-2 py-1">
-              {t("opencode.noExtraOptions", {
-                defaultValue: "No extra SDK options configured",
-              })}
-            </p>
-          ) : (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-xs text-fg-2 px-1 mb-1">
-                <span className="flex-1">
-                  {t("opencode.extraOptionKey", { defaultValue: "Key" })}
-                </span>
-                <span className="flex-1">
-                  {t("opencode.extraOptionValue", { defaultValue: "Value" })}
-                </span>
-                <span className="w-9" />
-              </div>
-              {Object.entries(extraOptions).map(([key, value]) => (
-                <div key={key} className="flex items-center gap-2">
-                  <ExtraOptionKeyInput
-                    optionKey={key}
-                    onChange={(newKey) =>
-                      handleExtraOptionKeyChange(key, newKey)
-                    }
-                    placeholder={t("opencode.extraOptionKeyPlaceholder", {
-                      defaultValue: "timeout",
-                    })}
-                  />
-                  <ImeSafeInput
-                    value={value}
-                    onValueChange={(nextValue) =>
-                      handleExtraOptionValueChange(key, nextValue)
-                    }
-                    placeholder={t("opencode.extraOptionValuePlaceholder", {
-                      defaultValue: "600000",
-                    })}
-                    className="flex-1"
-                  />
-                  <HoverTip content={t("common.delete")}>
-                    <Button
-                      aria-label={t("common.delete")}
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleRemoveExtraOption(key)}
-                      className="h-9 w-9 text-fg-2 hover:text-destructive"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </HoverTip>
-                </div>
-              ))}
+      {showExtraOptions && (
+        <div className="space-y-2 border-l border-border pl-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-1">
+              <FormLabel>
+                {t("opencode.extraOptions", {
+                  defaultValue: "Extra SDK Options",
+                })}
+              </FormLabel>
+              <p className="text-xs text-fg-2">
+                {t("opencode.extraOptionsHint", {
+                  defaultValue:
+                    "Advanced SDK options not exposed by the structured fields.",
+                })}
+              </p>
             </div>
-          )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleAddExtraOption}
+              className="h-7 gap-1"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {t("opencode.addExtraOption", { defaultValue: "Add" })}
+            </Button>
+          </div>
+
+          <div>
+            {Object.keys(extraOptions).length === 0 ? (
+              <p className="text-sm text-fg-2 py-1">
+                {t("opencode.noExtraOptions", {
+                  defaultValue: "No extra SDK options configured",
+                })}
+              </p>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-xs text-fg-2 px-1 mb-1">
+                  <span className="flex-1">
+                    {t("opencode.extraOptionKey", { defaultValue: "Key" })}
+                  </span>
+                  <span className="flex-1">
+                    {t("opencode.extraOptionValue", { defaultValue: "Value" })}
+                  </span>
+                  <span className="w-9" />
+                </div>
+                {Object.entries(extraOptions).map(([key, value]) => (
+                  <div key={key} className="flex items-center gap-2">
+                    <ExtraOptionKeyInput
+                      optionKey={key}
+                      onChange={(newKey) =>
+                        handleExtraOptionKeyChange(key, newKey)
+                      }
+                      placeholder={t("opencode.extraOptionKeyPlaceholder", {
+                        defaultValue: "timeout",
+                      })}
+                    />
+                    <ImeSafeInput
+                      value={value}
+                      onValueChange={(nextValue) =>
+                        handleExtraOptionValueChange(key, nextValue)
+                      }
+                      placeholder={t("opencode.extraOptionValuePlaceholder", {
+                        defaultValue: "600000",
+                      })}
+                      className="flex-1"
+                    />
+                    <HoverTip content={t("common.delete")}>
+                      <Button
+                        aria-label={t("common.delete")}
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleRemoveExtraOption(key)}
+                        className="h-9 w-9 text-fg-2 hover:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </HoverTip>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Models Editor */}
       <div className="space-y-3 border-l border-border pl-3">

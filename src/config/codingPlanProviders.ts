@@ -139,6 +139,9 @@ export function extractBaseUrlForUsageDetection(
     case "openclaw":
       raw = settingsConfig.baseUrl;
       break;
+    case "commandcode":
+      raw = settingsConfig.baseURL;
+      break;
     case "hermes":
       raw = settingsConfig.base_url;
       break;

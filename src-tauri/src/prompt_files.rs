@@ -19,7 +19,7 @@ pub(crate) fn validate_prompt_content(app: &AppType, content: &str) -> Result<()
 
 /// 返回指定应用所使用的提示词文件路径。
 pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
-    if matches!(app, AppType::ClaudeDesktop) {
+    if matches!(app, AppType::ClaudeDesktop | AppType::CommandCode) {
         return Err(AppError::localized(
             "app.prompts_unsupported",
             "当前应用暂不支持 Prompts",
@@ -37,6 +37,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir()?,
         AppType::Mcode => crate::mcode_config::data_dir(),
+        AppType::CommandCode => unreachable!("handled above"),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -47,6 +48,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw => "AGENTS.md",
         AppType::Hermes => "SOUL.md",
         AppType::Pi | AppType::Mcode => "AGENTS.md",
+        AppType::CommandCode => unreachable!("handled above"),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 

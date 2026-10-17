@@ -1053,6 +1053,13 @@
       "description": "MiniMax hesabınızda oturum açma işleminiz MiniMax Code'nin kendisi tarafından yönetildiğinden içe aktarılacak hiçbir şey yoktur. Zaten config.yaml'de bulunan özel sağlayıcılar burada otomatik olarak görünür. Ön ayar veya özel sağlayıcı eklemek için sağ üst köşedeki + düğmesini kullanın."
     }
   },
+  "commandcode": {
+    "empty": {
+      "title": "Henüz sağlayıcı yok",
+      "description": "Command Code hesap oturumunuz (auth.json) Command Code'un kendisi tarafından yönetildiğinden içe aktarılacak bir şey yoktur. providers.json'da zaten bulunan özel sağlayıcılar burada otomatik olarak görünür. Ön ayar veya özel sağlayıcı eklemek için sağ üst köşedeki + düğmesini kullanın."
+    },
+    "providerKeyHint": "providers.json içindeki benzersiz tanımlayıcı. Küçük harf, rakam, tire, alt çizgi ve nokta kullanın; yerleşik kimlikler (anthropic, codex, github-copilot) kullanılamaz."
+  },
   "pi": {
     "empty": {
       "title": "Henüz API anahtar sağlayıcısı yok",

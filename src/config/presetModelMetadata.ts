@@ -10,6 +10,10 @@ import {
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import type { OpenCodeModel } from "@/types";
 import { codexProviderPresets } from "./codexProviderPresets";
+import {
+  commandcodeProviderPresets,
+  type CommandCodeProviderModel,
+} from "./commandcodeProviderPresets";
 import { hermesProviderPresets } from "./hermesProviderPresets";
 import { mcodeProviderPresets } from "./mcodeProviderPresets";
 import { openclawProviderPresets } from "./openclawProviderPresets";
@@ -124,6 +128,31 @@ export const mcodePresetModelSources = lazy(() =>
       [preset.settingsConfig.options.baseURL],
       Object.entries(preset.settingsConfig.models ?? {}),
       openCodeModelMetadata,
+    ),
+  ),
+);
+
+function commandCodeModelMetadata(
+  model: CommandCodeProviderModel,
+): KnownModelMetadata {
+  const limit =
+    model.limit && typeof model.limit === "object"
+      ? (model.limit as { context?: unknown; output?: unknown })
+      : undefined;
+  return {
+    contextWindow: positiveInteger(model.contextWindow ?? limit?.context),
+    maxOutputTokens: positiveInteger(model.maxOutput ?? limit?.output),
+    reasoning:
+      typeof model.reasoning === "boolean" ? model.reasoning : undefined,
+  };
+}
+
+export const commandcodePresetModelSources = lazy(() =>
+  commandcodeProviderPresets.flatMap((preset) =>
+    buildSources(
+      [preset.settingsConfig.baseURL],
+      Object.entries(preset.settingsConfig.models ?? {}),
+      commandCodeModelMetadata,
     ),
   ),
 );
