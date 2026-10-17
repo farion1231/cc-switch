@@ -1124,6 +1124,16 @@ fn probe_local_version(
     wsl_shell: Option<&str>,
     wsl_shell_flag: Option<&str>,
 ) -> ShellProbe {
+    probe_local_version_skipping(tool, wsl_distro, wsl_shell, wsl_shell_flag, |_| false)
+}
+
+fn probe_local_version_skipping(
+    tool: &str,
+    wsl_distro: Option<&str>,
+    wsl_shell: Option<&str>,
+    wsl_shell_flag: Option<&str>,
+    skip: impl Fn(&Path) -> bool,
+) -> ShellProbe {
     if let Some(distro) = wsl_distro {
         try_get_version_wsl(tool, distro, wsl_shell, wsl_shell_flag)
     } else {
@@ -1142,7 +1152,7 @@ fn probe_local_version(
             //    resolved by `where` (App Execution Aliases filtered out), so
             //    it never `cmd /C tool` into a protocol handler.
             match probe_path_default_version(tool) {
-                ShellProbe::NotFound(_) => scan_cli_version(tool),
+                ShellProbe::NotFound(_) => scan_cli_version_skipping(tool, skip),
                 found => found,
             }
         }
@@ -1151,7 +1161,7 @@ fn probe_local_version(
         {
             // PATH 第一个命令优先；只有它确实没装(NotFound)才去常见目录兜底扫描。
             match try_get_version(tool) {
-                ShellProbe::NotFound(_) => scan_cli_version(tool),
+                ShellProbe::NotFound(_) => scan_cli_version_skipping(tool, skip),
                 found => found,
             }
         }
@@ -1242,7 +1252,7 @@ async fn get_single_tool_version_impl(
 }
 
 /// 「应用」页里这个工具自己的那份安装的版本。ChatGPT Desktop 随附的 codex 归桌面版那一行，
-/// 不算 Codex CLI：命令行默认是它时跳过，去找单独安装的那份。
+/// 不算 Codex CLI：默认命令是它时不运行它；PATH 不可用而扫描常见目录时也跳过它。
 ///
 /// 只给「应用」页用；`local_tool_version` 等其它地方照旧认命令行默认的那份。
 fn probe_own_install_version(
@@ -1251,8 +1261,13 @@ fn probe_own_install_version(
     wsl_shell: Option<&str>,
     wsl_shell_flag: Option<&str>,
 ) -> ShellProbe {
-    if wsl_distro.is_none() && path_default_is_bundled_with_desktop(tool) {
-        return scan_cli_version_skipping(tool, |path| is_bundled_with_desktop(tool, path));
+    if wsl_distro.is_none() && tool == "codex" {
+        if path_default_is_bundled_with_desktop(tool) {
+            return scan_cli_version_skipping(tool, |path| is_bundled_with_desktop(tool, path));
+        }
+        return probe_local_version_skipping(tool, wsl_distro, wsl_shell, wsl_shell_flag, |path| {
+            is_bundled_with_desktop(tool, path)
+        });
     }
     probe_local_version(tool, wsl_distro, wsl_shell, wsl_shell_flag)
 }
@@ -2682,17 +2697,20 @@ fn probe_path_default_version(tool: &str) -> ShellProbe {
     }
 }
 
-/// 扫描常见路径查找 CLI（PATH 主命令未命中时的兜底单探）。
-fn scan_cli_version(tool: &str) -> ShellProbe {
-    scan_cli_version_skipping(tool, |_| false)
+/// 扫描常见路径查找 CLI（PATH 主命令未命中时的兜底单探），可跳过随附的 Codex CLI。
+fn scan_cli_version_skipping(tool: &str, skip: impl Fn(&Path) -> bool) -> ShellProbe {
+    let search_paths = build_tool_search_paths(tool);
+    scan_cli_version_skipping_paths(tool, &search_paths, skip)
 }
 
-/// 同 `scan_cli_version`，但跳过 `skip` 认出的候选（ChatGPT Desktop 随附的 codex）。
-fn scan_cli_version_skipping(tool: &str, skip: impl Fn(&Path) -> bool) -> ShellProbe {
+fn scan_cli_version_skipping_paths(
+    tool: &str,
+    search_paths: &[PathBuf],
+    skip: impl Fn(&Path) -> bool,
+) -> ShellProbe {
     #[cfg(not(target_os = "windows"))]
     use std::process::Command;
 
-    let search_paths = build_tool_search_paths(tool);
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
     #[cfg(not(target_os = "windows"))]
@@ -2703,7 +2721,7 @@ fn scan_cli_version_skipping(tool: &str, skip: impl Fn(&Path) -> bool) -> ShellP
     // 这类信息比笼统的 "not installed" 有用得多，循环结束未探到版本时回传。
     let mut exec_diagnostic: Option<String> = None;
 
-    for path in &search_paths {
+    for path in search_paths {
         #[cfg(target_os = "windows")]
         let new_path = format!("{};{}", path.display(), current_path);
 
@@ -7739,6 +7757,28 @@ mod tests {
                 infer_install_source(Path::new("C:\\Users\\me\\scoop\\shims\\codex.cmd")),
                 "scoop"
             );
+        }
+
+        #[test]
+        fn fallback_scan_skips_bundled_codex_candidate() {
+            let dir = tempfile::tempdir().unwrap();
+            let resources = dir
+                .path()
+                .join("ChatGPT.app")
+                .join("Contents")
+                .join("Resources");
+            std::fs::create_dir_all(&resources).unwrap();
+            #[cfg(windows)]
+            let candidate = resources.join("codex.exe");
+            #[cfg(not(windows))]
+            let candidate = resources.join("codex");
+            std::fs::write(&candidate, b"placeholder").unwrap();
+
+            let result = scan_cli_version_skipping_paths("codex", &[resources], |path| {
+                is_bundled_with_desktop("codex", path)
+            });
+
+            assert!(matches!(result, ShellProbe::NotFound(_)));
         }
 
         #[test]

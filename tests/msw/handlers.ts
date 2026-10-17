@@ -560,6 +560,7 @@ export const handlers = [
     success({
       supported: true,
       installed: false,
+      cleanupRequired: false,
       appVersion: null,
       bundledCliVersion: null,
       bundledCliPath: null,

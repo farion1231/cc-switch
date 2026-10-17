@@ -16,6 +16,8 @@ pub struct ChatGptDesktopStatus {
     /// 当前系统有没有 ChatGPT Desktop（Linux 没有）。
     pub supported: bool,
     pub installed: bool,
+    /// MSIX 已卸载但仍有桌面版解出的 CLI 缓存，或缓存目录暂时无法检查。
+    pub cleanup_required: bool,
     /// 桌面应用的版本：Windows 取 MSIX 包版本，macOS 取 `CFBundleShortVersionString`。
     pub app_version: Option<String>,
     /// 随附 Codex CLI 的版本（`codex --version`），只展示，从不和 npm 的最新版比较。
@@ -54,6 +56,19 @@ fn detect() -> ChatGptDesktopStatus {
     };
     let names = windows_package::full_names(WINDOWS_PACKAGE_FAMILY);
     let Some(full_name) = newest_main_package(&names) else {
+        if let Some(bin) = extracted_cli_bin() {
+            match extracted_cli_paths_under(&bin) {
+                Ok(paths) if !paths.is_empty() => {
+                    status.cleanup_required = true;
+                    probe_bundled_cli(&mut status, &extracted_cli_candidates());
+                }
+                Err(error) => {
+                    log::warn!("Could not inspect ChatGPT Desktop CLI cache: {error}");
+                    status.cleanup_required = true;
+                }
+                _ => {}
+            }
+        }
         return status;
     };
     status.installed = true;
@@ -102,10 +117,19 @@ fn detect() -> ChatGptDesktopStatus {
 fn uninstall() -> Result<(), String> {
     // 执行时重新查：确认框开着的时候桌面版可能自己更新过，包全名会变
     let names = windows_package::full_names(WINDOWS_PACKAGE_FAMILY);
-    let commands = remove_main_package_commands(&names)
-        .ok_or_else(|| "ChatGPT Desktop is not installed".to_string())?;
+    let commands = remove_main_package_commands(&names);
+    let bin = extracted_cli_bin();
+    let Some(commands) = commands else {
+        let Some(bin) = bin else {
+            return Err("ChatGPT Desktop is not installed".to_string());
+        };
+        if extracted_cli_paths_under(&bin)?.is_empty() {
+            return Err("ChatGPT Desktop is not installed".to_string());
+        }
+        return remove_extracted_cli_copies_under(&bin);
+    };
     // 先清理缓存：如果 CLI 正在运行或文件被占用，保留 MSIX 包，用户关闭进程后还能重试。
-    if let Some(bin) = extracted_cli_bin() {
+    if let Some(bin) = bin {
         remove_extracted_cli_copies_under(&bin)?;
     }
     for command in commands {

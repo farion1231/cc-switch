@@ -179,11 +179,24 @@ export function AppsPage() {
   const queryClient = useQueryClient();
   const [confirmDesktopUninstall, setConfirmDesktopUninstall] = useState(false);
   const uninstallDesktop = useMutation({
-    mutationFn: () => providersApi.uninstallChatGptDesktop(),
-    onSuccess: () =>
-      toast.success(t("appsPage.chatgptDesktop.uninstalled"), {
-        closeButton: true,
-      }),
+    mutationFn: async () => {
+      const cleanupOnly =
+        chatgptDesktop.data?.cleanupRequired === true &&
+        chatgptDesktop.data.installed === false;
+      await providersApi.uninstallChatGptDesktop();
+      return cleanupOnly;
+    },
+    onSuccess: (cleanupOnly) =>
+      toast.success(
+        t(
+          cleanupOnly
+            ? "appsPage.chatgptDesktop.cacheCleaned"
+            : "appsPage.chatgptDesktop.uninstalled",
+        ),
+        {
+          closeButton: true,
+        },
+      ),
     onError: (error) =>
       toast.error(t("settings.toolUninstallFailed"), {
         description: extractErrorMessage(error),
@@ -514,16 +527,23 @@ export function AppsPage() {
         />
       )}
 
-      {confirmDesktopUninstall && chatgptDesktop.data?.uninstallCommand && (
-        <ChatgptDesktopUninstallDialog
-          command={chatgptDesktop.data.uninstallCommand}
-          onConfirm={() => {
-            setConfirmDesktopUninstall(false);
-            uninstallDesktop.mutate();
-          }}
-          onCancel={() => setConfirmDesktopUninstall(false)}
-        />
-      )}
+      {confirmDesktopUninstall &&
+        chatgptDesktop.data &&
+        (chatgptDesktop.data.uninstallCommand ||
+          chatgptDesktop.data.cleanupRequired) && (
+          <ChatgptDesktopUninstallDialog
+            command={chatgptDesktop.data.uninstallCommand}
+            cleanupOnly={
+              chatgptDesktop.data.cleanupRequired &&
+              !chatgptDesktop.data.installed
+            }
+            onConfirm={() => {
+              setConfirmDesktopUninstall(false);
+              uninstallDesktop.mutate();
+            }}
+            onCancel={() => setConfirmDesktopUninstall(false)}
+          />
+        )}
 
       <ToolUpgradeConfirmDialog
         isOpen={tools.pendingUpgrade !== null}
@@ -620,6 +640,7 @@ function ChatgptDesktopRow({
       {t("appsPage.chatgptDesktop.help")}
     </HelpTip>
   );
+  const cleanupOnly = status?.cleanupRequired === true && !status.installed;
 
   const version = isPending ? (
     <span
@@ -654,7 +675,9 @@ function ChatgptDesktopRow({
   );
 
   // 不截断：随附 CLI 的版本和「不能单独升级」是这一行要说清楚的事，窄的时候换行
-  const meta = status?.installed ? (
+  const meta = cleanupOnly ? (
+    <span>{t("appsPage.chatgptDesktop.cleanupRequiredHint")}</span>
+  ) : status?.installed ? (
     <span title={status.bundledCliPath ?? undefined}>
       {status.bundledCliVersion
         ? t("appsPage.chatgptDesktop.bundledCli", {
@@ -681,11 +704,16 @@ function ChatgptDesktopRow({
       version={version}
       visibility={visibility}
       menu={
-        status?.uninstallCommand || uninstalling ? (
+        status?.uninstallCommand || status?.cleanupRequired || uninstalling ? (
           <RowUninstallMenu
             name={CHATGPT_DESKTOP_NAME}
             disabled={uninstalling}
             busy={uninstalling}
+            actionLabel={
+              cleanupOnly
+                ? t("appsPage.chatgptDesktop.cleanupAction")
+                : undefined
+            }
             onUninstall={onUninstall}
           />
         ) : null
@@ -956,11 +984,13 @@ function RowUninstallMenu({
   name,
   disabled,
   busy,
+  actionLabel,
   onUninstall,
 }: {
   name: string;
   disabled: boolean;
   busy: boolean;
+  actionLabel?: string;
   onUninstall: () => void;
 }) {
   const { t } = useTranslation();
@@ -989,7 +1019,7 @@ function RowUninstallMenu({
           className="text-danger-text focus:text-danger-text"
         >
           <Trash2 className="h-3.5 w-3.5" />
-          {t("settings.toolUninstall")}
+          {actionLabel ?? t("settings.toolUninstall")}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

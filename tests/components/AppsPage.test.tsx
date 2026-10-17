@@ -48,6 +48,7 @@ const chatgptDesktop = vi.hoisted(() => {
   const notInstalled: ChatGptDesktopStatus = {
     supported: true,
     installed: false,
+    cleanupRequired: false,
     appVersion: null,
     bundledCliVersion: null,
     bundledCliPath: null,
@@ -1972,6 +1973,7 @@ describe("AppsPage ChatGPT Desktop row", () => {
   const installed: ChatGptDesktopStatus = {
     supported: true,
     installed: true,
+    cleanupRequired: false,
     appVersion: "26.1013.3656.0",
     bundledCliVersion: "0.163.0-alpha.10.2",
     bundledCliPath:
@@ -2189,14 +2191,16 @@ describe("AppsPage ChatGPT Desktop row", () => {
     }
   });
 
-  async function openDesktopUninstall() {
+  async function openDesktopUninstall(
+    actionLabel = "settings.toolUninstall",
+  ) {
     const user = userEvent.setup();
     const desktop = within(row("ChatGPT Desktop"));
     await user.click(
       await desktop.findByRole("button", { name: "appPage.moreActions" }),
     );
     await user.click(
-      await screen.findByRole("menuitem", { name: "settings.toolUninstall" }),
+      await screen.findByRole("menuitem", { name: actionLabel }),
     );
     return { user, desktop, dialog: within(await screen.findByRole("dialog")) };
   }
@@ -2223,6 +2227,44 @@ describe("AppsPage ChatGPT Desktop row", () => {
     expect(
       desktop.queryByRole("button", { name: "appPage.moreActions" }),
     ).toBeNull();
+  });
+
+  it("offers cleanup when only an extracted Codex cache remains", async () => {
+    const cleanupOnly: ChatGptDesktopStatus = {
+      ...chatgptDesktop.notInstalled,
+      cleanupRequired: true,
+      bundledCliVersion: "0.163.0-alpha.10.2",
+    };
+    chatgptDesktop.getStatus.mockResolvedValue(cleanupOnly);
+    await renderApps();
+    const desktop = within(row("ChatGPT Desktop"));
+    expect(
+      await desktop.findByText("appsPage.chatgptDesktop.cleanupRequiredHint"),
+    ).toBeInTheDocument();
+
+    const { user, dialog } = await openDesktopUninstall(
+      "appsPage.chatgptDesktop.cleanupAction",
+    );
+    expect(
+      dialog.getByText("appsPage.chatgptDesktop.cleanupConfirmTitle"),
+    ).toBeInTheDocument();
+    expect(
+      dialog.getByText("appsPage.chatgptDesktop.cleanupHint"),
+    ).toBeInTheDocument();
+    expect(dialog.queryByText("settings.toolUpgradeWillRun")).toBeNull();
+
+    await user.click(
+      dialog.getByRole("button", {
+        name: "appsPage.chatgptDesktop.cleanupAction",
+      }),
+    );
+    await waitFor(() =>
+      expect(mocks.success).toHaveBeenCalledWith(
+        "appsPage.chatgptDesktop.cacheCleaned",
+        { closeButton: true },
+      ),
+    );
+    expect(chatgptDesktop.uninstall).toHaveBeenCalledTimes(1);
   });
 
   it("leaves ChatGPT Desktop alone when the confirmation is cancelled", async () => {

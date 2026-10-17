@@ -48,10 +48,12 @@ export interface ChatGptDesktopStatus {
   /** 当前系统有没有 ChatGPT Desktop（Linux 没有）。 */
   supported: boolean;
   installed: boolean;
+  /** MSIX 已卸载但桌面版解出的 CLI 缓存仍需清理。 */
+  cleanupRequired: boolean;
   appVersion: string | null;
   bundledCliVersion: string | null;
   bundledCliPath: string | null;
-  /** 卸载时执行的命令，给确认框展示；多个 MSIX 主包时按行列出；没装时为空。 */
+  /** 卸载时执行的命令，给确认框展示；多个 MSIX 主包时按行列出；缓存清理模式为空。 */
   uninstallCommand: string | null;
 }
 

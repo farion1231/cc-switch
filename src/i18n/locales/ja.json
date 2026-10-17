@@ -4161,6 +4161,11 @@
       "bundledCliUnknown": "同梱の Codex CLI のバージョンを読み取れません · ChatGPT Desktop と一緒に更新され、単独では更新できません",
       "installHint": "Microsoft Store または OpenAI 公式サイトからインストール",
       "installHintMac": "OpenAI 公式サイトからインストール",
+      "cleanupRequiredHint": "ChatGPT Desktop は未インストールですが、同梱 CLI のキャッシュが残っています。メニューから削除できます。",
+      "cleanupConfirmTitle": "ChatGPT Desktop の CLI キャッシュを削除しますか？",
+      "cleanupHint": "残っている同梱 CLI のキャッシュだけを削除します。設定や別途インストールした Codex CLI は削除しません。",
+      "cleanupAction": "キャッシュを削除",
+      "cacheCleaned": "ChatGPT Desktop の CLI キャッシュを削除しました",
       "uninstallHint": "ChatGPT Desktop と同梱の Codex CLI をアンインストールします。~/.codex の設定とセッションは残り、別途インストールした Codex CLI には影響しません。",
       "uninstalled": "ChatGPT Desktop をアンインストールしました"
     },

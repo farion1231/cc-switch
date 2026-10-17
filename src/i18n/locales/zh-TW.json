@@ -4162,6 +4162,11 @@
       "bundledCliUnknown": "讀不到隨附 Codex CLI 的版本 · 跟著 ChatGPT Desktop 更新，無法單獨更新",
       "installHint": "從 Microsoft Store 或 OpenAI 官網安裝",
       "installHintMac": "從 OpenAI 官網安裝",
+      "cleanupRequiredHint": "ChatGPT Desktop 已解除安裝，但仍有隨附 Codex CLI 快取。可從選單清理。",
+      "cleanupConfirmTitle": "清理 ChatGPT Desktop CLI 快取？",
+      "cleanupHint": "只會刪除殘留的隨附 CLI 快取，不會刪除設定或單獨安裝的 Codex CLI。",
+      "cleanupAction": "清理快取",
+      "cacheCleaned": "已清理 ChatGPT Desktop CLI 快取",
       "uninstallHint": "會解除安裝 ChatGPT Desktop 和它隨附的 Codex CLI。~/.codex 裡的設定和工作階段會保留，單獨安裝的 Codex CLI 不受影響。",
       "uninstalled": "已解除安裝 ChatGPT Desktop"
     },

@@ -4161,6 +4161,11 @@
       "bundledCliUnknown": "Couldn't read the bundled Codex CLI version · updates with ChatGPT Desktop, can't be updated on its own",
       "installHint": "Install from the Microsoft Store or the OpenAI website",
       "installHintMac": "Install from the OpenAI website",
+      "cleanupRequiredHint": "ChatGPT Desktop is uninstalled, but a bundled Codex CLI cache remains. Use the menu to clean it up.",
+      "cleanupConfirmTitle": "Clean up the ChatGPT Desktop CLI cache?",
+      "cleanupHint": "This only removes the leftover bundled CLI cache. It does not remove settings or a separately installed Codex CLI.",
+      "cleanupAction": "Clean up cache",
+      "cacheCleaned": "ChatGPT Desktop CLI cache cleaned",
       "uninstallHint": "This uninstalls ChatGPT Desktop together with its bundled Codex CLI. Your settings and sessions in ~/.codex are kept, and a separately installed Codex CLI is not affected.",
       "uninstalled": "ChatGPT Desktop uninstalled"
     },
