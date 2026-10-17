@@ -25,6 +25,7 @@ import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import {
   extractCodexExperimentalBearerToken,
+  extractCodexModelName,
   extractProviderBaseUrl,
 } from "@/utils/providerConfigUtils";
 import { resolveManagedAccountId } from "@/lib/authBinding";
@@ -158,6 +159,41 @@ const extractApiUrl = (provider: Provider, fallbackText: string) => {
   return extractProviderBaseUrl(provider.settingsConfig) ?? fallbackText;
 };
 
+interface ConfiguredModel {
+  model: string;
+  label: string;
+}
+
+const MODEL_BADGE_LIMIT = 3;
+
+// 与后端 codex_published_specs 保持一致：有目录就发目录，目录为空才发顶层 model。
+const extractConfiguredModels = (provider: Provider): ConfiguredModel[] => {
+  const rawModels = provider.settingsConfig?.modelCatalog?.models;
+  const models: ConfiguredModel[] = [];
+  const seen = new Set<string>();
+
+  if (Array.isArray(rawModels)) {
+    for (const item of rawModels) {
+      if (!item || typeof item !== "object") continue;
+      const model =
+        typeof item.model === "string" ? item.model.trim() : undefined;
+      if (!model || seen.has(model)) continue;
+
+      seen.add(model);
+      const displayName =
+        typeof item.displayName === "string" ? item.displayName.trim() : "";
+      models.push({ model, label: displayName || model });
+    }
+  }
+
+  if (models.length > 0) {
+    return models;
+  }
+
+  const model = extractCodexModelName(provider.settingsConfig?.config);
+  return model ? [{ model, label: model }] : [];
+};
+
 export function ProviderCard({
   provider,
   appId,
@@ -216,6 +252,10 @@ export function ProviderCard({
   const displayUrl = useMemo(() => {
     return extractApiUrl(provider, fallbackUrlText);
   }, [provider, fallbackUrlText]);
+  const configuredModels = useMemo(
+    () => (appId === "codex" ? extractConfiguredModels(provider) : []),
+    [appId, provider],
+  );
 
   const isClickableUrl = useMemo(() => {
     if (provider.notes?.trim()) {
@@ -436,6 +476,37 @@ export function ProviderCard({
               <span className="min-w-0 truncate">{displayUrl}</span>
             </button>
           ) : null}
+
+          {configuredModels.length > 0 && (
+            <div
+              className={cn(
+                "mt-1.5 flex flex-wrap items-center gap-1",
+                presentation.dim && "opacity-60",
+              )}
+            >
+              {configuredModels.slice(0, MODEL_BADGE_LIMIT).map((model) => (
+                <CardChipBadge
+                  key={model.model}
+                  chip={{
+                    key: model.model,
+                    label: model.label,
+                    tone: "outline",
+                    title:
+                      model.label === model.model ? undefined : model.model,
+                  }}
+                />
+              ))}
+              {configuredModels.length > MODEL_BADGE_LIMIT && (
+                <CardChipBadge
+                  chip={{
+                    key: "more-models",
+                    label: `+${configuredModels.length - MODEL_BADGE_LIMIT}`,
+                    tone: "outline",
+                  }}
+                />
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
