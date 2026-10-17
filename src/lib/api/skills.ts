@@ -14,6 +14,19 @@ export type AppType =
   | "pi"
   | "mcode";
 
+export interface SkillProjectGroup {
+  id: string;
+  name: string;
+  skillIds: string[];
+}
+
+export interface LocalSkillSourceScanResult {
+  updated: number;
+  ambiguous: number;
+  scannedRepositories: number;
+  scannedSkills: number;
+}
+
 /** Skill 应用启用状态 */
 export interface SkillApps {
   claude: boolean;
@@ -38,6 +51,9 @@ export interface InstalledSkill {
   repoName?: string;
   repoBranch?: string;
   readmeUrl?: string;
+  sourceType?: string;
+  sourceId?: string;
+  sourceUrl?: string;
   apps: SkillApps;
   installedAt: number;
   contentHash?: string;
@@ -186,6 +202,22 @@ export interface SkillRepo {
 // ========== API ==========
 
 export const skillsApi = {
+  getProjectGroups(): Promise<SkillProjectGroup[]> {
+    return invoke("get_skill_project_groups");
+  },
+  saveProjectGroup(
+    group: Omit<SkillProjectGroup, "id"> & { id?: string },
+  ): Promise<SkillProjectGroup> {
+    return invoke("save_skill_project_group", {
+      id: group.id ?? null,
+      name: group.name,
+      skillIds: group.skillIds,
+    });
+  },
+  deleteProjectGroup(id: string): Promise<boolean> {
+    return invoke("delete_skill_project_group", { id });
+  },
+
   // ========== 统一管理 API (v3.10.0+) ==========
 
   /** 获取所有已安装的 Skills */
@@ -232,6 +264,11 @@ export const skillsApi = {
   /** 扫描未管理的 Skills */
   async scanUnmanaged(): Promise<UnmanagedSkill[]> {
     return await invoke("scan_unmanaged_skills");
+  },
+
+  /** 扫描用户选择的本地 Git 工作区，补全可唯一确认的 Skill 来源。 */
+  async scanLocalSources(root: string): Promise<LocalSkillSourceScanResult> {
+    return await invoke("scan_local_skill_sources", { root });
   },
 
   /** 从应用目录导入 Skills */

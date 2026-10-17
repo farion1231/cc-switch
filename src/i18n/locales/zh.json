@@ -3349,6 +3349,11 @@
     "importSuccess": "成功导入 {{count}} 个技能",
     "importSelected": "导入已选 ({{count}})",
     "noUnmanagedFound": "未发现需要导入的技能。所有技能已在 CC Switch 统一管理中。",
+    "localSourceScan": {
+      "completed": "已扫描 {{repositories}} 个项目中的 {{skills}} 个 Skill，补全了 {{count}} 个项目来源",
+      "none": "已扫描 {{repositories}} 个项目中的 {{skills}} 个 Skill，未找到可唯一确认的项目来源",
+      "ambiguous": "{{count}} 个 Skill 对应多个项目，已保持未分组。"
+    },
     "unmanagedAvailable": "发现可导入的技能",
     "foundIn": "发现于",
     "local": "本地",
@@ -4626,6 +4631,7 @@
     },
     "moreMenu": {
       "restore": "从备份恢复",
+      "scanLocalSources": "扫描本地项目来源",
       "repos": "仓库管理"
     },
     "viewAria": "Skills 视图",
@@ -4781,7 +4787,23 @@
     "headerUpdatesShow": "只看可更新的 Skill",
     "headerUpdatesClear": "显示全部 Skill",
     "updateAllCount": "全部更新（{{count}} 个）",
-    "updatingProgress": "正在更新 {{done}}/{{total}}…"
+    "updatingProgress": "正在更新 {{done}}/{{total}}…",
+    "groups": {
+      "create": "新建项目分组",
+      "edit": "编辑项目分组",
+      "editNamed": "编辑 {{name}}",
+      "description": "按来源项目整理本地 Skills。每个 Skill 归属一个项目；移动成员或解散分组会保留技能和应用开关。",
+      "name": "项目名称",
+      "search": "搜索本地 Skills",
+      "noLocal": "没有匹配的本地 Skills",
+      "moveFrom": "从 {{name}} 移入",
+      "dissolve": "解散项目分组",
+      "ungrouped": "未分组的本地 Skills",
+      "scope": "组开关作用于全部成员，包括被筛选隐藏或折叠的 Skills。",
+      "toggle": "{{name}} · {{app}}：切换组内全部技能",
+      "expand": "展开或折叠 {{name}}",
+      "loadFailed": "项目分组加载失败，请重新打开此页面重试。"
+    }
   },
   "newLayoutNotice": {
     "title": "界面改版了",

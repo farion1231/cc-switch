@@ -74,6 +74,16 @@ import { useSkillInstallTargets } from "./useSkillInstallTargets";
 import { describeRepoFailures } from "./repoFailures";
 import type { ZipSkippedSkill } from "@/lib/api/skills";
 
+import {
+  useSkillProjectGroups,
+  useSaveSkillProjectGroup,
+  useDeleteSkillProjectGroup,
+} from "@/hooks/useSkillProjectGroups";
+import { groupInstalledSkills, isLocalSkill } from "./skillGroups";
+import { SkillGroupSection } from "./SkillGroupSection";
+import { SkillProjectGroupDialog } from "./SkillProjectGroupDialog";
+import type { SkillProjectGroup } from "@/lib/api/skills";
+
 const BACKUP_DIR = "~/.cc-switch/skill-backups";
 
 type SkillsView = "installed" | "discover";
@@ -125,6 +135,26 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const appIds = useVisibleAppIds(SKILLS_APP_IDS);
   const { targets, setTargets, installTo } = useSkillInstallTargets(appIds);
 
+  const { data: projectGroups = [], isError: groupsError } =
+    useSkillProjectGroups();
+  const saveGroup = useSaveSkillProjectGroup();
+  const deleteGroup = useDeleteSkillProjectGroup();
+  const [groupDialog, setGroupDialog] = useState<{
+    group?: SkillProjectGroup;
+    initialIds: string[];
+  } | null>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    new Set(),
+  );
+  // 分组列表首次加载时全部收起，避免大量未归类 Skill 把项目分组淹没。
+  const [groupsInitialized, setGroupsInitialized] = useState(false);
+  const initializedGroupKeysRef = useRef<Set<string>>(new Set());
+  // 搜索会临时展开先前收起的分组，方便看见命中的 Skill；用户仍可手动收起它们。
+  const [searchRevealedGroups, setSearchRevealedGroups] = useState<Set<string>>(
+    new Set(),
+  );
+  const collapsedGroupsRef = useRef(collapsedGroups);
+  const previousSearchQueryRef = useRef("");
   const [view, setView] = useState<SkillsView>(initialView);
   // 「发现」段第一次打开后就一直挂着（隐藏而不卸载），来回切不再重新加载仓库列表
   const [discoverMounted, setDiscoverMounted] = useState(
@@ -203,9 +233,15 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     importMutation.isPending ||
     installFromZipMutation.isPending ||
     updateSkillMutation.isPending ||
-    isUpdatingMany;
+    isUpdatingMany ||
+    saveGroup.isPending ||
+    deleteGroup.isPending;
   const dialogOpen =
-    importOpen || restoreOpen || confirm !== null || repoManagerOpen;
+    importOpen ||
+    restoreOpen ||
+    confirm !== null ||
+    repoManagerOpen ||
+    groupDialog !== null;
   const navigationBlocked = writePending || mutationPending || dialogOpen;
   const interactionBlocked = navigationBlocked || isCheckingUpdates;
   // 外观上的禁用晚 300ms 才出现：点一个格子写得很快时不让整页按钮闪一下变灰。
@@ -308,6 +344,20 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     SKILLS_APP_IDS.filter((app) => skill.apps[app]).length;
 
   const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
+  useEffect(() => {
+    collapsedGroupsRef.current = collapsedGroups;
+  }, [collapsedGroups]);
+
+  useEffect(() => {
+    const wasSearching = Boolean(previousSearchQueryRef.current);
+    if (normalizedQuery && !wasSearching) {
+      setSearchRevealedGroups(new Set(collapsedGroupsRef.current));
+    } else if (!normalizedQuery) {
+      setSearchRevealedGroups(new Set());
+    }
+    previousSearchQueryRef.current = normalizedQuery;
+  }, [normalizedQuery]);
+
   const filteredSkills = useMemo(() => {
     return installedSkills.filter((skill) => {
       if (statusFilter === "updates" && !updatesMap[skill.id]) return false;
@@ -353,6 +403,59 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     }
     prevUpdatesRef.current = nApplicableUpdates;
   }, [nApplicableUpdates, statusFilter]);
+
+  const groupedSkills = useMemo(
+    () =>
+      groupInstalledSkills(
+        installedSkills,
+        projectGroups,
+        t("skillsPage.groups.ungrouped"),
+      ),
+    [installedSkills, projectGroups, t],
+  );
+  useEffect(() => {
+    if (isLoading) return;
+    const newGroupKeys = groupedSkills
+      .map((group) => group.key)
+      .filter((key) => !initializedGroupKeysRef.current.has(key));
+    if (newGroupKeys.length > 0) {
+      for (const key of newGroupKeys) initializedGroupKeysRef.current.add(key);
+    }
+    setCollapsedGroups((current) => {
+      if (newGroupKeys.length === 0) return current;
+      const next = new Set(current);
+      for (const key of newGroupKeys) next.add(key);
+      return next;
+    });
+    setGroupsInitialized(true);
+  }, [groupedSkills, isLoading]);
+  const visibleSkillIds = new Set(filteredSkills.map((skill) => skill.id));
+  // App/status filters only hide rows; group headers and their operation scope stay intact.
+  const visibleGroups = groupedSkills.filter((group) => {
+    if (
+      !group.skills.some(
+        (skill) => sourceFilter === "all" || sourceKey(skill) === sourceFilter,
+      ) &&
+      !(group.project && sourceFilter === "all")
+    )
+      return false;
+    return (
+      !normalizedQuery ||
+      group.skills.some((skill) =>
+        [
+          skill.name,
+          skill.id,
+          skill.description,
+          skill.directory,
+          skill.repoOwner,
+          skill.repoName,
+          skill.repoOwner && skill.repoName
+            ? `${skill.repoOwner}/${skill.repoName}`
+            : skill.sourceId,
+        ].some((value) => value?.toLocaleLowerCase().includes(normalizedQuery)),
+      )
+    );
+  });
 
   const filtersActive = statusFilter !== "all" || sourceFilter !== "all";
   const scope = resolveBulkScope(
@@ -685,6 +788,40 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     }
   };
 
+  const handleScanLocalSources = async () => {
+    if (!beginWrite()) return;
+    try {
+      const root = await settingsApi.pickDirectory();
+      if (!root) return;
+      const result = await skillsApi.scanLocalSources(root);
+      await refetch();
+      toast.success(
+        result.updated > 0
+          ? t("skillsPage.localSourceScan.completed", {
+              count: result.updated,
+              repositories: result.scannedRepositories,
+              skills: result.scannedSkills,
+            })
+          : t("skillsPage.localSourceScan.none", {
+              repositories: result.scannedRepositories,
+              skills: result.scannedSkills,
+            }),
+        result.ambiguous > 0
+          ? {
+              description: t("skillsPage.localSourceScan.ambiguous", {
+                count: result.ambiguous,
+              }),
+              closeButton: true,
+            }
+          : { closeButton: true },
+      );
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    } finally {
+      endWrite();
+    }
+  };
+
   const reportEnableFailures = (
     failures: Array<{ id: string; app: AppId; error: unknown }>,
   ) => {
@@ -882,6 +1019,15 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     setSourceFilter("all");
     setView("installed");
     setHighlightId(skillId);
+    const group = groupedSkills.find((group) =>
+      group.skills.some((skill) => skill.id === skillId),
+    );
+    if (group)
+      setCollapsedGroups((prev) => {
+        const next = new Set(prev);
+        next.delete(group.key);
+        return next;
+      });
   };
 
   // ─── 渲染：页头 ─────────────────────────────────────────────────────
@@ -992,6 +1138,12 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                 onSelect={() => void handleOpenRestoreFromBackup()}
               >
                 {t("skillsPage.moreMenu.restore")}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={controlsDisabled}
+                onSelect={() => void handleScanLocalSources()}
+              >
+                {t("skillsPage.moreMenu.scanLocalSources")}
               </DropdownMenuItem>
               <DropdownMenuItem
                 disabled={controlsDisabled}
@@ -1156,7 +1308,9 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                 {selectionActive ? (
                   <>
                     <span className="shrink-0 whitespace-nowrap pe-1.5 ps-2.5 text-body font-medium tabular-nums">
-                      {t("skillsPage.bulk.selected", { count: selected.size })}
+                      {t("skillsPage.bulk.selected", {
+                        count: selected.size,
+                      })}
                     </span>
                     <AppMenuButton
                       label={t("skillsPage.bulk.enableTo")}
@@ -1321,7 +1475,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
               <span aria-hidden="true" className="w-16 shrink-0" />
             </div>
 
-            {filteredSkills.length === 0 ? (
+            {visibleGroups.length === 0 ? (
               <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
                 <h2 className="m-0 text-section">
                   {normalizedQuery
@@ -1374,53 +1528,114 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                 aria-label={t("skillsPage.listLabel")}
                 className="m-0 list-none p-0"
               >
-                {filteredSkills.map((skill, index) => (
-                  <InstalledRow
-                    key={skill.id}
-                    skill={skill}
-                    first={index === 0}
-                    appIds={appIds}
-                    checked={selected.has(skill.id)}
-                    hasUpdate={Boolean(updatesMap[skill.id])}
-                    isUpdating={
-                      updateSkillMutation.isPending &&
-                      updateSkillMutation.variables === skill.id
-                    }
-                    highlighted={highlightId === skill.id}
-                    fails={fails}
-                    disabled={controlsDisabled}
-                    sourceText={
-                      skill.repoOwner && skill.repoName
-                        ? `${skill.repoOwner}/${skill.repoName}`
-                        : t("skillsPage.source.local")
-                    }
-                    onPick={(checked) =>
-                      setSelected((prev) => {
-                        const next = new Set(prev);
-                        if (checked) next.add(skill.id);
-                        else next.delete(skill.id);
-                        return next;
-                      })
-                    }
-                    onCell={(app) => {
-                      const failure = fails[failKey(skill.id, app)];
-                      void writeOne(
-                        skill.id,
-                        app,
-                        failure ? failure.desired : !skill.apps[app],
-                      );
-                    }}
-                    onOpenSource={() => void openDocs(skill)}
-                    onFixSync={() => setStorageOpen(true)}
-                    onUpdate={() => void updateIds([skill.id])}
-                    onOpenDocs={() => void openDocs(skill)}
-                    onCopyDir={() => void copyDirectory(skill)}
-                    onUninstall={() => {
-                      if (writeLockRef.current || interactionBlocked) return;
-                      setConfirm({ kind: "uninstall", ids: [skill.id] });
-                    }}
-                  />
-                ))}
+                {visibleGroups.map((group) => {
+                  const visible = group.skills.filter((skill) =>
+                    visibleSkillIds.has(skill.id),
+                  );
+                  const expanded =
+                    (groupsInitialized && !collapsedGroups.has(group.key)) ||
+                    (Boolean(normalizedQuery) &&
+                      searchRevealedGroups.has(group.key));
+                  return (
+                    <SkillGroupSection
+                      key={group.key}
+                      group={group}
+                      appIds={appIds}
+                      expanded={Boolean(expanded)}
+                      disabled={controlsDisabled}
+                      onCollapse={() => {
+                        if (
+                          normalizedQuery &&
+                          searchRevealedGroups.has(group.key)
+                        ) {
+                          setSearchRevealedGroups((prev) => {
+                            const next = new Set(prev);
+                            next.delete(group.key);
+                            return next;
+                          });
+                          return;
+                        }
+                        setCollapsedGroups((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(group.key)) next.delete(group.key);
+                          else next.add(group.key);
+                          return next;
+                        });
+                      }}
+                      onEdit={() => {
+                        if (group.project)
+                          setGroupDialog({
+                            group: group.project,
+                            initialIds: [],
+                          });
+                      }}
+                      onToggle={(app, enabled) => {
+                        const ids = group.skills
+                          .filter(
+                            (skill) => Boolean(skill.apps[app]) !== enabled,
+                          )
+                          .map((skill) => skill.id);
+                        if (ids.length)
+                          void bulkToggle(ids, app, enabled, {
+                            on: "appMatrix.toast.enabled",
+                            off: "appMatrix.toast.disabled",
+                          });
+                      }}
+                    >
+                      {visible.map((skill, index) => (
+                        <InstalledRow
+                          key={skill.id}
+                          skill={skill}
+                          first={index === 0}
+                          appIds={appIds}
+                          checked={selected.has(skill.id)}
+                          hasUpdate={Boolean(updatesMap[skill.id])}
+                          isUpdating={
+                            updateSkillMutation.isPending &&
+                            updateSkillMutation.variables === skill.id
+                          }
+                          highlighted={highlightId === skill.id}
+                          fails={fails}
+                          disabled={controlsDisabled}
+                          sourceText={
+                            skill.repoOwner && skill.repoName
+                              ? `${skill.repoOwner}/${skill.repoName}`
+                              : skill.sourceId ?? t("skillsPage.source.local")
+                          }
+                          onPick={(checked) =>
+                            setSelected((prev) => {
+                              const next = new Set(prev);
+                              if (checked) next.add(skill.id);
+                              else next.delete(skill.id);
+                              return next;
+                            })
+                          }
+                          onCell={(app) => {
+                            const failure = fails[failKey(skill.id, app)];
+                            void writeOne(
+                              skill.id,
+                              app,
+                              failure ? failure.desired : !skill.apps[app],
+                            );
+                          }}
+                          onOpenSource={() => void openDocs(skill)}
+                          onFixSync={() => setStorageOpen(true)}
+                          onUpdate={() => void updateIds([skill.id])}
+                          onOpenDocs={() => void openDocs(skill)}
+                          onCopyDir={() => void copyDirectory(skill)}
+                          onUninstall={() => {
+                            if (writeLockRef.current || interactionBlocked)
+                              return;
+                            setConfirm({
+                              kind: "uninstall",
+                              ids: [skill.id],
+                            });
+                          }}
+                        />
+                      ))}
+                    </SkillGroupSection>
+                  );
+                })}
               </ul>
             )}
           </div>
@@ -1478,6 +1693,31 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
             "installed",
             loadOk && nInstalled > 0 ? (
               <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="neutral"
+                  size="regular"
+                  disabled={controlsDisabled || groupsError}
+                  onClick={() =>
+                    setGroupDialog({
+                      initialIds: installedSkills
+                        .filter(
+                          (skill) =>
+                            isLocalSkill(skill) && selected.has(skill.id),
+                        )
+                        .map((skill) => skill.id),
+                    })
+                  }
+                >
+                  {t("skillsPage.groups.create")}
+                </Button>
+                <HelpTip title={t("skillsPage.groups.scope")}>
+                  {t(
+                    groupsError
+                      ? "skillsPage.groups.loadFailed"
+                      : "skillsPage.groups.scope",
+                  )}
+                </HelpTip>
                 <MatrixSearch
                   className="w-[280px] min-w-[160px] shrink"
                   value={searchQuery}
@@ -1746,6 +1986,37 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         }
         onCancel={() => setConfirm(null)}
       />
+
+      {groupDialog && (
+        <SkillProjectGroupDialog
+          group={groupDialog.group}
+          initialIds={groupDialog.initialIds}
+          skills={installedSkills}
+          projects={projectGroups}
+          pending={saveGroup.isPending || deleteGroup.isPending}
+          onClose={() => setGroupDialog(null)}
+          onSave={(name, skillIds) => {
+            if (!beginWrite(true)) return;
+            void saveGroup
+              .mutateAsync({ id: groupDialog.group?.id, name, skillIds })
+              .then(() => setGroupDialog(null))
+              .catch((error) =>
+                toast.error(t("common.error"), { description: String(error) }),
+              )
+              .finally(endWrite);
+          }}
+          onDelete={() => {
+            if (!groupDialog.group || !beginWrite(true)) return;
+            void deleteGroup
+              .mutateAsync(groupDialog.group.id)
+              .then(() => setGroupDialog(null))
+              .catch((error) =>
+                toast.error(t("common.error"), { description: String(error) }),
+              )
+              .finally(endWrite);
+          }}
+        />
+      )}
 
       <SkillsStorageSheet open={storageOpen} onOpenChange={setStorageOpen} />
 

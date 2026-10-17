@@ -7,9 +7,10 @@
 use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
 use crate::error::format_skill_error;
 use crate::services::skill::{
-    DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillAppSyncOutcome,
-    SkillBackupEntry, SkillDiscoveryResult, SkillRepo, SkillService, SkillStorageLocation,
-    SkillUninstallResult, SkillUpdateCheckResult, SkillsShSearchResult, ZipInstallResult,
+    DiscoverableSkill, ImportSkillSelection, LocalSkillSourceScanResult, MigrationResult, Skill,
+    SkillAppSyncOutcome, SkillBackupEntry, SkillDiscoveryResult, SkillRepo, SkillService,
+    SkillStorageLocation, SkillUninstallResult, SkillUpdateCheckResult, SkillsShSearchResult,
+    ZipInstallResult,
 };
 use crate::store::AppState;
 use std::str::FromStr;
@@ -104,6 +105,22 @@ pub fn scan_unmanaged_skills(
     app_state: State<'_, AppState>,
 ) -> Result<Vec<UnmanagedSkill>, String> {
     SkillService::scan_unmanaged(&app_state.db).map_err(|e| e.to_string())
+}
+
+/// 用户选择本地 Git 工作区后，按内容哈希补全复制安装的 Skill 来源。
+#[tauri::command]
+pub async fn scan_local_skill_sources(
+    root: String,
+    app_state: State<'_, AppState>,
+) -> Result<LocalSkillSourceScanResult, String> {
+    let root = std::path::PathBuf::from(root);
+    let db = app_state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        SkillService::scan_local_project_sources(&db, &root)
+    })
+    .await
+    .map_err(|e| format!("扫描本地项目来源失败: {e}"))?
+    .map_err(|e| e.to_string())
 }
 
 /// 从应用目录导入 Skills
@@ -375,4 +392,35 @@ pub fn install_skills_from_zip(
     let path = std::path::Path::new(&file_path);
 
     SkillService::install_from_zip(&app_state.db, path, &app_type).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_skill_project_groups(
+    app_state: State<'_, AppState>,
+) -> Result<Vec<crate::database::SkillProjectGroup>, String> {
+    app_state
+        .db
+        .get_skill_project_groups()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn save_skill_project_group(
+    id: Option<String>,
+    name: String,
+    skill_ids: Vec<String>,
+    app_state: State<'_, AppState>,
+) -> Result<crate::database::SkillProjectGroup, String> {
+    SkillService::save_project_group(&app_state.db, id, name, skill_ids).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_skill_project_group(
+    id: String,
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    app_state
+        .db
+        .delete_skill_project_group(&id)
+        .map_err(|e| e.to_string())
 }

@@ -3349,6 +3349,11 @@
     "importSuccess": "Successfully imported {{count}} skills",
     "importSelected": "Import Selected ({{count}})",
     "noUnmanagedFound": "No skills to import found. All skills are already managed by CC Switch.",
+    "localSourceScan": {
+      "completed": "Scanned {{skills}} Skills in {{repositories}} projects and completed {{count}} project sources",
+      "none": "Scanned {{skills}} Skills in {{repositories}} projects; no uniquely identifiable local project source found",
+      "ambiguous": "{{count}} Skills matched multiple projects and remain ungrouped."
+    },
     "unmanagedAvailable": "Skills available to import",
     "foundIn": "Found in",
     "local": "Local",
@@ -4626,6 +4631,7 @@
     },
     "moreMenu": {
       "restore": "Restore from backup",
+      "scanLocalSources": "Scan local project sources",
       "repos": "Manage repositories"
     },
     "viewAria": "Skills view",
@@ -4781,7 +4787,23 @@
     "headerUpdatesShow": "Show only Skills with updates",
     "headerUpdatesClear": "Show all Skills",
     "updateAllCount": "Update all ({{count}})",
-    "updatingProgress": "Updating {{done}}/{{total}}…"
+    "updatingProgress": "Updating {{done}}/{{total}}…",
+    "groups": {
+      "create": "New project group",
+      "edit": "Edit project group",
+      "editNamed": "Edit {{name}}",
+      "description": "Group local Skills by their source project. Each Skill belongs to one project. Moving or dissolving a group keeps Skills and their app switches.",
+      "name": "Project name",
+      "search": "Search local Skills",
+      "noLocal": "No matching local Skills",
+      "moveFrom": "Move from {{name}}",
+      "dissolve": "Dissolve project group",
+      "ungrouped": "Ungrouped local Skills",
+      "scope": "Group switches apply to every member, including filtered or collapsed Skills.",
+      "toggle": "{{name}} · {{app}}: switch all group members",
+      "expand": "Expand or collapse {{name}}",
+      "loadFailed": "Project groups could not be loaded. Reopen this page to retry."
+    }
   },
   "newLayoutNotice": {
     "title": "CC Switch has a new look",
