@@ -5389,6 +5389,28 @@ fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), S
     run_windows_start_command_with_env(args, terminal_name, &[])
 }
 
+/// 组装 `cmd /C start ...`。终端里跑的 `claude` 等命令按这里的 PATH 查找：CC Switch
+/// 被 MSI 自动重启后只剩机器级 PATH（#6061），或是在装 CLI 之前就已启动，进程 PATH
+/// 都会缺用户级条目（#3877、#8446）。和检测、生命周期命令（#8173）一样用补全后的 PATH，
+/// 只影响启动的终端，不改 CC Switch 自身的环境；Windows Terminal 从命令行开新标签时
+/// 也沿用调用方的环境。
+#[cfg(target_os = "windows")]
+fn windows_start_command(
+    args: &[&str],
+    envs: &[(&str, &str)],
+    effective_path: &str,
+) -> std::process::Command {
+    let mut command = std::process::Command::new("cmd");
+    command
+        .arg("/C")
+        .arg("start")
+        .args(args)
+        .env("PATH", effective_path)
+        .envs(envs.iter().copied())
+        .creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
 /// 同 `run_windows_start_command`，额外给启动的终端设置环境变量（`start` 会继承）。
 #[cfg(target_os = "windows")]
 fn run_windows_start_command_with_env(
@@ -5396,15 +5418,7 @@ fn run_windows_start_command_with_env(
     terminal_name: &str,
     envs: &[(&str, &str)],
 ) -> Result<(), String> {
-    use std::process::Command;
-
-    let mut full_args = vec!["/C", "start"];
-    full_args.extend(args);
-
-    let output = Command::new("cmd")
-        .args(&full_args)
-        .envs(envs.iter().copied())
-        .creation_flags(CREATE_NO_WINDOW)
+    let output = windows_start_command(args, envs, &effective_path_string())
         .output()
         .map_err(|e| format!("启动 {} 失败: {e}", terminal_name))?;
 
@@ -5896,6 +5910,53 @@ mod tests {
         assert_eq!(
             decode_command_output(&restored.stdout).trim(),
             "restored-user-path"
+        );
+        assert_eq!(std::env::var_os("PATH"), parent_path);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_start_command_passes_restored_path_to_the_terminal() {
+        let root = tempfile::tempdir().unwrap();
+        let tool_dir = root.path().join("claude 用户 & bin");
+        std::fs::create_dir_all(&tool_dir).unwrap();
+        std::fs::write(
+            tool_dir.join("cc_switch_start_test_tool.cmd"),
+            "@echo restored-terminal-path\r\n@exit /b 0\r\n",
+        )
+        .unwrap();
+
+        // `start /B /WAIT` runs the child in the same hidden console, so the
+        // test observes what the launched terminal would resolve.
+        let args = [
+            "/B",
+            "/WAIT",
+            "cmd",
+            "/D",
+            "/C",
+            "cc_switch_start_test_tool",
+        ];
+        let system_path = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32");
+        let inherited = system_path.to_str().unwrap();
+        let effective = merge_path_segments_win(&[inherited, tool_dir.to_str().unwrap()]);
+        let parent_path = std::env::var_os("PATH");
+
+        let missing = windows_start_command(&args, &[], inherited)
+            .current_dir(root.path())
+            .output()
+            .unwrap();
+        assert!(
+            !decode_command_output(&missing.stdout).contains("restored-terminal-path"),
+            "the tool must be absent on the narrow PATH: {missing:?}"
+        );
+
+        let restored = windows_start_command(&args, &[], &effective)
+            .current_dir(root.path())
+            .output()
+            .unwrap();
+        assert!(
+            decode_command_output(&restored.stdout).contains("restored-terminal-path"),
+            "{restored:?}"
         );
         assert_eq!(std::env::var_os("PATH"), parent_path);
     }
