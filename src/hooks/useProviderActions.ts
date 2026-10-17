@@ -25,6 +25,7 @@ import {
   useSwitchProviderMutation,
 } from "@/lib/query";
 import { usageKeys } from "@/lib/query/usage";
+import { routeSwitchNotification } from "@/utils/routeSwitchNotification";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
@@ -271,7 +272,10 @@ export function useProviderActions(
             messageKey = "notifications.addToConfigSuccess";
             defaultMessage = "已添加到配置";
           }
-          toast.success(t(messageKey, { defaultValue: defaultMessage }), {
+          const message = result?.route
+            ? routeSwitchNotification(result.route, activeApp, provider.name, t)
+            : t(messageKey, { defaultValue: defaultMessage });
+          toast.success(message, {
             closeButton: true,
           });
         }

@@ -259,7 +259,7 @@ describe("UsageDashboard (smoke)", () => {
     await user.click(screen.getByRole("tab", { name: "usage.tabs.models" }));
     expect(await screen.findByText("kimi-k2.6")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "usage.tabs.pricing" }));
+    await user.click(screen.getByRole("tab", { name: "usage.tabs.settings" }));
     expect(await screen.findByText("DeepSeek V4 Pro")).toBeInTheDocument();
     expect(screen.getByText("$1.32")).toBeInTheDocument();
     expect(screen.getByText("$0.044")).toBeInTheDocument();

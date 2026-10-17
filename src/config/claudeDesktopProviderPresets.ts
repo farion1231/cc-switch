@@ -377,6 +377,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "TokenFactory",
+    nameKey: "providerForm.presets.tokenfactory",
     websiteUrl: "https://tokenfactory.cn",
     apiKeyUrl: "https://console.tokenfactory.cn/login",
     category: "aggregator",
@@ -392,8 +393,6 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       true,
     ),
     endpointCandidates: ["https://api.tokenfactory.cn/anthropic"],
-    isPartner: true,
-    partnerPromotionKey: "tokenfactory",
     icon: "tokenfactory",
   },
   {
@@ -732,10 +731,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.siliconflow.cn",
     mode: "proxy",
     apiFormat: "anthropic",
+    // 国内站 M2.5 已于 2026-09-11 下线，与 Codex/OpenCode 同换 V4 Flash（1M）
     modelRoutes: brandedRoutes(
-      "Pro/MiniMaxAI/MiniMax-M2.5",
-      "Pro/MiniMaxAI/MiniMax-M2.5",
-      "Pro/MiniMaxAI/MiniMax-M2.5",
+      "deepseek-ai/DeepSeek-V4-Flash",
+      "deepseek-ai/DeepSeek-V4-Flash",
+      "deepseek-ai/DeepSeek-V4-Flash",
+      true,
     ),
     isPartner: true,
     partnerPromotionKey: "siliconflow",
