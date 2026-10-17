@@ -19,7 +19,7 @@ mod tool_node_requirement;
 #[path = "tool_uninstall.rs"]
 mod tool_uninstall;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
 use super::chatgpt_desktop::{
     is_chatgpt_desktop_codex_path, is_chatgpt_desktop_extracted_cli_path,
 };
@@ -1302,11 +1302,13 @@ fn is_bundled_with_desktop_paths(tool: &str, path: &Path, real_path: Option<&Pat
     #[cfg(target_os = "macos")]
     let is_desktop_copy =
         |path: &Path| super::chatgpt_desktop::is_chatgpt_desktop_macos_cli_path(path);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     let is_desktop_copy = |path: &Path| {
         let path = path.to_string_lossy();
         is_chatgpt_desktop_codex_path(&path) || is_chatgpt_desktop_extracted_cli_path(&path)
     };
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let is_desktop_copy = |_: &Path| false;
     is_desktop_copy(path) || real_path.is_some_and(is_desktop_copy)
 }
 
@@ -7774,7 +7776,7 @@ mod tests {
             );
         }
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(windows)]
         #[test]
         fn fallback_scan_skips_bundled_codex_candidate() {
             let dir = tempfile::tempdir().unwrap();
@@ -7825,6 +7827,22 @@ mod tests {
                 "claude",
                 Path::new("/Applications/ChatGPT.app/Contents/Resources/codex"),
             ));
+        }
+
+        #[cfg(not(any(windows, target_os = "macos")))]
+        #[test]
+        fn linux_does_not_filter_desktop_named_codex_paths() {
+            for path in [
+                Path::new("/opt/OpenAI/Codex/bin/stable/codex"),
+                Path::new("/home/me/ChatGPT.app/Contents/Resources/codex"),
+                Path::new("/run/user/1000/windowsapps/openai.codex_26.1013.3656.0_x64/codex.exe"),
+            ] {
+                assert!(
+                    !is_bundled_with_desktop("codex", path),
+                    "Linux Codex path must remain independently managed: {}",
+                    path.display()
+                );
+            }
         }
 
         #[test]
