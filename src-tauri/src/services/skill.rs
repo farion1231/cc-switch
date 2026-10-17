@@ -657,7 +657,7 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
-            AppType::ClaudeDesktop | AppType::Mcode => {}
+            AppType::ClaudeDesktop | AppType::Mcode | AppType::CommandCode => {}
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
                     return Ok(custom.join("skills"));
@@ -700,6 +700,7 @@ impl SkillService {
 
         Ok(match app {
             AppType::Mcode => crate::mcode_config::data_dir().join("skills"),
+            AppType::CommandCode => crate::commandcode_config::data_dir().join("skills"),
             AppType::Claude => home.join(".claude").join("skills"),
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),
@@ -1138,7 +1139,7 @@ impl SkillService {
 
                     // 其他应用沿用既有的逐项容错行为。
                     for app in AppType::all() {
-                        if matches!(app, AppType::Pi | AppType::Mcode) {
+                        if matches!(app, AppType::Pi | AppType::Mcode | AppType::CommandCode) {
                             continue;
                         }
                         let _ = Self::remove_from_app_preserving(
@@ -2811,19 +2812,19 @@ impl SkillService {
         Self::sync_to_app_unlocked(db, app).map(|_| ())
     }
 
-    /// Skills 不由 `sync_to_app` 投影的应用：Claude Desktop、OpenClaw 不支持 Skills，
-    /// Pi 没有数据库列、按目录是否存在现算。这些应用的 skills 目录不归 CC Switch 管，
-    /// 同步时一个字节都不能碰——OpenClaw 自己的 `~/.openclaw/skills` 里和受管
-    /// Skill 同名的真实目录，否则会被当成「已关掉的投影」删掉。
+    /// Skills 不由 `sync_to_app` 投影的应用：Claude Desktop、OpenClaw、Command Code
+    /// 不支持 Skills，Pi 没有数据库列、按目录是否存在现算。这些应用的 skills 目录
+    /// 不归 CC Switch 管，同步时一个字节都不能碰——应用自己维护的、和受管 Skill
+    /// 同名的真实目录，否则会被当成「已关掉的投影」删掉。
     fn is_sync_managed_app(app: &AppType) -> bool {
         !matches!(
             app,
-            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi
+            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi | AppType::CommandCode
         )
     }
 
     /// 「立即重新同步」：按数据库里的开关和当前同步方式，把 Skill 重新投影到各应用目录，
-    /// 逐应用报告结果（Claude Desktop、OpenClaw、Pi 不由这里同步，不在结果里）。
+    /// 逐应用报告结果（Claude Desktop、OpenClaw、Pi、Command Code 不由这里同步，不在结果里）。
     pub fn resync_all_apps(db: &Arc<Database>) -> Vec<SkillAppSyncOutcome> {
         let _state_guard = skill_state_read_guard();
         AppType::all()
@@ -6052,6 +6053,32 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn uninstall_leaves_commandcode_skills_dir_alone() {
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let skill = poisoned_skill("owner/repo:shared", "shared-name");
+        db.save_skill(&skill).expect("save skill");
+        let source = SkillService::get_ssot_dir().unwrap().join("shared-name");
+        write_skill(&source, "managed");
+        let commandcode_skill = SkillService::get_app_skills_dir(&AppType::CommandCode)
+            .expect("commandcode skills dir")
+            .join("shared-name");
+        write_skill(&commandcode_skill, "commandcode's own skill");
+
+        SkillService::uninstall(&db, &skill.id).expect("uninstall managed record");
+
+        assert!(!source.exists(), "managed source must be removed");
+        assert_eq!(
+            fs::read_to_string(commandcode_skill.join("SKILL.md"))
+                .expect("read Command Code skill"),
+            "---\nname: commandcode's own skill\ndescription: Test skill\n---\n"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn mcode_uninstall_keeps_modified_copy_and_record_until_cleanup_succeeds() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
@@ -7495,6 +7522,42 @@ mod tests {
 
         // 切换供应商走的同一条同步也不能碰它
         SkillService::sync_to_app(&db, &AppType::OpenClaw).expect("no-op sync");
+        assert!(own_skill.exists());
+    }
+
+    /// Command Code 不支持 Skills，`~/.commandcode/skills` 归它自己：里面和受管 Skill 同名的
+    /// 真实目录不能被当成「已关掉的投影」删掉。
+    #[test]
+    #[serial_test::serial]
+    fn resync_all_apps_leaves_commandcode_skills_dir_alone() {
+        let home = tempdir().expect("home");
+        let _home = TestHomeGuard::set(home.path());
+        let ssot_dir = SkillService::get_ssot_dir().expect("ssot dir");
+        write_skill(&ssot_dir.join("shared-name"), "managed copy");
+
+        let commandcode_dir = SkillService::get_app_skills_dir(&AppType::CommandCode).expect("dir");
+        let own_skill = commandcode_dir.join("shared-name").join("SKILL.md");
+        fs::create_dir_all(own_skill.parent().unwrap()).unwrap();
+        fs::write(&own_skill, "Command Code's own skill").unwrap();
+        write_skill(&commandcode_dir.join("other"), "untouched");
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let mut skill = poisoned_skill("owner/repo:shared", "shared-name");
+        skill.name = "shared".to_string();
+        skill.apps = SkillApps::only(&AppType::Claude);
+        db.save_skill(&skill).expect("seed row");
+
+        let outcomes = SkillService::resync_all_apps(&db);
+
+        assert!(outcomes.iter().all(|o| o.app != "commandcode"));
+        assert!(outcomes.iter().all(|o| o.ok), "{outcomes:?}");
+        assert_eq!(
+            fs::read_to_string(&own_skill).unwrap(),
+            "Command Code's own skill"
+        );
+        assert!(commandcode_dir.join("other").join("SKILL.md").exists());
+
+        SkillService::sync_to_app(&db, &AppType::CommandCode).expect("no-op sync");
         assert!(own_skill.exists());
     }
 }

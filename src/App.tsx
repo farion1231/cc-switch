@@ -586,7 +586,7 @@ function App() {
   useEffect(() => {
     const checkEnvOnSwitch = async () => {
       try {
-        if (activeApp === "mcode") return;
+        if (activeApp === "mcode" || activeApp === "commandcode") return;
         const conflicts = await checkEnvConflicts(activeApp);
 
         if (conflicts.length > 0) {
@@ -836,6 +836,10 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: ["providers", "mcode"],
         });
+      } else if (activeApp === "commandcode") {
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", "commandcode"],
+        });
       }
       toast.success(
         activeApp === "pi"
@@ -971,9 +975,9 @@ function App() {
         existingKeys,
       );
       duplicatedProvider.addToLive = false;
-    } else if (activeApp === "mcode") {
-      // The MCode list already includes its live custom nodes; the backend
-      // rejects a key that MCode itself owns.
+    } else if (activeApp === "mcode" || activeApp === "commandcode") {
+      // These lists already include their live custom nodes; the backend
+      // rejects a key the native app itself owns.
       duplicatedProvider.providerKey = generateUniqueProviderCopyKey(
         provider.id,
         Object.keys(providers),
@@ -1151,6 +1155,7 @@ function App() {
         <>
           {currentView === "providers" &&
             activeApp !== "mcode" &&
+            activeApp !== "commandcode" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
@@ -1309,7 +1314,8 @@ function App() {
               activeApp === "openclaw" ||
               activeApp === "hermes" ||
               activeApp === "pi" ||
-              activeApp === "mcode"
+              activeApp === "mcode" ||
+              activeApp === "commandcode"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
             }

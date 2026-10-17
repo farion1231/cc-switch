@@ -315,6 +315,7 @@ export interface VisibleApps {
   hermes: boolean;
   pi: boolean;
   mcode: boolean;
+  commandcode: boolean;
 }
 
 // WebDAV 同步状态

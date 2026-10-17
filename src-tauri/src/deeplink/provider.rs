@@ -345,6 +345,11 @@ pub(crate) fn build_provider_from_request(
                 "Add MCode providers from the MCode page".into(),
             ))
         }
+        AppType::CommandCode => {
+            return Err(AppError::InvalidInput(
+                "Add Command Code providers from the Command Code page".into(),
+            ))
+        }
     };
 
     // Build usage script configuration if provided

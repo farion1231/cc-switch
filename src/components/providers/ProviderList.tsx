@@ -158,6 +158,8 @@ export function ProviderList({
       switch (appId) {
         case "mcode":
           return provider.meta?.liveConfigManaged === true;
+        case "commandcode":
+          return provider.meta?.liveConfigManaged === true;
         case "opencode":
           return opencodeLiveIds?.includes(provider.id) ?? false;
         case "openclaw":
@@ -415,7 +417,7 @@ export function ProviderList({
           appId={appId}
           onCreate={appId === "pi" ? undefined : onCreate}
           onImport={
-            appId === "pi" || appId === "mcode"
+            appId === "pi" || appId === "mcode" || appId === "commandcode"
               ? undefined
               : () => importMutation.mutate()
           }

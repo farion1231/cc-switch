@@ -5478,6 +5478,30 @@ impl ProviderService {
             }
             return Ok(saved);
         }
+        if app_type == AppType::CommandCode {
+            let native = crate::commandcode_config::get_providers()?;
+            let mut saved = state.db.get_all_providers("commandcode")?;
+            for (id, config) in &native {
+                if !saved.contains_key(id) {
+                    let name = config.get("name").and_then(Value::as_str).unwrap_or(id);
+                    saved.insert(
+                        id.clone(),
+                        Provider::with_id(id.clone(), name.into(), config.clone(), None),
+                    );
+                }
+            }
+            for (id, provider) in &mut saved {
+                if let Some(config) = native.get(id) {
+                    if let Some(name) = config.get("name").and_then(Value::as_str) {
+                        provider.name = name.into();
+                    }
+                    provider.settings_config = config.clone();
+                }
+                Self::set_provider_live_config_managed(provider, native.contains_key(id));
+                state.db.save_provider("commandcode", provider)?;
+            }
+            return Ok(saved);
+        }
         state.db.get_all_providers(app_type.as_str())
     }
 
@@ -5521,6 +5545,32 @@ impl ProviderService {
                 match previous {
                     Some(previous) => state.db.save_provider("mcode", &previous)?,
                     None => state.db.delete_provider("mcode", &provider.id)?,
+                }
+                return Err(error);
+            }
+        }
+        Ok(true)
+    }
+
+    fn save_commandcode_provider(
+        state: &AppState,
+        provider: &Provider,
+        write_live: bool,
+        create: bool,
+    ) -> Result<bool, AppError> {
+        let previous = state.db.get_provider_by_id(&provider.id, "commandcode")?;
+        state.db.save_provider("commandcode", provider)?;
+        if write_live {
+            let config = provider.settings_config.clone();
+            let written = if create {
+                crate::commandcode_config::add_provider(&provider.id, config)
+            } else {
+                crate::commandcode_config::set_provider(&provider.id, config)
+            };
+            if let Err(error) = written {
+                match previous {
+                    Some(previous) => state.db.save_provider("commandcode", &previous)?,
+                    None => state.db.delete_provider("commandcode", &provider.id)?,
                 }
                 return Err(error);
             }
@@ -5599,6 +5649,26 @@ impl ProviderService {
                 )));
             }
             return Self::save_mcode_provider(state, &provider, add_to_live, true);
+        }
+
+        if app_type == AppType::CommandCode {
+            // The key is user-chosen, and saving would overwrite an existing row or live entry.
+            // Adds are serialized here; the live write repeats the check under Command Code's file lock.
+            let _guard = futures::executor::block_on(
+                state.proxy_service.lock_switch_for_app(app_type.as_str()),
+            );
+            if state
+                .db
+                .get_provider_by_id(&provider.id, "commandcode")?
+                .is_some()
+                || crate::commandcode_config::provider_key_exists(&provider.id)?
+            {
+                return Err(AppError::InvalidInput(format!(
+                    "Command Code provider key '{}' already exists",
+                    provider.id
+                )));
+            }
+            return Self::save_commandcode_provider(state, &provider, add_to_live, true);
         }
 
         // 还没有当前供应商时这一家会被写进 live：和进入代理、切换互斥（同 `update`）。
@@ -6272,6 +6342,15 @@ impl ProviderService {
                 return Self::save_mcode_provider(state, &provider, live_config_managed, false);
             }
 
+            if app_type == AppType::CommandCode {
+                return Self::save_commandcode_provider(
+                    state,
+                    &provider,
+                    live_config_managed,
+                    false,
+                );
+            }
+
             // Save to database after live-config presence is resolved so parse errors
             // do not report failure after already mutating DB state.
             state.db.save_provider(app_type.as_str(), &provider)?;
@@ -6449,6 +6528,7 @@ impl ProviderService {
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
                     AppType::Mcode => crate::mcode_config::remove_provider(id)?,
+                    AppType::CommandCode => crate::commandcode_config::remove_provider(id)?,
                     _ => {}
                 }
             }
@@ -6525,6 +6605,7 @@ impl ProviderService {
                 remove_hermes_provider_from_live(id)?;
             }
             AppType::Mcode => crate::mcode_config::remove_provider(id)?,
+            AppType::CommandCode => crate::commandcode_config::remove_provider(id)?,
             _ => {
                 return Err(AppError::Message(format!(
                     "App {} does not support remove from live config",
@@ -6748,6 +6829,9 @@ impl ProviderService {
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
                     AppType::Mcode => crate::mcode_config::remove_provider(&provider.id),
+                    AppType::CommandCode => {
+                        crate::commandcode_config::remove_provider(&provider.id)
+                    }
                     _ => Ok(()),
                 };
 
@@ -7011,7 +7095,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode => Ok(String::new()),
+            AppType::Pi | AppType::Mcode | AppType::CommandCode => Ok(String::new()),
         }
     }
 
@@ -7029,7 +7113,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode => Ok(String::new()),
+            AppType::Pi | AppType::Mcode | AppType::CommandCode => Ok(String::new()),
         }
     }
 
@@ -7794,6 +7878,10 @@ impl ProviderService {
             AppType::Mcode => {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?
             }
+            AppType::CommandCode => crate::commandcode_config::validate_provider(
+                &provider.id,
+                &provider.settings_config,
+            )?,
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
@@ -7991,6 +8079,25 @@ impl ProviderService {
                     .get("baseURL")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
+                    .to_string();
+
+                Ok((api_key, base_url))
+            }
+            AppType::CommandCode => {
+                // providers.json keeps the endpoint and key at the top level; a
+                // keyless provider (`apiKey: false`) is legal, so the key may be empty.
+                let api_key = provider
+                    .settings_config
+                    .get("apiKey")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+
+                let base_url = provider
+                    .settings_config
+                    .get("baseURL")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
                     .to_string();
 
                 Ok((api_key, base_url))
