@@ -2522,6 +2522,112 @@ mod tests {
         })
     }
 
+    fn token_usage_record_at(
+        response_id: &str,
+        input: u64,
+        cached: u64,
+        output: u64,
+        timestamp: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "timestamp": timestamp,
+            "type": "token_usage_record",
+            "payload": {
+                "response_id": response_id,
+                "usage": {
+                    "input_tokens": input,
+                    "cached_input_tokens": cached,
+                    "cache_write_input_tokens": 0,
+                    "output_tokens": output,
+                    "reasoning_output_tokens": 0,
+                    "total_tokens": input + output
+                }
+            }
+        })
+    }
+
+    fn codex_usage_rows(db: &Database) -> Result<Vec<(String, i64, i64)>, AppError> {
+        let conn = lock_conn!(db.conn);
+        let mut stmt = conn
+            .prepare(
+                "SELECT request_id, input_tokens, output_tokens
+                 FROM proxy_request_logs WHERE data_source = 'codex_session'
+                 ORDER BY request_id",
+            )
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        Ok(rows)
+    }
+
+    #[test]
+    fn remote_compaction_usage_record_is_imported_when_the_following_token_count_is_zero(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let path = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &path,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_usage_record_at("resp_compact", 26_705, 0, 491, "2026-07-10T03:00:02Z"),
+                token_count_with_last_at(0, 0, 0, 0, 0, 0, "default", "2026-07-10T03:00:02Z"),
+            ],
+        );
+
+        let result = sync_test_file(&db, &path, &[&path])?;
+
+        assert_eq!(result.imported, 1, "compaction usage must be imported");
+        let rows = codex_usage_rows(&db)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, 26_705);
+        assert_eq!(rows[0].2, 491);
+        assert!(rows[0].0.ends_with(":usage:resp_compact"));
+        Ok(())
+    }
+
+    #[test]
+    fn usage_record_covered_by_token_count_is_not_imported_twice() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let path = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &path,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_usage_record_at("resp_turn", 26_705, 1_000, 491, "2026-07-10T03:00:02Z"),
+                token_count_with_last_at(
+                    26_705,
+                    1_000,
+                    491,
+                    26_705,
+                    1_000,
+                    491,
+                    "default",
+                    "2026-07-10T03:00:03Z",
+                ),
+            ],
+        );
+
+        let result = sync_test_file(&db, &path, &[&path])?;
+
+        assert_eq!(result.imported, 1);
+        let rows = codex_usage_rows(&db)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, 26_705);
+        assert_eq!(rows[0].2, 491);
+        assert_eq!(
+            rows[0].0,
+            format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{PARENT_ID}:1")
+        );
+        Ok(())
+    }
+
     fn sync_test_file(
         db: &Database,
         file: &Path,
