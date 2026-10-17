@@ -473,6 +473,45 @@ pub(crate) fn decode_command_output(bytes: &[u8]) -> String {
 }
 
 #[cfg(target_os = "windows")]
+fn decode_windows_codepage(bytes: &[u8], codepage: u32) -> Option<String> {
+    use windows_sys::Win32::Globalization::MultiByteToWideChar;
+
+    if codepage == 0 {
+        return None;
+    }
+
+    let input_len = i32::try_from(bytes.len()).ok()?;
+    unsafe {
+        let wide_len = MultiByteToWideChar(
+            codepage,
+            0,
+            bytes.as_ptr(),
+            input_len,
+            std::ptr::null_mut(),
+            0,
+        );
+        if wide_len <= 0 {
+            return None;
+        }
+
+        let mut wide = vec![0u16; wide_len as usize];
+        let written = MultiByteToWideChar(
+            codepage,
+            0,
+            bytes.as_ptr(),
+            input_len,
+            wide.as_mut_ptr(),
+            wide_len,
+        );
+        if written <= 0 {
+            return None;
+        }
+
+        Some(String::from_utf16_lossy(&wide[..written as usize]))
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn decode_windows_command_output(bytes: &[u8]) -> String {
     if bytes.is_empty() {
         return String::new();
@@ -482,57 +521,39 @@ fn decode_windows_command_output(bytes: &[u8]) -> String {
         return text.to_string();
     }
 
-    use windows_sys::Win32::Globalization::{GetACP, GetOEMCP, MultiByteToWideChar};
-
-    fn decode_codepage(bytes: &[u8], codepage: u32) -> Option<String> {
-        if codepage == 0 {
-            return None;
-        }
-
-        let input_len = i32::try_from(bytes.len()).ok()?;
-        unsafe {
-            let wide_len = MultiByteToWideChar(
-                codepage,
-                0,
-                bytes.as_ptr(),
-                input_len,
-                std::ptr::null_mut(),
-                0,
-            );
-            if wide_len <= 0 {
-                return None;
-            }
-
-            let mut wide = vec![0u16; wide_len as usize];
-            let written = MultiByteToWideChar(
-                codepage,
-                0,
-                bytes.as_ptr(),
-                input_len,
-                wide.as_mut_ptr(),
-                wide_len,
-            );
-            if written <= 0 {
-                return None;
-            }
-
-            Some(String::from_utf16_lossy(&wide[..written as usize]))
-        }
-    }
+    use windows_sys::Win32::Globalization::{GetACP, GetOEMCP};
 
     let oem_cp = unsafe { GetOEMCP() };
-    if let Some(decoded) = decode_codepage(bytes, oem_cp) {
+    if let Some(decoded) = decode_windows_codepage(bytes, oem_cp) {
         return decoded;
     }
 
     let ansi_cp = unsafe { GetACP() };
     if ansi_cp != oem_cp {
-        if let Some(decoded) = decode_codepage(bytes, ansi_cp) {
+        if let Some(decoded) = decode_windows_codepage(bytes, ansi_cp) {
             return decoded;
         }
     }
 
     String::from_utf8_lossy(bytes).into_owned()
+}
+
+/// `where.exe` writes paths using the OEM code page. Decode that known protocol
+/// before considering UTF-8, because some OEM byte pairs are also valid UTF-8
+/// with a different meaning (for example CP936 C2 A1).
+#[cfg(target_os = "windows")]
+fn decode_windows_where_output_with_codepage(bytes: &[u8], codepage: u32) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+    decode_windows_codepage(bytes, codepage)
+        .unwrap_or_else(|| String::from_utf8_lossy(bytes).into_owned())
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn decode_windows_where_output(bytes: &[u8]) -> String {
+    let oem_cp = unsafe { windows_sys::Win32::Globalization::GetOEMCP() };
+    decode_windows_where_output_with_codepage(bytes, oem_cp)
 }
 
 fn normalize_requested_tools(tools: &[String]) -> Vec<&'static str> {
@@ -674,8 +695,8 @@ const MCODE_INSTALL_WINDOWS_SCRIPT: &str =
 #[cfg(target_os = "windows")]
 const CODEX_INSTALL_WINDOWS_SCRIPT: &str = "irm https://chatgpt.com/codex/install.ps1 | iex";
 
-#[cfg(target_os = "windows")]
-fn powershell_encoded_command(script: &str) -> String {
+#[cfg(any(target_os = "windows", test))]
+pub(super) fn powershell_encoded_command(script: &str) -> String {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
 
     let mut bytes = Vec::with_capacity(script.len() * 2);
@@ -1793,6 +1814,33 @@ fn build_final_shell_cd_command(shell: &str, cwd: Option<&Path>) -> String {
     .unwrap_or_default()
 }
 
+#[cfg_attr(windows, allow(dead_code))]
+fn build_posix_provider_launcher_script(
+    config_path: &str,
+    script_path: &str,
+    provider_command: &str,
+    final_cd_command: &str,
+    exec_line: &str,
+) -> String {
+    let quoted_config_path = shell_single_quote(config_path);
+    let quoted_script_path = shell_single_quote(script_path);
+
+    format!(
+        r#"#!/usr/bin/env sh
+cleanup() {{
+    rm -f {quoted_config_path} {quoted_script_path}
+}}
+trap cleanup EXIT
+echo "Using provider-specific claude config:"
+echo {quoted_config_path}
+{provider_command}
+{final_cd_command}cleanup
+trap - EXIT
+{exec_line}
+"#
+    )
+}
+
 #[cfg(target_os = "windows")]
 fn try_get_version_wsl(
     tool: &str,
@@ -1898,7 +1946,7 @@ fn try_get_version_wsl(
     ShellProbe::NotFound("WSL check not supported on this platform".to_string())
 }
 
-fn push_unique_path(paths: &mut IndexSet<std::path::PathBuf>, path: std::path::PathBuf) {
+pub(super) fn push_unique_path(paths: &mut IndexSet<std::path::PathBuf>, path: std::path::PathBuf) {
     if path.as_os_str().is_empty() {
         return;
     }
@@ -1959,7 +2007,7 @@ fn should_skip_cli_path_env_dir(path: &Path) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn is_windows_app_execution_alias_dir(path: &Path) -> bool {
+pub(super) fn is_windows_app_execution_alias_dir(path: &Path) -> bool {
     let normalized = path
         .to_string_lossy()
         .replace('/', "\\")
@@ -2190,7 +2238,7 @@ fn effective_path_string() -> String {
 /// Windows this is derived from `effective_path_string`; on other platforms the
 /// raw process value is returned unchanged (zero behaviour change).
 #[cfg(target_os = "windows")]
-fn effective_path_os() -> Option<std::ffi::OsString> {
+pub(super) fn effective_path_os() -> Option<std::ffi::OsString> {
     Some(std::ffi::OsString::from(effective_path_string()))
 }
 
@@ -2898,7 +2946,7 @@ fn resolve_path_default(
 }
 
 #[cfg(target_os = "windows")]
-fn windows_path_lookup_command(
+pub(super) fn windows_path_lookup_command(
     tool: &str,
     effective_path: &std::ffi::OsStr,
 ) -> std::process::Command {
@@ -2943,7 +2991,7 @@ fn resolve_path_default(
     if !out.status.success() {
         return Ok(None);
     }
-    let raw = decode_command_output(&out.stdout);
+    let raw = decode_windows_where_output(&out.stdout);
     // `where` lists every match on PATH in order; the first is what the user
     // actually runs. Skip App Execution Aliases (reparse points under
     // `Microsoft\WindowsApps`) — they launch the Store / a protocol handler,
@@ -3835,13 +3883,13 @@ fn locate_default_tool(
 }
 
 #[derive(Clone, Copy)]
-struct CommandDeadline {
+pub(super) struct CommandDeadline {
     expires_at: std::time::Instant,
     limit: std::time::Duration,
 }
 
 impl CommandDeadline {
-    fn from_timeout(timeout: Option<std::time::Duration>) -> Option<Self> {
+    pub(super) fn from_timeout(timeout: Option<std::time::Duration>) -> Option<Self> {
         timeout.map(|limit| Self {
             expires_at: std::time::Instant::now() + limit,
             limit,
@@ -3902,7 +3950,7 @@ fn isolate_child_process_group(cmd: &mut std::process::Command) {
     }
 }
 
-fn wait_child_output(
+pub(super) fn wait_child_output(
     mut child: std::process::Child,
     deadline: Option<CommandDeadline>,
 ) -> Result<std::process::Output, String> {
@@ -4593,8 +4641,8 @@ pub async fn open_provider_terminal(
     let config = &provider.settings_config;
     let env_vars = extract_env_vars_from_config(config, &app_type);
 
-    // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
-    launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref())
+    // 根据平台启动终端；每次调用使用独立的临时配置和启动脚本。
+    launch_terminal_with_env(env_vars, launch_cwd.as_deref())
         .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
@@ -4675,50 +4723,70 @@ fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
     Ok(Some(resolved))
 }
 
+fn write_unique_temp_artifact(
+    temp_dir: &Path,
+    prefix: &str,
+    suffix: &str,
+    content: &[u8],
+) -> Result<PathBuf, String> {
+    use std::io::Write;
+
+    let mut artifact = tempfile::Builder::new()
+        .prefix(prefix)
+        .suffix(suffix)
+        .tempfile_in(temp_dir)
+        .map_err(|e| format!("创建临时文件失败: {e}"))?;
+    artifact
+        .write_all(content)
+        .map_err(|e| format!("写入临时文件失败: {e}"))?;
+    let (file, path) = artifact
+        .keep()
+        .map_err(|e| format!("保留临时文件失败: {}", e.error))?;
+    drop(file);
+    Ok(path)
+}
+
 /// 创建临时配置文件并启动 claude 终端
 /// 使用 --settings 参数传入提供商特定的 API 配置
 fn launch_terminal_with_env(
     env_vars: Vec<(String, String)>,
-    provider_id: &str,
     cwd: Option<&Path>,
 ) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
-    let config_file = temp_dir.join(format!(
-        "claude_{}_{}.json",
-        provider_id,
-        std::process::id()
-    ));
 
-    // 创建并写入配置文件
-    write_claude_config(&config_file, &env_vars)?;
+    // 创建并写入每次调用独立的配置文件。
+    let config_file = write_claude_config(&temp_dir, &env_vars)?;
 
-    #[cfg(target_os = "macos")]
-    {
-        launch_macos_terminal(&config_file, cwd)?;
-        Ok(())
+    let result = {
+        #[cfg(target_os = "macos")]
+        {
+            launch_macos_terminal(&config_file, cwd)
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            launch_linux_terminal(&config_file, cwd)
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            launch_windows_terminal(&temp_dir, &config_file, cwd)
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+        {
+            Err("不支持的操作系统".to_string())
+        }
+    };
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(&config_file);
     }
-
-    #[cfg(target_os = "linux")]
-    {
-        launch_linux_terminal(&config_file, cwd)?;
-        Ok(())
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        launch_windows_terminal(&temp_dir, &config_file, cwd)?;
-        Ok(())
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    Err("不支持的操作系统".to_string())
+    result
 }
 
 /// 写入 claude 配置文件
-fn write_claude_config(
-    config_file: &std::path::Path,
-    env_vars: &[(String, String)],
-) -> Result<(), String> {
+fn write_claude_config(temp_dir: &Path, env_vars: &[(String, String)]) -> Result<PathBuf, String> {
     let mut config_obj = serde_json::Map::new();
     let mut env_obj = serde_json::Map::new();
 
@@ -4731,14 +4799,46 @@ fn write_claude_config(
     let config_json =
         serde_json::to_string_pretty(&config_obj).map_err(|e| format!("序列化配置失败: {e}"))?;
 
-    std::fs::write(config_file, config_json).map_err(|e| format!("写入配置文件失败: {e}"))
+    write_unique_temp_artifact(temp_dir, "claude_", ".json", config_json.as_bytes())
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
+fn write_posix_provider_launcher_script(
+    config_file: &Path,
+    provider_command: &str,
+    final_cd_command: &str,
+    exec_line: &str,
+) -> Result<PathBuf, String> {
+    // The config is unique per launch; its companion script must be unique too.
+    let script_file = config_file.with_extension("sh");
+    let content = build_posix_provider_launcher_script(
+        &config_file.to_string_lossy(),
+        &script_file.to_string_lossy(),
+        provider_command,
+        final_cd_command,
+        exec_line,
+    );
+    if let Err(error) = std::fs::write(&script_file, content) {
+        let _ = std::fs::remove_file(&script_file);
+        return Err(format!("写入启动脚本失败: {error}"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        if let Err(error) =
+            std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
+        {
+            let _ = std::fs::remove_file(&script_file);
+            return Err(format!("设置脚本权限失败: {error}"));
+        }
+    }
+    Ok(script_file)
 }
 
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
 fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("terminal");
 
@@ -4746,34 +4846,14 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let exec_line = build_exec_line(&shell, cwd);
     let final_cd_command = build_final_shell_cd_command(&shell, cwd);
 
-    let temp_dir = std::env::temp_dir();
-    let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
     let provider_command = build_provider_command_line(&shell, &config_path, cwd);
-
-    // Write the shell script to a temp file
-    // 脚本使用 POSIX sh 语法确保可移植性，exec 行切换到用户交互式 shell
-    let script_content = format!(
-        r#"#!/usr/bin/env sh
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-{provider_command}
-{final_cd_command}
-{exec_line}
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        provider_command = provider_command,
-        final_cd_command = final_cd_command,
-        exec_line = exec_line,
-    );
-
-    std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
-
-    // Make script executable
-    std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("设置脚本权限失败: {e}"))?;
+    let script_file = write_posix_provider_launcher_script(
+        config_file,
+        &provider_command,
+        &final_cd_command,
+        &exec_line,
+    )?;
 
     // Try the preferred terminal first, fall back to Terminal.app if it fails
     // Note: Kitty doesn't need the -e flag, others do
@@ -4790,15 +4870,19 @@ echo "{config_path}"
     };
 
     // If preferred terminal fails and it's not the default, try Terminal.app as fallback
-    if result.is_err() && terminal != "terminal" {
+    let result = if result.is_err() && terminal != "terminal" {
         log::warn!(
             "首选终端 {} 启动失败，回退到 Terminal.app: {:?}",
             terminal,
             result.as_ref().err()
         );
-        return launch_macos_terminal_app(&script_file);
+        launch_macos_terminal_app(&script_file)
+    } else {
+        result
+    };
+    if result.is_err() {
+        let _ = std::fs::remove_file(&script_file);
     }
-
     result
 }
 
@@ -5129,7 +5213,6 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
 fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
     let preferred = crate::settings::get_preferred_terminal();
@@ -5150,32 +5233,14 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
         ("ghostty", vec!["-e"]),
     ];
 
-    // Create temp script file
-    let temp_dir = std::env::temp_dir();
-    let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
     let provider_command = build_provider_command_line(&shell, &config_path, cwd);
-
-    let script_content = format!(
-        r#"#!/usr/bin/env sh
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-{provider_command}
-{final_cd_command}
-{exec_line}
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        provider_command = provider_command,
-        final_cd_command = final_cd_command,
-        exec_line = exec_line,
-    );
-
-    std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
-
-    std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("设置脚本权限失败: {e}"))?;
+    let script_file = write_posix_provider_launcher_script(
+        config_file,
+        &provider_command,
+        &final_cd_command,
+        &exec_line,
+    )?;
 
     // Build terminal list: preferred terminal first (if specified), then defaults
     let terminals_to_try: Vec<(&str, Vec<&str>)> = if let Some(ref pref) = preferred {
@@ -5243,77 +5308,35 @@ fn which_command(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Windows: 根据用户首选终端启动
+/// Windows: launch the user's preferred terminal.
 #[cfg(target_os = "windows")]
 fn launch_windows_terminal(
     temp_dir: &std::path::Path,
     config_file: &std::path::Path,
     cwd: Option<&Path>,
 ) -> Result<(), String> {
-    let preferred = crate::settings::get_preferred_terminal();
-    let terminal = preferred.as_deref().unwrap_or("cmd");
-
-    let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
-    // 配置文件和 .bat 同在 temp_dir（%TEMP% 含用户名），用 %~dp0 引用：目录由 cmd
-    // 运行时展开，不进 .bat 字节，非 ASCII 用户名下也不会乱码（#8034）。
-    let config_name = config_file
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let config_path_for_batch = format!("%~dp0{}", escape_windows_batch_value(&config_name));
-    let (cwd_command, cwd_env) = build_windows_cwd_command(cwd);
-    let launch_env: Vec<(&str, &str)> = cwd_env
-        .as_deref()
-        .map(|value| (WINDOWS_CWD_ENV, value))
-        .into_iter()
-        .collect();
-
-    let content = format!(
-        "@echo off
-{cwd_command}
-echo Using provider-specific claude config:
-echo \"{}\"
-claude --settings \"{}\"
-del \"{}\" >nul 2>&1
-del \"%~f0\" >nul 2>&1
-",
-        config_path_for_batch,
-        config_path_for_batch,
-        config_path_for_batch,
-        cwd_command = cwd_command,
-    );
-
-    std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
+    let bat_file = write_unique_temp_artifact(
+        temp_dir,
+        "cc_switch_claude_",
+        ".bat",
+        WINDOWS_PROVIDER_BATCH.as_bytes(),
+    )?;
 
     let bat_path = bat_file.to_string_lossy();
-    let ps_cmd = format!("& '{}'", bat_path);
-
-    // Try the preferred terminal first
-    let result = match terminal {
-        "powershell" => run_windows_start_command_with_env(
-            &["powershell", "-NoExit", "-Command", &ps_cmd],
-            "PowerShell",
-            &launch_env,
-        ),
-        "wt" => run_windows_start_command_with_env(
-            &["wt", "cmd", "/K", &bat_path],
-            "Windows Terminal",
-            &launch_env,
-        ),
-        // "cmd" or default
-        _ => run_windows_start_command_with_env(&["cmd", "/K", &bat_path], "cmd", &launch_env),
-    };
-
-    // If preferred terminal fails and it's not the default, try cmd as fallback
-    if result.is_err() && terminal != "cmd" {
-        log::warn!(
-            "首选终端 {} 启动失败，回退到 cmd: {:?}",
-            terminal,
-            result.as_ref().err()
-        );
-        return run_windows_start_command_with_env(&["cmd", "/K", &bat_path], "cmd", &launch_env);
+    let config_path = config_file.to_string_lossy();
+    let cwd_path = cwd.map(|path| path.to_string_lossy());
+    let mut launch_env = vec![(WINDOWS_CONFIG_PATH_ENV, config_path.as_ref())];
+    if let Some(cwd_path) = cwd_path.as_deref() {
+        launch_env.push((WINDOWS_CWD_ENV, cwd_path));
     }
 
+    let result = launch_windows_batch_in_preferred_terminal(&bat_path, &launch_env);
+
+    // The batch removes itself after it starts. If every spawn attempt failed,
+    // clean it here; the caller similarly removes the provider settings file.
+    if result.is_err() {
+        let _ = std::fs::remove_file(&bat_file);
+    }
     result
 }
 
@@ -5322,95 +5345,167 @@ fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn is_windows_unc_path(path: &str) -> bool {
-    path.starts_with(r"\\")
+#[cfg(any(target_os = "windows", test))]
+pub(super) const WINDOWS_BATCH_PATH_ENV: &str = "CC_SWITCH_INTERNAL_BATCH_PATH";
+#[cfg(any(target_os = "windows", test))]
+pub(super) const WINDOWS_CONFIG_PATH_ENV: &str = "CC_SWITCH_INTERNAL_CONFIG_PATH";
+#[cfg(any(target_os = "windows", test))]
+pub(super) const WINDOWS_CWD_ENV: &str = "CC_SWITCH_INTERNAL_CWD";
+#[cfg(any(target_os = "windows", test))]
+pub(super) const WINDOWS_BATCH_PATH_COMMAND: &str = "%CC_SWITCH_INTERNAL_BATCH_PATH%";
+#[cfg(any(target_os = "windows", test))]
+pub(super) const WINDOWS_POWERSHELL_BATCH_COMMAND: &str =
+    "& $env:ComSpec /D /V:OFF /C '%CC_SWITCH_INTERNAL_BATCH_PATH%'";
+
+// Keep path data out of the BAT bytes. cmd.exe decodes a batch file using the
+// active console/OEM code page; embedding a UTF-8 Chinese path can corrupt the
+// rest of the command stream. Environment values stay Unicode inside Windows.
+// A child CMD returns even for claude.cmd shims. Doubled percent signs defer
+// config-path expansion to that child, without CALL's second expansion pass.
+// The final (goto) ends batch processing before deletion so CMD won't try to
+// read another line from the deleted file; the calling shell stays alive.
+#[cfg(any(target_os = "windows", test))]
+const WINDOWS_PROVIDER_BATCH: &str = "@echo off\r\n\
+setlocal DisableDelayedExpansion\r\n\
+set \"CC_SWITCH_INTERNAL_BATCH_PATH=\"\r\n\
+if not defined CC_SWITCH_INTERNAL_CONFIG_PATH exit /b 1\r\n\
+if not defined CC_SWITCH_INTERNAL_CWD goto cc_switch_cwd_done\r\n\
+if \"%CC_SWITCH_INTERNAL_CWD:~0,2%\"==\"\\\\\" goto cc_switch_cwd_unc\r\n\
+cd /d \"%CC_SWITCH_INTERNAL_CWD%\" || exit /b 1\r\n\
+goto cc_switch_cwd_done\r\n\
+:cc_switch_cwd_unc\r\n\
+pushd \"%CC_SWITCH_INTERNAL_CWD%\" || exit /b 1\r\n\
+:cc_switch_cwd_done\r\n\
+set \"CC_SWITCH_INTERNAL_CWD=\"\r\n\
+echo Using provider-specific claude config:\r\n\
+echo \"%CC_SWITCH_INTERNAL_CONFIG_PATH%\"\r\n\
+\"%ComSpec%\" /D /V:OFF /C claude --settings \"%%CC_SWITCH_INTERNAL_CONFIG_PATH%%\"\r\n\
+del \"%CC_SWITCH_INTERNAL_CONFIG_PATH%\" >nul 2>&1\r\n\
+set \"CC_SWITCH_INTERNAL_CONFIG_PATH=\"\r\n\
+(goto) 2>nul & del \"%~f0\" >nul 2>&1\r\n";
+
+#[cfg(any(target_os = "windows", test))]
+pub(super) fn quote_windows_batch_path_for_env(path: &str) -> String {
+    format!("\"{path}\"")
 }
 
-/// 非 ASCII 的项目目录经这个环境变量传给 Claude 启动 .bat。
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-const WINDOWS_CWD_ENV: &str = "CC_SWITCH_INTERNAL_CWD";
-
-/// 生成切到项目目录的 .bat 行，第二项是需要给启动进程设置的 `WINDOWS_CWD_ENV` 值。
-///
-/// cmd 按控制台代码页解码 .bat 字节，非 ASCII 路径以 UTF-8 写进文件会乱码（#8034）；
-/// 环境变量在 Windows 内部保持 Unicode，所以这类路径改由环境变量传入。纯 ASCII
-/// 路径照旧写进文件，不依赖终端继承环境变量（旧版 Windows Terminal 不继承）。
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn build_windows_cwd_command_str(path: &str) -> (String, Option<String>) {
-    let (target, env_value, cleanup) = if path.is_ascii() {
-        (escape_windows_batch_value(path), None, String::new())
-    } else {
-        (
-            format!("%{WINDOWS_CWD_ENV}%"),
-            Some(path.to_string()),
-            format!("set \"{WINDOWS_CWD_ENV}=\"\r\n"),
-        )
-    };
-
-    let command = if is_windows_unc_path(path) {
-        // `cmd.exe` cannot make a UNC path current via `cd`; `pushd` maps it first.
-        format!("pushd \"{target}\" || exit /b 1\r\n{cleanup}")
-    } else {
-        format!("cd /d \"{target}\" || exit /b 1\r\n{cleanup}")
-    };
-    (command, env_value)
+#[cfg(test)]
+pub(super) fn escape_windows_batch_value(value: &str) -> String {
+    // Every caller places the value inside double quotes. CMD keeps metacharacters
+    // literal there; only percent expansion still applies in a batch file.
+    value.replace('%', "%%")
 }
 
+#[cfg(any(target_os = "windows", test))]
+pub(super) const PARENT_CLAUDE_SESSION_ENV_VARS: &[&str] = &[
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDECODE",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_SSE_PORT",
+    "CLAUDE_PID",
+    // Claude Code injects these into tool subprocesses so transcripts stay ANSI-free.
+    // A launched terminal is a real TTY; inheriting them greys out the new Claude TUI.
+    "NO_COLOR",
+    "NODE_DISABLE_COLORS",
+];
+
+/// Terminals opened by CC Switch are top-level sessions. They must not inherit the
+/// parent Claude session identity, IPC endpoints, or color-disable flags.
+/// Only runtime metadata is stripped; auth, proxy, PATH, and user Claude config stay.
 #[cfg(target_os = "windows")]
-fn build_windows_cwd_command(cwd: Option<&Path>) -> (String, Option<String>) {
-    cwd.map(|dir| build_windows_cwd_command_str(&dir.to_string_lossy()))
-        .unwrap_or_default()
-}
-
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn escape_windows_batch_value(value: &str) -> String {
-    value
-        .replace('^', "^^")
-        .replace('%', "%%")
-        .replace('&', "^&")
-        .replace('|', "^|")
-        .replace('<', "^<")
-        .replace('>', "^>")
-        .replace('(', "^(")
-        .replace(')', "^)")
-}
-/// Windows: Run a start command with common error handling
-#[cfg(target_os = "windows")]
-fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), String> {
-    run_windows_start_command_with_env(args, terminal_name, &[])
-}
-
-/// 同 `run_windows_start_command`，额外给启动的终端设置环境变量（`start` 会继承）。
-#[cfg(target_os = "windows")]
-fn run_windows_start_command_with_env(
-    args: &[&str],
-    terminal_name: &str,
-    envs: &[(&str, &str)],
-) -> Result<(), String> {
-    use std::process::Command;
-
-    let mut full_args = vec!["/C", "start"];
-    full_args.extend(args);
-
-    let output = Command::new("cmd")
-        .args(&full_args)
-        .envs(envs.iter().copied())
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .map_err(|e| format!("启动 {} 失败: {e}", terminal_name))?;
-
-    if !output.status.success() {
-        let stderr = decode_command_output(&output.stderr);
-        return Err(format!(
-            "{} 启动失败 (exit code: {:?}): {}",
-            terminal_name,
-            output.status.code(),
-            stderr
-        ));
+pub(super) fn detach_claude_parent_session_env(command: &mut std::process::Command) {
+    for name in PARENT_CLAUDE_SESSION_ENV_VARS {
+        command.env_remove(name);
     }
+}
 
+#[cfg(target_os = "windows")]
+pub(super) fn configure_windows_batch_env_with(
+    command: &mut std::process::Command,
+    bat_path: &str,
+    launch_env: &[(&str, &str)],
+) {
+    detach_claude_parent_session_env(command);
+    command.env(
+        WINDOWS_BATCH_PATH_ENV,
+        quote_windows_batch_path_for_env(bat_path),
+    );
+    command.env_remove(WINDOWS_CONFIG_PATH_ENV);
+    command.env_remove(WINDOWS_CWD_ENV);
+    command.envs(launch_env.iter().copied());
+}
+
+#[cfg(all(target_os = "windows", test))]
+pub(super) fn configure_windows_batch_env(command: &mut std::process::Command, bat_path: &str) {
+    configure_windows_batch_env_with(command, bat_path, &[]);
+}
+
+#[cfg(target_os = "windows")]
+fn configure_windows_cmd_batch_with(
+    command: &mut std::process::Command,
+    action: &str,
+    bat_path: &str,
+    launch_env: &[(&str, &str)],
+) {
+    configure_windows_batch_env_with(command, bat_path, launch_env);
+    command.args(["/D", "/V:OFF", action, WINDOWS_BATCH_PATH_COMMAND]);
+}
+
+#[cfg(all(target_os = "windows", test))]
+pub(super) fn configure_windows_cmd_batch(
+    command: &mut std::process::Command,
+    action: &str,
+    bat_path: &str,
+) {
+    configure_windows_cmd_batch_with(command, action, bat_path, &[]);
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_cmd_batch(bat_path: &str, launch_env: &[(&str, &str)]) -> Result<(), String> {
+    let mut command = std::process::Command::new("cmd");
+    configure_windows_cmd_batch_with(&mut command, "/K", bat_path, launch_env);
+    super::windows_console::spawn_new_console(&mut command)
+        .map_err(|e| format!("启动 cmd 失败: {e}"))?;
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_powershell_batch(bat_path: &str, launch_env: &[(&str, &str)]) -> Result<(), String> {
+    let mut command = std::process::Command::new("powershell");
+    configure_windows_batch_env_with(&mut command, bat_path, launch_env);
+    command.args(["-NoExit", "-Command", WINDOWS_POWERSHELL_BATCH_COMMAND]);
+    super::windows_console::spawn_new_console(&mut command)
+        .map_err(|e| format!("启动 PowerShell 失败: {e}"))?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn launch_windows_batch_in_preferred_terminal(
+    bat_path: &str,
+    launch_env: &[(&str, &str)],
+) -> Result<(), String> {
+    let preferred = crate::settings::get_preferred_terminal();
+    let terminal = preferred.as_deref().unwrap_or("cmd");
+    let result = match terminal {
+        "powershell" => run_windows_powershell_batch(bat_path, launch_env),
+        "wt" => super::windows_terminal::launch_wt_terminal_with_env(bat_path, launch_env),
+        _ => run_windows_cmd_batch(bat_path, launch_env),
+    };
+
+    if result.is_err() && terminal != "cmd" {
+        log::warn!(
+            "首选终端 {} 启动失败，回退到 cmd: {:?}",
+            terminal,
+            result.as_ref().err()
+        );
+        run_windows_cmd_batch(bat_path, launch_env)
+    } else {
+        result
+    }
 }
 
 /// 打开用户首选终端并在其中执行一段可信命令脚本。脚本尾部 `read -r` / `pause`
@@ -5421,6 +5516,8 @@ fn run_windows_start_command_with_env(
 /// 保证它是可信字符串（当前只由后端硬编码调用）。
 pub(crate) fn launch_terminal_running(command_line: &str, label: &str) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     let pid = std::process::id();
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -5549,47 +5646,29 @@ read -r _
 
     #[cfg(target_os = "windows")]
     {
-        let preferred = crate::settings::get_preferred_terminal();
-        let terminal = preferred.as_deref().unwrap_or("cmd");
-
-        let bat_file = temp_dir.join(format!("cc_switch_{}_{}.bat", label, pid));
         let content = format!(
-            "@echo off\r\necho [cc-switch] Starting: {label}\r\necho.\r\n{cmd}\r\necho.\r\necho [cc-switch] Command exited. Press any key to close.\r\npause >nul\r\ndel \"%~f0\" >nul 2>&1\r\n",
+            "@echo off\r\nsetlocal DisableDelayedExpansion\r\nset \"CC_SWITCH_INTERNAL_BATCH_PATH=\"\r\necho [cc-switch] Starting: {label}\r\necho.\r\n{cmd}\r\necho.\r\necho [cc-switch] Command exited. Press any key to close.\r\npause >nul\r\ndel \"%~f0\" >nul 2>&1\r\n",
             label = label,
             cmd = command_line,
         );
-        std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
+        let bat_file = write_unique_temp_artifact(
+            &temp_dir,
+            "cc_switch_command_",
+            ".bat",
+            content.as_bytes(),
+        )?;
 
         let bat_path = bat_file.to_string_lossy();
-        let ps_cmd = format!("& '{}'", bat_path);
 
-        let result = match terminal {
-            "powershell" => run_windows_start_command(
-                &["powershell", "-NoExit", "-Command", &ps_cmd],
-                "PowerShell",
-            ),
-            "wt" => run_windows_start_command(&["wt", "cmd", "/K", &bat_path], "Windows Terminal"),
-            _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"),
-        };
-
-        let final_result = if result.is_err() && terminal != "cmd" {
-            log::warn!(
-                "首选终端 {} 启动失败，回退到 cmd: {:?}",
-                terminal,
-                result.as_ref().err()
-            );
-            run_windows_start_command(&["cmd", "/K", &bat_path], "cmd")
-        } else {
-            result
-        };
+        let result = launch_windows_batch_in_preferred_terminal(&bat_path, &[]);
 
         // The .bat self-deletes (`del "%~f0"`) after it runs, but that only
         // fires if *some* terminal actually launched it. If every attempt
         // failed, sweep the temp file ourselves to avoid pollution.
-        if final_result.is_err() {
+        if result.is_err() {
             let _ = std::fs::remove_file(&bat_file);
         }
-        final_result
+        result
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -5810,6 +5889,29 @@ mod tests {
         coordinator.run(vec!["claude"], |_| Ok(())).await.unwrap();
     }
 
+    #[test]
+    fn temporary_launch_artifacts_are_unique_and_complete() {
+        let temp = tempfile::tempdir().expect("temporary directory should be created");
+        let first = write_unique_temp_artifact(temp.path(), "cc_switch_", ".bat", b"first")
+            .expect("first artifact should be written");
+        let second = write_unique_temp_artifact(temp.path(), "cc_switch_", ".bat", b"second")
+            .expect("second artifact should be written");
+
+        assert_ne!(first, second);
+        assert_eq!(first.parent(), Some(temp.path()));
+        assert_eq!(second.parent(), Some(temp.path()));
+        assert_eq!(
+            first.extension().and_then(|value| value.to_str()),
+            Some("bat")
+        );
+        assert_eq!(
+            second.extension().and_then(|value| value.to_str()),
+            Some("bat")
+        );
+        assert_eq!(std::fs::read(first).unwrap(), b"first");
+        assert_eq!(std::fs::read(second).unwrap(), b"second");
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn concurrent_lifecycle_runs_use_independent_scripts() {
@@ -5837,6 +5939,236 @@ mod tests {
             assert!(
                 !script_path.parent().unwrap().exists(),
                 "temporary directory must be cleaned up"
+            );
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[derive(Clone, Copy, Debug)]
+    enum ProviderBatchTestLauncher {
+        Cmd,
+        CmdKeepOpen,
+        PowerShell,
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_provider_batch_keeps_unicode_paths_out_of_batch_bytes() {
+        for launcher in [
+            ProviderBatchTestLauncher::Cmd,
+            ProviderBatchTestLauncher::CmdKeepOpen,
+            ProviderBatchTestLauncher::PowerShell,
+        ] {
+            assert_windows_provider_batch_cleanup(false, 0, launcher);
+            assert_windows_provider_batch_cleanup(false, 7, launcher);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_provider_batch_cleans_up_after_cmd_shim_exits() {
+        for launcher in [
+            ProviderBatchTestLauncher::Cmd,
+            ProviderBatchTestLauncher::CmdKeepOpen,
+            ProviderBatchTestLauncher::PowerShell,
+        ] {
+            assert_windows_provider_batch_cleanup(true, 0, launcher);
+            assert_windows_provider_batch_cleanup(true, 7, launcher);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn assert_windows_provider_batch_cleanup(
+        cmd_shim: bool,
+        exit_code: i32,
+        launcher: ProviderBatchTestLauncher,
+    ) {
+        assert!(WINDOWS_PROVIDER_BATCH.is_ascii());
+
+        let temp = tempfile::tempdir().expect("probe directory should be created");
+        let cwd = temp
+            .path()
+            .join("迅雷下载 space & %CC_SWITCH_CMD_EXPAND% ^ ! (test) and O'Brien");
+        let config_dir = temp
+            .path()
+            .join("配置 space & %CC_SWITCH_CMD_EXPAND% ^ ! (test) and O'Brien");
+        let bin_dir = temp.path().join("bin");
+        std::fs::create_dir_all(&cwd).expect("Unicode working directory should be created");
+        std::fs::create_dir_all(&config_dir).expect("Unicode config directory should be created");
+        std::fs::create_dir(&bin_dir).expect("probe bin directory should be created");
+
+        let config = config_dir.join("设置.json");
+        let config_copy = temp.path().join("settings-copy.json");
+        let marker = cwd.join("cc-switch-provider-marker.txt");
+        let parent_marker = temp.path().join("parent-resumed.txt");
+        let batch = config_dir.join("启动 & %CC_SWITCH_CMD_EXPAND% ^ ! (test) and O'Brien.bat");
+        std::fs::write(&config, "{}\n").expect("provider config should be written");
+        std::fs::write(&batch, WINDOWS_PROVIDER_BATCH.as_bytes())
+            .expect("ASCII provider batch should be written");
+        let probe_source = temp.path().join("claude_probe.rs");
+        let probe_executable = bin_dir.join(if cmd_shim {
+            "claude_probe.exe"
+        } else {
+            "claude.exe"
+        });
+        if cmd_shim {
+            std::fs::write(
+                bin_dir.join("claude.cmd"),
+                "@echo off\r\n\"%~dp0claude_probe.exe\" %*\r\n",
+            )
+            .expect("CMD shim should be written");
+        }
+        std::fs::write(
+            &probe_source,
+            r#"fn main() {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    assert_eq!(args.first().and_then(|value| value.to_str()), Some("--settings"));
+    let config = args.get(1).expect("missing settings path");
+    let config_copy = std::env::var_os("CC_SWITCH_TEST_CONFIG_COPY").unwrap();
+    std::fs::copy(config, config_copy).unwrap();
+    std::fs::write(
+        std::env::current_dir().unwrap().join("cc-switch-provider-marker.txt"),
+        "ok\n",
+    )
+    .unwrap();
+    let exit_code: i32 = std::env::var("CC_SWITCH_TEST_EXIT_CODE").unwrap().parse().unwrap();
+    if exit_code != 0 {
+        eprintln!("cc-switch-test-provider-error");
+    }
+    std::process::exit(exit_code);
+}
+"#,
+        )
+        .expect("Claude probe source should be written");
+        let compiled =
+            std::process::Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
+                .arg(&probe_source)
+                .arg("-o")
+                .arg(&probe_executable)
+                .output()
+                .expect("rustc should compile the Claude probe");
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+
+        let path = std::env::join_paths(std::iter::once(bin_dir.clone()).chain(
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+        ))
+        .expect("probe PATH should be valid");
+        let bat_path = batch.to_string_lossy();
+        let config_path = config.to_string_lossy();
+        let cwd_path = cwd.to_string_lossy();
+        let config_copy_path = config_copy.to_string_lossy();
+        let launch_env = [
+            (WINDOWS_CONFIG_PATH_ENV, config_path.as_ref()),
+            (WINDOWS_CWD_ENV, cwd_path.as_ref()),
+        ];
+        let mut command = match launcher {
+            ProviderBatchTestLauncher::Cmd | ProviderBatchTestLauncher::CmdKeepOpen => {
+                let mut command = std::process::Command::new("cmd");
+                let action = if matches!(launcher, ProviderBatchTestLauncher::CmdKeepOpen) {
+                    "/K"
+                } else {
+                    "/C"
+                };
+                configure_windows_cmd_batch_with(&mut command, action, &bat_path, &launch_env);
+                command
+            }
+            ProviderBatchTestLauncher::PowerShell => {
+                let mut command = std::process::Command::new(
+                    super::super::windows_console::system_powershell_path().unwrap(),
+                );
+                configure_windows_batch_env_with(&mut command, &bat_path, &launch_env);
+                command.args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    &format!(
+                        "{WINDOWS_POWERSHELL_BATCH_COMMAND}; $code = $LASTEXITCODE; \
+                         [System.IO.File]::WriteAllText($env:CC_SWITCH_TEST_PARENT_MARKER, \
+                         'parent-resumed'); exit $code"
+                    ),
+                ]);
+                command
+            }
+        };
+        command
+            .env("PATH", path)
+            .env("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+            .env("CC_SWITCH_CMD_EXPAND", "wrong")
+            .env("CC_SWITCH_TEST_CONFIG_COPY", config_copy_path.as_ref())
+            .env("CC_SWITCH_TEST_EXIT_CODE", exit_code.to_string())
+            .env("CC_SWITCH_TEST_PARENT_MARKER", &parent_marker);
+        let output = if matches!(launcher, ProviderBatchTestLauncher::CmdKeepOpen) {
+            use std::io::Write;
+            use std::process::Stdio;
+
+            // CMD /K needs its own console state when the test runner is detached.
+            let mut child = command
+                .creation_flags(CREATE_NO_WINDOW)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("interactive CMD should start");
+            let mut input = child.stdin.take().unwrap();
+            input
+                .write_all(
+                    b"@echo parent-resumed>\"%CC_SWITCH_TEST_PARENT_MARKER%\"\r\n@exit 0\r\n",
+                )
+                .expect("parent CMD should accept commands after the provider exits");
+            let output = child.wait_with_output().unwrap();
+            drop(input);
+            output
+        } else {
+            command.output().expect("provider batch should start")
+        };
+
+        let diagnostics = || {
+            format!(
+                "launcher: {launcher:?}, shim: {cmd_shim}, provider exit: {exit_code}\n\
+                 status: {}\nstdout: {}\nstderr: {}",
+                output.status,
+                decode_command_output(&output.stdout),
+                decode_command_output(&output.stderr)
+            )
+        };
+        assert_eq!(
+            std::fs::read_to_string(marker)
+                .unwrap_or_else(|error| panic!("marker missing: {error}\n{}", diagnostics()))
+                .trim(),
+            "ok"
+        );
+        assert_eq!(
+            std::fs::read_to_string(config_copy)
+                .unwrap_or_else(|error| panic!("config copy missing: {error}\n{}", diagnostics())),
+            "{}\n"
+        );
+        assert!(!config.exists(), "provider config should self-delete");
+        assert!(!batch.exists(), "provider batch should self-delete");
+        assert!(output.status.success(), "{}", diagnostics());
+        assert_eq!(
+            decode_command_output(&output.stderr).trim(),
+            if exit_code == 0 {
+                ""
+            } else {
+                "cc-switch-test-provider-error"
+            },
+            "{}",
+            diagnostics()
+        );
+        if !matches!(launcher, ProviderBatchTestLauncher::Cmd) {
+            assert_eq!(
+                std::fs::read_to_string(parent_marker)
+                    .unwrap_or_else(|error| panic!(
+                        "parent shell did not resume: {error}\n{}",
+                        diagnostics()
+                    ))
+                    .trim(),
+                "parent-resumed"
             );
         }
     }
@@ -6065,6 +6397,104 @@ mod tests {
         assert_eq!(
             build_final_shell_cd_command("/bin/bash", Some(Path::new("/tmp/project O'Brien"))),
             "cd '/tmp/project O'\"'\"'Brien' || exit 1\n"
+        );
+    }
+
+    #[test]
+    fn posix_provider_launchers_are_independent() {
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let first_config = write_claude_config(temp.path(), &[]).unwrap();
+        let first_script = write_posix_provider_launcher_script(
+            &first_config,
+            ":",
+            "",
+            "exec /bin/sh -c 'exit 0'",
+        )
+        .unwrap();
+        let first_content = std::fs::read_to_string(&first_script).unwrap();
+        let second_config = write_claude_config(temp.path(), &[]).unwrap();
+        let second_script = write_posix_provider_launcher_script(
+            &second_config,
+            ":",
+            "",
+            "exec /bin/sh -c 'exit 0'",
+        )
+        .unwrap();
+
+        assert_ne!(
+            first_script, second_script,
+            "each launch must own its script"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&first_script).unwrap(),
+            first_content
+        );
+
+        #[cfg(unix)]
+        for (config, script) in [
+            (&first_config, &first_script),
+            (&second_config, &second_script),
+        ] {
+            let output = std::process::Command::new("/bin/sh")
+                .arg(script)
+                .output()
+                .expect("launcher should run");
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(!config.exists());
+            assert!(!script.exists());
+            if script == &first_script {
+                assert!(
+                    second_config.exists(),
+                    "pending config must survive the first exit"
+                );
+                assert!(
+                    second_script.exists(),
+                    "pending launcher must survive the first exit"
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn posix_provider_launcher_does_not_accumulate_successful_launch_artifacts() {
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let artifact_dir = temp.path().join("provider artifacts O'Brien");
+        std::fs::create_dir(&artifact_dir).expect("artifact dir should be created");
+        for launch in 0..3 {
+            let config_file = artifact_dir.join(format!("claude_{launch}.json"));
+            std::fs::write(&config_file, r#"{"env":{"TOKEN":"fake-token"}}"#)
+                .expect("config fixture should be written");
+            let script_file = write_posix_provider_launcher_script(
+                &config_file,
+                ":",
+                "",
+                "exec /bin/sh -c 'exit 0'",
+            )
+            .expect("launcher fixture should be written");
+
+            let output = std::process::Command::new("/bin/sh")
+                .arg(&script_file)
+                .output()
+                .expect("launcher should run");
+            assert!(
+                output.status.success(),
+                "launcher failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(!config_file.exists(), "provider config should be removed");
+            assert!(!script_file.exists(), "launcher script should be removed");
+        }
+
+        assert_eq!(
+            std::fs::read_dir(artifact_dir)
+                .expect("artifact dir should remain readable")
+                .count(),
+            0
         );
     }
 
@@ -9173,6 +9603,23 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
+    fn windows_where_output_prefers_oem_codepage_over_valid_utf8() {
+        let bytes = b"C:\\Temp\\\xC2\xA1\\wt.exe\r\n";
+
+        assert_eq!(
+            decode_windows_where_output_with_codepage(bytes, 936).trim(),
+            r"C:\Temp\隆\wt.exe"
+        );
+        assert_eq!(
+            std::str::from_utf8(bytes)
+                .expect("fixture is intentionally valid UTF-8")
+                .trim(),
+            r"C:\Temp\¡\wt.exe"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
     fn windows_path_lookup_ignores_same_named_file_in_current_directory() {
         let current_dir = tempfile::tempdir().expect("current directory should be created");
         let path_dir = tempfile::tempdir().expect("PATH directory should be created");
@@ -9563,51 +10010,5 @@ mod tests {
             build_macos_ghostty_applescript(p).contains(expected),
             "Ghostty did not keep the non-exec launcher"
         );
-    }
-
-    #[test]
-    fn build_windows_cwd_command_str_uses_cd_for_drive_paths() {
-        let (command, env) = build_windows_cwd_command_str(r"C:\work\repo");
-
-        assert_eq!(command, "cd /d \"C:\\work\\repo\" || exit /b 1\r\n");
-        assert_eq!(env, None);
-    }
-
-    #[test]
-    fn build_windows_cwd_command_str_uses_pushd_for_unc_paths() {
-        let (command, _) = build_windows_cwd_command_str(r"\\wsl$\Ubuntu\home\coder\repo");
-
-        assert_eq!(
-            command,
-            "pushd \"\\\\wsl$\\Ubuntu\\home\\coder\\repo\" || exit /b 1\r\n"
-        );
-    }
-
-    #[test]
-    fn build_windows_cwd_command_str_escapes_batch_metacharacters() {
-        let (command, _) = build_windows_cwd_command_str(r"\\server\share\100%&(test)");
-
-        assert_eq!(
-            command,
-            "pushd \"\\\\server\\share\\100%%^&^(test^)\" || exit /b 1\r\n"
-        );
-    }
-
-    #[test]
-    fn build_windows_cwd_command_str_passes_non_ascii_paths_via_env() {
-        // cmd 按控制台代码页解码 .bat，中文路径不能写进文件（#8034）。
-        let path = r"C:\Users\林增文\项目";
-        let (command, env) = build_windows_cwd_command_str(path);
-
-        assert!(command.is_ascii(), "batch line must stay ASCII: {command}");
-        assert_eq!(
-            command,
-            "cd /d \"%CC_SWITCH_INTERNAL_CWD%\" || exit /b 1\r\nset \"CC_SWITCH_INTERNAL_CWD=\"\r\n"
-        );
-        assert_eq!(env.as_deref(), Some(path));
-
-        let (unc_command, unc_env) = build_windows_cwd_command_str(r"\\server\共享\repo");
-        assert!(unc_command.starts_with("pushd \"%CC_SWITCH_INTERNAL_CWD%\" || exit /b 1\r\n"));
-        assert_eq!(unc_env.as_deref(), Some(r"\\server\共享\repo"));
     }
 }
