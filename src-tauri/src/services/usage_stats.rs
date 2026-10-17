@@ -279,6 +279,9 @@ pub struct LogFilters {
     pub status_code: Option<u16>,
     pub start_date: Option<i64>,
     pub end_date: Option<i64>,
+    /// Device scope: absent/"local", "all", or a remote device id.
+    #[serde(default)]
+    pub device: Option<String>,
 }
 
 /// 分页请求日志响应
@@ -328,6 +331,9 @@ pub struct RequestLogDetail {
     /// 写入时实际用于计价的模型名。None = v11 前的历史行，"" = 未计价的错误行。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pricing_model: Option<String>,
+    /// Remote device that recorded this request (None = this device).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
 }
 
 /// 把 26 列的查询结果映射为 `RequestLogDetail`。
@@ -371,6 +377,7 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
         data_source: row.get(23)?,
         pricing_model: row.get(24)?,
         input_token_semantics: row.get::<_, i64>(25)?,
+        device_id: None,
     })
 }
 
@@ -378,7 +385,7 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
 /// Session logs use placeholder provider_ids (e.g., `_session`, `_<app>_session`)
 /// that don't exist in the providers table — the CASE expression below is the
 /// authoritative mapping from placeholder to readable name.
-fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
+pub(crate) fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
     format!(
         "COALESCE({provider_alias}.name, CASE {log_alias}.provider_id \
          WHEN '_session' THEN 'Claude (Session)' \
@@ -517,6 +524,57 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     )
 }
 
+/// Pairing condition of the local session/proxy heuristic between session row
+/// `s` and proxy row `p` (the same conditions as [`effective_usage_log_filter`]).
+fn session_proxy_pair_sql(s: &str, p: &str) -> String {
+    let s_source = data_source_expr(s);
+    let p_source = data_source_expr(p);
+    let app_type_match =
+        dedup_app_type_match_sql(&format!("{p}.app_type"), &format!("{s}.app_type"));
+    format!(
+        "({s_source} IN ({DEDUP_SESSION_SOURCES_SQL})
+          AND {p_source} = 'proxy'
+          AND {app_type_match}
+          AND {p}.status_code >= 200 AND {p}.status_code < 300
+          AND {p}.input_tokens = {s}.input_tokens
+          AND {p}.output_tokens = {s}.output_tokens
+          AND {p}.cache_read_tokens = {s}.cache_read_tokens
+          AND (
+              {p}.cache_creation_tokens = {s}.cache_creation_tokens
+              OR ({s}.cache_creation_tokens = 0
+                  AND {s_source} IN ('codex_session', 'gemini_session', 'opencode_session'))
+              OR ({p}.cache_creation_tokens = 0
+                  AND {p}.input_token_semantics = {INPUT_TOKEN_SEMANTICS_LEGACY}
+                  AND {s_source} = 'codex_session')
+          )
+          AND {p}.created_at BETWEEN {s}.created_at - {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
+              AND {s}.created_at + {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
+          AND (LOWER({p}.model) = LOWER({s}.model) OR LOWER({p}.model) = 'unknown'
+               OR LOWER({s}.model) = 'unknown'))"
+    )
+}
+
+/// Session row `s` (one the local heuristic drops) pairs with exactly one
+/// proxy row, and that proxy row pairs with no other session row.
+///
+/// Only such unambiguous pairings are published to other devices as aliases
+/// (a fleet-wide "already counted through another row" claim). An ambiguous
+/// pairing — several similar requests inside the time window — stays a local
+/// decision: this device keeps dropping the session row, but other devices'
+/// copies of it are not suppressed (see docs, "not detectable").
+pub(crate) fn unambiguous_alias_sql(s: &str) -> String {
+    let pair_u = session_proxy_pair_sql(s, "pu");
+    let pair_v = session_proxy_pair_sql(s, "pv");
+    let pair_other = session_proxy_pair_sql("sv", "pu");
+    format!(
+        "EXISTS (SELECT 1 FROM proxy_request_logs pu WHERE {pair_u}
+            AND NOT EXISTS (SELECT 1 FROM proxy_request_logs pv
+                WHERE {pair_v} AND pv.request_id <> pu.request_id)
+            AND NOT EXISTS (SELECT 1 FROM proxy_request_logs sv
+                WHERE sv.request_id <> {s}.request_id AND {pair_other}))"
+    )
+}
+
 /// 参与跨源去重的会话日志来源（和 [`effective_usage_log_filter`] 同口径）。
 const DEDUP_SESSION_SOURCES_SQL: &str =
     "'session_log', 'codex_session', 'gemini_session', 'opencode_session'";
@@ -536,6 +594,21 @@ pub(crate) fn effective_usage_log_filter_for_range(
     log_alias: &str,
     start_date: Option<i64>,
     end_date: Option<i64>,
+) -> Result<String, AppError> {
+    effective_usage_log_filter_for_range_keyed(conn, log_alias, start_date, end_date, "rowid")
+}
+
+/// [`effective_usage_log_filter_for_range`] with a configurable row key.
+///
+/// `rowid` only exists on the base table; when `log_alias` names a derived
+/// table (the cross-device union) the primary key `request_id` is used instead,
+/// which identifies the same rows.
+fn effective_usage_log_filter_for_range_keyed(
+    conn: &Connection,
+    log_alias: &str,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    row_key: &str,
 ) -> Result<String, AppError> {
     let lo = start_date
         .map(|v| v.saturating_sub(SESSION_PROXY_DEDUP_WINDOW_SECONDS))
@@ -568,8 +641,8 @@ pub(crate) fn effective_usage_log_filter_for_range(
     let dp_source = data_source_expr("dedup_p");
     let ds_source = data_source_expr("dedup_s");
     Ok(format!(
-        "{log_alias}.rowid NOT IN (
-            SELECT dedup_s.rowid
+        "{log_alias}.{row_key} NOT IN (
+            SELECT dedup_s.{row_key}
             FROM proxy_request_logs dedup_p
             JOIN proxy_request_logs dedup_s
               ON dedup_s.app_type IN (
@@ -629,12 +702,13 @@ fn connection_total_changes(conn: &Connection) -> Result<u64, AppError> {
 
 fn log_count_cache_key(filters: &LogFilters) -> String {
     format!(
-        "{:?}|{:?}|{:?}|{:?}|{:?}",
+        "{:?}|{:?}|{:?}|{:?}|{:?}|{:?}",
         filters.app_type,
         filters.provider_name,
         filters.model,
         filters.status_code,
-        filters.start_date
+        filters.start_date,
+        filters.device
     )
 }
 
@@ -936,8 +1010,374 @@ fn local_day_start_rfc3339(day: NaiveDate) -> String {
     local_midnight.to_rfc3339()
 }
 
+// ─── Device scope (cross-device usage sync) ──────────────────
+
+/// Which devices a statistics query covers.
+///
+/// `Local` is the historical behaviour and produces byte-identical SQL to the
+/// pre-sync implementation. Remote data comes only from the read-only
+/// `usage_sync_remote_*` cache tables.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum UsageDeviceScope {
+    #[default]
+    Local,
+    All,
+    Device(String),
+}
+
+impl UsageDeviceScope {
+    /// Parse the UI parameter: absent / `"local"` → this device, `"all"` →
+    /// every device, anything else → one remote device id.
+    pub fn from_param(value: Option<&str>) -> Self {
+        match value.map(str::trim) {
+            None | Some("") | Some("local") => Self::Local,
+            Some("all") => Self::All,
+            Some(id) => Self::Device(id.to_string()),
+        }
+    }
+}
+
+/// Columns of `proxy_request_logs` that the statistics queries read; the
+/// cross-device union projects exactly these plus two remote-only columns.
+const DETAIL_UNION_COLUMNS: &str = "request_id, provider_id, app_type, model, request_model, \
+    pricing_model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, \
+    input_token_semantics, input_cost_usd, output_cost_usd, cache_read_cost_usd, \
+    cache_creation_cost_usd, total_cost_usd, latency_ms, first_token_ms, duration_ms, \
+    status_code, error_message, session_id, provider_type, is_streaming, cost_multiplier, \
+    created_at, data_source";
+
+const REMOTE_DETAIL_COLUMNS: &str = "rl.request_id AS request_id, \
+    rl.provider_id AS provider_id, rl.app_type AS app_type, rl.model AS model, \
+    rl.request_model AS request_model, rl.pricing_model AS pricing_model, \
+    rl.input_tokens AS input_tokens, rl.output_tokens AS output_tokens, \
+    rl.cache_read_tokens AS cache_read_tokens, rl.cache_creation_tokens AS cache_creation_tokens, \
+    rl.input_token_semantics AS input_token_semantics, rl.input_cost_usd AS input_cost_usd, \
+    rl.output_cost_usd AS output_cost_usd, rl.cache_read_cost_usd AS cache_read_cost_usd, \
+    rl.cache_creation_cost_usd AS cache_creation_cost_usd, rl.total_cost_usd AS total_cost_usd, \
+    rl.latency_ms AS latency_ms, rl.first_token_ms AS first_token_ms, \
+    rl.duration_ms AS duration_ms, rl.status_code AS status_code, NULL AS error_message, \
+    NULL AS session_id, NULL AS provider_type, rl.is_streaming AS is_streaming, \
+    rl.cost_multiplier AS cost_multiplier, rl.created_at AS created_at, \
+    rl.data_source AS data_source";
+
+const ROLLUP_UNION_COLUMNS: &str = "date, app_type, provider_id, model, request_model, \
+    pricing_model, request_count, success_count, input_tokens, output_tokens, \
+    cache_read_tokens, cache_creation_tokens, input_token_semantics, total_cost_usd, \
+    avg_latency_ms";
+
+/// Cross-device identity rule (viewer independent).
+///
+/// Every copy of a request id is a *claim* by one device: a request-level row,
+/// a rolled-up ledger entry (`usage_rollup_ledger` / remote `ledger`), or an
+/// alias (a row its device dropped as a duplicate of another of its own rows,
+/// i.e. already counted through that row). For one id:
+/// 1. if any device holds it as an alias, every counted copy is dropped — the
+///    aliasing device counts the request through its other row;
+/// 2. otherwise the counted copy of the smallest device id wins.
+///
+/// Losing request-level rows are filtered out; losing ledger copies become
+/// negative rows of exactly their contribution in their rollup group (see
+/// `ScopeSql::rollup_table`). Only provable identities (equal request ids) are
+/// ever merged — never time/token similarity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct IdentityRules {
+    /// This device's id ('' when no identity exists yet: no remote data either).
+    local_id: String,
+}
+
+impl IdentityRules {
+    pub(crate) fn new(local_id: Option<&str>) -> Self {
+        let local_id = local_id
+            .filter(|id| crate::services::usage_sync::protocol::is_valid_device_id(id))
+            .unwrap_or_default()
+            .to_string();
+        Self { local_id }
+    }
+
+    pub(crate) fn load(conn: &Connection) -> Result<Self, AppError> {
+        let local_id: Option<String> = conn
+            .query_row(
+                "SELECT device_id FROM usage_sync_identity WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(Self::new(local_id.as_deref()))
+    }
+
+    /// Some device holds `{req}` as an alias, or this device has it only in
+    /// the legacy Pi ledger (contribution unknown, so it cannot lose).
+    pub(crate) fn alias_claimed(&self, req: &str, source: &str) -> String {
+        let local_dup = effective_usage_log_filter("la");
+        let unambiguous = unambiguous_alias_sql("la");
+        format!(
+            "(EXISTS (SELECT 1 FROM usage_sync_remote_claims ca \
+                 WHERE ca.request_id = {req} AND ca.kind = 1) \
+              OR EXISTS (SELECT 1 FROM usage_rollup_ledger ga \
+                 WHERE ga.request_id = {req} AND ga.kind = 1) \
+              OR EXISTS (SELECT 1 FROM proxy_request_logs la \
+                 WHERE la.request_id = {req} AND NOT ({local_dup}) AND {unambiguous}) \
+              OR (EXISTS (SELECT 1 FROM session_usage_dedup sx \
+                     WHERE sx.data_source = {source} AND sx.request_id = {req}) \
+                  AND NOT EXISTS (SELECT 1 FROM usage_rollup_ledger gp \
+                     WHERE gp.request_id = {req}) \
+                  AND NOT EXISTS (SELECT 1 FROM proxy_request_logs lp \
+                     WHERE lp.request_id = {req})))"
+        )
+    }
+
+    /// A counted copy of `{req}` exists on a device whose id sorts below `{dev}`.
+    pub(crate) fn counted_copy_below(&self, req: &str, dev: &str) -> String {
+        let local = &self.local_id;
+        let local_counted = effective_usage_log_filter("lc");
+        format!(
+            "(EXISTS (SELECT 1 FROM usage_sync_remote_logs ry \
+                 WHERE ry.request_id = {req} AND ry.device_id < {dev}) \
+              OR EXISTS (SELECT 1 FROM usage_sync_remote_claims cy \
+                 WHERE cy.request_id = {req} AND cy.kind = 0 AND cy.device_id < {dev}) \
+              OR ('{local}' < {dev} AND ( \
+                 EXISTS (SELECT 1 FROM proxy_request_logs lc \
+                    WHERE lc.request_id = {req} AND {local_counted}) \
+                 OR EXISTS (SELECT 1 FROM usage_rollup_ledger gc \
+                    WHERE gc.request_id = {req} AND gc.kind = 0))))"
+        )
+    }
+
+    /// A counted local copy (request-level row of this device) loses.
+    pub(crate) fn local_copy_loses(&self, req: &str) -> String {
+        let local = &self.local_id;
+        format!(
+            "(EXISTS (SELECT 1 FROM usage_sync_remote_claims ca \
+                 WHERE ca.request_id = {req} AND ca.kind = 1) \
+              OR EXISTS (SELECT 1 FROM usage_sync_remote_logs ry \
+                 WHERE ry.request_id = {req} AND ry.device_id < '{local}') \
+              OR EXISTS (SELECT 1 FROM usage_sync_remote_claims cy \
+                 WHERE cy.request_id = {req} AND cy.kind = 0 AND cy.device_id < '{local}'))"
+        )
+    }
+
+    /// A counted remote copy held by device `{dev}` loses. The gate (another
+    /// remote device holds the id, or this device holds it in any form) is a
+    /// handful of primary-key probes; the full rule only runs behind it.
+    pub(crate) fn remote_copy_loses(&self, req: &str, source: &str, dev: &str) -> String {
+        format!(
+            "((EXISTS (SELECT 1 FROM usage_sync_remote_multi mm WHERE mm.request_id = {req}) \
+               OR EXISTS (SELECT 1 FROM proxy_request_logs lg WHERE lg.request_id = {req}) \
+               OR EXISTS (SELECT 1 FROM usage_rollup_ledger gg WHERE gg.request_id = {req}) \
+               OR EXISTS (SELECT 1 FROM session_usage_dedup sg \
+                  WHERE sg.data_source = {source} AND sg.request_id = {req})) \
+              AND ({} OR {}))",
+            self.alias_claimed(req, source),
+            self.counted_copy_below(req, dev)
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ScopeKind {
+    Local,
+    All {
+        rules: IdentityRules,
+    },
+    /// Validated remote device id (safe to inline: `[0-9a-z-]` only).
+    Device(String),
+}
+
+/// SQL fragments for one device scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ScopeSql {
+    kind: ScopeKind,
+}
+
+impl ScopeSql {
+    pub(crate) fn resolve(conn: &Connection, scope: &UsageDeviceScope) -> Result<Self, AppError> {
+        let kind = match scope {
+            UsageDeviceScope::Local => ScopeKind::Local,
+            UsageDeviceScope::All => ScopeKind::All {
+                rules: IdentityRules::load(conn)?,
+            },
+            UsageDeviceScope::Device(id) => {
+                if !crate::services::usage_sync::protocol::is_valid_device_id(id) {
+                    return Err(AppError::InvalidInput(format!("invalid device id: {id}")));
+                }
+                let local_id: Option<String> = conn
+                    .query_row(
+                        "SELECT device_id FROM usage_sync_identity WHERE id = 1",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if local_id.as_deref() == Some(id.as_str()) {
+                    ScopeKind::Local
+                } else {
+                    ScopeKind::Device(id.clone())
+                }
+            }
+        };
+        Ok(Self { kind })
+    }
+
+    pub(crate) fn is_local(&self) -> bool {
+        self.kind == ScopeKind::Local
+    }
+
+    /// Table expression for request-level rows (alias is appended by the caller).
+    pub(crate) fn detail_table(&self) -> String {
+        match &self.kind {
+            ScopeKind::Local => "proxy_request_logs".to_string(),
+            ScopeKind::All { rules, .. } => {
+                let local_loses = rules.local_copy_loses("pl.request_id");
+                let remote_loses =
+                    rules.remote_copy_loses("rl.request_id", "rl.data_source", "rl.device_id");
+                format!(
+                    "(SELECT {DETAIL_UNION_COLUMNS}, NULL AS remote_device_id, \
+                        NULL AS remote_provider_name FROM proxy_request_logs pl \
+                      WHERE NOT {local_loses} \
+                      UNION ALL \
+                      SELECT {REMOTE_DETAIL_COLUMNS}, rl.device_id, rl.provider_name \
+                        FROM usage_sync_remote_logs rl WHERE NOT {remote_loses})"
+                )
+            }
+            ScopeKind::Device(id) => format!(
+                "(SELECT {REMOTE_DETAIL_COLUMNS}, rl.device_id AS remote_device_id, \
+                    rl.provider_name AS remote_provider_name \
+                  FROM usage_sync_remote_logs rl WHERE rl.device_id = '{id}')"
+            ),
+        }
+    }
+
+    /// Table expression for daily rollup rows.
+    pub(crate) fn rollup_table(&self) -> String {
+        match &self.kind {
+            ScopeKind::Local => "usage_daily_rollups".to_string(),
+            ScopeKind::All { .. } => {
+                // Negative rows carry their group's average latency, so removing
+                // a duplicate leaves the latency average of the group unchanged.
+                // Inherited (id-less) history of copied installations is
+                // subtracted as materialized and bounded by
+                // `refresh_ledger_suppression` (nearest present ancestor).
+                format!(
+                    "(SELECT {ROLLUP_UNION_COLUMNS}, NULL AS remote_device_id, \
+                        NULL AS remote_provider_name FROM usage_daily_rollups \
+                      UNION ALL \
+                      SELECT {ROLLUP_UNION_COLUMNS}, device_id, provider_name \
+                        FROM usage_sync_remote_rollups \
+                      UNION ALL \
+                      SELECT g.date, g.app_type, g.provider_id, g.model, g.request_model, \
+                        g.pricing_model, -1, -g.success, -g.input_tokens, -g.output_tokens, \
+                        -g.cache_read_tokens, -g.cache_creation_tokens, \
+                        {INPUT_TOKEN_SEMANTICS_FRESH}, \
+                        CAST(-CAST(g.total_cost_usd AS REAL) AS TEXT), \
+                        COALESCE((SELECT lr.avg_latency_ms FROM usage_daily_rollups lr WHERE lr.date = g.date AND lr.app_type = g.app_type AND lr.provider_id = g.provider_id AND lr.model = g.model AND lr.request_model = g.request_model AND lr.pricing_model = g.pricing_model), 0), NULL, NULL \
+                      FROM usage_rollup_ledger g \
+                      JOIN usage_sync_ledger_suppressed sg \
+                        ON sg.device_id = '' AND sg.request_id = g.request_id \
+                      WHERE g.kind = 0 \
+                      UNION ALL \
+                      SELECT c.date, c.app_type, c.provider_id, c.model, c.request_model, \
+                        c.pricing_model, -1, -c.success, -c.input_tokens, -c.output_tokens, \
+                        -c.cache_read_tokens, -c.cache_creation_tokens, \
+                        {INPUT_TOKEN_SEMANTICS_FRESH}, \
+                        CAST(-CAST(c.total_cost_usd AS REAL) AS TEXT), \
+                        COALESCE((SELECT MAX(rr.avg_latency_ms) FROM usage_sync_remote_rollups rr WHERE rr.device_id = c.device_id AND rr.date = c.date AND rr.app_type = c.app_type AND rr.provider_id = c.provider_id AND rr.model = c.model AND rr.request_model = c.request_model AND rr.pricing_model = c.pricing_model), 0), c.device_id, \
+                        c.provider_name \
+                      FROM usage_sync_remote_claims c \
+                      JOIN usage_sync_ledger_suppressed sc \
+                        ON sc.device_id = c.device_id AND sc.request_id = c.request_id \
+                      WHERE c.kind = 0 \
+                      UNION ALL \
+                      SELECT e.date, e.app_type, e.provider_id, e.model, e.request_model, \
+                        e.pricing_model, -e.request_count, -e.success_count, -e.input_tokens, \
+                        -e.output_tokens, -e.cache_read_tokens, -e.cache_creation_tokens, \
+                        {INPUT_TOKEN_SEMANTICS_FRESH}, CAST(-e.total_cost_usd AS TEXT), \
+                        e.avg_latency_ms, NULLIF(e.device_id, ''), e.provider_name \
+                      FROM usage_sync_inherited_effective e)"
+                )
+            }
+            ScopeKind::Device(id) => format!(
+                "(SELECT {ROLLUP_UNION_COLUMNS}, device_id AS remote_device_id, \
+                    provider_name AS remote_provider_name \
+                  FROM usage_sync_remote_rollups WHERE device_id = '{id}')"
+            ),
+        }
+    }
+
+    /// Provider display name: remote rows keep the name their device recorded.
+    pub(crate) fn provider_name(&self, log_alias: &str, provider_alias: &str) -> String {
+        let local = provider_name_coalesce(log_alias, provider_alias);
+        if self.is_local() {
+            local
+        } else {
+            format!("COALESCE(NULLIF({log_alias}.remote_provider_name, ''), {local})")
+        }
+    }
+
+    /// Session/proxy de-duplication. Applies only to this device's own rows;
+    /// remote rows were already de-duplicated on their source device.
+    pub(crate) fn detail_filter(
+        &self,
+        conn: &Connection,
+        log_alias: &str,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+    ) -> Result<String, AppError> {
+        match &self.kind {
+            ScopeKind::Local => {
+                effective_usage_log_filter_for_range(conn, log_alias, start_date, end_date)
+            }
+            ScopeKind::All { .. } => {
+                let local = effective_usage_log_filter_for_range_keyed(
+                    conn,
+                    log_alias,
+                    start_date,
+                    end_date,
+                    "request_id",
+                )?;
+                Ok(format!(
+                    "({log_alias}.remote_device_id IS NOT NULL OR ({local}))"
+                ))
+            }
+            ScopeKind::Device(_) => Ok("1 = 1".to_string()),
+        }
+    }
+
+    /// Dashboard Provider/Model filters with scope-aware provider names.
+    fn push_provider_model_filters(
+        &self,
+        conditions: &mut Vec<String>,
+        params: &mut Vec<Box<dyn rusqlite::ToSql>>,
+        log_alias: &str,
+        provider_alias: &str,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+    ) {
+        if self.is_local() {
+            push_provider_model_filters(
+                conditions,
+                params,
+                log_alias,
+                provider_alias,
+                provider_name,
+                model,
+            );
+            return;
+        }
+        if let Some(name) = provider_name {
+            conditions.push(format!(
+                "{} = ?",
+                self.provider_name(log_alias, provider_alias)
+            ));
+            params.push(Box::new(name.to_string()));
+        }
+        if let Some(m) = model {
+            conditions.push(format!("{} = ?", effective_model_sql(log_alias)));
+            params.push(Box::new(m.to_string()));
+        }
+    }
+}
+
 impl Database {
-    /// 获取使用量汇总
+    /// This device only; see [`Self::get_usage_summary_scoped`] for other device scopes.
     pub fn get_usage_summary(
         &self,
         start_date: Option<i64>,
@@ -946,12 +1386,33 @@ impl Database {
         provider_name: Option<&str>,
         model: Option<&str>,
     ) -> Result<UsageSummary, AppError> {
+        self.get_usage_summary_scoped(
+            start_date,
+            end_date,
+            app_type,
+            provider_name,
+            model,
+            &UsageDeviceScope::Local,
+        )
+    }
+
+    /// 获取使用量汇总
+    pub fn get_usage_summary_scoped(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        app_type: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        scope: &UsageDeviceScope,
+    ) -> Result<UsageSummary, AppError> {
         let conn = lock_conn!(self.conn);
+        let scope = ScopeSql::resolve(&conn, scope)?;
+        let detail_table = scope.detail_table();
+        let rollup_table = scope.rollup_table();
 
         // Build detail WHERE clause
-        let mut conditions = vec![effective_usage_log_filter_for_range(
-            &conn, "l", start_date, end_date,
-        )?];
+        let mut conditions = vec![scope.detail_filter(&conn, "l", start_date, end_date)?];
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         if let Some(start) = start_date {
@@ -966,7 +1427,7 @@ impl Database {
             conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             params_vec.push(Box::new(at.to_string()));
         }
-        push_provider_model_filters(
+        scope.push_provider_model_filters(
             &mut conditions,
             &mut params_vec,
             "l",
@@ -1001,7 +1462,7 @@ impl Database {
             rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
             rollup_params.push(Box::new(at.to_string()));
         }
-        push_provider_model_filters(
+        scope.push_provider_model_filters(
             &mut rollup_conditions,
             &mut rollup_params,
             "r",
@@ -1041,7 +1502,7 @@ impl Database {
                     COALESCE(SUM(l.cache_creation_tokens), 0) as total_cache_creation_tokens,
                     COALESCE(SUM(l.cache_read_tokens), 0) as total_cache_read_tokens,
                     COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) as success_count
-                 FROM proxy_request_logs l {detail_join} {where_clause}) d,
+                 FROM {detail_table} l {detail_join} {where_clause}) d,
                 (SELECT
                     COALESCE(SUM(r.request_count), 0) as total_requests,
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0) as total_cost,
@@ -1050,7 +1511,7 @@ impl Database {
                     COALESCE(SUM(r.cache_creation_tokens), 0) as total_cache_creation_tokens,
                     COALESCE(SUM(r.cache_read_tokens), 0) as total_cache_read_tokens,
                     COALESCE(SUM(r.success_count), 0) as success_count
-                 FROM usage_daily_rollups r {rollup_join} {rollup_where}) r"
+                 FROM {rollup_table} r {rollup_join} {rollup_where}) r"
         );
 
         // Combine params: detail params first, then rollup params
@@ -1099,11 +1560,7 @@ impl Database {
         Ok(result)
     }
 
-    /// 按 app_type 维度拆分的使用量汇总，用于 Dashboard 的分应用展示条。
-    /// 返回所有有数据的 app_type，按 real_total_tokens 降序。
-    ///
-    /// Single SQL with `GROUP BY app_type` — avoids the N+1 round-trip that
-    /// would result from invoking `get_usage_summary` once per app_type.
+    /// This device only; see [`Self::get_usage_summary_by_app_scoped`] for other device scopes.
     pub fn get_usage_summary_by_app(
         &self,
         start_date: Option<i64>,
@@ -1111,11 +1568,34 @@ impl Database {
         provider_name: Option<&str>,
         model: Option<&str>,
     ) -> Result<Vec<UsageSummaryByApp>, AppError> {
-        let conn = lock_conn!(self.conn);
+        self.get_usage_summary_by_app_scoped(
+            start_date,
+            end_date,
+            provider_name,
+            model,
+            &UsageDeviceScope::Local,
+        )
+    }
 
-        let mut detail_conditions = vec![effective_usage_log_filter_for_range(
-            &conn, "l", start_date, end_date,
-        )?];
+    /// 按 app_type 维度拆分的使用量汇总，用于 Dashboard 的分应用展示条。
+    /// 返回所有有数据的 app_type，按 real_total_tokens 降序。
+    ///
+    /// Single SQL with `GROUP BY app_type` — avoids the N+1 round-trip that
+    /// would result from invoking `get_usage_summary` once per app_type.
+    pub fn get_usage_summary_by_app_scoped(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        scope: &UsageDeviceScope,
+    ) -> Result<Vec<UsageSummaryByApp>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let scope = ScopeSql::resolve(&conn, scope)?;
+        let detail_table = scope.detail_table();
+        let rollup_table = scope.rollup_table();
+
+        let mut detail_conditions = vec![scope.detail_filter(&conn, "l", start_date, end_date)?];
         let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if let Some(start) = start_date {
             detail_conditions.push("l.created_at >= ?".to_string());
@@ -1125,7 +1605,7 @@ impl Database {
             detail_conditions.push("l.created_at <= ?".to_string());
             detail_params.push(Box::new(end));
         }
-        push_provider_model_filters(
+        scope.push_provider_model_filters(
             &mut detail_conditions,
             &mut detail_params,
             "l",
@@ -1149,7 +1629,7 @@ impl Database {
             "r.date",
             &rollup_bounds,
         );
-        push_provider_model_filters(
+        scope.push_provider_model_filters(
             &mut rollup_conditions,
             &mut rollup_params,
             "r",
@@ -1192,7 +1672,7 @@ impl Database {
                     COALESCE(SUM(l.cache_creation_tokens), 0) as cache_create_t,
                     COALESCE(SUM(l.cache_read_tokens), 0) as cache_read_t,
                     COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) as success_count
-                FROM proxy_request_logs l {detail_join} {detail_where}
+                FROM {detail_table} l {detail_join} {detail_where}
                 GROUP BY l.app_type
                 UNION ALL
                 SELECT {rollup_app_type} as app_type,
@@ -1203,7 +1683,7 @@ impl Database {
                     COALESCE(SUM(r.cache_creation_tokens), 0),
                     COALESCE(SUM(r.cache_read_tokens), 0),
                     COALESCE(SUM(r.success_count), 0)
-                FROM usage_daily_rollups r {rollup_join} {rollup_where}
+                FROM {rollup_table} r {rollup_join} {rollup_where}
                 GROUP BY r.app_type
             )
             GROUP BY app_type"
@@ -1268,7 +1748,7 @@ impl Database {
         Ok(summaries)
     }
 
-    /// 获取每日趋势（滑动窗口，<=24h 按小时，>24h 按天，窗口与汇总一致）
+    /// This device only; see [`Self::get_daily_trends_scoped`] for other device scopes.
     pub fn get_daily_trends(
         &self,
         start_date: Option<i64>,
@@ -1277,7 +1757,30 @@ impl Database {
         provider_name: Option<&str>,
         model: Option<&str>,
     ) -> Result<Vec<DailyStats>, AppError> {
+        self.get_daily_trends_scoped(
+            start_date,
+            end_date,
+            app_type,
+            provider_name,
+            model,
+            &UsageDeviceScope::Local,
+        )
+    }
+
+    /// 获取每日趋势（滑动窗口，<=24h 按小时，>24h 按天，窗口与汇总一致）
+    pub fn get_daily_trends_scoped(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        app_type: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        scope: &UsageDeviceScope,
+    ) -> Result<Vec<DailyStats>, AppError> {
         let conn = lock_conn!(self.conn);
+        let scope = ScopeSql::resolve(&conn, scope)?;
+        let detail_table = scope.detail_table();
+        let rollup_table = scope.rollup_table();
 
         let end_ts = end_date.unwrap_or_else(|| Local::now().timestamp());
         let mut start_ts = start_date.unwrap_or_else(|| end_ts - 24 * 60 * 60);
@@ -1305,7 +1808,7 @@ impl Database {
                 extra_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
                 extra_params.push(Box::new(at.to_string()));
             }
-            push_provider_model_filters(
+            scope.push_provider_model_filters(
                 &mut extra_conditions,
                 &mut extra_params,
                 "l",
@@ -1324,8 +1827,7 @@ impl Database {
                 String::new()
             };
 
-            let effective_filter =
-                effective_usage_log_filter_for_range(&conn, "l", Some(start_ts), Some(end_ts))?;
+            let effective_filter = scope.detail_filter(&conn, "l", Some(start_ts), Some(end_ts))?;
             let fresh_input = fresh_input_sql("l");
             let sql = format!(
                 "SELECT
@@ -1337,7 +1839,7 @@ impl Database {
                     COALESCE(SUM(l.output_tokens), 0) as total_output_tokens,
                     COALESCE(SUM(l.cache_creation_tokens), 0) as total_cache_creation_tokens,
                     COALESCE(SUM(l.cache_read_tokens), 0) as total_cache_read_tokens
-                FROM proxy_request_logs l {detail_join}
+                FROM {detail_table} l {detail_join}
                 WHERE l.created_at >= ?1 AND l.created_at <= ?2
                   AND {effective_filter} {extra_filter}
                 GROUP BY bucket_idx
@@ -1419,7 +1921,7 @@ impl Database {
             extra_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             extra_params.push(Box::new(at.to_string()));
         }
-        push_provider_model_filters(
+        scope.push_provider_model_filters(
             &mut extra_conditions,
             &mut extra_params,
             "l",
@@ -1438,8 +1940,7 @@ impl Database {
             String::new()
         };
 
-        let effective_filter =
-            effective_usage_log_filter_for_range(&conn, "l", Some(start_ts), Some(end_ts))?;
+        let effective_filter = scope.detail_filter(&conn, "l", Some(start_ts), Some(end_ts))?;
         let fresh_input = fresh_input_sql("l");
         let detail_sql = format!(
             "SELECT
@@ -1451,7 +1952,7 @@ impl Database {
                 COALESCE(SUM(l.output_tokens), 0) as total_output_tokens,
                 COALESCE(SUM(l.cache_creation_tokens), 0) as total_cache_creation_tokens,
                 COALESCE(SUM(l.cache_read_tokens), 0) as total_cache_read_tokens
-            FROM proxy_request_logs l {detail_join}
+            FROM {detail_table} l {detail_join}
             WHERE l.created_at >= ?1 AND l.created_at <= ?2
               AND {effective_filter} {extra_filter}
             GROUP BY bucket_date
@@ -1503,7 +2004,7 @@ impl Database {
             rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
             rollup_params.push(Box::new(at.to_string()));
         }
-        push_provider_model_filters(
+        scope.push_provider_model_filters(
             &mut rollup_conditions,
             &mut rollup_params,
             "r",
@@ -1534,7 +2035,7 @@ impl Database {
                 COALESCE(SUM(r.output_tokens), 0),
                 COALESCE(SUM(r.cache_creation_tokens), 0),
                 COALESCE(SUM(r.cache_read_tokens), 0)
-            FROM usage_daily_rollups r {rollup_join}
+            FROM {rollup_table} r {rollup_join}
             {rollup_where}
             GROUP BY r.date
             ORDER BY r.date ASC"
@@ -1610,17 +2111,31 @@ impl Database {
         Ok(stats)
     }
 
-    /// 最早有用量记录的那一天（本地日期 `YYYY-MM-DD`），明细和日聚合一起看；没有记录时为 `None`。
-    ///
-    /// 给「全部」的按年热力图定起始年份用，所以不套跨源去重：被去重掉的会话行
-    /// 和对应的代理行只差几分钟，不会改变最早的日期。
+    /// This device only; see [`Self::get_first_usage_date_scoped`] for other device scopes.
     pub fn get_first_usage_date(
         &self,
         app_type: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
     ) -> Result<Option<String>, AppError> {
+        self.get_first_usage_date_scoped(app_type, provider_name, model, &UsageDeviceScope::Local)
+    }
+
+    /// 最早有用量记录的那一天（本地日期 `YYYY-MM-DD`），明细和日聚合一起看；没有记录时为 `None`。
+    ///
+    /// 给「全部」的按年热力图定起始年份用，所以不套跨源去重：被去重掉的会话行
+    /// 和对应的代理行只差几分钟，不会改变最早的日期。
+    pub fn get_first_usage_date_scoped(
+        &self,
+        app_type: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        scope: &UsageDeviceScope,
+    ) -> Result<Option<String>, AppError> {
         let conn = lock_conn!(self.conn);
+        let scope = ScopeSql::resolve(&conn, scope)?;
+        let detail_table = scope.detail_table();
+        let rollup_table = scope.rollup_table();
 
         let mut detail_conditions = Vec::new();
         let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -1628,7 +2143,7 @@ impl Database {
             detail_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             detail_params.push(Box::new(at.to_string()));
         }
-        push_provider_model_filters(
+        scope.push_provider_model_filters(
             &mut detail_conditions,
             &mut detail_params,
             "l",
@@ -1649,9 +2164,7 @@ impl Database {
         let detail_param_refs: Vec<&dyn rusqlite::ToSql> =
             detail_params.iter().map(|p| p.as_ref()).collect();
         let first_detail_ts: Option<i64> = conn.query_row(
-            &format!(
-                "SELECT MIN(l.created_at) FROM proxy_request_logs l {detail_join} {detail_where}"
-            ),
+            &format!("SELECT MIN(l.created_at) FROM {detail_table} l {detail_join} {detail_where}"),
             detail_param_refs.as_slice(),
             |row| row.get(0),
         )?;
@@ -1665,7 +2178,7 @@ impl Database {
             rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
             rollup_params.push(Box::new(at.to_string()));
         }
-        push_provider_model_filters(
+        scope.push_provider_model_filters(
             &mut rollup_conditions,
             &mut rollup_params,
             "r",
@@ -1686,7 +2199,7 @@ impl Database {
         let rollup_param_refs: Vec<&dyn rusqlite::ToSql> =
             rollup_params.iter().map(|p| p.as_ref()).collect();
         let first_rollup_raw: Option<String> = conn.query_row(
-            &format!("SELECT MIN(r.date) FROM usage_daily_rollups r {rollup_join} {rollup_where}"),
+            &format!("SELECT MIN(r.date) FROM {rollup_table} r {rollup_join} {rollup_where}"),
             rollup_param_refs.as_slice(),
             |row| row.get(0),
         )?;
@@ -1704,7 +2217,7 @@ impl Database {
         Ok(first.map(|day| day.format("%Y-%m-%d").to_string()))
     }
 
-    /// 获取 Provider 统计
+    /// This device only; see [`Self::get_provider_stats_scoped`] for other device scopes.
     pub fn get_provider_stats(
         &self,
         start_date: Option<i64>,
@@ -1713,11 +2226,32 @@ impl Database {
         provider_name: Option<&str>,
         model: Option<&str>,
     ) -> Result<Vec<ProviderStats>, AppError> {
-        let conn = lock_conn!(self.conn);
+        self.get_provider_stats_scoped(
+            start_date,
+            end_date,
+            app_type,
+            provider_name,
+            model,
+            &UsageDeviceScope::Local,
+        )
+    }
 
-        let mut detail_conditions = vec![effective_usage_log_filter_for_range(
-            &conn, "l", start_date, end_date,
-        )?];
+    /// 获取 Provider 统计
+    pub fn get_provider_stats_scoped(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        app_type: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        scope: &UsageDeviceScope,
+    ) -> Result<Vec<ProviderStats>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let scope = ScopeSql::resolve(&conn, scope)?;
+        let detail_table = scope.detail_table();
+        let rollup_table = scope.rollup_table();
+
+        let mut detail_conditions = vec![scope.detail_filter(&conn, "l", start_date, end_date)?];
         let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if let Some(start) = start_date {
             detail_conditions.push("l.created_at >= ?".to_string());
@@ -1731,7 +2265,7 @@ impl Database {
             detail_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             detail_params.push(Box::new(at.to_string()));
         }
-        push_provider_model_filters(
+        scope.push_provider_model_filters(
             &mut detail_conditions,
             &mut detail_params,
             "l",
@@ -1758,7 +2292,7 @@ impl Database {
             rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
             rollup_params.push(Box::new(at.to_string()));
         }
-        push_provider_model_filters(
+        scope.push_provider_model_filters(
             &mut rollup_conditions,
             &mut rollup_params,
             "r",
@@ -1773,8 +2307,8 @@ impl Database {
         };
 
         // UNION detail logs + rollup data, then aggregate
-        let detail_pname = provider_name_coalesce("l", "p");
-        let rollup_pname = provider_name_coalesce("r", "p2");
+        let detail_pname = scope.provider_name("l", "p");
+        let rollup_pname = scope.provider_name("r", "p2");
         let real_total_detail = real_total_tokens_sql("l");
         let real_total_rollup = real_total_tokens_sql("r");
         let speed_ok = speed_eligible_sql("l");
@@ -1805,7 +2339,7 @@ impl Database {
                     COALESCE(SUM(CASE WHEN {speed_ok} THEN l.latency_ms - l.first_token_ms ELSE 0 END), 0) as speed_gen_ms,
                     COALESCE(SUM(CASE WHEN {est_ok} THEN l.output_tokens ELSE 0 END), 0) as est_output,
                     COALESCE(SUM(CASE WHEN {est_ok} THEN l.latency_ms ELSE 0 END), 0) as est_ms
-                FROM proxy_request_logs l
+                FROM {detail_table} l
                 LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
                 {detail_where}
                 GROUP BY l.provider_id, l.app_type
@@ -1821,7 +2355,7 @@ impl Database {
                     0,
                     0,
                     0
-                FROM usage_daily_rollups r
+                FROM {rollup_table} r
                 LEFT JOIN providers p2 ON r.provider_id = p2.id AND r.app_type = p2.app_type
                 {rollup_where}
                 GROUP BY r.provider_id, r.app_type
@@ -1838,8 +2372,10 @@ impl Database {
                 first_token_medians(
                     &conn,
                     "l.provider_id || char(31) || l.app_type",
-                    "FROM proxy_request_logs l
-                     LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type",
+                    &format!(
+                        "FROM {detail_table} l
+                     LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type"
+                    ),
                     &detail_where,
                     &eligible_sql,
                     &detail_refs,
@@ -1897,7 +2433,7 @@ impl Database {
         Ok(stats)
     }
 
-    /// 获取模型统计
+    /// This device only; see [`Self::get_model_stats_scoped`] for other device scopes.
     pub fn get_model_stats(
         &self,
         start_date: Option<i64>,
@@ -1906,11 +2442,32 @@ impl Database {
         provider_name: Option<&str>,
         model: Option<&str>,
     ) -> Result<Vec<ModelStats>, AppError> {
-        let conn = lock_conn!(self.conn);
+        self.get_model_stats_scoped(
+            start_date,
+            end_date,
+            app_type,
+            provider_name,
+            model,
+            &UsageDeviceScope::Local,
+        )
+    }
 
-        let mut detail_conditions = vec![effective_usage_log_filter_for_range(
-            &conn, "l", start_date, end_date,
-        )?];
+    /// 获取模型统计
+    pub fn get_model_stats_scoped(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        app_type: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        scope: &UsageDeviceScope,
+    ) -> Result<Vec<ModelStats>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let scope = ScopeSql::resolve(&conn, scope)?;
+        let detail_table = scope.detail_table();
+        let rollup_table = scope.rollup_table();
+
+        let mut detail_conditions = vec![scope.detail_filter(&conn, "l", start_date, end_date)?];
         let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if let Some(start) = start_date {
             detail_conditions.push("l.created_at >= ?".to_string());
@@ -1924,7 +2481,7 @@ impl Database {
             detail_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             detail_params.push(Box::new(at.to_string()));
         }
-        push_provider_model_filters(
+        scope.push_provider_model_filters(
             &mut detail_conditions,
             &mut detail_params,
             "l",
@@ -1956,7 +2513,7 @@ impl Database {
             rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
             rollup_params.push(Box::new(at.to_string()));
         }
-        push_provider_model_filters(
+        scope.push_provider_model_filters(
             &mut rollup_conditions,
             &mut rollup_params,
             "r",
@@ -2008,7 +2565,7 @@ impl Database {
                     COALESCE(SUM(CASE WHEN {speed_ok} THEN l.latency_ms - l.first_token_ms ELSE 0 END), 0) as speed_gen_ms,
                     COALESCE(SUM(CASE WHEN {est_ok} THEN l.output_tokens ELSE 0 END), 0) as est_output,
                     COALESCE(SUM(CASE WHEN {est_ok} THEN l.latency_ms ELSE 0 END), 0) as est_ms
-                FROM proxy_request_logs l
+                FROM {detail_table} l
                 {detail_join}
                 {detail_where}
                 GROUP BY {detail_model}
@@ -2022,7 +2579,7 @@ impl Database {
                     0,
                     0,
                     0
-                FROM usage_daily_rollups r
+                FROM {rollup_table} r
                 {rollup_join}
                 {rollup_where}
                 GROUP BY {rollup_model}
@@ -2034,7 +2591,7 @@ impl Database {
         let (first_token_ms, est_first_token_ms) = {
             let detail_refs: Vec<&dyn rusqlite::ToSql> =
                 detail_params.iter().map(|p| p.as_ref()).collect();
-            let from_sql = format!("FROM proxy_request_logs l {detail_join}");
+            let from_sql = format!("FROM {detail_table} l {detail_join}");
             let medians = |eligible_sql: String| {
                 first_token_medians(
                     &conn,
@@ -2107,13 +2664,14 @@ impl Database {
         page_size: u32,
     ) -> Result<PaginatedLogs, AppError> {
         let conn = lock_conn!(self.conn);
-
-        let mut conditions = vec![effective_usage_log_filter_for_range(
+        let scope = ScopeSql::resolve(
             &conn,
-            "l",
-            filters.start_date,
-            filters.end_date,
-        )?];
+            &UsageDeviceScope::from_param(filters.device.as_deref()),
+        )?;
+        let detail_table = scope.detail_table();
+
+        let mut conditions =
+            vec![scope.detail_filter(&conn, "l", filters.start_date, filters.end_date)?];
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         if let Some(ref app_type) = filters.app_type {
@@ -2124,7 +2682,7 @@ impl Database {
         }
         // 与 Dashboard 顶部下拉筛选同口径：Provider 按展示名精确匹配（会话占位
         // 行如 "Claude (Session)" 也能命中），模型按有效计价模型匹配。
-        push_provider_model_filters(
+        scope.push_provider_model_filters(
             &mut conditions,
             &mut params,
             "l",
@@ -2153,13 +2711,26 @@ impl Database {
 
         // 获取总数
         let count_sql = format!(
-            "SELECT COUNT(*) FROM proxy_request_logs l
+            "SELECT COUNT(*) FROM {detail_table} l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              {where_clause}"
         );
         let mut count_cache = lock_conn!(self.log_count_cache);
-        let total: u32 = match cached_log_count(&count_cache, &conn, filters)? {
+        // 缓存的增量判断只看本机明细表；含远端设备的范围每次直接计数。
+        let cached_total = if scope.is_local() {
+            cached_log_count(&count_cache, &conn, filters)?
+        } else {
+            None
+        };
+        let total: u32 = match cached_total {
             Some(total) => total,
+            None if !scope.is_local() => {
+                let count_params: Vec<&dyn rusqlite::ToSql> =
+                    params.iter().map(|p| p.as_ref()).collect();
+                conn.query_row(&count_sql, count_params.as_slice(), |row| {
+                    row.get::<_, i64>(0).map(|v| v as u32)
+                })?
+            }
             None => {
                 let count_params: Vec<&dyn rusqlite::ToSql> =
                     params.iter().map(|p| p.as_ref()).collect();
@@ -2183,7 +2754,12 @@ impl Database {
         params.push(Box::new(page_size as i64));
         params.push(Box::new(offset as i64));
 
-        let logs_pname = provider_name_coalesce("l", "p");
+        let logs_pname = scope.provider_name("l", "p");
+        let device_column = if scope.is_local() {
+            ""
+        } else {
+            ", l.remote_device_id"
+        };
         let sql = format!(
             "SELECT l.request_id, l.provider_id, {logs_pname} as provider_name, l.app_type, l.model,
                     l.request_model, l.cost_multiplier,
@@ -2191,8 +2767,8 @@ impl Database {
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
                     l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model,
-                    l.input_token_semantics
-             FROM proxy_request_logs l
+                    l.input_token_semantics{device_column}
+             FROM {detail_table} l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              {where_clause}
              ORDER BY l.created_at DESC
@@ -2201,14 +2777,24 @@ impl Database {
 
         let mut stmt = conn.prepare(&sql)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        let rows = stmt.query_map(params_refs.as_slice(), row_to_request_log_detail)?;
+        let is_local = scope.is_local();
+        let rows = stmt.query_map(params_refs.as_slice(), |row| {
+            let mut log = row_to_request_log_detail(row)?;
+            if !is_local {
+                log.device_id = row.get(26)?;
+            }
+            Ok(log)
+        })?;
 
         let mut logs = Vec::new();
         let mut pricing_cache = HashMap::new();
 
         for row in rows {
             let mut log = row?;
-            Self::maybe_backfill_log_costs(&conn, &mut log, &mut pricing_cache)?;
+            // 回填会写回本机明细表；远端记录是只读缓存，保持其来源设备的估算值。
+            if log.device_id.is_none() {
+                Self::maybe_backfill_log_costs(&conn, &mut log, &mut pricing_cache)?;
+            }
             logs.push(log);
         }
 
@@ -2225,7 +2811,20 @@ impl Database {
         &self,
         request_id: &str,
     ) -> Result<Option<RequestLogDetail>, AppError> {
+        self.get_request_detail_scoped(request_id, None)
+    }
+
+    /// Request detail; `device` selects a remote device's cached record.
+    pub fn get_request_detail_scoped(
+        &self,
+        request_id: &str,
+        device: Option<&str>,
+    ) -> Result<Option<RequestLogDetail>, AppError> {
         let conn = lock_conn!(self.conn);
+        let scope = ScopeSql::resolve(&conn, &UsageDeviceScope::from_param(device))?;
+        if !scope.is_local() {
+            return Self::get_remote_request_detail(&conn, &scope, request_id);
+        }
 
         let detail_pname = provider_name_coalesce("l", "p");
         let detail_sql = format!(
@@ -2251,6 +2850,37 @@ impl Database {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(AppError::Database(e.to_string())),
         }
+    }
+
+    /// Request detail for a cached remote record (read-only, no cost backfill).
+    fn get_remote_request_detail(
+        conn: &Connection,
+        scope: &ScopeSql,
+        request_id: &str,
+    ) -> Result<Option<RequestLogDetail>, AppError> {
+        let detail_table = scope.detail_table();
+        let detail_pname = scope.provider_name("l", "p");
+        let sql = format!(
+            "SELECT l.request_id, l.provider_id, {detail_pname} as provider_name, l.app_type, l.model,
+                    l.request_model, l.cost_multiplier,
+                    l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
+                    l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
+                    l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
+                    l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model,
+                    l.input_token_semantics, l.remote_device_id
+             FROM {detail_table} l
+             LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
+             WHERE l.request_id = ?
+             ORDER BY l.remote_device_id IS NOT NULL
+             LIMIT 1"
+        );
+        conn.query_row(&sql, [request_id], |row| {
+            let mut log = row_to_request_log_detail(row)?;
+            log.device_id = row.get(26)?;
+            Ok(log)
+        })
+        .optional()
+        .map_err(Into::into)
     }
 
     /// 检查 Provider 使用限额

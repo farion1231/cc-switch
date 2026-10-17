@@ -26,6 +26,8 @@ interface UsageHeroProps {
   appType?: string;
   providerName?: string;
   model?: string;
+  /** 设备范围：缺省 = 本机，"all" = 全部设备，其它 = 远端设备 ID */
+  device?: string;
   refreshIntervalMs: number;
   /** 窄容器下指标卡排成两列 */
   compact?: boolean;
@@ -155,6 +157,7 @@ export function UsageHero({
   appType,
   providerName,
   model,
+  device,
   refreshIntervalMs,
   compact = false,
 }: UsageHeroProps) {
@@ -165,7 +168,7 @@ export function UsageHero({
 
   const { data, isLoading } = useUsageSummaryByApp(
     range,
-    { providerName, model },
+    { providerName, model, device },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },

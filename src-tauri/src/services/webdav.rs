@@ -346,6 +346,185 @@ pub async fn head_etag(url: &str, auth: &WebDavAuth) -> Result<Option<String>, A
         .map(|s| s.to_string()))
 }
 
+/// DELETE a remote resource. A missing resource (404) counts as success so
+/// garbage collection stays idempotent.
+pub async fn delete_resource(url: &str, auth: &WebDavAuth) -> Result<(), AppError> {
+    let client = http_client::get();
+    let resp = apply_auth(
+        client
+            .delete(url)
+            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
+        auth,
+    )
+    .send()
+    .await
+    .map_err(|e| {
+        webdav_transport_error(
+            "webdav.delete_failed",
+            "DELETE 请求",
+            "DELETE request",
+            url,
+            &e,
+        )
+    })?;
+
+    if resp.status().is_success() || resp.status() == StatusCode::NOT_FOUND {
+        return Ok(());
+    }
+    Err(webdav_status_error("DELETE", resp.status(), url))
+}
+
+/// One child entry returned by [`list_collection`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DavEntry {
+    /// Percent-decoded last path segment.
+    pub name: String,
+    pub is_collection: bool,
+}
+
+/// Upper bound for a PROPFIND Depth=1 response body.
+const MAX_PROPFIND_BYTES: usize = 8 * 1024 * 1024;
+
+/// List the direct children of a collection via PROPFIND Depth=1.
+///
+/// Returns `None` when the collection does not exist (404), so callers can
+/// treat "nothing uploaded yet" separately from transport failures.
+pub async fn list_collection(
+    url: &str,
+    auth: &WebDavAuth,
+) -> Result<Option<Vec<DavEntry>>, AppError> {
+    let dir_url = if url.ends_with('/') {
+        url.to_string()
+    } else {
+        format!("{url}/")
+    };
+    let client = http_client::get();
+    let body = r#"<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:prop><D:resourcetype/></D:prop></D:propfind>"#;
+    let resp = apply_auth(
+        client
+            .request(method_propfind(), &dir_url)
+            .header("Depth", "1")
+            .header("Content-Type", "application/xml; charset=utf-8")
+            .body(body)
+            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
+        auth,
+    )
+    .send()
+    .await
+    .map_err(|e| {
+        webdav_transport_error(
+            "webdav.propfind_failed",
+            "PROPFIND 请求",
+            "PROPFIND request",
+            &dir_url,
+            &e,
+        )
+    })?;
+
+    if resp.status() == StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !(resp.status().is_success() || resp.status() == StatusCode::MULTI_STATUS) {
+        return Err(webdav_status_error("PROPFIND", resp.status(), &dir_url));
+    }
+    ensure_content_length_within_limit(resp.headers(), MAX_PROPFIND_BYTES, &dir_url)?;
+    let mut bytes = Vec::new();
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| {
+            AppError::localized(
+                "webdav.response_read_failed",
+                format!("读取 WebDAV 响应失败: {e}"),
+                format!("Failed to read WebDAV response: {e}"),
+            )
+        })?;
+        if bytes.len().saturating_add(chunk.len()) > MAX_PROPFIND_BYTES {
+            return Err(response_too_large_error(&dir_url, MAX_PROPFIND_BYTES));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    let request_path = Url::parse(&dir_url)
+        .map(|u| u.path().to_string())
+        .unwrap_or_default();
+    Ok(Some(parse_propfind_children(&text, &request_path)))
+}
+
+/// Normalize an href (absolute URL or path) to a decoded path without a trailing slash.
+fn normalize_href_path(href: &str) -> String {
+    let path = if href.starts_with("http://") || href.starts_with("https://") {
+        Url::parse(href)
+            .map(|u| u.path().to_string())
+            .unwrap_or_else(|_| href.to_string())
+    } else {
+        href.to_string()
+    };
+    let decoded = percent_encoding::percent_decode_str(&path)
+        .decode_utf8_lossy()
+        .to_string();
+    decoded.trim_end_matches('/').to_string()
+}
+
+/// Parse a multistatus body into the children of `request_path`.
+///
+/// The entry describing the collection itself is skipped. Some reverse proxies
+/// rewrite the path prefix, so "self" is detected by suffix match as well.
+pub(crate) fn parse_propfind_children(xml: &str, request_path: &str) -> Vec<DavEntry> {
+    use super::xml_scan::{scan, XmlEvent};
+
+    let self_path = normalize_href_path(request_path);
+    let mut entries = Vec::new();
+    let mut in_response = false;
+    let mut in_href = false;
+    let mut in_resourcetype = false;
+    let mut href: Option<String> = None;
+    let mut is_collection = false;
+
+    for event in scan(xml) {
+        match event {
+            XmlEvent::Start(name) => match name.as_str() {
+                "response" => {
+                    in_response = true;
+                    href = None;
+                    is_collection = false;
+                }
+                "href" if in_response && href.is_none() => in_href = true,
+                "resourcetype" if in_response => in_resourcetype = true,
+                "collection" if in_resourcetype => is_collection = true,
+                _ => {}
+            },
+            XmlEvent::Text(text) if in_href => {
+                href = Some(text);
+            }
+            XmlEvent::End(name) => match name.as_str() {
+                "href" => in_href = false,
+                "resourcetype" => in_resourcetype = false,
+                "response" => {
+                    in_response = false;
+                    let Some(raw) = href.take() else { continue };
+                    let path = normalize_href_path(&raw);
+                    let is_self = path == self_path
+                        || (!path.is_empty() && self_path.ends_with(&path))
+                        || (!self_path.is_empty() && path.ends_with(&self_path));
+                    if is_self {
+                        continue;
+                    }
+                    let Some(name) = path.rsplit('/').next().filter(|n| !n.is_empty()) else {
+                        continue;
+                    };
+                    entries.push(DavEntry {
+                        name: name.to_string(),
+                        is_collection,
+                    });
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    entries
+}
+
 // ─── Internal helpers ────────────────────────────────────────
 
 /// PROPFIND Depth=0 to check if a remote resource exists.
@@ -485,6 +664,58 @@ mod tests {
             "https://dav.example.com/remote.php/dav/files/demo/cc%20switch-sync/v2/db-v6/default%20profile/manifest.json"
         );
         assert!(!url.contains("//cc"), "should not have double-slash");
+    }
+
+    #[test]
+    fn parse_propfind_children_skips_self_and_decodes_names() {
+        let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/dav/root/usage-v1/default/devices/</d:href>
+    <d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/dav/root/usage-v1/default/devices/0f8fad5b-d9cb-469f-a165-70867728950e/</d:href>
+    <d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>https://dav.example.com/dav/root/usage-v1/default/devices/with%20space.txt</d:href>
+    <d:propstat><d:prop><d:resourcetype/></d:prop></d:propstat>
+  </d:response>
+</d:multistatus>"#;
+        let entries = parse_propfind_children(xml, "/dav/root/usage-v1/default/devices/");
+        assert_eq!(
+            entries,
+            vec![
+                DavEntry {
+                    name: "0f8fad5b-d9cb-469f-a165-70867728950e".into(),
+                    is_collection: true,
+                },
+                DavEntry {
+                    name: "with space.txt".into(),
+                    is_collection: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_propfind_children_handles_prefix_rewriting_proxies() {
+        // Reverse proxy strips "/public" from hrefs; the self entry must still be skipped.
+        let xml = r#"<multistatus xmlns="DAV:">
+  <response><href>/dav/devices/</href><propstat><prop><resourcetype><collection/></resourcetype></prop></propstat></response>
+  <response><href>/dav/devices/abc/</href><propstat><prop><resourcetype><collection/></resourcetype></prop></propstat></response>
+</multistatus>"#;
+        let entries = parse_propfind_children(xml, "/public/dav/devices/");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "abc");
+        assert!(entries[0].is_collection);
+    }
+
+    #[test]
+    fn parse_propfind_children_tolerates_garbage() {
+        assert!(parse_propfind_children("not xml at all", "/x").is_empty());
+        assert!(parse_propfind_children("<response><href>", "/x").is_empty());
     }
 
     #[test]

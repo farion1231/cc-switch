@@ -37,7 +37,15 @@ type RequestLogsKey = {
   providerName?: string;
   model?: string;
   statusCode?: number;
+  device?: string;
 };
+
+/**
+ * 设备范围只在非本机时进 query key：本机范围的 key 与引入跨设备同步前完全一致，
+ * 不影响已有缓存与失效逻辑。
+ */
+const deviceKey = (device?: string): [] | [string] =>
+  device ? [`device:${device}`] : [];
 
 // Query keys
 export const usageKeys = {
@@ -59,12 +67,13 @@ export const usageKeys = {
       filters?.appType ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
+      ...deviceKey(filters?.device),
     ] as const,
   summaryByApp: (
     preset: UsageRangeSelection["preset"],
     customStartDate: number | undefined,
     customEndDate: number | undefined,
-    filters?: Pick<UsageScopeFilters, "providerName" | "model">,
+    filters?: Pick<UsageScopeFilters, "providerName" | "model" | "device">,
     liveEndTime?: boolean,
   ) =>
     [
@@ -76,6 +85,7 @@ export const usageKeys = {
       liveEndTime ?? false,
       filters?.providerName ?? null,
       filters?.model ?? null,
+      ...deviceKey(filters?.device),
     ] as const,
   trends: (
     preset: UsageRangeSelection["preset"],
@@ -94,6 +104,7 @@ export const usageKeys = {
       filters?.appType ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
+      ...deviceKey(filters?.device),
     ] as const,
   firstDate: (filters?: UsageScopeFilters) =>
     [
@@ -102,6 +113,7 @@ export const usageKeys = {
       filters?.appType ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
+      ...deviceKey(filters?.device),
     ] as const,
   providerStats: (
     preset: UsageRangeSelection["preset"],
@@ -120,6 +132,7 @@ export const usageKeys = {
       filters?.appType ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
+      ...deviceKey(filters?.device),
     ] as const,
   modelStats: (
     preset: UsageRangeSelection["preset"],
@@ -138,6 +151,7 @@ export const usageKeys = {
       filters?.appType ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
+      ...deviceKey(filters?.device),
     ] as const,
   logs: (key: RequestLogsKey, page: number, pageSize: number) =>
     [
@@ -153,9 +167,10 @@ export const usageKeys = {
       key.statusCode ?? -1,
       page,
       pageSize,
+      ...deviceKey(key.device),
     ] as const,
-  detail: (requestId: string) =>
-    [...usageKeys.all, "detail", requestId] as const,
+  detail: (requestId: string, device?: string) =>
+    [...usageKeys.all, "detail", requestId, ...deviceKey(device)] as const,
   pricing: () => [...usageKeys.all, "pricing"] as const,
   session: (appType: string, sessionId: string) =>
     [...usageKeys.all, "session", appType, sessionId] as const,
@@ -171,7 +186,13 @@ function normalizeScopeFilters(filters?: UsageScopeFilters): UsageScopeFilters {
     appType: filters?.appType === "all" ? undefined : filters?.appType,
     providerName: filters?.providerName,
     model: filters?.model,
+    device: normalizeDevice(filters?.device),
   };
+}
+
+/** 设备范围："local"/空 = 本机（传给后端时省略）。 */
+export function normalizeDevice(device?: string): string | undefined {
+  return device && device !== "local" ? device : undefined;
 }
 
 // Hooks
@@ -199,6 +220,7 @@ export function useUsageSummary(
         effective.appType,
         effective.providerName,
         effective.model,
+        effective.device,
       );
     },
     placeholderData: keepPreviousData,
@@ -209,15 +231,16 @@ export function useUsageSummary(
 
 export function useUsageSummaryByApp(
   range: UsageRangeSelection,
-  filters?: Pick<UsageScopeFilters, "providerName" | "model">,
+  filters?: Pick<UsageScopeFilters, "providerName" | "model" | "device">,
   options?: UsageQueryOptions,
 ) {
+  const device = normalizeDevice(filters?.device);
   return useQuery({
     queryKey: usageKeys.summaryByApp(
       range.preset,
       range.customStartDate,
       range.customEndDate,
-      filters,
+      { ...filters, device },
       range.liveEndTime,
     ),
     queryFn: () => {
@@ -227,6 +250,7 @@ export function useUsageSummaryByApp(
         endDate,
         filters?.providerName,
         filters?.model,
+        device,
       );
     },
     placeholderData: keepPreviousData,
@@ -257,6 +281,7 @@ export function useUsageTrends(
         effective.appType,
         effective.providerName,
         effective.model,
+        effective.device,
       );
     },
     enabled: options?.enabled ?? true,
@@ -279,6 +304,7 @@ export function useUsageFirstDate(
         effective.appType,
         effective.providerName,
         effective.model,
+        effective.device,
       ),
     placeholderData: keepPreviousData,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
@@ -308,6 +334,7 @@ export function useProviderStats(
         effective.appType,
         effective.providerName,
         effective.model,
+        effective.device,
       );
     },
     placeholderData: keepPreviousData,
@@ -338,6 +365,7 @@ export function useModelStats(
         effective.appType,
         effective.providerName,
         effective.model,
+        effective.device,
       );
     },
     placeholderData: keepPreviousData,
@@ -362,12 +390,17 @@ export function useRequestLogs({
     providerName: filters.providerName,
     model: filters.model,
     statusCode: filters.statusCode,
+    device: normalizeDevice(filters.device),
   };
 
   return useQuery({
     queryKey: usageKeys.logs(key, page, pageSize),
     queryFn: () => {
-      const effectiveFilters = { ...filters, ...resolveUsageRange(range) };
+      const effectiveFilters = {
+        ...filters,
+        device: key.device,
+        ...resolveUsageRange(range),
+      };
       return usageApi.getRequestLogs(effectiveFilters, page, pageSize);
     },
     placeholderData: keepPreviousData,
@@ -376,10 +409,11 @@ export function useRequestLogs({
   });
 }
 
-export function useRequestDetail(requestId: string) {
+export function useRequestDetail(requestId: string, device?: string) {
+  const scopedDevice = normalizeDevice(device);
   return useQuery({
-    queryKey: usageKeys.detail(requestId),
-    queryFn: () => usageApi.getRequestDetail(requestId),
+    queryKey: usageKeys.detail(requestId, scopedDevice),
+    queryFn: () => usageApi.getRequestDetail(requestId, scopedDevice),
     enabled: !!requestId,
   });
 }

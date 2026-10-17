@@ -8,6 +8,7 @@ import {
   ChevronDown,
   Database,
   Loader2,
+  MonitorSmartphone,
   RefreshCw,
 } from "lucide-react";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
@@ -40,6 +41,14 @@ import {
   useSessionUsageLastSync,
 } from "@/lib/query/usage";
 import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
+import {
+  isDeviceStale,
+  useRunUsageSync,
+  useSetUsageSyncDeviceHidden,
+  useUsageSyncEventBridge,
+  useUsageSyncOverview,
+} from "@/lib/query/usageSync";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import { useUsageAutoRefresh } from "@/hooks/useUsageAutoRefresh";
 import { usageApi } from "@/lib/api/usage";
 import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
@@ -57,6 +66,8 @@ import { resolveRequestLogColumns } from "./requestLogColumns";
 import type { UsageDisplaySettings } from "@/types";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { UsageHeatmap } from "./UsageHeatmap";
+import { UsageDevicesSheet } from "./UsageDevicesSheet";
+import { UsageScopeAccuracy, buildScopeAccuracy } from "./UsageScopeAccuracy";
 import {
   USAGE_CHOICE_KEYS,
   readRememberedChoice,
@@ -166,6 +177,8 @@ interface UsageDashboardProps {
   initialAppType?: AppTypeFilter;
   /** 「数据来源」里的「修改记录请求用量」：打开设置 → 本地路由 */
   onOpenRoutingSettings?: () => void;
+  /** 「设备」抽屉里的「去设置」：打开设置 → 数据（云同步与用量同步） */
+  onOpenSyncSettings?: () => void;
   /** 金额显示币种与汇率（设备级设置） */
   usageDisplay?: UsageDisplaySettings;
   onUsageDisplayChange?: (
@@ -184,6 +197,7 @@ export function UsageDashboard({
   onSessionAutoSyncEnabledChange,
   initialAppType = "all",
   onOpenRoutingSettings,
+  onOpenSyncSettings,
   usageDisplay,
   onUsageDisplayChange,
 }: UsageDashboardProps = {}) {
@@ -222,6 +236,12 @@ export function UsageDashboard({
     normalizeRefreshInterval(savedRefreshIntervalMs),
   );
   const [detailRequestId, setDetailRequestId] = useState<string | null>(null);
+  const [detailDeviceId, setDetailDeviceId] = useState<string | undefined>(
+    undefined,
+  );
+  // 设备范围：local = 本机（原有行为）、all = 全部已同步设备、其它 = 远端设备 ID
+  const [device, setDevice] = useState<string>("local");
+  const [devicesOpen, setDevicesOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [showRebuildConfirm, setShowRebuildConfirm] = useState(false);
   const [rebuildingCodex, setRebuildingCodex] = useState(false);
@@ -276,6 +296,72 @@ export function UsageDashboard({
 
   // 后端写入新日志时 emit `usage-log-recorded`，立刻 invalidate 所有 usage 查询
   useUsageEventBridge();
+  useUsageSyncEventBridge();
+
+  // ── 跨设备用量同步 ──────────────────────────────────────────────────
+  const { data: syncOverview } = useUsageSyncOverview();
+  const runUsageSync = useRunUsageSync();
+  const setDeviceHidden = useSetUsageSyncDeviceHidden();
+  const visibleDevices = useMemo(
+    () => (syncOverview?.devices ?? []).filter((d) => d.status !== "hidden"),
+    [syncOverview],
+  );
+  // 传给查询层的设备范围：本机为 undefined，与引入跨设备同步前的调用完全一致
+  const scopedDevice = device === "local" ? undefined : device;
+  const usageSyncEnabled = syncOverview?.settings.enabled ?? false;
+  const showDeviceFilter = usageSyncEnabled || visibleDevices.length > 0;
+  const deviceNames = useMemo(
+    () =>
+      Object.fromEntries(
+        (syncOverview?.devices ?? []).map((d) => [d.deviceId, d.deviceName]),
+      ),
+    [syncOverview],
+  );
+  // 选中的远端设备被隐藏/移除后回到本机，避免停在一个查无数据的范围
+  useEffect(() => {
+    if (device === "local" || device === "all" || !syncOverview) return;
+    if (!visibleDevices.some((d) => d.deviceId === device)) {
+      setDevice("local");
+    }
+  }, [device, syncOverview, visibleDevices]);
+  const staleAfterSecs = syncOverview?.staleAfterSecs ?? 86_400;
+  const deviceLabel =
+    device === "local"
+      ? t("usageSync.thisDevice")
+      : device === "all"
+        ? t("usageSync.allDevices")
+        : (deviceNames[device] ?? device.slice(0, 8));
+
+  const runDeviceSync = async () => {
+    try {
+      const report = await runUsageSync.mutateAsync();
+      const failures =
+        report.deviceErrors.length +
+        (report.uploadError ? 1 : 0) +
+        (report.downloadError ? 1 : 0);
+      if (failures > 0) {
+        toast.warning(
+          t("usageSync.syncPartial", {
+            error:
+              report.uploadError ??
+              report.downloadError ??
+              report.deviceErrors[0]?.error ??
+              "",
+          }),
+        );
+      } else {
+        toast.success(
+          t("usageSync.syncCompleted", { devices: report.devicesSeen }),
+        );
+      }
+    } catch (error) {
+      toast.error(
+        t("usageSync.syncFailed", {
+          error: extractErrorMessage(error) || String(error),
+        }),
+      );
+    }
+  };
 
   const changeRefreshInterval = async (next: number) => {
     const normalized = normalizeRefreshInterval(next);
@@ -370,18 +456,32 @@ export function UsageDashboard({
   };
   const { data: providerOptionsData } = useProviderStats(
     range,
-    { appType },
+    { appType, device: scopedDevice },
     refetch,
   );
   const { data: modelOptionsData } = useModelStats(
     range,
-    { appType, providerName },
+    { appType, providerName, device: scopedDevice },
     refetch,
   );
   // 有没有任何用量（不分时间范围）：一条都没有时显示空状态
   const { data: allTimeSummary } = useQuery({
-    queryKey: [...usageKeys.all, "all-time-summary"],
-    queryFn: () => usageApi.getUsageSummary(),
+    queryKey: [
+      ...usageKeys.all,
+      "all-time-summary",
+      ...(scopedDevice ? [scopedDevice] : []),
+    ],
+    queryFn: () =>
+      scopedDevice
+        ? usageApi.getUsageSummary(
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            scopedDevice,
+          )
+        : usageApi.getUsageSummary(),
     refetchInterval: refetch.refetchInterval,
   });
   const isEmpty = allTimeSummary != null && allTimeSummary.totalRequests === 0;
@@ -511,6 +611,19 @@ export function UsageDashboard({
         <Database className="h-3.5 w-3.5" />
         {t("usage.dataSources")}
       </Button>
+      {showDeviceFilter && (
+        <Button
+          type="button"
+          variant="quiet"
+          size="regular"
+          className="shrink-0 gap-1.5 ps-2.5 text-fg-2"
+          aria-haspopup="dialog"
+          onClick={() => setDevicesOpen(true)}
+        >
+          <MonitorSmartphone className="h-3.5 w-3.5" />
+          {t("usageSync.devices.button")}
+        </Button>
+      )}
     </>
   );
 
@@ -572,6 +685,65 @@ export function UsageDashboard({
         ))}
       </div>
       <div className="min-w-2 flex-1" />
+      {showDeviceFilter && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="neutral"
+              size="regular"
+              className="min-w-[78px] max-w-[156px] shrink gap-1 pe-2 ps-3"
+              title={t("usageSync.deviceFilter.title")}
+              aria-label={`${t("usageSync.deviceFilter.title")}: ${deviceLabel}`}
+            >
+              <MonitorSmartphone className="h-3.5 w-3.5 shrink-0 text-fg-2" />
+              <span className="min-w-0 truncate">{deviceLabel}</span>
+              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-fg-2" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            aria-label={t("usageSync.deviceFilter.title")}
+            className={cn(menuContentClass, "max-h-[360px] overflow-y-auto")}
+          >
+            <DropdownMenuItem
+              className={menuItemClass}
+              onSelect={() => setDevice("local")}
+            >
+              <MenuCheck checked={device === "local"} />
+              <span className="min-w-0 truncate">
+                {t("usageSync.thisDevice")}
+              </span>
+              {syncOverview && (
+                <MenuMeta>{syncOverview.thisDevice.deviceName}</MenuMeta>
+              )}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className={menuItemClass}
+              onSelect={() => setDevice("all")}
+            >
+              <MenuCheck checked={device === "all"} />
+              {t("usageSync.allDevices")}
+              <MenuMeta>{visibleDevices.length + 1}</MenuMeta>
+            </DropdownMenuItem>
+            {visibleDevices.map((remote) => (
+              <DropdownMenuItem
+                key={remote.deviceId}
+                className={menuItemClass}
+                title={remote.deviceId}
+                onSelect={() => setDevice(remote.deviceId)}
+              >
+                <MenuCheck checked={device === remote.deviceId} />
+                <span className="min-w-0 truncate">{remote.deviceName}</span>
+                {(remote.status !== "ok" ||
+                  isDeviceStale(remote, staleAfterSecs)) && (
+                  <MenuMeta>{t("usageSync.status.stale")}</MenuMeta>
+                )}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -675,6 +847,19 @@ export function UsageDashboard({
     </div>
   );
 
+  // 远端数据的覆盖说明：按天汇总的设备没有请求级明细；过期/出错的设备数据可能不全
+  // 非本机范围的统计口径：精确去重、无法去重的历史、无法识别的重叠、日历、时效与估算
+  const scopeAccuracy = (
+    <UsageScopeAccuracy
+      items={buildScopeAccuracy(
+        syncOverview,
+        device,
+        t("usageSync.thisDevice"),
+        now,
+      )}
+    />
+  );
+
   // ── 子页签 ───────────────────────────────────────────────────────────
   const tabLabel: Record<UsageTab, string> = {
     logs: t("usage.requestLogs"),
@@ -757,8 +942,13 @@ export function UsageDashboard({
             providerName={providerName}
             model={model}
             statusCode={statusCode}
+            device={scopedDevice}
+            deviceNames={deviceNames}
             refreshIntervalMs={0}
-            onOpenDetail={setDetailRequestId}
+            onOpenDetail={(requestId, deviceId) => {
+              setDetailDeviceId(deviceId);
+              setDetailRequestId(requestId);
+            }}
             columns={logColumns}
           />
         )}
@@ -768,6 +958,7 @@ export function UsageDashboard({
             appType={appType}
             providerName={providerName}
             model={model}
+            device={scopedDevice}
             refreshIntervalMs={0}
           />
         )}
@@ -777,6 +968,7 @@ export function UsageDashboard({
             appType={appType}
             providerName={providerName}
             model={model}
+            device={scopedDevice}
             refreshIntervalMs={0}
           />
         )}
@@ -860,6 +1052,7 @@ export function UsageDashboard({
           appType={scopedAppType}
           providerName={providerName}
           model={model}
+          device={scopedDevice}
           refreshIntervalMs={0}
           compact={compact}
         />
@@ -870,6 +1063,7 @@ export function UsageDashboard({
             appType={appType}
             providerName={providerName}
             model={model}
+            device={scopedDevice}
             refreshIntervalMs={0}
           />
         ) : (
@@ -879,6 +1073,7 @@ export function UsageDashboard({
             appType={appType}
             providerName={providerName}
             model={model}
+            device={scopedDevice}
             refreshIntervalMs={0}
           />
         )}
@@ -898,11 +1093,28 @@ export function UsageDashboard({
         actions={headerActions}
       />
       {filterRow}
+      {scopeAccuracy}
       {body}
 
       <RequestDetailPanel
         requestId={detailRequestId}
-        onClose={() => setDetailRequestId(null)}
+        deviceId={detailDeviceId}
+        deviceName={detailDeviceId ? deviceNames[detailDeviceId] : undefined}
+        onClose={() => {
+          setDetailRequestId(null);
+          setDetailDeviceId(undefined);
+        }}
+      />
+      <UsageDevicesSheet
+        open={devicesOpen}
+        onOpenChange={setDevicesOpen}
+        overview={syncOverview}
+        syncing={runUsageSync.isPending || (syncOverview?.syncing ?? false)}
+        onSyncNow={() => void runDeviceSync()}
+        onToggleHidden={(deviceId, hidden) =>
+          setDeviceHidden.mutate({ deviceId, hidden })
+        }
+        onOpenSyncSettings={onOpenSyncSettings}
       />
       <UsageDataSourcesSheet
         open={sourcesOpen}

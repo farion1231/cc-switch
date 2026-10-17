@@ -33,6 +33,9 @@ import {
   type RequestLogColumnId,
 } from "./requestLogColumns";
 
+const DEVICE_COLUMN = "device" as const;
+type RenderedColumn = RequestLogColumnId | typeof DEVICE_COLUMN;
+
 interface RequestLogTableProps {
   range: UsageRangeSelection;
   /** 旧接口保留；时间范围由页面顶部的筛选统一控制 */
@@ -42,9 +45,13 @@ interface RequestLogTableProps {
   model?: string;
   /** 状态码筛选（页签行右侧的下拉） */
   statusCode?: number;
+  /** 设备范围：缺省 = 本机，"all" = 全部设备，其它 = 远端设备 ID */
+  device?: string;
+  /** 远端设备 ID → 显示名，非本机范围时用来填「设备」列 */
+  deviceNames?: Record<string, string>;
   refreshIntervalMs: number;
-  /** 点一行打开请求详情 */
-  onOpenDetail?: (requestId: string) => void;
+  /** 点一行打开请求详情；远端记录带上设备 ID */
+  onOpenDetail?: (requestId: string, deviceId?: string) => void;
   /** 要显示的列（按表格顺序）；不传按默认列 */
   columns?: RequestLogColumnId[];
 }
@@ -160,6 +167,8 @@ export function RequestLogTable({
   providerName,
   model,
   statusCode,
+  device,
+  deviceNames,
   refreshIntervalMs,
   onOpenDetail,
   columns = DEFAULT_COLUMNS,
@@ -177,7 +186,9 @@ export function RequestLogTable({
     providerName,
     model,
     statusCode,
+    device,
   };
+  const showDevice = !!device && device !== "local";
 
   const { data: result, isLoading } = useRequestLogs({
     filters: effectiveFilters,
@@ -200,6 +211,7 @@ export function RequestLogTable({
     providerName,
     model,
     statusCode,
+    device,
     range.customEndDate,
     range.customStartDate,
     range.preset,
@@ -213,6 +225,17 @@ export function RequestLogTable({
   if (isLoading) {
     return <div className={usageTable.skeleton} />;
   }
+
+  // 本机记录只带 requestId（与原有回调一致）；远端记录额外带上设备 ID
+  const openDetail = (log: RequestLog) => {
+    if (log.deviceId) onOpenDetail?.(log.requestId, log.deviceId);
+    else onOpenDetail?.(log.requestId);
+  };
+
+  const deviceLabel = (deviceId?: string) =>
+    deviceId
+      ? (deviceNames?.[deviceId] ?? deviceId.slice(0, 8))
+      : t("usageSync.thisDevice");
 
   // 带说明的列在表头挂「?」，其余只写列名
   const headerHelp: Partial<
@@ -243,6 +266,14 @@ export function RequestLogTable({
   };
   // 打开了「状态码」列就不在时间旁边再挂一个错误码
   const showStatusInTime = !columns.includes("statusCode");
+  // 「设备」列紧跟在应用列后（应用列关掉时跟在时间列后）
+  const renderedColumns: RenderedColumn[] = showDevice
+    ? columns.flatMap((id): RenderedColumn[] =>
+        id === (columns.includes("app") ? "app" : "time")
+          ? [id, DEVICE_COLUMN]
+          : [id],
+      )
+    : columns;
 
   const renderRow = (log: RequestLog) => {
     const unpriced = isUnpricedUsage(log);
@@ -306,7 +337,7 @@ export function RequestLogTable({
             })}
             onClick={(event) => {
               event.stopPropagation();
-              onOpenDetail?.(log.requestId);
+              openDetail(log);
             }}
           >
             {time}
@@ -495,14 +526,25 @@ export function RequestLogTable({
       ),
     };
 
+    // 全部设备视图多一列「设备」：不进可选列菜单，随设备范围出现
+    const deviceCell = (
+      <td className={cn(usageTable.td, "w-[12%] max-w-0")}>
+        <span className="block truncate" title={deviceLabel(log.deviceId)}>
+          {deviceLabel(log.deviceId)}
+        </span>
+      </td>
+    );
+
     return (
       <tr
-        key={log.requestId}
+        key={`${log.deviceId ?? "local"}:${log.requestId}`}
         className={onOpenDetail ? usageTable.rowInteractive : usageTable.row}
-        onClick={() => onOpenDetail?.(log.requestId)}
+        onClick={() => openDetail(log)}
       >
-        {columns.map((id) => (
-          <Fragment key={id}>{cells[id]}</Fragment>
+        {renderedColumns.map((id) => (
+          <Fragment key={id}>
+            {id === DEVICE_COLUMN ? deviceCell : cells[id]}
+          </Fragment>
         ))}
       </tr>
     );
@@ -510,7 +552,7 @@ export function RequestLogTable({
 
   // 默认 10 列时 620px：最小窗口（900）展开侧栏表格区只有 644px，再宽最右的速度列就被挤进横向滚动；
   // 多开一列加一份宽度，列再多就横向滚动，不把每列挤到看不清
-  const minWidth = 620 + Math.max(0, columns.length - 10) * 64;
+  const minWidth = 620 + Math.max(0, renderedColumns.length - 10) * 64;
 
   return (
     <div className="flex flex-col">
@@ -522,9 +564,11 @@ export function RequestLogTable({
         >
           <thead>
             <tr className={usageTable.headRow}>
-              {columns.map((id) => (
+              {renderedColumns.map((id) => (
                 <th key={id} className={usageTable.th}>
-                  {renderHeader(id)}
+                  {id === DEVICE_COLUMN
+                    ? t("usageSync.device")
+                    : renderHeader(id)}
                 </th>
               ))}
             </tr>
@@ -532,7 +576,10 @@ export function RequestLogTable({
           <tbody>
             {logs.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className={usageTable.empty}>
+                <td
+                  colSpan={renderedColumns.length}
+                  className={usageTable.empty}
+                >
                   {t("usage.noData")}
                 </td>
               </tr>

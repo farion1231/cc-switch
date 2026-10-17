@@ -35,6 +35,7 @@ import { DirectoryInput } from "@/components/settings/DirectorySettings";
 import { ImportExportSection } from "@/components/settings/ImportExportSection";
 import { BackupListSection } from "@/components/settings/BackupListSection";
 import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
+import { UsageSyncSection } from "@/components/settings/UsageSyncSection";
 import { AboutSection } from "@/components/settings/AboutSection";
 import { RoutingSection } from "@/components/settings/sections/RoutingSection";
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
@@ -496,6 +497,17 @@ export function SettingsPage({
                   settings={settings}
                   onAutoSave={handleAutoSave}
                 />
+              </div>
+            </SettingsBlock>
+            <SettingsBlock
+              title={t("usageSync.settings.title")}
+              help={{
+                title: t("usageSync.settings.title"),
+                body: t("usageSync.settings.help"),
+              }}
+            >
+              <div className="rounded-panel border border-border bg-surface p-5">
+                <UsageSyncSection />
               </div>
             </SettingsBlock>
             <SettingsBlock

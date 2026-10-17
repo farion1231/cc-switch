@@ -20,6 +20,8 @@ interface ProviderStatsTableProps {
   appType?: string;
   providerName?: string;
   model?: string;
+  /** 设备范围：缺省 = 本机，"all" = 全部设备，其它 = 远端设备 ID */
+  device?: string;
   refreshIntervalMs: number;
 }
 
@@ -28,6 +30,7 @@ export function ProviderStatsTable({
   appType,
   providerName,
   model,
+  device,
   refreshIntervalMs,
 }: ProviderStatsTableProps) {
   const { t, i18n } = useTranslation();
@@ -35,7 +38,7 @@ export function ProviderStatsTable({
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const { data: stats, isLoading } = useProviderStats(
     range,
-    { appType, providerName, model },
+    { appType, providerName, model, device },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
@@ -48,7 +51,7 @@ export function ProviderStatsTable({
   );
   const pagination = useClientPagination(
     rows,
-    JSON.stringify([range, appType, providerName, model]),
+    JSON.stringify([range, appType, providerName, model, device]),
   );
 
   if (isLoading) {

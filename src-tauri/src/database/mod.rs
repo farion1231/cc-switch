@@ -27,6 +27,7 @@ pub(crate) mod backup;
 mod dao;
 mod migration;
 mod schema;
+pub(crate) use schema::VERSION_TRIGGER_MARKER;
 
 #[cfg(test)]
 mod tests;
@@ -51,7 +52,7 @@ use std::sync::Mutex;
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub(crate) const SCHEMA_VERSION: i32 = 20;
+pub(crate) const SCHEMA_VERSION: i32 = 21;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {
@@ -79,6 +80,10 @@ pub struct Database {
     pub(crate) conn: Mutex<Connection>,
     /// 请求日志总数缓存，见 `services::usage_stats::LogCountCache`
     pub(crate) log_count_cache: Mutex<Option<crate::services::usage_stats::LogCountCache>>,
+    /// Tests run several simulated devices in one process with one settings
+    /// store; this stands in for each device's own `usageSync.enabled`.
+    #[cfg(test)]
+    pub(crate) usage_sync_enabled_override: Mutex<Option<bool>>,
 }
 
 fn register_db_change_hook(conn: &Connection) {
@@ -122,6 +127,8 @@ impl Database {
         let db = Self {
             conn: Mutex::new(conn),
             log_count_cache: Mutex::new(None),
+            #[cfg(test)]
+            usage_sync_enabled_override: Mutex::new(None),
         };
         db.create_tables()?;
 
@@ -197,6 +204,8 @@ impl Database {
         let db = Self {
             conn: Mutex::new(conn),
             log_count_cache: Mutex::new(None),
+            #[cfg(test)]
+            usage_sync_enabled_override: Mutex::new(None),
         };
         db.create_tables()?;
         db.ensure_model_pricing_seeded()?;

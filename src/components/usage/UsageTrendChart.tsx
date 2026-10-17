@@ -24,6 +24,8 @@ interface UsageTrendChartProps {
   appType?: string;
   providerName?: string;
   model?: string;
+  /** 设备范围：缺省 = 本机，"all" = 全部设备，其它 = 远端设备 ID */
+  device?: string;
   refreshIntervalMs: number;
 }
 
@@ -174,6 +176,7 @@ export function UsageTrendChart({
   appType,
   providerName,
   model,
+  device,
   refreshIntervalMs,
 }: UsageTrendChartProps) {
   const { t, i18n } = useTranslation();
@@ -186,7 +189,7 @@ export function UsageTrendChart({
   const { startDate, endDate } = resolveUsageRange(range);
   const { data: trends, isLoading } = useUsageTrends(
     range,
-    { appType, providerName, model },
+    { appType, providerName, model, device },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },

@@ -35,6 +35,10 @@ import { getUsageProviderLabel } from "./providerLabel";
 interface RequestDetailPanelProps {
   /** 要看的请求；null 时抽屉关闭 */
   requestId: string | null;
+  /** 远端设备记录的请求：从同步缓存读取；缺省为本机 */
+  deviceId?: string;
+  /** 远端设备的显示名（详情里注明来源） */
+  deviceName?: string;
   onClose: () => void;
 }
 
@@ -315,12 +319,25 @@ function useDetailSections(request: RequestLog) {
   return { basic, tokens, cost, performance };
 }
 
-function RequestDetailBody({ request }: { request: RequestLog }) {
+function RequestDetailBody({
+  request,
+  deviceName,
+}: {
+  request: RequestLog;
+  deviceName?: string;
+}) {
   const { t } = useTranslation();
   const { currency } = useMoneyFormat();
   const sections = useDetailSections(request);
   return (
     <div className="flex flex-col gap-4">
+      {request.deviceId && (
+        <Notice tone="neutral" title={t("usageSync.detail.remoteTitle")}>
+          {t("usageSync.detail.remoteBody", {
+            device: deviceName ?? request.deviceId,
+          })}
+        </Notice>
+      )}
       <DetailSection title={t("usage.basicInfo")} rows={sections.basic} />
       <DetailSection
         title={t("usage.detail.tokensTitle")}
@@ -351,6 +368,8 @@ function RequestDetailBody({ request }: { request: RequestLog }) {
 /** 请求详情抽屉（v7 S6：点表格一行打开）。 */
 export function RequestDetailPanel({
   requestId,
+  deviceId,
+  deviceName,
   onClose,
 }: RequestDetailPanelProps) {
   const { t } = useTranslation();
@@ -359,7 +378,7 @@ export function RequestDetailPanel({
     isLoading,
     error,
     refetch,
-  } = useRequestDetail(requestId ?? "");
+  } = useRequestDetail(requestId ?? "", deviceId);
 
   const subtitle = request
     ? [
@@ -391,7 +410,7 @@ export function RequestDetailPanel({
           {isLoading ? (
             <div className="h-[320px] animate-pulse rounded-panel bg-subtle" />
           ) : request ? (
-            <RequestDetailBody request={request} />
+            <RequestDetailBody request={request} deviceName={deviceName} />
           ) : error ? (
             // 查询失败和「没有这条记录」分开说：前者能重试，也要让人看到原因
             <Notice

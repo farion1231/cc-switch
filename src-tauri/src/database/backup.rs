@@ -91,6 +91,24 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    // Cross-device usage sync: device identity and the remote-usage cache are
+    // device-local and travel through their own protocol (usage-v1), never
+    // through the configuration snapshot.
+    "usage_sync_identity",
+    "usage_sync_devices",
+    "usage_sync_remote_partitions",
+    "usage_sync_remote_logs",
+    "usage_sync_remote_rollups",
+    "usage_sync_remote_claims",
+    "usage_sync_remote_inherited",
+    "usage_sync_ledger_suppressed",
+    "usage_sync_remote_multi",
+    "usage_sync_inherited_effective",
+    "usage_sync_partition_versions",
+    "usage_sync_namespaces",
+    "usage_sync_export_cache",
+    "usage_sync_inherited",
+    "usage_rollup_ledger",
 ];
 
 /// Tables whose local data is preserved from the live database during WebDAV import.
@@ -102,6 +120,23 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "usage_sync_identity",
+    "usage_sync_devices",
+    "usage_sync_remote_partitions",
+    "usage_sync_remote_logs",
+    "usage_sync_remote_rollups",
+    "usage_sync_remote_claims",
+    "usage_sync_remote_inherited",
+    "usage_sync_ledger_suppressed",
+    "usage_sync_remote_multi",
+    "usage_sync_inherited_effective",
+    "usage_sync_partition_versions",
+    "usage_sync_namespaces",
+    // usage_sync_export_cache is deliberately not preserved: an import can
+    // change provider names without bumping the preserved versions, so the
+    // next usage sync re-encodes every partition once.
+    "usage_sync_inherited",
+    "usage_rollup_ledger",
 ];
 
 /// A database backup entry for the UI
