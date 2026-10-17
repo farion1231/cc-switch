@@ -670,7 +670,40 @@ fn direct_inference_model_specs(provider: &Provider) -> Result<Vec<InferenceMode
     Ok(result)
 }
 
+fn uses_default_proxy_routes(provider: &Provider) -> bool {
+    !is_official_provider(provider)
+        && !needs_routing(provider)
+        && provider
+            .meta
+            .as_ref()
+            .is_none_or(|meta| meta.claude_desktop_model_routes.is_empty())
+}
+
 pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>, AppError> {
+    // 原生直连卡允许留空模型列表。先用同名角色路由进入代理，之后才能保存模型映射，
+    // 否则「先开路由」和「先存映射」会互相阻挡。显式映射卡仍须配置模型。
+    if uses_default_proxy_routes(provider) {
+        validate_direct_provider(provider)?;
+        let mut routes = DEFAULT_PROXY_ROUTES
+            .iter()
+            .map(|route| ResolvedModelRoute {
+                route_id: route.route_id.to_string(),
+                upstream_model: route.route_id.to_string(),
+                label_override: None,
+                supports_1m: false,
+            })
+            .collect::<Vec<_>>();
+        routes.sort_by(|a, b| a.route_id.cmp(&b.route_id));
+        return Ok(routes);
+    }
+
+    configured_proxy_model_routes(provider)
+}
+
+/// 聚合成员只能发布用户配置过的模型，不能把路由引导用的默认角色当成上游目录。
+pub(crate) fn configured_proxy_model_routes(
+    provider: &Provider,
+) -> Result<Vec<ResolvedModelRoute>, AppError> {
     let routes = provider
         .meta
         .as_ref()
@@ -813,6 +846,11 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
     let requested = strip_one_m_suffix_for_route_lookup(&requested_raw);
 
     let routes = proxy_model_routes(provider)?;
+    // 默认列表只提供进入路由时的角色菜单，不把原生的日期后缀或版本别名改成默认 ID。
+    if uses_default_proxy_routes(provider) && is_claude_safe_model_id(requested) {
+        body["model"] = json!(requested);
+        return Ok(normalize_upstream_request(body, provider));
+    }
     let upstream_model = routes
         .iter()
         .find(|r| r.route_id == requested)
@@ -1865,6 +1903,97 @@ mod tests {
 
         let err = validate_provider(&provider).expect_err("direct mapping should fail");
         assert!(err.to_string().contains("本地路由模式"));
+    }
+
+    #[test]
+    fn claude_desktop_native_provider_without_catalog_can_start_routing() {
+        for with_meta in [false, true] {
+            let mut provider = direct_provider("native");
+            if !with_meta {
+                provider.meta = None;
+            } else {
+                provider.meta.as_mut().unwrap().claude_desktop_mode =
+                    Some(ClaudeDesktopMode::Direct);
+            }
+            let before = serde_json::to_value(&provider).expect("provider snapshot");
+            let db = test_db();
+            let profile = route_profile(&db, &provider, "http://127.0.0.1:15721", &[])
+                .expect("native provider should not need a pre-existing mapping");
+
+            assert_eq!(
+                profile["inferenceGatewayBaseUrl"],
+                json!("http://127.0.0.1:15721/claude-desktop")
+            );
+            assert_eq!(
+                profile["inferenceModels"],
+                json!([
+                    "claude-fable-5",
+                    "claude-haiku-4-5",
+                    "claude-opus-5",
+                    "claude-sonnet-5"
+                ])
+            );
+            let models = model_list_response(&provider).expect("local model discovery");
+            configured_proxy_model_routes(&provider)
+                .expect_err("bootstrap defaults must not become a configured catalog");
+            assert_eq!(models["data"].as_array().expect("models").len(), 4);
+            assert!(models["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|model| model.get("supports1m").is_none()));
+            assert_eq!(serde_json::to_value(&provider).unwrap(), before);
+            assert!(direct_profile(&provider)
+                .expect("direct profile remains valid")
+                .get("inferenceModels")
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn claude_desktop_native_default_routes_preserve_requested_model_versions() {
+        let provider = direct_provider("native");
+        for model in [
+            "claude-haiku-4-5-20251001",
+            "claude-opus-4-8",
+            "anthropic/claude-sonnet-4-6",
+        ] {
+            let mapped = map_proxy_request_model(
+                json!({"model": format!("{model} [1M]"), "messages": []}),
+                &provider,
+            )
+            .expect("native model should pass through without a version rewrite");
+            assert_eq!(mapped["model"], json!(model));
+        }
+        map_proxy_request_model(json!({"model": "unconfigured-model"}), &provider)
+            .expect_err("default native routes must not accept arbitrary model names");
+    }
+
+    #[test]
+    fn claude_desktop_mapping_provider_still_requires_explicit_routes() {
+        let mut provider = proxy_provider("mapping");
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes
+            .clear();
+
+        let error = validate_proxy_provider(&provider).expect_err("mapping is required");
+        assert!(error.to_string().contains("至少需要一个模型路由映射"));
+        route_profile(&test_db(), &provider, "http://127.0.0.1:15721", &[])
+            .expect_err("an empty mapping must not silently become native defaults");
+    }
+
+    #[test]
+    fn claude_desktop_default_routes_do_not_bypass_native_provider_validation() {
+        let mut provider = direct_provider("invalid-native");
+        provider.meta.as_mut().expect("meta").api_format = Some("openai_chat".to_string());
+        proxy_model_routes(&provider).expect_err("native defaults require native API format");
+
+        provider.meta.as_mut().expect("meta").api_format = Some("anthropic".to_string());
+        provider.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"] = json!("");
+        proxy_model_routes(&provider).expect_err("native defaults require credentials");
     }
 
     #[test]
