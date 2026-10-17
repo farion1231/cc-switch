@@ -75,6 +75,31 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
       "NewAPI 是一个可自部署的 API 网关，支持 Anthropic、OpenAI、Gemini 等多种协议",
   },
   {
+    name: "MonkeyAI",
+    providerType: "monkeyai",
+    defaultApps: {
+      claude: true,
+      codex: true,
+      // 没有 Gemini 原生 /v1beta 入口，同步过去会指到不存在的协议
+      gemini: false,
+    },
+    defaultModels: {
+      claude: {
+        model: "your-model-id",
+        haikuModel: "your-model-id",
+        sonnetModel: "your-model-id",
+        opusModel: "your-model-id",
+      },
+      codex: {
+        model: "your-model-id",
+        reasoningEffort: "high",
+      },
+    },
+    websiteUrl: "https://github.com/chaitin/MonkeyCode/tree/main/monkeyai",
+    description:
+      "自托管模型网关。地址填公网 origin，不要加 /v1。Claude 走 /v1/messages，Codex 同步时会补 /v1 后走 /responses。调用密钥用 Bearer。",
+  },
+  {
     name: "自定义网关",
     providerType: "custom_gateway",
     defaultApps: {

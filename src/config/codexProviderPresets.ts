@@ -4946,4 +4946,19 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     ),
     icon: "aicoming",
   },
+  {
+    name: "MonkeyAI",
+    websiteUrl: "https://github.com/chaitin/MonkeyCode/tree/main/monkeyai",
+    // wire_api = responses 时实际请求 {base_url}/responses。MonkeyAI 入口是
+    // POST /v1/responses，所以这里必须带 /v1。把 example.com 换成部署 origin，
+    // 模型 ID 换成后台已启用的 ID。调用密钥走 OPENAI_API_KEY，Codex 发 Bearer。
+    category: "third_party",
+    apiFormat: "openai_responses",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "MonkeyAI",
+      "https://monkeyai.example.com/v1",
+      "your-model-id",
+    ),
+  },
 ];
