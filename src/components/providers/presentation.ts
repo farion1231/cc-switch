@@ -652,8 +652,8 @@ export interface AdditiveInput {
   /** Hermes：model.provider 指向的那家 */
   hermesCurrentId?: string | null;
   isHermesManaged?: (provider: Provider) => boolean;
-  /** Pi：读不到当前配置时一律不能改 */
-  piStateUnavailable?: boolean;
+  /** Pi / Oh My Pi：读不到当前配置时一律不能改 */
+  nativeStateUnavailable?: boolean;
   actions: {
     add: (provider: Provider) => void;
     remove: (provider: Provider) => void;
@@ -666,9 +666,9 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   const { app, t, providers, actions } = input;
   const added: ProviderSection["items"] = [];
   const available: ProviderSection["items"] = [];
-  const piBlocked =
-    app === "pi" && input.piStateUnavailable
-      ? t("pi.current.stateUnavailableHint")
+  const stateBlocked =
+    (app === "pi" || app === "ohmypi") && input.nativeStateUnavailable
+      ? t(`${app}.current.stateUnavailableHint`)
       : undefined;
 
   for (const p of providers) {
@@ -736,16 +736,16 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           chips,
           dim: managed,
           editDisabledReason: readOnlyReason,
-          deleteDisabledReason: readOnlyReason ?? piBlocked,
+          deleteDisabledReason: readOnlyReason ?? stateBlocked,
           buttons: [
             {
               key: "add",
               label:
-                app === "pi"
+                app === "pi" || app === "ohmypi"
                   ? t("providerCard.action.enable")
                   : t("providerCard.action.add"),
               onClick: () => actions.add(p),
-              disabledReason: piBlocked,
+              disabledReason: stateBlocked,
             },
           ],
         },
@@ -757,7 +757,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     const buttons: CardButton[] = [];
     let status: CardPresentation["status"];
     let isDefault = false;
-    let removeReason: string | undefined = piBlocked;
+    let removeReason: string | undefined = stateBlocked;
 
     if (app === "openclaw") {
       isDefault = input.openclawDefault?.providerId === p.id;
@@ -826,7 +826,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
         chips,
         dim: managed,
         editDisabledReason: readOnlyReason,
-        deleteDisabledReason: readOnlyReason ?? piBlocked,
+        deleteDisabledReason: readOnlyReason ?? stateBlocked,
         buttons,
       },
     });

@@ -49,6 +49,8 @@ pub struct VisibleApps {
     pub hermes: bool,
     #[serde(default = "default_true")]
     pub pi: bool,
+    #[serde(default)]
+    pub ohmypi: bool,
     #[serde(default = "default_true")]
     pub mcode: bool,
 }
@@ -66,6 +68,7 @@ impl Default for VisibleApps {
             hermes: false, // 默认不显示，需用户手动启用
             pi: true,
             mcode: true,
+            ohmypi: false, // 默认不显示，需用户手动启用
         }
     }
 }
@@ -84,6 +87,7 @@ impl VisibleApps {
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
+            AppType::OhMyPi => self.ohmypi,
         }
     }
 }
@@ -521,6 +525,8 @@ pub struct AppSettings {
     pub hermes_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pi_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ohmypi_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -652,6 +658,7 @@ impl Default for AppSettings {
             openclaw_config_dir: None,
             hermes_config_dir: None,
             pi_config_dir: None,
+            ohmypi_config_dir: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
@@ -741,6 +748,13 @@ impl AppSettings {
 
         self.pi_config_dir = self
             .pi_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.ohmypi_config_dir = self
+            .ohmypi_config_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -1120,6 +1134,13 @@ pub fn get_pi_override_dir() -> Option<PathBuf> {
         .as_ref()
         .map(|path| resolve_override_path(path))
 }
+pub fn get_ohmypi_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .ohmypi_config_dir
+        .as_ref()
+        .map(|path| resolve_override_path(path))
+}
 
 pub fn preserve_codex_official_auth_on_switch() -> bool {
     settings_store()
@@ -1202,7 +1223,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenCode => settings.current_provider_opencode.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
-        AppType::Pi | AppType::Mcode => None,
+        AppType::Pi | AppType::Mcode | AppType::OhMyPi => None,
     }
 }
 
@@ -1221,7 +1242,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
-        AppType::Pi | AppType::Mcode => {}
+        AppType::Pi | AppType::Mcode | AppType::OhMyPi => {}
     })
 }
 

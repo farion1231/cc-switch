@@ -47,6 +47,7 @@ import { cn } from "@/lib/utils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
+import { useOhMyPiCurrentState } from "@/lib/query/ohmypi";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import {
   buildAdditiveSections,
@@ -144,6 +145,14 @@ export function ProviderList({
     error: piCurrentStateError,
   } = usePiCurrentState(appId === "pi");
   const isPiStateReady = appId !== "pi" || isPiCurrentStateSuccess;
+  const {
+    data: ohmypiCurrentState,
+    isSuccess: isOhMyPiCurrentStateSuccess,
+    isPending: isOhMyPiCurrentStatePending,
+    isError: isOhMyPiCurrentStateError,
+    error: ohmypiCurrentStateError,
+  } = useOhMyPiCurrentState(appId === "ohmypi");
+  const isOhMyPiStateReady = appId !== "ohmypi" || isOhMyPiCurrentStateSuccess;
   // 累加式应用要等 live 里有哪些供应商读回来（成功或失败）才知道卡片该进哪个分区；
   // 在那之前按加载中画骨架，不然卡片先全落进「可添加」，读回来再整体搬到「已添加」。
   // 一张卡都没有时不用等，直接出空状态
@@ -151,7 +160,8 @@ export function ProviderList({
     (appId === "opencode" && isOpencodeLiveIdsPending) ||
     (appId === "openclaw" && isOpenclawLiveIdsPending) ||
     (appId === "hermes" && isHermesLiveIdsPending) ||
-    (appId === "pi" && isPiCurrentStatePending);
+    (appId === "pi" && isPiCurrentStatePending) ||
+    (appId === "ohmypi" && isOhMyPiCurrentStatePending);
 
   const isInConfig = useCallback(
     (provider: Provider): boolean => {
@@ -169,6 +179,11 @@ export function ProviderList({
             ? (piCurrentState?.enabledProviderIds.includes(provider.id) ??
                 false)
             : false;
+        case "ohmypi":
+          return isOhMyPiStateReady
+            ? (ohmypiCurrentState?.enabledProviderIds.includes(provider.id) ??
+                false)
+            : false;
         default:
           return true;
       }
@@ -180,6 +195,8 @@ export function ProviderList({
       hermesLiveIds,
       isPiStateReady,
       piCurrentState,
+      isOhMyPiStateReady,
+      ohmypiCurrentState,
     ],
   );
 
@@ -342,7 +359,9 @@ export function ProviderList({
       hermesCurrentId: hermesModelConfig?.provider ?? null,
       isHermesManaged: (provider) =>
         isHermesReadOnlyProvider(provider.settingsConfig),
-      piStateUnavailable: appId === "pi" && !isPiStateReady,
+      nativeStateUnavailable:
+        (appId === "pi" && !isPiStateReady) ||
+        (appId === "ohmypi" && !isOhMyPiStateReady),
       actions: {
         add: onSwitch,
         remove: (provider) =>
@@ -394,6 +413,22 @@ export function ProviderList({
       </Notice>
     ) : null;
 
+  const ohmypiStateError =
+    appId === "ohmypi" && isOhMyPiCurrentStateError
+      ? extractErrorMessage(ohmypiCurrentStateError)
+      : "";
+  const ohmypiStateErrorNotice =
+    appId === "ohmypi" && isOhMyPiCurrentStateError ? (
+      <Notice
+        tone="warning"
+        title={t("ohmypi.current.readFailed", {
+          defaultValue: "无法读取 Oh My Pi 当前配置",
+        })}
+      >
+        {t("ohmypi.current.stateUnavailableHint")}
+        {ohmypiStateError ? ` ${ohmypiStateError}` : ""}
+      </Notice>
+    ) : null;
   if (isLoading || (isLiveMembershipPending && sortedProviders.length > 0)) {
     return (
       <div className="space-y-2">
@@ -411,11 +446,12 @@ export function ProviderList({
     return (
       <div className="space-y-4">
         {piStateErrorNotice}
+        {ohmypiStateErrorNotice}
         <ProviderEmptyState
           appId={appId}
           onCreate={appId === "pi" ? undefined : onCreate}
           onImport={
-            appId === "pi" || appId === "mcode"
+            appId === "pi" || appId === "mcode" || appId === "ohmypi"
               ? undefined
               : () => importMutation.mutate()
           }
@@ -426,7 +462,7 @@ export function ProviderList({
 
   // 「当前」只用来决定额度自动刷新：Pi 没有当前项，OMO / Hermes 各看自己的当前项
   const isCurrentFor = (provider: Provider) => {
-    if (appId === "pi") return false;
+    if (appId === "pi" || appId === "ohmypi") return false;
     if (provider.category === "omo") return provider.id === currentOmoId;
     if (provider.category === "omo-slim")
       return provider.id === currentOmoSlimId;
@@ -536,6 +572,7 @@ export function ProviderList({
   return (
     <div className="space-y-4">
       {piStateErrorNotice}
+      {ohmypiStateErrorNotice}
       {searchSlot && createPortal(searchField, searchSlot)}
       {showListHeader && (
         <div

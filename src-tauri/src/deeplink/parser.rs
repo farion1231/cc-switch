@@ -246,10 +246,11 @@ fn parse_prompt_deeplink(
             | "openclaw"
             | "hermes"
             | "pi"
+            | "ohmypi"
             | "mcode"
     ) {
         return Err(AppError::InvalidInput(format!(
-            "Invalid app type: must be 'claude', 'codex', 'gemini', 'grokbuild', 'opencode', 'openclaw', 'hermes', 'pi', or 'mcode', got '{app}'"
+            "Invalid app type: must be 'claude', 'codex', 'gemini', 'grokbuild', 'opencode', 'openclaw', 'hermes', 'pi', 'ohmypi', or 'mcode', got '{app}'"
         )));
     }
 

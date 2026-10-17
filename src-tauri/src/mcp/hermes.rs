@@ -320,6 +320,7 @@ pub fn import_from_hermes(config: &mut MultiAppConfig) -> Result<usize, AppError
                         hermes: true,
                         mcode: false,
                         pi: false,
+                        ohmypi: false,
                     },
                     description: None,
                     homepage: None,
