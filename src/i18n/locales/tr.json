@@ -4104,7 +4104,7 @@
     "installHint": {
       "claude": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner",
       "codex": "Npm ile yükler",
-      "gemini": "Npm ile yükler",
+      "gemini": "Resmi komut dosyasıyla yüklenir (agy)",
       "grok": "Npm ile yükler",
       "opencode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner",
       "openclaw": "Npm ile yükler",

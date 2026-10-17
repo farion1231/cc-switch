@@ -798,8 +798,8 @@ describe("AppsPage concurrent CLI upgrades", () => {
       await screen.findByRole("option", { name: "Homebrew (formula)" }),
     );
     expect(
-      dialog.getByText("brew uninstall --formula gemini-cli"),
-    ).toBeInTheDocument();
+      dialog.queryByText("brew uninstall --formula gemini-cli"),
+    ).not.toBeInTheDocument();
     expect(
       dialog.getByText("brew uninstall --formula opencode"),
     ).toBeInTheDocument();
@@ -1148,7 +1148,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(2);
     expect(updateButton("Claude Code")).toBeDisabled();
     expect(updateButton("Codex")).toBeDisabled();
-    expect(updateButton("Gemini CLI")).toBeEnabled();
+    expect(updateButton("Antigravity CLI")).toBeEnabled();
 
     await act(async () => codexRun.resolve());
     expect(isReady("Codex")).toBe(true);
@@ -1191,7 +1191,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       runs.get("gemini")!.resolve();
       runs.get("codex")!.resolve();
     });
-    expect(isReady("Gemini CLI")).toBe(true);
+    expect(isReady("Antigravity CLI")).toBe(true);
     expect(isReady("Codex")).toBe(true);
     expect(updateButton("Claude Code")).toBeDisabled();
     await act(async () => runs.get("claude")!.resolve());
@@ -1399,10 +1399,10 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(updateAll).toHaveAttribute("aria-busy", "true");
     expect(isReady("Codex")).toBe(true);
     expect(updateButton("Claude Code")).toHaveAttribute("aria-busy", "true");
-    expect(updateButton("Gemini CLI")).toBeDisabled();
+    expect(updateButton("Antigravity CLI")).toBeDisabled();
 
     await act(async () => runs.get("gemini")!.resolve());
-    expect(isReady("Gemini CLI")).toBe(true);
+    expect(isReady("Antigravity CLI")).toBe(true);
     expect(updateButton("Claude Code")).toBeDisabled();
     expect(updateAll).toHaveAttribute("aria-busy", "true");
     await act(async () => runs.get("claude")!.resolve());
@@ -1496,7 +1496,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     await waitFor(() => expect(mocks.success).toHaveBeenCalledTimes(1));
     expect(mocks.info).toHaveBeenCalledTimes(1);
     expect(isReady("Codex")).toBe(true);
-    expect(isReady("Gemini CLI")).toBe(true);
+    expect(isReady("Antigravity CLI")).toBe(true);
     expect(mocks.warning).not.toHaveBeenCalled();
     expect(mocks.error).not.toHaveBeenCalled();
   });
@@ -1761,7 +1761,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     // 不然机器慢时这几行还在加载
     await waitFor(() => {
       expect(updateButton("Codex")).toBeEnabled();
-      expect(updateButton("Gemini CLI")).toBeEnabled();
+      expect(updateButton("Antigravity CLI")).toBeEnabled();
     });
     fireEvent.click(updateAllButton());
     await waitFor(() =>
@@ -1795,7 +1795,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     await renderApps();
     fireEvent.click(updateAllButton());
     await waitFor(() => expect(isReady("Codex")).toBe(true));
-    expect(isReady("Gemini CLI")).toBe(true);
+    expect(isReady("Antigravity CLI")).toBe(true);
     expect(updateButton("Claude Code")).toBeEnabled();
     expect(
       mocks.runToolLifecycleAction.mock.calls.map(([tools]) => tools),
@@ -1858,7 +1858,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     ).toBeNull();
     fireEvent.click(updateAllButton());
     await waitFor(() => expect(isReady("Codex")).toBe(true));
-    expect(isReady("Gemini CLI")).toBe(true);
+    expect(isReady("Antigravity CLI")).toBe(true);
     expect(
       mocks.runToolLifecycleAction.mock.calls.map(([tools]) => tools),
     ).toEqual([["codex"], ["gemini"]]);

@@ -4163,7 +4163,7 @@
     "installHint": {
       "claude": "安装时运行官方安装脚本，失败时改用 npm",
       "codex": "通过 npm 安装",
-      "gemini": "通过 npm 安装",
+      "gemini": "安装时运行官方安装脚本（agy）",
       "grok": "通过 npm 安装",
       "opencode": "安装时运行官方安装脚本，失败时改用 npm",
       "openclaw": "通过 npm 安装",
