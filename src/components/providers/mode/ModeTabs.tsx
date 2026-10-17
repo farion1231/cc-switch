@@ -1,5 +1,12 @@
 import { useTranslation } from "react-i18next";
-import { Layers, Plug, Route, Settings2, Shuffle } from "lucide-react";
+import {
+  Layers,
+  ListChecks,
+  Plug,
+  Route,
+  Settings2,
+  Shuffle,
+} from "lucide-react";
 import type { AppMode } from "@/types/proxy";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
@@ -53,6 +60,8 @@ interface ModeTabsProps {
   onOpenRouteSettings?: () => void;
   /** Codex 聚合页签上的「聚合设置」（子代理模型、经典子代理） */
   onOpenStackSettings?: () => void;
+  /** Claude Code 聚合页签上的「模型绑定」设置入口 */
+  onOpenRoleBindings?: () => void;
   /** 供应商搜索框挂在状态行右侧（由列表通过 portal 渲染进来） */
   searchSlotRef?: (node: HTMLDivElement | null) => void;
 }
@@ -71,6 +80,7 @@ export function ModeTabs({
   failover,
   onOpenRouteSettings,
   onOpenStackSettings,
+  onOpenRoleBindings,
   searchSlotRef,
 }: ModeTabsProps) {
   const { t } = useTranslation();
@@ -171,6 +181,19 @@ export function ModeTabs({
               aria-label={t("mode.failover")}
             />
           </label>
+        </HoverTip>
+      )}
+      {onOpenRoleBindings && (
+        <HoverTip content={t("mode.roleBindings")}>
+          <Button
+            variant="quiet"
+            size="compact"
+            className="h-8 w-8 shrink-0 px-0"
+            aria-label={t("mode.roleBindings")}
+            onClick={onOpenRoleBindings}
+          >
+            <ListChecks className="h-4 w-4" strokeWidth={1.75} />
+          </Button>
         </HoverTip>
       )}
       {onOpenRouteSettings && (

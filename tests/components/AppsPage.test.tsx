@@ -1755,7 +1755,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     } finally {
       now.mockRestore();
     }
-    expect(updateButton("Claude Code")).toBeDisabled();
+    await waitFor(() => expect(updateButton("Claude Code")).toBeDisabled());
     expect(updateButton("Claude Code")).toHaveAttribute("aria-busy", "true");
     // 缓存过期，重新挂载时别的工具会重新探测版本；等探测完、按钮出来再点「全部更新」，
     // 不然机器慢时这几行还在加载

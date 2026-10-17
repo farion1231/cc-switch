@@ -122,6 +122,8 @@
     "stackReselectHint": "CC Switch istemci yapılandırmasını yeniden yazdığında, model seçicide toplanan modeli tekrar seçin",
     "stackPartial": "Kısmen yazılı; bir sonraki değişiklikte veya CC Switch yeniden başlatıldığında tamamlanacak",
     "stackFailed": "Birleştirilmiş modeller kaydedilemedi: {{error}}",
+    "roleBindingsSaved": "Model eşlemeleri kaydedildi",
+    "roleBindingsFailed": "Model eşlemeleri kaydedilemedi: {{error}}",
     "stackDefaultCannotRemove": "Varsayılan sağlayıcı kaldırılamaz; önce başka bir sağlayıcıyı varsayılan olarak ayarlayın",
     "stackDefaultHint": "Bu varsayılan sağlayıcıdır: listesindeki ilk model Claude Code'nin başlangıç ​​ve arka plan görevlerini yönetir",
     "officialModelsBundled": "Resmi model listesi henüz mevcut olmadığından şimdilik Codex'nin yerleşik listesi kullanılıyor ve hesaba özel modeller eksik olabilir",
@@ -4139,6 +4141,14 @@
     "routeSettings": "Yönlendirme ayarları",
     "routeSettingsTitle": "Yönlendirme ayarları",
     "moreRouteSettings": "Daha fazla yönlendirme ayarı",
+    "roleBindings": "Model eşlemeleri",
+    "roleBindingsTitle": "Model eşlemeleri",
+    "roleBindingsLead": "Claude Code model kademelerinin her biri için bir model seçin. Varsayılanı izlemek, varsayılan sağlayıcının ilk modelini kullanır.",
+    "roleBindingDefault": "Varsayılanı izle",
+    "roleBindingInvalidTag": "Kullanılamıyor",
+    "roleBindingInvalid": "Kayıtlı model artık toplama listesinde yok. Başka bir model seçin veya varsayılanı izleyin.",
+    "roleBindingsUnavailable": "Toplu model listesi şu anda okunamıyor. Lütfen daha sonra tekrar deneyin.",
+
     "queueMoved": "{{name}}, {{position}} konumuna taşındı.",
     "status": {
       "directLead": "Doğrudan etkin · şuraya bağlı:",

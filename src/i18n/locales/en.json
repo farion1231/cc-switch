@@ -122,6 +122,8 @@
     "stackReselectHint": "Whenever CC Switch rewrites the client config, pick the aggregated model again in the model picker",
     "stackPartial": "Partly written; it will be finished on the next change or when CC Switch restarts",
     "stackFailed": "Failed to save aggregated models: {{error}}",
+    "roleBindingsSaved": "Model bindings saved",
+    "roleBindingsFailed": "Failed to save model bindings: {{error}}",
     "stackDefaultCannotRemove": "The default provider cannot be removed; set another provider as the default first",
     "stackDefaultHint": "This is the default provider: the first model in its list handles Claude Code's startup and background tasks",
     "officialModelsBundled": "The official model list isn't available yet, so Codex's built-in list is used for now and account-specific models may be missing",
@@ -4210,6 +4212,13 @@
       "autoReviewUnavailable": "The selected model is no longer in the aggregation (the provider was removed or stopped publishing it), so approvals use the default reviewer for now. It comes back once you add it again.",
       "saveFailed": "Failed to save: {{error}}"
     },
+    "roleBindings": "Model bindings",
+    "roleBindingsTitle": "Model bindings",
+    "roleBindingsLead": "Choose a model for each Claude Code tier. Following the default uses the default provider's first model.",
+    "roleBindingDefault": "Follow default",
+    "roleBindingInvalidTag": "Unavailable",
+    "roleBindingInvalid": "The saved model is no longer in aggregation. Choose another model or follow the default.",
+    "roleBindingsUnavailable": "The aggregated model list is unavailable. Try again shortly.",
     "queueMoved": "{{name}} moved to position {{position}}.",
     "status": {
       "directLead": "Direct is active · connected to",

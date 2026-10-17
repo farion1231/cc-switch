@@ -1659,6 +1659,7 @@ pub fn run() {
             commands::switch_proxy_provider,
             commands::get_proxy_stack,
             commands::set_proxy_stack_member,
+            commands::set_proxy_stack_role_bindings,
             commands::adopt_codex_stack_catalog,
             commands::restart_codex_app_server_daemon,
             commands::acknowledge_codex_stale_clients,

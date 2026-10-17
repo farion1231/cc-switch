@@ -122,6 +122,8 @@
     "stackReselectHint": "CC Switch 每次改寫用戶端設定後，如果模型選擇器裡選的是聚合的模型，需要重新選一次",
     "stackPartial": "已部分寫入，將在下次操作或重新啟動 CC Switch 時補完",
     "stackFailed": "聚合的模型儲存失敗：{{error}}",
+    "roleBindingsSaved": "模型綁定已儲存",
+    "roleBindingsFailed": "模型綁定儲存失敗：{{error}}",
     "stackDefaultCannotRemove": "預設供應商不能移除，請先把別的供應商設為預設",
     "stackDefaultHint": "它是預設供應商：列表裡的第一個模型負責 Claude Code 啟動和背景任務",
     "officialModelsBundled": "官方模型列表暫未取得，暫用 Codex 內建列表，可能缺少帳號專屬模型",
@@ -4211,6 +4213,13 @@
       "autoReviewUnavailable": "所選模型已不在聚合名單裡（成員被移除或模型不再發布），審批暫時使用預設模型；加回來後自動恢復。",
       "saveFailed": "儲存失敗：{{error}}"
     },
+    "roleBindings": "模型綁定",
+    "roleBindingsTitle": "模型綁定",
+    "roleBindingsLead": "為 Claude Code 的四個模型檔位分別指定模型；選「跟隨預設」時使用預設供應商的第一個模型。",
+    "roleBindingDefault": "跟隨預設",
+    "roleBindingInvalidTag": "已失效",
+    "roleBindingInvalid": "已儲存的模型不在聚合名單中；請重新選擇或改為跟隨預設。",
+    "roleBindingsUnavailable": "暫時無法讀取聚合模型清單，請稍後重試。",
     "queueMoved": "{{name}} 移到第 {{position}} 位。",
     "status": {
       "directLead": "直連生效中 · 直接連線",

@@ -3,9 +3,9 @@
 //! Stack 模式和路由模式在界面上二选一，内部都是代理模式：Stack 模式多一个开关位
 //! （[`StackState::enabled`]）。Stack 模式下供应商列表是累加式的：添加的每一家（第三方）的
 //! 模型以带保留前缀的 id 发布给客户端，选中后请求直达那一家；不带前缀的请求发往「默认」
-//! 那家（代理路由），不做故障转移。Claude Code 的四档别名（启动默认、后台任务、子代理别名）
-//! 都指向默认那家列表里的第一个模型（[`claude_route_default`]），平时用哪个由用户在
-//! `/model` 里选。
+//! 那家（代理路由），不做故障转移。Claude Code 的四档别名可绑定名单中不同模型，
+//! 没绑定的档位跟随默认那家列表里的第一个模型（[`claude_route_default`]）；
+//! 平时主对话用哪个模型由用户在 `/model` 里选。
 //!
 //! - 名单和 key 登记簿存在 `live-state.json`（[`StackState`]），增删和客户端文件在同一个
 //!   操作里提交（`controller::set_stack_member`）；默认那家也在名单里，不能移除；
@@ -18,6 +18,7 @@
 
 use serde::Serialize;
 use serde_json::{Map, Value};
+use std::collections::BTreeMap;
 
 use crate::app_config::AppType;
 use crate::database::Database;
@@ -28,7 +29,7 @@ use crate::provider::{ClaudeStackModel, Provider};
 use crate::proxy::model_mapper::strip_one_m_suffix_for_upstream;
 use crate::services::provider::codex_client_catalog::StaleClients;
 
-use super::state::{self, StackState};
+use super::state::{self, StackRoleBindings, StackRoleTarget, StackState};
 
 /// Claude Code 的 Stack 模型 id：`ccs-claude-<key>--<model>`。id 里要有 `claude` 才进
 /// `/model` 选择器，不以 `claude-` 开头 MAX 窗口才生效。
@@ -555,15 +556,58 @@ pub fn claude_published(members: &[Member]) -> Vec<StackModel> {
         .collect()
 }
 
-/// 默认那家（路由）列表里的第一个模型：Stack 模式下 Claude Code 的四档别名（启动默认、后台
-/// 任务、子代理别名）都指向它。列表的顺序就是模型映射的顺序（`ANTHROPIC_MODEL` 在前），
-/// 所以没配列表的行用的是它的主模型。路由那家不在发布的成员里（Stack 模式关着、它没有模型）
-/// 时没有。
+/// 默认那家（路由）列表里的第一个模型：未绑定的 Claude Code 档位跟随它。
+/// 列表的顺序就是模型映射的顺序（`ANTHROPIC_MODEL` 在前），所以没配列表的行
+/// 用的是它的主模型。路由那家不在发布的成员里或没有模型时返回 None。
 pub fn claude_route_default(members: &[Member]) -> Option<StackModel> {
     let route = members.iter().find(|member| member.route)?;
     claude_models(&route.key, &route.provider)
         .into_iter()
         .next()
+}
+
+pub const CLAUDE_ROLES: [&str; 4] = ["haiku", "sonnet", "opus", "fable"];
+
+pub fn role_target<'a>(bindings: &'a StackRoleBindings, role: &str) -> Option<&'a StackRoleTarget> {
+    match role {
+        "haiku" => bindings.haiku.as_ref(),
+        "sonnet" => bindings.sonnet.as_ref(),
+        "opus" => bindings.opus.as_ref(),
+        "fable" => bindings.fable.as_ref(),
+        _ => None,
+    }
+}
+
+/// 按成员身份和完整模型 ID 匹配；不能靠模型名猜测另一家的目标。
+pub fn claude_role_candidate(members: &[Member], target: &StackRoleTarget) -> Option<StackModel> {
+    let member = members
+        .iter()
+        .find(|member| member.provider.id == target.provider_id)?;
+    claude_models(&member.key, &member.provider)
+        .into_iter()
+        .find(|model| model.id == target.model_id)
+}
+
+pub fn claude_role_models(
+    members: &[Member],
+    bindings: &StackRoleBindings,
+) -> (BTreeMap<&'static str, StackModel>, Vec<&'static str>) {
+    let fallback = claude_route_default(members);
+    let mut models = BTreeMap::new();
+    let mut invalid = Vec::new();
+    for role in CLAUDE_ROLES {
+        let selected = role_target(bindings, role).and_then(|target| {
+            let candidate = claude_role_candidate(members, target);
+            if candidate.is_none() {
+                invalid.push(role);
+            }
+            candidate
+        });
+        if let Some(model) = selected.or_else(|| fallback.clone()) {
+            models.insert(role, model);
+        }
+    }
+    (models, invalid)
 }
 
 /// 这个应用在 Stack 模式（代理模式且 Stack 模式开着）。读不出状态按不在处理。
@@ -782,7 +826,7 @@ pub struct StackMemberView {
     pub provider_id: String,
     /// 发布给客户端的模型 id。
     pub model_ids: Vec<String>,
-    /// 这家是默认那家（代理路由）。Claude 的照常发布，第一个模型同时占着四档别名；Codex 的
+    /// 这家是默认那家（代理路由）。Claude 的照常发布，第一个模型供未绑定档位使用；Codex 的
     /// 模型是默认路由的目录行，`model_ids` 为空，默认换到别家后才带前缀发布。
     pub route: bool,
     /// 这家不做默认、只做成员时发布几个模型。换默认的预览用它：现在的默认那家（Codex、
@@ -805,6 +849,14 @@ pub struct StackSubagentModel {
     pub default_effort: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackRoleCandidate {
+    pub provider_id: String,
+    pub model_id: String,
+    pub display_name: String,
+}
+
 /// 给前端：Stack 模式的状态、名单和提示。
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -812,6 +864,13 @@ pub struct StackView {
     /// 在 Stack 模式（代理模式且 Stack 模式开着）。
     pub active: bool,
     pub members: Vec<StackMemberView>,
+    /// Claude 四档用户保存的选择；空档跟随当前默认供应商。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role_bindings: Option<StackRoleBindings>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub role_candidates: Vec<StackRoleCandidate>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub role_invalid: Vec<&'static str>,
     /// Codex Stack 模型客户端看不到或看不全：`routeOwnsCatalog` 路由那家自己管理模型目录
     /// 文件，Stack 模型不发布；官方做路由时官方模型列表暂未取到：`officialModelsBundled`
     /// 暂用 Codex 自带的列表（可能缺账号专属的模型），`officialModelsUnavailable` Stack 模型
