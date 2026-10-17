@@ -184,6 +184,191 @@ fn collect_files_named(root: &Path, name: &str, files: &mut Vec<PathBuf>, depth:
     }
 }
 
+/// 这份 `updates.jsonl` 和父会话用量的关系。
+enum GrokUsageSource {
+    /// 交互会话、headless、worktree，或没有可读 summary 时，用量记在本文件。
+    Own,
+    /// `session_kind` 为 subagent、subagent_fork、subagent_resume。
+    /// grok-build 的 `UsageLedger::record_subagent` 把子用量折进父轮，
+    /// 父会话的 `turn_completed` 已经包含它。子代理尚未折完时父轮不含这部分，
+    /// 跳过整文件会少计；CLI 自己把那种情况标成少计。
+    FoldedIntoParent,
+    /// 用户 fork 逐行复制父会话的 `prompt_id`，再追加新轮次。
+    Forked {
+        copied_prompt_ids: std::collections::HashSet<String>,
+    },
+}
+
+fn session_id_from_updates(file_path: &Path) -> String {
+    file_path
+        .parent()
+        .and_then(|dir| dir.file_name())
+        .and_then(|name| name.to_str())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+fn grok_usage_source(updates_path: &Path) -> GrokUsageSource {
+    let Some(session_dir) = updates_path.parent() else {
+        return GrokUsageSource::Own;
+    };
+    let summary_path = session_dir.join("summary.json");
+    let Ok(text) = fs::read_to_string(&summary_path) else {
+        return GrokUsageSource::Own;
+    };
+    let Ok(summary) = serde_json::from_str::<serde_json::Value>(&text) else {
+        log::warn!(
+            "[GROK-SYNC] 无法解析 {}，按独立会话导入",
+            summary_path.display()
+        );
+        return GrokUsageSource::Own;
+    };
+    let kind = summary
+        .get("session_kind")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    match kind {
+        "subagent" | "subagent_fork" | "subagent_resume" => GrokUsageSource::FoldedIntoParent,
+        "fork" => forked_usage_source(updates_path, summary.get("parent_session_id")),
+        _ => GrokUsageSource::Own,
+    }
+}
+
+fn forked_usage_source(
+    updates_path: &Path,
+    parent_session_id: Option<&serde_json::Value>,
+) -> GrokUsageSource {
+    let parent_id = parent_session_id
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    if parent_id.is_empty() {
+        log::warn!(
+            "[GROK-SYNC] fork 会话缺少 parent_session_id，整文件导入: {}",
+            updates_path.display()
+        );
+        return GrokUsageSource::Own;
+    }
+    let Some(parent_updates) = find_parent_updates(updates_path, parent_id) else {
+        log::warn!(
+            "[GROK-SYNC] 找不到 fork 父会话 {parent_id} 的 updates.jsonl，整文件导入: {}",
+            updates_path.display()
+        );
+        return GrokUsageSource::Own;
+    };
+    let Some(copied_prompt_ids) = prompt_ids_in_updates(&parent_updates) else {
+        return GrokUsageSource::Own;
+    };
+    GrokUsageSource::Forked { copied_prompt_ids }
+}
+
+/// 布局是 `{grok_home}/{sessions|archived_sessions}/{enc-cwd}/{session_id}/updates.jsonl`。
+fn find_parent_updates(child_updates: &Path, parent_id: &str) -> Option<PathBuf> {
+    let session_dir = child_updates.parent()?;
+    let project_dir = session_dir.parent()?;
+    let sibling = project_dir.join(parent_id).join("updates.jsonl");
+    if sibling.is_file() && sibling != child_updates {
+        return Some(sibling);
+    }
+    let sessions_root = project_dir.parent()?;
+    let grok_home = sessions_root.parent()?;
+    for root_name in ["sessions", "archived_sessions"] {
+        let Ok(entries) = fs::read_dir(grok_home.join(root_name)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if entry
+                .metadata()
+                .map(|meta| meta.is_symlink())
+                .unwrap_or(true)
+            {
+                continue;
+            }
+            let candidate = entry.path().join(parent_id).join("updates.jsonl");
+            if candidate.is_file() && candidate != child_updates {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn prompt_ids_in_updates(path: &Path) -> Option<std::collections::HashSet<String>> {
+    let metadata = fs::metadata(path).ok()?;
+    if metadata.len() > MAX_GROK_FILE_BYTES {
+        log::warn!(
+            "[GROK-SYNC] 父会话 updates.jsonl 超过上限，fork 按独立会话导入: {}",
+            path.display()
+        );
+        return None;
+    }
+    let content = fs::read_to_string(path).ok()?;
+    Some(
+        parse_grok_usage_events(&content)
+            .into_iter()
+            .map(|event| event.prompt_id)
+            .filter(|prompt_id| !prompt_id.is_empty())
+            .collect(),
+    )
+}
+
+fn nonzero_model_rows(events: &[GrokUsageEvent]) -> u32 {
+    events
+        .iter()
+        .map(|event| {
+            event
+                .per_model
+                .iter()
+                .filter(|(_, turn)| !turn.is_zero())
+                .count()
+        })
+        .sum::<usize>() as u32
+}
+
+fn delete_grok_session_rows(
+    db: &Database,
+    session_id: &str,
+    turn_key: Option<&str>,
+) -> Result<(), AppError> {
+    if session_id.is_empty() || session_id == "unknown" {
+        return Ok(());
+    }
+    let mut prefix = format!("grok_session:{session_id}:");
+    if let Some(turn_key) = turn_key {
+        if turn_key.is_empty() {
+            return Ok(());
+        }
+        prefix.push_str(turn_key);
+        prefix.push(':');
+    }
+    let pattern = format!("{}%", escape_like(&prefix));
+    let conn = lock_conn!(db.conn);
+    conn.execute(
+        "DELETE FROM proxy_request_logs
+         WHERE data_source = 'grok_session' AND request_id LIKE ?1 ESCAPE '\\'",
+        rusqlite::params![pattern],
+    )
+    .map_err(|error| AppError::Database(format!("删除已折进父轮的 Grok 用量失败: {error}")))?;
+    Ok(())
+}
+
+fn escape_like(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+fn drop_copied_fork_rows(
+    db: &Database,
+    session_id: &str,
+    copied_prompt_ids: &std::collections::HashSet<String>,
+) -> Result<(), AppError> {
+    for prompt_id in copied_prompt_ids {
+        delete_grok_session_rows(db, session_id, Some(prompt_id))?;
+    }
+    Ok(())
+}
+
 /// 同步单个 updates.jsonl 文件。游标来自调用方批量预取。
 fn sync_single_grok_file(
     db: &Database,
@@ -207,7 +392,34 @@ fn sync_single_grok_file(
     }
 
     let last_modified = cursors.get(&file_path_str).map_or(0, |c| c.last_modified);
-    if file_modified <= last_modified {
+    // 会话 ID = 会话目录名（与 summary.json 的 info.id 一致）。request_id
+    // 唯一性押在该 UUIDv7 全局唯一上：同 ID 的归档/活跃副本经 UPSERT 幂等
+    // 收敛（有意），不同 <enc-cwd> 下撞 ID 视为不可能。
+    let session_id = session_id_from_updates(file_path);
+    // 游标只看 updates.jsonl 的 mtime。升级前已经入库的重复行，文件本身不再变化，
+    // 仍要靠 summary.json 把它们清掉。30 天 rollup 已经剪掉的明细不在这张表里，清不掉。
+    let source = grok_usage_source(file_path);
+    let file_changed = file_modified > last_modified;
+
+    if matches!(source, GrokUsageSource::FoldedIntoParent) {
+        delete_grok_session_rows(db, &session_id, None)?;
+        if !file_changed {
+            return Ok(SessionSyncResult::default());
+        }
+        let content = fs::read_to_string(file_path)
+            .map_err(|e| AppError::Config(format!("无法读取文件: {e}")))?;
+        let events = parse_grok_usage_events(&content);
+        update_sync_state(db, &file_path_str, file_modified, events.len() as i64)?;
+        return Ok(SessionSyncResult {
+            skipped: nonzero_model_rows(&events),
+            ..SessionSyncResult::default()
+        });
+    }
+
+    if let GrokUsageSource::Forked { copied_prompt_ids } = &source {
+        drop_copied_fork_rows(db, &session_id, copied_prompt_ids)?;
+    }
+    if !file_changed {
         return Ok(SessionSyncResult::default());
     }
 
@@ -218,16 +430,6 @@ fn sync_single_grok_file(
     let content = fs::read_to_string(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件: {e}")))?;
     let events = parse_grok_usage_events(&content);
-
-    // 会话 ID = 会话目录名（与 summary.json 的 info.id 一致）。request_id
-    // 唯一性押在该 UUIDv7 全局唯一上：同 ID 的归档/活跃副本经 UPSERT 幂等
-    // 收敛（有意），不同 <enc-cwd> 下撞 ID 视为不可能。
-    let session_id = file_path
-        .parent()
-        .and_then(|dir| dir.file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_string();
 
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -245,6 +447,17 @@ fn sync_single_grok_file(
         if now.saturating_sub(event.created_at) < SETTLE_WINDOW_SECONDS {
             deferred = true;
             break;
+        }
+
+        if let GrokUsageSource::Forked { copied_prompt_ids } = &source {
+            if !event.prompt_id.is_empty() && copied_prompt_ids.contains(&event.prompt_id) {
+                result.skipped += event
+                    .per_model
+                    .iter()
+                    .filter(|(_, turn)| !turn.is_zero())
+                    .count() as u32;
+                continue;
+            }
         }
 
         // 接管守卫按事件时刻判定一次，整条事件的所有模型行同进退；
