@@ -208,6 +208,14 @@
     "geminiConfig": "Gemini 配置",
     "geminiConfigHint": "使用 .env 格式配置 Gemini",
     "form": {
+      "agy": {
+        "connectionHint": "不填 API Key 和请求地址时使用 agy 自身的 Google 登录。填写 Key 但不填地址时使用 Google 默认 API；第三方地址须兼容 Gemini API。切换后请新开终端或重启 agy，已运行的会话不会自动切换。登录模式的模型列表读取当前 agy 配置。 登录模式请使用模型列表中的显示名称；API 模式使用接口模型 ID。",
+        "keyFieldsHint": "地址、Key 和模型随供应商切换；Antigravity 的其他原生设置保持不变。",
+        "envFile": "启动环境变量",
+        "envFileHint": "CC Switch 会在启动 agy 时传入 API Key、请求地址和模型。其他环境变量不会应用。",
+        "configJson": "模型配置（CC Switch 格式）",
+        "configJsonHint": "这里仅支持模型设置，其他 Antigravity 选项请在 agy 中调整；MCP 在 MCP 面板中管理。"
+      },
       "gemini": {
         "model": "模型",
         "oauthTitle": "OAuth 认证模式",
@@ -1082,7 +1090,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "agy": "Antigravity"
   },
   "mcode": {
     "empty": {
@@ -1321,6 +1330,7 @@
     "deleteSessionEllipsis": "删除会话",
     "deleteEllipsis": "删除",
     "selectSessionLabel": "选择 {{title}}",
+    "agyDeleteHint": "请在 Antigravity 中删除会话，以同步清理运行状态",
     "mcodeDeleteHint": "请在 MiniMax Code 中删除",
     "groupMeta": "{{count}} 个会话 · {{time}}",
     "bucketToday": "今天",
@@ -2532,7 +2542,8 @@
       "cacheWrite": "缓存写入"
     },
     "prevMonth": "上个月",
-    "nextMonth": "下个月"
+    "nextMonth": "下个月",
+    "agyUsageHint": "Antigravity 显示会话日志的原始 Token；缺失的历史模型记为 unknown。日志未提供可靠计费信息，显示的 0 费用不代表免费。"
   },
   "usageScript": {
     "title": "配置用量查询",

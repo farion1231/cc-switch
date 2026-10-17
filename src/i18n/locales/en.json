@@ -208,6 +208,14 @@
     "geminiConfig": "Gemini Configuration",
     "geminiConfigHint": "Use .env format to configure Gemini",
     "form": {
+      "agy": {
+        "connectionHint": "Leave the API key and endpoint empty to use agy's Google sign-in. A key without an endpoint uses Google's default API; third-party endpoints must support the Gemini API. Open a new terminal or restart agy after switching. Running sessions keep their configuration. Login-mode model discovery uses the current agy configuration. In login mode, use the display name from the model list; API mode uses API model IDs.",
+        "keyFieldsHint": "The endpoint, key and model follow the provider; other native Antigravity settings are preserved.",
+        "envFile": "Launcher environment variables",
+        "envFileHint": "CC Switch passes the API key, endpoint and model when starting agy. Other environment variables are not applied.",
+        "configJson": "Model configuration (CC Switch format)",
+        "configJsonHint": "Only model settings are supported here. Change other Antigravity options in agy; manage MCP in the MCP panel."
+      },
       "gemini": {
         "model": "Model",
         "oauthTitle": "OAuth Authentication Mode",
@@ -1082,7 +1090,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "agy": "Antigravity"
   },
   "mcode": {
     "empty": {
@@ -1321,6 +1330,7 @@
     "deleteSessionEllipsis": "Delete sessions",
     "deleteEllipsis": "Delete",
     "selectSessionLabel": "Select {{title}}",
+    "agyDeleteHint": "Delete this session in Antigravity to also remove its runtime state",
     "mcodeDeleteHint": "Delete it in MiniMax Code",
     "groupMeta": "{{count}} sessions · {{time}}",
     "bucketToday": "Today",
@@ -2532,7 +2542,8 @@
       "cacheWrite": "Cache write"
     },
     "prevMonth": "Previous month",
-    "nextMonth": "Next month"
+    "nextMonth": "Next month",
+    "agyUsageHint": "Antigravity shows native session token counters; missing historical models are unknown. The log does not provide reliable billing data; a displayed cost of 0 does not mean free usage."
   },
   "usageScript": {
     "title": "Configure Usage Query",

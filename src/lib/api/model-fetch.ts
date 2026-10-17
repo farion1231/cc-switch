@@ -61,6 +61,11 @@ export async function fetchModelsForConfig(
   });
 }
 
+/** Models reported by the locally installed Antigravity runtime. */
+export async function getAgyModels(): Promise<FetchedModel[]> {
+  return invoke("get_agy_models");
+}
+
 export interface OpenCodeModelRef {
   providerId: string;
   modelId: string;

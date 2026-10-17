@@ -27,6 +27,7 @@ export function ProviderEmptyState({
     appId === "claude" ||
     appId === "codex" ||
     appId === "gemini" ||
+    appId === "agy" ||
     appId === "grokbuild";
 
   return (
