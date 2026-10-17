@@ -2422,6 +2422,9 @@
     "trend": {
       "title": "使用状況の推移 · {{range}}",
       "metricLabel": "推移の指標",
+      "chartTypeLabel": "グラフの種類",
+      "bar": "棒グラフ",
+      "area": "面グラフ",
       "requests": "リクエスト",
       "tokens": "Tokens",
       "cost": "コスト",
