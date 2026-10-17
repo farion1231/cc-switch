@@ -688,17 +688,51 @@ pub(crate) struct DedupKey<'a> {
 
 /// session 日志写入前的统一去重判定。
 ///
-/// 命中以下任一条件即跳过插入：① `request_id` 已存在；② 时间窗口内存在
-/// 与 `key` 匹配的 proxy 日志（指纹去重）。
+/// 命中以下任一条件即跳过插入：
+/// ① `session_usage_dedup` 持久化账本已存在（即使明细已被 prune 剪枝仍有效）；
+/// ② `proxy_request_logs` 明细表中 `request_id` 已存在；
+/// ③ 时间窗口内存在与 `key` 匹配的 proxy 日志（指纹去重）。
 pub(crate) fn should_skip_session_insert(
     conn: &Connection,
+    data_source: &str,
     request_id: &str,
     key: &DedupKey,
 ) -> Result<bool, AppError> {
+    if session_dedup_request_id_exists(conn, data_source, request_id)? {
+        return Ok(true);
+    }
     if proxy_request_id_exists(conn, request_id)? {
         return Ok(true);
     }
     has_matching_proxy_usage_log(conn, key)
+}
+
+fn session_dedup_request_id_exists(
+    conn: &Connection,
+    data_source: &str,
+    request_id: &str,
+) -> Result<bool, AppError> {
+    conn.prepare_cached(
+        "SELECT EXISTS(SELECT 1 FROM session_usage_dedup WHERE data_source = ?1 AND request_id = ?2)",
+    )
+    .and_then(|mut stmt| stmt.query_row(params![data_source, request_id], |row| row.get::<_, bool>(0)))
+    .map_err(|e| AppError::Database(format!("查询 session_usage_dedup 失败: {e}")))
+}
+
+/// 登记会话消息到持久化去重账本。即使 30 天后明细从 proxy_request_logs 剪枝删除，
+/// 该账本仍会保留 request_id，防止会话重扫时重复导入导致 rollup 统计被死循环放大。
+pub(crate) fn record_session_usage_dedup(
+    conn: &Connection,
+    data_source: &str,
+    request_id: &str,
+) -> Result<(), AppError> {
+    conn.prepare_cached(
+        "INSERT OR IGNORE INTO session_usage_dedup (data_source, request_id, semantic_id, has_entry_id)
+         VALUES (?1, ?2, ?2, 0)",
+    )
+    .and_then(|mut stmt| stmt.execute(params![data_source, request_id]))
+    .map_err(|e| AppError::Database(format!("写入 session_usage_dedup 失败: {e}")))?;
+    Ok(())
 }
 
 fn proxy_request_id_exists(conn: &Connection, request_id: &str) -> Result<bool, AppError> {

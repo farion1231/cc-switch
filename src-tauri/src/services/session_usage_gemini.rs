@@ -272,7 +272,7 @@ fn insert_gemini_session_entry(
         cache_creation_tokens: 0,
         created_at,
     };
-    if should_skip_session_insert(&conn, request_id, &dedup_key)? {
+    if should_skip_session_insert(&conn, "gemini_session", request_id, &dedup_key)? {
         return Ok(false);
     }
 
@@ -364,6 +364,13 @@ fn insert_gemini_session_entry(
 
     // changes() > 0 表示新插入或已更新，== 0 表示值完全相同（无实际变更）
     let changed = conn.changes() > 0;
+    if changed {
+        crate::services::usage_stats::record_session_usage_dedup(
+            &conn,
+            "gemini_session",
+            request_id,
+        )?;
+    }
     Ok(changed)
 }
 
