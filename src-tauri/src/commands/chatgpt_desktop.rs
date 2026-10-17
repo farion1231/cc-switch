@@ -840,6 +840,8 @@ mod tests {
         let bundled_cli = verified_app.join("Contents/Resources/codex");
         let unrelated_executable = verified_app.join("Contents/Resources/codex-command-runner");
         let unrelated_cli = unverified_app.join("Contents/Resources/codex");
+        std::fs::create_dir_all(bundled_cli.parent().unwrap()).unwrap();
+        std::fs::write(&bundled_cli, b"placeholder").unwrap();
 
         assert!(is_macos_cli_path_with_verified_apps(
             &bundled_cli,
@@ -853,6 +855,20 @@ mod tests {
             &unrelated_executable,
             std::slice::from_ref(&verified_app)
         ));
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("bin/codex");
+            std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&bundled_cli, &link).unwrap();
+            assert!(!is_macos_cli_path_with_verified_apps(
+                &link,
+                std::slice::from_ref(&verified_app)
+            ));
+            assert!(is_macos_cli_path_with_verified_apps(
+                &std::fs::canonicalize(&link).unwrap(),
+                std::slice::from_ref(&verified_app)
+            ));
+        }
     }
 
     #[test]

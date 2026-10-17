@@ -7843,7 +7843,7 @@ mod tests {
         }
 
         /// macOS 把包内的 codex 软链进 PATH：入口看不出来，要按真身认。
-        #[cfg(unix)]
+        #[cfg(all(unix, not(target_os = "macos")))]
         #[test]
         fn codex_symlinked_out_of_chatgpt_desktop_is_recognized() {
             let dir = tempfile::tempdir().unwrap();
