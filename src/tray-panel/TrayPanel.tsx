@@ -44,7 +44,7 @@ const TAB_KEY = "cc-switch-tray-tab";
 /** 主界面保存语言用的键 */
 const LANGUAGE_KEY = "language";
 const MAIN_MAX_HEIGHT = 620;
-/** 卡片分开摆（macOS）时窗口在一次弹出里固定的最大高度 */
+/** 使用固定画布时，窗口在一次弹出里的最大高度 */
 const CANVAS_MAX_HEIGHT = 760;
 /** 分开摆时窗口四周留的透明边距，给卡片的阴影（系统窗口阴影已关掉） */
 const SHADOW_MARGIN = 16;
@@ -429,6 +429,7 @@ export function TrayPanel() {
   const subRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const hoverTimer = useRef<number | undefined>(undefined);
+  const layoutFrame = useRef<number | undefined>(undefined);
   const lastLayout = useRef("");
   const placementRef = useRef(placement);
   placementRef.current = placement;
@@ -501,6 +502,8 @@ export function TrayPanel() {
     if (!p || !main) return;
     const sub = subRef.current;
     const floating = p.layout === "floating";
+    const windowsJoined = p.platform === "windows" && !floating;
+    const fixedCanvas = floating || windowsJoined;
 
     main.style.minHeight = "";
     if (sub) sub.style.minHeight = "";
@@ -520,15 +523,15 @@ export function TrayPanel() {
     let bottom: number;
     let mainX: number;
     let width: number;
-    if (floating) {
-      // 分开摆（macOS）：这次弹出期间窗口固定为能放下两块卡片的最大范围，展开 / 切换
-      // 子面板只挪网页里的卡片和下面的玻璃，不改窗口大小和位置，所以不会跳。
+    if (fixedCanvas) {
+      // macOS 和 Windows 在这次弹出期间固定窗口范围，不让展开 / 切换子面板
+      // 触发 WebView resize。Windows 的原生窗口区域只露出实际的卡片，其余区域可点击穿透。
       const canvas = floatingCanvas(p);
       top = canvas.top;
       bottom = canvas.bottom;
       mainX = p.side === "left" ? p.subWidth + p.gap : 0;
       width = p.mainWidth + p.gap + p.subWidth;
-      if (sub) {
+      if (sub && floating) {
         // 子面板顶边对齐展开的那一行
         const row = openApp
           ? main.querySelector<HTMLElement>(`[data-app-row="${openApp}"]`)
@@ -580,9 +583,33 @@ export function TrayPanel() {
     };
     const key = JSON.stringify(layout);
     if (key === lastLayout.current) return;
+    const firstLayout = lastLayout.current === "";
     lastLayout.current = key;
-    void trayPanelApi.layout(layout);
+    if (layoutFrame.current !== undefined) {
+      window.cancelAnimationFrame(layoutFrame.current);
+    }
+    layoutFrame.current = undefined;
+    if (windowsJoined && !firstLayout) {
+      // 先让新列表绘制到固定画布，再扩展原生可见区域，避免先露出未绘制的底色。
+      layoutFrame.current = window.requestAnimationFrame(() => {
+        layoutFrame.current = window.requestAnimationFrame(() => {
+          layoutFrame.current = undefined;
+          void trayPanelApi.layout(layout);
+        });
+      });
+    } else {
+      void trayPanelApi.layout(layout);
+    }
   }, [openApp, theme.explicit]);
+
+  useEffect(
+    () => () => {
+      if (layoutFrame.current !== undefined) {
+        window.cancelAnimationFrame(layoutFrame.current);
+      }
+    },
+    [],
+  );
 
   useLayoutEffect(() => {
     relayout();
@@ -724,6 +751,7 @@ export function TrayPanel() {
   return (
     <div
       className="relative h-full w-full"
+      data-platform={placement.platform}
       onMouseDown={(event) => {
         // 点到两块卡片之外的透明处：先收起子面板，再点一次收起面板
         if (event.target !== event.currentTarget) return;

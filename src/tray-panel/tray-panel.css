@@ -1,4 +1,4 @@
-/* 背景交给系统玻璃（macOS NSGlassEffectView / NSVisualEffectView，Windows Acrylic），网页本身透明 */
+/* macOS 背景交给系统玻璃，其余平台只给卡片画磨砂背景；画布本身始终透明 */
 html,
 body.tray-panel,
 body.tray-panel #root {
@@ -37,15 +37,7 @@ html.dark[data-glass="native"][data-layout="floating"] .tp-card {
     0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
-/* Windows：整窗 Acrylic，卡片并成两栏 */
-html[data-glass="native"][data-layout="joined"] .tp-card {
-  background: rgba(249, 249, 250, 0.62);
-}
-html.dark[data-glass="native"][data-layout="joined"] .tp-card {
-  background: rgba(30, 30, 33, 0.62);
-}
-
-/* 兼容毛玻璃：系统没有可用的玻璃材质（Linux、Win11 22H2 之前的 Windows），网页自己画——
+/* 兼容磨砂背景：Windows、Linux 在卡片内绘制，保持固定画布的其余部分透明——
    半透明底色 + 背景模糊（只作用于网页内容）+ 顶部高光和细描边，看起来像磨砂玻璃 */
 html[data-glass="frosted"] .tp-card {
   background:
@@ -72,6 +64,17 @@ html.dark[data-glass="frosted"] .tp-card {
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.08),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* Windows：移除整窗 Acrylic 后，卡片自己提供完整底色，避免桌面内容透进菜单。
+   保留卡片上的控件、选中态和用量区块的层次；只有卡片之外的画布透明。 */
+html [data-platform="windows"] .tp-card {
+  background: #ebebed;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+html.dark [data-platform="windows"] .tp-card {
+  background: #242428;
 }
 
 /* 两栏时子面板和主面板之间一条分隔线 */

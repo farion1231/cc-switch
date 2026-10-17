@@ -4,8 +4,8 @@
 //! - macOS：窗口透明，按前端回报的卡片位置在网页下面垫原生玻璃——macOS 26 用
 //!   `NSGlassEffectView`（Liquid Glass），更早的系统用 `NSVisualEffectView` 的 Popover 材质。
 //!   两块卡片各垫一块，中间留缝。
-//! - Windows：Win11 22H2+ 整窗系统 Acrylic，更早的系统没有可用的玻璃材质，网页画兼容的毛玻璃；
-//!   Win11 圆角；两块卡片并成两栏。
+//! - Windows：固定透明画布，网页只为卡片绘制不透明背景，两块卡片并成两栏；
+//!   原生窗口区域跟随卡片裁剪，画布其余部分透明且不拦截鼠标。
 //! - Linux：AppIndicator 不派发点击事件，点图标仍是原生菜单，菜单最上面一项打开面板；没有原生模糊，
 //!   网页画兼容的毛玻璃。
 //!
@@ -37,7 +37,7 @@ const SUB_WIDTH: f64 = 300.0;
 /// 面板离托盘图标的距离、离屏幕边缘至少留的距离（逻辑像素）。
 const ICON_GAP: f64 = 6.0;
 const SCREEN_MARGIN: f64 = 8.0;
-/// 前端没在这段时间内回报尺寸时，按上次的尺寸直接显示，免得点了没反应。
+/// 前端没在这段时间内回报尺寸时，按上次的尺寸显示；Windows 必须先完成区域裁剪。
 const REVEAL_FALLBACK: Duration = Duration::from_millis(600);
 /// 点托盘图标关面板时，失焦隐藏先于点击事件到达；这段时间内的点击当作「关」，不再弹出。
 const BLUR_CLICK_GRACE: Duration = Duration::from_millis(300);
@@ -52,6 +52,7 @@ mod style {
 #[cfg(target_os = "windows")]
 mod style {
     pub const LAYOUT: &str = "joined";
+    pub const GLASS: &str = "frosted";
     pub const CARD_GAP: f64 = 0.0;
     pub const RADIUS: f64 = 8.0;
 }
@@ -170,6 +171,8 @@ impl PanelTexts {
 pub struct PanelPlacement {
     /// 每次弹出加一；前端回报尺寸时带回来，过期的回报不用。
     pub seq: u64,
+    /// 窗口平台；Windows 使用固定画布配合原生窗口区域，避免展开子面板时调整 WebView 大小。
+    pub platform: &'static str,
     /// 子面板在主面板的哪一边：`left` / `right`
     pub side: &'static str,
     /// 主面板哪条边贴着图标：`top`（向下弹出）/ `bottom`（向上弹出）
@@ -246,6 +249,7 @@ fn place(icon: (f64, f64, f64, f64), work: Area, seq: u64) -> (f64, f64, PanelPl
 
     let placement = PanelPlacement {
         seq,
+        platform: std::env::consts::OS,
         side,
         edge,
         bounds_top: work.top + SCREEN_MARGIN - y,
@@ -317,7 +321,8 @@ fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
             .minimizable(false)
             .decorations(false)
             .transparent(true)
-            .shadow(true)
+            // Windows 使用固定透明画布，整窗系统阴影会暴露画布的外框。
+            .shadow(!cfg!(target_os = "windows"))
             .always_on_top(true)
             .skip_taskbar(true)
             .visible_on_all_workspaces(true)
@@ -385,6 +390,11 @@ fn show_at(app: &AppHandle, window: &WebviewWindow, icon: (f64, f64, f64, f64)) 
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(REVEAL_FALLBACK).await;
         if SEQ.load(Ordering::Acquire) == seq && PENDING_REVEAL.load(Ordering::Acquire) {
+            if cfg!(target_os = "windows") {
+                // 固定画布尚未排版和裁剪时不能显示，避免露出尚未准备好的窗口。
+                log::debug!("[TrayPanel] 等待 Windows 面板区域就绪");
+                return;
+            }
             log::debug!("[TrayPanel] 前端没回报尺寸，直接显示");
             reveal(&fallback);
         }
@@ -445,8 +455,8 @@ pub fn notify_changed(app: &AppHandle) {
 /// 卡片在窗口里的位置（逻辑像素，左上角为原点）。
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "camelCase")]
-// 只有 macOS 按卡片位置垫玻璃；其它平台整窗一块背景，用不到这些字段
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+// macOS 按卡片位置垫玻璃，Windows 据此裁剪原生窗口区域。
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 pub struct CardRect {
     pub x: f64,
     pub y: f64,
@@ -633,86 +643,147 @@ mod platform {
 
 #[cfg(target_os = "windows")]
 mod platform {
-    use tauri::window::{Color, Effect, EffectsBuilder};
     use tauri::WebviewWindow;
-    use windows_sys::Win32::Graphics::Dwm::{
-        DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+    use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
+    use windows_sys::Win32::Graphics::Gdi::{
+        ClientToScreen, CreateRoundRectRgn, DeleteObject, SetWindowRgn,
     };
-    use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
+    use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetClientRect, GetWindowRect, SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
+    };
 
-    use super::{CardRect, Frame};
+    use super::{style, CardRect, Frame};
 
-    /// 系统背景材质（`DWMWA_SYSTEMBACKDROP_TYPE`）从这个版本号起可用，和 window-vibrancy
-    /// 走系统 Acrylic 的门槛一致。更早的系统只能用旧的合成属性，改窗口尺寸时卡顿。
-    const SYSTEM_BACKDROP_BUILD: u32 = 22523;
-
-    fn os_build() -> Option<u32> {
-        use winreg::enums::HKEY_LOCAL_MACHINE;
-        use winreg::RegKey;
-        let key = RegKey::predef(HKEY_LOCAL_MACHINE)
-            .open_subkey(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
-            .ok()?;
-        let build: String = key.get_value("CurrentBuildNumber").ok()?;
-        build.trim().parse().ok()
+    /// 整窗 Acrylic 的合成背景不遵循 SetWindowRgn，会把预留画布涂成灰色；
+    /// Windows 在网页卡片内绘制背景，画布本身保持透明。
+    pub fn glass() -> &'static str {
+        style::GLASS
     }
 
-    /// Win11 22H2+ 用系统 Acrylic；更早的系统没有可用的玻璃材质，网页画兼容的毛玻璃。
-    pub fn glass() -> &'static str {
-        static GLASS: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
-        GLASS.get_or_init(|| {
-            if os_build().is_some_and(|build| build >= SYSTEM_BACKDROP_BUILD) {
-                "native"
-            } else {
-                "frosted"
+    pub fn init(_window: &WebviewWindow) {}
+
+    /// 前端回报的是客户区尺寸；带阴影的无边框窗口仍有非客户区，需补回四边，
+    /// 否则 WebView 的右侧和底部会被裁切。坐标也按客户区原点换算，保持卡片贴住图标。
+    fn outer_rect(frame: Frame, scale: f64, outer: RECT, client: RECT, origin: POINT) -> RECT {
+        let left = origin.x - outer.left;
+        let top = origin.y - outer.top;
+        let right = outer.right - origin.x - (client.right - client.left);
+        let bottom = outer.bottom - origin.y - (client.bottom - client.top);
+        let x = (frame.x * scale).round() as i32;
+        let y = (frame.y * scale).round() as i32;
+        RECT {
+            left: x - left,
+            top: y - top,
+            right: x + (frame.width * scale).round() as i32 + right,
+            bottom: y + (frame.height * scale).round() as i32 + bottom,
+        }
+    }
+
+    fn set_client_frame(hwnd: HWND, frame: Frame, scale: f64) {
+        let mut outer = RECT::default();
+        let mut client = RECT::default();
+        let mut origin = POINT::default();
+        // SAFETY: 只在窗口存活时由主线程调用；传入的矩形和坐标指针均有效。
+        unsafe {
+            if GetWindowRect(hwnd, &mut outer) == 0
+                || GetClientRect(hwnd, &mut client) == 0
+                || ClientToScreen(hwnd, &mut origin) == 0
+            {
+                log::warn!("[TrayPanel] 读取 Windows 窗口边距失败");
+                return;
             }
+            let rect = outer_rect(frame, scale, outer, client, origin);
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                rect.left,
+                rect.top,
+                rect.right - rect.left,
+                rect.bottom - rect.top,
+                SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+    }
+
+    fn card_bounds(cards: &[CardRect]) -> Option<Frame> {
+        let first = cards.first()?;
+        let mut left = first.x;
+        let mut top = first.y;
+        let mut right = first.x + first.width;
+        let mut bottom = first.y + first.height;
+        for card in &cards[1..] {
+            left = left.min(card.x);
+            top = top.min(card.y);
+            right = right.max(card.x + card.width);
+            bottom = bottom.max(card.y + card.height);
+        }
+        Some(Frame {
+            x: left,
+            y: top,
+            width: right - left,
+            height: bottom - top,
         })
     }
 
-    /// 有系统材质时整窗 Acrylic；Win11 圆角（Win10 忽略，保持直角）。
-    pub fn init(window: &WebviewWindow) {
-        if glass() == "native" {
-            let _ = window.set_effects(
-                EffectsBuilder::new()
-                    .effect(Effect::Acrylic)
-                    .color(Color(32, 32, 36, 96))
-                    .build(),
+    /// 裁掉固定画布中没有卡片的部分，避免不可见的区域拦截鼠标。
+    /// 展开子面板只改 region，不改变 HWND / WebView 尺寸，避免 DWM 重用旧尺寸的画面造成闪烁。
+    fn set_card_region(hwnd: HWND, scale: f64, cards: &[CardRect]) -> bool {
+        let Some(bounds) = card_bounds(cards) else {
+            return false;
+        };
+        let mut outer = RECT::default();
+        let mut origin = POINT::default();
+        // SAFETY: 主线程上的存活窗口；region 成功交给系统后由系统管理，失败时自行释放。
+        unsafe {
+            if GetWindowRect(hwnd, &mut outer) == 0 || ClientToScreen(hwnd, &mut origin) == 0 {
+                return false;
+            }
+            let x = origin.x - outer.left;
+            let y = origin.y - outer.top;
+            let diameter = (style::RADIUS * 2.0 * scale).round() as i32;
+            let region = CreateRoundRectRgn(
+                x + (bounds.x * scale).round() as i32,
+                y + (bounds.y * scale).round() as i32,
+                x + ((bounds.x + bounds.width) * scale).round() as i32 + 1,
+                y + ((bounds.y + bounds.height) * scale).round() as i32 + 1,
+                diameter,
+                diameter,
             );
-        }
-        if let Ok(hwnd) = window.hwnd() {
-            let preference = DWMWCP_ROUND;
-            // SAFETY: hwnd 来自 tao，窗口存活；传入的是 4 字节的枚举值。
-            unsafe {
-                DwmSetWindowAttribute(
-                    hwnd.0 as _,
-                    DWMWA_WINDOW_CORNER_PREFERENCE as _,
-                    (&preference as *const i32).cast(),
-                    std::mem::size_of::<i32>() as u32,
-                );
+            if region.is_null() {
+                log::warn!("[TrayPanel] 创建 Windows 面板区域失败");
+                false
+            } else if SetWindowRgn(hwnd, region, 1) == 0 {
+                DeleteObject(region);
+                log::warn!("[TrayPanel] 设置 Windows 面板区域失败");
+                false
+            } else {
+                true
             }
         }
     }
 
-    /// 位置和大小一次 `SetWindowPos` 设好（分两次设展开子面板时会闪一下）。
-    pub fn apply(window: &WebviewWindow, frame: Option<Frame>, scale: f64, _cards: Vec<CardRect>) {
-        let Some(frame) = frame else {
-            return;
-        };
+    /// 首次弹出时一次设好位置和客户区大小，之后只更新卡片的原生可见区域。
+    pub fn apply(window: &WebviewWindow, frame: Option<Frame>, scale: f64, cards: Vec<CardRect>) {
         let target = window.clone();
         let _ = window.run_on_main_thread(move || {
             let Ok(hwnd) = target.hwnd() else {
                 return;
             };
-            // SAFETY: hwnd 来自 tao，窗口存活。
-            unsafe {
-                SetWindowPos(
-                    hwnd.0 as _,
-                    std::ptr::null_mut(),
-                    (frame.x * scale).round() as i32,
-                    (frame.y * scale).round() as i32,
-                    (frame.width * scale).round() as i32,
-                    (frame.height * scale).round() as i32,
-                    SWP_NOZORDER | SWP_NOACTIVATE,
-                );
+            if let Some(frame) = frame {
+                // SAFETY: hwnd 来自 tao，窗口存活。
+                unsafe {
+                    let dpi = GetDpiForWindow(hwnd.0 as _);
+                    set_client_frame(hwnd.0 as _, frame, scale);
+                    // 跨到不同缩放的显示器时，WM_DPICHANGED 会改变非客户区；按新的边距再校准。
+                    if GetDpiForWindow(hwnd.0 as _) != dpi {
+                        set_client_frame(hwnd.0 as _, frame, scale);
+                    }
+                }
+            }
+            if set_card_region(hwnd.0 as _, scale, &cards) {
+                // 先裁剪、再显示；不能在排队的主线程任务执行前露出整个预留画布。
+                super::reveal(&target);
             }
         });
     }
@@ -725,6 +796,134 @@ mod platform {
                 tauri::Theme::Light
             }
         }));
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn only_the_visible_cards_belong_to_the_window_region() {
+            let main = CardRect {
+                x: 300.0,
+                y: 433.0,
+                width: 320.0,
+                height: 327.0,
+            };
+            let sub = CardRect {
+                x: 0.0,
+                width: 300.0,
+                ..main
+            };
+            assert_eq!(card_bounds(&[]), None);
+            assert_eq!(
+                card_bounds(&[main]),
+                Some(Frame {
+                    x: 300.0,
+                    y: 433.0,
+                    width: 320.0,
+                    height: 327.0,
+                })
+            );
+            assert_eq!(
+                card_bounds(&[main, sub]),
+                Some(Frame {
+                    x: 0.0,
+                    y: 433.0,
+                    width: 620.0,
+                    height: 327.0,
+                })
+            );
+        }
+
+        #[test]
+        fn shadow_borders_do_not_clip_the_webview() {
+            // 实际观察到的 Windows 窗口：外框 620×327，客户区仅 604×318。
+            let rect = outer_rect(
+                Frame {
+                    x: 1755.0,
+                    y: 1002.0,
+                    width: 620.0,
+                    height: 327.0,
+                },
+                1.0,
+                RECT {
+                    left: 1755,
+                    top: 1002,
+                    right: 2375,
+                    bottom: 1329,
+                },
+                RECT {
+                    left: 0,
+                    top: 0,
+                    right: 604,
+                    bottom: 318,
+                },
+                POINT { x: 1763, y: 1003 },
+            );
+            assert_eq!((rect.left, rect.top), (1747, 1001));
+            assert_eq!((rect.right, rect.bottom), (2383, 1337));
+            assert_eq!(rect.right - rect.left - 16, 620);
+            assert_eq!(rect.bottom - rect.top - 9, 327);
+        }
+
+        #[test]
+        fn scaled_submenu_expansion_keeps_the_client_right_and_bottom_fixed() {
+            // 左侧的副屏可以有负坐标；125% / 150% 下也应按客户区锚定，不能把边框重复缩放。
+            for (scale, border) in [(1.25, 10), (1.5, 12)] {
+                let outer = RECT {
+                    left: -1000,
+                    top: 100,
+                    right: 0,
+                    bottom: 800,
+                };
+                let client = RECT {
+                    left: 0,
+                    top: 0,
+                    right: 1000 - border * 2,
+                    bottom: 699 - border,
+                };
+                let origin = POINT {
+                    x: -1000 + border,
+                    y: 101,
+                };
+                let collapsed = outer_rect(
+                    Frame {
+                        x: -500.0,
+                        y: 373.0,
+                        width: 320.0,
+                        height: 327.0,
+                    },
+                    scale,
+                    outer,
+                    client,
+                    origin,
+                );
+                let expanded = outer_rect(
+                    Frame {
+                        x: -800.0,
+                        y: 300.0,
+                        width: 620.0,
+                        height: 400.0,
+                    },
+                    scale,
+                    outer,
+                    client,
+                    origin,
+                );
+                assert_eq!(collapsed.right, expanded.right);
+                // 高度分别取整后可相差一个物理像素。
+                assert!((collapsed.bottom - expanded.bottom).abs() <= 1);
+                assert_eq!(
+                    expanded.right - expanded.left - border * 2,
+                    (620.0 * scale) as i32
+                );
+                assert_eq!(
+                    expanded.bottom - expanded.top - border - 1,
+                    (400.0 * scale) as i32
+                );
+            }
+        }
     }
 }
 
@@ -842,6 +1041,7 @@ pub fn tray_panel_layout(app: AppHandle, layout: PanelLayout) {
         anchor.scale,
         layout.cards,
     );
+    #[cfg(not(target_os = "windows"))]
     reveal(&window);
 }
 

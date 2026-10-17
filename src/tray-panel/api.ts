@@ -83,6 +83,7 @@ export interface TrayPanelState {
 /** 这次弹出的方位（后端 `tray_panel::PanelPlacement`），坐标为逻辑像素。 */
 export interface PanelPlacement {
   seq: number;
+  platform: string;
   side: "left" | "right";
   edge: "top" | "bottom";
   boundsTop: number;
