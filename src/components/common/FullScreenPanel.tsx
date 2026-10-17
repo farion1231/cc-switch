@@ -39,6 +39,9 @@ interface FullScreenPanelProps {
 /** 外壳里的内容区（App 的 <main id="content-area">）：二级页只盖住它，侧栏留着 */
 const CONTENT_AREA_ID = "content-area";
 
+/** 已打开的面板，后开的在后；Esc 只交给最上面那个（嵌套面板里不能连带关掉外层） */
+const openPanelStack: symbol[] = [];
+
 let bodyScrollLockCount = 0;
 let bodyOverflowBeforeFirstLock: string | null = null;
 
@@ -93,6 +96,18 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
     return unlockBodyScroll;
   }, [isOpen]);
 
+  const panelIdRef = React.useRef<symbol>(Symbol("full-screen-panel"));
+
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const id = panelIdRef.current;
+    openPanelStack.push(id);
+    return () => {
+      const index = openPanelStack.lastIndexOf(id);
+      if (index !== -1) openPanelStack.splice(index, 1);
+    };
+  }, [isOpen]);
+
   // ESC 键关闭面板
   const onCloseRef = React.useRef(onClose);
 
@@ -105,6 +120,10 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        // 上面还有别的面板：交给它
+        if (openPanelStack[openPanelStack.length - 1] !== panelIdRef.current) {
+          return;
+        }
         // 子组件（例如 Radix 的 Select/Dialog/Dropdown）如果已经消费了 ESC，就不要再关闭整个面板
         if (event.defaultPrevented) {
           return;
