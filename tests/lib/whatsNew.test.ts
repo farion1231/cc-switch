@@ -5,6 +5,8 @@ import {
   entriesUpTo,
   isNewerThanSeen,
   markSeen,
+  parseWhatsNewEntry,
+  parseWhatsNewNotes,
   resolveWhatsNewLanguage,
   type WhatsNewEntry,
 } from "@/lib/whatsNew";
@@ -92,5 +94,107 @@ describe("language and links", () => {
       "https://ccswitch.io/en/changelog/4.0.2",
     );
     expect(changelogUrl("zh-TW")).toBe("https://ccswitch.io/zh/changelog");
+  });
+});
+
+const REMOTE_ENTRY = {
+  version: "4.0.13",
+  items: [{ type: "new", zh: "新", "zh-TW": "新", en: "new", ja: "新機能" }],
+};
+
+describe("parseWhatsNewEntry", () => {
+  it("accepts a well-formed entry and keeps only the four languages", () => {
+    const parsed = parseWhatsNewEntry(REMOTE_ENTRY);
+    expect(parsed).toEqual({
+      version: "4.0.13",
+      items: [
+        {
+          type: "new",
+          zh: "新",
+          "zh-TW": "新",
+          en: "new",
+          ja: "新機能",
+        },
+      ],
+    });
+  });
+
+  it("rejects broken shapes instead of throwing", () => {
+    expect(parseWhatsNewEntry(null)).toBeNull();
+    expect(parseWhatsNewEntry([])).toBeNull();
+    expect(parseWhatsNewEntry({ version: 3, items: [] })).toBeNull();
+    expect(
+      parseWhatsNewEntry({ version: "4.0.2-beta.1-bad/..", items: [] }),
+    ).toBeNull();
+    expect(parseWhatsNewEntry({ version: "4.0.13" })).toBeNull();
+    expect(parseWhatsNewEntry({ version: "4.0.13", items: [null] })).toBeNull();
+    expect(
+      parseWhatsNewEntry({ version: "4.0.13", items: [{ type: "news" }] }),
+    ).toBeNull();
+    expect(
+      parseWhatsNewEntry({
+        version: "4.0.13",
+        items: [{ type: "new", zh: "新", "zh-TW": "新", en: "new" }],
+      }),
+    ).toBeNull();
+    expect(
+      parseWhatsNewEntry({
+        version: "4.0.13",
+        items: [
+          { type: "new", zh: "", "zh-TW": "新", en: "new", ja: "新機能" },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("allows empty items and rejects more than four", () => {
+    // 纯构建版本本来就是空 items，形状合法；是否显示由调用方决定
+    expect(parseWhatsNewEntry({ version: "4.0.13", items: [] })).toEqual({
+      version: "4.0.13",
+      items: [],
+    });
+    expect(
+      parseWhatsNewEntry({
+        version: "4.0.13",
+        items: Array.from({ length: 5 }, () => ({
+          type: "new",
+          zh: "新",
+          "zh-TW": "新",
+          en: "new",
+          ja: "新機能",
+        })),
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("parseWhatsNewNotes", () => {
+  it("reads the summary when the manifest also contains full announcements", () => {
+    const notes = JSON.stringify({
+      ...REMOTE_ENTRY,
+      releaseNotes: { en: "# Full announcement" },
+    });
+    expect(parseWhatsNewNotes(notes, "4.0.13")).toEqual(REMOTE_ENTRY);
+  });
+
+  it("reads the serialized summary from the updater body", () => {
+    expect(parseWhatsNewNotes(JSON.stringify(REMOTE_ENTRY), "4.0.13")).toEqual(
+      REMOTE_ENTRY,
+    );
+  });
+
+  it.each([
+    undefined,
+    "",
+    "Release v4.0.13",
+    '{"version":',
+    "null",
+    "[]",
+    JSON.stringify({ version: "4.0.13" }),
+    JSON.stringify({ version: "4.0.11", items: REMOTE_ENTRY.items }),
+    JSON.stringify({ version: "4.0.13", items: [] }),
+    JSON.stringify({ version: "4.0.13", items: [{ type: "new" }] }),
+  ])("returns no remote summary for unusable notes: %s", (notes) => {
+    expect(parseWhatsNewNotes(notes, "4.0.13")).toBeNull();
   });
 });

@@ -4793,6 +4793,7 @@
     "updatedTo": "v{{version}} に更新しました",
     "recentTitle": "最近の更新",
     "since": "v{{version}} 以降の変更",
+    "pendingUpdate": "更新可能",
     "types": {
       "new": "新機能",
       "fix": "修正",
