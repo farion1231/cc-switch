@@ -2179,7 +2179,48 @@ fn codex_model_catalog_from_settings(
     if specs.is_empty() {
         return Ok(None);
     }
-    codex_catalog_from_specs_for_row(&specs, config_text, profile).map(Some)
+    let mut catalog = codex_catalog_from_specs_for_row(&specs, config_text, profile)?;
+    if let Some(model) = codex_card_auto_review_model(settings) {
+        apply_codex_auto_review_model(&mut catalog, model);
+    }
+    Ok(Some(catalog))
+}
+
+/// 卡上选的自动审批模型（`modelCatalog.autoReviewModel`），空串当作没选。只在直连、路由
+/// 下生效：聚合下用聚合设置里的（`settings::codex_stack_auto_review_model`）。
+fn codex_card_auto_review_model(settings: &Value) -> Option<&str> {
+    settings
+        .get("modelCatalog")
+        .and_then(|catalog| catalog.get("autoReviewModel"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+}
+
+/// Codex 自动审批（Auto Review）用的模型：写进目录每一行的 `auto_review_model_override`。
+/// Codex 按主模型那一行的这个字段选审批模型（codex-rs `ext/guardian-reviewer/src/model.rs`），
+/// 主模型可以是目录里任何一行，所以每行都写。审批请求和主对话走同一家：直连、路由下只能
+/// 选这一家目录里的模型，聚合下可以选别家发布的 `ccs-*` 模型。
+///
+/// 不写时 Codex 用供应商默认的 `codex-auto-review`，目录里没有它（第三方的目录）就由主模型
+/// 自己审批。`model` 不在目录里时不写：Codex 照样会拿这个名字发请求，上游多半不认。
+/// 返回是否写了。
+pub(crate) fn apply_codex_auto_review_model(catalog: &mut Value, model: &str) -> bool {
+    let Some(entries) = catalog.get_mut("models").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    if !entries
+        .iter()
+        .any(|entry| entry.get("slug").and_then(Value::as_str) == Some(model))
+    {
+        return false;
+    }
+    for entry in entries.iter_mut() {
+        if let Some(obj) = entry.as_object_mut() {
+            obj.insert("auto_review_model_override".to_string(), json!(model));
+        }
+    }
+    true
 }
 
 /// Codex 自带的 OpenAI 官方模型列表（`codex debug models --bundled`），给第三方的 GPT
@@ -2558,7 +2599,9 @@ pub(crate) fn plan_codex_stack_catalog(
 const CODEX_CLASSIC_SUBAGENTS: &str = "v1";
 
 /// 一家第三方供应商在合并目录里的行（`comp_hash` 保持模板的值）。
-fn codex_stack_third_party_rows(row: &CodexCatalogRow<'_>) -> Result<Vec<Value>, AppError> {
+pub(crate) fn codex_stack_third_party_rows(
+    row: &CodexCatalogRow<'_>,
+) -> Result<Vec<Value>, AppError> {
     let specs = codex_published_specs(row.settings, row.config_text);
     if specs.is_empty() {
         return Ok(Vec::new());
@@ -2859,7 +2902,32 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
         return None;
     }
 
-    Some(json!({ "models": entries }))
+    // 卡上选的自动审批模型写在每一行上（见 `apply_codex_auto_review_model`）：这张卡的行都写着
+    // 同一个、而且是这张卡自己的模型时才还原。聚合设置写的 `ccs-*` 不属于这张卡。
+    let mut overrides = models.iter().filter_map(|entry| {
+        let slug = entry.get("slug").and_then(Value::as_str)?.trim();
+        matches!(
+            crate::mode::stack::decode(&crate::app_config::AppType::Codex, slug),
+            crate::mode::stack::Decoded::Plain
+        )
+        .then(|| {
+            entry
+                .get("auto_review_model_override")
+                .and_then(Value::as_str)
+        })
+    });
+    let auto_review = overrides.next().flatten().filter(|model| {
+        overrides.all(|other| other == Some(*model))
+            && entries
+                .iter()
+                .any(|entry| entry.get("model").and_then(Value::as_str) == Some(*model))
+    });
+
+    let mut simplified = json!({ "models": entries });
+    if let Some(model) = auto_review {
+        simplified["autoReviewModel"] = json!(model);
+    }
+    Some(simplified)
 }
 
 /// Extract a provider-scoped `experimental_bearer_token` from Codex `config.toml`.
@@ -4873,6 +4941,89 @@ wire_api = "responses"
             models[1].get("displayName").and_then(|v| v.as_str()),
             Some("DeepSeek Flash")
         );
+    }
+
+    fn auto_review_overrides(catalog: &Value) -> Vec<Option<&str>> {
+        catalog["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| {
+                row.get("auto_review_model_override")
+                    .and_then(Value::as_str)
+            })
+            .collect()
+    }
+
+    /// 卡上选的自动审批模型写进这张卡目录的每一行（主模型可以是任何一行）；不在模型列表里
+    /// 就不写，用 Codex 的默认。
+    #[test]
+    fn card_auto_review_model_is_written_to_every_catalog_row() {
+        let config = "model = \"deepseek-v4-pro\"\n";
+        let settings = |auto_review: &str| {
+            json!({
+                "modelCatalog": {
+                    "models": [
+                        { "model": "deepseek-v4-pro" },
+                        { "model": "deepseek-v4-flash" }
+                    ],
+                    "autoReviewModel": auto_review
+                }
+            })
+        };
+        let profile = CodexCatalogToolProfile::NativeResponses;
+
+        let catalog =
+            codex_model_catalog_from_settings(&settings(" deepseek-v4-flash "), config, profile)
+                .unwrap()
+                .expect("catalog");
+        assert_eq!(
+            auto_review_overrides(&catalog),
+            vec![Some("deepseek-v4-flash"); 2]
+        );
+
+        for not_written in ["", "codex-auto-review"] {
+            let catalog =
+                codex_model_catalog_from_settings(&settings(not_written), config, profile)
+                    .unwrap()
+                    .expect("catalog");
+            assert_eq!(
+                auto_review_overrides(&catalog),
+                vec![None; 2],
+                "{not_written:?}"
+            );
+        }
+    }
+
+    /// 读回 live 目录时还原卡上选的审批模型；聚合设置写的 `ccs-*`、各行不一致的都不还原。
+    #[test]
+    fn simplified_catalog_restores_the_card_auto_review_model() {
+        let catalog = |overrides: [&str; 2]| {
+            json!({ "models": [
+                { "slug": "deepseek-v4-pro", "auto_review_model_override": overrides[0] },
+                { "slug": "deepseek-v4-flash", "auto_review_model_override": overrides[1] }
+            ]})
+            .to_string()
+        };
+        let restored = |overrides| {
+            build_simplified_catalog_from_texts("", &catalog(overrides))
+                .expect("entries")
+                .get("autoReviewModel")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        };
+        assert_eq!(
+            restored(["deepseek-v4-flash", "deepseek-v4-flash"]).as_deref(),
+            Some("deepseek-v4-flash")
+        );
+        assert_eq!(restored(["ccs-kimi/k3", "ccs-kimi/k3"]), None);
+        assert_eq!(restored(["deepseek-v4-flash", "deepseek-v4-pro"]), None);
+
+        let plain = r#"{ "models": [{ "slug": "deepseek-v4-pro" }] }"#;
+        assert!(build_simplified_catalog_from_texts("", plain)
+            .expect("entries")
+            .get("autoReviewModel")
+            .is_none());
     }
 
     /// 在官方列表换成 `rows` 的情况下跑 `f`（本线程）。

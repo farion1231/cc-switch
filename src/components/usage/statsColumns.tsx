@@ -1,15 +1,21 @@
 import { useTranslation } from "react-i18next";
 import { HelpTip } from "@/components/ui/help-tip";
 import { cn } from "@/lib/utils";
-import { formatTokensPerSecond, getAggregateTokensPerSecond } from "./format";
+import {
+  formatFirstTokenSeconds,
+  formatTokensPerSecond,
+  getAggregateTokensPerSecond,
+} from "./format";
 import { usageTable } from "./usageTable";
 
-/** 供应商 / 模型统计行共有的速度分子分母（后端只累加满足条件的明细请求）。 */
+/** 供应商 / 模型统计行共有的速度分子分母与首字中位数（后端只统计满足条件的明细请求）。 */
 export interface SpeedTotals {
   speedOutputTokens?: number;
   speedGenerationMs?: number;
   estSpeedOutputTokens?: number;
   estSpeedDurationMs?: number;
+  firstTokenMedianMs?: number | null;
+  estFirstTokenMedianMs?: number | null;
 }
 
 /** 一行的汇总速度：Σ输出 ÷ Σ生成时间。 */
@@ -32,13 +38,13 @@ export function getStatsEstimatedSpeed(stat: SpeedTotals): string | null {
   );
 }
 
-/** 「成功率」「速度」两列的表头，供应商和模型统计共用。 */
-export function SuccessSpeedHeaders() {
+/** 「成功率」「速度」「首字」三列的表头，供应商和模型统计共用。 */
+export function PerformanceHeaders() {
   const { t } = useTranslation();
   return (
     <>
-      <th className={usageTable.thEnd}>{t("usage.successRate")}</th>
-      <th className={usageTable.thEnd}>
+      <th className={usageTable.th}>{t("usage.successRate")}</th>
+      <th className={usageTable.th}>
         <span className="inline-flex items-center gap-0.5">
           {t("usage.speed")}
           <HelpTip title={t("usage.speedSumHelpTitle")} align="end">
@@ -46,12 +52,20 @@ export function SuccessSpeedHeaders() {
           </HelpTip>
         </span>
       </th>
+      <th className={usageTable.th}>
+        <span className="inline-flex items-center gap-0.5">
+          {t("usage.firstToken")}
+          <HelpTip title={t("usage.firstTokenSumHelpTitle")} align="end">
+            {t("usage.firstTokenSumHelp")}
+          </HelpTip>
+        </span>
+      </th>
     </>
   );
 }
 
-/** 「成功率」「速度」两列的单元格；精确速度缺失时用会话日志的估算值，带 ≈。 */
-export function SuccessSpeedCells({
+/** 「成功率」「速度」「首字」三列的单元格；精确值缺失时用会话日志的估算值，带 ≈。 */
+export function PerformanceCells({
   stat,
 }: {
   stat: SpeedTotals & { successRate: number };
@@ -60,12 +74,18 @@ export function SuccessSpeedCells({
   const estimatedSpeed =
     exactSpeed == null ? getStatsEstimatedSpeed(stat) : null;
   const speed = exactSpeed ?? estimatedSpeed;
+  const exactFirstToken = formatFirstTokenSeconds(stat.firstTokenMedianMs);
+  const estimatedFirstToken =
+    exactFirstToken == null
+      ? formatFirstTokenSeconds(stat.estFirstTokenMedianMs)
+      : null;
+  const firstToken = exactFirstToken ?? estimatedFirstToken;
   return (
     <>
-      <td className={usageTable.tdEnd}>
+      <td className={usageTable.td}>
         {stat.successRate.toFixed(stat.successRate >= 99.95 ? 0 : 1)}%
       </td>
-      <td className={cn(usageTable.tdEnd, speed == null && usageTable.muted)}>
+      <td className={cn(usageTable.td, speed == null && usageTable.muted)}>
         {speed == null ? (
           "—"
         ) : (
@@ -77,6 +97,10 @@ export function SuccessSpeedCells({
             </span>
           </>
         )}
+      </td>
+      <td className={cn(usageTable.td, firstToken == null && usageTable.muted)}>
+        {estimatedFirstToken != null && "≈"}
+        {firstToken ?? "—"}
       </td>
     </>
   );

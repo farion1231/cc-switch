@@ -5,15 +5,15 @@ import { TablePagination, useClientPagination } from "./TablePagination";
 import { cn } from "@/lib/utils";
 import {
   fmtInt,
-  fmtUsd,
   formatTokensCompact,
   getLocaleFromLanguage,
   getResolvedLang,
 } from "./format";
 import { usageTable } from "./usageTable";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
-import { SuccessSpeedCells, SuccessSpeedHeaders } from "./statsColumns";
+import { PerformanceCells, PerformanceHeaders } from "./statsColumns";
 import type { UsageRangeSelection } from "@/types/usage";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 
 interface ProviderStatsTableProps {
   range: UsageRangeSelection;
@@ -31,6 +31,7 @@ export function ProviderStatsTable({
   refreshIntervalMs,
 }: ProviderStatsTableProps) {
   const { t, i18n } = useTranslation();
+  const { money, moneyTitle } = useMoneyFormat();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const { data: stats, isLoading } = useProviderStats(
     range,
@@ -64,16 +65,16 @@ export function ProviderStatsTable({
           <thead>
             <tr className={usageTable.headRow}>
               <th className={usageTable.th}>{t("usage.provider")}</th>
-              <th className={usageTable.thEnd}>{t("usage.requests")}</th>
-              <th className={usageTable.thEnd}>{t("usage.tokens")}</th>
-              <th className={usageTable.thEnd}>{t("usage.cost")}</th>
-              <SuccessSpeedHeaders />
+              <th className={usageTable.th}>{t("usage.requests")}</th>
+              <th className={usageTable.th}>{t("usage.tokens")}</th>
+              <th className={usageTable.th}>{t("usage.cost")}</th>
+              <PerformanceHeaders />
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={6} className={usageTable.empty}>
+                <td colSpan={7} className={usageTable.empty}>
                   {t("usage.noData")}
                 </td>
               </tr>
@@ -93,22 +94,22 @@ export function ProviderStatsTable({
                         {provider.label}
                       </span>
                     </td>
-                    <td className={usageTable.tdEnd}>
+                    <td className={usageTable.td}>
                       {fmtInt(stat.requestCount, locale)}
                     </td>
                     <td
-                      className={usageTable.tdEnd}
+                      className={usageTable.td}
                       title={fmtInt(stat.totalTokens, locale)}
                     >
                       {formatTokensCompact(stat.totalTokens, locale)}
                     </td>
                     <td
-                      className={cn(usageTable.tdEnd, "font-medium")}
-                      title={fmtUsd(stat.totalCost, 6)}
+                      className={cn(usageTable.td, "font-medium")}
+                      title={moneyTitle(stat.totalCost, 6)}
                     >
-                      {fmtUsd(stat.totalCost, 2)}
+                      {money(stat.totalCost, 2)}
                     </td>
-                    <SuccessSpeedCells stat={stat} />
+                    <PerformanceCells stat={stat} />
                   </tr>
                 );
               })
