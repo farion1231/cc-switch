@@ -297,6 +297,7 @@
     "providerSaved": "供应商配置已保存",
     "providerDeleted": "供应商删除成功",
     "switchSuccess": "切换成功！",
+    "codexOfficialLoginUnavailable": "这张卡片对应的 Codex 登录在本机不可用。请先在授权中心添加账号，再编辑卡片，将登录方式绑定到该账号。客户端文件和供应商选择均未更改。",
     "codexRestartRequired": "切换成功，请重启客户端以生效",
     "geminiRestartRequired": "切换成功，请重启 Gemini CLI 以生效",
     "grokBuildRestartRequired": "切换成功，请重启 Grok Build 以生效",

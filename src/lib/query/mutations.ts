@@ -367,7 +367,12 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       }
     },
     onError: (error: Error) => {
-      const detail = extractErrorMessage(error) || t("common.unknown");
+      const message = extractErrorMessage(error) || t("common.unknown");
+      const detail =
+        appId === "codex" &&
+        message.includes("Codex official login is unavailable")
+          ? t("notifications.codexOfficialLoginUnavailable")
+          : message;
 
       toast.error(
         t("notifications.switchFailedTitle", { defaultValue: "切换失败" }),

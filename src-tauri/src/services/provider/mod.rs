@@ -3875,6 +3875,133 @@ wire_api = "responses"
 
     #[test]
     #[serial]
+    fn codex_legacy_official_switch_rejects_missing_login_without_changes() {
+        for unrelated_login in [false, true] {
+            with_test_home(|state, home| {
+                crate::settings::reload_settings().expect("reload settings");
+                let login = |user: &str| {
+                    json!({
+                        "auth_mode": "chatgpt",
+                        "OPENAI_API_KEY": null,
+                        "tokens": {
+                            "id_token": crate::codex_config::test_codex_id_token(user),
+                            "access_token": format!("access-{user}"),
+                            "refresh_token": format!("refresh-{user}"),
+                            "account_id": format!("account-{user}")
+                        }
+                    })
+                };
+                for user in ["alice", "bob"] {
+                    let mut provider = Provider::with_id(
+                        user.to_string(),
+                        user.to_string(),
+                        json!({ "auth": login(user), "config": "model = \"gpt-5\"\n" }),
+                        None,
+                    );
+                    provider.category = Some("official".to_string());
+                    state
+                        .db
+                        .save_provider("codex", &provider)
+                        .expect("save legacy card");
+                }
+                ProviderService::switch(state, AppType::Codex, "alice")
+                    .expect("activate first legacy card");
+
+                // An initialized stash does not import row snapshots again. Both an
+                // empty stash and one holding a different login can lack the target.
+                let stash_path = home.join(".cc-switch/codex-login-stash.json");
+                let logins = if unrelated_login {
+                    json!({ "sub:carol|account:account-carol": login("carol") })
+                } else {
+                    json!({})
+                };
+                write_json_file(&stash_path, &json!({ "version": 1, "logins": logins }))
+                    .expect("seed initialized stash without target login");
+                let paths = [
+                    crate::codex_config::get_codex_auth_path(),
+                    crate::codex_config::get_codex_config_path(),
+                    stash_path,
+                ];
+                let before: Vec<_> = paths.iter().map(|path| fs::read(path).unwrap()).collect();
+
+                let error = ProviderService::switch(state, AppType::Codex, "bob")
+                    .expect_err("a missing login must not silently keep another account");
+                assert!(matches!(
+                    error,
+                    AppError::Localized {
+                        key: "codex.official_login_unavailable",
+                        ..
+                    }
+                ));
+                for (path, bytes) in paths.iter().zip(&before) {
+                    assert_eq!(
+                        &fs::read(path).unwrap(),
+                        bytes,
+                        "{} changed",
+                        path.display()
+                    );
+                }
+                assert_eq!(
+                    ProviderService::current(state, AppType::Codex).unwrap(),
+                    "alice"
+                );
+                assert_eq!(
+                    state.db.get_current_provider("codex").unwrap().as_deref(),
+                    Some("alice")
+                );
+
+                let target = state
+                    .db
+                    .get_provider_by_id("bob", "codex")
+                    .unwrap()
+                    .unwrap();
+                let predicted = codex_direct::predicted_official_login(
+                    &state.db,
+                    &codex_direct::Owner::None,
+                    &codex_direct::Target::Direct(Some(&target)),
+                    &codex_direct::Prepared::default(),
+                );
+                assert!(
+                    predicted.is_err(),
+                    "model lookup must not use the previous account"
+                );
+
+                ProviderService::switch(state, AppType::Codex, "alice")
+                    .expect("the already active login needs no stash entry");
+                assert_eq!(fs::read(&paths[0]).unwrap(), before[0]);
+
+                // The existing Auth Center binding is an explicit recovery path;
+                // no stale row tokens need to be revived or synced back to the DB.
+                tauri::async_runtime::block_on(async {
+                    state
+                        .codex_oauth_manager
+                        .add_test_account_with_user_identity(
+                            "managed-bob",
+                            "managed-access-bob",
+                            "bob",
+                        )
+                        .await
+                        .expect("add account in Auth Center");
+                });
+                let managed = managed_codex_provider("bob", "managed-bob");
+                state
+                    .db
+                    .save_provider("codex", &managed)
+                    .expect("bind target card");
+                ProviderService::switch(state, AppType::Codex, "bob")
+                    .expect("switch after binding an available account");
+                let live: Value = read_json_file(&paths[0]).unwrap();
+                assert_eq!(live["tokens"]["access_token"], "managed-access-bob");
+                assert_eq!(
+                    ProviderService::current(state, AppType::Codex).unwrap(),
+                    "bob"
+                );
+            });
+        }
+    }
+
+    #[test]
+    #[serial]
     fn switch_to_managed_codex_official_with_unresolvable_account_keeps_current_unchanged() {
         with_test_home(|state, _| {
             crate::settings::reload_settings().expect("reload settings");

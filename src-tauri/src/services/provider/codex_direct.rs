@@ -283,6 +283,7 @@ pub(crate) fn predicted_official_login(
         target: auth_target(&planned.auth),
         stash,
     });
+    ensure_official_login(&planned.auth, &auth_plan, live.as_ref())?;
     let keychain = || {
         prepared
             .keychain
@@ -294,6 +295,40 @@ pub(crate) fn predicted_official_login(
             .ok_or(OfficialSkip::NoLogin)
             .and_then(|auth| OfficialLogin::of(&auth)),
     )
+}
+
+/// A legacy official card can name an account whose device-local login is gone.
+/// Reject that selection instead of retaining another account or reviving a row
+/// snapshot that may have been invalidated by logout or token rotation.
+fn ensure_official_login(
+    goal: &AuthGoal,
+    auth_plan: &AuthPlan,
+    live: Option<&Value>,
+) -> Result<(), AppError> {
+    let AuthGoal::Official(row_auth) = goal else {
+        return Ok(());
+    };
+    let Some(expected) = codex_login::official_login_requirement(row_auth) else {
+        // A card without its own credentials follows the current Codex login.
+        return Ok(());
+    };
+    let after = match &auth_plan.auth {
+        None => live,
+        Some(None) => None,
+        Some(Some(auth)) => Some(auth),
+    };
+    if after
+        .and_then(codex_login::official_login_requirement)
+        .as_ref()
+        != Some(&expected)
+    {
+        return Err(AppError::localized(
+            "codex.official_login_unavailable",
+            "这张卡片对应的 Codex 官方登录在本机不可用。请先在授权中心添加账号，再编辑卡片，将登录方式绑定到该账号。客户端文件和供应商选择均未更改。",
+            "Codex official login is unavailable for this card on this device. Add the account in Auth Center, then edit the card and select that account as its login method. No client files or provider selection were changed.",
+        ));
+    }
+    Ok(())
 }
 
 /// 操作之后 Codex 实际会用的登录，按 `cli_auth_credentials_store`：file 看操作之后的
@@ -1128,6 +1163,7 @@ pub(crate) fn run_with_edits(
         target: auth_target(&planned.auth),
         stash,
     });
+    ensure_official_login(&planned.auth, &auth_plan, live_auth.as_ref())?;
     let config_text = read_config_text();
     // 目录里的官方行是按拿锁前预测的登录取的：实际的目标登录换了人（Codex 恰好重新登录、
     // settle 补完了上一次操作），就停下，什么都不写。不能换成别的来源：目录已经算进契约。
