@@ -5,6 +5,8 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TrayPanel } from "@/tray-panel/TrayPanel";
 import {
@@ -14,6 +16,7 @@ import {
   type TrayPanelState,
 } from "@/tray-panel/api";
 import { emitTauriEvent } from "../msw/tauriMocks";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 vi.mock("@/tray-panel/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/tray-panel/api")>()),
@@ -101,9 +104,17 @@ async function paint() {
   });
 }
 
+function renderPanel(client = createTestQueryClient()) {
+  return render(<TrayPanel />, {
+    wrapper: ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    ),
+  });
+}
+
 async function openPanel(placement: PanelPlacement) {
   vi.mocked(trayPanelApi.placement).mockResolvedValue(placement);
-  const view = render(<TrayPanel />);
+  const view = renderPanel();
   await screen.findByRole("button", { name: "Claude Code default · Direct" });
   await paint();
   return view;
@@ -139,7 +150,7 @@ describe("TrayPanel window layout", () => {
 
   it("clips the first Windows frame without waiting for animation frames in a hidden window", async () => {
     vi.mocked(trayPanelApi.placement).mockResolvedValue(windows);
-    render(<TrayPanel />);
+    renderPanel();
     await screen.findByRole("button", { name: "Claude Code default · Direct" });
     expect(trayPanelApi.layout).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -211,6 +222,23 @@ describe("TrayPanel window layout", () => {
         offsetY: collapsed.offsetY,
         cards: collapsed.cards,
       }),
+    );
+  });
+
+  it("re-reads settings every time it pops up so changes made in the main window show", async () => {
+    const client = createTestQueryClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    vi.mocked(trayPanelApi.placement).mockResolvedValue(windows);
+    renderPanel(client);
+    await screen.findByRole("button", { name: "Claude Code default · Direct" });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["settings"] });
+
+    invalidate.mockClear();
+    await act(async () => {
+      emitTauriEvent(SHOW_EVENT, { ...windows, seq: 2 });
+    });
+    await waitFor(() =>
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ["settings"] }),
     );
   });
 

@@ -8,6 +8,7 @@ import {
   type CSSProperties,
 } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { useQueryClient } from "@tanstack/react-query";
 import i18n from "i18next";
 import {
   AlertTriangle,
@@ -424,6 +425,7 @@ export function TrayPanel() {
   const [query, setQuery] = useState("");
   const [shownCount, setShownCount] = useState(0);
   const theme = usePanelTheme(shownCount);
+  const queryClient = useQueryClient();
 
   const mainRef = useRef<HTMLDivElement>(null);
   const subRef = useRef<HTMLDivElement>(null);
@@ -442,18 +444,22 @@ export function TrayPanel() {
     }
   }, []);
 
-  // 每次弹出：收起子面板、清空搜索、先取数据再排版，显示出来就是新内容
+  // 每次弹出：收起子面板、清空搜索、先取数据再排版，显示出来就是新内容。
+  // 设置（币种、趋势图样式）也重新读：面板窗口只隐藏不销毁，主窗口改了设置这边收不到。
   const begin = useCallback(
     async (next: PanelPlacement) => {
       syncLanguage();
       setOpenApp(null);
       setQuery("");
-      await load();
+      await Promise.all([
+        load(),
+        queryClient.invalidateQueries({ queryKey: ["settings"] }),
+      ]);
       lastLayout.current = "";
       setShownCount((count) => count + 1);
       setPlacement(next);
     },
-    [load],
+    [load, queryClient],
   );
 
   useEffect(() => {
