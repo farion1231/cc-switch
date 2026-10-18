@@ -151,19 +151,64 @@ export function formatUsageTrendTickLabel(
   return point?.label ?? xKey;
 }
 
+export interface UsageTrendTokenTickFormatter {
+  format(value: number): string;
+}
+
+/**
+ * 中日文的「万」「亿」各管四位数，5000万、2000亿 比英文的 50M、200B 宽一截，
+ * 会把纵轴撑宽；这两段改写成 5千万、2千亿。
+ */
+function cjkThousandUnits(locale: string): Array<[number, string]> | null {
+  if (locale === "zh-TW") {
+    return [
+      [1e11, "千億"],
+      [1e7, "千萬"],
+    ];
+  }
+  if (locale.startsWith("zh")) {
+    return [
+      [1e11, "千亿"],
+      [1e7, "千万"],
+    ];
+  }
+  if (locale.startsWith("ja")) {
+    return [
+      [1e11, "千億"],
+      [1e7, "千万"],
+    ];
+  }
+  return null;
+}
+
 export function createUsageTrendTokenTickFormatter(
   locale: string,
-): Intl.NumberFormat {
-  return new Intl.NumberFormat(locale, {
+): UsageTrendTokenTickFormatter {
+  const compact = new Intl.NumberFormat(locale, {
     notation: "compact",
     compactDisplay: "short",
     maximumFractionDigits: 1,
   });
+  const units = cjkThousandUnits(locale);
+  if (!units) return compact;
+  const plain = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 });
+  return {
+    format(value) {
+      const abs = Math.abs(value);
+      for (const [size, unit] of units) {
+        if (abs < size || abs >= size * 10) continue;
+        const scaled = Number((value / size).toFixed(1));
+        // 9.96 千万这类进位到 10 的，交回原格式（9960万）
+        if (Math.abs(scaled) < 10) return `${plain.format(scaled)}${unit}`;
+      }
+      return compact.format(value);
+    },
+  };
 }
 
 export function formatUsageTrendTokenTickLabel(
   value: unknown,
-  formatter: Intl.NumberFormat,
+  formatter: UsageTrendTokenTickFormatter,
 ): string {
   const num = parseFiniteNumber(value);
   if (num == null) return "--";
@@ -333,7 +378,7 @@ export function UsageTrendChart({
                 allowDuplicatedCategory={false}
               />
               <YAxis
-                width={44}
+                width="auto"
                 axisLine={false}
                 tickLine={false}
                 tick={AXIS_TICK}

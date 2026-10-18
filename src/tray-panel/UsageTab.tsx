@@ -347,7 +347,7 @@ export function UsageTab({
                     minTickGap={24}
                   />
                   <YAxis
-                    width={44}
+                    width="auto"
                     tick={{ fill: "currentColor", fontSize: 10, opacity: 0.55 }}
                     tickLine={false}
                     axisLine={false}
