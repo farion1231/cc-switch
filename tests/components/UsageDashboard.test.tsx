@@ -8,6 +8,7 @@ import {
   resetUsageSyncClockForTests,
 } from "@/components/usage/UsageDashboard";
 import type { UsageRangeSelection } from "@/types/usage";
+import { USAGE_CHOICE_KEYS } from "@/components/usage/rememberedChoice";
 
 const useProviderStatsMock = vi.hoisted(() => vi.fn());
 const useModelStatsMock = vi.hoisted(() => vi.fn());
@@ -124,6 +125,9 @@ vi.mock("@/components/usage/UsageDateRangePicker", () => ({
       <button type="button" onClick={() => onApply({ preset: "all" })}>
         pick-all
       </button>
+      <button type="button" onClick={() => onApply({ preset: "7d" })}>
+        pick-7d
+      </button>
       <button
         type="button"
         onClick={() =>
@@ -135,6 +139,19 @@ vi.mock("@/components/usage/UsageDateRangePicker", () => ({
         }
       >
         pick-custom
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          onApply({
+            preset: "custom",
+            customStartDate: 1_700_000_000,
+            customEndDate: 1_700_086_400,
+            liveEndTime: true,
+          })
+        }
+      >
+        pick-live-custom
       </button>
     </>
   ),
@@ -153,11 +170,11 @@ const renderDashboard = (props: ComponentProps<typeof UsageDashboard> = {}) => {
       queries: { retry: false },
     },
   });
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <UsageDashboard {...props} />
-    </QueryClientProvider>,
-  );
+  return render(<UsageDashboard {...props} />, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    ),
+  });
 };
 
 describe("UsageDashboard", () => {
@@ -253,6 +270,193 @@ describe("UsageDashboard", () => {
     expect(usageHeroMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ range: { preset: "today" } }),
     );
+  });
+
+  describe("per-app time ranges", () => {
+    it("restores separate presets for each app and the all-app filter", async () => {
+      const user = userEvent.setup();
+      renderDashboard();
+      await user.click(screen.getByRole("button", { name: "pick-all" }));
+      await user.click(screen.getByRole("button", { name: /Codex/ }));
+      expect(usageHeroMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          appType: "codex",
+          range: { preset: "today" },
+        }),
+      );
+      await user.click(screen.getByRole("button", { name: "pick-7d" }));
+      await user.click(screen.getByRole("button", { name: "Pi" }));
+      expect(usageHeroMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ appType: "pi", range: { preset: "today" } }),
+      );
+      await user.click(screen.getByRole("button", { name: /Codex/ }));
+      expect(usageHeroMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ appType: "codex", range: { preset: "7d" } }),
+      );
+      await user.click(
+        screen.getByRole("button", { name: "usage.appFilter.all" }),
+      );
+      expect(usageHeroMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          appType: undefined,
+          range: { preset: "all" },
+        }),
+      );
+      expect(localStorage.getItem(`${USAGE_CHOICE_KEYS.range}.all`)).toBe(
+        "all",
+      );
+      expect(localStorage.getItem(`${USAGE_CHOICE_KEYS.range}.codex`)).toBe(
+        "7d",
+      );
+      expect(localStorage.getItem(USAGE_CHOICE_KEYS.range)).toBeNull();
+    });
+
+    it("uses the legacy preset without changing another app's fallback", async () => {
+      localStorage.setItem(USAGE_CHOICE_KEYS.range, "14d");
+      localStorage.setItem(`${USAGE_CHOICE_KEYS.range}.codex`, "7d");
+      const user = userEvent.setup();
+      renderDashboard({ initialAppType: "codex" });
+      expect(usageHeroMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ range: { preset: "7d" } }),
+      );
+      await user.click(screen.getByRole("button", { name: "pick-all" }));
+      await user.click(screen.getByRole("button", { name: "Pi" }));
+      expect(usageHeroMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ appType: "pi", range: { preset: "14d" } }),
+      );
+      expect(localStorage.getItem(USAGE_CHOICE_KEYS.range)).toBe("14d");
+      expect(localStorage.getItem(`${USAGE_CHOICE_KEYS.range}.codex`)).toBe(
+        "all",
+      );
+    });
+
+    it.each([false, true])(
+      "keeps custom dates across app switches but reopens the last preset (live=%s)",
+      async (liveEndTime) => {
+        const user = userEvent.setup();
+        const first = renderDashboard({ initialAppType: "codex" });
+        await user.click(screen.getByRole("button", { name: "pick-7d" }));
+        await user.click(
+          screen.getByRole("button", {
+            name: liveEndTime ? "pick-live-custom" : "pick-custom",
+          }),
+        );
+        await user.click(screen.getByRole("button", { name: "Pi" }));
+        await user.click(screen.getByRole("button", { name: "pick-all" }));
+        await user.click(screen.getByRole("button", { name: /Codex/ }));
+        expect(usageHeroMock).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            appType: "codex",
+            range: {
+              preset: "custom",
+              customStartDate: 1_700_000_000,
+              customEndDate: 1_700_086_400,
+              ...(liveEndTime ? { liveEndTime: true } : {}),
+            },
+          }),
+        );
+        first.unmount();
+        renderDashboard({ initialAppType: "codex" });
+        expect(usageHeroMock).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            appType: "codex",
+            range: { preset: "7d" },
+          }),
+        );
+      },
+    );
+
+    it("restores the range and clears dependent filters when initialAppType changes", async () => {
+      localStorage.setItem(`${USAGE_CHOICE_KEYS.range}.codex`, "7d");
+      localStorage.setItem(`${USAGE_CHOICE_KEYS.range}.pi`, "30d");
+      useModelStatsMock.mockReturnValue({
+        data: [{ model: "deepseek-chat", requestCount: 12 }],
+      });
+      const user = userEvent.setup();
+      const view = renderDashboard({ initialAppType: "codex" });
+      await user.click(
+        screen.getByRole("button", { name: "usage.providerFilter.label" }),
+      );
+      await user.click(
+        await screen.findByRole("menuitem", { name: /DeepSeek/ }),
+      );
+      await user.click(
+        screen.getByRole("button", { name: "usage.modelFilter.label" }),
+      );
+      await user.click(
+        await screen.findByRole("menuitem", { name: /deepseek-chat/ }),
+      );
+      expect(usageHeroMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          providerName: "DeepSeek",
+          model: "deepseek-chat",
+        }),
+      );
+      view.rerender(<UsageDashboard initialAppType="pi" />);
+      expect(usageHeroMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          appType: "pi",
+          range: { preset: "30d" },
+          providerName: undefined,
+          model: undefined,
+        }),
+      );
+      await user.click(screen.getByRole("button", { name: /Codex/ }));
+      expect(usageHeroMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          appType: "codex",
+          range: { preset: "7d" },
+          providerName: undefined,
+          model: undefined,
+        }),
+      );
+    });
+
+    it("keeps each app's current range when browser storage is unavailable", async () => {
+      const getItem = vi
+        .spyOn(Storage.prototype, "getItem")
+        .mockImplementation(() => {
+          throw new DOMException("Storage blocked", "SecurityError");
+        });
+      const setItem = vi
+        .spyOn(Storage.prototype, "setItem")
+        .mockImplementation(() => {
+          throw new DOMException("Storage blocked", "SecurityError");
+        });
+      try {
+        const user = userEvent.setup();
+        renderDashboard({ initialAppType: "codex" });
+        await user.click(screen.getByRole("button", { name: "pick-7d" }));
+        await user.click(screen.getByRole("button", { name: "Pi" }));
+        await user.click(screen.getByRole("button", { name: "pick-all" }));
+        await user.click(screen.getByRole("button", { name: /Codex/ }));
+        expect(usageHeroMock).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            appType: "codex",
+            range: { preset: "7d" },
+          }),
+        );
+      } finally {
+        getItem.mockRestore();
+        setItem.mockRestore();
+      }
+    });
+
+    it("falls back from invalid app presets and never restores custom from storage", async () => {
+      localStorage.setItem(USAGE_CHOICE_KEYS.range, "14d");
+      localStorage.setItem(`${USAGE_CHOICE_KEYS.range}.codex`, "unknown");
+      localStorage.setItem(`${USAGE_CHOICE_KEYS.range}.pi`, "custom");
+      const user = userEvent.setup();
+      renderDashboard({ initialAppType: "codex" });
+      expect(usageHeroMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ appType: "codex", range: { preset: "14d" } }),
+      );
+      await user.click(screen.getByRole("button", { name: "pick-all" }));
+      await user.click(screen.getByRole("button", { name: "Pi" }));
+      expect(usageHeroMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ appType: "pi", range: { preset: "14d" } }),
+      );
+    });
   });
 
   it("shows the saved refresh interval in the header menu", () => {
