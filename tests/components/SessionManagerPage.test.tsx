@@ -94,7 +94,9 @@ describe("SessionManagerPage", () => {
       clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
     });
 
-    const now = Date.now();
+    const todayAtNoon = new Date();
+    todayAtNoon.setHours(12, 0, 0, 0);
+    const now = todayAtNoon.getTime();
     const sessions: SessionMeta[] = [
       {
         providerId: "codex",
