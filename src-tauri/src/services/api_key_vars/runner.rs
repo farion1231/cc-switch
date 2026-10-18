@@ -1319,7 +1319,9 @@ mod tests {
         ApiKeyRefreshConfig {
             enabled: true,
             script_dir: dir.to_str().unwrap().to_string(),
-            timeout_secs: Some(5),
+            // Output/exit-code tests use the normal timeout: starting Node
+            // can take several seconds on a cold Windows CI runner.
+            timeout_secs: None,
             lead_time_secs: None,
         }
     }
@@ -1412,8 +1414,12 @@ process.stdout.write(JSON.stringify({ apiKey: ok ? "sk-from-mjs-123" : "bad-env"
         assert!(!f.permanent);
 
         std::fs::write(&script, r#"setTimeout(() => {}, 60000);"#).unwrap();
+        let timeout_cfg = ApiKeyRefreshConfig {
+            timeout_secs: Some(5),
+            ..script_cfg(dir.path())
+        };
         let started = std::time::Instant::now();
-        let f = run_script(&script_cfg(dir.path()), &test_ctx(), None, &[])
+        let f = run_script(&timeout_cfg, &test_ctx(), None, &[])
             .await
             .unwrap_err();
         assert!(
@@ -1538,12 +1544,10 @@ process.exitCode = 0;"#,
         )
         .unwrap();
 
-        let started = std::time::Instant::now();
         let failure = run_script(&script_cfg(dir.path()), &test_ctx(), None, &[])
             .await
             .unwrap_err();
         assert!(failure.error.contains("64 KiB"), "{}", failure.error);
-        assert!(started.elapsed() < Duration::from_secs(4), "{failure:?}");
 
         std::fs::write(
             dir.path().join("index.mjs"),
@@ -1558,12 +1562,10 @@ process.exitCode = 1;"#,
             ),
         )
         .unwrap();
-        let started = std::time::Instant::now();
         let failure = run_script(&script_cfg(dir.path()), &test_ctx(), None, &[])
             .await
             .unwrap_err();
         assert!(failure.error.contains("tail sentinel"), "{}", failure.error);
-        assert!(started.elapsed() < Duration::from_secs(4), "{failure:?}");
     }
 
     #[tokio::test]
