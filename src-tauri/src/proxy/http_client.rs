@@ -28,7 +28,8 @@ static CC_SWITCH_PROXY_PORT: OnceCell<RwLock<u16>> = OnceCell::new();
 /// reqwest/hyper-util 内部按 http/https/all 三类代理外加 NO_PROXY 分别生效，
 /// 单个 `Option<String>` 无法表达这些语义：HTTPS 不变、仅 HTTP 变化，或仅
 /// NO_PROXY 变化时，单 URL 签名都看不见。快照按 hyper-util 的规则构造
-/// （环境变量优先，macOS 系统配置只填补仍为空的协议槽），用作变化检测签名。
+/// （环境变量优先，系统配置只填补仍为空的槽位：macOS 填 http/https，
+/// Windows 额外用 ProxyOverride 填 NO_PROXY），用作变化检测签名。
 ///
 /// macOS 上 reqwest 还把系统代理的 bypass 规则（ExceptionsList 与
 /// ExcludeSimpleHostnames）烘焙进客户端，因此快照以 `system_bypass` 记录
@@ -249,8 +250,9 @@ pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 /// 获取全局 HTTP 客户端
 ///
 /// 返回配置了代理的客户端（如果已配置代理），否则返回跟随系统代理的客户端。
-/// 未配置显式代理时（macOS），会节流地检测系统代理配置变化并按需重建客户端，
-/// 避免应用启动后系统代理关闭/切换导致请求持续打到已移除的代理上。
+/// 未配置显式代理时（macOS/Windows），会节流地检测系统代理配置变化并按需
+/// 重建客户端，避免应用启动后系统代理关闭/切换导致请求持续打到已移除的
+/// 代理上。
 ///
 /// 注意：这里只跟随"配置"变化，不做代理性存活性探测——系统仍配置代理但
 /// 代理进程未监听时保持 fail-closed（请求按 reqwest 语义正常报错），不静默
@@ -296,10 +298,10 @@ fn baked_system_snapshot() -> Option<SystemProxySnapshot> {
 ///
 /// 仅在未配置显式代理时生效；显式代理由用户管理，不参与自动刷新。
 /// 平台边界：reqwest 只在构建时读取一次系统代理，长驻进程里配置关闭/
-/// 切换后旧客户端会一直指向失效目标，这个检测只服务该场景的 macOS 桌面
-/// 应用；其余平台维持原有行为，不做周期性解析。
+/// 切换后旧客户端会一直指向失效目标，这个检测只服务该场景的 macOS 与
+/// Windows 桌面应用；其余平台维持原有行为，不做周期性解析。
 fn refresh_system_proxy_if_changed() {
-    if !cfg!(target_os = "macos") {
+    if !(cfg!(target_os = "macos") || cfg!(target_os = "windows")) {
         return;
     }
 
@@ -393,7 +395,7 @@ fn commit_system_refresh(
 
 /// 读取"跟随系统代理"的结构化解析结果（环境变量优先，系统配置填空）
 fn read_system_proxy_snapshot() -> SystemProxySnapshot {
-    // mut 仅在下方 macOS cfg 块中使用，其他平台不触发 unused_mut
+    // mut 仅在下方 macOS/Windows cfg 块中使用，其他平台不触发 unused_mut
     #[allow(unused_mut)]
     let mut snapshot = env_system_proxy_snapshot();
 
@@ -412,6 +414,24 @@ fn read_system_proxy_snapshot() -> SystemProxySnapshot {
         // 匹配层，没有"环境变量存在则系统 bypass 无效"的可靠结论。多记的
         // 代价最多是一次幂等的重建，漏记的代价是旧 bypass 规则驻留。
         snapshot.system_bypass = system_bypass;
+    }
+
+    // Windows 注册表同样只填补环境变量仍为空的槽位。与 macOS 的差异：
+    // ProxyOverride 与 NO_PROXY 环境变量在 hyper-util 里是同一个匹配槽
+    // （环境变量存在时注册表整体让位），不存在独立的 bypass 层，因此
+    // 归一化结果直接记入 no_proxy；ALL_PROXY 没有注册表来源。
+    #[cfg(target_os = "windows")]
+    {
+        let (registry_http, registry_https, registry_no_proxy) = windows_system_proxy_state();
+        if snapshot.http.is_none() {
+            snapshot.http = registry_http;
+        }
+        if snapshot.https.is_none() {
+            snapshot.https = registry_https;
+        }
+        if snapshot.no_proxy.is_none() {
+            snapshot.no_proxy = registry_no_proxy;
+        }
     }
 
     snapshot
@@ -632,6 +652,60 @@ fn host_is_loopback(host: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Windows 系统代理条目（注册表 `Internet Settings`，与 reqwest/hyper-util
+/// 的数据源一致），返回 (http, https, NO_PROXY 签名)。
+///
+/// 语义逐条对齐 hyper-util v0.1.20 的 `win::with_system`：`ProxyEnable`
+/// 为 0 时注册表整体不贡献，任意非零值均启用；`ProxyServer` 原样作为 http/https 槽的候选值
+/// （裸 `host:port` 由 hyper-util 按 http 代理解析；`http=...;https=...`
+/// 分协议形式则解析失败、行为等价于无代理，签名照原样记录即可）；
+/// `ProxyOverride` 归一化后充当 NO_PROXY。PAC（`AutoConfigURL`）hyper-util
+/// 不支持，同样忽略。
+#[cfg(target_os = "windows")]
+fn windows_system_proxy_state() -> (Option<String>, Option<String>, Option<String>) {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    let Ok(settings) = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
+    else {
+        return (None, None, None);
+    };
+    let proxy_enable: u32 = settings.get_value("ProxyEnable").unwrap_or(0);
+    if proxy_enable == 0 {
+        return (None, None, None);
+    }
+
+    let proxy_server: Option<String> = settings.get_value("ProxyServer").ok();
+    let no_proxy: Option<String> = settings
+        .get_value::<String, _>("ProxyOverride")
+        .ok()
+        .and_then(|value| canonical_windows_bypass(&value));
+
+    (proxy_server.clone(), proxy_server, no_proxy)
+}
+
+/// `ProxyOverride` → NO_PROXY 风格的规范化签名。先对齐 hyper-util v0.1.20
+/// 的 normalize（分号分隔 → 逗号连接、移除所有 `*.`），再叠加与 macOS
+/// bypass 相同的规范化（小写 + 排序去重）：NoProxy 的域名匹配不区分大小写、
+/// 条目顺序无语义，这些差异不构成客户端行为变化，不该触发重建。
+/// `127.*` 这类通配符条目在 0.1.20 里原样保留（匹配不到任何主机），签名
+/// 同样原样记录。
+#[cfg(any(target_os = "windows", test))]
+fn canonical_windows_bypass(value: &str) -> Option<String> {
+    let mut entries: Vec<String> = value
+        .split(';')
+        .map(|entry| entry.trim().replace("*.", "").to_lowercase())
+        .filter(|entry| !entry.is_empty())
+        .collect();
+    entries.sort();
+    entries.dedup();
+    if entries.is_empty() {
+        return None;
+    }
+    Some(entries.join(","))
+}
+
 /// 获取当前代理 URL
 ///
 /// 返回当前配置的代理 URL，None 表示直连。
@@ -692,10 +766,10 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
     } else {
         // 跟随系统代理。reqwest 内建的自动跟随只在客户端构建时读取一次系统
         // 状态：长驻进程里系统代理配置关闭/切换（代理工具退出、转为 TUN
-        // 模式）会让客户端继续使用已移除的代理。macOS 上由 get() 节流检测
-        // 配置变化并重建（见 refresh_system_proxy_if_changed）；代理语义
-        // （分协议、NO_PROXY）完全交由 reqwest 处理，不做存活探测，也不在
-        // 配置仍指向代理时静默直连。
+        // 模式）会让客户端继续使用已移除的代理。macOS/Windows 上由 get()
+        // 节流检测配置变化并重建（见 refresh_system_proxy_if_changed）；
+        // 代理语义（分协议、NO_PROXY）完全交由 reqwest 处理，不做存活探测，
+        // 也不在配置仍指向代理时静默直连。
         log::debug!("[GlobalProxy] Following system proxy (no explicit proxy configured)");
     }
 
@@ -1132,7 +1206,7 @@ mod tests {
     }
 
     /// 初始化全局客户端并烘焙当前快照（消除 init 路径差异）
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn setup_global_client_with_current_snapshot() {
         if GLOBAL_CLIENT.get().is_none() {
             let _ = init(None);
@@ -1140,7 +1214,7 @@ mod tests {
         store_baked_system_snapshot(Some(read_system_proxy_snapshot()));
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn reset_system_proxy_check_throttle() {
         if let Ok(mut last_check) = LAST_SYSTEM_PROXY_CHECK.try_lock() {
             *last_check = None;
@@ -1149,7 +1223,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn test_no_rebuild_when_system_proxy_unchanged() {
         let _guard = env_lock().lock().unwrap();
         clear_proxy_env();
@@ -1176,7 +1250,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn test_rebuild_once_when_system_proxy_config_removed() {
         let _guard = env_lock().lock().unwrap();
         clear_proxy_env();
@@ -1211,7 +1285,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn test_refresh_yields_to_explicit_proxy() {
         let _guard = env_lock().lock().unwrap();
         clear_proxy_env();
@@ -1248,7 +1322,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn test_stale_refresh_cannot_overwrite_explicit_proxy() {
         let _guard = env_lock().lock().unwrap();
         clear_proxy_env();
@@ -1280,8 +1354,50 @@ mod tests {
         clear_proxy_env();
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn system_proxy_rebuild_count() -> u64 {
         SYSTEM_PROXY_REBUILD_COUNT.load(Ordering::Relaxed)
+    }
+
+    #[test]
+    fn test_canonical_windows_bypass_normalizes_semantically_equal_lists() {
+        // 大小写、空白、顺序、重复项都不构成语义变化（NoProxy 匹配不区分
+        // 大小写，条目顺序无语义）；`*.` 按 hyper-util 的 normalize 全局移除
+        assert_eq!(
+            canonical_windows_bypass(" *.INTERNAL;internal.com;*.internal "),
+            Some("internal,internal.com".to_string())
+        );
+
+        // `<local>` 是 Windows 常见条目，hyper-util 原样保留，签名同样保留；
+        // `*.` 前缀按 v0.1.20 的全局 `replace("*.", "")` 剥掉，排序后 `<` 在 `e` 前
+        assert_eq!(
+            canonical_windows_bypass("<local>;*.example.com"),
+            Some("<local>,example.com".to_string())
+        );
+
+        // `127.*` 这类通配符在 v0.1.20 里不被剥除也不转 CIDR，原样记录
+        assert_eq!(
+            canonical_windows_bypass("192.168.*;127.*"),
+            Some("127.*,192.168.*".to_string())
+        );
+
+        // 空列表与"没有 bypass"同义
+        assert_eq!(canonical_windows_bypass(""), None);
+        assert_eq!(canonical_windows_bypass(" ; ; "), None);
+    }
+
+    #[test]
+    fn test_canonical_windows_bypass_matches_global_wildcard_removal() {
+        // 锁定的 hyper-util v0.1.20 使用 replace("*.", "")，不是 strip_prefix。
+        // 中间与重复出现的 `*.` 也被移除；这些写法烘焙进客户端后行为相同，
+        // 快照必须保持相同，避免仅改写规则时产生多余重建。
+        let expected = canonical_windows_bypass("foo.example.com");
+        for value in [
+            "foo.*.example.com",
+            "*.*.foo.example.com",
+            "*.foo.*.example.com",
+        ] {
+            assert_eq!(canonical_windows_bypass(value), expected, "{value}");
+        }
     }
 }
