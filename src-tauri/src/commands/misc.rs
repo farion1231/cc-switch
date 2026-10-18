@@ -2580,6 +2580,20 @@ fn installation_identity(tool_path: &Path, real: &Path) -> PathBuf {
         .unwrap_or_else(|| real.to_path_buf())
 }
 
+/// 是否把该候选排到最后再认领身份。Windows 上是批处理转发壳；其他平台没有壳，
+/// 恒为 false，排序因此是恒等的。
+fn is_deferred_forwarder_candidate(path: &Path) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        is_windows_command_script(path)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = path;
+        false
+    }
+}
+
 /// Convert a canonicalized Windows path back to the form accepted by shell
 /// commands. `std::fs::canonicalize` prefixes local paths with `\\?\` (and UNC
 /// paths with `\\?\UNC\`), but `cmd.exe` cannot `call` a batch file through
@@ -3107,12 +3121,14 @@ fn run_probe_version_command(
 /// 壳必须排在真身之后认领：搜索路径里 `%APPDATA%\npm` 这类硬编码目录排在 PATH 合并
 /// 出来的原生安装目录之前，壳会先被遍历到；先认领的话真身就被丢掉，用户看到的「安装」
 /// 会变成一个没有版本可探测的脚本。非 Windows 没有壳，排序是恒等的。
-fn dedup_tool_candidates(
-    candidates: Vec<(std::path::PathBuf, String)>,
-) -> Vec<(std::path::PathBuf, String)> {
+///
+/// `T` 是调用方的 `new_path`：Windows 上是 `String`，其他平台是 `OsString`
+/// （`prepend_search_dir_to_path` 的约定，避免非 UTF-8 的 PATH 段被有损转换丢掉）。
+fn dedup_tool_candidates<T>(
+    candidates: Vec<(std::path::PathBuf, T)>,
+) -> Vec<(std::path::PathBuf, T)> {
     let mut candidates = candidates;
-    #[cfg(target_os = "windows")]
-    candidates.sort_by_key(|(tool_path, _)| is_windows_command_script(tool_path));
+    candidates.sort_by_key(|(tool_path, _)| is_deferred_forwarder_candidate(tool_path));
 
     let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
     let mut kept = Vec::with_capacity(candidates.len());
@@ -3153,7 +3169,8 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
     // 候选先全部收齐再统一去重：跨目录时转发壳和它启动的真身可能都命中（#8259），
     // 真身必须先认领自己的身份，否则壳会把真身顶掉、用户看到的「安装」变成一个
     // 没有意义的脚本。
-    let mut candidates: Vec<(std::path::PathBuf, String)> = Vec::new();
+    // `new_path` 的类型随平台：Windows 是 String，其他平台是 OsString。
+    let mut candidates: Vec<(std::path::PathBuf, _)> = Vec::new();
     for dir in &search_paths {
         #[cfg(target_os = "windows")]
         let new_path = format!("{};{}", dir.display(), current_path);
