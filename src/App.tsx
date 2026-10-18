@@ -84,6 +84,7 @@ import {
 } from "@/components/providers/forms/helpers/opencodeFormUtils";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { OpenTerminalDialog } from "@/components/providers/OpenTerminalDialog";
 import { discardUnsavedChanges, hasUnsavedChanges } from "@/lib/unsavedChanges";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
@@ -269,6 +270,9 @@ function App() {
     provider: Provider;
     action: "remove" | "delete";
   } | null>(null);
+  const [terminalProvider, setTerminalProvider] = useState<Provider | null>(
+    null,
+  );
   const [envConflicts, setEnvConflicts] = useState<EnvConflict[]>([]);
   const [showEnvBanner, setShowEnvBanner] = useState(false);
 
@@ -400,9 +404,11 @@ function App() {
       try {
         const off = await providersApi.onSwitched(
           async (event: ProviderSwitchEvent) => {
-            if (event.appType === activeApp) {
-              await refetch();
-            }
+            // 按前缀失效：故障转移只改路由指针，「路由中」标记读的是
+            // ["providers", app, "mode"]，只 refetch 列表会让它停在旧那家
+            await queryClient.invalidateQueries({
+              queryKey: ["providers", event.appType],
+            });
             if (event.appType === "pi") {
               await invalidatePiProviderCaches(queryClient);
             }
@@ -423,7 +429,7 @@ function App() {
       active = false;
       unsubscribe?.();
     };
-  }, [activeApp, queryClient, refetch]);
+  }, [queryClient]);
 
   useTauriEvent("universal-provider-synced", async () => {
     await queryClient.invalidateQueries({ queryKey: ["providers"] });
@@ -1027,32 +1033,6 @@ function App() {
       : message;
   }, [activeApp, confirmAction, piCurrentState?.defaultProviderId, t]);
 
-  const handleOpenTerminal = async (provider: Provider) => {
-    try {
-      const selectedDir = await settingsApi.pickDirectory();
-      if (!selectedDir) {
-        return;
-      }
-
-      await providersApi.openTerminal(provider.id, activeApp, {
-        cwd: selectedDir,
-      });
-      toast.success(
-        t("provider.terminalOpened", {
-          defaultValue: "终端已打开",
-        }),
-      );
-    } catch (error) {
-      console.error("[App] Failed to open terminal", error);
-      const errorMessage = extractErrorMessage(error);
-      toast.error(
-        t("provider.terminalOpenFailed", {
-          defaultValue: "打开终端失败",
-        }) + (errorMessage ? `: ${errorMessage}` : ""),
-      );
-    }
-  };
-
   const handleImportSuccess = async () => {
     try {
       await queryClient.invalidateQueries({
@@ -1271,7 +1251,7 @@ function App() {
     onDuplicate: handleDuplicateProvider,
     onConfigureUsage: setUsageProvider,
     onOpenWebsite: handleOpenWebsite,
-    onOpenTerminal: activeApp === "claude" ? handleOpenTerminal : undefined,
+    onOpenTerminal: activeApp === "claude" ? setTerminalProvider : undefined,
     onCreate: () => openAddProvider(currentModeView),
     searchOpen: providerSearchOpen,
     onSearchOpenChange: setProviderSearchOpen,
@@ -1627,6 +1607,12 @@ function App() {
           }}
         />
       )}
+
+      <OpenTerminalDialog
+        provider={terminalProvider}
+        appId={activeApp}
+        onClose={() => setTerminalProvider(null)}
+      />
 
       <ConfirmDialog
         isOpen={Boolean(confirmAction)}

@@ -1258,8 +1258,18 @@ fn npm_prerelease_tags(tool: &str) -> &'static [&'static str] {
 /// 与前端 `src/lib/version.ts` 的 parseVersion 语义对称(跨语言各实现一份)。
 /// patch 用 u64 以容纳 codex 的 `0.1.2505172116` 时间戳式版本而不溢出。
 fn parse_semver(v: &str) -> Option<([u64; 3], Vec<String>)> {
-    // 忽略 `+build` 元数据,再以首个 `-` 切出预发布段。
-    let core_and_pre = v.trim().split('+').next().unwrap_or("");
+    let v = v.trim();
+    // `+local` 段命中开发构建形态(git describe `238.g<sha>`,或含 canary /
+    // nightly / dev 等开发通道标识,如 Hermes main/canary 自报的
+    // `0.22.1+238.g<sha>`)时,版本号可能低于最新 release、内容反而更新,与
+    // release 不可比 —— 返回 None,调用方据此保守处理。普通 semver build
+    // metadata(如 `1.0.0+linux.1`)按 semver 规范忽略后照常比较。
+    if let Some((_, local)) = v.split_once('+') {
+        if is_dev_local(local) {
+            return None;
+        }
+    }
+    let core_and_pre = v.split('+').next().unwrap_or("");
     let (core, pre) = match core_and_pre.split_once('-') {
         Some((c, p)) => (c, Some(p)),
         None => (core_and_pre, None),
@@ -1275,6 +1285,18 @@ fn parse_semver(v: &str) -> Option<([u64; 3], Vec<String>)> {
         .map(|p| p.split('.').map(|s| s.to_string()).collect())
         .unwrap_or_default();
     Some(([major, minor, patch], pre_segments))
+}
+
+/// local version 段的开发构建形态:git describe(`238.g<sha>`)或常见开发通道标识
+/// (canary / nightly / dev / dirty / snapshot)。普通 semver build metadata
+/// (如 `linux.1`)不命中 —— 与前端 `src/lib/version.ts` 的 DEV_LOCAL_RE 语义对称。
+static DEV_LOCAL_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)^\d+\.g[0-9a-f]{4,}|(^|\.)(canary|nightly|dev|dirty|snapshot)(\.|$)")
+        .expect("Invalid dev-local regex")
+});
+
+fn is_dev_local(local: &str) -> bool {
+    DEV_LOCAL_RE.is_match(local)
 }
 
 /// 比较两个版本号(遵循 semver:主版本三段优先;core 相等时有预发布 < 无预发布;
@@ -1483,9 +1505,12 @@ async fn fetch_pypi_latest_version(client: &reqwest::Client, package: &str) -> O
     }
 }
 
-/// 预编译的版本号正则表达式
-static VERSION_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\d+\.\d+\.\d+(-[\w.]+)?").expect("Invalid version regex"));
+/// 预编译的版本号正则表达式。末尾的 `(\+[\w.-]+)?` 保留 PEP 440 local version
+/// 段(git describe 风格,如 Hermes main/canary 开发构建 `0.22.1+238.g<sha>`),
+/// 让前端能据此识别开发构建,避免把"版本号更低但内容更新"误报成"有新版本"。
+static VERSION_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\d+\.\d+\.\d+(-[\w.]+)?(\+[\w.-]+)?").expect("Invalid version regex")
+});
 
 /// WSL 版本探测载荷先打印的哨兵。用户 shell 的启动文件（Ubuntu 的 update-motd、
 /// `/etc/bash.bashrc` 的 sudo 提示、nvm 的 `Using Node vX.Y.Z` 等）输出都在它前面，
@@ -1534,6 +1559,16 @@ fn after_version_sentinel(output: &str) -> &str {
         Some(i) => output[i + VERSION_PROBE_SENTINEL.len()..].trim(),
         None => output,
     }
+}
+
+/// 判断 shell 输出是否表示"找不到该命令"。
+/// 只认各 shell 的固定格式，避免把工具自身的 `module not found` 之类错误当成没装：
+/// bash/zsh `command not found`，dash/sh `<tool>: not found`，fish `Unknown command`。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn is_shell_command_missing(err: &str, tool: &str) -> bool {
+    err.contains("command not found")
+        || err.contains(&format!("{tool}: not found"))
+        || err.contains("Unknown command")
 }
 
 /// 从版本输出中提取纯版本号
@@ -1611,7 +1646,7 @@ fn try_get_version(tool: &str) -> ShellProbe {
 }
 
 /// 校验 WSL 发行版名称是否合法
-/// WSL 发行版名称只允许字母、数字、连字符和下划线
+/// WSL 发行版名称只允许字母、数字、连字符、下划线和点（如 `Ubuntu-22.04`）
 #[cfg(target_os = "windows")]
 fn is_valid_wsl_distro_name(name: &str) -> bool {
     !name.is_empty()
@@ -1831,12 +1866,11 @@ fn try_get_version_wsl(
                 } else {
                     stderr
                 };
-                // wsl.exe 透传的退出码不总可靠，故同时用 exit 127 与 "command not found"
+                // wsl.exe 透传的退出码不总可靠，故同时用 exit 127 与 shell 的"找不到命令"
                 // 文本兜底判别"没装"；其余非零退出视作"装了但 --version 报错"。
                 let not_found = err.is_empty()
                     || out.status.code() == Some(127)
-                    || err.contains("command not found")
-                    || err.contains("not found");
+                    || is_shell_command_missing(&err, tool);
                 if not_found {
                     ShellProbe::NotFound(format!("[WSL:{distro}] {NOT_INSTALLED}"))
                 } else {
@@ -2682,6 +2716,11 @@ pub struct ToolInstallation {
     runnable: bool,
     /// 跑不起来时的诊断信息末尾若干行。
     error: Option<String>,
+    /// `--version` 真的跑完并以非 0 退出（命令自己报错）。超时被击杀、启动失败都不算：
+    /// 那只说明这次没探到，不能证明装坏了。Codex 的卸载重装自愈只认这个信号——误判
+    /// 健康的一处为损坏、重装又失败时，旧版已被卸掉，用户看到「未安装」。
+    #[serde(skip)]
+    exited_with_error: bool,
     /// 由路径前缀推断的安装来源（nvm/homebrew/...），驱动 UI 徽章。
     source: String,
     /// 是否为 PATH 解析到的那处（= 命令行默认，也是升级会作用的目标）。
@@ -3023,12 +3062,12 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
 
             let output = run_probe_version_command(&tool_path, &new_path);
 
-            let (version, runnable, error) = match output {
+            let (version, runnable, error, exited_with_error) = match output {
                 Ok(out) if out.status.success() => {
                     let stdout = decode_command_output(&out.stdout).trim().to_string();
                     let stderr = decode_command_output(&out.stderr).trim().to_string();
                     let raw = if stdout.is_empty() { stderr } else { stdout };
-                    (Some(extract_version(&raw)), true, None)
+                    (Some(extract_version(&raw)), true, None, false)
                 }
                 Ok(out) => {
                     let stderr = decode_command_output(&out.stderr).trim().to_string();
@@ -3040,9 +3079,9 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
                     } else {
                         Some(last_lines(detail, 4))
                     };
-                    (None, false, error)
+                    (None, false, error, true)
                 }
-                Err(e) => (None, false, Some(e)),
+                Err(e) => (None, false, Some(e), false),
             };
 
             let is_path_default = path_default.as_ref() == Some(&real);
@@ -3054,6 +3093,7 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
                 version,
                 runnable,
                 error,
+                exited_with_error,
                 source: source.to_string(),
                 is_path_default,
                 // 复用上面 line ~1357 已 canonicalize 的真身,避免下游
@@ -4230,7 +4270,9 @@ fn installs_anchored_command(tool: &str, installs: &[ToolInstallation]) -> Optio
     // 来源**（codex_repair_command 内按 source/real 收窄，brew/volta/bun/system 交回下方
     // source-specific 锚定，避免误用 npm 重装）。runnable=true 的正常升级也走下方普通锚定
     // 路径（且因 codex 不在 prefers_official_update，不会再跑会假成功掩盖损坏的 `codex update`）。
-    if tool == "codex" && !inst.runnable {
+    // 只认 `--version` 真的退出报错：探测超时 / 启动失败的那处可能是好的，先卸载再装
+    // 一旦装失败就把旧版丢了；普通 `npm i -g` 失败时 npm 会回滚、旧版还在。
+    if tool == "codex" && !inst.runnable && inst.exited_with_error {
         if let Some(cmd) = codex_repair_command(&inst.path, &real) {
             return Some(cmd);
         }
@@ -5347,6 +5389,28 @@ fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), S
     run_windows_start_command_with_env(args, terminal_name, &[])
 }
 
+/// 组装 `cmd /C start ...`。终端里跑的 `claude` 等命令按这里的 PATH 查找：CC Switch
+/// 被 MSI 自动重启后只剩机器级 PATH（#6061），或是在装 CLI 之前就已启动，进程 PATH
+/// 都会缺用户级条目（#3877、#8446）。和检测、生命周期命令（#8173）一样用补全后的 PATH，
+/// 只影响启动的终端，不改 CC Switch 自身的环境；Windows Terminal 从命令行开新标签时
+/// 也沿用调用方的环境。
+#[cfg(target_os = "windows")]
+fn windows_start_command(
+    args: &[&str],
+    envs: &[(&str, &str)],
+    effective_path: &str,
+) -> std::process::Command {
+    let mut command = std::process::Command::new("cmd");
+    command
+        .arg("/C")
+        .arg("start")
+        .args(args)
+        .env("PATH", effective_path)
+        .envs(envs.iter().copied())
+        .creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
 /// 同 `run_windows_start_command`，额外给启动的终端设置环境变量（`start` 会继承）。
 #[cfg(target_os = "windows")]
 fn run_windows_start_command_with_env(
@@ -5354,15 +5418,7 @@ fn run_windows_start_command_with_env(
     terminal_name: &str,
     envs: &[(&str, &str)],
 ) -> Result<(), String> {
-    use std::process::Command;
-
-    let mut full_args = vec!["/C", "start"];
-    full_args.extend(args);
-
-    let output = Command::new("cmd")
-        .args(&full_args)
-        .envs(envs.iter().copied())
-        .creation_flags(CREATE_NO_WINDOW)
+    let output = windows_start_command(args, envs, &effective_path_string())
         .output()
         .map_err(|e| format!("启动 {} 失败: {e}", terminal_name))?;
 
@@ -5582,6 +5638,31 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn shell_command_missing_matches_shell_formats_only() {
+        assert!(is_shell_command_missing(
+            "bash: line 1: claude: command not found",
+            "claude"
+        ));
+        assert!(is_shell_command_missing(
+            "zsh:1: command not found: claude",
+            "claude"
+        ));
+        assert!(is_shell_command_missing(
+            "sh: 1: claude: not found",
+            "claude"
+        ));
+        assert!(is_shell_command_missing(
+            "fish: Unknown command: claude",
+            "claude"
+        ));
+        assert!(!is_shell_command_missing(
+            "Error: Cannot find module 'x'\nmodule not found",
+            "claude"
+        ));
+        assert!(!is_shell_command_missing("config file not found", "claude"));
+    }
     use super::*;
 
     #[test]
@@ -5829,6 +5910,53 @@ mod tests {
         assert_eq!(
             decode_command_output(&restored.stdout).trim(),
             "restored-user-path"
+        );
+        assert_eq!(std::env::var_os("PATH"), parent_path);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_start_command_passes_restored_path_to_the_terminal() {
+        let root = tempfile::tempdir().unwrap();
+        let tool_dir = root.path().join("claude 用户 & bin");
+        std::fs::create_dir_all(&tool_dir).unwrap();
+        std::fs::write(
+            tool_dir.join("cc_switch_start_test_tool.cmd"),
+            "@echo restored-terminal-path\r\n@exit /b 0\r\n",
+        )
+        .unwrap();
+
+        // `start /B /WAIT` runs the child in the same hidden console, so the
+        // test observes what the launched terminal would resolve.
+        let args = [
+            "/B",
+            "/WAIT",
+            "cmd",
+            "/D",
+            "/C",
+            "cc_switch_start_test_tool",
+        ];
+        let system_path = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32");
+        let inherited = system_path.to_str().unwrap();
+        let effective = merge_path_segments_win(&[inherited, tool_dir.to_str().unwrap()]);
+        let parent_path = std::env::var_os("PATH");
+
+        let missing = windows_start_command(&args, &[], inherited)
+            .current_dir(root.path())
+            .output()
+            .unwrap();
+        assert!(
+            !decode_command_output(&missing.stdout).contains("restored-terminal-path"),
+            "the tool must be absent on the narrow PATH: {missing:?}"
+        );
+
+        let restored = windows_start_command(&args, &[], &effective)
+            .current_dir(root.path())
+            .output()
+            .unwrap();
+        assert!(
+            decode_command_output(&restored.stdout).contains("restored-terminal-path"),
+            "{restored:?}"
         );
         assert_eq!(std::env::var_os("PATH"), parent_path);
     }
@@ -6098,7 +6226,36 @@ mod tests {
     fn test_extract_version() {
         assert_eq!(extract_version("claude 1.0.20"), "1.0.20");
         assert_eq!(extract_version("v2.3.4-beta.1"), "2.3.4-beta.1");
+        // Hermes main/canary 开发构建:保留 local version 段,前端据此识别、不误报升级
+        assert_eq!(
+            extract_version("Hermes Agent v0.22.1+238.g8211bb9 (2026.9.24) · upstream 8211bb96"),
+            "0.22.1+238.g8211bb9"
+        );
         assert_eq!(extract_version("no version here"), "no version here");
+    }
+
+    #[test]
+    fn local_versions_are_dev_builds_and_incomparable() {
+        // 开发构建(git describe / 开发通道标识)与任何版本不可比
+        assert!(parse_semver("0.22.1+238.g8211bb9").is_none());
+        assert!(parse_semver("0.22.1+canary.20261015T070051Z").is_none());
+        assert!(compare_semver("0.22.2", "0.22.1+238.g8211bb9").is_none());
+        assert!(compare_semver("0.22.1+238.g8211bb9", "0.22.1").is_none());
+        // 普通 semver build metadata 按规范忽略后照常比较
+        assert_eq!(parse_semver("1.0.0+linux.1"), Some(([1, 0, 0], vec![])));
+        assert_eq!(
+            compare_semver("1.0.1", "1.0.0+linux.1"),
+            Some(std::cmp::Ordering::Greater)
+        );
+        // 正式版与预发布版不受影响
+        assert_eq!(
+            compare_semver("0.22.2", "0.22.1"),
+            Some(std::cmp::Ordering::Greater)
+        );
+        assert_eq!(
+            compare_semver("2.1.156-beta.1", "2.1.156"),
+            Some(std::cmp::Ordering::Less)
+        );
     }
 
     #[test]
@@ -6403,6 +6560,7 @@ mod tests {
             version: Some("0.5.3".to_string()),
             runnable: true,
             error: None,
+            exited_with_error: false,
             source: infer_install_source(Path::new(&entry)).to_string(),
             is_path_default: false,
             real: PathBuf::from(&entry),
@@ -6698,6 +6856,7 @@ mod tests {
                 version: Some("1.0.0".to_string()),
                 runnable: true,
                 error: None,
+                exited_with_error: false,
                 source: infer_install_source(&path).to_string(),
                 is_path_default: is_default,
                 real: path,
@@ -7488,6 +7647,7 @@ mod tests {
                 version: None,
                 runnable: true,
                 error: None,
+                exited_with_error: false,
                 source: infer_install_source(Path::new(path)).to_string(),
                 is_path_default: is_default,
                 // 测试场景下不需要走 fs canonicalize——POSIX 锚定测试关心的是
@@ -8220,10 +8380,27 @@ mod tests {
             // set -e 下对半损坏包返回非 0 时仍继续 install）。
             let mut broken = inst("/Users/me/.nvm/versions/node/v22.14.0/bin/codex", true);
             broken.runnable = false;
+            broken.exited_with_error = true;
             assert_eq!(
                 installs_anchored_command("codex", &[broken]).as_deref(),
                 Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm uninstall -g @openai/codex || true; PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
             );
+        }
+
+        #[test]
+        fn codex_probe_timeout_uses_plain_npm_not_uninstall() {
+            // `--version` 超时被击杀 / 启动失败：runnable=false 但不是命令自己报错，不能当成
+            // 装坏了。走卸载重装时，一旦装失败旧版就没了，用户看到「未安装」；普通
+            // `npm i -g` 失败 npm 会回滚、旧版还在。
+            let mut probe_failed = inst("/Users/me/.nvm/versions/node/v22.14.0/bin/codex", true);
+            probe_failed.runnable = false;
+            probe_failed.error = Some("Command timed out after 10s".to_string());
+            let cmd = installs_anchored_command("codex", &[probe_failed]);
+            assert_eq!(
+                cmd.as_deref(),
+                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+            );
+            assert!(!cmd.unwrap().contains("uninstall"));
         }
 
         #[test]
@@ -8249,6 +8426,7 @@ mod tests {
                 version: None,
                 runnable: false,
                 error: None,
+                exited_with_error: true,
                 source: "homebrew".to_string(),
                 is_path_default: true,
                 real: std::path::PathBuf::from("/opt/homebrew/Cellar/codex/1.2.3/bin/codex"),
@@ -8269,6 +8447,7 @@ mod tests {
                 version: None,
                 runnable: false,
                 error: None,
+                exited_with_error: true,
                 source: "homebrew".to_string(),
                 is_path_default: true,
                 real: std::path::PathBuf::from("/opt/homebrew/Caskroom/codex/0.146.0/bin/codex"),
@@ -8284,6 +8463,7 @@ mod tests {
             // volta 装的坏 codex：回落到 `volta install`，不走 npm 重装。
             let mut broken = inst("/Users/me/.volta/bin/codex", true);
             broken.runnable = false;
+            broken.exited_with_error = true;
             assert_eq!(
                 installs_anchored_command("codex", &[broken]).as_deref(),
                 Some("/Users/me/.volta/bin/volta install @openai/codex")
@@ -8296,6 +8476,7 @@ mod tests {
             // （bun 目录下没有 npm，那条路径不存在、执行会直接失败）。
             let mut broken = inst("/Users/me/.bun/bin/codex", true);
             broken.runnable = false;
+            broken.exited_with_error = true;
             let cmd = installs_anchored_command("codex", &[broken]);
             assert_eq!(
                 cmd.as_deref(),
@@ -8354,6 +8535,7 @@ mod tests {
                 version: None,
                 runnable: false,
                 error: None,
+                exited_with_error: true,
                 source: "system".to_string(),
                 is_path_default: true,
                 real: std::path::PathBuf::from(
@@ -8379,6 +8561,7 @@ mod tests {
                     version: None,
                     runnable: false,
                     error: None,
+                    exited_with_error: true,
                     source: infer_install_source(Path::new(bin)).to_string(),
                     is_path_default: true,
                     real: std::path::PathBuf::from(
@@ -8458,6 +8641,7 @@ mod tests {
                 version: version.map(str::to_string),
                 runnable,
                 error: None,
+                exited_with_error: false,
                 source: "nvm".to_string(),
                 is_path_default: false,
                 real: std::path::PathBuf::from("/x"),

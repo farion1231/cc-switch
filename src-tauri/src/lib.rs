@@ -41,6 +41,7 @@ mod settings;
 mod store;
 
 mod tray;
+mod tray_panel;
 mod usage_events;
 mod usage_script;
 
@@ -328,6 +329,11 @@ async fn update_tray_menu(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
+    if !tray_panel::USES_NATIVE_MENU {
+        // 不挂原生菜单的平台：更新图标状态，通知开着的面板重新取数据。
+        tray::refresh_tray_menu(&app);
+        return Ok(app.tray_by_id(tray::TRAY_ID).is_some());
+    }
     match tray::create_tray_menu(&app, state.inner()) {
         Ok(new_menu) => {
             if let Some(tray) = app.tray_by_id(tray::TRAY_ID) {
@@ -420,6 +426,10 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         // 拦截窗口关闭：根据设置决定是否最小化到托盘
         .on_window_event(|window, event| {
+            // 托盘面板自己处理关闭（只隐藏），不走主窗口的「最小化到托盘 / 退出」
+            if window.label() == tray_panel::PANEL_LABEL {
+                return;
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 log::info!("收到窗口关闭请求: label={}", window.label());
                 // 数据库版本过新的恢复模式下没有托盘可唤回，关闭即退出，避免应用隐身后台
@@ -460,6 +470,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(window_state_flags())
+                .with_denylist(&[tray_panel::PANEL_LABEL])
                 .build(),
         )
         .setup(|app| {
@@ -1132,25 +1143,21 @@ pub fn run() {
                 Err(e) => log::warn!("读取启动时的深链接失败: {e}"),
             }
 
-            // 创建动态托盘菜单
-            let menu = tray::create_tray_menu(app.handle(), &app_state)?;
-
-            // 构建托盘
+            // 构建托盘：macOS / Windows 点图标（左右键）弹出托盘面板，不挂原生菜单；
+            // Linux（AppIndicator）不派发点击事件，只能出原生菜单，菜单里有一项打开面板。
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
                 .tooltip("CC Switch") // 鼠标悬停提示
                 .on_tray_icon_event(|tray, event| {
-                    // Windows 的习惯是左键打开应用、右键出菜单（按平台给默认值，不加开关）；
-                    // macOS 左键仍出菜单；Linux（AppIndicator）不派发点击事件，只能出菜单。
-                    #[cfg(target_os = "windows")]
+                    if let TrayIconEvent::Click {
+                        button:
+                            tauri::tray::MouseButton::Left | tauri::tray::MouseButton::Right,
+                        button_state: tauri::tray::MouseButtonState::Up,
+                        rect,
+                        ..
+                    } = &event
                     {
-                        if let TrayIconEvent::Click {
-                            button: tauri::tray::MouseButton::Left,
-                            button_state: tauri::tray::MouseButtonState::Up,
-                            ..
-                        } = &event
-                        {
-                            tray::show_main_window(tray.app_handle());
-                        }
+                        tray_panel::toggle(tray.app_handle(), rect);
+                        return;
                     }
                     match &event {
                         // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
@@ -1162,10 +1169,6 @@ pub fn run() {
                             if matches!(event, TrayIconEvent::Enter { .. }) {
                                 tray::refresh_tray_if_problems_changed(&app);
                             }
-                            // 弹出的菜单里已经有反馈行了：算显示过，下次悬停时拿掉。
-                            if let TrayIconEvent::Click { button, .. } = &event {
-                                tray::note_tray_click(*button);
-                            }
                             tauri::async_runtime::spawn(async move {
                                 crate::tray::refresh_all_usage_in_tray(&app).await;
                             });
@@ -1173,11 +1176,14 @@ pub fn run() {
                         _ => log::debug!("unhandled event {event:?}"),
                     }
                 })
-                .menu(&menu)
                 .on_menu_event(|app, event| {
                     tray::handle_tray_menu_event(app, &event.id.0);
                 })
-                .show_menu_on_left_click(cfg!(not(target_os = "windows")));
+                .show_menu_on_left_click(tray_panel::USES_NATIVE_MENU);
+            if tray_panel::USES_NATIVE_MENU {
+                let menu = tray::create_tray_menu(app.handle(), &app_state)?;
+                tray_builder = tray_builder.menu(&menu);
+            }
 
             // 使用平台对应的托盘图标（macOS 使用模板图标适配深浅色）；出问题时 tray.rs 换成带圆点的那张
             if let Some((icon, template)) = tray::base_tray_icon(app.handle()) {
@@ -1639,6 +1645,11 @@ pub fn run() {
             commands::set_proxy_route,
             commands::take_startup_attach_failures,
             tray::take_tray_navigation,
+            tray_panel::tray_panel_state,
+            tray_panel::tray_panel_placement,
+            tray_panel::tray_panel_layout,
+            tray_panel::tray_panel_hide,
+            tray_panel::tray_panel_action,
             tray::tray_app_page_seen,
             commands::exit_proxy_apps_in_mode,
             commands::get_direct_provider,

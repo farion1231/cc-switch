@@ -30,6 +30,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   KNOWN_APP_TYPES,
   type AppTypeFilter,
+  type UsageRangePreset,
   type UsageRangeSelection,
 } from "@/types/usage";
 import {
@@ -51,8 +52,17 @@ import { ModelStatsTable } from "./ModelStatsTable";
 import { PricingConfigPanel } from "./PricingConfigPanel";
 import { RequestDetailPanel } from "./RequestDetailPanel";
 import { UsageDataSourcesSheet } from "./UsageDataSourcesSheet";
+import { UsageDisplaySection } from "./UsageDisplaySection";
+import { resolveRequestLogColumns } from "./requestLogColumns";
+import type { UsageDisplaySettings } from "@/types";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { UsageHeatmap } from "./UsageHeatmap";
+import {
+  USAGE_CHOICE_KEYS,
+  readRememberedChoice,
+  useRememberedChoice,
+  writeRememberedChoice,
+} from "./rememberedChoice";
 import { fmtInt, formatRelativeTime, getLocaleFromLanguage } from "./format";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
 
@@ -71,8 +81,18 @@ const normalizeRefreshInterval = (value: number | undefined) =>
 
 const STATUS_CODE_OPTIONS = [200, 400, 401, 429, 500] as const;
 
-type UsageTab = "logs" | "providers" | "models" | "pricing";
-const TABS: UsageTab[] = ["logs", "providers", "models", "pricing"];
+// 「设置」放显示币种和模型定价（原「定价」页签并进来）
+type UsageTab = "logs" | "providers" | "models" | "settings";
+const TABS: UsageTab[] = ["logs", "providers", "models", "settings"];
+/** 记住的时间范围只认预设：自定义的起止日期过几天就不是用户想看的了，选自定义时不改记下的预设 */
+const REMEMBERED_RANGE_PRESETS: UsageRangePreset[] = [
+  "today",
+  "1d",
+  "7d",
+  "14d",
+  "30d",
+  "all",
+];
 
 /**
  * 手动「立即同步」的时间，离开页面再回来也还在。后端也会记下最近一次扫描（后台定时和
@@ -146,6 +166,11 @@ interface UsageDashboardProps {
   initialAppType?: AppTypeFilter;
   /** 「数据来源」里的「修改记录请求用量」：打开设置 → 本地路由 */
   onOpenRoutingSettings?: () => void;
+  /** 金额显示币种与汇率（设备级设置） */
+  usageDisplay?: UsageDisplaySettings;
+  onUsageDisplayChange?: (
+    next: UsageDisplaySettings,
+  ) => Promise<boolean> | boolean | void;
 }
 
 /**
@@ -159,19 +184,38 @@ export function UsageDashboard({
   onSessionAutoSyncEnabledChange,
   initialAppType = "all",
   onOpenRoutingSettings,
+  usageDisplay,
+  onUsageDisplayChange,
 }: UsageDashboardProps = {}) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
-  const [range, setRange] = useState<UsageRangeSelection>({
-    preset: "today",
-  });
+  const [range, setRange] = useState<UsageRangeSelection>(() => ({
+    preset: readRememberedChoice(
+      USAGE_CHOICE_KEYS.range,
+      REMEMBERED_RANGE_PRESETS,
+      "today",
+    ),
+  }));
+  const applyRange = (next: UsageRangeSelection) => {
+    setRange(next);
+    if (next.preset !== "custom") {
+      writeRememberedChoice(USAGE_CHOICE_KEYS.range, next.preset);
+    }
+  };
   const [appType, setAppType] = useState<AppTypeFilter>(initialAppType);
   const [providerName, setProviderName] = useState<string | undefined>(
     undefined,
   );
   const [model, setModel] = useState<string | undefined>(undefined);
   const [statusCode, setStatusCode] = useState<number | undefined>(undefined);
-  const [tab, setTab] = useState<UsageTab>("logs");
+
+  // 请求日志显示哪些列在「设置」页签里改，这里只按设置画
+  const logColumns = resolveRequestLogColumns(usageDisplay?.requestLogColumns);
+  const [tab, setTab] = useRememberedChoice<UsageTab>(
+    USAGE_CHOICE_KEYS.tab,
+    TABS,
+    "logs",
+  );
   // 没有用量时也能进定价页：新装的人往往先配好 models.dev 同步再开始用
   const [pricingWhileEmpty, setPricingWhileEmpty] = useState(false);
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(() =>
@@ -626,7 +670,7 @@ export function UsageDashboard({
       <UsageDateRangePicker
         selection={range}
         triggerLabel={rangeLabel}
-        onApply={(nextRange) => setRange(nextRange)}
+        onApply={applyRange}
       />
     </div>
   );
@@ -636,7 +680,7 @@ export function UsageDashboard({
     logs: t("usage.requestLogs"),
     providers: t("usage.tabs.providers"),
     models: t("usage.tabs.models"),
-    pricing: t("usage.tabs.pricing"),
+    settings: t("usage.tabs.settings"),
   };
   const statusLabel =
     statusCode == null
@@ -715,6 +759,7 @@ export function UsageDashboard({
             statusCode={statusCode}
             refreshIntervalMs={0}
             onOpenDetail={setDetailRequestId}
+            columns={logColumns}
           />
         )}
         {tab === "providers" && (
@@ -735,7 +780,25 @@ export function UsageDashboard({
             refreshIntervalMs={0}
           />
         )}
-        {tab === "pricing" && <PricingConfigPanel />}
+        {tab === "settings" && (
+          <div className="flex flex-col gap-5 pt-3">
+            {onUsageDisplayChange && (
+              <UsageDisplaySection
+                value={usageDisplay}
+                onChange={onUsageDisplayChange}
+              />
+            )}
+            <section aria-labelledby="usage-pricing-title">
+              <h3
+                id="usage-pricing-title"
+                className="m-0 text-strong font-semibold text-fg-1"
+              >
+                {t("usage.tabs.pricing")}
+              </h3>
+              <PricingConfigPanel />
+            </section>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -779,7 +842,7 @@ export function UsageDashboard({
             variant="quiet"
             size="regular"
             onClick={() => {
-              setTab("pricing");
+              setTab("settings");
               setPricingWhileEmpty(true);
             }}
           >
@@ -801,7 +864,7 @@ export function UsageDashboard({
           compact={compact}
         />
 
-        {/* 「全部」看长期分布用热力图；24 小时到 30 天这类短范围用柱状图 */}
+        {/* 「全部」看长期分布用热力图；24 小时到 30 天这类短范围用趋势图 */}
         {range.preset === "all" ? (
           <UsageHeatmap
             appType={appType}

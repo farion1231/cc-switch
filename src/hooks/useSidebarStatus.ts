@@ -25,7 +25,7 @@ const MANAGED_AUTH_PROVIDERS: ManagedAuthProvider[] = [
 ];
 
 /**
- * 侧栏需要的状态：每个应用的模式标签和提醒、今日花费、授权中心是否有账号要重新登录。
+ * 侧栏需要的状态：每个应用的模式标签和提醒、今日花费与 Token、授权中心是否有账号要重新登录。
  */
 export function useSidebarStatus() {
   const { data: proxyStatus } = useProxyStatusQuery();
@@ -69,6 +69,10 @@ export function useSidebarStatus() {
   }, [proxyStatus, serviceRunning, modeKey]);
 
   const todayCost = parseFiniteNumber(todaySummary?.totalCost) ?? 0;
+  // 和用量页「真实消耗 Tokens」同口径
+  const todayTokens = todaySummary?.realTotalTokens ?? 0;
+  const todayRequests = todaySummary?.totalRequests ?? 0;
+  const todayHitRate = todaySummary?.cacheHitRate ?? 0;
 
   const authNeedsAttention = authStatuses.some((query) =>
     query.data?.accounts.some(
@@ -76,5 +80,12 @@ export function useSidebarStatus() {
     ),
   );
 
-  return { appStatus, todayCost, authNeedsAttention };
+  return {
+    appStatus,
+    todayCost,
+    todayTokens,
+    todayRequests,
+    todayHitRate,
+    authNeedsAttention,
+  };
 }

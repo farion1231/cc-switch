@@ -89,11 +89,6 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
-<td width="180"><a href="https://console.tokenfactory.cn/login"><img src="assets/partners/logos/tokenfactory-banner.png" alt="TokenFactory" width="150"></a></td>
-<td>Danke an TokenFactory für die Unterstützung dieses Projekts! TokenFactory ist eine API-Plattform für führende chinesische Sprachmodelle, ausgerichtet auf Entwickler und Unternehmen. Dank eigener Recheninfrastruktur liefert sie schnellere Token-Geschwindigkeiten und höhere Qualität. Abgerechnet wird nutzungsbasiert, Modellpreise und Nutzungsabrechnungen sind jederzeit transparent einsehbar. Exklusiver Vorteil für CC-Switch-Nutzer: Lösen Sie in der <a href="https://console.tokenfactory.cn/login">Konsole</a> den Code <code>CCSWITCH</code> ein und erhalten Sie 10 ¥ API-Guthaben!</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
 <td>Danke an Shengsuanyun für die Unterstützung dieses Projekts! Shengsuanyun ist eine Superfabrik für KI-native Teams — eine Plattform zur parallelen Ausführung von KI-Aufgaben in industrieller Qualität. Ihr Modellmarktplatz bündelt die Fähigkeiten von Claude, ChatGPT, Gemini und weiteren in- und ausländischen LLM- und Multimedia-Modellen mit Direktbezug. Absolut kein Reverse Engineering und keine Verwässerung — die plattformweite Modell-SLA-Verfügbarkeit erreicht 99,7 %, und die <a href="https://watch.shengsuanyun.com/status/shengsuanyun">Monitoring-Dashboards</a> zeigen durchgehend grün an. Es bietet außerdem unternehmensgerechte, anpassbare Gateways für fein abgestufte Kosten- und Berechtigungsverwaltung im Team, intelligentes Routing, Sicherheitsschutz und BYOK-Hosting (Bring Your Own Key). Die Plattform rechnet nach Nutzung sowie über einen Token-Plan (in Kürze verfügbar) ab, und Rechnungsstellung ist möglich. Registrieren Sie sich über <a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">diesen Link</a> als Neukunde und erhalten Sie ein Guthaben von ¥10 sowie 10 % Bonus auf Ihre erste Aufladung.</td>
 </tr>
