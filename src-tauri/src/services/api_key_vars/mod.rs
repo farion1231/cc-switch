@@ -26,13 +26,14 @@ pub use resolve::RefStatus;
 pub use runner::{ApiKeyRefreshConfig, ApiKeyRefreshState, RefreshReason, ResolvedScript};
 
 use runner::{
-    mask_key, needs_refresh, now_ms, run_script, should_refresh_on_switch, RunFailure,
+    mask_key, needs_refresh, next_due_ms, now_ms, run_script, should_refresh_on_switch, RunFailure,
     ScriptContext, ScriptRun,
 };
 
 pub const EVENT_REFRESHED: &str = "api-key-var-refreshed";
 pub const EVENT_REFRESH_FAILED: &str = "api-key-var-refresh-failed";
 const SCHEDULER_TICK: Duration = Duration::from_secs(60);
+const MIN_SCHEDULER_WAIT: Duration = Duration::from_millis(1);
 const MAX_CONCURRENT_REFRESHES: usize = 4;
 
 // ---------------------------------------------------------------------------
@@ -875,6 +876,41 @@ fn spawn_due_refreshes<F, Fut>(
     }
 }
 
+/// Sleeps until the nearest eligible automatic refresh, but never longer than
+/// the regular minute tick. Running work is excluded because its completion
+/// wakes the worker directly; work that cannot fit in a slot waits for the
+/// same completion instead of creating a zero-duration select loop.
+fn scheduler_wait_duration(
+    db: &Database,
+    now: i64,
+    in_flight: &HashMap<tokio::task::Id, String>,
+    task_count: usize,
+) -> Duration {
+    if task_count >= MAX_CONCURRENT_REFRESHES {
+        return SCHEDULER_TICK;
+    }
+    let running: HashSet<&str> = in_flight.values().map(String::as_str).collect();
+    let next_due = db
+        .list_api_key_vars()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|var| !running.contains(var.name.as_str()))
+        .map(|var| next_due_ms(&var.config, &var.state))
+        .min();
+    let Some(next_due) = next_due else {
+        return SCHEDULER_TICK;
+    };
+    if next_due <= now {
+        // The caller normally dispatched this in the scan above. Keep a
+        // positive fallback in case a concurrent edit made it ineligible.
+        return MIN_SCHEDULER_WAIT;
+    }
+    let millis = (next_due - now) as u64;
+    Duration::from_millis(millis)
+        .min(SCHEDULER_TICK)
+        .max(MIN_SCHEDULER_WAIT)
+}
+
 /// Check due work on startup, every minute, on configuration changes, and as
 /// slots become available. Slow scripts do not delay independent refreshes.
 pub fn start_worker(app: tauri::AppHandle) {
@@ -891,9 +927,11 @@ pub fn start_worker(app: tauri::AppHandle) {
         let mut in_flight = HashMap::new();
         let mut startup_pending = HashSet::new();
         loop {
+            let mut wait = SCHEDULER_TICK;
             if let Some(state) = app.try_state::<AppState>() {
                 let db = state.db.clone();
-                let due = due_vars(&db, now_ms());
+                let scan_now = now_ms();
+                let due = due_vars(&db, scan_now);
                 if first {
                     startup_pending.extend(due.iter().map(|(name, _)| name.clone()));
                 }
@@ -911,6 +949,7 @@ pub fn start_worker(app: tauri::AppHandle) {
                         }
                     },
                 );
+                wait = scheduler_wait_duration(&db, scan_now, &in_flight, tasks.len());
             }
             first = false;
             tokio::select! {
@@ -924,7 +963,7 @@ pub fn start_worker(app: tauri::AppHandle) {
                         None => {}
                     }
                 }
-                _ = tokio::time::sleep(SCHEDULER_TICK) => {}
+                _ = tokio::time::sleep(wait) => {}
                 _ = scheduler_notify().notified() => {}
             }
         }
@@ -1077,6 +1116,97 @@ mod tests {
         assert_eq!(name, format!("job-{MAX_CONCURRENT_REFRESHES}"));
         assert_eq!(reason, RefreshReason::Startup);
         gate.notify_one();
+        while tasks.join_next().await.is_some() {}
+    }
+
+    #[tokio::test]
+    async fn scheduler_waits_for_nearest_idle_due_and_never_spins_on_in_flight_work() {
+        let db = Database::memory().unwrap();
+        let config = ApiKeyRefreshConfig {
+            enabled: true,
+            lead_time_secs: Some(10),
+            ..Default::default()
+        };
+        const NAME: &str = "SCHEDULER_NEAREST_DUE";
+        const SUCCESS: i64 = 1_000_000;
+        db.upsert_api_key_var(None, NAME, &config).unwrap();
+        db.update_api_key_var_result(
+            NAME,
+            Some("scheduler-key"),
+            &ApiKeyRefreshState {
+                last_success_at: Some(SUCCESS),
+                expires_at: Some(SUCCESS + 40_000),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let mut tasks = JoinSet::new();
+        let mut in_flight = HashMap::new();
+        assert_eq!(
+            scheduler_wait_duration(&db, SUCCESS, &in_flight, tasks.len()),
+            Duration::from_secs(30),
+            "the worker should wake at the short key's actual due time"
+        );
+
+        let id = tasks
+            .spawn(async { std::future::pending::<()>().await })
+            .id();
+        in_flight.insert(id, NAME.to_string());
+        assert_eq!(
+            scheduler_wait_duration(&db, SUCCESS, &in_flight, tasks.len()),
+            SCHEDULER_TICK,
+            "running work must wait for task completion instead of a zero-duration loop"
+        );
+        tasks.abort_all();
+    }
+
+    #[tokio::test]
+    async fn scheduler_dispatches_a_variable_when_its_nearest_due_time_arrives() {
+        let db = Database::memory().unwrap();
+        let config = ApiKeyRefreshConfig {
+            enabled: true,
+            lead_time_secs: Some(10),
+            ..Default::default()
+        };
+        const NAME: &str = "SCHEDULER_DUE_DISPATCH";
+        const SUCCESS: i64 = 2_000_000;
+        db.upsert_api_key_var(None, NAME, &config).unwrap();
+        db.update_api_key_var_result(
+            NAME,
+            Some("scheduler-dispatch-key"),
+            &ApiKeyRefreshState {
+                last_success_at: Some(SUCCESS),
+                expires_at: Some(SUCCESS + 40_000),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let due_at = SUCCESS + 30_000;
+        assert_eq!(
+            scheduler_wait_duration(&db, SUCCESS, &HashMap::new(), 0),
+            Duration::from_millis((due_at - SUCCESS) as u64)
+        );
+
+        let mut tasks = JoinSet::new();
+        let mut in_flight = HashMap::new();
+        let mut startup_pending = HashSet::new();
+        let (started, mut observed) = tokio::sync::mpsc::unbounded_channel();
+        let refresh = |name: String, reason| {
+            let started = started.clone();
+            async move { started.send((name, reason)).unwrap() }
+        };
+        spawn_due_refreshes(
+            &mut tasks,
+            &mut in_flight,
+            &mut startup_pending,
+            due_vars(&db, due_at),
+            refresh,
+        );
+        assert_eq!(
+            observed.recv().await,
+            Some((NAME.to_string(), RefreshReason::Scheduled))
+        );
         while tasks.join_next().await.is_some() {}
     }
 

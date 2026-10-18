@@ -67,6 +67,10 @@ pub const MAX_TIMEOUT_SECS: u64 = 300;
 pub const DEFAULT_LEAD_TIME_SECS: u64 = 300;
 /// 脚本未给出过期信息时的固定刷新间隔
 pub const FALLBACK_INTERVAL_MS: i64 = 60 * 60 * 1000;
+/// A successful automatic refresh may not immediately schedule the same script
+/// again. Short-lived keys use a proportionate cooldown so this never pushes
+/// their only refresh opportunity past expiry.
+pub const MIN_SUCCESS_COOLDOWN_MS: i64 = 60 * 1000;
 pub const MAX_STDOUT_BYTES: usize = 64 * 1024;
 pub const MAX_STDERR_KEEP_BYTES: usize = 4 * 1024;
 // Keep enough context to redact a maximum-length returned key before taking
@@ -176,6 +180,22 @@ pub fn effective_lead_time_ms(cfg: &ApiKeyRefreshConfig) -> i64 {
     (secs.min(7 * 24 * 3600) as i64) * 1000
 }
 
+fn effective_lead_time_for_ttl_ms(cfg: &ApiKeyRefreshConfig, ttl_ms: i64) -> i64 {
+    // A configured five-minute lead must not make a 30-second credential due
+    // before its successful refresh. Reserving at most half of the lifetime
+    // leaves the other half for the script to run and the value to be used.
+    effective_lead_time_ms(cfg).min(ttl_ms.max(0).saturating_div(2))
+}
+
+fn successful_refresh_cooldown_ms(ttl_ms: Option<i64>) -> i64 {
+    match ttl_ms {
+        Some(ttl) if ttl > 0 => MIN_SUCCESS_COOLDOWN_MS.min((ttl / 2).max(1)),
+        // Without an expiry there is no deadline to trade against, so retain
+        // the normal cooldown.
+        _ => MIN_SUCCESS_COOLDOWN_MS,
+    }
+}
+
 /// 指数退避：30s → 1m → 2m → 5m → 10m → 15m（封顶）
 pub fn backoff(consecutive_failures: u32) -> Duration {
     const STEPS: [u64; 6] = [30, 60, 120, 300, 600, 900];
@@ -198,16 +218,41 @@ pub fn next_due_ms(cfg: &ApiKeyRefreshConfig, state: &ApiKeyRefreshState) -> i64
     if state.last_success_at.is_none() {
         return 0;
     }
-    if let Some(refresh_after) = state.refresh_after {
-        return refresh_after;
+    let last_success = state.last_success_at.expect("checked above");
+    let ttl_ms = state
+        .expires_at
+        .map(|expires_at| expires_at.saturating_sub(last_success));
+    let minimum_due = last_success.saturating_add(successful_refresh_cooldown_ms(ttl_ms));
+
+    let expiry_due = match (state.expires_at, ttl_ms) {
+        (Some(expires_at), Some(ttl)) if ttl > 0 => {
+            let lead = effective_lead_time_for_ttl_ms(cfg, ttl);
+            Some(expires_at.saturating_sub(lead).max(minimum_due))
+        }
+        // Persisted stale metadata receives the normal success cooldown. This
+        // prevents a key that crossed its expiry between script parsing and
+        // persistence from repeatedly launching Node in a hot loop.
+        (Some(_), _) => Some(minimum_due),
+        (None, _) => None,
+    };
+
+    match state.refresh_after {
+        Some(refresh_after) if refresh_after > last_success => {
+            // Script hints are useful, but cannot bypass the post-success
+            // cooldown or leave an expiring key idle beyond its safe window.
+            let candidate = refresh_after.max(minimum_due);
+            expiry_due
+                .map(|due| candidate.min(due))
+                .unwrap_or(candidate)
+        }
+        // An old absolute timestamp is commonly caused by clock skew or a
+        // reused response. Retry as soon as the success cooldown permits;
+        // do not turn this into a full fallback interval.
+        Some(_) => expiry_due
+            .map(|due| minimum_due.min(due))
+            .unwrap_or(minimum_due),
+        None => expiry_due.unwrap_or_else(|| last_success.saturating_add(FALLBACK_INTERVAL_MS)),
     }
-    if let Some(expires_at) = state.expires_at {
-        return expires_at.saturating_sub(effective_lead_time_ms(cfg));
-    }
-    state
-        .last_success_at
-        .map(|last| last.saturating_add(FALLBACK_INTERVAL_MS))
-        .unwrap_or(0)
 }
 
 pub fn needs_refresh(cfg: &ApiKeyRefreshConfig, state: &ApiKeyRefreshState, now_ms: i64) -> bool {
@@ -220,7 +265,10 @@ pub fn key_expiring(cfg: &ApiKeyRefreshConfig, state: &ApiKeyRefreshState, now_m
         return true;
     }
     match state.expires_at {
-        Some(expires_at) => now_ms >= expires_at.saturating_sub(effective_lead_time_ms(cfg)),
+        Some(expires_at) => {
+            let ttl = expires_at.saturating_sub(state.last_success_at.unwrap_or(now_ms));
+            now_ms >= expires_at.saturating_sub(effective_lead_time_for_ttl_ms(cfg, ttl))
+        }
         None => false,
     }
 }
@@ -1189,7 +1237,7 @@ mod tests {
         st.expires_at = Some(NOW + 3_600_000);
         assert_eq!(next_due_ms(&c, &st), NOW + 3_600_000 - 300_000);
         st.refresh_after = Some(NOW + 1000);
-        assert_eq!(next_due_ms(&c, &st), NOW + 1000);
+        assert_eq!(next_due_ms(&c, &st), NOW + MIN_SUCCESS_COOLDOWN_MS);
         st.consecutive_failures = 2;
         st.last_attempt_at = Some(NOW);
         assert_eq!(next_due_ms(&c, &st), NOW + 60_000);
@@ -1217,6 +1265,177 @@ mod tests {
     }
 
     #[test]
+    fn short_ttl_never_schedules_before_a_successful_refresh() {
+        let cfg = ApiKeyRefreshConfig {
+            enabled: true,
+            // The default lead time is deliberately larger than this key's
+            // remaining lifetime.
+            lead_time_secs: Some(DEFAULT_LEAD_TIME_SECS),
+            ..Default::default()
+        };
+        let state = ApiKeyRefreshState {
+            last_success_at: Some(NOW),
+            expires_at: Some(NOW + 120_000),
+            ..Default::default()
+        };
+
+        let due = next_due_ms(&cfg, &state);
+        assert!(
+            due > NOW,
+            "a short-lived key must not be immediately due after success: {due}"
+        );
+        assert!(
+            due < state.expires_at.unwrap(),
+            "a short-lived key still needs a refresh opportunity before expiry: {due}"
+        );
+    }
+
+    #[test]
+    fn ttl_at_or_below_configured_lead_has_a_future_due_time() {
+        let cfg = ApiKeyRefreshConfig {
+            enabled: true,
+            lead_time_secs: Some(300),
+            ..Default::default()
+        };
+        let state = ApiKeyRefreshState {
+            last_success_at: Some(NOW),
+            expires_at: Some(NOW + 30_000),
+            ..Default::default()
+        };
+
+        let due = next_due_ms(&cfg, &state);
+        assert!(
+            due > NOW,
+            "lead time must shrink for a 30-second key: {due}"
+        );
+        assert!(due < NOW + 30_000, "refresh must precede expiry: {due}");
+    }
+
+    #[test]
+    fn past_refresh_after_retries_after_success_cooldown() {
+        let cfg = cfg();
+        let state = ApiKeyRefreshState {
+            last_success_at: Some(NOW),
+            expires_at: Some(NOW + 3_600_000),
+            // A script can return an old absolute hint because of clock skew
+            // or a reused response. It must not spin the worker.
+            refresh_after: Some(NOW - 1),
+            ..Default::default()
+        };
+
+        let due = next_due_ms(&cfg, &state);
+        assert_eq!(due, NOW + MIN_SUCCESS_COOLDOWN_MS);
+        assert!(due < state.expires_at.unwrap());
+    }
+
+    #[test]
+    fn future_refresh_after_cannot_bypass_success_cooldown() {
+        let cfg = cfg();
+        let state = ApiKeyRefreshState {
+            last_success_at: Some(NOW),
+            expires_at: Some(NOW + 3_600_000),
+            // This is technically future, but too close to a successful
+            // refresh to be allowed to requeue the same script immediately.
+            refresh_after: Some(NOW + 1),
+            ..Default::default()
+        };
+
+        let due = next_due_ms(&cfg, &state);
+        assert!(
+            due >= NOW + 60_000,
+            "refreshAfter must respect the normal success cooldown: {due}"
+        );
+        assert!(due < state.expires_at.unwrap());
+    }
+
+    #[test]
+    fn future_refresh_after_without_expiry_keeps_the_script_schedule() {
+        let cfg = cfg();
+        let state = ApiKeyRefreshState {
+            last_success_at: Some(NOW),
+            refresh_after: Some(NOW + 2 * FALLBACK_INTERVAL_MS),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            next_due_ms(&cfg, &state),
+            NOW + 2 * FALLBACK_INTERVAL_MS,
+            "a valid script hint must not be truncated by the no-expiry fallback"
+        );
+    }
+
+    #[test]
+    fn stale_expiry_uses_success_cooldown_and_is_expiring() {
+        let cfg = cfg();
+        let state = ApiKeyRefreshState {
+            last_success_at: Some(NOW),
+            // This can occur when the script output was valid when parsed but
+            // crossed its deadline before a later successful result was saved.
+            expires_at: Some(NOW - 1),
+            ..Default::default()
+        };
+
+        assert_eq!(next_due_ms(&cfg, &state), NOW + MIN_SUCCESS_COOLDOWN_MS);
+        assert!(key_expiring(&cfg, &state, NOW));
+    }
+
+    #[test]
+    fn repeated_success_with_fixed_expiry_does_not_requeue_immediately() {
+        let cfg = ApiKeyRefreshConfig {
+            enabled: true,
+            lead_time_secs: Some(300),
+            ..Default::default()
+        };
+        // Some providers issue a fixed expiry for repeated successful refreshes.
+        // A new success must still leave a positive delay rather than dispatching
+        // the same variable again in the next scheduler scan.
+        let state = ApiKeyRefreshState {
+            last_success_at: Some(NOW),
+            expires_at: Some(NOW + 60_000),
+            ..Default::default()
+        };
+
+        let due = next_due_ms(&cfg, &state);
+        assert!(
+            due > NOW,
+            "a successful refresh must not self-requeue: {due}"
+        );
+        assert!(due < state.expires_at.unwrap());
+        assert!(!needs_refresh(&cfg, &state, NOW));
+    }
+
+    #[test]
+    fn initial_and_changed_script_stay_immediately_due() {
+        let cfg = cfg();
+        assert_eq!(next_due_ms(&cfg, &ApiKeyRefreshState::default()), 0);
+
+        let changed_script = ApiKeyRefreshState {
+            // The previous credential's metadata remains visible when a script
+            // changes, but no successful run belongs to the new generation.
+            expires_at: Some(NOW + 3_600_000),
+            refresh_after: Some(NOW + 1_800_000),
+            ..Default::default()
+        };
+        assert_eq!(next_due_ms(&cfg, &changed_script), 0);
+    }
+
+    #[test]
+    fn failures_keep_the_existing_exponential_backoff() {
+        let cfg = cfg();
+        let state = ApiKeyRefreshState {
+            last_success_at: Some(NOW),
+            last_attempt_at: Some(NOW),
+            expires_at: Some(NOW + 3_600_000),
+            consecutive_failures: 2,
+            ..Default::default()
+        };
+
+        assert_eq!(next_due_ms(&cfg, &state), NOW + 60_000);
+        assert!(!needs_refresh(&cfg, &state, NOW + 59_999));
+        assert!(needs_refresh(&cfg, &state, NOW + 60_000));
+    }
+
+    #[test]
     fn switch_refresh_rules() {
         let c = ApiKeyRefreshConfig {
             lead_time_secs: Some(60),
@@ -1228,7 +1447,11 @@ mod tests {
         st.expires_at = Some(NOW + 3_600_000);
         assert!(!should_refresh_on_switch(&c, &st, NOW));
         st.expires_at = Some(NOW + 30_000);
-        assert!(should_refresh_on_switch(&c, &st, NOW));
+        // A 31-second total lifetime gets a 15.5-second adaptive lead. A
+        // successful refresh therefore remains usable briefly instead of
+        // being immediately considered near-expiry.
+        assert!(!should_refresh_on_switch(&c, &st, NOW));
+        assert!(should_refresh_on_switch(&c, &st, NOW + 14_500));
         st.needs_attention = true;
         assert!(!should_refresh_on_switch(&c, &st, NOW));
     }
