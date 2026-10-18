@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import { Input } from "@/components/ui/input";
@@ -25,8 +25,11 @@ export function CodexQuotaProtectionSettings({
   const id = useId();
   const config =
     settings.codexQuotaProtection ?? DEFAULT_CODEX_QUOTA_PROTECTION;
-  const [fiveHour, setFiveHour] = useState(String(config.fiveHourThreshold));
-  const [weekly, setWeekly] = useState(String(config.weeklyThreshold));
+  // Keep edits separate from optimistic settings and their possible rollback.
+  const [fiveHourDraft, setFiveHourDraft] = useState<string>();
+  const [weeklyDraft, setWeeklyDraft] = useState<string>();
+  const fiveHour = fiveHourDraft ?? String(config.fiveHourThreshold);
+  const weekly = weeklyDraft ?? String(config.weeklyThreshold);
   const [saving, setSaving] = useState(false);
   const valid = (value: string) =>
     /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 99;
@@ -35,15 +38,14 @@ export function CodexQuotaProtectionSettings({
     Number(fiveHour) !== config.fiveHourThreshold ||
     Number(weekly) !== config.weeklyThreshold;
 
-  useEffect(() => {
-    setFiveHour(String(config.fiveHourThreshold));
-    setWeekly(String(config.weeklyThreshold));
-  }, [config.fiveHourThreshold, config.weeklyThreshold]);
-
   const save = async (next: typeof DEFAULT_CODEX_QUOTA_PROTECTION) => {
     setSaving(true);
     try {
-      await onChange({ codexQuotaProtection: next });
+      const saved = await onChange({ codexQuotaProtection: next });
+      if (saved !== false) {
+        setFiveHourDraft(undefined);
+        setWeeklyDraft(undefined);
+      }
     } catch {
       toast.error(t("notifications.saveFailedGeneric"));
     } finally {
@@ -81,7 +83,7 @@ export function CodexQuotaProtectionSettings({
                 disabled={saving}
                 aria-invalid={!valid(fiveHour)}
                 aria-describedby={`${id}-hint`}
-                onChange={(event) => setFiveHour(event.target.value)}
+                onChange={(event) => setFiveHourDraft(event.target.value)}
                 className="w-24"
               />
             </label>
@@ -100,7 +102,7 @@ export function CodexQuotaProtectionSettings({
                 disabled={saving}
                 aria-invalid={!valid(weekly)}
                 aria-describedby={`${id}-hint`}
-                onChange={(event) => setWeekly(event.target.value)}
+                onChange={(event) => setWeeklyDraft(event.target.value)}
                 className="w-24"
               />
             </label>
@@ -123,8 +125,6 @@ export function CodexQuotaProtectionSettings({
               size="compact"
               disabled={saving}
               onClick={() => {
-                setFiveHour("95");
-                setWeekly("98");
                 void save({
                   ...DEFAULT_CODEX_QUOTA_PROTECTION,
                   enabled: config.enabled,

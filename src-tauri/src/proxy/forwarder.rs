@@ -2804,6 +2804,10 @@ impl RequestForwarder {
             .await?
         };
 
+        // Admission ends at upstream headers, including error responses. Never
+        // make concurrent requests wait for response validation or body streaming.
+        drop(quota_permit);
+
         // 检查响应状态
         let status = response.status();
 
@@ -2845,9 +2849,6 @@ impl RequestForwarder {
                 response = self
                     .hold_encrypted_agent_task_stream(response, &filtered_body)
                     .await?;
-            }
-            if let Some(permit) = quota_permit {
-                response = super::codex_quota_protection::hold_response(response, permit);
             }
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {

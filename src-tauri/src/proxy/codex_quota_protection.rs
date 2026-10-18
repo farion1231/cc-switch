@@ -1,8 +1,8 @@
 //! Pre-exhaustion admission for native ChatGPT requests in the Codex proxy.
 //! Queries use the request's credentials, never the UI's current-account cache.
-//! A permit lasts through the response body so concurrent turns cannot all pass
-//! on the same pre-request reading. This cannot reserve quota against other apps
-//! or bound the consumption of an already admitted request.
+//! A permit serializes admission until upstream response headers arrive, leaving
+//! response bodies free to stream concurrently. This cannot reserve quota against
+//! other apps or bound the consumption of already admitted requests.
 
 use std::{
     collections::HashMap,
@@ -11,15 +11,15 @@ use std::{
 };
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use futures::StreamExt;
 use http::HeaderMap;
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
-use super::{hyper_client::ProxyResponse, ProxyError};
+use super::ProxyError;
 use crate::{
     services::subscription::{
-        query_codex_usage, SubscriptionQuota, TIER_FIVE_HOUR, TIER_SEVEN_DAY, TIER_WEEKLY_LIMIT,
+        query_codex_usage, CredentialStatus, SubscriptionQuota, TIER_FIVE_HOUR, TIER_SEVEN_DAY,
+        TIER_WEEKLY_LIMIT,
     },
     settings::CodexQuotaProtection,
 };
@@ -38,6 +38,14 @@ impl Observation {
         quota: &SubscriptionQuota,
         config: &CodexQuotaProtection,
     ) -> Result<(), ProxyError> {
+        // Let Codex recover its login instead of disguising an expired bearer as
+        // a quota block, even if this account previously exceeded a threshold.
+        if matches!(quota.credential_status, CredentialStatus::Expired) {
+            return Err(ProxyError::AuthError(
+                "ChatGPT 登录已过期或失效，请刷新登录 (ChatGPT login expired or revoked; refresh your login)"
+                    .to_string(),
+            ));
+        }
         let mut five_hour_reported = false;
         let mut weekly_reported = false;
         let mut invalid = !quota.success;
@@ -83,7 +91,6 @@ impl Observation {
             )));
         }
         if invalid
-            || (!five_hour_reported && !weekly_reported)
             || (self.five_hour.is_some() && !five_hour_reported)
             || (self.weekly.is_some() && !weekly_reported)
         {
@@ -164,6 +171,7 @@ impl QuotaGuard {
     }
 }
 
+/// Release as soon as upstream headers arrive, before reading any response body.
 pub(crate) struct QuotaPermit {
     _guard: OwnedMutexGuard<Observation>,
 }
@@ -186,34 +194,18 @@ pub(crate) async fn acquire(
         .await
 }
 
-pub(crate) fn hold_response(response: ProxyResponse, permit: QuotaPermit) -> ProxyResponse {
-    let status = response.status();
-    let headers = response.headers().clone();
-    let mut upstream = response.bytes_stream();
-    ProxyResponse::streamed(
-        status,
-        headers,
-        async_stream::stream! {
-            let _permit = permit;
-            while let Some(chunk) = upstream.next().await {
-                let failed = chunk.is_err();
-                yield chunk;
-                if failed { break; }
-            }
-        },
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::subscription::QuotaTier;
+    use crate::{proxy::hyper_client::ProxyResponse, services::subscription::QuotaTier};
     use bytes::Bytes;
+    use futures::StreamExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn quota(five_hour: Option<f64>, weekly: Option<f64>) -> SubscriptionQuota {
         let mut quota = SubscriptionQuota::not_found("codex");
         quota.success = true;
+        quota.credential_status = CredentialStatus::Valid;
         quota.tiers = [(TIER_FIVE_HOUR, five_hour), (TIER_SEVEN_DAY, weekly)]
             .into_iter()
             .filter_map(|(name, used)| {
@@ -308,9 +300,6 @@ mod tests {
             .observe(&SubscriptionQuota::not_found("codex"), &config)
             .is_err());
         assert!(observed.observe(&quota(None, Some(0.0)), &config).is_err());
-        assert!(Observation::default()
-            .observe(&quota(None, None), &config)
-            .is_err());
         let custom = CodexQuotaProtection {
             five_hour_threshold: 90,
             weekly_threshold: 92,
@@ -319,6 +308,36 @@ mod tests {
         assert!(Observation::default()
             .observe(&quota(Some(91.0), Some(0.0)), &custom)
             .is_err());
+    }
+
+    #[test]
+    fn accounts_without_protected_windows_are_admitted() {
+        let config = CodexQuotaProtection::default();
+        let mut monthly = quota(None, None);
+        monthly.tiers.push(QuotaTier {
+            name: "30_day".to_string(),
+            utilization: 3.0,
+            resets_at: None,
+            used_value_usd: None,
+            max_value_usd: None,
+        });
+        for quota in [monthly, quota(None, None)] {
+            assert!(Observation::default().observe(&quota, &config).is_ok());
+        }
+    }
+
+    #[test]
+    fn missing_previously_observed_windows_fail_closed_even_below_threshold() {
+        let config = CodexQuotaProtection::default();
+        for initial in [quota(Some(3.0), None), quota(None, Some(3.0))] {
+            let mut observed = Observation::default();
+            assert!(observed.observe(&initial, &config).is_ok());
+            assert!(matches!(
+                observed.observe(&quota(None, None), &config),
+                Err(ProxyError::CodexQuotaProtection(_))
+            ));
+            assert!(observed.observe(&initial, &config).is_ok());
+        }
     }
 
     #[test]
@@ -370,7 +389,73 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn response_lifetime_serializes_same_account_then_rechecks_fresh_quota() {
+    async fn expired_credentials_return_auth_error_without_clearing_observed_quota() {
+        let guard = QuotaGuard::default();
+        assert!(guard
+            .check_with("a".into(), CodexQuotaProtection::default, || async {
+                Ok(quota(Some(95.0), Some(0.0)))
+            })
+            .await
+            .is_err());
+        let expired = SubscriptionQuota::error(
+            "codex",
+            CredentialStatus::Expired,
+            "secret-token-in-upstream-message".to_string(),
+        );
+        let error = guard
+            .check_with("a".into(), CodexQuotaProtection::default, || async {
+                Ok(expired)
+            })
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(error, ProxyError::AuthError(_)));
+        assert!(!error.to_string().contains("secret-token"));
+        assert!(matches!(
+            guard
+                .check_with("a".into(), CodexQuotaProtection::default, || async {
+                    Ok(quota(None, None))
+                })
+                .await,
+            Err(ProxyError::CodexQuotaProtection(_))
+        ));
+        assert!(guard
+            .check_with("a".into(), CodexQuotaProtection::default, || async {
+                Ok(quota(Some(0.0), Some(0.0)))
+            })
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn cancelled_lookup_releases_admission_for_the_same_account() {
+        let guard = Arc::new(QuotaGuard::default());
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let pending_guard = guard.clone();
+        let pending = tokio::spawn(async move {
+            pending_guard
+                .check_with("a".into(), CodexQuotaProtection::default, || async {
+                    started_tx.send(()).unwrap();
+                    std::future::pending().await
+                })
+                .await
+        });
+        started_rx.await.unwrap();
+        pending.abort();
+        assert!(pending.await.err().unwrap().is_cancelled());
+        assert!(tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            guard.check_with("a".into(), CodexQuotaProtection::default, || async {
+                Ok(quota(Some(0.0), Some(0.0)))
+            })
+        )
+        .await
+        .unwrap()
+        .is_ok());
+    }
+
+    #[tokio::test]
+    async fn admission_serializes_until_headers_then_allows_concurrent_bodies() {
         let guard = QuotaGuard::default();
         let queries = AtomicUsize::new(0);
         let first = guard
@@ -381,15 +466,14 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let response = hold_response(
-            ProxyResponse::buffered(
-                http::StatusCode::OK,
-                HeaderMap::new(),
-                Bytes::from_static(b"done"),
-            ),
-            first,
+        // Upstream has returned headers, but will not finish the body until sent.
+        let (body_tx, body_rx) = tokio::sync::oneshot::channel();
+        let response = ProxyResponse::streamed(
+            http::StatusCode::OK,
+            HeaderMap::new(),
+            futures::stream::once(async { Ok(body_rx.await.unwrap()) }),
         );
-        // A different account does not wait behind the held stream.
+        // A different account does not wait behind admission.
         drop(
             guard
                 .check_with("b".into(), CodexQuotaProtection::default, || async {
@@ -409,9 +493,15 @@ mod tests {
                 .is_err()
         );
         assert_eq!(queries.load(Ordering::SeqCst), 1);
-        // Dropping even an unpolled body releases the permit (client cancellation).
-        drop(response);
-        assert!(next.await.is_err());
+        // The forwarder releases admission on receipt of headers, with the body
+        // still pending. The next request must make its own fresh quota query.
+        drop(first);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), next)
+                .await
+                .unwrap()
+                .is_err()
+        );
         assert_eq!(queries.load(Ordering::SeqCst), 2);
         // Fresh usage below both cutoffs automatically restores admission.
         let permit = guard
@@ -421,14 +511,8 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let response = hold_response(
-            ProxyResponse::buffered(
-                http::StatusCode::OK,
-                HeaderMap::new(),
-                Bytes::from_static(b"complete"),
-            ),
-            permit,
-        );
+        drop(permit);
+        body_tx.send(Bytes::from_static(b"complete")).unwrap();
         assert_eq!(
             response.bytes_stream().next().await.unwrap().unwrap(),
             Bytes::from_static(b"complete")

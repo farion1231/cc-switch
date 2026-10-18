@@ -29,10 +29,17 @@ function setup(
       <CodexQuotaProtectionSettings
         settings={settings}
         onChange={async (updates) => {
-          const saved = await save(updates);
-          if (saved !== false)
-            setSettings((previous) => ({ ...previous, ...updates }));
-          return saved;
+          // Match SettingsPage: update optimistically, then roll back on failure.
+          const previous = settings;
+          setSettings({ ...settings, ...updates });
+          try {
+            const saved = await save(updates);
+            if (saved === false) setSettings(previous);
+            return saved;
+          } catch (error) {
+            setSettings(previous);
+            throw error;
+          }
         }}
       />
     );
@@ -42,6 +49,61 @@ function setup(
 }
 
 describe("Codex official quota protection settings", () => {
+  it.each(["false", "reject"])(
+    "preserves both drafts after an optimistic update rolls back (%s), then retries",
+    async (failure) => {
+      let complete!: (value: boolean) => void;
+      let reject!: (error: Error) => void;
+      const pending = new Promise<boolean>((resolve, fail) => {
+        complete = resolve;
+        reject = fail;
+      });
+      const save = setup(
+        {},
+        vi.fn().mockReturnValueOnce(pending).mockResolvedValue(true),
+      );
+      const fiveHour = screen.getByRole("spinbutton", {
+        name: key("fiveHour"),
+      });
+      const weekly = screen.getByRole("spinbutton", { name: key("weekly") });
+      const submit = screen.getByRole("button", { name: key("save") });
+      fireEvent.change(fiveHour, { target: { value: "89" } });
+      fireEvent.change(weekly, { target: { value: "92" } });
+      fireEvent.click(submit);
+      await waitFor(() => expect(fiveHour).toBeDisabled());
+      await act(async () => {
+        if (failure === "false") complete(false);
+        else reject(new Error("disk full"));
+      });
+      expect(fiveHour).toHaveValue(89);
+      expect(weekly).toHaveValue(92);
+      expect(submit).toBeEnabled();
+      await act(async () => {
+        fireEvent.click(submit);
+      });
+      expect(save).toHaveBeenCalledTimes(2);
+      expect(save).toHaveBeenLastCalledWith({
+        codexQuotaProtection: {
+          enabled: true,
+          fiveHourThreshold: 89,
+          weeklyThreshold: 92,
+        },
+      });
+      expect(submit).toBeDisabled();
+    },
+  );
+
+  it("keeps typed thresholds when restoring defaults fails", async () => {
+    setup({}, vi.fn().mockResolvedValue(false));
+    const fiveHour = screen.getByRole("spinbutton", { name: key("fiveHour") });
+    fireEvent.change(fiveHour, { target: { value: "89" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: key("reset") }));
+    });
+    expect(fiveHour).toHaveValue(89);
+    expect(screen.getByRole("button", { name: key("save") })).toBeEnabled();
+  });
+
   it("reports a rejected save and leaves the draft retryable", async () => {
     setup({}, vi.fn().mockRejectedValue(new Error("disk full")));
     fireEvent.change(
