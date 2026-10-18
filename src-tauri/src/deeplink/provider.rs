@@ -99,6 +99,7 @@ pub fn import_provider_from_deeplink(
 
     // Build provider configuration based on app type
     let mut provider = build_provider_from_request(&app_type, &merged_request)?;
+    check_provider_key_fields(&app_type, &provider.settings_config)?;
 
     provider.id = if matches!(app_type, AppType::OpenCode) {
         // Display names may be Unicode, but new OpenCode IDs must pass the editor's slug validation.
@@ -283,6 +284,8 @@ pub(super) fn check_link_values(
     app_type: &AppType,
     request: &DeepLinkImportRequest,
 ) -> Result<(), AppError> {
+    check_link_credential_values(request)?;
+
     if !app_type.is_additive_mode() {
         return Ok(());
     }
@@ -304,6 +307,48 @@ pub(super) fn check_link_values(
                 app_type.as_str()
             )));
         }
+    }
+    Ok(())
+}
+
+/// Untrusted links must not persist a reference that would later resolve a local API-key
+/// variable. This intentionally checks only credential fields: display names, notes and model
+/// names are ordinary user text and have no credential semantics.
+fn check_link_credential_values(request: &DeepLinkImportRequest) -> Result<(), AppError> {
+    for value in [
+        request.api_key.as_deref(),
+        request.usage_api_key.as_deref(),
+        request.usage_access_token.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        reject_link_credential_reference(value)?;
+    }
+    Ok(())
+}
+
+/// Check the final settings shape after inline config has been merged. This reuses the API-key
+/// variable field map so a config-only credential cannot bypass the direct-link guard above.
+fn check_provider_key_fields(
+    app_type: &AppType,
+    settings: &serde_json::Value,
+) -> Result<(), AppError> {
+    for (_, value) in crate::services::api_key_vars::resolve::key_field_entries(app_type, settings)
+    {
+        reject_link_credential_reference(&value)?;
+    }
+    Ok(())
+}
+
+fn reject_link_credential_reference(value: &str) -> Result<(), AppError> {
+    if crate::services::api_key_vars::resolve::parse_ref(value).is_some()
+        || crate::services::api_key_vars::resolve::is_malformed_ref(value)
+    {
+        return Err(AppError::InvalidInput(
+            "A link cannot import API key variable references or malformed credentials. Add the provider manually and enter the credential yourself."
+                .to_string(),
+        ));
     }
     Ok(())
 }
