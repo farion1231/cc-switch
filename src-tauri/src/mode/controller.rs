@@ -6478,6 +6478,57 @@ model_provider = "c"
 
     #[tokio::test]
     #[serial]
+    async fn claude_desktop_old_mapping_card_can_be_deleted_after_routing_elsewhere() {
+        let home = Home::new();
+        let _dirs = DesktopDirs::under(&home);
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[claude("a", "https://a.example", json!({}))],
+            "a",
+        )
+        .await;
+        let desktop = AppType::ClaudeDesktop;
+        for card in [desktop_card("map", true), desktop_card("other", true)] {
+            state
+                .db
+                .save_provider(desktop.as_str(), &card)
+                .expect("save desktop card");
+        }
+        // 旧版：映射卡同时是本地指针和 DB 的 is_current。
+        state
+            .db
+            .set_current_provider(desktop.as_str(), "map")
+            .expect("db current");
+        crate::settings::set_current_provider(&desktop, Some("map")).expect("desktop current");
+
+        startup(&state).await;
+        enter_with_route(&state, &desktop, false, Some("other"))
+            .await
+            .expect("route to other");
+
+        // 映射卡已经不是直连指针、也不在路由上，界面上可删，后端也要放行（#8506）。
+        crate::services::ProviderService::delete(&state, desktop.clone(), "map")
+            .expect("delete old mapping card");
+        assert!(state
+            .db
+            .get_provider_by_id("map", desktop.as_str())
+            .unwrap()
+            .is_none());
+        // 直连指针和路由那家照旧删不掉。
+        for id in [
+            crate::database::CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID,
+            "other",
+        ] {
+            assert!(
+                crate::services::ProviderService::delete(&state, desktop.clone(), id).is_err(),
+                "{id} should stay protected"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn claude_desktop_upgrade_that_cannot_attach_points_desktop_back_at_official() {
         let home = Home::new();
         let _dirs = DesktopDirs::under(&home);
