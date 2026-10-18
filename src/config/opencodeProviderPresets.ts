@@ -2158,7 +2158,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     family: "zhipu",
     regionKey: "cn",
     websiteUrl: "https://open.bigmodel.cn",
-    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "Zhipu GLM",
@@ -2199,7 +2199,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     family: "zhipu",
     regionKey: "intl",
     websiteUrl: "https://z.ai",
-    apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
+    apiKeyUrl: "https://z.ai/subscribe",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "Zhipu GLM en",

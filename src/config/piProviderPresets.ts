@@ -1338,7 +1338,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     regionKey: "cn",
     providerKey: "cc-switch-zhipu-glm",
     websiteUrl: "https://open.bigmodel.cn",
-    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code",
     settingsConfig: {
       name: "Zhipu GLM",
       baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
@@ -1361,7 +1361,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     regionKey: "intl",
     providerKey: "cc-switch-zhipu-glm-en",
     websiteUrl: "https://z.ai",
-    apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
+    apiKeyUrl: "https://z.ai/subscribe",
     settingsConfig: {
       name: "Zhipu GLM en",
       baseUrl: "https://api.z.ai/api/coding/paas/v4",

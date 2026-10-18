@@ -1692,7 +1692,7 @@ requires_openai_auth = true`,
     family: "zhipu",
     regionKey: "cn",
     websiteUrl: "https://open.bigmodel.cn",
-    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code",
     auth: generateThirdPartyAuth(""),
     // 智谱三端点分立（docs.bigmodel.cn/cn/coding-plan/tool/others）：Anthropic
     // /api/anthropic、OpenAI Chat /api/coding/paas/v4、OpenAI Responses /api/v1，
@@ -1757,7 +1757,7 @@ requires_openai_auth = true`,
     family: "zhipu",
     regionKey: "intl",
     websiteUrl: "https://z.ai",
-    apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
+    apiKeyUrl: "https://z.ai/subscribe",
     auth: generateThirdPartyAuth(""),
     // 国际站同上（docs.z.ai/devpack/tool/others + devpack/tool/codex，2026-09-04
     // 核对）：Responses 端点 /api/v1，官方 models.json 仅列 glm-5.3。
