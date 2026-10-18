@@ -299,6 +299,28 @@ impl Database {
         self.save_provider_inner(app_type, provider, false)
     }
 
+    /// Restore a previously captured database row exactly. This is used after
+    /// a not-yet-published live write fails, so the current stored row must
+    /// not influence the snapshot through native-readback template recovery.
+    pub fn restore_provider_snapshot(
+        &self,
+        app_type: &str,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
+        self.save_provider_inner(app_type, provider, false)
+    }
+
+    /// Persist an authoritative synchronization projection. Unlike a native
+    /// client readback, the supplied settings are intentional and may detach a
+    /// stored API-key-variable template in favor of an explicit literal.
+    pub fn save_provider_from_synchronization(
+        &self,
+        app_type: &str,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
+        self.save_provider_inner(app_type, provider, false)
+    }
+
     fn save_provider_inner(
         &self,
         app_type: &str,

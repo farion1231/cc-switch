@@ -5592,7 +5592,7 @@ impl ProviderService {
             });
             if let Err(error) = written {
                 match previous {
-                    Some(previous) => state.db.save_provider("mcode", &previous)?,
+                    Some(previous) => state.db.restore_provider_snapshot("mcode", &previous)?,
                     None => state.db.delete_provider("mcode", &provider.id)?,
                 }
                 return Err(error);
@@ -5789,7 +5789,9 @@ impl ProviderService {
                 return Err(error);
             }
             let rollback = match &previous {
-                Some(previous) => state.db.save_provider(app_type.as_str(), previous),
+                Some(previous) => state
+                    .db
+                    .restore_provider_snapshot(app_type.as_str(), previous),
                 None => state.db.delete_provider(app_type.as_str(), &provider.id),
             };
             if let Err(rollback) = rollback {
@@ -6095,7 +6097,9 @@ impl ProviderService {
             return Err(error);
         }
         let rollback = match existing {
-            Some(existing) => state.db.save_provider(app_type.as_str(), existing),
+            Some(existing) => state
+                .db
+                .restore_provider_snapshot(app_type.as_str(), existing),
             None => state.db.delete_provider(app_type.as_str(), provider_id),
         };
         if let Err(rollback) = rollback {
@@ -6433,7 +6437,10 @@ impl ProviderService {
                 Ok(outcome) => outcome,
                 Err(error) => {
                     if let Some(existing) = existing_provider.as_ref() {
-                        if let Err(rollback) = state.db.save_provider(app_type.as_str(), existing) {
+                        if let Err(rollback) = state
+                            .db
+                            .restore_provider_snapshot(app_type.as_str(), existing)
+                        {
                             return Err(AppError::Message(format!(
                                 "保存供应商后同步 live 配置失败: {error}; 恢复供应商数据同时失败: {rollback}"
                             )));
@@ -6503,7 +6510,10 @@ impl ProviderService {
                 return Err(error);
             }
             if let Some(existing) = existing {
-                if let Err(rollback) = state.db.save_provider(app_type.as_str(), existing) {
+                if let Err(rollback) = state
+                    .db
+                    .restore_provider_snapshot(app_type.as_str(), existing)
+                {
                     return Err(AppError::Message(format!(
                         "更新 Codex 供应商失败: {error}; 恢复供应商数据同时失败: {rollback}"
                     )));
@@ -8356,7 +8366,9 @@ impl ProviderService {
                 claude_provider.created_at = existing.created_at;
                 claude_provider.sort_index = existing.sort_index;
             }
-            state.db.save_provider("claude", &claude_provider)?;
+            state
+                .db
+                .save_provider_from_synchronization("claude", &claude_provider)?;
             Self::project_universal_child_to_live(
                 state,
                 AppType::Claude,
@@ -8381,7 +8393,9 @@ impl ProviderService {
                 codex_provider.created_at = existing.created_at;
                 codex_provider.sort_index = existing.sort_index;
             }
-            state.db.save_provider("codex", &codex_provider)?;
+            state
+                .db
+                .save_provider_from_synchronization("codex", &codex_provider)?;
             Self::project_universal_child_to_live(
                 state,
                 AppType::Codex,
@@ -8405,7 +8419,9 @@ impl ProviderService {
                 gemini_provider.created_at = existing.created_at;
                 gemini_provider.sort_index = existing.sort_index;
             }
-            state.db.save_provider("gemini", &gemini_provider)?;
+            state
+                .db
+                .save_provider_from_synchronization("gemini", &gemini_provider)?;
             Self::project_universal_child_to_live(
                 state,
                 AppType::Gemini,
