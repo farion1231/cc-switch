@@ -1,0 +1,33 @@
+{
+  "version": "4.0.15",
+  "items": [
+    {
+      "type": "fix",
+      "zh": "修复 Windows 更新后设置被重置、更新 Codex 时误卸载",
+      "zh-TW": "修正 Windows 更新後設定被重設、更新 Codex 時誤解除安裝",
+      "en": "Fixed settings resetting after updates on Windows, and Codex updates removing a working install",
+      "ja": "Windows で更新後に設定が初期化される問題と、Codex 更新時の誤アンインストールを修正"
+    },
+    {
+      "type": "fix",
+      "zh": "路由重新认出 Claude Code 会话，修复 DeepSeek 报 400",
+      "zh-TW": "路由重新認出 Claude Code 工作階段，修正 DeepSeek 400",
+      "en": "Routing recognizes Claude Code sessions again; fixed 400 errors from DeepSeek",
+      "ja": "Claude Code のセッションを再び認識、Codex→DeepSeek の 400 を修正"
+    },
+    {
+      "type": "fix",
+      "zh": "macOS 26 的应用图标不再显示在灰色底板里",
+      "zh-TW": "macOS 26 的應用程式圖示不再顯示在灰色底板裡",
+      "en": "The app icon no longer sits in a grey tile on macOS 26",
+      "ja": "macOS 26 でアプリアイコンがグレーの背景に入らなくなりました"
+    },
+    {
+      "type": "new",
+      "zh": "用量趋势图可选柱形图或曲线面积图，Hermes 可声明模型支持图片",
+      "zh-TW": "使用趨勢圖可選長條圖或曲線面積圖，Hermes 可宣告模型支援圖片",
+      "en": "Usage trend chart can switch between bar and area; Hermes models can declare image input",
+      "ja": "利用推移グラフを棒/面グラフで切替、Hermes でモデルの画像入力を宣言可能に"
+    }
+  ]
+}

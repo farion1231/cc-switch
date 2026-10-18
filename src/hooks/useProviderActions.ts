@@ -25,6 +25,7 @@ import {
   useSwitchProviderMutation,
 } from "@/lib/query";
 import { usageKeys } from "@/lib/query/usage";
+import { routeSwitchNotification } from "@/utils/routeSwitchNotification";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
@@ -167,13 +168,10 @@ export function useProviderActions(
   // 切换供应商
   const switchProvider = useCallback(
     async (provider: Provider, options?: { acknowledgedRouting?: boolean }) => {
-      // Claude Desktop 切到模型映射卡时，后端会自动拉起路由服务，不用提醒；
-      // 其余应用必须开启当前应用的 takeover（只看全局进程会漏判别的应用已接管的情况）。
+      // 必须开启当前应用的 takeover（只看全局进程会漏判别的应用已接管的情况）。
       // 确认框 F 里选了「仍然直连切换」的不再重复提醒。
       const routingReady =
-        activeApp === "claude-desktop" ||
-        isProxyTakeover === true ||
-        options?.acknowledgedRouting === true;
+        isProxyTakeover === true || options?.acknowledgedRouting === true;
       const proxyRequiredReason = routingReady
         ? null
         : getRoutingReason(activeApp, provider, t);
@@ -263,14 +261,9 @@ export function useProviderActions(
             messageKey = "notifications.grokBuildRestartRequired";
             defaultMessage = "切换成功，请重启 Grok Build 以生效";
           } else if (activeApp === "claude-desktop") {
-            if (provider.meta?.claudeDesktopMode === "proxy") {
-              messageKey = "notifications.claudeDesktopProxyRestartRequired";
-              defaultMessage =
-                "切换成功，请保持 CC Switch 运行，并重启 Claude Desktop 后生效";
-            } else {
-              messageKey = "notifications.claudeDesktopRestartRequired";
-              defaultMessage = "切换成功，重启 Claude Desktop 后生效";
-            }
+            // 直连、路由换一家都改了 Desktop 的配置文件，它只在启动时读
+            messageKey = "notifications.claudeDesktopRestartRequired";
+            defaultMessage = "切换成功，重启 Claude Desktop 后生效";
           } else if (
             activeApp === "opencode" ||
             activeApp === "openclaw" ||
@@ -279,7 +272,10 @@ export function useProviderActions(
             messageKey = "notifications.addToConfigSuccess";
             defaultMessage = "已添加到配置";
           }
-          toast.success(t(messageKey, { defaultValue: defaultMessage }), {
+          const message = result?.route
+            ? routeSwitchNotification(result.route, activeApp, provider.name, t)
+            : t(messageKey, { defaultValue: defaultMessage });
+          toast.success(message, {
             closeButton: true,
           });
         }

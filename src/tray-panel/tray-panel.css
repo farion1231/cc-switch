@@ -1,0 +1,130 @@
+/* macOS 背景交给系统玻璃，其余平台只给卡片画磨砂背景；画布本身始终透明 */
+html,
+body.tray-panel,
+body.tray-panel #root {
+  height: 100%;
+  background: transparent !important;
+  overflow: hidden;
+}
+
+body.tray-panel {
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+.tp-card {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: hsl(var(--foreground));
+}
+
+/* macOS：每块卡片下面一块系统玻璃，网页只叠一层很淡的底色，保证文字对比度 */
+html[data-glass="native"][data-layout="floating"] .tp-card {
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(0, 0, 0, 0.12),
+    0 6px 16px rgba(0, 0, 0, 0.14),
+    0 1px 3px rgba(0, 0, 0, 0.1);
+}
+html.dark[data-glass="native"][data-layout="floating"] .tp-card {
+  background: rgba(24, 24, 27, 0.08);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.14),
+    0 6px 16px rgba(0, 0, 0, 0.3),
+    0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* 兼容磨砂背景：Windows、Linux 在卡片内绘制，保持固定画布的其余部分透明——
+   半透明底色 + 背景模糊（只作用于网页内容）+ 顶部高光和细描边，看起来像磨砂玻璃 */
+html[data-glass="frosted"] .tp-card {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.55),
+      rgba(255, 255, 255, 0) 120px
+    ),
+    rgba(244, 244, 247, 0.9);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+html.dark[data-glass="frosted"] .tp-card {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.06),
+      rgba(255, 255, 255, 0) 120px
+    ),
+    rgba(36, 36, 40, 0.9);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* Windows：移除整窗 Acrylic 后，卡片自己提供完整底色，避免桌面内容透进菜单。
+   保留卡片上的控件、选中态和用量区块的层次；只有卡片之外的画布透明。 */
+html [data-platform="windows"] .tp-card {
+  background: #ebebed;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+html.dark [data-platform="windows"] .tp-card {
+  background: #242428;
+}
+
+/* 两栏时子面板和主面板之间一条分隔线 */
+html[data-layout="joined"] .tp-sub[data-side="right"] {
+  border-left: 1px solid rgba(0, 0, 0, 0.08);
+}
+html[data-layout="joined"] .tp-sub[data-side="left"] {
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+}
+html.dark[data-layout="joined"] .tp-sub[data-side="right"] {
+  border-left-color: rgba(255, 255, 255, 0.08);
+}
+html.dark[data-layout="joined"] .tp-sub[data-side="left"] {
+  border-right-color: rgba(255, 255, 255, 0.08);
+}
+
+.tp-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.tp-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.tp-scroll::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: rgba(127, 127, 127, 0.35);
+}
+
+/* 子面板展开：淡入并略微滑入（玻璃在原生层同步淡入） */
+@keyframes tp-sub-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+}
+@keyframes tp-sub-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(6px);
+  }
+}
+html[data-layout="floating"] .tp-sub[data-side="right"] {
+  animation: tp-sub-in-right 140ms ease-out;
+}
+html[data-layout="floating"] .tp-sub[data-side="left"] {
+  animation: tp-sub-in-left 140ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-layout="floating"] .tp-sub {
+    animation: none;
+  }
+}

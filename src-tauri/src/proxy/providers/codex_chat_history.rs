@@ -477,6 +477,7 @@ fn enrich_call_item_from_cache(item: &mut Value, cached: &Value) -> bool {
         "execution",
         "reasoning_content",
         "reasoning",
+        "extra_content",
     ] {
         if item.get(key).is_some_and(|value| !is_empty_value(value)) {
             continue;
@@ -682,6 +683,64 @@ mod tests {
         let input = request["input"].as_array().unwrap();
         assert_eq!(input[0]["reasoning_content"], "Need to inspect the file.");
         assert_eq!(input.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn round_trips_gemini_thought_signature_extra_content() {
+        // Gemini OpenAI 兼容接口要求下一轮原样带回 tool call 的 thought signature（#8336）。
+        let signature = json!({"google": {"thought_signature": "sig-abc"}});
+        let response = super::super::transform_codex_chat::chat_completion_to_response(json!({
+            "id": "chatcmpl_gemini",
+            "model": "gemini-4-argon",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "exec_command", "arguments": "{\"cmd\":\"ls\"}"},
+                        "extra_content": signature
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        }))
+        .unwrap();
+        let output = response["output"].as_array().unwrap();
+        let call = output
+            .iter()
+            .find(|item| item["type"] == "function_call")
+            .unwrap();
+        assert_eq!(call["extra_content"], signature);
+
+        let history = CodexChatHistoryStore::default();
+        history.record_response(&response).await;
+
+        // Codex 回传历史时不保留未知字段。
+        let mut request = json!({
+            "model": "gemini-4-argon",
+            "input": [
+                {"type": "message", "role": "user", "content": "list files"},
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "exec_command",
+                    "arguments": "{\"cmd\":\"ls\"}"
+                },
+                {"type": "function_call_output", "call_id": "call_1", "output": "a.txt"}
+            ]
+        });
+        assert_eq!(history.enrich_request(&mut request).await, 1);
+
+        let chat =
+            super::super::transform_codex_chat::responses_to_chat_completions(request).unwrap();
+        let assistant = chat["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| message["role"] == "assistant")
+            .unwrap();
+        assert_eq!(assistant["tool_calls"][0]["extra_content"], signature);
     }
 
     #[tokio::test]
