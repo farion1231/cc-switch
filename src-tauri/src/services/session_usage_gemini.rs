@@ -1993,6 +1993,75 @@ mod tests {
         Ok(())
     }
     #[test]
+    fn antigravity_flash_variants_charge_base_prices_unless_exactly_overridden(
+    ) -> Result<(), AppError> {
+        for raw_model in [
+            "gemini-3.8-flash-n",
+            "gemini-3.8-flash-tiered",
+            "gemini-3.8-flash-n-tiered",
+            "gemini-3.8-flash-n-tiered-thinking",
+            "gemini-3.8-flash-high-tiered",
+        ] {
+            for exact_override in [false, true] {
+                let db = Database::memory()?;
+                {
+                    let conn = lock_conn!(db.conn);
+                    conn.execute(
+                        "INSERT OR REPLACE INTO model_pricing (model_id, display_name,
+                         input_cost_per_million, output_cost_per_million,
+                         cache_read_cost_per_million, cache_creation_cost_per_million)
+                         VALUES ('gemini-3.8-flash', 'Base fixture', '7', '8', '1', '0')",
+                        [],
+                    )?;
+                    if exact_override {
+                        conn.execute(
+                            "INSERT INTO model_pricing (model_id, display_name,
+                             input_cost_per_million, output_cost_per_million,
+                             cache_read_cost_per_million, cache_creation_cost_per_million)
+                             VALUES (?1, 'Exact variant fixture', '11', '12', '2', '0')",
+                            [raw_model],
+                        )?;
+                    }
+                }
+                let tokens = AntigravityTokenData {
+                    input_tokens: 80,
+                    output_tokens: 50,
+                    cached_tokens: 20,
+                    model: raw_model.to_string(),
+                    duration_ms: None,
+                };
+                assert!(insert_antigravity_session_entry(
+                    &db,
+                    "variant-request",
+                    &tokens,
+                    Some("variant-session"),
+                    10_000,
+                )?);
+                let conn = lock_conn!(db.conn);
+                let (model, pricing_model, cost): (String, String, String) = conn.query_row(
+                    "SELECT model, pricing_model, total_cost_usd FROM proxy_request_logs
+                     WHERE request_id = 'variant-request'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?;
+                assert_eq!(model, raw_model);
+                let (expected_model, expected_cost) = if exact_override {
+                    (raw_model, "0.00152")
+                } else {
+                    ("gemini-3.8-flash", "0.00098")
+                };
+                assert_eq!(pricing_model, expected_model, "{raw_model}");
+                assert_eq!(
+                    Decimal::from_str_exact(&cost).unwrap(),
+                    Decimal::from_str_exact(expected_cost).unwrap(),
+                    "{raw_model}, exact_override={exact_override}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn antigravity_future_flash_versions_require_only_price_entries() -> Result<(), AppError> {
         let db = Database::memory()?;
         let conn = lock_conn!(db.conn);
@@ -2008,6 +2077,7 @@ mod tests {
             "flash-9.12",
             "gemini-9.12-flash-high",
             "gemini-9.12-flash-tiered",
+            "gemini-9.12-flash-high-tiered",
             "gemini-9.12-flash-thinking",
         ] {
             let (price, resolved) = resolve_antigravity_pricing(&conn, model);
@@ -2022,6 +2092,8 @@ mod tests {
             "gemini-9.12-flash-pro",
             "gemini-9.12-flash-fast",
             "gemini-9.12-flash-n",
+            "gemini-9.12-flash-n-tiered",
+            "gemini-9.12-flash-fast-tiered",
             "gemini-9.13-flash-high",
             "gemini-9-flash-high",
         ] {
@@ -2048,6 +2120,8 @@ mod tests {
             ("9.12flash", "gemini-9.12-flash"),
             ("model_placeholder_m187", "gemini-3.5-flash"),
             ("gemini-3.8-flash-n", "gemini-3.8-flash"),
+            ("gemini-3.8-flash-tiered", "gemini-3.8-flash"),
+            ("gemini-3.8-flash-n-tiered", "gemini-3.8-flash"),
         ] {
             let db = Database::memory()?;
             {

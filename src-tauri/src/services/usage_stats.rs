@@ -2646,8 +2646,11 @@ fn antigravity_flash_candidate(model: &str) -> Option<String> {
         return None;
     }
     let legacy = matches!(version, "3.6" | "3.7" | "3.8");
+    // Tiered is a routing suffix and may follow a known model variant.
+    let suffix = suffix.map(|suffix| suffix.strip_suffix("-tiered").unwrap_or(suffix));
     match suffix {
-        Some("" | "-low" | "-medium" | "-high" | "-tiered") => {}
+        Some("" | "-low" | "-medium" | "-high") => {}
+        Some("-n") if version == "3.8" => {}
         None | Some("-a" | "-b" | "-exp-a" | "-exp-b" | "-preview") if legacy => {}
         _ => return None,
     }
@@ -2720,7 +2723,6 @@ pub(crate) fn resolve_antigravity_pricing(
 
     // 4. Explicit AGY aliases and verified opaque placeholder exceptions
     let placeholder_target = match without_thinking {
-        "gemini-3.8-flash-n" => Some("gemini-3.8-flash"),
         "model_placeholder_m187" | "model_placeholder_m20" | "gemini-default" => {
             Some("gemini-3.5-flash")
         }
