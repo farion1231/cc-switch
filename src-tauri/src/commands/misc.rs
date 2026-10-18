@@ -782,6 +782,7 @@ fn codex_standalone_install(bin_path: &str, real_target: &str) -> Option<CodexSt
         })
 }
 
+#[cfg(any(windows, test))]
 pub(crate) fn is_codex_standalone_install_at(bin_path: &Path, real_target: &Path) -> bool {
     codex_standalone_install(&bin_path.to_string_lossy(), &real_target.to_string_lossy()).is_some()
 }
