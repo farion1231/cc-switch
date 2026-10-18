@@ -6987,8 +6987,8 @@ model_provider = "c"
         assert_eq!(route["priority"], 1);
         assert_eq!(route["context_window"], 200000);
         assert_eq!(route["auto_compact_token_limit"], 150000);
-        // 路由那家的行保持模板的值（这里模板没有），加进第一家不会让路由上的会话被压缩。
-        assert_eq!(route["comp_hash"], Value::Null);
+        // 第三方路由那家的行和 Stack 行同一个值，互相切换不会先用上一家压缩（#8485）。
+        assert_eq!(route["comp_hash"], "cc-switch");
         assert_eq!(stacked["priority"], 2);
         assert_eq!(stacked["display_name"], "DeepSeek V4 Pro（DEEPSEEK）");
         // DeepSeek 官方目录的 "3000" 不带过来，窗口按它自己的行算。

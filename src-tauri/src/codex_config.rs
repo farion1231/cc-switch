@@ -2530,10 +2530,15 @@ pub(crate) enum CodexStackRoute<'a> {
     },
 }
 
-/// 合并目录里 Stack 行统一的 `comp_hash`。Codex 在一个会话记下的值变了时会压缩一次；
-/// 模板带来的值会随来源漂移（DeepSeek 官方目录是 "3000"，从 Codex 缓存克隆的 gpt-5.5
-/// 跟着缓存变），固定值才稳定。路由那家的行不改：它的值要和名单为空时的目录一致，否则
-/// 加进第一家、移除最后一家都会让路由上的会话恢复时被压缩一次。
+/// 合并目录里 Stack 行统一的 `comp_hash`。Codex 在一个会话记下的值变了时，会先用**上一个
+/// 模型**压缩一次（codex-rs `maybe_run_previous_model_inline_compact`）；模板带来的值会随
+/// 来源漂移（DeepSeek 官方目录是 "3000"，镜像官方的 GPT 行也是），固定值才稳定。
+///
+/// 第三方路由那家的行也写这个值：否则在它和 Stack 行之间切换都要先用上一家压缩，上一家
+/// 不可用（额度用完）时压缩失败，而自定义供应商不会改用当前模型重试，会话从此每轮都卡在
+/// 上一家（#8485）。代价是加进第一家、移除最后一家时，路由上原本带值的会话会用路由那家
+/// 自己的模型压缩一次。官方路由的原生行不改：失败时 Codex 会改用当前模型重试，官方的
+/// 压缩语义也要保留。
 const CODEX_STACK_COMP_HASH: &str = "cc-switch";
 
 /// Stack 名单非空时的模型目录：路由那家的行在前，各 Stack 供应商的行按名单顺序在后，
@@ -2549,7 +2554,15 @@ pub(crate) fn plan_codex_stack_catalog(
     classic_subagents: bool,
 ) -> Result<Value, AppError> {
     let mut entries = match route {
-        CodexStackRoute::ThirdParty(row) => codex_stack_third_party_rows(&row)?,
+        CodexStackRoute::ThirdParty(row) => {
+            let mut rows = codex_stack_third_party_rows(&row)?;
+            for entry in &mut rows {
+                if let Some(obj) = entry.as_object_mut() {
+                    obj.insert("comp_hash".to_string(), json!(CODEX_STACK_COMP_HASH));
+                }
+            }
+            rows
+        }
         CodexStackRoute::Official {
             mut native,
             config_text,
@@ -2634,7 +2647,7 @@ pub(crate) fn plan_codex_stack_catalog(
 /// `config.toml` 里 `[features] multi_agent_v2 = true` 比目录优先，这时写了也不生效。
 const CODEX_CLASSIC_SUBAGENTS: &str = "v1";
 
-/// 一家第三方供应商在合并目录里的行（`comp_hash` 保持模板的值）。
+/// 一家第三方供应商在合并目录里的行（`comp_hash` 保持模板的值，由调用方统一改写）。
 pub(crate) fn codex_stack_third_party_rows(
     row: &CodexCatalogRow<'_>,
 ) -> Result<Vec<Value>, AppError> {
@@ -5781,8 +5794,11 @@ wire_api = "responses"
         assert_eq!(models, vec!["deepseek/deepseek-v4"]);
     }
 
+    /// #8485：第三方路由那家的行和 Stack 行同一个 `comp_hash`，两者之间切换时 Codex 不会先
+    /// 用上一家压缩（上一家额度用完时压缩失败，会话每轮都卡在上一家）。名单为空时的目录
+    /// 仍是模板的值。
     #[test]
-    fn the_route_rows_keep_the_comp_hash_they_have_without_stack_models() {
+    fn third_party_route_rows_share_the_stack_comp_hash() {
         let route_settings =
             json!({ "modelCatalog": { "models": [{ "model": "deepseek-v4-pro" }] } });
         let route_text = "model_provider = \"deepseek\"\nmodel = \"deepseek-v4-pro\"\n\
@@ -5814,9 +5830,10 @@ wire_api = "responses"
         .unwrap();
         let models = stacked["models"].as_array().unwrap();
         assert_eq!(models[0]["slug"], "deepseek-v4-pro");
-        assert_eq!(models[0]["comp_hash"], plain["models"][0]["comp_hash"]);
         assert_eq!(models[1]["slug"], "ccs-ds/deepseek-v4-pro");
-        assert_eq!(models[1]["comp_hash"], "cc-switch");
+        for model in models {
+            assert_eq!(model["comp_hash"], "cc-switch", "{}", model["slug"]);
+        }
     }
 
     #[test]
