@@ -3196,6 +3196,13 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
             Err(e) => (None, false, Some(e), false),
         };
 
+        // 两边都要过同一套身份规则：PATH 默认可能正好是那个被合并掉的转发壳，直接比
+        // canonical 路径会让默认标记全部落空。`default_install` 在「多处且无默认标记」
+        // 时返回 None，锚定会因此退到静态命令，可能升级到另一处拷贝去。
+        #[cfg(target_os = "windows")]
+        let is_path_default =
+            path_default.as_ref() == Some(&installation_identity(&tool_path, &real));
+        #[cfg(not(target_os = "windows"))]
         let is_path_default = path_default.as_ref() == Some(&real);
         let path_str = tool_path.display().to_string();
         let source = infer_install_source_for_install(&tool_path, &real);
@@ -9648,6 +9655,36 @@ mod tests {
 
         assert_eq!(kept.len(), 1, "a lone forwarder is still an install");
         assert_eq!(kept[0].0, cmd);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn installation_identity_maps_a_forwarder_to_the_target_it_launches() {
+        // `is_path_default` compares the PATH default against each survivor's identity.
+        // When the PATH default is the forwarder, both sides must normalize to the exe,
+        // or every survivor reads as non-default and `default_install` returns None.
+        let root = tempfile::tempdir().unwrap();
+        let npm_dir = root.path().join("npm");
+        let prog_dir = root.path().join("Programs").join("opencode");
+        std::fs::create_dir_all(&npm_dir).unwrap();
+        std::fs::create_dir_all(&prog_dir).unwrap();
+        let exe = prog_dir.join("opencode.exe");
+        std::fs::write(&exe, b"MZ").unwrap();
+        let cmd = npm_dir.join("opencode.cmd");
+        std::fs::write(&cmd, format!("@ECHO off\r\n\"{}\" %*\r\n", exe.display())).unwrap();
+
+        let from_forwarder = installation_identity(&cmd, &std::fs::canonicalize(&cmd).unwrap());
+        let from_exe = installation_identity(&exe, &std::fs::canonicalize(&exe).unwrap());
+
+        assert_eq!(
+            from_forwarder, from_exe,
+            "the forwarder and its target must share one identity"
+        );
+        assert_eq!(
+            from_forwarder,
+            std::fs::canonicalize(&exe).unwrap(),
+            "that identity must be the real exe"
+        );
     }
 
     #[cfg(target_os = "windows")]
