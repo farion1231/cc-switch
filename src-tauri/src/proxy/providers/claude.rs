@@ -465,6 +465,29 @@ pub fn transform_claude_request_for_api_format(
 /// Claude 适配器
 pub struct ClaudeAdapter;
 
+/// 是否是 API 版本路径段（`v1`、`v4`、`v10`……）。URL 路径大小写敏感，所以不做小写化。
+fn is_version_path_segment(segment: &str) -> bool {
+    match segment.strip_prefix('v') {
+        Some(digits) => !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()),
+        None => false,
+    }
+}
+
+/// `base_url` 的最后一个路径段是否是 API 版本段，例如 OpenAI 的 `.../v1` 或智谱的
+/// `.../api/paas/v4`。`?query` / `#fragment` 和结尾的 `/` 不影响判断。
+fn base_url_ends_with_version(base_url: &str) -> bool {
+    let trimmed = base_url.trim();
+    // Match against the path only: a `?query`/`#fragment` must not hide the segment.
+    let path = match trimmed.split_once(['?', '#']) {
+        Some((head, _)) => head,
+        None => trimmed,
+    };
+    match path.trim_end_matches('/').rsplit('/').next() {
+        Some(segment) => is_version_path_segment(segment),
+        None => false,
+    }
+}
+
 impl ClaudeAdapter {
     pub fn new() -> Self {
         Self
@@ -873,18 +896,22 @@ impl ProviderAdapter for ClaudeAdapter {
         // 现在 OpenRouter 已推出 Claude Code 兼容接口，因此默认直接透传 endpoint。
         // 如需回退旧逻辑，可在 forwarder 中根据 needs_transform 改写 endpoint。
         //
-        let mut base = format!(
-            "{}/{}",
-            base_url.trim_end_matches('/'),
-            endpoint.trim_start_matches('/')
-        );
+        let base = base_url.trim_end_matches('/');
+        let endpoint = endpoint.trim_start_matches('/');
 
-        // 去除重复的 /v1/v1（可能由 base_url 与 endpoint 都带版本导致）
-        while base.contains("/v1/v1") {
-            base = base.replace("/v1/v1", "/v1");
-        }
+        // 上游把 API 版本放进 base_url 时（智谱 `.../api/paas/v4`、OpenAI `.../v1`），
+        // endpoint 自带的版本段是多余的：拼上去会得到 `/v4/v1/chat/completions` 而 404。
+        // 只丢掉这一处版本段，其余路径原样拼接；base_url 不带版本段时完全不影响。
+        let endpoint = if base_url_ends_with_version(base_url) {
+            match endpoint.split_once('/') {
+                Some((first, rest)) if is_version_path_segment(first) => rest,
+                _ => endpoint,
+            }
+        } else {
+            endpoint
+        };
 
-        base
+        format!("{base}/{endpoint}")
     }
 
     fn get_auth_headers(
@@ -1602,6 +1629,68 @@ mod tests {
         let adapter = ClaudeAdapter::new();
         let url = adapter.build_url("https://integrate.api.nvidia.com", "/v1/chat/completions");
         assert_eq!(url, "https://integrate.api.nvidia.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn test_build_url_reuses_base_url_version_for_openai_endpoints() {
+        let adapter = ClaudeAdapter::new();
+
+        // 智谱的 Anthropic 兼容地址不带 /v1，但上游格式选 OpenAI Chat 时 endpoint 被改写成
+        // /v1/chat/completions，两个版本段拼在一起会 404。
+        assert_eq!(
+            adapter.build_url(
+                "https://open.bigmodel.cn/api/paas/v4",
+                "/v1/chat/completions"
+            ),
+            "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+        );
+        assert_eq!(
+            adapter.build_url(
+                "https://open.bigmodel.cn/api/paas/v4",
+                "/v1/responses?foo=bar"
+            ),
+            "https://open.bigmodel.cn/api/paas/v4/responses?foo=bar"
+        );
+    }
+
+    #[test]
+    fn test_build_url_version_dedupe_keeps_other_paths_untouched() {
+        let adapter = ClaudeAdapter::new();
+
+        // base_url 自己带 /v1 时结果和以前一致（原来只去重字面量 /v1/v1）。
+        assert_eq!(
+            adapter.build_url("https://api.openai.com/v1", "/v1/messages"),
+            "https://api.openai.com/v1/messages"
+        );
+        assert_eq!(
+            adapter.build_url("https://api.openai.com/v1/", "/v1/messages"),
+            "https://api.openai.com/v1/messages"
+        );
+        // 结尾不是版本段时原样拼接。
+        assert_eq!(
+            adapter.build_url("https://api.anthropic.com", "/v1/messages"),
+            "https://api.anthropic.com/v1/messages"
+        );
+        assert_eq!(
+            adapter.build_url("https://openrouter.ai/api", "/v1/messages"),
+            "https://openrouter.ai/api/v1/messages"
+        );
+    }
+
+    #[test]
+    fn base_url_ends_with_version_ignores_query_and_fragment() {
+        assert!(base_url_ends_with_version("https://x.com/v1"));
+        assert!(base_url_ends_with_version("https://x.com/v4/"));
+        assert!(base_url_ends_with_version("https://x.com/api/paas/v10"));
+        assert!(base_url_ends_with_version("https://x.com/v4?beta=true"));
+        assert!(base_url_ends_with_version("https://x.com/v4#frag"));
+
+        // 不是 `v` + 纯数字的结尾都不能当成版本段。
+        assert!(!base_url_ends_with_version("https://api.anthropic.com"));
+        assert!(!base_url_ends_with_version("https://openrouter.ai/api"));
+        assert!(!base_url_ends_with_version("https://x.com/v1beta"));
+        assert!(!base_url_ends_with_version("https://x.com/version"));
+        assert!(!base_url_ends_with_version("https://x.com/v"));
     }
 
     #[test]
