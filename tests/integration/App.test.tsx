@@ -280,6 +280,83 @@ describe("App integration with MSW", () => {
     expect(toastSuccessMock).toHaveBeenCalled();
   }, 10_000);
 
+  it("refreshes the route pointer when the proxy fails over to another provider", async () => {
+    let routeProviderId = "claude-1";
+    let modeRequests = 0;
+    server.use(
+      http.post("http://tauri.local/get_app_mode", async ({ request }) => {
+        const { appType } = (await request.json()) as { appType: string };
+        if (appType !== "claude") return;
+        modeRequests += 1;
+        return HttpResponse.json({
+          mode: "route",
+          attached: true,
+          routeProviderId,
+          directProviderId: "claude-1",
+        });
+      }),
+    );
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() => expect(modeRequests).toBeGreaterThan(0));
+    const before = modeRequests;
+
+    // 故障转移只改后端的路由指针，再发 provider-switched
+    routeProviderId = "claude-2";
+    emitTauriEvent("provider-switched", {
+      appType: "claude",
+      providerId: "claude-2",
+      source: "failover",
+    });
+
+    await waitFor(() => expect(modeRequests).toBeGreaterThan(before));
+  });
+
+  it.each(["pi", "rpi"] as const)(
+    "refreshes only %s caches for a background provider switch",
+    async (app) => {
+      const other = app === "pi" ? "rpi" : "pi";
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+      });
+      const keys = (id: "pi" | "rpi") => [
+        [id, "currentState"],
+        ["providers", id],
+        ["providers", id, "mode"],
+      ];
+      for (const key of [...keys(app), ...keys(other)]) {
+        client.setQueryData(key, { cached: true });
+      }
+      const listener = vi.spyOn(providersApi, "onSwitched");
+      const { default: App } = await import("@/App");
+      try {
+        render(
+          <QueryClientProvider client={client}>
+            <App />
+          </QueryClientProvider>,
+        );
+        await waitFor(() => expect(listener).toHaveBeenCalled());
+        await screen.findByText("switch");
+        emitTauriEvent("provider-switched", {
+          appType: app,
+          providerId: "native-only",
+        });
+        await waitFor(() => {
+          for (const key of keys(app)) {
+            expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+          }
+        });
+        for (const key of keys(other)) {
+          expect(client.getQueryState(key)?.isInvalidated).toBe(false);
+        }
+      } finally {
+        listener.mockRestore();
+      }
+    },
+  );
+
   it("resets provider view scroll when switching apps", async () => {
     const { default: App } = await import("@/App");
     const { container } = renderApp(App);

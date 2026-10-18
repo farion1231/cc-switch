@@ -82,9 +82,18 @@ export function fillHermesModel(
   model: HermesModel,
   metadata: KnownModelMetadata,
 ): HermesModel {
-  return isBlank(model.context_length) && metadata.contextWindow
-    ? { ...model, context_length: metadata.contextWindow }
-    : model;
+  const next = { ...model };
+  if (isBlank(model.context_length) && metadata.contextWindow) {
+    next.context_length = metadata.contextWindow;
+  }
+  // 只补 true：没写时 Hermes 自己查目录，用户明确写的 false 也不动。
+  if (
+    model.supports_vision === undefined &&
+    metadata.inputModalities?.includes("image")
+  ) {
+    next.supports_vision = true;
+  }
+  return next;
 }
 
 export function fillOpenCodeModel(

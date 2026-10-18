@@ -17,10 +17,10 @@
     },
     {
       "type": "improve",
-      "zh": "切回直连前先确认；GPT 上下文窗口封顶 272K",
-      "zh-TW": "切回直連前先確認；GPT 上下文視窗上限 272K",
-      "en": "Going back to direct now asks first, and GPT context windows are capped at 272K",
-      "ja": "直接接続に戻す前に確認するように、GPT のコンテキストウィンドウは 272K が上限に"
+      "zh": "1M 模型的预设默认声明 1M，Haiku 档也能勾；GPT 窗口封顶 272K",
+      "zh-TW": "1M 模型的預設改為宣告 1M，Haiku 檔也能勾；GPT 視窗上限 272K",
+      "en": "Presets for 1M models now declare 1M (Haiku tier too), and GPT windows are capped at 272K",
+      "ja": "1M モデルのプリセットは 1M を宣言（Haiku 枠も可）、GPT は 272K が上限に"
     },
     {
       "type": "improve",

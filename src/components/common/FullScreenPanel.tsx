@@ -22,8 +22,8 @@ interface FullScreenPanelProps {
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
-  /** Defaults to no motion to avoid revealing the underlying page during a fade. */
-  motionPreset?: "none" | "fade" | "slide-from-right";
+  /** Defaults to no motion to avoid revealing the underlying page during panel transitions. */
+  motionPreset?: "none" | "slide-from-right";
   /**
    * 覆盖内容区滚动容器的内边距/间距类。默认 `px-6 py-6 space-y-6`。
    * 通过 `cn`(twMerge) 合并，传入如 `pt-3` 只覆盖顶部内边距，其余保持默认。

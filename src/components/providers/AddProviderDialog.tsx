@@ -536,7 +536,6 @@ export function AddProviderDialog({
   return (
     <FullScreenPanel
       isOpen={open}
-      motionPreset="none"
       trackUnsavedChanges={step === "form"}
       title={t("provider.addNewProvider")}
       subtitle={

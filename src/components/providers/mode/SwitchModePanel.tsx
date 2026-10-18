@@ -28,13 +28,17 @@ import {
 import { useModeActions } from "@/hooks/useModeActions";
 import { getRoutingReason } from "@/utils/routingReason";
 import { CODEX_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
+import { routeSwitchNotification } from "@/utils/routeSwitchNotification";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { CodexStaleClientsNotice } from "@/components/providers/CodexStaleClientsNotice";
-import { blockedFromRouting } from "@/components/providers/presentation";
+import {
+  blockedFromRouting,
+  queueMoveSortUpdates,
+} from "@/components/providers/presentation";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { ModeTabs } from "./ModeTabs";
 import { ModeDialog, type ModeDialogState } from "./ModeDialog";
@@ -187,25 +191,16 @@ export function SwitchModePanel({
     setDialog({ kind: "exit", useProviderId: provider.id });
 
   const queueMove = async (provider: Provider, delta: -1 | 1) => {
-    const items = queue ?? [];
-    const index = items.findIndex((item) => item.providerId === provider.id);
-    const target = index + delta;
-    if (index < 0 || target < 0 || target >= items.length) return;
-    const order = items.map((item) => item.providerId);
-    order.splice(index, 1);
-    order.splice(target, 0, provider.id);
-    // 队列顺序就是供应商的排序：按原来占着的位置重新分配
-    const slots = items
-      .map(
-        (item, i) =>
-          item.sortIndex ?? providers[item.providerId]?.sortIndex ?? i,
-      )
-      .sort((a, b) => a - b);
+    const updates = queueMoveSortUpdates(
+      queue ?? [],
+      providers,
+      provider.id,
+      delta,
+    );
+    if (!updates) return;
+    const target = updates.findIndex((update) => update.id === provider.id);
     try {
-      await providersApi.updateSortOrder(
-        order.map((id, i) => ({ id, sortIndex: slots[i] })),
-        app,
-      );
+      await providersApi.updateSortOrder(updates, app);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["failoverQueue", app] }),
         queryClient.invalidateQueries({ queryKey: ["providers", app] }),
@@ -220,12 +215,11 @@ export function SwitchModePanel({
 
   const rememberDefault = async (provider: Provider) => {
     try {
-      await proxyApi.setProxyRoute(app, provider.id);
+      const result = await proxyApi.setProxyRoute(app, provider.id);
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
-      toast.success(
-        t("mode.toast.defaultRemembered", { provider: provider.name }),
-        { closeButton: true },
-      );
+      toast.success(routeSwitchNotification(result, app, provider.name, t), {
+        closeButton: true,
+      });
     } catch (error) {
       toast.error(
         t("mode.toast.failed", {

@@ -185,6 +185,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     config: grokPresetConfig("OpenModel", "https://api.openmodel.ai/v1"),
     category: "aggregator",
     isPartner: true,
+    partnerPromotionKey: "openmodel",
     icon: "openmodel",
   },
   {
@@ -199,6 +200,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     ),
     category: "aggregator",
     isPartner: true,
+    partnerPromotionKey: "grooroute",
     icon: "grooroute",
   },
   {
@@ -536,6 +538,37 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     category: "third_party",
     isPartner: true,
     icon: "sudocode-us",
+  },
+  {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    auth: grokAuth(),
+    // 官方 Grok Build 文档（docs.modelflare.dev/guides/clients/grok-build，
+    // 2026-10-15 核对）：Responses + /v1、grok-4.5
+    config: grokPresetConfig("Modelflare", "https://modelflare.dev/v1"),
+    endpointCandidates: [
+      "https://modelflare.dev/v1",
+      "https://origin.modelflare.dev/v1",
+    ],
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
+  },
+  {
+    name: "AllTokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    auth: grokAuth(),
+    // Sub2API 网关：Key 绑定单个分组，须用 Grok 分组的 Key（分组与模型见
+    // alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+    config: grokPresetConfig("AllTokens", "https://alltokens.cc/v1"),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
