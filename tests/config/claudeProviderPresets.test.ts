@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { providerPresets } from "@/config/claudeProviderPresets";
+import { GPT_CONTEXT_WINDOW_CAP } from "@/lib/modelMetadata";
 import type { Provider } from "@/types";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
 
@@ -40,11 +41,15 @@ describe("Codex Provider Preset", () => {
     expect(codex).toBeDefined();
   });
 
-  // 预设直接钉 Codex 目录的 372K 窗口（openai/codex#31860），不暴露表单输入框
-  it("should pin the Codex-catalog 372K window without exposing form fields", () => {
+  // 预设直接钉 Codex 订阅目录的 272K 窗口（与 GPT_CONTEXT_WINDOW_CAP 一致），不暴露表单输入框
+  it("should pin the Codex-catalog 272K window without exposing form fields", () => {
     const env = (codex!.settingsConfig as any).env;
-    expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("372000");
-    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("372000");
+    expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe(
+      String(GPT_CONTEXT_WINDOW_CAP),
+    );
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+      String(GPT_CONTEXT_WINDOW_CAP),
+    );
     expect(codex!.templateValues).toBeUndefined();
   });
 });
@@ -59,10 +64,10 @@ describe("OpenCode Go Provider Preset", () => {
     expect(env).toMatchObject({
       ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
       ANTHROPIC_API_KEY: "",
-      ANTHROPIC_MODEL: "deepseek-v4-flash",
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash",
-      ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-flash",
-      ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-flash",
+      ANTHROPIC_MODEL: "deepseek-v4-flash[1M]",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash[1M]",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-flash[1M]",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-flash[1M]",
     });
     // /messages 只认 x-api-key，Bearer 被网关静默忽略——勿换回 AUTH_TOKEN
     expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");

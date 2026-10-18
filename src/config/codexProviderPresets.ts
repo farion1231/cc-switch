@@ -575,6 +575,7 @@ requires_openai_auth = true`,
       "gpt-5.6-sol",
     ),
     isPartner: true,
+    partnerPromotionKey: "openmodel",
     icon: "openmodel",
   },
   {
@@ -593,7 +594,74 @@ requires_openai_auth = true`,
       "https://grooroute.xyz/v1",
     ],
     isPartner: true,
+    partnerPromotionKey: "grooroute",
     icon: "grooroute",
+  },
+  {
+    name: "TokenFactory",
+    nameKey: "providerForm.presets.tokenfactory",
+    websiteUrl: "https://tokenfactory.cn",
+    apiKeyUrl: "https://console.tokenfactory.cn/login",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    // 官方 Codex 文档（docs.tokenfactory.cn/tools/codex，2026-10-15 核对）：
+    // base 为 /v1、wire_api = "responses"
+    config: generateThirdPartyConfig(
+      "tokenfactory",
+      "https://api.tokenfactory.cn/v1",
+      "glm-5.3",
+    ),
+    endpointCandidates: ["https://api.tokenfactory.cn/v1"],
+    apiFormat: "openai_responses",
+    // 模型 ID、窗口、输入模态取 api.tokenfactory.cn/v1/public/models；档位取
+    // 平台各模型文档（同日）：GLM / Kimi / DeepSeek 为 low/high/max，Qwen3.8
+    // Flash 为 low/medium/xhigh（无 high，故单独给默认档）。首行 = 默认模型
+    modelCatalog: modelCatalog([
+      {
+        model: "glm-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+      {
+        model: "kimi-k3",
+        displayName: "Kimi K3",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+      {
+        model: "deepseek-v4-pro-0813",
+        displayName: "DeepSeek V4 Pro",
+        contextWindow: 1048576,
+        inputModalities: ["text"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+      {
+        model: "deepseek-v4.1-flash",
+        displayName: "DeepSeek V4.1 Flash",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+      {
+        model: "glm-5.3-flash",
+        displayName: "GLM-5.3-Flash",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+      {
+        model: "qwen3.8-flash",
+        displayName: "Qwen3.8 Flash",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "medium", "xhigh"],
+        defaultReasoningLevel: "xhigh",
+      },
+    ]),
+    icon: "tokenfactory",
   },
   {
     name: "Shengsuanyun",
@@ -1401,6 +1469,65 @@ requires_openai_auth = true`,
     isPartner: true,
     partnerPromotionKey: "xycai",
     icon: "xycai",
+  },
+  {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    // 官方 Codex 文档（docs.modelflare.dev/guides/clients/codex，2026-10-15
+    // 核对）：base 为 /v1、wire_api = "responses"、默认 gpt-5.6-sol
+    config: generateThirdPartyConfig(
+      "modelflare",
+      "https://modelflare.dev/v1",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: [
+      "https://modelflare.dev/v1",
+      "https://origin.modelflare.dev/v1",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
+  },
+  {
+    name: "EveryAPI",
+    websiteUrl: "https://everyapi.ai",
+    apiKeyUrl:
+      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "everyapi",
+      "https://api.everyapi.ai/v1",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: [
+      "https://api.everyapi.ai/v1",
+      "https://api-cn.everyapi.ai/v1",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "everyapi",
+    icon: "everyapi",
+  },
+  {
+    name: "AllTokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    // Sub2API 网关：Key 绑定单个分组，须用 GPT 分组的 Key（分组与模型见
+    // alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+    config: generateThirdPartyConfig(
+      "alltokens",
+      "https://alltokens.cc/v1",
+      "gpt-5.6-sol",
+    ),
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
@@ -4108,7 +4235,8 @@ requires_openai_auth = true`,
     // 官方列 low/medium/high/xhigh/max，无 none/minimal）；GLM-5.3 平台声明
     // low/high/max；DeepSeek V4 Pro 0813 平台未写，退回 DeepSeek 官方
     // low/high/max。每档都含 high，与 config 的 model_reasoning_effort = "high"
-    // 一致，无需 defaultReasoningLevel。窗口取平台模型表；GPT-6.1 Sol 超 272K
+    // 一致，无需 defaultReasoningLevel。窗口取平台模型表，GPT 按
+    // GPT_CONTEXT_WINDOW_CAP 封顶；GPT-6.1 Sol 超 272K
     // 按长上下文价计费（docs.digitalocean.com/products/inference/details/
     // pricing）。Tier 1 / Tier 2 账号只能用 gpt-oss，GPT-6.1 Sol 须 Tier 3+。
     // 首行 = 默认模型，须与 config 的 model 一致
@@ -4116,7 +4244,7 @@ requires_openai_auth = true`,
       {
         model: "openai-gpt-6-1-sol",
         displayName: "GPT-6.1 Sol",
-        contextWindow: 1050000,
+        contextWindow: 272000,
         inputModalities: ["text", "image"],
         reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
       },

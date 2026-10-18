@@ -159,6 +159,9 @@ describe("Turkish locale", () => {
     expect(translations.get("hermes.webui.launchConfirmMessage")).toContain(
       "pip install hermes-agent[web]",
     );
+    expect(
+      translations.get("settings.manualUninstallBunLauncherHint"),
+    ).toContain("OpenClaw Bun launcher");
     expect(translations.get("prompts.contentPlaceholderHermes")).toMatch(
       /^# SOUL\.md\n/,
     );

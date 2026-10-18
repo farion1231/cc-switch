@@ -169,11 +169,6 @@ pub async fn switch_provider(
     id: String,
 ) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    let is_desktop = matches!(app_type, AppType::ClaudeDesktop);
-    let desktop_was_mapping = is_desktop
-        && app_handle.try_state::<AppState>().is_some_and(|state| {
-            crate::claude_desktop_config::current_provider_uses_proxy(&state.db)
-        });
     // 在任何 live 写入前尝试刷新。刷新失败时，仅未过期的已有值能作为降级继续；
     // 已过期且没有新值会返回错误，后续切换任务不会启动。
     let refresh_warning =
@@ -191,15 +186,6 @@ pub async fn switch_provider(
     .map_err(|e| format!("供应商切换任务执行失败: {e}"))??;
     if let Some(warning) = refresh_warning {
         result.warnings.push(warning);
-    }
-    if is_desktop {
-        if let Some(state) = app_handle.try_state::<AppState>() {
-            crate::mode::controller::sync_desktop_mapping_service(
-                state.inner(),
-                desktop_was_mapping,
-            )
-            .await;
-        }
     }
     Ok(result)
 }

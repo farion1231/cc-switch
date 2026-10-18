@@ -52,6 +52,12 @@ export interface HermesModel {
   name?: string;
   /** Override the auto-detected context window. */
   context_length?: number;
+  /**
+   * Declares that the model accepts image input. Hermes reads it per model
+   * (`agent/image_routing.py`, `vision` is an alias); when absent it falls
+   * back to its own catalog and treats unknown models as text-only.
+   */
+  supports_vision?: boolean;
 }
 
 /**
@@ -303,7 +309,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
         },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "third_party",
@@ -430,6 +436,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "claude-opus-5-5", provider: "openmodel" },
     },
     isPartner: true,
+    partnerPromotionKey: "openmodel",
     icon: "openmodel",
   },
   {
@@ -459,7 +466,46 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "claude-opus-5-5", provider: "grooroute_pro" },
     },
     isPartner: true,
+    partnerPromotionKey: "grooroute",
     icon: "grooroute",
+  },
+  {
+    name: "TokenFactory",
+    nameKey: "providerForm.presets.tokenfactory",
+    websiteUrl: "https://tokenfactory.cn",
+    apiKeyUrl: "https://console.tokenfactory.cn/login",
+    settingsConfig: {
+      name: "tokenfactory",
+      // 官方 Hermes 文档（docs.tokenfactory.cn/tools/hermes，2026-10-15 核对）
+      base_url: "https://api.tokenfactory.cn/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "glm-5.3", name: "GLM-5.3", context_length: 1048576 },
+        { id: "kimi-k3", name: "Kimi K3", context_length: 1048576 },
+        {
+          id: "deepseek-v4-pro-0813",
+          name: "DeepSeek V4 Pro",
+          context_length: 1048576,
+        },
+        {
+          id: "deepseek-v4.1-flash",
+          name: "DeepSeek V4.1 Flash",
+          context_length: 1048576,
+        },
+        {
+          id: "glm-5.3-flash",
+          name: "GLM-5.3-Flash",
+          context_length: 1048576,
+        },
+        { id: "qwen3.8-flash", name: "Qwen3.8 Flash", context_length: 1000000 },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "glm-5.3", provider: "tokenfactory" },
+    },
+    icon: "tokenfactory",
   },
   {
     name: "Shengsuanyun",
@@ -476,7 +522,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-6-astra",
           name: "GPT-6 Astra",
-          context_length: 1050000,
+          context_length: 272000,
         },
       ],
     },
@@ -523,7 +569,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_key: "",
       api_mode: "chat_completions",
       models: [
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
         { id: "moonshotai/kimi-k3", name: "Kimi K3", context_length: 1048576 },
         { id: "z-ai/glm-5.3", name: "GLM-5.3", context_length: 1048576 },
         {
@@ -578,9 +624,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
-          context_length: 400000,
+          context_length: 272000,
         },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",
@@ -761,7 +807,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",
@@ -997,10 +1043,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: "https://api.siliconflow.cn/v1",
       api_key: "",
       api_mode: "chat_completions",
+      // 国内站 M2.5 已于 2026-09-11 下线，与 Codex/OpenCode 同换 V4 Flash
       models: [
         {
-          id: "Pro/MiniMaxAI/MiniMax-M2.5",
-          name: "Pro / MiniMax M2.5",
+          id: "deepseek-ai/DeepSeek-V4-Flash",
+          name: "DeepSeek V4 Flash",
+          context_length: 1048576,
         },
       ],
     },
@@ -1011,7 +1059,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#6E29F6",
     suggestedDefaults: {
       model: {
-        default: "Pro/MiniMaxAI/MiniMax-M2.5",
+        default: "deepseek-ai/DeepSeek-V4-Flash",
         provider: "siliconflow",
       },
     },
@@ -1052,7 +1100,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",
@@ -1077,7 +1125,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_key: "",
       api_mode: "chat_completions",
       models: [
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
         { id: "kimi-k3", name: "Kimi K3", context_length: 1048576 },
       ],
     },
@@ -1127,7 +1175,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "gpt-6-astra",
           name: "GPT-6 Astra",
-          context_length: 1050000,
+          context_length: 272000,
         },
       ],
     },
@@ -1334,9 +1382,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
         },
-        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 1050000 },
-        { id: "gpt-6-luna", name: "GPT-6 Luna", context_length: 1050000 },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-luna", name: "GPT-6 Luna", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "third_party",
@@ -1362,8 +1410,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
         },
-        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 1050000 },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "third_party",
@@ -1384,7 +1432,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",
@@ -1394,6 +1442,83 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     suggestedDefaults: {
       model: { default: "gpt-5.6-sol", provider: "xycai" },
     },
+  },
+  {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    settingsConfig: {
+      name: "modelflare",
+      // Chat Completions + /v1（docs.modelflare.dev/guides/endpoints，
+      // 2026-10-15 核对）；阵容同 OpenCode
+      base_url: "https://modelflare.dev/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", context_length: 272000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "gpt-5.6-sol", provider: "modelflare" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
+  },
+  {
+    name: "EveryAPI",
+    websiteUrl: "https://everyapi.ai",
+    apiKeyUrl:
+      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
+    settingsConfig: {
+      name: "everyapi",
+      // GPT 系列只开放 Responses（api.everyapi.ai/api/pricing 的
+      // supported_endpoint_types 为 openai-response，2026-10-17 核对）
+      base_url: "https://api.everyapi.ai/v1",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: [
+        { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", context_length: 272000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "gpt-5.6-sol", provider: "everyapi" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "everyapi",
+    icon: "everyapi",
+  },
+  {
+    name: "AllTokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    settingsConfig: {
+      name: "alltokens",
+      // Sub2API 网关：Key 绑定单个分组，须用 GPT 分组的 Key；GPT 账号池原生走
+      // Responses（分组与模型见 alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+      base_url: "https://alltokens.cc/v1",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: [
+        { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", context_length: 272000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "gpt-5.6-sol", provider: "alltokens" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
@@ -1441,7 +1566,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",
@@ -1521,7 +1646,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-5.6-sol",
           name: "GPT-5.6 Sol",
-          context_length: 400000,
+          context_length: 272000,
         },
         {
           id: "google/gemini-3.6-flash",
@@ -1541,7 +1666,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-6-astra",
           name: "GPT-6 Astra",
-          context_length: 1050000,
+          context_length: 272000,
         },
         {
           id: "google/gemini-3.8-flash",
@@ -2273,7 +2398,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",
@@ -2720,12 +2845,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-6-astra",
           name: "GPT-6 Astra",
-          context_length: 1050000,
+          context_length: 272000,
         },
         {
           id: "openai/gpt-6.1-sol",
           name: "GPT-6.1 Sol",
-          context_length: 1050000,
+          context_length: 272000,
         },
         {
           id: "google/gemini-3.8-flash",
@@ -3025,12 +3150,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-6.1-sol",
           name: "GPT-6.1 Sol",
-          context_length: 1050000,
+          context_length: 272000,
         },
         {
           id: "openai/gpt-6-luna",
           name: "GPT-6 Luna",
-          context_length: 1050000,
+          context_length: 272000,
         },
         {
           id: "moonshotai/kimi-k3",
@@ -3179,8 +3304,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
           id: "gpt-5.6-sol",
           name: "GPT-5.6 Sol",
         },
-        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 1050000 },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 1050000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
       ],
     },
     category: "aggregator",
