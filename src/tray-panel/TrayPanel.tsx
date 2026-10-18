@@ -56,6 +56,8 @@ const SUB_MAX_HEIGHT = 540;
 const HOVER_OPEN_MS = 50;
 /** 正朝子面板移动时隔这么久再看一次：鼠标停下了或偏离了就切换 */
 const AIM_RECHECK_MS = 120;
+/** 鼠标停在主面板里不是应用行的项上（`hovered` 的取值） */
+const OTHER_ITEM = "";
 
 const ROW_HOVER = "hover:bg-black/[0.06] dark:hover:bg-white/[0.08]";
 const FOCUS_RING =
@@ -438,6 +440,8 @@ export function TrayPanel() {
   const [state, setState] = useState<TrayPanelState | null>(null);
   const [tab, setTab] = useState<Tab>(readTab);
   const [openApp, setOpenApp] = useState<string | null>(null);
+  /** 子面板是从另一个应用换过来的（不是刚展开）：内容做一次很短的淡入 */
+  const [swapped, setSwapped] = useState(false);
   const [query, setQuery] = useState("");
   const [shownCount, setShownCount] = useState(0);
   const theme = usePanelTheme(shownCount);
@@ -457,6 +461,8 @@ export function TrayPanel() {
   const lastLayout = useRef("");
   const placementRef = useRef(placement);
   placementRef.current = placement;
+  const openAppRef = useRef(openApp);
+  openAppRef.current = openApp;
 
   const load = useCallback(async () => {
     try {
@@ -661,7 +667,10 @@ export function TrayPanel() {
 
   const openSub = useCallback((app: PanelApp | null) => {
     window.clearTimeout(hoverTimer.current);
-    setOpenApp(app && !app.addId ? app.app : null);
+    const next = app && !app.addId ? app.app : null;
+    const previous = openAppRef.current;
+    setSwapped(previous !== null && next !== null && previous !== next);
+    setOpenApp(next);
     setQuery("");
   }, []);
 
@@ -676,11 +685,12 @@ export function TrayPanel() {
   }, []);
 
   /**
-   * 子面板开着时换到另一个应用：鼠标正斜着朝子面板移动（途经别的行）就先不换，
-   * 隔一会儿再看；鼠标停下了、偏离了，或本来就是竖着移，立即切换。
+   * 子面板开着时换到另一个应用（`null`＝移到了主面板里别的项上，收起子面板）：
+   * 鼠标正斜着朝子面板移动（途经别的行）就先不换，隔一会儿再看；鼠标停下了、
+   * 偏离了，或本来就是竖着移，立即切换。
    */
-  const switchTo = (app: PanelApp) => {
-    if (hovered.current !== app.app) return;
+  const switchTo = (app: PanelApp | null) => {
+    if (hovered.current !== (app?.app ?? OTHER_ITEM)) return;
     const points = trail.current;
     const current = points[points.length - 1];
     const sub = subRef.current?.getBoundingClientRect();
@@ -717,6 +727,17 @@ export function TrayPanel() {
       return;
     }
     hoverTimer.current = window.setTimeout(() => openSub(app), HOVER_OPEN_MS);
+  };
+
+  // 和原生菜单一样：移到主面板里别的项（标签、设置、底部按钮）上就收起子面板；
+  // 移出整个面板不收，手滑出去再回来不用重新展开
+  const hoverOtherItem = (event: React.MouseEvent) => {
+    if (!openApp || hovered.current === OTHER_ITEM) return;
+    if (!(event.target as HTMLElement).closest("[data-other-item]")) return;
+    window.clearTimeout(hoverTimer.current);
+    hovered.current = OTHER_ITEM;
+    aimedAt.current = null;
+    switchTo(null);
   };
 
   const leaveApp = () => {
@@ -845,13 +866,17 @@ export function TrayPanel() {
       <div
         ref={mainRef}
         className="tp-card"
+        onMouseOver={hoverOtherItem}
         style={{
           width: placement.mainWidth,
           maxHeight: mainMaxHeight,
           ...cornerStyle("main"),
         }}
       >
-        <div className="flex shrink-0 items-center px-4 pb-2 pt-3">
+        <div
+          data-other-item
+          className="flex shrink-0 items-center px-4 pb-2 pt-3"
+        >
           <span className="text-[15px] font-semibold">CC Switch</span>
           <button
             type="button"
@@ -868,7 +893,7 @@ export function TrayPanel() {
           </button>
         </div>
 
-        <div className="shrink-0 px-3 pb-2">
+        <div data-other-item className="shrink-0 px-3 pb-2">
           <div
             role="tablist"
             className="flex rounded-lg bg-black/[0.06] p-0.5 dark:bg-white/[0.08]"
@@ -901,6 +926,7 @@ export function TrayPanel() {
                 <button
                   key={problem.id}
                   type="button"
+                  data-other-item
                   onClick={() => action(problem.id)}
                   className={cn(
                     "flex items-start gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-amber-600 dark:text-amber-400",
@@ -939,7 +965,10 @@ export function TrayPanel() {
           )}
         </div>
 
-        <div className="shrink-0 border-t border-black/[0.08] px-1.5 py-1.5 dark:border-white/[0.08]">
+        <div
+          data-other-item
+          className="shrink-0 border-t border-black/[0.08] px-1.5 py-1.5 dark:border-white/[0.08]"
+        >
           <button
             type="button"
             role="switch"
@@ -993,6 +1022,7 @@ export function TrayPanel() {
           ref={subRef}
           className="tp-card tp-sub"
           data-side={placement.side}
+          data-swap={swapped || undefined}
           onMouseEnter={() => window.clearTimeout(hoverTimer.current)}
           style={{
             width: placement.subWidth,
@@ -1001,6 +1031,7 @@ export function TrayPanel() {
           }}
         >
           <SubPanel
+            key={openEntry.app}
             app={openEntry}
             texts={texts}
             query={query}

@@ -432,6 +432,8 @@ describe("TrayPanel window layout", () => {
 
     fireEvent.mouseEnter(claudeRow);
     await waitFor(() => expect(subTitle()).toContain("Claude Code"));
+    // 刚展开：卡片自己有展开动画，内容不另做淡入
+    expect(container.querySelector(".tp-sub")).not.toHaveAttribute("data-swap");
 
     // 竖着移到下一行：不等，立即换
     fireEvent.mouseMove(window, { clientX: 200, clientY: 80 });
@@ -439,6 +441,8 @@ describe("TrayPanel window layout", () => {
     fireEvent.mouseLeave(claudeRow);
     fireEvent.mouseEnter(codexRow);
     expect(subTitle()).toContain("Codex");
+    // 从另一个应用换过来：内容做一次短淡入
+    expect(container.querySelector(".tp-sub")).toHaveAttribute("data-swap");
 
     // 斜着朝子面板移动、途经 Claude 那行：先不换；鼠标停下后再换
     fireEvent.mouseMove(window, { clientX: 200, clientY: 120 });
@@ -447,5 +451,17 @@ describe("TrayPanel window layout", () => {
     fireEvent.mouseEnter(claudeRow);
     expect(subTitle()).toContain("Codex");
     await waitFor(() => expect(subTitle()).toContain("Claude Code"));
+
+    // 移出应用行（比如移出整个面板）：子面板留着
+    fireEvent.mouseLeave(claudeRow);
+    expect(container.querySelector(".tp-sub")).not.toBeNull();
+
+    // 竖着移到底部「打开主窗口」：和原生菜单一样收起子面板
+    fireEvent.mouseMove(window, { clientX: 200, clientY: 300 });
+    fireEvent.mouseMove(window, { clientX: 200, clientY: 340 });
+    fireEvent.mouseOver(
+      screen.getByRole("button", { name: "Open main window" }),
+    );
+    expect(container.querySelector(".tp-sub")).toBeNull();
   });
 });

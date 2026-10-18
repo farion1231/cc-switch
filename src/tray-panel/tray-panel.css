@@ -123,8 +123,19 @@ html[data-layout="floating"] .tp-sub[data-side="right"] {
 html[data-layout="floating"] .tp-sub[data-side="left"] {
   animation: tp-sub-in-left 140ms ease-out;
 }
+/* 子面板换到另一个应用：新内容第一帧就在，只从半透明淡到不透明，不淡出、不动卡片
+   （卡片下的原生玻璃不跟网页动画，只淡内容才不会露出空玻璃） */
+@keyframes tp-sub-swap {
+  from {
+    opacity: 0.5;
+  }
+}
+.tp-sub[data-swap] > * {
+  animation: tp-sub-swap 90ms ease-out;
+}
 @media (prefers-reduced-motion: reduce) {
-  html[data-layout="floating"] .tp-sub {
+  html[data-layout="floating"] .tp-sub,
+  .tp-sub[data-swap] > * {
     animation: none;
   }
 }
