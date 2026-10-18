@@ -2594,6 +2594,25 @@ fn is_deferred_forwarder_candidate(path: &Path) -> bool {
     }
 }
 
+/// 该候选是不是 PATH 默认命中的那处。
+///
+/// **两边都要过 `installation_identity`**：`resolve_path_default` 返回的是 `where`
+/// 命中项的 canonical 路径，转发壳所在目录在 PATH 里排在原生目录之前时它就是壳本身。
+/// 只归一化一侧是不够的——留下的是 exe，`installation_identity(exe)` 仍是 exe 的路径，
+/// 和壳的路径永远不相等，默认标记照样丢。反向的情况同样要顾到：壳的目标 exe 存在但
+/// 不在搜索目录里时，列表里只有壳这一项，而它自己就是 PATH 默认。
+///
+/// 默认标记丢了之后，`default_install` 在「多处且无默认标记」时返回 None，锚定退到
+/// 静态命令，可能升级到另一处拷贝去。
+#[cfg(target_os = "windows")]
+fn is_path_default_candidate(tool_path: &Path, real: &Path, path_default: Option<&Path>) -> bool {
+    let Some(default) = path_default else {
+        return false;
+    };
+    // `default` 已经是 canonical 路径，直接当自己的 real 传进去。
+    installation_identity(default, default) == installation_identity(tool_path, real)
+}
+
 /// Convert a canonicalized Windows path back to the form accepted by shell
 /// commands. `std::fs::canonicalize` prefixes local paths with `\\?\` (and UNC
 /// paths with `\\?\UNC\`), but `cmd.exe` cannot `call` a batch file through
@@ -3213,12 +3232,8 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
             Err(e) => (None, false, Some(e), false),
         };
 
-        // 两边都要过同一套身份规则：PATH 默认可能正好是那个被合并掉的转发壳，直接比
-        // canonical 路径会让默认标记全部落空。`default_install` 在「多处且无默认标记」
-        // 时返回 None，锚定会因此退到静态命令，可能升级到另一处拷贝去。
         #[cfg(target_os = "windows")]
-        let is_path_default =
-            path_default.as_ref() == Some(&installation_identity(&tool_path, &real));
+        let is_path_default = is_path_default_candidate(&tool_path, &real, path_default.as_deref());
         #[cfg(not(target_os = "windows"))]
         let is_path_default = path_default.as_ref() == Some(&real);
         let path_str = tool_path.display().to_string();
@@ -9701,6 +9716,49 @@ mod tests {
             from_forwarder,
             std::fs::canonicalize(&exe).unwrap(),
             "that identity must be the real exe"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn is_path_default_candidate_sees_through_a_forwarder_default() {
+        let root = tempfile::tempdir().unwrap();
+        let npm_dir = root.path().join("npm");
+        let prog_dir = root.path().join("Programs").join("opencode");
+        let other_dir = root.path().join("elsewhere");
+        std::fs::create_dir_all(&npm_dir).unwrap();
+        std::fs::create_dir_all(&prog_dir).unwrap();
+        std::fs::create_dir_all(&other_dir).unwrap();
+        let exe = prog_dir.join("opencode.exe");
+        std::fs::write(&exe, b"MZ").unwrap();
+        let other = other_dir.join("opencode.exe");
+        std::fs::write(&other, b"MZ").unwrap();
+        let cmd = npm_dir.join("opencode.cmd");
+        std::fs::write(&cmd, format!("@ECHO off\r\n\"{}\" %*\r\n", exe.display())).unwrap();
+
+        let default = std::fs::canonicalize(&cmd).unwrap();
+        let real_exe = std::fs::canonicalize(&exe).unwrap();
+        let real_other = std::fs::canonicalize(&other).unwrap();
+
+        // The forwarder is the PATH default and the exe is what survives the merge.
+        assert!(
+            is_path_default_candidate(&exe, &real_exe, Some(&default)),
+            "the survivor of a merged forwarder must inherit the default marker"
+        );
+        // Reverse case: the forwarder is the only entry for that identity and is the
+        // default itself. It must not lose the marker to its own identity mapping.
+        assert!(
+            is_path_default_candidate(&cmd, &default, Some(&default)),
+            "a lone forwarder that is the default must keep the marker"
+        );
+        // A genuinely different install is not the default.
+        assert!(
+            !is_path_default_candidate(&other, &real_other, Some(&default)),
+            "an unrelated install must not be marked default"
+        );
+        assert!(
+            !is_path_default_candidate(&exe, &real_exe, None),
+            "no PATH default means nothing is marked"
         );
     }
 
