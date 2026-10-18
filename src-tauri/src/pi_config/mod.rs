@@ -1,6 +1,6 @@
 //! Thin adapter for the Pi family's native files.
 //!
-//! Pi and RPI ship the same layout (`models.json`, `settings.json`) in separate
+//! Pi and rpi ship the same layout (`models.json`, `settings.json`) in separate
 //! directories. Pi owns account login and the active provider/model in
 //! `settings.json`; CC Switch only manages explicit provider entries in
 //! `models.json`. Every path here is resolved from the `AppType`, so a write for
@@ -29,7 +29,7 @@ static TEST_RPI_AGENT_DIR: LazyLock<Mutex<Option<PathBuf>>> = LazyLock::new(|| M
 /// Product name used in user-facing messages and log lines.
 pub(crate) fn display_name(app: &AppType) -> &'static str {
     match app {
-        AppType::Rpi => "RPI",
+        AppType::Rpi => "rpi",
         _ => "Pi",
     }
 }
@@ -82,7 +82,7 @@ fn get_rpi_agent_dir() -> Result<PathBuf, AppError> {
     #[cfg(test)]
     if let Some(path) = TEST_RPI_AGENT_DIR
         .lock()
-        .expect("lock RPI test directory")
+        .expect("lock rpi test directory")
         .clone()
     {
         return resolve_rpi_agent_dir(Some(path), None, get_home_dir().join(".rpi").join("agent"));
@@ -125,13 +125,13 @@ fn resolve_rpi_agent_dir(
     default_path: PathBuf,
 ) -> Result<PathBuf, AppError> {
     let (path, source) = match settings_override {
-        Some(path) => (path, "RPI settings override"),
+        Some(path) => (path, "rpi settings override"),
         None => match env_override {
             Some(value) if !value.is_empty() => (
                 crate::settings::resolve_override_path(value.to_string_lossy().as_ref()),
                 "RPI_CODING_AGENT_DIR",
             ),
-            _ => (default_path, "RPI default"),
+            _ => (default_path, "rpi default"),
         },
     };
     if !path.is_absolute() {
@@ -331,11 +331,7 @@ pub(crate) fn restore_provider_if_missing(
     }
 }
 
-// --- Pi-specific wrappers (Pi state, sessions and deeplinks keep using these) ---
-
-pub(crate) fn read_pi_native_providers() -> Result<IndexMap<String, Value>, AppError> {
-    read_native_providers(&AppType::Pi)
-}
+// --- Pi-specific wrappers (sessions and deeplinks keep using these) ---
 
 #[cfg(test)]
 pub(crate) fn read_pi_native_provider(provider_key: &str) -> Result<Option<Value>, AppError> {
@@ -532,6 +528,13 @@ fn write_models_document(
     let mut bytes =
         serde_json::to_vec_pretty(document).map_err(|source| AppError::JsonSerialize { source })?;
     bytes.push(b'\n');
+    if bytes.len() as u64 > MAX_PI_FILE_BYTES {
+        return Err(AppError::InvalidInput(format!(
+            "{} models file exceeds the 1 MiB limit: {}",
+            display_name(app),
+            path.display()
+        )));
+    }
     ensure_private_models_parent(app, path)?;
     ensure_models_revision(app, path, expected_revision)?;
     atomic_write_private(path, &bytes)
@@ -554,7 +557,8 @@ fn ensure_models_revision(
         Ok(())
     } else {
         Err(AppError::Conflict(format!(
-            "Pi models.json changed outside CC Switch: {}",
+            "{} models.json changed outside CC Switch: {}",
+            display_name(app),
             path.display()
         )))
     }
@@ -649,7 +653,7 @@ pub(crate) mod test_support {
         }
     }
 
-    /// Same isolation as [`TestAgentDir`], pointing at the RPI tree.
+    /// Same isolation as [`TestAgentDir`], pointing at the rpi tree.
     pub(crate) struct TestRpiAgentDir {
         _dir: Option<tempfile::TempDir>,
         previous: Option<PathBuf>,
@@ -657,11 +661,11 @@ pub(crate) mod test_support {
 
     impl TestRpiAgentDir {
         pub(crate) fn new() -> Self {
-            let dir = tempfile::tempdir().expect("create RPI test directory");
+            let dir = tempfile::tempdir().expect("create rpi test directory");
             let agent_dir = dir.path().join("agent");
             let previous = super::TEST_RPI_AGENT_DIR
                 .lock()
-                .expect("lock RPI test directory")
+                .expect("lock rpi test directory")
                 .replace(agent_dir);
             Self {
                 _dir: Some(dir),
@@ -674,7 +678,7 @@ pub(crate) mod test_support {
         fn drop(&mut self) {
             *super::TEST_RPI_AGENT_DIR
                 .lock()
-                .expect("lock RPI test directory") = self.previous.take();
+                .expect("lock rpi test directory") = self.previous.take();
         }
     }
 }
@@ -784,25 +788,88 @@ mod tests {
 
     #[test]
     #[serial]
+    fn oversized_models_writes_do_not_create_an_unreadable_file() {
+        let _pi = test_support::TestAgentDir::new();
+        let _rpi = test_support::TestRpiAgentDir::new();
+        for app in [AppType::Pi, AppType::Rpi] {
+            let path = models_path(&app).unwrap();
+            let oversized = json!({"futureField": "x".repeat(MAX_PI_FILE_BYTES as usize)});
+            let error = insert_provider(&app, "too-large", &oversized)
+                .expect_err("writes must respect the same size limit as reads");
+            assert!(matches!(error, AppError::InvalidInput(_)), "{error}");
+            assert!(error.to_string().contains("1 MiB limit"), "{error}");
+            assert!(error.to_string().contains(display_name(&app)), "{error}");
+            assert!(
+                !path.exists(),
+                "oversized create must not write models.json"
+            );
+            assert!(
+                !path.parent().unwrap().exists(),
+                "validate before creating directories"
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn models_at_the_size_limit_remain_readable_and_reject_growth() {
+        let _pi = test_support::TestAgentDir::new();
+        let _rpi = test_support::TestRpiAgentDir::new();
+        for app in [AppType::Pi, AppType::Rpi] {
+            let empty = json!({"providers": {"large": {"futureField": ""}}});
+            // Include pretty-printing overhead and the writer's trailing newline.
+            let overhead = serde_json::to_vec_pretty(&empty).unwrap().len() + 1;
+            let content = "x".repeat(MAX_PI_FILE_BYTES as usize - overhead);
+            let config = json!({"futureField": content});
+            insert_provider(&app, "large", &config).expect("exact limit is valid");
+            let path = models_path(&app).unwrap();
+            let before = fs::read(&path).unwrap();
+            assert_eq!(before.len() as u64, MAX_PI_FILE_BYTES);
+            assert_eq!(
+                read_native_provider(&app, "large").unwrap(),
+                Some(config.clone())
+            );
+
+            let grown = json!({"futureField": format!("{content}x")});
+            assert!(
+                replace_provider_if_present(&app, "large", &grown).is_err(),
+                "one extra byte must be rejected"
+            );
+            assert_eq!(fs::read(&path).unwrap(), before);
+            insert_provider(&app, "another", &json!({}))
+                .expect_err("aggregate file size, not each provider size, is limited");
+            assert_eq!(fs::read(&path).unwrap(), before);
+            assert_eq!(read_native_provider(&app, "large").unwrap(), Some(config));
+        }
+    }
+
+    #[test]
+    #[serial]
     fn stale_models_revision_does_not_overwrite_an_external_edit() {
-        let _agent = test_support::TestAgentDir::new();
-        let path = get_pi_models_path().expect("models path");
-        ensure_private_models_parent(&AppType::Pi, &path).expect("create agent directory");
-        fs::write(&path, r#"{"providers":{"external":{"models":[]}}}"#)
-            .expect("write initial models");
-        let (_, stale_revision) =
-            read_models_document_with_revision(&AppType::Pi, &path).expect("read models revision");
+        let _pi = test_support::TestAgentDir::new();
+        let _rpi = test_support::TestRpiAgentDir::new();
+        for app in [AppType::Pi, AppType::Rpi] {
+            let path = models_path(&app).expect("models path");
+            ensure_private_models_parent(&app, &path).expect("create agent directory");
+            fs::write(&path, r#"{"providers":{"external":{"models":[]}}}"#)
+                .expect("write initial models");
+            let (_, stale_revision) =
+                read_models_document_with_revision(&app, &path).expect("read models revision");
 
-        let external = r#"{"providers":{"external":{"models":[]},"pi-added":{"models":[]}}}"#;
-        fs::write(&path, external).expect("edit models externally");
+            let external = r#"{"providers":{"external":{"models":[]},"cli-added":{"models":[]}}}"#;
+            fs::write(&path, external).expect("edit models externally");
 
-        let replacement = json!({"providers": {"cc-switch": provider()}});
-        let error = write_models_document(&AppType::Pi, &path, &replacement, &stale_revision)
-            .expect_err("stale write must fail");
-        assert!(matches!(error, AppError::Conflict(_)));
-        assert_eq!(
-            fs::read_to_string(path).expect("read external models"),
-            external
-        );
+            let replacement = json!({"providers": {"cc-switch": provider()}});
+            let error = write_models_document(&app, &path, &replacement, &stale_revision)
+                .expect_err("stale write must fail");
+            assert!(matches!(error, AppError::Conflict(_)));
+            assert!(error
+                .to_string()
+                .contains(&format!("{} models.json", display_name(&app))));
+            assert_eq!(
+                fs::read_to_string(path).expect("read external models"),
+                external
+            );
+        }
     }
 }

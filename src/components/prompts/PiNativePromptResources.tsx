@@ -49,12 +49,14 @@ import {
 import { isValidPiPromptTemplateSlug } from "@/lib/piPromptSlug";
 import { cn } from "@/lib/utils";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { usePromptFileLocationQuery } from "@/lib/query/prompts";
 import { FieldError, promptFieldClass } from "./PromptFormPanel";
 import { promptMenuContentClass, promptMenuItemClass } from "./PromptPageFrame";
 import {
   charCount,
   copyText,
   formatSize,
+  parentDir,
   renderSegs,
   showPromptToast,
   utf8Bytes,
@@ -90,7 +92,8 @@ const promptFileKey = (app: AppId, kind: EditablePiPromptFileKind) =>
 export const promptTemplatesKey = (app: AppId) =>
   [app, "promptTemplates"] as const;
 /** 编辑页保存用的 mutation key：页面据此在保存进行中锁住导航 */
-export const PI_PROMPT_SAVE_MUTATION_KEY = ["pi", "promptSave"] as const;
+export const piPromptSaveMutationKey = (app: AppId) =>
+  [app, "promptSave"] as const;
 
 export function usePiPromptTemplatesQuery(app: AppId) {
   return useQuery({
@@ -165,7 +168,7 @@ function PiInstructionFileEditor({
   const queryKey = promptFileKey(app, file.kind);
 
   const save = useMutation({
-    mutationKey: PI_PROMPT_SAVE_MUTATION_KEY,
+    mutationKey: piPromptSaveMutationKey(app),
     mutationFn: () =>
       promptsApi.replacePiPromptFile(
         app,
@@ -516,8 +519,6 @@ export function PiSystemPromptFiles({ app }: { app: AppId }) {
   );
 }
 
-const SAVE_TO_PREFIX = "~/.pi/agent/prompts/";
-
 interface PiPromptTemplateEditorProps {
   app: AppId;
   template?: PiPromptTemplate;
@@ -534,6 +535,10 @@ function PiPromptTemplateEditor({
   onChanged,
 }: PiPromptTemplateEditorProps) {
   const { t } = useTranslation();
+  const { data: location } = usePromptFileLocationQuery(app);
+  const saveToPrefix = location
+    ? `${parentDir(location.displayPath).replace(/\\/g, "/")}prompts/`
+    : `~/.${app}/agent/prompts/`;
   const baseId = useId();
   const initialDescription = getPiPromptTemplateDescription(
     template?.content ?? "",
@@ -579,11 +584,11 @@ function PiPromptTemplateEditor({
             to: normalizedSlug,
           })
         : t("pi.prompts.templateSaveTo", {
-            path: `${SAVE_TO_PREFIX}${normalizedSlug}.md`,
+            path: `${saveToPrefix}${normalizedSlug}.md`,
           });
 
   const save = useMutation({
-    mutationKey: PI_PROMPT_SAVE_MUTATION_KEY,
+    mutationKey: piPromptSaveMutationKey(app),
     mutationFn: () =>
       promptsApi.upsertPiPromptTemplate(
         app,

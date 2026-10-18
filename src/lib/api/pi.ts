@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { UsageScript } from "@/types";
 
+export type PiFamilyAppId = "pi" | "rpi";
+
 export interface PiCurrentState {
   enabledProviderIds: string[];
   defaultProviderId: string | null;
@@ -20,8 +22,10 @@ export type PiSessionDiscovery =
     };
 
 export const piApi = {
-  async getCurrentState(): Promise<PiCurrentState> {
-    return await invoke("get_pi_current_state");
+  async getCurrentState(app: PiFamilyAppId = "pi"): Promise<PiCurrentState> {
+    return await invoke(
+      app === "rpi" ? "get_rpi_current_state" : "get_pi_current_state",
+    );
   },
 
   async updateProviderUsageScript(

@@ -68,6 +68,27 @@ const sanitizeDir = (value?: string | null): string | undefined => {
   return trimmed.length > 0 ? trimmed : undefined;
 };
 
+// One invalid override (notably Pi-family relative paths) must not discard
+// healthy app paths or the separately saved CC Switch data-directory baseline.
+const loadConfigDirectory = async (
+  app: DirectoryAppId,
+): Promise<string | null> => {
+  try {
+    return await settingsApi.getConfigDir(app);
+  } catch (error) {
+    console.error(
+      `[useDirectorySettings] Failed to resolve ${app} config dir`,
+      error,
+    );
+    return null;
+  }
+};
+
+const resolvedOrDefault = (
+  resolved: string | null,
+  fallback: string,
+): string => (resolved === null ? "" : resolved || fallback);
+
 const computeDefaultAppConfigDir = async (): Promise<string | undefined> => {
   try {
     const home = await homeDir();
@@ -206,15 +227,15 @@ export function useDirectorySettings({
           defaultRpiDir,
         ] = await Promise.all([
           settingsApi.getAppConfigDirOverride(),
-          settingsApi.getConfigDir("claude"),
-          settingsApi.getConfigDir("codex"),
-          settingsApi.getConfigDir("gemini"),
-          settingsApi.getConfigDir("grokbuild"),
-          settingsApi.getConfigDir("opencode"),
-          settingsApi.getConfigDir("openclaw"),
-          settingsApi.getConfigDir("hermes"),
-          settingsApi.getConfigDir("pi"),
-          settingsApi.getConfigDir("rpi"),
+          loadConfigDirectory("claude"),
+          loadConfigDirectory("codex"),
+          loadConfigDirectory("gemini"),
+          loadConfigDirectory("grokbuild"),
+          loadConfigDirectory("opencode"),
+          loadConfigDirectory("openclaw"),
+          loadConfigDirectory("hermes"),
+          loadConfigDirectory("pi"),
+          loadConfigDirectory("rpi"),
           computeDefaultAppConfigDir(),
           computeDefaultConfigDir("claude"),
           computeDefaultConfigDir("codex"),
@@ -249,15 +270,21 @@ export function useDirectorySettings({
 
         setResolvedDirs({
           appConfig: normalizedOverride ?? defaultsRef.current.appConfig,
-          claude: claudeDir || defaultsRef.current.claude,
-          codex: codexDir || defaultsRef.current.codex,
-          gemini: geminiDir || defaultsRef.current.gemini,
-          grokbuild: grokDir || defaultsRef.current.grokbuild,
-          opencode: opencodeDir || defaultsRef.current.opencode,
-          openclaw: openclawDir || defaultsRef.current.openclaw,
-          hermes: hermesDir || defaultsRef.current.hermes,
-          pi: piDir || defaultsRef.current.pi,
-          rpi: rpiDir || defaultsRef.current.rpi,
+          claude: resolvedOrDefault(claudeDir, defaultsRef.current.claude),
+          codex: resolvedOrDefault(codexDir, defaultsRef.current.codex),
+          gemini: resolvedOrDefault(geminiDir, defaultsRef.current.gemini),
+          grokbuild: resolvedOrDefault(grokDir, defaultsRef.current.grokbuild),
+          opencode: resolvedOrDefault(
+            opencodeDir,
+            defaultsRef.current.opencode,
+          ),
+          openclaw: resolvedOrDefault(
+            openclawDir,
+            defaultsRef.current.openclaw,
+          ),
+          hermes: resolvedOrDefault(hermesDir, defaultsRef.current.hermes),
+          pi: resolvedOrDefault(piDir, defaultsRef.current.pi),
+          rpi: resolvedOrDefault(rpiDir, defaultsRef.current.rpi),
         });
       } catch (error) {
         console.error(

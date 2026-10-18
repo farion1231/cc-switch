@@ -20,6 +20,7 @@ export const PROMPT_APP_IDS: AppId[] = [
   "opencode",
   "hermes",
   "pi",
+  "rpi",
   "mcode",
 ];
 

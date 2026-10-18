@@ -17,7 +17,7 @@ import {
 } from "./PromptLibrary";
 import { PromptPageFrame } from "./PromptPageFrame";
 import {
-  PI_PROMPT_SAVE_MUTATION_KEY,
+  piPromptSaveMutationKey,
   PiPromptTemplates,
   PiSystemPromptFiles,
   usePiPromptTemplatesQuery,
@@ -29,6 +29,7 @@ import {
   copyText,
   formatSize,
   renderSegs,
+  parentDir,
   showPromptToast,
   utf8Bytes,
 } from "./promptUtils";
@@ -43,12 +44,6 @@ interface PiPromptPanelProps {
   onAppChange: (app: AppId) => void;
   onInteractionBlockedChange?: (blocked: boolean) => void;
   onNavigationBlockedChange?: (blocked: boolean) => void;
-}
-
-/** 去掉路径最后一段（AGENTS.md），留下目录，末尾带分隔符。 */
-function parentDir(path: string): string {
-  const index = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return index >= 0 ? path.slice(0, index + 1) : path;
 }
 
 /** Pi 的提示词页（PromptsPi.dc.html）：提示库 | 系统提示 | 模板 三段。 */
@@ -92,7 +87,7 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
     loading || writePending || isFormOpen || dialogOpen;
   // 系统提示 / 模板编辑页自己的保存，按 mutation key 单独看
   const nativeSaving =
-    useIsMutating({ mutationKey: PI_PROMPT_SAVE_MUTATION_KEY }) > 0;
+    useIsMutating({ mutationKey: piPromptSaveMutationKey(appId) }) > 0;
   // 编辑页只盖住内容区，不锁导航：离开页面就关掉它（同供应商编辑页）；保存进行中仍锁
   const navigationBlocked = writePending || dialogOpen || nativeSaving;
   // 外观上的禁用晚 300ms 才出现：点一下启用这类很快的写入不让整列按钮闪一下变灰。
@@ -131,7 +126,7 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
     window.addEventListener("prompt-imported", handlePromptImported);
     return () =>
       window.removeEventListener("prompt-imported", handlePromptImported);
-  }, [reload]);
+  }, [appId, reload]);
 
   useTauriEvent("profile-applied", () => {
     void reload();

@@ -23,6 +23,11 @@ const PROMPT_FILE_NAME: Partial<Record<AppId, string>> = {
   mcode: "AGENTS.md",
 };
 
+export function parentDir(path: string): string {
+  const index = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return index >= 0 ? path.slice(0, index + 1) : path;
+}
+
 export function promptFileName(app: AppId): string {
   return PROMPT_FILE_NAME[app] ?? "AGENTS.md";
 }

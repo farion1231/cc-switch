@@ -16,15 +16,17 @@ import {
   type PiPromptTemplatesHandle,
 } from "@/components/prompts/PiNativePromptResources";
 import { promptsApi, type PiPromptFileKind } from "@/lib/api/prompts";
+import type { AppId } from "@/lib/api";
 
 const toastMocks = vi.hoisted(() => ({
   success: vi.fn(),
   error: vi.fn(),
+  translate: vi.fn((key: string, _options?: Record<string, unknown>) => key),
 }));
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: toastMocks.translate,
   }),
 }));
 
@@ -54,14 +56,14 @@ const renderWithQueryClient = (
   ),
 });
 
-function TemplateHarness() {
+function TemplateHarness({ app = "pi" }: { app?: AppId }) {
   const ref = useRef<PiPromptTemplatesHandle>(null);
   return (
     <>
       <button type="button" onClick={() => ref.current?.openCreate()}>
         open-create
       </button>
-      <PiPromptTemplates app="pi" ref={ref} />
+      <PiPromptTemplates app={app} ref={ref} />
     </>
   );
 }
@@ -75,6 +77,10 @@ describe("Pi native prompt resources", () => {
     vi.restoreAllMocks();
     toastMocks.success.mockReset();
     toastMocks.error.mockReset();
+    vi.spyOn(promptsApi, "getFileLocation").mockImplementation(async (app) => ({
+      path: `/home/test/.${app}/agent/AGENTS.md`,
+      displayPath: `~/.${app}/agent/AGENTS.md`,
+    }));
     vi.spyOn(promptsApi, "getPiPromptFile").mockImplementation(
       async (_app, kind: PiPromptFileKind) => ({
         exists: kind === "system_append",
@@ -103,30 +109,75 @@ describe("Pi native prompt resources", () => {
     );
   });
 
-  it("shows file configuration state and edits the recommended append file", async () => {
-    renderWithQueryClient(<PiSystemPromptFiles app="pi" />);
+  it.each([
+    "~/.rpi/agent/AGENTS.md",
+    "D:/custom-rpi/AGENTS.md",
+    "D:\\custom-rpi\\AGENTS.md",
+  ])(
+    "shows the actual rpi template directory for %s and saves only to rpi",
+    async (displayPath) => {
+      vi.mocked(promptsApi.getFileLocation).mockResolvedValue({
+        path: displayPath,
+        displayPath,
+      });
+      renderWithQueryClient(<TemplateHarness app="rpi" />);
+      await screen.findByText("/empty");
+      fireEvent.click(screen.getByRole("button", { name: "open-create" }));
+      fireEvent.change(screen.getByPlaceholderText("pi.prompts.templateSlug"), {
+        target: { value: "review" },
+      });
+      await waitFor(() =>
+        expect(toastMocks.translate).toHaveBeenCalledWith(
+          "pi.prompts.templateSaveTo",
+          {
+            path: displayPath
+              .replace(/\\/g, "/")
+              .replace("AGENTS.md", "prompts/review.md"),
+          },
+        ),
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: "pi.prompts.createTemplate" }),
+      );
+      await waitFor(() =>
+        expect(promptsApi.upsertPiPromptTemplate).toHaveBeenCalledWith(
+          "rpi",
+          "review",
+          "missing",
+          "",
+          undefined,
+        ),
+      );
+    },
+  );
 
-    await screen.findByText("pi.prompts.configuredSize");
-    expect(screen.getByText("pi.prompts.notConfigured")).toBeInTheDocument();
+  it.each(["pi", "rpi"] as const)(
+    "edits %s's recommended append file without touching the other app",
+    async (app) => {
+      renderWithQueryClient(<PiSystemPromptFiles app={app} />);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "common.edit APPEND_SYSTEM.md" }),
-    );
-    const editor = screen.getByPlaceholderText(
-      "pi.prompts.instructionPlaceholder",
-    );
-    fireEvent.change(editor, { target: { value: "new append" } });
-    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+      await screen.findByText("pi.prompts.configuredSize");
+      expect(screen.getByText("pi.prompts.notConfigured")).toBeInTheDocument();
 
-    await waitFor(() =>
-      expect(promptsApi.replacePiPromptFile).toHaveBeenCalledWith(
-        "pi",
-        "system_append",
-        "append-revision",
-        "new append",
-      ),
-    );
-  });
+      fireEvent.click(
+        screen.getByRole("button", { name: "common.edit APPEND_SYSTEM.md" }),
+      );
+      const editor = screen.getByPlaceholderText(
+        "pi.prompts.instructionPlaceholder",
+      );
+      fireEvent.change(editor, { target: { value: "new append" } });
+      fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+      await waitFor(() =>
+        expect(promptsApi.replacePiPromptFile).toHaveBeenCalledWith(
+          app,
+          "system_append",
+          "append-revision",
+          "new append",
+        ),
+      );
+    },
+  );
 
   it("keeps the open draft and its base revision when the query refreshes", async () => {
     const { queryClient } = renderWithQueryClient(

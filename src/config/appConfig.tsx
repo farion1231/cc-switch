@@ -240,8 +240,8 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 border-0 gap-1.5",
   },
   rpi: {
-    label: "RPI",
-    icon: <ProviderIcon icon="rpi" name="RPI" size={14} showFallback={false} />,
+    label: "rpi",
+    icon: <ProviderIcon icon="rpi" name="rpi" size={14} showFallback={false} />,
     activeClass:
       "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
     badgeClass:

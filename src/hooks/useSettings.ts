@@ -368,6 +368,7 @@ export function useSettings(): UseSettingsResult {
         const previousOpencodeDir = sanitizeDir(data?.opencodeConfigDir);
         const previousOpenclawDir = sanitizeDir(data?.openclawConfigDir);
         const previousPiDir = sanitizeDir(data?.piConfigDir);
+        const previousRpiDir = sanitizeDir(data?.rpiConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -493,6 +494,9 @@ export function useSettings(): UseSettingsResult {
         }
         if (piDirChanged) {
           await invalidatePiDirectoryCaches(queryClient);
+        }
+        if (sanitizedRpiDir !== previousRpiDir) {
+          await invalidatePiDirectoryCaches(queryClient, "rpi");
         }
 
         const appDirChanged = sanitizedAppDir !== (previousAppDir ?? undefined);

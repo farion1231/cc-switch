@@ -383,6 +383,22 @@ describe("useSettings hook", () => {
     expect(invalidatePiDirectoryCachesMock).toHaveBeenCalledTimes(1);
   });
 
+  it("invalidates only rpi native caches after its directory changes", async () => {
+    settingsFormMock = createSettingsFormMock({
+      settings: { ...serverSettings, rpiConfigDir: "  /custom/rpi  " },
+    });
+    const { result } = renderHook(() => useSettings());
+    await act(async () => {
+      await result.current.saveSettings(undefined, { silent: true });
+    });
+    expect((mutateAsyncMock.mock.calls[0][0] as Settings).rpiConfigDir).toBe(
+      "/custom/rpi",
+    );
+    expect(syncCurrentProvidersLiveMock).not.toHaveBeenCalled();
+    expect(invalidatePiDirectoryCachesMock).toHaveBeenCalledTimes(1);
+    expect(invalidatePiDirectoryCachesMock.mock.calls[0][1]).toBe("rpi");
+  });
+
   it("shows toast when Claude plugin sync fails but continues flow", async () => {
     // 设置服务器状态为 false,本地状态为 true,触发状态变化
     serverSettings = {

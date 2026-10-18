@@ -52,6 +52,23 @@ fn project_prompt_set_to_path(
 }
 
 impl PromptService {
+    /// Apps whose own global prompt file is imported on first launch.
+    pub(crate) fn first_launch_apps() -> impl Iterator<Item = AppType> {
+        [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::GrokBuild,
+            AppType::OpenCode,
+            AppType::OpenClaw,
+            AppType::Hermes,
+            AppType::Pi,
+            AppType::Rpi,
+            AppType::Mcode,
+        ]
+        .into_iter()
+    }
+
     pub fn get_prompts(
         state: &AppState,
         app: AppType,
@@ -862,6 +879,68 @@ mod pi_prompt_tests {
             enabled,
             created_at: Some(1),
             updated_at: Some(1),
+        }
+    }
+
+    #[test]
+    fn first_launch_apps_include_every_prompt_owner() {
+        let actual: Vec<_> = PromptService::first_launch_apps().collect();
+        let expected: Vec<_> = AppType::all()
+            .filter(|app| *app != AppType::ClaudeDesktop)
+            .collect();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    #[serial]
+    fn first_launch_import_preserves_both_pi_family_prompt_files() {
+        let _pi = TestAgentDir::new();
+        let _rpi = crate::pi_config::test_support::TestRpiAgentDir::new();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        for app in [AppType::Pi, AppType::Rpi] {
+            let path = prompt_file_path(&app).unwrap();
+            write_text_file(&path, &format!("{} native instructions", app.as_str())).unwrap();
+        }
+        for app in PromptService::first_launch_apps()
+            .filter(|app| matches!(app, AppType::Pi | AppType::Rpi))
+        {
+            assert_eq!(
+                PromptService::import_from_file_on_first_launch(&state, app).unwrap(),
+                1
+            );
+        }
+        for app in [AppType::Pi, AppType::Rpi] {
+            let saved = state.db.get_prompts(app.as_str()).unwrap();
+            assert_eq!(
+                saved.len(),
+                1,
+                "{} must be imported at startup",
+                app.as_str()
+            );
+            let prompt = saved.values().next().unwrap();
+            let content = format!("{} native instructions", app.as_str());
+            assert_eq!(prompt.content, content);
+            assert!(
+                !prompt.enabled,
+                "native files, not DB flags, define activation"
+            );
+            assert_eq!(
+                std::fs::read_to_string(prompt_file_path(&app).unwrap()).unwrap(),
+                content
+            );
+            assert_eq!(
+                PromptService::import_from_file_on_first_launch(&state, app.clone()).unwrap(),
+                0
+            );
+            assert_eq!(state.db.get_prompts(app.as_str()).unwrap().len(), 1);
+            assert!(
+                PromptService::get_prompts(&state, app)
+                    .unwrap()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .enabled
+            );
         }
     }
 

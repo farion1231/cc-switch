@@ -905,8 +905,8 @@
     "hermesConfigDirDescription": "覆寫 Hermes 設定目錄 (config.yaml)。",
     "piConfigDir": "Pi 設定目錄",
     "piConfigDirDescription": "覆寫 Pi 設定目錄（models.json、指示檔案、提示、Skills 與工作階段）。",
-    "rpiConfigDir": "RPI 設定目錄",
-    "rpiConfigDirDescription": "覆寫 RPI 設定目錄（models.json、指示檔、提示詞、Skills 與工作階段）。",
+    "rpiConfigDir": "rpi 設定目錄",
+    "rpiConfigDirDescription": "覆寫 rpi 設定目錄（models.json、指示檔、提示詞、Skills 與工作階段）。",
     "browsePlaceholderClaude": "例如：/home/<您的帳號>/.claude",
     "browsePlaceholderCodex": "例如：/home/<您的帳號>/.codex",
     "browsePlaceholderGemini": "例如：/home/<您的帳號>/.gemini",
@@ -1074,13 +1074,25 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "rpi": "RPI",
+    "rpi": "rpi",
     "mcode": "MiniMax Code"
   },
   "mcode": {
     "empty": {
       "title": "尚未新增自訂供應商",
       "description": "MiniMax 官方帳號登入由 MiniMax Code 自行管理，無需匯入；config.yaml 中已有的自訂供應商會自動顯示在這裡。點擊右上角的 +，從預設或自訂設定新增供應商。"
+    }
+  },
+  "rpi": {
+    "provider": {
+      "enabled": "已在 rpi 中啟用",
+      "enableFailed": "無法在 rpi 中啟用此供應商",
+      "removed": "已從 rpi 移除",
+      "writeConflict": "rpi 設定正由其他程序修改，請稍後再試。"
+    },
+    "current": {
+      "readFailed": "無法讀取 rpi 供應商設定",
+      "stateUnavailableHint": "CC Switch 讀取到 rpi 供應商設定前，供應商變更會暫時停用。"
     }
   },
   "pi": {

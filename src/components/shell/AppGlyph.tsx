@@ -14,7 +14,7 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   openclaw: "OpenClaw",
   hermes: "Hermes",
   pi: "Pi",
-  rpi: "RPI",
+  rpi: "rpi",
   mcode: "MiniMax Code",
 };
 

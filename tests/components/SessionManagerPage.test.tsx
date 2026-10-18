@@ -7,7 +7,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UNKNOWN_PROJECT_DIR_KEY } from "@/components/sessions/utils";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
 import { piApi } from "@/lib/api/pi";
@@ -80,7 +80,12 @@ const openAppMenu = async () =>
 const EXPANDED_KEY = "cc-switch.sessionManager.expandedProjects";
 
 describe("SessionManagerPage", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   beforeEach(() => {
+    // Keep Date.now and fixture timestamps away from midnight in every timezone.
+    // Real timers stay enabled for React Query, userEvent and waitFor.
+    vi.spyOn(Date, "now").mockReturnValue(new Date(2026, 5, 15, 12).getTime());
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
     platform.mac = false;

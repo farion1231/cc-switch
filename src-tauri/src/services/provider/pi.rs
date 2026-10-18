@@ -386,6 +386,69 @@ mod tests {
 
     #[test]
     #[serial]
+    fn oversized_native_provider_writes_preserve_the_saved_catalog() {
+        let _pi = TestAgentDir::new();
+        let _rpi = crate::pi_config::test_support::TestRpiAgentDir::new();
+        let state = state();
+        for app in [AppType::Pi, AppType::Rpi] {
+            let mut oversized = input("large-model");
+            oversized.settings_config["futureField"] = json!("x".repeat(1024 * 1024));
+            let path = crate::pi_config::models_path(&app).unwrap();
+            let id = oversized.id.clone();
+            let error = ProviderService::add(&state, app.clone(), oversized.clone(), true)
+                .expect_err("oversized native create must fail before catalog commit");
+            assert!(error.to_string().contains("1 MiB limit"), "{error}");
+            assert!(!path.exists());
+            assert!(state
+                .db
+                .get_provider_by_id(&id, app.as_str())
+                .unwrap()
+                .is_none());
+
+            ProviderService::add(&state, app.clone(), input("before"), true).unwrap();
+            let before = fs::read(&path).unwrap();
+            let saved = state
+                .db
+                .get_provider_by_id(&id, app.as_str())
+                .unwrap()
+                .unwrap();
+            ProviderService::update(&state, app.clone(), Some(&id), oversized.clone())
+                .expect_err("oversized update must leave both stores intact");
+            assert_eq!(fs::read(&path).unwrap(), before);
+            assert_eq!(
+                state
+                    .db
+                    .get_provider_by_id(&id, app.as_str())
+                    .unwrap()
+                    .unwrap()
+                    .settings_config,
+                saved.settings_config
+            );
+
+            // Saved-only entries may contain larger drafts; enabling them must
+            // reject the projection without damaging other native providers.
+            oversized.id = "large-draft".to_string();
+            ProviderService::add(&state, app.clone(), oversized.clone(), false).unwrap();
+            ProviderService::switch(&state, app.clone(), &oversized.id)
+                .expect_err("oversized enable must not write native config");
+            assert_eq!(fs::read(&path).unwrap(), before);
+            assert_eq!(
+                crate::pi_config::read_native_provider(&app, &id).unwrap(),
+                Some(saved.settings_config)
+            );
+            assert!(crate::pi_config::read_native_provider(&app, &oversized.id)
+                .unwrap()
+                .is_none());
+            assert!(state
+                .db
+                .get_provider_by_id(&oversized.id, app.as_str())
+                .unwrap()
+                .is_some());
+        }
+    }
+
+    #[test]
+    #[serial]
     fn rpi_public_provider_lifecycle_never_changes_pi() {
         let _pi = TestAgentDir::new();
         let _rpi = crate::pi_config::test_support::TestRpiAgentDir::new();

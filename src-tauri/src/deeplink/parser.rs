@@ -138,7 +138,7 @@ fn parse_provider_deeplink(
     if matches!(app.as_str(), "pi" | "rpi")
         && model.as_deref().is_none_or(|model| model.trim().is_empty())
     {
-        let label = if app == "rpi" { "RPI" } else { "Pi" };
+        let label = if app == "rpi" { "rpi" } else { "Pi" };
         return Err(AppError::InvalidInput(format!(
             "{label} providers need a model; add 'model' to the link"
         )));

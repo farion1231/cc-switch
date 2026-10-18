@@ -122,7 +122,11 @@ import {
   useDisableCurrentOmo,
   useDisableCurrentOmoSlim,
 } from "@/lib/query/omo";
-import { invalidatePiProviderCaches, usePiCurrentState } from "@/lib/query/pi";
+import {
+  invalidatePiProviderCaches,
+  piFamilyKeys,
+  usePiCurrentState,
+} from "@/lib/query/pi";
 import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
 import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
@@ -310,7 +314,9 @@ function App() {
   const { data, isLoading, refetch } = useProvidersQuery(activeApp, {
     isProxyRunning: currentAppUsesProxy && isProxyRunning,
   });
-  const { data: piCurrentState } = usePiCurrentState(activeApp === "pi");
+  const isPiFamily = activeApp === "pi" || activeApp === "rpi";
+  const piFamilyApp = activeApp === "rpi" ? "rpi" : "pi";
+  const { data: piCurrentState } = usePiCurrentState(isPiFamily, piFamilyApp);
   const providers = useMemo(() => data?.providers ?? {}, [data]);
   const currentProviderId = data?.currentProviderId ?? "";
   const isOpenClawView = activeApp === "openclaw" && isAppPage(currentView);
@@ -329,8 +335,7 @@ function App() {
   );
   const handleEnablePiProvider = async (provider: Provider) => {
     try {
-      await providersApi.switch(provider.id, "pi");
-      await invalidatePiProviderCaches(queryClient);
+      await providersApi.switch(provider.id, piFamilyApp);
       await providersApi.updateTrayMenu().catch((error) => {
         console.error(
           "Failed to update tray menu after enabling Pi provider",
@@ -338,23 +343,27 @@ function App() {
         );
       });
       toast.success(
-        t("pi.provider.enabled", {
-          defaultValue: "已在 Pi 中启用",
+        t(`${piFamilyApp}.provider.enabled`, {
+          defaultValue: `已在 ${piFamilyApp === "pi" ? "Pi" : "rpi"} 中启用`,
         }),
         { closeButton: true },
       );
     } catch (error) {
       const detail = extractErrorMessage(error);
       toast.error(
-        t("pi.provider.enableFailed", {
-          defaultValue: "无法在 Pi 中启用此供应商",
+        t(`${piFamilyApp}.provider.enableFailed`, {
+          defaultValue: `无法在 ${piFamilyApp === "pi" ? "Pi" : "rpi"} 中启用此供应商`,
         }),
         {
           description:
-            translatePiProviderMutationError(detail, t) || detail || undefined,
+            translatePiProviderMutationError(detail, t, piFamilyApp) ||
+            detail ||
+            undefined,
           closeButton: true,
         },
       );
+    } finally {
+      await invalidatePiProviderCaches(queryClient, piFamilyApp);
     }
   };
 
@@ -403,8 +412,8 @@ function App() {
             if (event.appType === activeApp) {
               await refetch();
             }
-            if (event.appType === "pi") {
-              await invalidatePiProviderCaches(queryClient);
+            if (event.appType === "pi" || event.appType === "rpi") {
+              await invalidatePiProviderCaches(queryClient, event.appType);
             }
           },
         );
@@ -796,12 +805,13 @@ function App() {
         await providersApi.removeFromLiveConfig(provider.id, activeApp);
       } catch (error) {
         const detail = extractErrorMessage(error);
-        const description =
-          activeApp === "pi"
-            ? translatePiProviderMutationError(detail, t) || detail
-            : detail;
-        if (activeApp === "pi") {
-          void invalidatePiProviderCaches(queryClient).catch(() => undefined);
+        const description = isPiFamily
+          ? translatePiProviderMutationError(detail, t, piFamilyApp) || detail
+          : detail;
+        if (isPiFamily) {
+          void invalidatePiProviderCaches(queryClient, piFamilyApp).catch(
+            () => undefined,
+          );
         }
         toast.error(t("notifications.removeFromConfigFailed"), {
           description: description || t("common.unknown"),
@@ -809,8 +819,8 @@ function App() {
         });
         return;
       }
-      if (activeApp === "pi") {
-        await invalidatePiProviderCaches(queryClient);
+      if (isPiFamily) {
+        await invalidatePiProviderCaches(queryClient, piFamilyApp);
       }
       // Invalidate queries to refresh the isInConfig state
       if (activeApp === "opencode") {
@@ -834,9 +844,9 @@ function App() {
         });
       }
       toast.success(
-        activeApp === "pi"
-          ? t("pi.provider.removed", {
-              defaultValue: "已从 Pi 移除",
+        isPiFamily
+          ? t(`${piFamilyApp}.provider.removed`, {
+              defaultValue: `已从 ${piFamilyApp === "pi" ? "Pi" : "rpi"} 移除`,
             })
           : t("notifications.removeFromConfigSuccess", {
               defaultValue: "已从配置移除",
@@ -920,7 +930,7 @@ function App() {
       activeApp === "opencode" ||
       activeApp === "openclaw" ||
       activeApp === "hermes" ||
-      activeApp === "pi"
+      isPiFamily
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -941,9 +951,10 @@ function App() {
                     queryFn: () => providersApi.getHermesLiveProviderIds(),
                   })
                 : (
-                    await queryClient.ensureQueryData({
-                      queryKey: ["pi", "currentState"],
-                      queryFn: () => piApi.getCurrentState(),
+                    await queryClient.fetchQuery({
+                      queryKey: piFamilyKeys.currentState(piFamilyApp),
+                      queryFn: () => piApi.getCurrentState(piFamilyApp),
+                      staleTime: 0,
                     })
                   ).enabledProviderIds;
       } catch (error) {
@@ -1322,7 +1333,7 @@ function App() {
             appId={activeApp}
             isLoading={isLoading}
             onSwitch={(provider) =>
-              void (activeApp === "pi"
+              void (isPiFamily
                 ? handleEnablePiProvider(provider)
                 : switchProvider(provider))
             }
@@ -1330,7 +1341,7 @@ function App() {
               activeApp === "opencode" ||
               activeApp === "openclaw" ||
               activeApp === "hermes" ||
-              activeApp === "pi" ||
+              isPiFamily ||
               activeApp === "mcode"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined

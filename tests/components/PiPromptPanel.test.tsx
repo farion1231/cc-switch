@@ -91,68 +91,184 @@ describe("Pi prompts page", () => {
     });
   });
 
-  it("switches between library, system prompt and templates", async () => {
-    renderWithClient(
-      <PromptPanel appId="pi" apps={["claude", "pi"]} onAppChange={vi.fn()} />,
-    );
+  it.each(["pi", "rpi"] as const)(
+    "switches %s between library, system prompt and templates",
+    async (app) => {
+      vi.mocked(promptsApi.getFileLocation).mockResolvedValue({
+        path: `/Users/me/.${app}/agent/AGENTS.md`,
+        displayPath: `~/.${app}/agent/AGENTS.md`,
+      });
+      renderWithClient(
+        <PromptPanel
+          appId={app}
+          apps={["claude", "pi", "rpi"]}
+          onAppChange={vi.fn()}
+        />,
+      );
 
-    expect(
-      await screen.findByRole("button", { name: "prompts.add" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "pi.prompts.globalTab" }),
-    ).toHaveAttribute("aria-pressed", "true");
+      expect(
+        await screen.findByRole("button", { name: "prompts.add" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "pi.prompts.globalTab" }),
+      ).toHaveAttribute("aria-pressed", "true");
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "pi.prompts.systemTab" }),
-    );
-    expect(
-      screen.queryByRole("button", { name: "prompts.add" }),
-    ).not.toBeInTheDocument();
-    expect(
-      await screen.findByRole("list", { name: "pi.prompts.systemFilesLabel" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("~/.pi/agent/")).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("button", { name: "pi.prompts.systemTab" }),
+      );
+      expect(
+        screen.queryByRole("button", { name: "prompts.add" }),
+      ).not.toBeInTheDocument();
+      expect(
+        await screen.findByRole("list", {
+          name: "pi.prompts.systemFilesLabel",
+        }),
+      ).toBeInTheDocument();
+      expect(screen.getByText(`~/.${app}/agent/`)).toBeInTheDocument();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "pi.prompts.templatesTab" }),
-    );
-    expect(
-      screen.getAllByRole("button", { name: "pi.prompts.newTemplate" }).length,
-    ).toBeGreaterThan(0);
-    expect(screen.getByText("~/.pi/agent/prompts/")).toBeInTheDocument();
-  });
+      fireEvent.click(
+        screen.getByRole("button", { name: "pi.prompts.templatesTab" }),
+      );
+      expect(
+        screen.getAllByRole("button", { name: "pi.prompts.newTemplate" })
+          .length,
+      ).toBeGreaterThan(0);
+      expect(screen.getByText(`~/.${app}/agent/prompts/`)).toBeInTheDocument();
+    },
+  );
 
-  it("locks navigation while a system prompt or template editor is saving", async () => {
-    function PendingNativeSave() {
+  it.each([
+    ["pi", "rpi"],
+    ["rpi", "pi"],
+  ] as const)(
+    "discards %s native drafts before switching to %s",
+    async (from, to) => {
+      vi.mocked(promptsApi.getPiPromptFile).mockImplementation(async (app) => ({
+        exists: true,
+        revision: `${app}-revision`,
+        content: `${app} content`,
+      }));
+      const replace = vi.spyOn(promptsApi, "replacePiPromptFile");
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      // A previously visited app has warm native-file caches, so no loading
+      // frame can accidentally hide/unmount the stale editor for us.
+      client.setQueryData([to, "promptFile", "system_append"], {
+        exists: true,
+        revision: `${to}-revision`,
+        content: `${to} content`,
+      });
+      const ui = (appId: "pi" | "rpi") => (
+        <QueryClientProvider client={client}>
+          <PromptPanel
+            appId={appId}
+            apps={["pi", "rpi"]}
+            onAppChange={vi.fn()}
+          />
+        </QueryClientProvider>
+      );
+      const view = render(ui(from));
+      fireEvent.click(
+        screen.getByRole("button", { name: "pi.prompts.systemTab" }),
+      );
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: "common.edit APPEND_SYSTEM.md",
+        }),
+      );
+      const editor = screen.getByPlaceholderText(
+        "pi.prompts.instructionPlaceholder",
+      );
+      fireEvent.change(editor, { target: { value: `${from} unsaved secret` } });
+      view.rerender(ui(to));
+      expect(
+        screen.queryByPlaceholderText("pi.prompts.instructionPlaceholder"),
+      ).not.toBeInTheDocument();
+      expect(replace).not.toHaveBeenCalled();
+      fireEvent.click(
+        screen.getByRole("button", { name: "pi.prompts.systemTab" }),
+      );
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: "common.edit APPEND_SYSTEM.md",
+        }),
+      );
+      expect(
+        screen.getByPlaceholderText("pi.prompts.instructionPlaceholder"),
+      ).toHaveValue(`${to} content`);
+    },
+  );
+
+  it.each(["pi", "rpi"] as const)(
+    "locks %s navigation while its native editor is saving",
+    async (app) => {
+      function PendingNativeSave() {
+        const save = useMutation({
+          mutationKey: [app, "promptSave"],
+          mutationFn: () => new Promise<void>(() => {}),
+        });
+        return (
+          <button type="button" onClick={() => save.mutate()}>
+            start-native-save
+          </button>
+        );
+      }
+      const onNavigationBlockedChange = vi.fn();
+      renderWithClient(
+        <>
+          <PromptPanel
+            appId={app}
+            apps={["claude", "pi", "rpi"]}
+            onAppChange={vi.fn()}
+            onNavigationBlockedChange={onNavigationBlockedChange}
+          />
+          <PendingNativeSave />
+        </>,
+      );
+      await screen.findByRole("button", { name: "prompts.add" });
+      expect(onNavigationBlockedChange).toHaveBeenLastCalledWith(false);
+      fireEvent.click(
+        screen.getByRole("button", { name: "start-native-save" }),
+      );
+      await waitFor(() =>
+        expect(onNavigationBlockedChange).toHaveBeenLastCalledWith(true),
+      );
+    },
+  );
+
+  it("does not let a Pi save control rpi navigation", async () => {
+    function PendingPiSave() {
       const save = useMutation({
         mutationKey: ["pi", "promptSave"],
         mutationFn: () => new Promise<void>(() => {}),
       });
       return (
-        <button type="button" onClick={() => save.mutate()}>
-          start-native-save
-        </button>
+        <>
+          <button onClick={() => save.mutate()}>start-pi-save</button>
+          {save.isPending && <span>pi-save-pending</span>}
+        </>
       );
     }
     const onNavigationBlockedChange = vi.fn();
     renderWithClient(
       <>
         <PromptPanel
-          appId="pi"
-          apps={["claude", "pi"]}
+          appId="rpi"
+          apps={["pi", "rpi"]}
           onAppChange={vi.fn()}
           onNavigationBlockedChange={onNavigationBlockedChange}
         />
-        <PendingNativeSave />
+        <PendingPiSave />
       </>,
     );
     await screen.findByRole("button", { name: "prompts.add" });
-    expect(onNavigationBlockedChange).toHaveBeenLastCalledWith(false);
-    fireEvent.click(screen.getByRole("button", { name: "start-native-save" }));
+    fireEvent.click(screen.getByRole("button", { name: "start-pi-save" }));
+    await screen.findByText("pi-save-pending");
     await waitFor(() =>
-      expect(onNavigationBlockedChange).toHaveBeenLastCalledWith(true),
+      expect(onNavigationBlockedChange).toHaveBeenLastCalledWith(false),
     );
+    expect(onNavigationBlockedChange).not.toHaveBeenCalledWith(true);
   });
 
   it("warns about an external AGENTS.md and stores it in the library", async () => {

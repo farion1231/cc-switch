@@ -115,7 +115,8 @@ pub struct PiPromptFileService;
 impl PiPromptFileService {
     pub fn read(app: &AppType, kind: PiPromptFileKind) -> Result<PiPromptFileSnapshot, AppError> {
         let _guard = lock_prompt_files()?;
-        read_prompt_file(&agent_dir(app)?, kind)
+        let label = format!("{} prompt file", crate::pi_config::display_name(app));
+        read_prompt_file(&agent_dir(app)?, kind, &label)
     }
 
     pub fn replace(
@@ -124,15 +125,15 @@ impl PiPromptFileService {
         expected_revision: &str,
         content: &str,
     ) -> Result<PiPromptFileSnapshot, AppError> {
-        validate_instruction_content(content)?;
+        let label = crate::pi_config::display_name(app);
+        validate_instruction_content(content, label)?;
 
         let _guard = lock_prompt_files()?;
         let root = agent_dir(app)?;
         let path = root.join(kind.filename());
-        let label = crate::pi_config::display_name(app);
         ensure_revision(&path, expected_revision, label)?;
         atomic_write(&path, content.as_bytes())?;
-        read_prompt_file(&root, kind)
+        read_prompt_file(&root, kind, &format!("{label} prompt file"))
     }
 
     pub fn delete(
@@ -176,22 +177,25 @@ impl PiPromptTemplateService {
         };
 
         let mut templates = Vec::new();
+        let label = format!("{} prompt template", crate::pi_config::display_name(app));
         for entry in entries {
             let entry = entry.map_err(|error| AppError::io(&dir, error))?;
             let path = entry.path();
-            if path.extension().and_then(|value| value.to_str()) != Some("md") {
+            // A directory or special file is not a template, even if its name
+            // ends in .md. Follow symlinks only when they point to regular files.
+            if path.extension().and_then(|value| value.to_str()) != Some("md") || !path.is_file() {
                 continue;
             }
             let Some(slug) = path.file_stem().and_then(|value| value.to_str()) else {
                 continue;
             };
-            if validate_template_slug(slug).is_err() {
+            if validate_template_slug(slug, app).is_err() {
                 continue;
             }
-            let bytes = read_limited(&path, "Pi prompt template")?;
+            let bytes = read_limited(&path, &label)?;
             let content = String::from_utf8(bytes).map_err(|error| {
                 AppError::InvalidInput(format!(
-                    "Pi prompt template must be UTF-8 ({}): {error}",
+                    "{label} must be UTF-8 ({}): {error}",
                     path.display()
                 ))
             })?;
@@ -212,32 +216,33 @@ impl PiPromptTemplateService {
         expected_revision: &str,
         content: &str,
     ) -> Result<PiPromptTemplate, AppError> {
-        validate_template_slug(slug)?;
+        validate_template_slug(slug, app)?;
         if let Some(original_slug) = original_slug {
-            validate_template_slug(original_slug)?;
+            validate_template_slug(original_slug, app)?;
         }
-        validate_content_size(content, "Pi prompt template")?;
+        let label = format!("{} prompt template", crate::pi_config::display_name(app));
+        validate_content_size(content, &label)?;
         let _guard = lock_prompt_files()?;
         let dir = agent_dir(app)?.join("prompts");
         let path = template_path(&dir, slug);
 
         if let Some(original_slug) = original_slug.filter(|value| *value != slug) {
             let original_path = template_path(&dir, original_slug);
-            ensure_revision(&original_path, expected_revision, "Pi prompt template")?;
-            ensure_revision(&path, MISSING_REVISION, "Pi prompt template")?;
+            ensure_revision(&original_path, expected_revision, &label)?;
+            ensure_revision(&path, MISSING_REVISION, &label)?;
             fs::rename(&original_path, &path)
                 .map_err(|error| AppError::io(&original_path, error))?;
 
             if let Err(write_error) = atomic_write(&path, content.as_bytes()) {
                 if let Err(rollback_error) = fs::rename(&path, &original_path) {
                     return Err(AppError::Message(format!(
-                        "Pi prompt template save failed ({write_error}); rename rollback also failed: {rollback_error}"
+                        "{label} save failed ({write_error}); rename rollback also failed: {rollback_error}"
                     )));
                 }
                 return Err(write_error);
             }
         } else {
-            ensure_revision(&path, expected_revision, "Pi prompt template")?;
+            ensure_revision(&path, expected_revision, &label)?;
             atomic_write(&path, content.as_bytes())?;
         }
 
@@ -249,10 +254,11 @@ impl PiPromptTemplateService {
     }
 
     pub fn delete(app: &AppType, slug: &str, expected_revision: &str) -> Result<bool, AppError> {
-        validate_template_slug(slug)?;
+        validate_template_slug(slug, app)?;
         let _guard = lock_prompt_files()?;
         let path = template_path(&agent_dir(app)?.join("prompts"), slug);
-        ensure_revision(&path, expected_revision, "Pi prompt template")?;
+        let label = format!("{} prompt template", crate::pi_config::display_name(app));
+        ensure_revision(&path, expected_revision, &label)?;
         match fs::remove_file(&path) {
             Ok(()) => Ok(true),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -264,18 +270,22 @@ impl PiPromptTemplateService {
 fn lock_prompt_files() -> Result<MutexGuard<'static, ()>, AppError> {
     PROMPT_FILE_LOCK
         .lock()
-        .map_err(|error| AppError::Config(format!("Pi prompt file lock is poisoned: {error}")))
+        .map_err(|error| AppError::Config(format!("Native prompt file lock is poisoned: {error}")))
 }
 
-fn read_prompt_file(root: &Path, kind: PiPromptFileKind) -> Result<PiPromptFileSnapshot, AppError> {
+fn read_prompt_file(
+    root: &Path,
+    kind: PiPromptFileKind,
+    label: &str,
+) -> Result<PiPromptFileSnapshot, AppError> {
     let path = root.join(kind.filename());
     let (exists, content, file_revision) = match fs::File::open(&path) {
         Ok(file) => {
-            let bytes = read_open_file_limited(file, &path, "Pi prompt file")?;
+            let bytes = read_open_file_limited(file, &path, label)?;
             let file_revision = revision(&bytes);
             let content = String::from_utf8(bytes).map_err(|error| {
                 AppError::InvalidInput(format!(
-                    "Pi prompt file must be UTF-8 ({}): {error}",
+                    "{label} must be UTF-8 ({}): {error}",
                     path.display()
                 ))
             })?;
@@ -336,13 +346,14 @@ fn read_open_file_limited(file: fs::File, path: &Path, label: &str) -> Result<Ve
     Ok(bytes)
 }
 
-fn validate_instruction_content(content: &str) -> Result<(), AppError> {
+fn validate_instruction_content(content: &str, app_label: &str) -> Result<(), AppError> {
+    let label = format!("{app_label} instruction");
     if content.trim().is_empty() {
-        return Err(AppError::InvalidInput(
-            "Pi instruction cannot be blank; remove the file to deactivate it".to_string(),
-        ));
+        return Err(AppError::InvalidInput(format!(
+            "{label} cannot be blank; remove the file to deactivate it"
+        )));
     }
-    validate_content_size(content, "Pi instruction")
+    validate_content_size(content, &label)
 }
 
 fn validate_content_size(content: &str, label: &str) -> Result<(), AppError> {
@@ -362,7 +373,7 @@ fn template_path(dir: &Path, slug: &str) -> PathBuf {
     dir.join(format!("{slug}.md"))
 }
 
-fn validate_template_slug(slug: &str) -> Result<(), AppError> {
+fn validate_template_slug(slug: &str, app: &AppType) -> Result<(), AppError> {
     let basename = slug.split('.').next().unwrap_or_default();
     let windows_reserved = matches!(
         basename.to_ascii_lowercase().as_str(),
@@ -405,9 +416,10 @@ fn validate_template_slug(slug: &str) -> Result<(), AppError> {
     if valid {
         Ok(())
     } else {
-        Err(AppError::InvalidInput(
-            "Pi prompt-template name must be one portable slash-command token".to_string(),
-        ))
+        Err(AppError::InvalidInput(format!(
+            "{} prompt-template name must be one portable slash-command token",
+            crate::pi_config::display_name(app)
+        )))
     }
 }
 
@@ -422,7 +434,7 @@ mod tests {
     #[test]
     fn template_names_are_single_portable_tokens() {
         for valid in ["review-pr", "release.v2", "评审"] {
-            validate_template_slug(valid).expect(valid);
+            validate_template_slug(valid, &AppType::Pi).expect(valid);
         }
         for invalid in [
             "",
@@ -433,10 +445,154 @@ mod tests {
             "CON",
             "lpt1.txt",
         ] {
-            assert!(validate_template_slug(invalid).is_err(), "{invalid}");
+            assert!(
+                validate_template_slug(invalid, &AppType::Pi).is_err(),
+                "{invalid}"
+            );
         }
         validate_content_size("", "Pi prompt template").expect("empty templates are native");
-        assert!(validate_instruction_content("").is_err());
+        assert!(validate_instruction_content("", "Pi").is_err());
+    }
+
+    #[test]
+    #[serial]
+    fn template_listing_skips_markdown_directories() {
+        let _pi = TestAgentDir::new();
+        let _rpi = TestRpiAgentDir::new();
+        for app in [AppType::Pi, AppType::Rpi] {
+            let expected = PiPromptTemplateService::upsert(
+                &app,
+                "review",
+                None,
+                MISSING_REVISION,
+                "review instructions",
+            )
+            .unwrap();
+            let dir = agent_dir(&app).unwrap().join("prompts");
+            fs::create_dir_all(dir.join("not-a-template.md")).unwrap();
+            fs::write(dir.join("notes.txt"), "not a template").unwrap();
+            assert_eq!(PiPromptTemplateService::list(&app).unwrap(), vec![expected]);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn native_prompt_errors_identify_the_actual_app() {
+        let _pi = TestAgentDir::new();
+        let _rpi = TestRpiAgentDir::new();
+        let oversized = "x".repeat(MAX_PROMPT_FILE_BYTES as usize + 1);
+        for app in [AppType::Pi, AppType::Rpi] {
+            let label = crate::pi_config::display_name(&app);
+            for content in [" ", oversized.as_str()] {
+                let error = PiPromptFileService::replace(
+                    &app,
+                    PiPromptFileKind::SystemOverride,
+                    MISSING_REVISION,
+                    content,
+                )
+                .unwrap_err();
+                assert!(
+                    error.to_string().contains(&format!("{label} instruction")),
+                    "{error}"
+                );
+            }
+            for slug in ["../outside", "CON"] {
+                let error =
+                    PiPromptTemplateService::upsert(&app, slug, None, MISSING_REVISION, "content")
+                        .unwrap_err();
+                assert!(
+                    error
+                        .to_string()
+                        .contains(&format!("{label} prompt-template")),
+                    "{error}"
+                );
+            }
+            let created =
+                PiPromptTemplateService::upsert(&app, "review", None, MISSING_REVISION, "content")
+                    .unwrap();
+            let error = PiPromptTemplateService::delete(&app, "review", "stale").unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("{label} prompt template")),
+                "{error}"
+            );
+            let error = PiPromptTemplateService::upsert(
+                &app,
+                "review",
+                None,
+                &created.revision,
+                &oversized,
+            )
+            .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("{label} prompt template")),
+                "{error}"
+            );
+            let root = agent_dir(&app).unwrap();
+            fs::write(root.join("SYSTEM.md"), b"\xff").unwrap();
+            let error =
+                PiPromptFileService::read(&app, PiPromptFileKind::SystemOverride).unwrap_err();
+            assert!(
+                error.to_string().contains(&format!("{label} prompt file")),
+                "{error}"
+            );
+            fs::write(root.join("prompts").join("review.md"), b"\xff").unwrap();
+            let error = PiPromptTemplateService::list(&app).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("{label} prompt template")),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn template_rename_conflicts_preserve_both_files() {
+        let _pi = TestAgentDir::new();
+        let _rpi = TestRpiAgentDir::new();
+        for app in [AppType::Pi, AppType::Rpi] {
+            for occupied_destination in [false, true] {
+                let created = PiPromptTemplateService::upsert(
+                    &app,
+                    "original",
+                    None,
+                    MISSING_REVISION,
+                    "original content",
+                )
+                .unwrap();
+                let dir = agent_dir(&app).unwrap().join("prompts");
+                let original = dir.join("original.md");
+                let target = dir.join("renamed.md");
+                if occupied_destination {
+                    fs::write(&target, "external target").unwrap();
+                } else {
+                    fs::write(&original, "external source edit").unwrap();
+                }
+                let before = fs::read(&original).unwrap();
+                let error = PiPromptTemplateService::upsert(
+                    &app,
+                    "renamed",
+                    Some("original"),
+                    &created.revision,
+                    "new content",
+                )
+                .unwrap_err();
+                assert!(matches!(error, AppError::Conflict(_)), "{error}");
+                assert_eq!(fs::read(&original).unwrap(), before);
+                if occupied_destination {
+                    assert_eq!(fs::read(&target).unwrap(), b"external target");
+                    fs::remove_file(&target).unwrap();
+                } else {
+                    assert!(!target.exists());
+                }
+                fs::remove_file(&original).unwrap();
+            }
+        }
     }
 
     #[test]

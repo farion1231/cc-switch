@@ -48,6 +48,34 @@ describe("PiProviderForm", () => {
     Element.prototype.scrollIntoView = vi.fn();
   });
 
+  it("uses rpi conflict notices in the shared provider editor", async () => {
+    const onSubmit = vi
+      .fn()
+      .mockRejectedValue(
+        new Error("rpi models.json changed outside CC Switch"),
+      );
+    render(
+      <PiProviderForm
+        appId="rpi"
+        providerId="custom"
+        submitLabel="Save rpi"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        initialData={{
+          name: "rpi provider",
+          settingsConfig: {
+            baseUrl: "https://example.com/v1",
+            models: [completeModel("model")],
+          },
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save rpi" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "rpi.provider.writeConflict",
+    );
+  });
+
   it("starts in the same editable custom state as OpenCode", async () => {
     const onSubmitReadyChange = vi.fn();
     const { container } = render(
@@ -61,9 +89,7 @@ describe("PiProviderForm", () => {
     );
 
     // 表单直接铺在添加页里，不再套一层卡片
-    expect(container.querySelector("#provider-form")).not.toHaveClass(
-      "glass",
-    );
+    expect(container.querySelector("#provider-form")).not.toHaveClass("glass");
     expect(screen.getByLabelText("provider.name")).toBeInTheDocument();
     expect(screen.getByLabelText("provider.notes")).toBeInTheDocument();
     expect(screen.getByLabelText("provider.websiteUrl")).toBeInTheDocument();

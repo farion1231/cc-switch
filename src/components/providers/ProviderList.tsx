@@ -136,14 +136,15 @@ export function ProviderList({
   const isOpenCode = appId === "opencode";
   const { data: currentOmoId } = useCurrentOmoProviderId(isOpenCode);
   const { data: currentOmoSlimId } = useCurrentOmoSlimProviderId(isOpenCode);
+  const isPiFamily = appId === "pi" || appId === "rpi";
   const {
     data: piCurrentState,
     isSuccess: isPiCurrentStateSuccess,
     isPending: isPiCurrentStatePending,
     isError: isPiCurrentStateError,
     error: piCurrentStateError,
-  } = usePiCurrentState(appId === "pi");
-  const isPiStateReady = appId !== "pi" || isPiCurrentStateSuccess;
+  } = usePiCurrentState(isPiFamily, appId === "rpi" ? "rpi" : "pi");
+  const isPiStateReady = !isPiFamily || isPiCurrentStateSuccess;
   // 累加式应用要等 live 里有哪些供应商读回来（成功或失败）才知道卡片该进哪个分区；
   // 在那之前按加载中画骨架，不然卡片先全落进「可添加」，读回来再整体搬到「已添加」。
   // 一张卡都没有时不用等，直接出空状态
@@ -151,7 +152,7 @@ export function ProviderList({
     (appId === "opencode" && isOpencodeLiveIdsPending) ||
     (appId === "openclaw" && isOpenclawLiveIdsPending) ||
     (appId === "hermes" && isHermesLiveIdsPending) ||
-    (appId === "pi" && isPiCurrentStatePending);
+    (isPiFamily && isPiCurrentStatePending);
 
   const isInConfig = useCallback(
     (provider: Provider): boolean => {
@@ -165,7 +166,6 @@ export function ProviderList({
         case "hermes":
           return hermesLiveIds?.includes(provider.id) ?? false;
         case "rpi":
-          return provider.meta?.liveConfigManaged !== false;
         case "pi":
           return isPiStateReady
             ? (piCurrentState?.enabledProviderIds.includes(provider.id) ??
@@ -344,7 +344,7 @@ export function ProviderList({
       hermesCurrentId: hermesModelConfig?.provider ?? null,
       isHermesManaged: (provider) =>
         isHermesReadOnlyProvider(provider.settingsConfig),
-      piStateUnavailable: appId === "pi" && !isPiStateReady,
+      piStateUnavailable: isPiFamily && !isPiStateReady,
       actions: {
         add: onSwitch,
         remove: (provider) =>
@@ -372,6 +372,7 @@ export function ProviderList({
     currentOmoSlimId,
     hermesModelConfig?.provider,
     isPiStateReady,
+    isPiFamily,
     onRemoveFromConfig,
     onDelete,
     onDisableOmo,
@@ -380,18 +381,18 @@ export function ProviderList({
   ]);
 
   const piStateError =
-    appId === "pi" && isPiCurrentStateError
+    isPiFamily && isPiCurrentStateError
       ? extractErrorMessage(piCurrentStateError)
       : "";
   const piStateErrorNotice =
-    appId === "pi" && isPiCurrentStateError ? (
+    isPiFamily && isPiCurrentStateError ? (
       <Notice
         tone="warning"
-        title={t("pi.current.readFailed", {
-          defaultValue: "无法读取 Pi 当前配置",
+        title={t(`${appId}.current.readFailed`, {
+          defaultValue: `无法读取 ${appId === "rpi" ? "rpi" : "Pi"} 当前配置`,
         })}
       >
-        {t("pi.current.stateUnavailableHint")}
+        {t(`${appId}.current.stateUnavailableHint`)}
         {piStateError ? ` ${piStateError}` : ""}
       </Notice>
     ) : null;

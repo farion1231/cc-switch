@@ -466,6 +466,7 @@ function buildPiSettingsConfig({
 }
 
 export function PiProviderForm({
+  appId,
   providerId,
   submitLabel,
   onSubmit,
@@ -1375,7 +1376,8 @@ export function PiProviderForm({
       const message =
         error instanceof PiFormValidationError
           ? rawMessage
-          : translatePiProviderMutationError(rawMessage, t) || rawMessage;
+          : translatePiProviderMutationError(rawMessage, t, appId) ||
+            rawMessage;
       setFormError(message);
       if (error instanceof PiFormValidationError) {
         const modelDetailsMatch = error.fieldSelector?.match(

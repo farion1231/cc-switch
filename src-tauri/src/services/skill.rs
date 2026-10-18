@@ -983,6 +983,9 @@ impl SkillService {
             return Ok(existing);
         }
 
+        // A storage migration may have completed while the download was in flight.
+        // Resolve the destination under the same lock as the copy and DB/app sync.
+        let dest = Self::get_ssot_dir()?.join(&install_name);
         if !dest.exists() {
             let source = downloaded_source
                 .as_ref()
@@ -1593,6 +1596,9 @@ impl SkillService {
         // Downloads do not mutate local state, so acquire only now and hold the
         // guard through the SSOT replacement, DB metadata update, and app sync.
         let _state_guard = skill_state_write_guard();
+        // The storage location may have changed during download. All mutations
+        // below must use the current SSOT, not the pre-download path.
+        let ssot_dir = Self::get_ssot_dir()?;
 
         // 下载和扫描期间用户可能已经卸载了该 Skill。必须在任何备份、删除或
         // 复制之前重新确认记录仍存在；否则即使最终的 metadata UPDATE 能发现
@@ -3566,6 +3572,9 @@ impl SkillService {
         #[cfg(test)]
         if let Some(fixture) = &self.repo_fixture {
             Self::copy_dir_recursive(fixture, &temp_path)?;
+            // Model the real network await so tests can interleave local mutations
+            // with a download without sleeps, threads, or external requests.
+            tokio::task::yield_now().await;
             return Ok((temp_dir, repo.branch.clone()));
         }
 
@@ -6387,9 +6396,9 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn uninstall_treats_an_aliased_pi_root_as_the_ssot() {
-        let _location = StorageLocationGuard::set(SkillStorageLocation::Unified);
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(SkillStorageLocation::Unified);
         let _pi_dir =
             crate::pi_config::test_support::TestAgentDir::at(&temp.path().join(".agents"));
 
@@ -6413,9 +6422,9 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn uninstall_warns_when_the_pi_root_cannot_be_resolved() {
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
         let _pi_dir =
             crate::pi_config::test_support::TestAgentDir::at(Path::new("relative/pi-agent"));
 
@@ -6453,6 +6462,52 @@ mod tests {
                 Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
                 None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
             }
+        }
+    }
+
+    #[test]
+    fn storage_location_test_does_not_modify_parent_home() {
+        let home = tempdir().expect("parent test home");
+        let settings = home.path().join(".cc-switch").join("settings.json");
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        let original = br#"{"skillStorageLocation":"cc_switch","unknownSentinel":"preserve"}"#;
+        fs::write(&settings, original).unwrap();
+
+        // nextest runs each test in its own process. A guard created before the
+        // test's HOME override would persist settings in this parent directory.
+        for test in [
+            "uninstall_treats_an_aliased_pi_root_as_the_ssot",
+            "uninstall_warns_when_the_pi_root_cannot_be_resolved",
+            "aliased_skill_roots_reject_sync_and_remove_without_deleting_the_source",
+            "migrate_storage_rejects_an_aliased_destination_before_moving_skills",
+            "migrate_storage_safely_leaves_an_existing_pi_ssot_alias",
+            "migrate_storage_skips_bad_rows_without_moving_foreign_dirs",
+            #[cfg(unix)]
+            "migrate_storage_retargets_managed_pi_family_and_mcode_symlinks",
+            #[cfg(unix)]
+            "migrate_storage_retargets_an_equivalent_relative_pi_symlink",
+        ] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    &format!("services::skill::tests::{test}"),
+                    "--exact",
+                    "--nocapture",
+                ])
+                .env("CC_SWITCH_TEST_HOME", home.path())
+                .output()
+                .expect("run isolated skill test");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("1 passed"),
+                "child test {test} did not pass: {stdout}
+{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(
+                fs::read(&settings).unwrap(),
+                original,
+                "{test} must not write settings outside its temporary HOME"
+            );
         }
     }
 
@@ -6681,9 +6736,9 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn aliased_skill_roots_reject_sync_and_remove_without_deleting_the_source() {
-        let _location = StorageLocationGuard::set(SkillStorageLocation::Unified);
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(SkillStorageLocation::Unified);
         let _pi_dir =
             crate::pi_config::test_support::TestAgentDir::at(&temp.path().join(".agents"));
 
@@ -6710,9 +6765,9 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn migrate_storage_rejects_an_aliased_destination_before_moving_skills() {
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
         let _pi_dir =
             crate::pi_config::test_support::TestAgentDir::at(&temp.path().join(".agents"));
 
@@ -6743,9 +6798,9 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn migrate_storage_safely_leaves_an_existing_pi_ssot_alias() {
-        let _location = StorageLocationGuard::set(SkillStorageLocation::Unified);
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(SkillStorageLocation::Unified);
         let _pi_dir =
             crate::pi_config::test_support::TestAgentDir::at(&temp.path().join(".agents"));
 
@@ -6824,9 +6879,9 @@ mod tests {
             vec![AppType::Mcode],
             vec![AppType::Pi, AppType::Rpi, AppType::Mcode],
         ] {
-            let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
             let temp = tempdir().expect("tempdir");
             let _home = TestHomeGuard::set(temp.path());
+            let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
             let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
             let _rpi_dir = crate::pi_config::test_support::TestRpiAgentDir::new();
 
@@ -6873,9 +6928,9 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn migrate_storage_retargets_an_equivalent_relative_pi_symlink() {
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
         let _pi_dir =
             crate::pi_config::test_support::TestAgentDir::at(&temp.path().join("pi-agent"));
 
@@ -6912,10 +6967,9 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn migrate_storage_skips_bad_rows_without_moving_foreign_dirs() {
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
-
         let temp = tempdir().expect("tempdir");
         let _guard = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
 
         // migrate_storage 会 fs::rename / remove_dir_all，脏 directory 能把
         // SSOT 之外的任意目录搬走或删掉。
@@ -7167,6 +7221,142 @@ mod tests {
             Some("skills"),
             "persisted source path should survive metadata changes and competing matches"
         );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn install_uses_current_storage_after_migration_during_download() {
+        for (initial, target) in [
+            (
+                SkillStorageLocation::CcSwitch,
+                SkillStorageLocation::Unified,
+            ),
+            (
+                SkillStorageLocation::Unified,
+                SkillStorageLocation::CcSwitch,
+            ),
+        ] {
+            for app in [AppType::Pi, AppType::Rpi] {
+                let home = tempdir().unwrap();
+                let config_dir = home.path().join(".cc-switch");
+                fs::create_dir_all(&config_dir).unwrap();
+                fs::File::create(config_dir.join("cc-switch.db")).unwrap();
+                let _home = TestHomeGuard::set(home.path());
+                let _storage = StorageLocationGuard::set(initial);
+                let _pi = crate::pi_config::test_support::TestAgentDir::new();
+                let _rpi = crate::pi_config::test_support::TestRpiAgentDir::new();
+                let remote = tempdir().unwrap();
+                write_skill(&remote.path().join("test-skill"), "test-skill");
+                let service = SkillService {
+                    repo_fixture: Some(remote.path().to_path_buf()),
+                };
+                let db = Arc::new(Database::memory().unwrap());
+                let skill = DiscoverableSkill {
+                    key: "owner/repo:test-skill".into(),
+                    name: "test-skill".into(),
+                    description: String::new(),
+                    directory: "test-skill".into(),
+                    readme_url: None,
+                    repo_owner: "owner".into(),
+                    repo_name: "repo".into(),
+                    repo_branch: "main".into(),
+                };
+                let old_source = SkillService::get_ssot_dir().unwrap().join("test-skill");
+                let install = service.install(&db, &skill, &app);
+                tokio::pin!(install);
+                assert!(futures::poll!(&mut install).is_pending());
+                SkillService::migrate_storage(&db, target).expect("migrate during download");
+                let new_source = SkillService::get_ssot_dir().unwrap().join("test-skill");
+                assert_ne!(old_source, new_source);
+
+                let installed = install.await.expect("install into current storage");
+                assert!(!old_source.exists(), "must not recreate the old SSOT copy");
+                assert!(new_source.join("SKILL.md").is_file());
+                let native = SkillService::get_app_skills_dir(&app)
+                    .unwrap()
+                    .join("test-skill");
+                assert_eq!(
+                    fs::read(native.join("SKILL.md")).unwrap(),
+                    fs::read(new_source.join("SKILL.md")).unwrap()
+                );
+                assert!(db.get_installed_skill(&installed.id).unwrap().is_some());
+                assert_eq!(
+                    installed.content_hash,
+                    Some(SkillService::compute_dir_hash(&new_source).unwrap())
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn update_uses_current_storage_after_migration_during_download() {
+        for (initial, target) in [
+            (
+                SkillStorageLocation::CcSwitch,
+                SkillStorageLocation::Unified,
+            ),
+            (
+                SkillStorageLocation::Unified,
+                SkillStorageLocation::CcSwitch,
+            ),
+        ] {
+            for app in [AppType::Pi, AppType::Rpi] {
+                let home = tempdir().unwrap();
+                let config_dir = home.path().join(".cc-switch");
+                fs::create_dir_all(&config_dir).unwrap();
+                fs::File::create(config_dir.join("cc-switch.db")).unwrap();
+                let _home = TestHomeGuard::set(home.path());
+                let _storage = StorageLocationGuard::set(initial);
+                let _pi = crate::pi_config::test_support::TestAgentDir::new();
+                let _rpi = crate::pi_config::test_support::TestRpiAgentDir::new();
+                let remote = tempdir().unwrap();
+                let remote_source = remote.path().join("test-skill");
+                write_skill(&remote_source, "test-skill");
+                fs::write(remote_source.join("version.txt"), "new version").unwrap();
+                let service = SkillService {
+                    repo_fixture: Some(remote.path().to_path_buf()),
+                };
+                let db = Arc::new(Database::memory().unwrap());
+                let mut skill = poisoned_skill("owner/repo:test-skill", "test-skill");
+                skill.repo_owner = Some("owner".into());
+                skill.repo_name = Some("repo".into());
+                skill.repo_branch = Some("main".into());
+                db.save_skill(&skill).unwrap();
+                let old_source = SkillService::get_ssot_dir().unwrap().join("test-skill");
+                write_skill(&old_source, "test-skill");
+                let native = SkillService::get_app_skills_dir(&app)
+                    .unwrap()
+                    .join("test-skill");
+                SkillService::copy_dir_recursive(&old_source, &native).unwrap();
+
+                let update = service.update_skill(&db, &skill.id);
+                tokio::pin!(update);
+                assert!(futures::poll!(&mut update).is_pending());
+                let migration =
+                    SkillService::migrate_storage(&db, target).expect("migrate during download");
+                assert_eq!(migration.migrated_count, 1);
+                assert!(migration.errors.is_empty(), "{:?}", migration.errors);
+                let new_source = SkillService::get_ssot_dir().unwrap().join("test-skill");
+
+                let updated = update.await.expect("update current storage");
+                assert!(!old_source.exists(), "must not recreate the old SSOT copy");
+                assert_eq!(
+                    fs::read(new_source.join("version.txt")).unwrap(),
+                    b"new version"
+                );
+                assert_eq!(
+                    fs::read(native.join("version.txt")).unwrap(),
+                    b"new version"
+                );
+                let saved = db.get_installed_skill(&updated.id).unwrap().unwrap();
+                assert_eq!(saved.content_hash, updated.content_hash);
+                assert_eq!(
+                    saved.content_hash,
+                    Some(SkillService::compute_dir_hash(&new_source).unwrap())
+                );
+            }
+        }
     }
 
     #[tokio::test]

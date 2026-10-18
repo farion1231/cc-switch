@@ -828,6 +828,16 @@ describe("PromptPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("offers rpi in the shared prompts picker", async () => {
+    const onAppChange = vi.fn();
+    renderPanel({ apps: ["claude", "rpi"], onAppChange });
+    await waitForPanelReady();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Claude Code/ }));
+    await user.click(await screen.findByRole("button", { name: /rpi/ }));
+    expect(onAppChange).toHaveBeenCalledWith("rpi");
+  });
+
   it("switches apps from the picker", async () => {
     const onAppChange = vi.fn();
     renderPanel({ onAppChange });

@@ -905,8 +905,8 @@
     "hermesConfigDirDescription": "覆盖 Hermes 配置目录 (config.yaml)。",
     "piConfigDir": "Pi 配置目录",
     "piConfigDirDescription": "覆盖 Pi 配置目录（models.json、指令文件、提示词、Skills 与会话）。",
-    "rpiConfigDir": "RPI 配置目录",
-    "rpiConfigDirDescription": "覆盖 RPI 配置目录（models.json、指令文件、提示词、Skills 与会话）。",
+    "rpiConfigDir": "rpi 配置目录",
+    "rpiConfigDirDescription": "覆盖 rpi 配置目录（models.json、指令文件、提示词、Skills 与会话）。",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
     "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
     "browsePlaceholderGemini": "例如：/home/<你的用户名>/.gemini",
@@ -1073,13 +1073,25 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "rpi": "RPI",
+    "rpi": "rpi",
     "mcode": "MiniMax Code"
   },
   "mcode": {
     "empty": {
       "title": "还没有添加自定义供应商",
       "description": "MiniMax 官方账号登录由 MiniMax Code 自行管理，无需导入；config.yaml 里已有的自定义供应商会自动显示在这里。点击右上角 +，从预设或自定义配置添加供应商。"
+    }
+  },
+  "rpi": {
+    "provider": {
+      "enabled": "已在 rpi 中启用",
+      "enableFailed": "无法在 rpi 中启用此供应商",
+      "removed": "已从 rpi 移除",
+      "writeConflict": "rpi 配置正在被其他进程修改，请稍后再试。"
+    },
+    "current": {
+      "readFailed": "无法读取 rpi 供应商配置",
+      "stateUnavailableHint": "CC Switch 读取到 rpi 供应商配置前，供应商变更已暂时禁用。"
     }
   },
   "pi": {

@@ -488,7 +488,10 @@ mod tests {
             None,
         );
         let proxy_info = proxy.start().await.expect("start test proxy");
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("local test client");
         for path in [
             "/responses",
             "/v1/responses",
@@ -505,6 +508,10 @@ mod tests {
                 .await
                 .expect("websocket handshake");
             assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED, "{path}");
+            // Consume the rejection before the next handshake can reuse its
+            // connection, and verify the fallback payload as well as the status.
+            let body: Value = response.json().await.expect("websocket rejection body");
+            assert_eq!(body["error"]["code"], "websocket_not_supported", "{path}");
         }
         proxy.stop().await.expect("stop test proxy");
     }

@@ -630,8 +630,8 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   const added: ProviderSection["items"] = [];
   const available: ProviderSection["items"] = [];
   const piBlocked =
-    app === "pi" && input.piStateUnavailable
-      ? t("pi.current.stateUnavailableHint")
+    (app === "pi" || app === "rpi") && input.piStateUnavailable
+      ? t(`${app}.current.stateUnavailableHint`)
       : undefined;
 
   for (const p of providers) {
