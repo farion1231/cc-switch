@@ -46,9 +46,12 @@ export function parseRepoUrl(
 export function countRepoSkills(skills: DiscoverableSkill[], repo: SkillRepo) {
   return skills.filter(
     (skill) =>
-      skill.repoOwner === repo.owner &&
-      skill.repoName === repo.name &&
-      (skill.repoBranch || "main") === (repo.branch || "main"),
+      skill.repoOwner.toLowerCase() === repo.owner.toLowerCase() &&
+      skill.repoName.toLowerCase() === repo.name.toLowerCase() &&
+      // Default-branch sentinels are resolved to a concrete branch by discovery.
+      (!repo.branch ||
+        repo.branch.toUpperCase() === "HEAD" ||
+        (skill.repoBranch || "main") === (repo.branch || "main")),
   ).length;
 }
 

@@ -256,6 +256,29 @@ describe("SkillsPage (Discover)", () => {
     ).toBeInTheDocument();
   });
 
+  it("counts and searches skills resolved from a HEAD repository", async () => {
+    m.repos = [makeRepo({ branch: "HEAD" })];
+    m.discoverable = [
+      makeDiscoverable({ repoOwner: "OWNER-A", repoName: "Repo-A" }),
+    ];
+    renderPage();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /skillsPage.repos.buttonAll/ }),
+    );
+    const repositoryCheckbox = await screen.findByRole("checkbox", {
+      name: "skillsPage.repos.enableAria",
+    });
+    expect(
+      within(repositoryCheckbox.closest("label")!).getByText("1"),
+    ).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+
+    await userEvent.type(screen.getByRole("textbox"), "owner-a/repo-a");
+    expect(screen.getByText("repo-skill")).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+  });
+
   it("says which repositories could not be read when only some failed", async () => {
     m.repos = [makeRepo(), makeRepo({ owner: "composio", name: "awesome" })];
     m.discoverable = [makeDiscoverable()];
