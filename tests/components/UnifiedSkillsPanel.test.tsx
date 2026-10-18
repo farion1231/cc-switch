@@ -731,6 +731,7 @@ describe("UnifiedSkillsPanel", () => {
         })),
       });
       renderPanel();
+      await expandGroup("owner/repo");
       await userEvent.click(columns()[0]);
       await userEvent.click(
         screen.getByRole("button", {
@@ -825,6 +826,7 @@ describe("UnifiedSkillsPanel", () => {
       "reports %s undo results and preserves failed-cell retries",
       async (outcome) => {
         renderPanel();
+        await expandGroup("owner/repo");
         await userEvent.click(columns()[0]);
         await userEvent.click(
           screen.getByRole("button", {
