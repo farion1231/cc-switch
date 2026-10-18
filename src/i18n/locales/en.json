@@ -298,7 +298,7 @@
     "providerDeleted": "Provider deleted successfully",
     "switchSuccess": "Switch successful!",
     "codexRestartRequired": "Switched successfully. Restart the client to apply changes.",
-    "codexOfficialLoginUnavailable": "The login for this Codex card is unavailable on this device. Add the account in Auth Center, then edit the card and select that account as its login method. No client files or provider selection were changed.",
+    "codexOfficialLoginUnavailable": "The login for this Codex card is unavailable on this device. Add the account in Accounts, then edit the card and select that account as its login method. No client files or provider selection were changed.",
     "geminiRestartRequired": "Switched successfully. Restart Gemini CLI to apply changes.",
     "grokBuildRestartRequired": "Switched successfully. Restart Grok Build to apply changes.",
     "claudeDesktopRestartRequired": "Switched successfully. Restart Claude Desktop to apply changes.",

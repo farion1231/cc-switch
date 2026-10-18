@@ -311,6 +311,16 @@ export const useDeleteProviderMutation = (appId: AppId) => {
   });
 };
 
+const isCodexOfficialLoginUnavailable = (message: string): boolean => {
+  try {
+    const error = JSON.parse(message) as { code?: unknown } | null;
+    return error?.code === "codex.official_login_unavailable";
+  } catch {
+    // Other backend errors use plain text and keep their original message.
+    return false;
+  }
+};
+
 export const useSwitchProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
@@ -369,8 +379,7 @@ export const useSwitchProviderMutation = (appId: AppId) => {
     onError: (error: Error) => {
       const message = extractErrorMessage(error) || t("common.unknown");
       const detail =
-        appId === "codex" &&
-        message.includes("Codex official login is unavailable")
+        appId === "codex" && isCodexOfficialLoginUnavailable(message)
           ? t("notifications.codexOfficialLoginUnavailable")
           : message;
 

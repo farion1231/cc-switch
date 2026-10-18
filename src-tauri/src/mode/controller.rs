@@ -4145,16 +4145,16 @@ model_provider = "c"
             "acct-a",
         )
         .await;
-        let account = || codex_login_on_disk()["tokens"]["account_id"].clone();
         ProviderService::switch(&state, AppType::Codex, "acct-a").expect("direct a");
-        assert_eq!(account(), json!("acct-a"));
+        assert_eq!(codex_login_on_disk(), chatgpt_login("acct-a"));
         ProviderService::switch(&state, AppType::Codex, "acct-b").expect("direct b");
         assert_eq!(
-            account(),
-            json!("acct-b"),
-            "the direct switch swaps accounts"
+            codex_login_on_disk(),
+            chatgpt_login("acct-b"),
+            "the direct switch writes the target's complete auth.json"
         );
         ProviderService::switch(&state, AppType::Codex, "acct-a").expect("direct a again");
+        assert_eq!(codex_login_on_disk(), chatgpt_login("acct-a"));
 
         enter(&state, &AppType::Codex, false).await.expect("enter");
         let result = ProviderService::switch(&state, AppType::Codex, "acct-b").expect("route to b");
@@ -4166,15 +4166,54 @@ model_provider = "c"
             })
         );
         assert_eq!(
-            account(),
-            json!("acct-b"),
+            codex_login_on_disk(),
+            chatgpt_login("acct-b"),
             "Codex signs in as the route's account"
         );
         switch_route(&state, &AppType::Codex, "acct-a")
             .await
             .expect("route back to a");
-        assert_eq!(account(), json!("acct-a"));
+        assert_eq!(codex_login_on_disk(), chatgpt_login("acct-a"));
         exit(&state, &AppType::Codex).await.expect("exit");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_legacy_official_reattach_keeps_the_cli_login() {
+        let _home = Home::new();
+        let mut official = codex_official();
+        official.settings_config["auth"] = chatgpt_login("alice");
+        seed_codex("", Some(&chatgpt_login("alice")));
+        let state = state_with(AppType::Codex, &[official.clone()], &official.id).await;
+        ProviderService::switch(&state, AppType::Codex, &official.id).unwrap();
+        enter(&state, &AppType::Codex, false).await.unwrap();
+
+        crate::config::write_json_file(&codex_auth_path(), &chatgpt_login("carol")).unwrap();
+        let auth_before = fs::read(codex_auth_path()).unwrap();
+        let stash_path = DeviceStore::for_device().file("codex-login-stash.json");
+        crate::config::write_json_file(&stash_path, &json!({ "version": 1, "logins": {} }))
+            .unwrap();
+        let stash_before = fs::read(&stash_path).unwrap();
+        {
+            let _guard = lock_settled(&state, &AppType::Codex).await.unwrap();
+            startup_app(&state, &AppType::Codex)
+                .await
+                .expect("reattaching the current route must follow the CLI login");
+        }
+        assert_eq!(fs::read(codex_auth_path()).unwrap(), auth_before);
+        assert_eq!(fs::read(&stash_path).unwrap(), stash_before);
+        let mode = mode(&AppType::Codex);
+        assert!(mode.is_proxy() && mode.attached);
+        assert_eq!(mode.proxy_route.as_deref(), Some(official.id.as_str()));
+        assert_eq!(
+            in_use(&state, &AppType::Codex).as_deref(),
+            Some(official.id.as_str())
+        );
+        assert_eq!(
+            direct(&state, &AppType::Codex).as_deref(),
+            Some(official.id.as_str())
+        );
+        exit(&state, &AppType::Codex).await.unwrap();
     }
 
     #[tokio::test]

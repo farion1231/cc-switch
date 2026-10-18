@@ -54,8 +54,11 @@ describe("provider switch result transport", () => {
   ] as const)(
     "explains an unavailable official login in %s without refreshing the active card",
     async (language, resources) => {
-      const message =
-        "Codex official login is unavailable for this card on this device.";
+      // The transport code, not the fallback wording, selects the translation.
+      const message = JSON.stringify({
+        code: "codex.official_login_unavailable",
+        message: "The fallback wording can change independently of the toast.",
+      });
       server.use(
         http.post("http://tauri.local/switch_provider", () =>
           HttpResponse.text(message, { status: 409 }),
@@ -89,9 +92,48 @@ describe("provider switch result transport", () => {
         }),
       );
       expect(invalidate).not.toHaveBeenCalled();
+      expect(resources.notifications.codexOfficialLoginUnavailable).toContain(
+        resources.nav.auth,
+      );
       unmount();
       client.clear();
       await i18n.changeLanguage("zh");
     },
   );
+
+  it("keeps unstructured errors unchanged instead of matching English wording", async () => {
+    const message =
+      "Codex official login is unavailable: an unstructured error";
+    server.use(
+      http.post("http://tauri.local/switch_provider", () =>
+        HttpResponse.text(message, { status: 409 }),
+      ),
+    );
+    await i18n.changeLanguage("en");
+    const client = createTestQueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result, unmount } = renderHook(
+      () => useSwitchProviderMutation("codex"),
+      { wrapper },
+    );
+    await act(async () => {
+      await expect(result.current.mutateAsync("provider-b")).rejects.toThrow(
+        message,
+      );
+    });
+    expect(toast.error).toHaveBeenCalledWith(
+      en.notifications.switchFailedTitle,
+      expect.objectContaining({
+        description: en.notifications.switchFailed.replace(
+          "{{error}}",
+          message,
+        ),
+      }),
+    );
+    unmount();
+    client.clear();
+    await i18n.changeLanguage("zh");
+  });
 });

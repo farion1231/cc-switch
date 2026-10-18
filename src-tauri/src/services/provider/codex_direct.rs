@@ -283,7 +283,11 @@ pub(crate) fn predicted_official_login(
         target: auth_target(&planned.auth),
         stash,
     });
-    ensure_official_login(&planned.auth, &auth_plan, live.as_ref())?;
+    ensure_official_login(
+        planned.expected_official_login.as_deref(),
+        &auth_plan,
+        live.as_ref(),
+    )?;
     let keychain = || {
         prepared
             .keychain
@@ -297,19 +301,15 @@ pub(crate) fn predicted_official_login(
     )
 }
 
-/// A legacy official card can name an account whose device-local login is gone.
-/// Reject that selection instead of retaining another account or reviving a row
-/// snapshot that may have been invalidated by logout or token rotation.
+/// Reject selecting a different legacy card if auth.json would keep another
+/// login. An absent login is valid after logout or with keychain storage; writes
+/// to the current card must also follow account changes made inside Codex.
 fn ensure_official_login(
-    goal: &AuthGoal,
+    expected: Option<&str>,
     auth_plan: &AuthPlan,
     live: Option<&Value>,
 ) -> Result<(), AppError> {
-    let AuthGoal::Official(row_auth) = goal else {
-        return Ok(());
-    };
-    let Some(expected) = codex_login::official_login_requirement(row_auth) else {
-        // A card without its own credentials follows the current Codex login.
+    let Some(expected) = expected else {
         return Ok(());
     };
     let after = match &auth_plan.auth {
@@ -317,15 +317,21 @@ fn ensure_official_login(
         Some(None) => None,
         Some(Some(auth)) => Some(auth),
     };
-    if after
-        .and_then(codex_login::official_login_requirement)
-        .as_ref()
-        != Some(&expected)
-    {
-        return Err(AppError::localized(
+    let Some(actual) = after.and_then(codex_login::official_login_requirement) else {
+        return Ok(());
+    };
+    if actual != expected {
+        let message = AppError::localized(
             "codex.official_login_unavailable",
             "这张卡片对应的 Codex 官方登录在本机不可用。请先在授权中心添加账号，再编辑卡片，将登录方式绑定到该账号。客户端文件和供应商选择均未更改。",
-            "Codex official login is unavailable for this card on this device. Add the account in Auth Center, then edit the card and select that account as its login method. No client files or provider selection were changed.",
+            "Codex official login is unavailable for this card on this device. Add the account in Accounts, then edit the card and select that account as its login method. No client files or provider selection were changed.",
+        );
+        return Err(AppError::Message(
+            serde_json::json!({
+                "code": "codex.official_login_unavailable",
+                "message": message.to_string(),
+            })
+            .to_string(),
         ));
     }
     Ok(())
@@ -553,6 +559,9 @@ pub(crate) struct Planned {
     stamp: Option<RouteAuth>,
     catalog: Option<Vec<u8>>,
     auth: AuthGoal,
+    /// Only selecting a different card checks which login would remain on disk.
+    /// Editing or reapplying the current card follows the user's Codex login.
+    expected_official_login: Option<String>,
     /// 切走的是没绑托管账号的官方卡：它行里的 `auth`。
     leaving_official: Option<Value>,
     retired_keys: Vec<String>,
@@ -756,6 +765,9 @@ pub(crate) fn plan(
         stamp,
         catalog,
         auth,
+        expected_official_login: official_login.filter(|_| {
+            owner.provider().map(|provider| &provider.id) != provider.map(|provider| &provider.id)
+        }),
         leaving_official,
         retired_keys: facts.third_party_keys,
         official_logins: facts.official_logins,
@@ -1163,7 +1175,11 @@ pub(crate) fn run_with_edits(
         target: auth_target(&planned.auth),
         stash,
     });
-    ensure_official_login(&planned.auth, &auth_plan, live_auth.as_ref())?;
+    ensure_official_login(
+        planned.expected_official_login.as_deref(),
+        &auth_plan,
+        live_auth.as_ref(),
+    )?;
     let config_text = read_config_text();
     // 目录里的官方行是按拿锁前预测的登录取的：实际的目标登录换了人（Codex 恰好重新登录、
     // settle 补完了上一次操作），就停下，什么都不写。不能换成别的来源：目录已经算进契约。
