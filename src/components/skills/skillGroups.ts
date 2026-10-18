@@ -41,17 +41,21 @@ export function groupInstalledSkills(
   for (const skill of skills) {
     if (assignment.has(skill.id) || !isLocalSkill(skill)) continue;
     const key = sourceKey(skill);
-    if (key) automaticSourceCounts.set(key, (automaticSourceCounts.get(key) ?? 0) + 1);
+    if (key)
+      automaticSourceCounts.set(key, (automaticSourceCounts.get(key) ?? 0) + 1);
   }
 
   for (const skill of skills) {
     const repo = !isLocalSkill(skill);
     const automaticSourceKey = sourceKey(skill);
-    const key = assignment.get(skill.id) ?? (repo
-      ? `repo:${skill.repoOwner!.toLowerCase()}/${skill.repoName!.toLowerCase()}`
-      : automaticSourceKey && (automaticSourceCounts.get(automaticSourceKey) ?? 0) > 1
-        ? automaticSourceKey
-        : "local:ungrouped");
+    const key =
+      assignment.get(skill.id) ??
+      (repo
+        ? `repo:${skill.repoOwner!.toLowerCase()}/${skill.repoName!.toLowerCase()}`
+        : automaticSourceKey &&
+            (automaticSourceCounts.get(automaticSourceKey) ?? 0) > 1
+          ? automaticSourceKey
+          : "local:ungrouped");
     if (!groups.has(key)) {
       const sourceGrouped = automaticSourceKey === key;
       groups.set(key, {

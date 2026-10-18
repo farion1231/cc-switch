@@ -110,6 +110,24 @@ mod tests {
     }
 
     #[test]
+    fn skill_project_existing_member_remains_editable_after_source_backfill() {
+        let db = Database::memory().unwrap();
+        let mut local = skill("a");
+        db.save_skill(&local).unwrap();
+        db.save_skill_project_group(&group("project", &["a"]))
+            .unwrap();
+
+        local.repo_owner = Some("owner".into());
+        local.repo_name = Some("repo".into());
+        db.update_skill_metadata(&local).unwrap();
+
+        let mut renamed = group("project", &["a"]);
+        renamed.name = "Renamed".into();
+        db.save_skill_project_group(&renamed).unwrap();
+        assert_eq!(db.get_skill_project_groups().unwrap(), [renamed]);
+    }
+
+    #[test]
     fn skill_project_group_service_trims_names_and_rejects_stale_groups() {
         let db = Arc::new(Database::memory().unwrap());
         db.save_skill(&skill("a")).unwrap();
@@ -208,15 +226,17 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
         // Validate before moving members; a stale/invalid selection must not partially edit groups.
         for id in &group.skill_ids {
-            let local: bool = tx
+            let editable: bool = tx
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM skills WHERE id = ?1
-                 AND (COALESCE(repo_owner, '') = '' OR COALESCE(repo_name, '') = ''))",
-                    params![id],
+                 AND ((COALESCE(repo_owner, '') = '' OR COALESCE(repo_name, '') = '')
+                      OR EXISTS(SELECT 1 FROM skill_project_group_members
+                                WHERE skill_id = ?1 AND group_id = ?2)))",
+                    params![id, group.id],
                     |row| row.get(0),
                 )
                 .map_err(|e| AppError::Database(e.to_string()))?;
-            if !local {
+            if !editable {
                 return Err(AppError::InvalidInput(format!(
                     "Local Skill not found: {id}"
                 )));

@@ -797,18 +797,18 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       await refetch();
       toast.success(
         result.updated > 0
-          ? t("skillsPage.localSourceScan.completed", {
+          ? t("skills.localSourceScan.completed", {
               count: result.updated,
               repositories: result.scannedRepositories,
               skills: result.scannedSkills,
             })
-          : t("skillsPage.localSourceScan.none", {
+          : t("skills.localSourceScan.none", {
               repositories: result.scannedRepositories,
               skills: result.scannedSkills,
             }),
         result.ambiguous > 0
           ? {
-              description: t("skillsPage.localSourceScan.ambiguous", {
+              description: t("skills.localSourceScan.ambiguous", {
                 count: result.ambiguous,
               }),
               closeButton: true,
@@ -1600,7 +1600,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                           sourceText={
                             skill.repoOwner && skill.repoName
                               ? `${skill.repoOwner}/${skill.repoName}`
-                              : skill.sourceId ?? t("skillsPage.source.local")
+                              : (skill.sourceId ?? t("skillsPage.source.local"))
                           }
                           onPick={(checked) =>
                             setSelected((prev) => {

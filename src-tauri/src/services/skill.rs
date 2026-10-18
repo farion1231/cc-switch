@@ -1131,9 +1131,21 @@ impl SkillService {
     /// 坐标或用户定义的项目分组。
     fn backfill_lock_provenance(db: &Arc<Database>, skills: &mut IndexMap<String, InstalledSkill>) {
         let lock = parse_agents_lock();
+        let manually_grouped_ids = db
+            .get_skill_project_groups()
+            .map(|groups| {
+                groups
+                    .into_iter()
+                    .flat_map(|group| group.skill_ids)
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap_or_else(|error| {
+                log::warn!("读取手动 Skill 分组失败，跳过来源回填: {error}");
+                HashSet::new()
+            });
 
         for skill in skills.values_mut() {
-            if has_source_provenance(skill) {
+            if manually_grouped_ids.contains(&skill.id) || has_source_provenance(skill) {
                 continue;
             }
             let info = lock
@@ -1202,8 +1214,13 @@ impl SkillService {
         let mut ambiguous = 0;
         let _state_guard = skill_state_write_guard();
         let skills = db.get_all_installed_skills()?;
+        let manually_grouped_ids = db
+            .get_skill_project_groups()?
+            .into_iter()
+            .flat_map(|group| group.skill_ids)
+            .collect::<HashSet<_>>();
         for mut skill in skills.into_values() {
-            if has_source_provenance(&skill) {
+            if manually_grouped_ids.contains(&skill.id) || has_source_provenance(&skill) {
                 continue;
             }
             let hash = match skill.content_hash.clone() {
@@ -8438,5 +8455,48 @@ mod tests {
             persisted.source_id.as_deref(),
             Some("example/source-skills")
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn local_project_scan_keeps_manual_group_members_unassigned() {
+        let home = tempdir().expect("home");
+        let _home = TestHomeGuard::set(home.path());
+        let workspace = home.path().join("projects");
+        let repository = workspace.join("source-repository");
+        fs::create_dir_all(repository.join(".git")).expect("git dir");
+        fs::write(
+            repository.join(".git").join("config"),
+            "[remote \"origin\"]\n\turl = git@github.com:example/source-skills.git\n",
+        )
+        .expect("git config");
+        write_skill(
+            &repository.join("skills").join("copied-skill"),
+            "copied skill",
+        );
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let local = poisoned_skill("local:copied-skill", "copied-skill");
+        db.save_skill(&local).expect("seed local skill");
+        db.save_skill_project_group(&crate::database::SkillProjectGroup {
+            id: "manual".into(),
+            name: "Manual".into(),
+            skill_ids: vec![local.id.clone()],
+        })
+        .expect("seed manual group");
+        let installed_skill = SkillService::get_ssot_dir()
+            .expect("SSOT")
+            .join("copied-skill");
+        write_skill(&installed_skill, "copied skill");
+
+        let result =
+            SkillService::scan_local_project_sources(&db, &workspace).expect("scan local projects");
+        assert_eq!(result.updated, 0);
+        let persisted = db
+            .get_installed_skill("local:copied-skill")
+            .expect("query")
+            .expect("persisted skill");
+        assert!(persisted.repo_owner.is_none());
+        assert!(persisted.repo_name.is_none());
     }
 }

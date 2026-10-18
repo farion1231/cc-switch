@@ -428,15 +428,21 @@ describe("UnifiedSkillsPanel", () => {
         sourceId: "open.feishu.cn",
       }),
     ];
-    m.projects = [{ id: "project", name: "My Lark", skillIds: ["local:lark-a"] }];
+    m.projects = [
+      { id: "project", name: "My Lark", skillIds: ["local:lark-a"] },
+    ];
     renderPanel();
     await expandGroup("My Lark");
     await expandGroup("skillsPage.groups.ungrouped");
 
     expect(
-      within(screen.getByRole("region", { name: "My Lark" })).getByText("Lark A"),
+      within(screen.getByRole("region", { name: "My Lark" })).getByText(
+        "Lark A",
+      ),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "open.feishu.cn" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "open.feishu.cn" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("Lark B")).toBeInTheDocument();
   });
 
@@ -509,6 +515,22 @@ describe("UnifiedSkillsPanel", () => {
     await waitFor(() => expect(m.deleteGroup).toHaveBeenCalledWith("p"));
     expect(m.uninstall).not.toHaveBeenCalled();
     expect(m.toggle).not.toHaveBeenCalled();
+  });
+
+  it("keeps a manually grouped Skill selectable after source backfill", async () => {
+    m.installed = [makeSkill({ id: "repo", name: "Repository Skill" })];
+    m.projects = [{ id: "p", name: "Tools", skillIds: ["repo"] }];
+    renderPanel();
+
+    await userEvent.click(
+      within(screen.getByRole("region", { name: "Tools" })).getByRole(
+        "button",
+        { name: "skillsPage.groups.editNamed" },
+      ),
+    );
+    expect(
+      within(screen.getByRole("dialog")).getByText("Repository Skill"),
+    ).toBeInTheDocument();
   });
 
   it("search reveals a collapsed group and still lets the user collapse it", async () => {
@@ -1223,12 +1245,14 @@ describe("UnifiedSkillsPanel", () => {
     const pickDirectory = vi
       .spyOn(settingsApi, "pickDirectory")
       .mockResolvedValue("/tmp/local-projects");
-    const scanLocalSources = vi.spyOn(skillsApi, "scanLocalSources").mockResolvedValue({
-      updated: 2,
-      ambiguous: 1,
-      scannedRepositories: 3,
-      scannedSkills: 8,
-    });
+    const scanLocalSources = vi
+      .spyOn(skillsApi, "scanLocalSources")
+      .mockResolvedValue({
+        updated: 2,
+        ambiguous: 1,
+        scannedRepositories: 3,
+        scannedSkills: 8,
+      });
     renderPanel();
 
     await userEvent.click(
@@ -1245,8 +1269,10 @@ describe("UnifiedSkillsPanel", () => {
     );
     expect(pickDirectory).toHaveBeenCalledOnce();
     expect(m.toastSuccess).toHaveBeenCalledWith(
-      "skillsPage.localSourceScan.completed",
-      expect.objectContaining({ description: "skillsPage.localSourceScan.ambiguous" }),
+      "skills.localSourceScan.completed",
+      expect.objectContaining({
+        description: "skills.localSourceScan.ambiguous",
+      }),
     );
     pickDirectory.mockRestore();
     scanLocalSources.mockRestore();

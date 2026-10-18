@@ -32,7 +32,9 @@ export function SkillProjectGroupDialog({
   const [query, setQuery] = useState("");
   const [chosen, setChosen] = useState(new Set(group?.skillIds ?? initialIds));
   const matches = skills
-    .filter(isLocalSkill)
+    .filter(
+      (skill) => isLocalSkill(skill) || group?.skillIds.includes(skill.id),
+    )
     .filter((skill) =>
       `${skill.name} ${skill.directory}`
         .toLowerCase()
