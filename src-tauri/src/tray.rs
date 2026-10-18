@@ -2056,6 +2056,8 @@ pub struct PanelApp {
     pub current: Option<String>,
     /// 直连 / 路由 / 聚合。
     pub mode: &'static str,
+    /// 同一模式的机器可读值（`direct` / `route` / `stack`），面板按它给模式名上主题色。
+    pub mode_kind: &'static str,
     /// 子面板标题下的说明（「路由 · 故障转移开启中」等）。
     pub header: Option<String>,
     pub attention: Option<&'static str>,
@@ -2279,6 +2281,11 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
                 TrayMode::Direct => texts.header_direct,
                 TrayMode::Route | TrayMode::Failover => texts.mode_route,
                 TrayMode::Stack => texts.mode_stack,
+            },
+            mode_kind: match snapshot.mode {
+                TrayMode::Direct => "direct",
+                TrayMode::Route | TrayMode::Failover => "route",
+                TrayMode::Stack => "stack",
             },
             header,
             attention: snapshot.needs_attention.then_some(texts.needs_attention),

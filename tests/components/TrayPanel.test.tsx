@@ -54,6 +54,7 @@ const state: TrayPanelState = {
       name: "Claude Code",
       current: "default",
       mode: "Direct",
+      modeKind: "direct",
       header: null,
       attention: null,
       quota: null,
@@ -241,6 +242,26 @@ describe("TrayPanel window layout", () => {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ["settings"] }),
     );
   });
+
+  it.each([
+    ["direct", "Direct", "text-direct-text"],
+    ["route", "Route", "text-route-text"],
+    ["stack", "Aggregation", "text-stack-text"],
+  ] as const)(
+    "colors the %s mode name with its theme color",
+    async (modeKind, mode, className) => {
+      vi.mocked(trayPanelApi.state).mockResolvedValue({
+        ...state,
+        apps: [{ ...state.apps[0], mode, modeKind }],
+      });
+      vi.mocked(trayPanelApi.placement).mockResolvedValue(windows);
+      renderPanel();
+      await screen.findByRole("button", {
+        name: `Claude Code default · ${mode}`,
+      });
+      expect(screen.getByText(mode)).toHaveClass(className);
+    },
+  );
 
   it("opens Windows top/left taskbars toward the opposite edges", async () => {
     const { container } = await openPanel(windows);

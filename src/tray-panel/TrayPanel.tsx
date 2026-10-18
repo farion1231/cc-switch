@@ -25,6 +25,7 @@ import {
 import { AppGlyph } from "@/components/shell/AppGlyph";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { cn } from "@/lib/utils";
+import type { AppMode } from "@/types/proxy";
 import {
   CHANGED_EVENT,
   SHOW_EVENT,
@@ -167,6 +168,13 @@ function QuotaBlock({
 
 // ─── 主面板的应用行 ───────────────────────────────────────────────────────────
 
+// 模式名用主界面的模式色（与 ModeTabs 的 MODE_TONE.text 同一组 token），一眼分出直连 / 路由 / 聚合。
+const MODE_TEXT: Record<AppMode, string> = {
+  direct: "text-direct-text",
+  route: "text-route-text",
+  stack: "text-stack-text",
+};
+
 function AppRow({
   app,
   texts,
@@ -185,9 +193,6 @@ function AppRow({
   onOpen: () => void;
 }) {
   const Chevron = side === "left" ? ChevronLeft : ChevronRight;
-  const subtitle = app.addId
-    ? app.addText
-    : [app.current, app.mode].filter(Boolean).join(" · ");
   return (
     <button
       type="button"
@@ -222,7 +227,16 @@ function AppRow({
           )}
         </span>
         <span className="block truncate text-xs text-muted-foreground">
-          {subtitle}
+          {app.addId ? (
+            app.addText
+          ) : (
+            <>
+              {app.current && `${app.current} · `}
+              <span className={cn("font-medium", MODE_TEXT[app.modeKind])}>
+                {app.mode}
+              </span>
+            </>
+          )}
         </span>
         {app.quota && <QuotaBlock quota={app.quota} texts={texts} />}
       </span>
