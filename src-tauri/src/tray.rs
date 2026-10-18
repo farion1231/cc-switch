@@ -2562,6 +2562,10 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
     #[cfg(not(target_os = "linux"))]
     {
         crate::tray_panel::notify_changed(app);
+        // 出面板时托盘上没挂原生菜单，没有标题要改
+        if !crate::tray_panel::uses_native_menu() {
+            return;
+        }
         let Some(app_state) = app.try_state::<AppState>() else {
             return;
         };

@@ -446,11 +446,45 @@ pub fn show_at_cursor(app: &AppHandle) {
     show_at(app, &window, (x, y, 1.0, 1.0));
 }
 
-/// 托盘状态变了：开着的面板重新取数据。
+/// 两次「状态变了」通知之间至少隔这么久：弹出时各家额度陆续查完，每家都会通知一次。
+const CHANGED_THROTTLE: Duration = Duration::from_millis(250);
+
+/// 上次通知的时间，以及是否已经约好了一次补发。
+static CHANGED_STATE: Mutex<(Option<Instant>, bool)> = Mutex::new((None, false));
+
+/// 托盘状态变了：开着的面板重新取数据。隔得够久就立即通知（点了切换要马上看到勾），
+/// 否则约在窗口结束时补发一次，一串额度结果只让面板重取一两次。
 pub fn notify_changed(app: &AppHandle) {
-    if panel_window(app).is_some() {
-        let _ = app.emit_to(PANEL_LABEL, CHANGED_EVENT, ());
+    if panel_window(app).is_none() {
+        return;
     }
+    let wait = {
+        let mut state = lock(&CHANGED_STATE);
+        if state.1 {
+            return;
+        }
+        let now = Instant::now();
+        match state.0.map(|last| now.duration_since(last)) {
+            Some(elapsed) if elapsed < CHANGED_THROTTLE => {
+                state.1 = true;
+                CHANGED_THROTTLE - elapsed
+            }
+            _ => {
+                state.0 = Some(now);
+                Duration::ZERO
+            }
+        }
+    };
+    if wait.is_zero() {
+        let _ = app.emit_to(PANEL_LABEL, CHANGED_EVENT, ());
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(wait).await;
+        *lock(&CHANGED_STATE) = (Some(Instant::now()), false);
+        let _ = app.emit_to(PANEL_LABEL, CHANGED_EVENT, ());
+    });
 }
 
 // ─── 平台：玻璃和摆放 ─────────────────────────────────────────────────────────
@@ -970,12 +1004,19 @@ pub struct TrayPanelState {
     pub model: crate::tray::PanelModel,
 }
 
+/// 收集要读库和设备文件，一次几十毫秒。同步命令跑在主线程上，弹出后那一串额度刷新
+/// 会接连卡住主线程，悬停、展开子面板都跟着掉帧；挪到阻塞线程池上做。
 #[tauri::command]
-pub fn tray_panel_state(state: tauri::State<'_, AppState>) -> Result<TrayPanelState, String> {
-    Ok(TrayPanelState {
-        texts: PanelTexts::current(),
-        model: crate::tray::collect_panel_model(state.inner()).map_err(|e| e.to_string())?,
+pub async fn tray_panel_state(app: AppHandle) -> Result<TrayPanelState, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        Ok(TrayPanelState {
+            texts: PanelTexts::current(),
+            model: crate::tray::collect_panel_model(state.inner()).map_err(|e| e.to_string())?,
+        })
     })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 面板挂载时取一次：第一次弹出时窗口是新建的，`tray-panel-show` 可能早于前端开始监听。

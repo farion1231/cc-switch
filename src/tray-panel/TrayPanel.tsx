@@ -38,6 +38,7 @@ import {
   type PanelTexts,
   type TrayPanelState,
 } from "./api";
+import { aimingAt, type Point } from "./menuAim";
 import { usePanelTheme } from "./usePanelTheme";
 import { UsageTab } from "./UsageTab";
 
@@ -51,9 +52,10 @@ const CANVAS_MAX_HEIGHT = 760;
 /** 分开摆时窗口四周留的透明边距，给卡片的阴影（系统窗口阴影已关掉） */
 const SHADOW_MARGIN = 16;
 const SUB_MAX_HEIGHT = 540;
-/** 悬停多久展开子面板；已经展开时换一个应用多等一会儿，斜着移向子面板时不误切 */
-const HOVER_OPEN_MS = 90;
-const HOVER_SWITCH_MS = 180;
+/** 悬停多久展开子面板；已经展开时换应用不等，只有鼠标正朝子面板移动才暂缓 */
+const HOVER_OPEN_MS = 50;
+/** 正朝子面板移动时隔这么久再看一次：鼠标停下了或偏离了就切换 */
+const AIM_RECHECK_MS = 120;
 
 const ROW_HOVER = "hover:bg-black/[0.06] dark:hover:bg-white/[0.08]";
 const FOCUS_RING =
@@ -202,7 +204,7 @@ function AppRow({
       onMouseLeave={onLeave}
       onClick={onOpen}
       className={cn(
-        "flex w-full items-start gap-3 rounded-[10px] px-2.5 py-2 text-left transition-colors",
+        "flex w-full items-start gap-3 rounded-[10px] px-2.5 py-2 text-left",
         FOCUS_RING,
         active ? "bg-blue-500/[0.16]" : ROW_HOVER,
       )}
@@ -290,7 +292,7 @@ function SubRow({
       disabled={!row.enabled}
       onClick={() => onAction(row.id)}
       className={cn(
-        "flex w-full gap-2.5 rounded-lg px-2.5 py-1.5 text-left transition-colors",
+        "flex w-full gap-2.5 rounded-lg px-2.5 py-1.5 text-left",
         // 带额度的行高，图标和「使用中」贴着第一行
         provider?.quota ? "items-start" : "items-center",
         FOCUS_RING,
@@ -415,7 +417,7 @@ function FooterButton({
       title={title}
       onClick={onClick}
       className={cn(
-        "flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors",
+        "flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px]",
         FOCUS_RING,
         ROW_HOVER,
         className,
@@ -445,6 +447,12 @@ export function TrayPanel() {
   const subRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const hoverTimer = useRef<number | undefined>(undefined);
+  /** 最近几次鼠标位置，判断是不是正朝子面板移动 */
+  const trail = useRef<Point[]>([]);
+  /** 上次因为「正朝子面板移动」而暂缓切换时的鼠标位置 */
+  const aimedAt = useRef<Point | null>(null);
+  const hovered = useRef<string | null>(null);
+  const lastState = useRef("");
   const layoutFrame = useRef<number | undefined>(undefined);
   const lastLayout = useRef("");
   const placementRef = useRef(placement);
@@ -452,7 +460,12 @@ export function TrayPanel() {
 
   const load = useCallback(async () => {
     try {
-      setState(await trayPanelApi.state());
+      const next = await trayPanelApi.state();
+      // 额度刷新会连着通知好几次，内容没变就不重新渲染
+      const key = JSON.stringify(next);
+      if (key === lastState.current) return;
+      lastState.current = key;
+      setState(next);
     } catch (error) {
       console.error("[TrayPanel] 读取托盘面板数据失败", error);
     }
@@ -652,13 +665,63 @@ export function TrayPanel() {
     setQuery("");
   }, []);
 
+  useEffect(() => {
+    const onMove = (event: MouseEvent) => {
+      const points = trail.current;
+      points.push({ x: event.clientX, y: event.clientY });
+      if (points.length > 3) points.shift();
+    };
+    window.addEventListener("mousemove", onMove);
+    return () => window.removeEventListener("mousemove", onMove);
+  }, []);
+
+  /**
+   * 子面板开着时换到另一个应用：鼠标正斜着朝子面板移动（途经别的行）就先不换，
+   * 隔一会儿再看；鼠标停下了、偏离了，或本来就是竖着移，立即切换。
+   */
+  const switchTo = (app: PanelApp) => {
+    if (hovered.current !== app.app) return;
+    const points = trail.current;
+    const current = points[points.length - 1];
+    const sub = subRef.current?.getBoundingClientRect();
+    const side = placementRef.current?.side ?? "right";
+    const stopped =
+      aimedAt.current !== null &&
+      current !== undefined &&
+      aimedAt.current.x === current.x &&
+      aimedAt.current.y === current.y;
+    if (
+      !stopped &&
+      sub &&
+      points.length >= 2 &&
+      aimingAt(points[0], current, sub, side)
+    ) {
+      aimedAt.current = current;
+      hoverTimer.current = window.setTimeout(
+        () => switchTo(app),
+        AIM_RECHECK_MS,
+      );
+      return;
+    }
+    aimedAt.current = null;
+    openSub(app);
+  };
+
   const hoverApp = (app: PanelApp) => {
     window.clearTimeout(hoverTimer.current);
+    hovered.current = app.app;
+    aimedAt.current = null;
     if (openApp === app.app) return;
-    hoverTimer.current = window.setTimeout(
-      () => openSub(app),
-      openApp ? HOVER_SWITCH_MS : HOVER_OPEN_MS,
-    );
+    if (openApp) {
+      switchTo(app);
+      return;
+    }
+    hoverTimer.current = window.setTimeout(() => openSub(app), HOVER_OPEN_MS);
+  };
+
+  const leaveApp = () => {
+    window.clearTimeout(hoverTimer.current);
+    hovered.current = null;
   };
 
   const changeTab = (next: Tab) => {
@@ -862,7 +925,7 @@ export function TrayPanel() {
                   active={openEntry?.app === app.app}
                   side={placement.side}
                   onHover={() => hoverApp(app)}
-                  onLeave={() => window.clearTimeout(hoverTimer.current)}
+                  onLeave={leaveApp}
                   onOpen={() =>
                     app.addId
                       ? action(app.addId)

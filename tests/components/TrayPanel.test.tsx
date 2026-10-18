@@ -386,4 +386,66 @@ describe("TrayPanel window layout", () => {
       expect(window.cancelAnimationFrame).not.toHaveBeenCalled();
     },
   );
+
+  it("switches apps at once on a vertical move and waits while heading for the sub panel", async () => {
+    const codex = {
+      ...state.apps[0],
+      app: "codex" as const,
+      name: "Codex",
+      current: "OpenAI",
+      rows: [
+        { ...state.apps[0].rows[0], id: "nav:codex", text: "Open Codex page" },
+      ],
+    };
+    vi.mocked(trayPanelApi.state).mockResolvedValue({
+      ...state,
+      apps: [state.apps[0], codex],
+    });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        return (
+          this.classList.contains("tp-sub")
+            ? { top: 0, bottom: 400, left: 344, right: 644 }
+            : { top: 50, bottom: 100, left: 16, right: 336 }
+        ) as DOMRect;
+      },
+    );
+    const { container } = await openPanel({
+      ...windows,
+      platform: "macos",
+      layout: "floating",
+      glass: "native",
+      side: "right",
+      edge: "top",
+      gap: 8,
+      boundsTop: 0,
+      boundsBottom: 900,
+    });
+    const subTitle = () =>
+      container.querySelector(".tp-sub")?.firstElementChild?.textContent;
+    const claudeRow = screen.getByRole("button", {
+      name: "Claude Code default · Direct",
+    });
+    const codexRow = screen.getByRole("button", {
+      name: "Codex OpenAI · Direct",
+    });
+
+    fireEvent.mouseEnter(claudeRow);
+    await waitFor(() => expect(subTitle()).toContain("Claude Code"));
+
+    // 竖着移到下一行：不等，立即换
+    fireEvent.mouseMove(window, { clientX: 200, clientY: 80 });
+    fireEvent.mouseMove(window, { clientX: 200, clientY: 120 });
+    fireEvent.mouseLeave(claudeRow);
+    fireEvent.mouseEnter(codexRow);
+    expect(subTitle()).toContain("Codex");
+
+    // 斜着朝子面板移动、途经 Claude 那行：先不换；鼠标停下后再换
+    fireEvent.mouseMove(window, { clientX: 200, clientY: 120 });
+    fireEvent.mouseMove(window, { clientX: 230, clientY: 110 });
+    fireEvent.mouseLeave(codexRow);
+    fireEvent.mouseEnter(claudeRow);
+    expect(subTitle()).toContain("Codex");
+    await waitFor(() => expect(subTitle()).toContain("Claude Code"));
+  });
 });
