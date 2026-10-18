@@ -24,8 +24,11 @@ use crate::store::AppState;
 pub const PANEL_LABEL: &str = "tray-panel";
 /// Linux 原生菜单里「打开快捷面板」的事件 id。
 pub const OPEN_PANEL_ID: &str = "panel:open";
-/// Linux 点图标只能出原生菜单；其它平台不挂菜单，点图标出面板。
-pub const USES_NATIVE_MENU: bool = cfg!(target_os = "linux");
+/// 点托盘图标出原生菜单还是面板。Linux 只能出原生菜单；其它平台默认出面板，
+/// 设置里打开「原生托盘菜单」（`native_tray_menu`）就挂回原生菜单，不再出面板。
+pub fn uses_native_menu() -> bool {
+    cfg!(target_os = "linux") || crate::settings::get_settings().native_tray_menu
+}
 
 /// 弹出前发给面板：带上这次的方位，前端据此排版后回报尺寸（`tray_panel_layout`）。
 const SHOW_EVENT: &str = "tray-panel-show";
