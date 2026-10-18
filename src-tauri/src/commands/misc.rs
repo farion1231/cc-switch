@@ -2165,6 +2165,10 @@ fn extend_mise_node_search_paths(paths: &mut IndexSet<std::path::PathBuf>, home:
 ///
 /// See `env_checker::check_system_env` for the same set of registry keys; here
 /// referenced variables also fall back to these keys if absent from the process.
+///
+/// fnm's default Node alias is appended last (see `fnm_default_alias_dir_candidates`),
+/// so a Node that only exists in `fnm env` shells is still visible, while every
+/// explicit PATH entry keeps precedence.
 #[cfg(target_os = "windows")]
 fn effective_path_string() -> String {
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
@@ -2183,7 +2187,48 @@ fn effective_path_string() -> String {
         .and_then(|k| k.get_value::<String, &str>("Path"))
         .map(|raw| expand_env_chars(&raw))
         .unwrap_or_default();
-    merge_path_segments_win(&[&process, &user, &machine])
+    let fnm = fnm_default_alias_dir_candidates(
+        std::env::var_os("FNM_DIR"),
+        &dirs::home_dir().unwrap_or_default(),
+        dirs::data_dir(),
+    )
+    .into_iter()
+    .filter(|dir| dir.is_dir())
+    .map(|dir| dir.to_string_lossy().into_owned())
+    .collect::<Vec<_>>()
+    .join(";");
+    merge_path_segments_win(&[&process, &user, &machine, &fnm])
+}
+
+/// fnm only puts Node on PATH through `fnm env`, which prepends a per-shell
+/// `%LOCALAPPDATA%\fnm_multishells\<id>` link to that shell's PATH. Nothing is
+/// written to the registry PATH, so a GUI-launched CC Switch sees neither node,
+/// npm nor the npm global CLIs (#8484, #6991). `<fnm dir>\aliases\default` is a
+/// stable link to the default Node installation; on Windows node.exe, npm.cmd
+/// and npm global commands live directly in that directory (no `bin`).
+///
+/// Mirrors fnm's own base-dir lookup: `FNM_DIR`, then the legacy `~\.fnm`, then
+/// `%APPDATA%\fnm`. Callers keep only the directories that exist.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn fnm_default_alias_dir_candidates(
+    fnm_dir: Option<std::ffi::OsString>,
+    home: &Path,
+    data_dir: Option<std::path::PathBuf>,
+) -> Vec<std::path::PathBuf> {
+    let mut bases = IndexSet::new();
+    if let Some(dir) = fnm_dir.filter(|value| !value.is_empty()) {
+        push_unique_path(&mut bases, std::path::PathBuf::from(dir));
+    }
+    if !home.as_os_str().is_empty() {
+        push_unique_path(&mut bases, home.join(".fnm"));
+    }
+    if let Some(data_dir) = data_dir {
+        push_unique_path(&mut bases, data_dir.join("fnm"));
+    }
+    bases
+        .into_iter()
+        .map(|base| base.join("aliases").join("default"))
+        .collect()
 }
 
 /// `extend_from_cli_path_env` consumes an `OsString` via `split_paths`. On
@@ -9135,6 +9180,31 @@ mod tests {
         assert!(!is_windows_app_execution_alias_dir(Path::new(
             r"C:\Users\tester\AppData\Roaming\npm"
         )));
+    }
+
+    #[test]
+    fn fnm_default_alias_dir_candidates_follow_fnm_base_dir_order() {
+        let home = Path::new("/home/tester");
+        let data_dir = std::path::PathBuf::from("/home/tester/AppData/Roaming");
+        let alias = |base: &str| {
+            std::path::PathBuf::from(base)
+                .join("aliases")
+                .join("default")
+        };
+
+        assert_eq!(
+            fnm_default_alias_dir_candidates(Some("/opt/fnm".into()), home, Some(data_dir.clone())),
+            vec![
+                alias("/opt/fnm"),
+                alias("/home/tester/.fnm"),
+                alias("/home/tester/AppData/Roaming/fnm"),
+            ]
+        );
+        // Empty FNM_DIR / home are ignored instead of becoming relative paths.
+        assert_eq!(
+            fnm_default_alias_dir_candidates(Some("".into()), Path::new(""), Some(data_dir)),
+            vec![alias("/home/tester/AppData/Roaming/fnm")]
+        );
     }
 
     #[cfg(target_os = "windows")]
