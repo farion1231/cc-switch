@@ -4444,7 +4444,7 @@ mod tests {
 
     /// 确保防御性：单段文件名的新 fork 首页即使其 history_base 指向父会话某页，
     /// 也不会被误判为延续页，父线程未达到 cutoff 时必须被 deferred（#8255 用
-    /// transient 错误触发可重试 deferred，而非永久 content 错误）。
+    /// cacheable/content 错误（cacheable=true）触发可重试 deferred，而非 transient 错误）。
     #[test]
     #[serial_test::serial]
     fn test_single_segment_fork_is_not_treated_as_continuation() -> Result<(), AppError> {
@@ -4485,8 +4485,8 @@ mod tests {
 
         let files = [parent_root.as_path(), child.as_path()];
         let result = sync_test_file(&db, &child, &files)?;
-        // #8255：父最后记录早于 fork 时刻时，用 transient 错误触发可重试
-        // deferred（而非永久 content 错误），下轮 pass 随文件变化重扫。
+        // #8255：父最后记录早于 fork 时刻时，用 cacheable/content 错误（cacheable=true）
+        // 触发可重试 deferred，下轮 pass 随文件变化重扫。
         assert!(
             result.deferred,
             "父线程未达到 fork 时刻时必须被 deferred（可重试）"
@@ -4496,7 +4496,8 @@ mod tests {
     }
 
     /// #8255: fork 发生在父会话仍活跃时（父最后记录早于 fork 时刻，父可能继续
-    /// 写入）。子会话用 transient 错误触发可重试 deferred，父追加写入后恢复导入。
+    /// 写入）。子会话用 cacheable/content 错误（cacheable=true）触发可重试
+    /// deferred，父追加写入后恢复导入。
     #[test]
     #[serial_test::serial]
     fn test_fork_while_parent_still_active_is_imported() -> Result<(), AppError> {
@@ -4539,10 +4540,7 @@ mod tests {
         // 父追加写入，max_ts 推进到 >= cutoff
         append_jsonl(&parent_root, turn_context_at("2026-07-10T03:00:10Z"));
         let recovered = sync_test_file(&db, &child, &files)?;
-        assert!(
-            !recovered.deferred,
-            "父追加写入后应恢复导入"
-        );
+        assert!(!recovered.deferred, "父追加写入后应恢复导入");
         assert_eq!(
             (recovered.imported, recovered.skipped),
             (1, 1),
