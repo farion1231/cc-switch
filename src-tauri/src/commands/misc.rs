@@ -19,11 +19,6 @@ mod tool_node_requirement;
 #[path = "tool_uninstall.rs"]
 mod tool_uninstall;
 
-#[cfg(windows)]
-use super::chatgpt_desktop::{
-    is_chatgpt_desktop_codex_path, is_chatgpt_desktop_extracted_cli_path,
-};
-
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
@@ -1129,16 +1124,6 @@ fn probe_local_version(
     wsl_shell: Option<&str>,
     wsl_shell_flag: Option<&str>,
 ) -> ShellProbe {
-    probe_local_version_skipping(tool, wsl_distro, wsl_shell, wsl_shell_flag, |_| false)
-}
-
-fn probe_local_version_skipping(
-    tool: &str,
-    wsl_distro: Option<&str>,
-    wsl_shell: Option<&str>,
-    wsl_shell_flag: Option<&str>,
-    skip: impl Fn(&Path) -> bool,
-) -> ShellProbe {
     if let Some(distro) = wsl_distro {
         try_get_version_wsl(tool, distro, wsl_shell, wsl_shell_flag)
     } else {
@@ -1157,7 +1142,7 @@ fn probe_local_version_skipping(
             //    resolved by `where` (App Execution Aliases filtered out), so
             //    it never `cmd /C tool` into a protocol handler.
             match probe_path_default_version(tool) {
-                ShellProbe::NotFound(_) => scan_cli_version_skipping(tool, skip),
+                ShellProbe::NotFound(_) => scan_cli_version(tool),
                 found => found,
             }
         }
@@ -1166,7 +1151,7 @@ fn probe_local_version_skipping(
         {
             // PATH 第一个命令优先；只有它确实没装(NotFound)才去常见目录兜底扫描。
             match try_get_version(tool) {
-                ShellProbe::NotFound(_) => scan_cli_version_skipping(tool, skip),
+                ShellProbe::NotFound(_) => scan_cli_version(tool),
                 found => found,
             }
         }
@@ -1199,7 +1184,7 @@ async fn get_single_tool_version_impl(
     let client = crate::proxy::http_client::get();
 
     // 1. 获取本地版本
-    let probe = probe_own_install_version(tool, wsl_distro.as_deref(), wsl_shell, wsl_shell_flag);
+    let probe = probe_local_version(tool, wsl_distro.as_deref(), wsl_shell, wsl_shell_flag);
     let (local_version, local_error, installed_but_broken) = match probe {
         ShellProbe::Found(v) => (Some(v), None, false),
         ShellProbe::FoundButFailed(e) => (None, Some(e), true),
@@ -1254,102 +1239,6 @@ async fn get_single_tool_version_impl(
         wsl_distro,
         update_blocked_by_node,
     }
-}
-
-/// 「应用」页里这个工具自己的那份安装的版本。ChatGPT Desktop 随附的 codex 归桌面版那一行，
-/// 不算 Codex CLI：默认命令是它时不运行它；PATH 不可用而扫描常见目录时也跳过它。
-///
-/// 只给「应用」页用；`local_tool_version` 等其它地方照旧认命令行默认的那份。
-fn probe_own_install_version(
-    tool: &str,
-    wsl_distro: Option<&str>,
-    wsl_shell: Option<&str>,
-    wsl_shell_flag: Option<&str>,
-) -> ShellProbe {
-    if wsl_distro.is_none() && tool == "codex" {
-        let desktop_matcher = DesktopCliMatcher::new(tool);
-        if path_default_is_bundled_with_desktop(tool, &desktop_matcher) {
-            return scan_cli_version_skipping(tool, |path| desktop_matcher.matches(tool, path));
-        }
-        return probe_local_version_skipping(tool, wsl_distro, wsl_shell, wsl_shell_flag, |path| {
-            desktop_matcher.matches(tool, path)
-        });
-    }
-    probe_local_version(tool, wsl_distro, wsl_shell, wsl_shell_flag)
-}
-
-/// 命令行里的 codex 是不是 ChatGPT Desktop 随附的那份。
-fn path_default_is_bundled_with_desktop(tool: &str, matcher: &DesktopCliMatcher) -> bool {
-    tool == "codex"
-        && resolve_path_default(
-            tool,
-            CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
-        )
-        .ok()
-        .flatten()
-        .is_some_and(|path| matcher.matches(tool, &path))
-}
-
-/// 在一次 Codex 探测中复用已验证的桌面应用根目录，避免每个候选路径都重复跑 codesign。
-struct DesktopCliMatcher {
-    #[cfg(target_os = "macos")]
-    verified_macos_apps: Vec<PathBuf>,
-}
-
-impl DesktopCliMatcher {
-    fn new(tool: &str) -> Self {
-        #[cfg(not(target_os = "macos"))]
-        let _ = tool;
-        Self {
-            #[cfg(target_os = "macos")]
-            verified_macos_apps: if tool == "codex" {
-                super::chatgpt_desktop::macos_installed_apps()
-            } else {
-                Vec::new()
-            },
-        }
-    }
-
-    fn matches(&self, tool: &str, path: &Path) -> bool {
-        let real_path = std::fs::canonicalize(path).ok();
-        self.matches_with_real_path(tool, path, real_path.as_deref())
-    }
-
-    fn matches_with_real_path(&self, tool: &str, path: &Path, real_path: Option<&Path>) -> bool {
-        if tool != "codex"
-            || real_path.is_some_and(|real| is_codex_standalone_install_at(path, real))
-        {
-            return false;
-        }
-        #[cfg(target_os = "macos")]
-        let is_desktop_copy = |path: &Path| {
-            super::chatgpt_desktop::is_chatgpt_desktop_macos_cli_path(
-                path,
-                &self.verified_macos_apps,
-            )
-        };
-        #[cfg(windows)]
-        let is_desktop_copy = |path: &Path| {
-            let path = path.to_string_lossy();
-            is_chatgpt_desktop_codex_path(&path) || is_chatgpt_desktop_extracted_cli_path(&path)
-        };
-        #[cfg(not(any(windows, target_os = "macos")))]
-        let is_desktop_copy = |_: &Path| false;
-        #[cfg(not(target_os = "macos"))]
-        let _ = self;
-        is_desktop_copy(path) || real_path.is_some_and(is_desktop_copy)
-    }
-}
-
-/// 这处 codex 是 ChatGPT Desktop 随附的（入口本身，或软链指向的真身在桌面版里）。
-#[cfg(test)]
-fn is_bundled_with_desktop(tool: &str, path: &Path) -> bool {
-    DesktopCliMatcher::new(tool).matches(tool, path)
-}
-
-#[cfg(test)]
-fn is_bundled_with_desktop_paths(tool: &str, path: &Path, real_path: Option<&Path>) -> bool {
-    DesktopCliMatcher::new(tool).matches_with_real_path(tool, path, real_path)
 }
 
 /// 该工具在 npm 上的预发布通道 tag(靠前者优先)。仅当本地版本已**严格领先**
@@ -2754,20 +2643,12 @@ fn probe_path_default_version(tool: &str) -> ShellProbe {
     }
 }
 
-/// 扫描常见路径查找 CLI（PATH 主命令未命中时的兜底单探），可跳过随附的 Codex CLI。
-fn scan_cli_version_skipping(tool: &str, skip: impl Fn(&Path) -> bool) -> ShellProbe {
-    let search_paths = build_tool_search_paths(tool);
-    scan_cli_version_skipping_paths(tool, &search_paths, skip)
-}
-
-fn scan_cli_version_skipping_paths(
-    tool: &str,
-    search_paths: &[PathBuf],
-    skip: impl Fn(&Path) -> bool,
-) -> ShellProbe {
+/// 扫描常见路径查找 CLI（PATH 主命令未命中时的兜底单探）。
+fn scan_cli_version(tool: &str) -> ShellProbe {
     #[cfg(not(target_os = "windows"))]
     use std::process::Command;
 
+    let search_paths = build_tool_search_paths(tool);
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
     #[cfg(not(target_os = "windows"))]
@@ -2778,7 +2659,7 @@ fn scan_cli_version_skipping_paths(
     // 这类信息比笼统的 "not installed" 有用得多，循环结束未探到版本时回传。
     let mut exec_diagnostic: Option<String> = None;
 
-    for path in search_paths {
+    for path in &search_paths {
         #[cfg(target_os = "windows")]
         let new_path = format!("{};{}", path.display(), current_path);
 
@@ -2786,7 +2667,7 @@ fn scan_cli_version_skipping_paths(
         let new_path = prepend_search_dir_to_path(path, &current_path);
 
         for tool_path in tool_executable_candidates(tool, path) {
-            if !tool_path.exists() || skip(&tool_path) {
+            if !tool_path.exists() {
                 continue;
             }
 
@@ -3172,7 +3053,6 @@ pub(crate) fn probe_executable_version(path: &Path) -> Result<String, String> {
 /// 可执行文件都跑一次 `--version`，从而能发现"升级写入 A 处、PATH 实际用 B 处"。
 fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
     let search_paths = build_tool_search_paths(tool);
-    let desktop_matcher = DesktopCliMatcher::new(tool);
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
     #[cfg(not(target_os = "windows"))]
@@ -3197,9 +3077,7 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
         let new_path = prepend_search_dir_to_path(dir, &current_path);
 
         for tool_path in tool_executable_candidates(tool, dir) {
-            // ChatGPT Desktop 随附的 codex 跟着桌面版更新、随桌面版卸载，在「应用」页归桌面版那一行：
-            // 不算 Codex CLI 的安装，不进安装分布、升级和卸载。
-            if !tool_path.exists() || desktop_matcher.matches(tool, &tool_path) {
+            if !tool_path.exists() {
                 continue;
             }
             // canonicalize 解析软链后去重：/opt/homebrew/bin/x → Cellar/...、nvm shim 等
@@ -7779,90 +7657,6 @@ mod tests {
                 infer_install_source(Path::new("C:\\Users\\me\\scoop\\shims\\codex.cmd")),
                 "scoop"
             );
-        }
-
-        #[cfg(windows)]
-        #[test]
-        fn fallback_scan_skips_bundled_codex_candidate() {
-            let dir = tempfile::tempdir().unwrap();
-            let resources = dir
-                .path()
-                .join("ChatGPT.app")
-                .join("Contents")
-                .join("Resources");
-            std::fs::create_dir_all(&resources).unwrap();
-            #[cfg(windows)]
-            let candidate = resources.join("codex.exe");
-            #[cfg(not(windows))]
-            let candidate = resources.join("codex");
-            std::fs::write(&candidate, b"placeholder").unwrap();
-
-            let result = scan_cli_version_skipping_paths("codex", &[resources], |path| {
-                is_bundled_with_desktop("codex", path)
-            });
-
-            assert!(matches!(result, ShellProbe::NotFound(_)));
-        }
-
-        #[test]
-        fn codex_bundled_with_chatgpt_desktop_is_not_a_codex_cli_install() {
-            #[cfg(windows)]
-            {
-                // 只把当前用户 LocalAppData 下桌面版解出的副本归给桌面版。
-                let extracted = dirs::data_local_dir()
-                    .unwrap()
-                    .join("OpenAI")
-                    .join("Codex")
-                    .join("bin")
-                    .join("e78bad9887fa50cf")
-                    .join("codex.exe");
-                assert!(is_bundled_with_desktop("codex", &extracted));
-            }
-            // Linux 上即使自定义安装路径与缓存目录结构相似，也不能误认成桌面版副本。
-            assert!(!is_bundled_with_desktop(
-                "codex",
-                Path::new("/opt/OpenAI/Codex/bin/stable/codex"),
-            ));
-            // 官方独立安装器那份照旧算；也只认 codex。
-            assert!(!is_bundled_with_desktop(
-                "codex",
-                Path::new(r"C:\Users\me\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe"),
-            ));
-            assert!(!is_bundled_with_desktop(
-                "claude",
-                Path::new("/Applications/ChatGPT.app/Contents/Resources/codex"),
-            ));
-        }
-
-        #[cfg(not(any(windows, target_os = "macos")))]
-        #[test]
-        fn linux_does_not_filter_desktop_named_codex_paths() {
-            for path in [
-                Path::new("/opt/OpenAI/Codex/bin/stable/codex"),
-                Path::new("/home/me/ChatGPT.app/Contents/Resources/codex"),
-                Path::new("/run/user/1000/windowsapps/openai.codex_26.1013.3656.0_x64/codex.exe"),
-            ] {
-                assert!(
-                    !is_bundled_with_desktop("codex", path),
-                    "Linux Codex path must remain independently managed: {}",
-                    path.display()
-                );
-            }
-        }
-
-        #[test]
-        fn numeric_custom_codex_install_is_not_classified_as_desktop_when_its_target_is_standalone()
-        {
-            let custom_install =
-                Path::new("/Users/me/AppData/Local/OpenAI/Codex/bin/1.2.3/codex.exe");
-            let standalone_target = Path::new(
-                "/Users/me/.codex/packages/standalone/releases/1.2.3-x86_64-pc-windows-msvc/bin/codex.exe",
-            );
-            assert!(!is_bundled_with_desktop_paths(
-                "codex",
-                custom_install,
-                Some(standalone_target)
-            ));
         }
     }
 

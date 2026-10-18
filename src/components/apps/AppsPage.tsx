@@ -563,7 +563,7 @@ function AppRow({
 /**
  * ChatGPT Desktop：和 Codex CLI 共用配置和侧栏入口，所以显示开关也是同一个设置，两行的开关一起开、一起关；
  * 不能在这里安装或升级。
- * 它随附的 Codex CLI 只列在这一行（Codex CLI 那一行只算单独安装的）。
+ * 这一行显示桌面版和随附 CLI 的状态；Codex CLI 行仍沿用现有检测行为。
  */
 function ChatgptDesktopRow({
   status,

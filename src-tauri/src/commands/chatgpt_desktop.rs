@@ -1,8 +1,7 @@
 //! ChatGPT Desktop（OpenAI 的桌面应用）的安装检测。
 //!
 //! 它自带一份 Codex CLI，和 Codex CLI 共用 `~/.codex` 配置；随附的那份跟着桌面版更新。
-//! 「应用」页把它列在 ChatGPT Desktop 那一行，Codex CLI 那一行只算单独安装的
-//! （见 `is_chatgpt_desktop_codex_path`）。
+//! 「应用」页会在 ChatGPT Desktop 行显示桌面版和随附 CLI 的版本。
 
 use std::path::PathBuf;
 
@@ -96,36 +95,9 @@ pub(crate) fn macos_installed_apps() -> Vec<PathBuf> {
     apps
 }
 
-#[cfg(target_os = "macos")]
-pub(crate) fn is_chatgpt_desktop_macos_cli_path(
-    path: &std::path::Path,
-    verified_apps: &[PathBuf],
-) -> bool {
-    is_macos_cli_path_with_verified_apps(path, verified_apps)
-}
-
-/// `apps` must come from `macos_installed_apps`, which only returns bundles with the expected
-/// bundle identifier and a valid OpenAI signature.
-#[cfg(any(target_os = "macos", test))]
-fn is_macos_cli_path_with_verified_apps(path: &std::path::Path, apps: &[PathBuf]) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| {
-            name.eq_ignore_ascii_case("codex") || name.eq_ignore_ascii_case("codex.exe")
-        })
-        && apps.iter().any(|app| macos_path_is_within_app(path, app))
-}
-
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 fn canonical_macos_app_path(app: &std::path::Path) -> Option<PathBuf> {
     std::fs::canonicalize(app).ok()
-}
-
-#[cfg(any(target_os = "macos", test))]
-fn macos_path_is_within_app(path: &std::path::Path, app: &std::path::Path) -> bool {
-    let app = canonical_macos_app_path(app).unwrap_or_else(|| app.to_path_buf());
-    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    path.starts_with(app)
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -411,65 +383,6 @@ fn newest_main_package(full_names: &[String]) -> Option<&String> {
         .map(|(name, _)| name)
 }
 
-/// 这处 codex 是不是 ChatGPT Desktop 随附的那份。纯字符串判断、不碰文件系统，
-/// 各平台的路径都能在任一平台单测。
-///
-/// - Windows：包内的 `WindowsApps\OpenAI.Codex_*\…\codex.exe`；
-/// - macOS：`ChatGPT.app` / `Codex.app` 包内的 `codex`。
-///
-/// 官方独立安装器的 `Programs\OpenAI\Codex\bin\codex.exe`（入口直接在 bin 下）、
-/// npm 的 `@openai/codex/bin/codex.js` 都不算。
-#[cfg_attr(not(windows), allow(dead_code))]
-pub(crate) fn is_chatgpt_desktop_codex_path(path: &str) -> bool {
-    let normalized = path.replace('\\', "/").to_ascii_lowercase();
-    let file_name = normalized.rsplit('/').next().unwrap_or_default();
-    if file_name != "codex" && file_name != "codex.exe" {
-        return false;
-    }
-    if normalized.contains("/windowsapps/openai.codex_")
-        || normalized.contains("/chatgpt.app/contents/")
-        || normalized.contains("/codex.app/contents/")
-    {
-        return true;
-    }
-    false
-}
-
-/// 只在 Windows 当前用户的 LocalAppData 下识别桌面版解出的缓存 CLI。
-#[cfg_attr(not(windows), allow(dead_code))]
-pub(crate) fn is_chatgpt_desktop_extracted_cli_path(path: &str) -> bool {
-    #[cfg(windows)]
-    {
-        dirs::data_local_dir().is_some_and(|local_data_dir| {
-            is_extracted_cli_path_under_root(path, &local_data_dir.to_string_lossy())
-        })
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = path;
-        false
-    }
-}
-
-#[cfg(any(windows, test))]
-fn is_extracted_cli_path_under_root(path: &str, local_data_dir: &str) -> bool {
-    fn normalize(path: &str) -> String {
-        let path = path.replace('\\', "/").to_ascii_lowercase();
-        if let Some(unc) = path.strip_prefix("//?/unc/") {
-            format!("//{unc}")
-        } else {
-            path.strip_prefix("//?/").unwrap_or(&path).to_string()
-        }
-    }
-
-    let path = normalize(path);
-    let root = normalize(local_data_dir);
-    let prefix = format!("{}/openai/codex/bin/", root.trim_end_matches('/'));
-    path.strip_prefix(&prefix).is_some_and(|rest| {
-        matches!(rest.split('/').collect::<Vec<_>>().as_slice(), [version, exe] if is_extracted_cli_cache_dir_name(version) && *exe == "codex.exe")
-    })
-}
-
 #[cfg(windows)]
 mod windows_package {
     use std::ffi::OsString;
@@ -605,47 +518,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn macos_cli_filter_requires_a_verified_app_root() {
-        let dir = tempfile::tempdir().unwrap();
-        let verified_app = dir.path().join("ChatGPT.app");
-        let unverified_app = dir.path().join("Other.app");
-        std::fs::create_dir_all(&verified_app).unwrap();
-        std::fs::create_dir_all(&unverified_app).unwrap();
-        let bundled_cli = verified_app.join("Contents/Resources/codex");
-        let unrelated_executable = verified_app.join("Contents/Resources/codex-command-runner");
-        let unrelated_cli = unverified_app.join("Contents/Resources/codex");
-        std::fs::create_dir_all(bundled_cli.parent().unwrap()).unwrap();
-        std::fs::write(&bundled_cli, b"placeholder").unwrap();
-
-        assert!(is_macos_cli_path_with_verified_apps(
-            &bundled_cli,
-            std::slice::from_ref(&verified_app)
-        ));
-        assert!(!is_macos_cli_path_with_verified_apps(
-            &unrelated_cli,
-            std::slice::from_ref(&verified_app)
-        ));
-        assert!(!is_macos_cli_path_with_verified_apps(
-            &unrelated_executable,
-            std::slice::from_ref(&verified_app)
-        ));
-        #[cfg(unix)]
-        {
-            let link = dir.path().join("bin/codex");
-            std::fs::create_dir_all(link.parent().unwrap()).unwrap();
-            std::os::unix::fs::symlink(&bundled_cli, &link).unwrap();
-            assert!(is_macos_cli_path_with_verified_apps(
-                &link,
-                std::slice::from_ref(&verified_app)
-            ));
-            assert!(is_macos_cli_path_with_verified_apps(
-                &std::fs::canonicalize(&link).unwrap(),
-                std::slice::from_ref(&verified_app)
-            ));
-        }
-    }
-
     #[cfg(unix)]
     #[test]
     fn macos_app_symlinks_are_resolved_before_detection() {
@@ -660,10 +532,6 @@ mod tests {
 
         let resolved_app = canonical_macos_app_path(&app_alias).unwrap();
         assert_eq!(resolved_app, std::fs::canonicalize(&real_app).unwrap());
-        assert!(macos_path_is_within_app(
-            &app_alias.join("Contents/Resources/codex"),
-            &resolved_app
-        ));
     }
 
     #[test]
@@ -761,41 +629,6 @@ mod tests {
     }
 
     #[test]
-    fn extracted_cli_cache_paths_are_anchored_to_localappdata() {
-        let local_data_dir = r"C:\Users\me\AppData\Local";
-        for path in [
-            r"C:\Users\me\AppData\Local\OpenAI\Codex\bin\e78bad9887fa50cf\codex.exe",
-            r"C:\Users\me\AppData\Local\OpenAI\Codex\bin\0.162.0\codex.exe",
-            r"\\?\C:\Users\me\AppData\Local\OpenAI\Codex\bin\e78bad9887fa50cf\codex.exe",
-        ] {
-            assert!(
-                is_extracted_cli_path_under_root(path, local_data_dir),
-                "{path}"
-            );
-        }
-        assert!(is_extracted_cli_path_under_root(
-            r"\\?\UNC\server\share\Users\me\AppData\Local\OpenAI\Codex\bin\e78bad9887fa50cf\codex.exe",
-            r"\\server\share\Users\me\AppData\Local"
-        ));
-        for path in [
-            r"D:\Profiles\me\LocalAppData\OpenAI\Codex\bin\0123456789abcdef\codex.exe",
-            r"C:\Users\me\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe",
-            r"C:\Users\me\AppData\Local\OpenAI\Codex\bin\stable\codex.exe",
-            r"C:\Users\me\AppData\Local\OpenAI\Codex\bin\stable\current\codex.exe",
-            "/opt/OpenAI/Codex/bin/stable/codex",
-        ] {
-            assert!(
-                !is_extracted_cli_path_under_root(path, local_data_dir),
-                "{path}"
-            );
-            assert!(!is_chatgpt_desktop_codex_path(path), "{path}");
-        }
-        assert!(!is_chatgpt_desktop_extracted_cli_path(
-            "/opt/OpenAI/Codex/bin/stable/codex"
-        ));
-    }
-
-    #[test]
     fn extracted_cli_cache_directory_names_are_specific() {
         assert!(is_extracted_cli_cache_dir_name("e78bad9887fa50cf"));
         assert!(is_extracted_cli_cache_dir_name("0.162.0"));
@@ -825,55 +658,6 @@ mod tests {
             legacy_desktop_cache,
             legacy_desktop_cache
         ));
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn extracted_cli_cache_path_uses_the_current_localappdata_root() {
-        let local_data_dir = dirs::data_local_dir().unwrap();
-        let path = local_data_dir
-            .join("OpenAI")
-            .join("Codex")
-            .join("bin")
-            .join("e78bad9887fa50cf")
-            .join("codex.exe");
-        assert!(is_chatgpt_desktop_extracted_cli_path(
-            &path.to_string_lossy()
-        ));
-    }
-
-    #[test]
-    fn recognizes_codex_bundled_with_chatgpt_desktop() {
-        for path in [
-            r"C:\Program Files\WindowsApps\OpenAI.Codex_26.1013.3656.0_x64__2p2nqsd0c76g0\app\resources\codex.exe",
-            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
-            "/Users/me/Applications/ChatGPT.app/Contents/Resources/codex",
-            "/Applications/Codex.app/Contents/Resources/codex",
-        ] {
-            assert!(is_chatgpt_desktop_codex_path(path), "{path}");
-        }
-    }
-
-    #[test]
-    fn leaves_standalone_npm_and_homebrew_codex_alone() {
-        for path in [
-            // 官方独立安装器：入口直接在 bin 下，真身在 CODEX_HOME 的发布包里。
-            r"C:\Users\me\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe",
-            r"C:\Users\me\.codex\packages\standalone\releases\0.150.0-x86_64-pc-windows-msvc\codex.exe",
-            // npm 全局包：`@openai/codex/bin/` 里含 `openai/codex/bin/`，但文件名不是 codex。
-            r"C:\Users\me\AppData\Roaming\npm\node_modules\@openai\codex\bin\codex.js",
-            r"C:\Users\me\AppData\Roaming\npm\codex.cmd",
-            "/Users/me/.nvm/versions/node/v22.0.0/lib/node_modules/@openai/codex/bin/codex.js",
-            "/opt/homebrew/Caskroom/codex/0.146.0/bin/codex",
-            "/usr/local/bin/codex",
-            "/opt/OpenAI/Codex/bin/stable/codex",
-            // 桌面版目录里的其它程序不是 codex 本体。
-            r"C:\Users\me\AppData\Local\OpenAI\Codex\bin\e78bad9887fa50cf\codex-command-runner.exe",
-            // 插件自带的 app-server 副本不在 ChatGPT.app 里。
-            "/Users/me/.codex/plugins/.plugin-appserver/codex-cli/CodexCLI.app/Contents/MacOS/codex",
-        ] {
-            assert!(!is_chatgpt_desktop_codex_path(path), "{path}");
-        }
     }
 
     #[cfg(windows)]
