@@ -761,16 +761,12 @@ fn token_snapshot_source(payload: &serde_json::Value) -> Option<String> {
 ///   不丢数据、不双算。
 /// - `pricing`：模型定价 pass 级缓存。定价表在 pass 进行中被修改时本 pass
 ///   仍用旧价，下一个同步 pass 生效。
-const CODEX_USAGE_RECORD_BACKFILL_KEY: &str = "codex_token_usage_record_backfill";
-
 struct CodexSyncPass {
     cursors: HashMap<String, (i64, i64)>,
     /// rollout 逻辑文件名（去掉 `.zst`）→ 记过游标的路径，供游标继承按名查找
     rollout_cursor_paths: HashMap<String, Vec<String>>,
     byte_offsets: HashMap<String, Option<i64>>,
     pricing: HashMap<String, Option<ModelPricing>>,
-    /// 升级前的游标已经扫过压缩行。第一次同步忽略未改文件的快路径，把这些行补上。
-    reread_unchanged: bool,
 }
 
 impl CodexSyncPass {
@@ -809,7 +805,6 @@ impl CodexSyncPass {
             rollout_cursor_paths,
             byte_offsets,
             pricing: HashMap::new(),
-            reread_unchanged: false,
         })
     }
 }
@@ -1041,7 +1036,6 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let files = collect_codex_session_files(&codex_dir);
     let rollout_index = build_rollout_index(&files);
     let mut pass = CodexSyncPass::load(db)?;
-    arm_usage_record_backfill(&mut pass);
 
     let mut result = SessionSyncResult {
         imported: 0,
@@ -1072,10 +1066,6 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         }
     }
 
-    if pass.reread_unchanged && result.errors.is_empty() {
-        mark_codex_usage_record_backfill(db)?;
-    }
-
     if result.imported > 0 || result.deferred_files > 0 {
         log::info!(
             "[CODEX-SYNC] 同步完成: 导入 {} 条, 跳过 {} 条, deferred {} 个, 扫描 {} 个文件",
@@ -1087,25 +1077,6 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     }
 
     Ok(result)
-}
-
-fn arm_usage_record_backfill(pass: &mut CodexSyncPass) {
-    pass.reread_unchanged = !pass.cursors.contains_key(CODEX_USAGE_RECORD_BACKFILL_KEY);
-}
-
-fn mark_codex_usage_record_backfill(db: &Database) -> Result<(), AppError> {
-    let conn = lock_conn!(db.conn);
-    conn.execute(
-        "INSERT OR IGNORE INTO session_log_sync
-            (file_path, last_modified, last_line_offset, last_synced_at)
-         VALUES (?1, 0, 0, ?2)",
-        rusqlite::params![
-            CODEX_USAGE_RECORD_BACKFILL_KEY,
-            Utc::now().timestamp_millis()
-        ],
-    )
-    .map_err(|e| AppError::Database(format!("记录 Codex 用量回读标记失败: {e}")))?;
-    Ok(())
 }
 
 /// 收集所有 Codex 会话 JSONL 文件
@@ -2029,10 +2000,7 @@ fn sync_single_codex_file(
     // Windows may keep mtime unchanged while Codex holds its write handle open.
     // Legacy cursors have no byte offset: rescan once to catch up and persist it.
     let last_byte_offset = pass.byte_offsets.get(&file_path_str).copied().flatten();
-    if !pass.reread_unchanged
-        && file_modified == last_modified
-        && last_byte_offset == i64::try_from(file_size).ok()
-    {
+    if file_modified == last_modified && last_byte_offset == i64::try_from(file_size).ok() {
         return Ok(CodexFileSyncResult::default());
     }
 
@@ -2221,8 +2189,7 @@ fn sync_single_codex_file(
         let Some(suffix) = event.request_suffix.as_deref() else {
             continue;
         };
-        // 回读时游标已经越过这些行。请求号带 response_id，重复插入是空操作。
-        if !pass.reread_unchanged && event.line_offset <= last_offset {
+        if event.line_offset <= last_offset {
             continue;
         }
         to_insert.push((event, suffix.to_string()));
@@ -2793,7 +2760,7 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_file_backfills_compaction_usage_once() -> Result<(), AppError> {
+    fn already_scanned_compaction_stays_behind_the_cursor() -> Result<(), AppError> {
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
         let path = rollout_path(temp.path(), PARENT_ID);
@@ -2822,27 +2789,10 @@ mod tests {
             .map_err(|error| AppError::Database(error.to_string()))?;
         }
 
-        let skipped = sync_test_file(&db, &path, &[&path])?;
-        assert_eq!(skipped.imported, 0);
+        let result = sync_test_file(&db, &path, &[&path])?;
+
+        assert_eq!(result.imported, 0);
         assert!(codex_usage_rows(&db)?.is_empty());
-
-        let files = vec![path.clone()];
-        let mut pass = CodexSyncPass::load(&db)?;
-        arm_usage_record_backfill(&mut pass);
-        let imported = sync_single_codex_file(&db, &path, &build_rollout_index(&files), &mut pass)?;
-        assert_eq!(imported.imported, 1);
-        let rows = codex_usage_rows(&db)?;
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].1, 26_705);
-        assert_eq!(rows[0].2, 491);
-
-        mark_codex_usage_record_backfill(&db)?;
-        let mut pass = CodexSyncPass::load(&db)?;
-        arm_usage_record_backfill(&mut pass);
-        assert!(!pass.reread_unchanged);
-        let again = sync_single_codex_file(&db, &path, &build_rollout_index(&files), &mut pass)?;
-        assert_eq!(again.imported, 0);
-        assert_eq!(codex_usage_rows(&db)?.len(), 1);
         Ok(())
     }
 
