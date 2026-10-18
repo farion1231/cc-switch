@@ -628,6 +628,7 @@ pub(crate) fn plan(
                     }
                     // 重试次数和流空闲超时是 Codex 客户端自己的行为（对本地路由同样生效），
                     // 照搬行里的值；旧版接管只改地址，这几个键一直留着（#8265）。
+                    // 独立搜索的能力声明也要带过来，Codex 才会使用代理的 /alpha/search 入口。
                     for key in PROXY_KEPT_CLIENT_KEYS {
                         if let Some(value) = table.get(key) {
                             proxy_table.insert(key, value.clone());
@@ -759,11 +760,12 @@ pub(crate) fn settings_without_row_catalog(route: &Provider) -> Option<Value> {
     Some(settings)
 }
 
-/// 代理契约的路由表从行的路由表照搬的客户端键：Codex 自己的重试和流空闲超时。
+/// 代理契约的路由表从行的路由表照搬的客户端键：重试、流空闲超时和独立搜索能力。
 const PROXY_KEPT_CLIENT_KEYS: &[&str] = &[
     "request_max_retries",
     "stream_max_retries",
     "stream_idle_timeout_ms",
+    "supports_standalone_web_search",
 ];
 
 /// 发布了 Stack 模型时不写进 `config.toml` 的全局键：Codex 拿它们覆盖目录里的每一行。

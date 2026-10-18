@@ -6810,7 +6810,11 @@ model_provider = "c"
         crate::config::read_json_file(&crate::codex_config::get_codex_model_catalog_path()).unwrap()
     }
 
-    async fn check_codex_proxy_compaction_preference(name: &str, capability: Option<&str>) {
+    async fn check_codex_proxy_compaction_preference(
+        name: &str,
+        capability: Option<&str>,
+        standalone_web_search: Option<bool>,
+    ) {
         for stack in [false, true] {
             let _home = Home::new();
             seed_codex("[features]\ngoals = true\n", None);
@@ -6831,6 +6835,9 @@ model_provider = "c"
             provider["capabilities"]["external_web_access"] = toml_edit::value(false);
             provider["stream_max_retries"] = toml_edit::value(50);
             provider["stream_idle_timeout_ms"] = toml_edit::value(600000);
+            if let Some(enabled) = standalone_web_search {
+                provider["supports_standalone_web_search"] = toml_edit::value(enabled);
+            }
             if let Some(value) = capability {
                 provider["capabilities"]["remote_compaction"] = toml_edit::value(value);
             }
@@ -6870,6 +6877,12 @@ model_provider = "c"
                 // Codex 自己的重试和流空闲超时跟着路由那家走（#8265）。
                 assert_eq!(proxy["stream_max_retries"].as_integer(), Some(50));
                 assert_eq!(proxy["stream_idle_timeout_ms"].as_integer(), Some(600000));
+                assert_eq!(
+                    proxy
+                        .get("supports_standalone_web_search")
+                        .and_then(|value| value.as_bool()),
+                    standalone_web_search
+                );
                 if published_stack {
                     // Stack keeps each provider's window on its own catalog row.
                     assert!(doc.get("model_context_window").is_none());
@@ -6926,6 +6939,7 @@ model_provider = "c"
             assert!(proxy.get("capabilities").is_none());
             assert!(proxy.get("stream_max_retries").is_none());
             assert!(proxy.get("stream_idle_timeout_ms").is_none());
+            assert!(proxy.get("supports_standalone_web_search").is_none());
             exit(&state, &AppType::Codex).await.unwrap();
         }
     }
@@ -6933,15 +6947,22 @@ model_provider = "c"
     #[tokio::test]
     #[serial]
     async fn codex_proxy_preserves_legacy_remote_compaction_toggle() {
-        check_codex_proxy_compaction_preference("OpenAI", None).await;
-        check_codex_proxy_compaction_preference("Relay", None).await;
+        check_codex_proxy_compaction_preference("OpenAI", None, None).await;
+        check_codex_proxy_compaction_preference("Relay", None, None).await;
     }
 
     #[tokio::test]
     #[serial]
     async fn codex_proxy_preserves_explicit_remote_compaction_capability() {
-        check_codex_proxy_compaction_preference("Relay", Some("v2")).await;
-        check_codex_proxy_compaction_preference("OpenAI", Some("unsupported")).await;
+        check_codex_proxy_compaction_preference("Relay", Some("v2"), None).await;
+        check_codex_proxy_compaction_preference("OpenAI", Some("unsupported"), None).await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_proxy_preserves_standalone_web_search_capability() {
+        check_codex_proxy_compaction_preference("Relay", None, Some(true)).await;
+        check_codex_proxy_compaction_preference("Relay", None, Some(false)).await;
     }
 
     #[tokio::test]

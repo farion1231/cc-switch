@@ -30,7 +30,7 @@ web_search = "disabled"
   );
 
   it("preserves comments and quoted keys", () => {
-    const input = `# search preference\n'web_search' = 'cached' # keep\n`;
+    const input = `# “search preference”\n'web_search' = 'cached' # keep\n[mcp_servers.fs]\nstartup_timeout_sec = 30.0\n`;
     expect(setCodexLiveWebSearch(input, true)).toBe(
       input.replace("'cached'", '"live"'),
     );
@@ -41,11 +41,22 @@ web_search = "disabled"
     '[model_providers.relay] # provider\nname = "Relay"\n',
     '[[items]]\nweb_search = "disabled"\n',
     'instructions = """\nweb_search = "disabled"\n"""\n',
-    '"web_search" = """cached"""\n',
   ])("safely writes the root key for unusual TOML: %s", (input) => {
     const expected = { ...parse(input), web_search: "live" };
     expect(parse(setCodexLiveWebSearch(input, true))).toEqual(expected);
   });
+
+  it.each(['"enabled"', '"""cached"""'])(
+    "preserves every byte when the existing value cannot be safely replaced: %s",
+    (value) => {
+      const input = `# Search preference\nweb_search = ${value} # keep\n\n[mcp_servers.fs] # tools\ncommand = 'fs'\nstartup_timeout_sec = 30.0\n`;
+      for (const enabled of [true, false]) {
+        expect(setCodexLiveWebSearch(input, enabled)).toBe(input);
+        const crlf = input.replace(/\n/g, "\r\n");
+        expect(setCodexLiveWebSearch(crlf, enabled)).toBe(crlf);
+      }
+    },
+  );
 
   it("does not overwrite invalid TOML", () => {
     const input = 'web_search = "unfinished';

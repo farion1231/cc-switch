@@ -3,7 +3,7 @@
 import type { TemplateValueConfig } from "../config/claudeProviderPresets";
 import type { CodexApiFormat } from "@/types";
 import { normalizeTomlText } from "@/utils/textNormalization";
-import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
+import { parse as parseToml } from "smol-toml";
 
 const isPlainObject = (value: unknown): value is Record<string, any> => {
   return Object.prototype.toString.call(value) === "[object Object]";
@@ -877,19 +877,17 @@ export const setCodexLiveWebSearch = (
   enabled: boolean,
 ): string => {
   try {
-    const text = normalizeTomlText(configText);
+    const text = configText;
     const parsed = parseToml(text);
     const mode = enabled ? "live" : "cached";
     if (parsed.web_search === mode) return configText;
     const lines = text ? text.split("\n") : [];
     const pattern =
       /^(\s*(?:web_search|"web_search"|'web_search')\s*=\s*)(?:"(?:disabled|cached|indexed|live)"|'(?:disabled|cached|indexed|live)')(\s*(?:#.*)?)$/;
-    const index = findTomlLineInRange(
-      lines,
-      pattern,
-      0,
-      getTopLevelEndIndex(lines),
-    );
+    const index =
+      parsed.web_search === undefined
+        ? -1
+        : findTomlLineInRange(lines, pattern, 0, getTopLevelEndIndex(lines));
     if (index !== -1) {
       lines[index] = lines[index].replace(pattern, `$1"${mode}"$2`);
     } else {
@@ -907,9 +905,10 @@ export const setCodexLiveWebSearch = (
         return candidate;
       }
     } catch {
-      // Fall back for valid but unusual TOML assignments (e.g. multiline strings).
+      // A toggle must not reserialize the whole live config and lose comments
+      // or change unrelated value types (e.g. 30.0 to 30).
     }
-    return stringifyToml(parsed);
+    return configText;
   } catch {
     return configText;
   }
@@ -935,7 +934,7 @@ export const setCodexStandaloneWebSearch = (
   configText: string,
   enabled: boolean,
 ): string => {
-  const text = normalizeTomlText(configText);
+  const text = configText;
   try {
     const parsed = parseToml(text);
     const id = parsed.model_provider;
@@ -960,7 +959,7 @@ export const setCodexStandaloneWebSearch = (
       } catch {
         // Unusual table syntax may not be recognized by the line editor.
       }
-      return stringifyToml(parsed);
+      return configText;
     };
     const lines = text.split("\n");
     const section = getTomlSectionRange(
@@ -989,10 +988,9 @@ export const setCodexStandaloneWebSearch = (
         return finish(lines);
       }
     }
-    // Inline tables and dotted assignments need structural editing to avoid
-    // duplicate tables or keys. Preserve their values through the TOML parser.
-    providers[id][key] = enabled;
-    return stringifyToml(parsed);
+    // Leave unsupported layouts untouched rather than reserialize unrelated
+    // live settings. The user can still edit the target value in the TOML editor.
+    return configText;
   } catch {
     // Leave incomplete/invalid TOML untouched while the user is typing.
     return configText;
