@@ -3,7 +3,7 @@
 import type { TemplateValueConfig } from "../config/claudeProviderPresets";
 import type { CodexApiFormat } from "@/types";
 import { normalizeTomlText } from "@/utils/textNormalization";
-import { parse as parseToml } from "smol-toml";
+import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 
 const isPlainObject = (value: unknown): value is Record<string, any> => {
   return Object.prototype.toString.call(value) === "[object Object]";
@@ -861,6 +861,142 @@ export const setCodexWireApi = (
 
   lines.splice(topLevelEndIndex, 0, replacementLine);
   return finalizeTomlText(lines);
+};
+
+/** Read the explicit preference, not the effective mode after Codex overrides. */
+export const isCodexLiveWebSearchEnabled = (configText: string): boolean => {
+  try {
+    return parseToml(normalizeTomlText(configText)).web_search === "live";
+  } catch {
+    return false;
+  }
+};
+
+export const setCodexLiveWebSearch = (
+  configText: string,
+  enabled: boolean,
+): string => {
+  try {
+    const text = normalizeTomlText(configText);
+    const parsed = parseToml(text);
+    const mode = enabled ? "live" : "cached";
+    if (parsed.web_search === mode) return configText;
+    const lines = text ? text.split("\n") : [];
+    const pattern =
+      /^(\s*(?:web_search|"web_search"|'web_search')\s*=\s*)(?:"(?:disabled|cached|indexed|live)"|'(?:disabled|cached|indexed|live)')(\s*(?:#.*)?)$/;
+    const index = findTomlLineInRange(
+      lines,
+      pattern,
+      0,
+      getTopLevelEndIndex(lines),
+    );
+    if (index !== -1) {
+      lines[index] = lines[index].replace(pattern, `$1"${mode}"$2`);
+    } else {
+      // Prepend so commented table headers and arrays of tables cannot put
+      // this root setting inside a nested table.
+      lines.unshift(`web_search = "${mode}"`);
+    }
+    parsed.web_search = mode;
+    const candidate = lines.join("\n");
+    try {
+      if (
+        JSON.stringify(comparableTomlValue(parseToml(candidate))) ===
+        JSON.stringify(comparableTomlValue(parsed))
+      ) {
+        return candidate;
+      }
+    } catch {
+      // Fall back for valid but unusual TOML assignments (e.g. multiline strings).
+    }
+    return stringifyToml(parsed);
+  } catch {
+    return configText;
+  }
+};
+
+/** The provider capability is independent of the top-level web_search mode. */
+export const isCodexStandaloneWebSearchEnabled = (
+  configText: string,
+): boolean => {
+  try {
+    const parsed = parseToml(normalizeTomlText(configText));
+    const id = parsed.model_provider;
+    if (typeof id !== "string") return false;
+    const providers: unknown = parsed.model_providers;
+    if (!isPlainObject(providers)) return false;
+    return providers[id]?.supports_standalone_web_search === true;
+  } catch {
+    return false;
+  }
+};
+
+export const setCodexStandaloneWebSearch = (
+  configText: string,
+  enabled: boolean,
+): string => {
+  const text = normalizeTomlText(configText);
+  try {
+    const parsed = parseToml(text);
+    const id = parsed.model_provider;
+    if (typeof id !== "string" || !isCustomCodexModelProviderId(id)) {
+      return configText;
+    }
+    const providers: unknown = parsed.model_providers;
+    if (!isPlainObject(providers) || !isPlainObject(providers[id])) {
+      return configText;
+    }
+    const key = "supports_standalone_web_search";
+    const finish = (editedLines: string[]): string => {
+      providers[id][key] = enabled;
+      const candidate = editedLines.join("\n");
+      try {
+        if (
+          JSON.stringify(comparableTomlValue(parseToml(candidate))) ===
+          JSON.stringify(comparableTomlValue(parsed))
+        ) {
+          return candidate;
+        }
+      } catch {
+        // Unusual table syntax may not be recognized by the line editor.
+      }
+      return stringifyToml(parsed);
+    };
+    const lines = text.split("\n");
+    const section = getTomlSectionRange(
+      lines,
+      tomlTableName("model_providers", id),
+    );
+    const pattern =
+      /^(\s*(?:supports_standalone_web_search|"supports_standalone_web_search"|'supports_standalone_web_search')\s*=\s*)(true|false)(\s*(?:#.*)?)$/;
+    if (section) {
+      const index = findTomlLineInRange(
+        lines,
+        pattern,
+        section.bodyStartIndex,
+        section.bodyEndIndex,
+      );
+      if (index !== -1) {
+        lines[index] = lines[index].replace(pattern, `$1${enabled}$3`);
+        return finish(lines);
+      }
+      if (!(key in providers[id])) {
+        lines.splice(
+          getTomlSectionInsertIndex(lines, section),
+          0,
+          `${key} = ${enabled}`,
+        );
+        return finish(lines);
+      }
+    }
+    // Inline tables and dotted assignments need structural editing to avoid
+    // duplicate tables or keys. Preserve their values through the TOML parser.
+    providers[id][key] = enabled;
+    return stringifyToml(parsed);
+  } catch {
+    // Leave incomplete/invalid TOML untouched while the user is typing.
+    return configText;
+  }
 };
 
 export const isCodexRemoteCompactionEnabled = (
