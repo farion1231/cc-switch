@@ -409,10 +409,7 @@ mod tests {
             if incoming == "anthropic/claude-opus-5.5" {
                 assert_eq!(result["model"], incoming, "{incoming}");
             } else {
-                assert_eq!(
-                    result["model"], "anthropic/claude-opus-5.5",
-                    "{incoming}"
-                );
+                assert_eq!(result["model"], "anthropic/claude-opus-5.5", "{incoming}");
             }
         }
 
