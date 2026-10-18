@@ -563,7 +563,6 @@ export const handlers = [
       appVersion: null,
       bundledCliVersion: null,
       bundledCliPath: null,
-      uninstallCommand: null,
     }),
   ),
   http.post(`${TAURI_ENDPOINT}/get_hermes_memory`, async ({ request }) => {

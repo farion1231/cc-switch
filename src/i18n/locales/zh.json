@@ -4160,9 +4160,7 @@
       "bundledCli": "随附 Codex CLI {{version}} · 随 ChatGPT Desktop 更新，不能单独升级",
       "bundledCliUnknown": "未读到随附 Codex CLI 的版本 · 随 ChatGPT Desktop 更新，不能单独升级",
       "installHint": "从 Microsoft Store 或 OpenAI 官网安装",
-      "installHintMac": "从 OpenAI 官网安装",
-      "uninstallHint": "会卸载 ChatGPT Desktop 和它随附的 Codex CLI。~/.codex 里的配置和会话会保留，单独安装的 Codex CLI 不受影响。",
-      "uninstalled": "已卸载 ChatGPT Desktop"
+      "installHintMac": "从 OpenAI 官网安装"
     },
     "newVersion": "有新版本 {{version}}",
     "notRunnable": "无法运行",

@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowUpCircle,
@@ -21,7 +20,6 @@ import type { VisibleApps } from "@/types";
 import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 import { useSettings } from "@/hooks/useSettings";
 import { isMac } from "@/lib/platform";
-import { extractErrorMessage } from "@/utils/errorUtils";
 import { isUpdateAvailable } from "@/lib/version";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -59,7 +57,6 @@ import { ToolUpgradeConfirmDialog } from "@/components/settings/ToolUpgradeConfi
 import { ToolInstallRow } from "@/components/settings/ToolInstallRow";
 import { ToolErrorMessage } from "@/components/settings/ToolErrorMessage";
 import { ToolUninstallConfirmDialog } from "./ToolUninstallConfirmDialog";
-import { ChatgptDesktopUninstallDialog } from "./ChatgptDesktopUninstallDialog";
 import { ManualUninstallDialog } from "./ManualUninstallDialog";
 import {
   ENV_BADGE_CONFIG,
@@ -176,24 +173,6 @@ export function AppsPage() {
     queryFn: () => providersApi.getChatGptDesktopStatus(),
     staleTime: 30_000,
   });
-  const queryClient = useQueryClient();
-  const [confirmDesktopUninstall, setConfirmDesktopUninstall] = useState(false);
-  const uninstallDesktop = useMutation({
-    mutationFn: () => providersApi.uninstallChatGptDesktop(),
-    onSuccess: () =>
-      toast.success(t("appsPage.chatgptDesktop.uninstalled"), {
-        closeButton: true,
-      }),
-    onError: (error) =>
-      toast.error(t("settings.toolUninstallFailed"), {
-        description: extractErrorMessage(error),
-        closeButton: true,
-      }),
-    // 成败都重查一次：失败也可能卸掉了一部分
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: ["chatgpt-desktop-status"] }),
-  });
-
   const visibleApps: VisibleApps = {
     ...DEFAULT_VISIBLE_APPS,
     ...settings?.visibleApps,
@@ -423,8 +402,6 @@ export function AppsPage() {
                       status={chatgptDesktop.data}
                       isPending={chatgptDesktop.isPending}
                       isError={chatgptDesktop.isError}
-                      uninstalling={uninstallDesktop.isPending}
-                      onUninstall={() => setConfirmDesktopUninstall(true)}
                       visibility={visibilitySwitch(
                         "codex",
                         CHATGPT_DESKTOP_NAME,
@@ -514,17 +491,6 @@ export function AppsPage() {
         />
       )}
 
-      {confirmDesktopUninstall && chatgptDesktop.data?.uninstallCommand && (
-        <ChatgptDesktopUninstallDialog
-          command={chatgptDesktop.data.uninstallCommand}
-          onConfirm={() => {
-            setConfirmDesktopUninstall(false);
-            uninstallDesktop.mutate();
-          }}
-          onCancel={() => setConfirmDesktopUninstall(false)}
-        />
-      )}
-
       <ToolUpgradeConfirmDialog
         isOpen={tools.pendingUpgrade !== null}
         plans={tools.pendingUpgrade?.plans ?? []}
@@ -554,7 +520,7 @@ function AppRow({
   meta?: React.ReactNode;
   version?: React.ReactNode;
   action?: React.ReactNode;
-  visibility?: React.ReactNode;
+  visibility: React.ReactNode;
   menu?: React.ReactNode;
   footer?: React.ReactNode;
 }) {
@@ -597,21 +563,17 @@ function AppRow({
 /**
  * ChatGPT Desktop：和 Codex CLI 共用配置和侧栏入口，所以显示开关也是同一个设置，两行的开关一起开、一起关；
  * 不能在这里安装或升级。
- * 它随附的 Codex CLI 只列在这一行（Codex CLI 那一行只算单独安装的），卸载桌面版时一起卸掉。
+ * 它随附的 Codex CLI 只列在这一行（Codex CLI 那一行只算单独安装的）。
  */
 function ChatgptDesktopRow({
   status,
   isPending,
   isError,
-  uninstalling,
-  onUninstall,
   visibility,
 }: {
   status: ChatGptDesktopStatus | undefined;
   isPending: boolean;
   isError: boolean;
-  uninstalling: boolean;
-  onUninstall: () => void;
   visibility: React.ReactNode;
 }) {
   const { t } = useTranslation();
@@ -620,7 +582,6 @@ function ChatgptDesktopRow({
       {t("appsPage.chatgptDesktop.help")}
     </HelpTip>
   );
-
   const version = isPending ? (
     <span
       role="status"
@@ -680,16 +641,6 @@ function ChatgptDesktopRow({
       meta={meta}
       version={version}
       visibility={visibility}
-      menu={
-        status?.uninstallCommand || uninstalling ? (
-          <RowUninstallMenu
-            name={CHATGPT_DESKTOP_NAME}
-            disabled={uninstalling}
-            busy={uninstalling}
-            onUninstall={onUninstall}
-          />
-        ) : null
-      }
     />
   );
 }
@@ -956,11 +907,13 @@ function RowUninstallMenu({
   name,
   disabled,
   busy,
+  actionLabel,
   onUninstall,
 }: {
   name: string;
   disabled: boolean;
   busy: boolean;
+  actionLabel?: string;
   onUninstall: () => void;
 }) {
   const { t } = useTranslation();
@@ -989,7 +942,7 @@ function RowUninstallMenu({
           className="text-danger-text focus:text-danger-text"
         >
           <Trash2 className="h-3.5 w-3.5" />
-          {t("settings.toolUninstall")}
+          {actionLabel ?? t("settings.toolUninstall")}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

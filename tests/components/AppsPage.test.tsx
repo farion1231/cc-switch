@@ -51,12 +51,10 @@ const chatgptDesktop = vi.hoisted(() => {
     appVersion: null,
     bundledCliVersion: null,
     bundledCliPath: null,
-    uninstallCommand: null,
   };
   return {
     notInstalled,
     getStatus: vi.fn(async (): Promise<ChatGptDesktopStatus> => notInstalled),
-    uninstall: vi.fn(async (): Promise<void> => {}),
   };
 });
 
@@ -65,7 +63,6 @@ vi.mock("@/lib/api/providers", () => ({
   providersApi: {
     getClaudeDesktopStatus: async () => ({ supported: true, configured: true }),
     getChatGptDesktopStatus: chatgptDesktop.getStatus,
-    uninstallChatGptDesktop: chatgptDesktop.uninstall,
   },
 }));
 // 显示开关的状态要真的会变，才看得出 Codex CLI 和 ChatGPT Desktop 两行的开关是不是联动；
@@ -1976,8 +1973,6 @@ describe("AppsPage ChatGPT Desktop row", () => {
     bundledCliVersion: "0.163.0-alpha.10.2",
     bundledCliPath:
       "C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.1013.3656.0_x64__2p2nqsd0c76g0\\app\\resources\\codex.exe",
-    uninstallCommand:
-      "Remove-AppxPackage -Package 'OpenAI.Codex_26.1013.3656.0_x64__2p2nqsd0c76g0'",
   };
 
   beforeEach(() => {
@@ -2017,7 +2012,6 @@ describe("AppsPage ChatGPT Desktop row", () => {
     chatgptDesktop.getStatus.mockImplementation(
       async () => chatgptDesktop.notInstalled,
     );
-    chatgptDesktop.uninstall.mockReset().mockResolvedValue(undefined);
     settingsMock.visibleApps = undefined;
     settingsMock.autoSaveSettings.mockClear();
   });
@@ -2094,7 +2088,7 @@ describe("AppsPage ChatGPT Desktop row", () => {
     expect(within(row("ChatGPT Desktop")).getByRole("switch")).toBeDisabled();
   });
 
-  it("shows the app version and the bundled Codex CLI version, with uninstall as the only action", async () => {
+  it("shows the app and bundled Codex CLI versions without lifecycle actions", async () => {
     chatgptDesktop.getStatus.mockResolvedValue(installed);
     i18n.addResourceBundle("zh", "translation", {
       appsPage: { chatgptDesktop: zh.appsPage.chatgptDesktop },
@@ -2108,12 +2102,12 @@ describe("AppsPage ChatGPT Desktop row", () => {
           "随附 Codex CLI 0.163.0-alpha.10.2 · 随 ChatGPT Desktop 更新，不能单独升级",
         ),
       ).toHaveAttribute("title", installed.bundledCliPath);
-      // 按钮只有版本旁的说明「?」和行尾的「⋯」（卸载），没有安装和升级；显示开关不是按钮
+      // 按钮只有版本旁的说明「?」，没有安装、升级或卸载；显示开关不是按钮
       expect(
         desktop
           .getAllByRole("button")
           .map((button) => button.getAttribute("aria-label")),
-      ).toEqual(["ChatGPT Desktop", "appPage.moreActions"]);
+      ).toEqual(["ChatGPT Desktop"]);
       expect(desktop.getByRole("switch")).toBeInTheDocument();
     } finally {
       i18n.removeResourceBundle("zh", "translation");
@@ -2187,76 +2181,6 @@ describe("AppsPage ChatGPT Desktop row", () => {
     } finally {
       platform.mockRestore();
     }
-  });
-
-  async function openDesktopUninstall() {
-    const user = userEvent.setup();
-    const desktop = within(row("ChatGPT Desktop"));
-    await user.click(
-      await desktop.findByRole("button", { name: "appPage.moreActions" }),
-    );
-    await user.click(
-      await screen.findByRole("menuitem", { name: "settings.toolUninstall" }),
-    );
-    return { user, desktop, dialog: within(await screen.findByRole("dialog")) };
-  }
-
-  it("uninstalls ChatGPT Desktop after showing the command, then checks it again", async () => {
-    chatgptDesktop.getStatus.mockResolvedValue(installed);
-    await renderApps();
-    const { user, desktop, dialog } = await openDesktopUninstall();
-    expect(dialog.getByText(installed.uninstallCommand!)).toBeInTheDocument();
-    expect(chatgptDesktop.uninstall).not.toHaveBeenCalled();
-
-    chatgptDesktop.getStatus.mockResolvedValue(chatgptDesktop.notInstalled);
-    await user.click(
-      dialog.getByRole("button", { name: "settings.toolUninstall" }),
-    );
-    await waitFor(() =>
-      expect(mocks.success).toHaveBeenCalledWith(
-        "appsPage.chatgptDesktop.uninstalled",
-        { closeButton: true },
-      ),
-    );
-    expect(chatgptDesktop.uninstall).toHaveBeenCalledTimes(1);
-    expect(await desktop.findByText("common.notInstalled")).toBeInTheDocument();
-    expect(
-      desktop.queryByRole("button", { name: "appPage.moreActions" }),
-    ).toBeNull();
-  });
-
-  it("leaves ChatGPT Desktop alone when the confirmation is cancelled", async () => {
-    chatgptDesktop.getStatus.mockResolvedValue(installed);
-    await renderApps();
-    const { user, dialog } = await openDesktopUninstall();
-    await user.click(dialog.getByRole("button", { name: "common.cancel" }));
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(chatgptDesktop.uninstall).not.toHaveBeenCalled();
-  });
-
-  it("reports a failed uninstall and lets it be retried", async () => {
-    chatgptDesktop.getStatus.mockResolvedValue(installed);
-    chatgptDesktop.uninstall.mockRejectedValueOnce(
-      new Error("Remove-AppxPackage failed"),
-    );
-    await renderApps();
-    const { user, desktop, dialog } = await openDesktopUninstall();
-    await user.click(
-      dialog.getByRole("button", { name: "settings.toolUninstall" }),
-    );
-    await waitFor(() =>
-      expect(mocks.error).toHaveBeenCalledWith("settings.toolUninstallFailed", {
-        description: "Remove-AppxPackage failed",
-        closeButton: true,
-      }),
-    );
-    expect(mocks.success).not.toHaveBeenCalled();
-    expect(desktop.getByText("26.1013.3656.0")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(
-        desktop.getByRole("button", { name: "appPage.moreActions" }),
-      ).toBeEnabled(),
-    );
   });
 
   it("checks ChatGPT Desktop again with the other apps", async () => {

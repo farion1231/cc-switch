@@ -1728,7 +1728,6 @@ pub fn run() {
             commands::probe_tool_installations,
             commands::list_tool_installations,
             commands::get_chatgpt_desktop_status,
-            commands::uninstall_chatgpt_desktop,
             // Provider terminal
             commands::open_provider_terminal,
             // Universal Provider management

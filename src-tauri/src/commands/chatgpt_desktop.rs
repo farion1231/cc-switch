@@ -1,7 +1,7 @@
-//! ChatGPT Desktop（OpenAI 的桌面应用）的安装检测和卸载。
+//! ChatGPT Desktop（OpenAI 的桌面应用）的安装检测。
 //!
-//! 它自带一份 Codex CLI，和 Codex CLI 共用 `~/.codex` 配置；随附的那份跟着桌面版更新、
-//! 随桌面版卸载。「应用」页把它列在 ChatGPT Desktop 那一行，Codex CLI 那一行只算单独安装的
+//! 它自带一份 Codex CLI，和 Codex CLI 共用 `~/.codex` 配置；随附的那份跟着桌面版更新。
+//! 「应用」页把它列在 ChatGPT Desktop 那一行，Codex CLI 那一行只算单独安装的
 //! （见 `is_chatgpt_desktop_codex_path`）。
 
 use std::path::PathBuf;
@@ -22,44 +22,27 @@ pub struct ChatGptDesktopStatus {
     pub bundled_cli_version: Option<String>,
     /// 读出版本的那份随附 CLI 的路径。
     pub bundled_cli_path: Option<String>,
-    /// 卸载时执行的命令（多个主包时每行一条），给确认框展示；没装时为空。
-    pub uninstall_command: Option<String>,
 }
 
 #[tauri::command]
 pub async fn get_chatgpt_desktop_status() -> Result<ChatGptDesktopStatus, String> {
     tokio::task::spawn_blocking(detect)
         .await
-        .map_err(|e| format!("ChatGPT Desktop probe task join error: {e}"))
+        .map_err(|e| format!("ChatGPT Desktop probe task join error: {e}"))?
 }
-
-/// 卸载 ChatGPT Desktop，它随附的 Codex CLI 一起没了。`~/.codex` 里的配置和会话不动，
-/// 单独安装的 Codex CLI 也不动。
-#[tauri::command]
-pub async fn uninstall_chatgpt_desktop() -> Result<(), String> {
-    tokio::task::spawn_blocking(uninstall)
-        .await
-        .map_err(|e| format!("ChatGPT Desktop uninstall task join error: {e}"))?
-}
-
-/// 卸载要等系统删完整个应用，给足时间；卡住就到点结束、如实报错。
-#[cfg(any(windows, target_os = "macos"))]
-const UNINSTALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
 #[cfg(windows)]
-fn detect() -> ChatGptDesktopStatus {
+fn detect() -> Result<ChatGptDesktopStatus, String> {
     let mut status = ChatGptDesktopStatus {
         supported: true,
         ..Default::default()
     };
-    let names = windows_package::full_names(WINDOWS_PACKAGE_FAMILY);
+    let names = windows_package::full_names(WINDOWS_PACKAGE_FAMILY)?;
     let Some(full_name) = newest_main_package(&names) else {
-        return status;
+        return Ok(status);
     };
     status.installed = true;
     status.app_version = parse_package_full_name(full_name).map(|parsed| parsed.version);
-    status.uninstall_command =
-        remove_main_package_commands(&names).map(|commands| commands.join("\n"));
 
     let mut candidates = Vec::new();
     if let Some(root) = windows_package::path(full_name) {
@@ -68,115 +51,144 @@ fn detect() -> ChatGptDesktopStatus {
     // 包内那份跑不起来（例如组策略禁止直接执行 WindowsApps 里的程序）时，退到桌面版运行时解出的副本。
     candidates.extend(extracted_cli_candidates());
     probe_bundled_cli(&mut status, &candidates);
-    status
+    Ok(status)
 }
 
 #[cfg(target_os = "macos")]
-fn detect() -> ChatGptDesktopStatus {
+fn detect() -> Result<ChatGptDesktopStatus, String> {
     let mut status = ChatGptDesktopStatus {
         supported: true,
         ..Default::default()
     };
-    let Some(app) = macos_installed_app() else {
-        return status;
-    };
-    status.installed = true;
-    status.app_version = macos_bundle_version(&app);
-    status.uninstall_command = finder_trash_command(&app);
-    probe_bundled_cli(&mut status, &macos_cli_candidates(&app));
-    status
-}
-
-#[cfg(not(any(windows, target_os = "macos")))]
-fn detect() -> ChatGptDesktopStatus {
-    ChatGptDesktopStatus::default()
-}
-
-#[cfg(windows)]
-fn uninstall() -> Result<(), String> {
-    // 执行时重新查：确认框开着的时候桌面版可能自己更新过，包全名会变
-    let names = windows_package::full_names(WINDOWS_PACKAGE_FAMILY);
-    let commands = remove_main_package_commands(&names)
-        .ok_or_else(|| "ChatGPT Desktop is not installed".to_string())?;
-    for command in commands {
-        super::misc::run_hidden_command(
-            "powershell.exe",
-            &[
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                &format!("$ErrorActionPreference = 'Stop'; {command}"),
-            ],
-            UNINSTALL_TIMEOUT,
-        )?;
-    }
-    if newest_main_package(&windows_package::full_names(WINDOWS_PACKAGE_FAMILY)).is_some() {
-        return Err("ChatGPT Desktop is still installed after Remove-AppxPackage".to_string());
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn uninstall() -> Result<(), String> {
-    let app =
-        macos_installed_app().ok_or_else(|| "ChatGPT Desktop is not installed".to_string())?;
-    let script = finder_trash_script(&app)
-        .ok_or_else(|| format!("Unexpected ChatGPT Desktop path: {}", app.display()))?;
-    super::misc::run_hidden_command("/usr/bin/osascript", &["-e", &script], UNINSTALL_TIMEOUT)?;
-    if app.exists() {
-        return Err(format!(
-            "{} is still there after moving it to the Trash",
-            app.display()
-        ));
-    }
-    Ok(())
-}
-
-#[cfg(not(any(windows, target_os = "macos")))]
-fn uninstall() -> Result<(), String> {
-    Err("ChatGPT Desktop is not available on this system".to_string())
-}
-
-/// 装着的那个 ChatGPT Desktop：优先选真带着 Codex CLI 的那个包，都没有就按顺序取第一个。
-#[cfg(target_os = "macos")]
-fn macos_installed_app() -> Option<PathBuf> {
-    let home = crate::config::get_home_dir();
-    let apps: Vec<PathBuf> = [
-        PathBuf::from("/Applications/ChatGPT.app"),
-        home.join("Applications").join("ChatGPT.app"),
-        PathBuf::from("/Applications/Codex.app"),
-    ]
-    .into_iter()
-    .filter(|app| app.join("Contents").join("Info.plist").is_file())
-    .collect();
-    apps.iter()
+    let apps = macos_installed_apps();
+    let Some(app) = apps
+        .iter()
         .find(|app| macos_cli_candidates(app).iter().any(|cli| cli.is_file()))
         .or_else(|| apps.first())
         .cloned()
+    else {
+        return Ok(status);
+    };
+    status.installed = true;
+    status.app_version = macos_bundle_version(&app);
+    probe_bundled_cli(&mut status, &macos_cli_candidates(&app));
+    Ok(status)
 }
 
-/// 卸载这个包的 PowerShell 命令。包全名只含字母、数字和 `._-`，放进单引号里不会被
-/// PowerShell 解释；名字对不上就不给命令。
-#[cfg_attr(not(windows), allow(dead_code))]
-fn remove_package_command(full_name: &str) -> Option<String> {
-    let plain = full_name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
-    (plain && parse_package_full_name(full_name).is_some())
-        .then(|| format!("Remove-AppxPackage -Package '{full_name}'"))
+#[cfg(not(any(windows, target_os = "macos")))]
+fn detect() -> Result<ChatGptDesktopStatus, String> {
+    Ok(ChatGptDesktopStatus::default())
 }
 
-/// 让访达把应用移到废纸篓的 AppleScript，和手动拖进废纸篓一样可以放回。
-/// 路径里有引号或反斜杠就不拼，免得改了脚本的意思。
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn finder_trash_script(app: &std::path::Path) -> Option<String> {
-    let path = app.to_str()?;
-    if path.contains(['"', '\\']) || path.chars().any(char::is_control) || !path.ends_with(".app") {
+/// 找出 /Applications 和 ~/Applications 下已安装的 ChatGPT.app / Codex.app。
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_installed_apps() -> Vec<PathBuf> {
+    let home = crate::config::get_home_dir();
+    let mut apps = Vec::new();
+    for candidate in macos_app_candidates(&home) {
+        let Some(app) = canonical_macos_app_path(&candidate) else {
+            continue;
+        };
+        if is_chatgpt_desktop_bundle(&app) && !apps.contains(&app) {
+            apps.push(app);
+        }
+    }
+    apps
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn is_chatgpt_desktop_macos_cli_path(
+    path: &std::path::Path,
+    verified_apps: &[PathBuf],
+) -> bool {
+    is_macos_cli_path_with_verified_apps(path, verified_apps)
+}
+
+/// `apps` must come from `macos_installed_apps`, which only returns bundles with the expected
+/// bundle identifier and a valid OpenAI signature.
+#[cfg(any(target_os = "macos", test))]
+fn is_macos_cli_path_with_verified_apps(path: &std::path::Path, apps: &[PathBuf]) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            name.eq_ignore_ascii_case("codex") || name.eq_ignore_ascii_case("codex.exe")
+        })
+        && apps.iter().any(|app| macos_path_is_within_app(path, app))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn canonical_macos_app_path(app: &std::path::Path) -> Option<PathBuf> {
+    std::fs::canonicalize(app).ok()
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_path_is_within_app(path: &std::path::Path, app: &std::path::Path) -> bool {
+    let app = canonical_macos_app_path(app).unwrap_or_else(|| app.to_path_buf());
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    path.starts_with(app)
+}
+
+#[cfg(any(target_os = "macos", test))]
+const MACOS_CHATGPT_DESKTOP_BUNDLE_IDENTIFIER: &str = "com.openai.codex";
+
+#[cfg(any(target_os = "macos", test))]
+const MACOS_OPENAI_TEAM_IDENTIFIER: &str = "2DC432GLL2";
+
+#[cfg(any(target_os = "macos", test))]
+fn is_chatgpt_desktop_bundle_identifier(bundle_identifier: &str) -> bool {
+    bundle_identifier == MACOS_CHATGPT_DESKTOP_BUNDLE_IDENTIFIER
+}
+
+#[cfg(target_os = "macos")]
+fn is_chatgpt_desktop_bundle(app: &std::path::Path) -> bool {
+    if !app.is_dir() || !app.join("Contents").join("Info.plist").is_file() {
+        return false;
+    }
+    let Some(bundle_identifier) = macos_bundle_identifier(app) else {
+        return false;
+    };
+    is_chatgpt_desktop_bundle_identifier(&bundle_identifier) && macos_openai_signature_is_valid(app)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_bundle_identifier(app: &std::path::Path) -> Option<String> {
+    let output = std::process::Command::new("/usr/bin/plutil")
+        .args(["-extract", "CFBundleIdentifier", "raw", "-o", "-"])
+        .arg(app.join("Contents").join("Info.plist"))
+        .output()
+        .ok()?;
+    if !output.status.success() {
         return None;
     }
-    Some(format!(
-        "tell application \"Finder\" to delete (POSIX file \"{path}\")"
-    ))
+    let bundle_identifier = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!bundle_identifier.is_empty()).then_some(bundle_identifier)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_openai_signature_requirement() -> String {
+    format!(
+        "=identifier \"{MACOS_CHATGPT_DESKTOP_BUNDLE_IDENTIFIER}\" and anchor apple generic and certificate leaf[subject.OU] = \"{MACOS_OPENAI_TEAM_IDENTIFIER}\""
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn macos_openai_signature_is_valid(app: &std::path::Path) -> bool {
+    std::process::Command::new("/usr/bin/codesign")
+        .args(["--verify", "--deep", "--strict", "-R"])
+        .arg(macos_openai_signature_requirement())
+        .arg(app)
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_app_candidates(home: &std::path::Path) -> [PathBuf; 4] {
+    [
+        PathBuf::from("/Applications/ChatGPT.app"),
+        home.join("Applications").join("ChatGPT.app"),
+        PathBuf::from("/Applications/Codex.app"),
+        home.join("Applications").join("Codex.app"),
+    ]
 }
 
 /// 按顺序试候选，第一份读出版本的就是随附 CLI。
@@ -197,26 +209,109 @@ fn probe_bundled_cli(status: &mut ChatGptDesktopStatus, candidates: &[PathBuf]) 
     }
 }
 
-/// 桌面版运行时把随附 CLI 解到 `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\`，新的优先。
+/// 桌面版运行时把随附 CLI 解到 `%LOCALAPPDATA%\OpenAI\Codex\bin\` 下的哈希或旧版版本目录，新的优先。
 #[cfg(windows)]
 fn extracted_cli_candidates() -> Vec<PathBuf> {
-    let Some(bin) = dirs::data_local_dir().map(|dir| dir.join("OpenAI").join("Codex").join("bin"))
-    else {
+    let Some(bin) = extracted_cli_bin() else {
         return Vec::new();
     };
-    let Ok(entries) = std::fs::read_dir(bin) else {
+    let Ok(paths) = extracted_cli_paths_under(&bin) else {
         return Vec::new();
     };
     newest_first(
-        entries
-            .flatten()
-            .filter_map(|entry| {
-                let exe = entry.path().join("codex.exe");
+        paths
+            .into_iter()
+            .filter_map(|exe| {
                 let modified = exe.metadata().ok()?.modified().ok()?;
                 Some((exe, modified))
             })
             .collect(),
     )
+}
+
+#[cfg(windows)]
+fn extracted_cli_bin() -> Option<PathBuf> {
+    dirs::data_local_dir().map(|dir| dir.join("OpenAI").join("Codex").join("bin"))
+}
+
+#[cfg(any(windows, test))]
+fn extracted_cli_paths_under(bin: &std::path::Path) -> Result<Vec<PathBuf>, String> {
+    let entries = match std::fs::read_dir(bin) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(format!(
+                "Could not inspect ChatGPT Desktop CLI cache {}: {error}",
+                bin.display()
+            ));
+        }
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "Could not inspect ChatGPT Desktop CLI cache {}: {error}",
+                bin.display()
+            )
+        })?;
+        if !entry
+            .file_name()
+            .to_str()
+            .is_some_and(is_extracted_cli_cache_dir_name)
+        {
+            continue;
+        }
+        let file_type = entry.file_type().map_err(|error| {
+            format!(
+                "Could not inspect ChatGPT Desktop CLI cache {}: {error}",
+                entry.path().display()
+            )
+        })?;
+        if !file_type.is_dir() && !file_type.is_symlink() {
+            continue;
+        }
+        let exe = entry.path().join("codex.exe");
+        match std::fs::metadata(&exe) {
+            Ok(metadata) if metadata.is_file() => {
+                let real_path = std::fs::canonicalize(&exe).unwrap_or_else(|_| exe.clone());
+                if is_extracted_cli_candidate_owned(&exe, &real_path) {
+                    paths.push(exe);
+                }
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "Could not inspect ChatGPT Desktop CLI cache {}: {error}",
+                    exe.display()
+                ));
+            }
+        }
+    }
+    Ok(paths)
+}
+
+/// 新版缓存目录是 16 位十六进制 ID；旧版用三段纯数字版本号。其它名字（如 `stable`）
+/// 可能是单独安装的 CLI，不能归为桌面版随附程序。
+#[cfg(any(windows, test))]
+fn is_extracted_cli_cache_dir_name(name: &str) -> bool {
+    let is_hash = name.len() == 16 && name.bytes().all(|byte| byte.is_ascii_hexdigit());
+    let parts = name.split('.').collect::<Vec<_>>();
+    let is_legacy_version = parts.len() == 3
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()));
+    is_hash || is_legacy_version
+}
+
+#[cfg(any(windows, test))]
+fn is_extracted_cli_candidate_owned(path: &std::path::Path, real_path: &std::path::Path) -> bool {
+    let is_cache_directory = path
+        .parent()
+        .and_then(std::path::Path::file_name)
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(is_extracted_cli_cache_dir_name);
+    is_cache_directory && !super::misc::is_codex_standalone_install_at(path, real_path)
 }
 
 /// 解出的副本可能有好几份（每个版本一个 hash 目录，旧的不一定清掉），按修改时间从新到旧。
@@ -316,40 +411,15 @@ fn newest_main_package(full_names: &[String]) -> Option<&String> {
         .map(|(name, _)| name)
 }
 
-/// 每个已注册的主包都要卸载；返回的命令列表也会原样展示在确认框中。
-#[cfg_attr(not(windows), allow(dead_code))]
-fn remove_main_package_commands(full_names: &[String]) -> Option<Vec<String>> {
-    let commands: Option<Vec<String>> = main_packages(full_names)
-        .into_iter()
-        .map(|(full_name, _)| remove_package_command(full_name))
-        .collect();
-    commands.filter(|commands| !commands.is_empty())
-}
-
-/// 给确认框展示可直接复制执行的 POSIX shell 参数。
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn shell_single_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn finder_trash_command(app: &std::path::Path) -> Option<String> {
-    let script = finder_trash_script(app)?;
-    Some(format!(
-        "/usr/bin/osascript -e {}",
-        shell_single_quote(&script)
-    ))
-}
-
 /// 这处 codex 是不是 ChatGPT Desktop 随附的那份。纯字符串判断、不碰文件系统，
 /// 各平台的路径都能在任一平台单测。
 ///
-/// - Windows：运行时解出的 `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe`，
-///   或包内的 `WindowsApps\OpenAI.Codex_*\…\codex.exe`；
+/// - Windows：包内的 `WindowsApps\OpenAI.Codex_*\…\codex.exe`；
 /// - macOS：`ChatGPT.app` / `Codex.app` 包内的 `codex`。
 ///
 /// 官方独立安装器的 `Programs\OpenAI\Codex\bin\codex.exe`（入口直接在 bin 下）、
 /// npm 的 `@openai/codex/bin/codex.js` 都不算。
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn is_chatgpt_desktop_codex_path(path: &str) -> bool {
     let normalized = path.replace('\\', "/").to_ascii_lowercase();
     let file_name = normalized.rsplit('/').next().unwrap_or_default();
@@ -362,13 +432,41 @@ pub(crate) fn is_chatgpt_desktop_codex_path(path: &str) -> bool {
     {
         return true;
     }
-    const EXTRACTED_BIN: &str = "/openai/codex/bin/";
-    if normalized.contains("/programs/openai/codex/bin/") {
-        return false;
+    false
+}
+
+/// 只在 Windows 当前用户的 LocalAppData 下识别桌面版解出的缓存 CLI。
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn is_chatgpt_desktop_extracted_cli_path(path: &str) -> bool {
+    #[cfg(windows)]
+    {
+        dirs::data_local_dir().is_some_and(|local_data_dir| {
+            is_extracted_cli_path_under_root(path, &local_data_dir.to_string_lossy())
+        })
     }
-    normalized.find(EXTRACTED_BIN).is_some_and(|start| {
-        let rest = &normalized[start + EXTRACTED_BIN.len()..];
-        matches!(rest.split('/').collect::<Vec<_>>().as_slice(), [dir, _] if !dir.is_empty())
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+#[cfg(any(windows, test))]
+fn is_extracted_cli_path_under_root(path: &str, local_data_dir: &str) -> bool {
+    fn normalize(path: &str) -> String {
+        let path = path.replace('\\', "/").to_ascii_lowercase();
+        if let Some(unc) = path.strip_prefix("//?/unc/") {
+            format!("//{unc}")
+        } else {
+            path.strip_prefix("//?/").unwrap_or(&path).to_string()
+        }
+    }
+
+    let path = normalize(path);
+    let root = normalize(local_data_dir);
+    let prefix = format!("{}/openai/codex/bin/", root.trim_end_matches('/'));
+    path.strip_prefix(&prefix).is_some_and(|rest| {
+        matches!(rest.split('/').collect::<Vec<_>>().as_slice(), [version, exe] if is_extracted_cli_cache_dir_name(version) && *exe == "codex.exe")
     })
 }
 
@@ -389,60 +487,78 @@ mod windows_package {
             .collect()
     }
 
-    /// 当前用户在这个包族下注册的所有包全名；没装时为空。
-    pub(super) fn full_names(family: &str) -> Vec<String> {
+    /// 当前用户在这个包族下注册的所有包全名；没装时为空，查询失败时返回错误。
+    pub(super) fn full_names(family: &str) -> Result<Vec<String>, String> {
         let family = wide(family);
-        let mut count = 0u32;
-        let mut buffer_len = 0u32;
-        // SAFETY: `family` is a NUL-terminated UTF-16 buffer alive for the call; `count` and
-        // `buffer_len` point to locals. Null output buffers only query the required sizes.
-        let rc = unsafe {
-            GetPackagesByPackageFamily(
-                family.as_ptr(),
-                &mut count,
-                std::ptr::null_mut(),
-                &mut buffer_len,
-                std::ptr::null_mut(),
-            )
-        };
-        // 没装：返回 ERROR_SUCCESS 且 count 为 0。
-        if rc == ERROR_SUCCESS || count == 0 {
-            return Vec::new();
+        for _ in 0..3 {
+            let mut count = 0u32;
+            let mut buffer_len = 0u32;
+            // SAFETY: `family` is a NUL-terminated UTF-16 buffer alive for the call; `count` and
+            // `buffer_len` point to locals. Null output buffers only query the required sizes.
+            let rc = unsafe {
+                GetPackagesByPackageFamily(
+                    family.as_ptr(),
+                    &mut count,
+                    std::ptr::null_mut(),
+                    &mut buffer_len,
+                    std::ptr::null_mut(),
+                )
+            };
+            // 没装：返回 ERROR_SUCCESS 且 count 为 0。其它错误不能当成“没装”。
+            if rc == ERROR_SUCCESS {
+                if count == 0 {
+                    return Ok(Vec::new());
+                }
+                return Err(format!(
+                    "GetPackagesByPackageFamily returned {count} packages without an output buffer"
+                ));
+            }
+            if rc != ERROR_INSUFFICIENT_BUFFER {
+                return Err(format!("GetPackagesByPackageFamily failed with error {rc}"));
+            }
+            if count == 0 || buffer_len == 0 {
+                return Err("GetPackagesByPackageFamily reported an empty required buffer".into());
+            }
+
+            let mut names = vec![std::ptr::null_mut::<u16>(); count as usize];
+            let mut buffer = vec![0u16; buffer_len as usize];
+            // SAFETY: `names` holds `count` pointer slots and `buffer` holds `buffer_len` UTF-16
+            // units, the sizes returned by the previous call. The API writes the names into
+            // `buffer` and points each slot into it.
+            let rc = unsafe {
+                GetPackagesByPackageFamily(
+                    family.as_ptr(),
+                    &mut count,
+                    names.as_mut_ptr(),
+                    &mut buffer_len,
+                    buffer.as_mut_ptr(),
+                )
+            };
+            if rc == ERROR_INSUFFICIENT_BUFFER {
+                // 包注册状态可能在两次查询间变化；重新计算所需缓冲区。
+                continue;
+            }
+            if rc != ERROR_SUCCESS {
+                return Err(format!("GetPackagesByPackageFamily failed with error {rc}"));
+            }
+            if count == 0 {
+                return Ok(Vec::new());
+            }
+
+            // 指针都指向 `buffer` 内部：换算成下标在 `buffer` 里读，不解引用裸指针。
+            let base = buffer.as_ptr() as usize;
+            return Ok(names
+                .iter()
+                .take(count as usize)
+                .filter_map(|&ptr| {
+                    let start = (ptr as usize).checked_sub(base)? / std::mem::size_of::<u16>();
+                    let rest = buffer.get(start..)?;
+                    let end = rest.iter().position(|&unit| unit == 0)?;
+                    Some(String::from_utf16_lossy(&rest[..end]))
+                })
+                .collect());
         }
-        if rc != ERROR_INSUFFICIENT_BUFFER {
-            log::warn!("GetPackagesByPackageFamily failed with error {rc}");
-            return Vec::new();
-        }
-        let mut names = vec![std::ptr::null_mut::<u16>(); count as usize];
-        let mut buffer = vec![0u16; buffer_len as usize];
-        // SAFETY: `names` holds `count` pointer slots and `buffer` holds `buffer_len` UTF-16
-        // units, the sizes returned by the previous call. The API writes the names into
-        // `buffer` and points each slot into it.
-        let rc = unsafe {
-            GetPackagesByPackageFamily(
-                family.as_ptr(),
-                &mut count,
-                names.as_mut_ptr(),
-                &mut buffer_len,
-                buffer.as_mut_ptr(),
-            )
-        };
-        if rc != ERROR_SUCCESS {
-            log::warn!("GetPackagesByPackageFamily failed with error {rc}");
-            return Vec::new();
-        }
-        // 指针都指向 `buffer` 内部：换算成下标在 `buffer` 里读，不解引用裸指针。
-        let base = buffer.as_ptr() as usize;
-        names
-            .iter()
-            .take(count as usize)
-            .filter_map(|&ptr| {
-                let start = (ptr as usize).checked_sub(base)? / std::mem::size_of::<u16>();
-                let rest = buffer.get(start..)?;
-                let end = rest.iter().position(|&unit| unit == 0)?;
-                Some(String::from_utf16_lossy(&rest[..end]))
-            })
-            .collect()
+        Err("GetPackagesByPackageFamily kept changing while reading packages".into())
     }
 
     /// 包的安装目录（`C:\Program Files\WindowsApps\<全名>`）。
@@ -474,6 +590,101 @@ mod tests {
     use super::*;
     use std::path::Path;
     use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn macos_app_candidates_cover_system_and_per_user_bundles() {
+        let home = Path::new("/Users/me");
+        assert_eq!(
+            macos_app_candidates(home),
+            [
+                PathBuf::from("/Applications/ChatGPT.app"),
+                PathBuf::from("/Users/me/Applications/ChatGPT.app"),
+                PathBuf::from("/Applications/Codex.app"),
+                PathBuf::from("/Users/me/Applications/Codex.app"),
+            ]
+        );
+    }
+
+    #[test]
+    fn macos_cli_filter_requires_a_verified_app_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let verified_app = dir.path().join("ChatGPT.app");
+        let unverified_app = dir.path().join("Other.app");
+        std::fs::create_dir_all(&verified_app).unwrap();
+        std::fs::create_dir_all(&unverified_app).unwrap();
+        let bundled_cli = verified_app.join("Contents/Resources/codex");
+        let unrelated_executable = verified_app.join("Contents/Resources/codex-command-runner");
+        let unrelated_cli = unverified_app.join("Contents/Resources/codex");
+        std::fs::create_dir_all(bundled_cli.parent().unwrap()).unwrap();
+        std::fs::write(&bundled_cli, b"placeholder").unwrap();
+
+        assert!(is_macos_cli_path_with_verified_apps(
+            &bundled_cli,
+            std::slice::from_ref(&verified_app)
+        ));
+        assert!(!is_macos_cli_path_with_verified_apps(
+            &unrelated_cli,
+            std::slice::from_ref(&verified_app)
+        ));
+        assert!(!is_macos_cli_path_with_verified_apps(
+            &unrelated_executable,
+            std::slice::from_ref(&verified_app)
+        ));
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("bin/codex");
+            std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&bundled_cli, &link).unwrap();
+            assert!(is_macos_cli_path_with_verified_apps(
+                &link,
+                std::slice::from_ref(&verified_app)
+            ));
+            assert!(is_macos_cli_path_with_verified_apps(
+                &std::fs::canonicalize(&link).unwrap(),
+                std::slice::from_ref(&verified_app)
+            ));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn macos_app_symlinks_are_resolved_before_detection() {
+        let dir = tempfile::tempdir().unwrap();
+        let real_app = dir.path().join("real/ChatGPT.app");
+        let app_alias = dir.path().join("Applications/ChatGPT.app");
+        let bundled_cli = real_app.join("Contents/Resources/codex");
+        std::fs::create_dir_all(bundled_cli.parent().unwrap()).unwrap();
+        std::fs::write(&bundled_cli, b"placeholder").unwrap();
+        std::fs::create_dir_all(app_alias.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&real_app, &app_alias).unwrap();
+
+        let resolved_app = canonical_macos_app_path(&app_alias).unwrap();
+        assert_eq!(resolved_app, std::fs::canonicalize(&real_app).unwrap());
+        assert!(macos_path_is_within_app(
+            &app_alias.join("Contents/Resources/codex"),
+            &resolved_app
+        ));
+    }
+
+    #[test]
+    fn codesign_requirement_uses_inline_expression_syntax() {
+        assert!(macos_openai_signature_requirement().starts_with('='));
+    }
+
+    #[test]
+    fn only_the_unified_openai_codex_bundle_identifier_is_accepted() {
+        assert!(is_chatgpt_desktop_bundle_identifier("com.openai.codex"));
+        for bundle_identifier in [
+            "com.openai.chat",
+            "com.example.codex",
+            "com.openai.codex.helper",
+        ] {
+            assert!(
+                !is_chatgpt_desktop_bundle_identifier(bundle_identifier),
+                "{bundle_identifier}"
+            );
+        }
+    }
 
     #[test]
     fn parses_main_package_full_names_of_any_architecture() {
@@ -550,11 +761,90 @@ mod tests {
     }
 
     #[test]
-    fn recognizes_codex_bundled_with_chatgpt_desktop() {
+    fn extracted_cli_cache_paths_are_anchored_to_localappdata() {
+        let local_data_dir = r"C:\Users\me\AppData\Local";
         for path in [
             r"C:\Users\me\AppData\Local\OpenAI\Codex\bin\e78bad9887fa50cf\codex.exe",
+            r"C:\Users\me\AppData\Local\OpenAI\Codex\bin\0.162.0\codex.exe",
             r"\\?\C:\Users\me\AppData\Local\OpenAI\Codex\bin\e78bad9887fa50cf\codex.exe",
+        ] {
+            assert!(
+                is_extracted_cli_path_under_root(path, local_data_dir),
+                "{path}"
+            );
+        }
+        assert!(is_extracted_cli_path_under_root(
+            r"\\?\UNC\server\share\Users\me\AppData\Local\OpenAI\Codex\bin\e78bad9887fa50cf\codex.exe",
+            r"\\server\share\Users\me\AppData\Local"
+        ));
+        for path in [
             r"D:\Profiles\me\LocalAppData\OpenAI\Codex\bin\0123456789abcdef\codex.exe",
+            r"C:\Users\me\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe",
+            r"C:\Users\me\AppData\Local\OpenAI\Codex\bin\stable\codex.exe",
+            r"C:\Users\me\AppData\Local\OpenAI\Codex\bin\stable\current\codex.exe",
+            "/opt/OpenAI/Codex/bin/stable/codex",
+        ] {
+            assert!(
+                !is_extracted_cli_path_under_root(path, local_data_dir),
+                "{path}"
+            );
+            assert!(!is_chatgpt_desktop_codex_path(path), "{path}");
+        }
+        assert!(!is_chatgpt_desktop_extracted_cli_path(
+            "/opt/OpenAI/Codex/bin/stable/codex"
+        ));
+    }
+
+    #[test]
+    fn extracted_cli_cache_directory_names_are_specific() {
+        assert!(is_extracted_cli_cache_dir_name("e78bad9887fa50cf"));
+        assert!(is_extracted_cli_cache_dir_name("0.162.0"));
+        assert!(!is_extracted_cli_cache_dir_name("26.1013.3656.0"));
+        assert!(!is_extracted_cli_cache_dir_name("stable"));
+        assert!(!is_extracted_cli_cache_dir_name(
+            ".staging-247581e40ee272fb-random"
+        ));
+        assert!(!is_extracted_cli_cache_dir_name("0.162.0-alpha.1"));
+    }
+
+    #[test]
+    fn numeric_custom_standalone_install_is_not_owned_by_desktop_cache() {
+        let custom_install =
+            std::path::Path::new("/Users/me/AppData/Local/OpenAI/Codex/bin/1.2.3/codex.exe");
+        let standalone_target = std::path::Path::new(
+            "/Users/me/.codex/packages/standalone/releases/1.2.3-x86_64-pc-windows-msvc/bin/codex.exe",
+        );
+        assert!(!is_extracted_cli_candidate_owned(
+            custom_install,
+            standalone_target
+        ));
+
+        let legacy_desktop_cache =
+            std::path::Path::new("/Users/me/AppData/Local/OpenAI/Codex/bin/0.162.0/codex.exe");
+        assert!(is_extracted_cli_candidate_owned(
+            legacy_desktop_cache,
+            legacy_desktop_cache
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn extracted_cli_cache_path_uses_the_current_localappdata_root() {
+        let local_data_dir = dirs::data_local_dir().unwrap();
+        let path = local_data_dir
+            .join("OpenAI")
+            .join("Codex")
+            .join("bin")
+            .join("e78bad9887fa50cf")
+            .join("codex.exe");
+        assert!(is_chatgpt_desktop_extracted_cli_path(
+            &path.to_string_lossy()
+        ));
+    }
+
+    #[test]
+    fn recognizes_codex_bundled_with_chatgpt_desktop() {
+        for path in [
             r"C:\Program Files\WindowsApps\OpenAI.Codex_26.1013.3656.0_x64__2p2nqsd0c76g0\app\resources\codex.exe",
             "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
             "/Users/me/Applications/ChatGPT.app/Contents/Resources/codex",
@@ -576,6 +866,7 @@ mod tests {
             "/Users/me/.nvm/versions/node/v22.0.0/lib/node_modules/@openai/codex/bin/codex.js",
             "/opt/homebrew/Caskroom/codex/0.146.0/bin/codex",
             "/usr/local/bin/codex",
+            "/opt/OpenAI/Codex/bin/stable/codex",
             // 桌面版目录里的其它程序不是 codex 本体。
             r"C:\Users\me\AppData\Local\OpenAI\Codex\bin\e78bad9887fa50cf\codex-command-runner.exe",
             // 插件自带的 app-server 副本不在 ChatGPT.app 里。
@@ -585,92 +876,14 @@ mod tests {
         }
     }
 
-    #[test]
-    fn uninstall_command_quotes_only_well_formed_package_names() {
-        assert_eq!(
-            remove_package_command("OpenAI.Codex_26.1013.4894.0_x64__2p2nqsd0c76g0").as_deref(),
-            Some("Remove-AppxPackage -Package 'OpenAI.Codex_26.1013.4894.0_x64__2p2nqsd0c76g0'")
-        );
-        for full_name in [
-            "OpenAI.Codex_26.1013.4894.0_x64__2p2nqsd0c76g0'; Remove-Item ~",
-            "OpenAI.Codex_26.1013.4894.0_x64__2p2nqsd0c76g0 ",
-            "OpenAI.Codex_26.1013.4894.0_x64__2p2nqsd0c76g0$x",
-            "garbage",
-        ] {
-            assert_eq!(remove_package_command(full_name), None, "{full_name:?}");
-        }
-    }
-
-    #[test]
-    fn finder_moves_only_plain_app_bundles_to_the_trash() {
-        assert_eq!(
-            finder_trash_script(Path::new("/Applications/ChatGPT.app")).as_deref(),
-            Some(r#"tell application "Finder" to delete (POSIX file "/Applications/ChatGPT.app")"#)
-        );
-        for path in [
-            r#"/Applications/Chat"GPT.app"#,
-            r"/Applications/Chat\GPT.app",
-            "/Applications/ChatGPT",
-        ] {
-            assert_eq!(finder_trash_script(Path::new(path)), None, "{path}");
-        }
-        assert_eq!(
-            finder_trash_command(Path::new("/Users/O'Brien/Applications/ChatGPT.app")).as_deref(),
-            Some(
-                r#"/usr/bin/osascript -e 'tell application "Finder" to delete (POSIX file "/Users/O'\''Brien/Applications/ChatGPT.app")'"#
-            )
-        );
-    }
-
-    #[test]
-    fn uninstall_removes_every_main_package_and_no_resource_package() {
-        let names = vec![
-            "OpenAI.Codex_26.1013.3656.0_x64__2p2nqsd0c76g0".to_string(),
-            "OpenAI.Codex_26.1013.4894.0_x64__2p2nqsd0c76g0".to_string(),
-            "OpenAI.Codex_26.1013.4894.0_neutral_split.scale-100_2p2nqsd0c76g0".to_string(),
-        ];
-        let mains: Vec<&str> = main_packages(&names)
-            .into_iter()
-            .map(|(name, _)| name.as_str())
-            .collect();
-        assert_eq!(
-            mains,
-            [
-                "OpenAI.Codex_26.1013.3656.0_x64__2p2nqsd0c76g0",
-                "OpenAI.Codex_26.1013.4894.0_x64__2p2nqsd0c76g0",
-            ]
-        );
-    }
-
-    #[test]
-    fn uninstall_confirmation_lists_every_main_package_and_skips_resource_packages() {
-        let names = vec![
-            "OpenAI.Codex_26.1013.3656.0_x64__2p2nqsd0c76g0".to_string(),
-            "OpenAI.Codex_26.1013.4894.0_x64__2p2nqsd0c76g0".to_string(),
-            "OpenAI.Codex_26.1013.4894.0_neutral_split.scale-100_2p2nqsd0c76g0".to_string(),
-        ];
-        assert_eq!(
-            remove_main_package_commands(&names).unwrap(),
-            [
-                "Remove-AppxPackage -Package 'OpenAI.Codex_26.1013.3656.0_x64__2p2nqsd0c76g0'",
-                "Remove-AppxPackage -Package 'OpenAI.Codex_26.1013.4894.0_x64__2p2nqsd0c76g0'",
-            ]
-        );
-    }
-
     #[cfg(windows)]
     #[test]
     fn windows_detection_reports_supported_without_panicking() {
-        let status = detect();
+        let status = detect().unwrap();
         assert!(status.supported);
-        if status.installed {
-            assert!(status
-                .uninstall_command
-                .is_some_and(|command| command.starts_with("Remove-AppxPackage -Package '")));
-        } else {
+        if !status.installed {
             assert_eq!(status.app_version, None);
             assert_eq!(status.bundled_cli_version, None);
-            assert_eq!(status.uninstall_command, None);
         }
     }
 }
