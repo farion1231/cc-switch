@@ -406,11 +406,12 @@
     "tabAdvanced": "高级",
     "tabProxy": "路由",
     "authCenter": {
-      "description": "把 GitHub Copilot、ChatGPT、xAI 订阅当作供应商用。凭据由路由服务注入，相关供应商要在路由模式下使用（Codex 官方登录绑定除外）。",
+      "description": "把 GitHub Copilot、ChatGPT、xAI 订阅当作供应商用。凭据由路由服务注入，相关供应商要在路由模式下使用（Codex 官方登录绑定除外）。CodeBuddy 账号用于登录并查看剩余额度。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 账号",
       "codexOauthDescription": "管理 ChatGPT 账号",
-      "xaiOauthDescription": "管理 xAI / Grok 账号"
+      "xaiOauthDescription": "管理 xAI / Grok 账号",
+      "codebuddyOauthDescription": "管理 CodeBuddy 账号"
     },
     "advanced": {
       "configDir": {
@@ -1865,6 +1866,23 @@
     "retry": "重试",
     "logoutAll": "删除全部 xAI 账号",
     "loginRequired": "请先登录 xAI 账号"
+  },
+  "codebuddyOauth": {
+    "authStatus": "CodeBuddy OAuth 认证",
+    "login": "使用 CodeBuddy 登录",
+    "addOrReauth": "添加账号或重新登录",
+    "waitingForAuth": "等待 CodeBuddy 授权中…",
+    "notAuthenticated": "未认证",
+    "accountCount": "{{count}} 个可用账号",
+    "reauthRequired": "需要重新登录",
+    "expired": "凭据已失效",
+    "defaultAccount": "默认",
+    "setAsDefault": "设为默认",
+    "removeAccount": "移除账号",
+    "logoutAll": "删除全部 CodeBuddy 账号",
+    "accounts": "CodeBuddy 账号",
+    "retry": "重试",
+    "loginRequired": "请先登录 CodeBuddy 账号"
   },
   "managedAuth": {
     "accountRemoved": "账号已删除",
@@ -4102,6 +4120,8 @@
     "monthly": "每月",
     "credits": "额度",
     "copilotPremium": "高级请求",
+    "codebuddyCredits": "CodeBuddy 额度",
+    "codebuddyCreditsText": "剩余 {{remaining}} / {{total}} credits",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}}后重置",
     "extraUsage": "超额用量",
@@ -4822,7 +4842,8 @@
       "helpTitle": "{{service}} 账号怎么用",
       "copilotHelp": "用于 Claude Code、Claude Desktop 的 GitHub Copilot 预设。没指定账号的供应商用「默认」账号。",
       "chatgptHelp": "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
-      "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。"
+      "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。",
+      "codebuddyHelp": "用于 CodeBuddy（腾讯 copilot.tencent.com）账号：登录账号并查看剩余额度。"
     },
     "addAccount": "添加账号",
     "groupMenu": "{{service}} 的更多操作",
@@ -4841,8 +4862,10 @@
     "enterpriseDomainRequired": "先填企业域名，例如 company.ghe.com",
     "codexReauthNote": "缺少登录凭据（id_token），不能用于 Codex 托管绑定",
     "xaiReauthNote": "登录凭据已失效，用到它的供应商无法使用",
+    "codebuddyReauthNote": "登录凭据已失效，请重新登录 CodeBuddy 账号",
     "statusLoading": "正在加载账号…",
     "xaiStatusLoadFailed": "无法加载 xAI 账号状态，请重试。",
+    "codebuddyStatusLoadFailed": "无法加载 CodeBuddy 账号状态，请重试。",
     "retry": "重试",
     "loginFailed": "登录没有完成",
     "pending": {

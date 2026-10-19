@@ -14,6 +14,7 @@
 mod adapter;
 mod auth;
 mod claude;
+pub mod codebuddy_oauth_auth;
 mod codex;
 pub(crate) mod codex_chat_common;
 pub mod codex_chat_history;

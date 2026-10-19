@@ -50,9 +50,13 @@ export function useManagedAuth(
     queryFn: () => authApi.authGetStatus(authProvider),
     staleTime: 30000,
     // A rejected xAI refresh token is persisted as `requires_reauth` by the
-    // proxy hot path. Periodically refresh local status so an already-open Auth
+    // proxy hot path, and CodeBuddy does the same when a quota query forces a
+    // refresh. Periodically refresh local status so an already-open Auth
     // Center stops showing the account as logged in without requiring a reload.
-    refetchInterval: authProvider === "xai_oauth" ? 15_000 : false,
+    refetchInterval:
+      authProvider === "xai_oauth" || authProvider === "codebuddy_oauth"
+        ? 15_000
+        : false,
   });
 
   const stopPolling = useCallback(() => {
@@ -68,7 +72,15 @@ export function useManagedAuth(
 
   const cancelBackendFlow = useCallback(
     async (deviceCode: string | null): Promise<boolean> => {
-      if (authProvider !== "codex_oauth" || !deviceCode) return true;
+      // 只有 codex / codebuddy 的后端会缓存待取消的登录状态；
+      // copilot / xAI 的 device code 过期即失效，取消只需停前端轮询。
+      if (
+        (authProvider !== "codex_oauth" &&
+          authProvider !== "codebuddy_oauth") ||
+        !deviceCode
+      ) {
+        return true;
+      }
       try {
         const cancelled = await authApi.authCancelLogin(
           authProvider,
@@ -124,12 +136,15 @@ export function useManagedAuth(
       setPollingState("polling");
       setError(null);
 
-      try {
-        await copyText(response.user_code);
-      } catch (e) {
-        console.debug("[ManagedAuth] Failed to copy user code:", e);
+      // CodeBuddy 没有 user code（只有浏览器授权链接），空值时不要复制空串。
+      if (response.user_code) {
+        try {
+          await copyText(response.user_code);
+        } catch (e) {
+          console.debug("[ManagedAuth] Failed to copy user code:", e);
+        }
+        if (request.generation !== flowGenerationRef.current) return;
       }
-      if (request.generation !== flowGenerationRef.current) return;
 
       try {
         await settingsApi.openExternal(response.verification_uri);

@@ -406,11 +406,12 @@
     "tabAdvanced": "Advanced",
     "tabProxy": "Routing",
     "authCenter": {
-      "description": "Use GitHub Copilot, ChatGPT and xAI subscriptions as providers. The routing service injects their credentials, so these providers run in Routing mode (except Codex's official-login binding).",
+      "description": "Use GitHub Copilot, ChatGPT and xAI subscriptions as providers. The routing service injects their credentials, so these providers run in Routing mode (except Codex's official-login binding). CodeBuddy accounts are used to sign in and check remaining credits.",
       "beta": "Beta",
       "copilotDescription": "Manage GitHub Copilot accounts",
       "codexOauthDescription": "Manage ChatGPT accounts",
-      "xaiOauthDescription": "Manage xAI / Grok accounts"
+      "xaiOauthDescription": "Manage xAI / Grok accounts",
+      "codebuddyOauthDescription": "Manage CodeBuddy accounts"
     },
     "advanced": {
       "configDir": {
@@ -1865,6 +1866,23 @@
     "retry": "Retry",
     "logoutAll": "Delete all xAI accounts",
     "loginRequired": "Sign in to an xAI account first"
+  },
+  "codebuddyOauth": {
+    "authStatus": "CodeBuddy OAuth authentication",
+    "login": "Sign in with CodeBuddy",
+    "addOrReauth": "Add account or sign in again",
+    "waitingForAuth": "Waiting for CodeBuddy authorization…",
+    "notAuthenticated": "Not authenticated",
+    "accountCount": "Usable accounts: {{count}}",
+    "reauthRequired": "Sign-in required",
+    "expired": "Credentials expired",
+    "defaultAccount": "Default",
+    "setAsDefault": "Set as default",
+    "removeAccount": "Remove account",
+    "logoutAll": "Delete all CodeBuddy accounts",
+    "accounts": "CodeBuddy accounts",
+    "retry": "Retry",
+    "loginRequired": "Sign in to a CodeBuddy account first"
   },
   "managedAuth": {
     "accountRemoved": "Account deleted",
@@ -4102,6 +4120,8 @@
     "monthly": "Monthly",
     "credits": "Credits",
     "copilotPremium": "Premium",
+    "codebuddyCredits": "CodeBuddy quota",
+    "codebuddyCreditsText": "{{remaining}} / {{total}} credits left",
     "utilization": "{{value}}%",
     "resetsIn": "Resets in {{time}}",
     "extraUsage": "Extra Usage",
@@ -4822,7 +4842,8 @@
       "helpTitle": "How {{service}} accounts are used",
       "copilotHelp": "Used by GitHub Copilot presets in Claude Code and Claude Desktop. Providers without a chosen account use the Default one.",
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
-      "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one."
+      "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
+      "codebuddyHelp": "Used for CodeBuddy (Tencent copilot.tencent.com) accounts: sign in and check remaining credits."
     },
     "addAccount": "Add account",
     "groupMenu": "More actions for {{service}}",
@@ -4841,8 +4862,10 @@
     "enterpriseDomainRequired": "Enter the enterprise domain first, e.g. company.ghe.com",
     "codexReauthNote": "Missing a sign-in credential (id_token), so it can't be used for Codex managed binding",
     "xaiReauthNote": "Sign-in credential expired; providers using it won't work",
+    "codebuddyReauthNote": "Sign-in credential expired; sign in to CodeBuddy again",
     "statusLoading": "Loading accounts…",
     "xaiStatusLoadFailed": "Couldn't load xAI accounts. Try again.",
+    "codebuddyStatusLoadFailed": "Couldn't load CodeBuddy accounts. Try again.",
     "retry": "Retry",
     "loginFailed": "Sign-in didn't finish",
     "pending": {

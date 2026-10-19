@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
 import { XaiOAuthSection } from "@/components/providers/forms/XaiOAuthSection";
+import { CodebuddyOAuthSection } from "@/components/providers/forms/CodebuddyOAuthSection";
 import type { ManagedAuthProvider } from "@/lib/api";
 
 interface AuthCenterPanelProps {
@@ -15,7 +16,7 @@ interface AuthCenterPanelProps {
 }
 
 /**
- * 授权中心（v7 Auth 画板）：GitHub Copilot、ChatGPT、xAI 三组账号，一组一张卡片。
+ * 授权中心（v7 Auth 画板）：GitHub Copilot、ChatGPT、xAI、CodeBuddy 四组账号，一组一张卡片。
  * 侧栏的「授权中心」页和供应商表单里「管理账号」打开的全屏页共用。
  */
 export function AuthCenterPanel({
@@ -26,6 +27,7 @@ export function AuthCenterPanel({
   const copilotSectionRef = useRef<HTMLDivElement | null>(null);
   const codexOauthSectionRef = useRef<HTMLDivElement | null>(null);
   const xaiOauthSectionRef = useRef<HTMLDivElement | null>(null);
+  const codebuddyOauthSectionRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!authScrollTarget) return;
@@ -35,7 +37,9 @@ export function AuthCenterPanel({
         ? copilotSectionRef
         : authScrollTarget === "codex_oauth"
           ? codexOauthSectionRef
-          : xaiOauthSectionRef;
+          : authScrollTarget === "xai_oauth"
+            ? xaiOauthSectionRef
+            : codebuddyOauthSectionRef;
 
     const frame = requestAnimationFrame(() => {
       const prefersReducedMotion = window.matchMedia(
@@ -65,7 +69,10 @@ export function AuthCenterPanel({
         <CodexOAuthSection showAccountQuota />
       </div>
       <div ref={xaiOauthSectionRef} className="scroll-mt-4">
-        <XaiOAuthSection mode="manage" helpSide="top" />
+        <XaiOAuthSection mode="manage" />
+      </div>
+      <div ref={codebuddyOauthSectionRef} className="scroll-mt-4">
+        <CodebuddyOAuthSection helpSide="top" />
       </div>
     </div>
   );

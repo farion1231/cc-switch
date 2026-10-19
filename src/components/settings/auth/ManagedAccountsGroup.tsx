@@ -371,31 +371,36 @@ export function ManagedAccountsGroup({
             {login.deviceCode && (
               <>
                 <div className="flex flex-wrap items-center gap-2 text-caption text-fg-2">
-                  <span>
-                    {t("authCenter.pending.enterCode", {
-                      defaultValue: "在浏览器中输入验证码：",
-                    })}
-                  </span>
-                  <code className="inline-flex h-7 items-center rounded-control border border-border-strong bg-surface px-2.5 font-mono text-section tracking-[1px] text-fg-1">
-                    {login.deviceCode.user_code}
-                  </code>
-                  <HoverTip
-                    content={t("authCenter.pending.copy", {
-                      defaultValue: "复制验证码",
-                    })}
-                  >
-                    <Button
-                      type="button"
-                      variant="quiet"
-                      size="icon-compact"
-                      aria-label={t("authCenter.pending.copy", {
-                        defaultValue: "复制验证码",
-                      })}
-                      onClick={() => void copyCode()}
-                    >
-                      <Copy className="h-3.5 w-3.5" strokeWidth={1.5} />
-                    </Button>
-                  </HoverTip>
+                  {/* CodeBuddy 只有浏览器授权链接，没有 user code：不渲染验证码块和复制按钮 */}
+                  {login.deviceCode.user_code && (
+                    <>
+                      <span>
+                        {t("authCenter.pending.enterCode", {
+                          defaultValue: "在浏览器中输入验证码：",
+                        })}
+                      </span>
+                      <code className="inline-flex h-7 items-center rounded-control border border-border-strong bg-surface px-2.5 font-mono text-section tracking-[1px] text-fg-1">
+                        {login.deviceCode.user_code}
+                      </code>
+                      <HoverTip
+                        content={t("authCenter.pending.copy", {
+                          defaultValue: "复制验证码",
+                        })}
+                      >
+                        <Button
+                          type="button"
+                          variant="quiet"
+                          size="icon-compact"
+                          aria-label={t("authCenter.pending.copy", {
+                            defaultValue: "复制验证码",
+                          })}
+                          onClick={() => void copyCode()}
+                        >
+                          <Copy className="h-3.5 w-3.5" strokeWidth={1.5} />
+                        </Button>
+                      </HoverTip>
+                    </>
+                  )}
                   <HoverTip
                     content={t("authCenter.pending.open", {
                       defaultValue: "打开授权页面",

@@ -1240,6 +1240,20 @@ pub fn run() {
                 log::info!("✓ XaiOAuthManager initialized");
             }
 
+            // 初始化 CodebuddyOAuthManager (授权中心账号管理 + 额度)
+            {
+                use crate::proxy::providers::codebuddy_oauth_auth::CodebuddyOAuthManager;
+                use commands::CodebuddyOAuthState;
+                use tokio::sync::RwLock;
+
+                let app_config_dir = crate::config::get_app_config_dir();
+                let codebuddy_oauth_manager = CodebuddyOAuthManager::new(app_config_dir);
+                app.manage(CodebuddyOAuthState(Arc::new(RwLock::new(
+                    codebuddy_oauth_manager,
+                ))));
+                log::info!("✓ CodebuddyOAuthManager initialized");
+            }
+
             // 初始化全局出站代理 HTTP 客户端
             {
                 let db = &app.state::<AppState>().db;
@@ -1511,6 +1525,7 @@ pub fn run() {
             commands::get_codex_oauth_models,
             commands::get_xai_oauth_models,
             commands::get_xai_oauth_quota,
+            commands::get_codebuddy_oauth_quota,
             commands::get_coding_plan_quota,
             commands::get_balance,
             // New MCP via config.json (SSOT)

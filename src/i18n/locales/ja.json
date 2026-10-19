@@ -406,11 +406,12 @@
     "tabAdvanced": "詳細",
     "tabProxy": "ルーティング",
     "authCenter": {
-      "description": "GitHub Copilot、ChatGPT、xAI のサブスクリプションをプロバイダーとして使えます。認証情報はルーティングサービスが注入するため、これらのプロバイダーはルーティングモードで使います（Codex の公式ログインのバインドを除く）。",
+      "description": "GitHub Copilot、ChatGPT、xAI のサブスクリプションをプロバイダーとして使えます。認証情報はルーティングサービスが注入するため、これらのプロバイダーはルーティングモードで使います（Codex の公式ログインのバインドを除く）。CodeBuddy のアカウントはログインと残り credits の確認に使います。",
       "beta": "Beta",
       "copilotDescription": "GitHub Copilot アカウントを管理します",
       "codexOauthDescription": "ChatGPT アカウントを管理します",
-      "xaiOauthDescription": "xAI / Grok アカウントを管理します"
+      "xaiOauthDescription": "xAI / Grok アカウントを管理します",
+      "codebuddyOauthDescription": "CodeBuddy アカウントを管理します"
     },
     "advanced": {
       "configDir": {
@@ -1865,6 +1866,23 @@
     "retry": "再試行",
     "logoutAll": "すべての xAI アカウントを削除",
     "loginRequired": "先に xAI アカウントへログインしてください"
+  },
+  "codebuddyOauth": {
+    "authStatus": "CodeBuddy OAuth 認証",
+    "login": "CodeBuddy でログイン",
+    "addOrReauth": "アカウントを追加または再ログイン",
+    "waitingForAuth": "CodeBuddy の認証を待っています…",
+    "notAuthenticated": "未認証",
+    "accountCount": "利用可能なアカウント: {{count}} 件",
+    "reauthRequired": "再ログインが必要です",
+    "expired": "認証情報が失効しました",
+    "defaultAccount": "デフォルト",
+    "setAsDefault": "デフォルトに設定",
+    "removeAccount": "アカウントを削除",
+    "logoutAll": "すべての CodeBuddy アカウントを削除",
+    "accounts": "CodeBuddy アカウント",
+    "retry": "再試行",
+    "loginRequired": "先に CodeBuddy アカウントへログインしてください"
   },
   "managedAuth": {
     "accountRemoved": "アカウントを削除しました",
@@ -4102,6 +4120,8 @@
     "monthly": "月間",
     "credits": "クレジット",
     "copilotPremium": "プレミアム",
+    "codebuddyCredits": "CodeBuddy クォータ",
+    "codebuddyCreditsText": "残り {{remaining}} / {{total}} credits",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}}後にリセット",
     "extraUsage": "超過使用量",
@@ -4822,7 +4842,8 @@
       "helpTitle": "{{service}} アカウントの使い方",
       "copilotHelp": "Claude Code、Claude Desktop の GitHub Copilot プリセットで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
       "chatgptHelp": "Claude Code、Claude Desktop の ChatGPT プリセットと、Codex の公式ログインのバインドで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
-      "xaiHelp": "Claude Code、Claude Desktop、Codex の xAI プリセットで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。"
+      "xaiHelp": "Claude Code、Claude Desktop、Codex の xAI プリセットで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
+      "codebuddyHelp": "CodeBuddy（Tencent copilot.tencent.com）のアカウントで使います：ログインと残り credits の確認。"
     },
     "addAccount": "アカウントを追加",
     "groupMenu": "{{service}} のその他の操作",
@@ -4841,8 +4862,10 @@
     "enterpriseDomainRequired": "先に企業ドメインを入力してください（例：company.ghe.com）",
     "codexReauthNote": "ログイン情報（id_token）が足りないため、Codex のマネージドバインドに使えません",
     "xaiReauthNote": "ログイン情報が無効になり、このアカウントを使うプロバイダーは使えません",
+    "codebuddyReauthNote": "ログイン情報が無効になりました。CodeBuddy アカウントに再ログインしてください",
     "statusLoading": "アカウントを読み込み中…",
     "xaiStatusLoadFailed": "xAI アカウントの状態を読み込めませんでした。再試行してください。",
+    "codebuddyStatusLoadFailed": "CodeBuddy アカウントの状態を読み込めませんでした。再試行してください。",
     "retry": "再試行",
     "loginFailed": "ログインが完了しませんでした",
     "pending": {

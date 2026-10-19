@@ -3,7 +3,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { subscriptionApi } from "@/lib/api/subscription";
 import type { AppId } from "@/lib/api/types";
 import type { ProviderMeta } from "@/types";
-import type { SubscriptionQuota } from "@/types/subscription";
+import type { CodebuddyQuota, SubscriptionQuota } from "@/types/subscription";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { PROVIDER_TYPES } from "@/config/constants";
 import { resolveDisplayUsage, type LastGoodSnapshot } from "./queries";
@@ -201,4 +201,25 @@ export function useXaiOauthQuotaByAccountId(
   });
 
   return useQuotaKeepLastGood(query, accountId ?? "default");
+}
+
+/**
+ * CodeBuddy OAuth 额度（按账号 ID）：授权中心逐个账号显示额度时用。
+ * 返回结构与 SubscriptionQuota 不同，因此不走 keep-last-good，直接返回查询结果。
+ */
+export function useCodebuddyOauthQuotaByAccountId(
+  accountId: string,
+  options: UseCodexOauthQuotaOptions = {},
+): UseQueryResult<CodebuddyQuota> {
+  const { enabled = true, autoQuery = false } = options;
+  return useQuery({
+    queryKey: ["codebuddy_oauth", "quota", accountId],
+    queryFn: () => subscriptionApi.getCodebuddyOauthQuota(accountId),
+    enabled,
+    refetchInterval: autoQuery ? REFETCH_INTERVAL : false,
+    refetchIntervalInBackground: autoQuery,
+    refetchOnWindowFocus: autoQuery,
+    staleTime: REFETCH_INTERVAL,
+    retry: 1,
+  });
 }

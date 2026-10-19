@@ -394,11 +394,12 @@
     "tabAdvanced": "Gelişmiş",
     "tabProxy": "Yönlendirme",
     "authCenter": {
-      "description": "Sağlayıcı olarak GitHub Copilot, ChatGPT ve xAI aboneliklerini kullanın. Yönlendirme hizmeti kimlik bilgilerini enjekte eder, böylece bu sağlayıcılar Yönlendirme modunda çalışır (Codex'nin resmi oturum açma bağlaması hariç).",
+      "description": "Sağlayıcı olarak GitHub Copilot, ChatGPT ve xAI aboneliklerini kullanın. Yönlendirme hizmeti kimlik bilgilerini enjekte eder, böylece bu sağlayıcılar Yönlendirme modunda çalışır (Codex'nin resmi oturum açma bağlaması hariç). CodeBuddy hesapları oturum açmak ve kalan credits tutarını görmek için kullanılır.",
       "beta": "beta",
       "copilotDescription": "GitHub Copilot hesaplarını yönetin",
       "codexOauthDescription": "ChatGPT hesaplarını yönetin",
-      "xaiOauthDescription": "xAI / Grok hesaplarını yönetin"
+      "xaiOauthDescription": "xAI / Grok hesaplarını yönetin",
+      "codebuddyOauthDescription": "CodeBuddy hesaplarını yönetin"
     },
     "advanced": {
       "configDir": {
@@ -1846,6 +1847,23 @@
     "retry": "Yeniden dene",
     "logoutAll": "Tüm xAI hesaplarını silin",
     "loginRequired": "Önce bir xAI hesabında oturum açın"
+  },
+  "codebuddyOauth": {
+    "authStatus": "CodeBuddy OAuth kimlik doğrulaması",
+    "login": "CodeBuddy ile oturum açın",
+    "addOrReauth": "Hesap ekleyin veya tekrar oturum açın",
+    "waitingForAuth": "CodeBuddy yetkilendirmesi bekleniyor…",
+    "notAuthenticated": "Kimliği doğrulanmadı",
+    "accountCount": "Kullanılabilir hesaplar: {{count}}",
+    "reauthRequired": "Oturum açmanız gerekiyor",
+    "expired": "Kimlik bilgilerinin süresi doldu",
+    "defaultAccount": "Varsayılan",
+    "setAsDefault": "Varsayılan olarak ayarla",
+    "removeAccount": "Hesabı kaldır",
+    "logoutAll": "Tüm CodeBuddy hesaplarını silin",
+    "accounts": "CodeBuddy hesapları",
+    "retry": "Yeniden dene",
+    "loginRequired": "Önce bir CodeBuddy hesabında oturum açın"
   },
   "managedAuth": {
     "accountRemoved": "Hesap silindi",
@@ -4044,6 +4062,8 @@
     "monthly": "Aylık",
     "credits": "Kredi",
     "copilotPremium": "Premium",
+    "codebuddyCredits": "CodeBuddy kotası",
+    "codebuddyCreditsText": "{{remaining}} / {{total}} credits kaldı",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}} sonra sıfırlanır",
     "extraUsage": "Ekstra Kullanım",
@@ -4743,7 +4763,8 @@
       "helpTitle": "{{service}} hesapları nasıl kullanılır?",
       "copilotHelp": "Claude Code ve Claude Desktop'deki GitHub Copilot ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "chatgptHelp": "Claude Code ve Claude Desktop'deki ChatGPT ön ayarları ve Codex'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
-      "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır."
+      "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
+      "codebuddyHelp": "CodeBuddy (Tencent copilot.tencent.com) hesapları için kullanılır: oturum açın ve kalan credits tutarını görün."
     },
     "addAccount": "Hesap ekle",
     "groupMenu": "{{service}} için daha fazla eylem",
@@ -4762,8 +4783,10 @@
     "enterpriseDomainRequired": "Önce kurumsal etki alanını girin, ör. şirket.ghe.com",
     "codexReauthNote": "Oturum açma kimlik bilgisi (id_token) eksik olduğundan Codex yönetilen bağlama için kullanılamaz",
     "xaiReauthNote": "Oturum açma kimlik bilgilerinin süresi doldu; bunu kullanan sağlayıcılar çalışmaz",
+    "codebuddyReauthNote": "Oturum açma kimlik bilgisi geçersiz; CodeBuddy hesabında tekrar oturum açın",
     "statusLoading": "Hesaplar yükleniyor…",
     "xaiStatusLoadFailed": "xAI hesapları yüklenemedi. Yeniden deneyin.",
+    "codebuddyStatusLoadFailed": "CodeBuddy hesapları yüklenemedi. Yeniden deneyin.",
     "retry": "Yeniden dene",
     "loginFailed": "Oturum açma işlemi tamamlanmadı",
     "pending": {
