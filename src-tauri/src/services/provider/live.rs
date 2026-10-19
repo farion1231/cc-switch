@@ -1345,16 +1345,16 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
                     let display_name = name.clone().unwrap_or_else(|| existing.name.clone());
                     // Older rows can hold a full OpenCode config wrapper while
                     // the native reader returns its V2 fragment. Normalize the
-                    // old row first, otherwise the different locations hide a
-                    // `settings.apiKey` template from preserve_refs and a live
-                    // re-import would store its resolved secret in the DB.
+                    // old row first, then restore refs from that persisted
+                    // template: after restart, cache history may no longer
+                    // contain the stale resolved native value.
                     let preserved_settings = match opencode_config::provider_fragment(
                         &id,
                         &existing.settings_config,
                         existing.opencode_config_format(),
                     ) {
                         Ok((existing_fragment, _)) => {
-                            crate::services::api_key_vars::resolve::preserve_refs(
+                            crate::services::api_key_vars::resolve::preserve_refs_from_stored_template(
                                 &AppType::OpenCode,
                                 existing_fragment,
                                 &settings_config,
