@@ -125,6 +125,22 @@ export function supportsOfficialProxyTakeover(
   return true;
 }
 
+/** Keep protocol override eligibility aligned with Rust supports_model_api_formats. */
+export function supportsModelApiFormats(
+  provider: Pick<Provider, "category" | "meta" | "settingsConfig">,
+): boolean {
+  const env = provider.settingsConfig?.env as
+    | Record<string, unknown>
+    | undefined;
+  const baseUrl = env?.ANTHROPIC_BASE_URL;
+  return (
+    provider.category !== "official" &&
+    provider.category !== "cloud_provider" &&
+    !isOAuthProviderType(provider.meta?.providerType) &&
+    !(typeof baseUrl === "string" && baseUrl.includes("githubcopilot.com"))
+  );
+}
+
 /**
  * 供应商在指定应用下是否必须开启路由接管才能正常工作（badge 与切换警告共用的权威谓词）。
  *
@@ -157,6 +173,7 @@ export function providerNeedsRouting(
 
   if (
     (appId === "claude" || appId === "codex") &&
+    supportsModelApiFormats(provider) &&
     Object.keys(provider.meta?.modelApiFormats ?? {}).length > 0
   )
     return true;

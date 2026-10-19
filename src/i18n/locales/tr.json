@@ -1764,6 +1764,9 @@
       "duplicate": "Her modelin yalnızca bir protokol ayarı olabilir ([1M] yok sayılır)."
     },
     "protocolSettings": {
+      "claudeMessagesHint": "Messages modelleri mevcut iletim kurallarını ve buradaki ortak kimlik doğrulama ayarlarını kullanır. Claude Code yerel olarak Messages kullanmaya devam eder.",
+      "claudeChatHint": "Chat modelleri mevcut Messages → Chat dönüşümünü kullanır. Burada ek ayar yoktur; Claude Code yerel olarak Messages kullanmaya devam eder.",
+      "claudeResponsesHint": "Responses modelleri mevcut Messages → Responses dönüşümünü kullanır. Burada ek ayar yoktur; Claude Code yerel olarak Messages kullanmaya devam eder.",
       "messages": "Anthropic Messages üst sunucu ayarları",
       "messagesHint": "Messages kullanan modeller mevcut ayarları paylaşır. Codex yerel olarak Responses kullanır.",
       "chat": "OpenAI Chat Completions üst sunucu ayarları",

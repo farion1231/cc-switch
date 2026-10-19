@@ -223,7 +223,9 @@ export function ModelApiFormatsField({
               {protocolSettings?.[format] ?? (
                 <p className="text-xs text-fg-2">
                   {t(
-                    `providerForm.protocolSettings.${format === "anthropic" ? "messages" : format === "openai_chat" ? "chat" : "responses"}Hint`,
+                    client === "claude"
+                      ? `providerForm.protocolSettings.${format === "anthropic" ? "claudeMessages" : format === "openai_chat" ? "claudeChat" : "claudeResponses"}Hint`
+                      : `providerForm.protocolSettings.${format === "anthropic" ? "messages" : format === "openai_chat" ? "chat" : "responses"}Hint`,
                   )}
                 </p>
               )}

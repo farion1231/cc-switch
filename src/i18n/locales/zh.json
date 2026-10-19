@@ -1789,6 +1789,9 @@
       "duplicate": "同一模型只能配置一次协议（[1M] 不区分）。"
     },
     "protocolSettings": {
+      "claudeMessagesHint": "使用 Messages 的模型沿用原生转发规则，共用此处的认证设置。Claude Code 下游仍使用 Messages。",
+      "claudeChatHint": "使用 Chat 的模型复用现有 Messages → Chat 转换规则。此处没有额外参数，Claude Code 下游仍使用 Messages。",
+      "claudeResponsesHint": "使用 Responses 的模型复用现有 Messages → Responses 转换规则。此处没有额外参数，Claude Code 下游仍使用 Messages。",
       "messages": "Anthropic Messages 上游参数",
       "messagesHint": "这些原有参数由使用 Messages 的模型共用，不改变 Codex 的 Responses 协议。",
       "chat": "OpenAI Chat Completions 上游参数",

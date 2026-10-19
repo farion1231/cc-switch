@@ -55,6 +55,30 @@ describe("model protocol overrides", () => {
       }
     });
   }
+  it.each(["claude", "codex"] as const)(
+    "%s shows protocol hints for the downstream client",
+    (client) => {
+      render(<Editor client={client} />);
+      for (const [label, hint] of [
+        [/Chat Completions/, "chat"],
+        [/Responses/, "responses"],
+        [/Anthropic Messages/, "messages"],
+      ] as const) {
+        fireEvent.mouseDown(screen.getByRole("tab", { name: label }), {
+          button: 0,
+          ctrlKey: false,
+        });
+        const key =
+          client === "claude"
+            ? `claude${hint[0].toUpperCase()}${hint.slice(1)}`
+            : hint;
+        expect(screen.getByRole("group")).toHaveTextContent(
+          `providerForm.protocolSettings.${key}Hint`,
+        );
+      }
+    },
+  );
+
   it("normalizes IDs, ignores empty rows, and detects incomplete/duplicate entries", () => {
     const row = (
       model: string,

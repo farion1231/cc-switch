@@ -4,6 +4,7 @@ import type { AppId } from "@/lib/api";
 import {
   providerNeedsRouting,
   resolveCodexOfficialIdentity,
+  supportsModelApiFormats,
   supportsOfficialProxyTakeover,
 } from "@/utils/providerCapabilities";
 
@@ -383,6 +384,48 @@ describe("providerNeedsRouting", () => {
 });
 
 describe("model protocol routing requirements", () => {
+  it.each(["claude", "codex"] as const)(
+    "%s ignores stale overrides on unsupported providers and preserves existing routing rules",
+    (appId) => {
+      const nativeFormat =
+        appId === "claude" ? "anthropic" : "openai_responses";
+      const restricted: Partial<Provider>[] = [
+        { category: "official" },
+        { category: "cloud_provider" },
+        ...["github_copilot", "codex_oauth", "xai_oauth"].map(
+          (providerType) => ({
+            meta: { providerType },
+          }),
+        ),
+        {
+          settingsConfig: {
+            env: { ANTHROPIC_BASE_URL: "https://api.githubcopilot.com" },
+          },
+        },
+      ];
+      for (const override of restricted) {
+        const provider = mkProvider({
+          ...override,
+          meta: { ...override.meta, apiFormat: nativeFormat },
+        });
+        const original = providerNeedsRouting(appId, provider);
+        provider.meta!.modelApiFormats = { model: "openai_chat" };
+        expect(supportsModelApiFormats(provider)).toBe(false);
+        expect(providerNeedsRouting(appId, provider)).toBe(original);
+      }
+      const cloud = mkProvider({
+        category: "cloud_provider",
+        meta: {
+          apiFormat: nativeFormat,
+          modelApiFormats: { model: "openai_chat" },
+        },
+      });
+      expect(providerNeedsRouting(appId, cloud)).toBe(false);
+      cloud.meta!.isFullUrl = true;
+      expect(providerNeedsRouting(appId, cloud)).toBe(true);
+    },
+  );
+
   it("requires routing even when the provider default matches the client protocol", () => {
     for (const appId of ["claude", "codex"] as const) {
       const provider = mkProvider({
@@ -392,6 +435,7 @@ describe("model protocol routing requirements", () => {
           modelApiFormats: { model: "openai_chat" },
         },
       });
+      expect(supportsModelApiFormats(provider)).toBe(true);
       expect(providerNeedsRouting(appId, provider)).toBe(true);
       provider.meta!.modelApiFormats = {};
       expect(providerNeedsRouting(appId, provider)).toBe(false);

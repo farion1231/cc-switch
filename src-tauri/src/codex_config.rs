@@ -2489,12 +2489,12 @@ pub(crate) fn plan_codex_provider_model_catalog(
         catalog: if specs.is_empty() {
             None
         } else {
-            Some(codex_catalog_with_model_formats(
-                &specs,
-                config_text,
-                profile,
-                formats,
-            )?)
+            let mut catalog =
+                codex_catalog_with_model_formats(&specs, config_text, profile, formats)?;
+            if let Some(model) = codex_card_auto_review_model(&provider.settings_config) {
+                apply_codex_auto_review_model(&mut catalog, model);
+            }
+            Some(catalog)
         },
     })
 }
@@ -5377,6 +5377,7 @@ wire_api = "responses"
 
                 let stacked = plan_codex_stack_catalog(
                     CodexStackRoute::ThirdParty(CodexCatalogRow {
+                        model_api_formats: None,
                         settings: &json!({}),
                         config_text: "",
                         profile,
@@ -5385,6 +5386,7 @@ wire_api = "responses"
                         key: "gemini",
                         provider_name: "Gemini",
                         row: CodexCatalogRow {
+                            model_api_formats: None,
                             settings: &settings,
                             config_text: "",
                             profile,
@@ -5472,6 +5474,7 @@ wire_api = "responses"
             ] } });
             let catalog = plan_codex_stack_catalog(
                 CodexStackRoute::ThirdParty(CodexCatalogRow {
+                    model_api_formats: None,
                     settings: &route,
                     config_text: "",
                     profile: CodexCatalogToolProfile::NativeResponses,
@@ -5480,6 +5483,7 @@ wire_api = "responses"
                     key: "relay",
                     provider_name: "Relay",
                     row: CodexCatalogRow {
+                        model_api_formats: None,
                         settings: &member,
                         config_text: "",
                         profile: CodexCatalogToolProfile::ProxyChat,
@@ -6461,6 +6465,44 @@ model_catalog_json = "cc-switch-model-catalog.json"
             "file larger than MAX_CODEX_CATALOG_BYTES must be rejected"
         );
     }
+    #[test]
+    fn model_api_formats_preserve_card_auto_review_model() {
+        let mut provider: crate::provider::Provider = serde_json::from_value(json!({
+            "id": "mixed", "name": "Mixed",
+            "settingsConfig": {"modelCatalog": {"models": [
+                {"model": "chat-model"}, {"model": "messages-model"}
+            ]}},
+            "meta": {"apiFormat": "openai_chat", "modelApiFormats": {
+                "messages-model": "anthropic"
+            }}
+        }))
+        .unwrap();
+        for (selected, expected) in [
+            (" messages-model ", Some("messages-model")),
+            ("chat-model", Some("chat-model")),
+            ("", None),
+            ("removed-model", None),
+        ] {
+            provider.settings_config["modelCatalog"]["autoReviewModel"] = json!(selected);
+            let overridden = plan_codex_provider_model_catalog(&provider, "")
+                .unwrap()
+                .catalog
+                .unwrap();
+            let mut plain = provider.clone();
+            plain.meta.as_mut().unwrap().model_api_formats = None;
+            let plain = plan_codex_provider_model_catalog(&plain, "")
+                .unwrap()
+                .catalog
+                .unwrap();
+            assert_eq!(auto_review_overrides(&overridden), vec![expected; 2]);
+            assert_eq!(
+                auto_review_overrides(&overridden),
+                auto_review_overrides(&plain)
+            );
+            assert_ne!(overridden["models"][1]["apply_patch_tool_type"], "freeform");
+        }
+    }
+
     #[test]
     fn model_api_formats_generate_per_model_tools_and_messages_web_search_policy() {
         let provider: crate::provider::Provider = serde_json::from_value(json!({

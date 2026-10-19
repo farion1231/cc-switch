@@ -1789,6 +1789,9 @@
       "duplicate": "Each model can have only one protocol override ([1M] is ignored)."
     },
     "protocolSettings": {
+      "claudeMessagesHint": "Messages models keep native forwarding and share the authentication settings here. Claude Code still uses Messages locally.",
+      "claudeChatHint": "Chat models use the existing Messages → Chat conversion. There are no additional settings here; Claude Code still uses Messages locally.",
+      "claudeResponsesHint": "Responses models use the existing Messages → Responses conversion. There are no additional settings here; Claude Code still uses Messages locally.",
       "messages": "Anthropic Messages upstream settings",
       "messagesHint": "These existing settings are shared by models using Messages. Codex still uses Responses locally.",
       "chat": "OpenAI Chat Completions upstream settings",

@@ -1789,6 +1789,9 @@
       "duplicate": "各モデルに設定できるプロトコルは一つです（[1M] は無視されます）。"
     },
     "protocolSettings": {
+      "claudeMessagesHint": "Messages モデルは既存の転送規則と共通の認証設定を使います。Claude Code 側は Messages のままです。",
+      "claudeChatHint": "Chat モデルは既存の Messages → Chat 変換を使います。追加設定はなく、Claude Code 側は Messages のままです。",
+      "claudeResponsesHint": "Responses モデルは既存の Messages → Responses 変換を使います。追加設定はなく、Claude Code 側は Messages のままです。",
       "messages": "Anthropic Messages の上流設定",
       "messagesHint": "Messages を使うモデルで既存設定を共有します。Codex 側は Responses のままです。",
       "chat": "OpenAI Chat Completions の上流設定",
