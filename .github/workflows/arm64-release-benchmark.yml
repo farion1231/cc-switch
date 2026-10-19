@@ -1,0 +1,102 @@
+name: Windows ARM64 Release cache experiment
+
+on:
+  push:
+    branches:
+      - codex/issue-8543-arm64-release
+    paths:
+      - .github/workflows/arm64-release-benchmark.yml
+      - src/**
+      - src-tauri/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - rust-toolchain.toml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arm64-release-benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: Windows ARM64 release build (no bundle)
+    runs-on: windows-11-arm
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: |
+          channel=$(sed -nE 's/^channel *= *"([^"]+)".*/\1/p' rust-toolchain.toml)
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Add Windows ARM64 target
+        shell: pwsh
+        run: rustup target add aarch64-pc-windows-msvc
+
+      - name: Setup pnpm
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+        run: |
+          corepack enable
+          corepack install
+          node --version
+          pnpm --version
+
+      - name: Get pnpm store directory
+        id: pnpm-store
+        if: runner.os == 'Windows' && runner.arch == 'ARM64'
+        shell: pwsh
+        run: |
+          $storePath = pnpm store path --silent
+          "path=$storePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Setup LLVM for Windows ARM64
+        if: runner.os == 'Windows' && runner.arch == 'ARM64'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $llvmRoot = 'C:\Program Files\LLVM'
+          if (-not (Test-Path $llvmRoot)) {
+            throw "LLVM not found at $llvmRoot"
+          }
+          $llvmBin = Join-Path $llvmRoot 'bin'
+          "LIBCLANG_PATH=$llvmBin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CLANG_PATH=$(Join-Path $llvmBin 'clang.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Tauri app without bundling or signing
+        run: pnpm tauri build --target aarch64-pc-windows-msvc --no-bundle
+
+      - name: Report ARM64 release target size
+        if: always()
+        shell: pwsh
+        run: |
+          $targetPath = 'src-tauri/target/aarch64-pc-windows-msvc/release'
+          if (Test-Path $targetPath) {
+            $bytes = (Get-ChildItem -LiteralPath $targetPath -File -Recurse | Measure-Object -Property Length -Sum).Sum
+            Write-Host "ARM64 release target bytes: $bytes"
+          } else {
+            Write-Host 'ARM64 release target was not produced.'
+          }

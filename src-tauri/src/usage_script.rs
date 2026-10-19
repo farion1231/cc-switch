@@ -598,6 +598,53 @@ fn is_loopback_host(url: &Url) -> bool {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn custom_usage_script_executes_request_and_extractor() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind local usage endpoint");
+        let address = listener.local_addr().expect("get local endpoint address");
+        let app = axum::Router::new().route(
+            "/quota",
+            axum::routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "used": 7,
+                    "total": 42,
+                    "plan": "test-plan"
+                }))
+            }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve local usage endpoint");
+        });
+
+        let script = format!(
+            r#"({{
+                request: {{ url: "http://{address}/quota", method: "GET" }},
+                extractor: (response) => ({{
+                    used: response.used,
+                    total: response.total,
+                    remaining: response.total - response.used,
+                    planName: response.plan,
+                    unit: "requests"
+                }})
+            }})"#
+        );
+        let result = execute_usage_script(&script, "", "", 5, None, None, Some("custom"))
+            .await
+            .expect("execute representative custom usage script");
+
+        server.abort();
+
+        assert_eq!(result["used"], 7);
+        assert_eq!(result["total"], 42);
+        assert_eq!(result["remaining"], 35);
+        assert_eq!(result["planName"], "test-plan");
+        assert_eq!(result["unit"], "requests");
+    }
+
     #[test]
     fn test_https_bypass_prevention() {
         // 非本地域名的 HTTP 应该被拒绝
