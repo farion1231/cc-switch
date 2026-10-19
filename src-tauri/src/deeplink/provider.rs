@@ -476,10 +476,13 @@ fn build_provider_meta(
 
     // 套餐地址且没带脚本：和在应用里新建一样，按套餐额度查询并默认启用
     // （链接写了 `usageEnabled` 仍照办）。额度走后端固定端点，不执行任何脚本。
+    // 阿里云两条套餐线例外：它们还要账号 AK/SK，默认开启只会先报一条失败，
+    // 因此预选好套餐模板但保持关闭，等用户填完凭据再手动打开。
     if let (Some(provider_id), true) = (coding_plan_provider, code.is_empty()) {
+        let needs_ak_sk = matches!(provider_id, "bailian" | "qwen_token_plan");
         return Ok(Some(ProviderMeta {
             usage_script: Some(UsageScript {
-                enabled: request.usage_enabled.unwrap_or(true),
+                enabled: request.usage_enabled.unwrap_or(!needs_ak_sk),
                 language: "javascript".to_string(),
                 code,
                 timeout: Some(10),

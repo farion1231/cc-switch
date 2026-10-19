@@ -214,7 +214,7 @@ describe("injectCodingPlanUsageScript", () => {
     expect(injected.meta?.usage_script?.codingPlanProvider).toBe("kimi");
   });
 
-  it("injects Bailian for the claude preset (AK/SK query)", () => {
+  it("preselects Bailian for the claude preset without enabling (AK/SK query)", () => {
     const injected = inject("claude", {
       settingsConfig: {
         env: {
@@ -223,14 +223,15 @@ describe("injectCodingPlanUsageScript", () => {
         },
       },
     });
+    // 预选套餐模板但不自动启用：还要账号 AK/SK，开启前不能先报失败
     expect(injected.meta?.usage_script).toMatchObject({
-      enabled: true,
+      enabled: false,
       templateType: "token_plan",
       codingPlanProvider: "bailian",
     });
   });
 
-  it("injects Qwen Token Plan for the claude preset (AK/SK query)", () => {
+  it("preselects Qwen Token Plan for the claude preset without enabling (AK/SK query)", () => {
     const injected = inject("claude", {
       settingsConfig: {
         env: {
@@ -239,8 +240,9 @@ describe("injectCodingPlanUsageScript", () => {
         },
       },
     });
+    // 同上百炼：预选但不自动启用
     expect(injected.meta?.usage_script).toMatchObject({
-      enabled: true,
+      enabled: false,
       templateType: "token_plan",
       codingPlanProvider: "qwen_token_plan",
     });

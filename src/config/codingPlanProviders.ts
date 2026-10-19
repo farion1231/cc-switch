@@ -182,6 +182,8 @@ export function extractBaseUrlForUsageDetection(
  *   客户端协议、base_url 路径无关；凭据提取与后端 `resolve_usage_credentials` 对齐
  * - ZenMux 例外，仍只在 Claude 注入：它的查询直接 GET 用户填的 base_url，
  *   其他 app 的推理地址未验证能返回额度
+ * - 阿里云两条套餐线（百炼 Coding Plan / 千问 Token Plan）注入但 `enabled: false`：
+ *   它们除推理 Key 外还要账号 AK/SK，预开启会让新卡片先显示一条失败
  * - code 置空：Rust 端走专用 `coding_plan::get_coding_plan_quota`，不执行 JS 脚本
  */
 export function injectCodingPlanUsageScript<
@@ -200,12 +202,18 @@ export function injectCodingPlanUsageScript<
   if (!codingPlanProvider) return provider;
   if (codingPlanProvider === "zenmux" && appId !== "claude") return provider;
 
+  // 阿里云两条套餐线要账号 AK/SK 才查得到：先按套餐模板预选好，但不自动启用，
+  // 否则用户在填凭据之前卡片就先报"缺 AccessKey"的失败（见 PR #8524 review）。
+  const needsAkSk =
+    codingPlanProvider === "bailian" ||
+    codingPlanProvider === "qwen_token_plan";
+
   return {
     ...provider,
     meta: {
       ...(provider.meta ?? {}),
       usage_script: createUsageScript({
-        enabled: true,
+        enabled: !needsAkSk,
         templateType: TEMPLATE_TYPES.TOKEN_PLAN,
         codingPlanProvider,
       }),
