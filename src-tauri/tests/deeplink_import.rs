@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use xsec_agent_shield_lib::{import_provider_from_deeplink, parse_deeplink_url, AppState, Database};
+use xsec_agent_shield_lib::{
+    import_provider_from_deeplink, parse_deeplink_url, AppState, Database,
+};
 
 #[path = "support.rs"]
 mod support;

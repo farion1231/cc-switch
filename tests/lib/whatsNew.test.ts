@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import * as whatsNew from "@/lib/whatsNew";
 import {
-  changelogUrl,
   entriesSince,
   entriesUpTo,
   isNewerThanSeen,
@@ -87,10 +87,8 @@ describe("language and links", () => {
     expect(resolveWhatsNewLanguage("fr")).toBe("en");
   });
 
-  it("links to the website changelog, Traditional Chinese uses the zh pages", () => {
-    expect(changelogUrl("en", "4.0.2")).toBe(
-      "https://ccswitch.io/en/changelog/4.0.2",
-    );
-    expect(changelogUrl("zh-TW")).toBe("https://ccswitch.io/zh/changelog");
+  it("P0-01: the module exposes no upstream changelog URL builder", () => {
+    expect((whatsNew as Record<string, unknown>).changelogUrl).toBeUndefined();
+    expect(whatsNew.WHATS_NEW_UI_ENABLED).toBe(false);
   });
 });

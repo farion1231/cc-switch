@@ -4,7 +4,7 @@ import {
   writeRememberedChoice,
 } from "@/components/usage/rememberedChoice";
 
-const KEY = "cc-switch.usage.test";
+const KEY = "xsec.usage.test";
 const METRICS = ["tokens", "requests", "cost"] as const;
 
 describe("remembered usage choices", () => {

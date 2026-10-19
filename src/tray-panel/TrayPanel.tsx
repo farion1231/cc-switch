@@ -40,7 +40,7 @@ import { usePanelTheme } from "./usePanelTheme";
 import { UsageTab } from "./UsageTab";
 
 type Tab = "config" | "usage";
-const TAB_KEY = "cc-switch-tray-tab";
+const TAB_KEY = "xsec-tray-tab";
 /** 主界面保存语言用的键 */
 const LANGUAGE_KEY = "language";
 const MAIN_MAX_HEIGHT = 620;

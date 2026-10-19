@@ -4894,7 +4894,10 @@ wire_api = "responses"
         let config = r#"model_catalog_json = "/tmp/.codex/cc-switch-model-catalog.json"
 "#;
         let resolved = resolve_cc_switch_catalog_path(config, &base).expect("path resolves");
-        assert_eq!(resolved, base.join(XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME));
+        assert_eq!(
+            resolved,
+            base.join(XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME)
+        );
     }
 
     #[test]

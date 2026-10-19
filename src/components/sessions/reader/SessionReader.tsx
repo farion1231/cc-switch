@@ -57,7 +57,7 @@ import {
 } from "./turns";
 
 /** 「展开全部过程」偏好（与会话列表的分组方式一样存在 localStorage） */
-const EXPAND_ALL_STORAGE_KEY = "cc-switch.sessionReader.expandTimelines";
+const EXPAND_ALL_STORAGE_KEY = "xsec.sessionReader.expandTimelines";
 
 const readExpandAll = () => {
   try {
@@ -86,7 +86,7 @@ const latestModel = (messages: SessionMessage[]) => {
 };
 
 /** 该轮的执行过程有没有摘要行（规则 5：只有 1 步且没失败时没有） */
-const OUTLINE_STORAGE_KEY = "cc-switch.sessionReader.outline";
+const OUTLINE_STORAGE_KEY = "xsec.sessionReader.outline";
 
 /** 会话标题转成文件名：去掉各系统不允许的字符，压掉空白，限制长度 */
 const toFileName = (title: string) =>

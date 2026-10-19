@@ -51,7 +51,7 @@ function applyColorScheme(isDark: boolean) {
 export function ThemeProvider({
   children,
   defaultTheme = "system",
-  storageKey = "cc-switch-theme",
+  storageKey = "xsec-shield-theme",
 }: ThemeProviderProps) {
   const getInitialTheme = () => {
     if (typeof window === "undefined") {

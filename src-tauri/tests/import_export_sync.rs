@@ -565,7 +565,8 @@ fn import_from_claude_merges_into_config() {
         },
     );
 
-    let changed = xsec_agent_shield_lib::import_from_claude(&mut config).expect("import from claude");
+    let changed =
+        xsec_agent_shield_lib::import_from_claude(&mut config).expect("import from claude");
     assert!(changed >= 1, "should mark at least one change");
 
     // v3.7.0: 检查统一结构

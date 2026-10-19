@@ -33,8 +33,8 @@ type Range = (typeof RANGES)[number];
 const METRICS = ["tokens", "requests", "cost"] as const;
 type Metric = (typeof METRICS)[number];
 
-const RANGE_KEY = "cc-switch-tray-usage-range";
-const METRIC_KEY = "cc-switch-tray-usage-metric";
+const RANGE_KEY = "xsec-tray-usage-range";
+const METRIC_KEY = "xsec-tray-usage-metric";
 /** 柱子最多这么多根，再多就把相邻的几天并成一根 */
 const MAX_BARS = 31;
 const DAY_SECONDS = 24 * 60 * 60;

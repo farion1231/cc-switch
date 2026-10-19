@@ -780,7 +780,8 @@ mod tests {
     #[ignore = "requires XSEC_SHIELD_WSL_TEST_DIR to point to a WSL2 UNC directory"]
     fn atomic_write_replaces_existing_wsl_unc_file() {
         let root = PathBuf::from(
-            std::env::var_os("XSEC_SHIELD_WSL_TEST_DIR").expect("XSEC_SHIELD_WSL_TEST_DIR must be set"),
+            std::env::var_os("XSEC_SHIELD_WSL_TEST_DIR")
+                .expect("XSEC_SHIELD_WSL_TEST_DIR must be set"),
         );
         let home = get_home_dir();
         let temp = std::env::temp_dir();

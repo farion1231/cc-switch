@@ -190,8 +190,8 @@ command = "say"
         "Codex provider switching should preserve the existing live auth.json"
     );
 
-    let config_text =
-        std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path()).expect("read config.toml");
+    let config_text = std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path())
+        .expect("read config.toml");
     // 只替换关键字段：live 里用户的 MCP 原样留着；行里的 MCP 不是关键字段，不投影。
     assert!(
         config_text.contains("[mcp_servers.legacy]"),
@@ -296,8 +296,8 @@ requires_openai_auth = true
     ProviderService::switch(&state, AppType::Codex, "new-provider")
         .expect("switch provider should succeed");
 
-    let config_text =
-        std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path()).expect("read config.toml");
+    let config_text = std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path())
+        .expect("read config.toml");
     let parsed: toml::Value = toml::from_str(&config_text).expect("parse config.toml");
 
     assert_eq!(
@@ -462,8 +462,8 @@ requires_openai_auth = true
         "existing ChatGPT OAuth token should be preserved"
     );
 
-    let live_config =
-        std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path()).expect("read config.toml");
+    let live_config = std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path())
+        .expect("read config.toml");
     let parsed_live: toml::Value = toml::from_str(&live_config).expect("parse live config");
     assert_eq!(
         parsed_live.get("model_provider").and_then(|v| v.as_str()),
@@ -597,14 +597,16 @@ wire_api = "responses"
         .expect("switch from official subscription to DeepSeek");
 
     let auth_after_switch: serde_json::Value =
-        read_json_file(&xsec_agent_shield_lib::get_codex_auth_path()).expect("read auth after switch");
+        read_json_file(&xsec_agent_shield_lib::get_codex_auth_path())
+            .expect("read auth after switch");
     assert_eq!(
         auth_after_switch, oauth_auth,
         "normal provider switch with Codex preservation enabled must keep OAuth auth.json"
     );
 
     let config_after_switch =
-        std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path()).expect("read config");
+        std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path())
+            .expect("read config");
     assert!(
         config_after_switch.contains("https://api.deepseek.com/v1"),
         "normal switch should write the DeepSeek endpoint before takeover"
@@ -625,14 +627,16 @@ wire_api = "responses"
     let codex_proxy_base_url = format!("http://127.0.0.1:{}/v1", proxy_status.port);
 
     let auth_after_takeover: serde_json::Value =
-        read_json_file(&xsec_agent_shield_lib::get_codex_auth_path()).expect("read auth after takeover");
+        read_json_file(&xsec_agent_shield_lib::get_codex_auth_path())
+            .expect("read auth after takeover");
     assert_eq!(
         auth_after_takeover, oauth_auth,
         "enabling takeover must not rewrite Codex OAuth auth.json"
     );
 
     let config_after_takeover =
-        std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path()).expect("read config");
+        std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path())
+            .expect("read config");
     assert!(
         config_after_takeover.contains(&codex_proxy_base_url),
         "enabling takeover should point Codex config.toml at the local proxy"
@@ -752,8 +756,8 @@ requires_openai_auth = true
         "default (preservation off) must delete auth.json on a third-party switch — \
          the official login goes away and the key rides in config.toml instead"
     );
-    let live_config =
-        std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path()).expect("read config.toml");
+    let live_config = std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path())
+        .expect("read config.toml");
     assert!(
         live_config.contains("experimental_bearer_token = \"third-party-key\""),
         "the third-party key must be injected as the provider-scoped bearer token; got:\n{live_config}"
@@ -809,8 +813,8 @@ requires_openai_auth = false
         "third-party switches are config-only: no auth.json is written"
     );
 
-    let live_config =
-        std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path()).expect("read config.toml");
+    let live_config = std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path())
+        .expect("read config.toml");
     assert!(
         live_config.contains("experimental_bearer_token = \"third-party-key\""),
         "default switch must inject the API key into config.toml so Codex >= 0.149 \
@@ -914,8 +918,8 @@ openai_base_url = "https://relay.example/v1"
     ProviderService::switch(&state, AppType::Codex, "legacy-shape")
         .expect("legacy reroute shape must be normalized, not rejected");
 
-    let live_config =
-        std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path()).expect("read config.toml");
+    let live_config = std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path())
+        .expect("read config.toml");
     assert!(
         !live_config.contains("openai_base_url"),
         "the top-level reroute must be rewritten away; got:\n{live_config}"
@@ -979,8 +983,8 @@ experimental_bearer_token = "config-carried-key"
     ProviderService::switch(&state, AppType::Codex, "raw-edited")
         .expect("legacy reroute with a config-carried token must be normalized");
 
-    let live_config =
-        std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path()).expect("read config.toml");
+    let live_config = std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path())
+        .expect("read config.toml");
     assert!(
         !live_config.contains("openai_base_url"),
         "the top-level reroute must be rewritten away; got:\n{live_config}"
@@ -1039,8 +1043,8 @@ openai_base_url = "https://relay.example/v1"
         !xsec_agent_shield_lib::get_codex_auth_path().exists(),
         "third-party switches are config-only: no auth.json is written"
     );
-    let live_config =
-        std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path()).expect("read config.toml");
+    let live_config = std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path())
+        .expect("read config.toml");
     assert!(
         !live_config.contains("openai_base_url")
             && live_config.contains("[model_providers.custom]")
@@ -1181,8 +1185,8 @@ http_headers = { Authorization = "Bearer explicit-header-token" }
     ProviderService::switch(&state, AppType::Codex, "header-auth")
         .expect("preservation-on switch must keep supporting keyless header-auth providers");
 
-    let config_text =
-        std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path()).expect("read config.toml");
+    let config_text = std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path())
+        .expect("read config.toml");
     assert!(
         config_text.contains("Authorization = \"Bearer explicit-header-token\""),
         "the provider's own Authorization header must be written verbatim; got:\n{config_text}"
@@ -1273,8 +1277,8 @@ requires_openai_auth = true
         "official provider should preserve the existing ChatGPT OAuth token"
     );
 
-    let live_config =
-        std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path()).expect("read config.toml");
+    let live_config = std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path())
+        .expect("read config.toml");
     assert!(
         !live_config.contains("experimental_bearer_token"),
         "official login provider has no API key to inject"
@@ -1365,8 +1369,8 @@ requires_openai_auth = true
         "the outgoing row is never rewritten from live"
     );
 
-    let live_config =
-        std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path()).expect("read config.toml");
+    let live_config = std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path())
+        .expect("read config.toml");
     assert!(
         !live_config.contains("experimental_bearer_token"),
         "official provider has no API key to inject"
@@ -1412,7 +1416,8 @@ fn provider_service_reswitch_current_official_keeps_live_auth() {
         .expect("re-switch to current official provider should succeed");
 
     let auth_value: serde_json::Value =
-        read_json_file(&xsec_agent_shield_lib::get_codex_auth_path()).expect("auth.json must survive");
+        read_json_file(&xsec_agent_shield_lib::get_codex_auth_path())
+            .expect("auth.json must survive");
     assert_eq!(
         auth_value.get("OPENAI_API_KEY").and_then(|v| v.as_str()),
         Some("residue-key"),
@@ -1492,7 +1497,8 @@ fn reapply_codex_official_live_rewrites_only_the_session_routing() {
         .expect("update settings");
     };
     let read_live = || {
-        std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path()).expect("read config.toml")
+        std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path())
+            .expect("read config.toml")
     };
 
     set_unify(true);
@@ -2052,7 +2058,9 @@ wire_api = "responses"
     }
 
     let state = create_test_state_with_config(&config).expect("create test state");
-    assert!(!xsec_agent_shield_lib::mode::current::is_proxy(&AppType::Codex));
+    assert!(!xsec_agent_shield_lib::mode::current::is_proxy(
+        &AppType::Codex
+    ));
 
     ProviderService::switch(&state, AppType::Codex, "new-provider")
         .expect("switch in direct mode writes the new provider");
@@ -2064,8 +2072,8 @@ wire_api = "responses"
         "preserving the official login keeps OAuth auth.json"
     );
 
-    let live_config =
-        std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path()).expect("read config.toml");
+    let live_config = std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path())
+        .expect("read config.toml");
     assert!(
         live_config.contains("https://new.deepseek.example/v1")
             && !live_config.contains("PROXY_MANAGED"),
@@ -3089,7 +3097,10 @@ fn editor_save(base: &serde_json::Value, on_conflict: &str) -> xsec_agent_shield
 }
 
 /// 打开编辑器：显示的就是切到这个供应商之后的 settings.json。
-fn open_claude_editor(state: &xsec_agent_shield_lib::AppState, id: &str) -> (Provider, serde_json::Value) {
+fn open_claude_editor(
+    state: &xsec_agent_shield_lib::AppState,
+    id: &str,
+) -> (Provider, serde_json::Value) {
     let row = state
         .db
         .get_provider_by_id(id, AppType::Claude.as_str())
@@ -3575,7 +3586,8 @@ fn claude_editor_never_leaves_the_row_and_live_apart() {
     let (row, base) = open_claude_editor(&state, "a");
     let mut edited = base.clone();
     edited["env"]["ANTHROPIC_AUTH_TOKEN"] = json!("sk-new");
-    let db = rusqlite::Connection::open(home.join(".xsec-agent-shield/cc-switch.db")).expect("open db");
+    let db =
+        rusqlite::Connection::open(home.join(".xsec-agent-shield/cc-switch.db")).expect("open db");
     db.execute_batch(
         "CREATE TRIGGER fail_edit BEFORE UPDATE OF settings_config ON providers \
          BEGIN SELECT RAISE(ABORT, 'injected save failure'); END;",

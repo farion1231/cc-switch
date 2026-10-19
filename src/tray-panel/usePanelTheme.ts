@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 /** 和主界面 ThemeProvider 的 storageKey 一致 */
-const THEME_STORAGE_KEY = "cc-switch-theme";
+const THEME_STORAGE_KEY = "xsec-shield-theme";
 
 type ThemeChoice = "light" | "dark" | "system";
 

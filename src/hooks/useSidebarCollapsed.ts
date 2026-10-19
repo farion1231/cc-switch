@@ -11,7 +11,7 @@ import { isMac } from "@/lib/platform";
 /** 窗口窄于这个宽度时侧栏自动收成图标轨（用户手动选过就按手动的来）。 */
 export const SIDEBAR_AUTO_COLLAPSE_WIDTH = 960;
 
-const STORAGE_KEY = "cc-switch-sidebar-collapsed";
+const STORAGE_KEY = "xsec-sidebar-collapsed";
 
 export const SIDEBAR_EXPANDED_WIDTH = 200;
 /** 收起时的图标轨宽度：macOS 的红绿灯（新版更大）要约 74px，Mac 上放宽到 84 */

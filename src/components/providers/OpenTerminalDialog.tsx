@@ -18,7 +18,7 @@ import { toast } from "@/lib/toast";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
 
-const STORAGE_KEY = "cc-switch:terminal:recent-dirs";
+const STORAGE_KEY = "xsec:terminal:recent-dirs";
 const MAX_RECENT = 5;
 
 function readRecent(): string[] {

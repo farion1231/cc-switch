@@ -3,7 +3,7 @@ import type { AppId } from "@/lib/api/types";
 import { SKILLS_APP_IDS } from "@/config/appConfig";
 import { useToggleSkillApp } from "@/hooks/useSkills";
 
-const STORAGE_KEY = "cc-switch:skills:install-to";
+const STORAGE_KEY = "xsec:skills:install-to";
 const DEFAULT_TARGETS: AppId[] = ["claude", "codex"];
 
 function readStored(): AppId[] | null {

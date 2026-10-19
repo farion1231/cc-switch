@@ -19,7 +19,6 @@ use tauri::menu::{
     CheckMenuItem, Menu, MenuBuilder, MenuItem, MenuItemKind, Submenu, SubmenuBuilder,
 };
 use tauri::{Emitter, Manager};
-use tauri_plugin_opener::OpenerExt;
 
 use crate::app_config::AppType;
 use crate::error::AppError;
@@ -4443,7 +4442,10 @@ mod tests {
             }
         };
         assert_eq!(quit_text(&zh(), false), "退出 XSEC Agent Shield");
-        assert_eq!(quit_text(&zh(), true), "退出 XSEC Agent Shield（路由服务会停止）");
+        assert_eq!(
+            quit_text(&zh(), true),
+            "退出 XSEC Agent Shield（路由服务会停止）"
+        );
         assert_eq!(
             quit_text(&en(), true),
             "Quit XSEC Agent Shield (stops the routing service)"

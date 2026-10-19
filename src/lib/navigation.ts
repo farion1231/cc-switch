@@ -61,8 +61,8 @@ const GLOBAL_PAGES: GlobalPage[] = [
   "apps",
 ];
 
-export const VIEW_STORAGE_KEY = "cc-switch-last-view";
-export const APP_STORAGE_KEY = "cc-switch-last-app";
+export const VIEW_STORAGE_KEY = "xsec-last-view";
+export const APP_STORAGE_KEY = "xsec-last-app";
 
 /** 旧版视图名 → 新视图（OpenClaw 的三个配置页合成了一个）。 */
 const LEGACY_VIEWS: Record<string, View> = {

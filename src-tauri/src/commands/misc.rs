@@ -73,18 +73,11 @@ pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
     .map_err(|e| format!("剪贴板任务执行失败: {e}"))?
 }
 
-/// 检查更新
+/// P0-01：上游 releases 页面同样属于旧产品更新渠道，开发构建禁用，
+/// 不打开任何上游下载地址。
 #[tauri::command]
-pub async fn check_for_updates(handle: AppHandle) -> Result<bool, String> {
-    handle
-        .opener()
-        .open_url(
-            "https://github.com/farion1231/cc-switch/releases/latest",
-            None::<String>,
-        )
-        .map_err(|e| format!("打开更新页面失败: {e}"))?;
-
-    Ok(true)
+pub async fn check_for_updates(_handle: AppHandle) -> Result<bool, String> {
+    Err("XSEC Agent Shield 开发构建未配置更新渠道".to_string())
 }
 
 /// P0-01：便携版更新下载同样属于上游发布渠道，开发构建未配置 XSEC 专属渠道前

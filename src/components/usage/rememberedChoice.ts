@@ -5,10 +5,10 @@ import { useState } from "react";
  * 只是界面偏好，不进 settings.json、不随云同步。读不到、写不了（隐私模式）或值认不出时按默认值。
  */
 export const USAGE_CHOICE_KEYS = {
-  tab: "cc-switch.usage.tab",
-  range: "cc-switch.usage.rangePreset",
-  trendMetric: "cc-switch.usage.trendMetric",
-  heatmapMetric: "cc-switch.usage.heatmapMetric",
+  tab: "xsec.usage.tab",
+  range: "xsec.usage.rangePreset",
+  trendMetric: "xsec.usage.trendMetric",
+  heatmapMetric: "xsec.usage.heatmapMetric",
 } as const;
 
 export function readRememberedChoice<T extends string>(

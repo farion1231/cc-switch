@@ -698,7 +698,7 @@ impl Database {
             let names = missing.join(", ");
             return Err(AppError::localized(
                 "backup.sql.invalid_schema",
-                format!("导入的 SQL 缺少 CC Switch 必需表：{names}"),
+                format!("导入的 SQL 缺少 XSEC Agent Shield 必需表：{names}"),
                 format!("The imported SQL is missing required CC Switch tables: {names}"),
             ));
         }
@@ -1458,7 +1458,7 @@ mod tests {
             .expect_err("缺少原始 schema 的文件必须被拒绝");
         assert!(
             error.to_string().contains("required CC Switch tables")
-                || error.to_string().contains("CC Switch 必需表"),
+                || error.to_string().contains("XSEC Agent Shield 必需表"),
             "应由原始 schema 校验拒绝，实际错误: {error}"
         );
 

@@ -1,8 +1,8 @@
 mod support;
 
-use xsec_agent_shield_lib::{update_settings, AppSettings, AppType, Prompt, PromptService};
 use std::fs;
 use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
+use xsec_agent_shield_lib::{update_settings, AppSettings, AppType, Prompt, PromptService};
 
 #[test]
 fn prompt_list_refreshes_external_edits_without_changing_inactive_templates() {

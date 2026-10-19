@@ -76,19 +76,24 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn test_get_macos_app_bundle_path_valid() {
-        let exe_path = std::path::Path::new("/Applications/XSEC Agent Shield.app/Contents/MacOS/XSEC Agent Shield");
+        let exe_path = std::path::Path::new(
+            "/Applications/XSEC Agent Shield.app/Contents/MacOS/XSEC Agent Shield",
+        );
         let result = get_macos_app_bundle_path(exe_path);
         assert_eq!(
             result,
-            Some(std::path::PathBuf::from("/Applications/XSEC Agent Shield.app"))
+            Some(std::path::PathBuf::from(
+                "/Applications/XSEC Agent Shield.app"
+            ))
         );
     }
 
     #[cfg(target_os = "macos")]
     #[test]
     fn test_get_macos_app_bundle_path_with_spaces() {
-        let exe_path =
-            std::path::Path::new("/Users/test/My Apps/XSEC Agent Shield.app/Contents/MacOS/XSEC Agent Shield");
+        let exe_path = std::path::Path::new(
+            "/Users/test/My Apps/XSEC Agent Shield.app/Contents/MacOS/XSEC Agent Shield",
+        );
         let result = get_macos_app_bundle_path(exe_path);
         assert_eq!(
             result,

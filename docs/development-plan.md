@@ -27,8 +27,9 @@
 - [x] 重写 README、CONTRIBUTING、SECURITY，保留原始许可证。
 - [x] 形成架构、威胁模型、阶段任务和验收矩阵。
 - [x] 前端类型检查和生产构建通过；详情见测试策略。
-- [ ] 应用身份、更新源、数据目录和 Agent 配置隔离。
-- [ ] 全量前后端基线回归、依赖/资源许可证审查。
+- [x] P0-01 应用身份原子调整完成（开发标识）：包名、Cargo、Tauri identifier、productName、数据目录、scheme、单实例/托盘标识、更新链路禁用、图标占位与 UI 品牌；V14 的静态隔离面已成立，双应用真机并存留待 P0-04。
+- [ ] P0-02 Agent 配置隔离：外部接管标识（`cc-switch-official`、`PROFILE_NAME`、`comp_hash`、`LEGACY_REROUTE_ID`、`"[cc-switch: …]"` wire 标记、live 接管备份目录）、旧数据目录导入与退出安全状态。
+- [ ] 全量前后端基线回归（nextest 全量 + CI 差异）、依赖/资源许可证审查。
 - [ ] 所有脱敏、存储、代理集成与安全验收任务。
 
 文档完成不等于 P0 工程门禁已通过。原始总结中的待办不自动勾选，执行状态统一在此更新。
@@ -63,6 +64,29 @@ P0–P4 合计暂估 **19–30 人日**，不含其他平台发布、完整第�
 | P0-05 | `THIRD_PARTY_NOTICES.md` 与密钥方案 | 列出直接/传递依赖及资源待审项；新增密码库与钥匙串实现先完成来源、维护状态和版本审查；冻结 token 格式、TTL、各类 buffer/timeout/请求上限及错误码 |
 
 P0-01 是下一项实际开发任务。拟用产品名 XSEC Agent Shield；具体反向域名标识、公开仓库和签名主体在正式发布配置前确认。开发可使用明确标注的开发标识，不因发布信息待定而复用旧产品身份。
+
+#### P0-01 执行记录（2026-10-19）
+
+新开发身份值（正式发布前均需重新确认）：
+
+| 项 | 旧值 | 新值 |
+| --- | --- | --- |
+| 产品显示名 / productName | CC Switch | XSEC Agent Shield |
+| Tauri identifier | `com.ccswitch.desktop` | `com.xsec.agent-shield.dev`（明确标注开发标识） |
+| npm/Cargo 包名 | `cc-switch` | `xsec-agent-shield`；库 `cc_switch_lib`→`xsec_agent_shield_lib` |
+| 数据目录 | `~/.cc-switch` | `~/.xsec-agent-shield`（Windows HOME 回退也只看新目录，不会碰旧产品库） |
+| deep-link scheme | `ccswitch://` | `xsecshield://`（conf + Info.plist + parser + 单测） |
+| 托盘标识 | `cc-switch` | `xsec-shield` |
+| 更新渠道 | 上游 pubkey/endpoints | 配置整段移除；`createUpdaterArtifacts:false`；Updater 插件不注册；capabilities 删除 `updater:default` |
+| 版本 | 4.0.15 | 保留 4.0.15（避免破坏 DB 迁移版本链；产品线版本重置归入发布配置） |
+
+更新禁用不是只删 URL：前端 `UPDATE_CHANNEL_CONFIGURED=false` 门（启动自动检查、手动检查全部不发起），后端 `install_update_and_restart`/`check_app_update_available`（恒 None，数据库过新界面自然降级为“升级无法解决”）/`check_for_updates`/`open_portable_update_download` 四个命令全部禁用；便携版上游下载地址构造函数删除。AboutSection 移除 GitHub/官网/发布说明/邀 Star/版本摘要入口；托盘菜单删除“打开官方网站”；whats-new 启动弹窗与官网 changelog 函数删除（`WHATS_NEW_UI_ENABLED=false`，数据 JSON 保留为历史，P4-03 重建）；i18n 五语清空旧产品赞助推广文案；新增 `settings.updateChannelDisabled` 文案。
+
+图标：PIL 生成盾形占位 1024 源图并 `tauri icon` 全量重生成（appicon.png/icns/ico/png/平台 Square/安卓 iOS）；前端 logo.svg、app-icon.png 同步占位；macOS 状态栏模板单色图标保留待品牌确认。内部存储键（theme/usage/sessions/terminal/skills/navigation/cache）统一 `xsec` 前缀，测试同步。
+
+刻意保留（归属与耦合理由）：外部接管 ID 与写往 Agent 配置的标记（P0-02）；代理 wire 层状态前缀与错误回显标记（P0-03 协议冻结）；历史迁移 fixture；上游 issue 链接注释（MIT 溯源）；presets 中赞助推广 URL（待单独清理项）；`db 文件名 cc-switch.db` 等目录内部文件名（目录已隔离，改名收益低、耦合测试面大）。本地数据目录内文件名不变。
+
+验证结果见 [测试策略](testing.md#p0-01-验证2026-10-19)。
 
 ### P1：脱敏与恢复内核
 

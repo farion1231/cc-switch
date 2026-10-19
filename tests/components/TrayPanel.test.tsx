@@ -119,7 +119,7 @@ describe("TrayPanel window layout", () => {
     vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => {
       frames.delete(id);
     });
-    window.localStorage.removeItem("cc-switch-tray-tab");
+    window.localStorage.removeItem("xsec-tray-tab");
     vi.mocked(trayPanelApi.state).mockResolvedValue(state);
     vi.mocked(trayPanelApi.layout).mockResolvedValue(undefined);
     // jsdom 不排版；分别提供主卡片和较高子卡片的实测高度。
@@ -132,7 +132,7 @@ describe("TrayPanel window layout", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    window.localStorage.removeItem("cc-switch-tray-tab");
+    window.localStorage.removeItem("xsec-tray-tab");
     delete document.documentElement.dataset.glass;
     delete document.documentElement.dataset.layout;
   });

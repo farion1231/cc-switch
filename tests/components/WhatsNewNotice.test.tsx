@@ -197,17 +197,16 @@ describe("WhatsNewNotice", () => {
     );
     expect(screen.getByText("v4.0.1")).toBeInTheDocument();
 
-    fireEvent.click(
-      screen.getAllByRole("button", { name: "whatsNew.versionDetails" })[0],
-    );
-    expect(mocks.openExternal).toHaveBeenCalledWith(
-      "https://ccswitch.io/zh/changelog/4.0.4",
-    );
+    // P0-01：弹窗不再提供上游官网 changelog 外链，确认按钮即关闭
+    expect(
+      screen.queryByRole("button", { name: "whatsNew.versionDetails" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "whatsNew.viewFull" }),
+    ).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "whatsNew.viewFull" }));
-    expect(mocks.openExternal).toHaveBeenLastCalledWith(
-      "https://ccswitch.io/zh/changelog",
-    );
+    fireEvent.click(screen.getByRole("button", { name: "whatsNew.confirm" }));
+    expect(mocks.openExternal).not.toHaveBeenCalled();
     await waitFor(() => expect(title()).not.toBeInTheDocument());
     expect(mocks.save).toHaveBeenCalledWith(
       expect.objectContaining({ whatsNewSeenVersion: "4.0.4" }),

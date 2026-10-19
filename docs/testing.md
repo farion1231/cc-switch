@@ -15,6 +15,28 @@
 | 全量前端单测、Rust 编译/单测/Clippy、桌面打包 | 本轮未运行；没有修改运行时实现，列为 P0 基线任务 |
 | Agent E2E / 安全能力 | 未实现、未验证，不能从前端构建通过推断安全性 |
 
+## P0-01 验证（2026-10-19）
+
+本轮只改应用身份、更新渠道禁用、品牌文案/资产与对应测试，不改脱敏语义。在 macOS 本机、锁定 Node 22.12.0 + pnpm 10.12.3、rust-toolchain 1.95 下执行：
+
+| 检查 | 结果 |
+| --- | --- |
+| `pnpm typecheck` | 通过，退出码 0 |
+| `pnpm format:check` | 通过（i18n JSON 重写后仍符合 Prettier） |
+| `pnpm test:unit` | 通过，231 个文件 / 3029 个用例全部通过（含同步更新的存储键、NewLayoutDialog/WhatsNew 负例） |
+| `pnpm build:renderer` | 通过；警告与基线相同（浏览器兼容数据过期、chunk 体积），未顺带升级依赖 |
+| `cargo fmt --check` | 通过（超宽品牌字符串由 rustfmt 自动换行） |
+| `cargo check` / `cargo test --no-run` | 通过，全部集成测试目标可编译，无新增 warning |
+| `cargo clippy -- -D warnings`（CI 同口径） | 通过 |
+| `cargo test --lib` | 通过：3797 个单测（含 tray 菜单顺序、deeplink parser、backup、handlers、config 路径用例） |
+| 定向集成测试 | `app_config_load` 4、`import_export_sync` 19、`mcp_commands` 33、`profile_roundtrip` 7、`skill_sync` 7、`provider_service` 51 全部通过 |
+| nextest 全量（含 proxy/golden 套件） | 未运行（本机未装 cargo-nextest），归入 P0-04 基线回归 |
+| 身份残留扫描 | 代码/配置中 `com.ccswitch.desktop`、`.cc-switch`、`ccswitch://`、旧更新端点均为 0 命中 |
+| V14 双应用真机并存 | 未执行：静态隔离面（identifier/数据目录/scheme/更新渠道/托盘与单实例标识）已成立；安装打包并存 smoke 留待 P0-04 |
+| Agent E2E / 安全能力 | 仍未实现；本轮未验证任何脱敏行为 |
+
+本轮失败历史：首次 `pnpm test:unit` 44 个失败，均为身份改名后的测试键/按钮断言失配（存储键前缀、NewLayoutDialog 发布说明按钮、WhatsNew 外链断言），已同步修正后全量通过；Rust 未出现测试失败。无基线失败与新回归混洌问题（上轮未跑过这些套件，本轮首次建立前端单测 + lib 单测 + 定向集成三个层次的本地基线）。
+
 ## 1. 测试层次
 
 1. 内核单元测试：规则、Unicode、重叠匹配、作用域和 token，优先 Rust 内置测试与现有测试依赖。

@@ -471,7 +471,7 @@ describe("SessionReader", () => {
     expect(
       screen.queryByRole("navigation", { name: "对话目录" }),
     ).not.toBeInTheDocument();
-    expect(window.localStorage.getItem("cc-switch.sessionReader.outline")).toBe(
+    expect(window.localStorage.getItem("xsec.sessionReader.outline")).toBe(
       "false",
     );
   });
