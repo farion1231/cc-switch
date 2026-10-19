@@ -1752,11 +1752,9 @@ export const providerPresets: ProviderPreset[] = [
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
         ANTHROPIC_MODEL: "MiniMax-M3.1-Flash[1M]",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3.1-Flash[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M3.1-Flash[1M]",
+        // M3 stays selectable as Opus; a role slot also works through the local route
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M3[1M]",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M3.1-Flash[1M]",
-        // extra /model entry; defaults stay on M3.1
-        ANTHROPIC_CUSTOM_MODEL_OPTION: "MiniMax-M3[1M]",
-        ANTHROPIC_CUSTOM_MODEL_OPTION_NAME: "MiniMax-M3",
       },
     },
     category: "cn_official",
@@ -1780,11 +1778,9 @@ export const providerPresets: ProviderPreset[] = [
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
         ANTHROPIC_MODEL: "MiniMax-M3.1-Flash[1M]",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3.1-Flash[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M3.1-Flash[1M]",
+        // M3 stays selectable as Opus; a role slot also works through the local route
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M3[1M]",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M3.1-Flash[1M]",
-        // extra /model entry; defaults stay on M3.1
-        ANTHROPIC_CUSTOM_MODEL_OPTION: "MiniMax-M3[1M]",
-        ANTHROPIC_CUSTOM_MODEL_OPTION_NAME: "MiniMax-M3",
       },
     },
     category: "cn_official",
