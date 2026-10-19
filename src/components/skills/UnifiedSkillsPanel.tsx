@@ -53,6 +53,7 @@ import { SKILLS_APP_IDS } from "@/config/appConfig";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { formatSkillError } from "@/lib/errors/skillErrorParser";
 import { cn } from "@/lib/utils";
 import {
   MatrixCell,
@@ -79,7 +80,11 @@ import {
   useSaveSkillProjectGroup,
   useDeleteSkillProjectGroup,
 } from "@/hooks/useSkillProjectGroups";
-import { groupInstalledSkills, isLocalSkill } from "./skillGroups";
+import {
+  groupInstalledSkills,
+  isLocalSkill,
+  matchesSkillSearch,
+} from "./skillGroups";
 import { SkillGroupSection } from "./SkillGroupSection";
 import { SkillProjectGroupDialog } from "./SkillProjectGroupDialog";
 import type { SkillProjectGroup } from "@/lib/api/skills";
@@ -369,18 +374,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       if (sourceFilter !== "all" && sourceKey(skill) !== sourceFilter) {
         return false;
       }
-      if (!normalizedQuery) return true;
-      return [
-        skill.name,
-        skill.id,
-        skill.description,
-        skill.directory,
-        skill.repoOwner,
-        skill.repoName,
-        skill.repoOwner && skill.repoName
-          ? `${skill.repoOwner}/${skill.repoName}`
-          : undefined,
-      ].some((value) => value?.toLocaleLowerCase().includes(normalizedQuery));
+      return matchesSkillSearch(skill, normalizedQuery);
     });
   }, [
     installedSkills,
@@ -441,19 +435,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       return false;
     return (
       !normalizedQuery ||
-      group.skills.some((skill) =>
-        [
-          skill.name,
-          skill.id,
-          skill.description,
-          skill.directory,
-          skill.repoOwner,
-          skill.repoName,
-          skill.repoOwner && skill.repoName
-            ? `${skill.repoOwner}/${skill.repoName}`
-            : skill.sourceId,
-        ].some((value) => value?.toLocaleLowerCase().includes(normalizedQuery)),
-      )
+      group.skills.some((skill) => matchesSkillSearch(skill, normalizedQuery))
     );
   });
 
@@ -816,7 +798,12 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
           : { closeButton: true },
       );
     } catch (error) {
-      toast.error(t("common.error"), { description: String(error) });
+      const message = formatSkillError(
+        extractErrorMessage(error),
+        t,
+        "common.error",
+      );
+      toast.error(message.title, { description: message.description });
     } finally {
       endWrite();
     }

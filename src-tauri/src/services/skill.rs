@@ -476,6 +476,103 @@ pub struct LocalSkillSourceScanResult {
 const MAX_LOCAL_SOURCE_SCAN_DIRECTORIES: usize = 10_000;
 const MAX_LOCAL_SOURCE_SCAN_REPOSITORIES: usize = 100;
 const MAX_LOCAL_SOURCE_SCAN_SKILLS: usize = 500;
+const MAX_LOCAL_SOURCE_HASH_ENTRIES: usize = 10_000;
+const MAX_LOCAL_SOURCE_HASH_BYTES: u64 = 256 * 1024 * 1024;
+
+fn local_source_scan_limit(code: &str, limit: impl ToString) -> anyhow::Error {
+    anyhow!(format_skill_error(
+        code,
+        &[("limit", &limit.to_string())],
+        None
+    ))
+}
+
+#[derive(Default)]
+struct LocalSourceHashBudget {
+    entries: usize,
+    bytes: u64,
+}
+
+/// Keep the update hash format, but never follow links while identifying sources.
+/// A skipped entry makes the entire Skill ineligible: hashing only a subset could
+/// incorrectly identify two different Skills as the same project. One budget is
+/// shared by all repository and installed-Skill hashes in this scan.
+fn local_source_hash(dir: &Path, budget: &mut LocalSourceHashBudget) -> Result<Option<String>> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+
+    if !fs::symlink_metadata(dir)?.file_type().is_dir() {
+        return Ok(None);
+    }
+    let mut pending = vec![dir.to_path_buf()];
+    let mut files = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            budget.entries += 1;
+            if budget.entries > MAX_LOCAL_SOURCE_HASH_ENTRIES {
+                return Err(local_source_scan_limit(
+                    "LOCAL_SOURCE_SCAN_ENTRIES",
+                    MAX_LOCAL_SOURCE_HASH_ENTRIES,
+                ));
+            }
+            // Match the existing update hash's exclusion of hidden files.
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            let file_type = entry.file_type()?;
+            if file_type.is_dir() {
+                if should_skip_local_source_scan_dir(&entry.path()) {
+                    return Ok(None);
+                }
+                pending.push(entry.path());
+            } else if file_type.is_file() {
+                files.push(entry.path());
+            } else {
+                return Ok(None);
+            }
+        }
+    }
+    files.sort();
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    for path in files {
+        // Recheck after enumeration so a replaced symlink is not followed.
+        if !fs::symlink_metadata(&path)?.file_type().is_file() {
+            return Ok(None);
+        }
+        let mut file = fs::File::open(&path)?;
+        if file.metadata()?.len() > MAX_LOCAL_SOURCE_HASH_BYTES.saturating_sub(budget.bytes) {
+            return Err(local_source_scan_limit(
+                "LOCAL_SOURCE_SCAN_BYTES",
+                MAX_LOCAL_SOURCE_HASH_BYTES / 1024 / 1024,
+            ));
+        }
+        hasher.update(
+            path.strip_prefix(dir)?
+                .to_string_lossy()
+                .replace('\\', "/")
+                .as_bytes(),
+        );
+        hasher.update(b"\0");
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            budget.bytes += read as u64;
+            if budget.bytes > MAX_LOCAL_SOURCE_HASH_BYTES {
+                return Err(local_source_scan_limit(
+                    "LOCAL_SOURCE_SCAN_BYTES",
+                    MAX_LOCAL_SOURCE_HASH_BYTES / 1024 / 1024,
+                ));
+            }
+            hasher.update(&buffer[..read]);
+        }
+        hasher.update(b"\0");
+    }
+    Ok(Some(format!("{:x}", hasher.finalize())))
+}
 
 fn normalize_optional_branch(branch: Option<String>) -> Option<String> {
     branch.and_then(|b| {
@@ -704,7 +801,15 @@ fn git_origin_url(repo_dir: &Path) -> Option<String> {
             repo_dir.join(git_dir)
         }
     };
-    let config = fs::read_to_string(git_dir.join("config")).ok()?;
+    // Linked worktrees keep remotes in the common Git directory, not their
+    // private .git/worktrees/<name> directory. Resolve relative commondir paths
+    // against git_dir (including when git_dir itself came from a .git file).
+    let common_dir = match fs::read_to_string(git_dir.join("commondir")) {
+        Ok(path) => git_dir.join(path.trim()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => git_dir,
+        Err(_) => return None,
+    };
+    let config = fs::read_to_string(common_dir.join("config")).ok()?;
     let mut in_origin = false;
     for line in config.lines() {
         let line = line.trim();
@@ -774,14 +879,16 @@ fn collect_local_git_repositories(
 ) -> Result<()> {
     *scanned_directories += 1;
     if *scanned_directories > MAX_LOCAL_SOURCE_SCAN_DIRECTORIES {
-        return Err(anyhow!(
-            "所选目录包含超过 {MAX_LOCAL_SOURCE_SCAN_DIRECTORIES} 个目录，请选择更小的工作区后重试"
+        return Err(local_source_scan_limit(
+            "LOCAL_SOURCE_SCAN_DIRECTORIES",
+            MAX_LOCAL_SOURCE_SCAN_DIRECTORIES,
         ));
     }
     if root.join(".git").exists() {
         if repositories.len() >= MAX_LOCAL_SOURCE_SCAN_REPOSITORIES {
-            return Err(anyhow!(
-                "所选目录包含超过 {MAX_LOCAL_SOURCE_SCAN_REPOSITORIES} 个 Git 项目，请选择更小的工作区后重试"
+            return Err(local_source_scan_limit(
+                "LOCAL_SOURCE_SCAN_REPOSITORIES",
+                MAX_LOCAL_SOURCE_SCAN_REPOSITORIES,
             ));
         }
         repositories.push(root.to_path_buf());
@@ -793,9 +900,7 @@ fn collect_local_git_repositories(
             log::warn!("跳过无权读取的本地项目目录: {}", root.display());
             return Ok(());
         }
-        Err(error) => {
-            return Err(error).with_context(|| format!("读取目录失败: {}", root.display()))
-        }
+        Err(error) => return Err(error.into()),
     };
     for entry in entries {
         let entry = entry?;
@@ -818,11 +923,13 @@ fn collect_skill_hashes_in_repository(
     source_info: &mut HashMap<String, LockSkillInfo>,
     scanned_skills: &mut usize,
     scanned_directories: &mut usize,
+    hash_budget: &mut LocalSourceHashBudget,
 ) -> Result<()> {
     *scanned_directories += 1;
     if *scanned_directories > MAX_LOCAL_SOURCE_SCAN_DIRECTORIES {
-        return Err(anyhow!(
-            "所选目录包含超过 {MAX_LOCAL_SOURCE_SCAN_DIRECTORIES} 个目录，请选择更小的工作区后重试"
+        return Err(local_source_scan_limit(
+            "LOCAL_SOURCE_SCAN_DIRECTORIES",
+            MAX_LOCAL_SOURCE_SCAN_DIRECTORIES,
         ));
     }
     let entries = match fs::read_dir(directory) {
@@ -831,9 +938,7 @@ fn collect_skill_hashes_in_repository(
             log::warn!("跳过无权读取的本地项目目录: {}", directory.display());
             return Ok(());
         }
-        Err(error) => {
-            return Err(error).with_context(|| format!("读取项目目录失败: {}", directory.display()))
-        }
+        Err(error) => return Err(error.into()),
     };
     for entry in entries {
         let entry = entry?;
@@ -854,15 +959,20 @@ fn collect_skill_hashes_in_repository(
                 source_info,
                 scanned_skills,
                 scanned_directories,
+                hash_budget,
             )?;
-        } else if path.file_name().is_some_and(|name| name == "SKILL.md") {
+        } else if file_type.is_file() && path.file_name().is_some_and(|name| name == "SKILL.md") {
             if *scanned_skills >= MAX_LOCAL_SOURCE_SCAN_SKILLS {
-                return Err(anyhow!(
-                    "所选目录包含超过 {MAX_LOCAL_SOURCE_SCAN_SKILLS} 个 Skill，请选择更小的工作区后重试"
+                return Err(local_source_scan_limit(
+                    "LOCAL_SOURCE_SCAN_SKILLS",
+                    MAX_LOCAL_SOURCE_SCAN_SKILLS,
                 ));
             }
             let skill_dir = path.parent().expect("SKILL.md has parent");
-            let hash = SkillService::compute_dir_hash(skill_dir)?;
+            *scanned_skills += 1;
+            let Some(hash) = local_source_hash(skill_dir, hash_budget)? else {
+                continue;
+            };
             hashes
                 .entry(hash)
                 .or_default()
@@ -870,7 +980,6 @@ fn collect_skill_hashes_in_repository(
             source_info
                 .entry(repo_info.source_id.clone())
                 .or_insert_with(|| repo_info.clone());
-            *scanned_skills += 1;
         }
     }
     Ok(())
@@ -1177,7 +1286,11 @@ impl SkillService {
         root: &Path,
     ) -> Result<LocalSkillSourceScanResult> {
         if !root.is_dir() {
-            return Err(anyhow!("选择的目录不存在或不可读取: {}", root.display()));
+            return Err(anyhow!(format_skill_error(
+                "LOCAL_SOURCE_SCAN_ROOT",
+                &[("path", &root.display().to_string())],
+                None
+            )));
         }
 
         let mut repositories = Vec::new();
@@ -1187,6 +1300,7 @@ impl SkillService {
         let mut source_info = HashMap::new();
         let mut scanned_repositories = 0;
         let mut scanned_skills = 0;
+        let mut hash_budget = LocalSourceHashBudget::default();
 
         for repository in repositories {
             let Some(remote) = git_origin_url(&repository) else {
@@ -1206,11 +1320,12 @@ impl SkillService {
                 &mut source_info,
                 &mut scanned_skills,
                 &mut scanned_directories,
+                &mut hash_budget,
             )?;
         }
 
         let ssot_dir = Self::get_ssot_dir()?;
-        let mut updated = 0;
+        let mut pending_updates = Vec::new();
         let mut ambiguous = 0;
         let _state_guard = skill_state_write_guard();
         let skills = db.get_all_installed_skills()?;
@@ -1223,18 +1338,15 @@ impl SkillService {
             if manually_grouped_ids.contains(&skill.id) || has_source_provenance(&skill) {
                 continue;
             }
-            let hash = match skill.content_hash.clone() {
-                Some(hash) => hash,
-                None => {
-                    let Ok(directory) = Self::require_valid_directory(&skill.directory) else {
-                        continue;
-                    };
-                    let Ok(hash) = Self::compute_dir_hash(&ssot_dir.join(directory)) else {
-                        continue;
-                    };
-                    skill.content_hash = Some(hash.clone());
-                    hash
-                }
+            let Ok(directory) = Self::require_valid_directory(&skill.directory) else {
+                continue;
+            };
+            if !ssot_dir.join(&directory).exists() {
+                continue;
+            }
+            // Cached update hashes do not prove that today's files still match.
+            let Some(hash) = local_source_hash(&ssot_dir.join(directory), &mut hash_budget)? else {
+                continue;
             };
             let Some(candidates) = hashes.get(&hash) else {
                 continue;
@@ -1248,6 +1360,11 @@ impl SkillService {
                 continue;
             };
             apply_lock_provenance(&mut skill, info);
+            pending_updates.push(skill);
+        }
+        // Finish bounded filesystem inspection before persisting any assignments.
+        let mut updated = 0;
+        for skill in pending_updates {
             if db.update_skill_metadata(&skill)? {
                 updated += 1;
             }
@@ -8379,7 +8496,7 @@ mod tests {
         .expect_err("a broad workspace must be rejected before it is scanned");
 
         assert!(
-            error.to_string().contains("Git 项目"),
+            error.to_string().contains("LOCAL_SOURCE_SCAN_REPOSITORIES"),
             "unexpected error: {error}"
         );
     }
@@ -8405,11 +8522,12 @@ mod tests {
             &mut source_info,
             &mut scanned_skills,
             &mut scanned_directories,
+            &mut LocalSourceHashBudget::default(),
         )
         .expect_err("a broad repository must be rejected before it is scanned");
 
         assert!(
-            error.to_string().contains("Skill"),
+            error.to_string().contains("LOCAL_SOURCE_SCAN_SKILLS"),
             "unexpected error: {error}"
         );
     }
@@ -8498,5 +8616,165 @@ mod tests {
             .expect("persisted skill");
         assert!(persisted.repo_owner.is_none());
         assert!(persisted.repo_name.is_none());
+    }
+
+    #[test]
+    fn local_project_hash_matches_update_hash_for_regular_files() {
+        let skill = tempdir().unwrap();
+        write_skill(skill.path(), "regular skill");
+        fs::create_dir(skill.path().join("scripts")).unwrap();
+        fs::write(skill.path().join("scripts/run.sh"), "echo test").unwrap();
+        fs::write(skill.path().join(".hidden"), "excluded from update hashes").unwrap();
+        let hash = local_source_hash(skill.path(), &mut LocalSourceHashBudget::default()).unwrap();
+        assert_eq!(
+            hash,
+            Some(SkillService::compute_dir_hash(skill.path()).unwrap())
+        );
+    }
+
+    #[test]
+    fn local_project_hash_rejects_dependency_trees_without_partial_matching() {
+        let skill = tempdir().unwrap();
+        write_skill(skill.path(), "regular skill");
+        fs::create_dir(skill.path().join("node_modules")).unwrap();
+        assert!(
+            local_source_hash(skill.path(), &mut LocalSourceHashBudget::default())
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn local_project_hash_rejects_directory_file_and_broken_symlinks() {
+        for target in ["directory", "file", "missing", "cycle"] {
+            let skill = tempdir().unwrap();
+            let external = tempdir().unwrap();
+            write_skill(skill.path(), "regular skill");
+            fs::write(external.path().join("payload"), "external fixture").unwrap();
+            let source = match target {
+                "directory" => external.path().to_path_buf(),
+                "file" => external.path().join("payload"),
+                "cycle" => skill.path().to_path_buf(),
+                _ => external.path().join("missing"),
+            };
+            std::os::unix::fs::symlink(source, skill.path().join("linked")).unwrap();
+            let mut budget = LocalSourceHashBudget::default();
+            assert!(local_source_hash(skill.path(), &mut budget)
+                .unwrap()
+                .is_none());
+            assert_eq!(budget.bytes, 0, "must not read any payload for {target}");
+        }
+    }
+
+    #[test]
+    fn local_project_hash_limits_are_shared_across_skills() {
+        let skill = tempdir().unwrap();
+        fs::write(skill.path().join("SKILL.md"), "data").unwrap();
+        let mut entries = LocalSourceHashBudget {
+            entries: MAX_LOCAL_SOURCE_HASH_ENTRIES - 1,
+            bytes: 0,
+        };
+        assert!(local_source_hash(skill.path(), &mut entries)
+            .unwrap()
+            .is_some());
+        let error = local_source_hash(skill.path(), &mut entries).unwrap_err();
+        assert!(error.to_string().contains("LOCAL_SOURCE_SCAN_ENTRIES"));
+        let mut bytes = LocalSourceHashBudget {
+            entries: 0,
+            bytes: MAX_LOCAL_SOURCE_HASH_BYTES - 4,
+        };
+        assert!(local_source_hash(skill.path(), &mut bytes)
+            .unwrap()
+            .is_some());
+        let error = local_source_hash(skill.path(), &mut bytes).unwrap_err();
+        assert!(error.to_string().contains("LOCAL_SOURCE_SCAN_BYTES"));
+        assert_eq!(bytes.bytes, MAX_LOCAL_SOURCE_HASH_BYTES);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn local_project_scan_resolves_worktree_common_directory() {
+        let home = tempdir().unwrap();
+        let _home = TestHomeGuard::set(home.path());
+        let common = home.path().join("repo/.git");
+        let private = common.join("worktrees/linked");
+        fs::create_dir_all(&private).unwrap();
+        fs::write(
+            common.join("config"),
+            "[remote \"origin\"]\nurl = https://github.com/example/skills.git\n",
+        )
+        .unwrap();
+        let worktree = home.path().join("linked");
+        fs::create_dir_all(&worktree).unwrap();
+        // Cover both forms Git permits in .git and commondir.
+        for absolute in [false, true] {
+            let git_dir = if absolute {
+                private.display().to_string()
+            } else {
+                "../repo/.git/worktrees/linked".into()
+            };
+            fs::write(worktree.join(".git"), format!("gitdir: {git_dir}\n")).unwrap();
+            let common_dir = if absolute {
+                common.display().to_string()
+            } else {
+                "../..".into()
+            };
+            fs::write(private.join("commondir"), format!("{common_dir}\n")).unwrap();
+            assert_eq!(
+                git_origin_url(&worktree).as_deref(),
+                Some("https://github.com/example/skills.git")
+            );
+        }
+        write_skill(&worktree.join("skills/copied"), "copied skill");
+        let db = Arc::new(Database::memory().unwrap());
+        let local = poisoned_skill("local:copied", "copied");
+        db.save_skill(&local).unwrap();
+        write_skill(
+            &SkillService::get_ssot_dir().unwrap().join("copied"),
+            "copied skill",
+        );
+        let result = SkillService::scan_local_project_sources(&db, &worktree).unwrap();
+        assert_eq!(result.updated, 1);
+        assert_eq!(
+            db.get_installed_skill(&local.id)
+                .unwrap()
+                .unwrap()
+                .source_id
+                .as_deref(),
+            Some("example/skills")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn local_project_scan_does_not_trust_stale_installed_hashes() {
+        let home = tempdir().unwrap();
+        let _home = TestHomeGuard::set(home.path());
+        let repository = home.path().join("repo");
+        fs::create_dir_all(repository.join(".git")).unwrap();
+        fs::write(
+            repository.join(".git/config"),
+            "[remote \"origin\"]\nurl = https://github.com/example/skills.git\n",
+        )
+        .unwrap();
+        let source = repository.join("skills/copied");
+        write_skill(&source, "original content");
+        let db = Arc::new(Database::memory().unwrap());
+        let mut local = poisoned_skill("local:copied", "copied");
+        local.content_hash = Some(SkillService::compute_dir_hash(&source).unwrap());
+        db.save_skill(&local).unwrap();
+        write_skill(
+            &SkillService::get_ssot_dir().unwrap().join("copied"),
+            "different local project",
+        );
+        let result = SkillService::scan_local_project_sources(&db, &repository).unwrap();
+        assert_eq!(result.updated, 0);
+        assert!(db
+            .get_installed_skill(&local.id)
+            .unwrap()
+            .unwrap()
+            .source_id
+            .is_none());
     }
 }

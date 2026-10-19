@@ -12,6 +12,24 @@ export interface InstalledSkillGroup {
 export const isLocalSkill = (skill: InstalledSkill) =>
   !skill.repoOwner || !skill.repoName;
 
+export function matchesSkillSearch(skill: InstalledSkill, query: string) {
+  return (
+    !query ||
+    [
+      skill.name,
+      skill.id,
+      skill.description,
+      skill.directory,
+      skill.repoOwner,
+      skill.repoName,
+      skill.sourceId,
+      skill.repoOwner && skill.repoName
+        ? `${skill.repoOwner}/${skill.repoName}`
+        : undefined,
+    ].some((value) => value?.toLocaleLowerCase().includes(query))
+  );
+}
+
 const sourceKey = (skill: InstalledSkill) =>
   skill.sourceType && skill.sourceId
     ? `source:${skill.sourceType.toLowerCase()}:${skill.sourceId.toLowerCase()}`

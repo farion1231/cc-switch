@@ -409,6 +409,58 @@ describe("UnifiedSkillsPanel", () => {
     );
   });
 
+  it("searches source IDs consistently for rows, counts, selection and column actions", async () => {
+    m.installed = ["a", "b"].map((id) =>
+      makeSkill({
+        id: `local:${id}`,
+        name: `Lark ${id}`,
+        repoOwner: undefined,
+        repoName: undefined,
+        sourceType: "well-known",
+        sourceId: "open.feishu.cn",
+      }),
+    );
+    m.installed.push(makeSkill({ id: "unrelated", name: "Unrelated" }));
+    i18n.addResourceBundle("zh", "translation", {
+      appMatrix: { found: "Found {{count}}" },
+    });
+    try {
+      renderPanel();
+      await userEvent.type(
+        screen.getByRole("textbox", {
+          name: "skills.installedSearchAriaLabel",
+        }),
+        "OPEN.FEISHU.CN",
+      );
+      const group = screen.getByRole("region", { name: "open.feishu.cn" });
+      expect(within(group).getByText("Lark a")).toBeInTheDocument();
+      expect(within(group).getByText("Lark b")).toBeInTheDocument();
+      expect(screen.getByText("Found 2")).toBeInTheDocument();
+      expect(screen.queryByText("Unrelated")).not.toBeInTheDocument();
+      await userEvent.click(columns()[1]);
+      await userEvent.click(
+        screen.getByRole("button", { name: "appMatrix.pop.enableRest" }),
+      );
+      await waitFor(() =>
+        expect(m.bulkToggle).toHaveBeenCalledWith({
+          ids: ["local:a", "local:b"],
+          app: "codex",
+          enabled: true,
+        }),
+      );
+      await userEvent.click(
+        screen.getByRole("checkbox", { name: "skillsPage.selectAllAria" }),
+      );
+      const selectedRows = screen.getAllByRole("checkbox", {
+        name: "skillsPage.selectAria",
+      });
+      expect(selectedRows).toHaveLength(2);
+      selectedRows.forEach((row) => expect(row).toBeChecked());
+    } finally {
+      i18n.removeResourceBundle("zh", "translation");
+    }
+  });
+
   it("gives a manual project group priority over an automatic source group", async () => {
     m.installed = [
       makeSkill({
@@ -1278,6 +1330,38 @@ describe("UnifiedSkillsPanel", () => {
     );
     pickDirectory.mockRestore();
     scanLocalSources.mockRestore();
+  });
+
+  it("translates structured local source scan errors in the toast", async () => {
+    const pick = vi
+      .spyOn(settingsApi, "pickDirectory")
+      .mockResolvedValue("/tmp/projects");
+    const scan = vi.spyOn(skillsApi, "scanLocalSources").mockRejectedValue(
+      JSON.stringify({
+        code: "LOCAL_SOURCE_SCAN_REPOSITORIES",
+        context: { limit: "100" },
+      }),
+    );
+    i18n.addResourceBundle("zh", "translation", {
+      skills: { localSourceScan: en.skills.localSourceScan },
+    });
+    try {
+      renderPanel();
+      await openMenu(
+        "skills.moreActions",
+        "skillsPage.moreMenu.scanLocalSources",
+      );
+      await waitFor(() =>
+        expect(m.toastError).toHaveBeenCalledWith("common.error", {
+          description:
+            "The scan exceeds 100 Git projects. Choose a smaller workspace and try again.",
+        }),
+      );
+    } finally {
+      pick.mockRestore();
+      scan.mockRestore();
+      i18n.removeResourceBundle("zh", "translation");
+    }
   });
 
   it("says which ZIP Skills were skipped because the folder name is taken", async () => {

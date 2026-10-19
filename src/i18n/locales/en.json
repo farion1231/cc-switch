@@ -3360,7 +3360,16 @@
     "localSourceScan": {
       "completed": "Scanned {{skills}} Skills in {{repositories}} projects and completed {{count}} project sources",
       "none": "Scanned {{skills}} Skills in {{repositories}} projects; no uniquely identifiable local project source found",
-      "ambiguous": "{{count}} Skills matched multiple projects and remain ungrouped."
+      "ambiguous": "{{count}} Skills matched multiple projects and remain ungrouped.",
+      "errors": {
+        "directories": "The scan exceeds {{limit}} directories. Choose a smaller workspace and try again.",
+        "repositories": "The scan exceeds {{limit}} Git projects. Choose a smaller workspace and try again.",
+        "skills": "The scan exceeds {{limit}} Skills. Choose a smaller workspace and try again.",
+        "entries": "Skill hashing exceeds {{limit}} filesystem entries. Choose a smaller workspace and try again.",
+        "bytes": "Skill hashing exceeds {{limit}} MiB. Choose a smaller workspace and try again.",
+        "root": "The selected folder is missing or inaccessible: {{path}}",
+        "failed": "Could not scan local project sources. Check folder access and try again."
+      }
     },
     "unmanagedAvailable": "Skills available to import",
     "foundIn": "Found in",

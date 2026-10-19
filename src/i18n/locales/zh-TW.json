@@ -3361,7 +3361,16 @@
     "localSourceScan": {
       "completed": "已掃描 {{repositories}} 個專案中的 {{skills}} 個 Skill，補全了 {{count}} 個專案來源",
       "none": "已掃描 {{repositories}} 個專案中的 {{skills}} 個 Skill，未找到可唯一確認的本機專案來源",
-      "ambiguous": "{{count}} 個 Skill 對應多個專案，已保持未分組。"
+      "ambiguous": "{{count}} 個 Skill 對應多個專案，已保持未分組。",
+      "errors": {
+        "directories": "掃描超過 {{limit}} 個目錄，請選擇較小的工作區後重試。",
+        "repositories": "掃描超過 {{limit}} 個 Git 專案，請選擇較小的工作區後重試。",
+        "skills": "掃描超過 {{limit}} 個 Skill，請選擇較小的工作區後重試。",
+        "entries": "Skill 內容檢查超過 {{limit}} 個檔案或目錄，請選擇較小的工作區後重試。",
+        "bytes": "Skill 內容檢查超過 {{limit}} MiB，請選擇較小的工作區後重試。",
+        "root": "所選目錄不存在或無法存取：{{path}}",
+        "failed": "無法掃描本機專案來源，請檢查目錄存取權限後重試。"
+      }
     },
     "unmanagedAvailable": "發現可匯入的技能",
     "foundIn": "發現於",

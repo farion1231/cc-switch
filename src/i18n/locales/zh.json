@@ -3360,7 +3360,16 @@
     "localSourceScan": {
       "completed": "已扫描 {{repositories}} 个项目中的 {{skills}} 个 Skill，补全了 {{count}} 个项目来源",
       "none": "已扫描 {{repositories}} 个项目中的 {{skills}} 个 Skill，未找到可唯一确认的项目来源",
-      "ambiguous": "{{count}} 个 Skill 对应多个项目，已保持未分组。"
+      "ambiguous": "{{count}} 个 Skill 对应多个项目，已保持未分组。",
+      "errors": {
+        "directories": "扫描超过 {{limit}} 个目录，请选择更小的工作区后重试。",
+        "repositories": "扫描超过 {{limit}} 个 Git 项目，请选择更小的工作区后重试。",
+        "skills": "扫描超过 {{limit}} 个 Skill，请选择更小的工作区后重试。",
+        "entries": "Skill 内容检查超过 {{limit}} 个文件或目录，请选择更小的工作区后重试。",
+        "bytes": "Skill 内容检查超过 {{limit}} MiB，请选择更小的工作区后重试。",
+        "root": "所选目录不存在或不可访问：{{path}}",
+        "failed": "无法扫描本地项目来源，请检查目录访问权限后重试。"
+      }
     },
     "unmanagedAvailable": "发现可导入的技能",
     "foundIn": "发现于",

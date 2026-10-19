@@ -119,8 +119,19 @@ pub async fn scan_local_skill_sources(
         SkillService::scan_local_project_sources(&db, &root)
     })
     .await
-    .map_err(|e| format!("扫描本地项目来源失败: {e}"))?
-    .map_err(|e| e.to_string())
+    .map_err(|_| format_skill_error("LOCAL_SOURCE_SCAN_FAILED", &[], None))?
+    .map_err(|error| {
+        let message = error.to_string();
+        if serde_json::from_str::<serde_json::Value>(&message)
+            .ok()
+            .is_some_and(|value| value["code"].is_string())
+        {
+            message
+        } else {
+            log::warn!("Local Skill source scan failed: {error:#}");
+            format_skill_error("LOCAL_SOURCE_SCAN_FAILED", &[], None)
+        }
+    })
 }
 
 /// 从应用目录导入 Skills

@@ -43,6 +43,14 @@ function getErrorI18nKey(code: string): string {
     ARCHIVE_TOO_MANY_ENTRIES: "skills.error.archiveTooManyEntries",
     GET_HOME_DIR_FAILED: "skills.error.getHomeDirFailed",
     NO_SKILLS_IN_ZIP: "skills.error.noSkillsInZip",
+    LOCAL_SOURCE_SCAN_DIRECTORIES: "skills.localSourceScan.errors.directories",
+    LOCAL_SOURCE_SCAN_REPOSITORIES:
+      "skills.localSourceScan.errors.repositories",
+    LOCAL_SOURCE_SCAN_SKILLS: "skills.localSourceScan.errors.skills",
+    LOCAL_SOURCE_SCAN_ENTRIES: "skills.localSourceScan.errors.entries",
+    LOCAL_SOURCE_SCAN_BYTES: "skills.localSourceScan.errors.bytes",
+    LOCAL_SOURCE_SCAN_ROOT: "skills.localSourceScan.errors.root",
+    LOCAL_SOURCE_SCAN_FAILED: "skills.localSourceScan.errors.failed",
   };
 
   return mapping[code] || "skills.error.unknownError";
