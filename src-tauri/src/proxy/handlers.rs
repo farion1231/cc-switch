@@ -3366,6 +3366,62 @@ mod tests {
     use crate::proxy::ProxyError;
     use bytes::Bytes;
 
+    #[tokio::test]
+    async fn codex_deflate_decompression_accepts_limit_and_returns_413_above_it() {
+        let payload = br#"{"message":"aaaaaaaaaaaaaaaaaaa"}"#;
+        assert_eq!(payload.len(), 33);
+        for raw in [false, true] {
+            let compressed = if raw {
+                let mut encoder =
+                    flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+                std::io::Write::write_all(&mut encoder, payload).unwrap();
+                encoder.finish().unwrap()
+            } else {
+                let mut encoder =
+                    flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+                std::io::Write::write_all(&mut encoder, payload).unwrap();
+                encoder.finish().unwrap()
+            };
+            assert!(compressed.len() < 32);
+            for limit in [33, 32] {
+                let mut headers = axum::http::HeaderMap::new();
+                headers.insert(
+                    axum::http::header::CONTENT_ENCODING,
+                    "deflate".parse().unwrap(),
+                );
+                headers.insert(axum::http::header::CONTENT_LENGTH, compressed.len().into());
+                headers.insert(
+                    axum::http::header::TRANSFER_ENCODING,
+                    "chunked".parse().unwrap(),
+                );
+                let result =
+                    decode_codex_request_body(&mut headers, Bytes::from(compressed.clone()), limit);
+                if limit == payload.len() {
+                    assert_eq!(&result.expect("output at limit")[..], payload);
+                    assert!(!headers.contains_key(axum::http::header::CONTENT_ENCODING));
+                    assert!(!headers.contains_key(axum::http::header::CONTENT_LENGTH));
+                    assert!(!headers.contains_key(axum::http::header::TRANSFER_ENCODING));
+                } else {
+                    let response = result.expect_err("expanded body must be rejected");
+                    assert_eq!(
+                        response.status(),
+                        axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+                        "raw={raw}"
+                    );
+                    let body = axum::body::to_bytes(response.into_body(), 1024)
+                        .await
+                        .unwrap();
+                    let error: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                    assert_eq!(error["error"]["type"], "request_too_large");
+                    assert_eq!(
+                        error["error"]["message"],
+                        "Decompressed request body exceeds 32 bytes"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn codex_decompression_rejects_oversized_output_and_accepts_the_limit() {
         for encoding in ["gzip", "zstd", "gzip, zstd"] {
