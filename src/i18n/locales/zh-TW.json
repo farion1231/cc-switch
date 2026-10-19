@@ -3136,6 +3136,8 @@
       "providerKeyRequired": "供應商標識不能為空",
       "providerKeyInvalid": "供應商標識只能包含小寫字母、數字和連字號",
       "providerKeyDuplicate": "該供應商標識已存在",
+      "providerKeyBuiltin": "「{{key}}」是 Hermes 內建供應商的標識。Hermes 會改用內建供應商（需要它自己的環境變數 Key），這張卡的位址和 Key 不會生效。請換一個標識，例如 cc-switch-{{key}}。",
+      "providerKeyBuiltinLocked": "「{{key}}」是 Hermes 內建供應商的標識。Hermes 會改用內建供應商，這張卡的位址和 Key 不會生效。標識已鎖定無法修改，請用其他標識（例如 cc-switch-{{key}}）重新新增這個供應商，再刪除這張卡。",
       "apiMode": "API 模式",
       "apiModeHint": "供應商 API 協定。請根據端點選擇正確的協定。",
       "apiModeChatCompletions": "OpenAI Chat Completions",

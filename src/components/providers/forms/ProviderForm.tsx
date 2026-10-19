@@ -57,6 +57,7 @@ import {
   hermesProviderPresets,
   type HermesProviderPreset,
 } from "@/config/hermesProviderPresets";
+import { isHermesBuiltinProviderId } from "@/config/hermesBuiltinProviderIds";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import { HermesFormFields } from "./HermesFormFields";
@@ -2544,11 +2545,25 @@ function ProviderFormFull({
                         {t("hermes.form.providerKeyInvalid")}
                       </p>
                     )}
-                  {!(
-                    additiveExistingProviderKeys.includes(
-                      hermesForm.hermesProviderKey,
-                    ) && !isProviderKeyLocked
-                  ) &&
+                  {isHermesBuiltinProviderId(hermesForm.hermesProviderKey) && (
+                    <p
+                      className="text-xs text-warning-text"
+                      data-testid="hermes-key-builtin-warning"
+                    >
+                      {t(
+                        isProviderKeyLocked
+                          ? "hermes.form.providerKeyBuiltinLocked"
+                          : "hermes.form.providerKeyBuiltin",
+                        { key: hermesForm.hermesProviderKey.trim() },
+                      )}
+                    </p>
+                  )}
+                  {!isHermesBuiltinProviderId(hermesForm.hermesProviderKey) &&
+                    !(
+                      additiveExistingProviderKeys.includes(
+                        hermesForm.hermesProviderKey,
+                      ) && !isProviderKeyLocked
+                    ) &&
                     (hermesForm.hermesProviderKey.trim() === "" ||
                       /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
                         hermesForm.hermesProviderKey,

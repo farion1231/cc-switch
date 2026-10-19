@@ -3135,6 +3135,8 @@
       "providerKeyRequired": "Provider key is required",
       "providerKeyInvalid": "Provider key can only contain lowercase letters, numbers, and hyphens",
       "providerKeyDuplicate": "This provider key already exists",
+      "providerKeyBuiltin": "\"{{key}}\" is the ID of a Hermes built-in provider. Hermes will use the built-in provider (which needs its own API key environment variable) and ignore this card's endpoint and key. Use a different key, e.g. cc-switch-{{key}}.",
+      "providerKeyBuiltinLocked": "\"{{key}}\" is the ID of a Hermes built-in provider. Hermes will use the built-in provider and ignore this card's endpoint and key. The key is locked: add this provider again under another key (e.g. cc-switch-{{key}}), then delete this card.",
       "apiMode": "API Mode",
       "apiModeHint": "Provider API protocol. Choose the format that matches your endpoint.",
       "apiModeChatCompletions": "OpenAI Chat Completions",

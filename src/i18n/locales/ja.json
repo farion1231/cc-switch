@@ -3135,6 +3135,8 @@
       "providerKeyRequired": "プロバイダーキーは必須です",
       "providerKeyInvalid": "プロバイダーキーは小文字、数字、ハイフンのみ使用できます",
       "providerKeyDuplicate": "このプロバイダーキーは既に存在します",
+      "providerKeyBuiltin": "「{{key}}」は Hermes 組み込みプロバイダーの ID です。Hermes は組み込みプロバイダー（専用の環境変数の API キーが必要）を使い、このカードのエンドポイントとキーは使われません。cc-switch-{{key}} など別のキーにしてください。",
+      "providerKeyBuiltinLocked": "「{{key}}」は Hermes 組み込みプロバイダーの ID です。Hermes は組み込みプロバイダーを使い、このカードのエンドポイントとキーは使われません。キーはロックされているため、別のキー（例: cc-switch-{{key}}）でこのプロバイダーを追加し直してから、このカードを削除してください。",
       "apiMode": "API モード",
       "apiModeHint": "プロバイダーの API プロトコル。エンドポイントに合わせて正しい形式を選択してください。",
       "apiModeChatCompletions": "OpenAI Chat Completions",
