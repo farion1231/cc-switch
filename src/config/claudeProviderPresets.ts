@@ -2996,4 +2996,16 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     icon: "aicoming",
   },
+  {
+    name: "1ZheAI",
+    websiteUrl: "https://1zheai.com",
+    apiKeyUrl: "https://1zheai.com/console/token",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://1zheai.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+  },
 ];
