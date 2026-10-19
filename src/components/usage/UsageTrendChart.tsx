@@ -6,7 +6,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
@@ -354,70 +353,74 @@ export function UsageTrendChart({
             <Loader2 className="h-5 w-5 animate-spin text-fg-3" />
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height="100%">
-            <Chart
-              data={chartData}
-              margin={{ top: 6, right: 0, left: 0, bottom: 0 }}
-            >
-              <CartesianGrid
-                vertical={false}
-                stroke="var(--chart-grid)"
-                strokeWidth={1}
+          <Chart
+            responsive
+            style={{ width: "100%", height: "100%" }}
+            {...{
+              // Recharts forwards SVG attributes but omits this one from its chart props.
+              preserveAspectRatio: "none",
+            }}
+            data={chartData}
+            margin={{ top: 6, right: 0, left: 0, bottom: 0 }}
+          >
+            <CartesianGrid
+              vertical={false}
+              stroke="var(--chart-grid)"
+              strokeWidth={1}
+            />
+            {/* 🔴 分类键必须是后端 RFC3339 桶时间戳（xKey），不能用显示文字，否则跨年错位 */}
+            <XAxis
+              dataKey="xKey"
+              axisLine={false}
+              tickLine={false}
+              tick={AXIS_TICK}
+              tickMargin={6}
+              minTickGap={12}
+              tickFormatter={(value) =>
+                formatUsageTrendTickLabel(String(value), chartData)
+              }
+              allowDuplicatedCategory={false}
+            />
+            <YAxis
+              width="auto"
+              axisLine={false}
+              tickLine={false}
+              tick={AXIS_TICK}
+              tickCount={3}
+              tickFormatter={formatYTick}
+            />
+            <Tooltip
+              content={renderTooltip}
+              cursor={
+                chartType === "bar"
+                  ? { fill: "var(--bg-subtle)" }
+                  : { stroke: "var(--text-3)", strokeDasharray: "3 3" }
+              }
+            />
+            {chartType === "bar" ? (
+              <Bar
+                dataKey={dataKey}
+                name={metricLabel}
+                fill="var(--chart-1)"
+                radius={[3, 3, 0, 0]}
+                maxBarSize={36}
+                isAnimationActive={false}
               />
-              {/* 🔴 分类键必须是后端 RFC3339 桶时间戳（xKey），不能用显示文字，否则跨年错位 */}
-              <XAxis
-                dataKey="xKey"
-                axisLine={false}
-                tickLine={false}
-                tick={AXIS_TICK}
-                tickMargin={6}
-                minTickGap={12}
-                tickFormatter={(value) =>
-                  formatUsageTrendTickLabel(String(value), chartData)
-                }
-                allowDuplicatedCategory={false}
+            ) : (
+              <Area
+                type="monotone"
+                dataKey={dataKey}
+                name={metricLabel}
+                stroke="var(--chart-1)"
+                strokeWidth={2}
+                fill="var(--chart-1)"
+                fillOpacity={0.16}
+                dot={chartData.length === 1 ? { r: 3 } : false}
+                activeDot={{ r: 4 }}
+                isAnimationActive={false}
               />
-              <YAxis
-                width="auto"
-                axisLine={false}
-                tickLine={false}
-                tick={AXIS_TICK}
-                tickCount={3}
-                tickFormatter={formatYTick}
-              />
-              <Tooltip
-                content={renderTooltip}
-                cursor={
-                  chartType === "bar"
-                    ? { fill: "var(--bg-subtle)" }
-                    : { stroke: "var(--text-3)", strokeDasharray: "3 3" }
-                }
-              />
-              {chartType === "bar" ? (
-                <Bar
-                  dataKey={dataKey}
-                  name={metricLabel}
-                  fill="var(--chart-1)"
-                  radius={[3, 3, 0, 0]}
-                  maxBarSize={36}
-                  isAnimationActive={false}
-                />
-              ) : (
-                <Area
-                  type="monotone"
-                  dataKey={dataKey}
-                  name={metricLabel}
-                  stroke="var(--chart-1)"
-                  strokeWidth={2}
-                  fill="var(--chart-1)"
-                  fillOpacity={0.16}
-                  dot={chartData.length === 1 ? { r: 3 } : false}
-                  activeDot={{ r: 4 }}
-                  isAnimationActive={false}
-                />
-              )}
-            </Chart>
-          </ResponsiveContainer>
+            )}
+          </Chart>
         )}
       </div>
     </section>
