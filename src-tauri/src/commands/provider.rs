@@ -1024,6 +1024,17 @@ pub fn get_opencode_live_provider_ids() -> Result<Vec<String>, String> {
         .map_err(|e| e.to_string())
 }
 
+/// OpenCode 顶层 `model`（`<provider>/<model>`）
+#[tauri::command]
+pub fn get_opencode_default_model() -> Result<Option<String>, String> {
+    crate::opencode_config::get_default_model().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_opencode_default_model(model: String) -> Result<(), String> {
+    crate::opencode_config::set_default_model(&model).map_err(|e| e.to_string())
+}
+
 // ============================================================================
 // OpenClaw 专属命令 → 已迁移至 commands/openclaw.rs
 // ============================================================================
