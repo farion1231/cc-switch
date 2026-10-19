@@ -1981,8 +1981,13 @@ fn qwen_usage_tiers(payload: &serde_json::Value) -> Vec<QuotaTier> {
 /// 控制面查询的失败：确定性错误（凭据/权限/业务错误）直接显示，瞬时错误（网络/超时）
 /// 让前端保留上次成功值并重试。
 enum ConsoleQueryError {
-    Deterministic(SubscriptionQuota),
+    Deterministic(Box<SubscriptionQuota>),
     Transient(String),
+}
+
+/// 确定性失败的小包装，避免 enum 体积告警（clippy::large_enum_variant）。
+fn deterministic(quota: SubscriptionQuota) -> ConsoleQueryError {
+    ConsoleQueryError::Deterministic(Box::new(quota))
 }
 
 /// 阿里云控制面一次完整查询：AK/SK 换 console token → 调控制台网关 JSON API。
@@ -2006,22 +2011,20 @@ async fn aliyun_console_call(
                 Some(token) => token.to_string(),
                 None => {
                     let raw: String = body.to_string().chars().take(700).collect();
-                    return Err(ConsoleQueryError::Deterministic(make_error(format!(
+                    return Err(deterministic(make_error(format!(
                         "GenerateCLIAccessToken returned no cliAccessToken. {ALIYUN_AKSK_HINT} Raw: {raw}"
                     ))));
                 }
             }
         }
-        VolcCall::Auth(detail) => {
-            return Err(ConsoleQueryError::Deterministic(aliyun_auth_error(detail)))
-        }
+        VolcCall::Auth(detail) => return Err(deterministic(aliyun_auth_error(detail))),
         VolcCall::Transient(detail) => {
             return Err(ConsoleQueryError::Transient(format!(
                 "GenerateCLIAccessToken: {detail}"
             )))
         }
         VolcCall::Soft(detail) => {
-            return Err(ConsoleQueryError::Deterministic(make_error(format!(
+            return Err(deterministic(make_error(format!(
                 "GenerateCLIAccessToken: {detail}"
             ))))
         }
@@ -2029,20 +2032,16 @@ async fn aliyun_console_call(
 
     let body = match aliyun_gateway_call(&token, api, data).await {
         VolcCall::Body(body) => body,
-        VolcCall::Auth(detail) => {
-            return Err(ConsoleQueryError::Deterministic(aliyun_auth_error(detail)))
-        }
+        VolcCall::Auth(detail) => return Err(deterministic(aliyun_auth_error(detail))),
         VolcCall::Transient(detail) => {
             return Err(ConsoleQueryError::Transient(format!("{api}: {detail}")))
         }
         VolcCall::Soft(detail) => {
-            return Err(ConsoleQueryError::Deterministic(make_error(format!(
-                "{api}: {detail}"
-            ))))
+            return Err(deterministic(make_error(format!("{api}: {detail}"))))
         }
     };
     if let Some(error) = aliyun_gateway_error(&body) {
-        return Err(ConsoleQueryError::Deterministic(make_error(error)));
+        return Err(deterministic(make_error(error)));
     }
     Ok(body)
 }
@@ -2061,7 +2060,7 @@ async fn query_qwen_token_plan(
     .await
     {
         Ok(body) => body,
-        Err(ConsoleQueryError::Deterministic(quota)) => return Ok(quota),
+        Err(ConsoleQueryError::Deterministic(quota)) => return Ok(*quota),
         Err(ConsoleQueryError::Transient(detail)) => return Err(detail),
     };
 
@@ -2142,7 +2141,7 @@ async fn query_bailian_coding_plan(
         .await
     {
         Ok(body) => body,
-        Err(ConsoleQueryError::Deterministic(quota)) => return Ok(quota),
+        Err(ConsoleQueryError::Deterministic(quota)) => return Ok(*quota),
         Err(ConsoleQueryError::Transient(detail)) => return Err(detail),
     };
 
