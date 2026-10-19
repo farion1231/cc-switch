@@ -38,24 +38,36 @@ export interface PresetModelVariant {
   variants?: Record<string, Record<string, unknown>>;
 }
 
+// MiniMax-M3.1-Flash 的思考不可关：禁用 OpenCode 自带的 none 档，
+// 并把 effort 档位（low…max）直接传给接口。
+const MINIMAX_M31_VARIANTS = {
+  none: { disabled: true },
+  low: { reasoningEffort: "low" },
+  medium: { reasoningEffort: "medium" },
+  high: { reasoningEffort: "high" },
+  xhigh: { reasoningEffort: "xhigh" },
+  max: { reasoningEffort: "max" },
+};
+
 export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
   string,
   PresetModelVariant[]
 > = {
   "@ai-sdk/openai-compatible": [
     {
+      id: "MiniMax-M3.1-Flash",
+      name: "MiniMax M3.1 Flash",
+      contextLimit: 1000000,
+      outputLimit: 131072,
+      modalities: { input: ["text", "image"], output: ["text"] },
+      variants: MINIMAX_M31_VARIANTS,
+    },
+    {
       id: "MiniMax-M3",
       name: "MiniMax M3",
       contextLimit: 1000000,
       outputLimit: 131072,
       modalities: { input: ["text", "image"], output: ["text"] },
-    },
-    {
-      id: "MiniMax-M2.7",
-      name: "MiniMax M2.7",
-      contextLimit: 204800,
-      outputLimit: 131072,
-      modalities: { input: ["text"], output: ["text"] },
     },
     {
       id: "glm-5.1",
@@ -3089,6 +3101,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
+        "MiniMax-M3.1-Flash": {
+          name: "MiniMax M3.1 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+          variants: MINIMAX_M31_VARIANTS,
+        },
         "MiniMax-M3": {
           name: "MiniMax M3",
           reasoning: true,
@@ -3127,6 +3146,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
+        "MiniMax-M3.1-Flash": {
+          name: "MiniMax M3.1 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+          variants: MINIMAX_M31_VARIANTS,
+        },
         "MiniMax-M3": {
           name: "MiniMax M3",
           reasoning: true,
