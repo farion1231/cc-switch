@@ -1,11 +1,9 @@
 //! Token Plan / 编程套餐额度查询服务
 //!
 //! 支持 Kimi For Coding、智谱 GLM、MiniMax、ZenMux、火山方舟、OpenCode Go、Command Code
-//! 以及千问AI平台 Token Plan（AK/SK 走阿里云控制台网关）的套餐额度查询。复用
+//! 以及阿里云两条套餐线（千问AI平台 Token Plan / 百炼 Coding Plan，都用阿里云 AK/SK
+//! 走控制台网关，见 `query_qwen_token_plan` / `query_bailian_coding_plan`）。复用
 //! subscription 模块的 SubscriptionQuota / QuotaTier 类型。
-//!
-//! 阿里云百炼 Coding Plan 只做识别：官方没有公开的用量接口，
-//! `get_coding_plan_quota` 直接返回确定性说明，不发请求。
 
 use super::subscription::{
     CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
@@ -33,8 +31,8 @@ enum CodingPlanProvider {
     CommandCode,
     /// 阿里云百炼 Coding Plan（千问AI平台 Coding Plan，CN 站）。套餐 key 形如
     /// `sk-sp-xxxxx`，base 固定 `https://coding.dashscope.aliyuncs.com/{v1,apps/anthropic}`。
-    /// 官方只在控制台展示用量、没有公开的额度查询接口，识别到后直接给确定性说明，
-    /// 不发请求（见 `get_coding_plan_quota` 中的提前返回）。
+    /// 用量同样在百炼控制台后面，与 Token Plan 共用一套 AK/SK 换 token 的链路，
+    /// 只是查的是套餐实例额度（5 小时 / 每周 / 每月请求数，见 `query_bailian_coding_plan`）。
     Bailian,
     /// 千问AI平台 Token Plan（Credits 订阅）。base 固定
     /// `https://token-plan.cn-beijing.maas.aliyuncs.com/{compatible-mode/v1,apps/anthropic}`，
@@ -1690,6 +1688,10 @@ const QWEN_GATEWAY_HOST: &str = "bailian-cs.console.aliyun.com";
 const QWEN_GATEWAY_ACTION: &str = "BroadScopeAspnGateway";
 const QWEN_GATEWAY_REGION: &str = "cn-beijing";
 const QWEN_USAGE_API: &str = "zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage";
+/// 百炼 Coding Plan 的套餐实例（含 5 小时 / 每周 / 每月额度），国际站 commodityCode 不同。
+const BAILIAN_USAGE_API: &str =
+    "zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2";
+const BAILIAN_COMMODITY_CODE: &str = "sfm_codingplan_public_cn";
 
 const QWEN_AKSK_HINT: &str =
     "Use the Aliyun AccessKey ID/Secret of an account (or a RAM user in the Bailian workspace) \
@@ -1890,7 +1892,10 @@ fn qwen_gateway_error(body: &serde_json::Value) -> Option<String> {
 }
 
 /// 在网关两层信封里找到业务数据：`data.DataV2.data.data`（不同 API 偶尔少一层）。
-fn qwen_usage_payload(body: &serde_json::Value) -> Option<&serde_json::Value> {
+fn qwen_payload_with(
+    body: &serde_json::Value,
+    matches: impl Fn(&serde_json::Value) -> bool,
+) -> Option<&serde_json::Value> {
     const PATHS: [&[&str]; 4] = [
         &["data", "DataV2", "data", "data"],
         &["data", "DataV2", "data"],
@@ -1909,16 +1914,20 @@ fn qwen_usage_payload(body: &serde_json::Value) -> Option<&serde_json::Value> {
                 }
             }
         }
-        if depth_ok
-            && (node.get("per1MonthPercentage").is_some()
-                || node.get("per1MonthResetTime").is_some()
-                || node.get("per5HourPercentage").is_some()
-                || node.get("per1WeekPercentage").is_some())
-        {
+        if depth_ok && matches(node) {
             return Some(node);
         }
     }
     None
+}
+
+fn qwen_usage_payload(body: &serde_json::Value) -> Option<&serde_json::Value> {
+    qwen_payload_with(body, |node| {
+        node.get("per1MonthPercentage").is_some()
+            || node.get("per1MonthResetTime").is_some()
+            || node.get("per5HourPercentage").is_some()
+            || node.get("per1WeekPercentage").is_some()
+    })
 }
 
 fn qwen_auth_error(detail: String) -> SubscriptionQuota {
@@ -1949,7 +1958,7 @@ fn qwen_usage_tiers(payload: &serde_json::Value) -> Vec<QuotaTier> {
     for (name, prefixes) in WINDOWS {
         for prefix in prefixes {
             let Some(percentage) = payload
-                .get(&format!("{prefix}Percentage"))
+                .get(format!("{prefix}Percentage"))
                 .and_then(parse_f64)
             else {
                 continue;
@@ -1958,7 +1967,7 @@ fn qwen_usage_tiers(payload: &serde_json::Value) -> Vec<QuotaTier> {
                 name: name.to_string(),
                 utilization: percentage * 100.0,
                 resets_at: payload
-                    .get(&format!("{prefix}ResetTime"))
+                    .get(format!("{prefix}ResetTime"))
                     .and_then(extract_reset_time),
                 used_value_usd: None,
                 max_value_usd: None,
@@ -1969,11 +1978,21 @@ fn qwen_usage_tiers(payload: &serde_json::Value) -> Vec<QuotaTier> {
     tiers
 }
 
-/// 千问AI平台 Token Plan 的月度用量（顺带显示旧版 5 小时 / 每周窗口）。
-async fn query_qwen_token_plan(
+/// 控制面查询的失败：确定性错误（凭据/权限/业务错误）直接显示，瞬时错误（网络/超时）
+/// 让前端保留上次成功值并重试。
+enum ConsoleQueryError {
+    Deterministic(SubscriptionQuota),
+    Transient(String),
+}
+
+/// 阿里云控制面一次完整查询：AK/SK 换 console token → 调控制台网关 JSON API。
+/// 千问 Token Plan 与百炼 Coding Plan 共用（两者的用量都在百炼控制台后面）。
+async fn qwen_console_call(
     access_key_id: &str,
     secret_access_key: &str,
-) -> Result<SubscriptionQuota, String> {
+    api: &str,
+    data: &serde_json::Value,
+) -> Result<serde_json::Value, ConsoleQueryError> {
     let token = match qwen_acs_call(access_key_id, secret_access_key).await {
         VolcCall::Body(body) => {
             let mut found = body.get("cliAccessToken").and_then(|v| v.as_str());
@@ -1987,30 +2006,64 @@ async fn query_qwen_token_plan(
                 Some(token) => token.to_string(),
                 None => {
                     let raw: String = body.to_string().chars().take(700).collect();
-                    return Ok(make_error(format!(
+                    return Err(ConsoleQueryError::Deterministic(make_error(format!(
                         "GenerateCLIAccessToken returned no cliAccessToken. {QWEN_AKSK_HINT} Raw: {raw}"
-                    )));
+                    ))));
                 }
             }
         }
-        VolcCall::Auth(detail) => return Ok(qwen_auth_error(detail)),
-        VolcCall::Transient(detail) => return Err(format!("GenerateCLIAccessToken: {detail}")),
+        VolcCall::Auth(detail) => {
+            return Err(ConsoleQueryError::Deterministic(qwen_auth_error(detail)))
+        }
+        VolcCall::Transient(detail) => {
+            return Err(ConsoleQueryError::Transient(format!(
+                "GenerateCLIAccessToken: {detail}"
+            )))
+        }
         VolcCall::Soft(detail) => {
-            return Ok(make_error(format!("GenerateCLIAccessToken: {detail}")))
+            return Err(ConsoleQueryError::Deterministic(make_error(format!(
+                "GenerateCLIAccessToken: {detail}"
+            ))))
         }
     };
 
-    let empty_params = serde_json::json!({});
-    let body = match qwen_gateway_call(&token, QWEN_USAGE_API, &empty_params).await {
+    let body = match qwen_gateway_call(&token, api, data).await {
         VolcCall::Body(body) => body,
-        VolcCall::Auth(detail) => return Ok(qwen_auth_error(detail)),
-        VolcCall::Transient(detail) => return Err(format!("Token Plan usage: {detail}")),
-        VolcCall::Soft(detail) => return Ok(make_error(format!("Token Plan usage: {detail}"))),
+        VolcCall::Auth(detail) => {
+            return Err(ConsoleQueryError::Deterministic(qwen_auth_error(detail)))
+        }
+        VolcCall::Transient(detail) => {
+            return Err(ConsoleQueryError::Transient(format!("{api}: {detail}")))
+        }
+        VolcCall::Soft(detail) => {
+            return Err(ConsoleQueryError::Deterministic(make_error(format!(
+                "{api}: {detail}"
+            ))))
+        }
     };
-
     if let Some(error) = qwen_gateway_error(&body) {
-        return Ok(make_error(error));
+        return Err(ConsoleQueryError::Deterministic(make_error(error)));
     }
+    Ok(body)
+}
+
+/// 千问AI平台 Token Plan 的月度用量（顺带显示旧版 5 小时 / 每周窗口）。
+async fn query_qwen_token_plan(
+    access_key_id: &str,
+    secret_access_key: &str,
+) -> Result<SubscriptionQuota, String> {
+    let body = match qwen_console_call(
+        access_key_id,
+        secret_access_key,
+        QWEN_USAGE_API,
+        &serde_json::json!({}),
+    )
+    .await
+    {
+        Ok(body) => body,
+        Err(ConsoleQueryError::Deterministic(quota)) => return Ok(quota),
+        Err(ConsoleQueryError::Transient(detail)) => return Err(detail),
+    };
 
     let Some(payload) = qwen_usage_payload(&body) else {
         let raw: String = body.to_string().chars().take(700).collect();
@@ -2027,6 +2080,88 @@ async fn query_qwen_token_plan(
     }
 
     Ok(volcengine_success(tiers, Some("Token Plan".to_string())))
+}
+
+/// 百炼 Coding Plan 的额度窗口：5 小时 / 每周 / 每月各一组
+/// `{prefix}UsedQuota` + `TotalQuota` + `QuotaNextRefreshTime`（没有 Percentage 字段）。
+fn bailian_usage_tiers(payload: &serde_json::Value) -> Vec<QuotaTier> {
+    const WINDOWS: [(&str, &str); 3] = [
+        (TIER_FIVE_HOUR, "per5Hour"),
+        (TIER_WEEKLY_LIMIT, "perWeek"),
+        (TIER_MONTHLY, "perBillMonth"),
+    ];
+    // 只有 status=VALID 的实例是当前生效的套餐；都没有时退回第一条。
+    let quota = payload
+        .get("codingPlanInstanceInfos")
+        .and_then(|v| v.as_array())
+        .and_then(|infos| {
+            infos
+                .iter()
+                .find(|i| i.get("status").and_then(|s| s.as_str()) == Some("VALID"))
+                .or_else(|| infos.first())
+        })
+        .and_then(|info| info.get("codingPlanQuotaInfo"));
+    let Some(quota) = quota else {
+        return Vec::new();
+    };
+
+    let mut tiers = Vec::new();
+    for (name, prefix) in WINDOWS {
+        let number = |suffix: &str| quota.get(format!("{prefix}{suffix}")).and_then(parse_f64);
+        let (Some(used), Some(total)) = (number("UsedQuota"), number("TotalQuota")) else {
+            continue;
+        };
+        if total <= 0.0 {
+            continue;
+        }
+        tiers.push(QuotaTier {
+            name: name.to_string(),
+            utilization: used / total * 100.0,
+            resets_at: quota
+                .get(format!("{prefix}QuotaNextRefreshTime"))
+                .and_then(extract_reset_time),
+            used_value_usd: None,
+            max_value_usd: None,
+        });
+    }
+    tiers
+}
+
+/// 百炼 Coding Plan 的用量（与千问 Token Plan 同一个控制台网关、同一套 AK/SK）。
+async fn query_bailian_coding_plan(
+    access_key_id: &str,
+    secret_access_key: &str,
+) -> Result<SubscriptionQuota, String> {
+    let data = serde_json::json!({
+        "queryCodingPlanInstanceInfoRequest": {
+            "commodityCode": BAILIAN_COMMODITY_CODE,
+            "onlyLatestOne": true,
+        }
+    });
+    let body =
+        match qwen_console_call(access_key_id, secret_access_key, BAILIAN_USAGE_API, &data).await {
+            Ok(body) => body,
+            Err(ConsoleQueryError::Deterministic(quota)) => return Ok(quota),
+            Err(ConsoleQueryError::Transient(detail)) => return Err(detail),
+        };
+
+    let Some(payload) =
+        qwen_payload_with(&body, |node| node.get("codingPlanInstanceInfos").is_some())
+    else {
+        let raw: String = body.to_string().chars().take(700).collect();
+        return Ok(make_error(format!(
+            "Coding Plan usage response had no codingPlanInstanceInfos. Raw: {raw}"
+        )));
+    };
+    let tiers = bailian_usage_tiers(payload);
+    if tiers.is_empty() {
+        let raw: String = payload.to_string().chars().take(700).collect();
+        return Ok(make_error(format!(
+            "Coding Plan instance had no quota windows. Raw: {raw}"
+        )));
+    }
+
+    Ok(volcengine_success(tiers, Some("Coding Plan".to_string())))
 }
 
 // ── 公开入口 ────────────────────────────────────────────────
@@ -2164,28 +2299,28 @@ pub async fn get_coding_plan_quota(
         None => return Ok(coding_plan_not_found("Unknown coding plan provider")),
     };
 
-    // 千问AI平台 Token Plan：走阿里云控制面 AK/SK 签名（换 console token 再查网关），
-    // 与数据面 Bearer api_key 完全是两条链路，单独分支提前处理。
-    if let CodingPlanProvider::QwenTokenPlan = provider {
+    // 阿里云两条套餐线（千问 Token Plan / 百炼 Coding Plan）：用量都在百炼控制台后面，
+    // 走 AK/SK 签名换 console token 再查网关，与数据面 Bearer api_key 是两条链路。
+    if matches!(
+        provider,
+        CodingPlanProvider::QwenTokenPlan | CodingPlanProvider::Bailian
+    ) {
         let ak = access_key_id.unwrap_or("").trim();
         let sk = secret_access_key.unwrap_or("").trim();
         if ak.is_empty() || sk.is_empty() {
-            return Ok(coding_plan_not_found(
-                "Qwen Token Plan usage query needs the Aliyun AccessKey ID + Secret (the sk-sp-... plan key only authorizes inference)",
-            ));
+            let plan = if matches!(provider, CodingPlanProvider::Bailian) {
+                "Bailian Coding Plan"
+            } else {
+                "Qwen Token Plan"
+            };
+            return Ok(coding_plan_not_found(&format!(
+                "{plan} usage query needs the Aliyun AccessKey ID + Secret (the sk-sp-... plan key only authorizes inference)"
+            )));
         }
-        return query_qwen_token_plan(ak, sk).await;
-    }
-
-    // 百炼 Coding Plan：官方只在控制台展示用量，没有公开的额度查询接口（sk-sp- key
-    // 只服务推理数据面）。不发请求，直接给确定性说明——让卡片显示"额度没查到 +
-    // 该去哪看"，而不是 Unknown coding plan provider。放在 api_key 判空之前。
-    if let CodingPlanProvider::Bailian = provider {
-        return Ok(make_error(
-            "Aliyun Bailian Coding Plan has no public usage API — view it at \
-             https://bailian.console.aliyun.com/cn-beijing/subscription/coding-plan"
-                .to_string(),
-        ));
+        return match provider {
+            CodingPlanProvider::Bailian => query_bailian_coding_plan(ak, sk).await,
+            _ => query_qwen_token_plan(ak, sk).await,
+        };
     }
 
     // 火山方舟走控制面 AK/SK 签名（区别于其他供应商的数据面 Bearer api_key），凭据
@@ -2221,9 +2356,9 @@ pub async fn get_coding_plan_quota(
         CodingPlanProvider::Volcengine => {
             unreachable!("volcengine handled via AK/SK branch above")
         }
-        // 百炼 / 千问 Token Plan 已在上面的分支提前返回，此处不可达。
+        // 百炼 / 千问 Token Plan 已在上面的 AK/SK 分支提前返回，此处不可达。
         CodingPlanProvider::Bailian | CodingPlanProvider::QwenTokenPlan => {
-            unreachable!("console-only / AK-SK plans handled above")
+            unreachable!("Aliyun console plans handled via AK/SK branch above")
         }
     }
 }
@@ -2231,9 +2366,9 @@ pub async fn get_coding_plan_quota(
 #[cfg(test)]
 mod tests {
     use super::{
-        acs3_canonical_request, detect_provider, detect_provider_id, extract_reset_time,
-        parse_afp_tiers, parse_coding_plan_tiers, parse_command_code_quota, parse_f64,
-        parse_minimax_tiers, parse_opencode_go_tiers, parse_zhipu_token_tiers,
+        acs3_canonical_request, bailian_usage_tiers, detect_provider, detect_provider_id,
+        extract_reset_time, parse_afp_tiers, parse_coding_plan_tiers, parse_command_code_quota,
+        parse_f64, parse_minimax_tiers, parse_opencode_go_tiers, parse_zhipu_token_tiers,
         query_command_code_at, query_zhipu_team_at, qwen_gateway_error, qwen_usage_payload,
         qwen_usage_tiers, volcengine_canonical_query, volcengine_is_auth_error_code,
         volcengine_region, volcengine_response_error, volcengine_sign, zhipu_quota_base,
@@ -2414,6 +2549,36 @@ mod tests {
         assert_eq!(monthly.len(), 1);
         assert_eq!(monthly[0].name, TIER_MONTHLY);
         assert!(qwen_usage_tiers(&json!({"foo": 1})).is_empty());
+    }
+
+    #[test]
+    fn bailian_usage_tiers_maps_request_windows() {
+        let payload = json!({
+            "codingPlanInstanceInfos": [
+                {"status": "INVALID", "codingPlanQuotaInfo": {"per5HourUsedQuota": 1}},
+                {
+                    "status": "VALID",
+                    "codingPlanQuotaInfo": {
+                        "per5HourUsedQuota": 600,
+                        "per5HourTotalQuota": 6000,
+                        "per5HourQuotaNextRefreshTime": 1_761_900_000_i64,
+                        "perWeekUsedQuota": 4500,
+                        "perWeekTotalQuota": 45000,
+                        // 月度额度为 0 表示不限，跳过这一档
+                        "perBillMonthUsedQuota": 0,
+                        "perBillMonthTotalQuota": 0,
+                    }
+                }
+            ]
+        });
+        let tiers = bailian_usage_tiers(&payload);
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert!((tiers[0].utilization - 10.0).abs() < 1e-9);
+        assert!(tiers[0].resets_at.is_some());
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert!((tiers[1].utilization - 10.0).abs() < 1e-9);
+        assert!(bailian_usage_tiers(&json!({"codingPlanInstanceInfos": []})).is_empty());
     }
 
     #[test]

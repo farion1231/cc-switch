@@ -91,8 +91,8 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
   {
     // 阿里云百炼 Coding Plan（千问AI平台 Coding Plan，CN 站）：套餐 key 形如
     // sk-sp-xxxxx，base 固定 https://coding.dashscope.aliyuncs.com/{v1,apps/anthropic}。
-    // 官方只在控制台展示用量、没有公开的额度查询接口，后端同条目也不发请求，
-    // 本条只负责"认出来 + 把失败语义说清楚"（报错文案由 coding_plan.rs 给出）。
+    // 用量在百炼控制台网关后面（5 小时 / 每周 / 每月请求数），后端用账号 AK/SK
+    // 走 ACS3 换 console token 再查，所以除推理 Key 外还要另填 AccessKey ID / Secret。
     // 按量付费 dashscope.aliyuncs.com、Token Plan 的 token-plan...maas.aliyuncs.com
     // 与国际站 dashscope-intl 都不含 coding. 前缀，刻意不命中。
     id: "bailian",

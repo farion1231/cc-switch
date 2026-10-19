@@ -214,7 +214,7 @@ describe("injectCodingPlanUsageScript", () => {
     expect(injected.meta?.usage_script?.codingPlanProvider).toBe("kimi");
   });
 
-  it("injects Bailian for the claude preset (explanation only, no query)", () => {
+  it("injects Bailian for the claude preset (AK/SK query)", () => {
     const injected = inject("claude", {
       settingsConfig: {
         env: {

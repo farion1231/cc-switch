@@ -47,7 +47,7 @@ const VOLCENGINE_KEY_CONSOLE_URL =
   "https://console.volcengine.com/iam/keymanage";
 // 千问AI平台 Token Plan：用量在百炼控制台网关后面，要先用阿里云 AK/SK 换
 // console token，凭据同样与推理用的 sk-sp-... Key 是两套。
-const QWEN_AK_CONSOLE_URL = "https://ram.console.aliyun.com/manage/ak";
+const ALIYUN_AK_CONSOLE_URL = "https://ram.console.aliyun.com/manage/ak";
 // 智谱团队套餐用量页（组织 ID / 项目 ID 在此页 URL 或管理后台可见）
 const ZHIPU_TEAM_USAGE_URL = "https://bigmodel.cn/coding-plan/team/usage-stats";
 
@@ -632,10 +632,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         // ZenMux 手填 baseUrl/apiKey；火山是 native 供应商，baseUrl 走推理配置，
         // 另用账号 AK/SK 签名查询控制面用量。
         const isZenMux = script.codingPlanProvider === "zenmux";
-        // 火山方舟与千问 Token Plan 都用账号 AK/SK 调控制面查询
+        // 火山方舟与阿里云套餐（千问 Token Plan / 百炼 Coding Plan）都用账号 AK/SK 调控制面查询
         const needsAkSk =
           script.codingPlanProvider === "volcengine" ||
-          script.codingPlanProvider === "qwen_token_plan";
+          script.codingPlanProvider === "qwen_token_plan" ||
+          script.codingPlanProvider === "bailian";
         const isZhipuTeam = script.codingPlanProvider === "zhipu_team";
         const baseUrl = isZenMux
           ? (script.baseUrl ?? "")
@@ -836,10 +837,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           providerCredentials.baseUrl,
         );
         const provider = script.codingPlanProvider || autoDetected || "kimi";
-        // ZenMux 保留手填 baseUrl/apiKey；火山与千问保留账号 AK/SK；智谱团队保留组织/项目 ID；其余清除。
+        // ZenMux 保留手填 baseUrl/apiKey；火山与阿里云套餐保留账号 AK/SK；智谱团队保留组织/项目 ID；其余清除。
         const isZenMux = provider === "zenmux";
         const needsAkSk =
-          provider === "volcengine" || provider === "qwen_token_plan";
+          provider === "volcengine" ||
+          provider === "qwen_token_plan" ||
+          provider === "bailian";
         const isZhipuTeam = provider === "zhipu_team";
         setScript({
           ...script,
@@ -888,8 +891,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
       script.codingPlanProvider === "zenmux");
 
-  // 千问 Token Plan 复用火山方舟那块 AK/SK 面板，只换提示文案与控制台链接
-  const isQwenTokenPlan = script.codingPlanProvider === "qwen_token_plan";
+  // 阿里云套餐（千问 Token Plan / 百炼 Coding Plan）复用火山方舟那块 AK/SK 面板，只换提示文案与控制台链接
+  const isAliyunPlan =
+    script.codingPlanProvider === "qwen_token_plan" ||
+    script.codingPlanProvider === "bailian";
 
   const footer = (
     <>
@@ -1368,36 +1373,35 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
             {/* 火山方舟 / 千问 Token Plan：控制面用量查询需账号 AK/SK（与推理 Key 是两套凭据） */}
             {selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
-              (script.codingPlanProvider === "volcengine" ||
-                isQwenTokenPlan) && (
+              (script.codingPlanProvider === "volcengine" || isAliyunPlan) && (
                 <div className="space-y-4">
                   <div>
                     <h4 className="text-sm font-medium text-fg-1">
                       {t("usageScript.credentialsConfig")}
                     </h4>
                     <p className="text-xs text-fg-2 mt-1 leading-relaxed">
-                      {isQwenTokenPlan
-                        ? t("usageScript.qwenTokenPlanAkSkHint")
+                      {isAliyunPlan
+                        ? t("usageScript.aliyunPlanAkSkHint")
                         : t("usageScript.volcengineAkSkHint")}
                     </p>
                     <p className="text-xs text-fg-2 mt-1.5">
-                      {isQwenTokenPlan
-                        ? t("usageScript.qwenTokenPlanConsoleLink")
+                      {isAliyunPlan
+                        ? t("usageScript.aliyunPlanConsoleLink")
                         : t("usageScript.volcengineKeyConsoleLink")}
                       {""}
                       <button
                         type="button"
                         onClick={() =>
                           settingsApi.openExternal(
-                            isQwenTokenPlan
-                              ? QWEN_AK_CONSOLE_URL
+                            isAliyunPlan
+                              ? ALIYUN_AK_CONSOLE_URL
                               : VOLCENGINE_KEY_CONSOLE_URL,
                           )
                         }
                         className="inline-flex items-center gap-1 text-fg-1 hover:text-fg-1 transition-colors break-all align-baseline underline-offset-2 hover:underline"
                       >
-                        {isQwenTokenPlan
-                          ? QWEN_AK_CONSOLE_URL
+                        {isAliyunPlan
+                          ? ALIYUN_AK_CONSOLE_URL
                           : VOLCENGINE_KEY_CONSOLE_URL}
                         <ExternalLink size={12} className="shrink-0" />
                       </button>
@@ -1419,7 +1423,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                             accessKeyId: e.target.value,
                           })
                         }
-                        placeholder={isQwenTokenPlan ? "LTAI..." : "AKLT..."}
+                        placeholder={isAliyunPlan ? "LTAI..." : "AKLT..."}
                         autoComplete="off"
                         className="border-white/10"
                       />
