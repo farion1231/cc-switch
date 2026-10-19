@@ -1740,6 +1740,7 @@
     "fetchModelsSuccess": "取得 {{count}} 個模型",
     "modelMetadataFilled": "已補齊 {{model}} 的上下文等參數（來源：{{source}}），請核對",
     "modelMetadataFilledMany": "已補齊 {{count}} 個模型的上下文等參數（來源：{{source}}），請核對",
+    "gptContextWindowHint": "中轉站的 GPT 多來自 ChatGPT 訂閱，視窗只有 272K。視窗寫大了不會提前壓縮，等上游拒收時這一輪會失敗；確認這家支援更大視窗再這樣填。",
     "modelMetadataSourcePreset": "預設",
     "modelMetadataSourceBoth": "預設和 models.dev",
     "modelPicker": {

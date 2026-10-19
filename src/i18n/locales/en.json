@@ -1739,6 +1739,7 @@
     "fetchModelsSuccess": "Found {{count}} models",
     "modelMetadataFilled": "Filled in context window and other parameters for {{model}} (source: {{source}}). Please double-check.",
     "modelMetadataFilledMany": "Filled in context window and other parameters for {{count}} models (source: {{source}}). Please double-check.",
+    "gptContextWindowHint": "GPT on relays usually comes from ChatGPT subscriptions, whose window is only 272K. A larger window delays compaction until the upstream rejects the request and the turn fails; only use it if this provider supports it.",
     "modelMetadataSourcePreset": "preset",
     "modelMetadataSourceBoth": "preset and models.dev",
     "modelPicker": {

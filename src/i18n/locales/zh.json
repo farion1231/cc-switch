@@ -1739,6 +1739,7 @@
     "fetchModelsSuccess": "获取到 {{count}} 个模型",
     "modelMetadataFilled": "已补全 {{model}} 的上下文等参数（来源：{{source}}），请核对",
     "modelMetadataFilledMany": "已补全 {{count}} 个模型的上下文等参数（来源：{{source}}），请核对",
+    "gptContextWindowHint": "中转站的 GPT 多来自 ChatGPT 订阅，窗口只有 272K。窗口写大了不会提前压缩，等上游拒收时这一轮会失败；确认这家支持更大窗口再这样填。",
     "modelMetadataSourcePreset": "预设",
     "modelMetadataSourceBoth": "预设和 models.dev",
     "modelPicker": {
