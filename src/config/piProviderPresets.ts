@@ -2292,7 +2292,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       // 走 /coding-agent/v1 Chat（vercel.com/docs/ai-gateway/coding-agents/pi 与
       // vercel.com/docs/cli/ai-gateway，2026-10-14 核对）。Gemini 3.8 Flash 按
       // GET https://ai-gateway.vercel.sh/v1/models 同日元数据覆盖窗口与最大输出；
-      // Haiku 5.5、GPT-6.1 Sol 目录里还没有条目，暂不收
+      // GPT 按 API 计费、窗口 1.05M，不用 catalog 的订阅窗口；Haiku 5.5、GPT-6.1 Sol 目录里还没有条目，暂不收
       baseUrl: "https://ai-gateway.vercel.sh/coding-agent/v1",
       api: "openai-completions",
       apiKey: "",
@@ -2303,7 +2303,10 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("anthropic/claude-sonnet-5.5", {
           id: "anthropic/claude-sonnet-5.5",
         }),
-        piModel("openai/gpt-6-astra", { id: "openai/gpt-6-astra" }),
+        piModel("openai/gpt-6-astra", {
+          id: "openai/gpt-6-astra",
+          contextWindow: 1_050_000,
+        }),
         piModel("google/gemini-3.8-flash", {
           id: "google/gemini-3.8-flash",
           contextWindow: 1_000_000,
