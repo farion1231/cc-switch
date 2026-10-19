@@ -108,21 +108,21 @@ const generatePresetTemplates = (
       var userAvailable = response.data.user_quota && response.data.user_quota.total_available;
       if (typeof userAvailable === "number") {
         return {
-          planName: response.data.name || "${t("usageScript.defaultPlan")}",
+          planName: response.data.name || "NewAPI",
           remaining: (response.data.unlimited_quota ? userAvailable : Math.min(response.data.total_available, userAvailable)) / quotaPerDollar,
           unit: "USD",
         };
       }
       if (response.data.unlimited_quota) {
         return {
-          planName: response.data.name || "${t("usageScript.defaultPlan")}",
+          planName: response.data.name || "NewAPI",
           used: response.data.total_used / quotaPerDollar,
           unit: "USD",
           extra: "∞",
         };
       }
       return {
-        planName: response.data.name || "${t("usageScript.defaultPlan")}",
+        planName: response.data.name || "NewAPI",
         remaining: response.data.total_available / quotaPerDollar,
         used: response.data.total_used / quotaPerDollar,
         total: response.data.total_granted / quotaPerDollar,
@@ -131,7 +131,7 @@ const generatePresetTemplates = (
     }
     return {
       isValid: false,
-      invalidMessage: response.message || "${t("usageScript.queryFailedMessage")}"
+      invalidMessage: response.message || "查询失败"
     };
   },
 })`,
@@ -533,6 +533,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   );
 
   const [showApiKey, setShowApiKey] = useState(false);
+  const [showAccessToken, setShowAccessToken] = useState(false);
 
   const handleEnableToggle = (checked: boolean) => {
     if (checked && !settingsData?.usageConfirmed) {
@@ -1257,6 +1258,69 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                           className="border-white/10"
                         />
                       </div>
+                      {script.code.includes("{{accessToken}}") && (
+                        <div className="space-y-2">
+                          <Label htmlFor="usage-access-token">
+                            {t("usageScript.accessToken")}
+                          </Label>
+                          <div className="relative">
+                            <Input
+                              id="usage-access-token"
+                              type={showAccessToken ? "text" : "password"}
+                              value={script.accessToken || ""}
+                              onChange={(e) =>
+                                setScript({
+                                  ...script,
+                                  accessToken: e.target.value,
+                                })
+                              }
+                              placeholder={t(
+                                "usageScript.accessTokenPlaceholder",
+                              )}
+                              autoComplete="off"
+                              className="border-white/10"
+                            />
+                            {script.accessToken && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setShowAccessToken(!showAccessToken)
+                                }
+                                className="absolute inset-y-0 right-0 flex items-center pr-3 text-fg-2 hover:text-fg-1 transition-colors"
+                                aria-label={
+                                  showAccessToken
+                                    ? t("apiKeyInput.hide")
+                                    : t("apiKeyInput.show")
+                                }
+                              >
+                                {showAccessToken ? (
+                                  <EyeOff size={16} />
+                                ) : (
+                                  <Eye size={16} />
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {script.code.includes("{{userId}}") && (
+                        <div className="space-y-2">
+                          <Label htmlFor="usage-user-id">
+                            {t("usageScript.userId")}
+                          </Label>
+                          <Input
+                            id="usage-user-id"
+                            type="text"
+                            value={script.userId || ""}
+                            onChange={(e) =>
+                              setScript({ ...script, userId: e.target.value })
+                            }
+                            placeholder={t("usageScript.userIdPlaceholder")}
+                            autoComplete="off"
+                            className="border-white/10"
+                          />
+                        </div>
+                      )}
                     </>
                   )}
 

@@ -159,17 +159,20 @@ vi.mock("@/lib/query/proxy", () => ({
   }),
 }));
 
-const renderDashboard = (props: ComponentProps<typeof UsageDashboard> = {}) => {
-  const queryClient = new QueryClient({
+const renderDashboard = (
+  props: ComponentProps<typeof UsageDashboard> = {},
+  queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
     },
-  });
-  return render(
+  }),
+) => {
+  const view = render(
     <QueryClientProvider client={queryClient}>
       <UsageDashboard {...props} />
     </QueryClientProvider>,
   );
+  return { ...view, queryClient };
 };
 
 describe("UsageDashboard", () => {
@@ -638,7 +641,14 @@ describe("UsageDashboard", () => {
 
   it("queries the summary for one selected conversation", async () => {
     const user = userEvent.setup();
-    renderDashboard();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryDefaults(["settings"], { staleTime: Infinity });
+    queryClient.setQueryData(["settings"], {
+      usageDisplay: { currency: "CNY", exchangeRates: { CNY: 7 } },
+    });
+    renderDashboard({}, queryClient);
 
     await user.click(screen.getByRole("tab", { name: "usage.tabs.sessions" }));
     await user.click(
@@ -652,7 +662,7 @@ describe("UsageDashboard", () => {
         "session-1",
       ),
     );
-    expect(await screen.findByText("$0.25")).toBeInTheDocument();
+    expect(await screen.findByText("¥1.75")).toBeInTheDocument();
     expect(
       screen.getByText("usage.singleSession.totalTokens"),
     ).toBeInTheDocument();
@@ -664,6 +674,41 @@ describe("UsageDashboard", () => {
     expect(
       screen.getByText("usage.singleSession.dataScopeHint"),
     ).toBeInTheDocument();
+  });
+
+  it("keeps aggregate filters visible on the single-session tab", async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+
+    await user.click(screen.getByRole("tab", { name: "usage.tabs.sessions" }));
+
+    expect(
+      screen.getByRole("group", { name: "usage.appFilter.label" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "usage.providerFilter.label" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "usage.modelFilter.label" }),
+    ).toBeVisible();
+  });
+
+  it("refreshes the session picker after manual session sync", async () => {
+    const user = userEvent.setup();
+    const { queryClient } = renderDashboard();
+
+    await waitFor(() =>
+      expect(usageApiMock.syncSessionUsage).toHaveBeenCalledTimes(1),
+    );
+    queryClient.setQueryData(["sessions"], []);
+    await user.click(
+      screen.getByRole("button", { name: "usage.sessionSync.syncNow" }),
+    );
+
+    await waitFor(() => {
+      expect(usageApiMock.syncSessionUsage).toHaveBeenCalledTimes(2);
+      expect(queryClient.getQueryState(["sessions"])?.isInvalidated).toBe(true);
+    });
   });
 
   it("toggles session scanning and links to routing settings from the data sources drawer", async () => {

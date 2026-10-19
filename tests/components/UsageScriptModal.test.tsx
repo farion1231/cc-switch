@@ -152,6 +152,15 @@ describe("UsageScriptModal NewAPI template", () => {
         },
       }),
     ).toMatchObject({ remaining: 24, used: 6, total: 30, unit: "USD" });
+    expect(
+      script.extractor({
+        code: true,
+        data: {
+          total_used: 5_000_000,
+          unlimited_quota: true,
+        },
+      }),
+    ).toMatchObject({ used: 10, unit: "USD", extra: "∞" });
     expect(screen.getByLabelText(/API Key/)).toBeInTheDocument();
     expect(screen.getAllByLabelText("usageScript.baseUrl")).toHaveLength(1);
     expect(
@@ -172,7 +181,7 @@ describe("UsageScriptModal NewAPI template", () => {
   it("preserves a saved user-profile script until the user selects a new template", async () => {
     const onSave = vi.fn();
     const oldCode =
-      '({ request: { url: "{{baseUrl}}/api/user/self" }, extractor: function (response) { return response; } })';
+      '({ request: { url: "{{baseUrl}}/api/user/self", headers: { Authorization: "Bearer {{accessToken}}", "New-Api-User": "{{userId}}" } }, extractor: function (response) { return response; } })';
     renderModal(onSave, {
       ...provider.meta!.usage_script!,
       templateType: "newapi",
@@ -184,6 +193,17 @@ describe("UsageScriptModal NewAPI template", () => {
     expect(
       screen.getByTestId("usage-script-code") as HTMLTextAreaElement,
     ).toHaveValue(oldCode);
+    expect(screen.getByLabelText("usageScript.accessToken")).toHaveValue(
+      "old-token",
+    );
+    expect(screen.getByLabelText("usageScript.userId")).toHaveValue("123");
+    await userEvent.clear(screen.getByLabelText("usageScript.accessToken"));
+    await userEvent.type(
+      screen.getByLabelText("usageScript.accessToken"),
+      "updated-token",
+    );
+    await userEvent.clear(screen.getByLabelText("usageScript.userId"));
+    await userEvent.type(screen.getByLabelText("usageScript.userId"), "456");
 
     await userEvent.click(
       screen.getByRole("button", { name: "usageScript.saveConfig" }),
@@ -192,8 +212,40 @@ describe("UsageScriptModal NewAPI template", () => {
       expect.objectContaining({
         templateType: "newapi",
         code: oldCode,
-        accessToken: "old-token",
-        userId: "123",
+        accessToken: "updated-token",
+        userId: "456",
+      }),
+    );
+  });
+
+  it("removes legacy credentials after the user selects the API-key template", async () => {
+    const onSave = vi.fn();
+    renderModal(onSave, {
+      ...provider.meta!.usage_script!,
+      templateType: "newapi",
+      code: '({ request: { headers: { Authorization: "Bearer {{accessToken}}", "New-Api-User": "{{userId}}" } } })',
+      accessToken: "old-token",
+      userId: "123",
+    });
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "usageScript.templateNewAPI" }),
+    );
+
+    expect(
+      screen.queryByLabelText("usageScript.accessToken"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("usageScript.userId"),
+    ).not.toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "usageScript.saveConfig" }),
+    );
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        templateType: "newapi",
+        accessToken: undefined,
+        userId: undefined,
       }),
     );
   });

@@ -83,12 +83,7 @@ const normalizeRefreshInterval = (value: number | undefined) =>
 const STATUS_CODE_OPTIONS = [200, 400, 401, 429, 500] as const;
 
 // 「设置」放显示币种和模型定价（原「定价」页签并进来）
-type UsageTab =
-  | "logs"
-  | "providers"
-  | "models"
-  | "sessions"
-  | "settings";
+type UsageTab = "logs" | "providers" | "models" | "sessions" | "settings";
 const TABS: UsageTab[] = [
   "logs",
   "providers",
@@ -335,6 +330,7 @@ export function UsageDashboard({
     try {
       const result = await syncSessionUsage();
       await queryClient.invalidateQueries({ queryKey: usageKeys.all });
+      await queryClient.invalidateQueries({ queryKey: ["sessions"] });
       lastManualSessionSyncAt = Date.now();
       setLastManualSyncAt(lastManualSessionSyncAt);
       const message = t("usage.sessionSync.syncCompleted", {

@@ -18,10 +18,11 @@ import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { formatSessionTitle } from "@/components/sessions/utils";
 import { useSessionUsageSummary } from "@/lib/query/usage";
 import { useSessionsQuery } from "@/lib/query/queries";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import type { SessionMeta } from "@/types";
 import {
   fmtInt,
-  fmtUsd,
+  formatHitRatePercent,
   formatTokensCompact,
   getLocaleFromLanguage,
 } from "./format";
@@ -35,6 +36,7 @@ function SingleSessionSummary({ session }: { session: SessionMeta }) {
     session.providerId,
     session.sessionId,
   );
+  const { money } = useMoneyFormat();
   const locale = getLocaleFromLanguage(
     i18n.resolvedLanguage || i18n.language || "en",
   );
@@ -90,7 +92,7 @@ function SingleSessionSummary({ session }: { session: SessionMeta }) {
           <div>
             <dt className="text-caption text-fg-3">{t("usage.totalCost")}</dt>
             <dd className="m-0 text-section tabular-nums text-fg-1">
-              {fmtUsd(data.totalCost, 2)}
+              {money(data.totalCost, 2)}
             </dd>
           </div>
           <div>
@@ -114,7 +116,7 @@ function SingleSessionSummary({ session }: { session: SessionMeta }) {
               {t("usage.cacheHitRate")}
             </dt>
             <dd className="m-0 text-section tabular-nums text-fg-1">
-              {`${(Math.max(0, Math.min(1, data.cacheHitRate)) * 100).toFixed(1)}%`}
+              {formatHitRatePercent(data.cacheHitRate)}
             </dd>
           </div>
           <div>
