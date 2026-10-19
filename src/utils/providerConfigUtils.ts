@@ -244,6 +244,10 @@ export const setApiKeyInConfig = (
 // ========== Codex base_url utils ==========
 
 const TOML_SECTION_HEADER_PATTERN = /^\s*\[([^\]\r\n]+)\]\s*$/;
+const TOML_BARE_KEY_PATTERN = /^[A-Za-z0-9_-]+$/;
+// 点分键的一段（基本字符串、字面字符串或裸键）及其后的 "." 或结尾
+const TOML_DOTTED_KEY_SEGMENT_PATTERN =
+  /\s*(?:"((?:\\.|[^"\\\r\n])*)"|'([^'\r\n]*)'|([A-Za-z0-9_-]+))\s*(\.|$)/y;
 const TOML_BASE_URL_PATTERN =
   /^\s*base_url\s*=\s*(?:"((?:\\.|[^"\\\r\n])*)"|'([^'\r\n]*)')\s*(?:#.*)?$/;
 const TOML_EXPERIMENTAL_BEARER_TOKEN_PATTERN =
@@ -298,20 +302,103 @@ const finalizeTomlText = (lines: string[]): string =>
     .replace(/\n{3,}/g, "\n\n")
     .replace(/^\n+/, "");
 
+// 表名的规范写法：能用裸键的段用裸键，其余用基本字符串
+const tomlTableName = (...segments: string[]): string =>
+  segments
+    .map((segment) =>
+      TOML_BARE_KEY_PATTERN.test(segment) ? segment : tomlBasicString(segment),
+    )
+    .join(".");
+
+// `[model_providers."custom"]`、`[ model_providers . custom ]` 与
+// `[model_providers.custom]` 是同一张表（#8271），比较表头前先统一成规范写法；
+// 认不出的表头原样返回
+const normalizeTomlTableName = (header: string): string => {
+  const segments: string[] = [];
+  let index = 0;
+  for (;;) {
+    TOML_DOTTED_KEY_SEGMENT_PATTERN.lastIndex = index;
+    const match = TOML_DOTTED_KEY_SEGMENT_PATTERN.exec(header);
+    if (!match) return header;
+    const [, basic, literal, bare, separator] = match;
+    segments.push(
+      basic !== undefined ? unescapeTomlBasicString(basic) : (literal ?? bare),
+    );
+    if (separator !== ".") return tomlTableName(...segments);
+    index = TOML_DOTTED_KEY_SEGMENT_PATTERN.lastIndex;
+  }
+};
+
+// 标出以多行字符串（""" 或 '''）内部开头的行。这些行是字符串内容，像表头或赋值也不算：
+// 说明文字里的 `[model_providers."custom"]` 示例不能被当成真正的 provider 表。
+// 逐字符跟踪字符串和注释状态；单行字符串和注释到行尾为止。
+const getTomlMultilineStringLines = (lines: string[]): boolean[] => {
+  let delimiter: '"""' | "'''" | undefined;
+  return lines.map((line) => {
+    const insideString = delimiter !== undefined;
+    let index = 0;
+    while (index < line.length) {
+      if (delimiter) {
+        if (delimiter === '"""' && line[index] === "\\") {
+          index += 2;
+          continue;
+        }
+        if (line.startsWith(delimiter, index)) {
+          // 结束符前最多可以再贴两个引号，它们属于字符串内容
+          const quote = delimiter[0];
+          let end = index + 3;
+          while (end < index + 5 && line[end] === quote) end += 1;
+          delimiter = undefined;
+          index = end;
+          continue;
+        }
+        index += 1;
+        continue;
+      }
+
+      const ch = line[index];
+      if (ch === "#") break;
+      if (line.startsWith('"""', index) || line.startsWith("'''", index)) {
+        delimiter = line.startsWith('"""', index) ? '"""' : "'''";
+        index += 3;
+        continue;
+      }
+      if (ch === '"') {
+        index += 1;
+        while (index < line.length && line[index] !== '"') {
+          index += line[index] === "\\" ? 2 : 1;
+        }
+        index += 1;
+        continue;
+      }
+      if (ch === "'") {
+        const end = line.indexOf("'", index + 1);
+        index = end === -1 ? line.length : end + 1;
+        continue;
+      }
+      index += 1;
+    }
+    return insideString;
+  });
+};
+
 const getTomlSectionRange = (
   lines: string[],
   sectionName: string,
 ): TomlSectionRange | undefined => {
+  const targetName = normalizeTomlTableName(sectionName);
+  const stringLines = getTomlMultilineStringLines(lines);
   let headerLineIndex = -1;
 
   for (let index = 0; index < lines.length; index += 1) {
+    if (stringLines[index]) continue;
     const match = lines[index].match(TOML_SECTION_HEADER_PATTERN);
     if (!match) {
       continue;
     }
 
     if (headerLineIndex === -1) {
-      if (match[1] === sectionName) {
+      if (normalizeTomlTableName(match[1]) === targetName) {
         headerLineIndex = index;
       }
       continue;
@@ -336,8 +423,10 @@ const getTomlSectionRange = (
 };
 
 const getTopLevelEndIndex = (lines: string[]): number => {
-  const firstSectionIndex = lines.findIndex((line) =>
-    TOML_SECTION_HEADER_PATTERN.test(line),
+  const stringLines = getTomlMultilineStringLines(lines);
+  const firstSectionIndex = lines.findIndex(
+    (line, index) =>
+      !stringLines[index] && TOML_SECTION_HEADER_PATTERN.test(line),
   );
   return firstSectionIndex === -1 ? lines.length : firstSectionIndex;
 };
@@ -414,7 +503,9 @@ const getCodexProviderSectionName = (
   configText: string,
 ): string | undefined => {
   const providerName = getCodexModelProviderName(configText);
-  return providerName ? `model_providers.${providerName}` : undefined;
+  return providerName
+    ? tomlTableName("model_providers", providerName)
+    : undefined;
 };
 
 const isCustomCodexModelProviderId = (providerName: string): boolean => {
@@ -430,7 +521,7 @@ const getCodexCustomProviderSectionName = (
 ): string | undefined => {
   const providerName = getCodexModelProviderName(configText);
   return providerName && isCustomCodexModelProviderId(providerName)
-    ? `model_providers.${providerName}`
+    ? tomlTableName("model_providers", providerName)
     : undefined;
 };
 
@@ -441,7 +532,9 @@ const findTomlAssignmentInRange = (
   endIndex: number,
   sectionName?: string,
 ): TomlAssignmentMatch | undefined => {
+  const stringLines = getTomlMultilineStringLines(lines);
   for (let index = startIndex; index < endIndex; index += 1) {
+    if (stringLines[index]) continue;
     const match = lines[index].match(pattern);
     const value = match?.[2] ?? match?.[1];
     if (value) {
@@ -464,8 +557,10 @@ const findTomlAssignmentsInRange = (
   sectionName?: string,
 ): TomlAssignmentMatch[] => {
   const matches: TomlAssignmentMatch[] = [];
+  const stringLines = getTomlMultilineStringLines(lines);
 
   for (let index = startIndex; index < endIndex; index += 1) {
+    if (stringLines[index]) continue;
     const match = lines[index].match(pattern);
     const value = match?.[2] ?? match?.[1];
     if (value) {
@@ -482,8 +577,9 @@ const findTomlLineInRange = (
   startIndex: number,
   endIndex: number,
 ): number => {
+  const stringLines = getTomlMultilineStringLines(lines);
   for (let index = startIndex; index < endIndex; index += 1) {
-    if (pattern.test(lines[index])) {
+    if (!stringLines[index] && pattern.test(lines[index])) {
       return index;
     }
   }
@@ -497,11 +593,13 @@ const findTomlAssignments = (
 ): TomlAssignmentMatch[] => {
   const assignments: TomlAssignmentMatch[] = [];
   let currentSectionName: string | undefined;
+  const stringLines = getTomlMultilineStringLines(lines);
 
   lines.forEach((line, index) => {
+    if (stringLines[index]) return;
     const sectionMatch = line.match(TOML_SECTION_HEADER_PATTERN);
     if (sectionMatch) {
-      currentSectionName = sectionMatch[1];
+      currentSectionName = normalizeTomlTableName(sectionMatch[1]);
       return;
     }
 
@@ -550,15 +648,12 @@ const getRecoverableBaseUrlAssignments = (
 const getRecoverableCodexProviderAssignments = getRecoverableBaseUrlAssignments;
 
 const getTopLevelModelProviderLineIndex = (lines: string[]): number => {
-  const topLevelEndIndex = getTopLevelEndIndex(lines);
-
-  for (let index = 0; index < topLevelEndIndex; index += 1) {
-    if (TOML_MODEL_PROVIDER_LINE_PATTERN.test(lines[index])) {
-      return index;
-    }
-  }
-
-  return -1;
+  return findTomlLineInRange(
+    lines,
+    TOML_MODEL_PROVIDER_LINE_PATTERN,
+    0,
+    getTopLevelEndIndex(lines),
+  );
 };
 
 const TOML_BASIC_STRING_ESCAPES: Record<string, string> = {
@@ -1397,7 +1492,7 @@ export const setCodexModelName = (
 // ========== Codex [agents] subagent defaults ==========
 
 // 子代理的默认模型和推理强度（Codex 的 `[agents]` 表）。后端把这两个键当关键字段，随供应商
-// 切换；聚合模式下不写（子代理跟随主模型）。
+// 切换；聚合模式下不写行里的，改用聚合页签「聚合设置」里的设备级设置。
 export type CodexAgentsStringKey =
   | "default_subagent_model"
   | "default_subagent_reasoning_effort";

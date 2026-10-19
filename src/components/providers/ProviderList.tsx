@@ -1,5 +1,5 @@
 import { CSS } from "@dnd-kit/utilities";
-import { DndContext, closestCenter } from "@dnd-kit/core";
+import { DndContext, closestCenter, type Modifier } from "@dnd-kit/core";
 import {
   SortableContext,
   useSortable,
@@ -20,6 +20,7 @@ import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import type { OpenClawProviderConfig, Provider } from "@/types";
+import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/opencodeFormUtils";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -50,7 +51,6 @@ import { usePiCurrentState } from "@/lib/query/pi";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import {
   buildAdditiveSections,
-  buildDesktopSections,
   buildSwitchSections,
   type CardPresentation,
   type ProviderSection,
@@ -59,6 +59,10 @@ import {
 
 /** 切换式应用（Claude Code / Codex / Gemini CLI / Grok Build）的模式状态和动作，由供应商页传入。 */
 export type SwitchModeProps = Omit<SwitchModeInput, "app" | "t" | "providers">;
+
+const verticalDragModifiers: Modifier[] = [
+  ({ transform }) => ({ ...transform, x: 0 }),
+];
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -126,6 +130,11 @@ export function ProviderList({
       queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
       enabled: appId === "opencode",
     });
+  const { data: opencodeDefaultModel } = useQuery({
+    queryKey: ["opencodeDefaultModel"],
+    queryFn: () => providersApi.getOpenCodeDefaultModel(),
+    enabled: appId === "opencode",
+  });
   const { data: openclawLiveIds, isPending: isOpenclawLiveIdsPending } =
     useOpenClawLiveProviderIds(appId === "openclaw");
   const { data: hermesLiveIds, isPending: isHermesLiveIdsPending } =
@@ -317,15 +326,12 @@ export function ProviderList({
         queue: switchMode.queue.filter((id) => known.has(id)),
       });
     }
-    if (appId === "claude-desktop") {
-      return buildDesktopSections({
-        t,
-        providers: filteredProviders,
-        currentId: currentProviderId,
-        onSwitch,
-      });
-    }
-    const defaultPrimary = openclawDefaultModel?.primary ?? "";
+    const defaultPrimary =
+      (appId === "openclaw"
+        ? openclawDefaultModel?.primary
+        : appId === "opencode"
+          ? opencodeDefaultModel
+          : null) ?? "";
     const slash = defaultPrimary.indexOf("/");
     return buildAdditiveSections({
       app: appId,
@@ -334,14 +340,20 @@ export function ProviderList({
       isInConfig,
       currentOmoId,
       currentOmoSlimId,
-      openclawDefault:
-        appId === "openclaw" && slash > 0
+      defaultModel:
+        slash > 0
           ? {
               providerId: defaultPrimary.slice(0, slash),
               model: defaultPrimary.slice(slash + 1),
             }
           : null,
-      openclawModels: (provider) => {
+      defaultModelOptions: (provider) => {
+        if (appId === "opencode") {
+          return getOpencodeDeclaredModels(
+            provider.id,
+            provider.settingsConfig,
+          );
+        }
         const config = provider.settingsConfig as OpenClawProviderConfig;
         if (!Array.isArray(config?.models)) return [];
         return config.models
@@ -374,6 +386,7 @@ export function ProviderList({
     currentProviderId,
     onSwitch,
     openclawDefaultModel?.primary,
+    opencodeDefaultModel,
     isInConfig,
     currentOmoId,
     currentOmoSlimId,
@@ -569,6 +582,7 @@ export function ProviderList({
       ) : (
         <DndContext
           sensors={sensors}
+          modifiers={verticalDragModifiers}
           collisionDetection={closestCenter}
           onDragEnd={handleDragEnd}
         >
@@ -628,8 +642,10 @@ function SortableProviderCard(props: SortableProviderCardProps) {
   } = useSortable({ id: props.provider.id });
 
   const style: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
+    transform: CSS.Translate.toString(transform),
     transition,
+    position: "relative",
+    zIndex: isDragging ? 10 : undefined,
   };
 
   return (

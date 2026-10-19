@@ -1092,6 +1092,50 @@ export const iconMetadata: Record<string, IconMetadata> = {
     shape: "tile",
     keywords: ["sssaicode", "ssai", "relay", "gateway"],
   },
+  tokenfactory: {
+    name: "tokenfactory",
+    displayName: "TokenFactory",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["tokenfactory", "token factory", "词元工厂", "aggregator"],
+    defaultColor: "currentColor",
+  },
+  modelflare: {
+    name: "modelflare",
+    displayName: "Modelflare",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["modelflare", "model flare", "aggregator", "gateway", "relay"],
+    defaultColor: "currentColor",
+  },
+  everyapi: {
+    name: "everyapi",
+    displayName: "EveryAPI",
+    category: "ai-provider",
+    keywords: ["everyapi", "every api", "aggregator", "gateway", "relay"],
+    defaultColor: "currentColor",
+  },
+  alltokens: {
+    name: "alltokens",
+    displayName: "AllTokens",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["alltokens", "all tokens", "aggregator", "gateway", "relay"],
+    defaultColor: "currentColor",
+  },
+  "alltokens-si": {
+    name: "alltokens-si",
+    displayName: "AllTokens SI",
+    category: "ai-provider",
+    keywords: [
+      "alltokens",
+      "alltokens si",
+      "enterprise",
+      "aggregator",
+      "relay",
+    ],
+    defaultColor: "currentColor",
+  },
 };
 
 export function getIconMetadata(name: string): IconMetadata | undefined {

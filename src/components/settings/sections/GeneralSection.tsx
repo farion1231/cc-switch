@@ -216,6 +216,36 @@ export function GeneralSection({
               void onAutoSave({ minimizeToTrayOnClose: value })
             }
           />
+          {/* Linux（AppIndicator）只能出原生菜单，没得选 */}
+          {!isLinux() && (
+            <SettingsRow
+              label={t("settings.general.trayStyle")}
+              help={{
+                title: t("settings.general.trayStyle"),
+                body: t("settings.general.trayStyleHelp"),
+              }}
+              control={
+                <SegmentedControl
+                  size="sm"
+                  aria-label={t("settings.general.trayStyle")}
+                  value={settings.nativeTrayMenu ? "menu" : "panel"}
+                  onValueChange={(value) =>
+                    void onAutoSave({ nativeTrayMenu: value === "menu" })
+                  }
+                  items={[
+                    {
+                      value: "panel",
+                      label: t("settings.general.trayStylePanel"),
+                    },
+                    {
+                      value: "menu",
+                      label: t("settings.general.trayStyleMenu"),
+                    },
+                  ]}
+                />
+              }
+            />
+          )}
           {isLinux() && (
             <SettingsSwitchRow
               label={t("settings.useAppWindowControls")}

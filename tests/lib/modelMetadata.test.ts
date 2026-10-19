@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  GPT_CONTEXT_WINDOW_CAP,
   resolveModelMetadata,
   type KnownModelMetadata,
   type PresetModelSource,
@@ -308,5 +309,71 @@ describe("resolveModelMetadata", () => {
     expect(
       resolveModelMetadata("glm-5", { baseUrl: "https://api.z.ai/v1" }),
     ).toBeNull();
+  });
+
+  it("caps GPT windows only when they are borrowed from the vendor entry", () => {
+    const openai: ModelsDevResponse = {
+      openai: {
+        id: "openai",
+        api: "https://api.openai.com/v1",
+        models: {
+          "gpt-6-astra": {
+            id: "gpt-6-astra",
+            limit: { context: 1050000, output: 128000 },
+          },
+          "gpt-4o": { id: "gpt-4o", limit: { context: 128000 } },
+          "o9-big": { id: "o9-big", limit: { context: 1050000 } },
+        },
+      },
+      relay: {
+        id: "relay",
+        models: {
+          "openai/gpt-6-astra": {
+            id: "openai/gpt-6-astra",
+            canonical_model_id: "openai/gpt-6-astra",
+          },
+        },
+      },
+      gateway: {
+        id: "gateway",
+        api: "https://gateway.example.com/v1",
+        models: {
+          "gpt-6-astra": {
+            id: "gpt-6-astra",
+            canonical_model_id: "openai/gpt-6-astra",
+          },
+        },
+      },
+    };
+    const resolve = (id: string, baseUrl: string) =>
+      resolveModelMetadata(id, { baseUrl, modelsDev: openai })?.contextWindow;
+
+    // 认不出地址、借原厂条目的中转封顶，带命名空间的写法也一样。
+    expect(resolve("gpt-6-astra", "https://relay.example.com/v1")).toBe(
+      GPT_CONTEXT_WINDOW_CAP,
+    );
+    expect(resolve("openai/GPT-6-Astra", "https://relay.example.com/v1")).toBe(
+      GPT_CONTEXT_WINDOW_CAP,
+    );
+    // 认出了地址但那家没写窗口，借来的原厂窗口同样封顶。
+    expect(resolve("gpt-6-astra", "https://gateway.example.com/v1")).toBe(
+      GPT_CONTEXT_WINDOW_CAP,
+    );
+    // 按地址认出的那家、同地址预设照用自己的值。
+    expect(resolve("gpt-6-astra", "https://api.openai.com/v1")).toBe(1050000);
+    expect(
+      resolveModelMetadata("openai-gpt-6-astra", {
+        baseUrl: "https://relay.example.com/v1",
+        presets: [
+          preset("https://relay.example.com/v1", {
+            "openai-gpt-6-astra": { contextWindow: 1050000 },
+          }),
+        ],
+        modelsDev: openai,
+      })?.contextWindow,
+    ).toBe(1050000);
+    // 本来就小的 GPT 不往上抬，其他模型不受影响。
+    expect(resolve("gpt-4o", "https://api.openai.com/v1")).toBe(128000);
+    expect(resolve("o9-big", "https://api.openai.com/v1")).toBe(1050000);
   });
 });

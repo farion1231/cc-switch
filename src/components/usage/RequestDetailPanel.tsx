@@ -17,6 +17,7 @@ import {
   type RequestLog,
 } from "@/types/usage";
 import { cn } from "@/lib/utils";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import {
   SPEED_ESTIMATE_MIN_OUTPUT_TOKENS,
@@ -82,13 +83,10 @@ function DetailSection({ title, rows }: { title: string; rows: DetailRow[] }) {
   );
 }
 
-const usd = (value: string) => {
-  const num = parseFiniteNumber(value);
-  return num == null ? "--" : `$${num.toFixed(4)}`;
-};
-
 function useDetailSections(request: RequestLog) {
   const { t, i18n } = useTranslation();
+  const { money, moneyTitle } = useMoneyFormat();
+  const usd = (value: string) => money(value, 4);
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const freshInput = getFreshInputTokens(request);
   const isCacheInclusive = request.inputTokens !== freshInput;
@@ -220,9 +218,7 @@ function useDetailSections(request: RequestLog) {
     value: unpriced ? t("usage.unpriced") : usd(request.totalCostUsd),
     strong: !unpriced,
     muted: unpriced,
-    title: unpriced
-      ? undefined
-      : `$${parseFiniteNumber(request.totalCostUsd)?.toFixed(6) ?? "--"}`,
+    title: unpriced ? undefined : moneyTitle(request.totalCostUsd, 6),
   });
 
   let performance: DetailRow[];
@@ -321,6 +317,7 @@ function useDetailSections(request: RequestLog) {
 
 function RequestDetailBody({ request }: { request: RequestLog }) {
   const { t } = useTranslation();
+  const { currency } = useMoneyFormat();
   const sections = useDetailSections(request);
   return (
     <div className="flex flex-col gap-4">
@@ -329,7 +326,10 @@ function RequestDetailBody({ request }: { request: RequestLog }) {
         title={t("usage.detail.tokensTitle")}
         rows={sections.tokens}
       />
-      <DetailSection title={t("usage.detail.costTitle")} rows={sections.cost} />
+      <DetailSection
+        title={t("usage.detail.costTitle", { currency })}
+        rows={sections.cost}
+      />
       <DetailSection
         title={t("usage.detail.performance")}
         rows={sections.performance}

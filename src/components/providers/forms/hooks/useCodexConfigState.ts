@@ -109,6 +109,8 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
   const [codexCatalogModels, setCodexCatalogModels] = useState<
     CodexCatalogModel[]
   >([]);
+  // 自动审批（Auto Review）用的模型：`modelCatalog.autoReviewModel`，空串 = 用 Codex 的默认
+  const [codexAutoReviewModel, setCodexAutoReviewModel] = useState("");
   const [codexAuthError, setCodexAuthError] = useState("");
 
   const isUpdatingCodexBaseUrlRef = useRef(false);
@@ -139,6 +141,11 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
         rawCatalogModels
           .map(mapCodexCatalogModelForForm)
           .filter((item: CodexCatalogModel) => item.model.trim()),
+      );
+      setCodexAutoReviewModel(
+        typeof modelCatalog?.autoReviewModel === "string"
+          ? modelCatalog.autoReviewModel.trim()
+          : "",
       );
 
       // 提取 Base URL
@@ -339,6 +346,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       setCodexAuth(authString);
       setCodexConfig(config);
       setCodexCatalogModels(modelCatalogModels);
+      setCodexAutoReviewModel("");
 
       const baseUrl = extractCodexBaseUrl(config);
       setCodexBaseUrl(baseUrl || "");
@@ -357,10 +365,12 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     codexSubagentModel,
     codexSubagentReasoningEffort,
     codexCatalogModels,
+    codexAutoReviewModel,
     codexAuthError,
     setCodexAuth,
     setCodexConfig,
     setCodexCatalogModels,
+    setCodexAutoReviewModel,
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelChange,

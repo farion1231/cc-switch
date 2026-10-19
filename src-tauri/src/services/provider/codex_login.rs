@@ -187,8 +187,10 @@ fn is_residue(auth: &Value, third_party_keys: &[String]) -> bool {
 pub(crate) enum AuthTarget<'a> {
     /// 直连的第三方：保留登录开关关闭时删掉 `auth.json`。
     ThirdParty { preserve: bool },
-    /// 代理的第三方路由：不动用户的原生登录（请求凭据由代理注入）。
-    ProxyThirdParty,
+    /// 代理的第三方路由：不动用户的原生登录（请求凭据由代理注入）。`restore_last`：进入或
+    /// 接上代理时 `auth.json` 里没有登录，就把最近暂存的那份还回去。Codex 桌面版续会话要
+    /// ChatGPT 登录，旧版退出 CC Switch 时分离会把它暂存走，接上时又不还（#8431）。
+    ProxyThirdParty { restore_last: bool },
     /// 没绑托管账号的官方卡（直连，或代理的官方路由）。
     Official { row_auth: &'a Value },
     /// 托管账号：整份写它的登录。
@@ -255,7 +257,15 @@ pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
             // 保留登录关闭时第三方路由旁边不留任何 auth.json（写 `{}` 不等于登出）。
             (managed || residue || (!preserve && input.live.is_some())).then_some(None)
         }
-        AuthTarget::ProxyThirdParty => managed.then_some(None),
+        AuthTarget::ProxyThirdParty { restore_last } => {
+            let restored = (restore_last && !managed && native.is_none())
+                .then(|| stash.last.clone().and_then(|id| stash.take(&id)))
+                .flatten();
+            match restored {
+                Some(saved) => Some(Some(saved)),
+                None => managed.then_some(None),
+            }
+        }
         AuthTarget::Managed { auth } => {
             if let Some(live) = native {
                 stash.put(live);
@@ -653,7 +663,9 @@ mod tests {
         let empty = json!({});
         for target in [
             AuthTarget::ThirdParty { preserve: true },
-            AuthTarget::ProxyThirdParty,
+            AuthTarget::ProxyThirdParty {
+                restore_last: false,
+            },
             AuthTarget::Official { row_auth: &empty },
         ] {
             let plan = plan(AuthInput {
@@ -668,8 +680,55 @@ mod tests {
     #[test]
     fn the_proxy_never_touches_the_native_login() {
         let alice = login("alice");
-        let plan = plan(input(Some(&alice), AuthTarget::ProxyThirdParty, ready()));
-        assert_eq!(plan.auth, None);
-        assert!(plan.login_on_disk);
+        let bob = login("bob");
+        let mut stash = ready();
+        stash.put(&bob);
+        for restore_last in [false, true] {
+            let plan = plan(input(
+                Some(&alice),
+                AuthTarget::ProxyThirdParty { restore_last },
+                stash.clone(),
+            ));
+            assert_eq!(plan.auth, None, "restore_last={restore_last}");
+            assert_eq!(plan.stash, None, "restore_last={restore_last}");
+            assert!(plan.login_on_disk);
+        }
+    }
+
+    /// 旧版退出时分离把登录暂存走了：进入、接上代理时还回去，只还一次（#8431）。
+    #[test]
+    fn attaching_the_proxy_gives_back_the_last_stashed_login() {
+        let alice = login("alice");
+        let mut stash = ready();
+        stash.put(&alice);
+
+        let attach = plan(input(
+            None,
+            AuthTarget::ProxyThirdParty { restore_last: true },
+            stash.clone(),
+        ));
+        assert_eq!(attach.auth, Some(Some(alice.clone())));
+        assert!(attach.login_on_disk);
+        let after = attach.stash.expect("stash emptied");
+        assert!(after.logins.is_empty() && after.last.is_none());
+
+        // 换路由等其它代理写入照旧不动 auth.json。
+        let route = plan(input(
+            None,
+            AuthTarget::ProxyThirdParty {
+                restore_last: false,
+            },
+            stash,
+        ));
+        assert_eq!(route.auth, None);
+        assert!(!route.login_on_disk);
+
+        // 暂存里没有最近一次的登录：什么都不写。
+        let nothing = plan(input(
+            None,
+            AuthTarget::ProxyThirdParty { restore_last: true },
+            ready(),
+        ));
+        assert_eq!(nothing.auth, None);
     }
 }

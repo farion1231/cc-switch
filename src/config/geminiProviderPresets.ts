@@ -132,6 +132,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     description: "OpenModel",
     category: "aggregator",
     isPartner: true,
+    partnerPromotionKey: "openmodel",
     icon: "openmodel",
   },
   {
@@ -467,6 +468,73 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     partnerPromotionKey: "xycai",
     endpointCandidates: ["https://apicdn.xycai.us", "https://apicdn.xyc.ai"],
     icon: "xycai",
+  },
+  {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    // 官方 Gemini CLI 文档（docs.modelflare.dev/guides/clients/gemini-cli，
+    // 2026-10-15 核对）：base 用站点根。Gemini CLI 走 /v1beta，只有
+    // modelflare.dev 提供，origin 子域不提供，故不加备用端点
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://modelflare.dev",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.6-flash",
+      },
+    },
+    baseURL: "https://modelflare.dev",
+    model: "gemini-3.6-flash",
+    description: "Modelflare",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
+  },
+  {
+    name: "AllTokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    // Sub2API 网关：Key 绑定单个分组，须用 Gemini 分组的 Key（分组与模型见
+    // alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://alltokens.cc",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://alltokens.cc",
+    model: "gemini-3.8-flash",
+    description: "AllTokens",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
+  },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    // Gemini 分组不在默认自动分组里，须用 Gemini 分组的 Key；目录里唯一
+    // 规范的 3.8 Flash ID 是 gemini-3.8-flash-high（alltokens.si/api/pricing，
+    // 2026-10-19 核对）
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://alltokens.si",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash-high",
+      },
+    },
+    baseURL: "https://alltokens.si",
+    model: "gemini-3.8-flash-high",
+    description: "AllTokens SI",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {

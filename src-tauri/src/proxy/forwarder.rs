@@ -1459,9 +1459,14 @@ impl RequestForwarder {
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
+        // 聚合模型的请求已经解出了上游名，不再查映射表（查不到会报错，按档位回落会发错模型）。
         let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
-            crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
-                .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+            if self.keeps_resolved_model() {
+                crate::claude_desktop_config::normalize_upstream_request(body.clone(), provider)
+            } else {
+                crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
+                    .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+            }
         } else if self.keeps_resolved_model() {
             body.clone()
         } else {
@@ -1842,6 +1847,15 @@ impl RequestForwarder {
                 mapped_body,
                 reasoning_config.as_ref(),
             )?;
+            let signature_fallbacks =
+                super::providers::codex_chat_common::fill_gemini_thought_signature_fallback(
+                    &mut chat_body,
+                );
+            if signature_fallbacks > 0 {
+                log::debug!(
+                    "[Codex] Filled {signature_fallbacks} missing Gemini thought signature(s) with the skip placeholder"
+                );
+            }
             super::providers::inject_codex_chat_prompt_cache_key(
                 provider,
                 &mut chat_body,
@@ -2489,10 +2503,14 @@ impl RequestForwarder {
             // 身份（`chatgpt-account-id` 等），它们只能发往官方上游。Stack 目标不会是官方账号，
             // 这里仍按上游判断，防止以后放宽。只限 Codex：Claude Code 自己的 `x-stainless-*`
             // 是 Anthropic SDK 的正常请求头，Stack 请求照常转发。
-            if (codex_responses_to_anthropic
-                || (codex_stack_request && !codex_official_auth_passthrough))
-                && is_codex_client_fingerprint_header(key_str)
-            {
+            if should_strip_codex_client_fingerprint_header(
+                key_str,
+                &effective_endpoint,
+                codex_responses_to_anthropic,
+                codex_responses_to_chat,
+                codex_stack_request,
+                codex_official_auth_passthrough,
+            ) {
                 continue;
             }
 
@@ -3585,6 +3603,37 @@ fn is_codex_client_fingerprint_header(key_str: &str) -> bool {
         || key_str.starts_with("x-responsesapi-")
 }
 
+/// Decide whether a Codex fingerprint header must be removed before the request
+/// reaches an upstream.
+///
+/// Stack requests to a third party still must not carry ChatGPT session or
+/// account identity. A native Responses third party, however, may use the
+/// non-identity `x-codex-beta-features` marker to recognize the Codex protocol
+/// and reject requests without it. Keep only that marker; all other Codex and
+/// OpenAI identity headers remain stripped. Converted Chat/Anthropic requests
+/// continue to receive a clean client fingerprint.
+fn should_strip_codex_client_fingerprint_header(
+    key_str: &str,
+    endpoint: &str,
+    codex_responses_to_anthropic: bool,
+    codex_responses_to_chat: bool,
+    codex_stack_request: bool,
+    codex_official_auth_passthrough: bool,
+) -> bool {
+    if codex_responses_to_anthropic {
+        return is_codex_client_fingerprint_header(key_str);
+    }
+
+    if codex_stack_request && !codex_official_auth_passthrough {
+        let native_third_party_responses =
+            !codex_responses_to_chat && super::providers::is_codex_responses_endpoint(endpoint);
+        return is_codex_client_fingerprint_header(key_str)
+            && !(native_third_party_responses && key_str == "x-codex-beta-features");
+    }
+
+    false
+}
+
 fn codex_anthropic_error_envelope_message(body: &[u8]) -> Option<String> {
     let value: Value = serde_json::from_slice(body).ok()?;
     if value.get("type").and_then(Value::as_str) != Some("error") && value.get("error").is_none() {
@@ -4228,12 +4277,15 @@ fn should_force_identity_encoding(
 }
 
 fn map_reqwest_send_error(error: reqwest::Error) -> ProxyError {
-    if error.is_timeout() {
-        ProxyError::Timeout(format!("上游请求超时: {}", error.without_url()))
-    } else if error.is_connect() {
-        ProxyError::ForwardFailed(format!("上游连接失败: {}", error.without_url()))
+    let is_timeout = error.is_timeout();
+    let is_connect = error.is_connect();
+    let detail = super::error::describe_reqwest_error(error);
+    if is_timeout {
+        ProxyError::Timeout(format!("上游请求超时: {detail}"))
+    } else if is_connect {
+        ProxyError::ForwardFailed(format!("上游连接失败: {detail}"))
     } else {
-        ProxyError::ForwardFailed(format!("上游请求发送失败: {}", error.without_url()))
+        ProxyError::ForwardFailed(format!("上游请求发送失败: {detail}"))
     }
 }
 
@@ -6971,6 +7023,7 @@ mod tests {
                 ("chatgpt-account-id", "acct-workspace"),
                 ("originator", "codex_cli_rs"),
                 ("session_id", "session-1"),
+                ("x-codex-beta-features", "remote_compaction_v2"),
                 ("x-codex-turn-state", "state"),
                 ("openai-beta", "responses=experimental"),
                 ("x-oai-attestation", "device-proof"),
@@ -7017,7 +7070,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn stacked_requests_never_carry_the_chatgpt_identity() {
+        async fn stacked_requests_drop_chatgpt_identity_but_keep_native_responses_beta_marker() {
             let upstream = upstream().await;
             for api_format in ["openai_responses", "openai_chat", "anthropic"] {
                 let seen = send(
@@ -7028,12 +7081,25 @@ mod tests {
                     body("listed", json!([])),
                 )
                 .await;
-                for (name, _) in seen.headers.iter() {
+                for name in [
+                    "chatgpt-account-id",
+                    "originator",
+                    "session_id",
+                    "x-codex-turn-state",
+                    "openai-beta",
+                    "x-oai-attestation",
+                    "x-openai-fedramp",
+                ] {
                     assert!(
-                        !is_codex_client_fingerprint_header(name.as_str()),
+                        !seen.headers.contains_key(name),
                         "{api_format}: {name} reached a third party"
                     );
                 }
+                assert_eq!(
+                    seen.headers.contains_key("x-codex-beta-features"),
+                    api_format == "openai_responses",
+                    "{api_format}: protocol marker handling"
+                );
                 let auth = seen
                     .headers
                     .get("authorization")
@@ -7045,7 +7111,7 @@ mod tests {
                 assert!(!auth.contains("chatgpt"), "{api_format}: {auth}");
             }
 
-            // 对照：路由请求发往原生 Responses 时照旧转发这些头。
+            // Control: routing requests to native Responses still forward these headers.
             let seen = send(
                 &forwarder(false),
                 &upstream,
@@ -7055,11 +7121,12 @@ mod tests {
             )
             .await;
             assert!(seen.headers.contains_key("session_id"));
+            assert!(seen.headers.contains_key("x-codex-beta-features"));
         }
 
-        /// 原生 Responses 第三方收不了 Codex 私有的压缩触发：改成禁止新工具调用的摘要回合
-        /// （工具定义保留，历史里的调用条目还引用着它们），CC Switch 包装的压缩摘要改成
-        /// 普通消息；看不出来源的压缩密文原样发出。
+        /// Native Responses third parties cannot consume Codex's private compaction
+        /// trigger. Rewrite it into a summary turn that prevents new tool calls
+        /// while preserving tool definitions and historical tool-call references.
         #[tokio::test]
         async fn native_third_party_compaction_becomes_summary_turn() {
             use crate::proxy::providers::codex_compaction::{
@@ -8450,6 +8517,55 @@ mod tests {
             send(&stack_forwarder(), vec![kimi], body)
                 .await
                 .map_err(|e| e.error)
+                .expect("stack mode");
+
+            let requests = up.requests.lock().await;
+            assert_eq!(requests[0]["model"], "kimi-k2");
+            assert_eq!(requests[1]["model"], "kimi-k3");
+        }
+
+        #[tokio::test]
+        async fn claude_desktop_stacked_requests_skip_the_mapping_table() {
+            let up = upstream(vec![ok(), ok()]).await;
+            let mut kimi = provider("kimi", &up);
+            kimi.meta = Some(crate::provider::ProviderMeta {
+                claude_desktop_model_routes: [(
+                    "claude-sonnet-5".to_string(),
+                    crate::provider::ClaudeDesktopModelRoute {
+                        model: "kimi-k2".to_string(),
+                        label_override: None,
+                        supports_1m: None,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            });
+            let send_desktop = |fwd: RequestForwarder, model: &'static str| {
+                let kimi = kimi.clone();
+                async move {
+                    let mut body = plain_body();
+                    body["model"] = json!(model);
+                    fwd.forward_with_retry(
+                        &AppType::ClaudeDesktop,
+                        http::Method::POST,
+                        "/v1/messages",
+                        body,
+                        HeaderMap::new(),
+                        Extensions::new(),
+                        vec![kimi],
+                    )
+                    .await
+                    .map_err(|e| e.error)
+                }
+            };
+
+            // 对照：路由请求按映射表换成上游名；聚合请求体里已经是上游名，映射表里没有它也照发。
+            send_desktop(forwarder(1, "kimi"), "claude-sonnet-5")
+                .await
+                .expect("routed");
+            send_desktop(stack_forwarder(), "kimi-k3")
+                .await
                 .expect("stack mode");
 
             let requests = up.requests.lock().await;
