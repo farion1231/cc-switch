@@ -159,6 +159,8 @@ mod tests {
     use crate::claude_desktop_config::PROFILE_ID;
     use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
     use crate::database::Database;
+    use crate::live::engine::DeviceStore;
+    use crate::mode::state::{Mode, ModeState};
     use crate::provider::{
         AuthBinding, AuthBindingSource, ClaudeModelConfig, ProviderMeta, UniversalProvider,
         UsageScript,
@@ -310,6 +312,37 @@ mod tests {
         }
 
         result
+    }
+
+    #[test]
+    fn editor_switchability_ignores_unreadable_stack_for_unprojected_literal_draft() {
+        with_test_home(|state, _home| {
+            let store = DeviceStore::for_device();
+            std::fs::create_dir_all(store.state_path())
+                .expect("make the Stack registry unreadable as a file");
+            assert!(crate::mode::stack::is_member(&AppType::Claude, "draft").is_err());
+            let draft = Provider::with_id(
+                "draft".into(),
+                "Draft".into(),
+                json!({"env": {"ANTHROPIC_AUTH_TOKEN": "literal-draft-key"}}),
+                None,
+            );
+            let proxy_with_another_route = ModeState {
+                mode: Some(Mode::Proxy),
+                attached: true,
+                proxy_route: Some("route".into()),
+                contract: None,
+            };
+
+            ProviderService::ensure_editor_provider_switchable_if_projected(
+                state,
+                &AppType::Claude,
+                &proxy_with_another_route,
+                &draft,
+                false,
+            )
+            .expect("an unprojected literal draft remains storable");
+        });
     }
 
     fn codex_settings(base_url: &str, api_key: &str) -> Value {
@@ -5981,6 +6014,9 @@ impl ProviderService {
 
         let mode = crate::mode::current::mode_state(&app_type);
         let key_fields = kind.writes_key_fields(state, &app_type, &mode, &provider.id)?;
+        Self::ensure_editor_provider_switchable_if_projected(
+            state, &app_type, &mode, &provider, key_fields,
+        )?;
 
         state
             .db
@@ -6058,6 +6094,9 @@ impl ProviderService {
         let mode = crate::mode::current::mode_state(&app_type);
         let key_fields = kind.writes_key_fields(state, &app_type, &mode, &provider.id)?;
         let set_pointer = kind == EditorSaveKind::Add;
+        Self::ensure_editor_provider_switchable_if_projected(
+            state, &app_type, &mode, &provider, key_fields,
+        )?;
 
         state
             .db
@@ -6125,6 +6164,38 @@ impl ProviderService {
         .map_err(AppError::Message)
     }
 
+    /// 编辑器保存只有在本次会将该行投影到客户端时才要求引用的变量可切换。普通草稿
+    /// 可以先保留尚未刷新或已过期的模板；直连关键字段、代理路由和 Stack 成员会立即
+    /// 重投影，因此必须在写数据库之前拒绝过期引用。
+    fn ensure_editor_provider_switchable_if_projected(
+        state: &AppState,
+        app_type: &AppType,
+        mode: &crate::mode::state::ModeState,
+        provider: &Provider,
+        writes_key_fields: bool,
+    ) -> Result<(), AppError> {
+        let proxy_projects_provider = mode.is_proxy()
+            && if mode.routes_to(&provider.id) {
+                true
+            } else {
+                crate::mode::stack::is_member(app_type, &provider.id).unwrap_or_else(|error| {
+                    // Keep this fallback aligned with resync_saved_row_locked: a broken
+                    // Stack registry must not prevent an unrelated literal draft from
+                    // being saved when no client projection will run.
+                    log::warn!("读取 {} 的 Stack 模型失败: {error}", app_type.as_str());
+                    false
+                })
+            };
+        if writes_key_fields || proxy_projects_provider {
+            crate::services::api_key_vars::ensure_provider_switchable(
+                &state.db,
+                app_type,
+                &provider.settings_config,
+            )?;
+        }
+        Ok(())
+    }
+
     fn add_claude_from_editor(
         state: &AppState,
         provider: Provider,
@@ -6149,15 +6220,22 @@ impl ProviderService {
             crate::mode::current::Purpose::Direct,
         )?
         .is_none();
-        state
-            .db
-            .save_provider_from_user(app_type.as_str(), &provider)?;
-
         let key_fields = first.then_some(claude_editor::KeyFieldWrite {
             prev: None,
             target: &provider,
             set_pointer: true,
         });
+        let mode = crate::mode::current::mode_state(&app_type);
+        Self::ensure_editor_provider_switchable_if_projected(
+            state,
+            &app_type,
+            &mode,
+            &provider,
+            key_fields.is_some(),
+        )?;
+        state
+            .db
+            .save_provider_from_user(app_type.as_str(), &provider)?;
         let written =
             claude_editor::write_live(state.db.as_ref(), &plan, editor.on_conflict, key_fields);
         Self::keep_row_if_written(state, &app_type, &provider.id, existing.as_ref(), written)
@@ -6197,6 +6275,13 @@ impl ProviderService {
                 target: &provider,
                 set_pointer: false,
             });
+        Self::ensure_editor_provider_switchable_if_projected(
+            state,
+            &app_type,
+            &mode,
+            &provider,
+            key_fields.is_some(),
+        )?;
 
         state
             .db
