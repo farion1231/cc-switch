@@ -5378,7 +5378,10 @@ fn chat_response_reasoning_only_completed_turn_is_an_error() {
         }]
     });
 
-    let err = chat_completion_to_response_with_context(chat, &CodexToolContext::default()).unwrap_err();
+    let err =
+        chat_completion_to_response_with_context(chat, &CodexToolContext::default()).unwrap_err();
     assert!(matches!(err, ProxyError::TransformError(_)));
-    assert!(err.to_string().contains("reasoning without any assistant message"));
+    assert!(err
+        .to_string()
+        .contains("reasoning without any assistant message"));
 }
