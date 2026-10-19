@@ -23,11 +23,11 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let previous_env = ["CC_SWITCH_TEST_HOME", "OPENCODE_DB"]
+        let previous_env = ["XSEC_SHIELD_TEST_HOME", "OPENCODE_DB"]
             .into_iter()
             .map(|key| (key, std::env::var_os(key)))
             .collect();
-        std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+        std::env::set_var("XSEC_SHIELD_TEST_HOME", dir.path());
         std::env::set_var("OPENCODE_DB", dir.path().join("opencode.db"));
         let previous_settings = get_settings();
         let config_dir = dir.path().join("opencode");

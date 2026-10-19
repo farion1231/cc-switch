@@ -3,7 +3,7 @@
 //! 重构不动数据库（不升 schema、不回填、不剥离存量行），降级后旧版直接读这些行，
 //! 所以新增供应商时写进 DB 的字节要保持原样。
 
-use cc_switch_lib::{
+use xsec_agent_shield_lib::{
     import_default_config_test_hook, import_provider_from_deeplink, parse_deeplink_url, AppType,
 };
 
@@ -34,8 +34,8 @@ fn deeplink_claude_rows() {
     import_deeplinks(
         AppType::Claude,
         &[
-            "ccswitch://v1/import?resource=provider&app=claude&name=Relay%20A&homepage=https%3A%2F%2Frelay-a.example&endpoint=https%3A%2F%2Fapi.relay-a.example%2Fanthropic,https%3A%2F%2Fbackup.relay-a.example&apiKey=sk-relay-a&model=claude-sonnet-4-5&haikuModel=claude-haiku-4-5&sonnetModel=claude-sonnet-4-5&opusModel=claude-opus-4-1&icon=anthropic&notes=imported%20from%20link",
-            "ccswitch://v1/import?resource=provider&app=claude&name=Relay%20B&homepage=https%3A%2F%2Frelay-b.example&endpoint=https%3A%2F%2Fapi.relay-b.example&apiKey=sk-relay-b",
+            "xsecshield://v1/import?resource=provider&app=claude&name=Relay%20A&homepage=https%3A%2F%2Frelay-a.example&endpoint=https%3A%2F%2Fapi.relay-a.example%2Fanthropic,https%3A%2F%2Fbackup.relay-a.example&apiKey=sk-relay-a&model=claude-sonnet-4-5&haikuModel=claude-haiku-4-5&sonnetModel=claude-sonnet-4-5&opusModel=claude-opus-4-1&icon=anthropic&notes=imported%20from%20link",
+            "xsecshield://v1/import?resource=provider&app=claude&name=Relay%20B&homepage=https%3A%2F%2Frelay-b.example&endpoint=https%3A%2F%2Fapi.relay-b.example&apiKey=sk-relay-b",
         ],
         "rows/deeplink-claude.txt",
     );
@@ -46,7 +46,7 @@ fn deeplink_codex_rows() {
     import_deeplinks(
         AppType::Codex,
         &[
-            "ccswitch://v1/import?resource=provider&app=codex&name=Relay%20Codex&homepage=https%3A%2F%2Frelay.example&endpoint=https%3A%2F%2Fapi.relay.example%2Fv1&apiKey=sk-relay-codex&model=gpt-5-codex&icon=openai",
+            "xsecshield://v1/import?resource=provider&app=codex&name=Relay%20Codex&homepage=https%3A%2F%2Frelay.example&endpoint=https%3A%2F%2Fapi.relay.example%2Fv1&apiKey=sk-relay-codex&model=gpt-5-codex&icon=openai",
         ],
         "rows/deeplink-codex.txt",
     );
@@ -78,7 +78,7 @@ fn deeplink_codex_config_rows() {
         )
     });
     let url = format!(
-        "ccswitch://v1/import?resource=provider&app=codex&name=Relay%20Codex%20Config&configFormat=json&config={}",
+        "xsecshield://v1/import?resource=provider&app=codex&name=Relay%20Codex%20Config&configFormat=json&config={}",
         BASE64_URL_SAFE_NO_PAD.encode(config.to_string())
     );
     import_deeplinks(AppType::Codex, &[&url], "rows/deeplink-codex-config.txt");
@@ -89,7 +89,7 @@ fn deeplink_gemini_rows() {
     import_deeplinks(
         AppType::Gemini,
         &[
-            "ccswitch://v1/import?resource=provider&app=gemini&name=Relay%20Gemini&homepage=https%3A%2F%2Frelay.example&endpoint=https%3A%2F%2Fapi.relay.example&apiKey=g-relay&model=gemini-2.5-pro",
+            "xsecshield://v1/import?resource=provider&app=gemini&name=Relay%20Gemini&homepage=https%3A%2F%2Frelay.example&endpoint=https%3A%2F%2Fapi.relay.example&apiKey=g-relay&model=gemini-2.5-pro",
         ],
         "rows/deeplink-gemini.txt",
     );
@@ -100,7 +100,7 @@ fn deeplink_grokbuild_rows() {
     import_deeplinks(
         AppType::GrokBuild,
         &[
-            "ccswitch://v1/import?resource=provider&app=grokbuild&name=Relay%20Grok&homepage=https%3A%2F%2Frelay.example&endpoint=https%3A%2F%2Fapi.relay.example%2Fv1&apiKey=xai-relay&model=grok-4.5",
+            "xsecshield://v1/import?resource=provider&app=grokbuild&name=Relay%20Grok&homepage=https%3A%2F%2Frelay.example&endpoint=https%3A%2F%2Fapi.relay.example%2Fv1&apiKey=xai-relay&model=grok-4.5",
         ],
         "rows/deeplink-grokbuild.txt",
     );
@@ -123,7 +123,7 @@ fn deeplink_grokbuild_config_rows() {
         )
     });
     let url = format!(
-        "ccswitch://v1/import?resource=provider&app=grokbuild&name=Relay%20Grok%20Config&endpoint=https%3A%2F%2Fapi.relay.example%2Fv1&apiKey=xai-relay&configFormat=json&config={}",
+        "xsecshield://v1/import?resource=provider&app=grokbuild&name=Relay%20Grok%20Config&endpoint=https%3A%2F%2Fapi.relay.example%2Fv1&apiKey=xai-relay&configFormat=json&config={}",
         BASE64_URL_SAFE_NO_PAD.encode(config.to_string())
     );
     import_deeplinks(

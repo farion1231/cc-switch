@@ -125,9 +125,9 @@ Not recommended. CC Switch blocks switching to official providers while local ro
 
 ## References
 
-- [CC Switch User Manual: Add Provider](../user-manual/en/2-providers/2.1-add.md)
-- [CC Switch User Manual: Proxy Service](../user-manual/en/4-proxy/4.1-service.md)
-- [CC Switch User Manual: App Routing](../user-manual/en/4-proxy/4.2-routing.md)
+- [CC Switch User Manual: Add Provider](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/en/2-providers/2.1-add.md)
+- [CC Switch User Manual: Proxy Service](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/en/4-proxy/4.1-service.md)
+- [CC Switch User Manual: App Routing](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/en/4-proxy/4.2-routing.md)
 - [DeepSeek API Docs: Integrate with Codex](https://api-docs.deepseek.com/quick_start/agent_integrations/codex/) (official Codex integration notes, including `wire_api = "responses"` and model coverage)
 - [DeepSeek API Docs: Using the Responses API](https://api-docs.deepseek.com/guides/responses_api/)
 - [DeepSeek API Docs: Your First API Call](https://api-docs.deepseek.com/)

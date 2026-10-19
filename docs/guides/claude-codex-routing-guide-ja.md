@@ -134,8 +134,8 @@ CC Switch 3.17.0 以降にアップグレードしてください。古いバー
 
 ## 参考リンク
 
-- [CC Switch ユーザーマニュアル: プロバイダーを追加（Codex OAuth リバースプロキシと API フォーマットを含む）](../user-manual/ja/2-providers/2.1-add.md)
-- [CC Switch ユーザーマニュアル: プロキシサービス](../user-manual/ja/4-proxy/4.1-service.md)
-- [CC Switch ユーザーマニュアル: アプリケーションルーティング](../user-manual/ja/4-proxy/4.2-routing.md)
-- [CC Switch v3.17.0 リリースノート](../release-notes/v3.17.0-ja.md)
+- [CC Switch ユーザーマニュアル: プロバイダーを追加（Codex OAuth リバースプロキシと API フォーマットを含む）](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/ja/2-providers/2.1-add.md)
+- [CC Switch ユーザーマニュアル: プロキシサービス](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/ja/4-proxy/4.1-service.md)
+- [CC Switch ユーザーマニュアル: アプリケーションルーティング](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/ja/4-proxy/4.2-routing.md)
+- [CC Switch v3.17.0 リリースノート](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/release-notes/v3.17.0-ja.md)
 - 逆方向のガイド: [Codex で Claude モデルを使う](./codex-claude-routing-guide-ja.md)

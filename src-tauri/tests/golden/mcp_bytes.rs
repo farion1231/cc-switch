@@ -6,7 +6,7 @@
 
 use serde_json::json;
 
-use cc_switch_lib::{AppType, McpService, ProviderService};
+use xsec_agent_shield_lib::{AppType, McpService, ProviderService};
 
 use crate::support::{create_test_state, reset_test_fs, test_mutex};
 use crate::util::{
@@ -18,7 +18,7 @@ const CLAUDE_JSON: &str = ".claude.json";
 const CODEX_CONFIG: &str = ".codex/config.toml";
 const GEMINI_SETTINGS: &str = ".gemini/settings.json";
 
-fn seed_mcp_servers(state: &cc_switch_lib::AppState) {
+fn seed_mcp_servers(state: &xsec_agent_shield_lib::AppState) {
     let all = [AppType::Claude, AppType::Codex, AppType::Gemini];
     for server in [
         mcp_server(
@@ -157,7 +157,7 @@ fn gemini_settings_mcp_projection_bytes() {
     );
 }
 
-fn codex_third_party(id: &str, base_url: &str, key: &str) -> cc_switch_lib::Provider {
+fn codex_third_party(id: &str, base_url: &str, key: &str) -> xsec_agent_shield_lib::Provider {
     provider(
         id,
         json!({

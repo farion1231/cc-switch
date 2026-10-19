@@ -1,7 +1,7 @@
 {
-  "name": "cc-switch",
+  "name": "xsec-agent-shield",
   "version": "4.0.15",
-  "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI",
+  "description": "XSEC Agent Shield — local-first security & reversible redaction for AI agents (dev build based on CC Switch)",
   "type": "module",
   "scripts": {
     "dev": "pnpm tauri dev",

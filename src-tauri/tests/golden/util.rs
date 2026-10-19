@@ -2,13 +2,13 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use cc_switch_lib::{AppState, AppType, McpApps, McpServer, Provider, ProviderMeta};
+use xsec_agent_shield_lib::{AppState, AppType, McpApps, McpServer, Provider, ProviderMeta};
 
 use crate::support::ensure_test_home;
 
-const UPDATE_ENV: &str = "CC_SWITCH_UPDATE_GOLDEN";
+const UPDATE_ENV: &str = "XSEC_SHIELD_UPDATE_GOLDEN";
 
-/// 按字节比对 `snapshots/<name>`；设了 `CC_SWITCH_UPDATE_GOLDEN` 时改为写入。
+/// 按字节比对 `snapshots/<name>`；设了 `XSEC_SHIELD_UPDATE_GOLDEN` 时改为写入。
 ///
 /// 快照扩展名只用 `.json` / `.toml` / `.txt`：`.gitattributes` 对它们固定 `eol=lf`，
 /// Windows 上 checkout 出来不会变成 CRLF。
@@ -199,7 +199,7 @@ fn opt_text<T: ToString>(value: Option<T>) -> String {
 }
 
 fn open_db_read_only() -> rusqlite::Connection {
-    let path = home().join(".cc-switch").join("cc-switch.db");
+    let path = home().join(".xsec-agent-shield").join("cc-switch.db");
     rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
         .unwrap_or_else(|e| panic!("open {}: {e}", path.display()))
 }

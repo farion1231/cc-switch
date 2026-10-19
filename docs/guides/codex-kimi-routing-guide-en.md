@@ -8,7 +8,7 @@ The official Codex presets for the Kimi Open Platform and Kimi For Coding now us
 2. Enter the matching API key, save and enable the provider. For an older card, adding the preset again is recommended; for manual migration, verify the endpoint and change **Upstream Format** to **Responses**.
 3. Restart Codex to load the configuration and model catalog. Native Responses can also use standard proxy routing, but Responses-to-Chat conversion is no longer required.
 
-See the [v3.20.3 release notes](../release-notes/v3.20.3-en.md) and [Adding Providers](../user-manual/en/2-providers/2.1-add.md). **The following instructions and screenshots describe legacy Chat configurations, retained for troubleshooting existing Chat cards; they do not describe the latest presets.**
+See the [v3.20.3 release notes](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/release-notes/v3.20.3-en.md) and [Adding Providers](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/en/2-providers/2.1-add.md). **The following instructions and screenshots describe legacy Chat configurations, retained for troubleshooting existing Chat cards; they do not describe the latest presets.**
 
 > Applies to CC Switch 3.16.5 and nearby versions. This guide is based on the repository documentation and code, and uses Kimi as an example of an OpenAI Chat Completions-compatible API. Screenshots are generated from the current frontend UI with de-identified sample data to avoid exposing a real API key or account balance.
 
@@ -115,9 +115,9 @@ Not recommended. CC Switch blocks switching to official providers while local ro
 
 ## References
 
-- [CC Switch User Manual: Add Provider](../user-manual/en/2-providers/2.1-add.md)
-- [CC Switch User Manual: Proxy Service](../user-manual/en/4-proxy/4.1-service.md)
-- [CC Switch User Manual: App Routing](../user-manual/en/4-proxy/4.2-routing.md)
+- [CC Switch User Manual: Add Provider](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/en/2-providers/2.1-add.md)
+- [CC Switch User Manual: Proxy Service](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/en/4-proxy/4.1-service.md)
+- [CC Switch User Manual: App Routing](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/en/4-proxy/4.2-routing.md)
 - [Kimi Open Platform: Using Kimi K2.7 Code in coding tools](https://platform.kimi.com/docs/guide/agent-support)
 - [Kimi Code Docs: Overview](https://www.kimi.com/code/docs/)
 - [Kimi Code Docs: Using with third-party coding agents](https://www.kimi.com/code/docs/third-party-tools/other-coding-agents.html)

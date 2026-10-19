@@ -334,7 +334,7 @@ mod tests {
         let test_home = std::env::temp_dir().join("cc-switch-s3-sync-error-status-test");
         let _ = std::fs::remove_dir_all(&test_home);
         std::fs::create_dir_all(&test_home).expect("create test home");
-        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+        std::env::set_var("XSEC_SHIELD_TEST_HOME", &test_home);
 
         crate::settings::update_settings(AppSettings::default()).expect("reset settings");
         let mut current = S3SyncSettings {
@@ -343,7 +343,7 @@ mod tests {
             bucket: "my-bucket".to_string(),
             access_key_id: "AKID".to_string(),
             secret_access_key: "SECRET".to_string(),
-            remote_root: "cc-switch-sync".to_string(),
+            remote_root: "xsec-agent-shield-sync".to_string(),
             profile: "default".to_string(),
             ..S3SyncSettings::default()
         };
@@ -360,7 +360,7 @@ mod tests {
         assert_eq!(after.bucket, "my-bucket");
         assert_eq!(after.access_key_id, "AKID");
         assert_eq!(after.secret_access_key, "SECRET");
-        assert_eq!(after.remote_root, "cc-switch-sync");
+        assert_eq!(after.remote_root, "xsec-agent-shield-sync");
         assert_eq!(after.profile, "default");
         assert!(
             after
@@ -380,7 +380,7 @@ mod tests {
         let test_home = std::env::temp_dir().join("cc-switch-s3-sync-enabled-disabled-test");
         let _ = std::fs::remove_dir_all(&test_home);
         std::fs::create_dir_all(&test_home).expect("create test home");
-        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+        std::env::set_var("XSEC_SHIELD_TEST_HOME", &test_home);
 
         crate::settings::update_settings(AppSettings::default()).expect("reset settings");
         crate::settings::set_s3_sync_settings(Some(S3SyncSettings {
@@ -406,7 +406,7 @@ mod tests {
         let test_home = std::env::temp_dir().join("cc-switch-s3-sync-enabled-ok-test");
         let _ = std::fs::remove_dir_all(&test_home);
         std::fs::create_dir_all(&test_home).expect("create test home");
-        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+        std::env::set_var("XSEC_SHIELD_TEST_HOME", &test_home);
 
         crate::settings::update_settings(AppSettings::default()).expect("reset settings");
         crate::settings::set_s3_sync_settings(Some(S3SyncSettings {

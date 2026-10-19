@@ -12,7 +12,7 @@
 
 这件事靠 `ccswitch://` 深链接完成。用户的系统装了 CC Switch 之后，浏览器点到 `ccswitch://...` 链接会唤起 CC Switch，弹出导入确认框，用户核对后点「导入」。
 
-用户手册里的 [深度链接协议](../user-manual/zh/5-faq/5.3-deeplink.md) 是参数速查表；这篇讲站长真正要做的决定：链接怎么生成、哪些东西能带、哪些会被拒绝、怎么让用户导入后直接看到余额。
+用户手册里的 [深度链接协议](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/zh/5-faq/5.3-deeplink.md) 是参数速查表；这篇讲站长真正要做的决定：链接怎么生成、哪些东西能带、哪些会被拒绝、怎么让用户导入后直接看到余额。
 
 ## 最快路径
 

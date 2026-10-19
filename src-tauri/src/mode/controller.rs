@@ -1813,7 +1813,7 @@ async fn drain_legacy_backup(state: &AppState, app: &AppType) -> bool {
         }
     };
     let dir = crate::config::get_home_dir()
-        .join(".cc-switch")
+        .join(".xsec-agent-shield")
         .join("backups")
         .join("proxy-live-backup");
     let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
@@ -2526,7 +2526,7 @@ mod mode_tests {
     impl Home {
         fn new() -> Self {
             let dir = TempDir::new().expect("temp home");
-            let saved = ["HOME", "USERPROFILE", "CC_SWITCH_TEST_HOME"]
+            let saved = ["HOME", "USERPROFILE", "XSEC_SHIELD_TEST_HOME"]
                 .into_iter()
                 .map(|key| {
                     let old = std::env::var_os(key);
@@ -3161,7 +3161,7 @@ mod mode_tests {
                 state.db.get_live_backup("claude").await.unwrap().is_none(),
                 "the old version would replay a leftover backup row after a downgrade"
             );
-            let drained = home.dir.path().join(".cc-switch/backups/proxy-live-backup");
+            let drained = home.dir.path().join(".xsec-agent-shield/backups/proxy-live-backup");
             assert_eq!(
                 fs::read_dir(&drained).unwrap().count(),
                 1,
@@ -6970,7 +6970,7 @@ model_provider = "c"
         );
         assert_eq!(
             doc["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(crate::codex_config::XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME)
         );
         // 窗口类全局键会覆盖每一行，改写进路由那家自己的行。
         assert!(doc.get("model_context_window").is_none(), "{doc:?}");
@@ -7583,7 +7583,7 @@ model_provider = "c"
             .expect("routing");
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(crate::codex_config::XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME)
         );
         assert_eq!(
             stale_clients_of(&state).await,
@@ -7672,7 +7672,7 @@ model_provider = "c"
         assert_eq!(notice, None);
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(crate::codex_config::XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME)
         );
     }
 
@@ -7708,7 +7708,7 @@ model_provider = "c"
         );
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
-            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(crate::codex_config::XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME)
         );
         let slugs: Vec<String> = codex_catalog()["models"]
             .as_array()

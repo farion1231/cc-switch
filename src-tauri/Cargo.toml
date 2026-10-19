@@ -1,7 +1,7 @@
 [package]
-name = "cc-switch"
+name = "xsec-agent-shield"
 version = "4.0.15"
-description = "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
+description = "XSEC Agent Shield — local-first security & reversible redaction for AI agents (dev build based on CC Switch)"
 authors = ["Jason Young"]
 license = "MIT"
 repository = "https://github.com/farion1231/cc-switch"
@@ -11,7 +11,7 @@ rust-version = "1.85.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-name = "cc_switch_lib"
+name = "xsec_agent_shield_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 doctest = false
 

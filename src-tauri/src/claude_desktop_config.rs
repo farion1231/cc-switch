@@ -1607,7 +1607,7 @@ mod tests {
                 .join("Application Support")
                 .join("Claude-3p"),
         );
-        paths.device = DeviceStore::at(home.join(".cc-switch"));
+        paths.device = DeviceStore::at(home.join(".xsec-agent-shield"));
         paths
     }
 
@@ -1681,7 +1681,7 @@ mod tests {
     #[test]
     fn linux_config_dir_uses_host_config_when_cc_switch_runs_in_flatpak() {
         let home = Path::new("/home/tester");
-        let private_xdg = Path::new("/home/tester/.var/app/com.ccswitch.desktop/config");
+        let private_xdg = Path::new("/home/tester/.var/app/com.xsec.agent-shield.dev/config");
 
         assert_eq!(
             linux_config_dir_from_home(home, Some(private_xdg), true),

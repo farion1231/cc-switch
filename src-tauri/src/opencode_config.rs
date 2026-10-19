@@ -683,8 +683,8 @@ mod tests {
     struct TestHomeGuard(Option<std::ffi::OsString>, crate::settings::AppSettings);
     impl TestHomeGuard {
         fn set(home: &std::path::Path) -> Self {
-            let previous_env = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", home);
+            let previous_env = std::env::var_os("XSEC_SHIELD_TEST_HOME");
+            std::env::set_var("XSEC_SHIELD_TEST_HOME", home);
             let guard = Self(previous_env, crate::settings::get_settings());
             crate::settings::update_settings(Default::default()).unwrap();
             guard
@@ -694,8 +694,8 @@ mod tests {
         fn drop(&mut self) {
             crate::settings::update_settings(self.1.clone()).unwrap();
             match self.0.take() {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                Some(value) => std::env::set_var("XSEC_SHIELD_TEST_HOME", value),
+                None => std::env::remove_var("XSEC_SHIELD_TEST_HOME"),
             }
         }
     }

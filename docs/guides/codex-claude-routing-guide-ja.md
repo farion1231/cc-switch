@@ -123,7 +123,7 @@ API エンドポイントを確認してください。ゲートウェイのル�
 
 ## 参考リンク
 
-- [CC Switch ユーザーマニュアル: プロキシサービス](../user-manual/ja/4-proxy/4.1-service.md)
-- [CC Switch ユーザーマニュアル: アプリケーションルーティング](../user-manual/ja/4-proxy/4.2-routing.md)
-- [CC Switch v3.17.0 リリースノート](../release-notes/v3.17.0-ja.md)
+- [CC Switch ユーザーマニュアル: プロキシサービス](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/ja/4-proxy/4.1-service.md)
+- [CC Switch ユーザーマニュアル: アプリケーションルーティング](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/ja/4-proxy/4.2-routing.md)
+- [CC Switch v3.17.0 リリースノート](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/release-notes/v3.17.0-ja.md)
 - この機能はコミュニティからの貢献 [#5071](https://github.com/farion1231/cc-switch/pull/5071) によるものです。@yeeyzy に感謝します。

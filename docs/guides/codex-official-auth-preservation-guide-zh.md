@@ -210,8 +210,8 @@ Codex 的模型目录是启动时读取的。即使 CC Switch 已经生成了新
 
 - [Codex 桌面应用里看不到自定义模型？（常见问题）](./codex-desktop-custom-model-visibility-zh.md)
 - [在 Codex 中使用 Chat 格式 API：本地路由攻略](./codex-deepseek-routing-guide-zh.md)
-- [添加 Codex 供应商：Chat Completions 路由与模型映射](../user-manual/zh/2-providers/2.1-add.md)
-- [本地代理服务](../user-manual/zh/4-proxy/4.1-service.md)
-- [本地路由](../user-manual/zh/4-proxy/4.2-routing.md)
-- [CC Switch v3.16.1 Release Note](../release-notes/v3.16.1-zh.md)
-- [CC Switch v3.20.1 Release Note](../release-notes/v3.20.1-zh.md)
+- [添加 Codex 供应商：Chat Completions 路由与模型映射](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/zh/2-providers/2.1-add.md)
+- [本地代理服务](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/zh/4-proxy/4.1-service.md)
+- [本地路由](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/zh/4-proxy/4.2-routing.md)
+- [CC Switch v3.16.1 Release Note](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/release-notes/v3.16.1-zh.md)
+- [CC Switch v3.20.1 Release Note](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/release-notes/v3.20.1-zh.md)

@@ -401,7 +401,7 @@ mod tests {
             assert_eq!(read(&path).unwrap()[field], "custom_provider:chosen/model");
         }
     }
-    /// Run alone with an isolated CC_SWITCH_TEST_HOME and MCODE_TEST_API_KEY.
+    /// Run alone with an isolated XSEC_SHIELD_TEST_HOME and MCODE_TEST_API_KEY.
     #[test]
     #[ignore = "requires an isolated home and a real API key"]
     fn mcode_provider_lifecycle() {
@@ -410,7 +410,7 @@ mod tests {
             services::provider::ProviderService, store::AppState,
         };
         use std::sync::Arc;
-        let home = std::env::var("CC_SWITCH_TEST_HOME").expect("Set an isolated home");
+        let home = std::env::var("XSEC_SHIELD_TEST_HOME").expect("Set an isolated home");
         assert!(Some(PathBuf::from(&home)) != dirs::home_dir());
         let key = std::env::var("MCODE_TEST_API_KEY").expect("Set a real API key");
         let state = AppState::new(Arc::new(Database::memory().unwrap()));
@@ -515,9 +515,9 @@ mod capability_tests {
     use std::sync::Arc;
 
     #[test]
-    #[ignore = "runs alone in an isolated CC_SWITCH_TEST_HOME; prepares real MCode validation"]
+    #[ignore = "runs alone in an isolated XSEC_SHIELD_TEST_HOME; prepares real MCode validation"]
     fn mcode_capability_lifecycle() {
-        let home = std::env::var("CC_SWITCH_TEST_HOME").expect("isolated home");
+        let home = std::env::var("XSEC_SHIELD_TEST_HOME").expect("isolated home");
         assert_ne!(Some(PathBuf::from(&home)), dirs::home_dir());
         let db = Arc::new(Database::memory().unwrap());
         let state = AppState::new(db.clone());

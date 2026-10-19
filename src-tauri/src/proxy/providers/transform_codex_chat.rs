@@ -2440,7 +2440,7 @@ mod tests {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
 
     fn large_test_image_data_url() -> String {
-        let bytes = b"CC_SWITCH_TOOL_MEDIA_SENTINEL".repeat(400);
+        let bytes = b"XSEC_SHIELD_TOOL_MEDIA_SENTINEL".repeat(400);
         format!("data:image/png;base64,{}", STANDARD.encode(bytes))
     }
 

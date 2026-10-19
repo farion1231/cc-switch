@@ -16,13 +16,13 @@ use std::fs;
 use std::process::{Command, Stdio};
 use toml_edit::DocumentMut;
 
-pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
+pub const XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 /// Temporary model-provider id used while the built-in `codex-official`
 /// provider is routed through CC Switch.  A dedicated id is an ownership
 /// marker: unlike a generic localhost `base_url`, it can be detected and
 /// cleaned up without mistaking a user's own local provider for takeover.
-pub const CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID: &str = "cc-switch-official";
-pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
+pub const XSEC_SHIELD_CODEX_OFFICIAL_PROXY_PROVIDER_ID: &str = "cc-switch-official";
+pub const XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -834,7 +834,7 @@ pub fn get_codex_config_path() -> PathBuf {
 }
 
 pub fn get_codex_model_catalog_path() -> PathBuf {
-    get_codex_config_dir().join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+    get_codex_config_dir().join(XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME)
 }
 
 /// 原子写 Codex 的 `auth.json` 与 `config.toml`，在第二步失败时回滚第一步
@@ -2750,7 +2750,7 @@ pub(crate) fn resolve_cc_switch_catalog_path(
 
     let referenced_path = Path::new(catalog_path_str);
     let is_cc_switch_owned = referenced_path.file_name().and_then(|name| name.to_str())
-        == Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+        == Some(XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME);
     if !is_cc_switch_owned {
         return None;
     }
@@ -2996,7 +2996,7 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
 /// Whether a live Codex config is the official route projected by an older CC Switch
 /// (`model_provider = "cc-switch-official"`).
 pub fn codex_config_has_official_proxy_route(config_text: &str) -> bool {
-    if !config_text.contains(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID) {
+    if !config_text.contains(XSEC_SHIELD_CODEX_OFFICIAL_PROXY_PROVIDER_ID) {
         return false;
     }
     config_text
@@ -3008,7 +3008,7 @@ pub fn codex_config_has_official_proxy_route(config_text: &str) -> bool {
                 .map(str::to_string)
         })
         .as_deref()
-        == Some(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
+        == Some(XSEC_SHIELD_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
 }
 
 /// live 的 `config.toml` 是不是现在的代理官方路由（`is_proxy_url` 认本地代理给 Codex 的
@@ -3027,10 +3027,10 @@ pub fn codex_config_routes_official_to_proxy(
     };
     match doc.get("model_provider").and_then(|item| item.as_str()) {
         None | Some("openai") => same_url(doc.get("openai_base_url")),
-        Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID) => doc
+        Some(XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID) => doc
             .get("model_providers")
             .and_then(|item| item.as_table_like())
-            .and_then(|providers| providers.get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID))
+            .and_then(|providers| providers.get(XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID))
             .and_then(|item| item.as_table_like())
             .is_some_and(|table| {
                 table
@@ -3070,14 +3070,14 @@ pub fn strip_codex_unified_session_bucket(config_text: &str) -> Result<String, A
         .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
 
     if doc.get("model_provider").and_then(|item| item.as_str())
-        != Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+        != Some(XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID)
     {
         return Ok(config_text.to_string());
     }
     let matches_injected = doc
         .get("model_providers")
         .and_then(|item| item.as_table())
-        .and_then(|providers| providers.get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID))
+        .and_then(|providers| providers.get(XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID))
         .and_then(|item| item.as_table())
         .is_some_and(table_matches_codex_unified_official_provider);
     if !matches_injected {
@@ -3088,7 +3088,7 @@ pub fn strip_codex_unified_session_bucket(config_text: &str) -> Result<String, A
     let providers_empty = doc["model_providers"]
         .as_table_mut()
         .map(|providers| {
-            providers.remove(CC_SWITCH_CODEX_MODEL_PROVIDER_ID);
+            providers.remove(XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID);
             providers.is_empty()
         })
         .unwrap_or(false);
@@ -3190,8 +3190,8 @@ mod tests {
     impl CodexLiveTestHome {
         fn new() -> Self {
             let dir = tempfile::tempdir().expect("create isolated Codex live test home");
-            let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            let original_test_home = std::env::var_os("XSEC_SHIELD_TEST_HOME");
+            std::env::set_var("XSEC_SHIELD_TEST_HOME", dir.path());
             crate::settings::reload_settings().expect("reload settings for isolated test home");
 
             Self {
@@ -3204,8 +3204,8 @@ mod tests {
     impl Drop for CodexLiveTestHome {
         fn drop(&mut self) {
             match &self.original_test_home {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                Some(value) => std::env::set_var("XSEC_SHIELD_TEST_HOME", value),
+                None => std::env::remove_var("XSEC_SHIELD_TEST_HOME"),
             }
             let _ = crate::settings::reload_settings();
         }
@@ -4894,7 +4894,7 @@ wire_api = "responses"
         let config = r#"model_catalog_json = "/tmp/.codex/cc-switch-model-catalog.json"
 "#;
         let resolved = resolve_cc_switch_catalog_path(config, &base).expect("path resolves");
-        assert_eq!(resolved, base.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME));
+        assert_eq!(resolved, base.join(XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME));
     }
 
     #[test]
@@ -5979,7 +5979,7 @@ model_catalog_json = "cc-switch-model-catalog.json"
         let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
         assert_eq!(
             result,
-            Some(base_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)),
+            Some(base_dir.join(XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME)),
             "relative filename should resolve under base_dir for file I/O"
         );
     }
@@ -6004,7 +6004,7 @@ model_catalog_json = "cc-switch-model-catalog.json"
         let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
         assert_eq!(
             result,
-            Some(base_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)),
+            Some(base_dir.join(XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME)),
             "absolute path inside ~/.codex should be accepted"
         );
     }
@@ -6031,7 +6031,7 @@ model_catalog_json = "cc-switch-model-catalog.json"
         let outside_dir = temp.path().join("outside");
         fs::create_dir_all(&base_dir).expect("create base");
         fs::create_dir_all(&outside_dir).expect("create outside");
-        let escaped_file = outside_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+        let escaped_file = outside_dir.join(XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME);
         fs::write(&escaped_file, r#"{"models":[]}"#).expect("write escaped catalog");
 
         #[cfg(unix)]
@@ -6050,7 +6050,7 @@ model_catalog_json = "cc-switch-model-catalog.json"
         let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
         let via_link = base_dir
             .join("link")
-            .join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+            .join(XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME);
         if via_link.exists() {
             assert_eq!(
                 result, None,
@@ -6072,7 +6072,7 @@ model_catalog_json = "cc-switch-model-catalog.json"
         let temp = tempfile::tempdir().expect("tempdir");
         let base_dir = temp.path().join("codex");
         fs::create_dir_all(&base_dir).expect("create base");
-        let catalog_file = base_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+        let catalog_file = base_dir.join(XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME);
         fs::write(&catalog_file, r#"{"models":[]}"#).expect("write catalog");
 
         let config_text = r#"model_catalog_json = "cc-switch-model-catalog.json"
@@ -6081,7 +6081,7 @@ model_catalog_json = "cc-switch-model-catalog.json"
         let resolved = result.expect("real file inside config dir should be accepted");
         assert_eq!(
             resolved.file_name().and_then(|n| n.to_str()),
-            Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+            Some(XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME)
         );
     }
 

@@ -11,7 +11,7 @@ use std::path::Path;
 
 use serde_json::json;
 
-use cc_switch_lib::{AppType, ProviderService};
+use xsec_agent_shield_lib::{AppType, ProviderService};
 
 use crate::support::{create_test_state, reset_test_fs, test_mutex};
 use crate::util::{assert_golden, home, official, provider, seed_providers, write_home_file};
@@ -45,7 +45,7 @@ fn collect(home: &Path, path: &Path, lines: &mut Vec<String>) {
     lines.push(format!("{rel} {:o}", meta.permissions().mode() & 0o777));
 }
 
-fn seed_all_providers(state: &cc_switch_lib::AppState) {
+fn seed_all_providers(state: &xsec_agent_shield_lib::AppState) {
     seed_providers(
         state,
         &AppType::Claude,
@@ -117,7 +117,7 @@ fn seed_all_providers(state: &cc_switch_lib::AppState) {
 }
 
 /// 官方 Codex（带 Key，auth.json 由它整份写入），再把四个应用都切到第三方。
-fn switch_everything(state: &cc_switch_lib::AppState) -> (String, String) {
+fn switch_everything(state: &xsec_agent_shield_lib::AppState) -> (String, String) {
     ProviderService::switch(state, AppType::Codex, "codex-official").expect("codex official");
     let after_official = inventory();
     for app in [

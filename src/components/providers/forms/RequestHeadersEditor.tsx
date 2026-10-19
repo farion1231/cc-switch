@@ -171,7 +171,7 @@ export function RequestHeadersEditor({
                     defaultValue: "Value",
                   })}
                   placeholder={t("opencode.headerValuePlaceholder", {
-                    defaultValue: "CC Switch",
+                    defaultValue: "XSEC Agent Shield",
                   })}
                   className="min-w-0 flex-1"
                 />

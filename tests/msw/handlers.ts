@@ -229,7 +229,7 @@ export const handlers = [
   // Skills / 用量：新加的只读或重投影命令，测试里默认都成功
   http.post(`${TAURI_ENDPOINT}/resync_skills_to_apps`, () => success([])),
   http.post(`${TAURI_ENDPOINT}/get_cc_switch_skills_dir`, () =>
-    success("/home/test/.cc-switch/skills"),
+    success("/home/test/.xsec-agent-shield/skills"),
   ),
   http.post(`${TAURI_ENDPOINT}/open_cc_switch_skills_dir`, () => success(true)),
   http.post(`${TAURI_ENDPOINT}/get_session_usage_last_sync`, () =>

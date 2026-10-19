@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 
 use serde_json::{json, Value};
 
-use cc_switch_lib::live::floor::{claude_floor_env, claude_floor_top};
-use cc_switch_lib::{AppState, AppType, Provider, ProviderService};
+use xsec_agent_shield_lib::live::floor::{claude_floor_env, claude_floor_top};
+use xsec_agent_shield_lib::{AppState, AppType, Provider, ProviderService};
 
 use crate::support::{create_test_state, reset_test_fs, test_mutex};
 use crate::util::{official, provider, read_home_json, seed_providers, write_home_file};
@@ -287,7 +287,7 @@ fn common_config_opt_in_does_not_carry_key_fields_to_the_next_provider() {
         Some(true),
     );
     let mut claude_official = official("claude-official", json!({ "env": {} }));
-    claude_official.meta = Some(cc_switch_lib::ProviderMeta {
+    claude_official.meta = Some(xsec_agent_shield_lib::ProviderMeta {
         common_config_enabled: Some(true),
         ..Default::default()
     });

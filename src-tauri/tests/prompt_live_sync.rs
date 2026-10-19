@@ -1,6 +1,6 @@
 mod support;
 
-use cc_switch_lib::{update_settings, AppSettings, AppType, Prompt, PromptService};
+use xsec_agent_shield_lib::{update_settings, AppSettings, AppType, Prompt, PromptService};
 use std::fs;
 use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
 

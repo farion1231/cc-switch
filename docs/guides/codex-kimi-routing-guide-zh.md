@@ -8,7 +8,7 @@ Kimi 开放平台和 Kimi For Coding 的官方 Codex 预设已切换为 **Respon
 2. 填入对应 API Key，保存并启用。旧卡片建议重新添加预设；若手动迁移，确认端点正确后将「上游格式」改为 **Responses**。
 3. 重启 Codex，使配置和模型目录生效。原生 Responses 也可经标准代理转发，但不再需要 Responses→Chat 转换。
 
-详见 [v3.20.3 更新说明](../release-notes/v3.20.3-zh.md)与[添加供应商](../user-manual/zh/2-providers/2.1-add.md)。**下文保留的是旧版 Chat 格式教程与截图，仅供已有 Chat 卡片排障参考，不代表新版预设的配置。**
+详见 [v3.20.3 更新说明](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/release-notes/v3.20.3-zh.md)与[添加供应商](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/zh/2-providers/2.1-add.md)。**下文保留的是旧版 Chat 格式教程与截图，仅供已有 Chat 卡片排障参考，不代表新版预设的配置。**
 
 > 适用版本：CC Switch 3.16.5 及附近版本。本文根据仓库内文档与代码整理，并用 Kimi 作为 OpenAI Chat Completions 兼容接口的示例。截图来自当前前端界面，使用去敏示例数据生成，避免泄露真实 API Key 或账户余额。
 
@@ -115,9 +115,9 @@ SiliconFlow、ModelScope 等常见 Chat 格式供应商在 CC Switch 里已有�
 
 ## 参考链接
 
-- [CC Switch 用户手册：添加供应商](../user-manual/zh/2-providers/2.1-add.md)
-- [CC Switch 用户手册：代理服务](../user-manual/zh/4-proxy/4.1-service.md)
-- [CC Switch 用户手册：应用路由](../user-manual/zh/4-proxy/4.2-routing.md)
+- [CC Switch 用户手册：添加供应商](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/zh/2-providers/2.1-add.md)
+- [CC Switch 用户手册：代理服务](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/zh/4-proxy/4.1-service.md)
+- [CC Switch 用户手册：应用路由](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/zh/4-proxy/4.2-routing.md)
 - [Kimi 开放平台：在编程工具中使用 Kimi K2.7 Code 模型](https://platform.kimi.com/docs/guide/agent-support)
 - [Kimi Code 文档：概览](https://www.kimi.com/code/docs/)
 - [Kimi Code 文档：在第三方 Coding Agent 中使用](https://www.kimi.com/code/docs/third-party-tools/other-coding-agents.html)

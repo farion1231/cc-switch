@@ -208,7 +208,7 @@ async fn download_and_verify(
 /// Build the S3 object key for a given artifact.
 ///
 /// Format: `{remote_root}/v{PROTOCOL_VERSION}/db-v{DB_COMPAT_VERSION}/{profile}/{artifact}`
-/// Example: `cc-switch-sync/v2/db-v6/default/manifest.json`
+/// Example: `xsec-agent-shield-sync/v2/db-v6/default/manifest.json`
 fn s3_key(settings: &S3SyncSettings, artifact: &str) -> String {
     format!(
         "{}/v{}/db-v{}/{}/{}",
@@ -241,7 +241,7 @@ mod tests {
 
     fn test_settings() -> S3SyncSettings {
         S3SyncSettings {
-            remote_root: "cc-switch-sync".to_string(),
+            remote_root: "xsec-agent-shield-sync".to_string(),
             profile: "default".to_string(),
             ..S3SyncSettings::default()
         }
@@ -251,7 +251,7 @@ mod tests {
     fn s3_key_uses_v2_and_correct_format() {
         let settings = test_settings();
         let key = s3_key(&settings, "manifest.json");
-        assert_eq!(key, "cc-switch-sync/v2/db-v6/default/manifest.json");
+        assert_eq!(key, "xsec-agent-shield-sync/v2/db-v6/default/manifest.json");
     }
 
     #[test]
@@ -271,7 +271,7 @@ mod tests {
         // Should follow {remote_root}/v{version}/db-v{db}/{profile}/{artifact}
         let parts: Vec<&str> = key.splitn(5, '/').collect();
         assert_eq!(parts.len(), 5);
-        assert_eq!(parts[0], "cc-switch-sync");
+        assert_eq!(parts[0], "xsec-agent-shield-sync");
         assert_eq!(parts[1], "v2");
         assert_eq!(parts[2], "db-v6");
         assert_eq!(parts[3], "default");

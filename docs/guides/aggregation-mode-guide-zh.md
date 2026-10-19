@@ -204,5 +204,5 @@ CC Switch 的聚合模式大量学习和参考了 [opencodex](https://github.com
 
 ## 相关文档
 
-- [聚合模式用户手册](../user-manual/zh/4-proxy/4.6-aggregation.md)
-- [本地路由](../user-manual/zh/4-proxy/4.2-routing.md)
+- [聚合模式用户手册](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/zh/4-proxy/4.6-aggregation.md)
+- [本地路由](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/zh/4-proxy/4.2-routing.md)

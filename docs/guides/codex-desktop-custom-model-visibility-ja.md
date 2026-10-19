@@ -43,4 +43,4 @@ Codex デスクトップアプリのモデルセレクタは、あなたの**現
 
 - [サードパーティ API 利用時に Codex のリモート操作と公式プラグインを保持する](./codex-official-auth-preservation-guide-ja.md)
 - [Codex で Chat 形式 API を使う: ローカルルーティングガイド](./codex-deepseek-routing-guide-ja.md)
-- [ローカルルーティング](../user-manual/ja/4-proxy/4.2-routing.md)
+- [ローカルルーティング](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/ja/4-proxy/4.2-routing.md)

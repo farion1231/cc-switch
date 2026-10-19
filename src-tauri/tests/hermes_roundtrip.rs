@@ -1,6 +1,6 @@
 mod support;
 
-use cc_switch_lib::{hermes_config, update_settings, AppSettings};
+use xsec_agent_shield_lib::{hermes_config, update_settings, AppSettings};
 
 /// 读取并回写 Hermes provider 时，Hermes v12+ 新增或未来才会出现的字段
 /// （例如 `rate_limit_delay`、`key_env`）必须透传，不能因为 UI 不感知就静默丢弃。

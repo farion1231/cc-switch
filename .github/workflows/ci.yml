@@ -226,8 +226,8 @@ jobs:
       - name: Prepare WSL2-backed test environment
         shell: pwsh
         run: |
-          wsl.exe -d Ubuntu-24.04 -- bash -lc "rm -rf /tmp/cc-switch-windows-test-root && mkdir -p /tmp/cc-switch-windows-test-root/{home,temp} && chmod -R 0777 /tmp/cc-switch-windows-test-root"
-          $testRoot = "\\wsl.localhost\Ubuntu-24.04\tmp\cc-switch-windows-test-root"
+          wsl.exe -d Ubuntu-24.04 -- bash -lc "rm -rf /tmp/xsec-shield-windows-test-root && mkdir -p /tmp/xsec-shield-windows-test-root/{home,temp} && chmod -R 0777 /tmp/xsec-shield-windows-test-root"
+          $testRoot = "\\wsl.localhost\Ubuntu-24.04\tmp\xsec-shield-windows-test-root"
           $testHome = Join-Path $testRoot "home"
           $testTemp = Join-Path $testRoot "temp"
           foreach ($path in @($testRoot, $testHome, $testTemp)) {
@@ -235,9 +235,9 @@ jobs:
               throw "WSL2-backed test path is unavailable: $path"
             }
           }
-          "CC_SWITCH_TEST_HOME=$testHome" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "CC_SWITCH_WSL_TEST_DIR=$testRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "CC_SWITCH_WSL_TEST_TEMP=$testTemp" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "XSEC_SHIELD_TEST_HOME=$testHome" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "XSEC_SHIELD_WSL_TEST_DIR=$testRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "XSEC_SHIELD_WSL_TEST_TEMP=$testTemp" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Compile backend tests with native temp
         # link.exe/mt.exe cannot create manifests when TEMP points at a WSL UNC path.
@@ -252,7 +252,7 @@ jobs:
             ForEach-Object {
               if ($_ -match '"reason":"compiler-artifact"') {
                 $artifact = $_ | ConvertFrom-Json
-                if ($artifact.executable -and $artifact.profile.test -and $artifact.target.name -eq 'cc_switch_lib') {
+                if ($artifact.executable -and $artifact.profile.test -and $artifact.target.name -eq 'xsec_agent_shield_lib') {
                   $artifact.executable
                 }
               }
@@ -261,9 +261,9 @@ jobs:
             exit $LASTEXITCODE
           }
           if (-not $testBinary) {
-            throw "cc_switch_lib test binary not found in cargo compiler artifacts"
+            throw "xsec_agent_shield_lib test binary not found in cargo compiler artifacts"
           }
-          "CC_SWITCH_TEST_EXE=$testBinary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "XSEC_SHIELD_TEST_EXE=$testBinary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run Windows-to-WSL2 filesystem contract
         # Run the test binary built in the previous step directly. Invoking cargo
@@ -271,10 +271,10 @@ jobs:
         # link.exe/mt.exe cannot create manifest temp files on \\wsl.localhost.
         shell: pwsh
         run: |
-          $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
-          $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
+          $env:TEMP = $env:XSEC_SHIELD_WSL_TEST_TEMP
+          $env:TMP = $env:XSEC_SHIELD_WSL_TEST_TEMP
           $testName = "config::tests::atomic_write_replaces_existing_wsl_unc_file"
-          $testList = & $env:CC_SWITCH_TEST_EXE --list --ignored
+          $testList = & $env:XSEC_SHIELD_TEST_EXE --list --ignored
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
@@ -282,19 +282,19 @@ jobs:
           if ($testList -notcontains $expected) {
             throw "Expected ignored test was not discovered: $testName"
           }
-          & $env:CC_SWITCH_TEST_EXE $testName --ignored --exact --nocapture
+          & $env:XSEC_SHIELD_TEST_EXE $testName --ignored --exact --nocapture
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
 
       - name: Run Hermes live WAL reads inside WSL2
         env:
-          CC_SWITCH_WSL_DISTRO: Ubuntu-24.04
+          XSEC_SHIELD_WSL_DISTRO: Ubuntu-24.04
         shell: pwsh
         run: |
           $testName = "session_manager::providers::hermes::tests::wsl2_live_wal_readonly_reference"
-          $testList = & $env:CC_SWITCH_TEST_EXE --list --ignored
+          $testList = & $env:XSEC_SHIELD_TEST_EXE --list --ignored
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($testList -notcontains "${testName}: test") { throw "Hermes WSL test not discovered" }
-          & $env:CC_SWITCH_TEST_EXE $testName --ignored --exact --nocapture
+          & $env:XSEC_SHIELD_TEST_EXE $testName --ignored --exact --nocapture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -43,4 +43,4 @@ Once enabled, CC Switch preserves the official login state in `~/.codex/auth.jso
 
 - [Keep Codex Remote Control and Official Plugins While Using Third-Party APIs](./codex-official-auth-preservation-guide-en.md)
 - [Using Chat-Format APIs in Codex: Local Routing Guide](./codex-deepseek-routing-guide-en.md)
-- [Local Routing](../user-manual/en/4-proxy/4.2-routing.md)
+- [Local Routing](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/en/4-proxy/4.2-routing.md)

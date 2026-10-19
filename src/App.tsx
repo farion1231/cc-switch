@@ -106,6 +106,7 @@ import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { WhatsNewNotice } from "@/components/WhatsNewDialog";
+import { WHATS_NEW_UI_ENABLED } from "@/lib/whatsNew";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
@@ -1669,7 +1670,8 @@ function App() {
       <DeepLinkImportDialog />
       <FirstRunNoticeDialog />
       <NewLayoutDialog />
-      <WhatsNewNotice />
+      {/* P0-01：上游版本摘要不适用于 XSEC 开发构建，见 docs/development-plan.md */}
+      {WHATS_NEW_UI_ENABLED && <WhatsNewNotice />}
     </WindowControlsContext.Provider>
   );
 }

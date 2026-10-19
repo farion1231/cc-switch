@@ -38,7 +38,7 @@ vi.mock("@/hooks/useSettings", () => ({
 
 vi.mock("@/hooks/useSkills", () => ({
   useInstalledSkills: () => ({ data: m.installed }),
-  useCcSwitchSkillsDir: () => ({ data: "/Users/jason/.cc-switch/skills" }),
+  useCcSwitchSkillsDir: () => ({ data: "/Users/jason/.xsec-agent-shield/skills" }),
   useResyncSkillsToApps: () => ({ mutateAsync: m.resync, isPending: false }),
 }));
 
@@ -104,7 +104,7 @@ describe("SkillsStorageSheet", () => {
     m.openDir.mockResolvedValue(undefined);
     renderDialog();
 
-    expect(screen.getByText("~/.cc-switch/skills")).toBeInTheDocument();
+    expect(screen.getByText("~/.xsec-agent-shield/skills")).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", {
         name: "skills.storageSheet.openFolderAria",

@@ -612,19 +612,19 @@ fn wsl_probe_script(tool: &str) -> String {
     format!(
         "sh -c {}",
         shell_single_quote(&format!(
-            "entry=$(command -v {tool}) && real=$(readlink -f -- \"$entry\") && [ -f \"$real\" ] && printf '__CC_SWITCH_UNINSTALL__\\n%s\\n%s\\n' \"$entry\" \"$real\""
+            "entry=$(command -v {tool}) && real=$(readlink -f -- \"$entry\") && [ -f \"$real\" ] && printf '__XSEC_SHIELD_UNINSTALL__\\n%s\\n%s\\n' \"$entry\" \"$real\""
         ))
     )
 }
 
 #[cfg(any(target_os = "windows", test))]
-const WSL_SHELL_FLAG_MARKER: &str = "__CC_SWITCH_SHELL_FLAG__ ";
+const WSL_SHELL_FLAG_MARKER: &str = "__XSEC_SHIELD_SHELL_FLAG__ ";
 
 /// Auto mode probe, run by an outer `sh -c`: `$1` is the probe, the remaining
 /// arguments are flags. Like the version check, try each flag in `$SHELL` until
 /// one succeeds (stderr kept only for the last), then report which flag won.
 #[cfg(any(target_os = "windows", test))]
-const WSL_SHELL_PROBE_LAUNCHER: &str = r#"s=${SHELL:-sh}; script=$1; shift; while [ $# -gt 1 ]; do out=$("$s" "$1" "$script" 2>/dev/null) && { printf '__CC_SWITCH_SHELL_FLAG__ %s\n%s\n' "$1" "$out"; exit 0; }; shift; done; out=$("$s" "$1" "$script") && printf '__CC_SWITCH_SHELL_FLAG__ %s\n%s\n' "$1" "$out""#;
+const WSL_SHELL_PROBE_LAUNCHER: &str = r#"s=${SHELL:-sh}; script=$1; shift; while [ $# -gt 1 ]; do out=$("$s" "$1" "$script" 2>/dev/null) && { printf '__XSEC_SHIELD_SHELL_FLAG__ %s\n%s\n' "$1" "$out"; exit 0; }; shift; done; out=$("$s" "$1" "$script") && printf '__XSEC_SHIELD_SHELL_FLAG__ %s\n%s\n' "$1" "$out""#;
 
 /// Auto mode removal: run `$1` in `$SHELL` with exactly the probe's flag `$2`.
 /// Never retry with another flag; a different environment could reach another copy.
@@ -728,7 +728,7 @@ fn wsl_process(distro: &str, shell_args: &[&str]) -> Result<std::process::Comman
 #[cfg(any(target_os = "windows", test))]
 fn parse_wsl_installation(stdout: &str) -> Result<(String, String), String> {
     let mut lines = stdout
-        .rsplit_once("__CC_SWITCH_UNINSTALL__\n")
+        .rsplit_once("__XSEC_SHIELD_UNINSTALL__\n")
         .map(|(_, paths)| paths.lines())
         .ok_or(
             "Cannot identify the WSL installation. Use the original installer to uninstall it.",
@@ -875,7 +875,7 @@ mod tests {
         use std::time::Duration;
 
         const TEST_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
-        const FIXTURE_ROOT: &str = "CC_SWITCH_TEST_NPM_UNINSTALL_ROOT";
+        const FIXTURE_ROOT: &str = "XSEC_SHIELD_TEST_NPM_UNINSTALL_ROOT";
         if let Some(root) = std::env::var_os(FIXTURE_ROOT) {
             let root = PathBuf::from(root);
             let prefix = root.join("custom npm prefix");
@@ -1304,12 +1304,12 @@ mod tests {
     fn wsl_shell_flag_must_be_reported_and_known() {
         assert_eq!(
             parse_wsl_shell_flag(
-                "noise\n__CC_SWITCH_SHELL_FLAG__ -lc\n__CC_SWITCH_UNINSTALL__\n/a\n/b\n"
+                "noise\n__XSEC_SHIELD_SHELL_FLAG__ -lc\n__XSEC_SHIELD_UNINSTALL__\n/a\n/b\n"
             ),
             Ok("-lc")
         );
-        assert!(parse_wsl_shell_flag("__CC_SWITCH_UNINSTALL__\n/a\n/b\n").is_err());
-        assert!(parse_wsl_shell_flag("__CC_SWITCH_SHELL_FLAG__ -x\n").is_err());
+        assert!(parse_wsl_shell_flag("__XSEC_SHIELD_UNINSTALL__\n/a\n/b\n").is_err());
+        assert!(parse_wsl_shell_flag("__XSEC_SHIELD_SHELL_FLAG__ -x\n").is_err());
     }
 
     #[cfg(target_os = "windows")]
@@ -1552,14 +1552,14 @@ mod tests {
     fn wsl_probe_requires_an_unambiguous_absolute_target() {
         assert_eq!(
             parse_wsl_installation(
-                "login output\n__CC_SWITCH_UNINSTALL__\n/usr/bin/codex\n/opt/codex\n"
+                "login output\n__XSEC_SHIELD_UNINSTALL__\n/usr/bin/codex\n/opt/codex\n"
             )
             .unwrap(),
             ("/usr/bin/codex".into(), "/opt/codex".into())
         );
-        assert!(parse_wsl_installation("__CC_SWITCH_UNINSTALL__\ncodex\n/opt/codex\n").is_err());
+        assert!(parse_wsl_installation("__XSEC_SHIELD_UNINSTALL__\ncodex\n/opt/codex\n").is_err());
         assert!(parse_wsl_installation(
-            "__CC_SWITCH_UNINSTALL__\n/usr/bin/codex\n/opt/codex\nextra\n"
+            "__XSEC_SHIELD_UNINSTALL__\n/usr/bin/codex\n/opt/codex\nextra\n"
         )
         .is_err());
     }

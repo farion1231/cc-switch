@@ -125,9 +125,9 @@ CC Switch 的做法是让 Codex 始终连本机路由，仍以 Responses API 发
 
 ## 参考链接
 
-- [CC Switch 用户手册：添加供应商](../user-manual/zh/2-providers/2.1-add.md)
-- [CC Switch 用户手册：代理服务](../user-manual/zh/4-proxy/4.1-service.md)
-- [CC Switch 用户手册：应用路由](../user-manual/zh/4-proxy/4.2-routing.md)
+- [CC Switch 用户手册：添加供应商](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/zh/2-providers/2.1-add.md)
+- [CC Switch 用户手册：代理服务](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/zh/4-proxy/4.1-service.md)
+- [CC Switch 用户手册：应用路由](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/zh/4-proxy/4.2-routing.md)
 - [DeepSeek API 文档：Integrate with Codex](https://api-docs.deepseek.com/quick_start/agent_integrations/codex/)（官方 Codex 集成说明，含 `wire_api = "responses"` 与模型支持范围）
 - [DeepSeek API 文档：Using the Responses API](https://api-docs.deepseek.com/guides/responses_api/)
 - [DeepSeek API 文档：Your First API Call](https://api-docs.deepseek.com/)

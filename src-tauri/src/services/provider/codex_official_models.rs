@@ -5,7 +5,7 @@
 //!
 //! 1. 自己拉的官方列表（`chatgpt.com/backend-api/codex/models`）：唯一在写了目录之后还能
 //!    更新的来源，身份和版本都能核对。按「工作区 ID + 用户身份」分条缓存在
-//!    `~/.cc-switch/codex-official-models.json`；
+//!    `~/.xsec-agent-shield/codex-official-models.json`；
 //! 2. 本机 Codex 自带的列表（`codex debug models --bundled`）：和账号无关，可能缺账号专属
 //!    的模型。
 //!
@@ -923,8 +923,8 @@ mod tests {
     impl Scope {
         fn new() -> Self {
             let dir = tempfile::TempDir::new().unwrap();
-            let saved = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            let saved = std::env::var_os("XSEC_SHIELD_TEST_HOME");
+            std::env::set_var("XSEC_SHIELD_TEST_HOME", dir.path());
             Self { _dir: dir, saved }
         }
     }
@@ -933,8 +933,8 @@ mod tests {
         fn drop(&mut self) {
             reset_test_env();
             match self.saved.take() {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                Some(value) => std::env::set_var("XSEC_SHIELD_TEST_HOME", value),
+                None => std::env::remove_var("XSEC_SHIELD_TEST_HOME"),
             }
         }
     }

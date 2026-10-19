@@ -24,7 +24,7 @@ import {
 } from "@/lib/modelsDevAutoSync";
 
 const state = {
-  configPath: "C:/Users/test/.cc-switch/model-pricing.json",
+  configPath: "C:/Users/test/.xsec-agent-shield/model-pricing.json",
   config: {
     autoSyncEnabled: true,
     includeCommonModels: true,

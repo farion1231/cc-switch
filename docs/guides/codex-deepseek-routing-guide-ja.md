@@ -125,9 +125,9 @@ Codex に入ったら、`/model` で現在のモデルが該当プリセット�
 
 ## 参考リンク
 
-- [CC Switch ユーザーマニュアル: プロバイダーの追加](../user-manual/ja/2-providers/2.1-add.md)
-- [CC Switch ユーザーマニュアル: プロキシサービス](../user-manual/ja/4-proxy/4.1-service.md)
-- [CC Switch ユーザーマニュアル: アプリケーションルーティング](../user-manual/ja/4-proxy/4.2-routing.md)
+- [CC Switch ユーザーマニュアル: プロバイダーの追加](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/ja/2-providers/2.1-add.md)
+- [CC Switch ユーザーマニュアル: プロキシサービス](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/ja/4-proxy/4.1-service.md)
+- [CC Switch ユーザーマニュアル: アプリケーションルーティング](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/ja/4-proxy/4.2-routing.md)
 - [DeepSeek API Docs: Integrate with Codex](https://api-docs.deepseek.com/quick_start/agent_integrations/codex/)（公式 Codex 連携の説明。`wire_api = "responses"` と対応モデルの範囲を含む）
 - [DeepSeek API Docs: Using the Responses API](https://api-docs.deepseek.com/guides/responses_api/)
 - [DeepSeek API Docs: Your First API Call](https://api-docs.deepseek.com/)

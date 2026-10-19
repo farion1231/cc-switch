@@ -18,8 +18,6 @@ import { useSettingsQuery } from "@/lib/query";
 import { markSeen } from "@/lib/whatsNew";
 import type { Settings } from "@/types";
 
-const RELEASES_URL = "https://github.com/farion1231/cc-switch/releases";
-
 /** 任一应用的数据库里已经有供应商（找到一家就停） */
 async function hasAnyProvider(): Promise<boolean> {
   for (const app of APP_IDS) {
@@ -93,18 +91,6 @@ export function NewLayoutDialog() {
     }
   };
 
-  const handleViewReleaseNotes = async () => {
-    try {
-      const version = await getVersion();
-      await settingsApi.openExternal(
-        version ? `${RELEASES_URL}/tag/v${version}` : RELEASES_URL,
-      );
-    } catch (error) {
-      console.error("Failed to open release notes:", error);
-    }
-    await handleAcknowledge();
-  };
-
   return (
     <Dialog
       open={isOpen}
@@ -125,9 +111,6 @@ export function NewLayoutDialog() {
           </DialogDescription>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={handleViewReleaseNotes}>
-            {t("newLayoutNotice.viewReleaseNotes")}
-          </Button>
           <Button onClick={handleAcknowledge}>
             {t("newLayoutNotice.confirm")}
           </Button>

@@ -29,7 +29,7 @@ interface SkillsStorageSheetProps {
 
 const appName = (app: string) => APP_DISPLAY_NAME[app as AppId] ?? app;
 
-const DEFAULT_CC_SWITCH_DIR = "~/.cc-switch/skills";
+const DEFAULT_XSEC_SHIELD_DIR = "~/.xsec-agent-shield/skills";
 const UNIFIED_DIR = "~/.agents/skills";
 
 /** 和后端 SyncMethod（auto / symlink / copy）一一对应。 */
@@ -72,7 +72,7 @@ export function SkillsStorageSheet({
   const installedCount = installedSkills?.length ?? 0;
   const ccSwitchDir = ccSwitchDirRaw
     ? shortenHomePath(ccSwitchDirRaw)
-    : DEFAULT_CC_SWITCH_DIR;
+    : DEFAULT_XSEC_SHIELD_DIR;
 
   // 单选只是「想换到哪」；点「移动并切换…」才真正迁移
   const [pendingLocation, setPendingLocation] =

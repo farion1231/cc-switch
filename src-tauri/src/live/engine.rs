@@ -24,7 +24,7 @@ use super::patch::{LivePatch, LiveWriteError};
 
 /// 这台设备自己的状态目录：`live-state.json` 和首写备份都放在这里。
 ///
-/// 路径固定为 `get_home_dir()/.cc-switch`，和 `settings.json` 一样不跟随配置目录
+/// 路径固定为 `get_home_dir()/.xsec-agent-shield`，和 `settings.json` 一样不跟随配置目录
 /// 覆盖：覆盖目录可能指向网盘同步目录，而写前意图和备份都是这台设备的事实。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceStore {
@@ -33,7 +33,7 @@ pub struct DeviceStore {
 
 impl DeviceStore {
     pub fn for_device() -> Self {
-        Self::at(crate::config::get_home_dir().join(".cc-switch"))
+        Self::at(crate::config::get_home_dir().join(".xsec-agent-shield"))
     }
 
     pub fn at(root: impl Into<PathBuf>) -> Self {

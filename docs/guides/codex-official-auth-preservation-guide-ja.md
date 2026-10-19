@@ -210,8 +210,8 @@ Codex アプリ拡張やルーティング管理は、必要ないユーザー�
 
 - [Codex デスクトップアプリでカスタムモデルが見えない？（よくある質問）](./codex-desktop-custom-model-visibility-ja.md)
 - [Codex で Chat 形式 API を使う: ローカルルーティングガイド](./codex-deepseek-routing-guide-ja.md)
-- [Codex プロバイダーの追加: Chat Completions ルーティングとモデルマッピング](../user-manual/ja/2-providers/2.1-add.md)
-- [ローカルプロキシサービス](../user-manual/ja/4-proxy/4.1-service.md)
-- [ローカルルーティング](../user-manual/ja/4-proxy/4.2-routing.md)
-- [CC Switch v3.16.1 Release Note](../release-notes/v3.16.1-ja.md)
-- [CC Switch v3.20.1 Release Note](../release-notes/v3.20.1-ja.md)
+- [Codex プロバイダーの追加: Chat Completions ルーティングとモデルマッピング](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/ja/2-providers/2.1-add.md)
+- [ローカルプロキシサービス](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/ja/4-proxy/4.1-service.md)
+- [ローカルルーティング](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/ja/4-proxy/4.2-routing.md)
+- [CC Switch v3.16.1 Release Note](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/release-notes/v3.16.1-ja.md)
+- [CC Switch v3.20.1 Release Note](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/release-notes/v3.20.1-ja.md)

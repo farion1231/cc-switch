@@ -680,14 +680,14 @@ mod tests {
     impl Scope {
         fn new() -> Self {
             let dir = tempfile::TempDir::new().unwrap();
-            let saved = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            let saved = std::env::var_os("XSEC_SHIELD_TEST_HOME");
+            std::env::set_var("XSEC_SHIELD_TEST_HOME", dir.path());
             std::fs::create_dir_all(get_codex_config_dir()).unwrap();
             Self { dir, saved }
         }
 
         fn store(&self) -> DeviceStore {
-            DeviceStore::at(self.dir.path().join(".cc-switch"))
+            DeviceStore::at(self.dir.path().join(".xsec-agent-shield"))
         }
     }
 
@@ -695,8 +695,8 @@ mod tests {
         fn drop(&mut self) {
             reset_test_env();
             match self.saved.take() {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                Some(value) => std::env::set_var("XSEC_SHIELD_TEST_HOME", value),
+                None => std::env::remove_var("XSEC_SHIELD_TEST_HOME"),
             }
         }
     }

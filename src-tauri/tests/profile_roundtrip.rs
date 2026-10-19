@@ -6,7 +6,7 @@ use std::fs;
 
 use serde_json::json;
 
-use cc_switch_lib::{
+use xsec_agent_shield_lib::{
     AppType, InstalledSkill, McpServer, McpService, ProfilePayload, ProfileScope, ProfileService,
     Prompt, PromptService, Provider, ProviderService, SkillApps, SkillService,
 };
@@ -412,7 +412,7 @@ fn profile_apply_reports_dangling_references_and_continues() {
         "skills": { "claude": ["ghost-skill"] },
         "prompts": { "claude": "ghost-prompt" }
     });
-    let profile = cc_switch_lib::Profile {
+    let profile = xsec_agent_shield_lib::Profile {
         id: "dangling-test".to_string(),
         name: "Dangling".to_string(),
         payload: payload.to_string(),
@@ -680,7 +680,7 @@ fn profile_switch_in_routing_mode_changes_the_route_only() {
     // 初始状态：custom1 + 路由模式
     ProviderService::switch(&state, AppType::Claude, "custom1").expect("switch to custom1");
     let rt = tokio::runtime::Runtime::new().expect("create tokio runtime");
-    rt.block_on(cc_switch_lib::mode::controller::enter(
+    rt.block_on(xsec_agent_shield_lib::mode::controller::enter(
         &state,
         &AppType::Claude,
         false,
@@ -712,17 +712,17 @@ fn profile_switch_in_routing_mode_changes_the_route_only() {
         "switching project should not warn: {warnings:?}"
     );
 
-    assert!(cc_switch_lib::mode::current::is_proxy(&AppType::Claude));
+    assert!(xsec_agent_shield_lib::mode::current::is_proxy(&AppType::Claude));
     let (proxy_enabled_after, _) = state.db.get_proxy_flags_sync("claude");
     assert!(
         proxy_enabled_after,
         "routing mode is mirrored for old versions"
     );
     assert_eq!(
-        cc_switch_lib::mode::current::provider_for(
+        xsec_agent_shield_lib::mode::current::provider_for(
             &state.db,
             &AppType::Claude,
-            cc_switch_lib::mode::current::Purpose::InUse,
+            xsec_agent_shield_lib::mode::current::Purpose::InUse,
         )
         .expect("in-use provider")
         .as_deref(),
@@ -730,10 +730,10 @@ fn profile_switch_in_routing_mode_changes_the_route_only() {
         "the proxy should route to custom2"
     );
     assert_eq!(
-        cc_switch_lib::mode::current::provider_for(
+        xsec_agent_shield_lib::mode::current::provider_for(
             &state.db,
             &AppType::Claude,
-            cc_switch_lib::mode::current::Purpose::Direct,
+            xsec_agent_shield_lib::mode::current::Purpose::Direct,
         )
         .expect("direct provider")
         .as_deref(),
@@ -759,10 +759,10 @@ fn profile_switch_in_routing_mode_changes_the_route_only() {
         .expect("apply custom1 project");
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(
-        cc_switch_lib::mode::current::provider_for(
+        xsec_agent_shield_lib::mode::current::provider_for(
             &state.db,
             &AppType::Claude,
-            cc_switch_lib::mode::current::Purpose::InUse,
+            xsec_agent_shield_lib::mode::current::Purpose::InUse,
         )
         .expect("in-use provider")
         .as_deref(),
@@ -785,7 +785,7 @@ fn profile_switch_in_routing_mode_changes_the_route_only() {
     assert!(base_url(&settings_path)
         .expect("proxy base url")
         .starts_with("http://127.0.0.1:"));
-    rt.block_on(cc_switch_lib::mode::controller::exit(
+    rt.block_on(xsec_agent_shield_lib::mode::controller::exit(
         &state,
         &AppType::Claude,
     ))

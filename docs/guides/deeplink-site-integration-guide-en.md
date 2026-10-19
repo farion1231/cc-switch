@@ -12,7 +12,7 @@ You run an API service (a relay, an aggregator or a self-hosted gateway all coun
 
 This is done with a `ccswitch://` deep link. Once CC Switch is installed, clicking a `ccswitch://...` link in the browser launches CC Switch and opens an import confirmation dialog. The user checks it and clicks "Import".
 
-The [Deep Link Protocol](../user-manual/en/5-faq/5.3-deeplink.md) page in the user manual is the parameter reference. This guide covers the decisions a site owner actually has to make: how to generate the link, what it can carry, what gets rejected, and how to show users their balance right after import.
+The [Deep Link Protocol](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/en/5-faq/5.3-deeplink.md) page in the user manual is the parameter reference. This guide covers the decisions a site owner actually has to make: how to generate the link, what it can carry, what gets rejected, and how to show users their balance right after import.
 
 ## Quickest path
 

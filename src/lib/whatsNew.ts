@@ -1,6 +1,13 @@
 import { compareVersions } from "@/lib/version";
 
 /**
+ * P0-01：whats-new 数据与链接都是上游 CC Switch 的产品历史，XSEC 品牌下的
+ * 版本摘要要在 P4-03 的安全状态 UI 里重建后重新启用。开发构建不弹摘要、
+ * 不提供官网 changelog 外链。
+ */
+export const WHATS_NEW_UI_ENABLED = false;
+
+/**
  * 更新摘要：每个版本一份 `src/whats-new/<version>.json`，构建时打进安装包。
  * 新版安装包天然带着它自己和之前所有版本的摘要，弹窗不联网。格式见同目录 README。
  */
@@ -86,14 +93,4 @@ export function resolveWhatsNewLanguage(language: string): WhatsNewLanguage {
   return (WHATS_NEW_LANGUAGES as readonly string[]).includes(language)
     ? (language as WhatsNewLanguage)
     : "en";
-}
-
-/** 官网更新日志：不带版本是列表页。官网只有 zh / en / ja，繁中用简中页面 */
-export function changelogUrl(
-  language: WhatsNewLanguage,
-  version?: string,
-): string {
-  const siteLanguage = language === "zh-TW" ? "zh" : language;
-  const base = `https://ccswitch.io/${siteLanguage}/changelog`;
-  return version ? `${base}/${version}` : base;
 }

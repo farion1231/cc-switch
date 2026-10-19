@@ -1,8 +1,8 @@
 //! 托盘菜单（v7）
 //!
-//! 结构：问题区（出问题才有）→ 反馈行（托盘里刚做完要重启才生效的操作）→ 打开 CC Switch →
+//! 结构：问题区（出问题才有）→ 反馈行（托盘里刚做完要重启才生效的操作）→ 打开 XSEC Agent Shield →
 //! 切换式应用的子菜单（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build；在「应用」页
-//! 隐藏的不列）→ 轻量模式 → 打开官方网站 / 退出 CC Switch。累加式应用（OpenCode / OpenClaw /
+//! 隐藏的不列）→ 轻量模式 → 退出 XSEC Agent Shield。累加式应用（OpenCode / OpenClaw /
 //! Hermes / Pi / MiniMax Code）不进托盘；托盘里不切模式、不启停路由服务。
 //!
 //! 分三层：`collect_*` 从数据库和设备状态读出快照，`build_menu_model` 把快照变成纯数据的菜单
@@ -31,7 +31,7 @@ const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
 /// Copilot 用量结果的单位（`commands::provider` 的 `COPILOT_UNIT_PREMIUM`）：高级请求次数。
 const COPILOT_UNIT_PREMIUM: &str = "requests";
 
-pub const TRAY_ID: &str = "cc-switch";
+pub const TRAY_ID: &str = "xsec-shield";
 
 /// 进托盘的应用，顺序和侧栏一致。累加式应用没有「当前供应商」，不进托盘。
 pub const TRAY_APPS: [AppType; 5] = [
@@ -81,7 +81,6 @@ static TRAY_SECTION_SUBMENUS: Lazy<Mutex<HashMap<AppType, Submenu<tauri::Wry>>>>
 #[derive(Clone, Copy)]
 pub struct TrayTexts {
     pub show_main: &'static str,
-    pub open_website: &'static str,
     pub lightweight_mode: &'static str,
     pub quit: &'static str,
     /// 有应用在用路由服务时的「退出」：写明后果（客户端指回直连、路由服务停止，下次打开自动接回）。
@@ -185,11 +184,10 @@ impl TrayTexts {
     pub fn from_language(language: &str) -> Self {
         match language {
             "en" => Self {
-                show_main: "Open CC Switch",
-                open_website: "Open official website",
+                show_main: "Open XSEC Agent Shield",
                 lightweight_mode: "Lightweight mode",
-                quit: "Quit CC Switch",
-                quit_stops_routing: "Quit CC Switch (stops the routing service)",
+                quit: "Quit XSEC Agent Shield",
+                quit_stops_routing: "Quit XSEC Agent Shield (stops the routing service)",
                 projects_label: "Projects",
                 no_project_label: "No project",
                 header_direct: "Direct",
@@ -210,8 +208,8 @@ impl TrayTexts {
                 problem_attach_failed:
                     "{app}: {mode} couldn't reconnect at startup; back to direct",
                 problem_switch_failed: "{app} didn't switch: {reason}",
-                problem_more: "{count} more issues — open CC Switch to see them",
-                tooltip_problem: "CC Switch · Needs attention: {problem}",
+                problem_more: "{count} more issues — open XSEC Agent Shield to see them",
+                tooltip_problem: "XSEC Agent Shield · Needs attention: {problem}",
                 feedback_switched: "{app} switched to {name}. Restart {app} to apply",
                 feedback_stack_default:
                     "{app}'s default provider is now {name}. Restart {app} to apply",
@@ -245,11 +243,10 @@ impl TrayTexts {
             // 在有人翻译前显示英文，而不是让所有改托盘的提交都必须补土耳其语。
             "tr" => {
                 let mut texts = Self::from_language("en");
-                texts.show_main = "CC Switch'i aç";
-                texts.open_website = "Resmî web sitesini aç";
+                texts.show_main = "XSEC Agent Shield'i aç";
                 texts.lightweight_mode = "Hafif mod";
-                texts.quit = "CC Switch'ten çık";
-                texts.quit_stops_routing = "CC Switch'ten çık (yönlendirme hizmeti durur)";
+                texts.quit = "XSEC Agent Shield'ten çık";
+                texts.quit_stops_routing = "XSEC Agent Shield'ten çık (yönlendirme hizmeti durur)";
                 texts.projects_label = "Projeler";
                 texts.no_project_label = "Proje yok";
                 texts.header_direct = "Doğrudan";
@@ -269,8 +266,8 @@ impl TrayTexts {
                 texts.problem_service_down = "Yönlendirme hizmeti çalışmıyor (port {port})";
                 texts.problem_attach_failed = "{app}: {mode} başlangıçta yeniden bağlanamadı; doğrudan bağlantıya dönüldü";
                 texts.problem_switch_failed = "{app} geçiş yapamadı: {reason}";
-                texts.problem_more = "{count} sorun daha var — görmek için CC Switch'i açın";
-                texts.tooltip_problem = "CC Switch · İlgilenilmesi gerekiyor: {problem}";
+                texts.problem_more = "{count} sorun daha var — görmek için XSEC Agent Shield'i açın";
+                texts.tooltip_problem = "XSEC Agent Shield · İlgilenilmesi gerekiyor: {problem}";
                 texts.feedback_switched = "{app}, {name} sağlayıcısına geçti. Uygulamak için {app} uygulamasını yeniden başlatın";
                 texts.feedback_stack_default = "{app} için varsayılan sağlayıcı artık {name}. Uygulamak için {app} uygulamasını yeniden başlatın";
                 texts.feedback_profile = "{name} projesi {app} uygulamasına uygulandı";
@@ -300,11 +297,10 @@ impl TrayTexts {
                 texts
             }
             "ja" => Self {
-                show_main: "CC Switch を開く",
-                open_website: "公式サイトを開く",
+                show_main: "XSEC Agent Shield を開く",
                 lightweight_mode: "軽量モード",
-                quit: "CC Switch を終了",
-                quit_stops_routing: "CC Switch を終了（ルーティングサービスが停止します）",
+                quit: "XSEC Agent Shield を終了",
+                quit_stops_routing: "XSEC Agent Shield を終了（ルーティングサービスが停止します）",
                 projects_label: "プロジェクト",
                 no_project_label: "プロジェクトを使用しない",
                 header_direct: "直接接続",
@@ -325,8 +321,8 @@ impl TrayTexts {
                 problem_attach_failed: "{app}：前回の{mode}に再接続できず、直接接続に戻りました",
                 problem_switch_failed: "{app} を切り替えられませんでした：{reason}",
                 problem_more:
-                    "ほかに {count} 件の問題があります。CC Switch を開いて確認してください",
-                tooltip_problem: "CC Switch · 対応が必要：{problem}",
+                    "ほかに {count} 件の問題があります。XSEC Agent Shield を開いて確認してください",
+                tooltip_problem: "XSEC Agent Shield · 対応が必要：{problem}",
                 feedback_switched:
                     "{app} を {name} に切り替えました。反映するには {app} を再起動してください",
                 feedback_stack_default: "{app} のデフォルトのプロバイダーを {name} に変更しました。反映するには {app} を再起動してください",
@@ -357,11 +353,10 @@ impl TrayTexts {
                 quota_used: false,
             },
             "zh-TW" => Self {
-                show_main: "開啟 CC Switch",
-                open_website: "開啟官方網站",
+                show_main: "開啟 XSEC Agent Shield",
                 lightweight_mode: "輕量模式",
-                quit: "退出 CC Switch",
-                quit_stops_routing: "退出 CC Switch（路由服務會停止）",
+                quit: "退出 XSEC Agent Shield",
+                quit_stops_routing: "退出 XSEC Agent Shield（路由服務會停止）",
                 projects_label: "專案",
                 no_project_label: "不使用專案",
                 header_direct: "直連",
@@ -381,8 +376,8 @@ impl TrayTexts {
                 problem_service_down: "路由服務沒在執行（連接埠 {port}）",
                 problem_attach_failed: "{app}：上次的{mode}沒能接上，已回到直連",
                 problem_switch_failed: "{app} 沒切換成功：{reason}",
-                problem_more: "還有 {count} 個問題，開啟 CC Switch 查看",
-                tooltip_problem: "CC Switch · 需要處理：{problem}",
+                problem_more: "還有 {count} 個問題，開啟 XSEC Agent Shield 查看",
+                tooltip_problem: "XSEC Agent Shield · 需要處理：{problem}",
                 feedback_switched: "{app} 已切換到 {name}，重新啟動 {app} 後生效",
                 feedback_stack_default: "{app} 的預設供應商改為 {name}，重新啟動 {app} 後生效",
                 feedback_profile: "已把專案「{name}」套用到 {app}",
@@ -412,11 +407,10 @@ impl TrayTexts {
                 quota_used: false,
             },
             _ => Self {
-                show_main: "打开 CC Switch",
-                open_website: "打开官方网站",
+                show_main: "打开 XSEC Agent Shield",
                 lightweight_mode: "轻量模式",
-                quit: "退出 CC Switch",
-                quit_stops_routing: "退出 CC Switch（路由服务会停止）",
+                quit: "退出 XSEC Agent Shield",
+                quit_stops_routing: "退出 XSEC Agent Shield（路由服务会停止）",
                 projects_label: "项目",
                 no_project_label: "不使用项目",
                 header_direct: "直连",
@@ -436,8 +430,8 @@ impl TrayTexts {
                 problem_service_down: "路由服务没在运行（端口 {port}）",
                 problem_attach_failed: "{app}：上次的{mode}没能接上，已回到直连",
                 problem_switch_failed: "{app} 没切换成功：{reason}",
-                problem_more: "还有 {count} 个问题，打开 CC Switch 查看",
-                tooltip_problem: "CC Switch · 需要处理：{problem}",
+                problem_more: "还有 {count} 个问题，打开 XSEC Agent Shield 查看",
+                tooltip_problem: "XSEC Agent Shield · 需要处理：{problem}",
                 feedback_switched: "{app} 已切换到 {name}，重启 {app} 后生效",
                 feedback_stack_default: "{app} 的默认供应商改为 {name}，重启 {app} 后生效",
                 feedback_profile: "已把项目「{name}」用到 {app}",
@@ -1922,7 +1916,7 @@ fn build_menu_model(
         menu.push(TrayEntry::Separator);
     }
 
-    // 窗口找不回来时托盘是唯一入口，「打开 CC Switch」一直放在最上面。
+    // 窗口找不回来时托盘是唯一入口，「打开 XSEC Agent Shield」一直放在最上面。
     menu.push(TrayEntry::item("show_main", texts.show_main));
     menu.push(TrayEntry::Separator);
 
@@ -1938,7 +1932,6 @@ fn build_menu_model(
         lightweight,
     ));
     menu.push(TrayEntry::Separator);
-    menu.push(TrayEntry::item("open_website", texts.open_website));
     // 不换成系统自带的 quit：它不经过 app.exit(0) 的退出流程，客户端指回直连、停服务只能在
     // RunEvent::Exit 里限时补做（见 lib.rs 的 cleanup_before_system_exit）。
     // 有应用在用路由服务时把这个后果写在「退出」上（后果不进说明，写在按钮文字里）。
@@ -2484,10 +2477,10 @@ fn icon_with_problem_dot(icon: &Image<'_>, template: bool) -> Image<'static> {
     Image::new_owned(rgba, width, height)
 }
 
-/// 悬停提示：平时 `CC Switch`，出问题时 `CC Switch · 需要处理：<问题区第一条>`。额度不算问题。
+/// 悬停提示：平时 `XSEC Agent Shield`，出问题时 `XSEC Agent Shield · 需要处理：<问题区第一条>`。额度不算问题。
 fn tray_tooltip(texts: &TrayTexts, problems: &[TrayProblem]) -> String {
     match problems.first() {
-        None => "CC Switch".to_string(),
+        None => "XSEC Agent Shield".to_string(),
         Some(problem) => truncate_chars(
             &fill(
                 texts.tooltip_problem,
@@ -2987,11 +2980,6 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
 
     match event_id {
         "show_main" => show_main_window(app),
-        "open_website" => {
-            if let Err(e) = app.opener().open_url("https://ccswitch.io", None::<String>) {
-                log::error!("打开官方网站失败: {e}");
-            }
-        }
         "lightweight_mode" => {
             if crate::lightweight::is_lightweight_mode() {
                 if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
@@ -3270,7 +3258,7 @@ mod tests {
 
     #[test]
     fn tray_id_is_unique_to_app() {
-        assert_eq!(TRAY_ID, "cc-switch");
+        assert_eq!(TRAY_ID, "xsec-shield");
         assert_ne!(TRAY_ID, "main");
     }
 
@@ -4075,7 +4063,7 @@ mod tests {
     }
 
     #[test]
-    fn top_level_order_is_open_apps_lightweight_website_quit() {
+    fn top_level_order_is_open_apps_lightweight_quit() {
         let apps = [
             snapshot(
                 AppType::Claude,
@@ -4088,19 +4076,18 @@ mod tests {
         assert_eq!(
             texts_of(&menu),
             [
-                "打开 CC Switch",
+                "打开 XSEC Agent Shield",
                 "---",
                 "Claude Code · Kimi For Coding",
                 "Grok Build · 添加供应商…",
                 "---",
                 "轻量模式",
                 "---",
-                "打开官方网站",
-                "退出 CC Switch",
+                "退出 XSEC Agent Shield",
             ]
         );
         assert!(matches!(&menu[3], TrayEntry::Item { id, .. } if id == "nav:add:grokbuild"));
-        assert!(matches!(&menu[8], TrayEntry::Item { id, .. } if id == "quit"));
+        assert!(matches!(&menu[7], TrayEntry::Item { id, .. } if id == "quit"));
     }
 
     #[test]
@@ -4282,7 +4269,7 @@ mod tests {
             matches!(&menu[0], TrayEntry::Item { id, enabled: true, .. } if id == "nav:settings:routing")
         );
         assert_eq!(text_of(&menu[1]), "---");
-        assert_eq!(text_of(&menu[2]), "打开 CC Switch");
+        assert_eq!(text_of(&menu[2]), "打开 XSEC Agent Shield");
         assert_eq!(
             text_of(&menu[4]),
             "Claude Desktop · 路由 · Kimi For Coding · 需要处理"
@@ -4311,7 +4298,7 @@ mod tests {
             [
                 "路由服务没在运行（端口 15721）",
                 "Claude Code：上次的路由没能接上，已回到直连",
-                "还有 1 个问题，打开 CC Switch 查看",
+                "还有 1 个问题，打开 XSEC Agent Shield 查看",
                 "---"
             ]
         );
@@ -4455,11 +4442,11 @@ mod tests {
                 other => panic!("last entry is not quit: {other:?}"),
             }
         };
-        assert_eq!(quit_text(&zh(), false), "退出 CC Switch");
-        assert_eq!(quit_text(&zh(), true), "退出 CC Switch（路由服务会停止）");
+        assert_eq!(quit_text(&zh(), false), "退出 XSEC Agent Shield");
+        assert_eq!(quit_text(&zh(), true), "退出 XSEC Agent Shield（路由服务会停止）");
         assert_eq!(
             quit_text(&en(), true),
-            "Quit CC Switch (stops the routing service)"
+            "Quit XSEC Agent Shield (stops the routing service)"
         );
         for language in ["zh", "zh-TW", "en", "ja", "tr"] {
             let texts = TrayTexts::from_language(language);
@@ -4485,7 +4472,7 @@ mod tests {
 
     #[test]
     fn tooltip_names_the_first_problem_and_is_plain_otherwise() {
-        assert_eq!(tray_tooltip(&zh(), &[]), "CC Switch");
+        assert_eq!(tray_tooltip(&zh(), &[]), "XSEC Agent Shield");
         let problems = [
             TrayProblem::ServiceDown { port: 15721 },
             TrayProblem::SwitchFailed {
@@ -4495,7 +4482,7 @@ mod tests {
         ];
         assert_eq!(
             tray_tooltip(&zh(), &problems),
-            "CC Switch · 需要处理：路由服务没在运行（端口 15721）"
+            "XSEC Agent Shield · 需要处理：路由服务没在运行（端口 15721）"
         );
         let long = [TrayProblem::SwitchFailed {
             app: AppType::Codex,
@@ -4586,7 +4573,7 @@ mod tests {
                 "路由服务没在运行（端口 15721）",
                 "Codex 已切换到 DeepSeek，重启 Codex 后生效",
                 "---",
-                "打开 CC Switch",
+                "打开 XSEC Agent Shield",
             ]
         );
         assert!(matches!(&menu[1], TrayEntry::Item { enabled: false, .. }));
@@ -4604,7 +4591,7 @@ mod tests {
             [
                 "Codex 的默认供应商改为 Kimi For Coding，重启 Codex 后生效",
                 "---",
-                "打开 CC Switch",
+                "打开 XSEC Agent Shield",
             ]
         );
         assert_eq!(

@@ -180,9 +180,9 @@ mod tests {
 mod native_validation {
     use super::*;
     #[test]
-    #[ignore = "requires the real MCode workflow in an isolated CC_SWITCH_TEST_HOME"]
+    #[ignore = "requires the real MCode workflow in an isolated XSEC_SHIELD_TEST_HOME"]
     fn mcode_reads_real_sessions_and_usage() -> Result<(), AppError> {
-        assert!(std::env::var("CC_SWITCH_TEST_HOME").is_ok());
+        assert!(std::env::var("XSEC_SHIELD_TEST_HOME").is_ok());
         let sessions = mcode::scan_sessions();
         assert!(!sessions.is_empty());
         let mut messages = 0;

@@ -87,38 +87,14 @@ pub async fn check_for_updates(handle: AppHandle) -> Result<bool, String> {
     Ok(true)
 }
 
-/// 便携版新版本压缩包的下载地址，命名与 release.yml 的「Prepare Windows Assets」一致：
-/// `CC-Switch-v<版本>-Windows[-arm64]-Portable.zip`。版本号不像版本号时返回 None。
-fn portable_zip_url(version: &str, arm64: bool) -> Option<String> {
-    let version = version.trim().trim_start_matches('v');
-    let looks_like_version = version.starts_with(|c: char| c.is_ascii_digit())
-        && version
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'));
-    if !looks_like_version {
-        return None;
-    }
-    let suffix = if arm64 { "-arm64" } else { "" };
-    Some(format!(
-        "https://github.com/farion1231/cc-switch/releases/download/v{version}/CC-Switch-v{version}-Windows{suffix}-Portable.zip"
-    ))
-}
-
-/// 便携版更新：直接下载对应架构的新版压缩包（解压覆盖即可，数据在 ~/.cc-switch 不受影响）。
-/// 不做原地替换自身 exe：那样很容易被杀毒软件当成病毒拦截。
+/// P0-01：便携版更新下载同样属于上游发布渠道，开发构建未配置 XSEC 专属渠道前
+/// 一律禁用（不打开任何旧产品下载地址）。
 #[tauri::command]
 pub async fn open_portable_update_download(
-    handle: AppHandle,
-    version: String,
+    _handle: AppHandle,
+    _version: String,
 ) -> Result<bool, String> {
-    let url = portable_zip_url(&version, cfg!(target_arch = "aarch64"))
-        .unwrap_or_else(|| "https://github.com/farion1231/cc-switch/releases/latest".to_string());
-    handle
-        .opener()
-        .open_url(url, None::<String>)
-        .map_err(|e| format!("打开更新页面失败: {e}"))?;
-
-    Ok(true)
+    Err("XSEC Agent Shield 开发构建未配置更新渠道，便携版下载已禁用".to_string())
 }
 
 /// 判断是否为便携版（绿色版）运行
@@ -5337,7 +5313,7 @@ fn is_windows_unc_path(path: &str) -> bool {
 
 /// 非 ASCII 的项目目录经这个环境变量传给 Claude 启动 .bat。
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-const WINDOWS_CWD_ENV: &str = "CC_SWITCH_INTERNAL_CWD";
+const WINDOWS_CWD_ENV: &str = "XSEC_SHIELD_INTERNAL_CWD";
 
 /// 生成切到项目目录的 .bat 行，第二项是需要给启动进程设置的 `WINDOWS_CWD_ENV` 值。
 ///
@@ -5664,21 +5640,6 @@ mod tests {
         assert!(!is_shell_command_missing("config file not found", "claude"));
     }
     use super::*;
-
-    #[test]
-    fn portable_zip_url_matches_release_asset_names() {
-        assert_eq!(
-            portable_zip_url("4.0.12", false).as_deref(),
-            Some("https://github.com/farion1231/cc-switch/releases/download/v4.0.12/CC-Switch-v4.0.12-Windows-Portable.zip")
-        );
-        assert_eq!(
-            portable_zip_url("v4.1.0-beta.1", true).as_deref(),
-            Some("https://github.com/farion1231/cc-switch/releases/download/v4.1.0-beta.1/CC-Switch-v4.1.0-beta.1-Windows-arm64-Portable.zip")
-        );
-        for bad in ["", "v", "latest", "4.0/../x", "4.0.0?x=1"] {
-            assert!(portable_zip_url(bad, false).is_none(), "{bad}");
-        }
-    }
 
     #[test]
     fn external_url_whitelist() {
@@ -9212,7 +9173,7 @@ mod tests {
     fn effective_path_keeps_process_entries_with_non_unicode_path() {
         use std::os::windows::ffi::OsStringExt;
 
-        const CHILD: &str = "CC_SWITCH_TEST_NON_UNICODE_PATH";
+        const CHILD: &str = "XSEC_SHIELD_TEST_NON_UNICODE_PATH";
         if std::env::var_os(CHILD).is_some() {
             assert!(std::env::var("PATH").is_err());
             let effective = effective_path_string();
@@ -9385,7 +9346,7 @@ mod tests {
             let entry = bin.join(format!("opencode.{extension}"));
             std::fs::write(
                 &entry,
-                "@echo off\r\necho arg=%~1\r\necho env=%CC_SWITCH_CAPTURE_TEST%\r\necho captured-stderr 1>&2\r\ncmd /D /C cc_switch_capture_helper.cmd\r\nexit /b %errorlevel%\r\n",
+                "@echo off\r\necho arg=%~1\r\necho env=%XSEC_SHIELD_CAPTURE_TEST%\r\necho captured-stderr 1>&2\r\ncmd /D /C cc_switch_capture_helper.cmd\r\nexit /b %errorlevel%\r\n",
             )
             .unwrap();
             let canonical = std::fs::canonicalize(entry).unwrap();
@@ -9395,7 +9356,7 @@ mod tests {
                 &["models"],
                 &path,
                 CommandDeadline::from_timeout(Some(std::time::Duration::from_secs(10))),
-                &[("CC_SWITCH_CAPTURE_TEST", "preserved".into())],
+                &[("XSEC_SHIELD_CAPTURE_TEST", "preserved".into())],
                 root.path(),
             )
             .unwrap();
@@ -9698,12 +9659,12 @@ mod tests {
         assert!(command.is_ascii(), "batch line must stay ASCII: {command}");
         assert_eq!(
             command,
-            "cd /d \"%CC_SWITCH_INTERNAL_CWD%\" || exit /b 1\r\nset \"CC_SWITCH_INTERNAL_CWD=\"\r\n"
+            "cd /d \"%XSEC_SHIELD_INTERNAL_CWD%\" || exit /b 1\r\nset \"XSEC_SHIELD_INTERNAL_CWD=\"\r\n"
         );
         assert_eq!(env.as_deref(), Some(path));
 
         let (unc_command, unc_env) = build_windows_cwd_command_str(r"\\server\共享\repo");
-        assert!(unc_command.starts_with("pushd \"%CC_SWITCH_INTERNAL_CWD%\" || exit /b 1\r\n"));
+        assert!(unc_command.starts_with("pushd \"%XSEC_SHIELD_INTERNAL_CWD%\" || exit /b 1\r\n"));
         assert_eq!(unc_env.as_deref(), Some(r"\\server\共享\repo"));
     }
 }

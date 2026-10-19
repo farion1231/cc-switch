@@ -8,7 +8,7 @@ Kimi オープンプラットフォームと Kimi For Coding の公式 Codex プ
 2. 対応する API Key を入力し、保存して有効にします。旧カードはプリセットの追加し直しを推奨します。手動で移行する場合は、エンドポイントを確認して「上流フォーマット」を **Responses** に変更します。
 3. Codex を再起動し、設定とモデルカタログを読み込みます。ネイティブ Responses を通常のプロキシ経由で転送することもできますが、Responses→Chat 変換は不要です。
 
-詳細は [v3.20.3 更新情報](../release-notes/v3.20.3-ja.md)と[プロバイダーの追加](../user-manual/ja/2-providers/2.1-add.md)を参照してください。**以下は既存の Chat カードのトラブルシュート用に残した旧版の手順と画像であり、最新プリセットの設定ではありません。**
+詳細は [v3.20.3 更新情報](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/release-notes/v3.20.3-ja.md)と[プロバイダーの追加](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/ja/2-providers/2.1-add.md)を参照してください。**以下は既存の Chat カードのトラブルシュート用に残した旧版の手順と画像であり、最新プリセットの設定ではありません。**
 
 > 対象バージョン: CC Switch 3.16.5 およびその前後のバージョン。本記事はリポジトリ内のドキュメントとコードをもとに整理し、OpenAI Chat Completions 互換 API の例として Kimi を使用します。スクリーンショットは現在のフロントエンド UI から、実際の API Key やアカウント残高が漏れないよう匿名化したサンプルデータで生成しています。
 
@@ -115,9 +115,9 @@ SiliconFlow、ModelScope など一般的な Chat 形式プロバイダーは CC 
 
 ## 参考リンク
 
-- [CC Switch ユーザーマニュアル: プロバイダーの追加](../user-manual/ja/2-providers/2.1-add.md)
-- [CC Switch ユーザーマニュアル: プロキシサービス](../user-manual/ja/4-proxy/4.1-service.md)
-- [CC Switch ユーザーマニュアル: アプリケーションルーティング](../user-manual/ja/4-proxy/4.2-routing.md)
+- [CC Switch ユーザーマニュアル: プロバイダーの追加](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/ja/2-providers/2.1-add.md)
+- [CC Switch ユーザーマニュアル: プロキシサービス](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/ja/4-proxy/4.1-service.md)
+- [CC Switch ユーザーマニュアル: アプリケーションルーティング](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/ja/4-proxy/4.2-routing.md)
 - [Kimi オープンプラットフォーム: コーディングツールで Kimi K2.7 Code を使う](https://platform.kimi.com/docs/guide/agent-support)
 - [Kimi Code ドキュメント: 概要](https://www.kimi.com/code/docs/)
 - [Kimi Code ドキュメント: サードパーティ Coding Agent での利用](https://www.kimi.com/code/docs/third-party-tools/other-coding-agents.html)

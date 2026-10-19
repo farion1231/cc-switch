@@ -43,4 +43,4 @@ Codex 桌面应用的模型选择器会按你**当前的登录身份**来决定�
 
 - [使用第三方 API 时保留 Codex 远程操作和官方插件](./codex-official-auth-preservation-guide-zh.md)
 - [在 Codex 中使用 Chat 格式 API：本地路由攻略](./codex-deepseek-routing-guide-zh.md)
-- [本地路由](../user-manual/zh/4-proxy/4.2-routing.md)
+- [本地路由](https://github.com/farion1231/cc-switch/blob/adc223af322adaeca878e82bf78323865b0db768/docs/user-manual/zh/4-proxy/4.2-routing.md)

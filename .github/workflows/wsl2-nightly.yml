@@ -74,8 +74,8 @@ jobs:
       - name: Prepare WSL2-backed test environment
         shell: pwsh
         run: |
-          wsl.exe -d Ubuntu-24.04 -- bash -lc "rm -rf /tmp/cc-switch-windows-test-root && mkdir -p /tmp/cc-switch-windows-test-root/{home,temp} && chmod -R 0777 /tmp/cc-switch-windows-test-root"
-          $testRoot = "\\wsl.localhost\Ubuntu-24.04\tmp\cc-switch-windows-test-root"
+          wsl.exe -d Ubuntu-24.04 -- bash -lc "rm -rf /tmp/xsec-shield-windows-test-root && mkdir -p /tmp/xsec-shield-windows-test-root/{home,temp} && chmod -R 0777 /tmp/xsec-shield-windows-test-root"
+          $testRoot = "\\wsl.localhost\Ubuntu-24.04\tmp\xsec-shield-windows-test-root"
           $testHome = Join-Path $testRoot "home"
           $testTemp = Join-Path $testRoot "temp"
           foreach ($path in @($testRoot, $testHome, $testTemp)) {
@@ -83,17 +83,17 @@ jobs:
               throw "WSL2-backed test path is unavailable: $path"
             }
           }
-          "CC_SWITCH_TEST_HOME=$testHome" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "CC_SWITCH_WSL_TEST_DIR=$testRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "CC_SWITCH_WSL_TEST_TEMP=$testTemp" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "XSEC_SHIELD_TEST_HOME=$testHome" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "XSEC_SHIELD_WSL_TEST_DIR=$testRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "XSEC_SHIELD_WSL_TEST_TEMP=$testTemp" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       # link.exe/mt.exe cannot create manifests when TEMP points at a WSL UNC path,
       # so build here with the native TEMP and only run the archive below.
       - name: Archive backend lib tests with native temp
         shell: pwsh
         run: |
-          $archive = Join-Path $env:RUNNER_TEMP "cc-switch-lib-tests.tar.zst"
-          $extractDir = Join-Path $env:RUNNER_TEMP "cc-switch-lib-tests"
+          $archive = Join-Path $env:RUNNER_TEMP "xsec-shield-lib-tests.tar.zst"
+          $extractDir = Join-Path $env:RUNNER_TEMP "xsec-shield-lib-tests"
           # --extract-to requires an existing directory
           New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
           cargo nextest archive --lib --manifest-path src-tauri/Cargo.toml --archive-file $archive
@@ -109,8 +109,8 @@ jobs:
       - name: Run Windows-to-WSL2 filesystem contract
         shell: pwsh
         run: |
-          $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
-          $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
+          $env:TEMP = $env:XSEC_SHIELD_WSL_TEST_TEMP
+          $env:TMP = $env:XSEC_SHIELD_WSL_TEST_TEMP
           cargo nextest run --archive-file $env:NEXTEST_ARCHIVE --extract-to $env:NEXTEST_EXTRACT_DIR --extract-overwrite --profile ci --no-tests fail --no-capture --run-ignored only -E 'test(=config::tests::atomic_write_replaces_existing_wsl_unc_file)'
 
       # The 9P share sometimes aborts a write mid-test (os error 995). Retry here
@@ -118,6 +118,6 @@ jobs:
       - name: Run lib tests against WSL2-backed home
         shell: pwsh
         run: |
-          $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
-          $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
+          $env:TEMP = $env:XSEC_SHIELD_WSL_TEST_TEMP
+          $env:TMP = $env:XSEC_SHIELD_WSL_TEST_TEMP
           cargo nextest run --archive-file $env:NEXTEST_ARCHIVE --extract-to $env:NEXTEST_EXTRACT_DIR --extract-overwrite --profile ci --test-threads 1 --retries 2 -E 'not test(/database::/)'

@@ -13,7 +13,7 @@
 //! 重建 live）随接管备份机制一起退役，发版时改用上一个正式版的二进制做降级回放。新版
 //! 这一侧由 `mode::controller` 的测试锁住：代理契约沿用这个字面值，启动时删掉旧备份行。
 //!
-//! 更新快照：`CC_SWITCH_UPDATE_GOLDEN=1 cargo test --test golden`，再逐个审 diff。
+//! 更新快照：`XSEC_SHIELD_UPDATE_GOLDEN=1 cargo test --test golden`，再逐个审 diff。
 //! 快照变了就意味着行为变了，要能说清楚为什么。
 
 #[allow(dead_code)]

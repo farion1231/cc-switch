@@ -291,7 +291,7 @@ fn apply_file_to_database(
     Ok((upserted, deleted))
 }
 
-/// Load user-maintained overrides from `~/.cc-switch/model-pricing.json`.
+/// Load user-maintained overrides from `~/.xsec-agent-shield/model-pricing.json`.
 /// Built-in rows remain database-owned so application updates can repair them;
 /// the file contains only explicit overrides and deletion tombstones.
 pub fn sync_local_model_pricing(db: &Database) -> Result<usize, AppError> {
@@ -478,16 +478,16 @@ mod tests {
 
     fn with_test_home(test: impl FnOnce(&Database, &PathBuf)) {
         let temp = tempfile::tempdir().expect("tempdir");
-        let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        let previous = std::env::var_os("XSEC_SHIELD_TEST_HOME");
+        std::env::set_var("XSEC_SHIELD_TEST_HOME", temp.path());
 
         let db = Database::memory().expect("memory database");
         let path = model_pricing_file_path();
         test(&db, &path);
 
         match previous {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            Some(value) => std::env::set_var("XSEC_SHIELD_TEST_HOME", value),
+            None => std::env::remove_var("XSEC_SHIELD_TEST_HOME"),
         }
     }
 

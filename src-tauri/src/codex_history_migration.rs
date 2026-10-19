@@ -4,8 +4,8 @@
 //! 失败时不写标记，下一次启动自动重试。
 
 use crate::codex_config::{
-    get_codex_config_dir, read_codex_config_text, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
-    CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID,
+    get_codex_config_dir, read_codex_config_text, XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID,
+    XSEC_SHIELD_CODEX_OFFICIAL_PROXY_PROVIDER_ID,
 };
 use crate::codex_rollout_file;
 use crate::codex_state_db::{codex_state_db_is_lockable, codex_state_db_paths};
@@ -52,11 +52,11 @@ pub(crate) fn lock_history_op_for_backup_cleanup() -> std::sync::MutexGuard<'sta
 /// Codex 内建默认 provider id：config.toml 没有 `model_provider` 键时会话归入此桶。
 /// 官方订阅（ChatGPT OAuth / OpenAI API key）的历史会话都记录这个 id。
 const OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID: &str = "openai";
-const LEGACY_CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "ccswitch";
+const LEGACY_CCSWITCH_CODEX_MODEL_PROVIDER_ID: &str = "ccswitch";
 // If a Codex preset ever used a temporary routing key, keep that old key here
 // so local history can be bucketed under the current custom provider id.
-const CC_SWITCH_LEGACY_CODEX_MODEL_PROVIDER_IDS: &[&str] = &[
-    LEGACY_CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+const LEGACY_CCSWITCH_CODEX_MODEL_PROVIDER_IDS: &[&str] = &[
+    LEGACY_CCSWITCH_CODEX_MODEL_PROVIDER_ID,
     "aicodemirror",
     "aicoding",
     "aigocode",
@@ -135,7 +135,7 @@ pub fn maybe_migrate_codex_third_party_history_provider_bucket(
         crate::settings::mark_codex_third_party_history_provider_bucket_migrated(
             CodexThirdPartyHistoryProviderBucketMigration {
                 completed_at: Utc::now().to_rfc3339(),
-                target_provider_id: CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string(),
+                target_provider_id: XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID.to_string(),
                 source_provider_ids: Vec::new(),
                 migrated_jsonl_files: 0,
                 migrated_state_rows: 0,
@@ -159,7 +159,7 @@ pub fn maybe_migrate_codex_third_party_history_provider_bucket(
     crate::settings::mark_codex_third_party_history_provider_bucket_migrated(
         CodexThirdPartyHistoryProviderBucketMigration {
             completed_at: Utc::now().to_rfc3339(),
-            target_provider_id: CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string(),
+            target_provider_id: XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID.to_string(),
             source_provider_ids: source_provider_ids_vec.clone(),
             migrated_jsonl_files,
             migrated_state_rows,
@@ -202,7 +202,7 @@ pub fn maybe_migrate_codex_provider_template_bucket(
 /// 重新开启并再次勾选即可补迁关闭期间产生的官方会话。
 /// custom 桶里官方与第三方会话无法区分，自动逻辑绝不反向搬回；
 /// 用户可在关闭开关时选择按备份账本精确还原（见 `restore_codex_official_history_from_backups`）。
-/// 迁移前 jsonl / state DB 均备份到 `~/.cc-switch/backups/codex-official-history-unify-v1/`。
+/// 迁移前 jsonl / state DB 均备份到 `~/.xsec-agent-shield/backups/codex-official-history-unify-v1/`。
 pub fn maybe_migrate_codex_official_history_to_unified_bucket(
 ) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
     if !crate::settings::unify_codex_session_history() {
@@ -264,7 +264,7 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
     let marker_written = crate::settings::mark_codex_official_history_unify_migrated_if_enabled(
         CodexOfficialHistoryUnifyMigration {
             completed_at: Utc::now().to_rfc3339(),
-            target_provider_id: CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string(),
+            target_provider_id: XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID.to_string(),
             migrated_jsonl_files,
             migrated_state_rows,
             codex_config_dir: Some(codex_dir_key),
@@ -289,7 +289,7 @@ fn codex_config_text_routes_custom(config_text: &str) -> bool {
         .and_then(|doc| {
             doc.get("model_provider")
                 .and_then(|item| item.as_str())
-                .map(|id| id.trim() == CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+                .map(|id| id.trim() == XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID)
         })
         .unwrap_or(false)
 }
@@ -315,7 +315,7 @@ pub fn maybe_migrate_codex_legacy_official_history_to_openai_bucket(
     }
 
     let config_text = read_codex_config_text().unwrap_or_default();
-    if codex_config_selects_provider(&config_text, CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID) {
+    if codex_config_selects_provider(&config_text, XSEC_SHIELD_CODEX_OFFICIAL_PROXY_PROVIDER_ID) {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("legacy_route_in_use".to_string()),
             ..Default::default()
@@ -332,7 +332,7 @@ pub fn maybe_migrate_codex_legacy_official_history_to_openai_bucket(
     }
 
     let source_provider_ids: BTreeSet<String> =
-        std::iter::once(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID.to_string()).collect();
+        std::iter::once(XSEC_SHIELD_CODEX_OFFICIAL_PROXY_PROVIDER_ID.to_string()).collect();
     let backup_root = migration_backup_root(MIGRATION_NAME);
     let migrated_jsonl_files = migrate_codex_jsonl_files_to(
         &codex_dir,
@@ -680,7 +680,7 @@ fn rewrite_codex_session_meta_line_for_restore(
         return None;
     }
     let payload = value.get_mut("payload")?.as_object_mut()?;
-    if payload.get("model_provider")?.as_str()? != CC_SWITCH_CODEX_MODEL_PROVIDER_ID {
+    if payload.get("model_provider")?.as_str()? != XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID {
         return None;
     }
     let session_id = payload.get("id")?.as_str()?;
@@ -723,7 +723,7 @@ fn restore_codex_state_db_official_threads(
             "SELECT COUNT(*) FROM threads WHERE model_provider = ? AND id IN ({placeholders})"
         );
         let mut values = Vec::with_capacity(chunk.len() + 1);
-        values.push(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
+        values.push(XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID.to_string());
         values.extend(chunk.iter().map(|id| (*id).clone()));
         let count: i64 = conn
             .query_row(&count_sql, params_from_iter(values.iter()), |row| {
@@ -749,7 +749,7 @@ fn restore_codex_state_db_official_threads(
         );
         let mut values = Vec::with_capacity(chunk.len() + 2);
         values.push(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string());
-        values.push(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
+        values.push(XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID.to_string());
         values.extend(chunk.iter().map(|id| (*id).clone()));
         changed += tx
             .execute(&update_sql, params_from_iter(values.iter()))
@@ -858,7 +858,7 @@ fn migration_backup_root(migration_name: &str) -> PathBuf {
 }
 
 fn is_known_cc_switch_legacy_codex_model_provider_id(provider_id: &str) -> bool {
-    CC_SWITCH_LEGACY_CODEX_MODEL_PROVIDER_IDS
+    LEGACY_CCSWITCH_CODEX_MODEL_PROVIDER_IDS
         .iter()
         .any(|known| known.eq_ignore_ascii_case(provider_id))
 }
@@ -869,8 +869,8 @@ fn legacy_codex_model_provider_id_from_normalized_config(config_text: &str) -> O
         .get("model_provider")
         .and_then(|item| item.as_str())
         .map(str::trim)?;
-    if provider_id != CC_SWITCH_CODEX_MODEL_PROVIDER_ID
-        && provider_id != LEGACY_CC_SWITCH_CODEX_MODEL_PROVIDER_ID
+    if provider_id != XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID
+        && provider_id != LEGACY_CCSWITCH_CODEX_MODEL_PROVIDER_ID
     {
         return None;
     }
@@ -889,7 +889,7 @@ fn legacy_codex_model_provider_id_from_normalized_config(config_text: &str) -> O
 
 fn normalized_legacy_codex_provider_name(name: &str) -> Option<&'static str> {
     if is_known_cc_switch_legacy_codex_model_provider_id(name) {
-        return CC_SWITCH_LEGACY_CODEX_MODEL_PROVIDER_IDS
+        return LEGACY_CCSWITCH_CODEX_MODEL_PROVIDER_IDS
             .iter()
             .copied()
             .find(|known| known.eq_ignore_ascii_case(name));
@@ -978,7 +978,7 @@ fn migrate_provider_config_template_to_custom(
         .map(str::to_string);
 
     let custom_table_exists =
-        config_defines_model_provider(&doc, CC_SWITCH_CODEX_MODEL_PROVIDER_ID);
+        config_defines_model_provider(&doc, XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID);
     let source_provider_id_to_move = active_provider_id
         .as_deref()
         .filter(|provider_id| source_provider_ids.contains(*provider_id))
@@ -1004,7 +1004,7 @@ fn migrate_provider_config_template_to_custom(
         let Some(provider_table) = model_providers.remove(source_provider_id.as_str()) else {
             return Ok(None);
         };
-        model_providers[CC_SWITCH_CODEX_MODEL_PROVIDER_ID] = provider_table;
+        model_providers[XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID] = provider_table;
         changed = true;
     }
 
@@ -1012,7 +1012,7 @@ fn migrate_provider_config_template_to_custom(
         .as_deref()
         .is_some_and(|provider_id| source_provider_ids.contains(provider_id))
     {
-        doc["model_provider"] = toml_edit::value(CC_SWITCH_CODEX_MODEL_PROVIDER_ID);
+        doc["model_provider"] = toml_edit::value(XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID);
         changed = true;
     }
 
@@ -1054,7 +1054,7 @@ fn rewrite_legacy_provider_profile_refs(doc: &mut DocumentMut, source_provider_i
         if references_legacy {
             profile_table.insert(
                 "model_provider",
-                toml_edit::value(CC_SWITCH_CODEX_MODEL_PROVIDER_ID),
+                toml_edit::value(XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID),
             );
             changed = true;
         }
@@ -1070,7 +1070,7 @@ fn migrate_codex_jsonl_files(
     migrate_codex_jsonl_files_to(
         codex_dir,
         source_provider_ids,
-        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+        XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID,
         backup_root,
     )
 }
@@ -1134,7 +1134,7 @@ fn rewrite_codex_session_file_for_provider_bucket(
         rewrite_codex_session_meta_line(
             line,
             source_provider_ids,
-            CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+            XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID,
         )
     })
 }
@@ -1228,7 +1228,7 @@ fn migrate_codex_state_dbs(
     migrate_codex_state_dbs_to(
         codex_dir,
         source_provider_ids,
-        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+        XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID,
         backup_root,
     )
 }
@@ -1267,7 +1267,7 @@ fn migrate_codex_state_db_provider_bucket(
         db_path,
         codex_dir,
         source_provider_ids,
-        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+        XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID,
         backup_root,
     )
 }
@@ -2869,8 +2869,8 @@ model_provider = "aihubmix"
     impl IsolatedHome {
         fn new() -> Self {
             let dir = tempdir().expect("tempdir");
-            let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            let original_test_home = std::env::var_os("XSEC_SHIELD_TEST_HOME");
+            std::env::set_var("XSEC_SHIELD_TEST_HOME", dir.path());
             crate::settings::reload_settings().expect("reload settings for isolated home");
             Self {
                 dir,
@@ -2886,8 +2886,8 @@ model_provider = "aihubmix"
     impl Drop for IsolatedHome {
         fn drop(&mut self) {
             match &self.original_test_home {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                Some(value) => std::env::set_var("XSEC_SHIELD_TEST_HOME", value),
+                None => std::env::remove_var("XSEC_SHIELD_TEST_HOME"),
             }
             let _ = crate::settings::reload_settings();
         }
@@ -3020,7 +3020,7 @@ model_provider = "aihubmix"
         fs::create_dir_all(&codex_dir).expect("create codex dir");
         fs::write(
             codex_dir.join("config.toml"),
-            "[profiles.legacy]\nmodel_provider = \"cc-switch-official\"\n\n[model_providers.cc-switch-official]\nname = \"OpenAI\"\nrequires_openai_auth = true\n",
+            "[profiles.legacy]\nmodel_provider = \"cc-switch-official\"\n\n[model_providers.xsec-agent-shield-official]\nname = \"OpenAI\"\nrequires_openai_auth = true\n",
         )
         .expect("write config");
         let state_db = codex_dir.join(CODEX_STATE_DB_FILENAME);
@@ -3053,7 +3053,7 @@ model_provider = "aihubmix"
             id
         ));
         assert!(!codex_config_selects_provider(
-            "model_provider = \"custom\"\n\n[model_providers.cc-switch-official]\nname = \"OpenAI\"\n",
+            "model_provider = \"custom\"\n\n[model_providers.xsec-agent-shield-official]\nname = \"OpenAI\"\n",
             id
         ));
         assert!(!codex_config_selects_provider("not = [valid", id));

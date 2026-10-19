@@ -1100,8 +1100,8 @@ mod tests {
         use std::io::{BufRead, BufReader};
         use std::process::{Command, Stdio};
 
-        let distro = std::env::var("CC_SWITCH_WSL_DISTRO").expect("WSL distro");
-        let native_path = format!("/tmp/ccswitch8205-{}.db", std::process::id());
+        let distro = std::env::var("XSEC_SHIELD_WSL_DISTRO").expect("WSL distro");
+        let native_path = format!("/tmp/xsecshield8205-{}.db", std::process::id());
         let mut writer = Command::new("wsl.exe")
             .args(["--distribution", &distro, "--exec", "python3", "-u", "-c"])
             .arg(

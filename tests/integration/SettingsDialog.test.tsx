@@ -119,7 +119,7 @@ describe("SettingsPage integration", () => {
     const appInput = await screen.findByPlaceholderText(
       "settings.browsePlaceholderApp",
     );
-    expect((appInput as HTMLInputElement).value).toBe("/home/mock/.cc-switch");
+    expect((appInput as HTMLInputElement).value).toBe("/home/mock/.xsec-agent-shield");
   });
 
   it("imports configuration and triggers success callback", async () => {
@@ -168,19 +168,19 @@ describe("SettingsPage integration", () => {
     const appInput = (await screen.findByPlaceholderText(
       "settings.browsePlaceholderApp",
     )) as HTMLInputElement;
-    expect(appInput.value).toBe("/home/mock/.cc-switch");
+    expect(appInput.value).toBe("/home/mock/.xsec-agent-shield");
 
     fireEvent.click(
       screen.getByRole("button", { name: "settings.browseDirectory" }),
     );
     await waitFor(() =>
-      expect(appInput.value).toBe("/home/mock/.cc-switch/picked"),
+      expect(appInput.value).toBe("/home/mock/.xsec-agent-shield/picked"),
     );
 
     fireEvent.click(
       screen.getByRole("button", { name: "settings.resetDefault" }),
     );
-    await waitFor(() => expect(appInput.value).toBe("/home/mock/.cc-switch"));
+    await waitFor(() => expect(appInput.value).toBe("/home/mock/.xsec-agent-shield"));
   });
 
   it("allows browsing and resetting an app's config directory", async () => {

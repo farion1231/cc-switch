@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { getVersion } from "@tauri-apps/api/app";
-import { ChevronRight, ExternalLink, Sparkles } from "lucide-react";
+import { ChevronRight, Sparkles } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -17,7 +17,6 @@ import { settingsApi } from "@/lib/api";
 import { useSettingsQuery } from "@/lib/query";
 import {
   WHATS_NEW_ENTRIES,
-  changelogUrl,
   entriesSince,
   isNewerThanSeen,
   markSeen,
@@ -53,23 +52,6 @@ export function WhatsNewDialog({
   const visible = showAll ? entries : entries.slice(0, EXPANDED_VERSIONS);
   const hiddenCount = entries.length - visible.length;
 
-  const openExternal = (url: string) => {
-    settingsApi.openExternal(url).catch((error) => {
-      console.error("Failed to open changelog:", error);
-    });
-  };
-
-  const handleViewFull = () => {
-    // 只有一个版本就直接打开这一版，多个版本打开更新日志列表
-    openExternal(
-      changelogUrl(
-        language,
-        entries.length === 1 ? entries[0].version : undefined,
-      ),
-    );
-    onClose();
-  };
-
   return (
     <Dialog
       open={open}
@@ -102,16 +84,6 @@ export function WhatsNewDialog({
                 <h3 className="text-strong tabular-nums text-fg-1">
                   v{entry.version}
                 </h3>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 text-caption text-fg-2 hover:text-fg-1"
-                  onClick={() =>
-                    openExternal(changelogUrl(language, entry.version))
-                  }
-                >
-                  {t("whatsNew.versionDetails")}
-                  <ExternalLink className="h-3 w-3" />
-                </button>
               </div>
               <ul className="mt-2 space-y-1.5">
                 {entry.items.map((item, index) => (
@@ -140,9 +112,6 @@ export function WhatsNewDialog({
           )}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={handleViewFull}>
-            {t("whatsNew.viewFull")}
-          </Button>
           <Button onClick={onClose}>{t("whatsNew.confirm")}</Button>
         </DialogFooter>
       </DialogContent>

@@ -2,7 +2,7 @@
 
 用户升级后第一次打开 CC Switch，会弹一个窗口，列出从上次看过的版本到当前版本之间每一版的几条摘要。数据就是这个目录下的文件，构建时打进安装包（`src/lib/whatsNew.ts`），弹窗不联网。
 
-详细内容仍在 `docs/release-notes/`。弹窗里每个版本的「详情」链到官网 `https://ccswitch.io/<zh|en|ja>/changelog/<version>`，所以发版后要照常同步官网更新日志。
+这里保留的是 CC Switch 基线的应用内摘要数据，当前仍被界面与测试使用。旧版详细发布说明已从工作树清理，可从基线提交 `adc223af322adaeca878e82bf78323865b0db768` 的 `docs/release-notes/` 查阅。界面中的官网详情链接属于待迁移的上游品牌配置，XSEC 发布前按 `docs/development-plan.md` 的 P0 任务统一替换；不要向上游官网同步本项目发布内容。
 
 ## 每个版本一个文件
 

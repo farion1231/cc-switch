@@ -931,14 +931,14 @@ mod tests {
         fs::create_dir_all(&openclaw_dir).unwrap();
         let config_path = openclaw_dir.join("openclaw.json");
         fs::write(&config_path, source).unwrap();
-        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        let old_test_home = std::env::var_os("XSEC_SHIELD_TEST_HOME");
         let old_home = std::env::var_os("HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        std::env::set_var("XSEC_SHIELD_TEST_HOME", temp.path());
         std::env::set_var("HOME", temp.path());
         let result = test(&config_path);
         match old_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            Some(value) => std::env::set_var("XSEC_SHIELD_TEST_HOME", value),
+            None => std::env::remove_var("XSEC_SHIELD_TEST_HOME"),
         }
         match old_home {
             Some(value) => std::env::set_var("HOME", value),

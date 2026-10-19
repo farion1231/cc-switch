@@ -411,7 +411,7 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 pub(crate) fn detect_system_device_name() -> Option<String> {
-    let env_name = ["CC_SWITCH_DEVICE_NAME", "COMPUTERNAME", "HOSTNAME"]
+    let env_name = ["XSEC_SHIELD_DEVICE_NAME", "COMPUTERNAME", "HOSTNAME"]
         .iter()
         .filter_map(|key| std::env::var(key).ok())
         .find_map(|value| normalize_device_name(&value));
