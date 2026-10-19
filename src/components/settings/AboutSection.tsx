@@ -19,7 +19,12 @@ import { settingsApi } from "@/lib/api";
 import { useUpdate } from "@/contexts/UpdateContext";
 import { Badge } from "@/components/ui/badge";
 import { WhatsNewDialog } from "@/components/WhatsNewDialog";
-import { WHATS_NEW_ENTRIES, entriesUpTo } from "@/lib/whatsNew";
+import {
+  WHATS_NEW_ENTRIES,
+  entriesUpTo,
+  parseWhatsNewNotes,
+} from "@/lib/whatsNew";
+import { compareVersions } from "@/lib/version";
 import appIcon from "@/assets/icons/app-icon.png";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
@@ -65,6 +70,29 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
 
   const { hasUpdate, updateInfo, checkUpdate, resetDismiss, isChecking } =
     useUpdate();
+
+  // 待更新版本的摘要随更新检查结果到达，无有效摘要时只显示本地内容。
+  const pendingEntry = useMemo(() => {
+    const candidate = updateInfo?.availableVersion;
+    if (
+      !hasUpdate ||
+      !candidate ||
+      !version ||
+      compareVersions(candidate, version) <= 0
+    ) {
+      return null;
+    }
+    return parseWhatsNewNotes(updateInfo.notes, candidate);
+  }, [hasUpdate, updateInfo, version]);
+
+  // 近期更新列表 = 已装版本的摘要 + 待更新版本的摘要
+  const recentEntriesWithPending = useMemo(
+    () =>
+      pendingEntry
+        ? [{ ...pendingEntry, pending: true }, ...recentEntries]
+        : recentEntries,
+    [pendingEntry, recentEntries],
+  );
 
   useEffect(() => {
     let active = true;
@@ -257,9 +285,6 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
               version: updateInfo.availableVersion,
             })}
           </p>
-          {updateInfo.notes && (
-            <p className="line-clamp-3 text-fg-2">{updateInfo.notes}</p>
-          )}
           {isPortable && (
             <p className="text-fg-2">{t("settings.portableUpdateHint")}</p>
           )}
@@ -296,7 +321,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           <ExternalLink className="h-3.5 w-3.5" />
           {t("settings.releaseNotes")}
         </Button>
-        {recentEntries.length > 0 && (
+        {recentEntriesWithPending.length > 0 && (
           <Button
             type="button"
             variant="neutral"
@@ -349,7 +374,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       <WhatsNewDialog
         open={whatsNewOpen}
         onClose={() => setWhatsNewOpen(false)}
-        entries={recentEntries}
+        entries={recentEntriesWithPending}
       />
     </div>
   );

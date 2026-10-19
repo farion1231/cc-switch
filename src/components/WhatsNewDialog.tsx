@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { useNewLayoutNoticePending } from "@/components/shell/NewLayoutDialog";
 import { settingsApi } from "@/lib/api";
 import { useSettingsQuery } from "@/lib/query";
@@ -99,8 +100,16 @@ export function WhatsNewDialog({
           {visible.map((entry) => (
             <section key={entry.version}>
               <div className="flex items-center justify-between gap-3">
-                <h3 className="text-strong tabular-nums text-fg-1">
+                <h3 className="flex items-center gap-2 text-strong tabular-nums text-fg-1">
                   v{entry.version}
+                  {entry.pending && (
+                    <Badge
+                      variant="secondary"
+                      className="gap-1 px-1.5 py-0 text-badge"
+                    >
+                      {t("whatsNew.pendingUpdate")}
+                    </Badge>
+                  )}
                 </h3>
                 <button
                   type="button"

@@ -4806,6 +4806,7 @@
     "updatedTo": "Updated to v{{version}}",
     "recentTitle": "Recent updates",
     "since": "What changed since v{{version}}",
+    "pendingUpdate": "Update available",
     "types": {
       "new": "New",
       "fix": "Fix",

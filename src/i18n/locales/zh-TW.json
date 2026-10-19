@@ -4807,6 +4807,7 @@
     "updatedTo": "已更新至 v{{version}}",
     "recentTitle": "近期更新",
     "since": "自 v{{version}} 以來的更新",
+    "pendingUpdate": "待更新",
     "types": {
       "new": "新增",
       "fix": "修復",

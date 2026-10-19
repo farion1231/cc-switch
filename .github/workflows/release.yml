@@ -797,6 +797,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      # 先 checkout，避免清理工作区时删除已下载的发布产物
+      - name: Checkout tag
+        uses: actions/checkout@v6
+
       - name: Download built release artifacts
         uses: actions/download-artifact@v8
         with:
@@ -821,6 +825,17 @@ jobs:
           VERSION="${TAG#v}"
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           base_url="https://github.com/$REPO/releases/download/$TAG"
+          # 摘要随更新清单一起到达；notes 是字符串，交给 jq 处理 JSON 转义。
+          notes_json=$(jq -c 'tojson' "src/whats-new/${VERSION}.json")
+          # 同时携带完整公告；旧客户端和近期更新仍然只读取 version/items。
+          for language in zh en ja; do
+            release_notes="docs/release-notes/v${VERSION}-${language}.md"
+            if [ -f "$release_notes" ]; then
+              notes_json=$(jq -cn --argjson notes "$notes_json" --arg language "$language" \
+                --rawfile markdown "$release_notes" \
+                '$notes | fromjson | .releaseNotes[$language] = $markdown | tojson')
+            fi
+          done
           # 初始化空平台映射
           mac_url=""; mac_sig=""
           win_x64_url=""; win_x64_sig=""
@@ -879,7 +894,7 @@ jobs:
           {
             echo '{'
             echo "  \"version\": \"$VERSION\",";
-            echo "  \"notes\": \"Release $TAG\",";
+            echo "  \"notes\": $notes_json,";
             echo "  \"pub_date\": \"$PUB_DATE\",";
             echo '  "platforms": {'
             first=1

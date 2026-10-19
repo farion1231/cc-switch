@@ -31,18 +31,24 @@ export async function checkForUpdate(
   const { check } = await import("@tauri-apps/plugin-updater");
 
   const currentVersion = await getCurrentVersion();
-  const update = await check({ timeout: opts.timeout ?? 30000 } as any);
+  const update = await check({ timeout: opts.timeout ?? 30000 });
 
   if (!update) {
     return { status: "up-to-date" };
   }
 
-  const info: UpdateInfo = {
-    currentVersion,
-    availableVersion: (update as any).version ?? "",
-    notes: (update as any).notes,
-    pubDate: (update as any).date,
-  };
-
-  return { status: "available", info };
+  try {
+    return {
+      status: "available",
+      info: {
+        currentVersion: update.currentVersion || currentVersion,
+        availableVersion: update.version,
+        notes: update.body,
+        pubDate: update.date,
+      },
+    };
+  } finally {
+    // 检测只读取元数据，不下载；及时释放插件持有的更新资源。
+    await update.close().catch(console.error);
+  }
 }

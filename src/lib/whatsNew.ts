@@ -20,6 +20,8 @@ export interface WhatsNewEntry {
   version: string;
   /** 空数组 = 这一版不弹窗（纯构建、CI 之类的版本） */
   items: WhatsNewItem[];
+  /** 待更新的远端版本（摘要来自更新清单） */
+  pending?: boolean;
 }
 
 const modules = import.meta.glob<WhatsNewEntry>("../whats-new/*.json", {
@@ -86,6 +88,67 @@ export function resolveWhatsNewLanguage(language: string): WhatsNewLanguage {
   return (WHATS_NEW_LANGUAGES as readonly string[]).includes(language)
     ? (language as WhatsNewLanguage)
     : "en";
+}
+
+const REMOTE_MAX_ITEMS = 4;
+
+/**
+ * 对任意数据只判形状、不抛错：弹窗渲染直接读 item.type、item[语言]，
+ * 结构不对不能进列表。空 items 形状合法，是否显示由调用方决定。
+ */
+export function parseWhatsNewEntry(data: unknown): WhatsNewEntry | null {
+  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    return null;
+  }
+  const record = data as Record<string, unknown>;
+  if (
+    typeof record.version !== "string" ||
+    !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(record.version)
+  ) {
+    return null;
+  }
+  if (!Array.isArray(record.items) || record.items.length > REMOTE_MAX_ITEMS) {
+    return null;
+  }
+  const items: WhatsNewItem[] = [];
+  for (const item of record.items) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      return null;
+    }
+    const itemRecord = item as Record<string, unknown>;
+    if (
+      !(WHATS_NEW_ITEM_TYPES as readonly unknown[]).includes(itemRecord.type)
+    ) {
+      return null;
+    }
+    const texts = { type: itemRecord.type } as Partial<WhatsNewItem>;
+    for (const language of WHATS_NEW_LANGUAGES) {
+      const text = itemRecord[language];
+      if (typeof text !== "string" || text.trim() === "") return null;
+      texts[language] = text;
+    }
+    items.push(texts as WhatsNewItem);
+  }
+  return { version: record.version, items };
+}
+
+/**
+ * release.yml 将摘要 JSON 序列化进 latest.json.notes，updater 映射到 Update.body。
+ * 旧清单的纯文本、无效结构、版本不匹配或空条目都返回 null，近期更新只显示本地摘要。
+ */
+export function parseWhatsNewNotes(
+  notes: string | undefined,
+  version: string,
+): WhatsNewEntry | null {
+  if (!notes) return null;
+  try {
+    const entry = parseWhatsNewEntry(JSON.parse(notes) as unknown);
+    return entry && entry.version === version && entry.items.length > 0
+      ? entry
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 /** 官网更新日志：不带版本是列表页。官网只有 zh / en / ja，繁中用简中页面 */
