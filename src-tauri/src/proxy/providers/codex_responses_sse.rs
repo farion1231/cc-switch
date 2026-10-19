@@ -55,8 +55,10 @@ pub(crate) fn response_completed(response: &Value) -> Bytes {
 
 /// `response.incomplete`. Emitted for truncated compaction turns and for
 /// truncated turns that produced no assistant text or tool calls (e.g., when
-/// reasoning tokens exhaust `max_output_tokens`), so Codex surfaces
-/// `ResponseIncomplete` instead of silently ending an empty turn.
+/// reasoning tokens exhaust `max_output_tokens`) instead of silently ending an
+/// empty turn. Codex >= 0.163.0 treats it as a terminal `ResponseIncomplete`
+/// error; Codex <= 0.162.1 treats it as a retryable `ApiError::Stream` (up to
+/// `DEFAULT_STREAM_MAX_RETRIES = 5`).
 pub(crate) fn response_incomplete(response: &Value) -> Bytes {
     sse_event(
         "response.incomplete",
