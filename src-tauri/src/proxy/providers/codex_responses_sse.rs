@@ -53,8 +53,10 @@ pub(crate) fn response_completed(response: &Value) -> Bytes {
     )
 }
 
-/// `response.incomplete`. Codex treats it as a retryable stream error; the converters
-/// only use it for compaction turns, where a truncated summary must not be installed.
+/// `response.incomplete`. Emitted for truncated compaction turns and for
+/// truncated turns that produced no assistant text or tool calls (e.g., when
+/// reasoning tokens exhaust `max_output_tokens`), so Codex surfaces
+/// `ResponseIncomplete` instead of silently ending an empty turn.
 pub(crate) fn response_incomplete(response: &Value) -> Bytes {
     sse_event(
         "response.incomplete",
