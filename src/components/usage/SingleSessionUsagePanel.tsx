@@ -114,7 +114,7 @@ function SingleSessionSummary({ session }: { session: SessionMeta }) {
               {t("usage.cacheHitRate")}
             </dt>
             <dd className="m-0 text-section tabular-nums text-fg-1">
-              {`${Math.max(0, Math.min(1, data.cacheHitRate)) * 100}%`}
+              {`${(Math.max(0, Math.min(1, data.cacheHitRate)) * 100).toFixed(1)}%`}
             </dd>
           </div>
           <div>

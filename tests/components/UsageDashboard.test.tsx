@@ -660,7 +660,7 @@ describe("UsageDashboard", () => {
     expect(screen.getByText("usage.cacheReadTokens")).toBeInTheDocument();
     expect(screen.getByText("1,234")).toBeInTheDocument();
     expect(screen.getByText("usage.cacheHitRate")).toBeInTheDocument();
-    expect(screen.getByText("75%")).toBeInTheDocument();
+    expect(screen.getByText("75.0%")).toBeInTheDocument();
     expect(
       screen.getByText("usage.singleSession.dataScopeHint"),
     ).toBeInTheDocument();

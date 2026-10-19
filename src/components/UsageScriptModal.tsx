@@ -104,28 +104,29 @@ const generatePresetTemplates = (
   },
   extractor: function (response) {
     if (response.code === true && response.data) {
+      var quotaPerDollar = 500000;
       var userAvailable = response.data.user_quota && response.data.user_quota.total_available;
       if (typeof userAvailable === "number") {
         return {
           planName: response.data.name || "${t("usageScript.defaultPlan")}",
-          remaining: response.data.unlimited_quota ? userAvailable : Math.min(response.data.total_available, userAvailable),
-          unit: "quota",
+          remaining: (response.data.unlimited_quota ? userAvailable : Math.min(response.data.total_available, userAvailable)) / quotaPerDollar,
+          unit: "USD",
         };
       }
       if (response.data.unlimited_quota) {
         return {
           planName: response.data.name || "${t("usageScript.defaultPlan")}",
-          used: response.data.total_used,
-          unit: "quota",
+          used: response.data.total_used / quotaPerDollar,
+          unit: "USD",
           extra: "∞",
         };
       }
       return {
         planName: response.data.name || "${t("usageScript.defaultPlan")}",
-        remaining: response.data.total_available,
-        used: response.data.total_used,
-        total: response.data.total_granted,
-        unit: "quota",
+        remaining: response.data.total_available / quotaPerDollar,
+        used: response.data.total_used / quotaPerDollar,
+        total: response.data.total_granted / quotaPerDollar,
+        unit: "USD",
       };
     }
     return {
@@ -387,20 +388,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     const savedScript = provider.meta?.usage_script;
     if (savedScript) {
       const normalizedScript = createUsageScript(savedScript);
-      if (
-        normalizedScript.code.includes("/api/user/self") &&
-        (normalizedScript.templateType === TEMPLATE_TYPES.NEW_API ||
-          normalizedScript.code.includes("New-Api-User"))
-      ) {
-        return {
-          ...normalizedScript,
-          code: PRESET_TEMPLATES[TEMPLATE_TYPES.NEW_API],
-          templateType: TEMPLATE_TYPES.NEW_API,
-          apiKey: undefined,
-          accessToken: undefined,
-          userId: undefined,
-        };
-      }
       if (
         isOfficialSubscription &&
         normalizedScript.templateType !== TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION

@@ -130,7 +130,7 @@ describe("UsageScriptModal NewAPI template", () => {
     ).value;
     expect(code).toContain('+ "/api/usage/token/"');
     expect(code).toContain('"Authorization": "Bearer {{apiKey}}"');
-    expect(code).toContain('unit: "quota"');
+    expect(code).toContain('unit: "USD"');
     expect(code).toContain("unlimited_quota");
     const script = new Function(
       `return ${code.split("{{baseUrl}}").join("https://apipaths.com/v1").split("{{apiKey}}").join("sk-test")}`,
@@ -145,13 +145,13 @@ describe("UsageScriptModal NewAPI template", () => {
         code: true,
         data: {
           name: "Default",
-          total_available: 120,
-          total_used: 30,
-          total_granted: 150,
+          total_available: 12000000,
+          total_used: 3000000,
+          total_granted: 15000000,
           unlimited_quota: false,
         },
       }),
-    ).toMatchObject({ remaining: 120, used: 30, total: 150, unit: "quota" });
+    ).toMatchObject({ remaining: 24, used: 6, total: 30, unit: "USD" });
     expect(screen.getByLabelText(/API Key/)).toBeInTheDocument();
     expect(screen.getAllByLabelText("usageScript.baseUrl")).toHaveLength(1);
     expect(
@@ -169,21 +169,21 @@ describe("UsageScriptModal NewAPI template", () => {
     );
   });
 
-  it("upgrades a saved user-profile script to the API-key template", async () => {
+  it("preserves a saved user-profile script until the user selects a new template", async () => {
     const onSave = vi.fn();
+    const oldCode =
+      '({ request: { url: "{{baseUrl}}/api/user/self" }, extractor: function (response) { return response; } })';
     renderModal(onSave, {
       ...provider.meta!.usage_script!,
       templateType: "newapi",
-      code: '({ request: { url: "{{baseUrl}}/api/user/self" } })',
+      code: oldCode,
       accessToken: "old-token",
       userId: "123",
     });
 
-    const code = (
-      screen.getByTestId("usage-script-code") as HTMLTextAreaElement
-    ).value;
-    expect(code).toContain("/api/usage/token/");
-    expect(code).not.toContain("/api/user/self");
+    expect(
+      screen.getByTestId("usage-script-code") as HTMLTextAreaElement,
+    ).toHaveValue(oldCode);
 
     await userEvent.click(
       screen.getByRole("button", { name: "usageScript.saveConfig" }),
@@ -191,9 +191,9 @@ describe("UsageScriptModal NewAPI template", () => {
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({
         templateType: "newapi",
-        code,
-        accessToken: undefined,
-        userId: undefined,
+        code: oldCode,
+        accessToken: "old-token",
+        userId: "123",
       }),
     );
   });
