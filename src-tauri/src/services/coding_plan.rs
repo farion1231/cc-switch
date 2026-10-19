@@ -1911,7 +1911,9 @@ fn qwen_usage_payload(body: &serde_json::Value) -> Option<&serde_json::Value> {
         }
         if depth_ok
             && (node.get("per1MonthPercentage").is_some()
-                || node.get("per1MonthResetTime").is_some())
+                || node.get("per1MonthResetTime").is_some()
+                || node.get("per5HourPercentage").is_some()
+                || node.get("per1WeekPercentage").is_some())
         {
             return Some(node);
         }
@@ -1934,8 +1936,40 @@ fn qwen_auth_error(detail: String) -> SubscriptionQuota {
     }
 }
 
-/// 千问AI平台 Token Plan 的月度用量。百分比原值是 0–1，乘 100 后与其它供应商的
-/// `QuotaTier.utilization`（0–100）统一。
+/// 组装套餐窗口。Token Plan 早期返回 5 小时 / 每周字段（官方 CLI 2026-10 前后删掉了
+/// 读取），现在只剩月度；这里按「有哪个显示哪个」处理，月度缺失时返回空由调用方报错。
+/// 百分比原值是 0–1，乘 100 后与其它供应商的 `QuotaTier.utilization`（0–100）统一。
+fn qwen_usage_tiers(payload: &serde_json::Value) -> Vec<QuotaTier> {
+    const WINDOWS: [(&str, &[&str]); 3] = [
+        (TIER_FIVE_HOUR, &["per5Hour"]),
+        (TIER_WEEKLY_LIMIT, &["per1Week", "perWeek"]),
+        (TIER_MONTHLY, &["per1Month"]),
+    ];
+    let mut tiers = Vec::new();
+    for (name, prefixes) in WINDOWS {
+        for prefix in prefixes {
+            let Some(percentage) = payload
+                .get(&format!("{prefix}Percentage"))
+                .and_then(parse_f64)
+            else {
+                continue;
+            };
+            tiers.push(QuotaTier {
+                name: name.to_string(),
+                utilization: percentage * 100.0,
+                resets_at: payload
+                    .get(&format!("{prefix}ResetTime"))
+                    .and_then(extract_reset_time),
+                used_value_usd: None,
+                max_value_usd: None,
+            });
+            break;
+        }
+    }
+    tiers
+}
+
+/// 千问AI平台 Token Plan 的月度用量（顺带显示旧版 5 小时 / 每周窗口）。
 async fn query_qwen_token_plan(
     access_key_id: &str,
     secret_access_key: &str,
@@ -1984,25 +2018,15 @@ async fn query_qwen_token_plan(
             "Token Plan usage response had no per1MonthPercentage. Raw: {raw}"
         )));
     };
-    let Some(percentage) = payload.get("per1MonthPercentage").and_then(parse_f64) else {
+    let tiers = qwen_usage_tiers(payload);
+    if tiers.is_empty() {
         let raw: String = payload.to_string().chars().take(700).collect();
         return Ok(make_error(format!(
-            "Token Plan usage response had no numeric per1MonthPercentage. Raw: {raw}"
+            "Token Plan usage response had no numeric percentage. Raw: {raw}"
         )));
-    };
+    }
 
-    Ok(volcengine_success(
-        vec![QuotaTier {
-            name: TIER_MONTHLY.to_string(),
-            utilization: percentage * 100.0,
-            resets_at: payload
-                .get("per1MonthResetTime")
-                .and_then(extract_reset_time),
-            used_value_usd: None,
-            max_value_usd: None,
-        }],
-        Some("Token Plan".to_string()),
-    ))
+    Ok(volcengine_success(tiers, Some("Token Plan".to_string())))
 }
 
 // ── 公开入口 ────────────────────────────────────────────────
@@ -2211,10 +2235,10 @@ mod tests {
         parse_afp_tiers, parse_coding_plan_tiers, parse_command_code_quota, parse_f64,
         parse_minimax_tiers, parse_opencode_go_tiers, parse_zhipu_token_tiers,
         query_command_code_at, query_zhipu_team_at, qwen_gateway_error, qwen_usage_payload,
-        volcengine_canonical_query, volcengine_is_auth_error_code, volcengine_region,
-        volcengine_response_error, volcengine_sign, zhipu_quota_base, CodingPlanProvider,
-        CredentialStatus, QWEN_ACS_ACTION, QWEN_ACS_PATH, QWEN_ACS_VERSION, TIER_FIVE_HOUR,
-        TIER_MONTHLY, TIER_WEEKLY_LIMIT,
+        qwen_usage_tiers, volcengine_canonical_query, volcengine_is_auth_error_code,
+        volcengine_region, volcengine_response_error, volcengine_sign, zhipu_quota_base,
+        CodingPlanProvider, CredentialStatus, QWEN_ACS_ACTION, QWEN_ACS_PATH, QWEN_ACS_VERSION,
+        TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
 
@@ -2365,6 +2389,31 @@ mod tests {
             .is_some());
         // 成功但没有用量字段 → 找不到载荷（调用方据此带上原始响应）
         assert!(qwen_usage_payload(&json!({"data": {"success": true}})).is_none());
+    }
+
+    #[test]
+    fn qwen_usage_tiers_reads_legacy_windows() {
+        let legacy = json!({
+            "per5HourPercentage": 0.1,
+            "per5HourResetTime": 1_761_900_000_i64,
+            "per1WeekPercentage": 0.25,
+            "per1MonthPercentage": 0.42,
+            "per1MonthResetTime": 1_761_926_400_i64,
+        });
+        let tiers = qwen_usage_tiers(&legacy);
+        assert_eq!(tiers.len(), 3);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert!((tiers[0].utilization - 10.0).abs() < 1e-9);
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(tiers[2].name, TIER_MONTHLY);
+        assert!((tiers[2].utilization - 42.0).abs() < 1e-9);
+        assert!(tiers[2].resets_at.is_some());
+
+        // 现在官方只返回月度：另外两个窗口直接缺席，不报错
+        let monthly = qwen_usage_tiers(&json!({"per1MonthPercentage": 0.5}));
+        assert_eq!(monthly.len(), 1);
+        assert_eq!(monthly[0].name, TIER_MONTHLY);
+        assert!(qwen_usage_tiers(&json!({"foo": 1})).is_empty());
     }
 
     #[test]
