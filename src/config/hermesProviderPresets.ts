@@ -1526,6 +1526,32 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     partnerPromotionKey: "alltokens",
     icon: "alltokens",
   },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    settingsConfig: {
+      name: "alltokens_si",
+      // new-api 网关，目录见 alltokens.si/api/pricing（2026-10-19 核对）：GPT 分组
+      // 只声明 Chat Completions，窗口按中转口径封顶 272K
+      base_url: "https://alltokens.si/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", context_length: 272000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "gpt-5.6-sol", provider: "alltokens_si" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",

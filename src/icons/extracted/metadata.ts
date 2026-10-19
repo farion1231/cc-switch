@@ -1123,6 +1123,19 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["alltokens", "all tokens", "aggregator", "gateway", "relay"],
     defaultColor: "currentColor",
   },
+  "alltokens-si": {
+    name: "alltokens-si",
+    displayName: "AllTokens SI",
+    category: "ai-provider",
+    keywords: [
+      "alltokens",
+      "alltokens si",
+      "enterprise",
+      "aggregator",
+      "relay",
+    ],
+    defaultColor: "currentColor",
+  },
 };
 
 export function getIconMetadata(name: string): IconMetadata | undefined {

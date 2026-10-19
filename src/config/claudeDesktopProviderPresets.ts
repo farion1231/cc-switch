@@ -1054,6 +1054,27 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     partnerPromotionKey: "alltokens",
     icon: "alltokens",
   },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    category: "aggregator",
+    baseUrl: "https://alltokens.si",
+    // 目录没有 claude-haiku-4-5、Claude ID 用点号（alltokens.si/api/pricing，
+    // 2026-10-19），不能透传；Haiku 档映射到 Sonnet
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5.5",
+      "claude-opus-5.5",
+      "claude-sonnet-5.5",
+      true,
+    ),
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",

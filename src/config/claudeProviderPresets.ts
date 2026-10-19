@@ -1083,6 +1083,29 @@ export const providerPresets: ProviderPreset[] = [
     partnerPromotionKey: "alltokens",
     icon: "alltokens",
   },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    // 官方 CC Switch 接入文档（alltokens.si/docs/cc-switch/configure）：Anthropic
+    // base 用站点根。目录里 Claude ID 用点号（claude-sonnet-5.5，非 5-5），没有
+    // Haiku（alltokens.si/api/pricing，2026-10-19），故四档全部写明、Haiku 指向 Sonnet
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://alltokens.si",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "claude-sonnet-5.5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-sonnet-5.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5.5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5.5",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",

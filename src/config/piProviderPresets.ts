@@ -1246,6 +1246,30 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "alltokens",
   },
   {
+    name: "AllTokens SI",
+    providerKey: "cc-switch-alltokens-si",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    // new-api 网关，目录见 alltokens.si/api/pricing（2026-10-19 核对）：GPT 分组
+    // 只声明 Chat Completions，窗口按中转口径封顶 272K
+    settingsConfig: {
+      name: "AllTokens SI",
+      baseUrl: "https://alltokens.si/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("openai/gpt-5.6-sol", { id: "gpt-5.6-sol" }),
+        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
+        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
+  },
+  {
     name: "Amux",
     providerKey: "cc-switch-amux",
     websiteUrl: "https://amux.ai",

@@ -2594,6 +2594,66 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     partnerPromotionKey: "alltokens",
     icon: "alltokens",
   },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    // new-api 网关，目录见 alltokens.si/api/pricing（2026-10-19 核对）：GPT 分组
+    // 只声明 Chat Completions，窗口按中转口径封顶 272K
+    settingsConfig: {
+      baseUrl: "https://alltokens.si/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-6-sol",
+          name: "GPT-6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-6-astra",
+          name: "GPT-6 Astra",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "alltokens-si/gpt-5.6-sol",
+        fallbacks: ["alltokens-si/gpt-6-sol"],
+      },
+      modelCatalog: {
+        "alltokens-si/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
+        "alltokens-si/gpt-6-sol": { alias: "GPT-6 Sol" },
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",

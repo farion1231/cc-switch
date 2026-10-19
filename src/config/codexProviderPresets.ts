@@ -1529,6 +1529,24 @@ requires_openai_auth = true`,
     partnerPromotionKey: "alltokens",
     icon: "alltokens",
   },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    // GPT 分组（alltokens.si/api/pricing，2026-10-19）。目录只声明 Chat，但
+    // new-api 的 OpenAI 渠道同样转发 /v1/responses，按 Codex 惯例走 Responses
+    config: generateThirdPartyConfig(
+      "alltokens_si",
+      "https://alltokens.si/v1",
+      "gpt-5.6-sol",
+    ),
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",
