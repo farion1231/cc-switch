@@ -22,7 +22,9 @@ export interface CodingPlanProviderEntry {
     | "zenmux"
     | "volcengine"
     | "opencode_go"
-    | "command_code";
+    | "command_code"
+    | "bailian"
+    | "qianwen_token_plan";
   /** UsageScriptModal 下拉显示用 */
   label: string;
   /** base_url 匹配规则 */
@@ -85,6 +87,29 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     id: "command_code",
     label: "Command Code",
     pattern: /api\.commandcode\.ai\/provider(?:[/?#]|$)/i,
+  },
+  {
+    // 阿里云百炼 Coding Plan（千问AI平台 Coding Plan，CN 站）：套餐 key 形如
+    // sk-sp-xxxxx，base 固定 https://coding.dashscope.aliyuncs.com/{v1,apps/anthropic}。
+    // 官方只在控制台展示用量、没有公开的额度查询接口，后端同条目也不发请求，
+    // 本条只负责"认出来 + 把失败语义说清楚"（报错文案由 coding_plan.rs 给出）。
+    // 按量付费 dashscope.aliyuncs.com、Token Plan 的 token-plan...maas.aliyuncs.com
+    // 与国际站 dashscope-intl 都不含 coding. 前缀，刻意不命中。
+    id: "bailian",
+    label: "百炼 Coding Plan (千问AI平台)",
+    pattern: /coding\.dashscope\.aliyuncs\.com/i,
+  },
+  {
+    // 千问AI平台 Token Plan（Credits 订阅）。base 有两种官方形态：
+    // 预设用 https://token-plan.cn-beijing.maas.aliyuncs.com/{compatible-mode/v1,apps/anthropic}，
+    // 官方文档写的是 https://token-plan.maas.qianwenaiapi.com/...，两者都命中。
+    // 用量在百炼控制台网关后面：后端用账号 AK/SK 走 ACS3 换 console token 再查，
+    // 所以除推理 Key 外还要在用量配置里另填 AccessKey ID / Secret（火山方舟同款字段）。
+    // 国际站 token-plan.ap-southeast-1 刻意不命中（控制台与网关不同，未取证）。
+    id: "qianwen_token_plan",
+    label: "千问AI平台 Token Plan",
+    pattern:
+      /token-plan\.(?:cn-beijing\.maas\.aliyuncs\.com|maas\.qianwenaiapi\.com)/i,
   },
 ] as const;
 
