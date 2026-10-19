@@ -94,7 +94,10 @@ describe("SessionManagerPage", () => {
       clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
     });
 
-    const now = Date.now();
+    // 最近会话固定在本地当天中午附近，避免午夜时 `now - 1h` 落到昨天。
+    const todayAtNoon = new Date();
+    todayAtNoon.setHours(12, 0, 0, 0);
+    const now = todayAtNoon.getTime();
     const sessions: SessionMeta[] = [
       {
         providerId: "codex",
