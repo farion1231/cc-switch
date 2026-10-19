@@ -21,7 +21,9 @@ pub struct FetchedModel {
 /// 模型列表响应的兼容格式。
 ///
 /// OpenAI 兼容接口和 Anthropic 接口使用 `data` 字段；Codex 远端模型目录
-/// （`{base}/models`，智谱 /api/v1 即此格式）使用 `models[].slug`。
+/// （`{base}/models`，智谱 /api/v1 即此格式）使用 `models[].slug`；
+/// Gemini 原生接口（`{base}/v1/models`、`{base}/v1beta/models`）使用
+/// `models[].name`（形如 `models/gemini-3.6-flash`）。
 ///
 /// `models` 收成 `Value` 而非强类型：部分供应商会在 `data` 旁附带任意形状的
 /// `models`，而 serde 反序列化的是整个结构体，强类型字段一旦对不上就会连带
@@ -38,7 +40,9 @@ struct ModelEntry {
     owned_by: Option<String>,
 }
 
-/// `models[]` 条目对应的模型 id：`slug` 优先，回退 OpenAI 风格的 `id`；
+/// `models[]` 条目对应的模型 id：`slug` 优先，回退 OpenAI 风格的 `id`，
+/// 最后兼容 Gemini 原生的 `name`（去掉 `models/` 前缀；不以 `models/`
+/// 开头的 `name` 不是模型 id，跳过）。
 /// 非数组、非对象、非字符串或空串一律跳过，绝不报错。
 fn catalog_model_ids(models: Option<serde_json::Value>) -> Vec<String> {
     let Some(serde_json::Value::Array(entries)) = models else {
@@ -47,11 +51,18 @@ fn catalog_model_ids(models: Option<serde_json::Value>) -> Vec<String> {
     entries
         .iter()
         .filter_map(|m| {
-            ["slug", "id"]
+            if let Some(id) = ["slug", "id"]
                 .iter()
                 .find_map(|k| m.get(k)?.as_str().filter(|s| !s.is_empty()))
+            {
+                return Some(id.to_string());
+            }
+            m.get("name")?
+                .as_str()?
+                .strip_prefix("models/")
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
         })
-        .map(str::to_string)
         .collect()
 }
 
@@ -92,6 +103,12 @@ pub async fn fetch_models(
     let candidates = build_models_url_candidates(base_url, is_full_url, models_url_override)?;
     let headers =
         build_model_fetch_headers(api_key, api_format, user_agent.as_ref(), request_headers)?;
+    let fallback_headers = build_gemini_auth_fallback_headers(
+        api_key,
+        api_format,
+        user_agent.as_ref(),
+        request_headers,
+    )?;
     let mut last_err: Option<String> = None;
     let mut known_secrets = vec![api_key.to_string()];
     if let Some(request_headers) = request_headers {
@@ -103,16 +120,24 @@ pub async fn fetch_models(
             "[ModelFetch] Trying endpoint: {}",
             crate::url_for_log_with_secrets(url, &known_secrets)
         );
-        let request = crate::proxy::http_client::get_for_url(url)
-            .get(url)
-            .headers(headers.clone())
-            .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS));
-        let response = match request.send().await {
-            Ok(r) => r,
-            Err(e) => {
-                return Err(format!("Request failed: {e}"));
+        let mut response = send_model_request(url, &headers).await?;
+
+        // Gemini 原生 API 不认 `Authorization: Bearer <API_KEY>`：会把它当成
+        // OAuth token 返回 401。仅在未显式指定认证方式时用 `x-goog-api-key`
+        // 重试一次，兼容官方端点，同时不影响只认 Bearer 的第三方网关。
+        if matches!(
+            response.status(),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+        ) {
+            if let Some(fallback_headers) = &fallback_headers {
+                log::debug!(
+                    "[ModelFetch] {} returned {}; retrying with x-goog-api-key",
+                    crate::url_for_log_with_secrets(url, &known_secrets),
+                    response.status()
+                );
+                response = send_model_request(url, fallback_headers).await?;
             }
-        };
+        }
 
         let status = response.status();
 
@@ -164,6 +189,16 @@ pub async fn fetch_models(
 
 fn redact_model_fetch_error_body(body: String, known_secrets: &[String]) -> String {
     truncate_body(crate::redact_known_secrets_strict(&body, known_secrets))
+}
+
+async fn send_model_request(url: &str, headers: &HeaderMap) -> Result<reqwest::Response, String> {
+    crate::proxy::http_client::get_for_url(url)
+        .get(url)
+        .headers(headers.clone())
+        .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {e}"))
 }
 
 fn build_model_fetch_headers(
@@ -228,12 +263,51 @@ fn build_model_fetch_headers(
     Ok(headers)
 }
 
+/// 自动认证模式（未显式指定 `api_format`）下的 Gemini 原生认证兜底。
+///
+/// Gemini 原生 API 不把 `Authorization: Bearer <API_KEY>` 当 API Key，而是
+/// 按 OAuth token 处理并返回 401；API Key 必须放在 `x-goog-api-key` 头（或
+/// `?key=` 查询参数）里。第三方 Gemini 兼容网关则普遍接受 Bearer，因此不能
+/// 一刀切改成 `x-goog-api-key`：先按 Bearer 请求，仅在 401/403 时用本兜底
+/// 头重试一次。
+///
+/// 调用方显式指定了 `api_format`，或通过 `request_headers` 自带了认证头时
+/// 返回 `None`，避免覆盖用户配置。
+fn build_gemini_auth_fallback_headers(
+    api_key: &str,
+    api_format: Option<&str>,
+    user_agent: Option<&HeaderValue>,
+    request_headers: Option<&BTreeMap<String, String>>,
+) -> Result<Option<HeaderMap>, String> {
+    if api_key.is_empty() || api_format.is_some() {
+        return Ok(None);
+    }
+    let has_explicit_auth = request_headers.is_some_and(|headers| {
+        headers.keys().any(|name| {
+            matches!(
+                name.trim().to_ascii_lowercase().as_str(),
+                "authorization" | "x-api-key" | "x-goog-api-key"
+            )
+        })
+    });
+    if has_explicit_auth {
+        return Ok(None);
+    }
+    build_model_fetch_headers(
+        api_key,
+        Some("google-generative-ai"),
+        user_agent,
+        request_headers,
+    )
+    .map(Some)
+}
+
 /// 构造「模型列表端点」的候选 URL 列表
 ///
 /// 候选顺序：
 /// 1. `models_url_override` 非空 → 只返回它
 /// 2. baseURL 拼 `/v1/models`；若已以版本段 `/v{N}` 结尾（`/v1`、智谱
-///    `/api/coding/paas/v4` 等），版本号已在路径里，改拼 `/models`
+///    `/api/coding/paas/v4`、Gemini `/v1beta` 等），版本号已在路径里，改拼 `/models`
 /// 3. 版本段非 `/v1`（如 `/v4`）时再追加 `/v1/models` 作为兜底次候选
 /// 4. 若 baseURL 命中 [`KNOWN_COMPAT_SUFFIXES`]，剥离后缀再拼 `/v1/models`、`/models`
 ///
@@ -328,13 +402,20 @@ fn strip_compat_suffix(base_url: &str) -> Option<&str> {
     None
 }
 
-/// 判断 baseURL 是否以 OpenAI 风格的版本段 `/v{N}` 结尾（`N` 为一个或多个数字），
-/// 例如 `/v1`、`.../paas/v4`。这类 URL 版本号已在路径中，模型端点应为
-/// `{base}/models`，不能再补 `/v1`（智谱 Coding Plan 即 `.../coding/paas/v4`）。
+/// 判断 baseURL 是否以版本段 `/v{N}` / `/v{N}alpha` / `/v{N}beta` 结尾，
+/// 例如 `/v1`、`.../paas/v4`、Gemini 的 `/v1beta`。这类 URL 版本号已在路径中，
+/// 模型端点应为 `{base}/models`，不能再补 `/v1`（智谱 Coding Plan 即
+/// `.../coding/paas/v4`；Gemini 用户也常把 `/v1beta` 直接写进 baseURL）。
 fn ends_with_version_segment(url: &str) -> bool {
     let last = url.rsplit('/').next().unwrap_or("");
-    last.strip_prefix('v')
-        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+    let Some(rest) = last.strip_prefix('v') else {
+        return false;
+    };
+    let digit_count = rest.bytes().take_while(|b| b.is_ascii_digit()).count();
+    if digit_count == 0 {
+        return false;
+    }
+    matches!(&rest[digit_count..], "" | "alpha" | "beta")
 }
 
 #[cfg(test)]
@@ -457,8 +538,12 @@ mod tests {
             "https://open.bigmodel.cn/api/coding/paas/v4"
         ));
         assert!(ends_with_version_segment("https://x.com/v10"));
+        assert!(ends_with_version_segment("https://x.com/v1beta"));
+        assert!(ends_with_version_segment("https://x.com/v1alpha"));
         assert!(!ends_with_version_segment("https://x.com/api"));
         assert!(!ends_with_version_segment("https://x.com/vX"));
+        assert!(!ends_with_version_segment("https://x.com/vbeta"));
+        assert!(!ends_with_version_segment("https://x.com/v1beta2"));
         assert!(!ends_with_version_segment("https://x.com/models"));
         assert!(!ends_with_version_segment("https://api.siliconflow.cn"));
     }
@@ -681,6 +766,90 @@ mod tests {
             ids,
             vec!["glm-4.7".to_string(), "openai-shaped".to_string()]
         );
+    }
+
+    #[test]
+    fn test_catalog_model_ids_gemini_name() {
+        // Gemini 原生 Model 资源：name 形如 models/<id>，去掉前缀后作为模型 id；
+        // 不以 models/ 开头的 name 不是模型 id，跳过。
+        let json = r#"{"models": [
+            {"name": "models/gemini-3.6-flash", "displayName": "Gemini 3.6 Flash"},
+            {"name": "models/gemini-embedding-2"},
+            {"name": "models/"},
+            {"name": "not-a-model-resource"},
+            {"slug": "glm-4.7"}
+        ]}"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            catalog_model_ids(resp.models),
+            vec![
+                "gemini-3.6-flash".to_string(),
+                "gemini-embedding-2".to_string(),
+                "glm-4.7".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_gemini_native_response() {
+        // Gemini `GET /v1beta/models` 的真实响应形状：顶层只有 models，没有 data。
+        let json = r#"{"models":[{"name":"models/gemini-3.6-flash","baseModelId":"gemini-3.6-flash","supportedGenerationMethods":["generateContent"]}]}"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.data.is_none());
+        assert_eq!(catalog_model_ids(resp.models), vec!["gemini-3.6-flash"]);
+    }
+
+    #[test]
+    fn test_candidates_gemini_v1beta_base() {
+        // 用户把 /v1beta 直接写进 baseURL 时，模型端点是 {base}/models，
+        // 不能再拼 /v1（否则 .../v1beta/v1/models -> 404）。
+        let c = build_models_url_candidates(
+            "https://generativelanguage.googleapis.com/v1beta",
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            c,
+            vec![
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                "https://generativelanguage.googleapis.com/v1beta/v1/models",
+            ]
+        );
+    }
+
+    #[test]
+    fn gemini_auth_fallback_uses_x_goog_api_key_for_auto_auth() {
+        let fallback = build_gemini_auth_fallback_headers("gemini-key", None, None, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fallback["x-goog-api-key"], "gemini-key");
+        assert!(!fallback.contains_key(AUTHORIZATION));
+    }
+
+    #[test]
+    fn gemini_auth_fallback_skips_explicit_auth_configuration() {
+        // 显式指定 api_format 时不兜底，由调用方决定认证方式。
+        assert!(
+            build_gemini_auth_fallback_headers("key", Some("anthropic-messages"), None, None,)
+                .unwrap()
+                .is_none()
+        );
+
+        // request_headers 已自带认证头时不覆盖用户配置。
+        for name in ["Authorization", "x-api-key", "X-Goog-Api-Key"] {
+            let custom = BTreeMap::from([(name.to_string(), "token".to_string())]);
+            assert!(
+                build_gemini_auth_fallback_headers("key", None, None, Some(&custom))
+                    .unwrap()
+                    .is_none()
+            );
+        }
+
+        // 没有 API Key 时也没有兜底。
+        assert!(build_gemini_auth_fallback_headers("", None, None, None)
+            .unwrap()
+            .is_none());
     }
 
     #[test]
