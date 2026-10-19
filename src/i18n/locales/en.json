@@ -959,7 +959,7 @@
     "copyToolUninstallCommand": "Copy the uninstall command for {{tool}}",
     "uninstallCommandCopied": "Uninstall command copied",
     "uninstallCommandCopyFailed": "Copy failed. Please select and copy the command manually.",
-    "oneClickInstallHint": "Install or upgrade Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code",
+    "oneClickInstallHint": "Install or upgrade Claude Code / Codex CLI / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code",
     "localEnvCheck": "Local environment check",
     "updateAllTools": "Update All ({{count}})",
     "currentVersion": "Current Version",
@@ -4154,6 +4154,14 @@
     "desktopUnsupported": "Not supported on this system",
     "desktopConnected": "Connected",
     "desktopNotConnected": "Not connected",
+    "chatgptDesktop": {
+      "help": "ChatGPT Desktop is a desktop app. It ships its own Codex CLI and shares its configuration and sidebar entry with Codex CLI, so the Show switches on the two rows turn on and off together. OpenAI updates it, so it can't be installed or upgraded here.",
+      "installed": "Installed",
+      "bundledCli": "Bundled Codex CLI {{version}} · updates with ChatGPT Desktop, can't be updated on its own",
+      "bundledCliUnknown": "Couldn't read the bundled Codex CLI version · updates with ChatGPT Desktop, can't be updated on its own",
+      "installHint": "Install from the Microsoft Store or the OpenAI website",
+      "installHintMac": "Install from the OpenAI website"
+    },
     "newVersion": "{{version}} available",
     "notRunnable": "Can't run",
     "updateNeedsNode": "{{version}} requires Node {{required}}, but this installation runs on Node {{current}}. Upgrade Node first.",

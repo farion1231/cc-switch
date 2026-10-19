@@ -618,7 +618,7 @@ fn build_tool_lifecycle_command(
 fn tool_display_name(tool: &str) -> &'static str {
     match tool {
         "claude" => "Claude Code",
-        "codex" => "Codex",
+        "codex" => "Codex CLI",
         "gemini" => "Gemini CLI",
         "grok" => "Grok Build",
         "opencode" => "OpenCode",
@@ -780,6 +780,11 @@ fn codex_standalone_install(bin_path: &str, real_target: &str) -> Option<CodexSt
             install_dir,
             codex_home: None,
         })
+}
+
+#[cfg(any(windows, test))]
+pub(crate) fn is_codex_standalone_install_at(bin_path: &Path, real_target: &Path) -> bool {
+    codex_standalone_install(&bin_path.to_string_lossy(), &real_target.to_string_lossy()).is_some()
 }
 
 /// 重跑官方 installer 升级独立安装那一处。显式传 `CODEX_INSTALL_DIR` / `CODEX_HOME`
@@ -3019,6 +3024,29 @@ fn run_probe_version_command(
         child,
         CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
     )
+}
+
+/// 对一个已定位的可执行文件跑 `--version`（无窗口、带超时），返回解析出的版本号；
+/// 失败时返回输出的末尾几行。ChatGPT Desktop 检测用它读随附 CLI 的版本。
+#[cfg_attr(not(any(target_os = "windows", target_os = "macos")), allow(dead_code))]
+pub(crate) fn probe_executable_version(path: &Path) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    let output = run_probe_version_command(path, &effective_path_string())?;
+    #[cfg(not(target_os = "windows"))]
+    let output = run_probe_version_command(path, &effective_path_os().unwrap_or_default())?;
+
+    let stdout = decode_command_output(&output.stdout).trim().to_string();
+    let stderr = decode_command_output(&output.stderr).trim().to_string();
+    if output.status.success() {
+        let raw = if stdout.is_empty() { stderr } else { stdout };
+        return if raw.is_empty() {
+            Err("--version printed nothing".to_string())
+        } else {
+            Ok(extract_version(&raw))
+        };
+    }
+    let detail = if stderr.is_empty() { stdout } else { stderr };
+    Err(last_lines(detail.trim(), 4))
 }
 
 /// 枚举工具在系统中的所有安装（不短路）。与 `scan_cli_version` 共用

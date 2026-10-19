@@ -946,7 +946,7 @@
     "copyToolUninstallCommand": "{{tool}} için kaldırma komutunu kopyala",
     "uninstallCommandCopied": "Kaldırma komutu kopyalandı",
     "uninstallCommandCopyFailed": "Kopyalama başarısız. Komutu seçip elle kopyalayın.",
-    "oneClickInstallHint": "Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code'yi yükleyin veya yükseltin",
+    "oneClickInstallHint": "Claude Code / Codex CLI / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code'yi yükleyin veya yükseltin",
     "localEnvCheck": "Yerel ortam kontrolü",
     "updateAllTools": "Tümünü Güncelle ({{count}})",
     "currentVersion": "Güncel Sürüm",

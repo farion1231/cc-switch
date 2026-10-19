@@ -959,7 +959,7 @@
     "copyToolUninstallCommand": "{{tool}} のアンインストールコマンドをコピー",
     "uninstallCommandCopied": "アンインストールコマンドをコピーしました",
     "uninstallCommandCopyFailed": "コピーに失敗しました。コマンドを選択して手動でコピーしてください。",
-    "oneClickInstallHint": "Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code をインストールまたは更新",
+    "oneClickInstallHint": "Claude Code / Codex CLI / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code をインストールまたは更新",
     "localEnvCheck": "ローカル環境チェック",
     "updateAllTools": "すべて更新（{{count}}）",
     "currentVersion": "現在のバージョン",
@@ -4154,6 +4154,14 @@
     "desktopUnsupported": "このシステムには対応していません",
     "desktopConnected": "接続済み",
     "desktopNotConnected": "未接続",
+    "chatgptDesktop": {
+      "help": "ChatGPT Desktop はデスクトップアプリで、Codex CLI を同梱し、Codex CLI と設定およびサイドバーの項目を共有するため、2 つの行の表示スイッチは連動してオン・オフになります。公式に更新されるため、ここではインストールや更新はできません。",
+      "installed": "インストール済み",
+      "bundledCli": "同梱の Codex CLI {{version}} · ChatGPT Desktop と一緒に更新され、単独では更新できません",
+      "bundledCliUnknown": "同梱の Codex CLI のバージョンを読み取れません · ChatGPT Desktop と一緒に更新され、単独では更新できません",
+      "installHint": "Microsoft Store または OpenAI 公式サイトからインストール",
+      "installHintMac": "OpenAI 公式サイトからインストール"
+    },
     "newVersion": "新しいバージョン {{version}}",
     "notRunnable": "実行できません",
     "updateNeedsNode": "{{version}} には Node {{required}} が必要ですが、このインストールは Node {{current}} で動いています。先に Node を更新してください。",

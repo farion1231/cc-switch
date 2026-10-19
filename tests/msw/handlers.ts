@@ -556,6 +556,15 @@ export const handlers = [
       gatewayTokenConfigured: false,
     }),
   ),
+  http.post(`${TAURI_ENDPOINT}/get_chatgpt_desktop_status`, () =>
+    success({
+      supported: true,
+      installed: false,
+      appVersion: null,
+      bundledCliVersion: null,
+      bundledCliPath: null,
+    }),
+  ),
   http.post(`${TAURI_ENDPOINT}/get_hermes_memory`, async ({ request }) => {
     const { kind } = await withJson<{ kind: string }>(request);
     return success(kind === "user" ? "user profile" : "agent notes");

@@ -43,6 +43,16 @@ export interface ClaudeDesktopStatus {
   gatewayTokenConfigured: boolean;
 }
 
+/** ChatGPT Desktop 的安装检测。它随附一份随桌面版更新的 Codex CLI。 */
+export interface ChatGptDesktopStatus {
+  /** 当前系统有没有 ChatGPT Desktop（Linux 没有）。 */
+  supported: boolean;
+  installed: boolean;
+  appVersion: string | null;
+  bundledCliVersion: string | null;
+  bundledCliPath: string | null;
+}
+
 /** 编辑器保存时，live 里的键在编辑期间被别的程序改过怎么办。 */
 export type EditorConflictPolicy = "refuse" | "keepMine" | "keepTheirs";
 
@@ -167,6 +177,10 @@ export const providersApi = {
 
   async getClaudeDesktopStatus(): Promise<ClaudeDesktopStatus> {
     return await invoke("get_claude_desktop_status");
+  },
+
+  async getChatGptDesktopStatus(): Promise<ChatGptDesktopStatus> {
+    return await invoke("get_chatgpt_desktop_status");
   },
 
   async getClaudeDesktopDefaultRoutes(): Promise<ClaudeDesktopDefaultRoute[]> {

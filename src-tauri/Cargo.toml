@@ -102,6 +102,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_Globalization",
     "Win32_Storage_FileSystem",
     "Win32_Graphics_Gdi",
+    "Win32_Storage_Packaging_Appx",
     "Win32_System_Threading",
     "Win32_UI_Shell",
     "Win32_UI_HiDpi",

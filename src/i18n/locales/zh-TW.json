@@ -960,7 +960,7 @@
     "uninstallCommandCopied": "解除安裝指令已複製",
     "uninstallCommandCopyFailed": "複製失敗，請手動選取並複製指令。",
     "oneClickInstall": "一鍵安裝",
-    "oneClickInstallHint": "安裝或更新 Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code",
+    "oneClickInstallHint": "安裝或更新 Claude Code / Codex CLI / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code",
     "localEnvCheck": "本地環境檢查",
     "updateAllTools": "全部更新（{{count}}）",
     "currentVersion": "目前版本",
@@ -4155,6 +4155,14 @@
     "desktopUnsupported": "目前系統不支援",
     "desktopConnected": "已接入",
     "desktopNotConnected": "未接入",
+    "chatgptDesktop": {
+      "help": "ChatGPT Desktop 是桌面應用，內含一份 Codex CLI，並和 Codex CLI 共用設定和側欄入口，所以兩列的顯示開關會一起開、一起關；它由官方更新，不能在這裡安裝或更新。",
+      "installed": "已安裝",
+      "bundledCli": "隨附 Codex CLI {{version}} · 跟著 ChatGPT Desktop 更新，無法單獨更新",
+      "bundledCliUnknown": "讀不到隨附 Codex CLI 的版本 · 跟著 ChatGPT Desktop 更新，無法單獨更新",
+      "installHint": "從 Microsoft Store 或 OpenAI 官網安裝",
+      "installHintMac": "從 OpenAI 官網安裝"
+    },
     "newVersion": "有新版本 {{version}}",
     "notRunnable": "無法執行",
     "updateNeedsNode": "新版本 {{version}} 需要 Node {{required}}，這處安裝用的是 Node {{current}}，需要先升級 Node。",
