@@ -19,6 +19,7 @@
 //! 写锁在更里面拿，两把锁不反向嵌套。
 
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use tokio::sync::OwnedMutexGuard;
 
 use crate::app_config::AppType;
@@ -42,7 +43,7 @@ use super::contract;
 use super::current::{self, Purpose};
 use super::operation;
 use super::stack::{self, StackModel, StackView};
-use super::state::{op, Contract, Mode, ModeState, PendingTarget, StackState};
+use super::state::{op, Contract, Mode, ModeState, PendingTarget, StackRoleBindings, StackState};
 
 /// 有路由模式的应用（[`AppType::has_route_mode`]）。Claude Desktop 也在内：它经同一个路由
 /// 服务转发，只是没有故障转移。
@@ -181,24 +182,33 @@ fn claude_proxy_auth(provider: &Provider) -> ProxyAuth {
     }
 }
 
-/// `stack` 是发布的 Stack 模型，`stack_default` 是四档别名指向的模型（Stack 模式下默认那家
-/// 列表里的第一个，见 [`stack::claude_route_default`]；路由模式为 `None`）。`others` 是其余
+/// `stack` 是发布的 Stack 模型；`stack_roles` 是四档解析后的有效目标，未绑定的档位
+/// 跟随默认那家列表的第一个模型（见 [`stack::claude_route_default`]）。`others` 是其余
 /// 发布模型的成员，它们的兼容开关按 [`with_member_switches`] 并进契约。
 fn claude_contract(
     route: &Provider,
     proxy_url: &str,
     stack: &[StackModel],
-    stack_default: Option<&StackModel>,
+    stack_roles: &BTreeMap<&str, StackModel>,
     others: &[&Provider],
 ) -> (ClaudeProjection, Contract) {
+    let role_models: BTreeMap<_, _> = stack_roles
+        .iter()
+        .map(|(role, model)| {
+            (
+                *role,
+                StackRoleModel {
+                    id: &model.id,
+                    name: &model.name,
+                },
+            )
+        })
+        .collect();
     let mut projection = proxy_projection(
         &ClaudeProjection::of(&route.settings_config),
         proxy_url,
         claude_proxy_auth(route),
-        stack_default.map(|model| StackRoleModel {
-            id: &model.id,
-            name: &model.name,
-        }),
+        (!stack_roles.is_empty()).then_some(&role_models),
     );
     with_stack_models(&mut projection, stack);
     if !stack.is_empty() {
@@ -215,8 +225,8 @@ fn claude_contract(
 const CLAUDE_MAX_CONTEXT_ENV: &str = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
 
 /// `/model` 选择器的配置（顶层关键字段）。`replaceBuiltInOptions` 让选择器只剩 Default 和
-/// 这里列的行：内置的 Opus / Sonnet / Haiku 行都指向默认那家的模型，留着就是几行重复，
-/// 还会把那个模型自己的行去重吃掉。四档别名仍然要写，Default、`--model opus` 和子代理靠它们。
+/// 这里列的行：内置的 Opus / Sonnet / Haiku 行可能与聚合模型重复，也会吞掉模型自身的行。
+/// 四档别名仍然要写，Default 和 `--model opus` 等调用靠它们。
 const CLAUDE_MODEL_PICKER: &str = "modelPicker";
 
 /// 发布了 Stack 模型时：`/model` 换成 Stack 模型列表；`CLAUDE_CODE_MAX_CONTEXT_TOKENS` 改由
@@ -400,19 +410,14 @@ async fn write_proxy(
         AppType::Claude => {
             let members = published_members(state, app, &stack, route)?;
             let published = stack::claude_published(&members);
-            let stack_default = stack::claude_route_default(&members);
+            let (stack_roles, _) = stack::claude_role_models(&members, &stack.role_bindings);
             let others: Vec<&Provider> = members
                 .iter()
                 .filter(|member| !member.route)
                 .map(|member| &member.provider)
                 .collect();
-            let (projection, contract) = claude_contract(
-                route,
-                &proxy_url,
-                &published,
-                stack_default.as_ref(),
-                &others,
-            );
+            let (projection, contract) =
+                claude_contract(route, &proxy_url, &published, &stack_roles, &others);
             let unchanged = !force && live_now.has_contract(&contract.key);
             let patch = direct_patch(live_now.claude_exclusive_owner().as_ref(), &projection);
             target.contract = Some(contract);
@@ -1349,6 +1354,73 @@ async fn set_stack_member_locked(
     }
 }
 
+/// 保存 Claude 聚合模式的四档绑定；锁内校验候选并与客户端契约一起落定。
+pub async fn set_stack_role_bindings(
+    state: &AppState,
+    app: &AppType,
+    bindings: StackRoleBindings,
+) -> Result<(), StackWriteError> {
+    if !matches!(app, AppType::Claude) {
+        return Err(StackWriteError::unchanged(
+            "只有 Claude Code 聚合模式支持档位绑定",
+        ));
+    }
+    let _guard = lock_settled(state, app)
+        .await
+        .map_err(|error| StackWriteError::unchanged(error.to_string()))?;
+    if let Err(message) = set_stack_role_bindings_locked(state, app, bindings).await {
+        let partial = operation::pending_published(&DeviceStore::for_device(), app.as_str())
+            .unwrap_or_else(|error| {
+                log::warn!("读取 {} 的写前意图失败: {error}", app.as_str());
+                None
+            })
+            == Some(true);
+        return Err(StackWriteError { partial, message });
+    }
+    Ok(())
+}
+
+async fn set_stack_role_bindings_locked(
+    state: &AppState,
+    app: &AppType,
+    bindings: StackRoleBindings,
+) -> Result<(), String> {
+    let current = settled_stack(app)?;
+    let mode = current::mode_state(app);
+    let route = mode.proxy_route.as_deref().filter(|_| mode.is_proxy());
+    let members = stack::members(&state.db, app, &current, route).map_err(err)?;
+    if bindings == current.role_bindings {
+        return Ok(());
+    }
+    for role in stack::CLAUDE_ROLES {
+        if let Some(target) = stack::role_target(&bindings, role) {
+            if stack::role_target(&current.role_bindings, role) != Some(target)
+                && stack::claude_role_candidate(&members, target).is_none()
+            {
+                return Err(format!("{role} 档绑定的模型未在当前聚合名单中发布"));
+            }
+        }
+    }
+    let mut next = current;
+    next.role_bindings = bindings;
+    if next.enabled {
+        if let Some((mode, route)) = attached_route(state, app)? {
+            let live_now = LiveNow::of(state, app, &mode)?;
+            return write_proxy(state, app, op::STACK, &route, &live_now, mode, Some(next))
+                .await
+                .map(|_| ());
+        }
+    }
+    commit_state(
+        state,
+        app,
+        &PendingTarget {
+            stack: Some(next),
+            ..PendingTarget::default()
+        },
+    )
+}
+
 /// Stack 模式的状态、名单里的每一家和它发布的模型 id（给前端）。
 pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String> {
     if !stack::supports_stack(app) {
@@ -1371,9 +1443,31 @@ pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String>
         AppType::Codex => codex_direct::stack_subagent_choices(&members),
         _ => Vec::new(),
     };
+    let (role_bindings, role_candidates, role_invalid) = if matches!(app, AppType::Claude) {
+        let candidates = members
+            .iter()
+            .flat_map(|member| {
+                stack::claude_models(&member.key, &member.provider)
+                    .into_iter()
+                    .map(|model| stack::StackRoleCandidate {
+                        provider_id: member.provider.id.clone(),
+                        model_id: model.id,
+                        display_name: model.display_name,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let (_, invalid) = stack::claude_role_models(&members, &stack.role_bindings);
+        (Some(stack.role_bindings.clone()), candidates, invalid)
+    } else {
+        (None, Vec::new(), Vec::new())
+    };
     Ok(StackView {
         active: mode.is_proxy() && stack.enabled,
         members: stack::member_views(app, &members),
+        role_bindings,
+        role_candidates,
+        role_invalid,
         notice,
         notice_reasons,
         stale_clients: None,
@@ -1938,14 +2032,17 @@ mod tests {
             .chain(others.iter().copied())
             .flat_map(|provider| stack::claude_models(&provider.id, provider))
             .collect();
-        let default = stack.first().cloned();
-        let (projection, contract) = claude_contract(
-            route,
-            "http://127.0.0.1:15721",
-            &stack,
-            default.as_ref(),
-            others,
-        );
+        let roles = stack
+            .first()
+            .map(|model| {
+                stack::CLAUDE_ROLES
+                    .into_iter()
+                    .map(|role| (role, model.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let (projection, contract) =
+            claude_contract(route, "http://127.0.0.1:15721", &stack, &roles, others);
         assert_eq!(contract.exclusive, projection.exclusive);
         projection.exclusive
     }
@@ -2031,8 +2128,13 @@ mod tests {
             }),
         );
         // 没有发布 Stack 模型（路由模式）时契约和原来一样，不看别家。
-        let (projection, _) =
-            claude_contract(&route, "http://127.0.0.1:15721", &[], None, &[&other]);
+        let (projection, _) = claude_contract(
+            &route,
+            "http://127.0.0.1:15721",
+            &[],
+            &BTreeMap::new(),
+            &[&other],
+        );
         assert_env_str(&projection.exclusive, "ENABLE_TOOL_SEARCH", Some("true"));
         assert_env_str(
             &projection.exclusive,
@@ -2043,7 +2145,13 @@ mod tests {
 
     /// 以 `live` 为底写入 `provider` 的代理契约，和进入代理时的补丁相同。
     fn takeover(live: &Value, provider: &Provider) -> Value {
-        let (projection, _) = claude_contract(provider, "http://127.0.0.1:15721", &[], None, &[]);
+        let (projection, _) = claude_contract(
+            provider,
+            "http://127.0.0.1:15721",
+            &[],
+            &BTreeMap::new(),
+            &[],
+        );
         let mut doc = live.clone();
         direct_patch(None, &projection)
             .apply_to(Path::new("settings.json"), &mut doc)
@@ -5612,6 +5720,209 @@ model_provider = "c"
             .await
             .unwrap_or_else(|error| panic!("set {id}={enabled}: {error:?}"));
         stack_views(state, &AppType::Claude).unwrap().members
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn stack_role_bindings_follow_selected_members_and_fall_back_safely() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+        enter(&state, &AppType::Claude, true).await.expect("enter");
+        set_member(&state, "kimi", true).await;
+        set_member(&state, "zhipu", true).await;
+
+        let selected = StackRoleBindings {
+            haiku: Some(state::StackRoleTarget {
+                provider_id: "zhipu".into(),
+                model_id: "ccs-claude-zhipu--glm-5.2[1M]".into(),
+            }),
+            opus: Some(state::StackRoleTarget {
+                provider_id: "kimi".into(),
+                model_id: "ccs-claude-kimi--kimi-k3".into(),
+            }),
+            ..Default::default()
+        };
+        set_stack_role_bindings(&state, &AppType::Claude, selected.clone())
+            .await
+            .expect("save role bindings");
+        let env = settings()["env"].clone();
+        // haiku 档也带 1M 标记：Stack id 不是 claude- 开头，不带标记会按 200K 算。
+        assert_eq!(
+            env["ANTHROPIC_DEFAULT_HAIKU_MODEL"],
+            "ccs-claude-zhipu--glm-5.2[1M]"
+        );
+        assert_eq!(env["ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"], "glm-5.2");
+        assert_eq!(
+            env["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+            "ccs-claude-kimi--kimi-k3"
+        );
+        assert_eq!(
+            env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+            "ccs-claude-a--claude-sonnet-4-6"
+        );
+        assert_eq!(
+            env["ANTHROPIC_DEFAULT_FABLE_MODEL"],
+            "ccs-claude-a--claude-sonnet-4-6"
+        );
+        assert_eq!(
+            stack_views(&state, &AppType::Claude).unwrap().role_bindings,
+            Some(selected)
+        );
+
+        set_member(&state, "kimi", false).await;
+        let view = stack_views(&state, &AppType::Claude).unwrap();
+        assert_eq!(view.role_invalid, vec!["opus"]);
+        assert_eq!(
+            settings()["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+            "ccs-claude-a--claude-sonnet-4-6"
+        );
+        assert_eq!(
+            settings()["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"],
+            "ccs-claude-zhipu--glm-5.2[1M]"
+        );
+        set_member(&state, "kimi", true).await;
+        assert!(stack_views(&state, &AppType::Claude)
+            .unwrap()
+            .role_invalid
+            .is_empty());
+        assert_eq!(
+            settings()["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+            "ccs-claude-kimi--kimi-k3"
+        );
+
+        // 更换默认供应商只影响未绑定的档位，显式绑定保持目标。
+        ProviderService::switch(&state, AppType::Claude, "zhipu").expect("switch default");
+        assert_eq!(
+            settings()["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+            "ccs-claude-kimi--kimi-k3"
+        );
+        assert_eq!(
+            settings()["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+            "ccs-claude-zhipu--glm-5.2[1M]"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn a_renamed_model_keeps_its_invalid_binding_while_other_roles_can_change() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+        enter(&state, &AppType::Claude, true).await.expect("enter");
+        set_member(&state, "kimi", true).await;
+        let old_target = state::StackRoleTarget {
+            provider_id: "kimi".into(),
+            model_id: "ccs-claude-kimi--kimi-k3".into(),
+        };
+        set_stack_role_bindings(
+            &state,
+            &AppType::Claude,
+            StackRoleBindings {
+                opus: Some(old_target.clone()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("bind opus");
+
+        let mut kimi = state
+            .db
+            .get_provider_by_id("kimi", "claude")
+            .unwrap()
+            .unwrap();
+        kimi.settings_config["env"]["ANTHROPIC_MODEL"] = json!("kimi-k4");
+        ProviderService::update(&state, AppType::Claude, None, kimi).expect("rename kimi model");
+        assert_eq!(
+            stack_views(&state, &AppType::Claude).unwrap().role_invalid,
+            vec!["opus"]
+        );
+        assert_eq!(
+            settings()["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+            "ccs-claude-a--claude-sonnet-4-6"
+        );
+
+        let next = StackRoleBindings {
+            opus: Some(old_target),
+            sonnet: Some(state::StackRoleTarget {
+                provider_id: "kimi".into(),
+                model_id: "ccs-claude-kimi--kimi-k4".into(),
+            }),
+            ..Default::default()
+        };
+        set_stack_role_bindings(&state, &AppType::Claude, next.clone())
+            .await
+            .expect("bind sonnet");
+        assert_eq!(
+            stack_views(&state, &AppType::Claude).unwrap().role_bindings,
+            Some(next)
+        );
+        assert_eq!(
+            settings()["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+            "ccs-claude-kimi--kimi-k4"
+        );
+        assert_eq!(
+            stack_views(&state, &AppType::Claude).unwrap().role_invalid,
+            vec!["opus"]
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn stack_role_bindings_reject_unpublished_models_and_apply_only_in_stack_mode() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+        let invalid = StackRoleBindings {
+            opus: Some(state::StackRoleTarget {
+                provider_id: "kimi".into(),
+                model_id: "ccs-claude-kimi--kimi-k3".into(),
+            }),
+            ..Default::default()
+        };
+        assert!(
+            !set_stack_role_bindings(&state, &AppType::Claude, invalid.clone())
+                .await
+                .unwrap_err()
+                .partial
+        );
+        assert!(stack_state().role_bindings.is_empty());
+
+        set_member(&state, "kimi", true).await;
+        set_stack_role_bindings(&state, &AppType::Claude, invalid.clone())
+            .await
+            .expect("save before entering stack");
+        assert_eq!(stack_state().role_bindings, invalid);
+        enter(&state, &AppType::Claude, false)
+            .await
+            .expect("route mode");
+        assert_eq!(
+            settings()["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+            "claude-opus-5"
+        );
+        enter(&state, &AppType::Claude, true)
+            .await
+            .expect("stack mode");
+        assert_eq!(
+            settings()["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+            "ccs-claude-kimi--kimi-k3"
+        );
+        let mapped = settings()["env"].clone();
+        let mismatched = StackRoleBindings {
+            opus: Some(state::StackRoleTarget {
+                provider_id: "a".into(),
+                model_id: "ccs-claude-kimi--kimi-k3".into(),
+            }),
+            ..Default::default()
+        };
+        assert!(
+            !set_stack_role_bindings(&state, &AppType::Claude, mismatched)
+                .await
+                .unwrap_err()
+                .partial
+        );
+        assert_eq!(settings()["env"], mapped);
+        assert_eq!(stack_state().role_bindings, invalid);
     }
 
     #[tokio::test]

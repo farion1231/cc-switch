@@ -202,6 +202,18 @@ pub async fn set_proxy_stack_member(
     result
 }
 
+/// Claude Code 聚合模式：一次保存四档绑定，跟客户端契约同一次操作落定。
+#[tauri::command]
+pub async fn set_proxy_stack_role_bindings(
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+    bindings: crate::mode::state::StackRoleBindings,
+) -> Result<(), crate::mode::controller::StackWriteError> {
+    let app = require_proxy_app(&app_type)
+        .map_err(crate::mode::controller::StackWriteError::unchanged)?;
+    crate::mode::controller::set_stack_role_bindings(state.inner(), &app, bindings).await
+}
+
 /// Codex 聚合的模型被别的模型目录挡住时，改用 CC Switch 生成的目录（去掉指向别的文件的
 /// `model_catalog_json`）。返回之后还剩的提示。
 #[tauri::command]

@@ -122,6 +122,8 @@
     "stackReselectHint": "CC Switch がクライアント設定を書き換えるたびに、モデル選択で集約したモデルを選び直してください",
     "stackPartial": "一部だけ書き込まれました。次の操作時または CC Switch の再起動時に完了します",
     "stackFailed": "集約したモデルの保存に失敗しました：{{error}}",
+    "roleBindingsSaved": "モデルの割り当てを保存しました",
+    "roleBindingsFailed": "モデルの割り当てを保存できませんでした：{{error}}",
     "stackDefaultCannotRemove": "デフォルトのプロバイダーは削除できません。先に別のプロバイダーをデフォルトに設定してください",
     "stackDefaultHint": "デフォルトのプロバイダーです：一覧の先頭のモデルが Claude Code の起動時とバックグラウンドタスクを担当します",
     "officialModelsBundled": "公式モデル一覧をまだ取得できていないため、Codex 内蔵の一覧を使っています。アカウント専用のモデルが表示されない場合があります",
@@ -4218,6 +4220,13 @@
       "autoReviewUnavailable": "選択したモデルは集約に含まれなくなったため（プロバイダーの削除またはモデルの公開停止）、承認は一時的に既定のモデルを使います。再び追加すると自動で戻ります。",
       "saveFailed": "保存に失敗しました：{{error}}"
     },
+    "roleBindings": "モデルの割り当て",
+    "roleBindingsTitle": "モデルの割り当て",
+    "roleBindingsLead": "Claude Code の各モデル種別にモデルを指定します。「デフォルトに従う」はデフォルトのプロバイダーの先頭モデルを使います。",
+    "roleBindingDefault": "デフォルトに従う",
+    "roleBindingInvalidTag": "無効",
+    "roleBindingInvalid": "保存されたモデルは集約リストにありません。別のモデルを選ぶか、デフォルトに従ってください。",
+    "roleBindingsUnavailable": "集約モデル一覧を読み込めません。しばらくしてからもう一度お試しください。",
     "queueMoved": "{{name}} を {{position}} 番目に移動しました。",
     "status": {
       "directLead": "直接接続が有効 · 接続先",

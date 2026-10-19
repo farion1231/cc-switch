@@ -155,6 +155,33 @@ export interface ProxyStack {
   staleRevision?: string;
   /** Codex：聚合设置里「子代理模型」下拉的选项，发布 Stack 模型的成员按名单顺序。 */
   subagentModels?: ProxyStackSubagentModel[];
+  /** Claude Code：四档模型绑定，缺的档跟随当前默认供应商。 */
+  roleBindings?: StackRoleBindings;
+  /** Claude Code：档位可绑的候选模型。 */
+  roleCandidates?: StackRoleCandidate[];
+  /** 保存的绑定已失效（候选里找不到）的档位。 */
+  roleInvalid?: string[];
+}
+
+/** Claude Code 聚合模式的四个模型档位。 */
+export const STACK_ROLES = ["haiku", "sonnet", "opus", "fable"] as const;
+
+export type StackRole = (typeof STACK_ROLES)[number];
+
+/** 一档绑定到的供应商模型。 */
+export interface StackRoleBinding {
+  providerId: string;
+  modelId: string;
+}
+
+/** 四档绑定；缺（undefined）的档跟随当前默认供应商。 */
+export type StackRoleBindings = Partial<Record<StackRole, StackRoleBinding>>;
+
+/** 档位可绑的一个候选模型。 */
+export interface StackRoleCandidate {
+  providerId: string;
+  modelId: string;
+  displayName: string;
 }
 
 /** 重启 Codex 守护进程的结果：`notRunning` 表示它没在运行，什么都没做。 */

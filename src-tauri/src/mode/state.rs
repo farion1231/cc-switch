@@ -113,6 +113,33 @@ pub struct Written {
     pub extra: Map<String, Value>,
 }
 
+/// Claude 聚合模式四档之一的模型绑定。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackRoleTarget {
+    pub provider_id: String,
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackRoleBindings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub haiku: Option<StackRoleTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sonnet: Option<StackRoleTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opus: Option<StackRoleTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fable: Option<StackRoleTarget>,
+}
+
+impl StackRoleBindings {
+    pub fn is_empty(&self) -> bool {
+        self.haiku.is_none() && self.sonnet.is_none() && self.opus.is_none() && self.fable.is_none()
+    }
+}
+
 /// 代理模式的 Stack 模型：这些供应商的模型以带前缀的 id 发布给客户端，选中后请求直达那一家
 /// （`mode::stack`）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -129,13 +156,20 @@ pub struct StackState {
     /// 客户端会一直带着选中过的 id，key 改了指向，旧 id 就会被悄悄发到另一家。
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub keys: BTreeMap<String, String>,
+    /// Claude 聚合模式下各档可选的已发布模型；缺省时跟随默认供应商的首个模型。
+    #[serde(default, skip_serializing_if = "StackRoleBindings::is_empty")]
+    pub role_bindings: StackRoleBindings,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
 impl StackState {
     pub fn is_empty(&self) -> bool {
-        !self.enabled && self.members.is_empty() && self.keys.is_empty() && self.extra.is_empty()
+        !self.enabled
+            && self.members.is_empty()
+            && self.keys.is_empty()
+            && self.role_bindings.is_empty()
+            && self.extra.is_empty()
     }
 
     /// 这家在登记簿里的 key。
@@ -425,6 +459,28 @@ pub fn apps_with_pending(store: &DeviceStore) -> Result<Vec<String>, AppError> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn old_stack_state_defaults_to_no_role_bindings() {
+        let old = json!({
+            "enabled": true,
+            "members": ["a"],
+            "keys": { "a": "a" }
+        });
+        let stack: StackState = serde_json::from_value(old.clone()).unwrap();
+        assert!(stack.role_bindings.is_empty());
+        assert_eq!(serde_json::to_value(&stack).unwrap(), old);
+
+        let mut updated = stack;
+        updated.role_bindings.opus = Some(StackRoleTarget {
+            provider_id: "a".into(),
+            model_id: "ccs-claude-a--m".into(),
+        });
+        let roundtrip: StackState =
+            serde_json::from_value(serde_json::to_value(&updated).unwrap()).unwrap();
+        assert_eq!(roundtrip.role_bindings, updated.role_bindings);
+        assert!(!updated.is_empty());
+    }
 
     fn sample_pending() -> Pending {
         Pending {
