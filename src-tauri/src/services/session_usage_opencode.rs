@@ -13,7 +13,8 @@
 //!
 //! OpenCode V2 把会话数据迁移到 `session_v2` / `session_message` 并冻结 V1
 //! 表。用户继续使用 1.x 时仍会写入 V1，因此两套表共存时合并读取；合并读取
-//! 从首次识别出混合布局时开始计数，不回填旧版本漏算的历史。
+//! 从识别出混合布局前最后一次成功扫描（没有则从首次识别）时开始计数，不回填
+//! 旧版本漏算的历史。
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
@@ -124,7 +125,7 @@ fn sync_opencode_usage_from_path(
     let schema = detect_schema(&opencode_conn)?;
     let cursors = crate::services::session_usage::load_sync_cursors(db)?;
 
-    // 混合布局只统计首次识别之后更新的消息（毫秒，与 time_updated 同单位）：
+    // 混合布局只统计起点之后更新的消息（毫秒，与 time_updated 同单位）：
     // 不回填旧版本漏算的历史，也避免明细已汇总删除的旧消息被重新导入而重复计数。
     // 必须在 mtime 提前返回之前固定，确保首次识别时就记下起点。
     let mixed_cutoff_ms = if schema == OpenCodeSchema::Mixed {
@@ -132,12 +133,17 @@ fn sync_opencode_usage_from_path(
         match cursors.get(&cutoff_key) {
             Some(cursor) => cursor.last_modified,
             None => {
-                let now_ms = SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .map(|d| d.as_millis() as i64)
-                    .unwrap_or(0);
-                update_sync_state(db, &cutoff_key, now_ms, 0)?;
-                now_ms
+                // 已扫描过的库从上次成功扫描时的文件 mtime（纳秒）起算：升级前
+                // 刚写入、旧版本本应按 V2 导入的用量不能被起点挡掉。
+                let cutoff_ms = match cursors.get(&db_path_str) {
+                    Some(cursor) if cursor.last_modified > 0 => cursor.last_modified / 1_000_000,
+                    _ => SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0),
+                };
+                update_sync_state(db, &cutoff_key, cutoff_ms, 0)?;
+                cutoff_ms
             }
         }
     } else {
@@ -915,6 +921,43 @@ mod tests {
         update_sync_state(&db, &base, 0, 0).unwrap();
         sync_opencode_usage_from_path(&db, &path).unwrap();
         assert_eq!(mixed_cutoff(&db, &path), Some(1000));
+    }
+
+    #[test]
+    fn test_mixed_cutoff_starts_at_last_scan_after_upgrade() {
+        // The previous version last scanned at 1_700_000_000_000 ms; 'between'
+        // was written after that scan and before the first Mixed scan.
+        let source = mixed_database();
+        source
+            .execute_batch(
+                "INSERT INTO session VALUES ('v1-only', 1699999000000);
+                 INSERT INTO session_v2 VALUES ('v2', 1700000001000);",
+            )
+            .unwrap();
+        source
+            .execute(
+                "INSERT INTO message VALUES ('missed', 'v1-only', 100, 1699999000000, ?1)",
+                [usage_message(20, true)],
+            )
+            .unwrap();
+        source
+            .execute(
+                "INSERT INTO session_message
+                 VALUES ('between', 'v2', 'assistant', 100, 1700000001000, ?1)",
+                [usage_message(20, true)],
+            )
+            .unwrap();
+        let (_dir, path) = write_database(&source);
+        let db = Database::memory().unwrap();
+        let base = path.to_string_lossy();
+        update_sync_state(&db, &base, 1_700_000_000_000_000_000, 0).unwrap();
+        update_sync_state(&db, &format!("{base}:v2"), 1_699_999_000_000, 0).unwrap();
+
+        let result = sync_opencode_usage_from_path(&db, &path).unwrap();
+        assert_eq!(result.imported, 1);
+        assert!(result.errors.is_empty());
+        assert_eq!(imported_request_ids(&db), vec!["opencode_session:v2:between"]);
+        assert_eq!(mixed_cutoff(&db, &path), Some(1_700_000_000_000));
     }
 
     #[test]
