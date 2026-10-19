@@ -45,8 +45,8 @@ import { formatUsageDataSummary } from "@/utils/usageDisplay";
  */
 const VOLCENGINE_KEY_CONSOLE_URL =
   "https://console.volcengine.com/iam/keymanage";
-// 千问AI平台 Token Plan：用量在百炼控制台网关后面，要先用阿里云 AK/SK 换
-// console token，凭据同样与推理用的 sk-sp-... Key 是两套。
+// 阿里云套餐（千问 Token Plan / 百炼 Coding Plan）：用量都在百炼控制台网关后面，
+// 要先用阿里云 AK/SK 换 console token，凭据与推理用的 sk-sp-... Key 是两套。
 const ALIYUN_AK_CONSOLE_URL = "https://ram.console.aliyun.com/manage/ak";
 // 智谱团队套餐用量页（组织 ID / 项目 ID 在此页 URL 或管理后台可见）
 const ZHIPU_TEAM_USAGE_URL = "https://bigmodel.cn/coding-plan/team/usage-stats";
