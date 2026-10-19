@@ -106,7 +106,14 @@ fn decompress_single(
                     // 回退后若真是炸弹，raw 解码同样会触发 TooLarge。
                     log::debug!("deflate 按 zlib 解压失败（{zlib_err}），回退 raw deflate");
                     let raw = flate2::read::DeflateDecoder::new(body);
-                    Ok(Some(read_with_output_limit(raw, max_output_bytes)?))
+                    match read_with_output_limit(raw, max_output_bytes) {
+                        Ok(decompressed) => Ok(Some(decompressed)),
+                        // 两种格式均失败时，不能让 raw 格式错误覆盖 zlib 的超限结果。
+                        Err(_) if matches!(zlib_err, DecompressError::TooLarge { .. }) => {
+                            Err(zlib_err)
+                        }
+                        Err(raw_err) => Err(raw_err),
+                    }
                 }
             }
         }
@@ -219,6 +226,44 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(decompressed, payload);
+    }
+
+    #[test]
+    fn decompress_body_deflate_preserves_output_limit_for_both_formats() {
+        let payload = [b' '; 33];
+        for raw in [false, true] {
+            let compressed = if raw {
+                let mut encoder =
+                    flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+                std::io::Write::write_all(&mut encoder, &payload).unwrap();
+                encoder.finish().unwrap()
+            } else {
+                let mut encoder =
+                    flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+                std::io::Write::write_all(&mut encoder, &payload).unwrap();
+                encoder.finish().unwrap()
+            };
+            assert_eq!(
+                decompress_body_with_limit("deflate", &compressed, payload.len())
+                    .unwrap()
+                    .unwrap(),
+                payload,
+                "raw={raw}"
+            );
+            let result = decompress_body_with_limit("deflate", &compressed, payload.len() - 1);
+            assert!(
+                matches!(result, Err(DecompressError::TooLarge { limit: 32 })),
+                "raw={raw}: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn decompress_body_deflate_corrupt_stream_remains_an_io_error() {
+        assert!(matches!(
+            decompress_body_with_limit("deflate", b"not a deflate stream", 32),
+            Err(DecompressError::Io(_))
+        ));
     }
 
     #[test]
