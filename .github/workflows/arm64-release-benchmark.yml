@@ -1,17 +1,32 @@
 name: Windows ARM64 Release cache experiment
 
 on:
-  push:
-    branches:
-      - codex/issue-8543-arm64-release
-    paths:
-      - .github/workflows/arm64-release-benchmark.yml
-      - src/**
-      - src-tauri/**
-      - package.json
-      - pnpm-lock.yaml
-      - pnpm-workspace.yaml
-      - rust-toolchain.toml
+  workflow_dispatch:
+    inputs:
+      cargo_cache:
+        description: Cargo cache strategy
+        required: true
+        type: choice
+        options:
+          - none
+          - rust-cache
+          - target
+        default: none
+      pnpm_cache:
+        description: Enable the pnpm store cache
+        required: true
+        type: boolean
+        default: false
+      cargo_cache_epoch:
+        description: Unique Cargo cache key for a cold-cache comparison
+        required: true
+        type: string
+        default: cargo-v1
+      pnpm_cache_epoch:
+        description: Unique pnpm cache key for a cold-cache comparison
+        required: true
+        type: string
+        default: pnpm-v1
 
 permissions:
   contents: read
@@ -69,6 +84,30 @@ jobs:
           $storePath = pnpm store path --silent
           "path=$storePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      - name: Cache pnpm store
+        id: pnpm-cache
+        if: inputs.pnpm_cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: windows-arm64-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}-${{ inputs.pnpm_cache_epoch }}
+          restore-keys: windows-arm64-pnpm-store-
+
+      - name: Cache Rust dependencies
+        if: inputs.cargo_cache == 'rust-cache'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: windows-arm64-release-${{ inputs.cargo_cache_epoch }}
+
+      - name: Cache the complete ARM64 release target
+        id: target-cache
+        if: inputs.cargo_cache == 'target'
+        uses: actions/cache@v5
+        with:
+          path: src-tauri/target/aarch64-pc-windows-msvc/release
+          key: windows-arm64-release-target-${{ hashFiles('rust-toolchain.toml', 'src-tauri/Cargo.lock') }}-${{ inputs.cargo_cache_epoch }}
+
       - name: Verify ARM64 dependency graph does not enable bindgen
         shell: pwsh
         run: |
@@ -81,15 +120,37 @@ jobs:
           }
 
       - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
+        shell: pwsh
+        run: |
+          $elapsed = [Diagnostics.Stopwatch]::StartNew()
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          $elapsed.Stop()
+          Write-Host ("pnpm install seconds: {0:N1}" -f $elapsed.Elapsed.TotalSeconds)
 
       - name: Build Tauri app without bundling or signing
-        run: pnpm tauri build --target aarch64-pc-windows-msvc --no-bundle
+        shell: pwsh
+        run: |
+          $elapsed = [Diagnostics.Stopwatch]::StartNew()
+          pnpm tauri build --target aarch64-pc-windows-msvc --no-bundle
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          $elapsed.Stop()
+          Write-Host ("Tauri build seconds: {0:N1}" -f $elapsed.Elapsed.TotalSeconds)
 
       - name: Report ARM64 release target size
         if: always()
         shell: pwsh
         run: |
+          Write-Host "Cargo cache strategy: ${{ inputs.cargo_cache }}"
+          Write-Host "Cargo cache epoch: ${{ inputs.cargo_cache_epoch }}"
+          Write-Host "Target cache hit: ${{ steps.target-cache.outputs.cache-hit }}"
+          Write-Host "pnpm cache enabled: ${{ inputs.pnpm_cache }}"
+          Write-Host "pnpm cache epoch: ${{ inputs.pnpm_cache_epoch }}"
+          Write-Host "pnpm cache hit: ${{ steps.pnpm-cache.outputs.cache-hit }}"
           $targetPath = 'src-tauri/target/aarch64-pc-windows-msvc/release'
           if (Test-Path $targetPath) {
             $bytes = (Get-ChildItem -LiteralPath $targetPath -File -Recurse | Measure-Object -Property Length -Sum).Sum
