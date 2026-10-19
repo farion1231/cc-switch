@@ -45,31 +45,28 @@ describe("GeneralSection tray style", () => {
     platform.linux = false;
   });
 
-  it("defaults to the native menu and saves the panel when Panel is picked", () => {
+  it("defaults to the panel and saves the native menu when Menu is picked", () => {
     const onAutoSave = renderSection();
     const group = screen.getByRole("group", {
       name: "settings.general.trayStyle",
     });
     expect(group).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "settings.general.trayStyleMenu" }),
-    ).toHaveAttribute("aria-pressed", "true");
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "settings.general.trayStylePanel" }),
-    );
-    expect(onAutoSave).toHaveBeenCalledWith({ nativeTrayMenu: false });
-  });
-
-  it("switches back to the native menu", () => {
-    const onAutoSave = renderSection({ nativeTrayMenu: false });
-    expect(
       screen.getByRole("button", { name: "settings.general.trayStylePanel" }),
     ).toHaveAttribute("aria-pressed", "true");
+
     fireEvent.click(
       screen.getByRole("button", { name: "settings.general.trayStyleMenu" }),
     );
     expect(onAutoSave).toHaveBeenCalledWith({ nativeTrayMenu: true });
+  });
+
+  it("switches back to the panel", () => {
+    const onAutoSave = renderSection({ nativeTrayMenu: true });
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.general.trayStylePanel" }),
+    );
+    expect(onAutoSave).toHaveBeenCalledWith({ nativeTrayMenu: false });
   });
 
   it("is hidden on Linux, which only has the native menu", () => {

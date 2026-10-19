@@ -450,8 +450,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub check_tool_updates_on_startup: bool,
     /// 点托盘图标出原生菜单，不出托盘面板（macOS / Windows；Linux 只能出原生菜单，不看这一项）。
-    /// 默认开：用原生菜单，托盘面板要在设置里手动选。
-    #[serde(default = "default_true")]
+    /// 默认关：用托盘面板，想要原生菜单在设置里换回。
+    #[serde(default)]
     pub native_tray_menu: bool,
     /// Keep Codex ChatGPT login material in auth.json when switching to third-party providers.
     /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
@@ -638,7 +638,7 @@ impl Default for AppSettings {
             show_profile_switcher: false,
             show_provider_search: true,
             check_tool_updates_on_startup: false,
-            native_tray_menu: true,
+            native_tray_menu: false,
             preserve_codex_official_auth_on_switch: false,
             unify_codex_session_history: false,
             unify_codex_migrate_existing: None,
@@ -1618,12 +1618,12 @@ mod tests {
     }
 
     #[test]
-    fn native_tray_menu_defaults_on_and_keeps_a_saved_panel_choice() {
-        assert!(AppSettings::default().native_tray_menu);
+    fn native_tray_menu_defaults_off_and_keeps_a_saved_menu_choice() {
+        assert!(!AppSettings::default().native_tray_menu);
         let missing: AppSettings = serde_json::from_str("{}").unwrap();
-        assert!(missing.native_tray_menu);
-        let panel: AppSettings = serde_json::from_str(r#"{"nativeTrayMenu":false}"#).unwrap();
-        assert!(!panel.native_tray_menu);
+        assert!(!missing.native_tray_menu);
+        let menu: AppSettings = serde_json::from_str(r#"{"nativeTrayMenu":true}"#).unwrap();
+        assert!(menu.native_tray_menu);
     }
 
     #[test]

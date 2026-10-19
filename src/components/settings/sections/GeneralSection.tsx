@@ -228,7 +228,7 @@ export function GeneralSection({
                 <SegmentedControl
                   size="sm"
                   aria-label={t("settings.general.trayStyle")}
-                  value={settings.nativeTrayMenu === false ? "panel" : "menu"}
+                  value={settings.nativeTrayMenu ? "menu" : "panel"}
                   onValueChange={(value) =>
                     void onAutoSave({ nativeTrayMenu: value === "menu" })
                   }
