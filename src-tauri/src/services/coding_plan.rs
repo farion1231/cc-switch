@@ -1678,28 +1678,28 @@ async fn query_volcengine(
 // 只复用底层 HMAC/SHA256/RFC3986 编码原语，不复用 volcengine_sign。
 
 /// 换 console token 的 OpenAPI 域名/路径（ROA 风格，Action 走请求头而非 query）。
-const QWEN_ACS_HOST: &str = "modelstudio.cn-beijing.aliyuncs.com";
-const QWEN_ACS_PATH: &str = "/modelstudio/cli/generateAccessToken";
-const QWEN_ACS_ACTION: &str = "GenerateCLIAccessToken";
-const QWEN_ACS_VERSION: &str = "2026-02-10";
+const ALIYUN_ACS_HOST: &str = "modelstudio.cn-beijing.aliyuncs.com";
+const ALIYUN_ACS_PATH: &str = "/modelstudio/cli/generateAccessToken";
+const ALIYUN_ACS_ACTION: &str = "GenerateCLIAccessToken";
+const ALIYUN_ACS_VERSION: &str = "2026-02-10";
 
 /// 控制台网关（`sfm_bailian` 产品，CN 站）。国际站是 bailian-cs.console.alibabacloud.com。
-const QWEN_GATEWAY_HOST: &str = "bailian-cs.console.aliyun.com";
-const QWEN_GATEWAY_ACTION: &str = "BroadScopeAspnGateway";
-const QWEN_GATEWAY_REGION: &str = "cn-beijing";
+const ALIYUN_GATEWAY_HOST: &str = "bailian-cs.console.aliyun.com";
+const ALIYUN_GATEWAY_ACTION: &str = "BroadScopeAspnGateway";
+const ALIYUN_GATEWAY_REGION: &str = "cn-beijing";
 const QWEN_USAGE_API: &str = "zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage";
 /// 百炼 Coding Plan 的套餐实例（含 5 小时 / 每周 / 每月额度），国际站 commodityCode 不同。
 const BAILIAN_USAGE_API: &str =
     "zeldaEasy.broadscope-bailian.codingPlan.queryCodingPlanInstanceInfoV2";
 const BAILIAN_COMMODITY_CODE: &str = "sfm_codingplan_public_cn";
 
-const QWEN_AKSK_HINT: &str =
+const ALIYUN_AKSK_HINT: &str =
     "Use the Aliyun AccessKey ID/Secret of an account (or a RAM user in the Bailian workspace) \
      allowed to call modelstudio:GenerateCLIAccessToken — the sk-sp-... plan key only authorizes \
      inference and cannot query usage.";
 
 /// ACS3 只签 host / content-type / x-acs-* 这几类头，**按字母序**（火山是固定顺序）。
-const QWEN_SIGNED_HEADERS: &str = "content-type;host;x-acs-action;x-acs-content-sha256;x-acs-date;x-acs-signature-nonce;x-acs-version";
+const ALIYUN_SIGNED_HEADERS: &str = "content-type;host;x-acs-action;x-acs-content-sha256;x-acs-date;x-acs-signature-nonce;x-acs-version";
 
 /// 构造 ACS3 canonical request（METHOD\npath\nquery\ncanonicalHeaders\nsignedHeaders\nbodyHash）。
 /// 单独抽成纯函数便于写确定性单测——签名错基本都是 canonicalization 错。
@@ -1725,7 +1725,7 @@ fn acs3_canonical_request(
          x-acs-signature-nonce:{nonce}\n\
          x-acs-version:{version}\n"
     );
-    format!("POST\n{pathname}\n\n{canonical_headers}\n{QWEN_SIGNED_HEADERS}\n{hashed_body}")
+    format!("POST\n{pathname}\n\n{canonical_headers}\n{ALIYUN_SIGNED_HEADERS}\n{hashed_body}")
 }
 
 /// 生成 ACS3 鉴权头。`now`/`nonce` 作参数传入便于写确定性单测。
@@ -1764,7 +1764,7 @@ fn acs3_signed_headers(
             .map(|b| format!("{b:02x}"))
             .collect();
     let authorization = format!(
-        "ACS3-HMAC-SHA256 Credential={access_key_id},SignedHeaders={QWEN_SIGNED_HEADERS},Signature={signature}"
+        "ACS3-HMAC-SHA256 Credential={access_key_id},SignedHeaders={ALIYUN_SIGNED_HEADERS},Signature={signature}"
     );
 
     vec![
@@ -1779,7 +1779,7 @@ fn acs3_signed_headers(
 }
 
 /// 读一个已拿到状态的响应并归类（与火山的 VolcCall 同一套语义）。
-async fn qwen_read_response(resp: reqwest::Response) -> VolcCall {
+async fn aliyun_read_response(resp: reqwest::Response) -> VolcCall {
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         let body = resp.text().await.unwrap_or_default();
@@ -1803,34 +1803,34 @@ async fn qwen_read_response(resp: reqwest::Response) -> VolcCall {
 }
 
 /// 第一步：AK/SK 换控制台临时 token（官方 `generateCLIAccessToken`，空 body）。
-async fn qwen_acs_call(access_key_id: &str, secret_access_key: &str) -> VolcCall {
+async fn aliyun_acs_call(access_key_id: &str, secret_access_key: &str) -> VolcCall {
     let nonce = uuid::Uuid::new_v4().to_string();
     let headers = acs3_signed_headers(
         access_key_id,
         secret_access_key,
-        QWEN_ACS_HOST,
-        QWEN_ACS_PATH,
+        ALIYUN_ACS_HOST,
+        ALIYUN_ACS_PATH,
         "application/json",
-        QWEN_ACS_ACTION,
-        QWEN_ACS_VERSION,
+        ALIYUN_ACS_ACTION,
+        ALIYUN_ACS_VERSION,
         b"",
         chrono::Utc::now(),
         &nonce,
     );
     let mut req = crate::proxy::http_client::get()
-        .post(format!("https://{QWEN_ACS_HOST}{QWEN_ACS_PATH}"))
+        .post(format!("https://{ALIYUN_ACS_HOST}{ALIYUN_ACS_PATH}"))
         .timeout(std::time::Duration::from_secs(15));
     for (name, value) in headers {
         req = req.header(name, value);
     }
     match req.body(Vec::<u8>::new()).send().await {
-        Ok(resp) => qwen_read_response(resp).await,
+        Ok(resp) => aliyun_read_response(resp).await,
         Err(e) => VolcCall::Transient(format!("Network error: {e}")),
     }
 }
 
 /// 第二步：调控制台网关。`api` 是控制台 JSON API 名，`data` 是业务参数（无则空对象）。
-async fn qwen_gateway_call(token: &str, api: &str, data: &serde_json::Value) -> VolcCall {
+async fn aliyun_gateway_call(token: &str, api: &str, data: &serde_json::Value) -> VolcCall {
     // 网关把业务参数包成 {Api,V,Data:{...,cornerstoneParam}} 再整体塞进 params 表单字段。
     let mut payload_data = data.clone();
     if !payload_data.is_object() {
@@ -1846,10 +1846,10 @@ async fn qwen_gateway_call(token: &str, api: &str, data: &serde_json::Value) -> 
     let params = serde_json::json!({"Api": api, "V": "1.0", "Data": payload_data});
     let encoded_api = volc_uri_encode(api);
     let url = format!(
-        "https://{QWEN_GATEWAY_HOST}/cli/api.json?action={QWEN_GATEWAY_ACTION}&product=sfm_bailian&api={encoded_api}"
+        "https://{ALIYUN_GATEWAY_HOST}/cli/api.json?action={ALIYUN_GATEWAY_ACTION}&product=sfm_bailian&api={encoded_api}"
     );
     let encoded_params = volc_uri_encode(&params.to_string());
-    let body = format!("params={encoded_params}&region={QWEN_GATEWAY_REGION}");
+    let body = format!("params={encoded_params}&region={ALIYUN_GATEWAY_REGION}");
 
     let resp = crate::proxy::http_client::get()
         .post(&url)
@@ -1861,13 +1861,13 @@ async fn qwen_gateway_call(token: &str, api: &str, data: &serde_json::Value) -> 
         .send()
         .await;
     match resp {
-        Ok(resp) => qwen_read_response(resp).await,
+        Ok(resp) => aliyun_read_response(resp).await,
         Err(e) => VolcCall::Transient(format!("Network error: {e}")),
     }
 }
 
 /// 控制台网关的业务错误：`data.success === false` 时取 errorCode/errorMessage。
-fn qwen_gateway_error(body: &serde_json::Value) -> Option<String> {
+fn aliyun_gateway_error(body: &serde_json::Value) -> Option<String> {
     let data = body.get("data")?;
     if data.get("success").and_then(|v| v.as_bool()) != Some(false) {
         return None;
@@ -1886,13 +1886,13 @@ fn qwen_gateway_error(body: &serde_json::Value) -> Option<String> {
     };
     // console token 过期（NotLogined）多半是 AK/SK 权限不足或已失效，附上引导文案。
     if code.contains("NotLogined") {
-        detail = format!("{detail}. {QWEN_AKSK_HINT}");
+        detail = format!("{detail}. {ALIYUN_AKSK_HINT}");
     }
     Some(detail)
 }
 
 /// 在网关两层信封里找到业务数据：`data.DataV2.data.data`（不同 API 偶尔少一层）。
-fn qwen_payload_with(
+fn aliyun_payload_with(
     body: &serde_json::Value,
     matches: impl Fn(&serde_json::Value) -> bool,
 ) -> Option<&serde_json::Value> {
@@ -1922,7 +1922,7 @@ fn qwen_payload_with(
 }
 
 fn qwen_usage_payload(body: &serde_json::Value) -> Option<&serde_json::Value> {
-    qwen_payload_with(body, |node| {
+    aliyun_payload_with(body, |node| {
         node.get("per1MonthPercentage").is_some()
             || node.get("per1MonthResetTime").is_some()
             || node.get("per5HourPercentage").is_some()
@@ -1930,7 +1930,7 @@ fn qwen_usage_payload(body: &serde_json::Value) -> Option<&serde_json::Value> {
     })
 }
 
-fn qwen_auth_error(detail: String) -> SubscriptionQuota {
+fn aliyun_auth_error(detail: String) -> SubscriptionQuota {
     SubscriptionQuota {
         tool: "coding_plan".to_string(),
         credential_status: CredentialStatus::Expired,
@@ -1940,7 +1940,7 @@ fn qwen_auth_error(detail: String) -> SubscriptionQuota {
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
-        error: Some(format!("{detail}. {QWEN_AKSK_HINT}")),
+        error: Some(format!("{detail}. {ALIYUN_AKSK_HINT}")),
         queried_at: Some(now_millis()),
     }
 }
@@ -1987,13 +1987,13 @@ enum ConsoleQueryError {
 
 /// 阿里云控制面一次完整查询：AK/SK 换 console token → 调控制台网关 JSON API。
 /// 千问 Token Plan 与百炼 Coding Plan 共用（两者的用量都在百炼控制台后面）。
-async fn qwen_console_call(
+async fn aliyun_console_call(
     access_key_id: &str,
     secret_access_key: &str,
     api: &str,
     data: &serde_json::Value,
 ) -> Result<serde_json::Value, ConsoleQueryError> {
-    let token = match qwen_acs_call(access_key_id, secret_access_key).await {
+    let token = match aliyun_acs_call(access_key_id, secret_access_key).await {
         VolcCall::Body(body) => {
             let mut found = body.get("cliAccessToken").and_then(|v| v.as_str());
             if found.is_none() {
@@ -2007,13 +2007,13 @@ async fn qwen_console_call(
                 None => {
                     let raw: String = body.to_string().chars().take(700).collect();
                     return Err(ConsoleQueryError::Deterministic(make_error(format!(
-                        "GenerateCLIAccessToken returned no cliAccessToken. {QWEN_AKSK_HINT} Raw: {raw}"
+                        "GenerateCLIAccessToken returned no cliAccessToken. {ALIYUN_AKSK_HINT} Raw: {raw}"
                     ))));
                 }
             }
         }
         VolcCall::Auth(detail) => {
-            return Err(ConsoleQueryError::Deterministic(qwen_auth_error(detail)))
+            return Err(ConsoleQueryError::Deterministic(aliyun_auth_error(detail)))
         }
         VolcCall::Transient(detail) => {
             return Err(ConsoleQueryError::Transient(format!(
@@ -2027,10 +2027,10 @@ async fn qwen_console_call(
         }
     };
 
-    let body = match qwen_gateway_call(&token, api, data).await {
+    let body = match aliyun_gateway_call(&token, api, data).await {
         VolcCall::Body(body) => body,
         VolcCall::Auth(detail) => {
-            return Err(ConsoleQueryError::Deterministic(qwen_auth_error(detail)))
+            return Err(ConsoleQueryError::Deterministic(aliyun_auth_error(detail)))
         }
         VolcCall::Transient(detail) => {
             return Err(ConsoleQueryError::Transient(format!("{api}: {detail}")))
@@ -2041,7 +2041,7 @@ async fn qwen_console_call(
             ))))
         }
     };
-    if let Some(error) = qwen_gateway_error(&body) {
+    if let Some(error) = aliyun_gateway_error(&body) {
         return Err(ConsoleQueryError::Deterministic(make_error(error)));
     }
     Ok(body)
@@ -2052,7 +2052,7 @@ async fn query_qwen_token_plan(
     access_key_id: &str,
     secret_access_key: &str,
 ) -> Result<SubscriptionQuota, String> {
-    let body = match qwen_console_call(
+    let body = match aliyun_console_call(
         access_key_id,
         secret_access_key,
         QWEN_USAGE_API,
@@ -2138,15 +2138,16 @@ async fn query_bailian_coding_plan(
             "onlyLatestOne": true,
         }
     });
-    let body =
-        match qwen_console_call(access_key_id, secret_access_key, BAILIAN_USAGE_API, &data).await {
-            Ok(body) => body,
-            Err(ConsoleQueryError::Deterministic(quota)) => return Ok(quota),
-            Err(ConsoleQueryError::Transient(detail)) => return Err(detail),
-        };
+    let body = match aliyun_console_call(access_key_id, secret_access_key, BAILIAN_USAGE_API, &data)
+        .await
+    {
+        Ok(body) => body,
+        Err(ConsoleQueryError::Deterministic(quota)) => return Ok(quota),
+        Err(ConsoleQueryError::Transient(detail)) => return Err(detail),
+    };
 
     let Some(payload) =
-        qwen_payload_with(&body, |node| node.get("codingPlanInstanceInfos").is_some())
+        aliyun_payload_with(&body, |node| node.get("codingPlanInstanceInfos").is_some())
     else {
         let raw: String = body.to_string().chars().take(700).collect();
         return Ok(make_error(format!(
@@ -2366,14 +2367,14 @@ pub async fn get_coding_plan_quota(
 #[cfg(test)]
 mod tests {
     use super::{
-        acs3_canonical_request, bailian_usage_tiers, detect_provider, detect_provider_id,
-        extract_reset_time, parse_afp_tiers, parse_coding_plan_tiers, parse_command_code_quota,
-        parse_f64, parse_minimax_tiers, parse_opencode_go_tiers, parse_zhipu_token_tiers,
-        query_command_code_at, query_zhipu_team_at, qwen_gateway_error, qwen_usage_payload,
+        acs3_canonical_request, aliyun_gateway_error, bailian_usage_tiers, detect_provider,
+        detect_provider_id, extract_reset_time, parse_afp_tiers, parse_coding_plan_tiers,
+        parse_command_code_quota, parse_f64, parse_minimax_tiers, parse_opencode_go_tiers,
+        parse_zhipu_token_tiers, query_command_code_at, query_zhipu_team_at, qwen_usage_payload,
         qwen_usage_tiers, volcengine_canonical_query, volcengine_is_auth_error_code,
         volcengine_region, volcengine_response_error, volcengine_sign, zhipu_quota_base,
-        CodingPlanProvider, CredentialStatus, QWEN_ACS_ACTION, QWEN_ACS_PATH, QWEN_ACS_VERSION,
-        TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
+        CodingPlanProvider, CredentialStatus, ALIYUN_ACS_ACTION, ALIYUN_ACS_PATH,
+        ALIYUN_ACS_VERSION, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
 
@@ -2467,10 +2468,10 @@ mod tests {
         let empty_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
         let canonical = acs3_canonical_request(
             "modelstudio.cn-beijing.aliyuncs.com",
-            QWEN_ACS_PATH,
+            ALIYUN_ACS_PATH,
             "application/json",
-            QWEN_ACS_ACTION,
-            QWEN_ACS_VERSION,
+            ALIYUN_ACS_ACTION,
+            ALIYUN_ACS_VERSION,
             empty_sha256,
             "2026-10-19T05:06:07Z",
             "0f8fad5b-d9cb-469f-a165-70867728950e",
@@ -2582,14 +2583,14 @@ mod tests {
     }
 
     #[test]
-    fn qwen_gateway_error_flags_not_logined() {
+    fn aliyun_gateway_error_flags_not_logined() {
         let not_logined = json!({
             "data": {"success": false, "errorCode": "BailianGateway.Login.NotLogined"}
         });
-        let error = qwen_gateway_error(&not_logined).expect("gateway error");
+        let error = aliyun_gateway_error(&not_logined).expect("gateway error");
         assert!(error.contains("BailianGateway.Login.NotLogined"));
         assert!(error.contains("GenerateCLIAccessToken"));
-        assert!(qwen_gateway_error(&json!({"data": {"success": true}})).is_none());
+        assert!(aliyun_gateway_error(&json!({"data": {"success": true}})).is_none());
     }
 
     #[test]
