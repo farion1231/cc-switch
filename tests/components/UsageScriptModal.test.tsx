@@ -115,3 +115,86 @@ describe("UsageScriptModal Sub2API template", () => {
     );
   });
 });
+
+describe("UsageScriptModal NewAPI template", () => {
+  it("queries the token usage API with the provider API key", async () => {
+    const onSave = vi.fn();
+    renderModal(onSave);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "usageScript.templateNewAPI" }),
+    );
+
+    const code = (
+      screen.getByTestId("usage-script-code") as HTMLTextAreaElement
+    ).value;
+    expect(code).toContain('+ "/api/usage/token/"');
+    expect(code).toContain('"Authorization": "Bearer {{apiKey}}"');
+    expect(code).toContain('unit: "quota"');
+    expect(code).toContain("unlimited_quota");
+    const script = new Function(
+      `return ${code.split("{{baseUrl}}").join("https://apipaths.com/v1").split("{{apiKey}}").join("sk-test")}`,
+    )() as {
+      request: { url: string; headers: Record<string, string> };
+      extractor: (response: unknown) => Record<string, unknown>;
+    };
+    expect(script.request.url).toBe("https://apipaths.com/api/usage/token/");
+    expect(script.request.headers.Authorization).toBe("Bearer sk-test");
+    expect(
+      script.extractor({
+        code: true,
+        data: {
+          name: "Default",
+          total_available: 120,
+          total_used: 30,
+          total_granted: 150,
+          unlimited_quota: false,
+        },
+      }),
+    ).toMatchObject({ remaining: 120, used: 30, total: 150, unit: "quota" });
+    expect(screen.getByLabelText(/API Key/)).toBeInTheDocument();
+    expect(screen.getAllByLabelText("usageScript.baseUrl")).toHaveLength(1);
+    expect(
+      screen.queryByLabelText("usageScript.accessToken"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("usageScript.userId"),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "usageScript.saveConfig" }),
+    );
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ templateType: "newapi", code }),
+    );
+  });
+
+  it("upgrades a saved user-profile script to the API-key template", async () => {
+    const onSave = vi.fn();
+    renderModal(onSave, {
+      ...provider.meta!.usage_script!,
+      templateType: "newapi",
+      code: '({ request: { url: "{{baseUrl}}/api/user/self" } })',
+      accessToken: "old-token",
+      userId: "123",
+    });
+
+    const code = (
+      screen.getByTestId("usage-script-code") as HTMLTextAreaElement
+    ).value;
+    expect(code).toContain("/api/usage/token/");
+    expect(code).not.toContain("/api/user/self");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "usageScript.saveConfig" }),
+    );
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        templateType: "newapi",
+        code,
+        accessToken: undefined,
+        userId: undefined,
+      }),
+    );
+  });
+});

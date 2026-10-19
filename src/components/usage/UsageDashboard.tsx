@@ -65,6 +65,7 @@ import {
 } from "./rememberedChoice";
 import { fmtInt, formatRelativeTime, getLocaleFromLanguage } from "./format";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
+import { SingleSessionUsagePanel } from "./SingleSessionUsagePanel";
 
 // 用量页打开时扫描会话日志的间隔；旧版存过的「关」(0) 等无效值回落到默认
 const DEFAULT_REFRESH_INTERVAL_MS = 60000;
@@ -82,8 +83,19 @@ const normalizeRefreshInterval = (value: number | undefined) =>
 const STATUS_CODE_OPTIONS = [200, 400, 401, 429, 500] as const;
 
 // 「设置」放显示币种和模型定价（原「定价」页签并进来）
-type UsageTab = "logs" | "providers" | "models" | "settings";
-const TABS: UsageTab[] = ["logs", "providers", "models", "settings"];
+type UsageTab =
+  | "logs"
+  | "providers"
+  | "models"
+  | "sessions"
+  | "settings";
+const TABS: UsageTab[] = [
+  "logs",
+  "providers",
+  "models",
+  "sessions",
+  "settings",
+];
 /** 记住的时间范围只认预设：自定义的起止日期过几天就不是用户想看的了，选自定义时不改记下的预设 */
 const REMEMBERED_RANGE_PRESETS: UsageRangePreset[] = [
   "today",
@@ -208,7 +220,6 @@ export function UsageDashboard({
   );
   const [model, setModel] = useState<string | undefined>(undefined);
   const [statusCode, setStatusCode] = useState<number | undefined>(undefined);
-
   // 请求日志显示哪些列在「设置」页签里改，这里只按设置画
   const logColumns = resolveRequestLogColumns(usageDisplay?.requestLogColumns);
   const [tab, setTab] = useRememberedChoice<UsageTab>(
@@ -216,8 +227,8 @@ export function UsageDashboard({
     TABS,
     "logs",
   );
-  // 没有用量时也能进定价页：新装的人往往先配好 models.dev 同步再开始用
-  const [pricingWhileEmpty, setPricingWhileEmpty] = useState(false);
+  // 没有用量时仍可打开设置或单个会话查询页
+  const [showTabsWhileEmpty, setShowTabsWhileEmpty] = useState(false);
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(() =>
     normalizeRefreshInterval(savedRefreshIntervalMs),
   );
@@ -681,6 +692,7 @@ export function UsageDashboard({
     providers: t("usage.tabs.providers"),
     models: t("usage.tabs.models"),
     settings: t("usage.tabs.settings"),
+    sessions: t("usage.tabs.sessions"),
   };
   const statusLabel =
     statusCode == null
@@ -780,6 +792,7 @@ export function UsageDashboard({
             refreshIntervalMs={0}
           />
         )}
+        {tab === "sessions" && <SingleSessionUsagePanel />}
         {tab === "settings" && (
           <div className="flex flex-col gap-5 pt-3">
             {onUsageDisplayChange && (
@@ -804,8 +817,8 @@ export function UsageDashboard({
   );
 
   const body =
-    isEmpty && pricingWhileEmpty ? (
-      // 空库里只有定价可配：不画全是 0 的概览和趋势，直接给页签
+    isEmpty && showTabsWhileEmpty ? (
+      // 空库里不画全是 0 的概览和趋势，直接给页签
       <div
         id="main-content"
         className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto scroll-stable px-6 pb-6 pt-1"
@@ -843,10 +856,21 @@ export function UsageDashboard({
             size="regular"
             onClick={() => {
               setTab("settings");
-              setPricingWhileEmpty(true);
+              setShowTabsWhileEmpty(true);
             }}
           >
             {t("usage.empty.configurePricing")}
+          </Button>
+          <Button
+            type="button"
+            variant="quiet"
+            size="regular"
+            onClick={() => {
+              setTab("sessions");
+              setShowTabsWhileEmpty(true);
+            }}
+          >
+            {t("usage.empty.querySingleSession")}
           </Button>
         </div>
       </div>

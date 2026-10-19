@@ -2217,6 +2217,22 @@
       "syncCompleted": "同步完成：新增 {{imported}} 条，扫描 {{files}} 个文件，错误 {{errors}}",
       "syncFailed": "会话用量同步失败：{{error}}"
     },
+    "singleSession": {
+      "select": "选择一个对话",
+      "search": "搜索对话",
+      "loadingSessions": "正在加载对话…",
+      "sessionsError": "无法加载对话列表",
+      "noSessions": "没有可查询的对话",
+      "noMatches": "没有匹配的对话",
+      "selectHint": "选择一个对话查看用量汇总。",
+      "loading": "正在加载用量…",
+      "error": "用量查询失败。",
+      "retry": "重试",
+      "noUsage": "这个对话没有可用的用量数据。",
+      "totalTokens": "总 Token",
+      "successRate": "成功率",
+      "dataScopeHint": "仅统计最近 30 天仍保留明细的会话日志请求；路由请求及已汇总的旧数据无法按对话查询。"
+    },
     "rebuildCodex": {
       "title": "Codex 用量维护",
       "description": "从本地 rollout 日志重新构建 Codex 会话用量",
@@ -2439,6 +2455,7 @@
       "providers": "供应商",
       "models": "模型",
       "pricing": "定价",
+      "sessions": "单个对话",
       "settings": "设置"
     },
     "sortedByRequests": "按请求数排序",
@@ -2509,7 +2526,8 @@
     "empty": {
       "title": "还没有用量数据",
       "body": "会话日志和经路由服务的请求都会记在这里。",
-      "configurePricing": "配置模型定价"
+      "configurePricing": "配置模型定价",
+      "querySingleSession": "查询单个对话"
     },
     "pricing": {
       "modelsDevTitle": "models.dev 同步 · {{status}}",
