@@ -2357,6 +2357,7 @@ fn codex_catalog_from_specs_for_row(
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Result<Value, AppError> {
+    let windows = RowWindows::of(config_text);
     // Vendors that publish an OFFICIAL Codex models.json for their native
     // `/responses` gateway get it mirrored verbatim instead of the neutral
     // template: its freeform apply_patch, vendor harness base_instructions and
@@ -2366,13 +2367,21 @@ fn codex_catalog_from_specs_for_row(
         let entries: Vec<Value> = specs
             .iter()
             .enumerate()
-            .map(|(index, spec)| codex_vendor_catalog_model_entry(&vendor_models, spec, index))
+            .map(|(index, spec)| {
+                let mut entry = codex_vendor_catalog_model_entry(&vendor_models, spec, index);
+                if windows.window.is_some()
+                    || windows.limit.is_some()
+                    || spec.context_window.is_some()
+                {
+                    sink_row_windows(&mut entry, &windows, true);
+                }
+                entry
+            })
             .collect();
         return Ok(json!({ "models": entries }));
     }
 
-    let configured_context_window =
-        extract_codex_top_level_u64(config_text, "model_context_window");
+    let configured_context_window = windows.window;
     let default_context_window = configured_context_window.unwrap_or(128_000);
 
     // Native providers use the bundled clean template (no freeform apply_patch);
@@ -2399,8 +2408,8 @@ fn codex_catalog_from_specs_for_row(
     let entries: Vec<Value> = specs
         .iter()
         .enumerate()
-        .map(
-            |(index, spec)| match find_codex_official_model(&spec.model, &official) {
+        .map(|(index, spec)| {
+            let mut entry = match find_codex_official_model(&spec.model, &official) {
                 Some(found) => codex_official_model_entry(
                     found,
                     &spec.model,
@@ -2417,8 +2426,16 @@ fn codex_catalog_from_specs_for_row(
                     profile,
                     default_context_window,
                 ),
-            },
-        )
+            };
+            // A changed window needs a matching compaction threshold in single-provider
+            // catalogs too. Otherwise an official/template threshold can stay at 244800
+            // even after the user requests 1M. Keep untouched official defaults intact.
+            if windows.window.is_some() || windows.limit.is_some() || spec.context_window.is_some()
+            {
+                sink_row_windows(&mut entry, &windows, true);
+            }
+            entry
+        })
         .collect();
     Ok(json!({ "models": entries }))
 }
@@ -2672,7 +2689,7 @@ fn sink_row_windows(entry: &mut Value, windows: &RowWindows, third_party: bool) 
             .then(|| obj.get("context_window").and_then(Value::as_u64))
             .flatten()
             .filter(|window| *window > 0)
-            .map(|window| window * 9 / 10)
+            .map(|window| (u128::from(window) * 9 / 10) as u64)
     });
     if let Some(limit) = limit {
         obj.insert("auto_compact_token_limit".to_string(), json!(limit));
@@ -5081,6 +5098,7 @@ wire_api = "responses"
                 "upgrade": { "model": "gpt-next" },
                 "context_window": 272_000,
                 "max_context_window": 872_000,
+                "auto_compact_token_limit": 244_800,
                 "effective_context_window_percent": 95,
                 "supports_image_detail_original": true,
                 "supported_reasoning_levels": [
@@ -5161,6 +5179,7 @@ wire_api = "responses"
         assert_eq!(gpt["tool_mode"], "code_mode_only");
         assert_eq!(gpt["context_window"], 272_000);
         assert_eq!(gpt["max_context_window"], 872_000);
+        assert_eq!(gpt["auto_compact_token_limit"], 244_800);
         assert_eq!(gpt["default_reasoning_level"], "low");
         assert_eq!(gpt["supported_reasoning_levels"][1]["effort"], "xhigh");
         assert_eq!(gpt["supports_image_detail_original"], true);
@@ -5201,6 +5220,7 @@ wire_api = "responses"
                 for (model, window) in models.iter().zip([1_050_000, 512_000, 128_000]) {
                     assert_eq!(model["context_window"], window);
                     assert_eq!(model["max_context_window"], window);
+                    assert_eq!(model["auto_compact_token_limit"], window * 9 / 10);
                     assert_eq!(model["effective_context_window_percent"], 95);
                     assert_eq!(model["apply_patch_tool_type"], "freeform");
                 }
@@ -5210,6 +5230,7 @@ wire_api = "responses"
                 );
                 assert_eq!(models[3]["context_window"], 272_000);
                 assert_eq!(models[3]["max_context_window"], 872_000);
+                assert_eq!(models[3]["auto_compact_token_limit"], 244_800);
             }
         });
     }
@@ -5229,8 +5250,70 @@ wire_api = "responses"
                 // Codex clamps config overrides to max_context_window, so both must match.
                 assert_eq!(model["context_window"], 1_000_000);
                 assert_eq!(model["max_context_window"], 1_000_000);
+                assert_eq!(model["auto_compact_token_limit"], 900_000);
             }
         });
+    }
+
+    #[test]
+    fn gemini_context_windows_and_compaction_limits_agree_in_every_catalog_mode() {
+        for profile in [
+            CodexCatalogToolProfile::NativeResponses,
+            CodexCatalogToolProfile::ProxyChat,
+        ] {
+            for window in [272_000_u64, 1_000_000] {
+                let settings = json!({ "modelCatalog": { "models": [
+                    { "model": "gemini-3.8-flash-high", "contextWindow": window },
+                    { "model": "gemini-3.8-pro" }
+                ] } });
+                let single = codex_model_catalog_from_settings(&settings, "", profile)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(single["models"][0]["context_window"], window);
+                assert_eq!(single["models"][0]["max_context_window"], window);
+                assert_eq!(
+                    single["models"][0]["auto_compact_token_limit"],
+                    window * 9 / 10
+                );
+                assert_eq!(single["models"][1]["context_window"], 128_000);
+
+                let stacked = plan_codex_stack_catalog(
+                    CodexStackRoute::ThirdParty(CodexCatalogRow {
+                        settings: &json!({}),
+                        config_text: "",
+                        profile,
+                    }),
+                    &[CodexStackCatalogMember {
+                        key: "gemini",
+                        provider_name: "Gemini",
+                        row: CodexCatalogRow {
+                            settings: &settings,
+                            config_text: "",
+                            profile,
+                        },
+                    }],
+                    false,
+                )
+                .unwrap();
+                let model = &stacked["models"][0];
+                assert_eq!(model["slug"], "ccs-gemini/gemini-3.8-flash-high");
+                assert_eq!(model["context_window"], window);
+                assert_eq!(model["auto_compact_token_limit"], window * 9 / 10);
+
+                let global = codex_model_catalog_from_settings(
+                    &settings,
+                    "model_context_window = 512000\nmodel_auto_compact_token_limit = 400000\n",
+                    profile,
+                )
+                .unwrap()
+                .unwrap();
+                for model in global["models"].as_array().unwrap() {
+                    assert_eq!(model["context_window"], 512_000);
+                    assert_eq!(model["max_context_window"], 512_000);
+                    assert_eq!(model["auto_compact_token_limit"], 400_000);
+                }
+            }
+        }
     }
 
     #[test]

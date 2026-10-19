@@ -6712,6 +6712,64 @@ model_provider = "c"
             .live_has_proxy_placeholder(&AppType::Codex));
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn codex_custom_context_windows_survive_updates_and_restart() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let mut relay = codex_native(
+            "relay",
+            "https://relay.example/v1",
+            "",
+            Some(json!({ "models": [
+                { "model": "gpt-5.5", "contextWindow": 1_050_000 },
+                { "model": "gpt-5.5-high", "contextWindow": 512_000 }
+            ] })),
+        );
+        let gemini = codex_native(
+            "gemini",
+            "https://gemini.example/v1",
+            "",
+            Some(json!({ "models": [
+                { "model": "gemini-3.8-flash-high", "contextWindow": 272_000 }
+            ] })),
+        );
+        let state = state_with(AppType::Codex, &[relay.clone(), gemini], "relay").await;
+        enter(&state, &AppType::Codex, true).await.unwrap();
+        let check = |gpt_window: u64, stacked: bool| {
+            let catalog = codex_catalog();
+            let models = catalog["models"].as_array().unwrap();
+            for (slug, window) in [("gpt-5.5", gpt_window), ("gpt-5.5-high", 512_000)] {
+                let model = models.iter().find(|model| model["slug"] == slug).unwrap();
+                assert_eq!(model["context_window"], window);
+                assert_eq!(model["max_context_window"], window);
+                assert_eq!(model["auto_compact_token_limit"], window * 9 / 10);
+            }
+            if stacked {
+                let gemini = models
+                    .iter()
+                    .find(|model| model["slug"] == "ccs-gemini/gemini-3.8-flash-high")
+                    .unwrap();
+                assert_eq!(gemini["context_window"], 272_000);
+                assert_eq!(gemini["auto_compact_token_limit"], 244_800);
+            }
+        };
+        check(1_050_000, false);
+        set_codex_member(&state, "gemini", true).await;
+        check(1_050_000, true);
+        relay.settings_config["modelCatalog"]["models"][0]["contextWindow"] = json!(750_000);
+        ProviderService::update(&state, AppType::Codex, None, relay).unwrap();
+        check(750_000, true);
+        let catalog = codex_catalog();
+        detach_all(&state).await;
+        startup(&state).await;
+        check(750_000, true);
+        assert_eq!(codex_catalog(), catalog);
+        set_codex_member(&state, "gemini", false).await;
+        check(750_000, false);
+        exit(&state, &AppType::Codex).await.unwrap();
+    }
+
     /// 子代理模型：路由模式照写路由那家的；Stack 模式不写（子代理跟随主模型），只删这两个
     /// 键，`[agents]` 里用户自己的设置不动；Stack 模型都移除后恢复。
     #[tokio::test]
