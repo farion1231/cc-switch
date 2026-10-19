@@ -232,8 +232,8 @@ function MainDirectory({
   const onAppPage = isAppPage(view);
 
   // 选了的项里是 0 的不写（没配定价时金额总是 0）；命中率在今天还没有请求时不写；
-  // 全都没有就整个不显示。行尾只写数（两项时上下两行），「今日」只放进悬停和读屏：
-  // 用量统计旁的数本来就是今天的，多写两个字只占地方
+  // 全都没有就整个不显示。两项都有时只写数、上下两行（「今日」放进悬停和读屏）：
+  // 带上「今日」，换成新台币这类长币种后一行放不下，会把「用量统计」挤成省略号
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const todayValue = (item: SidebarTodayItem): string | null => {
     switch (item) {
@@ -260,7 +260,7 @@ function MainDirectory({
     todayValues.length > 0
       ? t("nav.today", { value: todayValues.join(" · ") })
       : undefined;
-  const todayTrailing = todayValues.length > 1 ? todayValues : todayValues[0];
+  const todayTrailing = todayValues.length > 1 ? todayValues : todayText;
 
   const globals: {
     page: GlobalPage;

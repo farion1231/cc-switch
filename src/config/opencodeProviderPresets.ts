@@ -38,24 +38,36 @@ export interface PresetModelVariant {
   variants?: Record<string, Record<string, unknown>>;
 }
 
+// MiniMax-M3.1-Flash 的思考不可关：禁用 OpenCode 自带的 none 档，
+// 并把 effort 档位（low…max）直接传给接口。
+const MINIMAX_M31_VARIANTS = {
+  none: { disabled: true },
+  low: { reasoningEffort: "low" },
+  medium: { reasoningEffort: "medium" },
+  high: { reasoningEffort: "high" },
+  xhigh: { reasoningEffort: "xhigh" },
+  max: { reasoningEffort: "max" },
+};
+
 export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
   string,
   PresetModelVariant[]
 > = {
   "@ai-sdk/openai-compatible": [
     {
+      id: "MiniMax-M3.1-Flash",
+      name: "MiniMax M3.1 Flash",
+      contextLimit: 1000000,
+      outputLimit: 131072,
+      modalities: { input: ["text", "image"], output: ["text"] },
+      variants: MINIMAX_M31_VARIANTS,
+    },
+    {
       id: "MiniMax-M3",
       name: "MiniMax M3",
       contextLimit: 1000000,
       outputLimit: 131072,
       modalities: { input: ["text", "image"], output: ["text"] },
-    },
-    {
-      id: "MiniMax-M2.7",
-      name: "MiniMax M2.7",
-      contextLimit: 204800,
-      outputLimit: 131072,
-      modalities: { input: ["text"], output: ["text"] },
     },
     {
       id: "glm-5.1",
@@ -1989,6 +2001,54 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     partnerPromotionKey: "alltokens",
     icon: "alltokens",
   },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    // new-api 网关，目录见 alltokens.si/api/pricing（2026-10-19 核对）：GPT 分组
+    // 只声明 Chat Completions，窗口按中转口径封顶 272K
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "AllTokens SI",
+      options: {
+        baseURL: "https://alltokens.si/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-5.6-sol": {
+          name: "GPT-5.6 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-sol": {
+          name: "GPT-6 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",
@@ -2146,7 +2206,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     family: "zhipu",
     regionKey: "cn",
     websiteUrl: "https://open.bigmodel.cn",
-    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "Zhipu GLM",
@@ -2187,7 +2247,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     family: "zhipu",
     regionKey: "intl",
     websiteUrl: "https://z.ai",
-    apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
+    apiKeyUrl: "https://z.ai/subscribe",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "Zhipu GLM en",
@@ -3089,6 +3149,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
+        "MiniMax-M3.1-Flash": {
+          name: "MiniMax M3.1 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+          variants: MINIMAX_M31_VARIANTS,
+        },
         "MiniMax-M3": {
           name: "MiniMax M3",
           reasoning: true,
@@ -3127,6 +3194,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
+        "MiniMax-M3.1-Flash": {
+          name: "MiniMax M3.1 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+          variants: MINIMAX_M31_VARIANTS,
+        },
         "MiniMax-M3": {
           name: "MiniMax M3",
           reasoning: true,

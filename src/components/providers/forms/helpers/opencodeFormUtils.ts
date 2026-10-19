@@ -138,6 +138,44 @@ export function hasNativeOpencodeDefinition(
   return hasOpencodeDefinition(declaration, "package");
 }
 
+/** Models a stored provider declares, read from the fragment the backend
+ * writes: settings may hold a full config with the declaration under
+ * `providers.<id>` / `provider.<id>`.
+ */
+export function getOpencodeDeclaredModels(
+  providerId: string,
+  settingsConfig: unknown,
+): { id: string; name?: string }[] {
+  let declaration = settingsConfig;
+  if (
+    isPlainObject(settingsConfig) &&
+    ["$schema", "provider", "providers"].some((key) => key in settingsConfig)
+  ) {
+    const pick = (key: string) => {
+      const section = settingsConfig[key];
+      return isPlainObject(section) ? section[providerId] : undefined;
+    };
+    declaration = pick("providers") ?? pick("provider") ?? settingsConfig;
+  }
+  const models = isPlainObject(declaration) ? declaration.models : undefined;
+  if (!isPlainObject(models)) return [];
+  return (
+    Object.entries(models)
+      // 原生声明可以 `disabled: true` 关掉某个模型，不能拿它当默认
+      .filter(
+        ([id, model]) =>
+          id.trim() && !(isPlainObject(model) && model.disabled === true),
+      )
+      .map(([id, model]) => ({
+        id,
+        name:
+          isPlainObject(model) && typeof model.name === "string"
+            ? model.name
+            : undefined,
+      }))
+  );
+}
+
 export function isKnownOpencodeOptionKey(key: string): boolean {
   return OPENCODE_KNOWN_OPTION_KEYS.includes(
     key as (typeof OPENCODE_KNOWN_OPTION_KEYS)[number],

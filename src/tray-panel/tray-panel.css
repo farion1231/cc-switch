@@ -21,16 +21,18 @@ body.tray-panel {
   color: hsl(var(--foreground));
 }
 
-/* macOS：每块卡片下面一块系统玻璃，网页只叠一层很淡的底色，保证文字对比度 */
+/* macOS：每块卡片下面一块系统玻璃，网页再叠一层主题底色。
+   玻璃会随身后的桌面变深变浅，文字颜色却跟着主题走：底色太淡时，浅色主题放在
+   深色窗口上面会变成深字压深底，所以底色要盖住大半，只透出一点模糊的背景 */
 html[data-glass="native"][data-layout="floating"] .tp-card {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(246, 246, 248, 0.72);
   box-shadow:
     inset 0 0 0 0.5px rgba(0, 0, 0, 0.12),
     0 6px 16px rgba(0, 0, 0, 0.14),
     0 1px 3px rgba(0, 0, 0, 0.1);
 }
 html.dark[data-glass="native"][data-layout="floating"] .tp-card {
-  background: rgba(24, 24, 27, 0.08);
+  background: rgba(30, 30, 33, 0.62);
   box-shadow:
     inset 0 0 0 0.5px rgba(255, 255, 255, 0.14),
     0 6px 16px rgba(0, 0, 0, 0.3),
@@ -123,8 +125,19 @@ html[data-layout="floating"] .tp-sub[data-side="right"] {
 html[data-layout="floating"] .tp-sub[data-side="left"] {
   animation: tp-sub-in-left 140ms ease-out;
 }
+/* 子面板换到另一个应用：新内容第一帧就在，只从半透明淡到不透明，不淡出、不动卡片
+   （卡片下的原生玻璃不跟网页动画，只淡内容才不会露出空玻璃） */
+@keyframes tp-sub-swap {
+  from {
+    opacity: 0.5;
+  }
+}
+.tp-sub[data-swap] > * {
+  animation: tp-sub-swap 90ms ease-out;
+}
 @media (prefers-reduced-motion: reduce) {
-  html[data-layout="floating"] .tp-sub {
+  html[data-layout="floating"] .tp-sub,
+  .tp-sub[data-swap] > * {
     animation: none;
   }
 }

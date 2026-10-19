@@ -4009,6 +4009,81 @@ model_provider = "c"
         assert_eq!(login(), None, "logging out sticks");
     }
 
+    fn codex_login_file() -> Option<Value> {
+        fs::read(codex_auth_path())
+            .ok()
+            .map(|bytes| serde_json::from_slice(&bytes).unwrap())
+    }
+
+    /// 直连指针在第三方卡上：退出 CC Switch 的分离不暂存登录，重启接上后登录还在。Codex
+    /// 桌面版续会话要 ChatGPT 登录，分离吞掉它就得每次重启都重新登录（#8431）。
+    #[tokio::test]
+    #[serial]
+    async fn codex_detaching_and_attaching_keep_the_login_next_to_a_third_party_route() {
+        let _home = Home::new();
+        set_preservation(false);
+        seed_codex("", Some(&chatgpt_login("acct")));
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+
+        enter(&state, &AppType::Codex, false).await.expect("enter");
+        assert_eq!(codex_login_file(), Some(chatgpt_login("acct")));
+
+        detach_all(&state).await;
+        assert!(!mode(&AppType::Codex).attached);
+        assert_eq!(
+            codex_login_file(),
+            Some(chatgpt_login("acct")),
+            "detaching keeps the login"
+        );
+        assert_eq!(
+            codex_doc()["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
+            Some(true),
+            "Codex sees the login it keeps"
+        );
+
+        startup(&state).await;
+        assert!(mode(&AppType::Codex).attached);
+        assert_eq!(codex_login_file(), Some(chatgpt_login("acct")));
+
+        // 真正退出路由仍按保留登录开关走。
+        exit(&state, &AppType::Codex).await.expect("exit");
+        assert_eq!(codex_login_file(), None);
+    }
+
+    /// 登录已经被暂存走了（旧版的分离、或进路由前直连切到了第三方）：进入、接上代理时还回去。
+    #[tokio::test]
+    #[serial]
+    async fn codex_entering_the_proxy_gives_back_a_stashed_login() {
+        let _home = Home::new();
+        set_preservation(false);
+        seed_codex("", Some(&chatgpt_login("acct")));
+        let [a, b] = codex_a_b();
+        let official = codex_official();
+        let state = state_with(AppType::Codex, &[a, b, official.clone()], &official.id).await;
+
+        ProviderService::switch(&state, AppType::Codex, "a").expect("to a");
+        assert_eq!(
+            codex_login_file(),
+            None,
+            "stashed next to a third-party route"
+        );
+
+        enter(&state, &AppType::Codex, false).await.expect("enter");
+        assert_eq!(codex_login_file(), Some(chatgpt_login("acct")));
+        assert_eq!(
+            codex_doc()["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
+            Some(true)
+        );
+
+        // 只还一次：在 Codex 里登出后换路由，不会又被登上。
+        fs::remove_file(codex_auth_path()).unwrap();
+        set_route(&state, &AppType::Codex, "b")
+            .await
+            .expect("route b");
+        assert_eq!(codex_login_file(), None);
+        exit(&state, &AppType::Codex).await.expect("exit");
+    }
+
     fn codex_login_on_disk() -> Value {
         crate::config::read_json_file(&codex_auth_path()).unwrap()
     }
@@ -6403,6 +6478,57 @@ model_provider = "c"
 
     #[tokio::test]
     #[serial]
+    async fn claude_desktop_old_mapping_card_can_be_deleted_after_routing_elsewhere() {
+        let home = Home::new();
+        let _dirs = DesktopDirs::under(&home);
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[claude("a", "https://a.example", json!({}))],
+            "a",
+        )
+        .await;
+        let desktop = AppType::ClaudeDesktop;
+        for card in [desktop_card("map", true), desktop_card("other", true)] {
+            state
+                .db
+                .save_provider(desktop.as_str(), &card)
+                .expect("save desktop card");
+        }
+        // 旧版：映射卡同时是本地指针和 DB 的 is_current。
+        state
+            .db
+            .set_current_provider(desktop.as_str(), "map")
+            .expect("db current");
+        crate::settings::set_current_provider(&desktop, Some("map")).expect("desktop current");
+
+        startup(&state).await;
+        enter_with_route(&state, &desktop, false, Some("other"))
+            .await
+            .expect("route to other");
+
+        // 映射卡已经不是直连指针、也不在路由上，界面上可删，后端也要放行（#8506）。
+        crate::services::ProviderService::delete(&state, desktop.clone(), "map")
+            .expect("delete old mapping card");
+        assert!(state
+            .db
+            .get_provider_by_id("map", desktop.as_str())
+            .unwrap()
+            .is_none());
+        // 直连指针和路由那家照旧删不掉。
+        for id in [
+            crate::database::CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID,
+            "other",
+        ] {
+            assert!(
+                crate::services::ProviderService::delete(&state, desktop.clone(), id).is_err(),
+                "{id} should stay protected"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn claude_desktop_upgrade_that_cannot_attach_points_desktop_back_at_official() {
         let home = Home::new();
         let _dirs = DesktopDirs::under(&home);
@@ -6987,8 +7113,8 @@ model_provider = "c"
         assert_eq!(route["priority"], 1);
         assert_eq!(route["context_window"], 200000);
         assert_eq!(route["auto_compact_token_limit"], 150000);
-        // 路由那家的行保持模板的值（这里模板没有），加进第一家不会让路由上的会话被压缩。
-        assert_eq!(route["comp_hash"], Value::Null);
+        // 第三方路由那家的行和 Stack 行同一个值，互相切换不会先用上一家压缩（#8485）。
+        assert_eq!(route["comp_hash"], "cc-switch");
         assert_eq!(stacked["priority"], 2);
         assert_eq!(stacked["display_name"], "DeepSeek V4 Pro（DEEPSEEK）");
         // DeepSeek 官方目录的 "3000" 不带过来，窗口按它自己的行算。
@@ -7027,6 +7153,64 @@ model_provider = "c"
         assert!(!state
             .proxy_service
             .live_has_proxy_placeholder(&AppType::Codex));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_custom_context_windows_survive_updates_and_restart() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let mut relay = codex_native(
+            "relay",
+            "https://relay.example/v1",
+            "",
+            Some(json!({ "models": [
+                { "model": "gpt-5.5", "contextWindow": 1_050_000 },
+                { "model": "gpt-5.5-high", "contextWindow": 512_000 }
+            ] })),
+        );
+        let gemini = codex_native(
+            "gemini",
+            "https://gemini.example/v1",
+            "",
+            Some(json!({ "models": [
+                { "model": "gemini-3.8-flash-high", "contextWindow": 272_000 }
+            ] })),
+        );
+        let state = state_with(AppType::Codex, &[relay.clone(), gemini], "relay").await;
+        enter(&state, &AppType::Codex, true).await.unwrap();
+        let check = |gpt_window: u64, stacked: bool| {
+            let catalog = codex_catalog();
+            let models = catalog["models"].as_array().unwrap();
+            for (slug, window) in [("gpt-5.5", gpt_window), ("gpt-5.5-high", 512_000)] {
+                let model = models.iter().find(|model| model["slug"] == slug).unwrap();
+                assert_eq!(model["context_window"], window);
+                assert_eq!(model["max_context_window"], window);
+                assert_eq!(model["auto_compact_token_limit"], window * 9 / 10);
+            }
+            if stacked {
+                let gemini = models
+                    .iter()
+                    .find(|model| model["slug"] == "ccs-gemini/gemini-3.8-flash-high")
+                    .unwrap();
+                assert_eq!(gemini["context_window"], 272_000);
+                assert_eq!(gemini["auto_compact_token_limit"], 244_800);
+            }
+        };
+        check(1_050_000, false);
+        set_codex_member(&state, "gemini", true).await;
+        check(1_050_000, true);
+        relay.settings_config["modelCatalog"]["models"][0]["contextWindow"] = json!(750_000);
+        ProviderService::update(&state, AppType::Codex, None, relay).unwrap();
+        check(750_000, true);
+        let catalog = codex_catalog();
+        detach_all(&state).await;
+        startup(&state).await;
+        check(750_000, true);
+        assert_eq!(codex_catalog(), catalog);
+        set_codex_member(&state, "gemini", false).await;
+        check(750_000, false);
+        exit(&state, &AppType::Codex).await.unwrap();
     }
 
     /// 子代理模型：路由模式照写路由那家的；Stack 模式不写（子代理跟随主模型），只删这两个

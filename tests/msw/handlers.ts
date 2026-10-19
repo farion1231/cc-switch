@@ -91,6 +91,14 @@ export const handlers = [
     success(getLiveProviderIds("opencode")),
   ),
 
+  http.post(`${TAURI_ENDPOINT}/get_opencode_default_model`, () =>
+    success(null),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/set_opencode_default_model`, () =>
+    success(null),
+  ),
+
   http.post(`${TAURI_ENDPOINT}/get_openclaw_live_provider_ids`, () =>
     success(getLiveProviderIds("openclaw")),
   ),

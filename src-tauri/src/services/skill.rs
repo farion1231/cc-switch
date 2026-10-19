@@ -5622,7 +5622,7 @@ mod tests {
     fn pi_family_resync_preserves_native_membership_and_uninstall_removes_deployments() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi = crate::pi_config::test_support::TestAgentDir::new();
         let _rpi = crate::pi_config::test_support::TestRpiAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
@@ -5664,7 +5664,7 @@ mod tests {
     fn uninstall_preserves_both_external_pi_family_directories() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi = crate::pi_config::test_support::TestAgentDir::new();
         let _rpi = crate::pi_config::test_support::TestRpiAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
@@ -5696,7 +5696,7 @@ mod tests {
     fn migrate_storage_refreshes_pi_family_copies_and_preserves_external_skills() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi = crate::pi_config::test_support::TestAgentDir::new();
         let _rpi = crate::pi_config::test_support::TestRpiAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
@@ -5836,7 +5836,7 @@ mod tests {
     fn mcode_unmanaged_copy_survives_sync_migration_and_uninstall() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
         let mut skill = poisoned_skill("owner/repo:skill", "test-skill");
@@ -5863,7 +5863,7 @@ mod tests {
     fn mcode_imported_external_symlink_can_toggle_without_changing_its_source() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
         let external = temp.path().join("external-skill");
@@ -5924,7 +5924,7 @@ mod tests {
         for native_content in [None, Some("shared"), Some("different")] {
             let temp = tempdir().unwrap();
             let _home = TestHomeGuard::set(temp.path());
-            let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+            let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
             let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
             let db = Arc::new(Database::memory().unwrap());
             let claude = SkillService::get_app_skills_dir(&AppType::Claude)
@@ -5974,7 +5974,7 @@ mod tests {
     fn mcode_skill_import_continues_after_a_conflicting_copy() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
         let native = SkillService::get_app_skills_dir(&AppType::Mcode).unwrap();
@@ -6013,7 +6013,7 @@ mod tests {
     fn import_deploys_the_skill_to_selected_apps_that_do_not_have_it() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
         let app_copy = |app: AppType| {
@@ -6057,7 +6057,7 @@ mod tests {
     fn import_does_not_record_an_app_the_skill_could_not_be_deployed_to() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
         write_skill(
@@ -6099,7 +6099,7 @@ mod tests {
     async fn mcode_copy_updates_and_disables_without_losing_external_changes() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let db = Arc::new(Database::memory().unwrap());
         let mut skill = poisoned_skill("anthropics/skills:algorithmic-art", "algorithmic-art");
         skill.repo_owner = Some("anthropics".into());
@@ -6144,7 +6144,7 @@ mod tests {
         for symlink in [false, true] {
             let temp = tempdir().unwrap();
             let _home = TestHomeGuard::set(temp.path());
-            let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+            let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
             let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
             let db = Arc::new(Database::memory().unwrap());
             let mut skill = poisoned_skill("test-skill", "test-skill");
@@ -6240,7 +6240,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let ssot = SkillService::get_ssot_dir().unwrap().join("test-skill");
         let source = temp.path().join("download");
         let native = SkillService::get_app_skills_dir(&AppType::Mcode)
@@ -6403,7 +6403,7 @@ mod tests {
     fn mcode_uninstall_keeps_modified_copy_and_record_until_cleanup_succeeds() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
         let mut skill = poisoned_skill("owner/repo:skill", "test-skill");
@@ -6594,7 +6594,7 @@ mod tests {
     fn uninstall_treats_an_aliased_pi_root_as_the_ssot() {
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::Unified);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::Unified);
         let _pi_dir =
             crate::pi_config::test_support::TestAgentDir::at(&temp.path().join(".agents"));
 
@@ -6620,7 +6620,7 @@ mod tests {
     fn uninstall_warns_when_the_pi_root_cannot_be_resolved() {
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir =
             crate::pi_config::test_support::TestAgentDir::at(Path::new("relative/pi-agent"));
 
@@ -6644,17 +6644,23 @@ mod tests {
 
     /// CC_SWITCH_TEST_HOME 隔离守卫（serial 测试间互斥由 #[serial] 保证，
     /// 守卫只负责在测试结束后恢复原值）。
-    struct TestHomeGuard(Option<std::ffi::OsString>);
+    struct TestHomeGuard {
+        home: PathBuf,
+        previous: Option<std::ffi::OsString>,
+    }
     impl TestHomeGuard {
         fn set(home: &Path) -> Self {
-            let guard = Self(std::env::var_os("CC_SWITCH_TEST_HOME"));
+            let guard = Self {
+                home: home.to_path_buf(),
+                previous: std::env::var_os("CC_SWITCH_TEST_HOME"),
+            };
             std::env::set_var("CC_SWITCH_TEST_HOME", home);
             guard
         }
     }
     impl Drop for TestHomeGuard {
         fn drop(&mut self) {
-            match self.0.take() {
+            match self.previous.take() {
                 Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
                 None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
             }
@@ -6707,19 +6713,37 @@ mod tests {
         }
     }
 
-    struct StorageLocationGuard(SkillStorageLocation);
-    impl StorageLocationGuard {
-        fn set(location: SkillStorageLocation) -> Self {
+    /// 设置/恢复存储位置都会写 `settings.json`，所以必须借用一个已生效的
+    /// `TestHomeGuard`：借用保证它在 HOME 隔离之后创建、在 HOME 恢复之前 drop，
+    /// 不会写到真实 `~/.cc-switch/settings.json`（Windows 上该文件被占用时原子替换
+    /// 会报 os error 32 / 1176）。
+    struct StorageLocationGuard<'a> {
+        home: &'a TestHomeGuard,
+        previous: SkillStorageLocation,
+    }
+    impl<'a> StorageLocationGuard<'a> {
+        fn set(home: &'a TestHomeGuard, location: SkillStorageLocation) -> Self {
+            assert_settings_write_isolated(home);
             let previous = crate::settings::get_skill_storage_location();
             crate::settings::set_skill_storage_location(location)
                 .expect("set test skill storage location");
-            Self(previous)
+            Self { home, previous }
         }
     }
-    impl Drop for StorageLocationGuard {
+    impl Drop for StorageLocationGuard<'_> {
         fn drop(&mut self) {
-            let _ = crate::settings::set_skill_storage_location(self.0);
+            assert_settings_write_isolated(self.home);
+            let _ = crate::settings::set_skill_storage_location(self.previous);
         }
+    }
+
+    fn assert_settings_write_isolated(home: &TestHomeGuard) {
+        let config_dir = crate::config::get_home_dir().join(".cc-switch");
+        assert!(
+            config_dir.starts_with(&home.home),
+            "settings.json would be written outside the test home: {}",
+            config_dir.display()
+        );
     }
 
     fn poisoned_skill(id: &str, directory: &str) -> InstalledSkill {
@@ -6934,7 +6958,7 @@ mod tests {
     fn aliased_skill_roots_reject_sync_and_remove_without_deleting_the_source() {
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::Unified);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::Unified);
         let _pi_dir =
             crate::pi_config::test_support::TestAgentDir::at(&temp.path().join(".agents"));
 
@@ -6963,7 +6987,7 @@ mod tests {
     fn migrate_storage_rejects_an_aliased_destination_before_moving_skills() {
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir =
             crate::pi_config::test_support::TestAgentDir::at(&temp.path().join(".agents"));
 
@@ -6996,7 +7020,7 @@ mod tests {
     fn migrate_storage_safely_leaves_an_existing_pi_ssot_alias() {
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::Unified);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::Unified);
         let _pi_dir =
             crate::pi_config::test_support::TestAgentDir::at(&temp.path().join(".agents"));
 
@@ -7077,7 +7101,7 @@ mod tests {
         ] {
             let temp = tempdir().expect("tempdir");
             let _home = TestHomeGuard::set(temp.path());
-            let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+            let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
             let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
             let _rpi_dir = crate::pi_config::test_support::TestRpiAgentDir::new();
 
@@ -7126,7 +7150,7 @@ mod tests {
     fn migrate_storage_retargets_an_equivalent_relative_pi_symlink() {
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir =
             crate::pi_config::test_support::TestAgentDir::at(&temp.path().join("pi-agent"));
 
@@ -7165,7 +7189,7 @@ mod tests {
     fn migrate_storage_skips_bad_rows_without_moving_foreign_dirs() {
         let temp = tempdir().expect("tempdir");
         let _guard = TestHomeGuard::set(temp.path());
-        let _location = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _location = StorageLocationGuard::set(&_guard, SkillStorageLocation::CcSwitch);
 
         // migrate_storage 会 fs::rename / remove_dir_all，脏 directory 能把
         // SSOT 之外的任意目录搬走或删掉。
@@ -7438,7 +7462,7 @@ mod tests {
                 fs::create_dir_all(&config_dir).unwrap();
                 fs::File::create(config_dir.join("cc-switch.db")).unwrap();
                 let _home = TestHomeGuard::set(home.path());
-                let _storage = StorageLocationGuard::set(initial);
+                let _storage = StorageLocationGuard::set(&_home, initial);
                 let _pi = crate::pi_config::test_support::TestAgentDir::new();
                 let _rpi = crate::pi_config::test_support::TestRpiAgentDir::new();
                 let remote = tempdir().unwrap();
@@ -7503,7 +7527,7 @@ mod tests {
                 fs::create_dir_all(&config_dir).unwrap();
                 fs::File::create(config_dir.join("cc-switch.db")).unwrap();
                 let _home = TestHomeGuard::set(home.path());
-                let _storage = StorageLocationGuard::set(initial);
+                let _storage = StorageLocationGuard::set(&_home, initial);
                 let _pi = crate::pi_config::test_support::TestAgentDir::new();
                 let _rpi = crate::pi_config::test_support::TestRpiAgentDir::new();
                 let remote = tempdir().unwrap();
@@ -7575,7 +7599,7 @@ mod tests {
                     .expect("isolated database sentinel");
                 let _home = TestHomeGuard::set(home.path());
                 assert_eq!(crate::config::get_app_config_dir(), config_dir);
-                let _storage = StorageLocationGuard::set(location);
+                let _storage = StorageLocationGuard::set(&_home, location);
                 let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
                 let remote = tempdir().expect("remote repo");
                 let db = Arc::new(Database::memory().expect("memory db"));

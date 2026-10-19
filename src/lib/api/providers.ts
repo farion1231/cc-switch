@@ -227,6 +227,15 @@ export const providersApi = {
     return await invoke("get_opencode_live_provider_ids");
   },
 
+  /** OpenCode 顶层 model（`<provider>/<model>`），没写时为 null */
+  async getOpenCodeDefaultModel(): Promise<string | null> {
+    return await invoke("get_opencode_default_model");
+  },
+
+  async setOpenCodeDefaultModel(model: string): Promise<void> {
+    await invoke("set_opencode_default_model", { model });
+  },
+
   /**
    * 获取 OpenClaw live 配置中的供应商 ID 列表
    * 用于前端判断供应商是否已添加到 openclaw.json
