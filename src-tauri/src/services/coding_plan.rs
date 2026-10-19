@@ -1,7 +1,11 @@
 //! Token Plan / 编程套餐额度查询服务
 //!
 //! 支持 Kimi For Coding、智谱 GLM、MiniMax、ZenMux、火山方舟、OpenCode Go、Command Code
-//! 的套餐额度查询。复用 subscription 模块的 SubscriptionQuota / QuotaTier 类型。
+//! 以及千问AI平台 Token Plan（AK/SK 走阿里云控制台网关）的套餐额度查询。复用
+//! subscription 模块的 SubscriptionQuota / QuotaTier 类型。
+//!
+//! 阿里云百炼 Coding Plan 只做识别：官方没有公开的用量接口，
+//! `get_coding_plan_quota` 直接返回确定性说明，不发请求。
 
 use super::subscription::{
     CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
@@ -27,6 +31,17 @@ enum CodingPlanProvider {
     OpencodeGo,
     /// Command Code（Claude 使用 `/provider`，Codex 使用 `/provider/v1`）。
     CommandCode,
+    /// 阿里云百炼 Coding Plan（千问AI平台 Coding Plan，CN 站）。套餐 key 形如
+    /// `sk-sp-xxxxx`，base 固定 `https://coding.dashscope.aliyuncs.com/{v1,apps/anthropic}`。
+    /// 官方只在控制台展示用量、没有公开的额度查询接口，识别到后直接给确定性说明，
+    /// 不发请求（见 `get_coding_plan_quota` 中的提前返回）。
+    Bailian,
+    /// 千问AI平台 Token Plan（Credits 订阅）。base 固定
+    /// `https://token-plan.cn-beijing.maas.aliyuncs.com/{compatible-mode/v1,apps/anthropic}`，
+    /// key 形如 `sk-sp-xxxxx`。套餐 key 不能查用量，需用户另填阿里云 AK/SK：先按
+    /// ACS3-HMAC-SHA256 换 console token，再调控制台网关取月度百分比
+    /// （见 `query_qwen_token_plan`）。
+    QwenTokenPlan,
 }
 
 fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
@@ -52,6 +67,19 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         Some(CodingPlanProvider::OpencodeGo)
     } else if url.contains("api.commandcode.ai/provider") {
         Some(CodingPlanProvider::CommandCode)
+    } else if url.contains("coding.dashscope.aliyuncs.com") {
+        // 只命中 Coding Plan 的 `coding.` 前缀；按量付费 dashscope.aliyuncs.com、
+        // Token Plan 的 token-plan.cn-beijing.maas.aliyuncs.com 与国际站
+        // dashscope-intl 都不含该子串。
+        Some(CodingPlanProvider::Bailian)
+    } else if url.contains("token-plan.cn-beijing.maas.aliyuncs.com")
+        || url.contains("token-plan.maas.qwenaiapi.com")
+    {
+        // 千问AI平台 Token Plan（Credits 订阅）。两种 base 都来自官方：
+        // 预设用的 token-plan.cn-beijing.maas.aliyuncs.com，文档写的是
+        // token-plan.maas.qwenaiapi.com。国际站 token-plan.ap-southeast-1
+        // 与控制台不同，暂不命中。
+        Some(CodingPlanProvider::QwenTokenPlan)
     } else if url.contains("volces.com/api/plan") || url.contains("volces.com/api/coding") {
         // 仅匹配 Agent Plan（/api/plan[/v3]）与 Coding Plan（/api/coding[/v3]）
         // 入口；DouBaoSeed 按量付费走 /api/v3 与 /api/compatible，没有套餐
@@ -75,6 +103,8 @@ pub(crate) fn detect_provider_id(base_url: &str) -> Option<&'static str> {
         CodingPlanProvider::Volcengine => "volcengine",
         CodingPlanProvider::OpencodeGo => "opencode_go",
         CodingPlanProvider::CommandCode => "command_code",
+        CodingPlanProvider::Bailian => "bailian",
+        CodingPlanProvider::QwenTokenPlan => "qwen_token_plan",
     })
 }
 
@@ -1638,6 +1668,343 @@ async fn query_volcengine(
     }
 }
 
+// ── 千问AI平台 Token Plan（阿里云控制台网关）───────────────────
+//
+// 官方 CLI（github.com/modelstudioai/cli）的查询链路是两步，都是阿里云现成协议：
+//   1. AK/SK 按 ACS3-HMAC-SHA256 签名调 `GenerateCLIAccessToken`，换一个控制台临时
+//      token。套餐 key（`sk-sp-...`）只授权推理数据面，拿不到这一步——这是"填了
+//      API Key 却查不到用量"的根本原因。
+//   2. 用 `Authorization: Bearer <token>` 调控制台网关
+//      `zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage`，拿到月度百分比。
+// ACS3 与火山 SigV4 变体不是一回事（SignedHeaders 按字母序、algorithm 串不同），
+// 只复用底层 HMAC/SHA256/RFC3986 编码原语，不复用 volcengine_sign。
+
+/// 换 console token 的 OpenAPI 域名/路径（ROA 风格，Action 走请求头而非 query）。
+const QWEN_ACS_HOST: &str = "modelstudio.cn-beijing.aliyuncs.com";
+const QWEN_ACS_PATH: &str = "/modelstudio/cli/generateAccessToken";
+const QWEN_ACS_ACTION: &str = "GenerateCLIAccessToken";
+const QWEN_ACS_VERSION: &str = "2026-02-10";
+
+/// 控制台网关（`sfm_bailian` 产品，CN 站）。国际站是 bailian-cs.console.alibabacloud.com。
+const QWEN_GATEWAY_HOST: &str = "bailian-cs.console.aliyun.com";
+const QWEN_GATEWAY_ACTION: &str = "BroadScopeAspnGateway";
+const QWEN_GATEWAY_REGION: &str = "cn-beijing";
+const QWEN_USAGE_API: &str = "zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/usage";
+
+const QWEN_AKSK_HINT: &str =
+    "Use the Aliyun AccessKey ID/Secret of an account (or a RAM user in the Bailian workspace) \
+     allowed to call modelstudio:GenerateCLIAccessToken — the sk-sp-... plan key only authorizes \
+     inference and cannot query usage.";
+
+/// ACS3 只签 host / content-type / x-acs-* 这几类头，**按字母序**（火山是固定顺序）。
+const QWEN_SIGNED_HEADERS: &str = "content-type;host;x-acs-action;x-acs-content-sha256;x-acs-date;x-acs-signature-nonce;x-acs-version";
+
+/// 构造 ACS3 canonical request（METHOD\npath\nquery\ncanonicalHeaders\nsignedHeaders\nbodyHash）。
+/// 单独抽成纯函数便于写确定性单测——签名错基本都是 canonicalization 错。
+#[allow(clippy::too_many_arguments)]
+fn acs3_canonical_request(
+    host: &str,
+    pathname: &str,
+    content_type: &str,
+    action: &str,
+    version: &str,
+    hashed_body: &str,
+    x_acs_date: &str,
+    nonce: &str,
+) -> String {
+    // canonicalHeaders 每行以 `\n` 结尾，拼接时再补一个 `\n`（与官方实现一致，
+    // 也就是 canonical request 里这之间有一个空行）。
+    let canonical_headers = format!(
+        "content-type:{content_type}\n\
+         host:{host}\n\
+         x-acs-action:{action}\n\
+         x-acs-content-sha256:{hashed_body}\n\
+         x-acs-date:{x_acs_date}\n\
+         x-acs-signature-nonce:{nonce}\n\
+         x-acs-version:{version}\n"
+    );
+    format!("POST\n{pathname}\n\n{canonical_headers}\n{QWEN_SIGNED_HEADERS}\n{hashed_body}")
+}
+
+/// 生成 ACS3 鉴权头。`now`/`nonce` 作参数传入便于写确定性单测。
+#[allow(clippy::too_many_arguments)]
+fn acs3_signed_headers(
+    access_key_id: &str,
+    secret_access_key: &str,
+    host: &str,
+    pathname: &str,
+    content_type: &str,
+    action: &str,
+    version: &str,
+    body: &[u8],
+    now: chrono::DateTime<chrono::Utc>,
+    nonce: &str,
+) -> Vec<(&'static str, String)> {
+    let x_acs_date = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let hashed_body = volc_sha256_hex(body);
+    let canonical_request = acs3_canonical_request(
+        host,
+        pathname,
+        content_type,
+        action,
+        version,
+        &hashed_body,
+        &x_acs_date,
+        nonce,
+    );
+    let string_to_sign = {
+        let canonical_hash = volc_sha256_hex(canonical_request.as_bytes());
+        format!("ACS3-HMAC-SHA256\n{canonical_hash}")
+    };
+    let signature: String =
+        volc_hmac_sha256(secret_access_key.as_bytes(), string_to_sign.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+    let authorization = format!(
+        "ACS3-HMAC-SHA256 Credential={access_key_id},SignedHeaders={QWEN_SIGNED_HEADERS},Signature={signature}"
+    );
+
+    vec![
+        ("content-type", content_type.to_string()),
+        ("x-acs-action", action.to_string()),
+        ("x-acs-version", version.to_string()),
+        ("x-acs-date", x_acs_date),
+        ("x-acs-signature-nonce", nonce.to_string()),
+        ("x-acs-content-sha256", hashed_body),
+        ("authorization", authorization),
+    ]
+}
+
+/// 读一个已拿到状态的响应并归类（与火山的 VolcCall 同一套语义）。
+async fn qwen_read_response(resp: reqwest::Response) -> VolcCall {
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        let body = resp.text().await.unwrap_or_default();
+        let body: String = body.chars().take(300).collect();
+        return VolcCall::Auth(format!("Authentication failed (HTTP {status}): {body}"));
+    }
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        let body: String = body.chars().take(300).collect();
+        return VolcCall::Soft(format!("API error (HTTP {status}): {body}"));
+    }
+    // 先 bytes() 再解析：读体失败是瞬时，解析失败是确定性。
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return VolcCall::Transient(format!("Failed to read response: {e}")),
+    };
+    match serde_json::from_slice(&raw) {
+        Ok(v) => VolcCall::Body(v),
+        Err(e) => VolcCall::Soft(format!("Failed to parse response: {e}")),
+    }
+}
+
+/// 第一步：AK/SK 换控制台临时 token（官方 `generateCLIAccessToken`，空 body）。
+async fn qwen_acs_call(access_key_id: &str, secret_access_key: &str) -> VolcCall {
+    let nonce = uuid::Uuid::new_v4().to_string();
+    let headers = acs3_signed_headers(
+        access_key_id,
+        secret_access_key,
+        QWEN_ACS_HOST,
+        QWEN_ACS_PATH,
+        "application/json",
+        QWEN_ACS_ACTION,
+        QWEN_ACS_VERSION,
+        b"",
+        chrono::Utc::now(),
+        &nonce,
+    );
+    let mut req = crate::proxy::http_client::get()
+        .post(format!("https://{QWEN_ACS_HOST}{QWEN_ACS_PATH}"))
+        .timeout(std::time::Duration::from_secs(15));
+    for (name, value) in headers {
+        req = req.header(name, value);
+    }
+    match req.body(Vec::<u8>::new()).send().await {
+        Ok(resp) => qwen_read_response(resp).await,
+        Err(e) => VolcCall::Transient(format!("Network error: {e}")),
+    }
+}
+
+/// 第二步：调控制台网关。`api` 是控制台 JSON API 名，`data` 是业务参数（无则空对象）。
+async fn qwen_gateway_call(token: &str, api: &str, data: &serde_json::Value) -> VolcCall {
+    // 网关把业务参数包成 {Api,V,Data:{...,cornerstoneParam}} 再整体塞进 params 表单字段。
+    let mut payload_data = data.clone();
+    if !payload_data.is_object() {
+        payload_data = serde_json::json!({});
+    }
+    payload_data["cornerstoneParam"] = serde_json::json!({
+        "protocol": "V2",
+        "console": "ONE_CONSOLE",
+        "productCode": "p_efm",
+        "switchUserType": 3,
+        "consoleSite": "BAILIAN_ALIYUN",
+    });
+    let params = serde_json::json!({"Api": api, "V": "1.0", "Data": payload_data});
+    let encoded_api = volc_uri_encode(api);
+    let url = format!(
+        "https://{QWEN_GATEWAY_HOST}/cli/api.json?action={QWEN_GATEWAY_ACTION}&product=sfm_bailian&api={encoded_api}"
+    );
+    let encoded_params = volc_uri_encode(&params.to_string());
+    let body = format!("params={encoded_params}&region={QWEN_GATEWAY_REGION}");
+
+    let resp = crate::proxy::http_client::get()
+        .post(&url)
+        .header("Accept", "*/*")
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .header("Authorization", format!("Bearer {token}"))
+        .body(body)
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await;
+    match resp {
+        Ok(resp) => qwen_read_response(resp).await,
+        Err(e) => VolcCall::Transient(format!("Network error: {e}")),
+    }
+}
+
+/// 控制台网关的业务错误：`data.success === false` 时取 errorCode/errorMessage。
+fn qwen_gateway_error(body: &serde_json::Value) -> Option<String> {
+    let data = body.get("data")?;
+    if data.get("success").and_then(|v| v.as_bool()) != Some(false) {
+        return None;
+    }
+    let code = data.get("errorCode").and_then(|v| v.as_str()).unwrap_or("");
+    let message = data
+        .get("errorMessage")
+        .or_else(|| data.get("message"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let mut detail = match (code.is_empty(), message.is_empty()) {
+        (false, false) => format!("{code}: {message}"),
+        (false, true) => code.to_string(),
+        (true, false) => message.to_string(),
+        (true, true) => "unknown gateway error".to_string(),
+    };
+    // console token 过期（NotLogined）多半是 AK/SK 权限不足或已失效，附上引导文案。
+    if code.contains("NotLogined") {
+        detail = format!("{detail}. {QWEN_AKSK_HINT}");
+    }
+    Some(detail)
+}
+
+/// 在网关两层信封里找到业务数据：`data.DataV2.data.data`（不同 API 偶尔少一层）。
+fn qwen_usage_payload(body: &serde_json::Value) -> Option<&serde_json::Value> {
+    const PATHS: [&[&str]; 4] = [
+        &["data", "DataV2", "data", "data"],
+        &["data", "DataV2", "data"],
+        &["data", "data"],
+        &["data"],
+    ];
+    for path in PATHS.iter() {
+        let mut node = body;
+        let mut depth_ok = true;
+        for key in path.iter() {
+            match node.get(*key) {
+                Some(next) => node = next,
+                None => {
+                    depth_ok = false;
+                    break;
+                }
+            }
+        }
+        if depth_ok
+            && (node.get("per1MonthPercentage").is_some()
+                || node.get("per1MonthResetTime").is_some())
+        {
+            return Some(node);
+        }
+    }
+    None
+}
+
+fn qwen_auth_error(detail: String) -> SubscriptionQuota {
+    SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::Expired,
+        credential_message: Some("Invalid AccessKey".to_string()),
+        success: false,
+        tiers: vec![],
+        extra_usage: None,
+        reset_credits: None,
+        credits_balance: None,
+        error: Some(format!("{detail}. {QWEN_AKSK_HINT}")),
+        queried_at: Some(now_millis()),
+    }
+}
+
+/// 千问AI平台 Token Plan 的月度用量。百分比原值是 0–1，乘 100 后与其它供应商的
+/// `QuotaTier.utilization`（0–100）统一。
+async fn query_qwen_token_plan(
+    access_key_id: &str,
+    secret_access_key: &str,
+) -> Result<SubscriptionQuota, String> {
+    let token = match qwen_acs_call(access_key_id, secret_access_key).await {
+        VolcCall::Body(body) => {
+            let mut found = body.get("cliAccessToken").and_then(|v| v.as_str());
+            if found.is_none() {
+                found = body
+                    .get("data")
+                    .and_then(|d| d.get("cliAccessToken"))
+                    .and_then(|v| v.as_str());
+            }
+            match found.filter(|t| !t.is_empty()) {
+                Some(token) => token.to_string(),
+                None => {
+                    let raw: String = body.to_string().chars().take(700).collect();
+                    return Ok(make_error(format!(
+                        "GenerateCLIAccessToken returned no cliAccessToken. {QWEN_AKSK_HINT} Raw: {raw}"
+                    )));
+                }
+            }
+        }
+        VolcCall::Auth(detail) => return Ok(qwen_auth_error(detail)),
+        VolcCall::Transient(detail) => return Err(format!("GenerateCLIAccessToken: {detail}")),
+        VolcCall::Soft(detail) => {
+            return Ok(make_error(format!("GenerateCLIAccessToken: {detail}")))
+        }
+    };
+
+    let empty_params = serde_json::json!({});
+    let body = match qwen_gateway_call(&token, QWEN_USAGE_API, &empty_params).await {
+        VolcCall::Body(body) => body,
+        VolcCall::Auth(detail) => return Ok(qwen_auth_error(detail)),
+        VolcCall::Transient(detail) => return Err(format!("Token Plan usage: {detail}")),
+        VolcCall::Soft(detail) => return Ok(make_error(format!("Token Plan usage: {detail}"))),
+    };
+
+    if let Some(error) = qwen_gateway_error(&body) {
+        return Ok(make_error(error));
+    }
+
+    let Some(payload) = qwen_usage_payload(&body) else {
+        let raw: String = body.to_string().chars().take(700).collect();
+        return Ok(make_error(format!(
+            "Token Plan usage response had no per1MonthPercentage. Raw: {raw}"
+        )));
+    };
+    let Some(percentage) = payload.get("per1MonthPercentage").and_then(parse_f64) else {
+        let raw: String = payload.to_string().chars().take(700).collect();
+        return Ok(make_error(format!(
+            "Token Plan usage response had no numeric per1MonthPercentage. Raw: {raw}"
+        )));
+    };
+
+    Ok(volcengine_success(
+        vec![QuotaTier {
+            name: TIER_MONTHLY.to_string(),
+            utilization: percentage * 100.0,
+            resets_at: payload
+                .get("per1MonthResetTime")
+                .and_then(extract_reset_time),
+            used_value_usd: None,
+            max_value_usd: None,
+        }],
+        Some("Token Plan".to_string()),
+    ))
+}
+
 // ── 公开入口 ────────────────────────────────────────────────
 
 /// 构造"凭据缺失 / 域名未命中"的失败结果（NotFound 状态 + 明确错误文案）。
@@ -1773,6 +2140,30 @@ pub async fn get_coding_plan_quota(
         None => return Ok(coding_plan_not_found("Unknown coding plan provider")),
     };
 
+    // 千问AI平台 Token Plan：走阿里云控制面 AK/SK 签名（换 console token 再查网关），
+    // 与数据面 Bearer api_key 完全是两条链路，单独分支提前处理。
+    if let CodingPlanProvider::QwenTokenPlan = provider {
+        let ak = access_key_id.unwrap_or("").trim();
+        let sk = secret_access_key.unwrap_or("").trim();
+        if ak.is_empty() || sk.is_empty() {
+            return Ok(coding_plan_not_found(
+                "Qwen Token Plan usage query needs the Aliyun AccessKey ID + Secret (the sk-sp-... plan key only authorizes inference)",
+            ));
+        }
+        return query_qwen_token_plan(ak, sk).await;
+    }
+
+    // 百炼 Coding Plan：官方只在控制台展示用量，没有公开的额度查询接口（sk-sp- key
+    // 只服务推理数据面）。不发请求，直接给确定性说明——让卡片显示"额度没查到 +
+    // 该去哪看"，而不是 Unknown coding plan provider。放在 api_key 判空之前。
+    if let CodingPlanProvider::Bailian = provider {
+        return Ok(make_error(
+            "Aliyun Bailian Coding Plan has no public usage API — view it at \
+             https://bailian.console.aliyun.com/cn-beijing/subscription/coding-plan"
+                .to_string(),
+        ));
+    }
+
     // 火山方舟走控制面 AK/SK 签名（区别于其他供应商的数据面 Bearer api_key），凭据
     // 校验与查询路径都不同，单独分支提前处理。
     if let CodingPlanProvider::Volcengine = provider {
@@ -1806,17 +2197,23 @@ pub async fn get_coding_plan_quota(
         CodingPlanProvider::Volcengine => {
             unreachable!("volcengine handled via AK/SK branch above")
         }
+        // 百炼 / 千问 Token Plan 已在上面的分支提前返回，此处不可达。
+        CodingPlanProvider::Bailian | CodingPlanProvider::QwenTokenPlan => {
+            unreachable!("console-only / AK-SK plans handled above")
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_provider, parse_afp_tiers, parse_coding_plan_tiers, parse_command_code_quota,
+        acs3_canonical_request, detect_provider, detect_provider_id, extract_reset_time,
+        parse_afp_tiers, parse_coding_plan_tiers, parse_command_code_quota, parse_f64,
         parse_minimax_tiers, parse_opencode_go_tiers, parse_zhipu_token_tiers,
-        query_command_code_at, query_zhipu_team_at, volcengine_canonical_query,
-        volcengine_is_auth_error_code, volcengine_region, volcengine_response_error,
-        volcengine_sign, zhipu_quota_base, CodingPlanProvider, CredentialStatus, TIER_FIVE_HOUR,
+        query_command_code_at, query_zhipu_team_at, qwen_gateway_error, qwen_usage_payload,
+        volcengine_canonical_query, volcengine_is_auth_error_code, volcengine_region,
+        volcengine_response_error, volcengine_sign, zhipu_quota_base, CodingPlanProvider,
+        CredentialStatus, QWEN_ACS_ACTION, QWEN_ACS_PATH, QWEN_ACS_VERSION, TIER_FIVE_HOUR,
         TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
@@ -1852,6 +2249,133 @@ mod tests {
             Some(CodingPlanProvider::CommandCode)
         ));
         assert!(detect_provider("https://commandcode.ai/provider").is_none());
+    }
+
+    #[test]
+    fn bailian_detects_coding_plan_host_only() {
+        for base_url in [
+            "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+            "https://CODING.DASHSCOPE.ALIYUNCS.COM/v1",
+        ] {
+            assert!(matches!(
+                detect_provider(base_url),
+                Some(CodingPlanProvider::Bailian)
+            ));
+            assert_eq!(detect_provider_id(base_url), Some("bailian"));
+        }
+        // 按量付费 / 千问 Token Plan / 国际站都不是百炼 Coding Plan
+        for base_url in [
+            "https://dashscope.aliyuncs.com/apps/anthropic",
+            "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+            "https://dashscope-intl.aliyuncs.com/apps/anthropic",
+        ] {
+            assert!(!matches!(
+                detect_provider(base_url),
+                Some(CodingPlanProvider::Bailian)
+            ));
+        }
+    }
+
+    #[test]
+    fn qwen_token_plan_detects_its_host_only() {
+        for base_url in [
+            "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+            "https://token-plan.maas.qwenaiapi.com/apps/anthropic",
+            "https://TOKEN-PLAN.CN-BEIJING.MAAS.ALIYUNCS.COM/compatible-mode/v1",
+        ] {
+            assert!(matches!(
+                detect_provider(base_url),
+                Some(CodingPlanProvider::QwenTokenPlan)
+            ));
+            assert_eq!(detect_provider_id(base_url), Some("qwen_token_plan"));
+        }
+        // 国际站、百炼 Coding Plan、小米 Token Plan 都不是千问AI平台 Token Plan
+        for base_url in [
+            "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
+            "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+            "https://token-plan-cn.xiaomimimo.com/v1",
+        ] {
+            assert!(!matches!(
+                detect_provider(base_url),
+                Some(CodingPlanProvider::QwenTokenPlan)
+            ));
+        }
+    }
+
+    #[test]
+    fn acs3_canonical_request_matches_acs3_spec() {
+        // 空 body 的 sha256（固定值），便于把期望串写成字面量。
+        let empty_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let canonical = acs3_canonical_request(
+            "modelstudio.cn-beijing.aliyuncs.com",
+            QWEN_ACS_PATH,
+            "application/json",
+            QWEN_ACS_ACTION,
+            QWEN_ACS_VERSION,
+            empty_sha256,
+            "2026-10-19T05:06:07Z",
+            "0f8fad5b-d9cb-469f-a165-70867728950e",
+        );
+        assert_eq!(
+            canonical,
+            concat!(
+                "POST\n",
+                "/modelstudio/cli/generateAccessToken\n",
+                "\n",
+                "content-type:application/json\n",
+                "host:modelstudio.cn-beijing.aliyuncs.com\n",
+                "x-acs-action:GenerateCLIAccessToken\n",
+                "x-acs-content-sha256:",
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n",
+                "x-acs-date:2026-10-19T05:06:07Z\n",
+                "x-acs-signature-nonce:0f8fad5b-d9cb-469f-a165-70867728950e\n",
+                "x-acs-version:2026-02-10\n",
+                "\n",
+                "content-type;host;x-acs-action;x-acs-content-sha256;x-acs-date;",
+                "x-acs-signature-nonce;x-acs-version\n",
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            )
+        );
+    }
+
+    #[test]
+    fn qwen_usage_payload_reads_console_envelope() {
+        // 控制台网关两层信封：data.DataV2.data.data 才是业务数据。
+        let body = json!({
+            "data": {
+                "success": true,
+                "DataV2": {
+                    "data": {
+                        "data": {
+                            "per1MonthPercentage": 0.42,
+                            "per1MonthResetTime": 1_761_926_400_i64
+                        }
+                    }
+                }
+            }
+        });
+        let payload = qwen_usage_payload(&body).expect("usage payload");
+        assert_eq!(
+            payload.get("per1MonthPercentage").and_then(parse_f64),
+            Some(0.42)
+        );
+        assert!(payload
+            .get("per1MonthResetTime")
+            .and_then(extract_reset_time)
+            .is_some());
+        // 成功但没有用量字段 → 找不到载荷（调用方据此带上原始响应）
+        assert!(qwen_usage_payload(&json!({"data": {"success": true}})).is_none());
+    }
+
+    #[test]
+    fn qwen_gateway_error_flags_not_logined() {
+        let not_logined = json!({
+            "data": {"success": false, "errorCode": "BailianGateway.Login.NotLogined"}
+        });
+        let error = qwen_gateway_error(&not_logined).expect("gateway error");
+        assert!(error.contains("BailianGateway.Login.NotLogined"));
+        assert!(error.contains("GenerateCLIAccessToken"));
+        assert!(qwen_gateway_error(&json!({"data": {"success": true}})).is_none());
     }
 
     #[test]

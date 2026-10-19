@@ -2511,6 +2511,8 @@
     "secretAccessKey": "GizliErişimAnahtarı",
     "volcengineAkSkHint": "Volcengine kullanım sorgusu, hesap düzeyinde bir Erişim Anahtarı Kimliği/Gizlisi gerektirir (çıkarım API anahtarından farklı). Bunları Volcengine konsolunda sağ üstteki hesap menüsü → 'API Erişim Anahtarları' aracılığıyla oluşturun.",
     "volcengineKeyConsoleLink": "Anahtarları şu adreste oluşturun:",
+    "qwenTokenPlanAkSkHint": "Qwen Token Plan kullanımı Bailian konsol ağ geçidinin arkasında olduğundan ayrı bir Aliyun AccessKey ID / Secret gerekir (sk-sp-... plan anahtarı yalnızca çıkarım içindir). Aliyun konsolunda oluşturun; Bailian ile sınırlı bir RAM alt hesabı önerilir.",
+    "qwenTokenPlanConsoleLink": "AccessKey oluşturma adresi:",
     "zhipuTeamHint": "Zhipu ekip planı kullanım sorgusu, ekip API anahtarına (bu sağlayıcının kimlik bilgilerini yeniden kullanır) + kuruluş kimliği + proje kimliğine (bigmodel-organization / bigmodel-project istek başlıkları olarak gönderilir) ihtiyaç duyar. Ekip yönetici konsolunun kullanım sayfası URL'sinde kuruluş ve proje kimliklerini bulun.",
     "zhipuTeamConsoleLink": "Takım kullanım sayfası:",
     "organizationId": "Kuruluş Kimliği",
