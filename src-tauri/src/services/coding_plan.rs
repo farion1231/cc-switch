@@ -1789,6 +1789,19 @@ async fn aliyun_read_response(resp: reqwest::Response) -> VolcCall {
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
         let body: String = body.chars().take(300).collect();
+        // ACS 对无效/过期的 AK 不返回 401，而是 404 + InvalidAccessKeyId.NotFound，
+        // 归为凭据错误，前端才能按"凭据失效"提示而不是泛化失败。
+        let acs_code = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("Code").and_then(|c| c.as_str()).map(str::to_string));
+        if let Some(code) = acs_code {
+            if code.starts_with("InvalidAccessKeyId")
+                || code.starts_with("SignatureDoesNotMatch")
+                || code.starts_with("InvalidSecurityToken")
+            {
+                return VolcCall::Auth(format!("Authentication failed (HTTP {status}): {body}"));
+            }
+        }
         return VolcCall::Soft(format!("API error (HTTP {status}): {body}"));
     }
     // 先 bytes() 再解析：读体失败是瞬时，解析失败是确定性。
@@ -1875,10 +1888,12 @@ fn aliyun_gateway_error(body: &serde_json::Value) -> Option<String> {
     let code = data.get("errorCode").and_then(|v| v.as_str()).unwrap_or("");
     let message = data
         .get("errorMessage")
+        .or_else(|| data.get("errorMsg"))
         .or_else(|| data.get("message"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let mut detail = match (code.is_empty(), message.is_empty()) {
+    // 网关常把 errorMsg 写成与 errorCode 相同的串，重复时不拼第二遍。
+    let mut detail = match (code.is_empty(), message.is_empty() || message == code) {
         (false, false) => format!("{code}: {message}"),
         (false, true) => code.to_string(),
         (true, false) => message.to_string(),
@@ -1896,9 +1911,10 @@ fn aliyun_payload_with(
     body: &serde_json::Value,
     matches: impl Fn(&serde_json::Value) -> bool,
 ) -> Option<&serde_json::Value> {
-    const PATHS: [&[&str]; 4] = [
+    const PATHS: [&[&str]; 5] = [
         &["data", "DataV2", "data", "data"],
         &["data", "DataV2", "data"],
+        &["data", "DataV2"],
         &["data", "data"],
         &["data"],
     ];
@@ -2524,6 +2540,16 @@ mod tests {
             .is_some());
         // 成功但没有用量字段 → 找不到载荷（调用方据此带上原始响应）
         assert!(qwen_usage_payload(&json!({"data": {"success": true}})).is_none());
+        // 信封偶尔少一层：DataV2 本身即业务数据（与官方 unwrapResponse 的兜底同序）
+        let shallow = json!({
+            "data": {"success": true, "DataV2": {"per1MonthPercentage": 1.0}}
+        });
+        assert_eq!(
+            qwen_usage_payload(&shallow)
+                .and_then(|p| p.get("per1MonthPercentage"))
+                .and_then(parse_f64),
+            Some(1.0)
+        );
     }
 
     #[test]
@@ -2583,11 +2609,17 @@ mod tests {
 
     #[test]
     fn aliyun_gateway_error_flags_not_logined() {
+        // 控制台真实响应：errorCode 与 errorMsg 同名，只输出一次。
         let not_logined = json!({
-            "data": {"success": false, "errorCode": "BailianGateway.Login.NotLogined"}
+            "data": {
+                "success": false,
+                "errorCode": "BailianGateway.Login.NotLogined",
+                "errorMsg": "BailianGateway.Login.NotLogined"
+            }
         });
         let error = aliyun_gateway_error(&not_logined).expect("gateway error");
-        assert!(error.contains("BailianGateway.Login.NotLogined"));
+        assert!(error.starts_with("BailianGateway.Login.NotLogined. "));
+        assert!(!error.contains(": BailianGateway.Login.NotLogined"));
         assert!(error.contains("GenerateCLIAccessToken"));
         assert!(aliyun_gateway_error(&json!({"data": {"success": true}})).is_none());
     }
