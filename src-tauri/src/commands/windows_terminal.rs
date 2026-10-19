@@ -25,6 +25,8 @@ const IO_REPARSE_TAG_APPEXECLINK: u32 = 0x8000_001b;
 #[cfg(any(target_os = "windows", test))]
 const WINDOWS_LAUNCH_ACK_ENV: &str = "CC_SWITCH_INTERNAL_LAUNCH_ACK";
 #[cfg(any(target_os = "windows", test))]
+const WINDOWS_LAUNCH_CLAIM_ENV: &str = "CC_SWITCH_INTERNAL_LAUNCH_CLAIM";
+#[cfg(any(target_os = "windows", test))]
 const POWERSHELL_CORE_PROFILE_SOURCE: &str = "Windows.Terminal.PowershellCore";
 #[cfg(any(target_os = "windows", test))]
 const POWERSHELL_CORE_PROFILE_GUID: &str = "574e775e-4f2a-5b96-ac1e-a2962a402336";
@@ -78,6 +80,7 @@ const WINDOWS_PRIVATE_LAUNCH_ENV_VARS: &[&str] = &[
     WINDOWS_CONFIG_PATH_ENV,
     WINDOWS_CWD_ENV,
     WINDOWS_LAUNCH_ACK_ENV,
+    WINDOWS_LAUNCH_CLAIM_ENV,
 ];
 
 #[cfg(any(target_os = "windows", test))]
@@ -91,9 +94,13 @@ fn wt_env_vars_to_clear() -> impl Iterator<Item = &'static &'static str> {
 // Unicode paths only after decoding, and clear stale session/color variables.
 #[cfg(any(target_os = "windows", test))]
 fn wt_powershell_bootstrap(bat_path: &str, launch_env: &[(&str, &str)]) -> String {
-    let clear_env: String = wt_env_vars_to_clear()
-        .map(|name| format!("$env:{name} = $null; "))
-        .collect();
+    let clear_env = format!(
+        "foreach($n in {}){{[Environment]::SetEnvironmentVariable($n,$null)}};",
+        wt_env_vars_to_clear()
+            .map(|name| format!("'{name}'"))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
     let quoted_bat_path = quote_windows_batch_path_for_env(bat_path);
     let bind_env: String = std::iter::once((WINDOWS_BATCH_PATH_ENV, quoted_bat_path.as_str()))
         .chain(launch_env.iter().copied())
@@ -105,20 +112,29 @@ fn wt_powershell_bootstrap(bat_path: &str, launch_env: &[(&str, &str)]) -> Strin
                 .replace('\u{2019}', "\u{2019}\u{2019}")
                 .replace('\u{201a}', "\u{201a}\u{201a}")
                 .replace('\u{201b}', "\u{201b}\u{201b}");
-            format!("$env:{name} = '{value}'; ")
+            format!("$env:{name}='{value}';")
         })
         .collect();
-    let clear_private_env: String = WINDOWS_PRIVATE_LAUNCH_ENV_VARS
-        .iter()
-        .map(|name| format!("$env:{name} = $null; "))
-        .collect();
-    // A receipt confirms the decoded bootstrap and BAT readability, not provider readiness.
-    // Open, never create: a late tab must not recreate the receipt after timeout.
+    let clear_private_env = format!(
+        "foreach($n in {}){{[Environment]::SetEnvironmentVariable($n,$null)}};",
+        WINDOWS_PRIVATE_LAUNCH_ENV_VARS
+            .iter()
+            .map(|name| format!("'{name}'"))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    // The semaphore grants execution once; the file only observes the handoff.
+    // OpenExisting cannot resurrect a cancelled launch after the parent closes it.
     let acknowledge = format!(
         "if ($env:{WINDOWS_LAUNCH_ACK_ENV}) {{ \
-         $receipt = [IO.File]::Open($env:{WINDOWS_LAUNCH_ACK_ENV}, 'Open', 'Write', 'ReadWrite, Delete'); \
-         try {{ $receipt.WriteByte(1) }} finally {{ $receipt.Dispose() }}; \
-         $env:{WINDOWS_LAUNCH_ACK_ENV} = $null; }}; "
+         $receipt = $env:{WINDOWS_LAUNCH_ACK_ENV}; \
+         $claim = [Threading.Semaphore]::OpenExisting($env:{WINDOWS_LAUNCH_CLAIM_ENV}); \
+         try {{ if (-not $claim.WaitOne(0)) {{ throw 'Terminal launch was cancelled' }} }} \
+         finally {{ $claim.Dispose() }}; \
+         try {{ $stream = [IO.File]::Open($receipt, 'Open', 'Write', 'ReadWrite, Delete'); \
+         try {{ $stream.WriteByte(1) }} finally {{ $stream.Dispose() }} }} catch {{ }}; \
+         $env:{WINDOWS_LAUNCH_ACK_ENV} = $null; \
+         $env:{WINDOWS_LAUNCH_CLAIM_ENV} = $null; }}; "
     );
     format!(
         "& {{ $ErrorActionPreference = 'Stop'; {clear_env}{bind_env}try {{ \
@@ -448,37 +464,108 @@ fn wt_file_version(path: &Path) -> Option<(u16, u16)> {
 }
 
 #[cfg(target_os = "windows")]
-fn run_wt_command(command: &mut Command, receipt: &Path, timeout: Duration) -> Result<(), String> {
+struct WtLaunchReceipt {
+    file: tempfile::NamedTempFile,
+    semaphore: std::os::windows::io::OwnedHandle,
+    semaphore_name: String,
+}
+
+#[cfg(target_os = "windows")]
+impl WtLaunchReceipt {
+    fn new(file: tempfile::NamedTempFile) -> std::io::Result<Self> {
+        use std::os::windows::io::FromRawHandle;
+        use windows_sys::Win32::{
+            Foundation::{SetLastError, ERROR_ALREADY_EXISTS},
+            System::Threading::CreateSemaphoreW,
+        };
+
+        let semaphore_name = format!("Local\\CCSwitchLaunch-{}", uuid::Uuid::new_v4());
+        let name: Vec<u16> = semaphore_name.encode_utf16().chain(Some(0)).collect();
+        let handle = unsafe {
+            SetLastError(0);
+            CreateSemaphoreW(std::ptr::null(), 1, 1, name.as_ptr())
+        };
+        let error = std::io::Error::last_os_error();
+        if handle.is_null() {
+            return Err(error);
+        }
+        let semaphore = unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(handle) };
+        if error.raw_os_error() == Some(ERROR_ALREADY_EXISTS as i32) {
+            return Err(error);
+        }
+        Ok(Self {
+            file,
+            semaphore,
+            semaphore_name,
+        })
+    }
+
+    fn path(&self) -> &Path {
+        self.file.path()
+    }
+
+    fn cancel_or_preserve(&self, error: String) -> Result<(), String> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::{
+            Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT},
+            System::Threading::WaitForSingleObject,
+        };
+
+        // Neither side releases the count. Even an already-open late WT handle
+        // cannot execute after cancellation; an unopened one cannot recreate it.
+        match unsafe { WaitForSingleObject(self.semaphore.as_raw_handle(), 0) } {
+            WAIT_OBJECT_0 => Err(error),
+            WAIT_TIMEOUT => Ok(()),
+            status => {
+                log::error!("无法取消 WT 启动，保留其执行权以防重复启动: {status:#x}; {error}");
+                Ok(())
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn run_wt_command(
+    command: &mut Command,
+    receipt: &WtLaunchReceipt,
+    timeout: Duration,
+) -> Result<(), String> {
     detach_claude_parent_session_env(command);
     for name in WINDOWS_PRIVATE_LAUNCH_ENV_VARS {
         command.env_remove(name);
     }
-    let mut child = command
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .map_err(|error| format!("启动 Windows Terminal 失败: {error}"))?;
-    let deadline = Instant::now() + timeout;
-    loop {
-        if std::fs::read(receipt).is_ok_and(|value| value == [1]) {
-            return Ok(());
-        }
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("等待 Windows Terminal 失败: {error}"))?
-        {
-            if !status.success() {
-                return Err(format!("Windows Terminal 启动失败: {status}"));
+    let result = (|| {
+        let mut child = command
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|error| format!("启动 Windows Terminal 失败: {error}"))?;
+        let deadline = Instant::now() + timeout;
+        loop {
+            if std::fs::read(receipt.path()).is_ok_and(|value| value == [1]) {
+                return Ok(());
             }
+            if let Some(status) = child
+                .try_wait()
+                .map_err(|error| format!("等待 Windows Terminal 失败: {error}"))?
+            {
+                if !status.success() {
+                    return Err(format!("Windows Terminal 启动失败: {status}"));
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err(AppError::localized(
+                    "terminal.wt.startup_timeout",
+                    "Windows Terminal 未确认执行启动脚本",
+                    "Windows Terminal did not acknowledge the startup script",
+                )
+                .to_string());
+            }
+            std::thread::sleep(Duration::from_millis(50));
         }
-        if Instant::now() >= deadline {
-            return Err(AppError::localized(
-                "terminal.wt.startup_timeout",
-                "Windows Terminal 未确认执行启动脚本",
-                "Windows Terminal did not acknowledge the startup script",
-            )
-            .to_string());
-        }
-        std::thread::sleep(Duration::from_millis(50));
+    })();
+    match result {
+        Err(error) => receipt.cancel_or_preserve(error),
+        result => result,
     }
 }
 
@@ -528,17 +615,13 @@ pub(super) fn launch_wt_terminal_with_env(
         })?;
     let content = std::fs::read_to_string(&settings)
         .map_err(|error| AppError::io(&settings, error).to_string())?;
-    let profile = parse_wt_default_profile(&content).ok_or_else(|| {
-        AppError::localized(
-            "terminal.wt.profile_unsupported",
-            "Windows Terminal 默认 profile 的 GUID、shell 或启动参数不受支持",
-            "Unsupported GUID, shell or startup arguments in the Windows Terminal default profile",
-        )
-        .to_string()
-    })?;
+    let profile = parse_wt_default_profile(&content);
+    if profile.is_none() {
+        log::warn!("Windows Terminal 默认 profile 不受支持，改用显式 CMD 标签");
+    }
     launch_wt_tab(
         &installation.launcher,
-        &profile,
+        profile.as_ref(),
         bat_path,
         launch_env,
         effective_path,
@@ -548,13 +631,14 @@ pub(super) fn launch_wt_terminal_with_env(
 #[cfg(target_os = "windows")]
 fn launch_wt_tab(
     launcher: &Path,
-    profile: &WtDefaultProfile,
+    profile: Option<&WtDefaultProfile>,
     bat_path: &str,
     launch_env: &[(&str, &str)],
     effective_path: &str,
 ) -> Result<(), String> {
-    let receipt =
-        tempfile::NamedTempFile::new().map_err(|error| format!("创建终端启动回执失败: {error}"))?;
+    let receipt = tempfile::NamedTempFile::new()
+        .and_then(WtLaunchReceipt::new)
+        .map_err(|error| format!("创建终端启动回执失败: {error}"))?;
     let receipt_path = receipt.path().to_string_lossy();
     let cmd_path = super::windows_console::system_cmd_path()
         .map_err(|error| format!("定位系统 cmd 失败: {error}"))?;
@@ -562,13 +646,28 @@ fn launch_wt_tab(
     let mut environment = launch_env.to_vec();
     environment.extend([
         (WINDOWS_LAUNCH_ACK_ENV, receipt_path.as_ref()),
+        (WINDOWS_LAUNCH_CLAIM_ENV, receipt.semaphore_name.as_str()),
         ("ComSpec", cmd_path.as_ref()),
     ]);
     let encoded = powershell_encoded_command(&wt_powershell_bootstrap(bat_path, &environment));
     let powershell = super::windows_console::system_powershell_path()
         .map_err(|error| format!("定位系统 PowerShell 失败: {error}"))?;
     let bootstrap = wt_cmd_bootstrap_command(&powershell.to_string_lossy(), &encoded);
-    let mut args = profile.build_wt_args(&encoded, &bootstrap);
+    let mut args = if let Some(profile) = profile {
+        profile.build_wt_args(&encoded, &bootstrap)
+    } else {
+        // Replace the unsupported profile's commandline, rather than appending CMD
+        // arguments to a WSL, Git Bash or other unrelated shell.
+        vec![
+            "new-tab",
+            "--",
+            cmd_path.as_ref(),
+            "/V:OFF",
+            "/S",
+            "/K",
+            &bootstrap,
+        ]
+    };
     let cwd = launch_env
         .iter()
         .find_map(|(name, value)| (*name == WINDOWS_CWD_ENV).then_some(*value));
@@ -584,7 +683,7 @@ fn launch_wt_tab(
         command.current_dir(cwd);
     }
     command.args(args);
-    run_wt_command(&mut command, receipt.path(), Duration::from_secs(15))
+    run_wt_command(&mut command, &receipt, Duration::from_secs(15))
 }
 
 #[cfg(test)]
@@ -742,15 +841,190 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn wt_launch_does_not_report_spawn_as_script_execution() {
-        let receipt = tempfile::NamedTempFile::new().unwrap();
+        let receipt = WtLaunchReceipt::new(tempfile::NamedTempFile::new().unwrap()).unwrap();
         // Rerunning this test binary with a filter that matches nothing exits 0 without
         // running a script, like WT opening an empty tab.
         let mut command = Command::new(std::env::current_exe().unwrap());
         command.args(["--exact", "cc_switch_fake_wt_without_a_script"]);
-        let error =
-            run_wt_command(&mut command, receipt.path(), Duration::from_millis(100)).unwrap_err();
+        let error = run_wt_command(&mut command, &receipt, Duration::from_millis(100)).unwrap_err();
         assert!(error.contains("未确认执行启动脚本"), "{error}");
         assert!(std::fs::read(receipt.path()).unwrap().is_empty());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn wt_timeout_and_cmd_fallback_execute_the_batch_only_once() {
+        use super::super::misc::WINDOWS_RUN_AND_DELETE_BATCH;
+        use std::process::{Child, Stdio};
+
+        struct Shells {
+            children: Vec<Child>,
+            gates: Vec<PathBuf>,
+        }
+        impl Drop for Shells {
+            fn drop(&mut self) {
+                for gate in &self.gates {
+                    let _ = std::fs::write(gate, b"go");
+                }
+                for child in &mut self.children {
+                    let _ = child.wait();
+                }
+            }
+        }
+        let wait_until = |condition: &dyn Fn() -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !condition() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            condition()
+        };
+        for case in [
+            "cancel-before-open",
+            "cancel-after-open",
+            "wt-first",
+            "missing-ack",
+            "launcher-failed",
+        ] {
+            let cancel_first = !matches!(case, "wt-first" | "missing-ack");
+            let (variable, mode) = match case {
+                "cancel-after-open" => ("claim", "Read"),
+                "missing-ack" => ("receipt", "Read"),
+                _ => ("receipt", "Write"),
+            };
+            let temp = tempfile::tempdir().unwrap();
+            let batch = temp.path().join("provider.bat");
+            let counter = temp.path().join("executions.txt");
+            let ready = temp.path().join("ready");
+            let acknowledge = temp.path().join("acknowledge");
+            let finish = temp.path().join("finish");
+            let receipt =
+                WtLaunchReceipt::new(tempfile::NamedTempFile::new_in(temp.path()).unwrap())
+                    .unwrap();
+            let receipt_path = receipt.path().to_path_buf();
+            let semaphore_name = receipt.semaphore_name.clone();
+            let mut shells = Shells {
+                children: Vec::new(),
+                gates: vec![acknowledge.clone(), finish.clone()],
+            };
+            std::fs::write(
+                &batch,
+                "@echo off\r\nset \"CC_SWITCH_INTERNAL_BATCH_PATH=\"\r\n>> \"%CC_SWITCH_INTERNAL_CONFIG_PATH%\" echo executed\r\n\"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -NonInteractive -Command \"$limit = [DateTime]::UtcNow.AddSeconds(10); while (-not [IO.File]::Exists($env:CC_SWITCH_TEST_FINISH)) { if ([DateTime]::UtcNow -ge $limit) { exit 7 }; [Threading.Thread]::Sleep(10) }\"\r\n",
+            )
+            .unwrap();
+            let receipt_value = receipt_path.to_string_lossy();
+            let counter_value = counter.to_string_lossy();
+            let finish_value = finish.to_string_lossy();
+            let env = [
+                (WINDOWS_LAUNCH_ACK_ENV, receipt_value.as_ref()),
+                (WINDOWS_LAUNCH_CLAIM_ENV, semaphore_name.as_str()),
+                (WINDOWS_CONFIG_PATH_ENV, counter_value.as_ref()),
+                ("CC_SWITCH_TEST_FINISH", finish_value.as_ref()),
+            ];
+            // Pause the real bootstrap at its receipt handoff. In the old protocol
+            // the receipt stream is already open, so deleting its path cannot cancel it.
+            let script = format!(
+                "$null = Set-PSBreakpoint -Variable {variable} -Mode {mode} -Action {{ \
+                 [IO.File]::WriteAllText($env:CC_SWITCH_TEST_READY, 'ready'); \
+                 $limit = [DateTime]::UtcNow.AddSeconds(10); \
+                 while (-not [IO.File]::Exists($env:CC_SWITCH_TEST_ACKNOWLEDGE)) {{ \
+                 if ([DateTime]::UtcNow -ge $limit) {{ throw 'receipt gate timed out' }}; \
+                 [Threading.Thread]::Sleep(10) }} }}; {}",
+                wt_powershell_bootstrap(&batch.to_string_lossy(), &env)
+            );
+            let encoded = powershell_encoded_command(&script);
+            shells.children.push(
+                Command::new(super::super::windows_console::system_powershell_path().unwrap())
+                    .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded])
+                    .env("CC_SWITCH_TEST_READY", &ready)
+                    .env("CC_SWITCH_TEST_ACKNOWLEDGE", &acknowledge)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .spawn()
+                    .unwrap(),
+            );
+            assert!(
+                wait_until(&|| ready.is_file()),
+                "bootstrap did not reach the receipt gate"
+            );
+            let count = || {
+                std::fs::read_to_string(&counter)
+                    .unwrap_or_default()
+                    .lines()
+                    .count()
+            };
+            if case == "wt-first" {
+                std::fs::write(&acknowledge, b"go").unwrap();
+                assert!(wait_until(&|| count() == 1), "WT did not start the batch");
+            }
+            // Model a resident tab independent of the short-lived WT launcher.
+            let mut launcher = if case == "launcher-failed" {
+                let mut command =
+                    Command::new(super::super::windows_console::system_cmd_path().unwrap());
+                command.args(["/D", "/C", "exit 37"]);
+                command
+            } else {
+                let mut command = Command::new(std::env::current_exe().unwrap());
+                command.args(["--exact", "cc_switch_fake_wt_without_a_script"]);
+                command
+            };
+            let timeout = if case == "launcher-failed" {
+                Duration::from_secs(5)
+            } else {
+                Duration::ZERO
+            };
+            let result = run_wt_command(&mut launcher, &receipt, timeout);
+            if case == "launcher-failed" {
+                assert!(result
+                    .as_ref()
+                    .unwrap_err()
+                    .contains("Windows Terminal 启动失败"));
+            }
+            drop(receipt);
+            if result.is_err() {
+                let mut fallback =
+                    Command::new(super::super::windows_console::system_cmd_path().unwrap());
+                configure_windows_batch_env(&mut fallback, &batch.to_string_lossy(), &env);
+                fallback.args(["/D", "/V:OFF", "/C", WINDOWS_RUN_AND_DELETE_BATCH]);
+                fallback.creation_flags(CREATE_NO_WINDOW);
+                shells.children.push(fallback.spawn().unwrap());
+                assert!(
+                    wait_until(&|| count() >= 1),
+                    "CMD fallback did not start the batch"
+                );
+            }
+            std::fs::write(&acknowledge, b"go").unwrap();
+            if case == "missing-ack" {
+                assert!(
+                    wait_until(&|| count() == 1),
+                    "missing ACK blocked the claimed batch"
+                );
+            }
+            // Keep the BAT alive in the first shell until the late WT bootstrap
+            // has either attempted it or exited. This is a still-running provider.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while cancel_first
+                && count() < 2
+                && shells.children[0].try_wait().unwrap().is_none()
+                && Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            std::fs::write(&finish, b"go").unwrap();
+            for child in &mut shells.children {
+                child.wait().unwrap();
+            }
+            assert_eq!(
+                count(),
+                1,
+                "cancel_first={cancel_first}: batch executed more than once"
+            );
+            assert_eq!(
+                result.is_err(),
+                cancel_first,
+                "wrong shell won the handoff: {result:?}"
+            );
+        }
     }
 
     #[cfg(target_os = "windows")]
@@ -765,11 +1039,15 @@ mod tests {
             .share_mode(0)
             .open(&batch)
             .unwrap();
-        let receipt = tempfile::NamedTempFile::new_in(temp.path()).unwrap();
+        let receipt =
+            WtLaunchReceipt::new(tempfile::NamedTempFile::new_in(temp.path()).unwrap()).unwrap();
         let receipt_path = receipt.path().to_string_lossy();
         let script = wt_powershell_bootstrap(
             &batch.to_string_lossy(),
-            &[(WINDOWS_LAUNCH_ACK_ENV, receipt_path.as_ref())],
+            &[
+                (WINDOWS_LAUNCH_ACK_ENV, receipt_path.as_ref()),
+                (WINDOWS_LAUNCH_CLAIM_ENV, receipt.semaphore_name.as_str()),
+            ],
         );
         let encoded = powershell_encoded_command(&script);
         let output = Command::new(super::super::windows_console::system_powershell_path().unwrap())
@@ -849,6 +1127,7 @@ mod tests {
             WINDOWS_CONFIG_PATH_ENV,
             WINDOWS_CWD_ENV,
             WINDOWS_LAUNCH_ACK_ENV,
+            WINDOWS_LAUNCH_CLAIM_ENV,
             "CC_SWITCH_CMD_EXPAND",
             "CC_SWITCH_BANG",
         ];
@@ -870,19 +1149,11 @@ mod tests {
         // A cwd lookup would fail instead of running the system bootstrap.
         std::fs::write(starting.join("powershell.exe"), b"not a Windows executable").unwrap();
         let marker = hostile.join("配置结果.txt");
-        let receipt = tempfile::NamedTempFile::new_in(&hostile).unwrap();
         let marker_path = marker.to_string_lossy();
         let cwd_path = hostile.to_string_lossy();
-        let receipt_path = receipt.path().to_string_lossy();
         let cmd = super::super::windows_console::system_cmd_path().unwrap();
         let powershell = super::super::windows_console::system_powershell_path().unwrap();
         let cmd_path = cmd.to_string_lossy();
-        let launch_env = [
-            (WINDOWS_CONFIG_PATH_ENV, marker_path.as_ref()),
-            (WINDOWS_CWD_ENV, cwd_path.as_ref()),
-            (WINDOWS_LAUNCH_ACK_ENV, receipt_path.as_ref()),
-            ("ComSpec", cmd_path.as_ref()),
-        ];
         let check_env: String = PARENT_CLAUDE_SESSION_ENV_VARS
             .iter()
             .map(|name| format!("if defined {name} exit /b 2\r\n"))
@@ -894,7 +1165,7 @@ mod tests {
                 .suffix(".bat")
                 .tempfile_in(directory)
                 .unwrap();
-            let content = format!("@echo off\r\nsetlocal DisableDelayedExpansion\r\nset \"CC_SWITCH_INTERNAL_BATCH_PATH=\"\r\n{check_env}if defined CC_SWITCH_INTERNAL_LAUNCH_ACK exit /b 6\r\ncd /d \"%CC_SWITCH_INTERNAL_CWD%\" || exit /b 5\r\n> \"%CC_SWITCH_INTERNAL_CONFIG_PATH%\" echo {label}\r\n");
+            let content = format!("@echo off\r\nsetlocal DisableDelayedExpansion\r\nset \"CC_SWITCH_INTERNAL_BATCH_PATH=\"\r\n{check_env}if defined CC_SWITCH_INTERNAL_LAUNCH_ACK exit /b 6\r\nif defined CC_SWITCH_INTERNAL_LAUNCH_CLAIM exit /b 7\r\ncd /d \"%CC_SWITCH_INTERNAL_CWD%\" || exit /b 5\r\n> \"%CC_SWITCH_INTERNAL_CONFIG_PATH%\" echo {label}\r\n");
             assert!(content.is_ascii());
             std::fs::write(batch.path(), content).unwrap();
             batches.push(batch);
@@ -903,16 +1174,10 @@ mod tests {
             .iter()
             .map(|batch| std::fs::read(batch.path()).unwrap())
             .collect();
-        let script = wt_powershell_bootstrap(&batches[1].path().to_string_lossy(), &launch_env);
-        let encoded = powershell_encoded_command(&format!("{script}; exit $LASTEXITCODE"));
         let parent_env_check: String = PARENT_CLAUDE_SESSION_ENV_VARS
             .iter()
             .map(|name| format!(" & if defined {name} echo cc-switch-parent-env-leak-{name}"))
             .collect();
-        let bootstrap = format!(
-            "{}{parent_env_check}",
-            wt_cmd_bootstrap_command(&powershell.to_string_lossy(), &encoded)
-        );
         let mut failures = Vec::new();
         for stale in [false, true] {
             for name in WINDOWS_PRIVATE_LAUNCH_ENV_VARS {
@@ -931,13 +1196,38 @@ mod tests {
                     for (batch, content) in batches.iter().zip(&batch_contents) {
                         std::fs::write(batch.path(), content).unwrap();
                     }
-                    receipt.as_file().set_len(0).unwrap();
+                    let receipt =
+                        WtLaunchReceipt::new(tempfile::NamedTempFile::new_in(&hostile).unwrap())
+                            .unwrap();
+                    let receipt_path = receipt.path().to_string_lossy();
+                    let launch_env = [
+                        (WINDOWS_CONFIG_PATH_ENV, marker_path.as_ref()),
+                        (WINDOWS_CWD_ENV, cwd_path.as_ref()),
+                        (WINDOWS_LAUNCH_ACK_ENV, receipt_path.as_ref()),
+                        (WINDOWS_LAUNCH_CLAIM_ENV, receipt.semaphore_name.as_str()),
+                        ("ComSpec", cmd_path.as_ref()),
+                    ];
+                    let script =
+                        wt_powershell_bootstrap(&batches[1].path().to_string_lossy(), &launch_env);
+                    let profile_override = if shell == WtDefaultShell::Cmd {
+                        ""
+                    } else {
+                        "function Remove-Item { throw 'profile override' }; "
+                    };
+                    let encoded = powershell_encoded_command(&format!(
+                        "{profile_override}{script}; exit $LASTEXITCODE"
+                    ));
+                    let bootstrap = format!(
+                        "{}{parent_env_check}",
+                        wt_cmd_bootstrap_command(&powershell.to_string_lossy(), &encoded)
+                    );
                     let profile = WtDefaultProfile {
                         selector: "probe".into(),
                         shell,
                     };
                     let args = profile.build_wt_args(&encoded, &bootstrap);
                     let child_args = expand_in_resident_environment(&wt_child_command_line(&args));
+                    let cmdline_units = child_args.encode_utf16().count();
                     let executable = match shell {
                         WtDefaultShell::Cmd => cmd.as_os_str(),
                         WtDefaultShell::PowerShell => powershell.as_os_str(),
@@ -969,7 +1259,7 @@ mod tests {
                         || batches[1].path().exists()
                         || !batches[0].path().exists()
                     {
-                        failures.push(format!("{shell:?}, stale={stale}: expected B and receipt, got {observed:?}; stdout={}; stderr={}",
+                        failures.push(format!("{shell:?}, stale={stale}: expected B and receipt, got {observed:?}; cmdline_units={cmdline_units}; stdout={}; stderr={}",
                             decode_command_output(&output.stdout), decode_command_output(&output.stderr)));
                     }
                     let _ = std::fs::remove_file(&marker);
@@ -1026,7 +1316,8 @@ fn main() {
             "{}",
             String::from_utf8_lossy(&compiled.stderr)
         );
-        let receipt = tempfile::NamedTempFile::new_in(&directory).unwrap();
+        let receipt =
+            WtLaunchReceipt::new(tempfile::NamedTempFile::new_in(&directory).unwrap()).unwrap();
         let capture = directory.join("arguments.txt");
         let receipt_path = receipt.path().to_string_lossy();
         let capture_path = capture.to_string_lossy();
@@ -1040,24 +1331,27 @@ fn main() {
         command
             .args([receipt_path.as_ref(), capture_path.as_ref()])
             .args(args);
-        run_wt_command(&mut command, receipt.path(), Duration::from_secs(5)).unwrap();
+        run_wt_command(&mut command, &receipt, Duration::from_secs(5)).unwrap();
         assert_eq!(std::fs::read_to_string(capture).unwrap(), expected);
     }
 
-    // Model WT's CMD profile: the tab inherits wt.exe's environment and runs the
-    // appended command. A typical user PATH must not push CMD past 8191 characters.
     #[cfg(target_os = "windows")]
-    #[test]
-    #[serial_test::serial]
-    fn wt_cmd_profile_tab_inherits_a_long_restored_path() {
-        let temp = tempfile::tempdir().unwrap();
-        let source = temp.path().join("fake_wt.rs");
+    fn fake_wt_cmd_launcher(directory: &Path) -> PathBuf {
+        let source = directory.join("fake_wt.rs");
         std::fs::write(
             &source,
             r#"use std::os::windows::process::CommandExt;
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let start = args.iter().position(|argument| argument == "--").unwrap() + 1;
+    let mut start = args.iter().position(|argument| argument == "--").unwrap() + 1;
+    let explicit_cmd = !args[start].starts_with('/');
+    if explicit_cmd {
+        assert!(args[start].to_ascii_lowercase().ends_with("cmd.exe"));
+        assert!(!args.iter().any(|argument| argument == "--appendCommandLine"));
+        start += 1;
+    }
+    std::fs::write(std::env::current_exe().unwrap().with_extension("mode"),
+        if explicit_cmd { "explicit-cmd" } else { "profile" }).unwrap();
     let line = args[start..]
         .iter()
         .map(|argument| match argument.as_str() {
@@ -1074,7 +1368,7 @@ fn main() {
 "#,
         )
         .unwrap();
-        let launcher = temp.path().join("wt.exe");
+        let launcher = directory.join("wt.exe");
         let compiled = Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
             .arg(&source)
             .arg("-o")
@@ -1086,6 +1380,81 @@ fn main() {
             "{}",
             String::from_utf8_lossy(&compiled.stderr)
         );
+        launcher
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[serial_test::serial]
+    fn wt_unsupported_default_profile_opens_an_explicit_cmd_tab() {
+        let temp = tempfile::tempdir().unwrap();
+        let launcher = fake_wt_cmd_launcher(temp.path());
+        // A versioned system PE supplies the version probe for this fake WT.
+        std::fs::copy(
+            super::super::windows_console::system_cmd_path().unwrap(),
+            temp.path().join("WindowsTerminal.exe"),
+        )
+        .unwrap();
+        std::fs::write(temp.path().join(".portable"), "").unwrap();
+        let settings_dir = temp.path().join("settings");
+        std::fs::create_dir(&settings_dir).unwrap();
+        let project = temp
+            .path()
+            .join("项目 O'Brien ‘ ’ & %CC_SWITCH_TEST_PROFILE% !");
+        std::fs::create_dir(&project).unwrap();
+        let path = std::env::var_os("PATH");
+        let _restore = EnvRestore(vec![("PATH", path.clone())]);
+        std::env::set_var(
+            "PATH",
+            std::env::join_paths(
+                std::iter::once(temp.path().to_path_buf())
+                    .chain(std::env::split_paths(&path.unwrap_or_default())),
+            )
+            .unwrap(),
+        );
+        let effective = super::super::windows_console::system_cmd_path().unwrap();
+        let effective = effective.parent().unwrap().to_string_lossy();
+        for (index, settings) in [
+            r#"{"defaultProfile":"{11111111-1111-4111-8111-111111111111}","profiles":{"list":[{"guid":"{11111111-1111-4111-8111-111111111111}","source":"Windows.Terminal.Wsl"}]}}"#,
+            r#"{"defaultProfile":"Git Bash","profiles":{"list":[{"guid":"{11111111-1111-4111-8111-111111111111}","name":"Git Bash","commandline":"bash.exe"}]}}"#,
+            r#"{"defaultProfile":"{11111111-1111-4111-8111-111111111111}","profiles":{"list":[{"guid":"{11111111-1111-4111-8111-111111111111}","commandline":"powershell.exe -NoExit -Command Enter-VsDevShell"}]}}"#,
+            r#"{"defaultProfile":"{11111111-1111-4111-8111-111111111111}","profiles":{"list":[{"guid":"{11111111-1111-4111-8111-111111111111}","commandline":"pwsh.exe -WorkingDirectory ~"}]}}"#,
+            r#"{"defaultProfile":"{61c54bbd-c2c6-5271-96e7-009a87ff44bf}","profiles":{"defaults":{"commandline":"cmd.exe"}}}"#,
+        ]
+        .iter()
+        .enumerate()
+        {
+            std::fs::write(settings_dir.join("settings.json"), settings).unwrap();
+            let batch = temp.path().join(format!("provider-{index}.bat"));
+            let marker = project.join(format!("配置结果-{index}.txt"));
+            std::fs::write(&batch, "@echo off\r\nset \"CC_SWITCH_INTERNAL_BATCH_PATH=\"\r\n> \"%CC_SWITCH_INTERNAL_CONFIG_PATH%\" echo ok\r\n").unwrap();
+            launch_wt_terminal_with_env(
+                &batch.to_string_lossy(),
+                &[
+                    (WINDOWS_CONFIG_PATH_ENV, marker.to_string_lossy().as_ref()),
+                    (WINDOWS_CWD_ENV, project.to_string_lossy().as_ref()),
+                ],
+                &effective,
+            )
+            .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while batch.exists() || !marker.exists() {
+                assert!(Instant::now() < deadline, "fallback CMD must run and clean its batch");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert_eq!(std::fs::read_to_string(marker).unwrap().trim(), "ok");
+            assert_eq!(std::fs::read_to_string(launcher.with_extension("mode")).unwrap(), "explicit-cmd");
+        }
+    }
+
+    // Model WT's CMD profile: the tab inherits wt.exe's environment and runs the
+    // appended command. A typical user PATH must not push CMD past 8191 characters.
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[serial_test::serial]
+    fn wt_cmd_profile_tab_inherits_a_long_restored_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let launcher = fake_wt_cmd_launcher(temp.path());
         let project = temp.path().join("项目");
         std::fs::create_dir(&project).unwrap();
         let marker = project.join("配置结果.txt");
@@ -1109,7 +1478,7 @@ fn main() {
         let project_path = project.to_string_lossy();
         launch_wt_tab(
             &launcher,
-            &profile,
+            Some(&profile),
             &batch.to_string_lossy(),
             &[
                 (WINDOWS_CONFIG_PATH_ENV, marker_path.as_ref()),

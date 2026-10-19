@@ -5503,8 +5503,8 @@ fn launch_windows_batch_in_preferred_terminal(
         _ => run_windows_cmd_batch(bat_path, &child_env),
     };
 
-    // WT errors must reach the caller instead of silently changing its shell.
-    if result.is_err() && terminal != "cmd" && terminal != "wt" {
+    // Preserve upstream's last-resort CMD fallback when the preferred terminal fails.
+    if result.is_err() && terminal != "cmd" {
         log::warn!(
             "首选终端 {} 启动失败，回退到 cmd: {:?}",
             terminal,
@@ -5948,6 +5948,93 @@ mod tests {
                 !script_path.parent().unwrap().exists(),
                 "temporary directory must be cleaned up"
             );
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[serial_test::serial]
+    fn windows_wt_failures_fall_back_to_a_new_cmd_console() {
+        struct Restore {
+            settings: crate::settings::AppSettings,
+            env: Vec<(&'static str, Option<std::ffi::OsString>)>,
+        }
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                let _ = crate::settings::update_settings(self.settings.clone());
+                for (name, value) in self.env.drain(..) {
+                    match value {
+                        Some(value) => std::env::set_var(name, value),
+                        None => std::env::remove_var(name),
+                    }
+                }
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let env = ["CC_SWITCH_TEST_HOME", "PATH"]
+            .into_iter()
+            .map(|name| (name, std::env::var_os(name)))
+            .collect();
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path().join("home"));
+        let restore = Restore {
+            settings: crate::settings::get_settings(),
+            env,
+        };
+        let mut settings = restore.settings.clone();
+        settings.preferred_terminal = Some("wt".to_string());
+        crate::settings::update_settings(settings).unwrap();
+        let bin = temp.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        std::fs::write(bin.join("wt.exe"), b"not a Windows executable").unwrap();
+        std::fs::write(bin.join(".portable"), "").unwrap();
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        std::env::set_var(
+            "PATH",
+            std::env::join_paths(std::iter::once(bin.clone()).chain(std::env::split_paths(&path)))
+                .unwrap(),
+        );
+        let project = temp
+            .path()
+            .join("项目 O'Brien ‘ ’ & %CC_SWITCH_TEST_PROFILE% !");
+        std::fs::create_dir(&project).unwrap();
+        for failure in ["old-version", "missing-settings", "spawn-failed"] {
+            if failure != "old-version" {
+                std::fs::copy(
+                    super::super::windows_console::system_cmd_path().unwrap(),
+                    bin.join("WindowsTerminal.exe"),
+                )
+                .unwrap();
+            }
+            if failure == "spawn-failed" {
+                std::fs::create_dir(bin.join("settings")).unwrap();
+                std::fs::write(
+                    bin.join("settings/settings.json"),
+                    r#"{"defaultProfile":"{0caa0dad-35be-5f56-a8ff-afceeeaa6101}"}"#,
+                )
+                .unwrap();
+            }
+            let batch = temp.path().join(format!("{failure}.bat"));
+            let marker = project.join(format!("{failure}.txt"));
+            // Exit on the same parsed line as the marker: this route-only probe
+            // must not leave an interactive test console open.
+            std::fs::write(&batch, "@echo off\r\nset \"CC_SWITCH_INTERNAL_BATCH_PATH=\"\r\ncd /d \"%CC_SWITCH_INTERNAL_CWD%\" || exit 2\r\n> \"%CC_SWITCH_INTERNAL_CONFIG_PATH%\" echo ok & exit 0\r\n").unwrap();
+            launch_windows_batch_in_preferred_terminal(
+                &batch.to_string_lossy(),
+                &[
+                    (WINDOWS_CONFIG_PATH_ENV, marker.to_string_lossy().as_ref()),
+                    (WINDOWS_CWD_ENV, project.to_string_lossy().as_ref()),
+                ],
+            )
+            .unwrap_or_else(|error| panic!("{failure} must fall back to CMD: {error}"));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !marker.exists() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "{failure}: fallback did not execute"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            assert_eq!(std::fs::read_to_string(marker).unwrap().trim(), "ok");
         }
     }
 
