@@ -7,6 +7,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -425,9 +426,10 @@ struct LegacySkillMigrationRow {
     app_type: String,
 }
 
-// ========== ~/.agents/ lock 文件解析 ==========
+// ========== 本地安装器 lock 文件解析 ==========
 
-/// `~/.agents/.skill-lock.json` 文件结构
+/// 本地 Skill lock 文件结构。`~/.agents/.skill-lock.json` 和部分安装器写入的
+/// `~/skills-lock.json` 均使用此结构；旧格式没有 `sourceUrl` 也能解析。
 #[derive(Deserialize)]
 struct AgentsLockFile {
     skills: HashMap<String, AgentsLockSkill>,
@@ -451,6 +453,125 @@ struct LockRepoInfo {
     repo: String,
     skill_path: Option<String>,
     branch: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct LockSkillInfo {
+    source_type: String,
+    source_id: String,
+    source_url: Option<String>,
+    repo: Option<LockRepoInfo>,
+}
+
+/// 用户主动扫描本地 Git 项目后补全来源的结果。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalSkillSourceScanResult {
+    pub updated: usize,
+    pub ambiguous: usize,
+    pub scanned_repositories: usize,
+    pub scanned_skills: usize,
+}
+
+const MAX_LOCAL_SOURCE_SCAN_DIRECTORIES: usize = 10_000;
+const MAX_LOCAL_SOURCE_SCAN_REPOSITORIES: usize = 100;
+const MAX_LOCAL_SOURCE_SCAN_SKILLS: usize = 500;
+const MAX_LOCAL_SOURCE_HASH_ENTRIES: usize = 10_000;
+const MAX_LOCAL_SOURCE_HASH_BYTES: u64 = 256 * 1024 * 1024;
+
+fn local_source_scan_limit(code: &str, limit: impl ToString) -> anyhow::Error {
+    anyhow!(format_skill_error(
+        code,
+        &[("limit", &limit.to_string())],
+        None
+    ))
+}
+
+#[derive(Default)]
+struct LocalSourceHashBudget {
+    entries: usize,
+    bytes: u64,
+}
+
+/// Keep the update hash format, but never follow links while identifying sources.
+/// A skipped entry makes the entire Skill ineligible: hashing only a subset could
+/// incorrectly identify two different Skills as the same project. One budget is
+/// shared by all repository and installed-Skill hashes in this scan.
+fn local_source_hash(dir: &Path, budget: &mut LocalSourceHashBudget) -> Result<Option<String>> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+
+    if !fs::symlink_metadata(dir)?.file_type().is_dir() {
+        return Ok(None);
+    }
+    let mut pending = vec![dir.to_path_buf()];
+    let mut files = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            budget.entries += 1;
+            if budget.entries > MAX_LOCAL_SOURCE_HASH_ENTRIES {
+                return Err(local_source_scan_limit(
+                    "LOCAL_SOURCE_SCAN_ENTRIES",
+                    MAX_LOCAL_SOURCE_HASH_ENTRIES,
+                ));
+            }
+            // Match the existing update hash's exclusion of hidden files.
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            let file_type = entry.file_type()?;
+            if file_type.is_dir() {
+                if should_skip_local_source_scan_dir(&entry.path()) {
+                    return Ok(None);
+                }
+                pending.push(entry.path());
+            } else if file_type.is_file() {
+                files.push(entry.path());
+            } else {
+                return Ok(None);
+            }
+        }
+    }
+    files.sort();
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    for path in files {
+        // Recheck after enumeration so a replaced symlink is not followed.
+        if !fs::symlink_metadata(&path)?.file_type().is_file() {
+            return Ok(None);
+        }
+        let mut file = fs::File::open(&path)?;
+        if file.metadata()?.len() > MAX_LOCAL_SOURCE_HASH_BYTES.saturating_sub(budget.bytes) {
+            return Err(local_source_scan_limit(
+                "LOCAL_SOURCE_SCAN_BYTES",
+                MAX_LOCAL_SOURCE_HASH_BYTES / 1024 / 1024,
+            ));
+        }
+        hasher.update(
+            path.strip_prefix(dir)?
+                .to_string_lossy()
+                .replace('\\', "/")
+                .as_bytes(),
+        );
+        hasher.update(b"\0");
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            budget.bytes += read as u64;
+            if budget.bytes > MAX_LOCAL_SOURCE_HASH_BYTES {
+                return Err(local_source_scan_limit(
+                    "LOCAL_SOURCE_SCAN_BYTES",
+                    MAX_LOCAL_SOURCE_HASH_BYTES / 1024 / 1024,
+                ));
+            }
+            hasher.update(&buffer[..read]);
+        }
+        hasher.update(b"\0");
+    }
+    Ok(Some(format!("{:x}", hasher.finalize())))
 }
 
 fn normalize_optional_branch(branch: Option<String>) -> Option<String> {
@@ -515,57 +636,353 @@ fn get_agents_skills_dir() -> Option<PathBuf> {
     dir.exists().then_some(dir)
 }
 
-/// 解析 `~/.agents/.skill-lock.json`，返回 skill_name -> 仓库信息
-fn parse_agents_lock() -> HashMap<String, LockRepoInfo> {
-    let path = crate::config::get_home_dir()
-        .join(".agents")
-        .join(".skill-lock.json");
-    let content = match fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(e) => {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                log::debug!("未找到 agents lock 文件: {}", path.display());
-            } else {
-                log::warn!("读取 agents lock 文件失败 ({}): {}", path.display(), e);
+/// 读取已知安装器的 lock 文件，返回 skill_name -> 安装来源信息。
+///
+/// GitHub 条目保留仓库坐标，其他安装器来源也保留为可分组的稳定来源标识。更具体的
+/// `~/.agents/.skill-lock.json` 在同名条目上覆盖通用根目录 lock。
+fn parse_agents_lock() -> HashMap<String, LockSkillInfo> {
+    let home = crate::config::get_home_dir();
+    let paths = [
+        home.join("skills-lock.json"),
+        home.join(".agents").join(".skill-lock.json"),
+    ];
+    let mut all = HashMap::new();
+
+    for path in paths {
+        let content = match fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                log::warn!("读取 Skill lock 文件失败 ({}): {}", path.display(), error);
+                continue;
             }
-            return HashMap::new();
+        };
+        match parse_agents_lock_content(&content) {
+            Ok(parsed) => {
+                log::info!(
+                    "Skill lock 文件解析完成 ({}): {} 个有来源的 Skill",
+                    path.display(),
+                    parsed.len()
+                );
+                all.extend(parsed);
+            }
+            Err(error) => log::warn!("解析 Skill lock 文件失败 ({}): {}", path.display(), error),
         }
-    };
-    let lock: AgentsLockFile = match serde_json::from_str(&content) {
-        Ok(l) => l,
-        Err(e) => {
-            log::warn!("解析 agents lock 文件失败 ({}): {}", path.display(), e);
-            return HashMap::new();
-        }
-    };
-    let parsed: HashMap<String, LockRepoInfo> = lock
+    }
+    all
+}
+
+fn parse_agents_lock_content(
+    content: &str,
+) -> Result<HashMap<String, LockSkillInfo>, serde_json::Error> {
+    let lock: AgentsLockFile = serde_json::from_str(content)?;
+    let parsed: HashMap<String, LockSkillInfo> = lock
         .skills
         .into_iter()
         .filter_map(|(name, skill)| {
-            let source = skill.source?;
-            if skill.source_type.as_deref() != Some("github") {
+            let source_id = skill.source?.trim().to_string();
+            let source_type = skill.source_type?.trim().to_ascii_lowercase();
+            if source_id.is_empty() || source_type.is_empty() {
                 return None;
             }
-            let (owner, repo) = source.split_once('/')?;
             let branch = normalize_optional_branch(skill.branch)
                 .or_else(|| normalize_optional_branch(skill.source_branch))
                 .or_else(|| parse_branch_from_source_url(skill.source_url.as_deref()));
-            Some((
-                name,
-                LockRepoInfo {
+            let source_url = skill.source_url.or_else(|| {
+                (source_type == "github").then(|| format!("https://github.com/{source_id}"))
+            });
+            let repo = if source_type == "github" {
+                let (owner, repo) = source_id.split_once('/')?;
+                if owner.trim().is_empty() || repo.trim().is_empty() {
+                    return None;
+                }
+                Some(LockRepoInfo {
                     owner: owner.to_string(),
                     repo: repo.to_string(),
                     skill_path: skill.skill_path,
                     branch,
+                })
+            } else {
+                None
+            };
+            Some((
+                name,
+                LockSkillInfo {
+                    source_type,
+                    source_id,
+                    source_url,
+                    repo,
                 },
             ))
         })
         .collect();
-    log::info!(
-        "agents lock 文件解析完成，共识别 {} 个 github skill",
-        parsed.len()
-    );
-    parsed
+    Ok(parsed)
+}
+
+/// 从一个外部软链接的真实目录向上查找 Git 仓库，并识别 GitHub 的 origin。
+///
+/// 这覆盖了手动 `ln -s` 安装的 Skills：它们没有安装器 lock，但其原始项目仍是
+/// 可验证的来源。普通目录不参与推断，避免把用户自建目录误归到某个仓库。
+fn infer_github_provenance_from_symlink(path: &Path) -> Option<LockSkillInfo> {
+    if !path.symlink_metadata().ok()?.file_type().is_symlink() {
+        return None;
+    }
+    let resolved = path.canonicalize().ok()?;
+    let remote_url = resolved.ancestors().find_map(git_origin_url)?;
+    let (owner, repo) = parse_github_remote(&remote_url)?;
+    github_lock_info(owner, repo)
+}
+
+/// 从已安装 Skill 的 frontmatter 中读取其显式声明的 GitHub homepage。
+///
+/// 有些安装器将项目文件复制到各应用目录，或只在 `$HOME/.baoyu-skills`
+/// 保存偏好文件；这两种情形均没有可追溯的软链接或 lock。只有 Skill 自己声明
+/// 了 GitHub homepage 时才使用该来源，避免按名称前缀猜测项目归属。
+fn infer_github_provenance_from_skill_document(directory: &str) -> Option<LockSkillInfo> {
+    for app in AppType::all() {
+        let Ok(app_dir) = SkillService::get_app_skills_dir(&app) else {
+            continue;
+        };
+        let skill_file = app_dir.join(directory).join("SKILL.md");
+        let content = match fs::read_to_string(skill_file) {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
+        let Some(frontmatter) = content.strip_prefix("---").and_then(|value| {
+            value
+                .split_once("\n---")
+                .map(|(frontmatter, _)| frontmatter)
+        }) else {
+            continue;
+        };
+        let homepage = frontmatter.lines().find_map(|line| {
+            line.trim()
+                .strip_prefix("homepage:")
+                .map(|value| value.trim().trim_matches(['\"', '\'']))
+        });
+        if let Some((owner, repo)) = homepage.and_then(parse_github_remote) {
+            return github_lock_info(owner, repo);
+        }
+    }
+    None
+}
+
+fn github_lock_info(owner: String, repo: String) -> Option<LockSkillInfo> {
+    if SkillService::validate_repo_ref(&owner, &repo, "HEAD").is_err() {
+        return None;
+    }
+    Some(LockSkillInfo {
+        source_type: "github".to_string(),
+        source_id: format!("{owner}/{repo}"),
+        source_url: Some(format!("https://github.com/{owner}/{repo}")),
+        repo: Some(LockRepoInfo {
+            owner,
+            repo,
+            skill_path: None,
+            branch: None,
+        }),
+    })
+}
+
+fn git_origin_url(repo_dir: &Path) -> Option<String> {
+    let git = repo_dir.join(".git");
+    let git_dir = if git.is_dir() {
+        git
+    } else {
+        let git_dir = fs::read_to_string(git)
+            .ok()?
+            .strip_prefix("gitdir:")?
+            .trim()
+            .to_string();
+        let git_dir = PathBuf::from(git_dir);
+        if git_dir.is_absolute() {
+            git_dir
+        } else {
+            repo_dir.join(git_dir)
+        }
+    };
+    // Linked worktrees keep remotes in the common Git directory, not their
+    // private .git/worktrees/<name> directory. Resolve relative commondir paths
+    // against git_dir (including when git_dir itself came from a .git file).
+    let common_dir = match fs::read_to_string(git_dir.join("commondir")) {
+        Ok(path) => git_dir.join(path.trim()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => git_dir,
+        Err(_) => return None,
+    };
+    let config = fs::read_to_string(common_dir.join("config")).ok()?;
+    let mut in_origin = false;
+    for line in config.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_origin = line == r#"[remote "origin"]"#;
+        } else if in_origin {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            if key.trim() == "url" {
+                return Some(value.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+fn parse_github_remote(remote: &str) -> Option<(String, String)> {
+    let remote = remote.trim().split(['#', '?']).next()?;
+    let path = remote
+        .strip_prefix("git@github.com:")
+        .or_else(|| remote.strip_prefix("ssh://git@github.com/"))
+        .or_else(|| remote.strip_prefix("https://github.com/"))?
+        .trim_end_matches('/')
+        .trim_end_matches(".git");
+    let (owner, repo) = path.split_once('/')?;
+    (!owner.is_empty() && !repo.is_empty() && !repo.contains('/'))
+        .then(|| (owner.to_string(), repo.to_string()))
+}
+
+fn apply_lock_provenance(skill: &mut InstalledSkill, info: LockSkillInfo) {
+    skill.source_type = Some(info.source_type);
+    skill.source_id = Some(info.source_id);
+    skill.source_url = info.source_url;
+    if let Some(repo) = info.repo {
+        skill.repo_owner = Some(repo.owner.clone());
+        skill.repo_name = Some(repo.repo.clone());
+        skill.repo_branch = repo.branch;
+        skill.readme_url = Some(format!("https://github.com/{}/{}", repo.owner, repo.repo));
+    }
+}
+
+fn has_source_provenance(skill: &InstalledSkill) -> bool {
+    skill.repo_owner.is_some()
+        || skill.repo_name.is_some()
+        || (skill.source_type.is_some() && skill.source_id.is_some())
+}
+
+fn should_skip_local_source_scan_dir(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    name.starts_with('.')
+        || matches!(
+            name,
+            "node_modules" | "target" | "dist" | "build" | "vendor" | ".git"
+        )
+}
+
+/// 在一个由用户显式选择的目录中寻找 GitHub Git 项目。只递归普通目录，绝不跟随
+/// 链接，也不进入依赖/构建目录；目录和项目数量都有上限，避免扫描变成无边界的磁盘任务。
+fn collect_local_git_repositories(
+    root: &Path,
+    repositories: &mut Vec<PathBuf>,
+    scanned_directories: &mut usize,
+) -> Result<()> {
+    *scanned_directories += 1;
+    if *scanned_directories > MAX_LOCAL_SOURCE_SCAN_DIRECTORIES {
+        return Err(local_source_scan_limit(
+            "LOCAL_SOURCE_SCAN_DIRECTORIES",
+            MAX_LOCAL_SOURCE_SCAN_DIRECTORIES,
+        ));
+    }
+    if root.join(".git").exists() {
+        if repositories.len() >= MAX_LOCAL_SOURCE_SCAN_REPOSITORIES {
+            return Err(local_source_scan_limit(
+                "LOCAL_SOURCE_SCAN_REPOSITORIES",
+                MAX_LOCAL_SOURCE_SCAN_REPOSITORIES,
+            ));
+        }
+        repositories.push(root.to_path_buf());
+        return Ok(());
+    }
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            log::warn!("跳过无权读取的本地项目目录: {}", root.display());
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if !file_type.is_dir()
+            || file_type.is_symlink()
+            || should_skip_local_source_scan_dir(&entry.path())
+        {
+            continue;
+        }
+        collect_local_git_repositories(&entry.path(), repositories, scanned_directories)?;
+    }
+    Ok(())
+}
+
+fn collect_skill_hashes_in_repository(
+    directory: &Path,
+    repo_info: &LockSkillInfo,
+    hashes: &mut HashMap<String, HashSet<String>>,
+    source_info: &mut HashMap<String, LockSkillInfo>,
+    scanned_skills: &mut usize,
+    scanned_directories: &mut usize,
+    hash_budget: &mut LocalSourceHashBudget,
+) -> Result<()> {
+    *scanned_directories += 1;
+    if *scanned_directories > MAX_LOCAL_SOURCE_SCAN_DIRECTORIES {
+        return Err(local_source_scan_limit(
+            "LOCAL_SOURCE_SCAN_DIRECTORIES",
+            MAX_LOCAL_SOURCE_SCAN_DIRECTORIES,
+        ));
+    }
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            log::warn!("跳过无权读取的本地项目目录: {}", directory.display());
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            if file_type.is_symlink() || should_skip_local_source_scan_dir(&path) {
+                continue;
+            }
+            // 一个嵌套的 Git 项目由上层扫描单独处理，不能错误归到父项目。
+            if path.join(".git").exists() {
+                continue;
+            }
+            collect_skill_hashes_in_repository(
+                &path,
+                repo_info,
+                hashes,
+                source_info,
+                scanned_skills,
+                scanned_directories,
+                hash_budget,
+            )?;
+        } else if file_type.is_file() && path.file_name().is_some_and(|name| name == "SKILL.md") {
+            if *scanned_skills >= MAX_LOCAL_SOURCE_SCAN_SKILLS {
+                return Err(local_source_scan_limit(
+                    "LOCAL_SOURCE_SCAN_SKILLS",
+                    MAX_LOCAL_SOURCE_SCAN_SKILLS,
+                ));
+            }
+            let skill_dir = path.parent().expect("SKILL.md has parent");
+            *scanned_skills += 1;
+            let Some(hash) = local_source_hash(skill_dir, hash_budget)? else {
+                continue;
+            };
+            hashes
+                .entry(hash)
+                .or_default()
+                .insert(repo_info.source_id.clone());
+            source_info
+                .entry(repo_info.source_id.clone())
+                .or_insert_with(|| repo_info.clone());
+        }
+    }
+    Ok(())
 }
 
 // ========== SkillService ==========
@@ -582,6 +999,36 @@ impl Default for SkillService {
 }
 
 impl SkillService {
+    pub fn save_project_group(
+        db: &Arc<Database>,
+        id: Option<String>,
+        name: String,
+        mut skill_ids: Vec<String>,
+    ) -> Result<crate::database::SkillProjectGroup> {
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return Err(anyhow!("Project group name cannot be empty"));
+        }
+        if let Some(ref id) = id {
+            if !db
+                .get_skill_project_groups()?
+                .iter()
+                .any(|group| &group.id == id)
+            {
+                return Err(anyhow!("Project group not found: {id}"));
+            }
+        }
+        skill_ids.sort();
+        skill_ids.dedup();
+        let group = crate::database::SkillProjectGroup {
+            id: id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            name,
+            skill_ids,
+        };
+        db.save_skill_project_group(&group)?;
+        Ok(group)
+    }
+
     pub fn new() -> Self {
         Self {
             #[cfg(test)]
@@ -780,10 +1227,155 @@ impl SkillService {
     /// 获取所有已安装的 Skills
     pub fn get_all_installed(db: &Arc<Database>) -> Result<Vec<InstalledSkill>> {
         let mut skills = db.get_all_installed_skills()?;
+        Self::backfill_lock_provenance(db, &mut skills);
         for skill in skills.values_mut() {
             skill.apps.pi = Self::skill_exists_in_app(&skill.directory, &AppType::Pi);
         }
         Ok(skills.into_values().collect())
+    }
+
+    /// 为早于来源字段的本地导入记录补写安装器 lock 或外部软链接中的稳定来源。
+    ///
+    /// 只补非 GitHub Skill 缺失的来源字段，既不猜目录前缀，也不改既有 ID、仓库
+    /// 坐标或用户定义的项目分组。
+    fn backfill_lock_provenance(db: &Arc<Database>, skills: &mut IndexMap<String, InstalledSkill>) {
+        let lock = parse_agents_lock();
+        let manually_grouped_ids = db
+            .get_skill_project_groups()
+            .map(|groups| {
+                groups
+                    .into_iter()
+                    .flat_map(|group| group.skill_ids)
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap_or_else(|error| {
+                log::warn!("读取手动 Skill 分组失败，跳过来源回填: {error}");
+                HashSet::new()
+            });
+
+        for skill in skills.values_mut() {
+            if manually_grouped_ids.contains(&skill.id) || has_source_provenance(skill) {
+                continue;
+            }
+            let info = lock
+                .get(&skill.directory)
+                .cloned()
+                .or_else(|| {
+                    get_agents_skills_dir().and_then(|dir| {
+                        infer_github_provenance_from_symlink(&dir.join(&skill.directory))
+                    })
+                })
+                .or_else(|| infer_github_provenance_from_skill_document(&skill.directory));
+            let Some(info) = info else {
+                continue;
+            };
+            apply_lock_provenance(skill, info);
+            if let Err(error) = db.update_skill_metadata(skill) {
+                log::warn!("回填 Skill {} 的安装来源失败: {}", skill.directory, error);
+            }
+        }
+    }
+
+    /// 用户选择一个本地工作区后，按内容哈希识别复制安装的 GitHub Skills。
+    ///
+    /// 此操作刻意不在页面加载时执行：它需要遍历用户选择的目录。只有一个未分组
+    /// Skill 的完整目录哈希对应唯一 GitHub origin 时才写入来源；相同内容来自多个
+    /// 项目时保持未分组，交给用户手动处理。
+    pub fn scan_local_project_sources(
+        db: &Arc<Database>,
+        root: &Path,
+    ) -> Result<LocalSkillSourceScanResult> {
+        if !root.is_dir() {
+            return Err(anyhow!(format_skill_error(
+                "LOCAL_SOURCE_SCAN_ROOT",
+                &[("path", &root.display().to_string())],
+                None
+            )));
+        }
+
+        let mut repositories = Vec::new();
+        let mut scanned_directories = 0;
+        collect_local_git_repositories(root, &mut repositories, &mut scanned_directories)?;
+        let mut hashes: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut source_info = HashMap::new();
+        let mut scanned_repositories = 0;
+        let mut scanned_skills = 0;
+        let mut hash_budget = LocalSourceHashBudget::default();
+
+        for repository in repositories {
+            let Some(remote) = git_origin_url(&repository) else {
+                continue;
+            };
+            let Some((owner, repo)) = parse_github_remote(&remote) else {
+                continue;
+            };
+            let Some(info) = github_lock_info(owner, repo) else {
+                continue;
+            };
+            scanned_repositories += 1;
+            collect_skill_hashes_in_repository(
+                &repository,
+                &info,
+                &mut hashes,
+                &mut source_info,
+                &mut scanned_skills,
+                &mut scanned_directories,
+                &mut hash_budget,
+            )?;
+        }
+
+        let ssot_dir = Self::get_ssot_dir()?;
+        let mut pending_updates = Vec::new();
+        let mut ambiguous = 0;
+        let _state_guard = skill_state_write_guard();
+        let skills = db.get_all_installed_skills()?;
+        let manually_grouped_ids = db
+            .get_skill_project_groups()?
+            .into_iter()
+            .flat_map(|group| group.skill_ids)
+            .collect::<HashSet<_>>();
+        for mut skill in skills.into_values() {
+            if manually_grouped_ids.contains(&skill.id) || has_source_provenance(&skill) {
+                continue;
+            }
+            let Ok(directory) = Self::require_valid_directory(&skill.directory) else {
+                continue;
+            };
+            if !ssot_dir.join(&directory).exists() {
+                continue;
+            }
+            // Cached update hashes do not prove that today's files still match.
+            let Some(hash) = local_source_hash(&ssot_dir.join(directory), &mut hash_budget)? else {
+                continue;
+            };
+            let Some(candidates) = hashes.get(&hash) else {
+                continue;
+            };
+            if candidates.len() != 1 {
+                ambiguous += 1;
+                continue;
+            }
+            let source_id = candidates.iter().next().expect("unique source");
+            let Some(info) = source_info.get(source_id).cloned() else {
+                continue;
+            };
+            apply_lock_provenance(&mut skill, info);
+            pending_updates.push(skill);
+        }
+        // Finish bounded filesystem inspection before persisting any assignments.
+        let mut updated = 0;
+        for skill in pending_updates {
+            if db.update_skill_metadata(&skill)? {
+                updated += 1;
+            }
+        }
+
+        Ok(LocalSkillSourceScanResult {
+            updated,
+            ambiguous,
+            scanned_repositories,
+            scanned_skills,
+        })
     }
 
     /// Reuse an existing installation or reject a directory owned by another repo.
@@ -1014,6 +1606,12 @@ impl SkillService {
             repo_name: Some(skill.repo_name.clone()),
             repo_branch: Some(repo_branch),
             readme_url,
+            source_type: Some("github".to_string()),
+            source_id: Some(format!("{}/{}", skill.repo_owner, skill.repo_name)),
+            source_url: Some(format!(
+                "https://github.com/{}/{}",
+                skill.repo_owner, skill.repo_name
+            )),
             apps: SkillApps::only(current_app),
             installed_at: chrono::Utc::now().timestamp(),
             content_hash,
@@ -1649,6 +2247,9 @@ impl SkillService {
             repo_name: skill.repo_name.clone(),
             repo_branch: Some(used_branch),
             readme_url,
+            source_type: skill.source_type.clone(),
+            source_id: skill.source_id.clone(),
+            source_url: skill.source_url.clone(),
             apps: skill.apps.clone(),
             installed_at: skill.installed_at,
             content_hash: new_hash,
@@ -2332,8 +2933,7 @@ impl SkillService {
             }
 
             // 从 lock 文件提取仓库信息
-            let (id, repo_owner, repo_name, repo_branch, readme_url) =
-                build_repo_info_from_lock(&agents_lock, &dir_name);
+            let lock_info = build_skill_info_from_lock(&agents_lock, &dir_name);
 
             // 计算内容哈希
             let ssot_skill_dir = ssot_dir.join(&dir_name);
@@ -2341,14 +2941,17 @@ impl SkillService {
 
             // 创建记录
             let skill = InstalledSkill {
-                id,
+                id: lock_info.id,
                 name,
                 description,
                 directory: dir_name,
-                repo_owner,
-                repo_name,
-                repo_branch,
-                readme_url,
+                repo_owner: lock_info.repo_owner,
+                repo_name: lock_info.repo_name,
+                repo_branch: lock_info.repo_branch,
+                readme_url: lock_info.readme_url,
+                source_type: lock_info.source_type,
+                source_id: lock_info.source_id,
+                source_url: lock_info.source_url,
                 apps,
                 installed_at: chrono::Utc::now().timestamp(),
                 content_hash,
@@ -4307,6 +4910,9 @@ impl SkillService {
                 repo_name: None,
                 repo_branch: None,
                 readme_url: None,
+                source_type: None,
+                source_id: None,
+                source_url: None,
                 apps: SkillApps::only(current_app),
                 installed_at: chrono::Utc::now().timestamp(),
                 content_hash,
@@ -4553,44 +5159,70 @@ impl SkillService {
 
 // ========== 迁移支持 ==========
 
-/// 从 lock 文件信息构建 skill 的 ID、仓库字段和 readme URL
-///
-/// 返回 (id, repo_owner, repo_name, repo_branch, readme_url)
-fn build_repo_info_from_lock(
-    lock: &HashMap<String, LockRepoInfo>,
+/// 从 lock 文件信息构建 Skill 的来源与仓库字段。
+struct InstalledLockInfo {
+    id: String,
+    repo_owner: Option<String>,
+    repo_name: Option<String>,
+    repo_branch: Option<String>,
+    readme_url: Option<String>,
+    source_type: Option<String>,
+    source_id: Option<String>,
+    source_url: Option<String>,
+}
+
+fn build_skill_info_from_lock(
+    lock: &HashMap<String, LockSkillInfo>,
     dir_name: &str,
-) -> (
-    String,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-) {
+) -> InstalledLockInfo {
     match lock.get(dir_name) {
-        Some(info) => {
-            let branch = info.branch.clone();
+        Some(info) if info.repo.is_some() => {
+            let repo = info.repo.as_ref().expect("checked above");
+            let branch = repo.branch.clone();
             let url_branch = branch.clone().unwrap_or_else(|| "HEAD".to_string());
             // 优先使用 lock 文件中的 skillPath，否则回退到 dir_name/SKILL.md
             let fallback = format!("{dir_name}/SKILL.md");
-            let doc_path = info.skill_path.as_deref().unwrap_or(&fallback);
+            let doc_path = repo.skill_path.as_deref().unwrap_or(&fallback);
             let url =
-                SkillService::build_skill_doc_url(&info.owner, &info.repo, &url_branch, doc_path);
-            (
-                format!("{}/{}:{dir_name}", info.owner, info.repo),
-                Some(info.owner.clone()),
-                Some(info.repo.clone()),
-                branch,
-                url,
-            )
+                SkillService::build_skill_doc_url(&repo.owner, &repo.repo, &url_branch, doc_path);
+            InstalledLockInfo {
+                id: format!("{}/{}:{dir_name}", repo.owner, repo.repo),
+                repo_owner: Some(repo.owner.clone()),
+                repo_name: Some(repo.repo.clone()),
+                repo_branch: branch,
+                readme_url: url,
+                source_type: Some(info.source_type.clone()),
+                source_id: Some(info.source_id.clone()),
+                source_url: info.source_url.clone(),
+            }
         }
-        None => (format!("local:{dir_name}"), None, None, None, None),
+        Some(info) => InstalledLockInfo {
+            id: format!("local:{dir_name}"),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            source_type: Some(info.source_type.clone()),
+            source_id: Some(info.source_id.clone()),
+            source_url: info.source_url.clone(),
+        },
+        None => InstalledLockInfo {
+            id: format!("local:{dir_name}"),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            source_type: None,
+            source_id: None,
+            source_url: None,
+        },
     }
 }
 
 /// 将 lock 文件中发现的仓库保存到 skill_repos（去重）
 fn save_repos_from_lock(
     db: &Arc<Database>,
-    lock: &HashMap<String, LockRepoInfo>,
+    lock: &HashMap<String, LockSkillInfo>,
     directories: impl Iterator<Item = impl AsRef<str>>,
 ) {
     let existing_repos: HashSet<(String, String)> = db
@@ -4602,7 +5234,10 @@ fn save_repos_from_lock(
     let mut added = HashSet::new();
 
     for dir_name in directories {
-        if let Some(info) = lock.get(dir_name.as_ref()) {
+        if let Some(info) = lock
+            .get(dir_name.as_ref())
+            .and_then(|info| info.repo.as_ref())
+        {
             let key = (info.owner.clone(), info.repo.clone());
             if !existing_repos.contains(&key) && added.insert(key) {
                 let skill_repo = SkillRepo {
@@ -4739,20 +5374,22 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 
         let (name, description) = SkillService::read_skill_name_desc(&skill_md, &directory);
 
-        let (id, repo_owner, repo_name, repo_branch, readme_url) =
-            build_repo_info_from_lock(&agents_lock, &directory);
+        let lock_info = build_skill_info_from_lock(&agents_lock, &directory);
 
         let content_hash = SkillService::compute_dir_hash(&ssot_path).ok();
 
         let skill = InstalledSkill {
-            id,
+            id: lock_info.id,
             name,
             description,
             directory,
-            repo_owner,
-            repo_name,
-            repo_branch,
-            readme_url,
+            repo_owner: lock_info.repo_owner,
+            repo_name: lock_info.repo_name,
+            repo_branch: lock_info.repo_branch,
+            readme_url: lock_info.readme_url,
+            source_type: lock_info.source_type,
+            source_id: lock_info.source_id,
+            source_url: lock_info.source_url,
             apps,
             installed_at: chrono::Utc::now().timestamp(),
             content_hash,
@@ -6529,6 +7166,9 @@ mod tests {
             repo_name: None,
             repo_branch: None,
             readme_url: None,
+            source_type: None,
+            source_id: None,
+            source_url: None,
             apps: SkillApps::default(),
             installed_at: 0,
             content_hash: None,
@@ -7687,5 +8327,454 @@ mod tests {
         // 切换供应商走的同一条同步也不能碰它
         SkillService::sync_to_app(&db, &AppType::OpenClaw).expect("no-op sync");
         assert!(own_skill.exists());
+    }
+
+    #[test]
+    fn agents_lock_keeps_well_known_source_for_grouping() {
+        let lock = parse_agents_lock_content(
+            r#"{
+                "skills": {
+                    "lark-shared": {
+                        "source": "open.feishu.cn",
+                        "sourceType": "well-known",
+                        "sourceUrl": "https://open.feishu.cn/.well-known/skills/lark-shared/SKILL.md"
+                    }
+                }
+            }"#,
+        )
+        .expect("parse lock");
+
+        let info = build_skill_info_from_lock(&lock, "lark-shared");
+        assert_eq!(info.id, "local:lark-shared");
+        assert_eq!(info.source_type.as_deref(), Some("well-known"));
+        assert_eq!(info.source_id.as_deref(), Some("open.feishu.cn"));
+        assert_eq!(
+            info.source_url.as_deref(),
+            Some("https://open.feishu.cn/.well-known/skills/lark-shared/SKILL.md")
+        );
+        assert!(info.repo_owner.is_none());
+    }
+
+    #[test]
+    fn generic_lock_keeps_github_source_without_source_url() {
+        let lock = parse_agents_lock_content(
+            r#"{
+                "skills": {
+                    "characteristic-voice": {
+                        "source": "NoizAI/skills",
+                        "sourceType": "github",
+                        "skillPath": "skills/characteristic-voice/SKILL.md"
+                    }
+                }
+            }"#,
+        )
+        .expect("parse lock");
+
+        let info = build_skill_info_from_lock(&lock, "characteristic-voice");
+        assert_eq!(info.repo_owner.as_deref(), Some("NoizAI"));
+        assert_eq!(info.repo_name.as_deref(), Some("skills"));
+        assert_eq!(
+            info.source_url.as_deref(),
+            Some("https://github.com/NoizAI/skills")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn installed_local_skill_backfills_well_known_provenance_from_agents_lock() {
+        let home = tempdir().expect("home");
+        let _home = TestHomeGuard::set(home.path());
+        let agents = home.path().join(".agents");
+        fs::create_dir_all(&agents).expect("agents dir");
+        fs::write(
+            agents.join(".skill-lock.json"),
+            r#"{
+                "skills": {
+                    "lark-shared": {
+                        "source": "open.feishu.cn",
+                        "sourceType": "well-known",
+                        "sourceUrl": "https://open.feishu.cn/.well-known/skills/lark-shared/SKILL.md"
+                    }
+                }
+            }"#,
+        )
+        .expect("lock file");
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let local = poisoned_skill("local:lark-shared", "lark-shared");
+        db.save_skill(&local).expect("seed local skill");
+
+        let installed = SkillService::get_all_installed(&db).expect("list skills");
+        assert_eq!(installed[0].source_type.as_deref(), Some("well-known"));
+        assert_eq!(installed[0].source_id.as_deref(), Some("open.feishu.cn"));
+
+        let persisted = db
+            .get_installed_skill("local:lark-shared")
+            .expect("query")
+            .expect("skill");
+        assert_eq!(persisted.source_id.as_deref(), Some("open.feishu.cn"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial_test::serial]
+    fn installed_local_skill_backfills_github_provenance_from_agents_symlink() {
+        let home = tempdir().expect("home");
+        let _home = TestHomeGuard::set(home.path());
+        let source_repo = home.path().join("source").join("matt-skills");
+        let source_skill = source_repo
+            .join("skills")
+            .join("engineering")
+            .join("ask-matt");
+        write_skill(&source_skill, "ask matt");
+        fs::create_dir_all(source_repo.join(".git")).expect("git dir");
+        fs::write(
+            source_repo.join(".git").join("config"),
+            "[remote \"origin\"]\n\turl = git@github.com:mattpocock/skills.git\n",
+        )
+        .expect("git config");
+
+        let agents_skill = home.path().join(".agents").join("skills").join("ask-matt");
+        fs::create_dir_all(agents_skill.parent().unwrap()).expect("agents skills dir");
+        std::os::unix::fs::symlink(&source_skill, &agents_skill).expect("external symlink");
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let local = poisoned_skill("local:ask-matt", "ask-matt");
+        db.save_skill(&local).expect("seed local skill");
+
+        let installed = SkillService::get_all_installed(&db).expect("list skills");
+        assert_eq!(installed[0].repo_owner.as_deref(), Some("mattpocock"));
+        assert_eq!(installed[0].repo_name.as_deref(), Some("skills"));
+        assert_eq!(installed[0].source_id.as_deref(), Some("mattpocock/skills"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn installed_local_skill_backfills_github_provenance_from_declared_homepage() {
+        let home = tempdir().expect("home");
+        let _home = TestHomeGuard::set(home.path());
+        let skill_dir = home
+            .path()
+            .join(".codex")
+            .join("skills")
+            .join("baoyu-translate");
+        fs::create_dir_all(&skill_dir).expect("create skill dir");
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: baoyu-translate\nmetadata:\n  openclaw:\n    homepage: https://github.com/JimLiu/baoyu-skills#baoyu-translate\n---\n",
+        )
+        .expect("write skill");
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let local = poisoned_skill("local:baoyu-translate", "baoyu-translate");
+        db.save_skill(&local).expect("seed local skill");
+
+        let installed = SkillService::get_all_installed(&db).expect("list skills");
+        assert_eq!(installed[0].repo_owner.as_deref(), Some("JimLiu"));
+        assert_eq!(installed[0].repo_name.as_deref(), Some("baoyu-skills"));
+        assert_eq!(
+            installed[0].source_id.as_deref(),
+            Some("JimLiu/baoyu-skills")
+        );
+    }
+
+    #[test]
+    fn local_project_scan_rejects_too_many_git_projects_before_matching() {
+        let workspace = tempdir().expect("workspace");
+        for index in 0..=MAX_LOCAL_SOURCE_SCAN_REPOSITORIES {
+            fs::create_dir_all(workspace.path().join(format!("repo-{index}")).join(".git"))
+                .expect("git dir");
+        }
+
+        let mut repositories = Vec::new();
+        let mut scanned_directories = 0;
+        let error = collect_local_git_repositories(
+            workspace.path(),
+            &mut repositories,
+            &mut scanned_directories,
+        )
+        .expect_err("a broad workspace must be rejected before it is scanned");
+
+        assert!(
+            error.to_string().contains("LOCAL_SOURCE_SCAN_REPOSITORIES"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn local_project_scan_rejects_too_many_skills_before_matching() {
+        let repository = tempdir().expect("repository");
+        for index in 0..=MAX_LOCAL_SOURCE_SCAN_SKILLS {
+            write_skill(
+                &repository.path().join(format!("skill-{index}")),
+                "test skill",
+            );
+        }
+
+        let mut hashes = HashMap::new();
+        let mut source_info = HashMap::new();
+        let mut scanned_skills = 0;
+        let mut scanned_directories = 0;
+        let error = collect_skill_hashes_in_repository(
+            repository.path(),
+            &github_lock_info("example".to_string(), "skills".to_string()).expect("github info"),
+            &mut hashes,
+            &mut source_info,
+            &mut scanned_skills,
+            &mut scanned_directories,
+            &mut LocalSourceHashBudget::default(),
+        )
+        .expect_err("a broad repository must be rejected before it is scanned");
+
+        assert!(
+            error.to_string().contains("LOCAL_SOURCE_SCAN_SKILLS"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn local_project_scan_backfills_only_a_unique_github_hash_match() {
+        let home = tempdir().expect("home");
+        let _home = TestHomeGuard::set(home.path());
+        let workspace = home.path().join("projects");
+        let repository = workspace.join("source-repository");
+        fs::create_dir_all(repository.join(".git")).expect("git dir");
+        fs::write(
+            repository.join(".git").join("config"),
+            "[remote \"origin\"]\n\turl = git@github.com:example/source-skills.git\n",
+        )
+        .expect("git config");
+        let source_skill = repository.join("skills").join("copied-skill");
+        write_skill(&source_skill, "copied skill");
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let local = poisoned_skill("local:copied-skill", "copied-skill");
+        db.save_skill(&local).expect("seed local skill");
+        let installed_skill = SkillService::get_ssot_dir()
+            .expect("SSOT")
+            .join("copied-skill");
+        write_skill(&installed_skill, "copied skill");
+
+        let result =
+            SkillService::scan_local_project_sources(&db, &workspace).expect("scan local projects");
+        assert_eq!(result.updated, 1);
+        assert_eq!(result.ambiguous, 0);
+        assert_eq!(result.scanned_repositories, 1);
+        assert_eq!(result.scanned_skills, 1);
+
+        let persisted = db
+            .get_installed_skill("local:copied-skill")
+            .expect("query")
+            .expect("persisted skill");
+        assert_eq!(persisted.repo_owner.as_deref(), Some("example"));
+        assert_eq!(persisted.repo_name.as_deref(), Some("source-skills"));
+        assert_eq!(
+            persisted.source_id.as_deref(),
+            Some("example/source-skills")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn local_project_scan_keeps_manual_group_members_unassigned() {
+        let home = tempdir().expect("home");
+        let _home = TestHomeGuard::set(home.path());
+        let workspace = home.path().join("projects");
+        let repository = workspace.join("source-repository");
+        fs::create_dir_all(repository.join(".git")).expect("git dir");
+        fs::write(
+            repository.join(".git").join("config"),
+            "[remote \"origin\"]\n\turl = git@github.com:example/source-skills.git\n",
+        )
+        .expect("git config");
+        write_skill(
+            &repository.join("skills").join("copied-skill"),
+            "copied skill",
+        );
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let local = poisoned_skill("local:copied-skill", "copied-skill");
+        db.save_skill(&local).expect("seed local skill");
+        db.save_skill_project_group(&crate::database::SkillProjectGroup {
+            id: "manual".into(),
+            name: "Manual".into(),
+            skill_ids: vec![local.id.clone()],
+        })
+        .expect("seed manual group");
+        let installed_skill = SkillService::get_ssot_dir()
+            .expect("SSOT")
+            .join("copied-skill");
+        write_skill(&installed_skill, "copied skill");
+
+        let result =
+            SkillService::scan_local_project_sources(&db, &workspace).expect("scan local projects");
+        assert_eq!(result.updated, 0);
+        let persisted = db
+            .get_installed_skill("local:copied-skill")
+            .expect("query")
+            .expect("persisted skill");
+        assert!(persisted.repo_owner.is_none());
+        assert!(persisted.repo_name.is_none());
+    }
+
+    #[test]
+    fn local_project_hash_matches_update_hash_for_regular_files() {
+        let skill = tempdir().unwrap();
+        write_skill(skill.path(), "regular skill");
+        fs::create_dir(skill.path().join("scripts")).unwrap();
+        fs::write(skill.path().join("scripts/run.sh"), "echo test").unwrap();
+        fs::write(skill.path().join(".hidden"), "excluded from update hashes").unwrap();
+        let hash = local_source_hash(skill.path(), &mut LocalSourceHashBudget::default()).unwrap();
+        assert_eq!(
+            hash,
+            Some(SkillService::compute_dir_hash(skill.path()).unwrap())
+        );
+    }
+
+    #[test]
+    fn local_project_hash_rejects_dependency_trees_without_partial_matching() {
+        let skill = tempdir().unwrap();
+        write_skill(skill.path(), "regular skill");
+        fs::create_dir(skill.path().join("node_modules")).unwrap();
+        assert!(
+            local_source_hash(skill.path(), &mut LocalSourceHashBudget::default())
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn local_project_hash_rejects_directory_file_and_broken_symlinks() {
+        for target in ["directory", "file", "missing", "cycle"] {
+            let skill = tempdir().unwrap();
+            let external = tempdir().unwrap();
+            write_skill(skill.path(), "regular skill");
+            fs::write(external.path().join("payload"), "external fixture").unwrap();
+            let source = match target {
+                "directory" => external.path().to_path_buf(),
+                "file" => external.path().join("payload"),
+                "cycle" => skill.path().to_path_buf(),
+                _ => external.path().join("missing"),
+            };
+            std::os::unix::fs::symlink(source, skill.path().join("linked")).unwrap();
+            let mut budget = LocalSourceHashBudget::default();
+            assert!(local_source_hash(skill.path(), &mut budget)
+                .unwrap()
+                .is_none());
+            assert_eq!(budget.bytes, 0, "must not read any payload for {target}");
+        }
+    }
+
+    #[test]
+    fn local_project_hash_limits_are_shared_across_skills() {
+        let skill = tempdir().unwrap();
+        fs::write(skill.path().join("SKILL.md"), "data").unwrap();
+        let mut entries = LocalSourceHashBudget {
+            entries: MAX_LOCAL_SOURCE_HASH_ENTRIES - 1,
+            bytes: 0,
+        };
+        assert!(local_source_hash(skill.path(), &mut entries)
+            .unwrap()
+            .is_some());
+        let error = local_source_hash(skill.path(), &mut entries).unwrap_err();
+        assert!(error.to_string().contains("LOCAL_SOURCE_SCAN_ENTRIES"));
+        let mut bytes = LocalSourceHashBudget {
+            entries: 0,
+            bytes: MAX_LOCAL_SOURCE_HASH_BYTES - 4,
+        };
+        assert!(local_source_hash(skill.path(), &mut bytes)
+            .unwrap()
+            .is_some());
+        let error = local_source_hash(skill.path(), &mut bytes).unwrap_err();
+        assert!(error.to_string().contains("LOCAL_SOURCE_SCAN_BYTES"));
+        assert_eq!(bytes.bytes, MAX_LOCAL_SOURCE_HASH_BYTES);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn local_project_scan_resolves_worktree_common_directory() {
+        let home = tempdir().unwrap();
+        let _home = TestHomeGuard::set(home.path());
+        let common = home.path().join("repo/.git");
+        let private = common.join("worktrees/linked");
+        fs::create_dir_all(&private).unwrap();
+        fs::write(
+            common.join("config"),
+            "[remote \"origin\"]\nurl = https://github.com/example/skills.git\n",
+        )
+        .unwrap();
+        let worktree = home.path().join("linked");
+        fs::create_dir_all(&worktree).unwrap();
+        // Cover both forms Git permits in .git and commondir.
+        for absolute in [false, true] {
+            let git_dir = if absolute {
+                private.display().to_string()
+            } else {
+                "../repo/.git/worktrees/linked".into()
+            };
+            fs::write(worktree.join(".git"), format!("gitdir: {git_dir}\n")).unwrap();
+            let common_dir = if absolute {
+                common.display().to_string()
+            } else {
+                "../..".into()
+            };
+            fs::write(private.join("commondir"), format!("{common_dir}\n")).unwrap();
+            assert_eq!(
+                git_origin_url(&worktree).as_deref(),
+                Some("https://github.com/example/skills.git")
+            );
+        }
+        write_skill(&worktree.join("skills/copied"), "copied skill");
+        let db = Arc::new(Database::memory().unwrap());
+        let local = poisoned_skill("local:copied", "copied");
+        db.save_skill(&local).unwrap();
+        write_skill(
+            &SkillService::get_ssot_dir().unwrap().join("copied"),
+            "copied skill",
+        );
+        let result = SkillService::scan_local_project_sources(&db, &worktree).unwrap();
+        assert_eq!(result.updated, 1);
+        assert_eq!(
+            db.get_installed_skill(&local.id)
+                .unwrap()
+                .unwrap()
+                .source_id
+                .as_deref(),
+            Some("example/skills")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn local_project_scan_does_not_trust_stale_installed_hashes() {
+        let home = tempdir().unwrap();
+        let _home = TestHomeGuard::set(home.path());
+        let repository = home.path().join("repo");
+        fs::create_dir_all(repository.join(".git")).unwrap();
+        fs::write(
+            repository.join(".git/config"),
+            "[remote \"origin\"]\nurl = https://github.com/example/skills.git\n",
+        )
+        .unwrap();
+        let source = repository.join("skills/copied");
+        write_skill(&source, "original content");
+        let db = Arc::new(Database::memory().unwrap());
+        let mut local = poisoned_skill("local:copied", "copied");
+        local.content_hash = Some(SkillService::compute_dir_hash(&source).unwrap());
+        db.save_skill(&local).unwrap();
+        write_skill(
+            &SkillService::get_ssot_dir().unwrap().join("copied"),
+            "different local project",
+        );
+        let result = SkillService::scan_local_project_sources(&db, &repository).unwrap();
+        assert_eq!(result.updated, 0);
+        assert!(db
+            .get_installed_skill(&local.id)
+            .unwrap()
+            .unwrap()
+            .source_id
+            .is_none());
     }
 }

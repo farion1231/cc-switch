@@ -14,6 +14,7 @@ export default defineConfig(({ command }) => ({
   ].filter(Boolean),
   base: "./",
   build: {
+    target: "es2020",
     outDir: "../dist",
     emptyOutDir: true,
     rollupOptions: {

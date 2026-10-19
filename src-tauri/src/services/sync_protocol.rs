@@ -92,6 +92,8 @@ pub(crate) fn should_trigger_auto_sync_for_table(table: &str) -> bool {
             | "prompts"
             | "skills"
             | "skill_repos"
+            | "skill_project_groups"
+            | "skill_project_group_members"
             | "profiles"
             | "settings"
             | "proxy_config"
@@ -523,6 +525,8 @@ mod tests {
             "prompts",
             "skills",
             "skill_repos",
+            "skill_project_groups",
+            "skill_project_group_members",
             "profiles",
             "settings",
             "proxy_config",
