@@ -2284,8 +2284,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         {
-          id: "MiniMax-M3.1-Flash-Preview",
-          name: "MiniMax M3.1 Flash Preview",
+          id: "MiniMax-M3.1-Flash",
+          name: "MiniMax M3.1 Flash",
         },
         { id: "MiniMax-M3", name: "MiniMax M3" },
       ],
@@ -2297,7 +2297,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "minimax",
     iconColor: "#FF6B6B",
     suggestedDefaults: {
-      model: { default: "MiniMax-M3.1-Flash-Preview", provider: "minimax" },
+      model: { default: "MiniMax-M3.1-Flash", provider: "minimax" },
     },
   },
   {
@@ -2313,8 +2313,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         {
-          id: "MiniMax-M3.1-Flash-Preview",
-          name: "MiniMax M3.1 Flash Preview",
+          id: "MiniMax-M3.1-Flash",
+          name: "MiniMax M3.1 Flash",
         },
         { id: "MiniMax-M3", name: "MiniMax M3" },
       ],
@@ -2326,7 +2326,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "minimax",
     iconColor: "#FF6B6B",
     suggestedDefaults: {
-      model: { default: "MiniMax-M3.1-Flash-Preview", provider: "minimax_en" },
+      model: { default: "MiniMax-M3.1-Flash", provider: "minimax_en" },
     },
   },
   {

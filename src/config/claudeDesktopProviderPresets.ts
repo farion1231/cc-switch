@@ -1598,9 +1598,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiFormat: "anthropic",
     modelRoutes: [
       ...brandedRoutes(
-        "MiniMax-M3.1-Flash-Preview",
-        "MiniMax-M3.1-Flash-Preview",
-        "MiniMax-M3.1-Flash-Preview",
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3.1-Flash",
         true,
       ),
       // extra route (fable slot) so M3 stays selectable; defaults stay on M3.1
@@ -1630,9 +1630,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiFormat: "anthropic",
     modelRoutes: [
       ...brandedRoutes(
-        "MiniMax-M3.1-Flash-Preview",
-        "MiniMax-M3.1-Flash-Preview",
-        "MiniMax-M3.1-Flash-Preview",
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3.1-Flash",
         true,
       ),
       // extra route (fable slot) so M3 stays selectable; defaults stay on M3.1

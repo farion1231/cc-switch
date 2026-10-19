@@ -3962,8 +3962,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "MiniMax-M3.1-Flash-Preview",
-          name: "MiniMax M3.1 Flash Preview",
+          id: "MiniMax-M3.1-Flash",
+          name: "MiniMax M3.1 Flash",
           reasoning: true,
           input: ["text", "image"],
           contextWindow: 1000000,
@@ -3999,9 +3999,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "minimax/MiniMax-M3.1-Flash-Preview" },
+      model: { primary: "minimax/MiniMax-M3.1-Flash" },
       modelCatalog: {
-        "minimax/MiniMax-M3.1-Flash-Preview": { alias: "MiniMax" },
+        "minimax/MiniMax-M3.1-Flash": { alias: "MiniMax" },
       },
     },
   },
@@ -4017,8 +4017,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "MiniMax-M3.1-Flash-Preview",
-          name: "MiniMax M3.1 Flash Preview",
+          id: "MiniMax-M3.1-Flash",
+          name: "MiniMax M3.1 Flash",
           reasoning: true,
           input: ["text", "image"],
           contextWindow: 1000000,
@@ -4054,9 +4054,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "minimax-en/MiniMax-M3.1-Flash-Preview" },
+      model: { primary: "minimax-en/MiniMax-M3.1-Flash" },
       modelCatalog: {
-        "minimax-en/MiniMax-M3.1-Flash-Preview": { alias: "MiniMax" },
+        "minimax-en/MiniMax-M3.1-Flash": { alias: "MiniMax" },
       },
     },
   },

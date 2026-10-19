@@ -92,13 +92,13 @@ describe("Codex preset pre-filled reasoning levels", () => {
     ["MiniMax", "MiniMax-M3", ["none", "high"]],
     [
       "MiniMax",
-      "MiniMax-M3.1-Flash-Preview",
+      "MiniMax-M3.1-Flash",
       ["low", "medium", "high", "xhigh", "max"],
     ],
     ["MiniMax en", "MiniMax-M3", ["none", "high"]],
     [
       "MiniMax en",
-      "MiniMax-M3.1-Flash-Preview",
+      "MiniMax-M3.1-Flash",
       ["low", "medium", "high", "xhigh", "max"],
     ],
     ["Xiaomi MiMo", "mimo-v2.5-pro", ["none", "low", "medium", "high"], "low"],

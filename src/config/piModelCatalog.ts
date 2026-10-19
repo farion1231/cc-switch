@@ -264,9 +264,9 @@ export const piModelCatalog = {
       maxTokens: 128_000,
     },
   },
-  "minimax/minimax-m3.1-flash-preview": {
+  "minimax/minimax-m3.1-flash": {
     capabilities: {
-      name: "MiniMax-M3.1-Flash-Preview",
+      name: "MiniMax-M3.1-Flash",
       reasoning: true,
       input: ["text", "image"],
       contextWindow: 1_000_000,

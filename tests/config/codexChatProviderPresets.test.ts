@@ -263,7 +263,7 @@ describe("Codex Chat provider presets", () => {
           baseUrl: "https://api.minimax.cn/v1",
           contextWindows: {
             "MiniMax-M3": 1000000,
-            "MiniMax-M3.1-Flash-Preview": 1000000,
+            "MiniMax-M3.1-Flash": 1000000,
           },
         },
       ],
@@ -272,7 +272,7 @@ describe("Codex Chat provider presets", () => {
         {
           contextWindows: {
             "MiniMax-M3": 1000000,
-            "MiniMax-M3.1-Flash-Preview": 1000000,
+            "MiniMax-M3.1-Flash": 1000000,
           },
         },
       ],

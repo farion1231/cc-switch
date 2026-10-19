@@ -2083,7 +2083,7 @@ custom_providers:
         with_test_home(|| {
             let mm = serde_json::json!({
                 "base_url": "https://api.minimax.cn/v1",
-                "models": [{ "id": "MiniMax-M3.1-Flash-Preview" }, { "id": "MiniMax-M3" }],
+                "models": [{ "id": "MiniMax-M3.1-Flash" }, { "id": "MiniMax-M3" }],
                 "title_generation_model": "MiniMax-M3",
             });
             let other = serde_json::json!({ "models": [{ "id": "x" }] });
