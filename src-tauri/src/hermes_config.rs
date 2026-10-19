@@ -983,7 +983,10 @@ fn sync_title_generation_model(
         .and_then(|v| v.as_mapping())
         .cloned()
         .unwrap_or_default();
-    let current = title.get(&k_model).and_then(|v| v.as_str()).map(String::from);
+    let current = title
+        .get(&k_model)
+        .and_then(|v| v.as_str())
+        .map(String::from);
     match wanted {
         Some(model) => {
             if current.as_deref() == Some(model) {
@@ -2097,8 +2100,10 @@ custom_providers:
             // user's other auxiliary settings must survive
             write_yaml_section_to_config(
                 "auxiliary",
-                &serde_yaml::from_str("title_generation:\n  timeout: 9\ncompression:\n  model: keep\n")
-                    .unwrap(),
+                &serde_yaml::from_str(
+                    "title_generation:\n  timeout: 9\ncompression:\n  model: keep\n",
+                )
+                .unwrap(),
             )
             .unwrap();
 
@@ -2107,8 +2112,14 @@ custom_providers:
             apply_switch_defaults("other", &other).unwrap();
             assert_eq!(read(), None);
             let cfg = read_hermes_config().unwrap();
-            assert_eq!(cfg["auxiliary"]["title_generation"]["timeout"].as_i64(), Some(9));
-            assert_eq!(cfg["auxiliary"]["compression"]["model"].as_str(), Some("keep"));
+            assert_eq!(
+                cfg["auxiliary"]["title_generation"]["timeout"].as_i64(),
+                Some(9)
+            );
+            assert_eq!(
+                cfg["auxiliary"]["compression"]["model"].as_str(),
+                Some("keep")
+            );
 
             // a pin the user set by hand is not removed
             apply_switch_defaults("minimax", &mm).unwrap();
