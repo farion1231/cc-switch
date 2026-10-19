@@ -406,7 +406,7 @@
     "tabAdvanced": "詳細",
     "tabProxy": "ルーティング",
     "authCenter": {
-      "description": "GitHub Copilot、ChatGPT、xAI のサブスクリプションをプロバイダーとして使えます。認証情報はルーティングサービスが注入するため、これらのプロバイダーはルーティングモードで使います（Codex の公式ログインのバインドを除く）。CodeBuddy のアカウントはログインと残り credits の確認に使います。",
+      "description": "GitHub Copilot、ChatGPT、xAI、CodeBuddy のアカウントをプロバイダーとして使えます。認証情報はルーティングサービスが注入するため、これらのプロバイダーはルーティングモードで使います（Codex の公式ログインのバインドを除く）。",
       "beta": "Beta",
       "copilotDescription": "GitHub Copilot アカウントを管理します",
       "codexOauthDescription": "ChatGPT アカウントを管理します",
@@ -1869,6 +1869,9 @@
   },
   "codebuddyOauth": {
     "authStatus": "CodeBuddy OAuth 認証",
+    "selectAccount": "アカウントを選択",
+    "selectAccountPlaceholder": "CodeBuddy アカウントを選択",
+    "useDefaultAccount": "デフォルトアカウントを使用",
     "login": "CodeBuddy でログイン",
     "addOrReauth": "アカウントを追加または再ログイン",
     "waitingForAuth": "CodeBuddy の認証を待っています…",
@@ -2129,6 +2132,7 @@
       "chatgpt": "ChatGPT アカウントでログイン",
       "github": "GitHub アカウントでログイン",
       "xai": "xAI アカウントでログイン",
+      "codebuddy": "CodeBuddy アカウントでログイン",
       "google": "Google アカウントでログイン"
     },
     "versionCount": "{{domain}} · {{n}} バージョン",
@@ -4105,7 +4109,8 @@
       "geminiFlashLite": "Lite",
       "monthly": "月",
       "credits": "クレジット",
-      "copilotPremium": "プレミアム"
+      "copilotPremium": "プレミアム",
+      "codebuddyCredits": "クレジット"
     },
     "fiveHour": "5時間",
     "sevenDay": "週間",
@@ -4843,7 +4848,7 @@
       "copilotHelp": "Claude Code、Claude Desktop の GitHub Copilot プリセットで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
       "chatgptHelp": "Claude Code、Claude Desktop の ChatGPT プリセットと、Codex の公式ログインのバインドで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
       "xaiHelp": "Claude Code、Claude Desktop、Codex の xAI プリセットで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
-      "codebuddyHelp": "CodeBuddy（Tencent copilot.tencent.com）のアカウントで使います：ログインと残り credits の確認。"
+      "codebuddyHelp": "Claude Code の CodeBuddy（Tencent copilot.tencent.com）プロバイダーで使います。アカウントを指定しないプロバイダーは「デフォルト」アカウントを使います。"
     },
     "addAccount": "アカウントを追加",
     "groupMenu": "{{service}} のその他の操作",

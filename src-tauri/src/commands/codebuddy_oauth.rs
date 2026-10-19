@@ -1,9 +1,10 @@
 //! CodeBuddy OAuth 授权中心状态与额度命令。
 //!
 //! 登录/轮询/账号管理复用 `commands::auth` 的通用命令（`authProvider: "codebuddy_oauth"`），
-//! 这里只提供 CodeBuddy 专属的额度查询命令。
+//! 这里只提供 CodeBuddy 专属的额度与模型目录命令。
 
 use crate::proxy::providers::codebuddy_oauth_auth::{CodebuddyOAuthManager, CodebuddyQuota};
+use crate::services::model_fetch::FetchedModel;
 use std::sync::Arc;
 use tauri::State;
 use tokio::sync::RwLock;
@@ -26,4 +27,24 @@ pub async fn get_codebuddy_oauth_quota(
         .await
         .query_quota(account_id.as_deref())
         .await)
+}
+
+/// 拉取 CodeBuddy 账号可用的 CLI 模型目录（`GET /v3/config`）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_codebuddy_oauth_models(
+    account_id: Option<String>,
+    state: State<'_, CodebuddyOAuthState>,
+) -> Result<Vec<FetchedModel>, String> {
+    let manager = state.0.read().await;
+    let models = manager
+        .fetch_models(account_id.as_deref())
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(models
+        .into_iter()
+        .map(|model| FetchedModel {
+            id: model.id,
+            owned_by: model.vendor,
+        })
+        .collect())
 }

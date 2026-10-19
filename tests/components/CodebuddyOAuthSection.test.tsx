@@ -1,6 +1,31 @@
 import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CodebuddyOAuthSection } from "@/components/providers/forms/CodebuddyOAuthSection";
+
+// Radix Select 在打开菜单时会调用 scrollIntoView（jsdom 没有实现）
+let scrollIntoViewDescriptor: PropertyDescriptor | undefined;
+beforeEach(() => {
+  scrollIntoViewDescriptor = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    "scrollIntoView",
+  );
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+});
+afterEach(() => {
+  if (scrollIntoViewDescriptor) {
+    Object.defineProperty(
+      HTMLElement.prototype,
+      "scrollIntoView",
+      scrollIntoViewDescriptor,
+    );
+  } else {
+    Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+  }
+});
 
 const mocks = vi.hoisted(() => ({
   useCodebuddyOauth: vi.fn(),
@@ -29,6 +54,8 @@ vi.mock("@/components/settings/auth/AccountQuota", async (importOriginal) => {
 const baseAuth = () => ({
   accounts: [],
   defaultAccountId: null,
+  hasAnyAccount: false,
+  isAuthenticated: false,
   isStatusSuccess: true,
   isStatusError: false,
   pollingState: "idle" as const,
@@ -140,5 +167,95 @@ describe("CodebuddyOAuthSection", () => {
     expect(
       screen.getByRole("button", { name: "使用 CodeBuddy 登录" }),
     ).toBeInTheDocument();
+  });
+
+  describe("select mode (Claude Code provider form)", () => {
+    it("shows the account dropdown with a default-account option", async () => {
+      const user = userEvent.setup();
+      const onAccountSelect = vi.fn();
+      mocks.useCodebuddyOauth.mockReturnValue({
+        ...baseAuth(),
+        accounts: [
+          account({ id: "cb-1", login: "first@example.com" }),
+          account({ id: "cb-2", login: "second@example.com" }),
+        ],
+        defaultAccountId: "cb-1",
+        hasAnyAccount: true,
+        isAuthenticated: true,
+      });
+
+      render(
+        <CodebuddyOAuthSection
+          mode="select"
+          selectedAccountId="cb-2"
+          onAccountSelect={onAccountSelect}
+        />,
+      );
+
+      expect(screen.getByRole("combobox")).toHaveTextContent(
+        "second@example.com",
+      );
+
+      await user.click(screen.getByRole("combobox"));
+      expect(
+        await screen.findByRole("option", { name: "使用默认账号" }),
+      ).toBeInTheDocument();
+      await user.click(
+        screen.getByRole("option", { name: /first@example\.com/ }),
+      );
+      expect(onAccountSelect).toHaveBeenCalledWith("cb-1");
+    });
+
+    it("keeps an expired account visible but not selectable", async () => {
+      const user = userEvent.setup();
+      mocks.useCodebuddyOauth.mockReturnValue({
+        ...baseAuth(),
+        accounts: [
+          account({
+            id: "expired-account",
+            login: "expired@example.com",
+            requires_reauth: true,
+          }),
+          account({ id: "usable-account", login: "usable@example.com" }),
+        ],
+        defaultAccountId: "usable-account",
+        hasAnyAccount: true,
+        isAuthenticated: true,
+      });
+
+      render(
+        <CodebuddyOAuthSection
+          mode="select"
+          selectedAccountId="expired-account"
+          onAccountSelect={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByRole("combobox")).toHaveTextContent(
+        "expired@example.com",
+      );
+      expect(screen.getByRole("combobox")).toHaveTextContent("凭据已失效");
+
+      await user.click(screen.getByRole("combobox"));
+      const expired = await screen.findByRole("option", {
+        name: /expired@example\.com/,
+      });
+      expect(expired).toHaveAttribute("aria-disabled", "true");
+    });
+
+    it("hides the account dropdown and offers login before any account exists", () => {
+      render(
+        <CodebuddyOAuthSection
+          mode="select"
+          selectedAccountId={null}
+          onAccountSelect={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "使用 CodeBuddy 登录" }),
+      ).toBeInTheDocument();
+    });
   });
 });

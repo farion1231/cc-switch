@@ -406,7 +406,7 @@
     "tabAdvanced": "Advanced",
     "tabProxy": "Routing",
     "authCenter": {
-      "description": "Use GitHub Copilot, ChatGPT and xAI subscriptions as providers. The routing service injects their credentials, so these providers run in Routing mode (except Codex's official-login binding). CodeBuddy accounts are used to sign in and check remaining credits.",
+      "description": "Use GitHub Copilot, ChatGPT, xAI and CodeBuddy accounts as providers. The routing service injects their credentials, so these providers run in Routing mode (except Codex's official-login binding).",
       "beta": "Beta",
       "copilotDescription": "Manage GitHub Copilot accounts",
       "codexOauthDescription": "Manage ChatGPT accounts",
@@ -1869,6 +1869,9 @@
   },
   "codebuddyOauth": {
     "authStatus": "CodeBuddy OAuth authentication",
+    "selectAccount": "Select account",
+    "selectAccountPlaceholder": "Select a CodeBuddy account",
+    "useDefaultAccount": "Use default account",
     "login": "Sign in with CodeBuddy",
     "addOrReauth": "Add account or sign in again",
     "waitingForAuth": "Waiting for CodeBuddy authorization…",
@@ -2129,6 +2132,7 @@
       "chatgpt": "Sign in with a ChatGPT account",
       "github": "Sign in with a GitHub account",
       "xai": "Sign in with an xAI account",
+      "codebuddy": "Sign in with a CodeBuddy account",
       "google": "Sign in with a Google account"
     },
     "versionCount": "{{domain}} · {{n}} versions",
@@ -4105,7 +4109,8 @@
       "geminiFlashLite": "Lite",
       "monthly": "Mo",
       "credits": "Credits",
-      "copilotPremium": "Premium"
+      "copilotPremium": "Premium",
+      "codebuddyCredits": "Credits"
     },
     "fiveHour": "5-hour",
     "sevenDay": "Weekly",
@@ -4843,7 +4848,7 @@
       "copilotHelp": "Used by GitHub Copilot presets in Claude Code and Claude Desktop. Providers without a chosen account use the Default one.",
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
       "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
-      "codebuddyHelp": "Used for CodeBuddy (Tencent copilot.tencent.com) accounts: sign in and check remaining credits."
+      "codebuddyHelp": "Used for the CodeBuddy (Tencent copilot.tencent.com) provider in Claude Code. Providers without a specific account use the default account."
     },
     "addAccount": "Add account",
     "groupMenu": "More actions for {{service}}",

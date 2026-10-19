@@ -256,6 +256,11 @@ export function useManagedAuth(
         await queryClient.invalidateQueries({
           queryKey: ["providers", "codex"],
         });
+      } else if (authProvider === "codebuddy_oauth") {
+        // CodeBuddy 账号只会绑定到 Claude Code 的供应商，删号后让卡片立刻更新。
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", "claude"],
+        });
       }
     },
   });
@@ -279,12 +284,17 @@ export function useManagedAuth(
       console.error("[ManagedAuth] Failed to remove account:", e);
       setError(e instanceof Error ? e.message : String(e));
       // Account removal can succeed before provider unbinding fails.
-      if (authProvider === "codex_oauth") await refetchStatus();
+      if (authProvider === "codex_oauth" || authProvider === "codebuddy_oauth")
+        await refetchStatus();
     },
     onSettled: async () => {
       if (authProvider === "codex_oauth") {
         await queryClient.invalidateQueries({
           queryKey: ["providers", "codex"],
+        });
+      } else if (authProvider === "codebuddy_oauth") {
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", "claude"],
         });
       }
     },

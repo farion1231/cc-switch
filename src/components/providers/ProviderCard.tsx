@@ -22,6 +22,7 @@ import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
+import CodebuddyOauthQuotaFooter from "@/components/CodebuddyOauthQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import {
   extractCodexExperimentalBearerToken,
@@ -248,6 +249,9 @@ export function ProviderCard({
       : provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
   // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
   const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
+  // CodeBuddy OAuth：额度按绑定的 CodeBuddy 账号查询（未绑定跟随默认账号）
+  const isCodebuddyOauth =
+    provider.meta?.providerType === PROVIDER_TYPES.CODEBUDDY_OAUTH;
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery = isAdditiveAppId(appId) ? isInConfig : isCurrent;
@@ -439,8 +443,14 @@ export function ProviderCard({
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
-          {/* 额度列 136 宽，带重置倒计时时 194 宽（见 QuotaLines） */}
-          <div className="max-w-[208px] text-end">
+          {/* 额度列 136 宽，带重置倒计时时 194 宽（见 QuotaLines）；
+              CodeBuddy 显示「剩余/总量」credits，需要更宽一档 */}
+          <div
+            className={cn(
+              "text-end",
+              isCodebuddyOauth ? "max-w-[300px]" : "max-w-[208px]",
+            )}
+          >
             <div className="flex items-center justify-end gap-1">
               {isCopilot ? (
                 <CopilotQuotaFooter
@@ -463,6 +473,12 @@ export function ProviderCard({
                 ) : null
               ) : isXaiOauth ? (
                 <XaiOauthQuotaFooter
+                  meta={provider.meta}
+                  inline={true}
+                  isCurrent={isCurrent}
+                />
+              ) : isCodebuddyOauth ? (
+                <CodebuddyOauthQuotaFooter
                   meta={provider.meta}
                   inline={true}
                   isCurrent={isCurrent}
@@ -535,7 +551,8 @@ export function ProviderCard({
               (isOfficial && !supportsOfficialSubscription) ||
               isCopilot ||
               (isCodexOauth && !isBoundCodexOfficial) ||
-              isXaiOauth
+              isXaiOauth ||
+              isCodebuddyOauth
                 ? undefined
                 : () => onConfigureUsage(provider)
             }

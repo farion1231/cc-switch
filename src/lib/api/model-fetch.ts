@@ -93,6 +93,15 @@ export async function fetchXaiOauthModels(
   });
 }
 
+/** 获取当前 CodeBuddy 账号可用的模型列表（GET /v3/config 的 CLI 模型目录）。 */
+export async function fetchCodebuddyOauthModels(
+  accountId?: string | null,
+): Promise<FetchedModel[]> {
+  return invoke("get_codebuddy_oauth_models", {
+    accountId: accountId || null,
+  });
+}
+
 /**
  * 根据错误类型显示对应的 toast 提示
  */

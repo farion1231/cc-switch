@@ -17,6 +17,7 @@ const copilotApiMock = vi.hoisted(() => ({
 }));
 
 const modelFetchApiMock = vi.hoisted(() => ({
+  fetchCodebuddyOauthModels: vi.fn(),
   fetchCodexOauthModels: vi.fn(),
   fetchModelsForConfig: vi.fn(),
   showFetchModelsError: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock("@/lib/api/copilot", () => ({
 }));
 
 vi.mock("@/lib/api/model-fetch", () => ({
+  fetchCodebuddyOauthModels: modelFetchApiMock.fetchCodebuddyOauthModels,
   fetchCodexOauthModels: modelFetchApiMock.fetchCodexOauthModels,
   fetchModelsForConfig: modelFetchApiMock.fetchModelsForConfig,
   showFetchModelsError: modelFetchApiMock.showFetchModelsError,
@@ -39,6 +41,10 @@ vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
 
 vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
   CodexOAuthSection: () => <div data-testid="codex-oauth-section" />,
+}));
+
+vi.mock("@/components/providers/forms/CodebuddyOAuthSection", () => ({
+  CodebuddyOAuthSection: () => <div data-testid="codebuddy-oauth-section" />,
 }));
 
 type ClaudeFormFieldsProps = ComponentProps<typeof ClaudeFormFields>;
@@ -127,10 +133,24 @@ const renderCodexOauthForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) =>
     ...overrides,
   });
 
+const renderCodebuddyForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) =>
+  renderCopilotForm({
+    isCopilotPreset: false,
+    isCopilotAuthenticated: false,
+    selectedGitHubAccountId: null,
+    usesOAuth: true,
+    isCodebuddyOauthPreset: true,
+    isCodebuddyOauthAuthenticated: true,
+    selectedCodebuddyAccountId: "cb-1",
+    onCodebuddyAccountSelect: vi.fn(),
+    ...overrides,
+  });
+
 describe("ClaudeFormFields", () => {
   beforeEach(() => {
     copilotApiMock.copilotGetModels.mockResolvedValue([]);
     copilotApiMock.copilotGetModelsForAccount.mockResolvedValue([]);
+    modelFetchApiMock.fetchCodebuddyOauthModels.mockResolvedValue([]);
     modelFetchApiMock.fetchCodexOauthModels.mockResolvedValue([]);
     modelFetchApiMock.fetchModelsForConfig.mockResolvedValue([]);
   });
@@ -177,6 +197,35 @@ describe("ClaudeFormFields", () => {
     await waitFor(() => {
       expect(modelFetchApiMock.fetchCodexOauthModels).toHaveBeenCalledWith(
         "chatgpt-1",
+      );
+    });
+  });
+
+  it("renders the CodeBuddy account section and fetches models for the selected account", async () => {
+    modelFetchApiMock.fetchCodebuddyOauthModels.mockResolvedValue([
+      { id: "glm-5.3", ownedBy: null },
+    ]);
+    renderCodebuddyForm();
+
+    expect(screen.getByTestId("codebuddy-oauth-section")).toBeInTheDocument();
+    // 打开表单时不自动拉模型
+    expect(modelFetchApiMock.fetchCodebuddyOauthModels).not.toHaveBeenCalled();
+
+    // 托管账号卡默认收起高级选项，模型拉取按钮在里面
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "providerForm.advancedOptionsToggle",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "providerForm.fetchModels",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(modelFetchApiMock.fetchCodebuddyOauthModels).toHaveBeenCalledWith(
+        "cb-1",
       );
     });
   });

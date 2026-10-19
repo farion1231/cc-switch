@@ -460,11 +460,25 @@ pub async fn auth_remove_account(
                 .map_err(|e| e.to_string())
         }
         AUTH_PROVIDER_CODEBUDDY_OAUTH => {
+            // Serialize account removal with managed provider add/switch/hot-switch for
+            // Claude Code, so a switch that preflighted a bundle cannot keep a binding
+            // pointing at an account this command just deleted.
+            let _switch_guard = app_state
+                .proxy_service
+                .lock_switch_for_app(AppType::Claude.as_str())
+                .await;
             let auth_manager = codebuddy_state.0.write().await;
             auth_manager
                 .remove_account(&account_id)
                 .await
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.to_string())?;
+            app_state
+                .db
+                .unbind_managed_accounts("codebuddy_oauth", std::slice::from_ref(&account_id))
+                .map_err(|error| {
+                    format!("账号已删除，但 CodeBuddy 供应商解绑失败；请编辑供应商重新选择账号或切换供应商: {error}")
+                })?;
+            Ok(())
         }
         _ => unreachable!(),
     }
@@ -558,8 +572,25 @@ pub async fn auth_logout(
             auth_manager.clear_auth().await.map_err(|e| e.to_string())
         }
         AUTH_PROVIDER_CODEBUDDY_OAUTH => {
+            let _switch_guard = app_state
+                .proxy_service
+                .lock_switch_for_app(AppType::Claude.as_str())
+                .await;
             let auth_manager = codebuddy_state.0.write().await;
-            auth_manager.clear_auth().await.map_err(|e| e.to_string())
+            let removed: Vec<String> = auth_manager
+                .list_accounts()
+                .await
+                .into_iter()
+                .map(|account| account.id)
+                .collect();
+            auth_manager.clear_auth().await.map_err(|e| e.to_string())?;
+            app_state
+                .db
+                .unbind_managed_accounts("codebuddy_oauth", &removed)
+                .map_err(|error| {
+                    format!("CodeBuddy 账号已登出，但供应商解绑失败；请编辑供应商重新选择账号或切换供应商: {error}")
+                })?;
+            Ok(())
         }
         _ => unreachable!(),
     }

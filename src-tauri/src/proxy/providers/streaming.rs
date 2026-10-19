@@ -43,7 +43,10 @@ struct Delta {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct DeltaToolCall {
-    index: usize,
+    /// 部分 OpenAI 兼容上游（如腾讯 CodeBuddy）的流式 tool_call 不带 index，
+    /// 由转换器按 id / 位置补齐稳定索引。
+    #[serde(default)]
+    index: Option<usize>,
     #[serde(default)]
     id: Option<String>,
     #[serde(rename = "type", default)]
@@ -262,6 +265,11 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         let mut current_non_tool_block_index: Option<u32> = None;
         let mut inline_think = InlineThinkSplitter::default();
         let mut tool_blocks_by_index: HashMap<usize, ToolBlockState> = HashMap::new();
+        // 上游 tool_call 可能缺少 index（CodeBuddy 等）：按 id 记忆，缺失时沿用
+        // 最近的索引，首次出现则分配最小空闲索引，避免同一工具被拆成多块。
+        let mut tool_index_by_id: HashMap<String, usize> = HashMap::new();
+        let mut used_tool_indexes: HashSet<usize> = HashSet::new();
+        let mut last_tool_index: Option<usize> = None;
         let mut open_tool_block_indices: HashSet<u32> = HashSet::new();
 
         tokio::pin!(stream);
@@ -471,6 +479,61 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                 current_non_tool_block_type = None;
 
                                                 for tool_call in tool_calls {
+                                                    let resolved_index = match tool_call.index
+                                                    {
+                                                        Some(index) => {
+                                                            used_tool_indexes.insert(index);
+                                                            if let Some(id) = tool_call
+                                                                .id
+                                                                .as_deref()
+                                                                .map(str::trim)
+                                                                .filter(|id| !id.is_empty())
+                                                            {
+                                                                tool_index_by_id
+                                                                    .insert(id.to_string(), index);
+                                                            }
+                                                            last_tool_index = Some(index);
+                                                            index
+                                                        }
+                                                        None => {
+                                                            let id = tool_call
+                                                                .id
+                                                                .as_deref()
+                                                                .map(str::trim)
+                                                                .filter(|id| !id.is_empty());
+                                                            match id {
+                                                                Some(id) => {
+                                                                    if let Some(index) =
+                                                                        tool_index_by_id.get(id).copied()
+                                                                    {
+                                                                        last_tool_index = Some(index);
+                                                                        index
+                                                                    } else {
+                                                                        let mut index = 0;
+                                                                        while used_tool_indexes
+                                                                            .contains(&index)
+                                                                        {
+                                                                            index += 1;
+                                                                        }
+                                                                        used_tool_indexes.insert(index);
+                                                                        tool_index_by_id
+                                                                            .insert(id.to_string(), index);
+                                                                        last_tool_index = Some(index);
+                                                                        index
+                                                                    }
+                                                                }
+                                                                None => match last_tool_index {
+                                                                    Some(index) => index,
+                                                                    None => {
+                                                                        log::debug!(
+                                                                            "[Claude/OpenRouter] 跳过缺少 index/id 的 tool_call 分块"
+                                                                        );
+                                                                        continue;
+                                                                    }
+                                                                },
+                                                            }
+                                                        }
+                                                    };
                                                     let (
                                                         anthropic_index,
                                                         id,
@@ -480,7 +543,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                         immediate_delta,
                                                     ) = {
                                                         let state = tool_blocks_by_index
-                                                            .entry(tool_call.index)
+                                                            .entry(resolved_index)
                                                             .or_insert_with(|| {
                                                                 let index = next_content_index;
                                                                 next_content_index += 1;
@@ -985,6 +1048,65 @@ mod tests {
             map_stop_reason(Some("content_filter")),
             Some("end_turn".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn test_tool_calls_without_index_are_routed_by_id() {
+        // 腾讯 CodeBuddy 等 OpenAI 兼容上游的流式 tool_call 可能不带 index，
+        // 后续分块也可能只带 id 或什么都不带；转换器必须按 id/最近索引归一，
+        // 不能把同一个工具拆成多个块或直接反序列化失败。
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_cb\",\"model\":\"glm-5.3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"tool_a\",\"arguments\":\"{\\\"a\\\":1}\"}},{\"id\":\"call_b\",\"type\":\"function\",\"function\":{\"name\":\"tool_b\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_b\",\"function\":{\"arguments\":\"{\\\"b\\\":2}\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_events(vec![input.to_string()]).await;
+        let tool_starts: Vec<&Value> = events
+            .iter()
+            .filter(|event| {
+                event_type(event) == Some("content_block_start")
+                    && event["content_block"]["type"] == "tool_use"
+            })
+            .collect();
+        assert_eq!(tool_starts.len(), 2, "each tool must get exactly one block");
+        assert_eq!(tool_starts[0]["content_block"]["id"], "call_a");
+        assert_eq!(tool_starts[1]["content_block"]["id"], "call_b");
+        assert_ne!(
+            tool_starts[0]["index"], tool_starts[1]["index"],
+            "tool blocks must have distinct indices"
+        );
+        let mut args_by_index: std::collections::BTreeMap<u64, String> =
+            std::collections::BTreeMap::new();
+        for event in &events {
+            if event_type(event) != Some("content_block_delta")
+                || event.pointer("/delta/type").and_then(|v| v.as_str()) != Some("input_json_delta")
+            {
+                continue;
+            }
+            let Some(index) = event.get("index").and_then(|v| v.as_u64()) else {
+                continue;
+            };
+            let partial = event
+                .pointer("/delta/partial_json")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            args_by_index.entry(index).or_default().push_str(partial);
+        }
+        let arguments: Vec<Value> = args_by_index
+            .values()
+            .map(|args| serde_json::from_str::<Value>(args).expect("per-tool JSON args"))
+            .collect();
+        assert_eq!(
+            arguments,
+            vec![json!({"a": 1}), json!({"b": 2})],
+            "each tool's argument fragments must stay on its own block"
+        );
+        assert!(events.iter().any(|event| {
+            event_type(event) == Some("message_delta")
+                && event["delta"]["stop_reason"] == "tool_use"
+        }));
     }
 
     #[tokio::test]

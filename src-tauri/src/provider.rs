@@ -75,6 +75,10 @@ impl Provider {
         self.provider_type() == Some("xai_oauth")
     }
 
+    pub fn is_codebuddy_oauth(&self) -> bool {
+        self.provider_type() == Some("codebuddy_oauth")
+    }
+
     pub fn is_github_copilot(&self) -> bool {
         self.provider_type() == Some("github_copilot")
             || self.claude_base_url_contains("githubcopilot.com")
@@ -84,17 +88,18 @@ impl Provider {
         self.is_github_copilot()
             || self.is_codex_oauth()
             || self.is_xai_oauth()
+            || self.is_codebuddy_oauth()
             || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
     }
 
-    /// Third-party managed OAuth (xai_oauth, github_copilot, …): the real
-    /// credential is injected per-request by the local proxy, so the card is
-    /// keyless by design and its stored config is only an upstream snapshot.
-    /// `codex_oauth` is deliberately excluded — the official ChatGPT login
-    /// in auth.json IS its credential, so the `requires_openai_auth = true`
+    /// Third-party managed OAuth (xai_oauth, codebuddy_oauth, github_copilot, …):
+    /// the real credential is injected per-request by the local proxy, so the
+    /// card is keyless by design and its stored config is only an upstream
+    /// snapshot. `codex_oauth` is deliberately excluded — the official ChatGPT
+    /// login in auth.json IS its credential, so the `requires_openai_auth = true`
     /// fallback is its correct shape, never a legacy leftover.
     pub fn uses_proxy_injected_oauth(&self) -> bool {
-        self.is_xai_oauth() || self.is_github_copilot()
+        self.is_xai_oauth() || self.is_codebuddy_oauth() || self.is_github_copilot()
     }
 
     /// Whether the provider form's "auth field" was explicitly set to
@@ -1105,6 +1110,7 @@ mod tests {
 
         for (provider_type, expected) in [
             ("xai_oauth", true),
+            ("codebuddy_oauth", true),
             ("github_copilot", true),
             // the official ChatGPT login IS this card's credential — its
             // auth.json fallback shape must never be neutralized
@@ -1311,6 +1317,21 @@ mod tests {
         });
         assert!(codex.is_codex_oauth());
         assert!(codex.uses_managed_account_auth());
+
+        let mut codebuddy = Provider::with_id(
+            "codebuddy".to_string(),
+            "CodeBuddy".to_string(),
+            json!({ "env": {} }),
+            None,
+        );
+        assert!(!codebuddy.uses_managed_account_auth());
+        codebuddy.meta = Some(ProviderMeta {
+            provider_type: Some("codebuddy_oauth".to_string()),
+            ..Default::default()
+        });
+        assert!(codebuddy.is_codebuddy_oauth());
+        assert!(codebuddy.uses_managed_account_auth());
+        assert!(codebuddy.uses_proxy_injected_oauth());
 
         let codex_endpoint = Provider::with_id(
             "codex-endpoint".to_string(),

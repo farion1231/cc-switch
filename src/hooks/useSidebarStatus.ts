@@ -22,6 +22,7 @@ const MANAGED_AUTH_PROVIDERS: ManagedAuthProvider[] = [
   "github_copilot",
   "codex_oauth",
   "xai_oauth",
+  "codebuddy_oauth",
 ];
 
 /**

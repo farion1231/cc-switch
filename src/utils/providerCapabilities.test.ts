@@ -246,6 +246,26 @@ describe("providerNeedsRouting", () => {
       ).toBe(true);
     });
 
+    it("Claude 下 codebuddy_oauth 需要路由（token 由代理注入）", () => {
+      expect(
+        providerNeedsRouting(
+          "claude",
+          mkProvider({
+            meta: { providerType: "codebuddy_oauth", apiFormat: "openai_chat" },
+          }),
+        ),
+      ).toBe(true);
+      // 即使 apiFormat 被改成 anthropic，托管 OAuth 仍必须接管
+      expect(
+        providerNeedsRouting(
+          "claude",
+          mkProvider({
+            meta: { providerType: "codebuddy_oauth", apiFormat: "anthropic" },
+          }),
+        ),
+      ).toBe(true);
+    });
+
     it("Codex 下 xai_oauth 需要路由（原生 Responses 也要注入 token）", () => {
       expect(
         providerNeedsRouting(
@@ -363,7 +383,7 @@ describe("providerNeedsRouting", () => {
       ).toBe(true);
     });
 
-    it.each(["github_copilot", "codex_oauth", "xai_oauth"])(
+    it.each(["github_copilot", "codex_oauth", "xai_oauth", "codebuddy_oauth"])(
       "direct 模式的托管 OAuth %s 仍需要路由",
       (providerType) => {
         expect(

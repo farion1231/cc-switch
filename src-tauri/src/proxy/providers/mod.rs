@@ -52,6 +52,9 @@ use serde::{Deserialize, Serialize};
 
 pub const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 pub const XAI_API_BASE_URL: &str = "https://api.x.ai/v1";
+/// 腾讯 CodeBuddy 国内站 API origin。请求路径由适配器固定拼成
+/// `/v2/chat/completions`，不随用户可编辑的 base_url 变化。
+pub const CODEBUDDY_API_BASE_URL: &str = "https://copilot.tencent.com";
 
 // 公开导出
 pub use adapter::ProviderAdapter;
@@ -98,6 +101,8 @@ pub enum ProviderType {
     CodexOAuth,
     /// xAI Grok OAuth（需要 Anthropic ↔ Responses API 转换）
     XaiOAuth,
+    /// 腾讯 CodeBuddy OAuth（需要 Anthropic ↔ OpenAI Chat Completions 转换）
+    CodebuddyOAuth,
 }
 
 impl ProviderType {
@@ -112,6 +117,7 @@ impl ProviderType {
             ProviderType::GitHubCopilot => true,
             ProviderType::CodexOAuth => true,
             ProviderType::XaiOAuth => true,
+            ProviderType::CodebuddyOAuth => true,
             ProviderType::OpenRouter => false,
             _ => false,
         }
@@ -130,6 +136,7 @@ impl ProviderType {
             ProviderType::GitHubCopilot => "https://api.githubcopilot.com",
             ProviderType::CodexOAuth => CHATGPT_CODEX_BASE_URL,
             ProviderType::XaiOAuth => XAI_API_BASE_URL,
+            ProviderType::CodebuddyOAuth => CODEBUDDY_API_BASE_URL,
         }
     }
 
@@ -160,6 +167,9 @@ impl ProviderType {
                     }
                     if meta.provider_type.as_deref() == Some("xai_oauth") {
                         return Some(ProviderType::XaiOAuth);
+                    }
+                    if meta.provider_type.as_deref() == Some("codebuddy_oauth") {
+                        return Some(ProviderType::CodebuddyOAuth);
                     }
                 }
 
@@ -233,6 +243,7 @@ impl ProviderType {
             ProviderType::GitHubCopilot => "github_copilot",
             ProviderType::CodexOAuth => "codex_oauth",
             ProviderType::XaiOAuth => "xai_oauth",
+            ProviderType::CodebuddyOAuth => "codebuddy_oauth",
         }
     }
 }
@@ -259,6 +270,9 @@ impl std::str::FromStr for ProviderType {
             }
             "codex_oauth" | "codex-oauth" | "codexoauth" => Ok(ProviderType::CodexOAuth),
             "xai_oauth" | "xai-oauth" | "xaioauth" => Ok(ProviderType::XaiOAuth),
+            "codebuddy_oauth" | "codebuddy-oauth" | "codebuddyoauth" => {
+                Ok(ProviderType::CodebuddyOAuth)
+            }
             _ => Err(format!("Invalid provider type: {s}")),
         }
     }
@@ -285,7 +299,8 @@ pub fn get_adapter_for_provider_type(provider_type: &ProviderType) -> Box<dyn Pr
         | ProviderType::OpenRouter
         | ProviderType::GitHubCopilot
         | ProviderType::CodexOAuth
-        | ProviderType::XaiOAuth => Box::new(ClaudeAdapter::new()),
+        | ProviderType::XaiOAuth
+        | ProviderType::CodebuddyOAuth => Box::new(ClaudeAdapter::new()),
         ProviderType::Codex => Box::new(CodexAdapter::new()),
         ProviderType::Gemini | ProviderType::GeminiCli => Box::new(GeminiAdapter::new()),
     }
@@ -322,6 +337,9 @@ mod tests {
         assert!(!ProviderType::GeminiCli.needs_transform());
         assert!(!ProviderType::OpenRouter.needs_transform());
         assert!(ProviderType::GitHubCopilot.needs_transform());
+        assert!(ProviderType::CodexOAuth.needs_transform());
+        assert!(ProviderType::XaiOAuth.needs_transform());
+        assert!(ProviderType::CodebuddyOAuth.needs_transform());
     }
 
     #[test]
@@ -353,6 +371,14 @@ mod tests {
         assert_eq!(
             ProviderType::GitHubCopilot.default_endpoint(),
             "https://api.githubcopilot.com"
+        );
+        assert_eq!(
+            ProviderType::XaiOAuth.default_endpoint(),
+            "https://api.x.ai/v1"
+        );
+        assert_eq!(
+            ProviderType::CodebuddyOAuth.default_endpoint(),
+            CODEBUDDY_API_BASE_URL
         );
     }
 
@@ -406,6 +432,18 @@ mod tests {
             "xai_oauth".parse::<ProviderType>().unwrap(),
             ProviderType::XaiOAuth
         );
+        assert_eq!(
+            "codebuddy_oauth".parse::<ProviderType>().unwrap(),
+            ProviderType::CodebuddyOAuth
+        );
+        assert_eq!(
+            "codebuddy-oauth".parse::<ProviderType>().unwrap(),
+            ProviderType::CodebuddyOAuth
+        );
+        assert_eq!(
+            "codebuddyoauth".parse::<ProviderType>().unwrap(),
+            ProviderType::CodebuddyOAuth
+        );
         assert!("invalid".parse::<ProviderType>().is_err());
     }
 
@@ -419,6 +457,7 @@ mod tests {
         assert_eq!(ProviderType::OpenRouter.as_str(), "openrouter");
         assert_eq!(ProviderType::GitHubCopilot.as_str(), "github_copilot");
         assert_eq!(ProviderType::XaiOAuth.as_str(), "xai_oauth");
+        assert_eq!(ProviderType::CodebuddyOAuth.as_str(), "codebuddy_oauth");
     }
 
     #[test]
@@ -464,6 +503,23 @@ mod tests {
 
         let provider_type = ProviderType::from_app_type_and_config(&AppType::Claude, &provider);
         assert_eq!(provider_type, Some(ProviderType::OpenRouter));
+    }
+
+    #[test]
+    fn test_from_app_type_claude_codebuddy_oauth_uses_provider_type() {
+        let mut provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://copilot.tencent.com",
+                "ANTHROPIC_AUTH_TOKEN": "codebuddy_oauth_placeholder"
+            }
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("codebuddy_oauth".to_string()),
+            ..Default::default()
+        });
+
+        let provider_type = ProviderType::from_app_type_and_config(&AppType::Claude, &provider);
+        assert_eq!(provider_type, Some(ProviderType::CodebuddyOAuth));
     }
 
     #[test]
@@ -540,6 +596,9 @@ mod tests {
         assert_eq!(adapter.name(), "Claude");
 
         let adapter = get_adapter_for_provider_type(&ProviderType::GitHubCopilot);
+        assert_eq!(adapter.name(), "Claude");
+
+        let adapter = get_adapter_for_provider_type(&ProviderType::CodebuddyOAuth);
         assert_eq!(adapter.name(), "Claude");
 
         let adapter = get_adapter_for_provider_type(&ProviderType::Codex);

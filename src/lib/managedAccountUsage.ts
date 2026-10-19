@@ -30,6 +30,7 @@ export interface ManagedAccountUser {
 const BASE_URL_MARKERS: Partial<Record<ManagedAuthProvider, string>> = {
   github_copilot: "githubcopilot.com",
   codex_oauth: "chatgpt.com/backend-api/codex",
+  codebuddy_oauth: "copilot.tencent.com",
 };
 
 function claudeBaseUrl(provider: Provider): string {

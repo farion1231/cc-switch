@@ -61,7 +61,13 @@ export interface ProviderPreset extends PresetFamilyFields {
   // 供应商类型标识（用于特殊供应商检测）
   // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
   // - "codex_oauth": OpenAI Codex via ChatGPT Plus/Pro 反代（需要 OAuth 认证）
-  providerType?: "github_copilot" | "codex_oauth" | "xai_oauth";
+  // - "xai_oauth": xAI / Grok 订阅（需要 OAuth 认证）
+  // - "codebuddy_oauth": 腾讯 CodeBuddy（copilot.tencent.com，需要 OAuth 认证）
+  providerType?:
+    | "github_copilot"
+    | "codex_oauth"
+    | "xai_oauth"
+    | "codebuddy_oauth";
 
   // 是否需要 OAuth 认证（而非 API Key）
   requiresOAuth?: boolean;
@@ -2631,6 +2637,30 @@ export const providerPresets: ProviderPreset[] = [
     requiresOAuth: true,
     icon: "xai",
     iconColor: "#000000",
+  },
+  {
+    name: "CodeBuddy",
+    websiteUrl: "https://copilot.tencent.com",
+    settingsConfig: {
+      env: {
+        // The proxy enforces both this origin and the OpenAI Chat wire format
+        // (requests go to POST /v2/chat/completions, stream only).
+        ANTHROPIC_BASE_URL: "https://copilot.tencent.com",
+        ANTHROPIC_MODEL: "glm-5.3",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3",
+        // Claude Code falls back to 200K for unknown model ids; CodeBuddy's
+        // CLI models are documented at a 200K window.
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "200000",
+      },
+    },
+    category: "third_party",
+    apiFormat: "openai_chat",
+    providerType: "codebuddy_oauth",
+    requiresOAuth: true,
+    icon: "codebuddy",
+    iconColor: "#6C4DFF",
   },
   {
     name: "Nvidia",

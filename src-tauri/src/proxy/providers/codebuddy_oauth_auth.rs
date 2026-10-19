@@ -28,9 +28,8 @@ use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
 
 use super::copilot_auth::GitHubDeviceCodeResponse;
+use super::CODEBUDDY_API_BASE_URL;
 
-/// 国内站 API base。
-const CODEBUDDY_API_BASE_URL: &str = "https://copilot.tencent.com";
 /// 浏览器侧 Origin/Referer（登录、额度接口常见要求）。
 const CODEBUDDY_ORIGIN: &str = "https://www.codebuddy.cn";
 /// 默认 `X-Domain`，token 响应里的 domain 优先。
@@ -248,6 +247,27 @@ pub struct CodebuddyOAuthStatus {
     pub default_account_id: Option<String>,
     pub authenticated: bool,
     pub username: Option<String>,
+}
+
+/// 一次上游请求需要的账号上下文：真实 token + CodeBuddy CLI 专属请求头取值。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodebuddyRequestContext {
+    pub account_id: String,
+    /// 已刷新到有效期的 access token。
+    pub token: String,
+    /// 账号接口的 uid（`X-User-Id` 用它，不是 JWT sub）。
+    pub uid: String,
+    /// `X-Domain`；非法值已回退 `copilot.tencent.com`。
+    pub domain: String,
+    /// 企业账号的 `X-Enterprise-Id` / `X-Tenant-Id`；个人账号为 `None`。
+    pub enterprise_id: Option<String>,
+}
+
+/// `/v3/config` 模型目录条目。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodebuddyModelInfo {
+    pub id: String,
+    pub vendor: Option<String>,
 }
 
 /// `get_codebuddy_oauth_quota` 的返回结构（camelCase 入参、snake_case 字段）。
@@ -511,6 +531,115 @@ impl CodebuddyOAuthManager {
         self.resolve_default_account_id().await
     }
 
+    /// 解析本次请求要使用的账号：显式 `account_id` 优先，否则用默认账号。
+    async fn resolve_request_account_id(
+        &self,
+        account_id: Option<&str>,
+    ) -> Result<String, CodebuddyOAuthError> {
+        match account_id.map(str::trim).filter(|id| !id.is_empty()) {
+            Some(id) => Ok(id.to_string()),
+            None => self.default_account_id().await.ok_or_else(|| {
+                CodebuddyOAuthError::AccountNotFound(
+                    "没有可用的 CodeBuddy 账号，请先在授权中心登录".to_string(),
+                )
+            }),
+        }
+    }
+
+    /// 为一次上游请求准备账号上下文：有效 token + `X-User-Id` / `X-Domain` /
+    /// `X-Enterprise-Id` 取值。token 缺失/过期时走既有刷新链路。
+    pub async fn request_context(
+        &self,
+        account_id: Option<&str>,
+    ) -> Result<CodebuddyRequestContext, CodebuddyOAuthError> {
+        let account_id = self.resolve_request_account_id(account_id).await?;
+        // 先拿 token（可能触发刷新并更新 domain / enterprise 上下文），再读快照。
+        let token = self.get_valid_token_for_account(&account_id).await?;
+        let account = self
+            .accounts
+            .read()
+            .await
+            .get(&account_id)
+            .cloned()
+            .ok_or_else(|| CodebuddyOAuthError::AccountNotFound(account_id.clone()))?;
+        if account.requires_reauth {
+            return Err(CodebuddyOAuthError::ReauthRequired(account_id));
+        }
+        let domain = effective_domain(&account.domain).to_string();
+        let enterprise_id = account.enterprise_id.filter(|id| !id.trim().is_empty());
+        Ok(CodebuddyRequestContext {
+            account_id,
+            token,
+            uid: account.uid,
+            domain,
+            enterprise_id,
+        })
+    }
+
+    /// 拉取当前账号的 CodeBuddy CLI 模型目录（`GET /v3/config`）。
+    ///
+    /// `data.models[]` 是详情（`id` / `vendor`），`data.agents[name=="cli"].models[]`
+    /// 是 CLI 可用模型 ID 列表（字符串或对象）。两类都解析：有 CLI 列表时以它为
+    /// 准并用详情回填 vendor，没有时退回全部 `data.models`。过滤补全/NextEdit/
+    /// 提示词增强等服务模型（`completion-` / `nes-` / `enhance-` 前缀），去重排序。
+    pub async fn fetch_models(
+        &self,
+        account_id: Option<&str>,
+    ) -> Result<Vec<CodebuddyModelInfo>, CodebuddyOAuthError> {
+        let context = self.request_context(account_id).await?;
+        let (request_id, _span_id) = next_request_ids();
+        let uid = if context.uid.trim().is_empty() {
+            context.account_id.as_str()
+        } else {
+            context.uid.as_str()
+        };
+        let response = apply_authenticated_headers(
+            crate::proxy::http_client::get().get(format!("{CODEBUDDY_API_BASE_URL}/v3/config")),
+            &request_id,
+            &context.token,
+            &context.domain,
+            context.enterprise_id.as_deref(),
+        )
+        .header("X-User-Id", uid)
+        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .send()
+        .await?;
+
+        let status = response.status();
+        if matches!(
+            status,
+            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+        ) {
+            return Err(CodebuddyOAuthError::ReauthRequired(
+                context.account_id.clone(),
+            ));
+        }
+        let value = read_json_response(response).await?;
+        if !status.is_success() {
+            return Err(CodebuddyOAuthError::NetworkError(format!(
+                "CodeBuddy 模型目录请求失败: HTTP {status}"
+            )));
+        }
+        let code = envelope_code(&value).ok_or_else(|| {
+            CodebuddyOAuthError::ParseError("CodeBuddy 模型目录响应缺少 code".into())
+        })?;
+        if code != 0 {
+            return Err(CodebuddyOAuthError::TokenFetchFailed(format!(
+                "CodeBuddy 模型目录请求失败（上游 code {code}）"
+            )));
+        }
+        let data = envelope_data(&value).ok_or_else(|| {
+            CodebuddyOAuthError::ParseError("CodeBuddy 模型目录响应缺少 data".into())
+        })?;
+        let models = parse_models_catalog(data);
+        if models.is_empty() {
+            return Err(CodebuddyOAuthError::TokenFetchFailed(
+                "CodeBuddy 没有返回可用模型，请确认账号权限后重试".to_string(),
+            ));
+        }
+        Ok(models)
+    }
+
     pub async fn get_status(&self) -> CodebuddyOAuthStatus {
         let accounts = self.accounts.read().await.clone();
         let default_account_id = self.resolve_default_account_id().await;
@@ -520,7 +649,9 @@ impl CodebuddyOAuthManager {
             .and_then(|id| accounts.get(id))
             .and_then(|account| account.login.clone());
         CodebuddyOAuthStatus {
-            authenticated: default_account_id.is_some(),
+            // 只要还有一个可用（未被标记失效）账号就算已认证；全部账号失效时
+            // 前端据此阻止保存 CodeBuddy 供应商。
+            authenticated: accounts.values().any(|account| !account.requires_reauth),
             default_account_id,
             accounts: account_list,
             username,
@@ -1639,6 +1770,137 @@ fn parse_enterprise_quota(
     }])
 }
 
+/// 服务模型前缀：代码补全 / NextEdit / 提示词增强，不能走 chat completions。
+const CODEBUDDY_SERVICE_MODEL_PREFIXES: [&str; 3] = ["completion-", "nes-", "enhance-"];
+
+/// `/v3/config` 里的“自动选择”入口（菜单项而非模型，上游会自己挑后端），不发布。
+const CODEBUDDY_ROUTING_ALIAS_IDS: [&str; 3] = ["auto", "auto-chat", "default-model"];
+
+fn is_codebuddy_routing_alias(id: &str) -> bool {
+    let id = id.trim();
+    CODEBUDDY_ROUTING_ALIAS_IDS
+        .iter()
+        .any(|alias| id.eq_ignore_ascii_case(alias))
+}
+
+fn is_codebuddy_chat_model(id: &str) -> bool {
+    let id = id.trim();
+    !id.is_empty()
+        && !is_codebuddy_routing_alias(id)
+        && !CODEBUDDY_SERVICE_MODEL_PREFIXES
+            .iter()
+            .any(|prefix| id.starts_with(prefix))
+}
+
+fn model_vendor(model: &Value) -> Option<String> {
+    model
+        .get("vendor")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|vendor| !vendor.is_empty())
+        .map(ToString::to_string)
+}
+
+/// `data.agents[]`（或未登录形态 `data.agent.agents[]`）中 `name == "cli"` 的
+/// 模型 ID 列表；元素可能是字符串，也可能是带 `id` 的对象。
+fn collect_cli_model_ids(data: &Value) -> Vec<(String, Option<String>)> {
+    let agents = data.get("agents").and_then(Value::as_array).or_else(|| {
+        data.get("agent")
+            .and_then(|agent| agent.get("agents"))
+            .and_then(Value::as_array)
+    });
+    let Some(agents) = agents else {
+        return Vec::new();
+    };
+
+    let mut result = Vec::new();
+    for agent in agents {
+        if agent.get("name").and_then(Value::as_str) != Some("cli") {
+            continue;
+        }
+        let Some(models) = agent.get("models").and_then(Value::as_array) else {
+            continue;
+        };
+        for model in models {
+            // 对象形态的 `isDefault=true` 是“自动选择”菜单项，不发布。
+            if model
+                .get("isDefault")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            let (id, vendor) = match model {
+                Value::String(id) => (id.trim().to_string(), None),
+                Value::Object(object) => {
+                    let id = object
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .unwrap_or_default()
+                        .to_string();
+                    (id, model_vendor(model))
+                }
+                _ => continue,
+            };
+            if !id.is_empty() && !is_codebuddy_routing_alias(&id) {
+                result.push((id, vendor));
+            }
+        }
+    }
+    result
+}
+
+/// 解析 `/v3/config` 的 `data`：详情以 `data.models[]` 为准，CLI 可用列表以
+/// `data.agents[name=="cli"].models[]` 为准，两者按 id 合并后过滤 + 去重排序。
+fn parse_models_catalog(data: &Value) -> Vec<CodebuddyModelInfo> {
+    let mut details: HashMap<String, Option<String>> = HashMap::new();
+    if let Some(models) = data.get("models").and_then(Value::as_array) {
+        for model in models {
+            let Some(id) = model
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+            else {
+                continue;
+            };
+            // `isDefault=true` 是上游的“自动选择”菜单项，不是可调用模型。
+            if model
+                .get("isDefault")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+                || is_codebuddy_routing_alias(id)
+            {
+                continue;
+            }
+            details
+                .entry(id.to_string())
+                .or_insert_with(|| model_vendor(model));
+        }
+    }
+
+    let cli_models = collect_cli_model_ids(data);
+    let mut result: Vec<CodebuddyModelInfo> = if cli_models.is_empty() {
+        details
+            .into_iter()
+            .map(|(id, vendor)| CodebuddyModelInfo { id, vendor })
+            .collect()
+    } else {
+        cli_models
+            .into_iter()
+            .map(|(id, vendor)| {
+                let vendor = details.get(&id).cloned().flatten().or(vendor);
+                CodebuddyModelInfo { id, vendor }
+            })
+            .collect()
+    };
+    result.retain(|model| is_codebuddy_chat_model(&model.id));
+    result.sort_by(|a, b| a.id.cmp(&b.id));
+    result.dedup_by(|a, b| a.id == b.id);
+    result
+}
+
 fn remaining_percent(remaining: f64, total: f64) -> u8 {
     if total <= 0.0 {
         return 0;
@@ -2310,6 +2572,15 @@ mod tests {
             .iter()
             .find(|account| account.id == "account-two")
             .is_some_and(|account| account.requires_reauth));
+        // 还剩一个可用账号时仍算已认证；全部失效后 authenticated=false，前端
+        // 会阻止保存 CodeBuddy 供应商。
+        assert!(after_reauth.authenticated);
+        reloaded.mark_reauth_required("account-one").await.unwrap();
+        let all_reauth = CodebuddyOAuthManager::new(data_dir.path().to_path_buf())
+            .get_status()
+            .await;
+        assert!(!all_reauth.authenticated);
+        assert!(all_reauth.default_account_id.is_none());
 
         // 取消一个不存在的登录 state 返回 false。
         assert!(!reloaded.cancel_auth("missing-state").await);
@@ -2347,15 +2618,196 @@ mod tests {
         assert!(!data_dir.path().join("codebuddy_oauth_auth.json").exists());
     }
 
+    async fn seed_valid_token(manager: &CodebuddyOAuthManager, account_id: &str, token: &str) {
+        manager.access_tokens.write().await.insert(
+            account_id.to_string(),
+            CachedAccessToken {
+                token: token.to_string(),
+                expires_at_ms: chrono::Utc::now().timestamp_millis() + 3_600_000,
+            },
+        );
+    }
+
     #[tokio::test]
-    async fn query_quota_without_accounts_returns_chinese_error() {
+    async fn request_context_resolves_default_and_explicit_account() {
         let data_dir = tempfile::tempdir().unwrap();
         let manager = CodebuddyOAuthManager::new(data_dir.path().to_path_buf());
-        let quota = manager.query_quota(None).await;
-        assert!(!quota.success);
-        assert_eq!(quota.error.as_deref(), Some("还没有登录 CodeBuddy 账号"));
-        assert_eq!(quota.total, 0.0);
-        assert_eq!(quota.remaining_percent, 0);
-        assert!(quota.queried_at.is_some());
+        manager
+            .add_account_internal(sample_account_data("account-one", 10), None)
+            .await
+            .unwrap();
+        let mut second = sample_account_data("account-two", 20);
+        second.uid = "uid-two".to_string();
+        second.account_type = Some("ultimate".to_string());
+        second.enterprise_id = Some("enterprise-1".to_string());
+        second.domain = "www.codebuddy.cn".to_string();
+        manager.add_account_internal(second, None).await.unwrap();
+        manager.set_default_account("account-two").await.unwrap();
+        seed_valid_token(&manager, "account-one", "token-one").await;
+        seed_valid_token(&manager, "account-two", "token-two").await;
+
+        let default_context = manager.request_context(None).await.unwrap();
+        assert_eq!(default_context.account_id, "account-two");
+        assert_eq!(default_context.token, "token-two");
+        assert_eq!(default_context.uid, "uid-two");
+        assert_eq!(default_context.domain, "www.codebuddy.cn");
+        assert_eq!(
+            default_context.enterprise_id.as_deref(),
+            Some("enterprise-1")
+        );
+
+        let explicit_context = manager.request_context(Some("account-one")).await.unwrap();
+        assert_eq!(explicit_context.account_id, "account-one");
+        assert_eq!(explicit_context.token, "token-one");
+        assert_eq!(explicit_context.uid, "uid-account-one");
+        assert_eq!(explicit_context.domain, CODEBUDDY_DOMAIN);
+        assert!(explicit_context.enterprise_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn request_context_rejects_unknown_and_empty_state() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let manager = CodebuddyOAuthManager::new(data_dir.path().to_path_buf());
+        assert!(matches!(
+            manager.request_context(None).await,
+            Err(CodebuddyOAuthError::AccountNotFound(_))
+        ));
+        assert!(matches!(
+            manager.request_context(Some("missing")).await,
+            Err(CodebuddyOAuthError::AccountNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn models_catalog_parses_flat_models_with_vendor() {
+        let catalog = json!({
+            "models": [
+                { "id": "glm-5.3", "vendor": "Tencent" },
+                { "id": "hy4-preview", "vendor": "Tencent" },
+                { "id": "", "vendor": "ignored" }
+            ]
+        });
+
+        let models = parse_models_catalog(&catalog);
+        assert_eq!(
+            models,
+            vec![
+                CodebuddyModelInfo {
+                    id: "glm-5.3".to_string(),
+                    vendor: Some("Tencent".to_string()),
+                },
+                CodebuddyModelInfo {
+                    id: "hy4-preview".to_string(),
+                    vendor: Some("Tencent".to_string()),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn models_catalog_prefers_cli_agent_ids_and_backfills_vendor() {
+        let catalog = json!({
+            "agents": [
+                { "name": "ide", "models": ["ide-only"] },
+                { "name": "cli", "models": ["glm-5.3", { "id": "hy4-preview" }, "unknown-cli"] }
+            ],
+            "models": [
+                { "id": "glm-5.3", "vendor": "Tencent" },
+                { "id": "hy4-preview", "vendor": "Tencent" },
+                { "id": "ide-only", "vendor": "Tencent" }
+            ]
+        });
+
+        let models = parse_models_catalog(&catalog);
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| (model.id.as_str(), model.vendor.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("glm-5.3", Some("Tencent")),
+                ("hy4-preview", Some("Tencent")),
+                ("unknown-cli", None),
+            ]
+        );
+    }
+
+    #[test]
+    fn models_catalog_accepts_unlogged_agent_envelope() {
+        let catalog = json!({
+            "agent": {
+                "agents": [{ "name": "cli", "models": ["glm-5.3"] }]
+            },
+            "models": null
+        });
+
+        let models = parse_models_catalog(&catalog);
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "glm-5.3");
+    }
+
+    #[test]
+    fn models_catalog_filters_service_models_dedupes_and_sorts() {
+        let catalog = json!({
+            "models": [
+                { "id": "completion-1", "vendor": "Tencent" },
+                { "id": "nes-2", "vendor": "Tencent" },
+                { "id": "enhance-3", "vendor": "Tencent" },
+                { "id": "zeta", "vendor": "Tencent" },
+                { "id": "alpha", "vendor": "Tencent" },
+                { "id": "alpha", "vendor": "Tencent" },
+                { "id": "  ", "vendor": "Tencent" }
+            ]
+        });
+
+        let models = parse_models_catalog(&catalog);
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alpha", "zeta"]
+        );
+    }
+
+    #[test]
+    fn models_catalog_filters_routing_aliases() {
+        let catalog = json!({
+            "models": [
+                { "id": "glm-5.3", "vendor": "Tencent" },
+                { "id": "auto", "isDefault": true, "vendor": "Tencent" },
+                { "id": "default-model", "isDefault": true, "vendor": "Tencent" },
+                { "id": "auto-chat", "vendor": "Tencent" }
+            ]
+        });
+
+        let models = parse_models_catalog(&catalog);
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["glm-5.3"]
+        );
+
+        let cli_catalog = json!({
+            "agents": [{
+                "name": "cli",
+                "models": [
+                    "glm-5.3",
+                    "auto",
+                    { "id": "default-model", "isDefault": true },
+                    { "id": "hy4-preview" }
+                ]
+            }]
+        });
+        let models = parse_models_catalog(&cli_catalog);
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["glm-5.3", "hy4-preview"]
+        );
     }
 }

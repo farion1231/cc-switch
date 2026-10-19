@@ -983,7 +983,12 @@ fn cached_usage_view(
 
 // ─── 「需要路由」判定（镜像前端 `providerNeedsRouting`）──────────────────────────────
 
-const MANAGED_OAUTH_PROVIDER_TYPES: &[&str] = &["github_copilot", "codex_oauth", "xai_oauth"];
+const MANAGED_OAUTH_PROVIDER_TYPES: &[&str] = &[
+    "github_copilot",
+    "codex_oauth",
+    "xai_oauth",
+    "codebuddy_oauth",
+];
 
 /// 官方账号卡（同前端 `isOfficialAccount`）：Codex 早期绑定托管账号的官方卡没有 category，按身份认。
 fn is_official_account(app: &AppType, provider: &Provider) -> bool {

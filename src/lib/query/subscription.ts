@@ -204,16 +204,31 @@ export function useXaiOauthQuotaByAccountId(
 }
 
 /**
+ * CodeBuddy OAuth 额度（供应商卡片用）：按 meta.authBinding 解析绑定账号，
+ * 未绑定账号时跟随默认账号（accountId=null）。
+ */
+export function useCodebuddyOauthQuota(
+  meta: ProviderMeta | undefined,
+  options: UseCodexOauthQuotaOptions = {},
+) {
+  const accountId = resolveManagedAccountId(
+    meta,
+    PROVIDER_TYPES.CODEBUDDY_OAUTH,
+  );
+  return useCodebuddyOauthQuotaByAccountId(accountId, options);
+}
+
+/**
  * CodeBuddy OAuth 额度（按账号 ID）：授权中心逐个账号显示额度时用。
  * 返回结构与 SubscriptionQuota 不同，因此不走 keep-last-good，直接返回查询结果。
  */
 export function useCodebuddyOauthQuotaByAccountId(
-  accountId: string,
+  accountId: string | null,
   options: UseCodexOauthQuotaOptions = {},
 ): UseQueryResult<CodebuddyQuota> {
   const { enabled = true, autoQuery = false } = options;
   return useQuery({
-    queryKey: ["codebuddy_oauth", "quota", accountId],
+    queryKey: ["codebuddy_oauth", "quota", accountId ?? "default"],
     queryFn: () => subscriptionApi.getCodebuddyOauthQuota(accountId),
     enabled,
     refetchInterval: autoQuery ? REFETCH_INTERVAL : false,

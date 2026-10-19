@@ -394,7 +394,7 @@
     "tabAdvanced": "Gelişmiş",
     "tabProxy": "Yönlendirme",
     "authCenter": {
-      "description": "Sağlayıcı olarak GitHub Copilot, ChatGPT ve xAI aboneliklerini kullanın. Yönlendirme hizmeti kimlik bilgilerini enjekte eder, böylece bu sağlayıcılar Yönlendirme modunda çalışır (Codex'nin resmi oturum açma bağlaması hariç). CodeBuddy hesapları oturum açmak ve kalan credits tutarını görmek için kullanılır.",
+      "description": "Sağlayıcı olarak GitHub Copilot, ChatGPT, xAI ve CodeBuddy hesaplarını kullanın. Yönlendirme hizmeti kimlik bilgilerini enjekte eder, böylece bu sağlayıcılar Yönlendirme modunda çalışır (Codex'nin resmi oturum açma bağlaması hariç).",
       "beta": "beta",
       "copilotDescription": "GitHub Copilot hesaplarını yönetin",
       "codexOauthDescription": "ChatGPT hesaplarını yönetin",
@@ -1850,6 +1850,9 @@
   },
   "codebuddyOauth": {
     "authStatus": "CodeBuddy OAuth kimlik doğrulaması",
+    "selectAccount": "Hesap seçin",
+    "selectAccountPlaceholder": "Bir CodeBuddy hesabı seçin",
+    "useDefaultAccount": "Varsayılan hesabı kullan",
     "login": "CodeBuddy ile oturum açın",
     "addOrReauth": "Hesap ekleyin veya tekrar oturum açın",
     "waitingForAuth": "CodeBuddy yetkilendirmesi bekleniyor…",
@@ -2103,6 +2106,7 @@
       "chatgpt": "ChatGPT hesabıyla oturum açın",
       "github": "GitHub hesabıyla oturum açın",
       "xai": "Bir xAI hesabıyla oturum açın",
+      "codebuddy": "CodeBuddy hesabıyla oturum açın",
       "google": "Google hesabıyla oturum açın"
     },
     "versionCount": "{{domain}} · {{n}} versiyonları",
@@ -4047,7 +4051,8 @@
       "geminiFlashLite": "Lite",
       "monthly": "Ay",
       "credits": "Kredi",
-      "copilotPremium": "Premium"
+      "copilotPremium": "Premium",
+      "codebuddyCredits": "Kredi"
     },
     "fiveHour": "5 saat",
     "sevenDay": "Haftalık",
@@ -4764,7 +4769,7 @@
       "copilotHelp": "Claude Code ve Claude Desktop'deki GitHub Copilot ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "chatgptHelp": "Claude Code ve Claude Desktop'deki ChatGPT ön ayarları ve Codex'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
-      "codebuddyHelp": "CodeBuddy (Tencent copilot.tencent.com) hesapları için kullanılır: oturum açın ve kalan credits tutarını görün."
+      "codebuddyHelp": "Claude Code'daki CodeBuddy (Tencent copilot.tencent.com) sağlayıcısı için kullanılır. Belirli bir hesap seçmeyen sağlayıcılar varsayılan hesabı kullanır."
     },
     "addAccount": "Hesap ekle",
     "groupMenu": "{{service}} için daha fazla eylem",

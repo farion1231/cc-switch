@@ -406,7 +406,7 @@
     "tabAdvanced": "高级",
     "tabProxy": "路由",
     "authCenter": {
-      "description": "把 GitHub Copilot、ChatGPT、xAI 订阅当作供应商用。凭据由路由服务注入，相关供应商要在路由模式下使用（Codex 官方登录绑定除外）。CodeBuddy 账号用于登录并查看剩余额度。",
+      "description": "把 GitHub Copilot、ChatGPT、xAI、CodeBuddy 账号当作供应商用。凭据由路由服务注入，相关供应商要在路由模式下使用（Codex 官方登录绑定除外）。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 账号",
       "codexOauthDescription": "管理 ChatGPT 账号",
@@ -1869,6 +1869,9 @@
   },
   "codebuddyOauth": {
     "authStatus": "CodeBuddy OAuth 认证",
+    "selectAccount": "选择账号",
+    "selectAccountPlaceholder": "选择 CodeBuddy 账号",
+    "useDefaultAccount": "使用默认账号",
     "login": "使用 CodeBuddy 登录",
     "addOrReauth": "添加账号或重新登录",
     "waitingForAuth": "等待 CodeBuddy 授权中…",
@@ -2129,6 +2132,7 @@
       "chatgpt": "用 ChatGPT 账号登录",
       "github": "用 GitHub 账号登录",
       "xai": "用 xAI 账号登录",
+      "codebuddy": "用 CodeBuddy 账号登录",
       "google": "用 Google 账号登录"
     },
     "versionCount": "{{domain}} · {{n}} 个版本",
@@ -4105,7 +4109,8 @@
       "geminiFlashLite": "Lite",
       "monthly": "每月",
       "credits": "额度",
-      "copilotPremium": "高级请求"
+      "copilotPremium": "高级请求",
+      "codebuddyCredits": "额度"
     },
     "fiveHour": "5 小时",
     "sevenDay": "每周",
@@ -4843,7 +4848,7 @@
       "copilotHelp": "用于 Claude Code、Claude Desktop 的 GitHub Copilot 预设。没指定账号的供应商用「默认」账号。",
       "chatgptHelp": "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
       "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。",
-      "codebuddyHelp": "用于 CodeBuddy（腾讯 copilot.tencent.com）账号：登录账号并查看剩余额度。"
+      "codebuddyHelp": "用于 Claude Code 的 CodeBuddy（腾讯 copilot.tencent.com）供应商。没指定账号的供应商用「默认」账号。"
     },
     "addAccount": "添加账号",
     "groupMenu": "{{service}} 的更多操作",

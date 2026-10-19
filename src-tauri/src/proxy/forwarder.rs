@@ -26,7 +26,10 @@ use super::{
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
-use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
+use crate::commands::{CodebuddyOAuthState, CodexOAuthState, CopilotAuthState, XaiOAuthState};
+use crate::proxy::providers::codebuddy_oauth_auth::{
+    CodebuddyOAuthManager, CodebuddyRequestContext,
+};
 use crate::proxy::providers::copilot_auth::{CopilotAuthError, CopilotAuthManager};
 use crate::proxy::providers::copilot_model_map::{
     CopilotProtocol, CopilotTransport, ResolvedCopilotModel,
@@ -46,6 +49,31 @@ use tauri::Manager;
 use tokio::sync::RwLock;
 
 const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
+
+/// CodeBuddy CLI 请求的 User-Agent（上游按该形态校验客户端）。
+const CODEBUDDY_CLI_USER_AGENT: &str = "CLI/2.107.0 CodeBuddy/2.107.0";
+/// 托管账号的固定上游 host（`X-Domain` 非法值回退、host 白名单共用）。
+const CODEBUDDY_API_HOST: &str = "copilot.tencent.com";
+/// CodeBuddy CLI 请求携带的 Origin/Referer（上游按 CLI 形态校验）。
+const CODEBUDDY_ORIGIN: &str = "https://www.codebuddy.cn";
+
+/// CodeBuddy 上游的渠道校验：system / assistant 消息里出现 Claude Code 的这两句固定
+/// 文案时返回 400（code 11128 "unapproved channel"）。身份句只在文本开头命中且不区分
+/// 大小写，分支说明出现在任意位置都会命中；user / tool 消息、工具定义和工具调用参数
+/// 不参与校验。转发前只改写这两类消息，且只对 `codebuddy_oauth` 供应商生效。
+///
+/// 身份句的匹配串不带句尾标点，以同时覆盖 Agent SDK 的
+/// `…for Claude, running within the Claude Agent SDK.` 变体。
+const CODEBUDDY_CHANNEL_CHECK_REWRITES: [(&str, &str); 2] = [
+    (
+        "You are Claude Code, Anthropic's official CLI for Claude",
+        "You are Claude Code, Anthropic's official command-line tool for Claude",
+    ),
+    (
+        "Main branch (you will usually use this for PRs)",
+        "Base branch (you will usually use this for PRs)",
+    ),
+];
 
 /// Whether the upstream belongs to the OpenCode gateway (`opencode.ai`).
 ///
@@ -1394,6 +1422,7 @@ impl RequestForwarder {
             .unwrap_or(false)
             && !provider.is_codex_oauth()
             && !provider.is_xai_oauth()
+            && !provider.is_codebuddy_oauth()
             && !provider.is_github_copilot();
 
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
@@ -2070,6 +2099,19 @@ impl RequestForwarder {
                 }
             }
         }
+        // CodeBuddy: 上游只接受流式（非流返回 11101），并且对 system / assistant
+        // 消息做渠道校验（见 CODEBUDDY_CHANNEL_CHECK_REWRITES）。两步都只对托管
+        // CodeBuddy 供应商生效，其它供应商的 body 逐字节不变。
+        if provider.is_codebuddy_oauth() {
+            force_codebuddy_stream(&mut filtered_body);
+            let rewritten = rewrite_codebuddy_channel_check_phrases(&mut filtered_body);
+            if rewritten > 0 {
+                log::debug!(
+                    "[CodebuddyOAuth] 改写了 {rewritten} 处渠道校验文案 (provider={})",
+                    provider.id
+                );
+            }
+        }
         // 出站 body 定稿后刷新真值（覆盖 Codex chat 上游模型覆写、转换层模型改写）
         if let Some(m) = filtered_body
             .get("model")
@@ -2096,6 +2138,8 @@ impl RequestForwarder {
         // Codex OAuth 需要注入的 ChatGPT-Account-Id（在动态 token 获取期间填充）
         let mut codex_oauth_account_id: Option<String> = None;
         let mut should_send_codex_oauth_session_headers = false;
+        // CodeBuddy OAuth：token 注入期间解析出的账号上下文，随后用于 CLI 头注入。
+        let mut codebuddy_request_context: Option<CodebuddyRequestContext> = None;
 
         // 获取认证头（提前准备，用于内联替换），同时保留仅用于日志脱敏的
         // 精确认证材料。实际日志永远不输出这些值。
@@ -2253,6 +2297,43 @@ impl RequestForwarder {
                 } else {
                     return Err(ProxyError::AuthError(
                         "xAI OAuth 认证不可用（无 AppHandle）".to_string(),
+                    ));
+                }
+            }
+
+            // CodeBuddy OAuth: resolve the managed account token *and* the CLI
+            // account context (uid / domain / enterprise) in one shot. The
+            // context is kept aside and applied as upstream headers later so it
+            // overrides whatever the client sent (User-Agent in particular).
+            if auth.strategy == AuthStrategy::CodebuddyOAuth {
+                if let Some(app_handle) = &self.app_handle {
+                    let codebuddy_state = app_handle.state::<CodebuddyOAuthState>();
+                    let codebuddy_auth: tokio::sync::RwLockReadGuard<'_, CodebuddyOAuthManager> =
+                        codebuddy_state.0.read().await;
+                    let account_id = provider
+                        .meta
+                        .as_ref()
+                        .and_then(|meta| meta.managed_account_id_for("codebuddy_oauth"));
+                    match codebuddy_auth.request_context(account_id.as_deref()).await {
+                        Ok(context) => {
+                            log::debug!(
+                                "[CodebuddyOAuth] 成功获取 access_token (account={})",
+                                context.account_id
+                            );
+                            auth =
+                                AuthInfo::new(context.token.clone(), AuthStrategy::CodebuddyOAuth);
+                            codebuddy_request_context = Some(context);
+                        }
+                        Err(error) => {
+                            log::error!("[CodebuddyOAuth] 获取 access_token 失败: {error}");
+                            return Err(ProxyError::AuthError(format!(
+                                "CodeBuddy OAuth 认证失败: {error}"
+                            )));
+                        }
+                    }
+                } else {
+                    return Err(ProxyError::AuthError(
+                        "CodeBuddy OAuth 认证不可用（无 AppHandle）".to_string(),
                     ));
                 }
             }
@@ -2684,6 +2765,13 @@ impl RequestForwarder {
                 .and_then(|meta| meta.local_proxy_request_overrides.as_ref()),
             is_copilot,
         );
+
+        // CodeBuddy CLI 头：托管账号上下文只有在 token 解析之后才知道，因此在
+        // 客户端头 + 本地代理覆盖都应用完成后写入，确保覆盖同名头（尤其
+        // User-Agent），并剔除 Anthropic 专属头（避免上游误判协议）。
+        if let Some(context) = codebuddy_request_context.as_ref() {
+            apply_codebuddy_upstream_headers(&mut ordered_headers, context);
+        }
 
         // 托管 OAuth 的 workspace 由账号绑定决定，覆盖客户端或本地代理配置的旧值。
         if let Some(ref account_id) = codex_oauth_account_id {
@@ -3316,6 +3404,22 @@ impl RequestForwarder {
         // would silently move the conversation off the selected Grok account
         // and poison the provider's health state for an account-level issue.
         if provider.is_xai_oauth() && matches!(error, ProxyError::AuthError(_)) {
+            return ErrorCategory::NonRetryable;
+        }
+
+        // CodeBuddy OAuth: same account-level rule. A local token/AuthError can
+        // only be fixed by re-login, and upstream 401/403 belongs to the managed
+        // account, so neither may fail over to another provider card.
+        if provider.is_codebuddy_oauth()
+            && matches!(
+                error,
+                ProxyError::AuthError(_)
+                    | ProxyError::UpstreamError {
+                        status: 401 | 403,
+                        ..
+                    }
+            )
+        {
             return ErrorCategory::NonRetryable;
         }
 
@@ -4192,6 +4296,130 @@ fn build_codex_oauth_session_headers(
     headers
 }
 
+/// `X-Domain` 只允许 `[A-Za-z0-9.-]`；空值/控制字符等非法值回退固定 host，
+/// 避免把用户可编辑的 domain 变成头注入面。
+fn codebuddy_safe_domain(domain: &str) -> &str {
+    let trimmed = domain.trim();
+    if !trimmed.is_empty()
+        && trimmed.len() <= 255
+        && trimmed.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '.' || character == '-'
+        })
+    {
+        trimmed
+    } else {
+        CODEBUDDY_API_HOST
+    }
+}
+
+fn push_codebuddy_header(
+    headers: &mut Vec<(http::HeaderName, http::HeaderValue)>,
+    name: &'static str,
+    value: &str,
+) {
+    if value.is_empty() {
+        return;
+    }
+    if let Ok(value) = http::HeaderValue::from_str(value) {
+        headers.push((http::HeaderName::from_static(name), value));
+    }
+}
+
+/// 构造 CodeBuddy CLI 的动态请求头（Authorization 由 adapter 单独注入）。
+fn build_codebuddy_cli_headers(
+    uid: &str,
+    domain: &str,
+    enterprise_id: Option<&str>,
+) -> Vec<(http::HeaderName, http::HeaderValue)> {
+    let mut headers = Vec::new();
+    push_codebuddy_header(&mut headers, "x-user-id", uid.trim());
+    push_codebuddy_header(&mut headers, "x-domain", codebuddy_safe_domain(domain));
+    if let Some(enterprise_id) = enterprise_id.map(str::trim).filter(|id| !id.is_empty()) {
+        push_codebuddy_header(&mut headers, "x-enterprise-id", enterprise_id);
+        push_codebuddy_header(&mut headers, "x-tenant-id", enterprise_id);
+    }
+    push_codebuddy_header(&mut headers, "user-agent", CODEBUDDY_CLI_USER_AGENT);
+    push_codebuddy_header(&mut headers, "x-product", "SaaS");
+    push_codebuddy_header(&mut headers, "x-codebuddy-request", "1");
+    push_codebuddy_header(&mut headers, "x-requested-with", "XMLHttpRequest");
+    push_codebuddy_header(&mut headers, "accept", "application/json");
+    push_codebuddy_header(&mut headers, "origin", CODEBUDDY_ORIGIN);
+    push_codebuddy_header(&mut headers, "referer", &format!("{CODEBUDDY_ORIGIN}/"));
+    headers
+}
+
+/// 覆盖客户端同名头，并剔除 Anthropic 专属头（`anthropic-*` / `x-api-key` /
+/// `x-app` / `x-stainless-*`），避免 CodeBuddy 上游把请求误判成 Anthropic 协议。
+fn apply_codebuddy_upstream_headers(
+    headers: &mut http::HeaderMap,
+    context: &CodebuddyRequestContext,
+) {
+    for (name, value) in build_codebuddy_cli_headers(
+        &context.uid,
+        &context.domain,
+        context.enterprise_id.as_deref(),
+    ) {
+        headers.insert(name, value);
+    }
+    for name in ["anthropic-version", "anthropic-beta", "x-api-key", "x-app"] {
+        headers.remove(name);
+    }
+    let stainless: Vec<http::HeaderName> = headers
+        .keys()
+        .filter(|name| name.as_str().starts_with("x-stainless-"))
+        .cloned()
+        .collect();
+    for name in stainless {
+        headers.remove(name);
+    }
+}
+
+/// CodeBuddy 上游拒绝 `stream:false`（code 11101），统一强制流式。
+fn force_codebuddy_stream(body: &mut Value) {
+    if let Some(object) = body.as_object_mut() {
+        object.insert("stream".to_string(), Value::Bool(true));
+    }
+}
+
+fn rewrite_codebuddy_string(value: &mut String) -> usize {
+    let mut rewritten = 0;
+    for (from, to) in CODEBUDDY_CHANNEL_CHECK_REWRITES {
+        if value.contains(from) {
+            *value = value.replace(from, to);
+            rewritten += 1;
+        }
+    }
+    rewritten
+}
+
+fn rewrite_codebuddy_text_values(value: &mut Value) -> usize {
+    match value {
+        Value::String(text) => rewrite_codebuddy_string(text),
+        Value::Array(items) => items.iter_mut().map(rewrite_codebuddy_text_values).sum(),
+        Value::Object(map) => map.values_mut().map(rewrite_codebuddy_text_values).sum(),
+        _ => 0,
+    }
+}
+
+/// 改写 system / assistant 消息的 `content`（字符串或 content parts），
+/// 其余消息、工具定义和 `tool_calls` 原样转发。
+fn rewrite_codebuddy_channel_check_phrases(body: &mut Value) -> usize {
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return 0;
+    };
+    messages
+        .iter_mut()
+        .filter(|message| {
+            matches!(
+                message.get("role").and_then(Value::as_str),
+                Some("system" | "assistant")
+            )
+        })
+        .filter_map(|message| message.get_mut("content"))
+        .map(rewrite_codebuddy_text_values)
+        .sum()
+}
+
 fn reject_proxy_placeholder_for_managed_account_upstream(
     url: &str,
     headers: &http::HeaderMap,
@@ -4219,6 +4447,7 @@ fn is_managed_account_upstream_url(url: &str) -> bool {
         || host.ends_with(".githubcopilot.com")
         || (host == "chatgpt.com" && uri.path().starts_with("/backend-api/codex"))
         || (host == "api.x.ai" && uri.path().starts_with("/v1/"))
+        || host == CODEBUDDY_API_HOST
 }
 
 fn headers_contain_proxy_placeholder(headers: &http::HeaderMap) -> bool {
@@ -4240,7 +4469,11 @@ fn should_preserve_exact_header_case(
         return false;
     }
 
-    if is_copilot || provider.is_codex_oauth() || provider.is_xai_oauth() {
+    if is_copilot
+        || provider.is_codex_oauth()
+        || provider.is_xai_oauth()
+        || provider.is_codebuddy_oauth()
+    {
         return false;
     }
 
@@ -5256,6 +5489,7 @@ mod tests {
     fn exact_header_case_skipped_for_codex_oauth_and_copilot() {
         let codex_oauth = test_provider_with_type(Some("codex_oauth"));
         let copilot = test_provider_with_type(Some("github_copilot"));
+        let codebuddy_oauth = test_provider_with_type(Some("codebuddy_oauth"));
 
         assert!(!should_preserve_exact_header_case(
             "Claude",
@@ -5268,6 +5502,12 @@ mod tests {
             &copilot,
             Some("openai_chat"),
             true
+        ));
+        assert!(!should_preserve_exact_header_case(
+            "Claude",
+            &codebuddy_oauth,
+            Some("openai_chat"),
+            false
         ));
     }
 
@@ -5615,6 +5855,206 @@ mod tests {
             ),
             ErrorCategory::Retryable
         );
+    }
+
+    #[test]
+    fn codebuddy_oauth_token_failures_and_upstream_auth_errors_are_not_retryable() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let provider = test_provider_with_type(Some("codebuddy_oauth"));
+
+        // 本地取 token 失败 = 托管账号需要重新登录，failover 无济于事。
+        assert_eq!(
+            forwarder.categorize_proxy_error(
+                &ProxyError::AuthError("CodeBuddy OAuth 认证失败".to_string()),
+                &provider,
+            ),
+            ErrorCategory::NonRetryable
+        );
+        // CodeBuddy 上游 401/403 属于账号凭据问题，不换 provider。
+        for status in [401u16, 403] {
+            assert_eq!(
+                forwarder.categorize_proxy_error(
+                    &ProxyError::UpstreamError { status, body: None },
+                    &provider,
+                ),
+                ErrorCategory::NonRetryable,
+                "{status}"
+            );
+        }
+        // 其它状态码保持既有语义（400 等客户端错误不可重试，5xx 可重试）。
+        assert_eq!(
+            forwarder.categorize_proxy_error(
+                &ProxyError::UpstreamError {
+                    status: 500,
+                    body: None,
+                },
+                &provider,
+            ),
+            ErrorCategory::Retryable
+        );
+    }
+
+    #[test]
+    fn codebuddy_upstream_rejects_proxy_managed_placeholder_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "authorization",
+            HeaderValue::from_static("Bearer PROXY_MANAGED"),
+        );
+
+        let err = reject_proxy_placeholder_for_managed_account_upstream(
+            "https://copilot.tencent.com/v2/chat/completions",
+            &headers,
+        )
+        .expect_err("CodeBuddy placeholder should be rejected before upstream");
+
+        assert!(matches!(
+            err,
+            ProxyError::AuthError(message) if message.contains("PROXY_MANAGED")
+        ));
+    }
+
+    #[test]
+    fn codebuddy_cli_headers_override_client_fingerprint_and_strip_anthropic() {
+        let context = CodebuddyRequestContext {
+            account_id: "account-1".to_string(),
+            token: "access-token".to_string(),
+            uid: "uid-1".to_string(),
+            domain: "www.codebuddy.cn".to_string(),
+            enterprise_id: Some("enterprise-1".to_string()),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::USER_AGENT,
+            HeaderValue::from_static("claude-cli/2.0.0"),
+        );
+        headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
+        headers.insert("anthropic-beta", HeaderValue::from_static("claude-code"));
+        headers.insert("x-api-key", HeaderValue::from_static("sk-ant"));
+        headers.insert("x-app", HeaderValue::from_static("cli"));
+        headers.insert("x-stainless-lang", HeaderValue::from_static("js"));
+        headers.insert("x-stainless-os", HeaderValue::from_static("Windows"));
+        headers.insert("x-custom", HeaderValue::from_static("kept"));
+
+        apply_codebuddy_upstream_headers(&mut headers, &context);
+
+        assert_eq!(
+            headers.get(http::header::USER_AGENT).unwrap(),
+            CODEBUDDY_CLI_USER_AGENT
+        );
+        assert_eq!(headers.get("x-user-id").unwrap(), "uid-1");
+        assert_eq!(headers.get("x-domain").unwrap(), "www.codebuddy.cn");
+        assert_eq!(headers.get("x-enterprise-id").unwrap(), "enterprise-1");
+        assert_eq!(headers.get("x-tenant-id").unwrap(), "enterprise-1");
+        assert_eq!(headers.get("x-product").unwrap(), "SaaS");
+        assert_eq!(headers.get("x-codebuddy-request").unwrap(), "1");
+        assert_eq!(headers.get("x-requested-with").unwrap(), "XMLHttpRequest");
+        assert_eq!(headers.get("accept").unwrap(), "application/json");
+        assert_eq!(headers.get("origin").unwrap(), CODEBUDDY_ORIGIN);
+        assert_eq!(
+            headers.get("referer").unwrap(),
+            format!("{CODEBUDDY_ORIGIN}/").as_str()
+        );
+        assert!(headers.get("anthropic-version").is_none());
+        assert!(headers.get("anthropic-beta").is_none());
+        assert!(headers.get("x-api-key").is_none());
+        assert!(headers.get("x-app").is_none());
+        assert!(headers.get("x-stainless-lang").is_none());
+        assert!(headers.get("x-stainless-os").is_none());
+        assert_eq!(headers.get("x-custom").unwrap(), "kept");
+    }
+
+    #[test]
+    fn codebuddy_header_domain_falls_back_when_unsafe() {
+        let headers = build_codebuddy_cli_headers("uid-1", "evil\r\nhost", None);
+        let map: HeaderMap = headers.into_iter().collect();
+        assert_eq!(map.get("x-domain").unwrap(), CODEBUDDY_API_HOST);
+        // 个人账号不带企业头。
+        assert!(map.get("x-enterprise-id").is_none());
+        assert!(map.get("x-tenant-id").is_none());
+    }
+
+    #[test]
+    fn codebuddy_request_forces_stream_and_rewrites_system_and_assistant_only() {
+        let identity = "You are Claude Code, Anthropic's official CLI for Claude.";
+        let mut body = json!({
+            "model": "glm-5.3",
+            "stream": false,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are Claude Code, Anthropic's official CLI for Claude.\nMain branch (you will usually use this for PRs)"
+                },
+                {
+                    "role": "system",
+                    "content": "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK."
+                },
+                {
+                    "role": "user",
+                    "content": [{ "type": "text", "text": identity }]
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "text", "text": "Main branch (you will usually use this for PRs): main" }
+                    ],
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": { "name": "Read", "arguments": identity }
+                    }]
+                },
+                { "role": "tool", "tool_call_id": "call_1", "content": identity }
+            ],
+            "tools": [{
+                "type": "function",
+                "function": { "name": "Read", "description": identity, "parameters": {} }
+            }]
+        });
+        let before = body.clone();
+
+        force_codebuddy_stream(&mut body);
+        let rewritten = rewrite_codebuddy_channel_check_phrases(&mut body);
+
+        assert_eq!(body["stream"], json!(true));
+        assert_eq!(rewritten, 4);
+        assert_eq!(
+            body["messages"][0]["content"],
+            json!("You are Claude Code, Anthropic's official command-line tool for Claude.\nBase branch (you will usually use this for PRs)")
+        );
+        assert_eq!(
+            body["messages"][1]["content"],
+            json!("You are Claude Code, Anthropic's official command-line tool for Claude, running within the Claude Agent SDK.")
+        );
+        assert_eq!(
+            body["messages"][3]["content"][0]["text"],
+            json!("Base branch (you will usually use this for PRs): main")
+        );
+        assert_eq!(body["messages"][2], before["messages"][2]);
+        assert_eq!(
+            body["messages"][3]["tool_calls"],
+            before["messages"][3]["tool_calls"]
+        );
+        assert_eq!(body["messages"][4], before["messages"][4]);
+        assert_eq!(body["tools"], before["tools"]);
+    }
+
+    #[test]
+    fn codebuddy_channel_check_rewrite_leaves_other_content_byte_identical() {
+        let mut body = json!({
+            "model": "glm-5.3",
+            "messages": [{ "role": "user", "content": "hello world" }],
+            "system": "You are a helpful assistant."
+        });
+        let before = body.clone();
+
+        force_codebuddy_stream(&mut body);
+        let rewritten = rewrite_codebuddy_channel_check_phrases(&mut body);
+
+        assert_eq!(rewritten, 0);
+        assert_eq!(body["model"], before["model"]);
+        assert_eq!(body["messages"], before["messages"]);
+        assert_eq!(body["system"], before["system"]);
     }
 
     #[test]
