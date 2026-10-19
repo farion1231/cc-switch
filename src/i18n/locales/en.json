@@ -1613,6 +1613,8 @@
       "fluxa": "FluxA and Baidu AI Cloud jointly launched AgenticPlan, letting AI agents buy, manage and use models, APIs and tools on their own. It includes Baidu Qianfan TokenPlan at up to 40% off with flagship models such as DeepSeek V4, GLM 5.2 and Kimi, plus bonus FluxA AgentMarket API credits that unlock 13,000+ paid APIs for search, data scraping, social media, finance, crypto, image generation and video.",
       "88api": "88API is a one-stop multi-model API platform run by a Hong Kong company, giving unified access to text, image, speech and video models. It accepts major international payment methods, can issue invoices and provides enterprise-grade stable service. Sign up through the exclusive link to receive bonus credits!",
       "modelflare": "Modelflare is a stable, lower-cost AI model gateway: one key reaches GPT, Claude, Gemini, Grok, and other leading models. Exclusive for CC Switch users: use the code \"CCSWITCH\" on your first top-up for 10% off!",
+      "everyapi": "EveryAPI ships its own desktop client that auto-configures Claude Code, Codex, Cursor, and 20+ other tools in one click; one key reaches Claude, GPT, DeepSeek, GLM, MiniMax, Kimi, and Doubao, so switching models needs no config changes. Get ¥14 in free credit on sign-up and an extra 20% on your first top-up. Exclusive for CC Switch users: use the code \"ccswitch\" at checkout for a further 20% off, with no expiry!",
+      "alltokens": "AllTokens is built on stability and honesty, aiming to make every AI call stable, genuine, and trustworthy: reliable service, transparent billing, and one platform for GPT, Claude, Gemini, Grok, DeepSeek, GLM, Kimi, and other leading models, with pay-as-you-go pricing and spending caps. Get $1 in free trial credit when you sign up!",
       "openmodel": "OpenModel offers client-specific discounts of up to 90% for Codex and 60% for Claude Code across supported models. CC Switch users who register via this link and use promo code \"cc-switch\" get 10% off their first top-up!",
       "grooroute": "GrooRoute Pro is a reliable AI API relay with access to OpenAI, Claude, DeepSeek, and other mainstream models, offering pay-as-you-go and subscription plans. CC Switch users get ¥5 in free trial credit by registering via this link!"
     },
@@ -2391,7 +2393,12 @@
       },
       "sidebarTodayLimit": "Pick up to {{count}}",
       "logColumns": "Request log columns",
-      "logColumnsSummary": "{{shown}} of {{total}} columns"
+      "logColumnsSummary": "{{shown}} of {{total}} columns",
+      "trendChartType": "Trend chart",
+      "trendChartTypes": {
+        "bar": "Bar",
+        "area": "Area"
+      }
     },
     "providerFilter": {
       "label": "Provider",
@@ -3139,6 +3146,7 @@
       "modelName": "Display name",
       "modelNamePlaceholder": "Claude Opus 5",
       "contextLength": "Context length",
+      "supportsVision": "Supports image input",
       "toggleModelDetails": "Expand or collapse model details",
       "removeModel": "Remove model",
       "modelsHint": "When activated, the first model becomes the Hermes default.",
@@ -4236,6 +4244,11 @@
       "enteredStackLive": "{{app}} switched to Aggregation. The aggregated models are now in /model.",
       "enteredStackDesktop": "{{app}} switched to Aggregation. Restart {{app}} to see the aggregated models in its model list.",
       "exited": "Back to direct: {{app}} now connects to {{provider}} directly.",
+      "routeRemembered": "Provider {{provider}} saved for when the client connects through routing or aggregation.",
+      "routeTargetChanged": "Route target set to {{provider}}.",
+      "routeSwitched": "Route switched to {{provider}}. New requests will use this provider.",
+      "stackDefaultChanged": "Aggregation default set to {{provider}}. Selected aggregated models still use their respective providers.",
+      "clientConfigChanged": " Client configuration also changed. Restart {{app}} to load the updated configuration.",
       "defaultRemembered": "{{provider}} will be the default provider once you switch to Aggregation.",
       "restartHint": " Restart {{app}} to apply.",
       "failed": "Couldn't switch: {{detail}}"

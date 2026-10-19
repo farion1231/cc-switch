@@ -1614,6 +1614,8 @@
       "fluxa": "FluxA 與百度智能雲聯合推出 AgenticPlan，讓 AI Agent 能自主購買、管理和使用模型、API 與工具。內含百度千帆 TokenPlan，低至 6 折，可使用 DeepSeek V4、GLM 5.2、Kimi 等旗艦模型，並獲贈 FluxA AgentMarket API 呼叫額度，解鎖搜尋、資料抓取、社群媒體、金融、加密、生圖、影片等 13000+ 付費 API。",
       "88api": "88API 是由香港企業營運的一站式多模型 API 平台，透過統一介面接入文字、圖片、語音和影片模型，支援國際主流付款方式，可開立發票，提供企業級穩定服務。透過專屬連結註冊可獲得專屬贈送額度！",
       "modelflare": "Modelflare 是穩定、低成本的 AI 模型閘道，一個 Key 即可呼叫 GPT、Claude、Gemini、Grok 等主流模型。CC Switch 使用者專享福利：首次儲值使用優惠碼「CCSWITCH」可享 9 折優惠！",
+      "everyapi": "EveryAPI 自帶桌面客戶端，Claude Code、Codex、Cursor 等 20 多個工具一鍵自動設定；一把金鑰直接呼叫 Claude、GPT、DeepSeek、GLM、MiniMax、Kimi、豆包，換模型不用改設定。註冊即送 14 元額度，首儲額外加送 20%；CC Switch 使用者專享：付款時使用折扣碼「ccswitch」再打 8 折，不限時！",
+      "alltokens": "AllTokens 秉持「穩定為基，真實為本」，致力於讓每一次 AI 呼叫都穩定、真實、值得託付：服務可靠、計費透明，一個平台接入 GPT、Claude、Gemini、Grok、DeepSeek、GLM、Kimi 等主流模型，按量計費、支援額度上限。註冊即送 1 美元體驗金！",
       "openmodel": "OpenModel 為 Codex 和 Claude Code 提供客戶端專屬折扣，所支援的模型透過 Codex 呼叫最高優惠 90%、透過 Claude Code 呼叫最高優惠 60%。CC Switch 使用者透過此連結註冊並使用優惠碼「cc-switch」，即可享受首次儲值九折優惠！",
       "grooroute": "GrooRoute Pro 是可靠流暢的 AI API 中轉服務平台，接入 OpenAI、Claude、DeepSeek 等主流大模型，支援按量計費與訂閱方案。CC Switch 使用者透過此連結註冊即可獲得免費 5 元體驗額度！"
     },
@@ -2392,7 +2394,12 @@
       },
       "sidebarTodayLimit": "最多選 {{count}} 項",
       "logColumns": "請求日誌的欄位",
-      "logColumnsSummary": "{{shown}} / {{total}} 欄"
+      "logColumnsSummary": "{{shown}} / {{total}} 欄",
+      "trendChartType": "趨勢圖樣式",
+      "trendChartTypes": {
+        "bar": "長條圖",
+        "area": "曲線面積圖"
+      }
     },
     "providerFilter": {
       "label": "供應商",
@@ -3140,6 +3147,7 @@
       "modelName": "顯示名稱",
       "modelNamePlaceholder": "Claude Opus 5",
       "contextLength": "上下文長度",
+      "supportsVision": "支援圖片輸入",
       "toggleModelDetails": "展開或收合模型詳細資訊",
       "removeModel": "移除模型",
       "modelsHint": "啟用為目前供應商時，第一個模型會設為 Hermes 預設模型。",
@@ -4237,6 +4245,11 @@
       "enteredStackLive": "{{app}} 已切換到聚合模式，聚合的模型已出現在 /model 裡。",
       "enteredStackDesktop": "{{app}} 已切換到聚合模式。重新啟動 {{app}} 後，聚合的模型會出現在模型清單裡。",
       "exited": "已回到直連：{{app}} 現在直接連線 {{provider}}。",
+      "routeRemembered": "已記住供應商 {{provider}}，用戶端接入路由或聚合後使用。",
+      "routeTargetChanged": "路由目標已設為 {{provider}}。",
+      "routeSwitched": "路由已切換至 {{provider}}，後續新請求將使用此供應商。",
+      "stackDefaultChanged": "聚合預設供應商已設為 {{provider}}；已選聚合模型仍使用各自的供應商。",
+      "clientConfigChanged": "用戶端設定也已更新；重新啟動 {{app}} 以載入更新後的設定。",
       "defaultRemembered": "切換到聚合模式後，預設供應商是 {{provider}}。",
       "restartHint": "重新啟動 {{app}} 後生效。",
       "failed": "切換失敗：{{detail}}"

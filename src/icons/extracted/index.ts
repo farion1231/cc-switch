@@ -2,6 +2,7 @@
 // Update entries deliberately; automatic regeneration is intentionally unsupported.
 
 import _88api from "./88api.png";
+import _alltokens from "./alltokens.png";
 import _a6api from "./a6-icon.png";
 import _apikeyfun from "./apikeyfun.png";
 import _apinebula from "./apinebula_icon.png";
@@ -17,6 +18,7 @@ import _code0 from "./code0.png";
 import _dmxapi from "./dmxapi.png";
 import _eflowcode from "./eflowcode.png";
 import _etok from "./etok.png";
+import _everyapi from "./everyapi.svg?url";
 import _fenno from "./fenno-icon.png";
 import _fluxa from "./fluxa.png";
 import _grooroute from "./grooroute.jpg";
@@ -149,6 +151,7 @@ export const icons: Record<string, string> = {
 
 export const iconUrls: Record<string, string> = {
   "88api": _88api,
+  alltokens: _alltokens,
   a6api: _a6api,
   apikeyfun: _apikeyfun,
   apinebula: _apinebula,
@@ -164,6 +167,7 @@ export const iconUrls: Record<string, string> = {
   dmxapi: _dmxapi,
   eflowcode: _eflowcode,
   etok: _etok,
+  everyapi: _everyapi,
   fenno: _fenno,
   fluxa: _fluxa,
   grooroute: _grooroute,

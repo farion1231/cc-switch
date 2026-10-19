@@ -492,6 +492,27 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     partnerPromotionKey: "modelflare",
     icon: "modelflare",
   },
+  {
+    name: "AllTokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    // Sub2API 网关：Key 绑定单个分组，须用 Gemini 分组的 Key（分组与模型见
+    // alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://alltokens.cc",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://alltokens.cc",
+    model: "gemini-3.8-flash",
+    description: "AllTokens",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",

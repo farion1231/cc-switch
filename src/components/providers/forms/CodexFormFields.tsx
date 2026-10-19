@@ -448,9 +448,13 @@ function ReasoningLevelsEditor({
         sideOffset={6}
         avoidCollisions
         collisionPadding={8}
-        className="z-[1000] w-[var(--radix-popover-trigger-width)] p-0 border-border"
+        // Flipping alone can't help when neither side of the trigger has
+        // room for the whole panel (short window, row mid-form): cap it to
+        // the space Radix measured and let the level list scroll instead of
+        // cutting off the bottom, including the default-level picker.
+        className="z-[1000] flex max-h-[var(--radix-popover-content-available-height)] w-[var(--radix-popover-trigger-width)] flex-col p-0 border-border"
       >
-        <Command>
+        <Command className="min-h-0 flex-1">
           <CommandInput
             placeholder={t("codexConfig.reasoningLevelsSearch", {
               defaultValue: "Search reasoning levels...",
@@ -482,7 +486,7 @@ function ReasoningLevelsEditor({
           </CommandList>
         </Command>
         {selected.length > 0 && (
-          <div className="border-t border-border p-2">
+          <div className="shrink-0 border-t border-border p-2">
             <span className="text-xs text-fg-2">
               {t("codexConfig.defaultReasoningLevelLabel", {
                 defaultValue: "Default level",

@@ -4,8 +4,10 @@ use std::io;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use windows_sys::Win32::Foundation::CloseHandle;
-use windows_sys::Win32::Globalization::{CompareStringOrdinal, CSTR_GREATER_THAN, CSTR_LESS_THAN};
+use windows_sys::Win32::Foundation::{CloseHandle, TRUE};
+use windows_sys::Win32::Globalization::{
+    CompareStringOrdinal, CSTR_EQUAL, CSTR_GREATER_THAN, CSTR_LESS_THAN,
+};
 use windows_sys::Win32::System::Environment::{FreeEnvironmentStringsW, GetEnvironmentStringsW};
 use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows_sys::Win32::System::Threading::{
@@ -26,7 +28,7 @@ fn append_windows_arg(line: &mut Vec<u16>, value: &OsStr, force_quotes: bool) ->
         || units.is_empty()
         || units
             .iter()
-            .any(|unit| matches!(*unit, 9 | 10 | 11 | 12 | 13 | 32 | 34));
+            .any(|unit| u8::try_from(*unit).is_ok_and(|byte| b" \t\n\x0b\x0c\r\"".contains(&byte)));
     if !quote {
         line.extend(units);
         return Ok(());
@@ -70,27 +72,20 @@ fn system_directory() -> io::Result<PathBuf> {
 }
 
 fn console_executable(program: &OsStr) -> io::Result<PathBuf> {
-    let path = Path::new(program);
-    if path.is_absolute() {
-        return Ok(path.to_path_buf());
-    }
     let relative = match program.to_str() {
-        Some(name) if name.eq_ignore_ascii_case("cmd") || name.eq_ignore_ascii_case("cmd.exe") => {
-            "cmd.exe"
-        }
-        Some(name)
-            if name.eq_ignore_ascii_case("powershell")
-                || name.eq_ignore_ascii_case("powershell.exe") =>
-        {
-            "WindowsPowerShell/v1.0/powershell.exe"
-        }
+        Some("cmd") => "cmd.exe",
+        Some("powershell") => "WindowsPowerShell/v1.0/powershell.exe",
         _ => {
             return Err(invalid_input(
-                "new console requires a system shell or absolute executable",
+                "new console supports only the system cmd and PowerShell",
             ))
         }
     };
     Ok(system_directory()?.join(relative))
+}
+
+pub(super) fn system_cmd_path() -> io::Result<PathBuf> {
+    console_executable(OsStr::new("cmd"))
 }
 
 pub(super) fn system_powershell_path() -> io::Result<PathBuf> {
@@ -128,12 +123,12 @@ fn compare_environment_names(left: &[u16], right: &[u16]) -> Ordering {
             left.len() as i32,
             right.as_ptr(),
             right.len() as i32,
-            1,
+            TRUE,
         )
     } {
         CSTR_LESS_THAN => Ordering::Less,
         CSTR_GREATER_THAN => Ordering::Greater,
-        2 => Ordering::Equal,
+        CSTR_EQUAL => Ordering::Equal,
         _ => left.cmp(right),
     }
 }
@@ -274,8 +269,8 @@ mod tests {
     #[test]
     fn new_console_keeps_unicode_paths_and_clears_parent_session() {
         use super::super::misc::{
-            configure_windows_batch_env_with, WINDOWS_BATCH_PATH_COMMAND, WINDOWS_CONFIG_PATH_ENV,
-            WINDOWS_CWD_ENV, WINDOWS_POWERSHELL_BATCH_COMMAND,
+            configure_windows_batch_env, windows_powershell_run_and_delete_batch,
+            WINDOWS_CONFIG_PATH_ENV, WINDOWS_CWD_ENV, WINDOWS_RUN_AND_DELETE_BATCH,
         };
 
         let temp = tempfile::tempdir().unwrap();
@@ -296,13 +291,13 @@ mod tests {
 
             let mut command = Command::new(shell);
             if shell == "cmd" {
-                command.args(["/D", "/V:OFF", "/C", WINDOWS_BATCH_PATH_COMMAND]);
+                command.args(["/D", "/V:OFF", "/C", WINDOWS_RUN_AND_DELETE_BATCH]);
             } else {
                 command.args([
                     "-NoProfile",
                     "-NonInteractive",
                     "-Command",
-                    WINDOWS_POWERSHELL_BATCH_COMMAND,
+                    &windows_powershell_run_and_delete_batch(),
                 ]);
             }
             command
@@ -312,7 +307,7 @@ mod tests {
                 .env("CC_SWITCH_CMD_EXPAND", "wrong");
             let batch_path = batch.to_string_lossy();
             let config_path = marker.to_string_lossy();
-            configure_windows_batch_env_with(
+            configure_windows_batch_env(
                 &mut command,
                 &batch_path,
                 &[
@@ -337,6 +332,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "child-process entry point for console stream tests"]
     fn stdio_child_probe() {
         let Some(shell) = std::env::var_os("CC_SWITCH_CONSOLE_TEST_SHELL") else {
             return;
@@ -373,6 +369,7 @@ mod tests {
             .args([
                 "--exact",
                 "commands::windows_console::tests::stdio_child_probe",
+                "--ignored",
                 "--nocapture",
             ])
             .current_dir(temp.path())
@@ -403,6 +400,7 @@ mod tests {
                 .args([
                     "--exact",
                     "commands::windows_console::tests::stdio_child_probe",
+                    "--ignored",
                     "--nocapture",
                 ])
                 .env("CC_SWITCH_CONSOLE_TEST_SHELL", shell)

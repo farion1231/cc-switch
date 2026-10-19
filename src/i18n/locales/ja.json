@@ -1613,6 +1613,8 @@
       "fluxa": "FluxA と Baidu AI Cloud が共同で提供する AgenticPlan は、AI エージェントがモデル・API・ツールを自ら購入し、管理し、利用できるようにします。百度千帆 TokenPlan を最大 40% オフで含み、DeepSeek V4・GLM 5.2・Kimi などの主力モデルを利用可能。さらに FluxA AgentMarket の API クレジットが付き、検索・データ取得・ソーシャルメディア・金融・暗号資産・画像生成・動画など 13,000 以上の有料 API を利用できます。",
       "88api": "88API は香港企業が運営するワンストップのマルチモデル API プラットフォームで、統一インターフェースからテキスト・画像・音声・動画モデルを利用できます。主要な国際決済方法に対応し、請求書の発行も可能で、エンタープライズ級の安定したサービスを提供します。専用リンクから登録すると特典クレジットがもらえます！",
       "modelflare": "Modelflare は安定・低コストの AI モデルゲートウェイで、1 つのキーで GPT、Claude、Gemini、Grok などの主要モデルを利用できます。CC Switch ユーザー限定特典：初回チャージ時にクーポンコード \"CCSWITCH\" を入力すると 10% オフ！",
+      "everyapi": "EveryAPI は専用のデスクトップクライアントを備え、Claude Code、Codex、Cursor など 20 以上のツールをワンクリックで自動設定できます。1 つのキーで Claude、GPT、DeepSeek、GLM、MiniMax、Kimi、Doubao を利用でき、モデルを切り替えても設定の変更は不要です。登録で 14 元分のクレジットを進呈、初回チャージはさらに 20% 増量。CC Switch ユーザー限定：支払い時に割引コード \"ccswitch\" を使うとさらに 20% オフ（期限なし）！",
+      "alltokens": "AllTokens は「安定を基に、誠実を本に」を掲げ、すべての AI 呼び出しを安定的で正直、安心して任せられるものにすることを目指しています。信頼できるサービスと透明な課金で、GPT、Claude、Gemini、Grok、DeepSeek、GLM、Kimi などの主要モデルを 1 つのプラットフォームで利用でき、従量課金と利用上限の設定に対応しています。登録で 1 ドル分のお試しクレジットを進呈！",
       "openmodel": "OpenModel は Codex と Claude Code 向けにクライアント専用割引を提供し、対応モデルを Codex 経由で最大 90% オフ、Claude Code 経由で最大 60% オフで利用できます。CC Switch ユーザーはこのリンクから登録し、プロモコード \"cc-switch\" を使うと初回チャージが 10% オフになります！",
       "grooroute": "GrooRoute Pro は OpenAI、Claude、DeepSeek などの主要モデルに対応する信頼性の高い AI API 中継プラットフォームで、従量課金とサブスクリプションに対応しています。CC Switch ユーザーはこのリンクから登録すると 5 元分の無料お試しクレジットがもらえます！"
     },
@@ -2391,7 +2393,12 @@
       },
       "sidebarTodayLimit": "最大 {{count}} 項目まで",
       "logColumns": "リクエストログの列",
-      "logColumnsSummary": "{{shown}} / {{total}} 列"
+      "logColumnsSummary": "{{shown}} / {{total}} 列",
+      "trendChartType": "トレンドグラフの種類",
+      "trendChartTypes": {
+        "bar": "棒グラフ",
+        "area": "面グラフ"
+      }
     },
     "providerFilter": {
       "label": "プロバイダー",
@@ -3139,6 +3146,7 @@
       "modelName": "表示名",
       "modelNamePlaceholder": "Claude Opus 5",
       "contextLength": "コンテキスト長",
+      "supportsVision": "画像入力に対応",
       "toggleModelDetails": "モデル詳細を展開または折りたたむ",
       "removeModel": "モデルを削除",
       "modelsHint": "現在のプロバイダーとして有効にすると、最初のモデルが Hermes のデフォルトモデルになります。",
@@ -4236,6 +4244,11 @@
       "enteredStackLive": "{{app}} を集約に切り替えました。集約したモデルが /model に表示されます。",
       "enteredStackDesktop": "{{app}} を集約に切り替えました。{{app}} を再起動すると、集約したモデルがモデル一覧に表示されます。",
       "exited": "直接接続に戻しました：{{app}} は {{provider}} に直接接続しています。",
+      "routeRemembered": "プロバイダー {{provider}} を保存しました。クライアントがルーティングまたは集約に接続すると使用されます。",
+      "routeTargetChanged": "ルーティング先を {{provider}} に設定しました。",
+      "routeSwitched": "ルーティング先を {{provider}} に切り替えました。以降の新しいリクエストはこのプロバイダーを使用します。",
+      "stackDefaultChanged": "集約のデフォルトを {{provider}} に設定しました。選択済みの集約モデルは引き続き各モデルのプロバイダーを使用します。",
+      "clientConfigChanged": "クライアント設定も更新されました。更新後の設定を読み込むには {{app}} を再起動してください。",
       "defaultRemembered": "集約に切り替えると、{{provider}} が既定のプロバイダーになります。",
       "restartHint": "{{app}} の再起動後に反映されます。",
       "failed": "切り替えに失敗しました：{{detail}}"

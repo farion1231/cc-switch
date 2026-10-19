@@ -2475,6 +2475,125 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     partnerPromotionKey: "modelflare",
     icon: "modelflare",
   },
+  {
+    name: "EveryAPI",
+    websiteUrl: "https://everyapi.ai",
+    apiKeyUrl:
+      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
+    // GPT 系列只开放 Responses（api.everyapi.ai/api/pricing 的
+    // supported_endpoint_types 为 openai-response，2026-10-17 核对）
+    settingsConfig: {
+      baseUrl: "https://api.everyapi.ai/v1",
+      apiKey: "",
+      api: "openai-responses",
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-6-sol",
+          name: "GPT-6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-6-astra",
+          name: "GPT-6 Astra",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "everyapi/gpt-5.6-sol",
+        fallbacks: ["everyapi/gpt-6-sol"],
+      },
+      modelCatalog: {
+        "everyapi/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
+        "everyapi/gpt-6-sol": { alias: "GPT-6 Sol" },
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "everyapi",
+    icon: "everyapi",
+  },
+  {
+    name: "AllTokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    // Sub2API 网关：Key 绑定单个分组，须用 GPT 分组的 Key；GPT 账号池原生走
+    // Responses（分组与模型见 alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+    settingsConfig: {
+      baseUrl: "https://alltokens.cc/v1",
+      apiKey: "",
+      api: "openai-responses",
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-6-sol",
+          name: "GPT-6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-6-astra",
+          name: "GPT-6 Astra",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "alltokens/gpt-5.6-sol",
+        fallbacks: ["alltokens/gpt-6-sol"],
+      },
+      modelCatalog: {
+        "alltokens/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
+        "alltokens/gpt-6-sol": { alias: "GPT-6 Sol" },
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",

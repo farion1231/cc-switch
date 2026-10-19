@@ -198,4 +198,29 @@ describe("UsageDisplaySection", () => {
       requestLogColumns: {},
     });
   });
+
+  it("picks the trend chart style and keeps the other display settings", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <UsageDisplaySection value={{ currency: "CNY" }} onChange={onChange} />,
+    );
+    const trigger = screen.getByRole("combobox", {
+      name: "usage.display.trendChartType",
+    });
+    // 没设置过按柱形图
+    expect(trigger).toHaveTextContent("usage.display.trendChartTypes.bar");
+
+    await user.click(trigger);
+    await user.click(
+      await screen.findByRole("option", {
+        name: "usage.display.trendChartTypes.area",
+      }),
+    );
+    expect(onChange).toHaveBeenCalledWith({
+      currency: "CNY",
+      trendChartType: "area",
+    });
+    expect(trigger).toHaveTextContent("usage.display.trendChartTypes.area");
+  });
 });

@@ -57,6 +57,18 @@ export type SidebarTodayItem = (typeof SIDEBAR_TODAY_ITEMS)[number];
 /** 侧栏那一格窄，两项已经是上下两行 */
 export const SIDEBAR_TODAY_MAX_ITEMS = 2;
 
+export const TREND_CHART_TYPES = ["bar", "area"] as const;
+
+export type TrendChartType = (typeof TREND_CHART_TYPES)[number];
+
+/** 趋势图样式：没设置或认不出的值按柱形图 */
+export function resolveTrendChartType(
+  settings: UsageDisplaySettings | undefined,
+): TrendChartType {
+  const saved = settings?.trendChartType;
+  return TREND_CHART_TYPES.find((type) => type === saved) ?? "bar";
+}
+
 /**
  * 侧栏「今日」要显示的项：没设置过只显示金额；空列表＝不显示。
  * 认不出的项忽略，按菜单顺序排，最多两项（手改设置文件多写了也只取前两项）。

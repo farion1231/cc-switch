@@ -758,7 +758,7 @@ dependencies = [
 
 [[package]]
 name = "cc-switch"
-version = "4.0.14"
+version = "4.0.15"
 dependencies = [
  "anyhow",
  "arboard",
@@ -787,7 +787,10 @@ dependencies = [
  "libc",
  "log",
  "objc2 0.5.2",
+ "objc2 0.6.4",
  "objc2-app-kit 0.2.2",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "once_cell",
  "png 0.18.1",
  "regex",
@@ -5202,12 +5205,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sha1_smol"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
-
-[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6608,7 +6605,6 @@ dependencies = [
  "getrandom 0.4.2",
  "js-sys",
  "serde_core",
- "sha1_smol",
  "wasm-bindgen",
 ]
 

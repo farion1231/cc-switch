@@ -147,6 +147,9 @@ pub struct ProviderService;
 #[serde(rename_all = "camelCase")]
 pub struct SwitchResult {
     pub warnings: Vec<String>,
+    /// Present only when this operation selected a local proxy target.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route: Option<crate::mode::controller::RouteSwitchResult>,
 }
 
 #[cfg(test)]
@@ -6626,12 +6629,15 @@ impl ProviderService {
                     .unwrap_or("（无）"),
                 id
             );
-            futures::executor::block_on(crate::mode::controller::switch_route_locked(
+            let route = futures::executor::block_on(crate::mode::controller::switch_route_locked(
                 state, &app_type, _provider,
             ))
             .map_err(|e| AppError::Message(format!("切换路由失败: {e}")))?;
             // MCP 不随路由变：客户端文件没按直连重写。
-            return Ok(SwitchResult::default());
+            return Ok(SwitchResult {
+                route: Some(route),
+                ..Default::default()
+            });
         }
 
         // Normal mode: full switch with Live config write

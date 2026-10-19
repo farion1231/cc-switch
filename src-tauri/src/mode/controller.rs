@@ -1017,12 +1017,29 @@ pub async fn detach_all(state: &AppState) {
     }
 }
 
+/// What this operation actually applied, computed while holding the per-app switch lock.
+/// A client-config rewrite is separate from the proxy's immediately effective upstream target.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RouteSwitchResult {
+    pub kind: RouteSwitchKind,
+    pub client_config_changed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RouteSwitchKind {
+    Remembered,
+    Route,
+    Stack,
+}
+
 /// 代理模式下手动换路由。调用方持有切换锁。直连指针不变。
 pub async fn switch_route_locked(
     state: &AppState,
     app: &AppType,
     target: &Provider,
-) -> Result<(), String> {
+) -> Result<RouteSwitchResult, String> {
     let mode = current::mode_state(app);
     if !mode.is_proxy() {
         return Err(format!("{} 不在代理模式", app.as_str()));
@@ -1075,7 +1092,16 @@ pub async fn switch_route_locked(
         );
     }
     state.proxy_service.set_active_target(app, target).await;
-    Ok(())
+    Ok(RouteSwitchResult {
+        kind: if !mode.attached {
+            RouteSwitchKind::Remembered
+        } else if current.enabled {
+            RouteSwitchKind::Stack
+        } else {
+            RouteSwitchKind::Route
+        },
+        client_config_changed: rewritten,
+    })
 }
 
 /// 代理模式下手动换路由（拿切换锁）。不支持代理的官方供应商拒绝切入。
@@ -1114,12 +1140,16 @@ async fn switch_route_checked(
                 .to_string(),
         );
     }
-    switch_route_locked(state, app, &target).await
+    switch_route_locked(state, app, &target).await.map(|_| ())
 }
 
 /// 指定代理路由（聚合模式下是默认那家），不管现在是什么模式。直连模式下只记下指针，下次进入
 /// 路由 / 聚合模式时用它，客户端文件和模式都不动；已经在代理模式时就是换路由，当场生效。
-pub async fn set_route(state: &AppState, app: &AppType, provider_id: &str) -> Result<(), String> {
+pub async fn set_route(
+    state: &AppState,
+    app: &AppType,
+    provider_id: &str,
+) -> Result<RouteSwitchResult, String> {
     require_proxy_app(app)?;
     let target =
         provider(state, app, provider_id)?.ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
@@ -1130,7 +1160,10 @@ pub async fn set_route(state: &AppState, app: &AppType, provider_id: &str) -> Re
         return switch_route_locked(state, app, &target).await;
     }
     if mode.proxy_route.as_deref() == Some(provider_id) {
-        return Ok(());
+        return Ok(RouteSwitchResult {
+            kind: RouteSwitchKind::Remembered,
+            client_config_changed: false,
+        });
     }
     let previous = mode.proxy_route.clone();
     commit_state(
@@ -1150,7 +1183,10 @@ pub async fn set_route(state: &AppState, app: &AppType, provider_id: &str) -> Re
         previous.as_deref().unwrap_or("（无）"),
         provider_id
     );
-    Ok(())
+    Ok(RouteSwitchResult {
+        kind: RouteSwitchKind::Remembered,
+        client_config_changed: false,
+    })
 }
 
 /// 代理模式下不能切到不支持代理的官方供应商（Codex 官方账号走客户端自己的登录，除外）。
@@ -1452,7 +1488,7 @@ pub async fn resync_route_locked(state: &AppState, app: &AppType) -> Result<(), 
     let Some((_, route)) = attached_route(state, app)? else {
         return Ok(());
     };
-    switch_route_locked(state, app, &route).await
+    switch_route_locked(state, app, &route).await.map(|_| ())
 }
 
 /// 代理模式下存好了 `provider` 的行：它是代理路由时按新行重写代理契约；在 Stack 名单里时，
@@ -1468,7 +1504,7 @@ pub async fn resync_saved_row_locked(
         return Ok(());
     }
     if mode.routes_to(&provider.id) {
-        return switch_route_locked(state, app, provider).await;
+        return switch_route_locked(state, app, provider).await.map(|_| ());
     }
     let in_stack = stack::is_member(app, &provider.id).unwrap_or_else(|error| {
         log::warn!("读取 {} 的 Stack 模型失败: {error}", app.as_str());
@@ -2661,6 +2697,86 @@ mod mode_tests {
         assert_eq!(left.proxy_route.as_deref(), Some("a"), "the route is kept");
         assert!(!state.db.get_proxy_flags_sync("claude").0);
         assert!(!state.proxy_service.is_running().await);
+    }
+
+    #[test]
+    fn route_switch_results_serialize_the_renderer_contract() {
+        for (kind, name) in [
+            (RouteSwitchKind::Remembered, "remembered"),
+            (RouteSwitchKind::Route, "route"),
+            (RouteSwitchKind::Stack, "stack"),
+        ] {
+            for changed in [false, true] {
+                let result = RouteSwitchResult {
+                    kind: kind.clone(),
+                    client_config_changed: changed,
+                };
+                assert_eq!(
+                    serde_json::to_value(result).unwrap(),
+                    json!({ "kind": name, "clientConfigChanged": changed })
+                );
+            }
+        }
+        assert_eq!(
+            serde_json::to_value(crate::services::provider::SwitchResult::default()).unwrap(),
+            json!({ "warnings": [] })
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn route_switch_results_follow_the_applied_mode_not_the_viewed_tab() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[
+                claude("a", "https://a.example", json!({})),
+                claude("b", "https://b.example", json!({})),
+            ],
+            "a",
+        )
+        .await;
+        let unchanged = fs::read(settings_path()).unwrap();
+        for _ in 0..2 {
+            let result = set_route(&state, &AppType::Claude, "b").await.unwrap();
+            assert_eq!(
+                result,
+                RouteSwitchResult {
+                    kind: RouteSwitchKind::Remembered,
+                    client_config_changed: false,
+                }
+            );
+        }
+        assert_eq!(fs::read(settings_path()).unwrap(), unchanged);
+        assert!(!current::is_proxy(&AppType::Claude));
+        enter(&state, &AppType::Claude, false).await.unwrap();
+        let result = set_route(&state, &AppType::Claude, "a").await.unwrap();
+        assert_eq!(
+            result,
+            RouteSwitchResult {
+                kind: RouteSwitchKind::Route,
+                client_config_changed: false,
+            }
+        );
+        enter(&state, &AppType::Claude, true).await.unwrap();
+        let result = set_route(&state, &AppType::Claude, "b").await.unwrap();
+        assert_eq!(result.kind, RouteSwitchKind::Stack);
+        let result = ProviderService::switch(&state, AppType::Claude, "a").unwrap();
+        assert_eq!(result.route.unwrap().kind, RouteSwitchKind::Stack);
+        // A detached proxy mode only remembers a target: the client is back on direct config.
+        detach_all(&state).await;
+        let result = set_route(&state, &AppType::Claude, "b").await.unwrap();
+        assert_eq!(
+            result,
+            RouteSwitchResult {
+                kind: RouteSwitchKind::Remembered,
+                client_config_changed: false,
+            }
+        );
+        exit(&state, &AppType::Claude).await.unwrap();
+        let result = ProviderService::switch(&state, AppType::Claude, "b").unwrap();
+        assert!(result.route.is_none());
     }
 
     #[tokio::test]
@@ -4041,9 +4157,14 @@ model_provider = "c"
         ProviderService::switch(&state, AppType::Codex, "acct-a").expect("direct a again");
 
         enter(&state, &AppType::Codex, false).await.expect("enter");
-        switch_route(&state, &AppType::Codex, "acct-b")
-            .await
-            .expect("route to b");
+        let result = ProviderService::switch(&state, AppType::Codex, "acct-b").expect("route to b");
+        assert_eq!(
+            result.route,
+            Some(RouteSwitchResult {
+                kind: RouteSwitchKind::Route,
+                client_config_changed: true,
+            })
+        );
         assert_eq!(
             account(),
             json!("acct-b"),
@@ -4135,7 +4256,14 @@ model_provider = "c"
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(codex_config_path(), fs::Permissions::from_mode(0o000)).unwrap();
         }
-        ProviderService::switch(&state, AppType::Codex, "c").expect("switch route");
+        let result = ProviderService::switch(&state, AppType::Codex, "c").expect("switch route");
+        assert_eq!(
+            result.route,
+            Some(RouteSwitchResult {
+                kind: RouteSwitchKind::Route,
+                client_config_changed: false,
+            })
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -4152,7 +4280,14 @@ model_provider = "c"
         assert_eq!(in_use(&state, &AppType::Codex).as_deref(), Some("c"));
 
         // 换到只有模型名不同的 d：契约变了，客户端先改写。
-        ProviderService::switch(&state, AppType::Codex, "d").expect("route to d");
+        let result = ProviderService::switch(&state, AppType::Codex, "d").expect("route to d");
+        assert_eq!(
+            result.route,
+            Some(RouteSwitchResult {
+                kind: RouteSwitchKind::Route,
+                client_config_changed: true,
+            })
+        );
         assert_eq!(codex_doc()["model"].as_str(), Some("gpt-d"));
         // 换到独有字段也不同的 a：同样改写。
         ProviderService::switch(&state, AppType::Codex, "a").expect("route to a");
@@ -4783,7 +4918,14 @@ model_provider = "c"
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(gemini_env_path(), fs::Permissions::from_mode(0o000)).unwrap();
         }
-        ProviderService::switch(&state, AppType::Gemini, "b").expect("route to b");
+        let result = ProviderService::switch(&state, AppType::Gemini, "b").expect("route to b");
+        assert_eq!(
+            result.route,
+            Some(RouteSwitchResult {
+                kind: RouteSwitchKind::Route,
+                client_config_changed: false,
+            })
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -4791,6 +4933,19 @@ model_provider = "c"
         }
         assert_eq!(fs::read(gemini_env_path()).unwrap(), before);
         assert_eq!(in_use(&state, &AppType::Gemini).as_deref(), Some("b"));
+
+        let mut changed = state.db.get_provider_by_id("a", "gemini").unwrap().unwrap();
+        changed.settings_config["env"]["GEMINI_MODEL"] = json!("m-changed");
+        state.db.save_provider("gemini", &changed).unwrap();
+        let result = ProviderService::switch(&state, AppType::Gemini, "a").expect("changed model");
+        assert_eq!(
+            result.route,
+            Some(RouteSwitchResult {
+                kind: RouteSwitchKind::Route,
+                client_config_changed: true,
+            })
+        );
+        assert!(gemini_env().contains("GEMINI_MODEL=m-changed"));
 
         exit(&state, &AppType::Gemini).await.expect("exit");
         let env = gemini_env();
@@ -5069,8 +5224,18 @@ model_provider = "c"
         );
 
         // 换一家表名不同的路由：旧的代理表按写入记录删掉。
-        ProviderService::switch(&state, AppType::GrokBuild, "b").expect("route to b");
+        let result = ProviderService::switch(&state, AppType::GrokBuild, "b").expect("route to b");
+        assert_eq!(
+            result.route,
+            Some(RouteSwitchResult {
+                kind: RouteSwitchKind::Route,
+                client_config_changed: true,
+            })
+        );
         assert_eq!(grok_tables(), vec!["b", "mine"]);
+        let result =
+            ProviderService::switch(&state, AppType::GrokBuild, "b").expect("same contract");
+        assert!(!result.route.unwrap().client_config_changed);
         assert!(
             ProviderService::switch(&state, AppType::GrokBuild, "grok-official").is_err(),
             "the official account cannot be routed"
@@ -5932,6 +6097,39 @@ model_provider = "c"
             .is_some_and(|url| url.ends_with("/claude-desktop")));
         assert_eq!(profile["inferenceModels"], json!(["claude-sonnet-5"]));
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
+
+        let result = ProviderService::switch(&state, desktop.clone(), "map").expect("same profile");
+        assert_eq!(
+            result.route,
+            Some(RouteSwitchResult {
+                kind: RouteSwitchKind::Route,
+                client_config_changed: false,
+            })
+        );
+        let mut changed = state
+            .db
+            .get_provider_by_id("map", desktop.as_str())
+            .unwrap()
+            .unwrap();
+        for route in changed
+            .meta
+            .as_mut()
+            .unwrap()
+            .claude_desktop_model_routes
+            .values_mut()
+        {
+            route.label_override = Some("Updated model".to_string());
+        }
+        state.db.save_provider(desktop.as_str(), &changed).unwrap();
+        let result =
+            ProviderService::switch(&state, desktop.clone(), "map").expect("changed profile");
+        assert_eq!(
+            result.route,
+            Some(RouteSwitchResult {
+                kind: RouteSwitchKind::Route,
+                client_config_changed: true,
+            })
+        );
 
         // Claude Code 退出路由时，Desktop 还在路由模式，服务不能跟着停。
         enter(&state, &AppType::Claude, false).await.expect("enter");
