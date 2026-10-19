@@ -721,7 +721,15 @@ impl ChatToResponsesState {
         self.failed_event_with_error(error)
     }
 
-    fn failed_event_with_error(&mut self, error: Value) -> Bytes {
+    fn failed_event_with_error(&mut self, mut error: Value) -> Bytes {
+        // Codex expects Option<String>; other JSON types would hide the upstream message.
+        if let Some(code) = error
+            .get_mut("code")
+            .filter(|code| !code.is_string() && !code.is_null())
+        {
+            *code = json!(code.to_string());
+        }
+
         self.completed = true;
 
         let mut response = self.base_response("failed", self.completed_output_items());
@@ -1472,6 +1480,28 @@ mod tests {
         assert!(output.contains("quota exceeded"));
         assert!(output.contains("rate_limit_exceeded"));
         assert!(!output.contains("event: response.completed"));
+    }
+
+    #[tokio::test]
+    async fn gemini_sse_numeric_error_code_preserves_message() {
+        for prefix in ["", "event: error\n"] {
+            let chunk = format!(
+                "{prefix}data: {{\"error\":{{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\",\"message\":\"Quota exceeded for metric\"}}}}\n\n"
+            );
+            let output = collect(vec![&chunk, "data: [DONE]\n\n"]).await;
+            let events = parse_sse_events(&output);
+            let failed = events
+                .iter()
+                .find(|event| event["type"] == "response.failed")
+                .unwrap();
+
+            assert_eq!(failed["response"]["error"]["code"], "429");
+            assert_eq!(
+                failed["response"]["error"]["message"],
+                "Quota exceeded for metric"
+            );
+            assert!(!output.contains("event: response.completed"));
+        }
     }
 
     #[tokio::test]
