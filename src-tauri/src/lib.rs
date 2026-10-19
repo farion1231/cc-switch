@@ -329,8 +329,8 @@ async fn update_tray_menu(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
-    if !tray_panel::USES_NATIVE_MENU {
-        // 不挂原生菜单的平台：更新图标状态，通知开着的面板重新取数据。
+    if !tray_panel::uses_native_menu() {
+        // 用托盘面板、不挂原生菜单：更新图标状态，通知开着的面板重新取数据。
         tray::refresh_tray_menu(&app);
         return Ok(app.tray_by_id(tray::TRAY_ID).is_some());
     }
@@ -1143,21 +1143,35 @@ pub fn run() {
                 Err(e) => log::warn!("读取启动时的深链接失败: {e}"),
             }
 
-            // 构建托盘：macOS / Windows 点图标（左右键）弹出托盘面板，不挂原生菜单；
+            // 构建托盘：macOS / Windows 默认点图标（左右键）弹出托盘面板，不挂原生菜单；
+            // 设置里打开「原生托盘菜单」就挂原生菜单（`tray::apply_tray_style` 运行时切换）。
             // Linux（AppIndicator）不派发点击事件，只能出原生菜单，菜单里有一项打开面板。
+            let native_menu = tray_panel::uses_native_menu();
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
                 .tooltip("CC Switch") // 鼠标悬停提示
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click {
                         button:
-                            tauri::tray::MouseButton::Left | tauri::tray::MouseButton::Right,
+                            button @ (tauri::tray::MouseButton::Left
+                            | tauri::tray::MouseButton::Right),
                         button_state: tauri::tray::MouseButtonState::Up,
                         rect,
                         ..
                     } = &event
                     {
-                        tray_panel::toggle(tray.app_handle(), rect);
-                        return;
+                        if !tray_panel::uses_native_menu() {
+                            tray_panel::toggle(tray.app_handle(), rect);
+                            return;
+                        }
+                        // 原生菜单：Windows 的习惯是左键打开应用、右键出菜单；macOS 左右键都出菜单。
+                        if *button == tauri::tray::MouseButton::Left
+                            && !tray::native_menu_on_left_click(true)
+                        {
+                            tray::show_main_window(tray.app_handle());
+                        } else {
+                            // 弹出的菜单里已经有反馈行了：算显示过，下次悬停重建时拿掉。
+                            tray::mark_feedback_seen();
+                        }
                     }
                     match &event {
                         // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
@@ -1179,8 +1193,8 @@ pub fn run() {
                 .on_menu_event(|app, event| {
                     tray::handle_tray_menu_event(app, &event.id.0);
                 })
-                .show_menu_on_left_click(tray_panel::USES_NATIVE_MENU);
-            if tray_panel::USES_NATIVE_MENU {
+                .show_menu_on_left_click(tray::native_menu_on_left_click(native_menu));
+            if native_menu {
                 let menu = tray::create_tray_menu(app.handle(), &app_state)?;
                 tray_builder = tray_builder.menu(&menu);
             }
@@ -1743,6 +1757,8 @@ pub fn run() {
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,
+            commands::get_opencode_default_model,
+            commands::set_opencode_default_model,
             // OpenClaw specific
             commands::import_openclaw_providers_from_live,
             commands::get_openclaw_live_provider_ids,

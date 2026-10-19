@@ -1377,9 +1377,10 @@ describe("PiProviderForm", () => {
     await user.click(
       screen.getByRole("button", { name: "展开或收起模型详情" }),
     );
+    // models.dev 按地址认出了这家，GPT 窗口照用它登记的值，不封顶。
     await waitFor(() =>
       expect(screen.getByLabelText("pi.form.contextWindow")).toHaveValue(
-        272000,
+        400000,
       ),
     );
     expect(screen.getByLabelText("pi.form.maxTokens")).toHaveValue(128000);

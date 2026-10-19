@@ -398,6 +398,10 @@
       "checkToolUpdates": "起動時に各アプリの新しいバージョンを確認",
       "checkToolUpdatesHelp": "オンにすると、CC Switch の起動時にインストール済みのコマンドラインアプリの新しいバージョンを確認し、見つかればサイドバーの「アプリ」に点を表示します。自動でアップグレードはしません。",
       "windowAndTerminal": "ウィンドウとターミナル",
+      "trayStyle": "トレイの表示",
+      "trayStylePanel": "パネル",
+      "trayStyleMenu": "メニュー",
+      "trayStyleHelp": "トレイアイコンをクリックしたときに開くものです。パネル：各アプリの使用中のプロバイダー、クォータ、使用量を表示し、検索して切り替えられます。メニュー：システム標準のメニュー（Windows では左クリックでメイン画面、右クリックでメニュー）。すぐに反映されます。",
       "minimizeToTrayHelp": "オンのときは閉じるボタンでウィンドウを隠すだけで、CC Switch はシステムトレイで動き続けます（軽量モードはトレイメニューにあります）。オフのときは閉じるボタンで終了します。",
       "terminalHelp": "プロバイダーカードの「ターミナルを開く」で使うターミナルです。使えない場合はシステムの既定のターミナルを使います。"
     },
@@ -1615,6 +1619,7 @@
       "modelflare": "Modelflare は安定・低コストの AI モデルゲートウェイで、1 つのキーで GPT、Claude、Gemini、Grok などの主要モデルを利用できます。CC Switch ユーザー限定特典：初回チャージ時にクーポンコード \"CCSWITCH\" を入力すると 10% オフ！",
       "everyapi": "EveryAPI は専用のデスクトップクライアントを備え、Claude Code、Codex、Cursor など 20 以上のツールをワンクリックで自動設定できます。1 つのキーで Claude、GPT、DeepSeek、GLM、MiniMax、Kimi、Doubao を利用でき、モデルを切り替えても設定の変更は不要です。登録で 14 元分のクレジットを進呈、初回チャージはさらに 20% 増量。CC Switch ユーザー限定：支払い時に割引コード \"ccswitch\" を使うとさらに 20% オフ（期限なし）！",
       "alltokens": "AllTokens は「安定を基に、誠実を本に」を掲げ、すべての AI 呼び出しを安定的で正直、安心して任せられるものにすることを目指しています。信頼できるサービスと透明な課金で、GPT、Claude、Gemini、Grok、DeepSeek、GLM、Kimi などの主要モデルを 1 つのプラットフォームで利用でき、従量課金と利用上限の設定に対応しています。登録で 1 ドル分のお試しクレジットを進呈！",
+      "alltokens_si": "AllTokens SI は「安定を基に、誠実を本に」を掲げる、企業向けの AI トークン中継・チーム協業プラットフォームです。メンバー、キー、使用量、残高を企業コンソールで一元管理し、明確な権限と利用上限の設定により、チームの利用を追跡可能で安心して管理できます。",
       "openmodel": "OpenModel は Codex と Claude Code 向けにクライアント専用割引を提供し、対応モデルを Codex 経由で最大 90% オフ、Claude Code 経由で最大 60% オフで利用できます。CC Switch ユーザーはこのリンクから登録し、プロモコード \"cc-switch\" を使うと初回チャージが 10% オフになります！",
       "grooroute": "GrooRoute Pro は OpenAI、Claude、DeepSeek などの主要モデルに対応する信頼性の高い AI API 中継プラットフォームで、従量課金とサブスクリプションに対応しています。CC Switch ユーザーはこのリンクから登録すると 5 元分の無料お試しクレジットがもらえます！"
     },
@@ -1735,6 +1740,7 @@
     "fetchModelsSuccess": "{{count}}件のモデルを取得",
     "modelMetadataFilled": "{{model}} のコンテキスト長などのパラメータを補完しました（出典：{{source}}）。内容をご確認ください",
     "modelMetadataFilledMany": "{{count}} 件のモデルのコンテキスト長などのパラメータを補完しました（出典：{{source}}）。内容をご確認ください",
+    "gptContextWindowHint": "中継サービスの GPT は多くが ChatGPT サブスクリプション由来で、ウィンドウは 272K しかありません。大きく設定すると圧縮が遅れ、上流に拒否された時点でそのターンが失敗します。このプロバイダーが対応している場合のみ設定してください。",
     "modelMetadataSourcePreset": "プリセット",
     "modelMetadataSourceBoth": "プリセットと models.dev",
     "modelPicker": {

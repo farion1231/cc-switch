@@ -570,6 +570,24 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     partnerPromotionKey: "alltokens",
     icon: "alltokens",
   },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    auth: grokAuth(),
+    // Grok 分组不在默认自动分组里，须用 Grok 分组的 Key；分组没有 grok-4.5，
+    // 取 grok-4.7（alltokens.si/api/pricing，2026-10-19 核对）
+    config: grokPresetConfig(
+      "AllTokens SI",
+      "https://alltokens.si/v1",
+      "grok-4.7",
+    ),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",

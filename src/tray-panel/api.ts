@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AppId } from "@/lib/api/types";
+import type { AppMode } from "@/types/proxy";
 
 /** 托盘面板的数据（后端 `tray_panel::TrayPanelState`）。 */
 export interface PanelTexts {
@@ -63,6 +64,7 @@ export interface PanelApp {
   name: string;
   current: string | null;
   mode: string;
+  modeKind: AppMode;
   header: string | null;
   attention: string | null;
   quota: PanelQuota | null;

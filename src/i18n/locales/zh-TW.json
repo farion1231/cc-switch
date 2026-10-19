@@ -398,6 +398,10 @@
       "checkToolUpdates": "啟動時檢查各應用的新版本",
       "checkToolUpdatesHelp": "開啟後，每次啟動 CC Switch 會查一次已安裝的命令列應用有沒有新版本，查到了就在側欄「應用」上顯示一個圓點。不會自動升級。",
       "windowAndTerminal": "視窗與終端機",
+      "trayStyle": "系統匣樣式",
+      "trayStylePanel": "面板",
+      "trayStyleMenu": "選單",
+      "trayStyleHelp": "點系統匣圖示時彈出什麼。面板：各應用使用中的供應商、額度與用量，可以搜尋、切換。選單：系統原生選單（Windows 上左鍵開啟主視窗、右鍵出選單）。切換後立即生效。",
       "minimizeToTrayHelp": "開啟時，點關閉按鈕只隱藏視窗，CC Switch 留在系統匣裡繼續執行（輕量模式在系統匣選單裡）；關閉時點關閉按鈕直接結束。",
       "terminalHelp": "點供應商卡片上的「開啟終端機」時用哪個終端機。選的終端機無法使用時，改用系統預設終端機。"
     },
@@ -1616,6 +1620,7 @@
       "modelflare": "Modelflare 是穩定、低成本的 AI 模型閘道，一個 Key 即可呼叫 GPT、Claude、Gemini、Grok 等主流模型。CC Switch 使用者專享福利：首次儲值使用優惠碼「CCSWITCH」可享 9 折優惠！",
       "everyapi": "EveryAPI 自帶桌面客戶端，Claude Code、Codex、Cursor 等 20 多個工具一鍵自動設定；一把金鑰直接呼叫 Claude、GPT、DeepSeek、GLM、MiniMax、Kimi、豆包，換模型不用改設定。註冊即送 14 元額度，首儲額外加送 20%；CC Switch 使用者專享：付款時使用折扣碼「ccswitch」再打 8 折，不限時！",
       "alltokens": "AllTokens 秉持「穩定為基，真實為本」，致力於讓每一次 AI 呼叫都穩定、真實、值得託付：服務可靠、計費透明，一個平台接入 GPT、Claude、Gemini、Grok、DeepSeek、GLM、Kimi 等主流模型，按量計費、支援額度上限。註冊即送 1 美元體驗金！",
+      "alltokens_si": "AllTokens SI 秉持「穩定為基，真實為本」，是專為企業打造的 AI Token 中轉與團隊協作平台：成員、金鑰、用量與餘額統一納入企業控制台，以清晰的權限與額度設定，讓團隊協作有據可查、安心可控。",
       "openmodel": "OpenModel 為 Codex 和 Claude Code 提供客戶端專屬折扣，所支援的模型透過 Codex 呼叫最高優惠 90%、透過 Claude Code 呼叫最高優惠 60%。CC Switch 使用者透過此連結註冊並使用優惠碼「cc-switch」，即可享受首次儲值九折優惠！",
       "grooroute": "GrooRoute Pro 是可靠流暢的 AI API 中轉服務平台，接入 OpenAI、Claude、DeepSeek 等主流大模型，支援按量計費與訂閱方案。CC Switch 使用者透過此連結註冊即可獲得免費 5 元體驗額度！"
     },
@@ -1736,6 +1741,7 @@
     "fetchModelsSuccess": "取得 {{count}} 個模型",
     "modelMetadataFilled": "已補齊 {{model}} 的上下文等參數（來源：{{source}}），請核對",
     "modelMetadataFilledMany": "已補齊 {{count}} 個模型的上下文等參數（來源：{{source}}），請核對",
+    "gptContextWindowHint": "中轉站的 GPT 多來自 ChatGPT 訂閱，視窗只有 272K。視窗寫大了不會提前壓縮，等上游拒收時這一輪會失敗；確認這家支援更大視窗再這樣填。",
     "modelMetadataSourcePreset": "預設",
     "modelMetadataSourceBoth": "預設和 models.dev",
     "modelPicker": {

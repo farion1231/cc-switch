@@ -398,6 +398,10 @@
       "checkToolUpdates": "Check for new versions of your apps at launch",
       "checkToolUpdatesHelp": "When on, CC Switch checks your installed command-line apps for new versions each time it starts, and shows a dot on Apps in the sidebar if it finds one. Nothing is upgraded automatically.",
       "windowAndTerminal": "Window and terminal",
+      "trayStyle": "Tray style",
+      "trayStylePanel": "Panel",
+      "trayStyleMenu": "Menu",
+      "trayStyleHelp": "What opens when you click the tray icon. Panel: each app's in-use provider, quota and usage, with search and switching. Menu: the system's native menu (on Windows, left-click opens the main window and right-click shows the menu). Takes effect right away.",
       "minimizeToTrayHelp": "When on, the close button only hides the window and CC Switch keeps running in the system tray (lightweight mode is in the tray menu). When off, the close button quits.",
       "terminalHelp": "The terminal used by “Open terminal” on provider cards. If it isn't available, the system default terminal is used."
     },
@@ -1615,6 +1619,7 @@
       "modelflare": "Modelflare is a stable, lower-cost AI model gateway: one key reaches GPT, Claude, Gemini, Grok, and other leading models. Exclusive for CC Switch users: use the code \"CCSWITCH\" on your first top-up for 10% off!",
       "everyapi": "EveryAPI ships its own desktop client that auto-configures Claude Code, Codex, Cursor, and 20+ other tools in one click; one key reaches Claude, GPT, DeepSeek, GLM, MiniMax, Kimi, and Doubao, so switching models needs no config changes. Get ¥14 in free credit on sign-up and an extra 20% on your first top-up. Exclusive for CC Switch users: use the code \"ccswitch\" at checkout for a further 20% off, with no expiry!",
       "alltokens": "AllTokens is built on stability and honesty, aiming to make every AI call stable, genuine, and trustworthy: reliable service, transparent billing, and one platform for GPT, Claude, Gemini, Grok, DeepSeek, GLM, Kimi, and other leading models, with pay-as-you-go pricing and spending caps. Get $1 in free trial credit when you sign up!",
+      "alltokens_si": "AllTokens SI is built on stability and honesty: an enterprise AI token relay and team collaboration platform. Members, keys, usage, and balance all live in one company console, and clear permissions and spending limits keep team usage traceable and under control.",
       "openmodel": "OpenModel offers client-specific discounts of up to 90% for Codex and 60% for Claude Code across supported models. CC Switch users who register via this link and use promo code \"cc-switch\" get 10% off their first top-up!",
       "grooroute": "GrooRoute Pro is a reliable AI API relay with access to OpenAI, Claude, DeepSeek, and other mainstream models, offering pay-as-you-go and subscription plans. CC Switch users get ¥5 in free trial credit by registering via this link!"
     },
@@ -1735,6 +1740,7 @@
     "fetchModelsSuccess": "Found {{count}} models",
     "modelMetadataFilled": "Filled in context window and other parameters for {{model}} (source: {{source}}). Please double-check.",
     "modelMetadataFilledMany": "Filled in context window and other parameters for {{count}} models (source: {{source}}). Please double-check.",
+    "gptContextWindowHint": "GPT on relays usually comes from ChatGPT subscriptions, whose window is only 272K. A larger window delays compaction until the upstream rejects the request and the turn fails; only use it if this provider supports it.",
     "modelMetadataSourcePreset": "preset",
     "modelMetadataSourceBoth": "preset and models.dev",
     "modelPicker": {
