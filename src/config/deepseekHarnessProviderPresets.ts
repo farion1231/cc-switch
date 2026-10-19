@@ -1,5 +1,6 @@
 import type { ProviderCategory } from "../types";
 import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
+import type { PresetFamilyFields } from "./presetFamilies";
 import {
   opencodeProviderPresets,
   type OpenCodeProviderPreset,
@@ -23,7 +24,7 @@ export interface DeepSeekHarnessProviderConfig {
   models?: DeepSeekHarnessModel[];
 }
 
-export interface DeepSeekHarnessProviderPreset {
+export interface DeepSeekHarnessProviderPreset extends PresetFamilyFields {
   id: string;
   name: string;
   nameKey?: string;
@@ -162,6 +163,9 @@ export function toDeepSeekHarnessPreset(
     id: toDshPresetId(preset.name),
     name: preset.name,
     nameKey: preset.nameKey,
+    family: preset.family,
+    planKey: preset.planKey,
+    regionKey: preset.regionKey,
     websiteUrl: preset.websiteUrl,
     apiKeyUrl: preset.apiKeyUrl,
     settingsConfig: {

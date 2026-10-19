@@ -16,6 +16,13 @@ The DSH experience follows CC Switch's Codex design:
 
 DSH does not inherit Codex OAuth, proxy takeover, failover routing, or protocol transformation because the DSH runtime owns those concerns differently.
 
+The upstream submission follows the official v4 UI, version, and update mechanism.
+DSH appears in the shared sidebar and Apps page. Provider cards use the shared
+additive presentation (added/available sections, native default-model state, and
+current-provider removal protection). The official API-key preset belongs to the
+vendor group, not the OAuth login group. Apps-page detection is informational:
+install, update, and uninstall commands remain disabled for DSH.
+
 ## Data Flow
 
 ```text

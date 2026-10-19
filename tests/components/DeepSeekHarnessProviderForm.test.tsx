@@ -148,12 +148,12 @@ describe("DeepSeek Harness provider form (shared shell)", () => {
     const customButton = screen.getByRole("button", {
       name: "providerPreset.custom",
     });
-    expect(customButton.className).toContain("bg-blue-500");
+    expect(customButton.className).toContain("border-border-strong");
 
     const openAiButton = screen.getByRole("button", {
       name: /OpenAI Compatible/,
     });
-    expect(openAiButton.className).not.toContain("bg-blue-500");
+    expect(openAiButton.className).not.toContain("border-border-strong");
   });
 
   it("locks the official route key and submits the dsh_deepseek shape", async () => {

@@ -271,6 +271,9 @@ describe("Codex Chat provider presets", () => {
           contextWindows: {
             "mimo-v2.5-pro": 1048576,
             "mimo-v2.5": 1048576,
+            "mimo-v2.6-pro": 1048576,
+            "mimo-v2.6-flash": 1048576,
+            "mimo-v2.6-pro-ultraspeed": 1048576,
           },
         },
       ],
@@ -280,6 +283,8 @@ describe("Codex Chat provider presets", () => {
           contextWindows: {
             "mimo-v2.5-pro": 1048576,
             "mimo-v2.5": 1048576,
+            "mimo-v2.6-pro": 1048576,
+            "mimo-v2.6-flash": 1048576,
           },
         },
       ],
@@ -292,14 +297,18 @@ describe("Codex Chat provider presets", () => {
         "Zhipu GLM",
         {
           baseUrl: "https://open.bigmodel.cn/api/v1",
-          contextWindows: { "glm-5.3": 1048576, "glm-5-turbo": 204800 },
+          contextWindows: {
+            "glm-5.3": 1048576,
+            "glm-5.3-flash": 1048576,
+            "glm-5-turbo": 204800,
+          },
         },
       ],
       [
         "Zhipu GLM en",
         {
           baseUrl: "https://api.z.ai/api/v1",
-          contextWindows: { "glm-5.3": 1048576 },
+          contextWindows: { "glm-5.3": 1048576, "glm-5.3-flash": 1048576 },
         },
       ],
       // Kimi 两份官方 Codex 接入文档均要求 wire_api = "responses"，并明写服务

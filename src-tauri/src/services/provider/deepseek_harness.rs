@@ -60,7 +60,14 @@ pub(super) fn add(
         write_native_provider(&provider)?;
     }
     state.db.save_provider(APP, &provider)?;
-    if state.db.get_current_provider(APP)?.is_none() && add_to_live {
+    if add_to_live
+        && crate::mode::current::provider_for(
+            &state.db,
+            &crate::app_config::AppType::DeepSeekHarness,
+            crate::mode::current::Purpose::Direct,
+        )?
+        .is_none()
+    {
         crate::deepseek_harness_config::set_current_model(&provider.id, &first_model)?;
         state.db.set_current_provider(APP, &provider.id)?;
         crate::settings::set_current_provider(
@@ -619,6 +626,7 @@ mod tests {
         add(&state, copy, false).unwrap();
         let settings_before =
             std::fs::read_to_string(home._dir.path().join("settings.yaml")).unwrap();
+        let credentials_before = std::fs::read(home._dir.path().join(".credentials.yaml")).unwrap();
 
         let mut edited = state
             .db
@@ -627,12 +635,22 @@ mod tests {
             .unwrap();
         edited.name = "Renamed Copy".to_string();
         update(&state, None, edited).unwrap();
+        crate::services::provider::live::sync_additive_app_to_live(
+            &state,
+            &crate::app_config::AppType::DeepSeekHarness,
+        )
+        .unwrap();
 
         let settings_after =
             std::fs::read_to_string(home._dir.path().join("settings.yaml")).unwrap();
         assert_eq!(
             settings_before, settings_after,
             "editing a DB-only provider must not touch the native file"
+        );
+        assert_eq!(
+            credentials_before,
+            std::fs::read(home._dir.path().join(".credentials.yaml")).unwrap(),
+            "editing or syncing DB-only providers must not change credential refs"
         );
         assert!(!crate::deepseek_harness_config::read_native_state()
             .unwrap()

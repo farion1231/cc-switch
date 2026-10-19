@@ -4,6 +4,8 @@ import {
   getDeepSeekHarnessPresetEntries,
   deepseekHarnessProviderPresets,
 } from "@/config/deepseekHarnessProviderPresets";
+import { opencodeProviderPresets } from "@/config/opencodeProviderPresets";
+import { presetGroup } from "@/components/providers/forms/presetGroups";
 
 const DSH_MODEL_APIS = [
   "openai-completions",
@@ -12,6 +14,9 @@ const DSH_MODEL_APIS = [
 ] as const;
 
 describe("DeepSeek Harness provider presets", () => {
+  it("classifies the official API-key route as a vendor, not an OAuth login", () => {
+    expect(presetGroup(deepseekHarnessProviderPresets[0])).toBe("vendor");
+  });
   it("keeps the official DeepSeek preset first", () => {
     const preset = deepseekHarnessProviderPresets[0];
     expect(preset).toMatchObject({
@@ -92,10 +97,10 @@ describe("DeepSeek Harness provider presets", () => {
       api: "openai-completions",
       baseURL: "https://api.moonshot.cn/v1",
       apiKeyEnv: "KIMI_API_KEY",
-      models: [
-        { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
-        { id: "kimi-k3", name: "Kimi K3" },
-      ],
+      models: Object.entries(
+        opencodeProviderPresets.find((preset) => preset.name === "Kimi")!
+          .settingsConfig.models ?? {},
+      ).map(([id, model]) => ({ id, name: model?.name?.trim() || id })),
     });
   });
 

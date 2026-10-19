@@ -346,7 +346,7 @@ pub fn transform_claude_request_for_api_format(
     let is_codex_oauth = provider.is_codex_oauth();
 
     // Copilot 场景：优先从 metadata.user_id 提取 session ID 作为 cache key
-    // 格式: "uuid_sessionId" → 提取 "_" 后面的部分作为 session 标识
+    // 支持 JSON 字符串中的 session_id 和旧版 _session_ 后缀
     // 同一会话的请求共享 cache key，提升 Copilot 缓存命中率
     let is_copilot = provider.is_github_copilot()
         || provider
@@ -357,7 +357,7 @@ pub fn transform_claude_request_for_api_format(
     let session_cache_key: Option<String> = if is_copilot {
         let metadata = body.get("metadata");
         // Session 提取优先级（与 forwarder 和 session.rs 统一）：
-        //   1. metadata.user_id 中的 _session_ 后缀
+        //   1. metadata.user_id 中的 JSON session_id 或旧版 _session_ 后缀
         //   2. metadata.session_id（直接字段）
         metadata
             .and_then(|m| m.get("user_id"))
@@ -645,6 +645,17 @@ impl ClaudeAdapter {
                 log::debug!("[Claude] 使用 GEMINI_API_KEY");
                 return Some(key.to_string());
             }
+            // Bedrock API Key：Claude Code 读的变量名。旧版预设写在顶层 apiKey，
+            // 由下面的直接获取兜底。
+            if let Some(key) = env
+                .get("AWS_BEARER_TOKEN_BEDROCK")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                log::debug!("[Claude] 使用 AWS_BEARER_TOKEN_BEDROCK");
+                return Some(key.to_string());
+            }
         }
 
         // 尝试直接获取
@@ -817,6 +828,14 @@ impl ProviderAdapter for ClaudeAdapter {
             ProviderType::OpenRouter => Some(AuthInfo::new(key, AuthStrategy::Bearer)),
             ProviderType::ClaudeAuth => Some(AuthInfo::new(key, AuthStrategy::ClaudeAuth)),
             _ => {
+                // OpenAI Chat / Responses 协议只认 Authorization: Bearer；变量名推断只对
+                // Anthropic Messages 上游有意义，选了 ANTHROPIC_API_KEY 也不能发 x-api-key。
+                if matches!(
+                    self.get_api_format(provider),
+                    "openai_chat" | "openai_responses"
+                ) {
+                    return Some(AuthInfo::new(key, AuthStrategy::Bearer));
+                }
                 // 按 env 中的变量名推断鉴权策略，对齐 Anthropic SDK 语义：
                 // ANTHROPIC_AUTH_TOKEN → Authorization: Bearer
                 // ANTHROPIC_API_KEY    → x-api-key
@@ -919,51 +938,7 @@ impl ProviderAdapter for ClaudeAdapter {
                 vec![(HeaderName::from_static("authorization"), hv(&bearer)?)]
             }
             AuthStrategy::GitHubCopilot => {
-                // 生成请求追踪 ID
-                let request_id = uuid::Uuid::new_v4().to_string();
-                vec![
-                    (HeaderName::from_static("authorization"), hv(&bearer)?),
-                    (
-                        HeaderName::from_static("editor-version"),
-                        HeaderValue::from_static(super::copilot_auth::COPILOT_EDITOR_VERSION),
-                    ),
-                    (
-                        HeaderName::from_static("editor-plugin-version"),
-                        HeaderValue::from_static(super::copilot_auth::COPILOT_PLUGIN_VERSION),
-                    ),
-                    (
-                        HeaderName::from_static("copilot-integration-id"),
-                        HeaderValue::from_static(super::copilot_auth::COPILOT_INTEGRATION_ID),
-                    ),
-                    (
-                        HeaderName::from_static("user-agent"),
-                        HeaderValue::from_static(super::copilot_auth::COPILOT_USER_AGENT),
-                    ),
-                    (
-                        HeaderName::from_static("x-github-api-version"),
-                        HeaderValue::from_static(super::copilot_auth::COPILOT_API_VERSION),
-                    ),
-                    // 26-04-01新增的copilot关键 headers
-                    (
-                        HeaderName::from_static("openai-intent"),
-                        HeaderValue::from_static("conversation-agent"),
-                    ),
-                    (
-                        HeaderName::from_static("x-initiator"),
-                        HeaderValue::from_static("user"),
-                    ),
-                    (
-                        HeaderName::from_static("x-interaction-type"),
-                        HeaderValue::from_static("conversation-agent"),
-                    ),
-                    // x-interaction-id 由 forwarder 按需注入（仅在有 session 时）
-                    (
-                        HeaderName::from_static("x-vscode-user-agent-library-version"),
-                        HeaderValue::from_static("electron-fetch"),
-                    ),
-                    (HeaderName::from_static("x-request-id"), hv(&request_id)?),
-                    (HeaderName::from_static("x-agent-task-id"), hv(&request_id)?),
-                ]
+                super::copilot_auth::build_copilot_request_headers(&auth.api_key)?
             }
         })
     }
@@ -1109,6 +1084,58 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_auth_openai_formats_always_use_bearer() {
+        // 认证字段选了 ANTHROPIC_API_KEY、上游却是 OpenAI 协议：x-api-key 会被拒，必须发 Bearer。
+        let adapter = ClaudeAdapter::new();
+        for format in ["openai_chat", "openai_responses"] {
+            for env in [
+                json!({
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_API_KEY": "sk-test"
+                }),
+                json!({
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_AUTH_TOKEN": "sk-test"
+                }),
+            ] {
+                let provider = create_provider_with_meta(
+                    json!({ "env": env }),
+                    ProviderMeta {
+                        api_format: Some(format.to_string()),
+                        ..Default::default()
+                    },
+                );
+                let auth = adapter.extract_auth(&provider).unwrap();
+                assert_eq!(auth.strategy, AuthStrategy::Bearer, "{format}");
+                let headers = adapter.get_auth_headers(&auth).unwrap();
+                assert_eq!(headers.len(), 1);
+                assert_eq!(headers[0].0.as_str(), "authorization");
+                assert_eq!(headers[0].1.to_str().unwrap(), "Bearer sk-test");
+            }
+        }
+    }
+
+    #[test]
+    fn test_extract_auth_anthropic_format_keeps_env_var_semantics() {
+        // Anthropic Messages 上游照旧按变量名区分（bdc4c1e8b 修的严格端点不能回退）。
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_API_KEY": "sk-test"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("anthropic".to_string()),
+                ..Default::default()
+            },
+        );
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.strategy, AuthStrategy::Anthropic);
+    }
+
+    #[test]
     fn test_extract_auth_both_env_vars_prefer_auth_token() {
         // 两个变量都填时，extract_key 选 AUTH_TOKEN，strategy 推断也必须保持一致。
         let adapter = ClaudeAdapter::new();
@@ -1143,6 +1170,25 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_auth_reads_bedrock_bearer_token_env() {
+        // 新版 Bedrock API Key 预设把 Key 放在 env.AWS_BEARER_TOKEN_BEDROCK；
+        // 鉴权策略与旧版顶层 apiKey 保持一致，不在这次改动里变。
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "apiKey": "stale-top-level",
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://bedrock-runtime.us-west-2.amazonaws.com",
+                "AWS_BEARER_TOKEN_BEDROCK": "bedrock-key",
+                "CLAUDE_CODE_USE_BEDROCK": "1"
+            }
+        }));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "bedrock-key");
+        assert_eq!(auth.strategy, AuthStrategy::Anthropic);
+    }
+
+    #[test]
     fn codex_oauth_generation_uses_gpt6_compatible_identity() {
         let headers: http::HeaderMap = ClaudeAdapter::new()
             .get_auth_headers(&AuthInfo::new(
@@ -1160,10 +1206,10 @@ mod tests {
             .split('.')
             .map(|part| part.parse().unwrap())
             .collect();
-        // Official rust-v0.153.4 catalog: gpt-6-astra requires 0.153.0.
+        // GPT-6.1 Sol requires the newer Codex client identity on ChatGPT accounts.
         assert!(
-            version.as_slice() >= [0, 153, 0].as_slice(),
-            "gpt-6-astra requires Codex >= 0.153.0; sent {version:?}"
+            version.as_slice() >= [0, 159, 0].as_slice(),
+            "gpt-6.1-sol requires Codex >= 0.159.0; sent {version:?}"
         );
     }
 
@@ -1852,6 +1898,54 @@ mod tests {
         .unwrap();
 
         assert_eq!(transformed["prompt_cache_key"], "session-123");
+    }
+
+    #[test]
+    fn test_codex_oauth_cache_key_follows_claude_json_conversation() {
+        use crate::proxy::session::extract_session_id;
+        use axum::http::HeaderMap;
+
+        let provider = create_provider_with_meta(
+            json!({"env": {
+                "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+            }}),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                provider_type: Some("codex_oauth".to_string()),
+                ..ProviderMeta::default()
+            },
+        );
+        for client_format in ["claude", "claude-desktop"] {
+            for session_id in ["conversation-123", "conversation-456"] {
+                for turn in 0..3 {
+                    let body = json!({
+                        "model": "gpt-5.4",
+                        "max_tokens": 128,
+                        "messages": [{"role": "user", "content": format!("turn {turn}")}],
+                        "metadata": {"user_id": json!({
+                            "device_id": "same-device",
+                            "account_uuid": "same-account",
+                            "session_id": session_id
+                        }).to_string()}
+                    });
+                    let session = extract_session_id(&HeaderMap::new(), &body, client_format);
+                    // Match the forwarder's rule: generated IDs must not become cache keys.
+                    let cache_session = session
+                        .client_provided
+                        .then_some(session.session_id.as_str());
+                    let transformed = transform_claude_request_for_api_format(
+                        body,
+                        &provider,
+                        "openai_responses",
+                        cache_session,
+                        None,
+                    )
+                    .unwrap();
+                    assert_eq!(transformed["prompt_cache_key"], session_id);
+                    assert_eq!(transformed["store"], false);
+                }
+            }
+        }
     }
 
     #[test]

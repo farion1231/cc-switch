@@ -11,7 +11,7 @@ fi
 
 cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
 cargo test --manifest-path src-tauri/Cargo.toml deepseek_harness --lib
-cargo test --manifest-path src-tauri/Cargo.toml dsh_is_part_of_environment_checks --lib
+cargo test --manifest-path src-tauri/Cargo.toml dsh_environment_check_is_detection_only --lib
 
 ./node_modules/.bin/tsc --noEmit
 ./node_modules/.bin/vitest run \

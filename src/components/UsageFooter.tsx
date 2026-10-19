@@ -1,12 +1,24 @@
 import React from "react";
-import { RefreshCw, AlertCircle, Clock } from "lucide-react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { type AppId } from "@/lib/api";
 import { useUsageQuery } from "@/lib/query/queries";
 import { UsageData, Provider } from "@/types";
-import { TierBadge } from "@/components/SubscriptionQuotaFooter";
+import {
+  tierLabel,
+  tierShortLabel,
+} from "@/components/SubscriptionQuotaFooter";
 import type { QuotaTier } from "@/types/subscription";
 import { isAdditiveAppId } from "@/config/appConfig";
+import { QuotaBars, QuotaLines } from "@/components/quota/QuotaLines";
+import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
+import {
+  balanceLine,
+  expiredLine,
+  failedLines,
+  tierLine,
+  type QuotaLine,
+} from "@/components/quota/quotaRules";
 
 interface UsageFooterProps {
   provider: Provider;
@@ -43,6 +55,48 @@ function toQuotaTier(data: UsageData): QuotaTier {
   };
 }
 
+/** 脚本用量的一个套餐 → 一行（名字和明细进悬停说明） */
+function planLine(
+  t: TFunction,
+  data: UsageData,
+  index: number,
+): QuotaLine | null {
+  const key = `${index}-${data.planName ?? ""}`;
+  const amount = (value: number) =>
+    `${value === -1 ? "∞" : value.toFixed(2)}${data.unit ? ` ${data.unit}` : ""}`;
+  const detail = [
+    data.planName,
+    data.total !== undefined ? `${t("usage.total")} ${amount(data.total)}` : "",
+    data.used !== undefined ? `${t("usage.used")} ${amount(data.used)}` : "",
+    data.extra,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  if (data.isValid === false) {
+    return expiredLine(t, data.invalidMessage || detail || undefined, key);
+  }
+  if (data.remaining !== undefined) {
+    return balanceLine(t, {
+      key,
+      remaining: data.remaining,
+      total: data.total === -1 ? null : data.total,
+      unit: data.unit,
+      detail: detail || undefined,
+    });
+  }
+  if (data.used !== undefined) {
+    return {
+      key,
+      left: Infinity,
+      tone: "plain",
+      text: `${t("usage.used")} ${amount(data.used)}`,
+      detail: detail || undefined,
+    };
+  }
+  return null;
+}
+
 const UsageFooter: React.FC<UsageFooterProps> = ({
   provider,
   providerId,
@@ -53,6 +107,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   inline = false,
 }) => {
   const { t } = useTranslation();
+  const display = useQuotaDisplay();
   const isTokenPlan =
     provider.meta?.usage_script?.templateType === "token_plan";
 
@@ -73,20 +128,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
     enabled: usageEnabled,
     autoQueryInterval,
   });
-
-  // 🆕 定期更新当前时间，用于刷新相对时间显示
-  const [now, setNow] = React.useState(Date.now());
-
-  React.useEffect(() => {
-    if (!lastQueriedAt) return;
-
-    // 每30秒更新一次当前时间，触发相对时间显示的刷新
-    const interval = setInterval(() => {
-      setNow(Date.now());
-    }, 30000); // 30秒
-
-    return () => clearInterval(interval);
-  }, [lastQueriedAt]);
+  const refresh = () => refetch();
 
   // 只在启用用量查询且有数据时显示。后端把瞬时传输失败转成了 reject：有缓存
   // 成功值时 react-query 保留 data 照常展示；首次查询就失败则 data 为空——
@@ -95,359 +137,114 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
 
   // 错误状态（业务失败，或无缓存成功值的 reject）
   if (!usage || !usage.success) {
+    const reason = usage?.error || t("usage.queryFailed");
     if (inline) {
       return (
-        <div className="inline-flex items-center gap-2 text-xs rounded-lg border border-border-default bg-card px-3 py-2 shadow-sm">
-          <div className="flex items-center gap-1.5 text-red-500 dark:text-red-400">
-            <AlertCircle size={12} />
-            <span>{t("usage.queryFailed")}</span>
-          </div>
-          <button
-            onClick={() => refetch()}
-            disabled={loading}
-            className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0"
-            title={t("usage.refreshUsage")}
-          >
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-          </button>
-        </div>
+        <QuotaLines
+          lines={failedLines(t, reason)}
+          queriedAt={lastQueriedAt}
+          loading={loading}
+          onRefresh={refresh}
+        />
       );
     }
-
     return (
-      <div className="mt-3 rounded-xl border border-border-default bg-card px-4 py-3 shadow-sm">
-        <div className="flex items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-2 text-red-500 dark:text-red-400">
-            <AlertCircle size={14} />
-            <span>{usage?.error || t("usage.queryFailed")}</span>
-          </div>
-
-          {/* 刷新按钮 */}
-          <button
-            onClick={() => refetch()}
-            disabled={loading}
-            className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50 flex-shrink-0"
-            title={t("usage.refreshUsage")}
-          >
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-          </button>
-        </div>
-      </div>
+      <QuotaBars
+        className="mt-3"
+        title={t("usage.planUsage")}
+        rows={[]}
+        loading={loading}
+        onRefresh={refresh}
+        footer={
+          <p className="text-caption">
+            <span className="font-medium text-danger-text">
+              {t("quota.failed")}
+            </span>{" "}
+            <span className="text-fg-3">{reason}</span>
+          </p>
+        }
+      />
     );
   }
 
   const usageDataList = usage.data || [];
-
-  // 无数据时不显示
   if (usageDataList.length === 0) return null;
 
-  // ── Token Plan：订阅风格内联渲染（百分比徽章 + 倒计时） ──
-  if (isTokenPlan && inline) {
-    return (
-      <div className="flex flex-col items-end gap-1 text-xs whitespace-nowrap flex-shrink-0">
-        {/* 第一行：查询时间 + 刷新 */}
-        <div className="flex items-center gap-2 justify-end">
-          <span className="text-[10px] text-muted-foreground/70 flex items-center gap-1">
-            <Clock size={10} />
-            {lastQueriedAt
-              ? formatRelativeTime(lastQueriedAt, now, t)
-              : t("usage.never", { defaultValue: "从未更新" })}
-          </span>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              refetch();
-            }}
-            disabled={loading}
-            className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0 text-muted-foreground"
-            title={t("usage.refreshUsage")}
-          >
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-          </button>
-        </div>
-        {/* 第二行：tier 徽章（复用官方订阅的 TierBadge） */}
-        <div className="flex items-center gap-2">
-          {(() => {
-            const tiers = usageDataList.map((d) => toQuotaTier(d));
-            const planLabel = tiers[0]?.planLabel;
-            return (
-              <>
-                {planLabel && (
-                  <span className="font-semibold text-muted-foreground">
-                    💰 {planLabel}
-                  </span>
-                )}
-                {tiers.map((tier, index) => (
-                  <TierBadge key={index} tier={tier} t={t} />
-                ))}
-              </>
-            );
-          })()}
-        </div>
-      </div>
+  // Token Plan：按档写剩余（或已用）百分比
+  if (isTokenPlan) {
+    const tiers = usageDataList.map((d) => toQuotaTier(d));
+    const planLabel = tiers[0]?.planLabel;
+    const rows = tiers.map((tier, index) => {
+      const label = tierLabel(t, tier.name);
+      const line = tierLine(t, tier, label, {
+        short: tierShortLabel(t, tier.name),
+        display,
+      });
+      return {
+        label,
+        line: {
+          ...line,
+          key: `${index}-${tier.name}`,
+          detail: [planLabel, line.detail].filter(Boolean).join(" · "),
+        },
+      };
+    });
+    return inline ? (
+      <QuotaLines
+        lines={rows.map((row) => row.line)}
+        queriedAt={lastQueriedAt}
+        loading={loading}
+        onRefresh={refresh}
+      />
+    ) : (
+      <QuotaBars
+        className="mt-3"
+        title={planLabel || t("usage.planUsage")}
+        rows={rows}
+        queriedAt={lastQueriedAt}
+        loading={loading}
+        onRefresh={refresh}
+      />
     );
   }
 
-  // ── 通用用量：内联模式（原有逻辑） ──
+  const lines = usageDataList
+    .map((data, index) => planLine(t, data, index))
+    .filter((line): line is QuotaLine => line !== null);
+  if (lines.length === 0) return null;
+
   if (inline) {
-    const firstUsage = usageDataList[0];
-    const isExpired = firstUsage.isValid === false;
-
     return (
-      <div className="flex flex-col items-end gap-1 text-xs whitespace-nowrap flex-shrink-0">
-        {/* 第一行：更新时间和刷新按钮 */}
-        <div className="flex items-center gap-2 justify-end">
-          {/* 上次查询时间 */}
-          <span className="text-[10px] text-muted-foreground/70 flex items-center gap-1">
-            <Clock size={10} />
-            {lastQueriedAt
-              ? formatRelativeTime(lastQueriedAt, now, t)
-              : t("usage.never", { defaultValue: "从未更新" })}
-          </span>
-
-          {/* 刷新按钮 */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              refetch();
-            }}
-            disabled={loading}
-            className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0 text-muted-foreground"
-            title={t("usage.refreshUsage")}
-          >
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-          </button>
-        </div>
-
-        {/* 第二行：用量和剩余 */}
-        <div className="flex items-center gap-2">
-          {/* 已用 */}
-          {firstUsage.used !== undefined && (
-            <div className="flex items-center gap-0.5">
-              <span className="text-gray-500 dark:text-gray-400">
-                {t("usage.used")}
-              </span>
-              <span className="tabular-nums text-gray-600 dark:text-gray-400 font-medium">
-                {firstUsage.used.toFixed(2)}
-              </span>
-            </div>
-          )}
-
-          {/* 剩余 */}
-          {firstUsage.remaining !== undefined && (
-            <div className="flex items-center gap-0.5">
-              <span className="text-gray-500 dark:text-gray-400">
-                {t("usage.remaining")}
-              </span>
-              <span
-                className={`font-semibold tabular-nums ${
-                  isExpired
-                    ? "text-red-500 dark:text-red-400"
-                    : firstUsage.remaining <
-                        (firstUsage.total || firstUsage.remaining) * 0.1
-                      ? "text-orange-500 dark:text-orange-400"
-                      : "text-green-600 dark:text-green-400"
-                }`}
-              >
-                {firstUsage.remaining.toFixed(2)}
-              </span>
-            </div>
-          )}
-
-          {/* 单位 */}
-          {firstUsage.unit && (
-            <span className="text-gray-500 dark:text-gray-400">
-              {firstUsage.unit}
-            </span>
-          )}
-
-          {/* 扩展字段 extra */}
-          {firstUsage.extra && (
-            <span
-              className="text-gray-500 dark:text-gray-400 truncate max-w-[150px]"
-              title={firstUsage.extra}
-            >
-              {firstUsage.extra}
-            </span>
-          )}
-        </div>
-      </div>
+      <QuotaLines
+        lines={lines}
+        queriedAt={lastQueriedAt}
+        loading={loading}
+        onRefresh={refresh}
+      />
     );
   }
 
   return (
-    <div className="mt-3 rounded-xl border border-border-default bg-card px-4 py-3 shadow-sm">
-      {/* 标题行：包含刷新按钮和自动查询时间 */}
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">
-          {t("usage.planUsage")}
-        </span>
-        <div className="flex items-center gap-2">
-          {/* 自动查询时间提示 */}
-          {lastQueriedAt && (
-            <span className="text-[10px] text-muted-foreground/70 flex items-center gap-1">
-              <Clock size={10} />
-              {formatRelativeTime(lastQueriedAt, now, t)}
-            </span>
-          )}
-          <button
-            onClick={() => refetch()}
-            disabled={loading}
-            className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50"
-            title={t("usage.refreshUsage")}
-          >
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-          </button>
-        </div>
-      </div>
-
-      {/* 套餐列表 */}
-      <div className="flex flex-col gap-3">
-        {usageDataList.map((usageData, index) => (
-          <UsagePlanItem key={index} data={usageData} />
-        ))}
-      </div>
-    </div>
+    <QuotaBars
+      className="mt-3"
+      title={t("usage.planUsage")}
+      rows={usageDataList.flatMap((data, index) => {
+        const line = planLine(t, data, index);
+        return line
+          ? [
+              {
+                label: data.planName || "—",
+                line: { ...line, value: line.text },
+                note: data.extra,
+              },
+            ]
+          : [];
+      })}
+      queriedAt={lastQueriedAt}
+      loading={loading}
+      onRefresh={refresh}
+    />
   );
 };
-
-// ── 通用用量组件 ────────────────────────────────────────────
-
-// 单个套餐数据展示组件
-const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
-  const { t } = useTranslation();
-  const {
-    planName,
-    extra,
-    isValid,
-    invalidMessage,
-    total,
-    used,
-    remaining,
-    unit,
-  } = data;
-
-  // 判断套餐是否失效（isValid 为 false 或未定义时视为有效）
-  const isExpired = isValid === false;
-
-  return (
-    <div className="flex items-center gap-3">
-      {/* 标题部分：25% */}
-      <div
-        className="text-xs text-gray-500 dark:text-gray-400 min-w-0"
-        style={{ width: "25%" }}
-      >
-        {planName ? (
-          <span
-            className={`font-medium truncate block ${isExpired ? "text-red-500 dark:text-red-400" : ""}`}
-            title={planName}
-          >
-            💰 {planName}
-          </span>
-        ) : (
-          <span className="opacity-50">—</span>
-        )}
-      </div>
-
-      {/* 扩展字段：30% */}
-      <div
-        className="text-xs text-gray-500 dark:text-gray-400 min-w-0 flex items-center gap-2"
-        style={{ width: "30%" }}
-      >
-        {extra && (
-          <span
-            className={`truncate ${isExpired ? "text-red-500 dark:text-red-400" : ""}`}
-            title={extra}
-          >
-            {extra}
-          </span>
-        )}
-        {isExpired && (
-          <span className="text-red-500 dark:text-red-400 font-medium text-[10px] px-1.5 py-0.5 bg-red-50 dark:bg-red-900/20 rounded flex-shrink-0">
-            {invalidMessage || t("usage.invalid")}
-          </span>
-        )}
-      </div>
-
-      {/* 用量信息：45% */}
-      <div
-        className="flex items-center justify-end gap-2 text-xs flex-shrink-0"
-        style={{ width: "45%" }}
-      >
-        {/* 总额度 */}
-        {total !== undefined && (
-          <>
-            <span className="text-gray-500 dark:text-gray-400">
-              {t("usage.total")}
-            </span>
-            <span className="tabular-nums text-gray-600 dark:text-gray-400">
-              {total === -1 ? "∞" : total.toFixed(2)}
-            </span>
-            <span className="text-gray-400 dark:text-gray-600">|</span>
-          </>
-        )}
-
-        {/* 已用额度 */}
-        {used !== undefined && (
-          <>
-            <span className="text-gray-500 dark:text-gray-400">
-              {t("usage.used")}
-            </span>
-            <span className="tabular-nums text-gray-600 dark:text-gray-400">
-              {used.toFixed(2)}
-            </span>
-            <span className="text-gray-400 dark:text-gray-600">|</span>
-          </>
-        )}
-
-        {/* 剩余额度 - 突出显示 */}
-        {remaining !== undefined && (
-          <>
-            <span className="text-gray-500 dark:text-gray-400">
-              {t("usage.remaining")}
-            </span>
-            <span
-              className={`font-semibold tabular-nums ${
-                isExpired
-                  ? "text-red-500 dark:text-red-400"
-                  : remaining < (total || remaining) * 0.1
-                    ? "text-orange-500 dark:text-orange-400"
-                    : "text-green-600 dark:text-green-400"
-              }`}
-            >
-              {remaining.toFixed(2)}
-            </span>
-          </>
-        )}
-
-        {unit && (
-          <span className="text-gray-500 dark:text-gray-400">{unit}</span>
-        )}
-      </div>
-    </div>
-  );
-};
-
-// 格式化相对时间
-function formatRelativeTime(
-  timestamp: number,
-  now: number,
-  t: (key: string, options?: { count?: number }) => string,
-): string {
-  const diff = Math.floor((now - timestamp) / 1000); // 秒
-
-  if (diff < 60) {
-    return t("usage.justNow");
-  } else if (diff < 3600) {
-    const minutes = Math.floor(diff / 60);
-    return t("usage.minutesAgo", { count: minutes });
-  } else if (diff < 86400) {
-    const hours = Math.floor(diff / 3600);
-    return t("usage.hoursAgo", { count: hours });
-  } else {
-    const days = Math.floor(diff / 86400);
-    return t("usage.daysAgo", { count: days });
-  }
-}
 
 export default UsageFooter;

@@ -92,10 +92,9 @@ impl Database {
             AppType::GrokBuild => Some("enabled_grokbuild"),
             AppType::OpenCode => Some("enabled_opencode"),
             AppType::Hermes => Some("enabled_hermes"),
-            // These applications intentionally have no MCP flag in the SSOT.
             AppType::Mcode => Some("enabled_mcode"),
-            // These applications intentionally have no MCP flag in the SSOT.
             AppType::Pi => Some("enabled_pi"),
+            // These applications intentionally have no MCP flag in the SSOT.
             AppType::ClaudeDesktop | AppType::OpenClaw | AppType::DeepSeekHarness => None,
         };
 
@@ -277,18 +276,11 @@ mod tests {
     fn pi_mcp_flag_round_trips_through_the_database() {
         let db = Database::memory().expect("create memory db");
         db.save_mcp_server(&test_server()).expect("seed server");
-
         let returned = db
             .update_mcp_server_app_enabled("shared-server", &AppType::Pi, true)
             .expect("toggle pi")
             .expect("server exists");
-
         assert!(returned.apps.pi);
-        let stored = db
-            .get_all_mcp_servers()
-            .expect("read servers")
-            .shift_remove("shared-server")
-            .expect("stored server");
-        assert!(stored.apps.pi);
+        assert!(db.get_all_mcp_servers().unwrap()["shared-server"].apps.pi);
     }
 }

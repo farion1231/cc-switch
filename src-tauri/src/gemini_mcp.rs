@@ -49,7 +49,7 @@ pub fn read_mcp_servers_map() -> Result<std::collections::HashMap<String, Value>
         .unwrap_or_default();
 
     // 反向格式转换：Gemini 特有格式 → 统一 MCP 格式
-    for (_, spec) in servers.iter_mut() {
+    for spec in servers.values_mut() {
         if let Some(obj) = spec.as_object_mut() {
             // httpUrl → url + type: "http"
             if let Some(http_url) = obj.remove("httpUrl") {

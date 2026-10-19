@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use crate::session_manager::model::SessionBlock;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{extract_text, path_basename, truncate_summary, TITLE_MAX_CHARS};
@@ -62,21 +63,21 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
                     .map(extract_text)
                     .unwrap_or_default();
                 if !content.trim().is_empty() {
-                    messages.push(SessionMessage {
-                        role: "user".to_string(),
-                        content,
-                        ts: event_time(value),
-                    });
+                    messages.push(SessionMessage::from_blocks(
+                        "user",
+                        event_time(value),
+                        vec![SessionBlock::text(content)],
+                    ));
                 }
             }
             Some("assistant/message") => {
                 let content = assistant_text(value);
                 if !content.trim().is_empty() {
-                    messages.push(SessionMessage {
-                        role: "assistant".to_string(),
-                        content,
-                        ts: event_time(value),
-                    });
+                    messages.push(SessionMessage::from_blocks(
+                        "assistant",
+                        event_time(value),
+                        vec![SessionBlock::text(content)],
+                    ));
                 }
             }
             _ => {}
@@ -336,6 +337,14 @@ mod tests {
             assert_eq!(messages[0].ts, Some(1787220655606));
             assert_eq!(messages[1].role, "assistant");
             assert_eq!(messages[1].content, "hi there");
+            let serialized = serde_json::to_value(&messages[1]).unwrap();
+            assert_eq!(serialized["blocks"][0]["type"], "text");
+            assert_eq!(serialized["blocks"][0]["text"], "hi there");
+            assert!(serialized.get("content").is_none());
+            let transcript =
+                crate::session_manager::load_transcript(PROVIDER_ID, file.to_str().unwrap())
+                    .unwrap();
+            assert!(!transcript.cached);
         });
     }
 
