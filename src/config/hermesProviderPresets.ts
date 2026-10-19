@@ -121,6 +121,12 @@ export interface HermesProviderPreset extends PresetFamilyFields {
   isCustomTemplate?: boolean;
   /** Optional top-level `model:` defaults written on switch. */
   suggestedDefaults?: HermesSuggestedDefaults;
+  /**
+   * Provider key prefilled when the preset is picked. Set it when the obvious
+   * name is a Hermes built-in provider id (e.g. `minimax`): Hermes routes
+   * `model.provider` to the built-in, ignoring a same-named custom_provider.
+   */
+  providerKey?: string;
 }
 
 export interface HermesProviderSettingsConfig {
@@ -2334,8 +2340,10 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     regionKey: "cn",
     websiteUrl: "https://platform.minimax.cn",
     apiKeyUrl: "https://platform.minimax.cn/subscribe/token-plan",
+    // `minimax` / `minimax-cn` are Hermes built-ins that shadow custom_providers
+    providerKey: "cc-switch-minimax",
     settingsConfig: {
-      name: "minimax",
+      name: "cc-switch-minimax",
       base_url: "https://api.minimax.cn/v1",
       api_key: "",
       api_mode: "chat_completions",
@@ -2343,6 +2351,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "MiniMax-M3.1-Flash",
           name: "MiniMax M3.1 Flash",
+          supports_vision: true,
         },
         { id: "MiniMax-M3", name: "MiniMax M3" },
       ],
@@ -2354,7 +2363,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "minimax",
     iconColor: "#FF6B6B",
     suggestedDefaults: {
-      model: { default: "MiniMax-M3.1-Flash", provider: "minimax" },
+      model: { default: "MiniMax-M3.1-Flash", provider: "cc-switch-minimax" },
     },
   },
   {
@@ -2363,8 +2372,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     regionKey: "intl",
     websiteUrl: "https://platform.minimax.io",
     apiKeyUrl: "https://platform.minimax.io/subscribe/coding-plan",
+    providerKey: "cc-switch-minimax-en",
     settingsConfig: {
-      name: "minimax_en",
+      name: "cc-switch-minimax-en",
       base_url: "https://api.minimax.io/v1",
       api_key: "",
       api_mode: "chat_completions",
@@ -2372,6 +2382,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "MiniMax-M3.1-Flash",
           name: "MiniMax M3.1 Flash",
+          supports_vision: true,
         },
         { id: "MiniMax-M3", name: "MiniMax M3" },
       ],
@@ -2383,7 +2394,10 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "minimax",
     iconColor: "#FF6B6B",
     suggestedDefaults: {
-      model: { default: "MiniMax-M3.1-Flash", provider: "minimax_en" },
+      model: {
+        default: "MiniMax-M3.1-Flash",
+        provider: "cc-switch-minimax-en",
+      },
     },
   },
   {

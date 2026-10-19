@@ -2291,7 +2291,7 @@ function ProviderFormFull({
       const preset = entry.preset as HermesProviderPreset;
       const config = preset.settingsConfig;
 
-      hermesForm.resetHermesState(config);
+      hermesForm.resetHermesState(config, preset.providerKey);
 
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
