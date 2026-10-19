@@ -931,6 +931,8 @@ export interface OpenClawModel {
     maxTokensField?: string; // 最大输出 token 请求字段名（如 "max_tokens"）
     supportsTools?: boolean; // 自定义供应商声明模型支持工具调用
     toolSchemaProfile?: string; // 工具 schema 清理档案（如 llama-server 用 "llamacpp"）
+    supportsReasoningEffort?: boolean; // 接受 reasoning effort 参数
+    supportedReasoningEfforts?: string[]; // 接口接受的 effort 档位
   };
 }
 

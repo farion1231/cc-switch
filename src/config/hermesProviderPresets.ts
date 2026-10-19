@@ -2339,14 +2339,22 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: "https://api.minimax.cn/v1",
       api_key: "",
       api_mode: "chat_completions",
-      models: [{ id: "MiniMax-M3", name: "MiniMax M3" }],
+      models: [
+        {
+          id: "MiniMax-M3.1-Flash",
+          name: "MiniMax M3.1 Flash",
+        },
+        { id: "MiniMax-M3", name: "MiniMax M3" },
+      ],
+      // M3.1 can't disable thinking; Hermes' title request sends reasoning_effort:none
+      title_generation_model: "MiniMax-M3",
     },
     category: "cn_official",
     theme: { backgroundColor: "#f64551", textColor: "#FFFFFF" },
     icon: "minimax",
     iconColor: "#FF6B6B",
     suggestedDefaults: {
-      model: { default: "MiniMax-M3", provider: "minimax" },
+      model: { default: "MiniMax-M3.1-Flash", provider: "minimax" },
     },
   },
   {
@@ -2360,14 +2368,22 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: "https://api.minimax.io/v1",
       api_key: "",
       api_mode: "chat_completions",
-      models: [{ id: "MiniMax-M3", name: "MiniMax M3" }],
+      models: [
+        {
+          id: "MiniMax-M3.1-Flash",
+          name: "MiniMax M3.1 Flash",
+        },
+        { id: "MiniMax-M3", name: "MiniMax M3" },
+      ],
+      // M3.1 can't disable thinking; Hermes' title request sends reasoning_effort:none
+      title_generation_model: "MiniMax-M3",
     },
     category: "cn_official",
     theme: { backgroundColor: "#f64551", textColor: "#FFFFFF" },
     icon: "minimax",
     iconColor: "#FF6B6B",
     suggestedDefaults: {
-      model: { default: "MiniMax-M3", provider: "minimax_en" },
+      model: { default: "MiniMax-M3.1-Flash", provider: "minimax_en" },
     },
   },
   {

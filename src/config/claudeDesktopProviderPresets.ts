@@ -1637,7 +1637,21 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.minimax.cn/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("MiniMax-M3", "MiniMax-M3", "MiniMax-M3", true),
+    modelRoutes: [
+      ...brandedRoutes(
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3.1-Flash",
+        true,
+      ),
+      // extra route (fable slot) so M3 stays selectable; defaults stay on M3.1
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.fable,
+        upstreamModel: "MiniMax-M3",
+        labelOverride: "MiniMax-M3",
+        supports1m: true,
+      },
+    ],
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",
@@ -1655,7 +1669,21 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.minimax.io/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("MiniMax-M3", "MiniMax-M3", "MiniMax-M3", true),
+    modelRoutes: [
+      ...brandedRoutes(
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3.1-Flash",
+        true,
+      ),
+      // extra route (fable slot) so M3 stays selectable; defaults stay on M3.1
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.fable,
+        upstreamModel: "MiniMax-M3",
+        labelOverride: "MiniMax-M3",
+        supports1m: true,
+      },
+    ],
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",
