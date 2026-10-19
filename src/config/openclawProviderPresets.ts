@@ -3968,6 +3968,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           input: ["text", "image"],
           contextWindow: 1000000,
           maxTokens: 131072,
+          cost: { input: 0.15, output: 0.6, cacheRead: 0.015, cacheWrite: 0 },
           compat: {
             supportsReasoningEffort: true,
             supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
@@ -4023,6 +4024,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           input: ["text", "image"],
           contextWindow: 1000000,
           maxTokens: 131072,
+          cost: { input: 0.15, output: 0.6, cacheRead: 0.015, cacheWrite: 0 },
           compat: {
             supportsReasoningEffort: true,
             supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
