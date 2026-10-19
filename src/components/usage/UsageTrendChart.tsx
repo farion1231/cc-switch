@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  Area,
+  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -12,10 +14,16 @@ import {
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useUsageTrends } from "@/lib/query/usage";
 import { Loader2 } from "lucide-react";
-import { fmtInt, getLocaleFromLanguage, parseFiniteNumber } from "./format";
+import {
+  fmtInt,
+  getLocaleFromLanguage,
+  parseFiniteNumber,
+  resolveTrendChartType,
+} from "./format";
 import { resolveUsageRange } from "@/lib/usageRange";
 import type { UsageRangeSelection } from "@/types/usage";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
+import { useSettingsQuery } from "@/lib/query";
 import { USAGE_CHOICE_KEYS, useRememberedChoice } from "./rememberedChoice";
 
 interface UsageTrendChartProps {
@@ -50,7 +58,7 @@ export interface UsageTrendChartPoint {
   outputTokens: number;
   cacheCreationTokens: number;
   cacheReadTokens: number;
-  /** 请求数（「请求」指标的柱） */
+  /** 请求数（「请求」指标） */
   requests: number;
   /** 真实消耗 Tokens = 新增输入 + 输出 + 缓存写入 + 缓存命中（和指标卡同口径） */
   tokens: number;
@@ -143,19 +151,64 @@ export function formatUsageTrendTickLabel(
   return point?.label ?? xKey;
 }
 
+export interface UsageTrendTokenTickFormatter {
+  format(value: number): string;
+}
+
+/**
+ * 中日文的「万」「亿」各管四位数，5000万、2000亿 比英文的 50M、200B 宽一截，
+ * 会把纵轴撑宽；这两段改写成 5千万、2千亿。
+ */
+function cjkThousandUnits(locale: string): Array<[number, string]> | null {
+  if (locale === "zh-TW") {
+    return [
+      [1e11, "千億"],
+      [1e7, "千萬"],
+    ];
+  }
+  if (locale.startsWith("zh")) {
+    return [
+      [1e11, "千亿"],
+      [1e7, "千万"],
+    ];
+  }
+  if (locale.startsWith("ja")) {
+    return [
+      [1e11, "千億"],
+      [1e7, "千万"],
+    ];
+  }
+  return null;
+}
+
 export function createUsageTrendTokenTickFormatter(
   locale: string,
-): Intl.NumberFormat {
-  return new Intl.NumberFormat(locale, {
+): UsageTrendTokenTickFormatter {
+  const compact = new Intl.NumberFormat(locale, {
     notation: "compact",
     compactDisplay: "short",
     maximumFractionDigits: 1,
   });
+  const units = cjkThousandUnits(locale);
+  if (!units) return compact;
+  const plain = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 });
+  return {
+    format(value) {
+      const abs = Math.abs(value);
+      for (const [size, unit] of units) {
+        if (abs < size || abs >= size * 10) continue;
+        const scaled = Number((value / size).toFixed(1));
+        // 9.96 千万这类进位到 10 的，交回原格式（9960万）
+        if (Math.abs(scaled) < 10) return `${plain.format(scaled)}${unit}`;
+      }
+      return compact.format(value);
+    },
+  };
 }
 
 export function formatUsageTrendTokenTickLabel(
   value: unknown,
-  formatter: Intl.NumberFormat,
+  formatter: UsageTrendTokenTickFormatter,
 ): string {
   const num = parseFiniteNumber(value);
   if (num == null) return "--";
@@ -183,6 +236,9 @@ export function UsageTrendChart({
     TREND_METRICS,
     "tokens",
   );
+  // 柱形图 / 曲线面积图在用量「设置」里选
+  const { data: settings } = useSettingsQuery();
+  const chartType = resolveTrendChartType(settings?.usageDisplay);
   const { startDate, endDate } = resolveUsageRange(range);
   const { data: trends, isLoading } = useUsageTrends(
     range,
@@ -226,6 +282,14 @@ export function UsageTrendChart({
     metric === "cost"
       ? moneyTick(value)
       : formatUsageTrendTokenTickLabel(value, tokenTickFormatter);
+
+  const Chart = chartType === "bar" ? BarChart : AreaChart;
+  // 成本先换算成显示币种再画，Y 轴才会按这个币种挑整齐的刻度。
+  const dataKey =
+    metric === "cost"
+      ? (point: UsageTrendChartPoint) =>
+          point.cost == null ? null : point.cost * rate
+      : metric;
 
   const renderTooltip = ({ active, payload }: any) => {
     if (!active || !payload || payload.length === 0) return null;
@@ -291,7 +355,7 @@ export function UsageTrendChart({
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart
+            <Chart
               data={chartData}
               margin={{ top: 6, right: 0, left: 0, bottom: 0 }}
             >
@@ -314,7 +378,7 @@ export function UsageTrendChart({
                 allowDuplicatedCategory={false}
               />
               <YAxis
-                width={44}
+                width="auto"
                 axisLine={false}
                 tickLine={false}
                 tick={AXIS_TICK}
@@ -323,23 +387,36 @@ export function UsageTrendChart({
               />
               <Tooltip
                 content={renderTooltip}
-                cursor={{ fill: "var(--bg-subtle)" }}
-              />
-              <Bar
-                // 成本先换算成显示币种再画，Y 轴才会按这个币种挑整齐的刻度
-                dataKey={
-                  metric === "cost"
-                    ? (point: UsageTrendChartPoint) =>
-                        point.cost == null ? null : point.cost * rate
-                    : metric
+                cursor={
+                  chartType === "bar"
+                    ? { fill: "var(--bg-subtle)" }
+                    : { stroke: "var(--text-3)", strokeDasharray: "3 3" }
                 }
-                name={metricLabel}
-                fill="var(--chart-1)"
-                radius={[3, 3, 0, 0]}
-                maxBarSize={36}
-                isAnimationActive={false}
               />
-            </BarChart>
+              {chartType === "bar" ? (
+                <Bar
+                  dataKey={dataKey}
+                  name={metricLabel}
+                  fill="var(--chart-1)"
+                  radius={[3, 3, 0, 0]}
+                  maxBarSize={36}
+                  isAnimationActive={false}
+                />
+              ) : (
+                <Area
+                  type="monotone"
+                  dataKey={dataKey}
+                  name={metricLabel}
+                  stroke="var(--chart-1)"
+                  strokeWidth={2}
+                  fill="var(--chart-1)"
+                  fillOpacity={0.16}
+                  dot={chartData.length === 1 ? { r: 3 } : false}
+                  activeDot={{ r: 4 }}
+                  isAnimationActive={false}
+                />
+              )}
+            </Chart>
           </ResponsiveContainer>
         )}
       </div>

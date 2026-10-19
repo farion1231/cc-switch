@@ -148,6 +148,9 @@ pub struct ProviderService;
 #[serde(rename_all = "camelCase")]
 pub struct SwitchResult {
     pub warnings: Vec<String>,
+    /// Present only when this operation selected a local proxy target.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route: Option<crate::mode::controller::RouteSwitchResult>,
 }
 
 #[cfg(test)]
@@ -2295,6 +2298,12 @@ requires_openai_auth = true
         crate::settings::reload_settings().expect("reload settings");
 
         let db = Arc::new(Database::memory().expect("init db"));
+        db.update_proxy_config(ProxyConfig {
+            listen_port: 0,
+            ..Default::default()
+        })
+        .await
+        .expect("ephemeral proxy port");
         let state = AppState::new(db.clone());
 
         let mut original = Provider::with_id(
@@ -2337,6 +2346,8 @@ requires_openai_auth = true
         )
         .await
         .expect("enter desktop route mode");
+        let gateway_url = crate::claude_desktop_config::proxy_gateway_base_url_from_db(&db)
+            .expect("running Desktop gateway");
 
         let mut updated = Provider::with_id(
             "p1".into(),
@@ -2377,7 +2388,7 @@ requires_openai_auth = true
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
-            json!("http://127.0.0.1:15721/claude-desktop"),
+            json!(gateway_url),
             "desktop profile should stay pointed at the local gateway during takeover"
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
@@ -2386,6 +2397,11 @@ requires_openai_auth = true
             json!([{ "name": "claude-sonnet-4-6", "labelOverride": "DeepSeek V4 Flash Updated", "supports1m": true, "prefer1m": true }]),
             "provider edits should propagate into the Claude Desktop 3P profile during takeover"
         );
+        state
+            .proxy_service
+            .stop()
+            .await
+            .expect("stop proxy service");
     }
 
     #[test]
@@ -6393,7 +6409,7 @@ impl ProviderService {
 
     /// Delete a provider
     ///
-    /// 同时检查本地 settings 和数据库的当前供应商，防止删除任一端正在使用的供应商。
+    /// 直连指针或代理路由指着的供应商不能删（见 `mode::current::is_referenced`）。
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
         if app_type == AppType::Pi {
@@ -6625,12 +6641,15 @@ impl ProviderService {
                     .unwrap_or("（无）"),
                 id
             );
-            futures::executor::block_on(crate::mode::controller::switch_route_locked(
+            let route = futures::executor::block_on(crate::mode::controller::switch_route_locked(
                 state, &app_type, _provider,
             ))
             .map_err(|e| AppError::Message(format!("切换路由失败: {e}")))?;
             // MCP 不随路由变：客户端文件没按直连重写。
-            return Ok(SwitchResult::default());
+            return Ok(SwitchResult {
+                route: Some(route),
+                ..Default::default()
+            });
         }
 
         // Normal mode: full switch with Live config write

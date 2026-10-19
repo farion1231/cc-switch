@@ -2165,6 +2165,10 @@ fn extend_mise_node_search_paths(paths: &mut IndexSet<std::path::PathBuf>, home:
 ///
 /// See `env_checker::check_system_env` for the same set of registry keys; here
 /// referenced variables also fall back to these keys if absent from the process.
+///
+/// fnm's default Node alias is appended last (see `fnm_default_alias_dir_candidates`),
+/// so a Node that only exists in `fnm env` shells is still visible, while every
+/// explicit PATH entry keeps precedence.
 #[cfg(target_os = "windows")]
 fn effective_path_string() -> String {
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
@@ -2183,7 +2187,48 @@ fn effective_path_string() -> String {
         .and_then(|k| k.get_value::<String, &str>("Path"))
         .map(|raw| expand_env_chars(&raw))
         .unwrap_or_default();
-    merge_path_segments_win(&[&process, &user, &machine])
+    let fnm = fnm_default_alias_dir_candidates(
+        std::env::var_os("FNM_DIR"),
+        &dirs::home_dir().unwrap_or_default(),
+        dirs::data_dir(),
+    )
+    .into_iter()
+    .filter(|dir| dir.is_dir())
+    .map(|dir| dir.to_string_lossy().into_owned())
+    .collect::<Vec<_>>()
+    .join(";");
+    merge_path_segments_win(&[&process, &user, &machine, &fnm])
+}
+
+/// fnm only puts Node on PATH through `fnm env`, which prepends a per-shell
+/// `%LOCALAPPDATA%\fnm_multishells\<id>` link to that shell's PATH. Nothing is
+/// written to the registry PATH, so a GUI-launched CC Switch sees neither node,
+/// npm nor the npm global CLIs (#8484, #6991). `<fnm dir>\aliases\default` is a
+/// stable link to the default Node installation; on Windows node.exe, npm.cmd
+/// and npm global commands live directly in that directory (no `bin`).
+///
+/// Mirrors fnm's own base-dir lookup: `FNM_DIR`, then the legacy `~\.fnm`, then
+/// `%APPDATA%\fnm`. Callers keep only the directories that exist.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn fnm_default_alias_dir_candidates(
+    fnm_dir: Option<std::ffi::OsString>,
+    home: &Path,
+    data_dir: Option<std::path::PathBuf>,
+) -> Vec<std::path::PathBuf> {
+    let mut bases = IndexSet::new();
+    if let Some(dir) = fnm_dir.filter(|value| !value.is_empty()) {
+        push_unique_path(&mut bases, std::path::PathBuf::from(dir));
+    }
+    if !home.as_os_str().is_empty() {
+        push_unique_path(&mut bases, home.join(".fnm"));
+    }
+    if let Some(data_dir) = data_dir {
+        push_unique_path(&mut bases, data_dir.join("fnm"));
+    }
+    bases
+        .into_iter()
+        .map(|base| base.join("aliases").join("default"))
+        .collect()
 }
 
 /// `extend_from_cli_path_env` consumes an `OsString` via `split_paths`. On
@@ -2716,6 +2761,11 @@ pub struct ToolInstallation {
     runnable: bool,
     /// 跑不起来时的诊断信息末尾若干行。
     error: Option<String>,
+    /// `--version` 真的跑完并以非 0 退出（命令自己报错）。超时被击杀、启动失败都不算：
+    /// 那只说明这次没探到，不能证明装坏了。Codex 的卸载重装自愈只认这个信号——误判
+    /// 健康的一处为损坏、重装又失败时，旧版已被卸掉，用户看到「未安装」。
+    #[serde(skip)]
+    exited_with_error: bool,
     /// 由路径前缀推断的安装来源（nvm/homebrew/...），驱动 UI 徽章。
     source: String,
     /// 是否为 PATH 解析到的那处（= 命令行默认，也是升级会作用的目标）。
@@ -3057,12 +3107,12 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
 
             let output = run_probe_version_command(&tool_path, &new_path);
 
-            let (version, runnable, error) = match output {
+            let (version, runnable, error, exited_with_error) = match output {
                 Ok(out) if out.status.success() => {
                     let stdout = decode_command_output(&out.stdout).trim().to_string();
                     let stderr = decode_command_output(&out.stderr).trim().to_string();
                     let raw = if stdout.is_empty() { stderr } else { stdout };
-                    (Some(extract_version(&raw)), true, None)
+                    (Some(extract_version(&raw)), true, None, false)
                 }
                 Ok(out) => {
                     let stderr = decode_command_output(&out.stderr).trim().to_string();
@@ -3074,9 +3124,9 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
                     } else {
                         Some(last_lines(detail, 4))
                     };
-                    (None, false, error)
+                    (None, false, error, true)
                 }
-                Err(e) => (None, false, Some(e)),
+                Err(e) => (None, false, Some(e), false),
             };
 
             let is_path_default = path_default.as_ref() == Some(&real);
@@ -3088,6 +3138,7 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
                 version,
                 runnable,
                 error,
+                exited_with_error,
                 source: source.to_string(),
                 is_path_default,
                 // 复用上面 line ~1357 已 canonicalize 的真身,避免下游
@@ -4264,7 +4315,9 @@ fn installs_anchored_command(tool: &str, installs: &[ToolInstallation]) -> Optio
     // 来源**（codex_repair_command 内按 source/real 收窄，brew/volta/bun/system 交回下方
     // source-specific 锚定，避免误用 npm 重装）。runnable=true 的正常升级也走下方普通锚定
     // 路径（且因 codex 不在 prefers_official_update，不会再跑会假成功掩盖损坏的 `codex update`）。
-    if tool == "codex" && !inst.runnable {
+    // 只认 `--version` 真的退出报错：探测超时 / 启动失败的那处可能是好的，先卸载再装
+    // 一旦装失败就把旧版丢了；普通 `npm i -g` 失败时 npm 会回滚、旧版还在。
+    if tool == "codex" && !inst.runnable && inst.exited_with_error {
         if let Some(cmd) = codex_repair_command(&inst.path, &real) {
             return Some(cmd);
         }
@@ -5381,6 +5434,28 @@ fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), S
     run_windows_start_command_with_env(args, terminal_name, &[])
 }
 
+/// 组装 `cmd /C start ...`。终端里跑的 `claude` 等命令按这里的 PATH 查找：CC Switch
+/// 被 MSI 自动重启后只剩机器级 PATH（#6061），或是在装 CLI 之前就已启动，进程 PATH
+/// 都会缺用户级条目（#3877、#8446）。和检测、生命周期命令（#8173）一样用补全后的 PATH，
+/// 只影响启动的终端，不改 CC Switch 自身的环境；Windows Terminal 从命令行开新标签时
+/// 也沿用调用方的环境。
+#[cfg(target_os = "windows")]
+fn windows_start_command(
+    args: &[&str],
+    envs: &[(&str, &str)],
+    effective_path: &str,
+) -> std::process::Command {
+    let mut command = std::process::Command::new("cmd");
+    command
+        .arg("/C")
+        .arg("start")
+        .args(args)
+        .env("PATH", effective_path)
+        .envs(envs.iter().copied())
+        .creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
 /// 同 `run_windows_start_command`，额外给启动的终端设置环境变量（`start` 会继承）。
 #[cfg(target_os = "windows")]
 fn run_windows_start_command_with_env(
@@ -5388,15 +5463,7 @@ fn run_windows_start_command_with_env(
     terminal_name: &str,
     envs: &[(&str, &str)],
 ) -> Result<(), String> {
-    use std::process::Command;
-
-    let mut full_args = vec!["/C", "start"];
-    full_args.extend(args);
-
-    let output = Command::new("cmd")
-        .args(&full_args)
-        .envs(envs.iter().copied())
-        .creation_flags(CREATE_NO_WINDOW)
+    let output = windows_start_command(args, envs, &effective_path_string())
         .output()
         .map_err(|e| format!("启动 {} 失败: {e}", terminal_name))?;
 
@@ -5888,6 +5955,53 @@ mod tests {
         assert_eq!(
             decode_command_output(&restored.stdout).trim(),
             "restored-user-path"
+        );
+        assert_eq!(std::env::var_os("PATH"), parent_path);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_start_command_passes_restored_path_to_the_terminal() {
+        let root = tempfile::tempdir().unwrap();
+        let tool_dir = root.path().join("claude 用户 & bin");
+        std::fs::create_dir_all(&tool_dir).unwrap();
+        std::fs::write(
+            tool_dir.join("cc_switch_start_test_tool.cmd"),
+            "@echo restored-terminal-path\r\n@exit /b 0\r\n",
+        )
+        .unwrap();
+
+        // `start /B /WAIT` runs the child in the same hidden console, so the
+        // test observes what the launched terminal would resolve.
+        let args = [
+            "/B",
+            "/WAIT",
+            "cmd",
+            "/D",
+            "/C",
+            "cc_switch_start_test_tool",
+        ];
+        let system_path = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32");
+        let inherited = system_path.to_str().unwrap();
+        let effective = merge_path_segments_win(&[inherited, tool_dir.to_str().unwrap()]);
+        let parent_path = std::env::var_os("PATH");
+
+        let missing = windows_start_command(&args, &[], inherited)
+            .current_dir(root.path())
+            .output()
+            .unwrap();
+        assert!(
+            !decode_command_output(&missing.stdout).contains("restored-terminal-path"),
+            "the tool must be absent on the narrow PATH: {missing:?}"
+        );
+
+        let restored = windows_start_command(&args, &[], &effective)
+            .current_dir(root.path())
+            .output()
+            .unwrap();
+        assert!(
+            decode_command_output(&restored.stdout).contains("restored-terminal-path"),
+            "{restored:?}"
         );
         assert_eq!(std::env::var_os("PATH"), parent_path);
     }
@@ -6491,6 +6605,7 @@ mod tests {
             version: Some("0.5.3".to_string()),
             runnable: true,
             error: None,
+            exited_with_error: false,
             source: infer_install_source(Path::new(&entry)).to_string(),
             is_path_default: false,
             real: PathBuf::from(&entry),
@@ -6786,6 +6901,7 @@ mod tests {
                 version: Some("1.0.0".to_string()),
                 runnable: true,
                 error: None,
+                exited_with_error: false,
                 source: infer_install_source(&path).to_string(),
                 is_path_default: is_default,
                 real: path,
@@ -7576,6 +7692,7 @@ mod tests {
                 version: None,
                 runnable: true,
                 error: None,
+                exited_with_error: false,
                 source: infer_install_source(Path::new(path)).to_string(),
                 is_path_default: is_default,
                 // 测试场景下不需要走 fs canonicalize——POSIX 锚定测试关心的是
@@ -8308,10 +8425,27 @@ mod tests {
             // set -e 下对半损坏包返回非 0 时仍继续 install）。
             let mut broken = inst("/Users/me/.nvm/versions/node/v22.14.0/bin/codex", true);
             broken.runnable = false;
+            broken.exited_with_error = true;
             assert_eq!(
                 installs_anchored_command("codex", &[broken]).as_deref(),
                 Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm uninstall -g @openai/codex || true; PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
             );
+        }
+
+        #[test]
+        fn codex_probe_timeout_uses_plain_npm_not_uninstall() {
+            // `--version` 超时被击杀 / 启动失败：runnable=false 但不是命令自己报错，不能当成
+            // 装坏了。走卸载重装时，一旦装失败旧版就没了，用户看到「未安装」；普通
+            // `npm i -g` 失败 npm 会回滚、旧版还在。
+            let mut probe_failed = inst("/Users/me/.nvm/versions/node/v22.14.0/bin/codex", true);
+            probe_failed.runnable = false;
+            probe_failed.error = Some("Command timed out after 10s".to_string());
+            let cmd = installs_anchored_command("codex", &[probe_failed]);
+            assert_eq!(
+                cmd.as_deref(),
+                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+            );
+            assert!(!cmd.unwrap().contains("uninstall"));
         }
 
         #[test]
@@ -8337,6 +8471,7 @@ mod tests {
                 version: None,
                 runnable: false,
                 error: None,
+                exited_with_error: true,
                 source: "homebrew".to_string(),
                 is_path_default: true,
                 real: std::path::PathBuf::from("/opt/homebrew/Cellar/codex/1.2.3/bin/codex"),
@@ -8357,6 +8492,7 @@ mod tests {
                 version: None,
                 runnable: false,
                 error: None,
+                exited_with_error: true,
                 source: "homebrew".to_string(),
                 is_path_default: true,
                 real: std::path::PathBuf::from("/opt/homebrew/Caskroom/codex/0.146.0/bin/codex"),
@@ -8372,6 +8508,7 @@ mod tests {
             // volta 装的坏 codex：回落到 `volta install`，不走 npm 重装。
             let mut broken = inst("/Users/me/.volta/bin/codex", true);
             broken.runnable = false;
+            broken.exited_with_error = true;
             assert_eq!(
                 installs_anchored_command("codex", &[broken]).as_deref(),
                 Some("/Users/me/.volta/bin/volta install @openai/codex")
@@ -8384,6 +8521,7 @@ mod tests {
             // （bun 目录下没有 npm，那条路径不存在、执行会直接失败）。
             let mut broken = inst("/Users/me/.bun/bin/codex", true);
             broken.runnable = false;
+            broken.exited_with_error = true;
             let cmd = installs_anchored_command("codex", &[broken]);
             assert_eq!(
                 cmd.as_deref(),
@@ -8442,6 +8580,7 @@ mod tests {
                 version: None,
                 runnable: false,
                 error: None,
+                exited_with_error: true,
                 source: "system".to_string(),
                 is_path_default: true,
                 real: std::path::PathBuf::from(
@@ -8467,6 +8606,7 @@ mod tests {
                     version: None,
                     runnable: false,
                     error: None,
+                    exited_with_error: true,
                     source: infer_install_source(Path::new(bin)).to_string(),
                     is_path_default: true,
                     real: std::path::PathBuf::from(
@@ -8546,6 +8686,7 @@ mod tests {
                 version: version.map(str::to_string),
                 runnable,
                 error: None,
+                exited_with_error: false,
                 source: "nvm".to_string(),
                 is_path_default: false,
                 real: std::path::PathBuf::from("/x"),
@@ -9039,6 +9180,31 @@ mod tests {
         assert!(!is_windows_app_execution_alias_dir(Path::new(
             r"C:\Users\tester\AppData\Roaming\npm"
         )));
+    }
+
+    #[test]
+    fn fnm_default_alias_dir_candidates_follow_fnm_base_dir_order() {
+        let home = Path::new("/home/tester");
+        let data_dir = std::path::PathBuf::from("/home/tester/AppData/Roaming");
+        let alias = |base: &str| {
+            std::path::PathBuf::from(base)
+                .join("aliases")
+                .join("default")
+        };
+
+        assert_eq!(
+            fnm_default_alias_dir_candidates(Some("/opt/fnm".into()), home, Some(data_dir.clone())),
+            vec![
+                alias("/opt/fnm"),
+                alias("/home/tester/.fnm"),
+                alias("/home/tester/AppData/Roaming/fnm"),
+            ]
+        );
+        // Empty FNM_DIR / home are ignored instead of becoming relative paths.
+        assert_eq!(
+            fnm_default_alias_dir_candidates(Some("".into()), Path::new(""), Some(data_dir)),
+            vec![alias("/home/tester/AppData/Roaming/fnm")]
+        );
     }
 
     #[cfg(target_os = "windows")]

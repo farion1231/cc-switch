@@ -298,7 +298,7 @@ export function ProviderCard({
         presentation.tone
           ? TONE_CLASS[presentation.tone]
           : "border-border bg-surface hover:border-border-strong hover:shadow-v7-sm",
-        dragHandleProps?.isDragging && "z-10 cursor-grabbing shadow-v7-md",
+        dragHandleProps?.isDragging && "cursor-grabbing shadow-v7-md",
       )}
     >
       <div className="flex min-h-[58px] items-center gap-3 py-2.5 pe-3 ps-2">

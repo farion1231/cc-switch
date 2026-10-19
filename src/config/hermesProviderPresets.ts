@@ -52,6 +52,12 @@ export interface HermesModel {
   name?: string;
   /** Override the auto-detected context window. */
   context_length?: number;
+  /**
+   * Declares that the model accepts image input. Hermes reads it per model
+   * (`agent/image_routing.py`, `vision` is an alias); when absent it falls
+   * back to its own catalog and treats unknown models as text-only.
+   */
+  supports_vision?: boolean;
 }
 
 /**
@@ -115,6 +121,12 @@ export interface HermesProviderPreset extends PresetFamilyFields {
   isCustomTemplate?: boolean;
   /** Optional top-level `model:` defaults written on switch. */
   suggestedDefaults?: HermesSuggestedDefaults;
+  /**
+   * Provider key prefilled when the preset is picked. Set it when the obvious
+   * name is a Hermes built-in provider id (e.g. `minimax`): Hermes routes
+   * `model.provider` to the built-in, ignoring a same-named custom_provider.
+   */
+  providerKey?: string;
 }
 
 export interface HermesProviderSettingsConfig {
@@ -1463,6 +1475,83 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     partnerPromotionKey: "modelflare",
     icon: "modelflare",
   },
+  {
+    name: "EveryAPI",
+    websiteUrl: "https://everyapi.ai",
+    apiKeyUrl:
+      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
+    settingsConfig: {
+      name: "everyapi",
+      // GPT 系列只开放 Responses（api.everyapi.ai/api/pricing 的
+      // supported_endpoint_types 为 openai-response，2026-10-17 核对）
+      base_url: "https://api.everyapi.ai/v1",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: [
+        { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", context_length: 272000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "gpt-5.6-sol", provider: "everyapi" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "everyapi",
+    icon: "everyapi",
+  },
+  {
+    name: "AllTokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    settingsConfig: {
+      name: "alltokens",
+      // Sub2API 网关：Key 绑定单个分组，须用 GPT 分组的 Key；GPT 账号池原生走
+      // Responses（分组与模型见 alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+      base_url: "https://alltokens.cc/v1",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: [
+        { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", context_length: 272000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "gpt-5.6-sol", provider: "alltokens" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
+  },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    settingsConfig: {
+      name: "alltokens_si",
+      // new-api 网关，目录见 alltokens.si/api/pricing（2026-10-19 核对）：GPT 分组
+      // 只声明 Chat Completions，窗口按中转口径封顶 272K
+      base_url: "https://alltokens.si/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", context_length: 272000 },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "gpt-5.6-sol", provider: "alltokens_si" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",
@@ -1589,7 +1678,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-5.6-sol",
           name: "GPT-5.6 Sol",
-          context_length: 272000,
+          context_length: 400000,
         },
         {
           id: "google/gemini-3.6-flash",
@@ -1609,7 +1698,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-6-astra",
           name: "GPT-6 Astra",
-          context_length: 272000,
+          context_length: 1050000,
         },
         {
           id: "google/gemini-3.8-flash",
@@ -1733,7 +1822,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     family: "zhipu",
     regionKey: "cn",
     websiteUrl: "https://open.bigmodel.cn",
-    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code",
     settingsConfig: {
       name: "zhipu_glm",
       base_url: "https://open.bigmodel.cn/api/coding/paas/v4",
@@ -1756,7 +1845,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     family: "zhipu",
     regionKey: "intl",
     websiteUrl: "https://z.ai",
-    apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
+    apiKeyUrl: "https://z.ai/subscribe",
     settingsConfig: {
       name: "zhipu_glm_en",
       base_url: "https://api.z.ai/api/coding/paas/v4",
@@ -2277,19 +2366,30 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     regionKey: "cn",
     websiteUrl: "https://platform.minimax.cn",
     apiKeyUrl: "https://platform.minimax.cn/subscribe/token-plan",
+    // `minimax` / `minimax-cn` are Hermes built-ins that shadow custom_providers
+    providerKey: "cc-switch-minimax",
     settingsConfig: {
-      name: "minimax",
+      name: "cc-switch-minimax",
       base_url: "https://api.minimax.cn/v1",
       api_key: "",
       api_mode: "chat_completions",
-      models: [{ id: "MiniMax-M3", name: "MiniMax M3" }],
+      models: [
+        {
+          id: "MiniMax-M3.1-Flash",
+          name: "MiniMax M3.1 Flash",
+          supports_vision: true,
+        },
+        { id: "MiniMax-M3", name: "MiniMax M3" },
+      ],
+      // M3.1 can't disable thinking; Hermes' title request sends reasoning_effort:none
+      title_generation_model: "MiniMax-M3",
     },
     category: "cn_official",
     theme: { backgroundColor: "#f64551", textColor: "#FFFFFF" },
     icon: "minimax",
     iconColor: "#FF6B6B",
     suggestedDefaults: {
-      model: { default: "MiniMax-M3", provider: "minimax" },
+      model: { default: "MiniMax-M3.1-Flash", provider: "cc-switch-minimax" },
     },
   },
   {
@@ -2298,19 +2398,32 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     regionKey: "intl",
     websiteUrl: "https://platform.minimax.io",
     apiKeyUrl: "https://platform.minimax.io/subscribe/coding-plan",
+    providerKey: "cc-switch-minimax-en",
     settingsConfig: {
-      name: "minimax_en",
+      name: "cc-switch-minimax-en",
       base_url: "https://api.minimax.io/v1",
       api_key: "",
       api_mode: "chat_completions",
-      models: [{ id: "MiniMax-M3", name: "MiniMax M3" }],
+      models: [
+        {
+          id: "MiniMax-M3.1-Flash",
+          name: "MiniMax M3.1 Flash",
+          supports_vision: true,
+        },
+        { id: "MiniMax-M3", name: "MiniMax M3" },
+      ],
+      // M3.1 can't disable thinking; Hermes' title request sends reasoning_effort:none
+      title_generation_model: "MiniMax-M3",
     },
     category: "cn_official",
     theme: { backgroundColor: "#f64551", textColor: "#FFFFFF" },
     icon: "minimax",
     iconColor: "#FF6B6B",
     suggestedDefaults: {
-      model: { default: "MiniMax-M3", provider: "minimax_en" },
+      model: {
+        default: "MiniMax-M3.1-Flash",
+        provider: "cc-switch-minimax-en",
+      },
     },
   },
   {
@@ -2788,12 +2901,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-6-astra",
           name: "GPT-6 Astra",
-          context_length: 272000,
+          context_length: 1050000,
         },
         {
           id: "openai/gpt-6.1-sol",
           name: "GPT-6.1 Sol",
-          context_length: 272000,
+          context_length: 1050000,
         },
         {
           id: "google/gemini-3.8-flash",
@@ -3093,12 +3206,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-6.1-sol",
           name: "GPT-6.1 Sol",
-          context_length: 272000,
+          context_length: 1050000,
         },
         {
           id: "openai/gpt-6-luna",
           name: "GPT-6 Luna",
-          context_length: 272000,
+          context_length: 1050000,
         },
         {
           id: "moonshotai/kimi-k3",

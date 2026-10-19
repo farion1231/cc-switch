@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { TFunction } from "i18next";
 import type { Provider } from "@/types";
 import type { AppMode } from "@/types/proxy";
+import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/opencodeFormUtils";
 import {
   buildAdditiveSections,
   buildSwitchSections,
@@ -525,8 +526,8 @@ describe("buildAdditiveSections", () => {
       t,
       providers: [relay, multi],
       isInConfig: () => true,
-      openclawDefault: { providerId: "relay", model: "gpt" },
-      openclawModels: (p) =>
+      defaultModel: { providerId: "relay", model: "gpt" },
+      defaultModelOptions: (p) =>
         (p.settingsConfig as { models?: { id: string; name?: string }[] })
           .models ?? [],
       actions,
@@ -548,6 +549,72 @@ describe("buildAdditiveSections", () => {
     ]);
     setDefault.menu?.options[1].onSelect();
     expect(actions.setDefault).toHaveBeenCalledWith(multi, "m-2");
+  });
+
+  it("lets OpenCode set the top-level default model without blocking removal", () => {
+    const multi = provider("multi");
+    const actions = additiveActions();
+    const sections = buildAdditiveSections({
+      app: "opencode",
+      t,
+      providers: [relay, multi],
+      isInConfig: () => true,
+      defaultModel: { providerId: "relay", model: "vendor/gpt" },
+      defaultModelOptions: (p) =>
+        p.id === "multi" ? [{ id: "m-1", name: "Model 1" }, { id: "m-2" }] : [],
+      actions,
+    });
+
+    expect(item(sections, "relay")).toMatchObject({
+      tone: "neutral",
+      status: { label: "providerCard.status.default" },
+    });
+    expect(
+      item(sections, "relay").chips.some((c) => c.key === "defaultModel"),
+    ).toBe(true);
+    expect(button(sections, "relay", "remove").disabledReason).toBeUndefined();
+    const setDefault = button(sections, "multi", "setDefault");
+    setDefault.onClick();
+    expect(actions.setDefault).toHaveBeenCalledWith(multi, "m-1");
+    setDefault.menu?.options[1].onSelect();
+    expect(actions.setDefault).toHaveBeenCalledWith(multi, "m-2");
+    // relay 不是默认时也没有声明模型（内置供应商）：不给「设为默认」
+    const other = buildAdditiveSections({
+      app: "opencode",
+      t,
+      providers: [relay],
+      isInConfig: () => true,
+      defaultModel: null,
+      defaultModelOptions: () => [],
+      actions,
+    });
+    expect(item(other, "relay").buttons.map((b) => b.key)).toEqual(["remove"]);
+  });
+
+  it("reads OpenCode models from a stored full config as the backend does", () => {
+    const models = {
+      "m-1": { name: "Model 1" },
+      "": {},
+      off: { disabled: true },
+      "m-2": {},
+    };
+    expect(getOpencodeDeclaredModels("relay", { models })).toEqual([
+      { id: "m-1", name: "Model 1" },
+      { id: "m-2", name: undefined },
+    ]);
+    expect(
+      getOpencodeDeclaredModels("relay", {
+        $schema: "https://opencode.ai/config.json",
+        providers: { relay: { models: { native: {} } } },
+        provider: { relay: { models: { legacy: {} } } },
+      }).map((m) => m.id),
+    ).toEqual(["native"]);
+    expect(
+      getOpencodeDeclaredModels("relay", {
+        provider: { relay: { models: { legacy: {} } } },
+      }).map((m) => m.id),
+    ).toEqual(["legacy"]);
+    expect(getOpencodeDeclaredModels("relay", { options: {} })).toEqual([]);
   });
 
   it("keeps Hermes-managed providers read-only", () => {
