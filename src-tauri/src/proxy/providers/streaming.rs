@@ -676,8 +676,14 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                         // 注意：OpenRouter 某些 provider 会发送多个带 finish_reason 的 chunk
                                         // （第一个 usage 为 null，后续才补全）。此处只做缓存，不立即发送，
                                         // 等到 [DONE] 或流末尾再统一发出，确保 usage 完整且只发一次。
-                                        if let Some(finish_reason) = &choice.finish_reason {
-                                            let stop_reason = map_stop_reason(Some(finish_reason));
+                                        if let Some(finish_reason) = choice
+                                            .finish_reason
+                                            .as_deref()
+                                            .map(str::trim)
+                                            .filter(|reason| !reason.is_empty())
+                                        {
+                                            let stop_reason =
+                                                map_stop_reason(Some(finish_reason));
                                             let usage_json =
                                                 chunk_usage_json.clone().or_else(|| latest_usage.clone());
 
@@ -1102,6 +1108,66 @@ mod tests {
             arguments,
             vec![json!({"a": 1}), json!({"b": 2})],
             "each tool's argument fragments must stay on its own block"
+        );
+        assert!(events.iter().any(|event| {
+            event_type(event) == Some("message_delta")
+                && event["delta"]["stop_reason"] == "tool_use"
+        }));
+    }
+
+    #[tokio::test]
+    async fn test_empty_finish_reason_does_not_close_tool_block_early() {
+        // CodeBuddy 的每个中间 chunk 都带 "finish_reason":""：空串不是结束，
+        // 否则工具块会在参数到齐前被 content_block_stop 提前关闭。
+        let input = concat!(
+            "data: {\"id\":\"cb\",\"model\":\"glm-5.3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"\"}}]},\"finish_reason\":\"\"}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"\",\"arguments\":\"{\\\"city\\\":\"}}]},\"finish_reason\":\"\"}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"\",\"arguments\":\"\\\"Beijing\\\"}\"}}]},\"finish_reason\":\"\"}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[]},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_events(vec![input.to_string()]).await;
+        let start_positions: Vec<usize> = events
+            .iter()
+            .enumerate()
+            .filter(|(_, event)| {
+                event_type(event) == Some("content_block_start")
+                    && event["content_block"]["type"] == "tool_use"
+            })
+            .map(|(index, _)| index)
+            .collect();
+        let stop_positions: Vec<usize> = events
+            .iter()
+            .enumerate()
+            .filter(|(_, event)| event_type(event) == Some("content_block_stop"))
+            .map(|(index, _)| index)
+            .collect();
+        let delta_positions: Vec<usize> = events
+            .iter()
+            .enumerate()
+            .filter(|(_, event)| event_type(event) == Some("content_block_delta"))
+            .map(|(index, _)| index)
+            .collect();
+
+        assert_eq!(start_positions.len(), 1, "one tool block");
+        assert_eq!(stop_positions.len(), 1, "block must be closed exactly once");
+        assert!(
+            delta_positions
+                .iter()
+                .all(|position| *position > start_positions[0] && *position < stop_positions[0]),
+            "argument deltas must stay between start and stop, got events: {events:?}"
+        );
+
+        let arguments: String = events
+            .iter()
+            .filter(|event| event_type(event) == Some("content_block_delta"))
+            .filter_map(|event| event.pointer("/delta/partial_json"))
+            .filter_map(|value| value.as_str())
+            .collect();
+        assert_eq!(
+            serde_json::from_str::<Value>(&arguments).expect("tool arguments JSON"),
+            json!({"city": "Beijing"})
         );
         assert!(events.iter().any(|event| {
             event_type(event) == Some("message_delta")

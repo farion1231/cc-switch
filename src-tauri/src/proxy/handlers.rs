@@ -2932,9 +2932,15 @@ fn chat_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
             saw_choice = true;
 
             // finish_reason 首个非 null 即锁定（对齐 streaming.rs 的 first-wins：
-            // 多 finish_reason 上游的尾块 "stop" 不能覆盖先到的 "tool_calls"）
+            // 多 finish_reason 上游的尾块 "stop" 不能覆盖先到的 "tool_calls"）。
+            // CodeBuddy 等上游会给每个中间 chunk 带空字符串 finish_reason：
+            // 空串不是结束信号，必须先过滤，否则会在工具参数到齐前提前收尾。
             if finish_reason.is_null() {
-                if let Some(fr) = choice.get("finish_reason").filter(|v| !v.is_null()) {
+                if let Some(fr) = choice
+                    .get("finish_reason")
+                    .filter(|v| !v.is_null())
+                    .filter(|v| v.as_str().is_none_or(|s| !s.trim().is_empty()))
+                {
                     finish_reason = fr.clone();
                 }
             }
@@ -3917,6 +3923,40 @@ data: [DONE]\n\n";
         assert_eq!(tool_uses[1]["id"], "call_b");
         assert_eq!(tool_uses[0]["input"], serde_json::json!({"a": 1}));
         assert_eq!(tool_uses[1]["input"], serde_json::json!({"b": 2}));
+    }
+
+    #[test]
+    fn aggregated_chat_sse_ignores_empty_finish_reason() {
+        // CodeBuddy 每个中间 chunk 都带 "finish_reason":""；非流聚合必须忽略空串，
+        // 否则会在工具参数到齐前锁定 end_turn。
+        let sse = concat!(
+            "data: {\"id\":\"cb\",\"model\":\"glm-5.3\",\"choices\":[{\"delta\":{\"tool_calls\":[",
+            "{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"\"}}",
+            "]},\"finish_reason\":\"\"}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"city\\\":\\\"Beijing\\\"}\"}}]},\"finish_reason\":\"\"}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let aggregated = chat_sse_to_response_value(sse).unwrap();
+        assert_eq!(
+            aggregated["choices"][0]["finish_reason"], "tool_calls",
+            "empty finish_reason must not win"
+        );
+        let anthropic = transform::openai_to_anthropic(aggregated).unwrap();
+        assert_eq!(anthropic["stop_reason"], "tool_use");
+        let tool_uses: Vec<&serde_json::Value> = anthropic["content"]
+            .as_array()
+            .expect("content")
+            .iter()
+            .filter(|block| block["type"] == "tool_use")
+            .collect();
+        assert_eq!(tool_uses.len(), 1);
+        assert_eq!(tool_uses[0]["name"], "get_weather");
+        assert_eq!(
+            tool_uses[0]["input"],
+            serde_json::json!({"city": "Beijing"})
+        );
     }
 
     #[test]
