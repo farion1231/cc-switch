@@ -263,6 +263,27 @@ pub(crate) fn predicted_official_login(
     target: &Target<'_>,
     prepared: &Prepared,
 ) -> Result<Result<OfficialLogin, OfficialSkip>, AppError> {
+    let (auth_plan, live) = predicted_auth(db, owner, target, prepared)?;
+    let keychain = || {
+        prepared
+            .keychain
+            .clone()
+            .unwrap_or_else(codex_official_models::keychain_login)
+    };
+    Ok(
+        login_after(&auth_plan, live.as_ref(), &read_config_text(), keychain)
+            .ok_or(OfficialSkip::NoLogin)
+            .and_then(|auth| OfficialLogin::of(&auth)),
+    )
+}
+
+/// 按未加锁读到的内容预测这次操作对 `auth.json` 的去向，和读到的 live `auth.json`。只读。
+fn predicted_auth(
+    db: &Database,
+    owner: &Owner<'_>,
+    target: &Target<'_>,
+    prepared: &Prepared,
+) -> Result<(AuthPlan, Option<Value>), AppError> {
     // 先按没有官方行算一遍，拿到这次对 auth.json 的去向（目录在第二遍才算）。
     let planned = plan(db, owner, target, prepared)?;
     let live = read_current(&get_codex_auth_path())
@@ -283,17 +304,28 @@ pub(crate) fn predicted_official_login(
         target: auth_target(&planned.auth),
         stash,
     });
-    let keychain = || {
-        prepared
-            .keychain
-            .clone()
-            .unwrap_or_else(codex_official_models::keychain_login)
-    };
-    Ok(
-        login_after(&auth_plan, live.as_ref(), &read_config_text(), keychain)
-            .ok_or(OfficialSkip::NoLogin)
-            .and_then(|auth| OfficialLogin::of(&auth)),
-    )
+    Ok((auth_plan, live))
+}
+
+/// 切到 `target` 之后盘上 `auth.json` 的内容（没有文件为 `None`），按未加锁读到的内容
+/// 预测、不写任何东西：编辑器显示用。官方卡行里存的登录是旧版留下的快照，Codex 轮换过
+/// token 就和盘上的对不上，显示它会误导。
+pub(crate) fn predicted_auth_file(
+    db: &Database,
+    owner: &Owner<'_>,
+    target: &Target<'_>,
+) -> Result<Option<Value>, AppError> {
+    let (auth_plan, live) = predicted_auth(db, owner, target, &Prepared::default())?;
+    Ok(file_after(&auth_plan, live.as_ref()))
+}
+
+/// 操作之后的 `auth.json`（没有文件为 `None`）。
+fn file_after(auth_plan: &AuthPlan, live: Option<&Value>) -> Option<Value> {
+    match &auth_plan.auth {
+        None => live.cloned(),
+        Some(None) => None,
+        Some(Some(auth)) => Some(auth.clone()),
+    }
 }
 
 /// 操作之后 Codex 实际会用的登录，按 `cli_auth_credentials_store`：file 看操作之后的
@@ -306,11 +338,7 @@ fn login_after(
     config_text: &str,
     keychain: impl FnOnce() -> CodexKeychainLogin,
 ) -> Option<Value> {
-    let from_file = || match &auth_plan.auth {
-        None => live.cloned(),
-        Some(None) => None,
-        Some(Some(auth)) => Some(auth.clone()),
-    };
+    let from_file = || file_after(auth_plan, live);
     match codex_config_auth_store_mode(config_text) {
         CodexAuthStoreMode::File => from_file(),
         CodexAuthStoreMode::Keyring => match keychain() {
