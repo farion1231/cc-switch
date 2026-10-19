@@ -69,19 +69,16 @@ jobs:
           $storePath = pnpm store path --silent
           "path=$storePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-      - name: Setup LLVM for Windows ARM64
-        if: runner.os == 'Windows' && runner.arch == 'ARM64'
+      - name: Verify ARM64 dependency graph does not enable bindgen
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          $llvmRoot = 'C:\Program Files\LLVM'
-          if (-not (Test-Path $llvmRoot)) {
-            throw "LLVM not found at $llvmRoot"
+          $tree = cargo tree --color never --manifest-path src-tauri/Cargo.toml --target aarch64-pc-windows-msvc -e features
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
           }
-          $llvmBin = Join-Path $llvmRoot 'bin'
-          "LIBCLANG_PATH=$llvmBin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "CLANG_PATH=$(Join-Path $llvmBin 'clang.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          if ($tree -match '\bbindgen\b') {
+            throw 'The Windows ARM64 dependency graph still enables bindgen.'
+          }
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
