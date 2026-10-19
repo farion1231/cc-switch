@@ -20,6 +20,8 @@ use crate::config::get_app_config_dir;
 use crate::database::Database;
 use crate::error::format_skill_error;
 
+mod source_download;
+
 // ========== Skills state coordination ==========
 
 /// Coordinates the database `skills` state with the filesystem SSOT.
@@ -430,13 +432,15 @@ struct GithubDiscoveryTree {
     truncated: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct GithubDiscoveryEntry {
     path: String,
     #[serde(rename = "type")]
     kind: String,
     mode: String,
     size: Option<u64>,
+    #[serde(default)]
+    sha: Option<String>,
 }
 
 /// 技能元数据 (从 SKILL.md 解析)
@@ -1404,33 +1408,25 @@ impl SkillService {
                 enabled: true,
             };
 
-            // 下载仓库 ZIP
-            let (temp_guard, _used_branch) = match timeout(
-                std::time::Duration::from_secs(60),
-                self.download_repo(&repo),
-            )
-            .await
-            {
-                Ok(Ok(result)) => result,
-                Ok(Err(e)) => {
-                    log::warn!("检查更新时下载 {}/{} 失败: {e}", owner, name);
-                    failures.push(Self::repo_failure(&repo, e.to_string()));
-                    continue;
-                }
-                Err(_) => {
-                    log::warn!("检查更新时下载 {}/{} 超时", owner, name);
-                    failures.push(Self::repo_failure(
-                        &repo,
-                        Self::download_timeout_error(&repo),
-                    ));
-                    continue;
-                }
-            };
+            // Stage complete installed skill sources, excluding unrelated repository assets.
+            let (temp_guard, used_branch) =
+                match self.download_repo_for_skills(&repo, group_skills).await {
+                    Ok(result) => result,
+                    Err(e) => {
+                        log::warn!("检查更新时下载 {}/{} 失败: {e}", owner, name);
+                        failures.push(Self::repo_failure(&repo, e.to_string()));
+                        continue;
+                    }
+                };
             let temp_dir = temp_guard.path();
+            let mut resolved_repo = repo.clone();
+            resolved_repo.branch = used_branch;
 
             // 扫描仓库中的所有 Skill 目录
             let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
-            if let Err(e) = self.scan_dir_recursive(temp_dir, temp_dir, &repo, &mut remote_skills) {
+            if let Err(e) =
+                self.scan_dir_recursive(temp_dir, temp_dir, &resolved_repo, &mut remote_skills)
+            {
                 // 扫到一半失败：已扫到的照常比对，但如实报告这个仓库可能不完整
                 log::warn!("检查更新时扫描 {}/{} 失败: {e}", owner, name);
                 failures.push(Self::repo_failure(&repo, e.to_string()));
@@ -1469,7 +1465,7 @@ impl SkillService {
                 ) {
                     Some((h, freshly_computed)) => {
                         if freshly_computed {
-                            let _ = db.update_skill_hash(&skill.id, &h, 0);
+                            let _ = db.update_skill_hash(&skill.id, &h, skill.updated_at);
                         }
                         Some(h)
                     }
@@ -1566,24 +1562,16 @@ impl SkillService {
             Self::get_distinct_app_skills_dir(&ssot_dir, &AppType::Pi)?;
         }
 
-        // 下载仓库
-        let (temp_guard, used_branch) = timeout(
-            std::time::Duration::from_secs(60),
-            self.download_repo(&repo),
-        )
-        .await
-        .map_err(|_| {
-            anyhow!(format_skill_error(
-                "DOWNLOAD_TIMEOUT",
-                &[("owner", &owner), ("name", &name), ("timeout", "60")],
-                Some("checkNetwork"),
-            ))
-        })??;
+        let (temp_guard, used_branch) = self
+            .download_repo_for_skills(&repo, std::slice::from_ref(&skill))
+            .await?;
         let temp_dir = temp_guard.path();
+        let mut resolved_repo = repo.clone();
+        resolved_repo.branch = used_branch.clone();
 
         // 在解压的仓库中查找 Skill 源目录
         let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
-        let _ = self.scan_dir_recursive(temp_dir, temp_dir, &repo, &mut remote_skills);
+        let _ = self.scan_dir_recursive(temp_dir, temp_dir, &resolved_repo, &mut remote_skills);
 
         let remote_match = Self::find_remote_skill_for_install(
             &remote_skills,
@@ -8212,6 +8200,46 @@ mod tests {
             .await
             .expect("discover");
         assert_eq!(skills.len(), 1);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn check_updates_hash_backfill_preserves_update_timestamp() {
+        let home = tempdir().expect("home");
+        let config_dir = home.path().join(".cc-switch");
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::File::create(config_dir.join("cc-switch.db")).unwrap();
+        let _home = TestHomeGuard::set(home.path());
+        let _storage = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let db = Arc::new(Database::memory().unwrap());
+        let remote = tempdir().unwrap();
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+        };
+        let mut installed = poisoned_skill("owner/repo:example", "example");
+        installed.repo_owner = Some("owner".into());
+        installed.repo_name = Some("repo".into());
+        installed.repo_branch = Some("main".into());
+        installed.installed_at = 1_700_000_000;
+        installed.updated_at = 1_720_000_000;
+        installed.apps = SkillApps::only(&AppType::Claude);
+        db.save_skill(&installed).unwrap();
+        let local = SkillService::get_ssot_dir().unwrap().join("example");
+        assert!(local.starts_with(home.path()));
+        write_skill(&local, "example");
+        write_skill(&remote.path().join("skills/example"), "example");
+
+        let report = service.check_updates_report(&db).await.unwrap();
+        assert!(report.failures.is_empty());
+        assert!(report.updates.is_empty());
+        let stored = db.get_installed_skill(&installed.id).unwrap().unwrap();
+        assert_eq!(
+            stored.content_hash,
+            Some(SkillService::compute_dir_hash(&local).unwrap())
+        );
+        assert_eq!(stored.updated_at, installed.updated_at);
+        assert_eq!(stored.installed_at, installed.installed_at);
+        assert_eq!(stored.apps, installed.apps);
     }
 
     #[tokio::test]
