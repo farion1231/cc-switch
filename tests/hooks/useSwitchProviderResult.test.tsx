@@ -47,18 +47,25 @@ describe("provider switch result transport", () => {
   );
 
   it.each([
-    ["en", en],
-    ["zh", zh],
-    ["zh-TW", zhTW],
-    ["ja", ja],
+    ["en", en, ""],
+    ["zh", zh, ""],
+    ["zh-TW", zhTW, ""],
+    ["ja", ja, ""],
+    ["en", en, "切换路由失败: "],
+    ["zh", zh, "切换路由失败: "],
+    ["zh-TW", zhTW, "切换路由失败: "],
+    ["ja", ja, "切换路由失败: "],
   ] as const)(
     "explains an unavailable official login in %s without refreshing the active card",
-    async (language, resources) => {
+    async (language, resources, prefix) => {
       // The transport code, not the fallback wording, selects the translation.
-      const message = JSON.stringify({
-        code: "codex.official_login_unavailable",
-        message: "The fallback wording can change independently of the toast.",
-      });
+      const message =
+        prefix +
+        JSON.stringify({
+          code: "codex.official_login_unavailable",
+          message:
+            "The fallback wording can change independently of the toast.",
+        });
       server.use(
         http.post("http://tauri.local/switch_provider", () =>
           HttpResponse.text(message, { status: 409 }),

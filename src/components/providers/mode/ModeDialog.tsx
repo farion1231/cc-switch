@@ -19,7 +19,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import { extractErrorMessage } from "@/utils/errorUtils";
+import {
+  extractErrorMessage,
+  translateCodexProviderMutationError,
+} from "@/utils/errorUtils";
 import { logFrontendInfo } from "@/lib/frontendLogger";
 import { isOfficialAccount } from "@/utils/providerCapabilities";
 import {
@@ -240,7 +243,12 @@ function EnterBody({
       await onEnter(target, pick, showSubagent ? subagent : undefined);
       onClose();
     } catch (err) {
-      setError(extractErrorMessage(err) || t("common.unknown"));
+      const message = extractErrorMessage(err);
+      setError(
+        (app === "codex" && translateCodexProviderMutationError(message, t)) ||
+          message ||
+          t("common.unknown"),
+      );
     } finally {
       setBusy(false);
     }
@@ -412,7 +420,12 @@ function ExitBody({
       await onExit(state.useProviderId);
       onClose();
     } catch (err) {
-      setError(extractErrorMessage(err) || t("common.unknown"));
+      const message = extractErrorMessage(err);
+      setError(
+        (app === "codex" && translateCodexProviderMutationError(message, t)) ||
+          message ||
+          t("common.unknown"),
+      );
     } finally {
       setBusy(false);
     }
@@ -500,7 +513,12 @@ function NeedsRouteBody({
       await onEnter("route", state.providerId);
       onClose();
     } catch (err) {
-      setError(extractErrorMessage(err) || t("common.unknown"));
+      const message = extractErrorMessage(err);
+      setError(
+        (app === "codex" && translateCodexProviderMutationError(message, t)) ||
+          message ||
+          t("common.unknown"),
+      );
     } finally {
       setBusy(false);
     }

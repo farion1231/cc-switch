@@ -43,7 +43,7 @@ use crate::live::project::codex::{
 use crate::mode::contract::CONTRACT_VERSION;
 use crate::mode::operation::{AppWrite, FileChange, OperationReport};
 use crate::mode::stack::Member;
-use crate::mode::state::{Contract, PendingTarget};
+use crate::mode::state::{op, Contract, PendingTarget};
 use crate::provider::Provider;
 use crate::proxy::providers::codex_oauth_auth::CodexLiveAuthSwitchGuard;
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
@@ -213,6 +213,7 @@ pub(crate) fn prepare(
 /// 10 秒）放到阻塞线程池里做，不占异步运行时的工作线程。
 pub(crate) async fn prepare_official_rows(
     db: &Database,
+    op_name: &str,
     owner: &Owner<'_>,
     target: &Target<'_>,
     prepared: &mut Prepared,
@@ -229,7 +230,7 @@ pub(crate) async fn prepare_official_rows(
     ) {
         prepared.keychain = Some(off_runtime(codex_official_models::keychain_login).await?);
     }
-    let login = predicted_official_login(db, owner, target, prepared)?;
+    let login = predicted_official_login(db, op_name, owner, target, prepared)?;
     let rows = off_runtime(move || codex_official_models::rows_for_switch(&login)).await?;
     // 取官方行最多要 10 秒，这期间 Codex 可能在钥匙串里换了号。取完再读一次，拿锁后按
     // 这次读到的核对（见 `run_with_edits`），换了号就停下。
@@ -259,12 +260,13 @@ pub(crate) fn needs_official_rows(route: &Provider, stack: &[Member]) -> bool {
 /// 读，调用方要在阻塞线程里。
 pub(crate) fn predicted_official_login(
     db: &Database,
+    op_name: &str,
     owner: &Owner<'_>,
     target: &Target<'_>,
     prepared: &Prepared,
 ) -> Result<Result<OfficialLogin, OfficialSkip>, AppError> {
     // 先按没有官方行算一遍，拿到这次对 auth.json 的去向（目录在第二遍才算）。
-    let planned = plan(db, owner, target, prepared)?;
+    let planned = plan(db, op_name, owner, target, prepared)?;
     let live = read_current(&get_codex_auth_path())
         .ok()
         .flatten()
@@ -582,6 +584,7 @@ impl Planned {
 /// 算出写入内容；行有问题（比如会把官方登录发给第三方）就在这里报错，什么都不写。
 pub(crate) fn plan(
     db: &Database,
+    op_name: &str,
     owner: &Owner<'_>,
     target: &Target<'_>,
     prepared: &Prepared,
@@ -766,7 +769,11 @@ pub(crate) fn plan(
         catalog,
         auth,
         expected_official_login: official_login.filter(|_| {
-            owner.provider().map(|provider| &provider.id) != provider.map(|provider| &provider.id)
+            // Mode changes reapply independently selected direct/route cards.
+            // Only an explicit card switch requires the target's saved login.
+            matches!(op_name, op::SWITCH | op::ROUTE)
+                && owner.provider().map(|provider| &provider.id)
+                    != provider.map(|provider| &provider.id)
         }),
         leaving_official,
         retired_keys: facts.third_party_keys,
@@ -1333,14 +1340,14 @@ pub(crate) fn write_direct(
 ) -> Result<OperationReport, AppError> {
     let target = Target::Direct(target);
     let prepared = prepare(manager, &owner, &target)?;
-    let planned = plan(db, &owner, &target, &prepared)?;
+    let planned = plan(db, op, &owner, &target, &prepared)?;
     run(db, op, planned, &prepared, pending)
 }
 
 /// 只校验，不写：切换前用它挡住会被拒绝的目标（行有问题时指针不能先动）。
 pub(crate) fn preflight(db: &Database, provider: &Provider) -> Result<(), AppError> {
     let target = Target::Direct(Some(provider));
-    plan(db, &Owner::None, &target, &Prepared::default()).map(|_| ())
+    plan(db, op::APPLY, &Owner::None, &target, &Prepared::default()).map(|_| ())
 }
 
 #[cfg(test)]

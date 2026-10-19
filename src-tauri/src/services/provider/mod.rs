@@ -3957,6 +3957,7 @@ wire_api = "responses"
                     .unwrap();
                 let predicted = codex_direct::predicted_official_login(
                     &state.db,
+                    crate::mode::state::op::SWITCH,
                     &codex_direct::Owner::None,
                     &codex_direct::Target::Direct(Some(&target)),
                     &codex_direct::Prepared::default(),
@@ -4096,6 +4097,7 @@ wire_api = "responses"
             );
             let predicted = codex_direct::predicted_official_login(
                 &state.db,
+                crate::mode::state::op::APPLY,
                 &codex_direct::Owner::Provider(&alice),
                 &codex_direct::Target::Direct(Some(&alice)),
                 &codex_direct::Prepared::default(),

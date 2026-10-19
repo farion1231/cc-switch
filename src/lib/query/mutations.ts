@@ -8,6 +8,7 @@ import { parseLiveEditConflict } from "@/lib/errors/liveEditConflict";
 import type { Provider, SessionMeta, Settings } from "@/types";
 import {
   extractErrorMessage,
+  translateCodexProviderMutationError,
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
@@ -311,16 +312,6 @@ export const useDeleteProviderMutation = (appId: AppId) => {
   });
 };
 
-const isCodexOfficialLoginUnavailable = (message: string): boolean => {
-  try {
-    const error = JSON.parse(message) as { code?: unknown } | null;
-    return error?.code === "codex.official_login_unavailable";
-  } catch {
-    // Other backend errors use plain text and keep their original message.
-    return false;
-  }
-};
-
 export const useSwitchProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
@@ -379,9 +370,9 @@ export const useSwitchProviderMutation = (appId: AppId) => {
     onError: (error: Error) => {
       const message = extractErrorMessage(error) || t("common.unknown");
       const detail =
-        appId === "codex" && isCodexOfficialLoginUnavailable(message)
-          ? t("notifications.codexOfficialLoginUnavailable")
-          : message;
+        (appId === "codex" &&
+          translateCodexProviderMutationError(message, t)) ||
+        message;
 
       toast.error(
         t("notifications.switchFailedTitle", { defaultValue: "切换失败" }),

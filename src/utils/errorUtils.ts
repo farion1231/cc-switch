@@ -37,6 +37,16 @@ export const extractErrorMessage = (error: unknown): string => {
   return "";
 };
 
+export const translateCodexProviderMutationError = (
+  message: string,
+  t: (key: string) => string,
+): string => {
+  // Route switches can prefix the structured error with additional context.
+  return message.includes("codex.official_login_unavailable")
+    ? t("notifications.codexOfficialLoginUnavailable")
+    : "";
+};
+
 export const translatePiProviderMutationError = (
   message: string,
   t: (key: string, options?: Record<string, unknown>) => string,
