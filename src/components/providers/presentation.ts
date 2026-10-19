@@ -635,7 +635,7 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
   ];
 }
 
-// ─── 共存式应用（OpenCode / OpenClaw / Hermes / Pi / MiniMax Code）───────────
+// ─── 共存式应用（OpenCode / OpenClaw / Hermes / Pi / rpi / MiniMax Code）──────
 
 export interface AdditiveInput {
   app: AppId;
@@ -666,8 +666,9 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   const { app, t, providers, actions } = input;
   const added: ProviderSection["items"] = [];
   const available: ProviderSection["items"] = [];
+  const isPiFamily = app === "pi" || app === "rpi";
   const piBlocked =
-    (app === "pi" || app === "rpi") && input.piStateUnavailable
+    isPiFamily && input.piStateUnavailable
       ? t(`${app}.current.stateUnavailableHint`)
       : undefined;
 
@@ -740,10 +741,9 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           buttons: [
             {
               key: "add",
-              label:
-                app === "pi"
-                  ? t("providerCard.action.enable")
-                  : t("providerCard.action.add"),
+              label: isPiFamily
+                ? t("providerCard.action.enable")
+                : t("providerCard.action.add"),
               onClick: () => actions.add(p),
               disabledReason: piBlocked,
             },

@@ -577,24 +577,27 @@ describe("buildAdditiveSections", () => {
     );
   });
 
-  it("blocks every Pi change while Pi's current state is unavailable", () => {
-    const sections = buildAdditiveSections({
-      app: "pi",
-      t,
-      providers: [relay],
-      isInConfig: () => false,
-      piStateUnavailable: true,
-      actions: additiveActions(),
-    });
+  it.each(["pi", "rpi"] as const)(
+    "blocks every %s change while its current state is unavailable",
+    (app) => {
+      const sections = buildAdditiveSections({
+        app,
+        t,
+        providers: [relay],
+        isInConfig: () => false,
+        piStateUnavailable: true,
+        actions: additiveActions(),
+      });
 
-    expect(button(sections, "relay", "add")).toMatchObject({
-      label: "providerCard.action.enable",
-      disabledReason: "pi.current.stateUnavailableHint",
-    });
-    expect(item(sections, "relay").deleteDisabledReason).toBe(
-      "pi.current.stateUnavailableHint",
-    );
-  });
+      expect(button(sections, "relay", "add")).toMatchObject({
+        label: "providerCard.action.enable",
+        disabledReason: `${app}.current.stateUnavailableHint`,
+      });
+      expect(item(sections, "relay").deleteDisabledReason).toBe(
+        `${app}.current.stateUnavailableHint`,
+      );
+    },
+  );
 });
 
 describe("queueMoveSortUpdates", () => {
