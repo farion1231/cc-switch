@@ -43,7 +43,7 @@ use crate::live::project::codex::{
 use crate::mode::contract::CONTRACT_VERSION;
 use crate::mode::operation::{AppWrite, FileChange, OperationReport};
 use crate::mode::stack::Member;
-use crate::mode::state::{Contract, PendingTarget};
+use crate::mode::state::{op, Contract, PendingTarget};
 use crate::provider::Provider;
 use crate::proxy::providers::codex_oauth_auth::CodexLiveAuthSwitchGuard;
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
@@ -301,7 +301,7 @@ fn predicted_auth(
         live_is_managed: live_is_managed(prepared, live.as_ref()),
         third_party_keys: &planned.retired_keys,
         leaving_official: planned.leaving_official.as_ref(),
-        target: auth_target(&planned.auth),
+        target: auth_target(&planned.auth, op::SWITCH),
         stash,
     });
     Ok((auth_plan, live))
@@ -385,12 +385,21 @@ fn live_is_managed(prepared: &Prepared, live: Option<&Value>) -> bool {
     })
 }
 
-fn auth_target(goal: &AuthGoal) -> AuthTarget<'_> {
+/// 这次操作切到第三方时是否保留 `auth.json` 里的登录。退出 CC Switch 时的分离只是临时
+/// 指回直连，下次启动还要接上代理：照保留登录开关删掉登录，CC Switch 关着时 Codex 桌面版
+/// 没有 ChatGPT 登录就续不了会话，接上后也回不来（#8431）。
+fn preserve_login(op_name: &str) -> bool {
+    op_name == op::DETACH || crate::settings::preserve_codex_official_auth_on_switch()
+}
+
+fn auth_target<'a>(goal: &'a AuthGoal, op_name: &str) -> AuthTarget<'a> {
     match goal {
         AuthGoal::ThirdParty => AuthTarget::ThirdParty {
-            preserve: crate::settings::preserve_codex_official_auth_on_switch(),
+            preserve: preserve_login(op_name),
         },
-        AuthGoal::KeepNative => AuthTarget::ProxyThirdParty,
+        AuthGoal::KeepNative => AuthTarget::ProxyThirdParty {
+            restore_last: op_name == op::ENTER || op_name == op::ATTACH,
+        },
         AuthGoal::Official(row_auth) => AuthTarget::Official { row_auth },
         AuthGoal::Managed(auth) => AuthTarget::Managed { auth },
     }
@@ -1147,13 +1156,13 @@ pub(crate) fn run_with_edits(
         pre: stash_pre,
         unreadable: stash_unreadable,
     } = load_stash(store, &planned.official_logins, live_auth.as_ref());
-    let preserve = crate::settings::preserve_codex_official_auth_on_switch();
+    let preserve = preserve_login(op);
     let auth_plan = codex_login::plan(AuthInput {
         live: live_auth.as_ref(),
         live_is_managed,
         third_party_keys: &planned.retired_keys,
         leaving_official: planned.leaving_official.as_ref(),
-        target: auth_target(&planned.auth),
+        target: auth_target(&planned.auth, op),
         stash,
     });
     let config_text = read_config_text();

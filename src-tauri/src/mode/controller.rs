@@ -4009,6 +4009,81 @@ model_provider = "c"
         assert_eq!(login(), None, "logging out sticks");
     }
 
+    fn codex_login_file() -> Option<Value> {
+        fs::read(codex_auth_path())
+            .ok()
+            .map(|bytes| serde_json::from_slice(&bytes).unwrap())
+    }
+
+    /// 直连指针在第三方卡上：退出 CC Switch 的分离不暂存登录，重启接上后登录还在。Codex
+    /// 桌面版续会话要 ChatGPT 登录，分离吞掉它就得每次重启都重新登录（#8431）。
+    #[tokio::test]
+    #[serial]
+    async fn codex_detaching_and_attaching_keep_the_login_next_to_a_third_party_route() {
+        let _home = Home::new();
+        set_preservation(false);
+        seed_codex("", Some(&chatgpt_login("acct")));
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+
+        enter(&state, &AppType::Codex, false).await.expect("enter");
+        assert_eq!(codex_login_file(), Some(chatgpt_login("acct")));
+
+        detach_all(&state).await;
+        assert!(!mode(&AppType::Codex).attached);
+        assert_eq!(
+            codex_login_file(),
+            Some(chatgpt_login("acct")),
+            "detaching keeps the login"
+        );
+        assert_eq!(
+            codex_doc()["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
+            Some(true),
+            "Codex sees the login it keeps"
+        );
+
+        startup(&state).await;
+        assert!(mode(&AppType::Codex).attached);
+        assert_eq!(codex_login_file(), Some(chatgpt_login("acct")));
+
+        // 真正退出路由仍按保留登录开关走。
+        exit(&state, &AppType::Codex).await.expect("exit");
+        assert_eq!(codex_login_file(), None);
+    }
+
+    /// 登录已经被暂存走了（旧版的分离、或进路由前直连切到了第三方）：进入、接上代理时还回去。
+    #[tokio::test]
+    #[serial]
+    async fn codex_entering_the_proxy_gives_back_a_stashed_login() {
+        let _home = Home::new();
+        set_preservation(false);
+        seed_codex("", Some(&chatgpt_login("acct")));
+        let [a, b] = codex_a_b();
+        let official = codex_official();
+        let state = state_with(AppType::Codex, &[a, b, official.clone()], &official.id).await;
+
+        ProviderService::switch(&state, AppType::Codex, "a").expect("to a");
+        assert_eq!(
+            codex_login_file(),
+            None,
+            "stashed next to a third-party route"
+        );
+
+        enter(&state, &AppType::Codex, false).await.expect("enter");
+        assert_eq!(codex_login_file(), Some(chatgpt_login("acct")));
+        assert_eq!(
+            codex_doc()["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
+            Some(true)
+        );
+
+        // 只还一次：在 Codex 里登出后换路由，不会又被登上。
+        fs::remove_file(codex_auth_path()).unwrap();
+        set_route(&state, &AppType::Codex, "b")
+            .await
+            .expect("route b");
+        assert_eq!(codex_login_file(), None);
+        exit(&state, &AppType::Codex).await.expect("exit");
+    }
+
     fn codex_login_on_disk() -> Value {
         crate::config::read_json_file(&codex_auth_path()).unwrap()
     }
