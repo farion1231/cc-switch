@@ -956,7 +956,10 @@ mod tests {
         let result = sync_opencode_usage_from_path(&db, &path).unwrap();
         assert_eq!(result.imported, 1);
         assert!(result.errors.is_empty());
-        assert_eq!(imported_request_ids(&db), vec!["opencode_session:v2:between"]);
+        assert_eq!(
+            imported_request_ids(&db),
+            vec!["opencode_session:v2:between"]
+        );
         assert_eq!(mixed_cutoff(&db, &path), Some(1_700_000_000_000));
     }
 
