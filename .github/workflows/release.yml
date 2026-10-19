@@ -113,6 +113,13 @@ jobs:
         shell: pwsh
         run: rustup target add aarch64-pc-windows-msvc
 
+      - name: Cache Windows ARM64 Rust dependencies
+        if: runner.os == 'Windows' && matrix.arch == 'arm64'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: windows-arm64-release
+
       - name: Install Linux system deps
         if: runner.os == 'Linux'
         shell: bash
@@ -154,6 +161,7 @@ jobs:
           node --version
           pnpm --version
 
+      # ARM64 的 pnpm store 恢复实测约 32 秒，只节省约 8 秒安装时间，继续跳过。
       - name: Get pnpm store directory
         if: runner.os != 'Windows' || matrix.arch != 'arm64'
         id: pnpm-store
