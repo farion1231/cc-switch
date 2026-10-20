@@ -1731,3 +1731,44 @@ fn resync_app_reports_each_app_and_leaves_broken_config_untouched() {
     let serialized = serde_json::to_value(&claude).unwrap();
     assert_eq!(serialized, json!({"app": "claude", "ok": true}));
 }
+
+#[test]
+fn concurrent_toggles_keep_every_server_in_live_config() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    fs::create_dir_all(ensure_test_home().join(".claude")).unwrap();
+    let state = create_test_state().unwrap();
+
+    // 批量勾选会连发多个 toggle：每次都是读 ~/.claude.json → 改 → 写回，不串行就会互相覆盖
+    let ids: Vec<String> = (0..16).map(|i| format!("server-{i:02}")).collect();
+    for id in &ids {
+        let server: McpServer = serde_json::from_value(json!({
+            "id": id, "name": id, "server": {"type": "stdio", "command": "node"}, "apps": {}
+        }))
+        .unwrap();
+        state.db.save_mcp_server(&server).unwrap();
+    }
+
+    let barrier = std::sync::Barrier::new(ids.len());
+    std::thread::scope(|scope| {
+        for id in &ids {
+            let (state, barrier) = (&state, &barrier);
+            scope.spawn(move || {
+                barrier.wait();
+                futures::executor::block_on(McpService::toggle_app_locked(
+                    state,
+                    id,
+                    AppType::Claude,
+                    true,
+                ))
+                .unwrap();
+            });
+        }
+    });
+
+    let live: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(get_claude_mcp_path()).unwrap()).unwrap();
+    let written = live["mcpServers"].as_object().expect("mcpServers object");
+    let missing: Vec<&String> = ids.iter().filter(|id| !written.contains_key(*id)).collect();
+    assert!(missing.is_empty(), "lost concurrent toggles: {missing:?}");
+}

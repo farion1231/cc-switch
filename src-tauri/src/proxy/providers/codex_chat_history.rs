@@ -159,11 +159,16 @@ impl CodexChatHistoryStore {
                     new_items.push(item);
                 }
                 Some(item_type) if is_call_output_item_type(item_type) => {
-                    if let Some(group) = restore_group.take().filter(|group| !group.is_empty()) {
-                        for (call_id, cached_item) in group {
-                            seen_call_ids.insert(call_id);
-                            new_items.push(cached_item);
-                            restored += 1;
+                    // Older results may precede this batch in a full-history request.
+                    if response_item_call_id(&item)
+                        .is_some_and(|id| restore_group_ids.contains(&id))
+                    {
+                        if let Some(group) = restore_group.take() {
+                            for (call_id, cached_item) in group {
+                                seen_call_ids.insert(call_id);
+                                new_items.push(cached_item);
+                                restored += 1;
+                            }
                         }
                     }
 
@@ -834,6 +839,70 @@ mod tests {
         assert_eq!(input[1]["call_id"], "call_2");
         assert_eq!(input[2]["type"], "function_call_output");
         assert_eq!(input[3]["type"], "function_call_output");
+    }
+
+    #[tokio::test]
+    async fn restores_missing_parallel_group_after_existing_older_call_results() {
+        let history = CodexChatHistoryStore::default();
+        history
+            .record_response(&json!({
+                "id": "resp_old",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": "call_old",
+                        "name": "exec_command",
+                        "arguments": "{}",
+                        "reasoning_content": "First step."
+                    }
+                ]
+            }))
+            .await;
+        history
+            .record_response(&json!({
+                "id": "resp_new",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": "call_new_1",
+                        "name": "exec_command",
+                        "arguments": "{}",
+                        "reasoning_content": "Second step."
+                    },
+                    {
+                        "type": "function_call",
+                        "call_id": "call_new_2",
+                        "name": "exec_command",
+                        "arguments": "{}",
+                        "reasoning_content": "Second step."
+                    }
+                ]
+            }))
+            .await;
+
+        let mut request = json!({
+            "previous_response_id": "resp_new",
+            "input": [
+                { "role": "user", "content": "test" },
+                { "type": "function_call", "call_id": "call_old", "name": "exec_command", "arguments": "{}" },
+                { "type": "function_call_output", "call_id": "call_old", "output": "old" },
+                { "type": "function_call_output", "call_id": "call_new_1", "output": "one" },
+                { "type": "function_call_output", "call_id": "call_new_2", "output": "two" }
+            ]
+        });
+
+        history.enrich_request(&mut request).await;
+        let chat =
+            super::super::transform_codex_chat::responses_to_chat_completions(request).unwrap();
+        let assistants: Vec<_> = chat["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|message| message["role"] == "assistant")
+            .collect();
+        assert_eq!(assistants.len(), 2);
+        assert_eq!(assistants[0]["tool_calls"].as_array().unwrap().len(), 1);
+        assert_eq!(assistants[1]["tool_calls"].as_array().unwrap().len(), 2);
     }
 
     #[tokio::test]
