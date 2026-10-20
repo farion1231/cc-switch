@@ -1122,10 +1122,11 @@ function ProviderFormFull({
     );
   const isExistingNativeOpencodeKey =
     isNativeOpencode && providerId === opencodeForm.opencodeProviderKey;
-  // Existing native IDs are kept exactly as OpenCode accepted them.
+  // Keep existing IDs, including legacy V1 deep-link IDs, without renaming live references.
   const isOpencodeProviderKeyInvalid =
     opencodeForm.opencodeProviderKey.trim() !== "" &&
     !isExistingNativeOpencodeKey &&
+    !(isEditMode && providerId === opencodeForm.opencodeProviderKey) &&
     !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(opencodeForm.opencodeProviderKey);
 
   const keepsOpencodeProviderId =
@@ -2151,6 +2152,7 @@ function ProviderFormFull({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: baseUrl,
   });
 
   const {
@@ -2164,6 +2166,7 @@ function ProviderFormFull({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: codexBaseUrl,
   });
 
   const {
@@ -2177,6 +2180,7 @@ function ProviderFormFull({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: geminiBaseUrl,
   });
 
   const {
@@ -2190,6 +2194,7 @@ function ProviderFormFull({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: opencodeForm.opencodeBaseUrl,
   });
 
   // 使用 API Key 链接 hook (OpenClaw)
@@ -2204,6 +2209,7 @@ function ProviderFormFull({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: openclawForm.openclawBaseUrl,
   });
 
   // 使用 API Key 链接 hook (Hermes)
@@ -2218,6 +2224,7 @@ function ProviderFormFull({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: hermesForm.hermesBaseUrl,
   });
 
   // 使用 API Key 链接 hook (ZCode)
@@ -2409,7 +2416,7 @@ function ProviderFormFull({
       const preset = entry.preset as HermesProviderPreset;
       const config = preset.settingsConfig;
 
-      hermesForm.resetHermesState(config);
+      hermesForm.resetHermesState(config, preset.providerKey);
 
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -3159,7 +3166,12 @@ function ProviderFormFull({
                 </Label>
                 <JsonEditor
                   value={form.getValues("settingsConfig")}
-                  onChange={(config) => form.setValue("settingsConfig", config)}
+                  onChange={(config) => {
+                    form.setValue("settingsConfig", config);
+                    if (appId === "openclaw") {
+                      openclawForm.syncOpenclawUserAgentFromConfig(config);
+                    }
+                  }}
                   placeholder={
                     appId === "hermes"
                       ? `{

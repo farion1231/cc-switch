@@ -377,6 +377,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "TokenFactory",
+    nameKey: "providerForm.presets.tokenfactory",
     websiteUrl: "https://tokenfactory.cn",
     apiKeyUrl: "https://console.tokenfactory.cn/login",
     category: "aggregator",
@@ -732,10 +733,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.siliconflow.cn",
     mode: "proxy",
     apiFormat: "anthropic",
+    // 国内站 M2.5 已于 2026-09-11 下线，与 Codex/OpenCode 同换 V4 Flash（1M）
     modelRoutes: brandedRoutes(
-      "Pro/MiniMaxAI/MiniMax-M2.5",
-      "Pro/MiniMaxAI/MiniMax-M2.5",
-      "Pro/MiniMaxAI/MiniMax-M2.5",
+      "deepseek-ai/DeepSeek-V4-Flash",
+      "deepseek-ai/DeepSeek-V4-Flash",
+      "deepseek-ai/DeepSeek-V4-Flash",
+      true,
     ),
     isPartner: true,
     partnerPromotionKey: "siliconflow",
@@ -1011,6 +1014,68 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "modelflare",
     icon: "modelflare",
+  },
+  {
+    name: "EveryAPI",
+    websiteUrl: "https://everyapi.ai",
+    apiKeyUrl:
+      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
+    category: "aggregator",
+    baseUrl: "https://api.everyapi.ai",
+    // 网关没有 claude-haiku-4-5（api.everyapi.ai/api/pricing，2026-10-17），
+    // 不能透传，按 5.5 系列映射
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5-5",
+      "claude-opus-5-5",
+      "claude-haiku-5-5",
+      true,
+    ),
+    endpointCandidates: [
+      "https://api.everyapi.ai",
+      "https://api-cn.everyapi.ai",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "everyapi",
+    icon: "everyapi",
+  },
+  {
+    name: "AllTokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    category: "aggregator",
+    baseUrl: "https://alltokens.cc",
+    // Sub2API 网关：Key 绑定单个分组，须用 Claude 分组的 Key（分组与模型见
+    // alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+    // Claude 分组直接提供 claude-sonnet-5 / claude-opus-5 / claude-haiku-4-5，直连透传
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(true),
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
+  },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    category: "aggregator",
+    baseUrl: "https://alltokens.si",
+    // 目录没有 claude-haiku-4-5、Claude ID 用点号（alltokens.si/api/pricing，
+    // 2026-10-19），不能透传；Haiku 档映射到 Sonnet
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5.5",
+      "claude-opus-5.5",
+      "claude-sonnet-5.5",
+      true,
+    ),
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
@@ -1321,7 +1386,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     family: "zhipu",
     regionKey: "cn",
     websiteUrl: "https://open.bigmodel.cn",
-    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code",
     category: "cn_official",
     baseUrl: "https://open.bigmodel.cn/api/anthropic",
     mode: "proxy",
@@ -1335,7 +1400,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     family: "zhipu",
     regionKey: "intl",
     websiteUrl: "https://z.ai",
-    apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
+    apiKeyUrl: "https://z.ai/subscribe",
     category: "cn_official",
     baseUrl: "https://api.z.ai/api/anthropic",
     mode: "proxy",
@@ -1595,7 +1660,21 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.minimax.cn/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("MiniMax-M3", "MiniMax-M3", "MiniMax-M3", true),
+    modelRoutes: [
+      ...brandedRoutes(
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3.1-Flash",
+        true,
+      ),
+      // extra route (fable slot) so M3 stays selectable; defaults stay on M3.1
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.fable,
+        upstreamModel: "MiniMax-M3",
+        labelOverride: "MiniMax-M3",
+        supports1m: true,
+      },
+    ],
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",
@@ -1613,7 +1692,21 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.minimax.io/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("MiniMax-M3", "MiniMax-M3", "MiniMax-M3", true),
+    modelRoutes: [
+      ...brandedRoutes(
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3.1-Flash",
+        true,
+      ),
+      // extra route (fable slot) so M3 stays selectable; defaults stay on M3.1
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.fable,
+        upstreamModel: "MiniMax-M3",
+        labelOverride: "MiniMax-M3",
+        supports1m: true,
+      },
+    ],
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",

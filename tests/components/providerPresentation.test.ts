@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { TFunction } from "i18next";
 import type { Provider } from "@/types";
 import type { AppMode } from "@/types/proxy";
+import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/opencodeFormUtils";
 import {
   buildAdditiveSections,
   buildSwitchSections,
+  queueMoveSortUpdates,
   type ProviderSection,
   type SwitchModeInput,
 } from "@/components/providers/presentation";
@@ -138,8 +140,13 @@ describe("buildSwitchSections — delete guard", () => {
       view: "direct",
       routeId: "backup",
     });
-    expect(item(sections, "relay").deleteDisabledReason).toBeTruthy();
-    expect(item(sections, "backup").deleteDisabledReason).toBeTruthy();
+    // 直连那家此时不算在用，原因要说清是「退出路由后会回到它」（#8277）
+    expect(item(sections, "relay").deleteDisabledReason).toBe(
+      "providerCard.reason.directDefaultCannotDelete",
+    );
+    expect(item(sections, "backup").deleteDisabledReason).toBe(
+      "providerCard.reason.inUseCannotDelete",
+    );
     expect(item(sections, "converted").deleteDisabledReason).toBeUndefined();
 
     // 直连时 routeId 只是上次的路由，不算在用
@@ -519,8 +526,8 @@ describe("buildAdditiveSections", () => {
       t,
       providers: [relay, multi],
       isInConfig: () => true,
-      openclawDefault: { providerId: "relay", model: "gpt" },
-      openclawModels: (p) =>
+      defaultModel: { providerId: "relay", model: "gpt" },
+      defaultModelOptions: (p) =>
         (p.settingsConfig as { models?: { id: string; name?: string }[] })
           .models ?? [],
       actions,
@@ -542,6 +549,72 @@ describe("buildAdditiveSections", () => {
     ]);
     setDefault.menu?.options[1].onSelect();
     expect(actions.setDefault).toHaveBeenCalledWith(multi, "m-2");
+  });
+
+  it("lets OpenCode set the top-level default model without blocking removal", () => {
+    const multi = provider("multi");
+    const actions = additiveActions();
+    const sections = buildAdditiveSections({
+      app: "opencode",
+      t,
+      providers: [relay, multi],
+      isInConfig: () => true,
+      defaultModel: { providerId: "relay", model: "vendor/gpt" },
+      defaultModelOptions: (p) =>
+        p.id === "multi" ? [{ id: "m-1", name: "Model 1" }, { id: "m-2" }] : [],
+      actions,
+    });
+
+    expect(item(sections, "relay")).toMatchObject({
+      tone: "neutral",
+      status: { label: "providerCard.status.default" },
+    });
+    expect(
+      item(sections, "relay").chips.some((c) => c.key === "defaultModel"),
+    ).toBe(true);
+    expect(button(sections, "relay", "remove").disabledReason).toBeUndefined();
+    const setDefault = button(sections, "multi", "setDefault");
+    setDefault.onClick();
+    expect(actions.setDefault).toHaveBeenCalledWith(multi, "m-1");
+    setDefault.menu?.options[1].onSelect();
+    expect(actions.setDefault).toHaveBeenCalledWith(multi, "m-2");
+    // relay 不是默认时也没有声明模型（内置供应商）：不给「设为默认」
+    const other = buildAdditiveSections({
+      app: "opencode",
+      t,
+      providers: [relay],
+      isInConfig: () => true,
+      defaultModel: null,
+      defaultModelOptions: () => [],
+      actions,
+    });
+    expect(item(other, "relay").buttons.map((b) => b.key)).toEqual(["remove"]);
+  });
+
+  it("reads OpenCode models from a stored full config as the backend does", () => {
+    const models = {
+      "m-1": { name: "Model 1" },
+      "": {},
+      off: { disabled: true },
+      "m-2": {},
+    };
+    expect(getOpencodeDeclaredModels("relay", { models })).toEqual([
+      { id: "m-1", name: "Model 1" },
+      { id: "m-2", name: undefined },
+    ]);
+    expect(
+      getOpencodeDeclaredModels("relay", {
+        $schema: "https://opencode.ai/config.json",
+        providers: { relay: { models: { native: {} } } },
+        provider: { relay: { models: { legacy: {} } } },
+      }).map((m) => m.id),
+    ).toEqual(["native"]);
+    expect(
+      getOpencodeDeclaredModels("relay", {
+        provider: { relay: { models: { legacy: {} } } },
+      }).map((m) => m.id),
+    ).toEqual(["legacy"]);
+    expect(getOpencodeDeclaredModels("relay", { options: {} })).toEqual([]);
   });
 
   it("keeps Hermes-managed providers read-only", () => {
@@ -588,5 +661,66 @@ describe("buildAdditiveSections", () => {
     expect(item(sections, "relay").deleteDisabledReason).toBe(
       "pi.current.stateUnavailableHint",
     );
+  });
+});
+
+describe("queueMoveSortUpdates", () => {
+  it("swaps the two positions of a sorted queue", () => {
+    expect(
+      queueMoveSortUpdates(
+        [
+          { providerId: "a", sortIndex: 1 },
+          { providerId: "b", sortIndex: 4 },
+        ],
+        {},
+        "b",
+        -1,
+      ),
+    ).toEqual([
+      { id: "b", sortIndex: 1 },
+      { id: "a", sortIndex: 4 },
+    ]);
+  });
+
+  it("keeps positions distinct when sort indexes tie", () => {
+    expect(
+      queueMoveSortUpdates(
+        [
+          { providerId: "a", sortIndex: 2 },
+          { providerId: "b", sortIndex: 2 },
+        ],
+        {},
+        "b",
+        -1,
+      ),
+    ).toEqual([
+      { id: "b", sortIndex: 2 },
+      { id: "a", sortIndex: 3 },
+    ]);
+  });
+
+  it("keeps positions distinct when an unsorted provider falls back onto a used index", () => {
+    // b 没有 sortIndex，用下标 1 兜底，正好撞上 a 的 1
+    expect(
+      queueMoveSortUpdates(
+        [{ providerId: "a", sortIndex: 1 }, { providerId: "b" }],
+        {},
+        "b",
+        -1,
+      ),
+    ).toEqual([
+      { id: "b", sortIndex: 1 },
+      { id: "a", sortIndex: 2 },
+    ]);
+  });
+
+  it("returns null when the move would leave the queue", () => {
+    const items = [
+      { providerId: "a", sortIndex: 0 },
+      { providerId: "b", sortIndex: 1 },
+    ];
+    expect(queueMoveSortUpdates(items, {}, "a", -1)).toBeNull();
+    expect(queueMoveSortUpdates(items, {}, "b", 1)).toBeNull();
+    expect(queueMoveSortUpdates(items, {}, "x", 1)).toBeNull();
   });
 });

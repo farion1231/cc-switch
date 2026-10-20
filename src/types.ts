@@ -370,6 +370,20 @@ export interface RemoteSnapshotInfo {
   remotePath: string;
 }
 
+/** 用量金额的显示方式；对应 Rust `UsageDisplaySettings`。值由前端校验兜底。 */
+export interface UsageDisplaySettings {
+  /** 显示币种（见 `DISPLAY_CURRENCIES`），缺省为 USD */
+  currency?: string;
+  /** 1 美元折多少目标币种，按币种存 */
+  exchangeRates?: Record<string, number>;
+  /** 侧栏「今日」显示哪几项（见 `SIDEBAR_TODAY_ITEMS`），缺省只显示金额；空列表＝不显示 */
+  sidebarTodayItems?: string[];
+  /** 请求日志列显隐：只存用户改过的列（列 id → 是否显示） */
+  requestLogColumns?: Record<string, boolean>;
+  /** 用量趋势图的样式（见 `TREND_CHART_TYPES`），缺省为柱形图 */
+  trendChartType?: string;
+}
+
 // 应用设置类型（用于设置对话框与 Tauri API）
 // 存储在本地 ~/.cc-switch/settings.json，不随数据库同步
 export interface Settings {
@@ -397,6 +411,8 @@ export interface Settings {
   // User has confirmed the usage query first-run notice
   usageConfirmed?: boolean;
   usageDashboardRefreshIntervalMs?: number;
+  // 用量金额的显示币种与汇率（只影响显示，库里一律存美元）
+  usageDisplay?: UsageDisplaySettings;
   // 会话用量自动扫描开关（默认开启=自动模式；关闭后仅手动同步时扫描会话日志，代理记账不受影响）
   sessionAutoSyncEnabled?: boolean;
   // Whether to show the failover toggle independently on the main page
@@ -407,6 +423,8 @@ export interface Settings {
   showProviderSearch?: boolean;
   // 启动时检查已安装的命令行应用有没有新版本（默认关）
   checkToolUpdatesOnStartup?: boolean;
+  // 点托盘图标出原生菜单，不出托盘面板（macOS / Windows；Linux 一律原生菜单；默认关，没写过视为关，即用托盘面板）
+  nativeTrayMenu?: boolean;
   // Preserve Codex ChatGPT login in auth.json when switching third-party providers
   preserveCodexOfficialAuthOnSwitch?: boolean;
   // Run official Codex under the shared "custom" provider id so future
@@ -919,6 +937,8 @@ export interface OpenClawModel {
     maxTokensField?: string; // 最大输出 token 请求字段名（如 "max_tokens"）
     supportsTools?: boolean; // 自定义供应商声明模型支持工具调用
     toolSchemaProfile?: string; // 工具 schema 清理档案（如 llama-server 用 "llamacpp"）
+    supportsReasoningEffort?: boolean; // 接受 reasoning effort 参数
+    supportedReasoningEfforts?: string[]; // 接口接受的 effort 档位
   };
 }
 

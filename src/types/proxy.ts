@@ -53,6 +53,12 @@ export interface ProxyTakeoverStatus {
   zcode?: boolean;
 }
 
+/** Applied under the backend switch lock, not inferred from a possibly stale UI mode. */
+export interface RouteSwitchResult {
+  kind: "remembered" | "route" | "stack";
+  clientConfigChanged: boolean;
+}
+
 /** 应用当前的连接方式。 */
 export type AppMode = "direct" | "route" | "stack";
 

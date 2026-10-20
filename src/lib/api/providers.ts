@@ -7,6 +7,7 @@ import type {
   UniversalProvidersMap,
 } from "@/types";
 import type { AppId } from "./types";
+import type { RouteSwitchResult } from "@/types/proxy";
 
 export interface ProviderSortUpdate {
   id: string;
@@ -20,6 +21,7 @@ export interface ProviderSwitchEvent {
 
 export interface SwitchResult {
   warnings: string[];
+  route?: RouteSwitchResult;
 }
 
 export interface OpenTerminalOptions {
@@ -223,6 +225,15 @@ export const providersApi = {
    */
   async getOpenCodeLiveProviderIds(): Promise<string[]> {
     return await invoke("get_opencode_live_provider_ids");
+  },
+
+  /** OpenCode 顶层 model（`<provider>/<model>`），没写时为 null */
+  async getOpenCodeDefaultModel(): Promise<string | null> {
+    return await invoke("get_opencode_default_model");
+  },
+
+  async setOpenCodeDefaultModel(model: string): Promise<void> {
+    await invoke("set_opencode_default_model", { model });
   },
 
   /**

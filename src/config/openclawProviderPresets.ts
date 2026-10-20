@@ -719,6 +719,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "TokenFactory",
+    nameKey: "providerForm.presets.tokenfactory",
     websiteUrl: "https://tokenfactory.cn",
     apiKeyUrl: "https://console.tokenfactory.cn/login",
     // 官方 OpenClaw 文档（docs.tokenfactory.cn/tools/openclaw，2026-10-15
@@ -1699,12 +1700,15 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       baseUrl: "https://api.siliconflow.cn/v1",
       apiKey: "",
       api: "openai-completions",
+      // 国内站 M2.5 已于 2026-09-11 下线，与 Codex/OpenCode 同换 V4 Flash
       models: [
         {
-          id: "Pro/MiniMaxAI/MiniMax-M2.5",
-          name: "MiniMax M2.5",
-          contextWindow: 196608,
-          cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 },
+          id: "deepseek-ai/DeepSeek-V4-Flash",
+          name: "DeepSeek V4 Flash",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 384000,
         },
       ],
     },
@@ -1721,9 +1725,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "siliconflow/Pro/MiniMaxAI/MiniMax-M2.5" },
+      model: { primary: "siliconflow/deepseek-ai/DeepSeek-V4-Flash" },
       modelCatalog: {
-        "siliconflow/Pro/MiniMaxAI/MiniMax-M2.5": { alias: "MiniMax" },
+        "siliconflow/deepseek-ai/DeepSeek-V4-Flash": { alias: "DeepSeek" },
       },
     },
   },
@@ -2473,6 +2477,185 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     partnerPromotionKey: "modelflare",
     icon: "modelflare",
   },
+  {
+    name: "EveryAPI",
+    websiteUrl: "https://everyapi.ai",
+    apiKeyUrl:
+      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
+    // GPT 系列只开放 Responses（api.everyapi.ai/api/pricing 的
+    // supported_endpoint_types 为 openai-response，2026-10-17 核对）
+    settingsConfig: {
+      baseUrl: "https://api.everyapi.ai/v1",
+      apiKey: "",
+      api: "openai-responses",
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-6-sol",
+          name: "GPT-6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-6-astra",
+          name: "GPT-6 Astra",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "everyapi/gpt-5.6-sol",
+        fallbacks: ["everyapi/gpt-6-sol"],
+      },
+      modelCatalog: {
+        "everyapi/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
+        "everyapi/gpt-6-sol": { alias: "GPT-6 Sol" },
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "everyapi",
+    icon: "everyapi",
+  },
+  {
+    name: "AllTokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    // Sub2API 网关：Key 绑定单个分组，须用 GPT 分组的 Key；GPT 账号池原生走
+    // Responses（分组与模型见 alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+    settingsConfig: {
+      baseUrl: "https://alltokens.cc/v1",
+      apiKey: "",
+      api: "openai-responses",
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-6-sol",
+          name: "GPT-6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-6-astra",
+          name: "GPT-6 Astra",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "alltokens/gpt-5.6-sol",
+        fallbacks: ["alltokens/gpt-6-sol"],
+      },
+      modelCatalog: {
+        "alltokens/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
+        "alltokens/gpt-6-sol": { alias: "GPT-6 Sol" },
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
+  },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    // new-api 网关，目录见 alltokens.si/api/pricing（2026-10-19 核对）：GPT 分组
+    // 只声明 Chat Completions，窗口按中转口径封顶 272K
+    settingsConfig: {
+      baseUrl: "https://alltokens.si/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-6-sol",
+          name: "GPT-6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-6-astra",
+          name: "GPT-6 Astra",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "alltokens-si/gpt-5.6-sol",
+        fallbacks: ["alltokens-si/gpt-6-sol"],
+      },
+      modelCatalog: {
+        "alltokens-si/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
+        "alltokens-si/gpt-6-sol": { alias: "GPT-6 Sol" },
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",
@@ -2692,7 +2875,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     family: "zhipu",
     regionKey: "cn",
     websiteUrl: "https://open.bigmodel.cn",
-    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code",
     settingsConfig: {
       baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
       apiKey: "",
@@ -2741,7 +2924,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     family: "zhipu",
     regionKey: "intl",
     websiteUrl: "https://z.ai",
-    apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
+    apiKeyUrl: "https://z.ai/subscribe",
     settingsConfig: {
       baseUrl: "https://api.z.ai/api/coding/paas/v4",
       apiKey: "",
@@ -3960,46 +4143,18 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "MiniMax-M3",
-          name: "MiniMax M3",
+          id: "MiniMax-M3.1-Flash",
+          name: "MiniMax M3.1 Flash",
           reasoning: true,
           input: ["text", "image"],
           contextWindow: 1000000,
           maxTokens: 131072,
-          cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
+          cost: { input: 0.15, output: 0.6, cacheRead: 0.015, cacheWrite: 0 },
+          compat: {
+            supportsReasoningEffort: true,
+            supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+          },
         },
-      ],
-    },
-    category: "cn_official",
-    theme: {
-      backgroundColor: "#f64551",
-      textColor: "#FFFFFF",
-    },
-    icon: "minimax",
-    iconColor: "#FF6B6B",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: { primary: "minimax/MiniMax-M3" },
-      modelCatalog: { "minimax/MiniMax-M3": { alias: "MiniMax" } },
-    },
-  },
-  {
-    name: "MiniMax en",
-    family: "minimax",
-    regionKey: "intl",
-    websiteUrl: "https://platform.minimax.io",
-    apiKeyUrl: "https://platform.minimax.io/subscribe/coding-plan",
-    settingsConfig: {
-      baseUrl: "https://api.minimax.io/v1",
-      apiKey: "",
-      api: "openai-completions",
-      models: [
         {
           id: "MiniMax-M3",
           name: "MiniMax M3",
@@ -4026,8 +4181,66 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "minimax-en/MiniMax-M3" },
-      modelCatalog: { "minimax-en/MiniMax-M3": { alias: "MiniMax" } },
+      model: { primary: "minimax/MiniMax-M3.1-Flash" },
+      modelCatalog: {
+        "minimax/MiniMax-M3.1-Flash": { alias: "MiniMax" },
+      },
+    },
+  },
+  {
+    name: "MiniMax en",
+    family: "minimax",
+    regionKey: "intl",
+    websiteUrl: "https://platform.minimax.io",
+    apiKeyUrl: "https://platform.minimax.io/subscribe/coding-plan",
+    settingsConfig: {
+      baseUrl: "https://api.minimax.io/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "MiniMax-M3.1-Flash",
+          name: "MiniMax M3.1 Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 131072,
+          cost: { input: 0.15, output: 0.6, cacheRead: 0.015, cacheWrite: 0 },
+          compat: {
+            supportsReasoningEffort: true,
+            supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+          },
+        },
+        {
+          id: "MiniMax-M3",
+          name: "MiniMax M3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 131072,
+          cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "cn_official",
+    theme: {
+      backgroundColor: "#f64551",
+      textColor: "#FFFFFF",
+    },
+    icon: "minimax",
+    iconColor: "#FF6B6B",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "minimax-en/MiniMax-M3.1-Flash" },
+      modelCatalog: {
+        "minimax-en/MiniMax-M3.1-Flash": { alias: "MiniMax" },
+      },
     },
   },
   {

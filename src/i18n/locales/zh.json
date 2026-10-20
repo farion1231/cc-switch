@@ -182,6 +182,18 @@
     "openTerminal": "打开终端",
     "terminalOpened": "终端已打开",
     "terminalOpenFailed": "打开终端失败",
+    "openTerminalDialog": {
+      "title": "在哪个目录打开终端？",
+      "description": "会在你选的目录里打开一个终端，并用「{{name}}」的配置启动 Claude Code。一般选你的项目文件夹。",
+      "isolationTitle": "这个终端是隔离的",
+      "isolationBody": "它固定使用「{{name}}」，之后在 CC Switch 里切换供应商不会影响它；它也不会改动 CC Switch 里正在使用的供应商。",
+      "noDir": "还没选目录",
+      "choose": "选择文件夹…",
+      "change": "更换…",
+      "recent": "最近用过",
+      "forget": "从最近用过里移除",
+      "confirm": "打开终端"
+    },
     "name": "名称",
     "namePlaceholder": "例如：Claude 官方",
     "websiteUrl": "官网链接",
@@ -386,6 +398,10 @@
       "checkToolUpdates": "启动时检查各应用的新版本",
       "checkToolUpdatesHelp": "打开后，每次启动 CC Switch 会查一次已安装的命令行应用有没有新版本，查到了就在侧栏「应用」上显示一个圆点。不会自动升级。",
       "windowAndTerminal": "窗口与终端",
+      "trayStyle": "托盘样式",
+      "trayStylePanel": "面板",
+      "trayStyleMenu": "菜单",
+      "trayStyleHelp": "点托盘图标时弹出什么。面板：各应用在用的供应商、额度和用量，可以搜索、切换。菜单：系统原生菜单（Windows 上左键打开主界面、右键出菜单）。切换后立即生效。",
       "minimizeToTrayHelp": "打开时，点关闭按钮只隐藏窗口，CC Switch 留在系统托盘里继续运行（轻量模式在托盘菜单里）；关闭时点关闭按钮直接退出。",
       "terminalHelp": "点供应商卡片上的「打开终端」时用哪个终端。选的终端不可用时，改用系统默认终端。"
     },
@@ -1604,8 +1620,10 @@
       "soleapi": "SoleAPI 是面向开发者与企业的 AI 模型网关，一个 API Key 直达 Claude、GPT、Gemini 等 30+ 主流模型，原生兼容 OpenAI 与 Anthropic 协议，智能选路毫秒级故障切换，可用性 99.99%，7×24 技术支持。通过专属链接注册即送体验额度，邀请好友充值持续返现！",
       "fluxa": "FluxA 与百度智能云联合推出 AgenticPlan，让 AI Agent 能自主购买、管理和使用模型、API 与工具。内含百度千帆 TokenPlan，低至 6 折，可使用 DeepSeek V4、GLM 5.2、Kimi 等旗舰模型，并获赠 FluxA AgentMarket API 调用额度，解锁搜索、数据抓取、社交媒体、金融、加密、生图、视频等 13000+ 付费 API。",
       "88api": "88API 是由香港企业运营的一站式多模型 API 平台，通过统一接口接入文本、图片、语音和视频模型，支持国际主流付款方式，可提供发票，提供企业级稳定服务。通过专属链接注册可获取专属赠送额度！",
-      "tokenfactory": "TokenFactory 词元工厂是面向开发者与企业的国产大模型 API 平台，自建算力平台 token 速度更快，质量更强。CC Switch 用户专属福利：进入控制台使用兑换码 \"CCSWITCH\"，即可兑换 10 元 API 调用余额！",
       "modelflare": "Modelflare 是稳定、低成本的 AI 模型网关，一个 Key 即可调用 GPT、Claude、Gemini、Grok 等主流模型。CC Switch 用户专享福利：首次充值使用优惠码 \"CCSWITCH\" 可享 9 折优惠！",
+      "everyapi": "EveryAPI 自带桌面客户端，Claude Code、Codex、Cursor 等 20 多个工具一键自动配置；一把密钥直接调用 Claude、GPT、DeepSeek、GLM、MiniMax、Kimi、豆包，换模型不用改配置。注册即送 14 元额度，首充额外加送 20%；CC Switch 用户专享：付款时使用折扣码 \"ccswitch\" 再打 8 折，不限时！",
+      "alltokens": "AllTokens 秉持「稳定为基，真实为本」，致力于让每一次 AI 调用都稳定、真实、值得托付：服务可靠、计费透明，一个平台接入 GPT、Claude、Gemini、Grok、DeepSeek、GLM、Kimi 等主流模型，按量计费、支持配额上限。注册即送 1 美元体验金！",
+      "alltokens_si": "AllTokens SI 秉持「稳定为基，真实为本」，是专为企业打造的 AI Token 中转与团队协作平台：成员、密钥、用量与余额统一纳入企业控制台，以清晰的权限与额度配置，让团队协作有据可查、安心可控。",
       "openmodel": "OpenModel 为 Codex 和 Claude Code 提供客户端专属折扣，所支持的模型通过 Codex 调用最高优惠 90%、通过 Claude Code 调用最高优惠 60%。CC Switch 用户通过此链接注册并使用优惠码 \"cc-switch\"，即可享受首次充值九折优惠！",
       "grooroute": "GrooRoute Pro 是可靠流畅的 AI API 中转服务平台，接入 OpenAI、Claude、DeepSeek 等主流大模型，支持按量计费与订阅套餐。CC Switch 用户通过此链接注册即可获得免费 5 元体验额度！"
     },
@@ -1619,7 +1637,8 @@
       "deepseek": "DeepSeek",
       "together": "Together AI",
       "tuzi": "兔子API",
-      "yylx": "鱼鱼连线"
+      "yylx": "鱼鱼连线",
+      "tokenfactory": "词元工厂"
     },
     "parameterConfig": "参数配置 - {{name}} *",
     "mainModel": "主模型 (可选)",
@@ -1725,6 +1744,7 @@
     "fetchModelsSuccess": "获取到 {{count}} 个模型",
     "modelMetadataFilled": "已补全 {{model}} 的上下文等参数（来源：{{source}}），请核对",
     "modelMetadataFilledMany": "已补全 {{count}} 个模型的上下文等参数（来源：{{source}}），请核对",
+    "gptContextWindowHint": "中转站的 GPT 多来自 ChatGPT 订阅，窗口只有 272K。窗口写大了不会提前压缩，等上游拒收时这一轮会失败；确认这家支持更大窗口再这样填。",
     "modelMetadataSourcePreset": "预设",
     "modelMetadataSourceBoth": "预设和 models.dev",
     "modelPicker": {
@@ -2367,6 +2387,30 @@
       "seconds": "{{seconds}} 秒"
     },
     "dataSources": "数据来源",
+    "display": {
+      "title": "显示",
+      "currency": "币种",
+      "rate": "汇率",
+      "rateHint": "手动填写，只用于换算显示；费用仍按美元记录。",
+      "rateInvalid": "请输入大于 0 的数字",
+      "approxNote": "换算后的金额悬停可看美元原值。",
+      "sidebarToday": "侧栏「今日」",
+      "sidebarTodayItems": {
+        "cost": "金额",
+        "tokens": "Token",
+        "requests": "请求数",
+        "hitRate": "缓存命中率",
+        "none": "不显示"
+      },
+      "sidebarTodayLimit": "最多选 {{count}} 项",
+      "logColumns": "请求日志的列",
+      "logColumnsSummary": "{{shown}} / {{total}} 列",
+      "trendChartType": "趋势图样式",
+      "trendChartTypes": {
+        "bar": "柱形图",
+        "area": "曲线面积图"
+      }
+    },
     "providerFilter": {
       "label": "供应商",
       "all": "全部供应商",
@@ -2405,7 +2449,8 @@
       "label": "明细",
       "providers": "供应商",
       "models": "模型",
-      "pricing": "定价"
+      "pricing": "定价",
+      "settings": "设置"
     },
     "sortedByRequests": "按请求数排序",
     "app": "应用",
@@ -2425,6 +2470,13 @@
     "estimatedTimingTip": "耗时约 {{duration}}s（按会话日志的时间戳估算，含首字等待）",
     "estimatedTimingTipWithFirstToken": "耗时约 {{duration}}s · 首字约 {{ttft}}s（按会话日志的时间戳估算）",
     "cacheTip": "缓存命中 {{read}} · 缓存写入 {{write}}",
+    "logColumns": {
+      "reset": "恢复默认",
+      "cacheWrite": "缓存写入",
+      "hitRate": "命中率",
+      "hitRateTip": "缓存命中 {{read}} / 可缓存输入 {{total}}",
+      "duration": "总耗时"
+    },
     "openRequestDetail": "查看请求详情：{{time}} {{provider}}",
     "prevPage": "上一页",
     "nextPage": "下一页",
@@ -2433,7 +2485,7 @@
     },
     "detail": {
       "tokensTitle": "Tokens 用量",
-      "costTitle": "成本明细（USD）",
+      "costTitle": "成本明细（{{currency}}）",
       "performance": "性能",
       "source": "来源",
       "sourceProxy": "路由服务 · 状态码 {{code}}",
@@ -3106,6 +3158,7 @@
       "modelName": "显示名称",
       "modelNamePlaceholder": "Claude Opus 5",
       "contextLength": "上下文长度",
+      "supportsVision": "支持图片输入",
       "toggleModelDetails": "展开或收起模型详情",
       "removeModel": "移除模型",
       "modelsHint": "启用为当前供应商时，第一个模型会设为 Hermes 默认模型。",
@@ -3237,6 +3290,7 @@
       "emptyArchive": "下载的压缩包为空",
       "invalidRepoRef": "仓库地址不合法：{{owner}}/{{name}}",
       "archiveTooLarge": "压缩包解压后超过 {{limit_mb}} MB 上限，已中止",
+      "archiveDownloadTooLarge": "仓库压缩包下载超过 {{limit_mb}} MB 上限，已中止",
       "archiveTooManyEntries": "压缩包条目过多（{{count}}），上限 {{limit}}",
       "downloadFailed": "下载失败：HTTP {{status}}",
       "allBranchesFailed": "所有分支下载失败，尝试了：{{branches}}",
@@ -4074,7 +4128,9 @@
     "expandSidebar": "展开侧栏",
     "collapseSidebar": "收起侧栏",
     "appsGroup": "应用",
-    "todayCost": "今日 {{cost}}",
+    "today": "今日 {{value}}",
+    "todayRequests": "{{value}} 次",
+    "todayHitRate": "命中 {{value}}",
     "usage": "用量统计",
     "auth": "授权中心",
     "authNeedsReauth": "有账号需要重新登录",
@@ -4202,6 +4258,11 @@
       "enteredStackLive": "{{app}} 已切换到聚合模式，聚合的模型已出现在 /model 里。",
       "enteredStackDesktop": "{{app}} 已切换到聚合模式。重启 {{app}} 后，聚合的模型出现在模型列表里。",
       "exited": "已回到直连：{{app}} 现在直接连接 {{provider}}。",
+      "routeRemembered": "已记住供应商 {{provider}}，客户端接入路由或聚合后使用。",
+      "routeTargetChanged": "路由目标已设为 {{provider}}。",
+      "routeSwitched": "路由已切换至 {{provider}}，后续新请求将使用该供应商。",
+      "stackDefaultChanged": "聚合默认供应商已设为 {{provider}}；已选聚合模型仍使用各自的供应商。",
+      "clientConfigChanged": "客户端配置也已更新；重启 {{app}} 以加载更新后的配置。",
       "defaultRemembered": "切换到聚合模式后，默认供应商是 {{provider}}。",
       "restartHint": "重启 {{app}} 后生效。",
       "failed": "切换失败：{{detail}}"
@@ -4295,6 +4356,7 @@
       "defaultCannotRemove": "默认那家不能移除，先把别家设为默认。",
       "currentCannotRemove": "正在用的这家不能移除，先启用别家。",
       "inUseCannotDelete": "正在用的这家不能删除，先切到别家。",
+      "directDefaultCannotDelete": "退出路由后会回到这家，所以不能删除。先在直连页对别家点「回到直连并使用」，再删除。",
       "noFailover": "官方账号不进故障转移队列：它用客户端自己的登录，不能和别家轮换。"
     },
     "section": {

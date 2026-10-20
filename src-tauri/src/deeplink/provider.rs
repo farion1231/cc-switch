@@ -100,14 +100,25 @@ pub fn import_provider_from_deeplink(
     // Build provider configuration based on app type
     let mut provider = build_provider_from_request(&app_type, &merged_request)?;
 
-    // Generate a unique ID for the provider using timestamp + sanitized name
-    let timestamp = chrono::Utc::now().timestamp_millis();
-    let sanitized_name = name
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
-        .collect::<String>()
-        .to_lowercase();
-    provider.id = format!("{sanitized_name}-{timestamp}");
+    provider.id = if matches!(app_type, AppType::OpenCode) {
+        // Display names may be Unicode, but new OpenCode IDs must pass the editor's slug validation.
+        let slug = name
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("-")
+            .to_ascii_lowercase();
+        let slug = if slug.is_empty() { "provider" } else { &slug };
+        format!("{slug}-{}", uuid::Uuid::new_v4().simple())
+    } else {
+        let timestamp = chrono::Utc::now().timestamp_millis();
+        let sanitized_name = name
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+            .collect::<String>()
+            .to_lowercase();
+        format!("{sanitized_name}-{timestamp}")
+    };
 
     let provider_id = provider.id.clone();
 
@@ -466,10 +477,12 @@ fn build_provider_meta(
 
     // 套餐地址且没带脚本：和在应用里新建一样，按套餐额度查询并默认启用
     // （链接写了 `usageEnabled` 仍照办）。额度走后端固定端点，不执行任何脚本。
+    // 火山例外：查额度要账号级 AccessKey，链接里没有，默认启用只会显示「额度没查到」，
+    // 所以只预选套餐不启用（前端 `codingPlanEnabledByDefault` 与此一致）。
     if let (Some(provider_id), true) = (coding_plan_provider, code.is_empty()) {
         return Ok(Some(ProviderMeta {
             usage_script: Some(UsageScript {
-                enabled: request.usage_enabled.unwrap_or(true),
+                enabled: request.usage_enabled.unwrap_or(provider_id != "volcengine"),
                 language: "javascript".to_string(),
                 code,
                 timeout: Some(10),
