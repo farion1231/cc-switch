@@ -1,4 +1,4 @@
-/* macOS 背景交给系统玻璃，其余平台只给卡片画磨砂背景；画布本身始终透明 */
+/* 默认透明画布；macOS 背景交给系统玻璃，Linux 软件绘制回退时才铺整页实色 */
 html,
 body.tray-panel,
 body.tray-panel #root {
@@ -39,7 +39,7 @@ html.dark[data-glass="native"][data-layout="floating"] .tp-card {
     0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
-/* 兼容磨砂背景：Windows、Linux 在卡片内绘制，保持固定画布的其余部分透明——
+/* 兼容磨砂背景（Windows、Linux 在下方另有覆盖）：在卡片内绘制，画布其余部分透明——
    半透明底色 + 背景模糊（只作用于网页内容）+ 顶部高光和细描边，看起来像磨砂玻璃 */
 html[data-glass="frosted"] .tp-card {
   background:
@@ -79,20 +79,21 @@ html.dark [data-platform="windows"] .tp-card {
   background: #242428;
 }
 
-/* WebKitGTK 在禁用合成时不能可靠地重绘透明窗口和 backdrop-filter 的组合。
-   Linux 的原生窗口和整张网页都使用实色背景，暴露、缩放后也有完整的绘制底面。 */
-html[data-platform="linux"],
-html[data-platform="linux"] body.tray-panel,
-html[data-platform="linux"] body.tray-panel #root,
-html[data-platform="linux"] .tp-card {
+/* Linux 默认 SHM 合成保留透明圆角；用户显式禁用合成或 renderer 时，
+   原生层关闭 WebView 透明，同时以 solid 模式铺满整页，避免软件绘制缺失。
+   单独修改 CSS 背景不能替代原生层修复。 */
+html[data-platform="linux"][data-glass="solid"],
+html[data-platform="linux"][data-glass="solid"] body.tray-panel,
+html[data-platform="linux"][data-glass="solid"] body.tray-panel #root,
+html[data-platform="linux"][data-glass="solid"] .tp-card {
   background: #ebebed !important;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
-html.dark[data-platform="linux"],
-html.dark[data-platform="linux"] body.tray-panel,
-html.dark[data-platform="linux"] body.tray-panel #root,
-html.dark[data-platform="linux"] .tp-card {
+html.dark[data-platform="linux"][data-glass="solid"],
+html.dark[data-platform="linux"][data-glass="solid"] body.tray-panel,
+html.dark[data-platform="linux"][data-glass="solid"] body.tray-panel #root,
+html.dark[data-platform="linux"][data-glass="solid"] .tp-card {
   background: #242428 !important;
 }
 
