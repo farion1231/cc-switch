@@ -4,6 +4,7 @@ import {
   GripVertical,
   ChevronDown,
   ChevronUp,
+  ExternalLink,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
@@ -16,6 +17,7 @@ import type { AppId } from "@/lib/api";
 import { authApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ProviderIconBox } from "@/components/ProviderIconBox";
+import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
 import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
@@ -217,6 +219,24 @@ export function ProviderCard({
     return extractApiUrl(provider, fallbackUrlText);
   }, [provider, fallbackUrlText]);
 
+  const website = useMemo(() => {
+    const url = provider.websiteUrl?.trim();
+    if (!url) return null;
+
+    try {
+      const parsed = new URL(url);
+      if (!["http:", "https:"].includes(parsed.protocol) || !parsed.host) {
+        return null;
+      }
+      return { url, host: parsed.host };
+    } catch {
+      return null;
+    }
+  }, [provider.websiteUrl]);
+  const websiteLabel = website
+    ? t("providerCard.action.visitWebsite", { host: website.host })
+    : undefined;
+
   const isClickableUrl = useMemo(() => {
     if (provider.notes?.trim()) {
       return false;
@@ -333,7 +353,7 @@ export function ProviderCard({
         />
 
         <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-1.5">
+          <div className="flex min-h-6 min-w-0 items-center gap-1.5">
             <h3
               className={cn(
                 "m-0 min-w-0 truncate text-strong",
@@ -343,6 +363,25 @@ export function ProviderCard({
             >
               {provider.name}
             </h3>
+            {website && (
+              <HoverTip content={websiteLabel}>
+                <Button
+                  type="button"
+                  variant="quiet"
+                  size="icon-compact"
+                  className="size-6 shrink-0"
+                  aria-label={websiteLabel}
+                  onClick={() => onOpenWebsite(website.url)}
+                >
+                  <ExternalLink
+                    size={16}
+                    strokeWidth={1.5}
+                    aria-hidden="true"
+                    data-icon="inline-end"
+                  />
+                </Button>
+              </HoverTip>
+            )}
             {presentation.chips.map((chip) => (
               <CardChipBadge key={chip.key} chip={chip} />
             ))}
