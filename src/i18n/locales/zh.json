@@ -184,7 +184,7 @@
     "terminalOpenFailed": "打开终端失败",
     "openTerminalDialog": {
       "title": "在哪个目录打开终端？",
-      "description": "会在你选的目录里打开一个终端，并用「{{name}}」的配置启动 Claude Code。一般选你的项目文件夹。",
+      "description": "会在你选的目录里打开一个终端，并用「{{name}}」的配置启动 {{app}}。一般选你的项目文件夹。",
       "isolationTitle": "这个终端是隔离的",
       "isolationBody": "它固定使用「{{name}}」，之后在 CC Switch 里切换供应商不会影响它；它也不会改动 CC Switch 里正在使用的供应商。",
       "noDir": "还没选目录",
@@ -209,10 +209,10 @@
     "geminiConfigHint": "使用 .env 格式配置 Gemini",
     "form": {
       "agy": {
-        "connectionHint": "不填 API Key 和请求地址时使用 agy 自身的 Google 登录。填写 Key 但不填地址时使用 Google 默认 API；第三方地址须兼容 Gemini API。切换后请新开终端或重启 agy，已运行的会话不会自动切换。登录模式的模型列表读取当前 agy 配置。 登录模式请使用模型列表中的显示名称；API 模式使用接口模型 ID。",
-        "keyFieldsHint": "地址、Key 和模型随供应商切换；Antigravity 的其他原生设置保持不变。",
+        "connectionHint": "不填 API Key 和请求地址时使用 agy 自身的 Google 登录，切换后新开的 agy 都用这里的模型。填写 Key 后是第三方模式：Key 只在从卡片「打开终端」启动的 agy 里生效，直接在终端里运行 agy 仍是 Google 登录。不填地址时使用 Google 默认 API；第三方地址须兼容 Gemini API，并支持 agy 内置的 Gemini 模型。两种模式都请填写模型列表中的显示名称。",
+        "keyFieldsHint": "模型随供应商切换，Key 和地址在「打开终端」时使用；Antigravity 的其他原生设置保持不变。",
         "envFile": "启动环境变量",
-        "envFileHint": "CC Switch 会在启动 agy 时传入 API Key、请求地址和模型。其他环境变量不会应用。",
+        "envFileHint": "从卡片「打开终端」启动 agy 时，CC Switch 只把 API Key 和请求地址传给那一个 agy 进程，不写进任何文件。其他环境变量不会应用。",
         "configJson": "模型配置（CC Switch 格式）",
         "configJsonHint": "这里仅支持模型设置，其他 Antigravity 选项请在 agy 中调整；MCP 在 MCP 面板中管理。"
       },

@@ -1,4 +1,5 @@
-//! 切换 Antigravity CLI：写 `settings.json`，并把 Key / 地址注入启动包装。
+//! 切换 Antigravity CLI：只改 `settings.json`。第三方 Key 不进任何文件，只在 CC Switch
+//! 打开的终端里经环境变量传给 agy（见 `agy_config` 模块说明）。
 
 use serde_json::{json, Value};
 
@@ -87,25 +88,46 @@ pub(crate) fn switch_to(db: &Database, target: &Provider) -> Result<OperationRep
 pub(crate) fn reapply(db: &Database, target: &Provider) -> Result<OperationReport, AppError> {
     let settings = live_settings(target)?;
     // 全量同步（导入、云同步）会对每个当前供应商调用这里。没有真实内容的供应商
-    // 不能借机接管用户的启动器或 shell，也不应在 Windows 上报错。
+    // 不去改 agy 首次启动写出的 settings.json。
     if !agy_config::has_managed_content(&settings) {
         return Ok(OperationReport::default());
     }
     agy_config::apply_managed(db, &settings, op::APPLY, PendingTarget::default())
 }
 
-/// 删除供应商后调用：如果已经没有需要启动器的当前供应商，就撤掉 CC Switch 的启动器和 PATH 片段。
-pub(crate) fn release_launcher_if_unmanaged(db: &Database) -> Result<(), AppError> {
+/// 在终端里启动这张卡要用的参数；Key 卡会先建好它的私有目录。
+pub(crate) fn terminal_launch(provider: &Provider) -> Result<agy_config::AgyLaunch, AppError> {
+    let settings = live_settings(provider)?;
+    agy_config::prepare_launch(&provider.id, &settings)
+}
+
+/// 启动时调用：撤掉 #8268 测试版装的包装脚本、`env` 文件和 shell PATH 片段。清掉过
+/// `env` 的说明当时写过 `modelProvider`，按新规则把当前供应商重写一次，让直接敲 `agy`
+/// 回到官方登录。没有旧现场时什么都不做。
+pub(crate) fn migrate_legacy_launcher(db: &Database) -> Result<(), AppError> {
     use crate::app_config::AppType;
     use crate::mode::current::{provider_for, Purpose};
-    if let Some(id) = provider_for(db, &AppType::Agy, Purpose::Direct)? {
-        if let Some(current) = db.get_provider_by_id(&id, "agy")? {
-            if live_settings(&current).is_ok_and(|s| agy_config::needs_launcher(&s)) {
-                return Ok(());
-            }
+    if !agy_config::remove_legacy_launcher()? {
+        return Ok(());
+    }
+    let current = match provider_for(db, &AppType::Agy, Purpose::Direct)? {
+        Some(id) => db.get_provider_by_id(&id, "agy")?,
+        None => None,
+    };
+    match &current {
+        Some(provider) => {
+            agy_config::apply_managed(
+                db,
+                &live_settings(provider)?,
+                op::APPLY,
+                PendingTarget::default(),
+            )?;
+        }
+        None => {
+            agy_config::release_model_provider(db)?;
         }
     }
-    agy_config::remove_launcher()
+    Ok(())
 }
 
 #[cfg(test)]

@@ -1749,17 +1749,16 @@ fn build_exec_line(shell: &str, cwd: Option<&Path>) -> String {
 
 /// 构建 provider 命令行：通过用户 shell 的交互模式执行，确保 GUI 启动的终端也加载用户 PATH。
 #[cfg_attr(windows, allow(dead_code))]
-fn build_provider_command_line(shell: &str, config_path: &str, cwd: Option<&Path>) -> String {
-    let claude_command = format!("claude --settings {}", shell_single_quote(config_path));
+fn build_provider_command_line(shell: &str, launch_command: &str, cwd: Option<&Path>) -> String {
     let command = cwd
         .map(|dir| {
             format!(
                 "cd {} && {}",
                 shell_single_quote(&dir.to_string_lossy()),
-                claude_command
+                launch_command
             )
         })
-        .unwrap_or(claude_command);
+        .unwrap_or_else(|| launch_command.to_string());
 
     format!(
         "{} {} {}",
@@ -4642,12 +4641,15 @@ pub async fn open_provider_terminal(
         .get(&providerId)
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
 
-    // 从提供商配置中提取环境变量
-    let config = &provider.settings_config;
-    let env_vars = extract_env_vars_from_config(config, &app_type);
+    let launch = match app_type {
+        AppType::Agy => agy_terminal_launch(provider)?,
+        _ => {
+            let env_vars = extract_env_vars_from_config(&provider.settings_config, &app_type);
+            claude_terminal_launch(&env_vars, &providerId)?
+        }
+    };
 
-    // 根据平台启动终端，传入提供商ID用于生成唯一的配置文件名
-    launch_terminal_with_env(env_vars, &providerId, launch_cwd.as_deref())
+    launch_provider_terminal(&launch, launch_cwd.as_deref())
         .map_err(|e| format!("启动终端失败: {e}"))?;
 
     Ok(true)
@@ -4728,46 +4730,291 @@ fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
     Ok(Some(resolved))
 }
 
-/// 创建临时配置文件并启动 claude 终端
-/// 使用 --settings 参数传入提供商特定的 API 配置
-fn launch_terminal_with_env(
-    env_vars: Vec<(String, String)>,
+/// 在终端里启动的一次供应商会话：跑什么命令、只给它哪些环境变量、退出后删哪些临时
+/// 文件。打开终端那一层（各家终端的 AppleScript、Linux 候选列表、Windows start）对所有
+/// 应用共用，只有这里按应用不同。
+struct ProviderLaunch {
+    /// 启动前打印的说明
+    title: &'static str,
+    /// 说明下面打印的路径（只在 macOS / Linux 打印）
+    #[cfg_attr(windows, allow(dead_code))]
+    detail: Option<PathBuf>,
+    program: &'static str,
+    /// macOS / Linux 的参数，交给用户 shell 执行前逐个加引号
+    #[cfg_attr(windows, allow(dead_code))]
+    args: Vec<String>,
+    /// Windows .bat 里执行的命令
+    #[cfg_attr(not(windows), allow(dead_code))]
+    batch_command: String,
+    /// 只给这一个进程的环境变量；`None` 表示要清掉（用户 rc 里可能 export 过同名变量）。
+    /// macOS / Linux 写进 0600 的临时文件、读完立即删除；Windows 写进 .bat 的 `setlocal` 段。
+    env: Vec<(&'static str, Option<String>)>,
+    /// 只在 .bat 里设置、给 `batch_command` 引用的变量（比如可能含非 ASCII 的路径）
+    #[cfg_attr(not(windows), allow(dead_code))]
+    batch_vars: Vec<(&'static str, String)>,
+    /// 退出时删除的临时文件，都在系统临时目录里
+    cleanup: Vec<PathBuf>,
+}
+
+/// Claude Code：把卡上的 env 写进临时 settings 文件，`claude --settings <文件>` 启动。
+fn claude_terminal_launch(
+    env_vars: &[(String, String)],
     provider_id: &str,
-    cwd: Option<&Path>,
-) -> Result<(), String> {
-    let temp_dir = std::env::temp_dir();
-    let config_file = temp_dir.join(format!(
-        "claude_{}_{}.json",
-        provider_id,
-        std::process::id()
-    ));
+) -> Result<ProviderLaunch, String> {
+    let config_file = unique_temp_path(&format!("claude_{provider_id}"), "json");
+    write_claude_config(&config_file, env_vars)?;
+    let config_name = config_file
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(ProviderLaunch {
+        title: "Using provider-specific claude config:",
+        detail: Some(config_file.clone()),
+        program: "claude",
+        args: vec![
+            "--settings".to_string(),
+            config_file.to_string_lossy().into_owned(),
+        ],
+        // 配置文件和 .bat 同在 temp_dir（%TEMP% 含用户名），用 %~dp0 引用：目录由 cmd
+        // 运行时展开，不进 .bat 字节，非 ASCII 用户名下也不会乱码（#8034）。
+        batch_command: format!(
+            "claude --settings \"%~dp0{}\"",
+            escape_windows_batch_value(&config_name)
+        ),
+        env: Vec::new(),
+        batch_vars: Vec::new(),
+        cleanup: vec![config_file],
+    })
+}
 
-    // 创建并写入配置文件
-    write_claude_config(&config_file, &env_vars)?;
+/// Antigravity CLI：官方登录卡直接跑 `agy`；Key 卡用它的私有 `--gemini_dir`，Key 和地址
+/// 只经环境变量传给这一个进程。
+fn agy_terminal_launch(provider: &crate::provider::Provider) -> Result<ProviderLaunch, String> {
+    let launch = crate::services::provider::agy_direct::terminal_launch(provider)
+        .map_err(|e| e.to_string())?;
+    let Some(dir) = launch.gemini_dir else {
+        return Ok(ProviderLaunch {
+            title: "Starting Antigravity CLI with your signed-in account",
+            detail: None,
+            program: "agy",
+            args: Vec::new(),
+            batch_command: "agy".to_string(),
+            env: launch.env,
+            batch_vars: Vec::new(),
+            cleanup: Vec::new(),
+        });
+    };
+    Ok(ProviderLaunch {
+        title: "Using a private Antigravity profile for this provider:",
+        detail: Some(dir.clone()),
+        program: "agy",
+        args: vec![format!("--gemini_dir={}", dir.to_string_lossy())],
+        batch_command: format!("agy \"--gemini_dir=%{AGY_DIR_BATCH_VAR}%\""),
+        env: launch.env,
+        batch_vars: vec![(AGY_DIR_BATCH_VAR, dir.to_string_lossy().into_owned())],
+        cleanup: Vec::new(),
+    })
+}
 
-    #[cfg(target_os = "macos")]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const AGY_DIR_BATCH_VAR: &str = "CC_SWITCH_AGY_DIR";
+
+/// macOS / Linux 的启动脚本里，环境变量先以这个前缀的名字读进来，再由 `env` 改名交给
+/// 程序：用户 shell 的 rc 文件在中间执行，直接用原名会被 rc 里的 export 覆盖。
+#[cfg_attr(windows, allow(dead_code))]
+const LAUNCH_ENV_PREFIX: &str = "CC_SWITCH_LAUNCH_ENV_";
+
+/// 同一进程里连开几个终端也不会撞名。
+fn unique_temp_path(stem: &str, ext: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or_default();
+    std::env::temp_dir().join(format!(
+        "{stem}_{}_{nanos:x}{}.{ext}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+/// 根据平台打开终端运行 `launch`。
+fn launch_provider_terminal(launch: &ProviderLaunch, cwd: Option<&Path>) -> Result<(), String> {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
-        launch_macos_terminal(&config_file, cwd)?;
-        Ok(())
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        launch_linux_terminal(&config_file, cwd)?;
-        Ok(())
+        let (script_file, env_file) = write_unix_launcher(launch, cwd)?;
+        #[cfg(target_os = "macos")]
+        let result = launch_macos_terminal(&script_file);
+        #[cfg(target_os = "linux")]
+        let result = launch_linux_terminal(&script_file);
+        if result.is_err() {
+            for file in launch.cleanup.iter().chain([&script_file, &env_file]) {
+                let _ = std::fs::remove_file(file);
+            }
+        }
+        result
     }
 
     #[cfg(target_os = "windows")]
     {
-        launch_windows_terminal(&temp_dir, &config_file, cwd)?;
-        Ok(())
+        let result = launch_windows_terminal(launch, cwd);
+        if result.is_err() {
+            for file in &launch.cleanup {
+                let _ = std::fs::remove_file(file);
+            }
+        }
+        result
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    Err("不支持的操作系统".to_string())
+    {
+        let _ = (launch, cwd);
+        Err("不支持的操作系统".to_string())
+    }
 }
 
-/// 写入 claude 配置文件
+/// shell 里的一个词：只含安全字符时原样写，否则加单引号。
+#[cfg_attr(windows, allow(dead_code))]
+fn shell_word(value: &str) -> String {
+    let plain = !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | ':' | '='));
+    if plain {
+        value.to_string()
+    } else {
+        shell_single_quote(value)
+    }
+}
+
+/// 交给用户 shell 执行的启动命令。有环境变量时经 `env` 设置或清除，值从启动脚本读进来的
+/// `CC_SWITCH_LAUNCH_ENV_<n>` 取，不出现在命令行里。
+#[cfg_attr(windows, allow(dead_code))]
+fn unix_launch_command(launch: &ProviderLaunch) -> String {
+    let mut words = Vec::new();
+    if !launch.env.is_empty() {
+        words.push("env".to_string());
+        for (index, (name, value)) in launch.env.iter().enumerate() {
+            // 中转用的变量也不留给程序。
+            words.push(format!("-u {LAUNCH_ENV_PREFIX}{index}"));
+            if value.is_none() {
+                words.push(format!("-u {name}"));
+            }
+        }
+        for (index, (name, value)) in launch.env.iter().enumerate() {
+            if value.is_some() {
+                words.push(format!("{name}=\"${LAUNCH_ENV_PREFIX}{index}\""));
+            }
+        }
+    }
+    words.push(launch.program.to_string());
+    words.extend(launch.args.iter().map(|arg| shell_word(arg)));
+    words.join(" ")
+}
+
+/// 0600 环境变量文件的内容，启动脚本 `.` 进来后立即删除。
+#[cfg_attr(windows, allow(dead_code))]
+fn unix_launch_env_file(launch: &ProviderLaunch) -> String {
+    launch
+        .env
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (_, value))| {
+            value
+                .as_ref()
+                .map(|value| format!("{LAUNCH_ENV_PREFIX}{index}={}\n", shell_single_quote(value)))
+        })
+        .collect()
+}
+
+/// 启动脚本：读进环境变量文件并删掉它，跑启动命令，删掉临时文件，最后换成用户的交互 shell。
+#[cfg_attr(windows, allow(dead_code))]
+fn build_unix_launcher_script(
+    launch: &ProviderLaunch,
+    shell: &str,
+    cwd: Option<&Path>,
+    script_file: &Path,
+    env_file: Option<&Path>,
+) -> String {
+    let mut temp_files: Vec<String> = launch
+        .cleanup
+        .iter()
+        .map(PathBuf::as_path)
+        .chain(env_file)
+        .map(|file| shell_single_quote(&file.to_string_lossy()))
+        .collect();
+    temp_files.push(shell_single_quote(&script_file.to_string_lossy()));
+    let remove_temp_files = format!("rm -f -- {}", temp_files.join(" "));
+
+    let mut script = String::from("#!/usr/bin/env sh\n");
+    script.push_str(&format!(
+        "trap {} EXIT\n",
+        shell_single_quote(&remove_temp_files)
+    ));
+    if let Some(env_file) = env_file {
+        let quoted = shell_single_quote(&env_file.to_string_lossy());
+        script.push_str(&format!("set -a\n. {quoted}\nset +a\nrm -f -- {quoted}\n"));
+    }
+    script.push_str(&format!("echo {}\n", shell_single_quote(launch.title)));
+    if let Some(detail) = &launch.detail {
+        script.push_str(&format!(
+            "echo {}\n",
+            shell_single_quote(&detail.to_string_lossy())
+        ));
+    }
+    script.push_str(&build_provider_command_line(
+        shell,
+        &unix_launch_command(launch),
+        cwd,
+    ));
+    script.push('\n');
+    // exec 不会触发 EXIT trap，所以在换成交互 shell 之前自己删。
+    script.push_str(&remove_temp_files);
+    script.push('\n');
+    let launch_vars: Vec<String> = (0..launch.env.len())
+        .map(|index| format!("{LAUNCH_ENV_PREFIX}{index}"))
+        .collect();
+    if !launch_vars.is_empty() {
+        script.push_str(&format!("unset {}\n", launch_vars.join(" ")));
+    }
+    script.push_str(&build_final_shell_cd_command(shell, cwd));
+    script.push_str(&build_exec_line(shell, cwd));
+    script.push('\n');
+    script
+}
+
+/// 写好启动脚本（和需要时的 0600 环境变量文件），返回两者路径。
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn write_unix_launcher(
+    launch: &ProviderLaunch,
+    cwd: Option<&Path>,
+) -> Result<(PathBuf, PathBuf), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let shell = get_user_shell();
+    let script_file = unique_temp_path("cc_switch_launcher", "sh");
+    let env_file = unique_temp_path("cc_switch_launch_env", "sh");
+    let env_content = unix_launch_env_file(launch);
+    let has_env = !env_content.is_empty();
+    if has_env {
+        crate::config::atomic_write_private(&env_file, env_content.as_bytes())
+            .map_err(|e| format!("写入启动环境失败: {e}"))?;
+    }
+    let script_content = build_unix_launcher_script(
+        launch,
+        &shell,
+        cwd,
+        &script_file,
+        has_env.then_some(env_file.as_path()),
+    );
+    std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
+    std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o700))
+        .map_err(|e| format!("设置脚本权限失败: {e}"))?;
+    Ok((script_file, env_file))
+}
+
+/// 写入 claude 配置文件（含凭据，0600）
 fn write_claude_config(
     config_file: &std::path::Path,
     env_vars: &[(String, String)],
@@ -4784,49 +5031,16 @@ fn write_claude_config(
     let config_json =
         serde_json::to_string_pretty(&config_obj).map_err(|e| format!("序列化配置失败: {e}"))?;
 
-    std::fs::write(config_file, config_json).map_err(|e| format!("写入配置文件失败: {e}"))
+    crate::config::atomic_write_private(config_file, config_json.as_bytes())
+        .map_err(|e| format!("写入配置文件失败: {e}"))
 }
 
 /// macOS: 根据用户首选终端启动
 #[cfg(target_os = "macos")]
-fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-
+fn launch_macos_terminal(script_file: &std::path::Path) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("terminal");
-
-    let shell = get_user_shell();
-    let exec_line = build_exec_line(&shell, cwd);
-    let final_cd_command = build_final_shell_cd_command(&shell, cwd);
-
-    let temp_dir = std::env::temp_dir();
-    let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
-    let provider_command = build_provider_command_line(&shell, &config_path, cwd);
-
-    // Write the shell script to a temp file
-    // 脚本使用 POSIX sh 语法确保可移植性，exec 行切换到用户交互式 shell
-    let script_content = format!(
-        r#"#!/usr/bin/env sh
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-{provider_command}
-{final_cd_command}
-{exec_line}
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        provider_command = provider_command,
-        final_cd_command = final_cd_command,
-        exec_line = exec_line,
-    );
-
-    std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
-
-    // Make script executable
-    std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("设置脚本权限失败: {e}"))?;
+    let script_file = script_file.to_path_buf();
 
     // Try the preferred terminal first, fall back to Terminal.app if it fails
     // Note: Kitty doesn't need the -e flag, others do
@@ -5181,15 +5395,10 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
+fn launch_linux_terminal(script_file: &std::path::Path) -> Result<(), String> {
     use std::process::Command;
 
     let preferred = crate::settings::get_preferred_terminal();
-
-    let shell = get_user_shell();
-    let exec_line = build_exec_line(&shell, cwd);
-    let final_cd_command = build_final_shell_cd_command(&shell, cwd);
 
     // Default terminal list with their arguments
     let default_terminals = [
@@ -5202,33 +5411,6 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
         ("kitty", vec!["-e"]),
         ("ghostty", vec!["-e"]),
     ];
-
-    // Create temp script file
-    let temp_dir = std::env::temp_dir();
-    let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
-    let config_path = config_file.to_string_lossy();
-    let provider_command = build_provider_command_line(&shell, &config_path, cwd);
-
-    let script_content = format!(
-        r#"#!/usr/bin/env sh
-trap 'rm -f "{config_path}" "{script_file}"' EXIT
-echo "Using provider-specific claude config:"
-echo "{config_path}"
-{provider_command}
-{final_cd_command}
-{exec_line}
-"#,
-        config_path = config_path,
-        script_file = script_file.display(),
-        provider_command = provider_command,
-        final_cd_command = final_cd_command,
-        exec_line = exec_line,
-    );
-
-    std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
-
-    std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("设置脚本权限失败: {e}"))?;
 
     // Build terminal list: preferred terminal first (if specified), then defaults
     let terminals_to_try: Vec<(&str, Vec<&str>)> = if let Some(ref pref) = preferred {
@@ -5279,9 +5461,6 @@ echo "{config_path}"
         }
     }
 
-    // Clean up on failure
-    let _ = std::fs::remove_file(&script_file);
-    let _ = std::fs::remove_file(config_file);
     Err(last_error)
 }
 
@@ -5298,42 +5477,39 @@ fn which_command(cmd: &str) -> bool {
 
 /// Windows: 根据用户首选终端启动
 #[cfg(target_os = "windows")]
-fn launch_windows_terminal(
-    temp_dir: &std::path::Path,
-    config_file: &std::path::Path,
-    cwd: Option<&Path>,
-) -> Result<(), String> {
+fn launch_windows_terminal(launch: &ProviderLaunch, cwd: Option<&Path>) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
 
-    let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
-    // 配置文件和 .bat 同在 temp_dir（%TEMP% 含用户名），用 %~dp0 引用：目录由 cmd
-    // 运行时展开，不进 .bat 字节，非 ASCII 用户名下也不会乱码（#8034）。
-    let config_name = config_file
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let config_path_for_batch = format!("%~dp0{}", escape_windows_batch_value(&config_name));
+    let bat_file = unique_temp_path("cc_switch_launcher", "bat");
     let (cwd_command, cwd_env) = build_windows_cwd_command(cwd);
-    let launch_env: Vec<(&str, &str)> = cwd_env
-        .as_deref()
-        .map(|value| (WINDOWS_CWD_ENV, value))
+    let mut launch_env: Vec<(String, String)> = cwd_env
+        .map(|value| (WINDOWS_CWD_ENV.to_string(), value))
         .into_iter()
         .collect();
+    let (set_lines, extra_env) = build_windows_launch_env(launch);
+    launch_env.extend(extra_env);
+    let launch_env: Vec<(&str, &str)> = launch_env
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+    let cleanup: String = launch
+        .cleanup
+        .iter()
+        .filter_map(|file| file.file_name())
+        .map(|name| {
+            format!(
+                "del \"%~dp0{}\" >nul 2>&1\r\n",
+                escape_windows_batch_value(&name.to_string_lossy())
+            )
+        })
+        .collect();
 
+    // setlocal 段里设的变量（含 Key）在程序退出后随 endlocal 撤掉，不留在这个 cmd 会话里。
     let content = format!(
-        "@echo off
-{cwd_command}
-echo Using provider-specific claude config:
-echo \"{}\"
-claude --settings \"{}\"
-del \"{}\" >nul 2>&1
-del \"%~f0\" >nul 2>&1
-",
-        config_path_for_batch,
-        config_path_for_batch,
-        config_path_for_batch,
-        cwd_command = cwd_command,
+        "@echo off\r\n{cwd_command}setlocal\r\n{set_lines}echo {title}\r\n{command}\r\nendlocal\r\n{cleanup}del \"%~f0\" >nul 2>&1\r\n",
+        title = escape_windows_batch_value(launch.title),
+        command = launch.batch_command,
     );
 
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
@@ -5378,6 +5554,40 @@ fn shell_single_quote(value: &str) -> String {
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn is_windows_unc_path(path: &str) -> bool {
     path.starts_with(r"\\")
+}
+
+/// .bat 里 `setlocal` 段的 `set` 行，以及要经启动进程环境传入的变量。纯 ASCII 的值直接
+/// 写进文件（`%` 双写）；含非 ASCII 的按 #8034 的办法经环境变量转一手，免得按代码页乱码。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn build_windows_launch_env(launch: &ProviderLaunch) -> (String, Vec<(String, String)>) {
+    let mut lines = String::new();
+    let mut carried = Vec::new();
+    let entries = launch
+        .env
+        .iter()
+        .map(|(name, value)| (*name, value.clone()))
+        .chain(
+            launch
+                .batch_vars
+                .iter()
+                .map(|(name, value)| (*name, Some(value.clone()))),
+        );
+    for (index, (name, value)) in entries.enumerate() {
+        match value {
+            None => lines.push_str(&format!("set \"{name}=\"\r\n")),
+            Some(value) if value.is_ascii() => {
+                lines.push_str(&format!("set \"{name}={}\"\r\n", value.replace('%', "%%")))
+            }
+            Some(value) => {
+                let carrier = format!("CC_SWITCH_INTERNAL_ENV_{index}");
+                lines.push_str(&format!(
+                    "set \"{name}=%{carrier}%\"\r\nset \"{carrier}=\"\r\n"
+                ));
+                carried.push((carrier, value));
+            }
+        }
+    }
+    (lines, carried)
 }
 
 /// 非 ASCII 的项目目录经这个环境变量传给 Claude 启动 .bat。
@@ -6147,26 +6357,161 @@ mod tests {
 
     #[test]
     fn test_build_provider_command_line_uses_user_shell_environment() {
+        let claude = format!(
+            "claude --settings {}",
+            shell_word("/tmp/claude config.json")
+        );
         assert_eq!(
-            build_provider_command_line("/bin/zsh", "/tmp/claude config.json", None),
+            build_provider_command_line("/bin/zsh", &claude, None),
             "'/bin/zsh' -lic 'claude --settings '\"'\"'/tmp/claude config.json'\"'\"''"
         );
         assert_eq!(
-            build_provider_command_line(
-                "/bin/bash",
-                "/tmp/claude config.json",
-                Some(Path::new("/tmp/project"))
-            ),
+            build_provider_command_line("/bin/bash", &claude, Some(Path::new("/tmp/project"))),
             r#"'/bin/bash' -ic 'cd '"'"'/tmp/project'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
         );
         assert_eq!(
             build_provider_command_line(
                 "/bin/sh",
-                "/tmp/claude config.json",
+                &claude,
                 Some(Path::new("/tmp/project O'Brien"))
             ),
             r#"'/bin/sh' -c 'cd '"'"'/tmp/project O'"'"'"'"'"'"'"'"'Brien'"'"' && claude --settings '"'"'/tmp/claude config.json'"'"''"#
         );
+    }
+
+    fn agy_key_launch() -> ProviderLaunch {
+        ProviderLaunch {
+            title: "Using a private Antigravity profile for this provider:",
+            detail: Some(PathBuf::from("/home/me/.cc-switch/agy/relay")),
+            program: "agy",
+            args: vec!["--gemini_dir=/home/me/.cc-switch/agy/relay".to_string()],
+            batch_command: format!("agy \"--gemini_dir=%{AGY_DIR_BATCH_VAR}%\""),
+            env: vec![
+                ("GEMINI_API_KEY", Some("k'$(echo no)`x`%PATH%".to_string())),
+                ("GOOGLE_GEMINI_BASE_URL", None),
+            ],
+            batch_vars: vec![(
+                AGY_DIR_BATCH_VAR,
+                r"C:\Users\张三\.cc-switch\agy\relay".to_string(),
+            )],
+            cleanup: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn launch_command_keeps_secrets_out_of_the_command_line() {
+        let launch = agy_key_launch();
+        assert_eq!(
+            unix_launch_command(&launch),
+            "env -u CC_SWITCH_LAUNCH_ENV_0 -u CC_SWITCH_LAUNCH_ENV_1 -u GOOGLE_GEMINI_BASE_URL GEMINI_API_KEY=\"$CC_SWITCH_LAUNCH_ENV_0\" agy --gemini_dir=/home/me/.cc-switch/agy/relay"
+        );
+        assert_eq!(
+            unix_launch_env_file(&launch),
+            "CC_SWITCH_LAUNCH_ENV_0='k'\"'\"'$(echo no)`x`%PATH%'\n"
+        );
+        let plain = ProviderLaunch {
+            env: Vec::new(),
+            ..agy_key_launch()
+        };
+        assert_eq!(
+            unix_launch_command(&plain),
+            "agy --gemini_dir=/home/me/.cc-switch/agy/relay"
+        );
+        assert_eq!(unix_launch_env_file(&plain), "");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_launcher_script_passes_env_past_rc_files_and_cleans_up() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        // A user rc that exports its own Gemini variables must not win.
+        std::fs::write(
+            home.join(".bashrc"),
+            "export GEMINI_API_KEY=from-rc\nexport GOOGLE_GEMINI_BASE_URL=https://rc.test\n",
+        )
+        .unwrap();
+        let out = tmp.path().join("out");
+        std::fs::write(
+            bin.join("agy"),
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"${{GEMINI_API_KEY-unset}}\" \"${{GOOGLE_GEMINI_BASE_URL-unset}}\" \"${{CC_SWITCH_LAUNCH_ENV_0-unset}}\" \"$@\" > '{}'\n",
+                out.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(bin.join("agy"), std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let launch = agy_key_launch();
+        let script = tmp.path().join("launcher.sh");
+        let env_file = tmp.path().join("env.sh");
+        std::fs::write(&env_file, unix_launch_env_file(&launch)).unwrap();
+        // Replace the final interactive shell with a no-op so the test returns.
+        let content =
+            build_unix_launcher_script(&launch, "/bin/bash", None, &script, Some(&env_file))
+                .replace("exec '/bin/bash'", "exit 0 #");
+        std::fs::write(&script, content).unwrap();
+        let status = std::process::Command::new("sh")
+            .arg(&script)
+            .env("HOME", &home)
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("GEMINI_API_KEY", "from-gui")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(
+            std::fs::read_to_string(&out).unwrap(),
+            "k'$(echo no)`x`%PATH%\nunset\nunset\n--gemini_dir=/home/me/.cc-switch/agy/relay\n"
+        );
+        assert!(
+            !env_file.exists(),
+            "env file is removed right after reading"
+        );
+        assert!(!script.exists());
+    }
+
+    #[test]
+    fn windows_launch_env_scopes_values_and_carries_non_ascii_paths() {
+        let (lines, carried) = build_windows_launch_env(&agy_key_launch());
+        assert_eq!(
+            lines,
+            "set \"GEMINI_API_KEY=k'$(echo no)`x`%%PATH%%\"\r\n\
+             set \"GOOGLE_GEMINI_BASE_URL=\"\r\n\
+             set \"CC_SWITCH_AGY_DIR=%CC_SWITCH_INTERNAL_ENV_2%\"\r\n\
+             set \"CC_SWITCH_INTERNAL_ENV_2=\"\r\n"
+        );
+        assert_eq!(
+            carried,
+            vec![(
+                "CC_SWITCH_INTERNAL_ENV_2".to_string(),
+                r"C:\Users\张三\.cc-switch\agy\relay".to_string()
+            )]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_terminal_config_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let launch =
+            claude_terminal_launch(&[("ANTHROPIC_AUTH_TOKEN".into(), "t".into())], "p").unwrap();
+        let file = &launch.cleanup[0];
+        assert_eq!(
+            std::fs::metadata(file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            launch.args,
+            vec![
+                "--settings".to_string(),
+                file.to_string_lossy().into_owned()
+            ]
+        );
+        std::fs::remove_file(file).unwrap();
     }
 
     #[test]

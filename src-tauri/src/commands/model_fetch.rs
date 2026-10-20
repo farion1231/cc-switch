@@ -16,26 +16,18 @@ pub struct OpenCodeModelRef {
 /// Read the current runtime's model list. No shell and no credential values in errors.
 #[tauri::command]
 pub async fn get_agy_models() -> Result<Vec<FetchedModel>, String> {
-    let settings = crate::agy_config::read_live_settings().map_err(|e| e.to_string())?;
-    let path = tokio::task::spawn_blocking(|| {
-        crate::agy_config::real_agy_bin(&crate::agy_config::agy_dir().join("bin/agy"))
-    })
-    .await
-    .map_err(|e| e.to_string())?
-    .ok_or_else(|| "Antigravity CLI not found; install agy first".to_string())?;
+    // 文件坏了照样报错，免得把它当成「没有配置」静默略过。
+    crate::agy_config::read_live_settings().map_err(|e| e.to_string())?;
+    let path = tokio::task::spawn_blocking(crate::agy_config::real_agy_bin)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Antigravity CLI not found; install agy first".to_string())?;
     let mut command = tokio::process::Command::new(path);
     command
         .arg("models")
         .kill_on_drop(true)
         .env_remove("GEMINI_API_KEY")
         .env_remove("GOOGLE_GEMINI_BASE_URL");
-    if let Some(env) = settings["env"].as_object() {
-        for name in ["GEMINI_API_KEY", "GOOGLE_GEMINI_BASE_URL"] {
-            if let Some(value) = env.get(name).and_then(serde_json::Value::as_str) {
-                command.env(name, value);
-            }
-        }
-    }
     let output = tokio::time::timeout(std::time::Duration::from_secs(20), command.output())
         .await
         .map_err(|_| "Antigravity model discovery timed out".to_string())?
