@@ -24,7 +24,7 @@ pub fn configure_environment() {
     }
 }
 
-fn supports_transparency(
+fn compositing_requested(
     disable_dmabuf: Option<&OsStr>,
     disable_compositing: Option<&OsStr>,
 ) -> bool {
@@ -34,8 +34,9 @@ fn supports_transparency(
         .all(|value| value.is_none_or(|value| value == "0"))
 }
 
-pub(crate) fn transparent_panel() -> bool {
-    supports_transparency(
+/// 主窗口与面板必须遵循相同的合成开关；WebView 级别的 Never 会绕开 SHM 合成。
+pub(crate) fn compositing_enabled() -> bool {
+    compositing_requested(
         std::env::var_os(DISABLE_DMABUF).as_deref(),
         std::env::var_os(DISABLE_COMPOSITING).as_deref(),
     )
@@ -46,7 +47,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn transparency_follows_effective_webkit_overrides() {
+    fn compositing_follows_effective_webkit_overrides() {
         for (dmabuf, compositing, transparent) in [
             (None, None, true),
             (Some("0"), Some("0"), true),
@@ -59,7 +60,7 @@ mod tests {
             (Some("0"), Some("false"), false),
         ] {
             assert_eq!(
-                supports_transparency(dmabuf.map(OsStr::new), compositing.map(OsStr::new)),
+                compositing_requested(dmabuf.map(OsStr::new), compositing.map(OsStr::new)),
                 transparent,
                 "DMA-BUF override: {dmabuf:?}, compositing override: {compositing:?}"
             );
