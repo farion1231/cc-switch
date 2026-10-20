@@ -318,7 +318,15 @@ async fn cancellation_and_timeout_release_stdio_descendants() {
             wait_until(|| marker.with_extension("child").exists()).await;
             cancel_checks(&batch);
         } else {
-            assert!(!check_server(spec, Duration::from_secs(2)).await);
+            let check = tokio::spawn(check_server(spec, CHECK_TIMEOUT));
+            wait_until(|| marker.with_extension("child").exists()).await;
+            assert!(!check.is_finished(), "the fixture must wait for initialize");
+            // Resolve the login shell PATH and start both processes before
+            // expiring the probe, regardless of the CI runner's startup speed.
+            tokio::time::pause();
+            tokio::time::advance(CHECK_TIMEOUT).await;
+            assert!(!check.await.unwrap());
+            tokio::time::resume();
         }
         assert_process_released_port(&marker).await;
         assert_process_released_port(&marker.with_extension("child")).await;
