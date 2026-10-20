@@ -139,3 +139,4 @@ strip = "symbols"
 serial_test = "3"
 tempfile = "3"
 tauri = { version = "2.8.2", features = ["test"] }
+tokio = { version = "1", features = ["test-util"] }
