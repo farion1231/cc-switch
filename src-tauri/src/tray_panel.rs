@@ -8,7 +8,7 @@
 //! - Windows：固定透明画布，网页只为卡片绘制不透明背景，两块卡片并成两栏；
 //!   原生窗口区域跟随卡片裁剪，画布其余部分透明且不拦截鼠标。
 //! - Linux：AppIndicator 不派发点击事件，点图标仍是原生菜单，菜单最上面一项打开面板；
-//!   默认使用 SHM 合成保留透明圆角；显式禁用渲染器或合成时退回不透明背景。
+//!   WebKitGTK 2.44+ 默认使用 SHM 合成保留透明圆角；旧版或显式禁用合成时使用不透明背景。
 //!
 //! 面板只换了外观：每一行沿用原生菜单的事件 id，点击走 `tray::handle_tray_menu_event`，
 //! 切换、路由、故障转移的行为和原生菜单一致。窗口懒创建，之后只隐藏不销毁；失焦即隐藏。
@@ -377,7 +377,7 @@ fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
             .maximizable(false)
             .minimizable(false)
             .decorations(false)
-            // Linux 禁用 renderer / 合成的覆盖值必须同时控制原生透明和网页背景。
+            // Linux 的 renderer / 合成策略必须同时控制原生透明和网页背景。
             .transparent(transparent_window())
             // Windows 使用固定透明画布，整窗系统阴影会暴露画布的外框。
             .shadow(!cfg!(target_os = "windows"))

@@ -1445,7 +1445,7 @@ pub fn run() {
                 });
             });
 
-            // Linux: 只有显式禁用 renderer / 合成时才沿用软件绘制。
+            // Linux: 禁用 renderer / 合成时沿用软件绘制（包括旧版 WebKit 的默认策略）。
             // TODO: 上游修复 WebKitGTK 2.54 的软件绘制后重新评估；默认 SHM 合成下
             // 再把主窗口设为 Never 会使 DOM / IPC 正常但画面空白，不能与默认策略混用。
             #[cfg(target_os = "linux")]
