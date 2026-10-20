@@ -892,10 +892,15 @@ mod integration_tests {
         let _home = HomeGuard::new();
         fs::create_dir_all(agy_dir()).unwrap();
         fs::write(settings_path(), r#"{"model":"Gemini 3.8 Flash (High)"}"#).unwrap();
-        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        let db = Arc::new(Database::memory().unwrap());
+        let state = AppState::new(db.clone());
         assert!(
             crate::services::ProviderService::import_default_config(&state, AppType::Agy).unwrap()
         );
+        // The key never lives in a file, so anything imported is agy's own login.
+        let imported = db.get_provider_by_id("default", "agy").unwrap().unwrap();
+        assert_eq!(imported.category.as_deref(), Some("official"));
+        assert!(agy_direct::is_official(&imported));
     }
 
     /// 造一份 #8268 测试版留下的现场。

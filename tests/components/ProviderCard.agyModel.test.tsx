@@ -1,0 +1,77 @@
+import { QueryClientProvider } from "@tanstack/react-query";
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { ProviderCard } from "@/components/providers/ProviderCard";
+import type { Provider } from "@/types";
+import { createTestQueryClient } from "../utils/testQueryClient";
+
+vi.mock("@/components/providers/ProviderCardActions", () => ({
+  ProviderCardActions: () => null,
+}));
+vi.mock("@/components/ProviderIcon", () => ({ ProviderIcon: () => null }));
+vi.mock("@/components/UsageFooter", () => ({ default: () => null }));
+vi.mock("@/components/SubscriptionQuotaFooter", () => ({
+  default: () => null,
+}));
+vi.mock("@/components/CopilotQuotaFooter", () => ({ default: () => null }));
+vi.mock("@/components/CodexOauthQuotaFooter", () => ({ default: () => null }));
+vi.mock("@/components/XaiOauthQuotaFooter", () => ({ default: () => null }));
+vi.mock("@/lib/query/failover", () => ({
+  useProviderHealth: () => ({ data: undefined }),
+}));
+vi.mock("@/lib/query/queries", () => ({
+  useUsageQuery: () => ({ data: undefined }),
+}));
+
+function renderCard(provider: Provider, appId: "agy" | "gemini" = "agy") {
+  return render(
+    <QueryClientProvider client={createTestQueryClient()}>
+      <ProviderCard
+        provider={provider}
+        appId={appId}
+        isCurrent={false}
+        presentation={{ chips: [], buttons: [] }}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onConfigureUsage={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        onDuplicate={vi.fn()}
+      />
+    </QueryClientProvider>,
+  );
+}
+
+const relay: Provider = {
+  id: "relay",
+  name: "Relay",
+  settingsConfig: {
+    env: {
+      GEMINI_API_KEY: "k",
+      GOOGLE_GEMINI_BASE_URL: "https://relay.example.com",
+    },
+    config: { model: { name: "Gemini 3.1 Pro (High)" } },
+  },
+};
+
+describe("ProviderCard Antigravity model", () => {
+  it("shows the configured model instead of the endpoint", () => {
+    renderCard(relay);
+    expect(screen.getByText("Gemini 3.1 Pro (High)")).toBeInTheDocument();
+    expect(
+      screen.queryByText("https://relay.example.com"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("falls back to GEMINI_MODEL and leaves other apps alone", () => {
+    renderCard({
+      ...relay,
+      settingsConfig: { env: { GEMINI_MODEL: "Gemini 3.8 Flash (Low)" } },
+    });
+    expect(screen.getByText("Gemini 3.8 Flash (Low)")).toBeInTheDocument();
+  });
+
+  it("keeps showing the endpoint for Gemini CLI cards", () => {
+    renderCard(relay, "gemini");
+    expect(screen.queryByText("Gemini 3.1 Pro (High)")).not.toBeInTheDocument();
+  });
+});

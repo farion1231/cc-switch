@@ -31,7 +31,48 @@ pub fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     Ok(result)
 }
 
+/// agy 把模型切换写进会话正文：`changed setting \`Model Selection\` from X to Y`。
+/// 逐条响应本身没有模型字段，按 step 顺序继承最近一次切换即可还原当时的模型。
+fn model_from_settings_change(content: &str) -> Option<String> {
+    let start = content.find("Model Selection")?;
+    let rest = &content[start..];
+    let to = rest.find(" to ")? + 4;
+    let tail = &rest[to..];
+    // 模型名里本身有点（Gemini 3.8），只把「句号 + 空格」当成句子结束。
+    let end = tail
+        .find(". ")
+        .or_else(|| tail.find('\n'))
+        .or_else(|| tail.find('`'))
+        .unwrap_or(tail.len());
+    let model = tail[..end].trim().trim_matches('.').trim();
+    if model.is_empty() || model.eq_ignore_ascii_case("none") {
+        None
+    } else {
+        Some(model.to_string())
+    }
+}
+
 fn import_records(db: &Database, session: &str, rows: &[Value]) -> Result<(u32, u32), AppError> {
+    // step_index 顺序决定模型归属：先按顺序扫一遍切换事件，再给每个响应打上当时的模型。
+    let mut ordered: Vec<&Value> = rows.iter().collect();
+    ordered.sort_by_key(|row| row["step_index"].as_u64().unwrap_or(u64::MAX));
+    let mut current_model: Option<String> = None;
+    let mut model_by_step = std::collections::HashMap::<u64, String>::new();
+    for row in &ordered {
+        let Some(step) = row["step_index"].as_u64() else {
+            continue;
+        };
+        if row["type"] == "USER_INPUT" {
+            if let Some(model) = row["content"].as_str().and_then(model_from_settings_change) {
+                current_model = Some(model);
+            }
+        } else if row["type"] == "PLANNER_RESPONSE" {
+            if let Some(model) = &current_model {
+                model_by_step.entry(step).or_insert_with(|| model.clone());
+            }
+        }
+    }
+
     let mut conn = lock_conn!(db.conn);
     let tx = conn.transaction()?;
     let (mut imported, mut skipped) = (0, 0);
@@ -58,7 +99,11 @@ fn import_records(db: &Database, session: &str, rows: &[Value]) -> Result<(u32, 
         let id = format!("agy:{session}:{step}");
         // Persist a tombstone with the row so retention never imports pruned history again.
         let fresh = tx.execute("INSERT OR IGNORE INTO session_usage_dedup(data_source,request_id,semantic_id,has_entry_id) VALUES ('agy_session',?1,?1,1)", [&id])?;
-        let model = row["model"].as_str().unwrap_or("unknown");
+        let model = row["model"]
+            .as_str()
+            .map(str::to_string)
+            .or_else(|| model_by_step.get(&step).cloned())
+            .unwrap_or_else(|| "unknown".to_string());
         if fresh == 0 {
             // A rewritten completed step may correct counters; update retained detail only.
             // If retention already removed it, its tombstone still forbids resurrection.
@@ -136,6 +181,25 @@ mod tests {
         assert_eq!(import_records(&db, "session", &rows).unwrap(), (0, 1));
         assert_eq!(import_records(&db, "other", &rows).unwrap(), (1, 0));
     }
+    #[test]
+    fn model_selection_change_labels_later_responses() {
+        let db = Database::memory().unwrap();
+        let rows = [
+            json!({"step_index":0,"type":"USER_INPUT","status":"DONE","content":"The user changed setting `Model Selection` from None to Gemini 3.8 Flash (High). No need to comment"}),
+            json!({"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":10,"output_tokens":5}),
+        ];
+        assert_eq!(import_records(&db, "models", &rows).unwrap(), (1, 0));
+        let conn = db.conn.lock().unwrap();
+        let model: String = conn
+            .query_row(
+                "SELECT model FROM proxy_request_logs WHERE app_type='agy'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(model, "Gemini 3.8 Flash (High)");
+    }
+
     #[test]
     fn agy_incomplete_steps_do_not_consume_dedup_ids() {
         let db = Database::memory().unwrap();

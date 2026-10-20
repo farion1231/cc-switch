@@ -1143,6 +1143,9 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             } else {
                 "custom"
             }
+        } else if matches!(app_type, AppType::Agy) {
+            // Key 只在进程环境里，从不落盘：从 live 导入的一定是 agy 自己的登录。
+            "official"
         } else {
             "custom"
         }

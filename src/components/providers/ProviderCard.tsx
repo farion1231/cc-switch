@@ -146,6 +146,17 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
   return false;
 }
 
+/** Antigravity 卡片直接显示当前模型，省得进编辑才知道。 */
+function extractAgyModel(provider: Provider): string | null {
+  const config = provider.settingsConfig as Record<string, any>;
+  const model = config?.config?.model?.name;
+  if (typeof model === "string" && model.trim()) return model.trim();
+  const envModel = config?.env?.GEMINI_MODEL;
+  return typeof envModel === "string" && envModel.trim()
+    ? envModel.trim()
+    : null;
+}
+
 const extractApiUrl = (provider: Provider, fallbackText: string) => {
   if (provider.notes?.trim()) {
     return provider.notes.trim();
@@ -216,6 +227,11 @@ export function ProviderCard({
   const displayUrl = useMemo(() => {
     return extractApiUrl(provider, fallbackUrlText);
   }, [provider, fallbackUrlText]);
+
+  const agyModel = useMemo(
+    () => (appId === "agy" ? extractAgyModel(provider) : null),
+    [appId, provider],
+  );
 
   const isClickableUrl = useMemo(() => {
     if (provider.notes?.trim()) {
@@ -419,6 +435,12 @@ export function ProviderCard({
                   })}
                 </span>
               )}
+            </div>
+          ) : agyModel ? (
+            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
+              <span className="min-w-0 truncate" title={agyModel}>
+                {agyModel}
+              </span>
             </div>
           ) : displayUrl ? (
             <button
