@@ -424,12 +424,13 @@ export function showUndoToast(
   text: string,
   undoLabel: string,
   onUndo?: () => void,
+  severity: "success" | "warning" | "error" = "success",
 ) {
   if (!onUndo) {
-    toast.success(text, { closeButton: true });
+    toast[severity](text, { closeButton: true });
     return;
   }
-  toast.success(text, {
+  toast[severity](text, {
     closeButton: true,
     duration: 8000,
     action: { label: undoLabel, onClick: onUndo },

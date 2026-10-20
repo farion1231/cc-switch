@@ -65,6 +65,20 @@ pub fn grok(projection: &GrokProjection) -> Contract {
     }
 }
 
+/// Claude Desktop：路由模式写进 profile 的网关设置（本地路由地址、gateway token、路由那家的
+/// 模型列表）。模型列表跟着路由那家变，换路由时多半要重写文件、重启 Desktop。
+pub fn claude_desktop(profile: &Value) -> Contract {
+    Contract {
+        version: CONTRACT_VERSION,
+        key: key_of(&json!({
+            "app": "claude-desktop",
+            "version": CONTRACT_VERSION,
+            "profile": profile,
+        })),
+        exclusive: Map::new(),
+    }
+}
+
 fn sorted(map: &Map<String, Value>) -> Value {
     let mut entries: Vec<_> = map.iter().collect();
     entries.sort_by(|a, b| a.0.cmp(b.0));

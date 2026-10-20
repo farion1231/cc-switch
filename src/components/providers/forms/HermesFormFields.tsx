@@ -5,6 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { HoverTip } from "@/components/ui/hover-tip";
 import {
   Select,
@@ -15,7 +16,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "@/lib/toast";
 import { Download, Plus, Trash2, ChevronRight, Loader2 } from "lucide-react";
-import { ApiKeySection, ModelDropdown } from "./shared";
+import { ApiKeySection, GptContextWindowHint, ModelDropdown } from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -449,6 +450,32 @@ export function HermesFormFields({
                             );
                           }}
                           placeholder="200000"
+                        />
+                        <GptContextWindowHint
+                          modelId={model.id}
+                          contextWindow={model.context_length}
+                        />
+                      </div>
+                      <div className="flex h-9 items-center gap-2.5 self-end">
+                        <Label
+                          htmlFor={`hermes-model-vision-${modelKey}`}
+                          className="cursor-pointer text-xs font-normal text-fg-2"
+                        >
+                          {t("hermes.form.supportsVision", {
+                            defaultValue: "支持图片输入",
+                          })}
+                        </Label>
+                        <Switch
+                          id={`hermes-model-vision-${modelKey}`}
+                          checked={model.supports_vision === true}
+                          onCheckedChange={(checked) =>
+                            // 关掉时删键而不是写 false，交回 Hermes 按目录判断。
+                            handleModelChange(
+                              index,
+                              "supports_vision",
+                              checked ? true : undefined,
+                            )
+                          }
                         />
                       </div>
                     </div>

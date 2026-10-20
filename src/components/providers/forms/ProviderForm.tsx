@@ -57,6 +57,7 @@ import {
   hermesProviderPresets,
   type HermesProviderPreset,
 } from "@/config/hermesProviderPresets";
+import { isHermesBuiltinProviderId } from "@/config/hermesBuiltinProviderIds";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import { HermesFormFields } from "./HermesFormFields";
@@ -82,6 +83,7 @@ import { Label } from "@/components/ui/label";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
+import type { DirectModeFormatNotice } from "./shared";
 import {
   claudeStackModelsFromEnv,
   createClaudeStackModelRow,
@@ -696,6 +698,14 @@ function ProviderFormFull({
     appId,
     appId === "claude" || appId === "codex",
   );
+  // 应用实际在直连时，非原生上游格式发不出请求：正在直连用的这张卡一保存就坏，别的卡切不过去。
+  // 按实际模式判断，不看从哪一格打开。
+  const directModeFormatNotice: DirectModeFormatNotice | undefined =
+    appModeView?.mode === "direct"
+      ? providerId && providerId === appModeView.directProviderId
+        ? "inUse"
+        : "switch"
+      : undefined;
 
   const {
     codexAuth,
@@ -703,14 +713,20 @@ function ProviderFormFull({
     codexApiKey,
     codexBaseUrl,
     codexModel,
+    codexSubagentModel,
+    codexSubagentReasoningEffort,
     codexCatalogModels,
+    codexAutoReviewModel,
     codexAuthError,
     setCodexAuth,
     setCodexConfig,
     setCodexCatalogModels,
+    setCodexAutoReviewModel,
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelChange,
+    handleCodexSubagentModelChange,
+    handleCodexSubagentReasoningEffortChange,
     handleCodexConfigChange: originalHandleCodexConfigChange,
     resetCodexConfig,
   } = useCodexConfigState({ initialData });
@@ -864,11 +880,15 @@ function ProviderFormFull({
   );
 
   const presetEntries = useMemo(() => {
+    // 先编号再过滤 hidden：id 里的序号是原数组下标，AddProviderDialog /
+    // useProviderCategory 按它回查预设，先过滤会让隐藏项之后的预设全部错位
     if (appId === "codex") {
-      return codexProviderPresets.map<PresetEntry>((preset, index) => ({
-        id: `codex-${index}`,
-        preset,
-      }));
+      return codexProviderPresets
+        .map<PresetEntry>((preset, index) => ({
+          id: `codex-${index}`,
+          preset,
+        }))
+        .filter((entry) => !(entry.preset as CodexProviderPreset).hidden);
     } else if (appId === "gemini") {
       return geminiProviderPresets.map<PresetEntry>((preset, index) => ({
         id: `gemini-${index}`,
@@ -891,11 +911,11 @@ function ProviderFormFull({
       }));
     }
     return providerPresets
-      .filter((p) => !p.hidden)
       .map<PresetEntry>((preset, index) => ({
         id: `claude-${index}`,
         preset,
-      }));
+      }))
+      .filter((entry) => !(entry.preset as ProviderPreset).hidden);
   }, [appId]);
 
   const selectedPresetEntry = useMemo(
@@ -1086,10 +1106,11 @@ function ProviderFormFull({
     );
   const isExistingNativeOpencodeKey =
     isNativeOpencode && providerId === opencodeForm.opencodeProviderKey;
-  // Existing native IDs are kept exactly as OpenCode accepted them.
+  // Keep existing IDs, including legacy V1 deep-link IDs, without renaming live references.
   const isOpencodeProviderKeyInvalid =
     opencodeForm.opencodeProviderKey.trim() !== "" &&
     !isExistingNativeOpencodeKey &&
+    !(isEditMode && providerId === opencodeForm.opencodeProviderKey) &&
     !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(opencodeForm.opencodeProviderKey);
 
   const keepsOpencodeProviderId =
@@ -1683,10 +1704,23 @@ function ProviderFormFull({
         } as {
           auth: unknown;
           config: string;
-          modelCatalog?: { models: CodexCatalogModel[] };
+          modelCatalog?: {
+            models: CodexCatalogModel[];
+            autoReviewModel?: string;
+          };
         };
         if (normalizedCatalogModels.length > 0) {
           configObj.modelCatalog = { models: normalizedCatalogModels };
+          // 自动审批模型只能是列表里的（列表里删掉了就不再存，后端也只认列表里的）
+          const autoReviewModel = codexAutoReviewModel.trim();
+          if (
+            autoReviewModel &&
+            normalizedCatalogModels.some(
+              (model) => model.model === autoReviewModel,
+            )
+          ) {
+            configObj.modelCatalog.autoReviewModel = autoReviewModel;
+          }
         }
         settingsConfig = JSON.stringify(configObj);
       } catch (err) {
@@ -2017,6 +2051,7 @@ function ProviderFormFull({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: baseUrl,
   });
 
   const {
@@ -2030,6 +2065,7 @@ function ProviderFormFull({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: codexBaseUrl,
   });
 
   const {
@@ -2043,6 +2079,7 @@ function ProviderFormFull({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: geminiBaseUrl,
   });
 
   const {
@@ -2056,6 +2093,7 @@ function ProviderFormFull({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: opencodeForm.opencodeBaseUrl,
   });
 
   // 使用 API Key 链接 hook (OpenClaw)
@@ -2070,6 +2108,7 @@ function ProviderFormFull({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: openclawForm.openclawBaseUrl,
   });
 
   // 使用 API Key 链接 hook (Hermes)
@@ -2084,6 +2123,7 @@ function ProviderFormFull({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: hermesForm.hermesBaseUrl,
   });
 
   // 使用端点测速候选 hook
@@ -2258,7 +2298,7 @@ function ProviderFormFull({
       const preset = entry.preset as HermesProviderPreset;
       const config = preset.settingsConfig;
 
-      hermesForm.resetHermesState(config);
+      hermesForm.resetHermesState(config, preset.providerKey);
 
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -2505,11 +2545,25 @@ function ProviderFormFull({
                         {t("hermes.form.providerKeyInvalid")}
                       </p>
                     )}
-                  {!(
-                    additiveExistingProviderKeys.includes(
-                      hermesForm.hermesProviderKey,
-                    ) && !isProviderKeyLocked
-                  ) &&
+                  {isHermesBuiltinProviderId(hermesForm.hermesProviderKey) && (
+                    <p
+                      className="text-xs text-warning-text"
+                      data-testid="hermes-key-builtin-warning"
+                    >
+                      {t(
+                        isProviderKeyLocked
+                          ? "hermes.form.providerKeyBuiltinLocked"
+                          : "hermes.form.providerKeyBuiltin",
+                        { key: hermesForm.hermesProviderKey.trim() },
+                      )}
+                    </p>
+                  )}
+                  {!isHermesBuiltinProviderId(hermesForm.hermesProviderKey) &&
+                    !(
+                      additiveExistingProviderKeys.includes(
+                        hermesForm.hermesProviderKey,
+                      ) && !isProviderKeyLocked
+                    ) &&
                     (hermesForm.hermesProviderKey.trim() === "" ||
                       /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
                         hermesForm.hermesProviderKey,
@@ -2608,6 +2662,7 @@ function ProviderFormFull({
               localProxyBodyOverride={localProxyBodyOverride}
               onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
               variant={useStackLayout ? "stack" : "classic"}
+              directModeFormatNotice={directModeFormatNotice}
               stackModelRows={shownClaudeStackRows}
               onStackModelRowsChange={handleClaudeStackRowsChange}
             />
@@ -2668,6 +2723,12 @@ function ProviderFormFull({
               onAutoSelectChange={setEndpointAutoSelect}
               codexModel={codexModel}
               onModelChange={handleCodexModelChange}
+              subagentModel={codexSubagentModel}
+              onSubagentModelChange={handleCodexSubagentModelChange}
+              subagentReasoningEffort={codexSubagentReasoningEffort}
+              onSubagentReasoningEffortChange={
+                handleCodexSubagentReasoningEffortChange
+              }
               apiFormat={localCodexApiFormat}
               onApiFormatChange={handleCodexApiFormatChange}
               copilotApiFormat={effectiveCodexCopilotApiFormat}
@@ -2684,6 +2745,8 @@ function ProviderFormFull({
               onPromptCacheRoutingChange={setPromptCacheRouting}
               catalogModels={codexCatalogModels}
               onCatalogModelsChange={setCodexCatalogModels}
+              autoReviewModel={codexAutoReviewModel}
+              onAutoReviewModelChange={setCodexAutoReviewModel}
               speedTestEndpoints={speedTestEndpoints}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}
@@ -2692,6 +2755,7 @@ function ProviderFormFull({
               localProxyBodyOverride={localProxyBodyOverride}
               onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
               variant={useStackLayout ? "stack" : "classic"}
+              directModeFormatNotice={directModeFormatNotice}
             />
           )}
 
@@ -2902,7 +2966,12 @@ function ProviderFormFull({
                 </Label>
                 <JsonEditor
                   value={form.getValues("settingsConfig")}
-                  onChange={(config) => form.setValue("settingsConfig", config)}
+                  onChange={(config) => {
+                    form.setValue("settingsConfig", config);
+                    if (appId === "openclaw") {
+                      openclawForm.syncOpenclawUserAgentFromConfig(config);
+                    }
+                  }}
                   placeholder={
                     appId === "hermes"
                       ? `{

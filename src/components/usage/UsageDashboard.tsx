@@ -30,6 +30,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   KNOWN_APP_TYPES,
   type AppTypeFilter,
+  type UsageRangePreset,
   type UsageRangeSelection,
 } from "@/types/usage";
 import {
@@ -39,6 +40,7 @@ import {
   useSessionUsageLastSync,
 } from "@/lib/query/usage";
 import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
+import { useUsageAutoRefresh } from "@/hooks/useUsageAutoRefresh";
 import { usageApi } from "@/lib/api/usage";
 import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
 import { cn } from "@/lib/utils";
@@ -50,13 +52,23 @@ import { ModelStatsTable } from "./ModelStatsTable";
 import { PricingConfigPanel } from "./PricingConfigPanel";
 import { RequestDetailPanel } from "./RequestDetailPanel";
 import { UsageDataSourcesSheet } from "./UsageDataSourcesSheet";
+import { UsageDisplaySection } from "./UsageDisplaySection";
+import { resolveRequestLogColumns } from "./requestLogColumns";
+import type { UsageDisplaySettings } from "@/types";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { UsageHeatmap } from "./UsageHeatmap";
+import {
+  USAGE_CHOICE_KEYS,
+  readRememberedChoice,
+  useRememberedChoice,
+  writeRememberedChoice,
+} from "./rememberedChoice";
 import { fmtInt, formatRelativeTime, getLocaleFromLanguage } from "./format";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
 
-const DEFAULT_REFRESH_INTERVAL_MS = 30000;
-const REFRESH_INTERVAL_OPTIONS_MS = [0, 5000, 10000, 30000, 60000] as const;
+// 用量页打开时扫描会话日志的间隔；旧版存过的「关」(0) 等无效值回落到默认
+const DEFAULT_REFRESH_INTERVAL_MS = 60000;
+const REFRESH_INTERVAL_OPTIONS_MS = [5000, 10000, 30000, 60000] as const;
 type RefreshIntervalOption = (typeof REFRESH_INTERVAL_OPTIONS_MS)[number];
 
 const isRefreshIntervalOption = (
@@ -69,8 +81,18 @@ const normalizeRefreshInterval = (value: number | undefined) =>
 
 const STATUS_CODE_OPTIONS = [200, 400, 401, 429, 500] as const;
 
-type UsageTab = "logs" | "providers" | "models" | "pricing";
-const TABS: UsageTab[] = ["logs", "providers", "models", "pricing"];
+// 「设置」放显示币种和模型定价（原「定价」页签并进来）
+type UsageTab = "logs" | "providers" | "models" | "settings";
+const TABS: UsageTab[] = ["logs", "providers", "models", "settings"];
+/** 记住的时间范围只认预设：自定义的起止日期过几天就不是用户想看的了，选自定义时不改记下的预设 */
+const REMEMBERED_RANGE_PRESETS: UsageRangePreset[] = [
+  "today",
+  "1d",
+  "7d",
+  "14d",
+  "30d",
+  "all",
+];
 
 /**
  * 手动「立即同步」的时间，离开页面再回来也还在。后端也会记下最近一次扫描（后台定时和
@@ -135,6 +157,8 @@ interface UsageDashboardProps {
   refreshIntervalMs?: number;
   onRefreshIntervalChange?: (next: number) => Promise<boolean> | boolean | void;
   sessionAutoSyncEnabled?: boolean;
+  /** 设置还没读出来时为 false：此时 sessionAutoSyncEnabled 只是默认值，不能据此扫描 */
+  settingsReady?: boolean;
   onSessionAutoSyncEnabledChange?: (
     next: boolean,
   ) => Promise<boolean> | boolean | void;
@@ -142,6 +166,11 @@ interface UsageDashboardProps {
   initialAppType?: AppTypeFilter;
   /** 「数据来源」里的「修改记录请求用量」：打开设置 → 本地路由 */
   onOpenRoutingSettings?: () => void;
+  /** 金额显示币种与汇率（设备级设置） */
+  usageDisplay?: UsageDisplaySettings;
+  onUsageDisplayChange?: (
+    next: UsageDisplaySettings,
+  ) => Promise<boolean> | boolean | void;
 }
 
 /**
@@ -151,22 +180,42 @@ export function UsageDashboard({
   refreshIntervalMs: savedRefreshIntervalMs,
   onRefreshIntervalChange,
   sessionAutoSyncEnabled = true,
+  settingsReady = true,
   onSessionAutoSyncEnabledChange,
   initialAppType = "all",
   onOpenRoutingSettings,
+  usageDisplay,
+  onUsageDisplayChange,
 }: UsageDashboardProps = {}) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
-  const [range, setRange] = useState<UsageRangeSelection>({
-    preset: "today",
-  });
+  const [range, setRange] = useState<UsageRangeSelection>(() => ({
+    preset: readRememberedChoice(
+      USAGE_CHOICE_KEYS.range,
+      REMEMBERED_RANGE_PRESETS,
+      "today",
+    ),
+  }));
+  const applyRange = (next: UsageRangeSelection) => {
+    setRange(next);
+    if (next.preset !== "custom") {
+      writeRememberedChoice(USAGE_CHOICE_KEYS.range, next.preset);
+    }
+  };
   const [appType, setAppType] = useState<AppTypeFilter>(initialAppType);
   const [providerName, setProviderName] = useState<string | undefined>(
     undefined,
   );
   const [model, setModel] = useState<string | undefined>(undefined);
   const [statusCode, setStatusCode] = useState<number | undefined>(undefined);
-  const [tab, setTab] = useState<UsageTab>("logs");
+
+  // 请求日志显示哪些列在「设置」页签里改，这里只按设置画
+  const logColumns = resolveRequestLogColumns(usageDisplay?.requestLogColumns);
+  const [tab, setTab] = useRememberedChoice<UsageTab>(
+    USAGE_CHOICE_KEYS.tab,
+    TABS,
+    "logs",
+  );
   // 没有用量时也能进定价页：新装的人往往先配好 models.dev 同步再开始用
   const [pricingWhileEmpty, setPricingWhileEmpty] = useState(false);
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(() =>
@@ -180,7 +229,16 @@ export function UsageDashboard({
   const [lastManualSyncAt, setLastManualSyncAt] = useState(
     lastManualSessionSyncAt,
   );
-  const { data: lastScanAt } = useSessionUsageLastSync();
+  const { data: lastScanAt } = useSessionUsageLastSync({
+    refetchInterval: false,
+  });
+  const { syncSessionUsage } = useUsageAutoRefresh({
+    refreshIntervalMs,
+    sessionAutoSyncEnabled,
+    paused: rebuildingCodex || !settingsReady,
+    // 预设范围和「结束于现在」的自定义范围都随时间移动，没有新用量也要定时重算
+    rollingRange: range.preset !== "custom" || !!range.liveEndTime,
+  });
   const lastSyncAt = Math.max(lastManualSyncAt ?? 0, lastScanAt ?? 0) || null;
   const [containerRef, measuredWidth] = useContainerWidth<HTMLDivElement>();
   const now = useMinuteTicker();
@@ -223,7 +281,6 @@ export function UsageDashboard({
     const normalized = normalizeRefreshInterval(next);
     const previous = refreshIntervalMs;
     setRefreshIntervalMs(normalized);
-    queryClient.invalidateQueries({ queryKey: usageKeys.all });
     try {
       const saved = await onRefreshIntervalChange?.(normalized);
       if (saved === false) {
@@ -265,7 +322,7 @@ export function UsageDashboard({
   const runManualSessionSync = async () => {
     setSyncingSession(true);
     try {
-      const result = await usageApi.syncSessionUsage();
+      const result = await syncSessionUsage();
       await queryClient.invalidateQueries({ queryKey: usageKeys.all });
       lastManualSessionSyncAt = Date.now();
       setLastManualSyncAt(lastManualSessionSyncAt);
@@ -306,11 +363,10 @@ export function UsageDashboard({
   }, [locale, range, resolvedRange.endDate, resolvedRange.startDate, t]);
 
   // 筛选下拉的选项池：供应商列表只跟应用/时间范围走（不受自身选中值影响），
-  // 模型列表随所选供应商级联。refetchInterval 跟随面板的刷新设置——未筛选时
-  // 这两个查询与统计表共享 query key，落下的话会按默认 30s 拖着同 key 查询轮询。
+  // 模型列表随所选供应商级联。所有查询（含子组件）都不轮询：会话用量由
+  // useUsageAutoRefresh 按间隔导入，导入或路由写入后由 useUsageEventBridge 刷新。
   const refetch = {
-    refetchInterval:
-      refreshIntervalMs > 0 ? refreshIntervalMs : (false as const),
+    refetchInterval: false as const,
   };
   const { data: providerOptionsData } = useProviderStats(
     range,
@@ -380,10 +436,9 @@ export function UsageDashboard({
           time: formatRelativeTime(lastSyncAt, t, now),
         });
 
-  const refreshLabel =
-    refreshIntervalMs > 0
-      ? t("usage.refreshMenu.label", { seconds: refreshIntervalMs / 1000 })
-      : t("usage.refreshMenu.off");
+  const refreshLabel = t("usage.refreshMenu.label", {
+    seconds: refreshIntervalMs / 1000,
+  });
 
   const headerActions = (
     <>
@@ -413,37 +468,38 @@ export function UsageDashboard({
           {t("usage.sessionSync.syncNow")}
         </Button>
       </HoverTip>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="quiet"
-            size="regular"
-            className="shrink-0 gap-1 pe-2 ps-2.5 text-fg-2"
-            aria-label={`${t("usage.refreshInterval")}: ${refreshLabel}`}
-          >
-            {refreshLabel}
-            <ChevronDown className="h-3.5 w-3.5" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="end"
-          className={cn(menuContentClass, "min-w-[150px]")}
-        >
-          {REFRESH_INTERVAL_OPTIONS_MS.map((ms) => (
-            <DropdownMenuItem
-              key={ms}
-              className={menuItemClass}
-              onSelect={() => void changeRefreshInterval(ms)}
+      {/* 扫描间隔只在自动扫描开着时有意义 */}
+      {sessionAutoSyncEnabled && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="quiet"
+              size="regular"
+              className="shrink-0 gap-1 pe-2 ps-2.5 text-fg-2"
+              aria-label={`${t("usage.refreshInterval")}: ${refreshLabel}`}
             >
-              <MenuCheck checked={refreshIntervalMs === ms} />
-              {ms > 0
-                ? t("usage.refreshMenu.seconds", { seconds: ms / 1000 })
-                : t("usage.refreshOff")}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+              {refreshLabel}
+              <ChevronDown className="h-3.5 w-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            className={cn(menuContentClass, "min-w-[150px]")}
+          >
+            {REFRESH_INTERVAL_OPTIONS_MS.map((ms) => (
+              <DropdownMenuItem
+                key={ms}
+                className={menuItemClass}
+                onSelect={() => void changeRefreshInterval(ms)}
+              >
+                <MenuCheck checked={refreshIntervalMs === ms} />
+                {t("usage.refreshMenu.seconds", { seconds: ms / 1000 })}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
       <Button
         type="button"
         variant="quiet"
@@ -614,7 +670,7 @@ export function UsageDashboard({
       <UsageDateRangePicker
         selection={range}
         triggerLabel={rangeLabel}
-        onApply={(nextRange) => setRange(nextRange)}
+        onApply={applyRange}
       />
     </div>
   );
@@ -624,7 +680,7 @@ export function UsageDashboard({
     logs: t("usage.requestLogs"),
     providers: t("usage.tabs.providers"),
     models: t("usage.tabs.models"),
-    pricing: t("usage.tabs.pricing"),
+    settings: t("usage.tabs.settings"),
   };
   const statusLabel =
     statusCode == null
@@ -701,8 +757,9 @@ export function UsageDashboard({
             providerName={providerName}
             model={model}
             statusCode={statusCode}
-            refreshIntervalMs={refreshIntervalMs}
+            refreshIntervalMs={0}
             onOpenDetail={setDetailRequestId}
+            columns={logColumns}
           />
         )}
         {tab === "providers" && (
@@ -711,7 +768,7 @@ export function UsageDashboard({
             appType={appType}
             providerName={providerName}
             model={model}
-            refreshIntervalMs={refreshIntervalMs}
+            refreshIntervalMs={0}
           />
         )}
         {tab === "models" && (
@@ -720,10 +777,28 @@ export function UsageDashboard({
             appType={appType}
             providerName={providerName}
             model={model}
-            refreshIntervalMs={refreshIntervalMs}
+            refreshIntervalMs={0}
           />
         )}
-        {tab === "pricing" && <PricingConfigPanel />}
+        {tab === "settings" && (
+          <div className="flex flex-col gap-5 pt-3">
+            {onUsageDisplayChange && (
+              <UsageDisplaySection
+                value={usageDisplay}
+                onChange={onUsageDisplayChange}
+              />
+            )}
+            <section aria-labelledby="usage-pricing-title">
+              <h3
+                id="usage-pricing-title"
+                className="m-0 text-strong font-semibold text-fg-1"
+              >
+                {t("usage.tabs.pricing")}
+              </h3>
+              <PricingConfigPanel />
+            </section>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -767,7 +842,7 @@ export function UsageDashboard({
             variant="quiet"
             size="regular"
             onClick={() => {
-              setTab("pricing");
+              setTab("settings");
               setPricingWhileEmpty(true);
             }}
           >
@@ -785,17 +860,17 @@ export function UsageDashboard({
           appType={scopedAppType}
           providerName={providerName}
           model={model}
-          refreshIntervalMs={refreshIntervalMs}
+          refreshIntervalMs={0}
           compact={compact}
         />
 
-        {/* 「全部」看长期分布用热力图；24 小时到 30 天这类短范围用柱状图 */}
+        {/* 「全部」看长期分布用热力图；24 小时到 30 天这类短范围用趋势图 */}
         {range.preset === "all" ? (
           <UsageHeatmap
             appType={appType}
             providerName={providerName}
             model={model}
-            refreshIntervalMs={refreshIntervalMs}
+            refreshIntervalMs={0}
           />
         ) : (
           <UsageTrendChart
@@ -804,7 +879,7 @@ export function UsageDashboard({
             appType={appType}
             providerName={providerName}
             model={model}
-            refreshIntervalMs={refreshIntervalMs}
+            refreshIntervalMs={0}
           />
         )}
 
