@@ -11,6 +11,9 @@ import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import type { McpApps, McpServer, McpServerSpec } from "@/types";
 
 const mocks = vi.hoisted(() => ({
+  discovery: { unmanagedCount: 0, failedApps: [] as string[] },
+  discoveryError: false,
+  scan: vi.fn(),
   serversMap: {} as Record<string, McpServer>,
   isLoading: false,
   isError: false,
@@ -34,6 +37,12 @@ vi.mock("@/hooks/useMcp", () => ({
     isError: mocks.isError,
     error: mocks.isError ? new Error("database is locked") : null,
     refetch: mocks.refetch,
+  }),
+  useMcpDiscovery: () => ({
+    data: mocks.discovery,
+    isError: mocks.discoveryError,
+    isFetching: false,
+    refetch: mocks.scan,
   }),
   useToggleMcpApp: () => ({ mutateAsync: mocks.toggle, isPending: false }),
   useBulkToggleMcpApp: () => ({
@@ -130,6 +139,9 @@ const rowNames = () =>
 
 describe("UnifiedMcpPanel", () => {
   beforeEach(() => {
+    mocks.discovery = { unmanagedCount: 0, failedApps: [] };
+    mocks.discoveryError = false;
+    mocks.scan.mockReset().mockResolvedValue({ data: mocks.discovery });
     mocks.serversMap = {};
     mocks.isLoading = false;
     mocks.isError = false;
@@ -559,5 +571,67 @@ describe("UnifiedMcpPanel", () => {
     expect(onBlocked).toHaveBeenLastCalledWith(false);
     await userEvent.click(screen.getByRole("button", { name: "mcpPage.add" }));
     expect(onBlocked).toHaveBeenLastCalledWith(false);
+  });
+});
+
+describe("MCP local discovery", () => {
+  beforeEach(() => {
+    mocks.serversMap = { managed: makeServer("managed") };
+    mocks.isLoading = false;
+    mocks.isError = false;
+    mocks.discoveryError = false;
+    mocks.discovery = { unmanagedCount: 2, failedApps: [] };
+    mocks.scan.mockReset().mockResolvedValue({ data: mocks.discovery });
+    mocks.importServers.mockReset().mockResolvedValue(2);
+    mocks.refetch.mockReset().mockResolvedValue({ data: mocks.serversMap });
+  });
+
+  it("discovers local MCPs without importing until explicitly requested and keeps rows flat", async () => {
+    renderPanel();
+    expect(screen.getByText("mcpPage.discovery.available")).toBeInTheDocument();
+    expect(rowNames()).toEqual(["managed"]);
+    expect(
+      screen.queryByRole("button", { name: /expand|group/i }),
+    ).not.toBeInTheDocument();
+    expect(mocks.importServers).not.toHaveBeenCalled();
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpPage.discovery.import" }),
+    );
+    await waitFor(() => expect(mocks.importServers).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mocks.refetch).toHaveBeenCalled());
+  });
+
+  it("shows partial source failures while keeping local discovery available", () => {
+    mocks.discovery = { unmanagedCount: 2, failedApps: ["codex"] };
+    renderPanel();
+    expect(screen.getByText("mcpPage.discovery.available")).toBeInTheDocument();
+    expect(screen.getByText("mcpPage.discovery.partial")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "mcpPage.discovery.retry" }),
+    ).toBeEnabled();
+  });
+
+  it("allows retrying a discovery failure without importing", async () => {
+    mocks.discovery = { unmanagedCount: 0, failedApps: [] };
+    mocks.discoveryError = true;
+    renderPanel();
+    expect(screen.getByText("mcpPage.discovery.failed")).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpPage.discovery.retry" }),
+    );
+    expect(mocks.scan).toHaveBeenCalledTimes(1);
+    expect(mocks.importServers).not.toHaveBeenCalled();
+  });
+
+  it("does not add discovery notices when everything is already managed", () => {
+    mocks.discovery = { unmanagedCount: 0, failedApps: [] };
+    renderPanel();
+    expect(
+      screen.queryByText("mcpPage.discovery.available"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("mcpPage.discovery.partial"),
+    ).not.toBeInTheDocument();
+    expect(rowNames()).toEqual(["managed"]);
   });
 });

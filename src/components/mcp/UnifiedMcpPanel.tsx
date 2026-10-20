@@ -24,6 +24,7 @@ import {
   useBulkToggleMcpApp,
   useDeleteMcpServer,
   useImportMcpFromApps,
+  useMcpDiscovery,
   useResyncMcpToApps,
   useToggleMcpApp,
 } from "@/hooks/useMcp";
@@ -142,6 +143,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     error: loadError,
     refetch,
   } = useAllMcpServers();
+  const discovery = useMcpDiscovery(!isLoading && !isError);
   const toggleAppMutation = useToggleMcpApp();
   const bulkToggleAppMutation = useBulkToggleMcpApp();
   const deleteServerMutation = useDeleteMcpServer();
@@ -672,6 +674,66 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
             </span>
           </div>
         )}
+
+        <NoticeSlot
+          className={cn(
+            ((discovery.data?.unmanagedCount ?? 0) > 0 ||
+              discovery.isError ||
+              (discovery.data?.failedApps.length ?? 0) > 0) &&
+              "px-6 pb-3",
+          )}
+        >
+          {(discovery.data?.unmanagedCount ?? 0) > 0 && (
+            <Notice
+              title={t("mcpPage.discovery.available", {
+                count: discovery.data?.unmanagedCount,
+              })}
+              actions={
+                <Button
+                  type="button"
+                  variant="neutral"
+                  size="compact"
+                  disabled={controlsDisabled}
+                  onClick={() => void handleImport()}
+                >
+                  {t("mcpPage.discovery.import")}
+                </Button>
+              }
+            >
+              {t("mcpPage.discovery.readOnly")}
+            </Notice>
+          )}
+          {(discovery.isError ||
+            (discovery.data?.failedApps.length ?? 0) > 0) && (
+            <Notice
+              tone="warning"
+              title={t(
+                discovery.isError
+                  ? "mcpPage.discovery.failed"
+                  : "mcpPage.discovery.partial",
+                {
+                  apps: discovery.data?.failedApps
+                    .filter(isMcpAppId)
+                    .map((app) => APP_DISPLAY_NAME[app])
+                    .join(", "),
+                },
+              )}
+              actions={
+                <Button
+                  type="button"
+                  variant="neutral"
+                  size="compact"
+                  disabled={controlsDisabled || discovery.isFetching}
+                  onClick={() => void discovery.refetch()}
+                >
+                  {t("mcpPage.discovery.retry")}
+                </Button>
+              }
+            >
+              {t("mcpPage.discovery.readOnly")}
+            </Notice>
+          )}
+        </NoticeSlot>
 
         <NoticeSlot className={cn(failedApps.size > 0 && "px-6 pb-3")}>
           {Array.from(failedApps.entries()).map(([app, error]) => (

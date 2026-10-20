@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::app_config::{AppType, McpServer};
 use crate::error::AppError;
@@ -19,7 +19,61 @@ pub struct McpAppSyncOutcome {
     pub error: Option<String>,
 }
 
+/// Read-only discovery result. Connection definitions and credentials stay native.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpDiscoveryResult {
+    pub unmanaged_count: usize,
+    pub failed_apps: Vec<String>,
+}
+
 impl McpService {
+    /// Read the same user-level sources as import, without writing the database
+    /// or synchronizing any application. One broken source does not hide others.
+    pub fn scan_unmanaged(state: &AppState) -> Result<McpDiscoveryResult, AppError> {
+        type ReadSource = fn(&mut crate::app_config::MultiAppConfig) -> Result<usize, AppError>;
+        let managed = state.db.get_all_mcp_servers()?;
+        let mut unmanaged = HashSet::new();
+        let mut failed_apps = Vec::new();
+        let readers: [(&str, ReadSource); 6] = [
+            ("claude", mcp::import_from_claude),
+            ("codex", mcp::import_from_codex),
+            ("gemini", mcp::import_from_gemini),
+            ("grokbuild", mcp::import_from_grokbuild),
+            ("opencode", mcp::import_from_opencode),
+            ("hermes", mcp::import_from_hermes),
+        ];
+        for (app, read) in readers {
+            let mut config = crate::app_config::MultiAppConfig::default();
+            if read(&mut config).is_err() {
+                failed_apps.push(app.to_string());
+            }
+            for id in config
+                .mcp
+                .servers
+                .into_iter()
+                .flat_map(|servers| servers.into_keys())
+            {
+                if !managed.contains_key(&id) {
+                    unmanaged.insert(id);
+                }
+            }
+        }
+        for (app, result) in [
+            ("mcode", mcp::mcode::discover_ids()),
+            ("pi", mcp::pi::discover_ids()),
+        ] {
+            match result {
+                Ok(ids) => unmanaged.extend(ids.into_iter().filter(|id| !managed.contains_key(id))),
+                Err(_) => failed_apps.push(app.to_string()),
+            }
+        }
+        Ok(McpDiscoveryResult {
+            unmanaged_count: unmanaged.len(),
+            failed_apps,
+        })
+    }
+
     /// 获取所有 MCP 服务器（统一结构）
     pub fn get_all_servers(state: &AppState) -> Result<IndexMap<String, McpServer>, AppError> {
         state.db.get_all_mcp_servers()

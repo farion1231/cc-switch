@@ -70,6 +70,17 @@ fn sync_file(path: &Path, id: &str, spec: Option<&Value>) -> Result<(), AppError
     )
 }
 
+pub(crate) fn discover_ids() -> Result<Vec<String>, AppError> {
+    let document = read(&crate::mcode_config::data_dir().join("mcp.json"))?;
+    Ok(document["mcpServers"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(_, spec)| super::validation::validate_server_spec(&unified_spec(spec)).is_ok())
+        .map(|(id, _)| id.clone())
+        .collect())
+}
+
 pub fn import(state: &AppState) -> Result<usize, AppError> {
     let document = read(&crate::mcode_config::data_dir().join("mcp.json"))?;
     let mut existing = state.db.get_all_mcp_servers()?;
