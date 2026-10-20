@@ -85,10 +85,10 @@ function syncLanguage() {
 }
 
 /** 分开摆时窗口的纵向范围（相对贴图标那条边）。 */
-function floatingCanvas(p: PanelPlacement) {
+function floatingCanvas(p: PanelPlacement, maxHeight = CANVAS_MAX_HEIGHT) {
   return p.edge === "top"
-    ? { top: 0, bottom: Math.min(p.boundsBottom, CANVAS_MAX_HEIGHT) }
-    : { top: Math.max(p.boundsTop, -CANVAS_MAX_HEIGHT), bottom: 0 };
+    ? { top: 0, bottom: Math.min(p.boundsBottom, maxHeight) }
+    : { top: Math.max(p.boundsTop, -maxHeight), bottom: 0 };
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -245,7 +245,11 @@ function AppRow({
         {app.quota && <QuotaBlock quota={app.quota} texts={texts} />}
       </span>
       {app.addId ? (
-        <Plus className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
+        app.addId.startsWith("nav:add:") ? (
+          <Plus className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
+        ) : (
+          <ExternalLink className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
+        )
       ) : (
         <Chevron className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
       )}
@@ -419,7 +423,7 @@ function FooterButton({
       title={title}
       onClick={onClick}
       className={cn(
-        "flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px]",
+        "flex min-w-0 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px]",
         FOCUS_RING,
         ROW_HOVER,
         className,
@@ -436,7 +440,26 @@ function FooterButton({
 // ─── 面板 ─────────────────────────────────────────────────────────────────────
 
 export function TrayPanel() {
-  const [placement, setPlacement] = useState<PanelPlacement | null>(null);
+  const [nativePlacement, setPlacement] = useState<PanelPlacement | null>(null);
+  const [pixelRatio, setPixelRatio] = useState(window.devicePixelRatio || 1);
+  // Windows 文本大小 / WebView 缩放可能让 CSS 像素和屏幕逻辑像素不再一一对应。
+  const coordinateScale =
+    nativePlacement?.platform === "windows"
+      ? pixelRatio / nativePlacement.scaleFactor
+      : 1;
+  const placement = useMemo(
+    () =>
+      nativePlacement && {
+        ...nativePlacement,
+        boundsTop: nativePlacement.boundsTop / coordinateScale,
+        boundsBottom: nativePlacement.boundsBottom / coordinateScale,
+        mainWidth: nativePlacement.mainWidth / coordinateScale,
+        subWidth: nativePlacement.subWidth / coordinateScale,
+        gap: nativePlacement.gap / coordinateScale,
+        radius: nativePlacement.radius / coordinateScale,
+      },
+    [nativePlacement, coordinateScale],
+  );
   const [state, setState] = useState<TrayPanelState | null>(null);
   const [tab, setTab] = useState<Tab>(readTab);
   const [openApp, setOpenApp] = useState<string | null>(null);
@@ -464,6 +487,12 @@ export function TrayPanel() {
   const openAppRef = useRef(openApp);
   openAppRef.current = openApp;
 
+  useEffect(() => {
+    const update = () => setPixelRatio(window.devicePixelRatio || 1);
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
   const load = useCallback(async () => {
     try {
       const next = await trayPanelApi.state();
@@ -490,6 +519,7 @@ export function TrayPanel() {
       ]);
       lastLayout.current = "";
       setShownCount((count) => count + 1);
+      setPixelRatio(window.devicePixelRatio || 1);
       setPlacement(next);
     },
     [load, queryClient],
@@ -544,16 +574,13 @@ export function TrayPanel() {
     const windowsJoined = p.platform === "windows" && !floating;
     const fixedCanvas = floating || windowsJoined;
 
-    main.style.minHeight = "";
-    if (sub) sub.style.minHeight = "";
-    let mainHeight = main.offsetHeight;
-    let subHeight = sub ? sub.offsetHeight : 0;
-    if (sub && !floating) {
-      // 两栏：一样高，整窗一块背景不留空
-      const height = Math.max(mainHeight, subHeight);
-      main.style.minHeight = sub.style.minHeight = `${height}px`;
-      mainHeight = subHeight = height;
+    const mainHeight = main.getBoundingClientRect().height;
+    if (sub) {
+      // 两栏以主面板的高度为准，供应商列表在子面板内部滚动。
+      // 底部弹出时不能让子面板撑高主面板，否则应用行会移到鼠标下面，反复触发切换。
+      sub.style.height = floating ? "" : `${mainHeight}px`;
     }
+    const subHeight = sub ? sub.getBoundingClientRect().height : 0;
 
     const mainTop = p.edge === "top" ? 0 : -mainHeight;
     let subX = p.side === "left" ? 0 : p.mainWidth + p.gap;
@@ -565,7 +592,7 @@ export function TrayPanel() {
     if (fixedCanvas) {
       // macOS 和 Windows 在这次弹出期间固定窗口范围，不让展开 / 切换子面板
       // 触发 WebView resize。Windows 的原生窗口区域只露出实际的卡片，其余区域可点击穿透。
-      const canvas = floatingCanvas(p);
+      const canvas = floatingCanvas(p, CANVAS_MAX_HEIGHT / coordinateScale);
       top = canvas.top;
       bottom = canvas.bottom;
       mainX = p.side === "left" ? p.subWidth + p.gap : 0;
@@ -613,11 +640,16 @@ export function TrayPanel() {
 
     const layout = {
       seq: p.seq,
-      width,
-      height: Math.ceil(bottom - top),
-      offsetX: mainX,
-      offsetY: top,
-      cards,
+      width: width * coordinateScale,
+      height: Math.ceil((bottom - top) * coordinateScale),
+      offsetX: mainX * coordinateScale,
+      offsetY: top * coordinateScale,
+      cards: cards.map((card) => ({
+        x: card.x * coordinateScale,
+        y: card.y * coordinateScale,
+        width: card.width * coordinateScale,
+        height: card.height * coordinateScale,
+      })),
       dark: theme.explicit,
     };
     const key = JSON.stringify(layout);
@@ -639,7 +671,7 @@ export function TrayPanel() {
     } else {
       void trayPanelApi.layout(layout);
     }
-  }, [openApp, theme.explicit]);
+  }, [openApp, theme.explicit, coordinateScale]);
 
   useEffect(
     () => () => {
@@ -835,19 +867,19 @@ export function TrayPanel() {
   };
 
   const mainMaxHeight = useMemo(() => {
-    if (!placement) return MAIN_MAX_HEIGHT;
+    if (!placement) return MAIN_MAX_HEIGHT / coordinateScale;
     const room =
       placement.edge === "top" ? placement.boundsBottom : -placement.boundsTop;
-    return Math.max(200, Math.min(MAIN_MAX_HEIGHT, room));
-  }, [placement]);
+    return Math.max(0, Math.min(MAIN_MAX_HEIGHT / coordinateScale, room));
+  }, [placement, coordinateScale]);
   const subMaxHeight = useMemo(() => {
-    if (!placement) return SUB_MAX_HEIGHT;
+    if (!placement) return SUB_MAX_HEIGHT / coordinateScale;
     const room =
       placement.layout === "floating"
         ? floatingCanvas(placement).bottom - floatingCanvas(placement).top
         : placement.boundsBottom - placement.boundsTop;
-    return Math.max(200, Math.min(SUB_MAX_HEIGHT, room));
-  }, [placement]);
+    return Math.max(0, Math.min(SUB_MAX_HEIGHT / coordinateScale, room));
+  }, [placement, coordinateScale]);
 
   if (!state || !placement) return null;
   const { texts } = state;
@@ -1026,7 +1058,7 @@ export function TrayPanel() {
           onMouseEnter={() => window.clearTimeout(hoverTimer.current)}
           style={{
             width: placement.subWidth,
-            maxHeight: subMaxHeight,
+            maxHeight: joined ? mainMaxHeight : subMaxHeight,
             ...cornerStyle("sub"),
           }}
         >

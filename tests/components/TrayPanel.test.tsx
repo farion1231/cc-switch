@@ -79,6 +79,7 @@ const state: TrayPanelState = {
 const windows: PanelPlacement = {
   seq: 1,
   platform: "windows",
+  scaleFactor: 1,
   side: "left",
   edge: "bottom",
   boundsTop: -1000,
@@ -137,7 +138,15 @@ describe("TrayPanel window layout", () => {
     // jsdom 不排版；分别提供主卡片和较高子卡片的实测高度。
     vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(
       function (this: HTMLElement) {
-        return this.classList.contains("tp-sub") ? 400 : 320;
+        const natural = this.classList.contains("tp-sub") ? 400 : 320;
+        return this.style.height
+          ? Number.parseFloat(this.style.height)
+          : Math.max(natural, Number.parseFloat(this.style.minHeight) || 0);
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        return { top: 0, height: this.offsetHeight } as DOMRect;
       },
     );
   });
@@ -192,10 +201,10 @@ describe("TrayPanel window layout", () => {
     const sub = container.querySelector<HTMLElement>(".tp-sub")!;
     expect(main).toHaveStyle({
       left: "300px",
-      top: "360px",
-      minHeight: "400px",
+      top: "440px",
     });
-    expect(sub).toHaveStyle({ left: "0px", top: "360px" });
+    expect(main.style.minHeight).toBe("");
+    expect(sub).toHaveStyle({ left: "0px", top: "440px", height: "320px" });
     expect(trayPanelApi.layout).toHaveBeenCalledTimes(calls);
     await paint();
     expect(trayPanelApi.layout).toHaveBeenLastCalledWith(
@@ -205,8 +214,8 @@ describe("TrayPanel window layout", () => {
         offsetX: collapsed.offsetX,
         offsetY: collapsed.offsetY,
         cards: [
-          { x: 300, y: 360, width: 320, height: 400 },
-          { x: 0, y: 360, width: 300, height: 400 },
+          { x: 300, y: 440, width: 320, height: 320 },
+          { x: 0, y: 440, width: 300, height: 320 },
         ],
       }),
     );
@@ -226,6 +235,167 @@ describe("TrayPanel window layout", () => {
     );
   });
 
+  it.each(["windows", "linux"])(
+    "keeps %s app rows stationary while switching and filtering different provider counts",
+    async (platform) => {
+      const codex = {
+        ...state.apps[0],
+        app: "codex" as const,
+        name: "Codex",
+        current: "OpenAI",
+        rows: Array.from({ length: 20 }, (_, index) => ({
+          kind: "provider" as const,
+          id: `prov:codex:p${index}`,
+          text: `Provider ${index}`,
+          enabled: true,
+          checked: false,
+          provider: {
+            name: `Provider ${index}`,
+            hint: null,
+            icon: null,
+            iconColor: null,
+            quota: null,
+          },
+        })),
+      };
+      vi.mocked(trayPanelApi.state).mockResolvedValue({
+        ...state,
+        apps: [state.apps[0], codex],
+      });
+      vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(
+        function (this: HTMLElement) {
+          const natural = this.classList.contains("tp-sub")
+            ? this.textContent?.includes("Codex")
+              ? 540
+              : 180
+            : 320;
+          return this.style.height
+            ? Number.parseFloat(this.style.height)
+            : Math.max(natural, Number.parseFloat(this.style.minHeight) || 0);
+        },
+      );
+      const { container } = await openPanel({
+        ...windows,
+        platform,
+        side: "right",
+      });
+      const main = container.querySelector<HTMLElement>(".tp-card")!;
+      const position = { left: main.style.left, top: main.style.top };
+      const initial = vi.mocked(trayPanelApi.layout).mock.lastCall![0];
+      const claudeRow = screen.getByRole("button", {
+        name: "Claude Code default · Direct",
+      });
+      const codexRow = screen.getByRole("button", {
+        name: "Codex OpenAI · Direct",
+      });
+
+      fireEvent.click(claudeRow);
+      await paint();
+      expect(main).toHaveStyle(position);
+      expect(container.querySelector(".tp-sub")).toHaveStyle({
+        height: "320px",
+      });
+
+      fireEvent.mouseEnter(codexRow);
+      await paint();
+      expect(main).toHaveStyle(position);
+      expect(container.querySelector(".tp-sub")).toHaveStyle({
+        height: "320px",
+      });
+      expect(
+        screen.getByRole("button", { name: /Provider 19$/ }),
+      ).toBeVisible();
+
+      fireEvent.change(screen.getByPlaceholderText("Search providers"), {
+        target: { value: "does not exist" },
+      });
+      await paint();
+      expect(screen.getByText("No match")).toBeVisible();
+      expect(main).toHaveStyle(position);
+      expect(container.querySelector(".tp-sub")).toHaveStyle({
+        height: "320px",
+      });
+      expect(trayPanelApi.layout).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          cards: [
+            initial.cards[0],
+            { x: 320, y: initial.cards[0].y, width: 300, height: 320 },
+          ],
+        }),
+      );
+
+      fireEvent.mouseEnter(claudeRow);
+      fireEvent.keyDown(window, { key: "Escape" });
+      await paint();
+      expect(main).toHaveStyle(position);
+      expect(container.querySelector(".tp-sub")).toBeNull();
+    },
+  );
+
+  it("shows Pi providers and opens their management page", async () => {
+    vi.mocked(trayPanelApi.state).mockResolvedValue({
+      ...state,
+      apps: [
+        ...state.apps,
+        {
+          ...state.apps[0],
+          app: "pi",
+          name: "Pi",
+          current: null,
+          mode: "Manage providers",
+          header: "Manage providers",
+          rows: [
+            {
+              ...state.apps[0].rows[0],
+              kind: "provider",
+              id: "nav:app:pi:provider:p1",
+              text: "Pi provider",
+              provider: {
+                name: "Pi provider",
+                hint: null,
+                icon: null,
+                iconColor: null,
+                quota: null,
+              },
+            },
+          ],
+        },
+      ],
+    });
+    await openPanel(windows);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Pi Manage providers" }),
+    );
+    const provider = screen.getByRole("button", { name: /Pi provider$/ });
+    expect(provider).not.toHaveTextContent("In use");
+    fireEvent.click(provider);
+    expect(trayPanelApi.action).toHaveBeenLastCalledWith(
+      "nav:app:pi:provider:p1",
+    );
+  });
+
+  it("opens the Pi page directly when it has no providers", async () => {
+    vi.mocked(trayPanelApi.state).mockResolvedValue({
+      ...state,
+      apps: [
+        ...state.apps,
+        {
+          ...state.apps[0],
+          app: "pi",
+          name: "Pi",
+          current: null,
+          addId: "nav:app:pi",
+          addText: "Open Pi page",
+          rows: [],
+        },
+      ],
+    });
+    const { container } = await openPanel(windows);
+    fireEvent.click(screen.getByRole("button", { name: "Pi Open Pi page" }));
+    expect(trayPanelApi.action).toHaveBeenLastCalledWith("nav:app:pi");
+    expect(container.querySelector(".tp-sub")).toBeNull();
+  });
+
   it("re-reads settings every time it pops up so changes made in the main window show", async () => {
     const client = createTestQueryClient();
     const invalidate = vi.spyOn(client, "invalidateQueries");
@@ -241,6 +411,60 @@ describe("TrayPanel window layout", () => {
     await waitFor(() =>
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ["settings"] }),
     );
+  });
+
+  it.each([1, 1.25, 1.5, 2])(
+    "keeps native bounds consistent at %s display scaling with larger WebView text",
+    async (scaleFactor) => {
+      const ratio = vi.spyOn(window, "devicePixelRatio", "get");
+      ratio.mockReturnValue(scaleFactor * 1.1);
+      const { container } = await openPanel({ ...windows, scaleFactor });
+      const main = container.querySelector<HTMLElement>(".tp-card")!;
+      expect(Number.parseFloat(main.style.width)).toBeCloseTo(320 / 1.1);
+      expect(Number.parseFloat(main.style.maxHeight)).toBeCloseTo(620 / 1.1);
+      const scaled = vi.mocked(trayPanelApi.layout).mock.lastCall![0];
+      expect(scaled.width).toBeCloseTo(620);
+      expect(scaled.height).toBe(760);
+      expect(scaled.offsetX).toBeCloseTo(300);
+      expect(scaled.cards[0].width).toBeCloseTo(320);
+      expect(scaled.cards[0].height).toBeCloseTo(352);
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Claude Code default · Direct" }),
+      );
+      await paint();
+      const expanded = vi.mocked(trayPanelApi.layout).mock.lastCall![0];
+      expect(expanded.cards[0]).toEqual(scaled.cards[0]);
+      expect(expanded.cards[1].width).toBeCloseTo(300);
+      expect(expanded.cards[1].height).toBeCloseTo(352);
+
+      // 跨屏 / 缩放变化后，同一常驻 WebView 要重新量尺寸和裁剪区域。
+      ratio.mockReturnValue(scaleFactor);
+      fireEvent.resize(window);
+      await paint();
+      expect(main).toHaveStyle({ width: "320px", maxHeight: "620px" });
+      expect(trayPanelApi.layout).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          cards: [
+            { x: 300, y: 440, width: 320, height: 320 },
+            { x: 0, y: 440, width: 300, height: 320 },
+          ],
+        }),
+      );
+    },
+  );
+
+  it("limits both cards to the available height on small scaled displays", async () => {
+    const { container } = await openPanel({ ...windows, boundsTop: -180 });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Claude Code default · Direct" }),
+    );
+    expect(container.querySelector(".tp-card")).toHaveStyle({
+      maxHeight: "180px",
+    });
+    expect(container.querySelector(".tp-sub")).toHaveStyle({
+      maxHeight: "180px",
+    });
   });
 
   it.each([
@@ -330,7 +554,10 @@ describe("TrayPanel window layout", () => {
         HTMLElement.prototype,
         "getBoundingClientRect",
       ).mockImplementation(function (this: HTMLElement) {
-        return { top: this.dataset.appRow ? 110 : 50 } as DOMRect;
+        return {
+          top: this.dataset.appRow ? 110 : 50,
+          height: this.offsetHeight,
+        } as DOMRect;
       });
       const { container } = await openPanel({
         ...windows,
@@ -403,11 +630,12 @@ describe("TrayPanel window layout", () => {
     });
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
       function (this: HTMLElement) {
-        return (
-          this.classList.contains("tp-sub")
+        return {
+          ...(this.classList.contains("tp-sub")
             ? { top: 0, bottom: 400, left: 344, right: 644 }
-            : { top: 50, bottom: 100, left: 16, right: 336 }
-        ) as DOMRect;
+            : { top: 50, bottom: 100, left: 16, right: 336 }),
+          height: this.offsetHeight,
+        } as DOMRect;
       },
     );
     const { container } = await openPanel({
