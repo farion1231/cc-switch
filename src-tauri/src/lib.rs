@@ -41,6 +41,7 @@ mod settings;
 mod store;
 
 mod tray;
+mod tray_panel;
 mod usage_events;
 mod usage_script;
 
@@ -258,9 +259,9 @@ fn runtime_log_level_allows(level: log::Level, max_level: log::LevelFilter) -> b
 
 /// 统一处理 ccswitch:// 深链接 URL
 ///
-/// - 解析 URL
-/// - 向前端发射 `deeplink-import` / `deeplink-error` 事件
-/// - 可选：在成功时聚焦主窗口
+/// - 解析 URL，把结果（或错误）暂存为待处理深链接，再发 `deeplink-pending` 通知前端来读
+///   （前端可能还没挂载，见 `deeplink::PendingDeepLink`）
+/// - 可选：聚焦主窗口
 fn handle_deeplink_url(
     app: &tauri::AppHandle,
     url_str: &str,
@@ -276,7 +277,7 @@ fn handle_deeplink_url(
         url_for_log(url_str)
     );
 
-    match crate::deeplink::parse_deeplink_url(url_str) {
+    let pending = match crate::deeplink::parse_deeplink_url(url_str) {
         Ok(request) => {
             log::info!(
                 "✓ Successfully parsed deep link: resource={}, app={:?}, name={:?}",
@@ -284,42 +285,38 @@ fn handle_deeplink_url(
                 request.app,
                 request.name
             );
-
-            if let Err(e) = app.emit("deeplink-import", &request) {
-                log::error!("✗ Failed to emit deeplink-import event: {e}");
-            } else {
-                log::info!("✓ Emitted deeplink-import event to frontend");
-            }
-
-            if focus_main_window {
-                if let Some(window) = app.get_webview_window("main") {
-                    #[cfg(target_os = "windows")]
-                    {
-                        let _ = window.set_skip_taskbar(false);
-                    }
-                    let _ = window.unminimize();
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                    #[cfg(target_os = "linux")]
-                    {
-                        linux_fix::nudge_main_window(window.clone(), "deeplink");
-                    }
-                    log::info!("✓ Window shown and focused");
-                }
+            crate::deeplink::PendingDeepLink::Import {
+                request: Box::new(request),
             }
         }
         Err(e) => {
             log::error!("✗ Failed to parse deep link URL: {e}");
-
-            if let Err(emit_err) = app.emit(
-                "deeplink-error",
-                serde_json::json!({
-                    "url": url_str,
-                    "error": e.to_string()
-                }),
-            ) {
-                log::error!("✗ Failed to emit deeplink-error event: {emit_err}");
+            crate::deeplink::PendingDeepLink::Error {
+                url: url_str.to_string(),
+                error: e.to_string(),
             }
+        }
+    };
+    crate::deeplink::set_pending_deeplink(pending);
+
+    if let Err(e) = app.emit("deeplink-pending", ()) {
+        log::error!("✗ Failed to emit deeplink-pending event: {e}");
+    }
+
+    if focus_main_window {
+        if let Some(window) = app.get_webview_window("main") {
+            #[cfg(target_os = "windows")]
+            {
+                let _ = window.set_skip_taskbar(false);
+            }
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+            #[cfg(target_os = "linux")]
+            {
+                linux_fix::nudge_main_window(window.clone(), "deeplink");
+            }
+            log::info!("✓ Window shown and focused");
         }
     }
 
@@ -332,6 +329,11 @@ async fn update_tray_menu(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
+    if !tray_panel::uses_native_menu() {
+        // 用托盘面板、不挂原生菜单：更新图标状态，通知开着的面板重新取数据。
+        tray::refresh_tray_menu(&app);
+        return Ok(app.tray_by_id(tray::TRAY_ID).is_some());
+    }
     match tray::create_tray_menu(&app, state.inner()) {
         Ok(new_menu) => {
             if let Some(tray) = app.tray_by_id(tray::TRAY_ID) {
@@ -424,6 +426,10 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         // 拦截窗口关闭：根据设置决定是否最小化到托盘
         .on_window_event(|window, event| {
+            // 托盘面板自己处理关闭（只隐藏），不走主窗口的「最小化到托盘 / 退出」
+            if window.label() == tray_panel::PANEL_LABEL {
+                return;
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 log::info!("收到窗口关闭请求: label={}", window.label());
                 // 数据库版本过新的恢复模式下没有托盘可唤回，关闭即退出，避免应用隐身后台
@@ -464,6 +470,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(window_state_flags())
+                .with_denylist(&[tray_panel::PANEL_LABEL])
                 .build(),
         )
         .setup(|app| {
@@ -833,6 +840,25 @@ pub fn run() {
                         }
                     }
 
+                    // 旧版官方路由桶（cc-switch-official）迁回 openai，须在统一迁移之前：
+                    // 开关开着时，紧接着的统一迁移会把它们按正常流程带进 custom。
+                    match crate::codex_history_migration::maybe_migrate_codex_legacy_official_history_to_openai_bucket() {
+                        Ok(outcome) => {
+                            if let Some(reason) = outcome.skipped_reason {
+                                log::debug!("○ Codex legacy official history bucket migration skipped: {reason}");
+                            } else {
+                                log::info!(
+                                    "✓ Codex legacy official history bucket migration completed: jsonl_files={}, state_rows={}",
+                                    outcome.migrated_jsonl_files,
+                                    outcome.migrated_state_rows
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("✗ Codex legacy official history bucket migration failed: {e}");
+                        }
+                    }
+
                     // 统一会话开关的官方历史迁移：开关开启但上次未完成（如文件被占用
                     // 中途失败）时在启动期重试；函数内部自门控，开关关闭时直接跳过。
                     match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
@@ -1102,24 +1128,48 @@ pub fn run() {
             });
             log::info!("✓ Deep-link URL handler registered");
 
-            // 创建动态托盘菜单
-            let menu = tray::create_tray_menu(app.handle(), &app_state)?;
+            // 冷启动补取：Windows/Linux 上插件在自身初始化时就解析了启动参数并发出事件，
+            // macOS 的 Opened 也可能早于这里，都赶在上面的回调注册之前，只能从 get_current 取。
+            // 万一两边都处理了同一条链接也无妨：暂存区只留最新一条，前端处理完就清除。
+            match app.deep_link().get_current() {
+                Ok(Some(urls)) => {
+                    for url in urls {
+                        if handle_deeplink_url(app.handle(), url.as_str(), true, "get_current") {
+                            break;
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => log::warn!("读取启动时的深链接失败: {e}"),
+            }
 
-            // 构建托盘
+            // 构建托盘：Windows 左键打开主界面，右键默认弹出面板；macOS 左右键默认都弹出面板。
+            // 设置里打开「原生托盘菜单」就挂原生菜单（`tray::apply_tray_style` 运行时切换）。
+            // Linux（AppIndicator）不派发点击事件，只能出原生菜单，菜单里有一项打开面板。
+            let native_menu = tray_panel::uses_native_menu();
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
                 .tooltip("CC Switch") // 鼠标悬停提示
                 .on_tray_icon_event(|tray, event| {
-                    // Windows 的习惯是左键打开应用、右键出菜单（按平台给默认值，不加开关）；
-                    // macOS 左键仍出菜单；Linux（AppIndicator）不派发点击事件，只能出菜单。
-                    #[cfg(target_os = "windows")]
+                    if let TrayIconEvent::Click {
+                        button:
+                            button @ (tauri::tray::MouseButton::Left
+                            | tauri::tray::MouseButton::Right),
+                        button_state: tauri::tray::MouseButtonState::Up,
+                        rect,
+                        ..
+                    } = &event
                     {
-                        if let TrayIconEvent::Click {
-                            button: tauri::tray::MouseButton::Left,
-                            button_state: tauri::tray::MouseButtonState::Up,
-                            ..
-                        } = &event
+                        if cfg!(target_os = "windows")
+                            && *button == tauri::tray::MouseButton::Left
                         {
+                            tray_panel::hide_panel(tray.app_handle());
                             tray::show_main_window(tray.app_handle());
+                        } else if !tray_panel::uses_native_menu() {
+                            tray_panel::toggle(tray.app_handle(), rect);
+                            return;
+                        } else {
+                            // 弹出的菜单里已经有反馈行了：算显示过，下次悬停重建时拿掉。
+                            tray::mark_feedback_seen();
                         }
                     }
                     match &event {
@@ -1132,10 +1182,6 @@ pub fn run() {
                             if matches!(event, TrayIconEvent::Enter { .. }) {
                                 tray::refresh_tray_if_problems_changed(&app);
                             }
-                            // 弹出的菜单里已经有反馈行了：算显示过，下次悬停时拿掉。
-                            if let TrayIconEvent::Click { button, .. } = &event {
-                                tray::note_tray_click(*button);
-                            }
                             tauri::async_runtime::spawn(async move {
                                 crate::tray::refresh_all_usage_in_tray(&app).await;
                             });
@@ -1143,11 +1189,14 @@ pub fn run() {
                         _ => log::debug!("unhandled event {event:?}"),
                     }
                 })
-                .menu(&menu)
                 .on_menu_event(|app, event| {
                     tray::handle_tray_menu_event(app, &event.id.0);
                 })
-                .show_menu_on_left_click(cfg!(not(target_os = "windows")));
+                .show_menu_on_left_click(tray::native_menu_on_left_click(native_menu));
+            if native_menu {
+                let menu = tray::create_tray_menu(app.handle(), &app_state)?;
+                tray_builder = tray_builder.menu(&menu);
+            }
 
             // 使用平台对应的托盘图标（macOS 使用模板图标适配深浅色）；出问题时 tray.rs 换成带圆点的那张
             if let Some((icon, template)) = tray::base_tray_icon(app.handle()) {
@@ -1284,10 +1333,11 @@ pub fn run() {
                     }
                 });
 
-                // Session log usage sync: 启动时同步一次，之后每 60 秒检查
+                // Session log usage sync: 启动时同步一次，之后每 10 分钟兜底一次（防 CLI 清理旧会话
+                // 文件前漏导入）；用量页打开时由前端按所选间隔加扫
                 let db_for_session_sync = state.db.clone();
                 tauri::async_runtime::spawn(async move {
-                    const SESSION_SYNC_INTERVAL_SECS: u64 = 60;
+                    const SESSION_SYNC_INTERVAL_SECS: u64 = 10 * 60;
 
                     async fn run_session_sync(db: std::sync::Arc<crate::database::Database>, backfill: bool) {
                         // 手动扫描模式下跳过定时扫描；backfill 轮（启动首轮）仍进入，
@@ -1450,6 +1500,7 @@ pub fn run() {
             commands::install_update_and_restart,
             commands::check_app_update_available,
             commands::check_for_updates,
+            commands::open_portable_update_download,
             commands::is_portable_mode,
             commands::copy_text_to_clipboard,
             commands::get_claude_plugin_status,
@@ -1555,8 +1606,11 @@ pub fn run() {
             // Deep link import
             commands::parse_deeplink,
             commands::merge_deeplink_config,
+            commands::fetch_deeplink_icon,
             commands::import_from_deeplink,
             commands::import_from_deeplink_unified,
+            commands::peek_pending_deeplink,
+            commands::ack_pending_deeplink,
             update_tray_menu,
             // Environment variable management
             commands::check_env_conflicts,
@@ -1604,6 +1658,11 @@ pub fn run() {
             commands::set_proxy_route,
             commands::take_startup_attach_failures,
             tray::take_tray_navigation,
+            tray_panel::tray_panel_state,
+            tray_panel::tray_panel_placement,
+            tray_panel::tray_panel_layout,
+            tray_panel::tray_panel_hide,
+            tray_panel::tray_panel_action,
             tray::tray_app_page_seen,
             commands::exit_proxy_apps_in_mode,
             commands::get_direct_provider,
@@ -1678,6 +1737,7 @@ pub fn run() {
             commands::launch_session_terminal,
             commands::get_tool_versions,
             commands::run_tool_lifecycle_action,
+            commands::prepare_tool_uninstall,
             commands::probe_tool_installations,
             commands::list_tool_installations,
             // Provider terminal
@@ -1688,9 +1748,16 @@ pub fn run() {
             commands::upsert_universal_provider,
             commands::delete_universal_provider,
             commands::sync_universal_provider,
+            // Custom icon library
+            commands::get_custom_icons,
+            commands::add_custom_icon,
+            commands::rename_custom_icon,
+            commands::delete_custom_icon,
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,
+            commands::get_opencode_default_model,
+            commands::set_opencode_default_model,
             // OpenClaw specific
             commands::import_openclaw_providers_from_live,
             commands::get_openclaw_live_provider_ids,
@@ -1850,91 +1917,24 @@ pub fn run() {
 
         #[cfg(target_os = "macos")]
         {
-            match event {
-                // macOS 在 Dock 图标被点击并重新激活应用时会触发 Reopen 事件，这里手动恢复主窗口
-                RunEvent::Reopen { .. } => {
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        #[cfg(target_os = "windows")]
-                        {
-                            let _ = window.set_skip_taskbar(false);
-                        }
-                        let _ = window.unminimize();
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                        tray::apply_tray_policy(app_handle, true);
-                    } else if crate::lightweight::is_lightweight_mode() {
-                        if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle) {
-                            log::error!("退出轻量模式重建窗口失败: {e}");
-                        }
+            // macOS 在 Dock 图标被点击并重新激活应用时会触发 Reopen 事件，这里手动恢复主窗口。
+            // RunEvent::Opened（ccswitch:// 链接）不在这里处理：deep-link 插件的 on_event 已把它
+            // 转成 on_open_url 回调，这里再处理一遍会让同一条链接触发两次导入。
+            if let RunEvent::Reopen { .. } = event {
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    #[cfg(target_os = "windows")]
+                    {
+                        let _ = window.set_skip_taskbar(false);
+                    }
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                    tray::apply_tray_policy(app_handle, true);
+                } else if crate::lightweight::is_lightweight_mode() {
+                    if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle) {
+                        log::error!("退出轻量模式重建窗口失败: {e}");
                     }
                 }
-                // 处理通过自定义 URL 协议触发的打开事件（例如 ccswitch://...）
-                RunEvent::Opened { urls } => {
-                    if let Some(url) = urls.first() {
-                        let url_str = url.to_string();
-                        log::info!(
-                            "RunEvent::Opened with URL: {}",
-                            url_for_log(&url_str)
-                        );
-
-                        if url_str.starts_with("ccswitch://") {
-                            if crate::lightweight::is_lightweight_mode() {
-                                if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle)
-                                {
-                                    log::error!("退出轻量模式重建窗口失败: {e}");
-                                }
-                            }
-
-                            // 解析并广播深链接事件，复用与 single_instance 相同的逻辑
-                            match crate::deeplink::parse_deeplink_url(&url_str) {
-                                Ok(request) => {
-                                    log::info!(
-                                        "Successfully parsed deep link from RunEvent::Opened: resource={}, app={:?}",
-                                        request.resource,
-                                        request.app
-                                    );
-
-                                    if let Err(e) =
-                                        app_handle.emit("deeplink-import", &request)
-                                    {
-                                        log::error!(
-                                            "Failed to emit deep link event from RunEvent::Opened: {e}"
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    log::error!(
-                                        "Failed to parse deep link URL from RunEvent::Opened: {e}"
-                                    );
-
-                                    if let Err(emit_err) = app_handle.emit(
-                                        "deeplink-error",
-                                        serde_json::json!({
-                                            "url": url_str,
-                                            "error": e.to_string()
-                                        }),
-                                    ) {
-                                        log::error!(
-                                            "Failed to emit deep link error event from RunEvent::Opened: {emit_err}"
-                                        );
-                                    }
-                                }
-                            }
-
-                            // 确保主窗口可见
-                            if let Some(window) = app_handle.get_webview_window("main") {
-                                #[cfg(target_os = "windows")]
-                                {
-                                    let _ = window.set_skip_taskbar(false);
-                                }
-                                let _ = window.unminimize();
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
-                        }
-                    }
-                }
-                _ => {}
             }
         }
 

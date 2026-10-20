@@ -117,7 +117,22 @@ impl McpService {
         }
     }
 
-    /// 切换指定应用的启用状态
+    /// 命令入口用的 [`Self::toggle_app`]：先拿这个应用的切换锁再读改写 live 配置。
+    ///
+    /// 逐条写入是「读文件 → 改 → 写回」，并发的两次切换（批量勾选、和切换供应商或
+    /// 重新同步撞在一起）会互相覆盖、丢掉对方写的条目。和 `resync_mcp_to_apps` 用同一把
+    /// 锁。`toggle_app` 内部不拿这把锁（tokio 的锁不可重入），已经持锁的调用方直接调它。
+    pub async fn toggle_app_locked(
+        state: &AppState,
+        server_id: &str,
+        app: AppType,
+        enabled: bool,
+    ) -> Result<(), AppError> {
+        let _guard = state.proxy_service.lock_switch_for_app(app.as_str()).await;
+        Self::toggle_app(state, server_id, app, enabled)
+    }
+
+    /// 切换指定应用的启用状态。调用方负责先拿这个应用的切换锁（见 [`Self::toggle_app_locked`]）。
     pub fn toggle_app(
         state: &AppState,
         server_id: &str,

@@ -1,6 +1,8 @@
 import { render, screen, waitFor, within, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import i18n from "i18next";
+import en from "@/i18n/locales/en.json";
 
 import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { settingsApi, skillsApi } from "@/lib/api";
@@ -284,6 +286,49 @@ describe("UnifiedSkillsPanel", () => {
     );
   });
 
+  it.each([true, false])(
+    "shows an error toast when every bulk toggle fails (enabled=%s)",
+    async (enabled) => {
+      m.visibleApps = ["hermes"];
+      m.installed = [
+        makeSkill({ id: "a", name: "A", apps: { hermes: !enabled } }),
+        makeSkill({ id: "b", name: "B", apps: { hermes: !enabled } }),
+      ];
+      m.bulkToggle.mockResolvedValueOnce({
+        succeeded: [],
+        failed: ["a", "b"].map((item) => ({
+          item,
+          error: new Error("Invalid skill directory"),
+        })),
+      });
+      renderPanel();
+      await userEvent.click(columns()[0]);
+      await userEvent.click(
+        screen.getByRole("button", {
+          name: enabled
+            ? "appMatrix.pop.enableRest"
+            : "appMatrix.pop.disableAll",
+        }),
+      );
+      await waitFor(() =>
+        expect(m.toastError).toHaveBeenCalledWith(
+          expect.stringContaining("appMatrix.toast.partialFail"),
+          { closeButton: true },
+        ),
+      );
+      expect(m.bulkToggle).toHaveBeenCalledWith({
+        ids: ["a", "b"],
+        app: "hermes",
+        enabled,
+      });
+      expect(
+        screen.getAllByRole("button", { name: "appMatrix.cell.fail" }),
+      ).toHaveLength(2);
+      expect(m.toastSuccess).not.toHaveBeenCalled();
+      expect(m.toastWarning).not.toHaveBeenCalled();
+    },
+  );
+
   it("marks partial bulk failures in the matrix", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A" }),
@@ -304,10 +349,128 @@ describe("UnifiedSkillsPanel", () => {
       ).toBeInTheDocument(),
     );
     expect(screen.getByText(/skillsPage.rowFail/)).toBeInTheDocument();
+    expect(m.toastWarning).toHaveBeenCalledWith(
+      expect.stringContaining("appMatrix.toast.partialFail"),
+      expect.objectContaining({
+        closeButton: true,
+        duration: 8000,
+        action: expect.anything(),
+      }),
+    );
+    expect(m.toastSuccess).not.toHaveBeenCalled();
+    expect(m.toastError).not.toHaveBeenCalled();
+    const [, options] = m.toastWarning.mock.calls[0];
+    act(() => options.action.onClick());
+    await waitFor(() =>
+      expect(m.bulkToggle).toHaveBeenLastCalledWith({
+        ids: ["a"],
+        app: "claude",
+        enabled: false,
+      }),
+    );
     await userEvent.click(
       screen.getByRole("button", { name: "skillsPage.fixSync" }),
     );
     expect(screen.getByTestId("storage-sheet")).toBeInTheDocument();
+  });
+
+  describe.each([true, false])("bulk undo feedback (enabled=%s)", (enabled) => {
+    beforeEach(() => {
+      m.visibleApps = ["hermes"];
+      m.installed = ["a", "b"].map((id) =>
+        makeSkill({ id, name: id, apps: { hermes: !enabled } }),
+      );
+      // Check the actual outcome text and count without changing panel labels.
+      i18n.addResourceBundle("zh", "translation", {
+        common: { bulkToggleFailed: en.common.bulkToggleFailed },
+        appMatrix: { toast: { undone: en.appMatrix.toast.undone } },
+      });
+    });
+
+    afterEach(() => {
+      i18n.removeResourceBundle("zh", "translation");
+    });
+
+    it.each(["success", "partial", "total", "rejected"] as const)(
+      "reports %s undo results and preserves failed-cell retries",
+      async (outcome) => {
+        renderPanel();
+        await userEvent.click(columns()[0]);
+        await userEvent.click(
+          screen.getByRole("button", {
+            name: enabled
+              ? "appMatrix.pop.enableRest"
+              : "appMatrix.pop.disableAll",
+          }),
+        );
+        await waitFor(() => expect(m.toastSuccess).toHaveBeenCalledTimes(1));
+        const [, options] = m.toastSuccess.mock.calls[0];
+        m.toastSuccess.mockClear();
+
+        const failedIds =
+          outcome === "success"
+            ? []
+            : outcome === "partial"
+              ? ["b"]
+              : ["a", "b"];
+        if (outcome === "rejected") {
+          m.bulkToggle.mockRejectedValueOnce(new Error("undo failed"));
+        } else {
+          m.bulkToggle.mockResolvedValueOnce({
+            succeeded: ["a", "b"].filter((id) => !failedIds.includes(id)),
+            failed: failedIds.map((item) => ({
+              item,
+              error: new Error("undo failed"),
+            })),
+          });
+        }
+        act(() => options.action.onClick());
+
+        const expectedToast =
+          outcome === "success"
+            ? m.toastSuccess
+            : outcome === "partial"
+              ? m.toastWarning
+              : m.toastError;
+        await waitFor(() =>
+          expect(expectedToast).toHaveBeenCalledWith(
+            outcome === "success"
+              ? "Undone"
+              : `Failed to update ${failedIds.length} item(s)`,
+            { closeButton: true },
+          ),
+        );
+        for (const other of [m.toastSuccess, m.toastWarning, m.toastError]) {
+          if (other !== expectedToast) expect(other).not.toHaveBeenCalled();
+        }
+        expect(m.bulkToggle).toHaveBeenLastCalledWith({
+          ids: ["a", "b"],
+          app: "hermes",
+          enabled: !enabled,
+        });
+        const failedCells = screen.queryAllByRole("button", {
+          name: "appMatrix.cell.fail",
+        });
+        expect(failedCells).toHaveLength(failedIds.length);
+
+        if (failedIds.length > 0) {
+          // Undo releases the write lock and retry keeps the inverse target.
+          await userEvent.click(failedCells[0]);
+          await waitFor(() =>
+            expect(m.toggle).toHaveBeenCalledWith({
+              id: failedIds[0],
+              app: "hermes",
+              enabled: !enabled,
+            }),
+          );
+          await waitFor(() =>
+            expect(
+              screen.queryAllByRole("button", { name: "appMatrix.cell.fail" }),
+            ).toHaveLength(failedIds.length - 1),
+          );
+        }
+      },
+    );
   });
 
   it("enables the selected Skills in one app from the selection bar", async () => {
