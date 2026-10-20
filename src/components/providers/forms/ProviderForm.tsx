@@ -94,6 +94,10 @@ import { useAppMode } from "@/lib/query/proxy";
 import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
 import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
+import {
+  CodexCatalogDuplicateDialog,
+  type CodexCatalogDuplicateGroup,
+} from "./CodexCatalogDuplicateDialog";
 import { GeminiFormFields } from "./GeminiFormFields";
 import { McodeProviderForm } from "./McodeProviderForm";
 import { PiProviderForm } from "./PiProviderForm";
@@ -159,6 +163,25 @@ function getPresetProviderType(
     ? preset.providerType
     : undefined;
 }
+
+/** 按实际请求模型分组，返回所有出现多次的模型；空行忽略。 */
+export const findCodexCatalogDuplicateGroups = (
+  models: CodexCatalogModel[],
+): CodexCatalogDuplicateGroup[] => {
+  const byModel = new Map<string, CodexCatalogDuplicateGroup["rows"]>();
+
+  models.forEach((item) => {
+    const model = item.model.trim();
+    if (!model) return;
+    const rows = byModel.get(model) ?? [];
+    rows.push({ displayName: item.displayName?.trim() });
+    byModel.set(model, rows);
+  });
+
+  return [...byModel.entries()]
+    .filter(([, rows]) => rows.length > 1)
+    .map(([model, rows]) => ({ model, rows }));
+};
 
 export const normalizeCodexCatalogModelsForSave = (
   models: CodexCatalogModel[],
@@ -514,6 +537,15 @@ function ProviderFormFull({
 
   // 软校验：收集"业务约束"类问题（空值/缺项），由用户决定是否仍要保存
   const [softIssues, setSoftIssues] = useState<string[] | null>(null);
+  // 硬校验：Codex 模型目录按实际模型名去重，重复行保存后只会留下第一条。
+  const [catalogDuplicateGroups, setCatalogDuplicateGroups] = useState<
+    CodexCatalogDuplicateGroup[] | null
+  >(null);
+  const [focusCatalogDuplicate, setFocusCatalogDuplicate] = useState<{
+    model: string;
+    nonce: number;
+  } | null>(null);
+  const catalogDuplicateNonceRef = useRef(0);
   const [pendingFormValues, setPendingFormValues] =
     useState<ProviderFormData | null>(null);
   const [
@@ -522,6 +554,17 @@ function ProviderFormFull({
   ] = useState<LocalProxyRequestOverridesBuildResult | null>(null);
   // 确认框走的提交路径绕过了 react-hook-form 的 isSubmitting，单独追踪
   const [isConfirmSubmitting, setIsConfirmSubmitting] = useState(false);
+
+  const closeCatalogDuplicateDialog = useCallback(() => {
+    const firstGroup = catalogDuplicateGroups?.[0];
+    setCatalogDuplicateGroups(null);
+    if (!firstGroup) return;
+    catalogDuplicateNonceRef.current += 1;
+    setFocusCatalogDuplicate({
+      model: firstGroup.model,
+      nonce: catalogDuplicateNonceRef.current,
+    });
+  }, [catalogDuplicateGroups]);
 
   useEffect(() => {
     onSubmittingChange?.(isSubmitting || isConfirmSubmitting);
@@ -729,6 +772,14 @@ function ProviderFormFull({
     handleCodexConfigChange: originalHandleCodexConfigChange,
     resetCodexConfig,
   } = useCodexConfigState({ initialData });
+
+  const blockOnDuplicateCatalog = useCallback(() => {
+    if (appId !== "codex" || category === "official") return false;
+    const duplicateGroups = findCodexCatalogDuplicateGroups(codexCatalogModels);
+    if (duplicateGroups.length === 0) return false;
+    setCatalogDuplicateGroups(duplicateGroups);
+    return true;
+  }, [appId, category, codexCatalogModels]);
 
   const initialCodexApiFormat: CodexApiFormat =
     initialData?.meta?.providerType === "github_copilot"
@@ -1273,6 +1324,8 @@ function ProviderFormFull({
       return;
     }
 
+    if (blockOnDuplicateCatalog()) return;
+
     // 软性问题（业务约束，用户可选择仍要保存）
     const issues: string[] = [];
 
@@ -1666,6 +1719,7 @@ function ProviderFormFull({
     let settingsConfig: string;
 
     if (appId === "codex") {
+      if (blockOnDuplicateCatalog()) return;
       try {
         const shouldStripCodexOfficialAuth =
           isCodexOfficialManagedOauthBound || wasCodexOfficialManagedOauthBound;
@@ -2730,6 +2784,7 @@ function ProviderFormFull({
               onPromptCacheRoutingChange={setPromptCacheRouting}
               catalogModels={codexCatalogModels}
               onCatalogModelsChange={setCodexCatalogModels}
+              focusCatalogDuplicate={focusCatalogDuplicate}
               autoReviewModel={codexAutoReviewModel}
               onAutoReviewModelChange={setCodexAutoReviewModel}
               speedTestEndpoints={speedTestEndpoints}
@@ -3013,6 +3068,11 @@ function ProviderFormFull({
           )}
         </form>
       </Form>
+
+      <CodexCatalogDuplicateDialog
+        groups={catalogDuplicateGroups}
+        onClose={closeCatalogDuplicateDialog}
+      />
 
       <ConfirmDialog
         isOpen={softIssues !== null && softIssues.length > 0}
