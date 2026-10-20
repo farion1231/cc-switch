@@ -809,8 +809,8 @@ pub async fn cursor_byok_backup() -> Result<Option<crate::cursor_config::ByokBac
 ///
 /// **只提示、不代劳**：由用户在退出接管后显式点击触发；Cursor 运行中直接报错，不写。
 #[tauri::command]
-pub async fn cursor_restore_byok(
-) -> Result<crate::cursor_config::CursorRestoreByokResult, String> {
+pub async fn cursor_restore_byok() -> Result<crate::cursor_config::CursorRestoreByokResult, String>
+{
     crate::cursor_config::restore_byok().map_err(|e| e.to_string())
 }
 

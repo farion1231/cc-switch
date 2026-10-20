@@ -825,7 +825,10 @@ pub(crate) fn latest_byok_backup_in(dir: &Path) -> Option<ByokBackup> {
         else {
             continue;
         };
-        if newest.as_ref().is_none_or(|(best, _)| stamp > best.as_str()) {
+        if newest
+            .as_ref()
+            .is_none_or(|(best, _)| stamp > best.as_str())
+        {
             newest = Some((stamp.to_string(), entry.path()));
         }
     }
@@ -1172,12 +1175,14 @@ mod tests {
     fn latest_backup_picks_the_newest_snapshot() {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(
-            dir.path().join("cursor-appuser-PREWRITE-20260101-000000.json"),
+            dir.path()
+                .join("cursor-appuser-PREWRITE-20260101-000000.json"),
             "old",
         )
         .expect("write old");
         std::fs::write(
-            dir.path().join("cursor-appuser-PREWRITE-20260102-000000.json"),
+            dir.path()
+                .join("cursor-appuser-PREWRITE-20260102-000000.json"),
             "new",
         )
         .expect("write new");
