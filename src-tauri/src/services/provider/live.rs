@@ -1102,13 +1102,22 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             })
         }
         AppType::Agy => {
-            let live = crate::agy_config::read_live_settings()?;
-            // agy 首次启动就会写出空的 settings.json；没有 Key、端点、模型的配置
-            // 不是用户的供应商，导入它只会让后续全量同步接管启动器和 shell。
-            if !crate::agy_config::has_managed_content(&live) {
-                return Ok(false);
+            match crate::agy_config::read_live_settings() {
+                Ok(live) => {
+                    // agy 首次启动就会写出空的 settings.json；没有 Key、端点、模型的配置
+                    // 不是用户的供应商，导入它只会让后续全量同步接管启动器和 shell。
+                    if !crate::agy_config::has_managed_content(&live) {
+                        return Ok(false);
+                    }
+                    live
+                }
+                // 只有官方登录时 agy 不写 settings.json；CLI 能列出模型就按官方
+                // 默认供应商导入，页面不会空着，也不会装启动器或改 shell。
+                Err(_) => match crate::agy_config::default_login_settings() {
+                    Some(settings) => settings,
+                    None => return Ok(false),
+                },
             }
-            live
         }
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode => {
@@ -1142,6 +1151,21 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "official"
             } else {
                 "custom"
+            }
+        } else if matches!(app_type, AppType::Agy) {
+            let env = provider.settings_config.get("env");
+            let has_key = env
+                .and_then(|env| env.get("GEMINI_API_KEY"))
+                .and_then(Value::as_str)
+                .is_some_and(|key| !key.trim().is_empty());
+            let has_endpoint = env
+                .and_then(|env| env.get("GOOGLE_GEMINI_BASE_URL"))
+                .and_then(Value::as_str)
+                .is_some_and(|url| !url.trim().is_empty());
+            if has_key || has_endpoint {
+                "custom"
+            } else {
+                "official"
             }
         } else {
             "custom"

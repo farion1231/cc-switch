@@ -91,6 +91,44 @@ pub fn read_live_settings() -> Result<Value, AppError> {
     }))
 }
 
+/// 官方登录既没有 settings.json 也没有 env：用本机 CLI 的模型列表合成一个可管理
+/// 的默认供应商。CLI 不在或列不出模型时返回 None，绝不凭空造模型名。
+pub(crate) fn default_login_settings() -> Option<Value> {
+    let bin = real_agy_bin(&agy_dir().join("bin/agy"))?;
+    let mut child = Command::new(bin)
+        .arg("models")
+        .env_remove("GEMINI_API_KEY")
+        .env_remove("GOOGLE_GEMINI_BASE_URL")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    // 启动路径上不能卡住：CLI 在离线或登录过期时可能一直等网络。
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while child.try_wait().ok()?.is_none() {
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let output = child.wait_with_output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let model = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.trim().split_once('\t'))
+        .map(|(_, name)| name.trim())
+        .find(|name| !name.is_empty())?
+        .to_string();
+    Some(json!({
+        "env": {},
+        "config": { "model": { "name": model } }
+    }))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AgyProjection {
     api_key: Option<String>,
