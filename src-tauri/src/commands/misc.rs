@@ -1613,10 +1613,11 @@ fn try_get_version(tool: &str) -> ShellProbe {
             .filter(|s| is_valid_shell(s))
             .unwrap_or_else(|| "sh".to_string());
         let flag = default_flag_for_shell(&shell);
-        Command::new(shell)
-            .arg(flag)
-            .arg(format!("{tool} --version"))
-            .output()
+        let mut cmd = Command::new(shell);
+        cmd.arg(flag).arg(format!("{tool} --version"));
+        // 交互式 shell 必须脱离控制终端，避免作业控制把应用进程组 SIGTTIN 停住。
+        isolate_child_process_group(&mut cmd);
+        cmd.output()
     };
 
     match output {
@@ -2896,11 +2897,11 @@ fn login_shell_path() -> Option<String> {
         .filter(|s| is_valid_shell(s))
         .unwrap_or_else(|| "sh".to_string());
     let flag = default_flag_for_shell(&shell);
-    let out = Command::new(shell)
-        .arg(flag)
-        .arg("/usr/bin/env")
-        .output()
-        .ok()?;
+    let mut cmd = Command::new(shell);
+    cmd.arg(flag).arg("/usr/bin/env");
+    // 与版本探测一样隔离会话，保留登录 shell 的 PATH 初始化但不争抢控制终端。
+    isolate_child_process_group(&mut cmd);
+    let out = cmd.output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -6039,6 +6040,65 @@ mod tests {
         assert_eq!(
             finish_lifecycle_output(&output).unwrap_err(),
             "process-npm-failed"
+        );
+    }
+
+    /// 两条登录 shell 路径都必须隔离会话；在子测试中设置 SHELL，避免污染并行测试。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn login_shell_probes_detach_from_controlling_terminal() {
+        const CHILD_ENV: &str = "CC_SWITCH_TEST_LOGIN_SHELL_ISOLATION";
+        if std::env::var_os(CHILD_ENV).is_some() {
+            match try_get_version("test-tool") {
+                ShellProbe::Found(version) => assert_eq!(version, "1.2.3"),
+                ShellProbe::FoundButFailed(err) | ShellProbe::NotFound(err) => {
+                    panic!("version probe failed: {err}");
+                }
+            }
+            assert_eq!(login_shell_path().as_deref(), Some("/isolated/probe/bin"));
+            return;
+        }
+
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let shell = root.path().join("bash");
+        // SAFETY: getsid(0) only queries the calling process's session ID.
+        let parent_session = unsafe { libc::getsid(0) };
+        assert!(parent_session > 0);
+        std::fs::write(
+            &shell,
+            format!(
+                r#"#!/bin/sh
+[ "$1" = '-lic' ] || exit 90
+[ "$(/bin/ps -o sid= -p $$)" -ne '{parent_session}' ] || exit 91
+if ( : </dev/tty ) 2>/dev/null; then exit 92; fi
+case "$2" in
+    'test-tool --version') printf '1.2.3\n' ;;
+    '/usr/bin/env') printf 'PATH=/isolated/probe/bin\n' ;;
+    *) exit 93 ;;
+esac
+"#
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "commands::misc::tests::login_shell_probes_detach_from_controlling_terminal",
+                "--nocapture",
+            ])
+            .env(CHILD_ENV, "1")
+            .env("SHELL", &shell)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
+            "isolated shell probes failed:\n{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
         );
     }
 
