@@ -20,6 +20,7 @@ export interface DeepLinkImportRequest {
   enabled?: boolean;
 
   // Provider fields
+  allowedApps?: string[];
   homepage?: string;
   endpoint?: string;
   apiKey?: string;

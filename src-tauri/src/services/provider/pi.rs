@@ -206,6 +206,7 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
         .get_provider_by_id(id, app_type.as_str())?
         .ok_or_else(|| AppError::InvalidInput(format!("Pi provider '{id}' not found")))?;
 
+    provider.validate_app_restriction(&app_type)?;
     if let Some(native) = crate::pi_config::read_pi_native_provider(id)? {
         let mut synced = provider;
         merge_native_config(&mut synced, native);
@@ -278,6 +279,7 @@ fn strip_unsupported_pi_metadata(provider: &mut Provider) {
         return;
     };
     provider.meta = Some(ProviderMeta {
+        allowed_apps: meta.allowed_apps,
         usage_script: meta.usage_script,
         is_partner: meta.is_partner,
         partner_promotion_key: meta.partner_promotion_key,
@@ -295,6 +297,36 @@ mod tests {
     use serial_test::serial;
     use std::fs;
     use std::sync::Arc;
+
+    #[test]
+    #[serial]
+    fn allowed_apps_pi_normalization_preserves_and_enforces_restrictions() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        let mut provider = input("model-a");
+        provider.meta = Some(ProviderMeta {
+            allowed_apps: Some(vec!["claude".into()]),
+            ..Default::default()
+        });
+        assert!(ProviderService::add(&state, AppType::Pi, provider.clone(), true).is_err());
+        assert!(!crate::pi_config::pi_provider_exists(&provider.id).unwrap());
+        assert!(state
+            .db
+            .get_provider_by_id(&provider.id, PI_APP)
+            .unwrap()
+            .is_none());
+        provider.meta.as_mut().unwrap().allowed_apps = Some(vec!["pi".into()]);
+        ProviderService::add(&state, AppType::Pi, provider.clone(), true).unwrap();
+        provider.name = "Edited".into();
+        ProviderService::update(&state, AppType::Pi, None, provider).unwrap();
+        update_usage_script(&state, "cc-switch-test", usage_script("return {}")).unwrap();
+        let saved = state
+            .db
+            .get_provider_by_id("cc-switch-test", PI_APP)
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.meta.unwrap().allowed_apps, Some(vec!["pi".into()]));
+    }
 
     fn state() -> AppState {
         AppState::new(Arc::new(

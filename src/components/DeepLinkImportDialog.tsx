@@ -515,6 +515,20 @@ export function DeepLinkImportDialog() {
                     </div>
                   </div>
 
+                  {request.allowedApps && (
+                    <div className="grid grid-cols-3 items-center gap-4">
+                      <div className="font-medium text-sm text-fg-2">
+                        {t("deeplink.allowedApps")}
+                      </div>
+                      <div className="col-span-2 text-sm">
+                        {request.allowedApps.join(", ")}
+                        <p className="text-caption text-fg-3">
+                          {t("deeplink.allowedAppsHint")}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Provider Name */}
                   <div className="grid grid-cols-3 items-center gap-4">
                     <div className="font-medium text-sm text-fg-2">

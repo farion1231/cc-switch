@@ -6,6 +6,46 @@ use std::collections::HashMap;
 
 // SSOT 模式：不再写供应商副本文件
 
+/// Validate a declared app allowlist without silently treating malformed input as unrestricted.
+/// Use strings in metadata so a newer/unknown app ID survives deserialization for validation.
+pub(crate) fn validate_allowed_apps(
+    allowed: Option<&[String]>,
+    app: &crate::AppType,
+) -> Result<(), crate::error::AppError> {
+    validate_allowed_app_ids(allowed)?;
+    if allowed.is_some_and(|ids| !ids.iter().any(|id| id == app.as_str())) {
+        return Err(crate::error::AppError::localized(
+            "provider.allowed_apps.mismatch",
+            format!("此供应商不允许用于 {}", app.as_str()),
+            format!("This provider is not allowed for {}", app.as_str()),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_allowed_app_ids(
+    allowed: Option<&[String]>,
+) -> Result<(), crate::error::AppError> {
+    let Some(allowed) = allowed else {
+        return Ok(());
+    };
+    let valid_ids: Vec<_> = crate::AppType::all().collect();
+    let mut seen = std::collections::HashSet::new();
+    if allowed.is_empty()
+        || allowed.len() > valid_ids.len()
+        || allowed
+            .iter()
+            .any(|id| !valid_ids.iter().any(|known| known.as_str() == id) || !seen.insert(id))
+    {
+        return Err(crate::error::AppError::localized(
+            "provider.allowed_apps.invalid",
+            "允许使用的应用必须是非空且不重复的已知应用标识列表",
+            "Allowed apps must be a nonempty list of distinct, supported application IDs",
+        ));
+    }
+    Ok(())
+}
+
 /// 供应商结构体
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Provider {
@@ -44,6 +84,19 @@ pub struct Provider {
 }
 
 impl Provider {
+    /// Configuration guardrail only; the gateway still authorizes the credential.
+    pub fn validate_app_restriction(
+        &self,
+        app: &crate::AppType,
+    ) -> Result<(), crate::error::AppError> {
+        validate_allowed_apps(
+            self.meta
+                .as_ref()
+                .and_then(|meta| meta.allowed_apps.as_deref()),
+            app,
+        )
+    }
+
     /// 从现有ID创建供应商
     pub fn with_id(
         id: String,
@@ -470,6 +523,9 @@ impl LocalProxyRequestOverrides {
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
+    /// Optional import/assignment guard, retained in CC Switch, never written to live config.
+    #[serde(rename = "allowedApps", skip_serializing_if = "Option::is_none")]
+    pub allowed_apps: Option<Vec<String>>,
     /// 自定义端点列表（按 URL 去重存储）
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub custom_endpoints: HashMap<String, crate::settings::CustomEndpoint>,
@@ -1788,5 +1844,60 @@ mod tests {
             p.resolve_usage_credentials(&AppType::Claude),
             (String::new(), String::new())
         );
+    }
+}
+
+#[cfg(test)]
+mod allowed_apps_tests {
+    use super::*;
+    use crate::{AppType, Database};
+    use serde_json::json;
+
+    #[test]
+    fn allowed_apps_round_trip_and_credential_update_keep_scope_for_every_app() {
+        let db = Database::memory().unwrap();
+        for app in AppType::all() {
+            let mut provider = Provider::with_id(
+                "scoped".into(),
+                "Scoped".into(),
+                json!({"key":"old-test-key"}),
+                None,
+            );
+            provider.meta = Some(ProviderMeta {
+                allowed_apps: Some(vec![app.as_str().into()]),
+                ..Default::default()
+            });
+            db.save_provider(app.as_str(), &provider).unwrap();
+            let stored = db
+                .get_provider_by_id("scoped", app.as_str())
+                .unwrap()
+                .unwrap();
+            let serialized = serde_json::to_string(&stored).unwrap();
+            let mut updated: Provider = serde_json::from_str(&serialized).unwrap();
+            updated.settings_config["key"] = json!("new-test-key");
+            db.save_provider(app.as_str(), &updated).unwrap();
+            let after = db
+                .get_provider_by_id("scoped", app.as_str())
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                after.meta.unwrap().allowed_apps,
+                provider.meta.as_ref().unwrap().allowed_apps
+            );
+            for other in AppType::all().filter(|candidate| candidate != &app) {
+                assert!(db.save_provider(other.as_str(), &updated).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn allowed_apps_missing_metadata_remains_backward_compatible() {
+        let provider = Provider::with_id("old".into(), "Old".into(), json!({}), None);
+        for app in AppType::all() {
+            provider.validate_app_restriction(&app).unwrap();
+        }
+        assert!(!serde_json::to_string(&ProviderMeta::default())
+            .unwrap()
+            .contains("allowedApps"));
     }
 }

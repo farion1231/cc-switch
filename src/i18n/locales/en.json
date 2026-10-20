@@ -3443,6 +3443,8 @@
     "updatesIncomplete": "No updates found, but {{count}} repositories couldn't be read"
   },
   "deeplink": {
+    "allowedApps": "Allowed applications",
+    "allowedAppsHint": "Configuration restriction only; access permissions are enforced by the gateway.",
     "confirmImport": "Confirm Import Provider",
     "confirmImportDescription": "The following configuration will be imported from deep link into CC Switch",
     "importPrompt": "Import Prompt",

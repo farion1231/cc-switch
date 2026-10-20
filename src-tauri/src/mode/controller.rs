@@ -1191,6 +1191,7 @@ pub async fn set_route(
 
 /// 代理模式下不能切到不支持代理的官方供应商（Codex 官方账号走客户端自己的登录，除外）。
 pub fn reject_unsupported_official(app: &AppType, provider: &Provider) -> Result<(), String> {
+    provider.validate_app_restriction(app).map_err(err)?;
     if provider.category.as_deref() == Some("official")
         && !crate::services::provider::official_provider_supports_proxy_takeover(app, provider)
     {
@@ -1225,6 +1226,7 @@ impl StackWriteError {
 /// 但它靠客户端自己的登录做账号校验，不能当 Stack 目标。Codex 的行还要能解析：它的模型要
 /// 写进目录。
 fn check_stack_member(app: &AppType, provider: &Provider) -> Result<(), String> {
+    provider.validate_app_restriction(app).map_err(err)?;
     let official = match app {
         AppType::Codex => codex_direct::is_official(provider),
         _ => provider.category.as_deref() == Some("official"),

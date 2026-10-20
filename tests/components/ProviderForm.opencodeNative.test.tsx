@@ -43,7 +43,9 @@ function renderNativeForm(
         initialData={{
           name: "Anthropic override",
           settingsConfig: config,
-          meta: native ? { opencodeConfigFormat: "v2" } : undefined,
+          meta: native
+            ? { opencodeConfigFormat: "v2", allowedApps: ["opencode"] }
+            : undefined,
         }}
         submitLabel="save-provider"
         onSubmit={onSubmit}
@@ -135,6 +137,7 @@ describe("native OpenCode provider form", () => {
       const submitted = onSubmit.mock.calls[0][0];
       expect(JSON.parse(submitted.settingsConfig)).toEqual(config);
       expect(submitted.meta.opencodeConfigFormat).toBe("v2");
+      expect(submitted.meta.allowedApps).toEqual(["opencode"]);
     },
   );
 

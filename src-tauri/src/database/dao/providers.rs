@@ -264,6 +264,13 @@ impl Database {
     }
 
     pub fn save_provider(&self, app_type: &str, provider: &Provider) -> Result<(), AppError> {
+        if provider
+            .meta
+            .as_ref()
+            .is_some_and(|meta| meta.allowed_apps.is_some())
+        {
+            provider.validate_app_restriction(&app_type.parse()?)?;
+        }
         let mut conn = lock_conn!(self.conn);
         let tx = conn
             .transaction()

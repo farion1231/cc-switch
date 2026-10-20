@@ -3443,6 +3443,8 @@
     "updatesIncomplete": "没有发现更新，但有 {{count}} 个仓库没有读到"
   },
   "deeplink": {
+    "allowedApps": "允许使用的应用",
+    "allowedAppsHint": "此限制用于避免配置误用；访问权限仍由网关校验。",
     "confirmImport": "确认导入供应商配置",
     "confirmImportDescription": "以下配置将导入到 CC Switch",
     "importPrompt": "导入提示词",

@@ -388,6 +388,7 @@ pub(crate) fn write_live_for_state(
     app_type: &AppType,
     provider: &Provider,
 ) -> Result<(), AppError> {
+    provider.validate_app_restriction(app_type)?;
     let db = state.db.as_ref();
     if matches!(app_type, AppType::Claude) {
         // Claude 不再整份写，也不合并片段：只替换关键字段和独有字段。live 当前对应的
@@ -523,6 +524,7 @@ pub(crate) fn codex_managed_oauth_live_auth(
 
 /// Write live configuration snapshot for a provider
 pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+    provider.validate_app_restriction(app_type)?;
     match app_type {
         AppType::Claude => {
             return Err(AppError::localized(

@@ -47,6 +47,16 @@ pub fn parse_deeplink_url(url_str: &str) -> Result<DeepLinkImportRequest, AppErr
     }
 
     // Parse query parameters
+    if url
+        .query_pairs()
+        .filter(|(key, _)| key == "allowedApps")
+        .count()
+        > 1
+    {
+        return Err(AppError::InvalidInput(
+            "Duplicate allowedApps parameter".into(),
+        ));
+    }
     let params: HashMap<String, String> = url.query_pairs().into_owned().collect();
 
     // Extract and validate resource type
@@ -178,7 +188,18 @@ fn parse_provider_deeplink(
         .get("usageAutoInterval")
         .and_then(|v| v.parse::<u64>().ok());
 
+    let allowed_apps: Option<Vec<String>> = params
+        .get("allowedApps")
+        .map(|value| {
+            serde_json::from_str(value).map_err(|_| {
+                AppError::InvalidInput("allowedApps must be a JSON array of application IDs".into())
+            })
+        })
+        .transpose()?;
+    crate::provider::validate_allowed_apps(allowed_apps.as_deref(), &app.parse()?)?;
+
     let request = DeepLinkImportRequest {
+        allowed_apps,
         version,
         resource,
         app: Some(app),
@@ -280,6 +301,7 @@ fn parse_prompt_deeplink(
         homepage: None,
         endpoint: None,
         api_key: None,
+        allowed_apps: None,
         model: None,
         notes: None,
         haiku_model: None,
@@ -357,6 +379,7 @@ fn parse_mcp_deeplink(
         homepage: None,
         endpoint: None,
         api_key: None,
+        allowed_apps: None,
         model: None,
         notes: None,
         haiku_model: None,
@@ -414,6 +437,7 @@ fn parse_skill_deeplink(
         homepage: None,
         endpoint: None,
         api_key: None,
+        allowed_apps: None,
         model: None,
         notes: None,
         haiku_model: None,
