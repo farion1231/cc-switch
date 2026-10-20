@@ -53,6 +53,8 @@ pub struct VisibleApps {
     pub pi: bool,
     #[serde(default = "default_true")]
     pub mcode: bool,
+    #[serde(default = "default_true")]
+    pub agy: bool,
 }
 
 impl Default for VisibleApps {
@@ -68,6 +70,7 @@ impl Default for VisibleApps {
             hermes: false, // 默认不显示，需用户手动启用
             pi: true,
             mcode: true,
+            agy: true,
         }
     }
 }
@@ -86,6 +89,7 @@ impl VisibleApps {
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
+            AppType::Agy => self.agy,
         }
     }
 }
@@ -556,6 +560,9 @@ pub struct AppSettings {
     /// 当前 Hermes 供应商 ID（本地存储，保持结构一致）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_hermes: Option<String>,
+    /// 当前 Antigravity CLI 供应商 ID
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_agy: Option<String>,
 
     // ===== 本地路由（设备级）=====
     /// 写给客户端的代理主机（IP 或主机名），空/未设时按监听地址推（`0.0.0.0` → `127.0.0.1`）。
@@ -670,6 +677,7 @@ impl Default for AppSettings {
             current_provider_opencode: None,
             current_provider_openclaw: None,
             current_provider_hermes: None,
+            current_provider_agy: None,
             proxy_client_host: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
@@ -1328,6 +1336,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenCode => settings.current_provider_opencode.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
+        AppType::Agy => settings.current_provider_agy.clone(),
         AppType::Pi | AppType::Mcode => None,
     }
 }
@@ -1347,6 +1356,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
+        AppType::Agy => settings.current_provider_agy = id_owned.clone(),
         AppType::Pi | AppType::Mcode => {}
     })
 }

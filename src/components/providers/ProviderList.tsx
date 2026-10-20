@@ -326,6 +326,34 @@ export function ProviderList({
         queue: switchMode.queue.filter((id) => known.has(id)),
       });
     }
+    if (appId === "agy") {
+      return buildSwitchSections({
+        app: appId,
+        t,
+        providers: filteredProviders,
+        active: "direct",
+        view: "direct",
+        directId: currentProviderId || null,
+        routeId: null,
+        failoverOn: false,
+        queue: [],
+        stackMembers: new Map(),
+        routingReason: () => "",
+        serviceRunning: false,
+        actions: {
+          switchDirect: (provider) => onSwitch(provider),
+          needsRouteDialog: () => undefined,
+          exitAndUse: (provider) => onSwitch(provider),
+          routeTo: () => undefined,
+          queueAdd: () => undefined,
+          queueRemove: () => undefined,
+          queueMove: () => undefined,
+          stackAdd: () => undefined,
+          stackRemove: () => undefined,
+          stackSetDefault: () => undefined,
+        },
+      });
+    }
     const defaultPrimary =
       (appId === "openclaw"
         ? openclawDefaultModel?.primary
