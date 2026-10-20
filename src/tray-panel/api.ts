@@ -86,6 +86,8 @@ export interface TrayPanelState {
 export interface PanelPlacement {
   seq: number;
   platform: string;
+  /** 图标所在显示器的 DPI 缩放；可能与 WebView 的 devicePixelRatio 不同。 */
+  scaleFactor: number;
   side: "left" | "right";
   edge: "top" | "bottom";
   boundsTop: number;

@@ -1,4 +1,5 @@
-//! 托盘面板：点托盘图标（左右键都一样）在图标旁弹出一块玻璃面板，列出各应用和在用的供应商；
+//! 托盘面板：Windows 右键点托盘图标、macOS 左右键点图标时，在图标旁弹出一块玻璃面板，
+//! 列出各应用和在用的供应商；Windows 左键点图标始终打开主界面。
 //! 悬停 / 点一个应用，在旁边展开它的供应商子面板，可搜索、切换。
 //!
 //! - macOS：窗口透明，按前端回报的卡片位置在网页下面垫原生玻璃——macOS 26 用
@@ -176,6 +177,8 @@ pub struct PanelPlacement {
     pub seq: u64,
     /// 窗口平台；Windows 使用固定画布配合原生窗口区域，避免展开子面板时调整 WebView 大小。
     pub platform: &'static str,
+    /// 图标所在显示器的 DPI 缩放；前端据此区分屏幕逻辑像素和 WebView CSS 像素。
+    pub scale_factor: f64,
     /// 子面板在主面板的哪一边：`left` / `right`
     pub side: &'static str,
     /// 主面板哪条边贴着图标：`top`（向下弹出）/ `bottom`（向上弹出）
@@ -228,12 +231,21 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 /// 主面板放在图标旁边：水平居中于图标、不出工作区；图标在屏幕下半（Windows 任务栏）时向上弹出。
 /// 子面板默认向右展开，右边放不下就向左。`icon` 和 `work` 是同一显示器上的逻辑坐标。
-fn place(icon: (f64, f64, f64, f64), work: Area, seq: u64) -> (f64, f64, PanelPlacement) {
+fn place(
+    icon: (f64, f64, f64, f64),
+    work: Area,
+    seq: u64,
+    scale_factor: f64,
+) -> (f64, f64, PanelPlacement) {
     let (ix, iy, iw, ih) = icon;
     let gap = style::CARD_GAP;
+    let available_width = (work.right - work.left - SCREEN_MARGIN * 2.0 - gap).max(1.0);
+    let width_scale = (available_width / (MAIN_WIDTH + SUB_WIDTH)).min(1.0);
+    let main_width = MAIN_WIDTH * width_scale;
+    let sub_width = SUB_WIDTH * width_scale;
     let min_x = work.left + SCREEN_MARGIN;
-    let max_x = (work.right - SCREEN_MARGIN - MAIN_WIDTH).max(min_x);
-    let x = (ix + iw / 2.0 - MAIN_WIDTH / 2.0).clamp(min_x, max_x);
+    let max_x = (work.right - SCREEN_MARGIN - main_width).max(min_x);
+    let mut x = (ix + iw / 2.0 - main_width / 2.0).clamp(min_x, max_x);
 
     let upward = iy + ih / 2.0 > (work.top + work.bottom) / 2.0;
     let (edge, y) = if upward {
@@ -242,23 +254,31 @@ fn place(icon: (f64, f64, f64, f64), work: Area, seq: u64) -> (f64, f64, PanelPl
         ("top", (iy + ih + ICON_GAP).max(work.top))
     };
 
-    let room_right = work.right - SCREEN_MARGIN - (x + MAIN_WIDTH + gap);
+    let room_right = work.right - SCREEN_MARGIN - (x + main_width + gap);
     let room_left = x - gap - (work.left + SCREEN_MARGIN);
-    let side = if room_right >= SUB_WIDTH || room_right >= room_left {
+    let side = if room_right >= sub_width || room_right >= room_left {
         "right"
     } else {
         "left"
     };
 
+    // 两栏都要留在当前显示器内；高缩放的小屏幕上按可用宽度收窄。
+    x = if side == "left" {
+        x.max(min_x + sub_width + gap)
+    } else {
+        x.min(work.right - SCREEN_MARGIN - main_width - gap - sub_width)
+    };
+
     let placement = PanelPlacement {
         seq,
         platform: std::env::consts::OS,
+        scale_factor,
         side,
         edge,
         bounds_top: work.top + SCREEN_MARGIN - y,
         bounds_bottom: work.bottom - SCREEN_MARGIN - y,
-        main_width: MAIN_WIDTH,
-        sub_width: SUB_WIDTH,
+        main_width,
+        sub_width,
         gap,
         radius: style::RADIUS,
         layout: style::LAYOUT,
@@ -378,7 +398,12 @@ fn show_at(app: &AppHandle, window: &WebviewWindow, icon: (f64, f64, f64, f64)) 
         return;
     };
     let seq = SEQ.fetch_add(1, Ordering::AcqRel) + 1;
-    let (x, y, placement) = place((px / scale, py / scale, pw / scale, ph / scale), work, seq);
+    let (x, y, placement) = place(
+        (px / scale, py / scale, pw / scale, ph / scale),
+        work,
+        seq,
+        scale,
+    );
     *lock(&ANCHOR) = Some(Anchor {
         x,
         y,
@@ -1122,7 +1147,7 @@ mod tests {
 
     #[test]
     fn menu_bar_icon_opens_downward_and_flips_submenu_left_near_the_right_edge() {
-        let (x, y, placement) = place((1300.0, 0.0, 22.0, 24.0), WORK, 1);
+        let (x, y, placement) = place((1300.0, 0.0, 22.0, 24.0), WORK, 1, 1.0);
         assert_eq!(placement.edge, "top");
         assert_eq!(y, 24.0 + ICON_GAP);
         assert_eq!(x, WORK.right - SCREEN_MARGIN - MAIN_WIDTH);
@@ -1131,7 +1156,7 @@ mod tests {
 
     #[test]
     fn icon_on_the_left_expands_submenu_to_the_right() {
-        let (x, _, placement) = place((200.0, 0.0, 22.0, 24.0), WORK, 1);
+        let (x, _, placement) = place((200.0, 0.0, 22.0, 24.0), WORK, 1, 1.0);
         assert_eq!(x, 200.0 + 11.0 - MAIN_WIDTH / 2.0);
         assert_eq!(placement.side, "right");
     }
@@ -1144,9 +1169,48 @@ mod tests {
             right: 1920.0,
             bottom: 1032.0,
         };
-        let (_, y, placement) = place((1700.0, 1040.0, 24.0, 40.0), work, 1);
+        let (_, y, placement) = place((1700.0, 1040.0, 24.0, 40.0), work, 1, 1.0);
         assert_eq!(placement.edge, "bottom");
         assert_eq!(y, work.bottom);
         assert_eq!(placement.bounds_top, SCREEN_MARGIN - y);
+    }
+
+    #[test]
+    fn both_columns_fit_scaled_work_areas_including_negative_monitor_coordinates() {
+        for (width, height) in [(1280.0, 720.0), (1366.0, 768.0), (2560.0, 1440.0)] {
+            for scale in [1.0, 1.25, 1.5, 2.0, 2.5, 3.0] {
+                for physical_left in [0.0, -width] {
+                    let work = Area {
+                        left: physical_left / scale,
+                        top: 0.0,
+                        right: (physical_left + width) / scale,
+                        bottom: (height - 48.0) / scale,
+                    };
+                    // 左侧、居中及右侧图标均须为主 / 子面板预留足够的宽度。
+                    for fraction in [0.1, 0.5, 0.95] {
+                        let (x, y, p) = place(
+                            (
+                                work.left + (work.right - work.left) * fraction,
+                                height / scale - 40.0 / scale,
+                                24.0 / scale,
+                                40.0 / scale,
+                            ),
+                            work,
+                            1,
+                            scale,
+                        );
+                        let (left, right) = if p.side == "left" {
+                            (x - p.gap - p.sub_width, x + p.main_width)
+                        } else {
+                            (x, x + p.main_width + p.gap + p.sub_width)
+                        };
+                        assert!(left >= work.left + SCREEN_MARGIN - 0.001);
+                        assert!(right <= work.right - SCREEN_MARGIN + 0.001);
+                        assert!(y <= work.bottom);
+                        assert_eq!(p.scale_factor, scale);
+                    }
+                }
+            }
+        }
     }
 }
