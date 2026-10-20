@@ -5,6 +5,12 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **macOS Menu Bar Data**: The tray icon can now show live routed-output speed and today's total tokens, requests, cost and cache hit rate. Each item has its own switch under Settings → General → Window and terminal → Menu bar data; live speed is on by default. Live speed aggregates active local-routing streams over a rolling 5-second window and updates every 500 ms. Direct connections show `0 tok/s`. Today's values use the Usage page's local-day calculation and current visible-app scope, and refresh after usage logs are written.
+
 ## [4.0.16] - 2026-10-19
 
 This release turns the tray into a quick panel and fixes a batch of Codex and routing issues. Clicking the tray icon now opens a panel with each app's in-use provider, mode, quota and usage; the native menu is still available under Settings → General → Tray style. In Codex aggregation mode, a session no longer gets stuck compacting on the provider it came from, and the ChatGPT login is no longer lost every time CC Switch restarts while Codex is routed. Codex through Chat upstreams keeps parallel tool results together around image notices, configured GPT context windows now apply to official GPT catalog entries, and the 272K GPT cap from 4.0.13 only applies to windows borrowed from the vendor entry. Claude Code routing and Claude Desktop route mode publish the 5.5 catalog ids for 5.5 upstreams. Other fixes cover Zhipu pay-as-you-go accounts showing "query failed", Volcengine plan quota turning red on new cards, fnm-managed Node CLIs on Windows, an idle card that could not be deleted, the "Get API Key" link in the edit form, and a softer grey macOS icon tile. OpenCode cards can now set OpenCode's default model.

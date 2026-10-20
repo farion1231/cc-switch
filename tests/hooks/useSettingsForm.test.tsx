@@ -54,6 +54,13 @@ describe("useSettingsForm Hook", () => {
     expect(settings.claudeConfigDir).toBe("/Users/demo");
     expect(settings.codexConfigDir).toBeUndefined();
     expect(settings.language).toBe("en");
+    expect(settings.menuBarData).toEqual({
+      speed: true,
+      totalTokens: false,
+      requests: false,
+      cost: false,
+      cacheHitRate: false,
+    });
     expect(result.current.initialLanguage).toBe("en");
     expect(changeLanguageSpy).toHaveBeenCalledWith("en");
   });
