@@ -2,7 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    // 必须早于 GTK / WebKit 初始化：合成 + SHM 保留透明面板，避免 DMA-BUF 协商错误。
+    // 必须早于 GTK / WebKit 初始化：按运行时版本选择 SHM 合成或旧版软件绘制。
     #[cfg(target_os = "linux")]
     {
         cc_switch_lib::linux_rendering::configure_environment();
