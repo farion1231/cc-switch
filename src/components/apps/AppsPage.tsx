@@ -88,11 +88,10 @@ const ROWS: Row[] = [
   { kind: "desktop" },
   // Cursor 是桌面应用（没有 CLI 可安装/升级），但它和上面这些一样要能控制「在侧栏显示」，
   // 所以单独占一行；位置对齐侧栏顺序（Cursor 在 hermes 之后、pi 之前）。
-  ...TOOL_NAMES.filter((tool) => tool !== "claude").flatMap(
-    (tool): Row[] =>
-      tool === "hermes"
-        ? [{ kind: "tool", tool }, { kind: "cursor" }]
-        : [{ kind: "tool", tool }],
+  ...TOOL_NAMES.filter((tool) => tool !== "claude").flatMap((tool): Row[] =>
+    tool === "hermes"
+      ? [{ kind: "tool", tool }, { kind: "cursor" }]
+      : [{ kind: "tool", tool }],
   ),
 ];
 

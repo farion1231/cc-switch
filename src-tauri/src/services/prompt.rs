@@ -792,8 +792,8 @@ mod tests {
         prompts.insert("off".to_string(), prompt("off", "old", false));
         prompts.insert("on".to_string(), prompt("on", "restored", true));
 
-        let warning = project_prompt_set_to_path(&AppType::Claude, &prompts, &path)
-            .expect("project prompt");
+        let warning =
+            project_prompt_set_to_path(&AppType::Claude, &prompts, &path).expect("project prompt");
         assert!(warning.is_none());
         assert_eq!(
             std::fs::read_to_string(path).expect("read prompt"),
@@ -809,8 +809,8 @@ mod tests {
         let mut prompts = IndexMap::new();
         prompts.insert("off".to_string(), prompt("off", "managed", false));
 
-        let warning = project_prompt_set_to_path(&AppType::Claude, &prompts, &path)
-            .expect("project prompt");
+        let warning =
+            project_prompt_set_to_path(&AppType::Claude, &prompts, &path).expect("project prompt");
         assert!(warning.is_none());
         // The live file is not part of the sync payload, so a restore with no
         // enabled prompt must not wipe local content it never contained.
