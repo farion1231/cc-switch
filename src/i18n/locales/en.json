@@ -352,6 +352,7 @@
   },
   "notifications": {
     "providerAdded": "Provider added",
+    "providerAddedCheckActive": "Provider added. Check which provider is active before using it.",
     "switchSuccess": "Switch successful!",
     "codexRestartRequired": "Switched successfully. Restart the client to apply changes.",
     "geminiRestartRequired": "Switched successfully. Restart Gemini CLI to apply changes.",

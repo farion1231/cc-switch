@@ -352,6 +352,7 @@
   },
   "notifications": {
     "providerAdded": "Anbieter hinzugefügt",
+    "providerAddedCheckActive": "Anbieter hinzugefügt. Prüfen Sie vor der Verwendung, welcher Anbieter aktiv ist.",
     "switchSuccess": "Wechsel erfolgreich!",
     "codexRestartRequired": "Wechsel erfolgreich. Starten Sie den Client neu, um die Änderungen zu übernehmen.",
     "geminiRestartRequired": "Wechsel erfolgreich. Starten Sie Gemini CLI neu, um die Änderungen zu übernehmen.",

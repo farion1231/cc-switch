@@ -352,6 +352,7 @@
   },
   "notifications": {
     "providerAdded": "プロバイダーを追加しました",
+    "providerAddedCheckActive": "プロバイダーを追加しました。使用前に有効なプロバイダーを確認してください。",
     "switchSuccess": "切り替え成功！",
     "codexRestartRequired": "切り替えました。反映するにはクライアントを再起動してください",
     "geminiRestartRequired": "切り替えました。反映するには Gemini CLI を再起動してください",
