@@ -358,7 +358,7 @@ fn ensure_window(app: &AppHandle) -> Option<WebviewWindow> {
 fn transparent_window() -> bool {
     #[cfg(target_os = "linux")]
     {
-        crate::linux_rendering::transparent_panel()
+        crate::linux_rendering::compositing_enabled()
     }
     #[cfg(not(target_os = "linux"))]
     {
