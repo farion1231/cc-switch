@@ -819,8 +819,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         editorValue: "",
       },
     },
-    isPartner: true,
-    partnerPromotionKey: "tokenfactory",
     icon: "tokenfactory",
   },
   {

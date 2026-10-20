@@ -456,8 +456,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       ],
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "tokenfactory",
     icon: "tokenfactory",
   },
   {

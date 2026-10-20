@@ -361,8 +361,6 @@ export const providerPresets: ProviderPreset[] = [
     },
     endpointCandidates: ["https://api.tokenfactory.cn/anthropic"],
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "tokenfactory",
     icon: "tokenfactory",
   },
   {

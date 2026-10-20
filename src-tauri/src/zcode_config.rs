@@ -1,6 +1,6 @@
 //! ZCode 配置文件读写
 //!
-//! ZCode (dev.zcode.app) 的配置分散在两个文件：
+//! ZCode (zcode.z.ai) 的配置分散在两个文件：
 //!
 //! - Provider 配置：`~/.zcode/v2/provider_config.json`（个人供应商层）
 //! - MCP 配置：`~/.zcode/cli/config.json`，顶层有 `mcp.servers` 字段

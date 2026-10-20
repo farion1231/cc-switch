@@ -511,8 +511,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     suggestedDefaults: {
       model: { default: "glm-5.3", provider: "tokenfactory" },
     },
-    isPartner: true,
-    partnerPromotionKey: "tokenfactory",
     icon: "tokenfactory",
   },
   {
@@ -1680,7 +1678,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-5.6-sol",
           name: "GPT-5.6 Sol",
-          context_length: 272000,
+          context_length: 400000,
         },
         {
           id: "google/gemini-3.6-flash",
@@ -1700,7 +1698,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-6-astra",
           name: "GPT-6 Astra",
-          context_length: 272000,
+          context_length: 1050000,
         },
         {
           id: "google/gemini-3.8-flash",
@@ -2903,12 +2901,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-6-astra",
           name: "GPT-6 Astra",
-          context_length: 272000,
+          context_length: 1050000,
         },
         {
           id: "openai/gpt-6.1-sol",
           name: "GPT-6.1 Sol",
-          context_length: 272000,
+          context_length: 1050000,
         },
         {
           id: "google/gemini-3.8-flash",
@@ -3208,12 +3206,12 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         {
           id: "openai/gpt-6.1-sol",
           name: "GPT-6.1 Sol",
-          context_length: 272000,
+          context_length: 1050000,
         },
         {
           id: "openai/gpt-6-luna",
           name: "GPT-6 Luna",
-          context_length: 272000,
+          context_length: 1050000,
         },
         {
           id: "moonshotai/kimi-k3",

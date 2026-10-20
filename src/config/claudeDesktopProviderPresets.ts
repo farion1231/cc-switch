@@ -393,8 +393,6 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       true,
     ),
     endpointCandidates: ["https://api.tokenfactory.cn/anthropic"],
-    isPartner: true,
-    partnerPromotionKey: "tokenfactory",
     icon: "tokenfactory",
   },
   {

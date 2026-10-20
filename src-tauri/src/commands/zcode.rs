@@ -1,6 +1,6 @@
 //! ZCode provider commands
 //!
-//! ZCode (dev.zcode.app) uses additive mode — users may already have providers
+//! ZCode (zcode.z.ai) uses additive mode — users may already have providers
 //! configured in `~/.zcode/v2/provider_config.json`. These commands mirror the OpenCode /
 //! Hermes import commands.
 

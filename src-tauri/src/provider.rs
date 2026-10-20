@@ -1102,7 +1102,7 @@ pub struct OpenCodeModelLimit {
 
 /// ZCode 供应商的 settings_config 结构
 ///
-/// ZCode (dev.zcode.app) 的个人供应商规则位于 `~/.zcode/v2/provider_config.json`，
+/// ZCode (zcode.z.ai) 的个人供应商规则位于 `~/.zcode/v2/provider_config.json`，
 /// 通过 `kind` 字段指定供应商类型（anthropic / openai-compatible / openai），
 /// 凭据嵌套在 `options`（baseURL / apiKey），与 OpenCode 结构类似。
 /// 配置示例：

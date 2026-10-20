@@ -89,4 +89,26 @@ describe("useZcodeFormState", () => {
     expect(emitted.source).toBe("preset");
     expect(emitted.options.apiKey).toBe("key-2");
   });
+
+  it("derives apiKeyRequired from the real initial config, not the default template", () => {
+    // 新建供应商：没有初始 settingsConfig。parseZcodeConfig(undefined) 会回退到
+    // 默认模板（options 里带 apiKey: ""），不得据此判定「初始配置里有 key」
+    const fresh = renderHook(() =>
+      useZcodeFormState({
+        appId: "zcode",
+        onSettingsConfigChange: vi.fn(),
+      }),
+    );
+    expect(fresh.result.current.zcodeApiKeyRequired).toBe(false);
+
+    // 初始配置里确实写了 apiKey → 必填
+    const withKey = renderZcodeFormState({ options: { apiKey: "key-1" } });
+    expect(withKey.result.current.zcodeApiKeyRequired).toBe(true);
+
+    // 初始配置没写 apiKey（免鉴权自定义端点）→ 非必填
+    const withoutKey = renderZcodeFormState({
+      options: { baseURL: "https://example.com" },
+    });
+    expect(withoutKey.result.current.zcodeApiKeyRequired).toBe(false);
+  });
 });

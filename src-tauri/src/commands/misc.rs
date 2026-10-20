@@ -626,6 +626,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "hermes" => "Hermes",
         "pi" => "Pi",
         "mcode" => "MiniMax Code",
+        "zcode" => "ZCode",
         _ => "Unknown",
     }
 }
@@ -829,7 +830,7 @@ enum LifecycleCommandShell {
     WindowsBatch,
 }
 
-const ZCODE_DOWNLOAD_URL: &str = "https://dev.zcode.app";
+const ZCODE_DOWNLOAD_URL: &str = "https://zcode.z.ai";
 
 fn zcode_download_command(shell: LifecycleCommandShell) -> String {
     match shell {

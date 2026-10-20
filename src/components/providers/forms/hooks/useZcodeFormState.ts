@@ -124,7 +124,11 @@ export function useZcodeFormState({
 
   // apiKeyRequired: derived from initial config presence, NOT hard-coded.
   const [zcodeApiKeyRequired] = useState<boolean>(() => {
-    if (appId !== "zcode" || !initialZcodeConfig) return false;
+    if (appId !== "zcode") return false;
+    // parseZcodeConfig(undefined) returns the default template whose options
+    // carry apiKey: "", so the hasOwnProperty check would always pass;
+    // a brand-new provider (no initial settingsConfig) requires no key.
+    if (!initialData?.settingsConfig) return false;
     return Object.prototype.hasOwnProperty.call(initialZcodeOptions, "apiKey");
   });
 

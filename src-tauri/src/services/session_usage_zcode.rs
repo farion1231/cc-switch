@@ -230,9 +230,6 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
                 .unwrap_or(0)
         });
 
-    // ZCode 的 output 不含 reasoning，单独累加
-    let output_with_reasoning = row.output_tokens + row.reasoning_tokens;
-
     // ZCode 的 input_tokens 是 OpenAI 语义：已包含缓存命中部分
     // （provider_total_tokens = input + output，cache_read 是 input 的子集）。
     // cc-switch 账本是 Anthropic 语义（input = 未命中缓存的新增输入，
@@ -261,7 +258,11 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
     // ZCode 不提供费用，使用 cc-switch 自带的模型定价计算
     let usage = TokenUsage {
         input_tokens: fresh_input_tokens as u32,
-        output_tokens: output_with_reasoning as u32,
+        // reasoning_tokens 是 output 的子集（ZCode 归一化里
+        // outputTokenDetails.reasoningTokens），已含在 output_tokens 内：
+        // 真实库中 provider_total = input + output 恒成立，叠加会把 output
+        // 和按输出计价的费用虚高约四成
+        output_tokens: row.output_tokens as u32,
         cache_read_tokens: row.cache_read_tokens as u32,
         cache_creation_tokens: row.cache_creation_tokens as u32,
         cache_creation_1h_tokens: 0,
@@ -313,7 +314,7 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
             model_id,
             model_id,             // request_model = model
             fresh_input_tokens,
-            output_with_reasoning,
+            row.output_tokens,
             row.cache_read_tokens,
             row.cache_creation_tokens,
             input_cost,

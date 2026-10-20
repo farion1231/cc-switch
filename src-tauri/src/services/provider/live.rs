@@ -701,7 +701,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             ));
         }
         AppType::ZCode => {
-            // ZCode uses additive mode - write provider to config (~/.zcode/v2/config.json)
+            // ZCode uses additive mode - write provider to config (~/.zcode/v2/provider_config.json)
             use crate::provider::ZCodeProviderConfig;
             use crate::zcode_config;
 
