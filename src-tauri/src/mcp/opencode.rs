@@ -256,6 +256,7 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
                     name: id.clone(),
                     server: unified_spec,
                     apps: McpApps {
+                        agy: false,
                         claude: false,
                         codex: false,
                         gemini: false,

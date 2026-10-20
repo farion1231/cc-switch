@@ -758,9 +758,16 @@ export function DeepLinkImportDialog() {
                           )}
 
                           {/* Gemini config */}
-                          {parsedConfig.type === "gemini" &&
+                          {(parsedConfig.type === "gemini" ||
+                            parsedConfig.type === "agy") &&
                             parsedConfig.env && (
                               <div className="space-y-1.5">
+                                {parsedConfig.model && (
+                                  <EnvRow
+                                    envKey="model"
+                                    value={parsedConfig.model}
+                                  />
+                                )}
                                 {Object.entries(parsedConfig.env).map(
                                   ([key, value]) => (
                                     <EnvRow

@@ -1,3 +1,4 @@
+pub mod agy;
 mod blocks;
 pub mod claude;
 pub mod codex;

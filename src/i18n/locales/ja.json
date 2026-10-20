@@ -208,6 +208,14 @@
     "geminiConfig": "Gemini 設定",
     "geminiConfigHint": ".env 形式で Gemini を設定してください",
     "form": {
+      "agy": {
+        "connectionHint": "API Key と接続先を空欄にすると agy の Google ログインを使用します。Key のみを指定すると Google の標準 API を使用します。外部接続先は Gemini API に対応している必要があります。切替後は新しいターミナルを開くか agy を再起動してください。実行中のセッションは切り替わりません。ログイン時のモデル取得には現在の agy 設定を使用します。 ログイン時はモデル一覧の表示名を使用してください。API モードでは API のモデル ID を使用します。",
+        "keyFieldsHint": "エンドポイント、キー、モデルはプロバイダーとともに切り替わります。Antigravity の他のネイティブ設定は保持されます。",
+        "envFile": "起動時の環境変数",
+        "envFileHint": "CC Switch は agy 起動時に API キー、エンドポイント、モデルを渡します。他の環境変数は適用されません。",
+        "configJson": "モデル設定（CC Switch 形式）",
+        "configJsonHint": "ここではモデル設定のみ対応しています。他の Antigravity 設定は agy で変更し、MCP は MCP パネルで管理してください。"
+      },
       "gemini": {
         "model": "モデル",
         "oauthTitle": "OAuth 認証モード",
@@ -1086,7 +1094,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "agy": "Antigravity"
   },
   "mcode": {
     "empty": {
@@ -1325,6 +1334,7 @@
     "deleteSessionEllipsis": "セッションを削除",
     "deleteEllipsis": "削除",
     "selectSessionLabel": "{{title}} を選択",
+    "agyDeleteHint": "実行状態も削除するには Antigravity でセッションを削除してください",
     "mcodeDeleteHint": "MiniMax Code で削除してください",
     "groupMeta": "{{count}} 件 · {{time}}",
     "bucketToday": "今日",
@@ -2538,7 +2548,8 @@
       "cacheWrite": "キャッシュ書き込み"
     },
     "prevMonth": "前月",
-    "nextMonth": "翌月"
+    "nextMonth": "翌月",
+    "agyUsageHint": "Antigravity はログの Token 数を表示し、過去のモデルが不明な場合は unknown と表示します。ログに信頼できる料金情報がないため、料金 0 は無料を意味しません。"
   },
   "usageScript": {
     "title": "利用状況を設定",

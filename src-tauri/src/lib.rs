@@ -1,3 +1,6 @@
+mod agy_config;
+#[cfg(all(test, unix))]
+mod agy_smoke_tests;
 mod app_config;
 mod app_store;
 mod auto_launch;
@@ -1566,6 +1569,7 @@ pub fn run() {
             // Fetch OpenAI-compatible and Anthropic model lists. Response data structure:
             // data[].id, data[]?.owned_by. Special: supports Zhipu OpenAI Responses models[].slug.
             commands::fetch_models_for_config,
+            commands::get_agy_models,
             commands::get_opencode_models,
             // ours: endpoint speed test + custom endpoint management
             commands::test_api_endpoints,
