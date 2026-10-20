@@ -2,14 +2,14 @@
 
 use super::codex_responses_sse as sse;
 use super::{
-    codex_chat_common::{
-        extract_reasoning_field_text, split_leading_think_block, strip_leading_think_open_tag,
-    },
+    codex_chat_common::{extract_reasoning_field_text, tool_call_extra_content},
+    codex_compaction,
+    inline_think::InlineThinkSplitter,
     transform_codex_chat::{
-        chat_usage_to_responses_usage, custom_tool_input_from_chat_arguments,
-        response_id_from_chat_id, response_status_from_finish_reason,
-        response_tool_call_item_from_chat_name, response_tool_call_item_id_from_chat_name,
-        CodexToolContext,
+        chat_error_to_response_error, chat_usage_to_responses_usage,
+        custom_tool_input_from_chat_arguments, response_id_from_chat_id,
+        response_status_from_finish_reason, response_tool_call_item_from_chat_name,
+        response_tool_call_item_id_from_chat_name, CodexToolContext,
     },
 };
 use crate::proxy::json_canonical::canonicalize_tool_arguments_str;
@@ -37,20 +37,6 @@ struct ReasoningItemState {
     done: bool,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-enum InlineThinkMode {
-    #[default]
-    Detecting,
-    Reasoning,
-    Text,
-}
-
-#[derive(Debug, Default)]
-struct InlineThinkState {
-    mode: InlineThinkMode,
-    buffer: String,
-}
-
 #[derive(Debug, Default)]
 struct ToolCallState {
     output_index: Option<u32>,
@@ -59,6 +45,8 @@ struct ToolCallState {
     name: String,
     arguments: String,
     reasoning_content: String,
+    /// 上游 tool call 的 `extra_content`（Gemini thought signature），完成时原样挂回。
+    extra_content: Option<Value>,
     added: bool,
     done: bool,
 }
@@ -73,7 +61,7 @@ struct ChatToResponsesState {
     next_output_index: u32,
     text: TextItemState,
     reasoning: ReasoningItemState,
-    inline_think: InlineThinkState,
+    inline_think: InlineThinkSplitter,
     tools: BTreeMap<usize, ToolCallState>,
     next_tool_index_to_add: usize,
     output_items: Vec<(u32, Value)>,
@@ -95,7 +83,7 @@ impl Default for ChatToResponsesState {
             next_output_index: 0,
             text: TextItemState::default(),
             reasoning: ReasoningItemState::default(),
-            inline_think: InlineThinkState::default(),
+            inline_think: InlineThinkSplitter::default(),
             tools: BTreeMap::new(),
             next_tool_index_to_add: 0,
             output_items: Vec::new(),
@@ -176,95 +164,30 @@ impl ChatToResponsesState {
     }
 
     fn push_content_delta(&mut self, delta: &str) -> Vec<Bytes> {
-        match self.inline_think.mode {
-            InlineThinkMode::Text => {
-                let mut events = self.finalize_reasoning();
-                events.extend(self.push_text_delta(delta));
-                events
-            }
-            InlineThinkMode::Detecting => {
-                self.inline_think.buffer.push_str(delta);
-                match leading_think_prefix_decision(&self.inline_think.buffer) {
-                    ThinkPrefixDecision::NeedMore => Vec::new(),
-                    ThinkPrefixDecision::Reasoning => {
-                        self.inline_think.mode = InlineThinkMode::Reasoning;
-                        self.drain_complete_inline_think()
-                    }
-                    ThinkPrefixDecision::Text => {
-                        self.inline_think.mode = InlineThinkMode::Text;
-                        let text = std::mem::take(&mut self.inline_think.buffer);
-                        let mut events = self.finalize_reasoning();
-                        events.extend(self.push_text_delta(&text));
-                        events
-                    }
-                }
-            }
-            InlineThinkMode::Reasoning => {
-                self.inline_think.buffer.push_str(delta);
-                self.drain_complete_inline_think()
-            }
-        }
-    }
-
-    fn drain_complete_inline_think(&mut self) -> Vec<Bytes> {
-        let Some((reasoning, answer)) = split_leading_think_block(&self.inline_think.buffer) else {
-            return Vec::new();
-        };
-
-        self.inline_think.mode = InlineThinkMode::Text;
-        self.inline_think.buffer.clear();
-
-        let mut events = Vec::new();
-        if !reasoning.is_empty() {
-            events.extend(self.push_reasoning_delta(&reasoning));
-            events.extend(self.finalize_reasoning());
-        }
-        if !answer.is_empty() {
-            events.extend(self.push_text_delta(&answer));
-        }
-
-        events
+        let parts = self.inline_think.push(delta);
+        self.emit_inline_think_parts(parts)
     }
 
     fn flush_inline_think_at_boundary(&mut self) -> Vec<Bytes> {
-        match self.inline_think.mode {
-            InlineThinkMode::Text => Vec::new(),
-            InlineThinkMode::Detecting => {
-                self.inline_think.mode = InlineThinkMode::Text;
-                let text = std::mem::take(&mut self.inline_think.buffer);
-                if text.is_empty() {
-                    Vec::new()
-                } else {
-                    let mut events = self.finalize_reasoning();
-                    events.extend(self.push_text_delta(&text));
-                    events
-                }
-            }
-            InlineThinkMode::Reasoning => {
-                let buffered = std::mem::take(&mut self.inline_think.buffer);
-                self.inline_think.mode = InlineThinkMode::Text;
-                if let Some((reasoning, answer)) = split_leading_think_block(&buffered) {
-                    let mut events = Vec::new();
-                    if !reasoning.is_empty() {
-                        events.extend(self.push_reasoning_delta(&reasoning));
-                        events.extend(self.finalize_reasoning());
-                    }
-                    if !answer.is_empty() {
-                        events.extend(self.push_text_delta(&answer));
-                    }
-                    return events;
-                }
+        let parts = self.inline_think.flush();
+        self.emit_inline_think_parts(parts)
+    }
 
-                let reasoning = strip_leading_think_open_tag(&buffered).unwrap_or(buffered);
-                if reasoning.is_empty() {
-                    Vec::new()
-                } else {
-                    let mut events = self.push_reasoning_delta(&reasoning);
-                    events.extend(self.finalize_reasoning());
-                    events
-                }
-            }
+    /// 思考片段逐个追加到同一个 reasoning item；只有正文开始时才收尾，
+    /// 否则第二个片段到达时 item 已经 done。
+    fn emit_inline_think_parts(
+        &mut self,
+        (thinking, text): (Option<String>, Option<String>),
+    ) -> Vec<Bytes> {
+        let mut events = Vec::new();
+        if let Some(thinking) = thinking {
+            events.extend(self.push_reasoning_delta(&thinking));
         }
+        if let Some(text) = text {
+            events.extend(self.finalize_reasoning());
+            events.extend(self.push_text_delta(&text));
+        }
+        events
     }
 
     fn ensure_response_started(&mut self) -> Vec<Bytes> {
@@ -406,6 +329,9 @@ impl ChatToResponsesState {
             if !args_delta.is_empty() {
                 state.arguments.push_str(&args_delta);
             }
+            if let Some(extra) = tool_call_extra_content(tool_call) {
+                state.extra_content = Some(extra.clone());
+            }
             if state.reasoning_content.is_empty() {
                 if let Some(reasoning) = reasoning.map(str::trim).filter(|value| !value.is_empty())
                 {
@@ -510,7 +436,7 @@ impl ChatToResponsesState {
     fn has_substantive_output(&self) -> bool {
         !self.text.text.trim().is_empty()
             || !self.reasoning.text.trim().is_empty()
-            || !self.inline_think.buffer.trim().is_empty()
+            || self.inline_think.has_pending_content()
             || !self.output_items.is_empty()
             || self.tools.values().any(|state| {
                 state.added
@@ -542,6 +468,10 @@ impl ChatToResponsesState {
         events.extend(self.finalize_text());
         events.extend(self.finalize_tools());
 
+        if self.tool_context.is_compaction_request() {
+            return self.finish_compaction(events);
+        }
+
         let status = response_status_from_finish_reason(self.finish_reason.as_deref());
 
         // 丢弃过工具调用、且最终一个工具调用都没剩下时，Codex 会收到一个
@@ -569,6 +499,37 @@ impl ChatToResponsesState {
             response["incomplete_details"] = json!({ "reason": "max_output_tokens" });
         }
 
+        events.push(sse::response_completed(&response));
+        self.completed = true;
+        events
+    }
+
+    /// Codex 远程压缩回合：在 completed 之前交回唯一一个 compaction 条目（见
+    /// `codex_compaction`）。截断、内容过滤等非正常结束或没有摘要正文时报可重试的错误，
+    /// 不能让 Codex 装上半截或空的摘要。
+    fn finish_compaction(&mut self, mut events: Vec<Bytes>) -> Vec<Bytes> {
+        if let Some(reason) =
+            codex_compaction::compaction_incomplete_reason(self.finish_reason.as_deref())
+        {
+            let mut response = self.base_response("incomplete", self.completed_output_items());
+            response["incomplete_details"] = json!({ "reason": reason });
+            events.push(sse::response_incomplete(&response));
+            self.completed = true;
+            return events;
+        }
+        let summary = codex_compaction::summary_from_output_items(&self.completed_output_items());
+        if summary.is_empty() {
+            events.push(self.failed_event(
+                "Upstream returned no summary text for the compaction turn".to_string(),
+                Some("compaction_summary_empty".to_string()),
+            ));
+            return events;
+        }
+        let item = codex_compaction::compaction_output_item(&summary);
+        let output_index = self.next_output_index();
+        events.push(sse::output_item_done(output_index, &item));
+        self.output_items.push((output_index, item));
+        let response = self.base_response("completed", self.completed_output_items());
         events.push(sse::response_completed(&response));
         self.completed = true;
         events
@@ -688,7 +649,7 @@ impl ChatToResponsesState {
             let output_index = state.output_index.unwrap_or(0);
             let arguments = canonicalize_tool_arguments_str(&state.arguments);
             let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&state.name);
-            let item = response_tool_call_item_from_chat_name(
+            let mut item = response_tool_call_item_from_chat_name(
                 &state.item_id,
                 "completed",
                 &state.call_id,
@@ -697,6 +658,9 @@ impl ChatToResponsesState {
                 Some(&state.reasoning_content),
                 &self.tool_context,
             );
+            if let (Some(extra), Some(obj)) = (&state.extra_content, item.as_object_mut()) {
+                obj.insert("extra_content".to_string(), extra.clone());
+            }
             state.done = true;
             self.output_items.push((output_index, item.clone()));
 
@@ -758,11 +722,23 @@ impl ChatToResponsesState {
     }
 
     fn failed_event(&mut self, message: String, error_type: Option<String>) -> Bytes {
-        self.completed = true;
         let mut error = json!({ "message": message });
         if let Some(error_type) = error_type.filter(|value| !value.is_empty()) {
             error["type"] = json!(error_type);
         }
+        self.failed_event_with_error(error)
+    }
+
+    fn failed_event_with_error(&mut self, mut error: Value) -> Bytes {
+        // Codex expects Option<String>; other JSON types would hide the upstream message.
+        if let Some(code) = error
+            .get_mut("code")
+            .filter(|code| !code.is_string() && !code.is_null())
+        {
+            *code = json!(code.to_string());
+        }
+
+        self.completed = true;
 
         let mut response = self.base_response("failed", self.completed_output_items());
         response["error"] = error;
@@ -773,29 +749,6 @@ impl ChatToResponsesState {
 
 fn chat_delta_reasoning_text(delta: &Value) -> Option<String> {
     extract_reasoning_field_text(delta)
-}
-
-enum ThinkPrefixDecision {
-    NeedMore,
-    Reasoning,
-    Text,
-}
-
-fn leading_think_prefix_decision(buffer: &str) -> ThinkPrefixDecision {
-    let trimmed = buffer.trim_start();
-    if trimmed.is_empty() {
-        return ThinkPrefixDecision::NeedMore;
-    }
-
-    if trimmed.starts_with("<think>") {
-        return ThinkPrefixDecision::Reasoning;
-    }
-
-    if "<think>".starts_with(trimmed) {
-        return ThinkPrefixDecision::NeedMore;
-    }
-
-    ThinkPrefixDecision::Text
 }
 
 /// Create a stream that converts Chat Completions SSE chunks into Responses SSE events.
@@ -850,7 +803,8 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
                             for event in state.finalize() {
                                 yield Ok(event);
                             }
-                            continue;
+                            // [DONE] is terminal, including failed/incomplete finalization.
+                            return;
                         }
 
                         let chunk: Value = match serde_json::from_str(&data) {
@@ -859,8 +813,8 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
                         };
 
                         if event_name.as_deref() == Some("error") || chunk.get("error").is_some() {
-                            let (message, error_type) = extract_chat_sse_error(&chunk);
-                            yield Ok(state.failed_event(message, error_type));
+                            let normalized = chat_error_to_response_error(Some(&chunk));
+                            yield Ok(state.failed_event_with_error(normalized["error"].clone()));
                             stream_failed = true;
                             break;
                         }
@@ -903,28 +857,6 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
             }
         }
     }
-}
-
-fn extract_chat_sse_error(value: &Value) -> (String, Option<String>) {
-    let error = value.get("error").unwrap_or(value);
-    let message = error
-        .as_str()
-        .map(ToString::to_string)
-        .or_else(|| {
-            error
-                .get("message")
-                .or_else(|| error.get("detail"))
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string)
-        })
-        .unwrap_or_else(|| error.to_string());
-    let error_type = error
-        .get("type")
-        .or_else(|| error.get("code"))
-        .and_then(|v| v.as_str())
-        .map(ToString::to_string);
-
-    (message, error_type)
 }
 
 #[cfg(test)]
@@ -1025,6 +957,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn converts_inline_thinking_tag_variant_to_reasoning() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_ds\",\"created\":123,\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"<thin\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ds\",\"created\":123,\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"king>tool call</thin\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_ds\",\"created\":123,\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"king>\\npong\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        let items = &completed["response"]["output"];
+
+        assert_eq!(items[0]["type"], "reasoning");
+        assert_eq!(items[0]["summary"][0]["text"], "tool call");
+        assert_eq!(items[1]["type"], "message");
+        assert_eq!(items[1]["content"][0]["text"], "pong");
+        assert!(!output.contains("thinking>"));
+    }
+
+    #[test]
+    fn inline_think_reasoning_is_emitted_before_the_close_tag_arrives() {
+        // 外层的静默超时量的是转换后的流：思考期间每个上游增量都必须有输出，
+        // 整段缓冲到闭合标签才下发会让长思考被判成上游卡死。
+        let chunk = |content: &str| {
+            json!({
+                "id": "chatcmpl_long_think",
+                "model": "MiniMax-M2.7",
+                "choices": [{"delta": {"content": content}}]
+            })
+        };
+        let mut state = ChatToResponsesState::default();
+        state.handle_chat_chunk(&chunk("<think>"));
+
+        for step in ["step one", " step two", " step three"] {
+            let output = String::from_utf8(state.handle_chat_chunk(&chunk(step)).concat()).unwrap();
+            let events = parse_sse_events(&output);
+            let delta = events
+                .last()
+                .unwrap_or_else(|| panic!("no output for {step:?}"));
+            assert_eq!(delta["type"], "response.reasoning_summary_text.delta");
+            assert_eq!(delta["delta"], step);
+        }
+
+        // 思考片段都落在同一个 reasoning item 里，正文开始时才收尾，且只收尾一次
+        let mut output = state.handle_chat_chunk(&chunk("</think>\n\npong"));
+        output.extend(state.finalize());
+        let output = String::from_utf8(output.concat()).unwrap();
+        let events = parse_sse_events(&output);
+        let reasoning_done: Vec<&Value> = events
+            .iter()
+            .filter(|event| {
+                event["type"] == "response.output_item.done" && event["item"]["type"] == "reasoning"
+            })
+            .collect();
+
+        assert_eq!(reasoning_done.len(), 1);
+        assert_eq!(
+            reasoning_done[0]["item"]["summary"][0]["text"],
+            "step one step two step three"
+        );
+        assert!(output.contains("\"text\":\"pong\""));
+    }
+
+    #[tokio::test]
     async fn converts_tool_call_chat_sse_to_responses_sse() {
         let output = collect(vec![
             "data: {\"id\":\"chatcmpl_2\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\"}}]}}]}\n\n",
@@ -1037,6 +1036,36 @@ mod tests {
         assert!(output.contains("event: response.function_call_arguments.done"));
         assert!(output.contains("\"type\":\"function_call\""));
         assert!(output.contains("\"call_id\":\"call_1\""));
+    }
+
+    #[tokio::test]
+    async fn keeps_gemini_tool_call_extra_content_on_done_item() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_gemini\",\"model\":\"gemini-4-argon\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"ls\\\"}\"},\"extra_content\":{\"google\":{\"thought_signature\":\"sig-abc\"}}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        let events = parse_sse_events(&output);
+        let done = events
+            .iter()
+            .find(|event| {
+                event["type"] == "response.output_item.done"
+                    && event["item"]["type"] == "function_call"
+            })
+            .unwrap();
+        assert_eq!(
+            done["item"]["extra_content"]["google"]["thought_signature"],
+            "sig-abc"
+        );
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        assert_eq!(
+            completed["response"]["output"][0]["extra_content"]["google"]["thought_signature"],
+            "sig-abc"
+        );
     }
 
     #[tokio::test]
@@ -1489,5 +1518,265 @@ mod tests {
         assert!(output.contains("quota exceeded"));
         assert!(output.contains("rate_limit_exceeded"));
         assert!(!output.contains("event: response.completed"));
+    }
+
+    #[tokio::test]
+    async fn gemini_sse_numeric_error_code_preserves_message() {
+        for prefix in ["", "event: error\n"] {
+            let chunk = format!(
+                "{prefix}data: {{\"error\":{{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\",\"message\":\"Quota exceeded for metric\"}}}}\n\n"
+            );
+            let output = collect(vec![&chunk, "data: [DONE]\n\n"]).await;
+            let events = parse_sse_events(&output);
+            let failed = events
+                .iter()
+                .find(|event| event["type"] == "response.failed")
+                .unwrap();
+
+            assert_eq!(failed["response"]["error"]["code"], "429");
+            assert_eq!(
+                failed["response"]["error"]["message"],
+                "Quota exceeded for metric"
+            );
+            assert!(!output.contains("event: response.completed"));
+        }
+    }
+
+    #[tokio::test]
+    async fn gemini_sse_overflow_preserves_the_code_codex_uses_for_compaction() {
+        let output = collect(vec![
+            "data: {\"error\":{\"code\":400,\"status\":\"INVALID_ARGUMENT\",\"message\":\"The input token count exceeds the maximum number of tokens allowed 1048576.\"}}\n\n",
+            "data: [DONE]\n\n",
+        ]).await;
+        let events = parse_sse_events(&output);
+        let failed = events
+            .iter()
+            .find(|event| event["type"] == "response.failed")
+            .unwrap();
+        assert_eq!(
+            failed["response"]["error"]["code"],
+            "context_length_exceeded"
+        );
+        assert!(!output.contains("event: response.completed"));
+    }
+
+    fn compaction_context() -> CodexToolContext {
+        super::super::transform_codex_chat::build_codex_tool_context_from_request(&json!({
+            "input": [
+                { "type": "message", "role": "user", "content": "hi" },
+                { "type": "compaction_trigger" }
+            ]
+        }))
+    }
+
+    #[tokio::test]
+    async fn compaction_turn_emits_exactly_one_compaction_item_before_completed() {
+        let output = collect_with_context(
+            vec![
+                "data: {\"id\":\"chatcmpl_c\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"reasoning_content\":\"think\"}}]}\n\n",
+                "data: {\"id\":\"chatcmpl_c\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"content\":\"Progress: done A.\"},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            compaction_context(),
+        )
+        .await;
+        let events = parse_sse_events(&output);
+        let compaction_items: Vec<&Value> = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.done")
+            .map(|event| &event["item"])
+            .filter(|item| item["type"] == "compaction")
+            .collect();
+        assert_eq!(compaction_items.len(), 1);
+        assert_eq!(
+            super::super::codex_compaction::decode_compaction_summary(
+                compaction_items[0]["encrypted_content"].as_str().unwrap()
+            )
+            .as_deref(),
+            Some("Progress: done A.")
+        );
+        let last = events.last().unwrap();
+        assert_eq!(last["type"], "response.completed");
+        assert_eq!(last["response"]["status"], "completed");
+        assert!(last["response"]["output"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["type"] == "compaction"));
+    }
+
+    #[tokio::test]
+    async fn truncated_or_empty_compaction_turn_is_reported_as_retryable() {
+        let truncated = collect_with_context(
+            vec![
+                "data: {\"id\":\"chatcmpl_c\",\"choices\":[{\"delta\":{\"content\":\"half\"},\"finish_reason\":\"length\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            compaction_context(),
+        )
+        .await;
+        assert!(truncated.contains("event: response.incomplete"));
+        assert!(!truncated.contains("event: response.completed"));
+        assert!(!truncated.contains("\"type\":\"compaction\""));
+
+        // 输出了半段摘要后被内容过滤截断：普通回合算完成，压缩回合必须报未完成，
+        // 否则 Codex 会拿半截摘要覆盖历史。
+        for reason in ["content_filter", "sensitive"] {
+            let filtered = collect_with_context(
+                vec![
+                    &format!("data: {{\"id\":\"chatcmpl_c\",\"choices\":[{{\"delta\":{{\"content\":\"Progress: half\"}},\"finish_reason\":\"{reason}\"}}]}}\n\n"),
+                    "data: [DONE]\n\n",
+                ],
+                compaction_context(),
+            )
+            .await;
+            let events = parse_sse_events(&filtered);
+            let last = events.last().unwrap();
+            assert_eq!(last["type"], "response.incomplete", "{reason}");
+            assert_eq!(
+                last["response"]["incomplete_details"]["reason"],
+                "content_filter"
+            );
+            assert!(!filtered.contains("\"type\":\"compaction\""), "{reason}");
+            assert!(!filtered.contains("event: response.completed"), "{reason}");
+        }
+
+        let empty = collect_with_context(
+            vec![
+                "data: {\"id\":\"chatcmpl_c\",\"choices\":[{\"delta\":{\"reasoning_content\":\"only thinking\"},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            compaction_context(),
+        )
+        .await;
+        assert!(empty.contains("event: response.failed"));
+        assert!(empty.contains("compaction_summary_empty"));
+        assert!(!empty.contains("event: response.completed"));
+    }
+
+    async fn terminal_boundary_output(prefix: String, tail: Option<&str>) -> String {
+        let mut chunks = vec![Ok(Bytes::from(prefix))];
+        match tail {
+            Some("transport") => chunks.push(Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                "late reset",
+            ))),
+            Some(data) => chunks.push(Ok(Bytes::from(data.to_owned()))),
+            None => {}
+        }
+        create_responses_sse_stream_from_chat(futures::stream::iter(chunks))
+            .map(|chunk| String::from_utf8(chunk.unwrap().to_vec()).unwrap())
+            .collect::<Vec<_>>()
+            .await
+            .concat()
+    }
+
+    #[tokio::test]
+    async fn done_preserves_terminal_result_against_late_input() {
+        for reason in ["stop", "length"] {
+            let prefix = format!(
+                "data: {{\"id\":\"fixed\",\"model\":\"test\",\"choices\":[{{\"delta\":{{\"content\":\"visible\"}},\"finish_reason\":\"{reason}\"}}]}}\n\n\
+                 data: {{\"choices\":[],\"usage\":{{\"prompt_tokens\":7,\"completion_tokens\":11}}}}\n\n\
+                 data: [DONE]\n\n"
+            );
+            let expected = terminal_boundary_output(prefix.clone(), None).await;
+            assert_eq!(expected.matches("event: response.completed\n").count(), 1);
+            assert!(expected.contains("\"output_tokens\":11"));
+            assert!(expected.contains("\"input_tokens\":7"));
+            for tail in [
+                "transport",
+                "data: [DONE]\n\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"late\"}}]}\n\n",
+                "event: error\ndata: {\"error\":{\"message\":\"late error\"}}\n\n",
+            ] {
+                let actual = terminal_boundary_output(prefix.clone(), Some(tail)).await;
+                assert_eq!(actual, expected, "{reason}, {tail}");
+                if tail != "transport" {
+                    let actual = terminal_boundary_output(format!("{prefix}{tail}"), None).await;
+                    assert_eq!(actual, expected, "same chunk: {reason}, {tail}");
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn finish_reason_without_done_still_reports_transport_error() {
+        let prefix = "data: {\"id\":\"fixed\",\"choices\":[{\"delta\":{\"content\":\"visible\"},\"finish_reason\":\"stop\"}]}\n\n";
+        let actual = terminal_boundary_output(prefix.to_owned(), Some("transport")).await;
+        assert_eq!(actual.matches("event: response.failed\n").count(), 1);
+        assert!(!actual.contains("event: response.completed\n"));
+    }
+
+    #[tokio::test]
+    async fn done_closes_without_waiting_for_upstream_eof() {
+        let upstream = futures::stream::once(async {
+            Ok::<_, std::io::Error>(Bytes::from_static(b"data: [DONE]\n\n"))
+        })
+        .chain(futures::stream::pending());
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            create_responses_sse_stream_from_chat(upstream).collect::<Vec<_>>(),
+        )
+        .await
+        .expect("a terminal response must not await another upstream chunk");
+    }
+
+    async fn terminal_special_output(compact: bool, prefix: &str, late: bool) -> String {
+        let context = super::super::transform_codex_chat::build_codex_tool_context_from_request(
+            &if compact {
+                json!({"input":[{"type":"compaction_trigger"}]})
+            } else {
+                json!({})
+            },
+        );
+        let mut input = vec![Ok(Bytes::from(prefix.to_owned()))];
+        if late {
+            input.push(Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                "late reset",
+            )));
+        }
+        create_responses_sse_stream_from_chat_with_context(stream::iter(input), context)
+            .map(|b| String::from_utf8(b.unwrap().to_vec()).unwrap())
+            .collect::<Vec<_>>()
+            .await
+            .concat()
+    }
+
+    #[tokio::test]
+    async fn incomplete_compaction_must_ignore_late_transport() {
+        let prefix = concat!(
+            "data: {\"id\":\"fixed\",\"choices\":[{",
+            "\"delta\":{\"content\":\"summary\"},\"finish_reason\":\"length\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let expected = terminal_special_output(true, prefix, false).await;
+        assert!(expected.contains("event: response.incomplete"));
+        assert_eq!(terminal_special_output(true, prefix, true).await, expected);
+    }
+
+    #[tokio::test]
+    async fn failed_compaction_must_ignore_late_transport() {
+        let prefix = concat!(
+            "data: {\"id\":\"fixed\",\"choices\":[{",
+            "\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let expected = terminal_special_output(true, prefix, false).await;
+        assert_eq!(expected.matches("event: response.failed").count(), 1);
+        assert_eq!(terminal_special_output(true, prefix, true).await, expected);
+    }
+
+    #[tokio::test]
+    async fn dropped_tool_failed_must_ignore_late_transport() {
+        let prefix = concat!(
+            "data: {\"id\":\"fixed\",\"choices\":[{\"delta\":{\"tool_calls\":[{",
+            "\"index\":0,\"id\":\"c\",\"type\":\"function\",",
+            "\"function\":{\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let expected = terminal_special_output(false, prefix, false).await;
+        assert_eq!(expected.matches("event: response.failed").count(), 1);
+        assert_eq!(terminal_special_output(false, prefix, true).await, expected);
     }
 }

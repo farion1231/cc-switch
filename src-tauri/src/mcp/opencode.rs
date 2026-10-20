@@ -26,9 +26,10 @@ use super::validation::validate_server_spec;
 // ============================================================================
 
 /// Check if OpenCode MCP sync should proceed
-fn should_sync_opencode_mcp() -> bool {
+fn should_sync_opencode_mcp() -> Result<bool, AppError> {
     // Skip if OpenCode config directory doesn't exist
-    opencode_config::get_opencode_dir().exists()
+    let dir = opencode_config::get_opencode_dir();
+    dir.try_exists().map_err(|e| AppError::io(&dir, e))
 }
 
 // ============================================================================
@@ -186,7 +187,7 @@ pub fn sync_single_server_to_opencode(
     id: &str,
     server_spec: &Value,
 ) -> Result<(), AppError> {
-    if !should_sync_opencode_mcp() {
+    if !should_sync_opencode_mcp()? {
         return Ok(());
     }
 
@@ -199,7 +200,7 @@ pub fn sync_single_server_to_opencode(
 
 /// Remove a single MCP server from OpenCode live config
 pub fn remove_server_from_opencode(id: &str) -> Result<(), AppError> {
-    if !should_sync_opencode_mcp() {
+    if !should_sync_opencode_mcp()? {
         return Ok(());
     }
 
@@ -262,6 +263,7 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
                         opencode: true,
                         hermes: false,
                         mcode: false,
+                        pi: false,
                     },
                     description: None,
                     homepage: None,
