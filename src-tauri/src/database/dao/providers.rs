@@ -856,11 +856,8 @@ impl Database {
             .map_err(|error| AppError::Database(format!("Invalid official seed: {error}")))?;
         let providers = self.get_all_providers(app_type.as_str())?;
         let is_native = |provider: &&Provider| {
-            provider.category.as_deref() == Some("official")
-                && provider.settings_config == settings_config
-                && provider.meta.as_ref().is_none_or(|meta| {
-                    serde_json::to_value(meta).is_ok_and(|value| value == serde_json::json!({}))
-                })
+            (provider.id == seed.id || !crate::database::is_official_seed_id(&provider.id))
+                && provider.is_unconfigured_official(&settings_config)
         };
         if let Some(provider) = providers.get(seed.id).filter(is_native).or_else(|| {
             providers
@@ -994,6 +991,27 @@ mod ensure_official_seed_tests {
                 .category,
             Some("custom".to_string())
         );
+    }
+
+    #[test]
+    fn ensure_official_provider_does_not_reuse_another_apps_builtin_entry() {
+        let db = Database::memory().unwrap();
+        let foreign = db.ensure_official_provider(AppType::Claude).unwrap();
+        db.save_provider("claude-desktop", &foreign).unwrap();
+        let native = db.ensure_official_provider(AppType::ClaudeDesktop).unwrap();
+        assert_eq!(native.id, CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID);
+        assert!(crate::claude_desktop_config::is_official_provider(&native));
+        let mut customized = native;
+        customized.settings_config["env"]["ANTHROPIC_API_KEY"] =
+            serde_json::json!("test-saved-key");
+        db.save_provider("claude-desktop", &customized).unwrap();
+        let replacement = db.ensure_official_provider(AppType::ClaudeDesktop).unwrap();
+        assert_ne!(replacement.id, foreign.id);
+        assert_ne!(replacement.id, customized.id);
+        assert!(crate::claude_desktop_config::is_official_provider(
+            &replacement
+        ));
+        assert_eq!(db.get_all_providers("claude-desktop").unwrap().len(), 3);
     }
 
     #[test]

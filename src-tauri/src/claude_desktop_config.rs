@@ -308,6 +308,8 @@ pub fn is_compatible_direct_provider(provider: &Provider) -> bool {
 
 pub fn is_official_provider(provider: &Provider) -> bool {
     provider.id == CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID
+        || (!crate::database::is_official_seed_id(&provider.id)
+            && provider.is_unconfigured_official(&json!({"env": {}})))
 }
 
 /// 这张卡在直连模式下写不进去，要经本地路由：模型映射卡（上游模型名 Desktop 不认）、托管
@@ -2769,6 +2771,25 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn claude_desktop_clean_replacement_is_official_but_custom_cards_are_not() {
+        let mut native = official_provider();
+        native.id = "replacement-uuid".to_string();
+        native.meta = Some(ProviderMeta::default());
+        assert!(is_official_provider(&native));
+        assert!(direct_target(Some(&native)).unwrap().is_none());
+        assert!(!needs_routing(&native));
+        let mut custom = native.clone();
+        custom.settings_config["env"]["ANTHROPIC_API_KEY"] = json!("test-key");
+        assert!(!is_official_provider(&custom));
+        custom = native.clone();
+        custom.meta.as_mut().unwrap().provider_type = Some("codex_oauth".to_string());
+        assert!(!is_official_provider(&custom));
+        custom = native;
+        custom.category = Some("custom".to_string());
+        assert!(!is_official_provider(&custom));
     }
 
     #[test]

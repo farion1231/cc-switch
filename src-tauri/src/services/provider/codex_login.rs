@@ -20,9 +20,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::codex_config::{
-    codex_auth_has_credential_login_material, codex_auth_has_login_material,
-    codex_auth_has_openai_account_material, codex_live_auth_is_stale_third_party_residue,
-    extract_codex_auth_api_key, extract_codex_auth_user_identity,
+    codex_auth_has_chatgpt_login_material, codex_auth_has_credential_login_material,
+    codex_auth_has_login_material, codex_auth_has_openai_account_material,
+    codex_live_auth_is_stale_third_party_residue, extract_codex_auth_api_key,
+    extract_codex_auth_user_identity,
 };
 
 pub(crate) const STASH_FILENAME: &str = "codex-login-stash.json";
@@ -278,7 +279,7 @@ pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
             official(row_auth, native, managed || residue, &mut stash)
         }
         AuthTarget::NativeOfficial => {
-            if native.is_some_and(codex_auth_has_credential_login_material) {
+            if native.is_some_and(codex_auth_has_chatgpt_login_material) {
                 None
             } else {
                 // API-key logins remain available for ordinary official-card
@@ -290,14 +291,14 @@ pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
                         stash
                             .logins
                             .get(*id)
-                            .is_some_and(codex_auth_has_credential_login_material)
+                            .is_some_and(codex_auth_has_chatgpt_login_material)
                     })
                     .cloned()
                     .or_else(|| {
                         let mut candidates = stash
                             .logins
                             .iter()
-                            .filter(|(_, auth)| codex_auth_has_credential_login_material(auth));
+                            .filter(|(_, auth)| codex_auth_has_chatgpt_login_material(auth));
                         let (id, _) = candidates.next()?;
                         // Without a most-recent subscription, do not choose
                         // arbitrarily between several saved accounts.
@@ -415,6 +416,38 @@ mod tests {
             version: STASH_VERSION,
             initialized: true,
             ..LoginStash::default()
+        }
+    }
+
+    #[test]
+    fn native_official_never_keeps_or_restores_non_chatgpt_first_class_logins() {
+        for auth in [
+            json!({"auth_mode": "bedrockApiKey", "bedrock_api_key": "test-bedrock"}),
+            json!({"auth_mode": "personalAccessToken", "personal_access_token": "test-pat"}),
+            json!({"auth_mode": "agentIdentity", "agent_identity": {"token": "test-agent"}}),
+            json!({"auth_mode": "apikey", "OPENAI_API_KEY": "test-key", "tokens": login("stale")["tokens"]}),
+        ] {
+            let cleared = plan(input(Some(&auth), AuthTarget::NativeOfficial, ready()));
+            assert_eq!(cleared.auth, Some(None));
+            let stash = cleared.stash.unwrap();
+            assert!(stash.logins.values().any(|saved| saved == &auth));
+            assert_eq!(
+                plan(input(None, AuthTarget::NativeOfficial, stash)).auth,
+                None
+            );
+
+            let alice = login("alice");
+            let mut stash = ready();
+            stash.put(&alice);
+            stash.put(&auth);
+            let restored = plan(input(Some(&auth), AuthTarget::NativeOfficial, stash));
+            assert_eq!(restored.auth, Some(Some(alice)));
+            assert!(restored
+                .stash
+                .unwrap()
+                .logins
+                .values()
+                .any(|saved| saved == &auth));
         }
     }
 

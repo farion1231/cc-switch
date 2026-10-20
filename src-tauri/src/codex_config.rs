@@ -1117,6 +1117,18 @@ pub fn codex_auth_has_openai_account_material(auth: &Value) -> bool {
     }
 }
 
+/// Native subscription login, respecting Codex's explicit/implicit auth-mode
+/// precedence. Other first-class carriers and API keys are not ChatGPT logins,
+/// even when stale OAuth tokens are stored alongside them.
+pub(crate) fn codex_auth_has_chatgpt_login_material(auth: &Value) -> bool {
+    auth.as_object().is_some_and(|obj| {
+        matches!(
+            codex_auth_resolved_mode(obj),
+            CodexResolvedAuthMode::Chatgpt | CodexResolvedAuthMode::ChatgptAuthTokens
+        ) && codex_auth_has_openai_account_material(auth)
+    })
+}
+
 /// Where Codex keeps CLI auth, per the top-level `cli_auth_credentials_store`
 /// key (`codex-rs/config/src/types.rs`, serde lowercase; unset = `file`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1142,13 +1154,12 @@ pub(crate) fn codex_config_auth_store_mode(config_text: &str) -> CodexAuthStoreM
     };
     match doc
         .get("cli_auth_credentials_store")
-        .and_then(|item| item.as_str())
+        .map(|item| item.as_str())
     {
-        None => CodexAuthStoreMode::File,
-        Some("file") => CodexAuthStoreMode::File,
-        Some("keyring") => CodexAuthStoreMode::Keyring,
-        Some("auto") => CodexAuthStoreMode::Auto,
-        Some("ephemeral") => CodexAuthStoreMode::Ephemeral,
+        None | Some(Some("file")) => CodexAuthStoreMode::File,
+        Some(Some("keyring")) => CodexAuthStoreMode::Keyring,
+        Some(Some("auto")) => CodexAuthStoreMode::Auto,
+        Some(Some("ephemeral")) => CodexAuthStoreMode::Ephemeral,
         Some(_) => CodexAuthStoreMode::Unknown,
     }
 }
@@ -3611,6 +3622,47 @@ base_url = "https://single.example.com/v1"
             .expect("remove proven managed live auth");
         assert!(!get_codex_auth_path().exists());
         assert!(!get_codex_managed_oauth_live_auth_marker_path().exists());
+    }
+
+    #[test]
+    fn chatgpt_login_material_excludes_other_modes_even_with_stale_tokens() {
+        let tokens = json!({"access_token": "test-access", "refresh_token": "test-refresh"});
+        for mode in [None, Some("chatgpt"), Some("chatgptAuthTokens")] {
+            let mut auth = json!({"tokens": tokens, "OPENAI_API_KEY": null});
+            if let Some(mode) = mode {
+                auth["auth_mode"] = json!(mode);
+            }
+            assert!(codex_auth_has_chatgpt_login_material(&auth), "{mode:?}");
+        }
+        for mode in [
+            "apikey",
+            "bedrockApiKey",
+            "bedrockAccessKeys",
+            "personalAccessToken",
+            "agentIdentity",
+            "headers",
+            "unknown",
+        ] {
+            let auth = json!({"auth_mode": mode, "tokens": tokens, "OPENAI_API_KEY": "test-key"});
+            assert!(!codex_auth_has_chatgpt_login_material(&auth), "{mode}");
+        }
+        for carrier in [
+            "OPENAI_API_KEY",
+            "personal_access_token",
+            "bedrock_api_key",
+            "bedrock_access_keys",
+        ] {
+            let mut auth = json!({"tokens": tokens});
+            auth[carrier] = json!("test-credential");
+            assert!(!codex_auth_has_chatgpt_login_material(&auth), "{carrier}");
+        }
+        for auth in [
+            json!({"auth_mode": "chatgpt", "personal_access_token": "test-pat"}),
+            json!({"auth_mode": "chatgpt", "tokens": {"account_id": "metadata-only"}}),
+            json!({"auth_mode": "chatgpt", "tokens": {"access_token": " "}}),
+        ] {
+            assert!(!codex_auth_has_chatgpt_login_material(&auth));
+        }
     }
 
     #[test]

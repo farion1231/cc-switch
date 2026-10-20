@@ -2950,6 +2950,276 @@ mod mode_tests {
 
     #[tokio::test]
     #[serial]
+    async fn use_official_keychain_subscription_preserves_ignored_auth_and_stash() {
+        for storage in ["keyring", "auto"] {
+            for proxy in [None, Some(false), Some(true)] {
+                let _home = Home::new();
+                let fake = fake_models(
+                    vec![],
+                    CodexKeychainLogin::Found(chatgpt_login("keychain-native")),
+                    None,
+                );
+                let config =
+                    format!("cli_auth_credentials_store = \"{storage}\"\n{CODEX_USER_LIVE}");
+                seed_codex(&config, None);
+                let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+                if let Some(stack) = proxy {
+                    enter(&state, &AppType::Codex, stack).await.unwrap();
+                }
+                let auth_path = crate::codex_config::get_codex_auth_path();
+                let stash_path = DeviceStore::for_device().file("codex-login-stash.json");
+                fs::write(&auth_path, b"ignored malformed auth").unwrap();
+                fs::write(&stash_path, b"untouched malformed file stash").unwrap();
+
+                use_official_provider(&state, &AppType::Codex)
+                    .await
+                    .unwrap();
+                assert_eq!(fs::read(&auth_path).unwrap(), b"ignored malformed auth");
+                assert_eq!(
+                    fs::read(&stash_path).unwrap(),
+                    b"untouched malformed file stash"
+                );
+                assert_eq!(
+                    codex_doc()["cli_auth_credentials_store"].as_str(),
+                    Some(storage)
+                );
+                assert!(codex_doc().get("model_provider").is_none());
+                assert_eq!(
+                    app_mode_view(&state, &AppType::Codex).unwrap().mode,
+                    "direct"
+                );
+                assert_eq!(
+                    direct_provider_id(&state, &AppType::Codex)
+                        .unwrap()
+                        .as_deref(),
+                    Some("codex-official")
+                );
+                assert_eq!(
+                    fake.keychain_reads
+                        .load(std::sync::atomic::Ordering::SeqCst),
+                    1
+                );
+                assert!(
+                    fake.calls.lock().unwrap().is_empty(),
+                    "no Codex process or model fetch"
+                );
+                use_official_provider(&state, &AppType::Codex)
+                    .await
+                    .unwrap();
+                assert_eq!(fs::read(&auth_path).unwrap(), b"ignored malformed auth");
+                assert_eq!(
+                    fs::read(&stash_path).unwrap(),
+                    b"untouched malformed file stash"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn use_official_unverified_credential_stores_leave_mode_pointer_and_files_unchanged() {
+        for (storage, keychain) in [
+            ("keyring", CodexKeychainLogin::Missing),
+            ("keyring", CodexKeychainLogin::Unknown),
+            (
+                "keyring",
+                CodexKeychainLogin::Found(json!({"OPENAI_API_KEY": "test-keyring-key"})),
+            ),
+            ("auto", CodexKeychainLogin::Unknown),
+            (
+                "auto",
+                CodexKeychainLogin::Found(json!({"OPENAI_API_KEY": "test-keyring-key"})),
+            ),
+            ("ephemeral", CodexKeychainLogin::Missing),
+            ("unsupported", CodexKeychainLogin::Missing),
+        ] {
+            let _home = Home::new();
+            let _fake = fake_models(vec![], keychain, None);
+            let config = format!("cli_auth_credentials_store = \"{storage}\"\n{CODEX_USER_LIVE}");
+            let login = chatgpt_login("file-native");
+            seed_codex(&config, Some(&login));
+            let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+            enter(&state, &AppType::Codex, false).await.unwrap();
+            let stash_path = DeviceStore::for_device().file("codex-login-stash.json");
+            let stash =
+                serde_json::to_vec(&json!({"version":1,"logins":{"native":login},"last":"native"}))
+                    .unwrap();
+            fs::write(&stash_path, &stash).unwrap();
+            let before_config = codex_text();
+            let before_auth = fs::read(crate::codex_config::get_codex_auth_path()).unwrap();
+            let before_mode = mode(&AppType::Codex);
+
+            let error = use_official_provider(&state, &AppType::Codex)
+                .await
+                .unwrap_err();
+            assert!(error.contains("ChatGPT"));
+            assert_eq!(mode(&AppType::Codex), before_mode);
+            assert_eq!(
+                direct_provider_id(&state, &AppType::Codex)
+                    .unwrap()
+                    .as_deref(),
+                Some("a")
+            );
+            assert_eq!(codex_text(), before_config);
+            assert_eq!(
+                fs::read(crate::codex_config::get_codex_auth_path()).unwrap(),
+                before_auth
+            );
+            assert_eq!(fs::read(&stash_path).unwrap(), stash);
+            assert!(state.proxy_service.is_running().await);
+            exit(&state, &AppType::Codex).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn use_official_store_change_during_keychain_inspection_requires_retry() {
+        let _home = Home::new();
+        let _fake = fake_models(vec![], CodexKeychainLogin::Missing, None);
+        let login = chatgpt_login("file-native");
+        let before = format!("cli_auth_credentials_store = \"auto\"\n{CODEX_USER_LIVE}");
+        seed_codex(&before, Some(&login));
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        let config_path = crate::codex_config::get_codex_config_path();
+        let changed = before.replace("\"auto\"", "\"file\"");
+        let written = changed.clone();
+        official_models::set_test_env(official_models::Env {
+            codex_version: Box::new(|| panic!("must not launch Codex")),
+            fetch: Box::new(|_, _, _| panic!("must not fetch models")),
+            bundled: Box::new(|| panic!("must not launch Codex")),
+            keychain: Box::new(move || {
+                fs::write(&config_path, &written).unwrap();
+                CodexKeychainLogin::Found(chatgpt_login("keychain-native"))
+            }),
+            now: Box::new(|| NOW),
+        });
+        let error = use_official_provider(&state, &AppType::Codex)
+            .await
+            .unwrap_err();
+        assert!(error.contains("retry") || error.contains("重试"));
+        assert_eq!(codex_text(), changed, "preserve the concurrent edit");
+        assert_eq!(codex_login_file(), Some(login));
+        assert_eq!(
+            direct_provider_id(&state, &AppType::Codex)
+                .unwrap()
+                .as_deref(),
+            Some("a")
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn use_official_file_fallback_restores_chatgpt_instead_of_other_first_class_credentials()
+    {
+        for storage in ["file", "auto"] {
+            for credential in [
+                json!({"auth_mode":"bedrockApiKey", "bedrock_api_key":"test-bedrock"}),
+                json!({"auth_mode":"personalAccessToken", "personal_access_token":"test-pat"}),
+                json!({"auth_mode":"agentIdentity", "agent_identity":{"token":"test-agent"}}),
+            ] {
+                let _home = Home::new();
+                let fake = fake_models(vec![], CodexKeychainLogin::Missing, None);
+                set_preservation(false);
+                let login = chatgpt_login("file-native");
+                seed_codex(
+                    &format!("cli_auth_credentials_store = \"{storage}\"\n{CODEX_USER_LIVE}"),
+                    Some(&login),
+                );
+                let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+                ProviderService::switch(&state, AppType::Codex, "a").unwrap();
+                fs::write(
+                    crate::codex_config::get_codex_auth_path(),
+                    serde_json::to_vec(&credential).unwrap(),
+                )
+                .unwrap();
+                use_official_provider(&state, &AppType::Codex)
+                    .await
+                    .unwrap();
+                assert_eq!(codex_login_file(), Some(login));
+                let stash: Value = serde_json::from_slice(
+                    &fs::read(DeviceStore::for_device().file("codex-login-stash.json")).unwrap(),
+                )
+                .unwrap();
+                assert!(stash["logins"]
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .any(|auth| auth == &credential));
+                assert_eq!(
+                    fake.keychain_reads
+                        .load(std::sync::atomic::Ordering::SeqCst),
+                    usize::from(storage == "auto")
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn use_official_desktop_replacement_restores_native_mode_and_remains_switchable() {
+        for customized_settings in [false, true] {
+            let home = Home::new();
+            let _dirs = DesktopDirs::under(&home);
+            let app = AppType::ClaudeDesktop;
+            let state = state_with(app.clone(), &[desktop_card("a", false)], "a").await;
+            let mut saved = state.db.ensure_official_provider(app.clone()).unwrap();
+            if customized_settings {
+                saved.settings_config["env"]["ANTHROPIC_API_KEY"] = json!("test-saved-key");
+            } else {
+                saved.meta = Some(crate::provider::ProviderMeta {
+                    common_config_enabled: Some(false),
+                    ..Default::default()
+                });
+            }
+            state.db.save_provider(app.as_str(), &saved).unwrap();
+            let before = serde_json::to_value(
+                state
+                    .db
+                    .get_provider_by_id(&saved.id, app.as_str())
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
+            enter(&state, &app, false).await.unwrap();
+            use_official_provider(&state, &app).await.unwrap();
+            let id = direct_provider_id(&state, &app).unwrap().unwrap();
+            assert_ne!(id, saved.id);
+            let native = state
+                .db
+                .get_provider_by_id(&id, app.as_str())
+                .unwrap()
+                .unwrap();
+            assert!(crate::claude_desktop_config::is_official_provider(&native));
+            assert!(crate::claude_desktop_config::get_status(&state.db, false)
+                .unwrap()
+                .mode
+                .is_none());
+            assert!(desktop_profile().get("inferenceProvider").is_none());
+            assert_eq!(
+                serde_json::to_value(
+                    state
+                        .db
+                        .get_provider_by_id(&saved.id, app.as_str())
+                        .unwrap()
+                        .unwrap()
+                )
+                .unwrap(),
+                before
+            );
+            let count = state.db.get_all_providers(app.as_str()).unwrap().len();
+            use_official_provider(&state, &app).await.unwrap();
+            assert_eq!(
+                state.db.get_all_providers(app.as_str()).unwrap().len(),
+                count
+            );
+            ProviderService::switch(&state, app.clone(), "a").unwrap();
+            ProviderService::switch(&state, app.clone(), &id).unwrap();
+            assert!(desktop_profile().get("inferenceProvider").is_none());
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn use_official_restores_desktop_without_stopping_other_app_routes() {
         let home = Home::new();
         let _dirs = DesktopDirs::under(&home);

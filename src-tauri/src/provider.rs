@@ -44,6 +44,15 @@ pub struct Provider {
 }
 
 impl Provider {
+    /// A clean native official entry, as opposed to a customized official card.
+    pub(crate) fn is_unconfigured_official(&self, settings: &Value) -> bool {
+        self.category.as_deref() == Some("official")
+            && self.settings_config == *settings
+            && self.meta.as_ref().is_none_or(|meta| {
+                serde_json::to_value(meta).is_ok_and(|value| value == serde_json::json!({}))
+            })
+    }
+
     /// 从现有ID创建供应商
     pub fn with_id(
         id: String,

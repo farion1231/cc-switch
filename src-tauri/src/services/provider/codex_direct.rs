@@ -23,11 +23,12 @@ use crate::codex_config::{
     CodexCatalogRow, CodexStackCatalogMember, CodexStackRoute,
 };
 use crate::codex_config::{
-    codex_auth_has_credential_login_material, codex_config_auth_store_mode,
-    codex_disables_web_search, codex_live_auth_is_managed_chatgpt_login,
-    codex_managed_oauth_marker_bytes, extract_codex_auth_api_key, get_codex_auth_path,
-    get_codex_config_path, get_codex_managed_oauth_live_auth_marker_path,
-    get_codex_model_catalog_path, plan_codex_model_catalog, CodexAuthStoreMode,
+    codex_auth_has_chatgpt_login_material, codex_auth_has_credential_login_material,
+    codex_config_auth_store_mode, codex_disables_web_search,
+    codex_live_auth_is_managed_chatgpt_login, codex_managed_oauth_marker_bytes,
+    extract_codex_auth_api_key, get_codex_auth_path, get_codex_config_path,
+    get_codex_managed_oauth_live_auth_marker_path, get_codex_model_catalog_path,
+    plan_codex_model_catalog, CodexAuthStoreMode,
 };
 use crate::config::sorted_json_bytes;
 use crate::database::Database;
@@ -1103,6 +1104,30 @@ fn guarded(pre: Option<&[u8]>, then: WholeFile) -> Guarded {
     }
 }
 
+/// Whether native official login comes from the keychain rather than the file.
+/// Read-only: unsupported/unverifiable stores fail before any client writes.
+fn native_official_uses_keychain(
+    mode: CodexAuthStoreMode,
+    keychain: impl FnOnce() -> CodexKeychainLogin,
+) -> Result<bool, AppError> {
+    match mode {
+        CodexAuthStoreMode::File => return Ok(false),
+        CodexAuthStoreMode::Keyring | CodexAuthStoreMode::Auto => match keychain() {
+            CodexKeychainLogin::Found(auth) if codex_auth_has_chatgpt_login_material(&auth) => {
+                return Ok(true)
+            }
+            CodexKeychainLogin::Missing if mode == CodexAuthStoreMode::Auto => return Ok(false),
+            _ => {}
+        },
+        CodexAuthStoreMode::Ephemeral | CodexAuthStoreMode::Unknown => {}
+    }
+    Err(AppError::localized(
+        "codex.native_store_requires_chatgpt",
+        "无法确认 Codex 凭据存储中的 ChatGPT 登录。请在客户端登录 ChatGPT 后重试；若钥匙串不可读，请手动改用 file 存储并重新登录。本次未修改客户端配置或登录。",
+        "Cannot verify a ChatGPT login in the configured Codex credential store. Sign in to ChatGPT in the client and retry; if the keyring is unreadable, explicitly use file storage and sign in again. No client configuration or login was changed.",
+    ))
+}
+
 /// 执行一次 Codex 写入：拿写锁，决定 `auth.json` 的去向，和 `config.toml`、模型目录、
 /// 托管账号标记、登录暂存一起提交，最后落定 `pending`（指针、模式状态）。
 pub(crate) fn run(
@@ -1124,10 +1149,33 @@ pub(crate) fn run_with_edits(
     pending: PendingTarget,
     edits: Option<&super::editor_toml::TomlEdits>,
 ) -> Result<OperationReport, AppError> {
+    // Keychain reads may prompt on macOS. Do them before taking the file write
+    // lock, and never write to the OS credential store. Auto only falls back to
+    // auth.json when the keychain is known to be missing, not when unreadable.
+    let native_store = if op == op::USE_OFFICIAL && matches!(planned.auth, AuthGoal::Official(_)) {
+        let mode = codex_config_auth_store_mode(
+            &crate::codex_config::read_and_validate_codex_config_text()?,
+        );
+        Some((
+            mode,
+            native_official_uses_keychain(mode, codex_official_models::keychain_login)?,
+        ))
+    } else {
+        None
+    };
     // 先补完上一次的操作，再读 auth.json 和登录暂存：补完会改写它们，按补完前读到的内容
     // 写下去会被当成外部修改；`owner` 也是调用方按补完前的指针定的。
     let write = AppWrite::begin(db, app())?;
     let store = &write.store;
+    let config_text = read_config_text();
+    if native_store.is_some_and(|(mode, _)| mode != codex_config_auth_store_mode(&config_text)) {
+        return Err(AppError::localized(
+            "codex.native_store_changed",
+            "Codex 凭据存储配置在操作期间发生变化。本次未写入客户端文件，请重试。",
+            "The Codex credential store configuration changed during this operation. No client files were written; please retry.",
+        ));
+    }
+    let keychain_native = native_store.is_some_and(|(_, keychain)| keychain);
 
     // 切走的托管账号：采纳之后 CLI 又刷新了就停下，免得删掉新 token。
     if let Some((account, outgoing)) = &prepared.outgoing {
@@ -1136,7 +1184,11 @@ pub(crate) fn run_with_edits(
 
     // auth.json 读不了（比如被换成了目录）：不碰它，其余照常写。
     let auth_path = get_codex_auth_path();
-    let (auth_pre, auth_readable) = match read_current(&auth_path) {
+    let (auth_pre, auth_readable) = match if keychain_native {
+        Ok(None)
+    } else {
+        read_current(&auth_path)
+    } {
         Ok(pre) => (pre, true),
         Err(error) if op == op::USE_OFFICIAL => return Err(error.into()),
         Err(err) => {
@@ -1162,21 +1214,38 @@ pub(crate) fn run_with_edits(
         .as_ref()
         .is_some_and(|(_, guard)| matches!(guard, CodexLiveAuthSwitchGuard::MissingAccount));
 
-    let LoadedStash {
-        stash,
-        pre: stash_pre,
-        unreadable: stash_unreadable,
-    } = load_stash(store, &planned.official_logins, live_auth.as_ref());
     let preserve = preserve_login(op);
-    let auth_plan = codex_login::plan(AuthInput {
-        live: live_auth.as_ref(),
-        live_is_managed,
-        third_party_keys: &planned.retired_keys,
-        leaving_official: planned.leaving_official.as_ref(),
-        target: auth_target(&planned.auth, op),
-        stash,
-    });
-    let config_text = read_config_text();
+    let (auth_plan, stash_pre, stash_unreadable) = if keychain_native {
+        // The active subscription is in the keychain: preserve both the ignored
+        // auth.json and the file-login stash byte-for-byte, including logout state.
+        (
+            AuthPlan {
+                auth: None,
+                stash: None,
+                login_on_disk: false,
+            },
+            None,
+            None,
+        )
+    } else {
+        let LoadedStash {
+            stash,
+            pre,
+            unreadable,
+        } = load_stash(store, &planned.official_logins, live_auth.as_ref());
+        (
+            codex_login::plan(AuthInput {
+                live: live_auth.as_ref(),
+                live_is_managed,
+                third_party_keys: &planned.retired_keys,
+                leaving_official: planned.leaving_official.as_ref(),
+                target: auth_target(&planned.auth, op),
+                stash,
+            }),
+            pre,
+            unreadable,
+        )
+    };
     // 目录里的官方行是按拿锁前预测的登录取的：实际的目标登录换了人（Codex 恰好重新登录、
     // settle 补完了上一次操作），就停下，什么都不写。不能换成别的来源：目录已经算进契约。
     // 钥匙串用取完官方行后读到的那次（见 `prepare_official_rows`），不在锁里读。
@@ -1341,8 +1410,66 @@ pub(crate) fn preflight(db: &Database, provider: &Provider) -> Result<(), AppErr
 
 #[cfg(test)]
 mod tests {
-    use super::{is_proxy_base_url, stack_subagent_nested};
+    use super::{is_proxy_base_url, native_official_uses_keychain, stack_subagent_nested};
+    use crate::codex_config::CodexAuthStoreMode;
+    use crate::services::subscription::CodexKeychainLogin;
     use serde_json::json;
+
+    #[test]
+    fn native_official_store_only_uses_verified_chatgpt_or_known_file_fallback() {
+        for config in [
+            "cli_auth_credentials_store = true",
+            "cli_auth_credentials_store = 1",
+        ] {
+            assert!(native_official_uses_keychain(
+                crate::codex_config::codex_config_auth_store_mode(config),
+                || panic!("invalid store must not read keychain")
+            )
+            .is_err());
+        }
+        assert!(
+            !native_official_uses_keychain(CodexAuthStoreMode::File, || panic!(
+                "file mode must not read keychain"
+            ))
+            .unwrap()
+        );
+        for mode in [CodexAuthStoreMode::Ephemeral, CodexAuthStoreMode::Unknown] {
+            assert!(native_official_uses_keychain(mode, || panic!(
+                "no persistent keychain to inspect"
+            ))
+            .is_err());
+        }
+        for mode in [CodexAuthStoreMode::Keyring, CodexAuthStoreMode::Auto] {
+            let chatgpt =
+                json!({"auth_mode": "chatgpt", "tokens": {"access_token": "test-access"}});
+            assert!(
+                native_official_uses_keychain(mode, || CodexKeychainLogin::Found(chatgpt)).unwrap()
+            );
+            for auth in [
+                json!({"OPENAI_API_KEY": "test-key"}),
+                json!({"auth_mode": "personalAccessToken", "personal_access_token": "test-pat"}),
+                json!({"auth_mode": "chatgpt", "tokens": {"account_id": "metadata-only"}}),
+            ] {
+                assert!(
+                    native_official_uses_keychain(mode, || CodexKeychainLogin::Found(auth))
+                        .is_err()
+                );
+            }
+            assert!(native_official_uses_keychain(mode, || CodexKeychainLogin::Unknown).is_err());
+        }
+        assert!(
+            native_official_uses_keychain(CodexAuthStoreMode::Keyring, || {
+                CodexKeychainLogin::Missing
+            })
+            .is_err()
+        );
+        assert!(
+            !native_official_uses_keychain(CodexAuthStoreMode::Auto, || {
+                CodexKeychainLogin::Missing
+            })
+            .unwrap()
+        );
+    }
 
     /// 子代理设置按合并目录校验：不在目录里、或者父 agent 用新版工具时会拒收的
     /// （`multi_agent_version = "disabled"`）都不写；强度不在档位里只写模型。
