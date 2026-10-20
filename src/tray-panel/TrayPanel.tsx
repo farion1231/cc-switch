@@ -97,14 +97,42 @@ function clamp(value: number, min: number, max: number) {
 
 // ─── 额度 ────────────────────────────────────────────────────────────────────
 
-/** 重置时间写短：今天只写时刻，其余写月/日 + 时刻；已经过了的不写。 */
-function formatResetTime(iso: string, now: Date): string | null {
+/**
+ * 还有多久重置，写短：最多两级（天+小时、小时+分、分），零的那级不写；
+ * 不足一分钟按一分钟算，已经过了的不写。
+ */
+export function formatResetIn(
+  iso: string,
+  now: Date,
+  texts: PanelTexts,
+): string | null {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime()) || at <= now) return null;
-  const time = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
-  return at.toDateString() === now.toDateString()
-    ? time
-    : `${at.getMonth() + 1}/${at.getDate()} ${time}`;
+  const totalMinutes = Math.max(
+    1,
+    Math.floor((at.getTime() - now.getTime()) / 60_000),
+  );
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  const unit = (template: string, n: number) =>
+    template.replace("{n}", String(n));
+  const parts =
+    days > 0
+      ? [
+          unit(texts.durationDays, days),
+          hours > 0 && unit(texts.durationHours, hours),
+        ]
+      : hours > 0
+        ? [
+            unit(texts.durationHours, hours),
+            minutes > 0 && unit(texts.durationMinutes, minutes),
+          ]
+        : [unit(texts.durationMinutes, minutes)];
+  return texts.resetsIn.replace(
+    "{when}",
+    parts.filter(Boolean).join(texts.durationSep),
+  );
 }
 
 function QuotaBlock({
@@ -121,22 +149,38 @@ function QuotaBlock({
     return null;
   }
   const now = new Date();
+  const lines = quota.lines.slice(0, compact ? 2 : 3).map((line) => ({
+    ...line,
+    when: line.resetsAt ? formatResetIn(line.resetsAt, now, texts) : null,
+  }));
+  // 各档共用一张网格（文字 | 进度条 | 多久重置），进度条的起止才对得齐；
+  // 整块都没有重置时间时不留第三列，免得右边空出一截间距。
+  const hasWhen = lines.some((line) => line.when);
   return (
-    <div className={cn("flex flex-col gap-1", compact ? "mt-1" : "mt-1.5")}>
-      {quota.lines.slice(0, compact ? 2 : 3).map((line, index) => {
-        const when = line.resetsAt ? formatResetTime(line.resetsAt, now) : null;
+    <div
+      className={cn(
+        "grid items-center gap-x-2 gap-y-1",
+        hasWhen
+          ? "grid-cols-[auto_minmax(1.5rem,1fr)_auto]"
+          : "grid-cols-[auto_minmax(1.5rem,1fr)]",
+        compact ? "mt-1" : "mt-1.5",
+      )}
+    >
+      {lines.map((line, index) => {
         return (
-          <div key={index} className="flex items-center gap-2">
+          <div key={index} className="contents">
             <span
               className={cn(
-                "shrink-0 text-[11px] tabular-nums",
+                "whitespace-nowrap text-[11px] tabular-nums",
                 line.warn ? "text-amber-500" : "text-muted-foreground",
               )}
             >
               {line.text}
             </span>
-            {line.left != null && (
-              <span className="h-1 min-w-6 flex-1 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+            {line.left == null ? (
+              <span />
+            ) : (
+              <span className="h-1 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
                 <span
                   className={cn(
                     "block h-full rounded-full",
@@ -150,21 +194,23 @@ function QuotaBlock({
                 />
               </span>
             )}
-            {when && (
-              <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground">
-                {texts.resetsAt.replace("{when}", when)}
+            {hasWhen && (
+              <span className="justify-self-end whitespace-nowrap text-[10.5px] tabular-nums text-muted-foreground">
+                {line.when}
               </span>
             )}
           </div>
         );
       })}
       {quota.resetCredits != null && quota.resetCredits > 0 && (
-        <span className="text-[11px] text-muted-foreground">
+        <span className="col-span-full text-[11px] text-muted-foreground">
           {texts.resetCredits.replace("{count}", String(quota.resetCredits))}
         </span>
       )}
       {quota.note && (
-        <span className="text-[11px] text-amber-500">{quota.note}</span>
+        <span className="col-span-full text-[11px] text-amber-500">
+          {quota.note}
+        </span>
       )}
     </div>
   );
@@ -206,7 +252,8 @@ function AppRow({
       onMouseLeave={onLeave}
       onClick={onOpen}
       className={cn(
-        "flex w-full items-start gap-3 rounded-[10px] px-2.5 py-2 text-left",
+        // 图标 | 名称 | 箭头；额度另起一行，从名称列一直铺到箭头下方，进度条才不被箭头那一列挤短
+        "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 rounded-[10px] px-2.5 py-2 text-left",
         FOCUS_RING,
         active ? "bg-blue-500/[0.16]" : ROW_HOVER,
       )}
@@ -214,7 +261,7 @@ function AppRow({
       <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-black/[0.05] dark:bg-white/[0.08]">
         <AppGlyph app={app.app} size={20} badgeClassName="bg-transparent" />
       </span>
-      <span className="min-w-0 flex-1">
+      <span className="min-w-0">
         <span className="flex items-center gap-1.5">
           <span
             className={cn(
@@ -242,12 +289,16 @@ function AppRow({
             </>
           )}
         </span>
-        {app.quota && <QuotaBlock quota={app.quota} texts={texts} />}
       </span>
       {app.addId ? (
         <Plus className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
       ) : (
         <Chevron className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
+      )}
+      {app.quota && (
+        <span className="col-span-2 col-start-2 min-w-0">
+          <QuotaBlock quota={app.quota} texts={texts} />
+        </span>
       )}
     </button>
   );
@@ -287,6 +338,7 @@ function SubRow({
   const provider = row.provider;
   const hint =
     provider?.hint && !row.text.includes(provider.hint) ? provider.hint : null;
+  const inUse = row.checked && provider != null;
   return (
     <button
       type="button"
@@ -294,7 +346,11 @@ function SubRow({
       disabled={!row.enabled}
       onClick={() => onAction(row.id)}
       className={cn(
-        "flex w-full gap-2.5 rounded-lg px-2.5 py-1.5 text-left",
+        // 图标 | 名称 | 使用中；额度另起一行铺到「使用中」下方，免得被那一列挤窄
+        "grid w-full gap-x-2.5 rounded-lg px-2.5 py-1.5 text-left",
+        inUse
+          ? "grid-cols-[auto_minmax(0,1fr)_auto]"
+          : "grid-cols-[auto_minmax(0,1fr)]",
         // 带额度的行高，图标和「使用中」贴着第一行
         provider?.quota ? "items-start" : "items-center",
         FOCUS_RING,
@@ -313,7 +369,7 @@ function SubRow({
           />
         ) : null}
       </span>
-      <span className="min-w-0 flex-1">
+      <span className="min-w-0">
         <span className="block truncate text-[13px] font-medium">
           {row.text}
         </span>
@@ -322,13 +378,15 @@ function SubRow({
             {hint}
           </span>
         )}
-        {provider?.quota && (
-          <QuotaBlock quota={provider.quota} texts={texts} compact />
-        )}
       </span>
-      {row.checked && provider && (
-        <span className="shrink-0 text-[11px] font-medium text-blue-500">
+      {inUse && (
+        <span className="text-[11px] font-medium text-blue-500">
           {texts.inUse}
+        </span>
+      )}
+      {provider?.quota && (
+        <span className="min-w-0 [grid-column:2/-1]">
+          <QuotaBlock quota={provider.quota} texts={texts} compact />
         </span>
       )}
     </button>

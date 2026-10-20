@@ -15,8 +15,13 @@ export interface PanelTexts {
   openPanel: string;
   configTab: string;
   usageTab: string;
-  /** 某一档的重置时间：`{when}` */
-  resetsAt: string;
+  /** 某一档还有多久重置：`{when}` 是下面几个单位拼出的时长 */
+  resetsIn: string;
+  /** 时长单位：`{n}` 是数字；最多取两级，中间用 `durationSep` 隔开 */
+  durationDays: string;
+  durationHours: string;
+  durationMinutes: string;
+  durationSep: string;
   /** 可用的额度重置次数：`{count}` */
   resetCredits: string;
 }

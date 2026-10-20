@@ -86,8 +86,13 @@ pub struct PanelTexts {
     pub open_panel: &'static str,
     pub config_tab: &'static str,
     pub usage_tab: &'static str,
-    /// 某一档的重置时间：`{when}`
-    pub resets_at: &'static str,
+    /// 某一档还有多久重置：`{when}` 是下面几个单位拼出的时长
+    pub resets_in: &'static str,
+    /// 时长单位：`{n}` 是数字；最多取两级（天+小时、小时+分），中间用 `duration_sep` 隔开
+    pub duration_days: &'static str,
+    pub duration_hours: &'static str,
+    pub duration_minutes: &'static str,
+    pub duration_sep: &'static str,
     /// 可用的额度重置次数：`{count}`
     pub reset_credits: &'static str,
 }
@@ -111,7 +116,11 @@ impl PanelTexts {
                 open_panel: "Open quick panel",
                 config_tab: "Configuration",
                 usage_tab: "Usage",
-                resets_at: "Resets {when}",
+                resets_in: "Resets in {when}",
+                duration_days: "{n}d",
+                duration_hours: "{n}h",
+                duration_minutes: "{n}m",
+                duration_sep: " ",
                 reset_credits: "{count} resets available",
             },
             "ja" => Self {
@@ -126,7 +135,11 @@ impl PanelTexts {
                 open_panel: "クイックパネルを開く",
                 config_tab: "構成",
                 usage_tab: "使用量",
-                resets_at: "{when} にリセット",
+                resets_in: "{when}後にリセット",
+                duration_days: "{n}日",
+                duration_hours: "{n}時間",
+                duration_minutes: "{n}分",
+                duration_sep: "",
                 reset_credits: "リセット可能 {count} 回",
             },
             "zh-TW" => Self {
@@ -141,7 +154,11 @@ impl PanelTexts {
                 open_panel: "開啟快捷面板",
                 config_tab: "配置",
                 usage_tab: "用量",
-                resets_at: "{when} 重置",
+                resets_in: "{when}後重置",
+                duration_days: "{n}天",
+                duration_hours: "{n}小時",
+                duration_minutes: "{n}分",
+                duration_sep: "",
                 reset_credits: "可重置 {count} 次",
             },
             _ => Self {
@@ -156,7 +173,11 @@ impl PanelTexts {
                 open_panel: "打开快捷面板",
                 config_tab: "配置",
                 usage_tab: "用量",
-                resets_at: "{when} 重置",
+                resets_in: "{when}后重置",
+                duration_days: "{n}天",
+                duration_hours: "{n}小时",
+                duration_minutes: "{n}分",
+                duration_sep: "",
                 reset_credits: "可重置 {count} 次",
             },
         }

@@ -8,7 +8,7 @@ import {
 import type { ReactNode } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TrayPanel } from "@/tray-panel/TrayPanel";
+import { TrayPanel, formatResetIn } from "@/tray-panel/TrayPanel";
 import {
   SHOW_EVENT,
   trayPanelApi,
@@ -43,7 +43,11 @@ const state: TrayPanelState = {
     openPanel: "Open panel",
     configTab: "Configuration",
     usageTab: "Usage",
-    resetsAt: "Resets {when}",
+    resetsIn: "Resets in {when}",
+    durationDays: "{n}d",
+    durationHours: "{n}h",
+    durationMinutes: "{n}m",
+    durationSep: " ",
     resetCredits: "{count} resets",
   },
   problems: [],
@@ -689,5 +693,33 @@ describe("TrayPanel window layout", () => {
       screen.getByRole("button", { name: "Open main window" }),
     );
     expect(container.querySelector(".tp-sub")).toBeNull();
+  });
+});
+
+describe("formatResetIn", () => {
+  const now = new Date("2026-10-20T10:00:00Z");
+  const at = (ms: number) => new Date(now.getTime() + ms).toISOString();
+  const MIN = 60_000;
+
+  it("keeps at most two units and drops a zero second unit", () => {
+    expect(formatResetIn(at((47 * 60 + 30) * MIN), now, state.texts)).toBe(
+      "Resets in 1d 23h",
+    );
+    expect(formatResetIn(at(2 * 1440 * MIN), now, state.texts)).toBe(
+      "Resets in 2d",
+    );
+    expect(formatResetIn(at((4 * 60 + 5) * MIN), now, state.texts)).toBe(
+      "Resets in 4h 5m",
+    );
+    expect(formatResetIn(at(3 * 60 * MIN), now, state.texts)).toBe(
+      "Resets in 3h",
+    );
+    expect(formatResetIn(at(12 * MIN), now, state.texts)).toBe("Resets in 12m");
+  });
+
+  it("rounds sub-minute waits up and hides past or invalid times", () => {
+    expect(formatResetIn(at(20_000), now, state.texts)).toBe("Resets in 1m");
+    expect(formatResetIn(at(-MIN), now, state.texts)).toBeNull();
+    expect(formatResetIn("not a date", now, state.texts)).toBeNull();
   });
 });
