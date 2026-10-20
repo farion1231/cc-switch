@@ -356,6 +356,8 @@ fn ensure_window(app: &AppHandle) -> Option<WebviewWindow> {
 }
 
 fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    // 新窗口还没套过深浅色（轻量模式下面板收起即销毁，会反复新建）。
+    *lock(&APPLIED_DARK) = None;
     let window =
         WebviewWindowBuilder::new(app, PANEL_LABEL, WebviewUrl::App("tray-panel.html".into()))
             .title("CC Switch")
@@ -395,6 +397,34 @@ fn hide_window(window: &WebviewWindow) {
     let _ = window.hide();
     // 面板里已经显示过反馈行了，下次弹出不再显示。
     crate::tray::mark_feedback_seen();
+    release_if_lightweight(window.app_handle());
+}
+
+/// 轻量模式要释放全部 WebView（Windows 上只要还剩一个，WebView2 进程就都留着）：
+/// 面板收起后销毁，下次点托盘再新建。先挪出当前调用栈、再回主线程销毁，不在面板自己的
+/// 事件回调或命令里同步拆掉它；回到主线程时再确认一次仍是收起状态，期间又弹出就留着。
+pub fn release_if_lightweight(app: &AppHandle) {
+    if !crate::lightweight::is_lightweight_mode() || panel_window(app).is_none() {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let Some(window) = panel_window(&handle) else {
+                return;
+            };
+            if !crate::lightweight::is_lightweight_mode()
+                || PENDING_REVEAL.load(Ordering::Acquire)
+                || window.is_visible().unwrap_or(false)
+            {
+                return;
+            }
+            if let Err(e) = window.destroy() {
+                log::warn!("[TrayPanel] 轻量模式下销毁面板窗口失败: {e}");
+            }
+        });
+    });
 }
 
 pub fn hide_panel(app: &AppHandle) {
@@ -460,12 +490,11 @@ fn show_at(app: &AppHandle, window: &WebviewWindow, icon: (f64, f64, f64, f64)) 
 
 /// 点托盘图标：开着就关，关着就在图标旁弹出。`rect` 是点击事件带的图标矩形。
 pub fn toggle(app: &AppHandle, rect: &tauri::Rect) {
-    let Some(window) = ensure_window(app) else {
-        return;
-    };
-    if window.is_visible().unwrap_or(false) {
-        hide_window(&window);
-        return;
+    if let Some(window) = panel_window(app) {
+        if window.is_visible().unwrap_or(false) {
+            hide_window(&window);
+            return;
+        }
     }
     let just_blurred = lock(&LAST_BLUR_HIDE)
         .take()
@@ -473,6 +502,10 @@ pub fn toggle(app: &AppHandle, rect: &tauri::Rect) {
     if just_blurred {
         return;
     }
+    // 判断完「关」再建窗口：轻量模式下失焦收起时面板已销毁，这次点击只是关，不新建。
+    let Some(window) = ensure_window(app) else {
+        return;
+    };
     // 托盘矩形本来就是物理像素；万一是逻辑的，按 1 倍算也只是位置略偏。
     let pos = rect.position.to_physical::<f64>(1.0);
     let size = rect.size.to_physical::<f64>(1.0);
@@ -587,6 +620,8 @@ mod platform {
     /// macOS 26 上还会描一圈深色边。阴影由网页给每块卡片画（窗口四周留了边距）。
     pub fn init(window: &WebviewWindow) {
         let _ = window.set_shadow(false);
+        // 轻量模式下面板会销毁重建：旧窗口的玻璃挂在已销毁的视图上，丢掉，按新窗口重新垫。
+        let _ = window.run_on_main_thread(|| GLASS.with(|glass| glass.borrow_mut().clear()));
     }
 
     fn ns_window(window: &WebviewWindow) -> Option<&NSWindow> {
