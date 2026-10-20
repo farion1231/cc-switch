@@ -515,9 +515,12 @@ function FooterButton({
 export function TrayPanel() {
   const [nativePlacement, setPlacement] = useState<PanelPlacement | null>(null);
   const [pixelRatio, setPixelRatio] = useState(window.devicePixelRatio || 1);
-  // Windows 文本大小 / WebView 缩放可能让 CSS 像素和屏幕逻辑像素不再一一对应。
+  // Windows 文本大小及 Linux WebKit 缩放可能让 CSS 像素与屏幕逻辑像素不同。
+  // X11 下 DPR 可为 1.5 而原生窗口缩放为 1；忽略差异会裁掉卡片右侧和底部。
   const coordinateScale =
-    nativePlacement?.platform === "windows"
+    nativePlacement &&
+    (nativePlacement.platform === "windows" ||
+      nativePlacement.platform === "linux")
       ? pixelRatio / nativePlacement.scaleFactor
       : 1;
   const placement = useMemo(
