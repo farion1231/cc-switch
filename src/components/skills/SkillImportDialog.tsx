@@ -100,6 +100,7 @@ export function SkillImportDialog({
               hermes: chosen.has("hermes"),
               pi: false,
               mcode: chosen.has("mcode"),
+              agy: chosen.has("agy"),
             },
           };
         }),
