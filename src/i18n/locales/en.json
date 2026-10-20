@@ -294,6 +294,7 @@
   },
   "notifications": {
     "providerAdded": "Provider added",
+    "providerAddedCheckActive": "Provider added. Check which provider is active before using it.",
     "providerSaved": "Provider configuration saved",
     "providerDeleted": "Provider deleted successfully",
     "switchSuccess": "Switch successful!",

@@ -17,6 +17,7 @@ import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
 import { sessionKeys } from "@/lib/query/sessions";
 import { invalidatePiProviderCaches } from "@/lib/query/pi";
+import { isAdditiveAppId } from "@/config/appConfig";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 
 export const useAddProviderMutation = (appId: AppId) => {
@@ -134,9 +135,13 @@ export const useAddProviderMutation = (appId: AppId) => {
       }
 
       toast.success(
-        t("notifications.providerAdded", {
-          defaultValue: "供应商已添加",
-        }),
+        isAdditiveAppId(appId)
+          ? t("notifications.providerAdded", {
+              defaultValue: "供应商已添加",
+            })
+          : t("notifications.providerAddedCheckActive", {
+              defaultValue: "供应商已添加。使用前请确认当前启用的供应商。",
+            }),
         {
           closeButton: true,
         },
