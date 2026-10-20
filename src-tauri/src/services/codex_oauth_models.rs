@@ -87,6 +87,7 @@ fn push_model_entry(models: &mut Vec<FetchedModel>, entry: &Value, fallback_id: 
             owned_by: Some("Codex".to_string()),
             max_input_tokens: None,
             max_output_tokens: None,
+            pricing: None,
         });
         return;
     }
@@ -98,6 +99,7 @@ fn push_model_entry(models: &mut Vec<FetchedModel>, entry: &Value, fallback_id: 
                 owned_by: Some("Codex".to_string()),
                 max_input_tokens: None,
                 max_output_tokens: None,
+                pricing: None,
             });
         }
         return;
@@ -124,6 +126,7 @@ fn push_model_entry(models: &mut Vec<FetchedModel>, entry: &Value, fallback_id: 
         owned_by,
         max_input_tokens: None,
         max_output_tokens: None,
+        pricing: None,
     });
 }
 

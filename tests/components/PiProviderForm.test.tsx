@@ -61,9 +61,7 @@ describe("PiProviderForm", () => {
     );
 
     // 表单直接铺在添加页里，不再套一层卡片
-    expect(container.querySelector("#provider-form")).not.toHaveClass(
-      "glass",
-    );
+    expect(container.querySelector("#provider-form")).not.toHaveClass("glass");
     expect(screen.getByLabelText("provider.name")).toBeInTheDocument();
     expect(screen.getByLabelText("provider.notes")).toBeInTheDocument();
     expect(screen.getByLabelText("provider.websiteUrl")).toBeInTheDocument();
@@ -1079,7 +1077,9 @@ describe("PiProviderForm", () => {
     });
 
     await user.click(modelIdGroup.getByRole("button"));
-    await user.click(await screen.findByRole("option", { name: "plain-model" }));
+    await user.click(
+      await screen.findByRole("option", { name: "plain-model" }),
+    );
     expect(modelIdInput).toHaveValue("plain-model");
     expect(screen.getByLabelText("pi.form.contextWindow")).toHaveValue(null);
     expect(screen.getByLabelText("pi.form.maxTokens")).toHaveValue(null);
@@ -1090,6 +1090,96 @@ describe("PiProviderForm", () => {
     });
     expect(plainModel).not.toHaveProperty("contextWindow");
     expect(plainModel).not.toHaveProperty("maxTokens");
+  });
+
+  it("fills OpenRouter token pricing without overwriting manual Pi costs", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
+        HttpResponse.json([
+          {
+            id: "priced-a",
+            ownedBy: "openrouter",
+            pricing: {
+              prompt: "0.000001",
+              completion: "0.000002",
+              inputCacheRead: "0.0000005",
+              inputCacheWrite: "-1",
+              request: "0.01",
+            },
+          },
+          {
+            id: "priced-b",
+            ownedBy: "openrouter",
+            pricing: {
+              prompt: "not-a-number",
+              completion: "0.000004",
+              inputCacheWrite: "0",
+            },
+          },
+        ]),
+      ),
+    );
+
+    render(
+      <PiProviderForm
+        appId="pi"
+        providerId="openrouter"
+        submitLabel="Save priced provider"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+        initialData={{
+          name: "OpenRouter",
+          settingsConfig: {
+            name: "OpenRouter",
+            baseUrl: "https://openrouter.ai/api/v1",
+            api: "openai-completions",
+            apiKey: "literal-key",
+            models: [
+              {
+                id: "existing",
+                name: "Existing",
+                cost: { input: 0, other: 7 },
+              },
+            ],
+          },
+        }}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+    const modelIdInput = screen.getByLabelText("pi.form.modelId");
+    const modelIdGroup = within(modelIdInput.parentElement as HTMLElement);
+    await waitFor(() => expect(modelIdGroup.getByRole("button")).toBeEnabled());
+
+    await user.click(modelIdGroup.getByRole("button"));
+    await user.click(await screen.findByRole("option", { name: "priced-a" }));
+    const configEditor = screen.getByLabelText(
+      "provider.configJson",
+    ) as HTMLTextAreaElement;
+    expect(JSON.parse(configEditor.value).models[0].cost).toEqual({
+      input: 0,
+      output: 2,
+      cacheRead: 0.5,
+      other: 7,
+    });
+
+    const manuallyEdited = JSON.parse(configEditor.value);
+    manuallyEdited.models[0].cost.output = 9;
+    fireEvent.change(configEditor, {
+      target: { value: JSON.stringify(manuallyEdited, null, 2) },
+    });
+
+    await user.click(modelIdGroup.getByRole("button"));
+    await user.click(await screen.findByRole("option", { name: "priced-b" }));
+    expect(JSON.parse(configEditor.value).models[0].cost).toEqual({
+      input: 0,
+      output: 9,
+      cacheWrite: 0,
+      other: 7,
+    });
   });
 
   it("ignores a stale model-list response after the request config changes", async () => {

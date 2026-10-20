@@ -130,6 +130,7 @@ pub async fn get_xai_oauth_models(
             owned_by: model.owned_by,
             max_input_tokens: None,
             max_output_tokens: None,
+            pricing: None,
         })
         .collect();
     models.sort_by(|a, b| a.id.cmp(&b.id));

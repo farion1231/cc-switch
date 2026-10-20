@@ -8,6 +8,12 @@ export interface FetchedModel {
   ownedBy: string | null;
   maxInputTokens?: number | null;
   maxOutputTokens?: number | null;
+  pricing?: {
+    prompt?: string | null;
+    completion?: string | null;
+    inputCacheRead?: string | null;
+    inputCacheWrite?: string | null;
+  } | null;
 }
 
 export interface ModelFetchOptions {
