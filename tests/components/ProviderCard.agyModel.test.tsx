@@ -11,7 +11,9 @@ vi.mock("@/components/providers/ProviderCardActions", () => ({
 vi.mock("@/components/ProviderIcon", () => ({ ProviderIcon: () => null }));
 vi.mock("@/components/UsageFooter", () => ({ default: () => null }));
 vi.mock("@/components/SubscriptionQuotaFooter", () => ({
-  default: () => null,
+  default: ({ appId }: { appId: string }) => (
+    <span data-testid="subscription-quota">{appId}</span>
+  ),
 }));
 vi.mock("@/components/CopilotQuotaFooter", () => ({ default: () => null }));
 vi.mock("@/components/CodexOauthQuotaFooter", () => ({ default: () => null }));
@@ -73,5 +75,37 @@ describe("ProviderCard Antigravity model", () => {
   it("keeps showing the endpoint for Gemini CLI cards", () => {
     renderCard(relay, "gemini");
     expect(screen.queryByText("Gemini 3.1 Pro (High)")).not.toBeInTheDocument();
+  });
+});
+
+describe("ProviderCard Antigravity official quota", () => {
+  const official: Provider = {
+    id: "official",
+    name: "Antigravity",
+    category: "official",
+    settingsConfig: { config: {} },
+    meta: {
+      usage_script: {
+        enabled: true,
+        language: "javascript",
+        code: "",
+        templateType: "official_subscription",
+      },
+    },
+  };
+
+  it("shows the signed-in quota once official usage is turned on", () => {
+    renderCard(official);
+    expect(screen.getByTestId("subscription-quota")).toHaveTextContent("agy");
+  });
+
+  it("stays hidden while usage is off", () => {
+    renderCard({
+      ...official,
+      meta: {
+        usage_script: { ...official.meta!.usage_script!, enabled: false },
+      },
+    });
+    expect(screen.queryByTestId("subscription-quota")).not.toBeInTheDocument();
   });
 });
