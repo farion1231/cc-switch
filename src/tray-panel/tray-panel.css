@@ -79,6 +79,23 @@ html.dark [data-platform="windows"] .tp-card {
   background: #242428;
 }
 
+/* WebKitGTK 在禁用合成时不能可靠地重绘透明窗口和 backdrop-filter 的组合。
+   Linux 的原生窗口和整张网页都使用实色背景，暴露、缩放后也有完整的绘制底面。 */
+html[data-platform="linux"],
+html[data-platform="linux"] body.tray-panel,
+html[data-platform="linux"] body.tray-panel #root,
+html[data-platform="linux"] .tp-card {
+  background: #ebebed !important;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+html.dark[data-platform="linux"],
+html.dark[data-platform="linux"] body.tray-panel,
+html.dark[data-platform="linux"] body.tray-panel #root,
+html.dark[data-platform="linux"] .tp-card {
+  background: #242428 !important;
+}
+
 /* 两栏时子面板和主面板之间一条分隔线 */
 html[data-layout="joined"] .tp-sub[data-side="right"] {
   border-left: 1px solid rgba(0, 0, 0, 0.08);
