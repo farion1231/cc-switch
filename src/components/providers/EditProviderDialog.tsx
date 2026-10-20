@@ -1,3 +1,5 @@
+import { CredentialProtectionNotice } from "@/components/providers/CredentialProtectionNotice";
+import { CredentialEditProtectionContext } from "@/contexts/CredentialEditProtectionContext";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
@@ -76,6 +78,7 @@ export function EditProviderDialog({
 }: EditProviderDialogProps) {
   const { t } = useTranslation();
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
+  const [isRemovingProtection, setIsRemovingProtection] = useState(false);
   // 表单用了聚合的简化布局：页头应用名后标「聚合模式」
   const [stackLayout, setStackLayout] = useState(false);
   const [authSettingsTarget, setAuthSettingsTarget] =
@@ -357,74 +360,89 @@ export function EditProviderDialog({
     ) : null;
 
   return (
-    <FullScreenPanel
-      // Keep the list visible until the initial projection is ready.
-      // Showing a loading page first causes a flash for fast local reads.
-      isOpen={open && !waitingForEditorView}
-      trackUnsavedChanges
-      title={t("provider.editProviderNamed", { name: provider.name })}
-      subtitle={
-        stackLayout
-          ? t("provider.formSubtitleStack", {
-              app: APP_DISPLAY_NAME[appId],
-              defaultValue: "{{app}}（聚合模式）",
-            })
-          : APP_DISPLAY_NAME[appId]
-      }
-      backLabel={t("provider.backToList")}
-      onClose={handlePanelClose}
-      contentClassName={appId === "pi" ? "pb-0 pt-4" : "pt-4"}
-      footer={
-        <>
-          <Button
-            type="button"
-            variant="neutral"
-            size="regular"
-            onClick={closeDialog}
-          >
-            {t("common.cancel")}
-          </Button>
-          <Button
-            type="submit"
-            form="provider-form"
-            variant="solid"
-            size="regular"
-            disabled={isFormSubmitting || !isFormReady}
-          >
-            {isFormSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-            {t("common.save")}
-          </Button>
-        </>
-      }
+    <CredentialEditProtectionContext.Provider
+      value={provider.meta?.credentialEditProtected === true}
     >
-      {currentNotice}
-      {waitingForEditorView ? (
-        <div className="py-12 text-center text-body text-fg-2">
-          {t("common.loading")}
-        </div>
-      ) : (
-        <ProviderForm
-          appId={appId}
-          providerId={provider.id}
-          submitLabel={t("common.save")}
-          onSubmit={handleSubmit}
-          onCancel={closeDialog}
-          onManageAuthAccounts={setAuthSettingsTarget}
-          onSubmittingChange={setIsFormSubmitting}
-          onSubmitReadyChange={handleSubmitReadyChange}
-          initialData={initialData}
-          showButtons={false}
-          isProxyTakeover={isProxyTakeover}
-          inactiveFields={editorView?.inactive}
-          modeView={modeView}
-          onStackLayoutChange={setStackLayout}
+      <FullScreenPanel
+        // Keep the list visible until the initial projection is ready.
+        // Showing a loading page first causes a flash for fast local reads.
+        isOpen={open && !waitingForEditorView}
+        trackUnsavedChanges
+        title={t("provider.editProviderNamed", { name: provider.name })}
+        subtitle={
+          stackLayout
+            ? t("provider.formSubtitleStack", {
+                app: APP_DISPLAY_NAME[appId],
+                defaultValue: "{{app}}（聚合模式）",
+              })
+            : APP_DISPLAY_NAME[appId]
+        }
+        backLabel={t("provider.backToList")}
+        onClose={handlePanelClose}
+        contentClassName={appId === "pi" ? "pb-0 pt-4" : "pt-4"}
+        footer={
+          <>
+            <Button
+              type="button"
+              variant="neutral"
+              size="regular"
+              onClick={closeDialog}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              type="submit"
+              form="provider-form"
+              variant="solid"
+              size="regular"
+              disabled={
+                isFormSubmitting || isRemovingProtection || !isFormReady
+              }
+            >
+              {isFormSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+              {t("common.save")}
+            </Button>
+          </>
+        }
+      >
+        {currentNotice}
+        {provider.meta?.credentialEditProtected === true && (
+          <CredentialProtectionNotice
+            key={`${appId}:${provider.id}`}
+            appId={appId}
+            providerId={provider.id}
+            onRemoved={closeDialog}
+            onPendingChange={setIsRemovingProtection}
+          />
+        )}
+        {waitingForEditorView ? (
+          <div className="py-12 text-center text-body text-fg-2">
+            {t("common.loading")}
+          </div>
+        ) : (
+          <ProviderForm
+            appId={appId}
+            providerId={provider.id}
+            submitLabel={t("common.save")}
+            onSubmit={handleSubmit}
+            onCancel={closeDialog}
+            onManageAuthAccounts={setAuthSettingsTarget}
+            onSubmittingChange={setIsFormSubmitting}
+            onSubmitReadyChange={handleSubmitReadyChange}
+            initialData={initialData}
+            showButtons={false}
+            isProxyTakeover={isProxyTakeover}
+            inactiveFields={editorView?.inactive}
+            modeView={modeView}
+            onStackLayoutChange={setStackLayout}
+          />
+        )}
+        {conflictDialog}
+        <AuthSettingsPanel
+          target={authSettingsTarget}
+          onClose={() => setAuthSettingsTarget(null)}
         />
-      )}
-      {conflictDialog}
-      <AuthSettingsPanel
-        target={authSettingsTarget}
-        onClose={() => setAuthSettingsTarget(null)}
-      />
-    </FullScreenPanel>
+      </FullScreenPanel>
+    </CredentialEditProtectionContext.Provider>
   );
 }

@@ -16,6 +16,88 @@ type OmoProviderRow = (
     String,
 );
 
+/// Validate the previous row while holding the same connection/transaction as the write.
+fn validate_credential_write(
+    conn: &rusqlite::Connection,
+    app: &str,
+    previous_id: &str,
+    next: &Provider,
+) -> Result<(), AppError> {
+    let stored: Option<(String, String, Option<String>)> = conn
+        .query_row(
+            "SELECT settings_config, meta, category FROM providers WHERE id = ?1 AND app_type = ?2",
+            params![previous_id, app],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if let Some((settings, meta, category)) = stored {
+        let protected = serde_json::from_str::<serde_json::Value>(&meta)
+            .ok()
+            .is_some_and(|value| {
+                value
+                    .get("credentialEditProtected")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true)
+            });
+        if protected {
+            let meta: ProviderMeta = serde_json::from_str(&meta)
+                .map_err(|_| AppError::Config("Cannot read protected provider metadata".into()))?;
+            let settings = serde_json::from_str(&settings)
+                .map_err(|_| AppError::Config("Cannot read protected provider settings".into()))?;
+            let mut previous = Provider::with_id(previous_id.into(), String::new(), settings, None);
+            previous.meta = Some(meta);
+            previous.category = category;
+            if let Some(meta) = &next.meta {
+                for endpoint in meta.custom_endpoints.values() {
+                    let exists: bool = conn.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2 AND url = ?3)",
+                        params![previous_id, app, endpoint.url], |row| row.get(0),
+                    ).map_err(|e| AppError::Database(e.to_string()))?;
+                    if !exists {
+                        return Err(crate::credential_edit_guard::conflict());
+                    }
+                }
+            }
+            return crate::credential_edit_guard::validate_update(&app.parse()?, &previous, next);
+        }
+        if crate::credential_edit_guard::is_protected(next) {
+            return Err(crate::credential_edit_guard::conflict());
+        }
+    }
+    if crate::credential_edit_guard::is_protected(next) {
+        crate::credential_edit_guard::validate_supported(&app.parse()?, next)?;
+    }
+    Ok(())
+}
+
+fn reject_protected_endpoint_edit(
+    conn: &rusqlite::Connection,
+    app: &str,
+    id: &str,
+) -> Result<(), AppError> {
+    let meta: Option<String> = conn
+        .query_row(
+            "SELECT meta FROM providers WHERE id = ?1 AND app_type = ?2",
+            params![id, app],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if meta
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .is_some_and(|value| {
+            value
+                .get("credentialEditProtected")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+        })
+    {
+        return Err(crate::credential_edit_guard::conflict());
+    }
+    Ok(())
+}
+
 impl Database {
     /// Detach Codex providers bound to these deleted local accounts, atomically.
     /// Only this device's account IDs are passed in: provider rows sync across
@@ -269,6 +351,7 @@ impl Database {
             .transaction()
             .map_err(|e| AppError::Database(e.to_string()))?;
 
+        validate_credential_write(&tx, app_type, &provider.id, provider)?;
         let mut meta_clone = provider.meta.clone().unwrap_or_default();
         let endpoints = std::mem::take(&mut meta_clone.custom_endpoints);
 
@@ -381,6 +464,7 @@ impl Database {
             .transaction()
             .map_err(|e| AppError::Database(e.to_string()))?;
 
+        validate_credential_write(&tx, app_type, original_id, provider)?;
         let (is_current, in_failover_queue) = tx
             .query_row(
                 "SELECT is_current, in_failover_queue FROM providers WHERE id = ?1 AND app_type = ?2",
@@ -494,6 +578,35 @@ impl Database {
         Ok(())
     }
 
+    /// Explicit local user action; never called by a generic save or a remote callback.
+    /// Only change this metadata field, leaving credentials, live files and unknown metadata intact.
+    pub(crate) fn remove_provider_credential_protection(
+        &self,
+        app: &str,
+        id: &str,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        let text: String = conn
+            .query_row(
+                "SELECT meta FROM providers WHERE id = ?1 AND app_type = ?2",
+                params![id, app],
+                |row| row.get(0),
+            )
+            .map_err(|_| AppError::Config("Provider not found".into()))?;
+        let mut meta: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|_| AppError::Config("Cannot read provider metadata".into()))?;
+        let object = meta
+            .as_object_mut()
+            .ok_or_else(|| AppError::Config("Cannot read provider metadata".into()))?;
+        object.remove("credentialEditProtected");
+        conn.execute(
+            "UPDATE providers SET meta = ?1 WHERE id = ?2 AND app_type = ?3",
+            params![meta.to_string(), id, app],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     pub fn update_provider_settings_config(
         &self,
         app_type: &str,
@@ -501,6 +614,37 @@ impl Database {
         settings_config: &serde_json::Value,
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
+        let meta: Option<(String, Option<String>)> = conn
+            .query_row(
+                "SELECT meta, category FROM providers WHERE id = ?1 AND app_type = ?2",
+                params![provider_id, app_type],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if let Some((meta, category)) = meta.filter(|(text, _)| {
+            serde_json::from_str::<serde_json::Value>(text)
+                .ok()
+                .is_some_and(|value| {
+                    value
+                        .get("credentialEditProtected")
+                        .and_then(serde_json::Value::as_bool)
+                        == Some(true)
+                })
+        }) {
+            let mut next = Provider::with_id(
+                provider_id.into(),
+                String::new(),
+                settings_config.clone(),
+                None,
+            );
+            next.meta = Some(
+                serde_json::from_str(&meta)
+                    .map_err(|_| AppError::Config("Cannot read provider metadata".into()))?,
+            );
+            next.category = category;
+            validate_credential_write(&conn, app_type, provider_id, &next)?;
+        }
         conn.execute(
             "UPDATE providers SET settings_config = ?1 WHERE id = ?2 AND app_type = ?3",
             params![
@@ -522,6 +666,7 @@ impl Database {
         url: &str,
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
+        reject_protected_endpoint_edit(&conn, app_type, provider_id)?;
         let added_at = chrono::Utc::now().timestamp_millis();
         conn.execute(
             "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at) VALUES (?1, ?2, ?3, ?4)",
@@ -537,6 +682,7 @@ impl Database {
         url: &str,
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
+        reject_protected_endpoint_edit(&conn, app_type, provider_id)?;
         conn.execute(
             "DELETE FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2 AND url = ?3",
             params![provider_id, app_type, url],

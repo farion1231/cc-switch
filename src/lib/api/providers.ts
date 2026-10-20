@@ -73,6 +73,12 @@ export interface ClaudeDesktopDefaultRoute {
 }
 
 export const providersApi = {
+  async removeCredentialProtection(id: string, appId: AppId): Promise<void> {
+    return await invoke("remove_provider_credential_protection", {
+      id,
+      app: appId,
+    });
+  },
   async getAll(appId: AppId): Promise<Record<string, Provider>> {
     return await invoke("get_providers", { app: appId });
   },
