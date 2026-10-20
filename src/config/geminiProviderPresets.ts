@@ -513,6 +513,29 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     partnerPromotionKey: "alltokens",
     icon: "alltokens",
   },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    // Gemini 分组不在默认自动分组里，须用 Gemini 分组的 Key；目录里唯一
+    // 规范的 3.8 Flash ID 是 gemini-3.8-flash-high（alltokens.si/api/pricing，
+    // 2026-10-19 核对）
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://alltokens.si",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash-high",
+      },
+    },
+    baseURL: "https://alltokens.si",
+    model: "gemini-3.8-flash-high",
+    description: "AllTokens SI",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",

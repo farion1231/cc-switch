@@ -2056,6 +2056,8 @@ pub struct PanelApp {
     pub current: Option<String>,
     /// 直连 / 路由 / 聚合。
     pub mode: &'static str,
+    /// 同一模式的机器可读值（`direct` / `route` / `stack`），面板按它给模式名上主题色。
+    pub mode_kind: &'static str,
     /// 子面板标题下的说明（「路由 · 故障转移开启中」等）。
     pub header: Option<String>,
     pub attention: Option<&'static str>,
@@ -2279,6 +2281,11 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
                 TrayMode::Direct => texts.header_direct,
                 TrayMode::Route | TrayMode::Failover => texts.mode_route,
                 TrayMode::Stack => texts.mode_stack,
+            },
+            mode_kind: match snapshot.mode {
+                TrayMode::Direct => "direct",
+                TrayMode::Route | TrayMode::Failover => "route",
+                TrayMode::Stack => "stack",
             },
             header,
             attention: snapshot.needs_attention.then_some(texts.needs_attention),
@@ -2555,6 +2562,10 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
     #[cfg(not(target_os = "linux"))]
     {
         crate::tray_panel::notify_changed(app);
+        // 出面板时托盘上没挂原生菜单，没有标题要改
+        if !crate::tray_panel::uses_native_menu() {
+            return;
+        }
         let Some(app_state) = app.try_state::<AppState>() else {
             return;
         };
@@ -2580,7 +2591,7 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
 
 pub fn refresh_tray_menu(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
-        if crate::tray_panel::USES_NATIVE_MENU {
+        if crate::tray_panel::uses_native_menu() {
             match create_tray_menu(app, state.inner()) {
                 Ok(new_menu) => {
                     if let Some(tray) = app.tray_by_id(TRAY_ID) {
@@ -2596,6 +2607,32 @@ pub fn refresh_tray_menu(app: &tauri::AppHandle) {
         }
     }
     crate::tray_panel::notify_changed(app);
+}
+
+/// 设置里切换了原生托盘菜单 / 托盘面板：当场换掉托盘的点击行为，不用重启。
+/// 换成原生菜单时挂上重建的菜单、收起面板；换成面板时摘掉菜单（`refresh_tray_menu` 只更新图标状态）。
+pub fn apply_tray_style(app: &tauri::AppHandle) {
+    let native = crate::tray_panel::uses_native_menu();
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        if native {
+            crate::tray_panel::hide_panel(app);
+        } else {
+            if let Err(e) = tray.set_menu(None::<Menu<tauri::Wry>>) {
+                log::error!("摘掉托盘菜单失败: {e}");
+            }
+            // 菜单没了，旧句柄不再更新标题。
+            lock(&TRAY_SECTION_SUBMENUS).clear();
+        }
+        if let Err(e) = tray.set_show_menu_on_left_click(native_menu_on_left_click(native)) {
+            log::warn!("设置托盘左键行为失败: {e}");
+        }
+    }
+    refresh_tray_menu(app);
+}
+
+/// 左键是否直接出原生菜单：用面板时不出；Windows 的习惯是左键打开主界面、右键出菜单。
+pub fn native_menu_on_left_click(native: bool) -> bool {
+    native && cfg!(not(target_os = "windows"))
 }
 
 /// 悬停到托盘图标时：问题区该出现 / 该消失了（路由服务停了、又起来了）、反馈行显示过了或到点了，

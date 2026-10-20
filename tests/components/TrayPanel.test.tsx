@@ -5,6 +5,8 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TrayPanel } from "@/tray-panel/TrayPanel";
 import {
@@ -14,6 +16,7 @@ import {
   type TrayPanelState,
 } from "@/tray-panel/api";
 import { emitTauriEvent } from "../msw/tauriMocks";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 vi.mock("@/tray-panel/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/tray-panel/api")>()),
@@ -51,6 +54,7 @@ const state: TrayPanelState = {
       name: "Claude Code",
       current: "default",
       mode: "Direct",
+      modeKind: "direct",
       header: null,
       attention: null,
       quota: null,
@@ -101,9 +105,17 @@ async function paint() {
   });
 }
 
+function renderPanel(client = createTestQueryClient()) {
+  return render(<TrayPanel />, {
+    wrapper: ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    ),
+  });
+}
+
 async function openPanel(placement: PanelPlacement) {
   vi.mocked(trayPanelApi.placement).mockResolvedValue(placement);
-  const view = render(<TrayPanel />);
+  const view = renderPanel();
   await screen.findByRole("button", { name: "Claude Code default · Direct" });
   await paint();
   return view;
@@ -139,7 +151,7 @@ describe("TrayPanel window layout", () => {
 
   it("clips the first Windows frame without waiting for animation frames in a hidden window", async () => {
     vi.mocked(trayPanelApi.placement).mockResolvedValue(windows);
-    render(<TrayPanel />);
+    renderPanel();
     await screen.findByRole("button", { name: "Claude Code default · Direct" });
     expect(trayPanelApi.layout).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -213,6 +225,43 @@ describe("TrayPanel window layout", () => {
       }),
     );
   });
+
+  it("re-reads settings every time it pops up so changes made in the main window show", async () => {
+    const client = createTestQueryClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    vi.mocked(trayPanelApi.placement).mockResolvedValue(windows);
+    renderPanel(client);
+    await screen.findByRole("button", { name: "Claude Code default · Direct" });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["settings"] });
+
+    invalidate.mockClear();
+    await act(async () => {
+      emitTauriEvent(SHOW_EVENT, { ...windows, seq: 2 });
+    });
+    await waitFor(() =>
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ["settings"] }),
+    );
+  });
+
+  it.each([
+    ["direct", "Direct", "text-direct-text"],
+    ["route", "Route", "text-route-text"],
+    ["stack", "Aggregation", "text-stack-text"],
+  ] as const)(
+    "colors the %s mode name with its theme color",
+    async (modeKind, mode, className) => {
+      vi.mocked(trayPanelApi.state).mockResolvedValue({
+        ...state,
+        apps: [{ ...state.apps[0], mode, modeKind }],
+      });
+      vi.mocked(trayPanelApi.placement).mockResolvedValue(windows);
+      renderPanel();
+      await screen.findByRole("button", {
+        name: `Claude Code default · ${mode}`,
+      });
+      expect(screen.getByText(mode)).toHaveClass(className);
+    },
+  );
 
   it("opens Windows top/left taskbars toward the opposite edges", async () => {
     const { container } = await openPanel(windows);
@@ -337,4 +386,82 @@ describe("TrayPanel window layout", () => {
       expect(window.cancelAnimationFrame).not.toHaveBeenCalled();
     },
   );
+
+  it("switches apps at once on a vertical move and waits while heading for the sub panel", async () => {
+    const codex = {
+      ...state.apps[0],
+      app: "codex" as const,
+      name: "Codex",
+      current: "OpenAI",
+      rows: [
+        { ...state.apps[0].rows[0], id: "nav:codex", text: "Open Codex page" },
+      ],
+    };
+    vi.mocked(trayPanelApi.state).mockResolvedValue({
+      ...state,
+      apps: [state.apps[0], codex],
+    });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        return (
+          this.classList.contains("tp-sub")
+            ? { top: 0, bottom: 400, left: 344, right: 644 }
+            : { top: 50, bottom: 100, left: 16, right: 336 }
+        ) as DOMRect;
+      },
+    );
+    const { container } = await openPanel({
+      ...windows,
+      platform: "macos",
+      layout: "floating",
+      glass: "native",
+      side: "right",
+      edge: "top",
+      gap: 8,
+      boundsTop: 0,
+      boundsBottom: 900,
+    });
+    const subTitle = () =>
+      container.querySelector(".tp-sub")?.firstElementChild?.textContent;
+    const claudeRow = screen.getByRole("button", {
+      name: "Claude Code default · Direct",
+    });
+    const codexRow = screen.getByRole("button", {
+      name: "Codex OpenAI · Direct",
+    });
+
+    fireEvent.mouseEnter(claudeRow);
+    await waitFor(() => expect(subTitle()).toContain("Claude Code"));
+    // 刚展开：卡片自己有展开动画，内容不另做淡入
+    expect(container.querySelector(".tp-sub")).not.toHaveAttribute("data-swap");
+
+    // 竖着移到下一行：不等，立即换
+    fireEvent.mouseMove(window, { clientX: 200, clientY: 80 });
+    fireEvent.mouseMove(window, { clientX: 200, clientY: 120 });
+    fireEvent.mouseLeave(claudeRow);
+    fireEvent.mouseEnter(codexRow);
+    expect(subTitle()).toContain("Codex");
+    // 从另一个应用换过来：内容做一次短淡入
+    expect(container.querySelector(".tp-sub")).toHaveAttribute("data-swap");
+
+    // 斜着朝子面板移动、途经 Claude 那行：先不换；鼠标停下后再换
+    fireEvent.mouseMove(window, { clientX: 200, clientY: 120 });
+    fireEvent.mouseMove(window, { clientX: 230, clientY: 110 });
+    fireEvent.mouseLeave(codexRow);
+    fireEvent.mouseEnter(claudeRow);
+    expect(subTitle()).toContain("Codex");
+    await waitFor(() => expect(subTitle()).toContain("Claude Code"));
+
+    // 移出应用行（比如移出整个面板）：子面板留着
+    fireEvent.mouseLeave(claudeRow);
+    expect(container.querySelector(".tp-sub")).not.toBeNull();
+
+    // 竖着移到底部「打开主窗口」：和原生菜单一样收起子面板
+    fireEvent.mouseMove(window, { clientX: 200, clientY: 300 });
+    fireEvent.mouseMove(window, { clientX: 200, clientY: 340 });
+    fireEvent.mouseOver(
+      screen.getByRole("button", { name: "Open main window" }),
+    );
+    expect(container.querySelector(".tp-sub")).toBeNull();
+  });
 });

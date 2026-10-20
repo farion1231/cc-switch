@@ -2015,6 +2015,20 @@ fn test_deeplink_coding_plan_never_replaces_a_carried_script() {
 }
 
 #[test]
+fn test_deeplink_volcengine_plan_is_preselected_but_off() {
+    // 火山查额度要账号级 AccessKey，链接里没有：只预选套餐，不默认启用
+    let request = coding_plan_request("opencode", "https://ark.cn-beijing.volces.com/api/plan/v3");
+    let script = imported_usage_script(AppType::OpenCode, &request).unwrap();
+    assert!(!script.enabled);
+    assert_eq!(script.coding_plan_provider.as_deref(), Some("volcengine"));
+
+    let mut request = coding_plan_request("claude", "https://ark.cn-beijing.volces.com/api/coding");
+    request.usage_enabled = Some(true);
+    let script = imported_usage_script(AppType::Claude, &request).unwrap();
+    assert!(script.enabled, "usageEnabled=true 必须照办");
+}
+
+#[test]
 fn test_deeplink_non_plan_and_zenmux_outside_claude_stay_off() {
     let request = coding_plan_request("claude", "https://api.example.com/v1");
     assert!(imported_usage_script(AppType::Claude, &request).is_none());

@@ -1529,6 +1529,24 @@ requires_openai_auth = true`,
     partnerPromotionKey: "alltokens",
     icon: "alltokens",
   },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    // GPT 分组（alltokens.si/api/pricing，2026-10-19）。目录只声明 Chat，但
+    // new-api 的 OpenAI 渠道同样转发 /v1/responses，按 Codex 惯例走 Responses
+    config: generateThirdPartyConfig(
+      "alltokens_si",
+      "https://alltokens.si/v1",
+      "gpt-5.6-sol",
+    ),
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",
@@ -1692,7 +1710,7 @@ requires_openai_auth = true`,
     family: "zhipu",
     regionKey: "cn",
     websiteUrl: "https://open.bigmodel.cn",
-    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code",
     auth: generateThirdPartyAuth(""),
     // 智谱三端点分立（docs.bigmodel.cn/cn/coding-plan/tool/others）：Anthropic
     // /api/anthropic、OpenAI Chat /api/coding/paas/v4、OpenAI Responses /api/v1，
@@ -1757,7 +1775,7 @@ requires_openai_auth = true`,
     family: "zhipu",
     regionKey: "intl",
     websiteUrl: "https://z.ai",
-    apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
+    apiKeyUrl: "https://z.ai/subscribe",
     auth: generateThirdPartyAuth(""),
     // 国际站同上（docs.z.ai/devpack/tool/others + devpack/tool/codex，2026-09-04
     // 核对）：Responses 端点 /api/v1，官方 models.json 仅列 glm-5.3。
@@ -3138,7 +3156,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "minimax",
       "https://api.minimax.cn/v1",
-      "MiniMax-M3",
+      "MiniMax-M3.1-Flash",
     ),
     endpointCandidates: ["https://api.minimax.cn/v1"],
     // MiniMax 官方 API 参考已列 /v1/responses 为正式端点（CN/intl 双区，POST /v1/responses），原生 Responses，无需路由接管转换
@@ -3149,6 +3167,16 @@ requires_openai_auth = true`,
     // 端点接受但与 high 行为完全等价，不给假差异档）。与模板默认一致故 Codex 侧
     // 零行为变化，显式声明只为表单可见（"未设置"误导性更大，Jason 2026-08-15 拍板）
     modelCatalog: modelCatalog([
+      {
+        model: "MiniMax-M3.1-Flash",
+        displayName: "MiniMax-M3.1-Flash",
+        contextWindow: 1000000,
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text", "image"],
+        baseInstructions:
+          "You are Codex, a coding agent based on MiniMax-M3.1-Flash. You and the user share the same workspace and collaborate to achieve the user's goals.",
+      },
       {
         model: "MiniMax-M3",
         displayName: "MiniMax-M3",
@@ -3178,7 +3206,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "minimax_en",
       "https://api.minimax.io/v1",
-      "MiniMax-M3",
+      "MiniMax-M3.1-Flash",
     ),
     endpointCandidates: ["https://api.minimax.io/v1"],
     // MiniMax 官方 API 参考已列 /v1/responses 为正式端点（CN/intl 双区，POST /v1/responses），原生 Responses，无需路由接管转换
@@ -3189,6 +3217,16 @@ requires_openai_auth = true`,
     // 端点接受但与 high 行为完全等价，不给假差异档）。与模板默认一致故 Codex 侧
     // 零行为变化，显式声明只为表单可见（"未设置"误导性更大，Jason 2026-08-15 拍板）
     modelCatalog: modelCatalog([
+      {
+        model: "MiniMax-M3.1-Flash",
+        displayName: "MiniMax-M3.1-Flash",
+        contextWindow: 1000000,
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text", "image"],
+        baseInstructions:
+          "You are Codex, a coding agent based on MiniMax-M3.1-Flash. You and the user share the same workspace and collaborate to achieve the user's goals.",
+      },
       {
         model: "MiniMax-M3",
         displayName: "MiniMax-M3",
@@ -4235,8 +4273,7 @@ requires_openai_auth = true`,
     // 官方列 low/medium/high/xhigh/max，无 none/minimal）；GLM-5.3 平台声明
     // low/high/max；DeepSeek V4 Pro 0813 平台未写，退回 DeepSeek 官方
     // low/high/max。每档都含 high，与 config 的 model_reasoning_effort = "high"
-    // 一致，无需 defaultReasoningLevel。窗口取平台模型表，GPT 按
-    // GPT_CONTEXT_WINDOW_CAP 封顶；GPT-6.1 Sol 超 272K
+    // 一致，无需 defaultReasoningLevel。窗口取平台模型表；GPT-6.1 Sol 超 272K
     // 按长上下文价计费（docs.digitalocean.com/products/inference/details/
     // pricing）。Tier 1 / Tier 2 账号只能用 gpt-oss，GPT-6.1 Sol 须 Tier 3+。
     // 首行 = 默认模型，须与 config 的 model 一致
@@ -4244,7 +4281,7 @@ requires_openai_auth = true`,
       {
         model: "openai-gpt-6-1-sol",
         displayName: "GPT-6.1 Sol",
-        contextWindow: 272000,
+        contextWindow: 1050000,
         inputModalities: ["text", "image"],
         reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
       },

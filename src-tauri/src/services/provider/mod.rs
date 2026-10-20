@@ -3955,6 +3955,18 @@ wire_api = "responses"
                     .get_provider_by_id("bob", "codex")
                     .unwrap()
                     .unwrap();
+                let preview = ProviderService::editor_view(
+                    state,
+                    AppType::Codex,
+                    &target.settings_config,
+                    Some("official"),
+                )
+                .expect("an unavailable login must not block a read-only card preview");
+                let live_auth: Value = serde_json::from_slice(&before[0]).unwrap();
+                assert_eq!(preview.settings.get("auth"), Some(&live_auth));
+                for (path, bytes) in paths.iter().zip(&before) {
+                    assert_eq!(&fs::read(path).unwrap(), bytes);
+                }
                 let predicted = codex_direct::predicted_official_login(
                     &state.db,
                     crate::mode::state::op::SWITCH,
@@ -6638,7 +6650,7 @@ impl ProviderService {
 
     /// Delete a provider
     ///
-    /// 同时检查本地 settings 和数据库的当前供应商，防止删除任一端正在使用的供应商。
+    /// 直连指针或代理路由指着的供应商不能删（见 `mode::current::is_referenced`）。
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
         if app_type == AppType::Pi {
