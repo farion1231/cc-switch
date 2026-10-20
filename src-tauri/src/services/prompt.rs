@@ -65,6 +65,7 @@ impl PromptService {
             AppType::Pi,
             AppType::Rpi,
             AppType::Mcode,
+            AppType::Agy,
         ]
         .into_iter()
     }

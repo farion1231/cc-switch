@@ -68,6 +68,7 @@ impl Database {
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
             enabled_rpi BOOLEAN NOT NULL DEFAULT 0
@@ -100,6 +101,7 @@ impl Database {
             enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
             enabled_rpi BOOLEAN NOT NULL DEFAULT 0,
@@ -581,9 +583,22 @@ impl Database {
                         Self::set_user_version(conn, 20)?;
                     }
                     20 => {
-                        log::info!("迁移数据库从 v20 到 v21（MCP 与 Skills 添加 RPI 支持）");
-                        // v20 Skills derived Pi state from disk and had no enabled_pi column.
-                        // CREATE TABLE IF NOT EXISTS cannot upgrade an existing table.
+                        // Keep upstream's v21 Antigravity migration intact.
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_agy",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        Self::set_user_version(conn, 21)?;
+                    }
+                    21 => {
+                        // v21 may come from upstream (AGY) or an earlier RPI build.
+                        // Ensure both layouts can upgrade without losing app flags.
                         if Self::table_exists(conn, "skills")? {
                             Self::add_column_if_missing(
                                 conn,
@@ -594,15 +609,17 @@ impl Database {
                         }
                         for table in ["mcp_servers", "skills"] {
                             if Self::table_exists(conn, table)? {
-                                Self::add_column_if_missing(
-                                    conn,
-                                    table,
-                                    "enabled_rpi",
-                                    "BOOLEAN NOT NULL DEFAULT 0",
-                                )?;
+                                for column in ["enabled_rpi", "enabled_agy"] {
+                                    Self::add_column_if_missing(
+                                        conn,
+                                        table,
+                                        column,
+                                        "BOOLEAN NOT NULL DEFAULT 0",
+                                    )?;
+                                }
                             }
                         }
-                        Self::set_user_version(conn, 21)?;
+                        Self::set_user_version(conn, 22)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -3932,7 +3949,8 @@ mod tests {
                 INSERT INTO skills (id, name, directory, enabled_claude, enabled_mcode,
                                     installed_at, content_hash, updated_at)
                 VALUES ('existing', 'Existing', 'existing', 1, 1, 123, 'original-hash', 456);
-                ALTER TABLE mcp_servers DROP COLUMN enabled_rpi;",
+                ALTER TABLE mcp_servers DROP COLUMN enabled_rpi;
+                ALTER TABLE mcp_servers DROP COLUMN enabled_agy;",
             )?;
             Database::set_user_version(&conn, 20)?;
             // Startup runs CREATE before migration; it must not mask missing columns.
@@ -3952,6 +3970,115 @@ mod tests {
         assert!(db.get_all_installed_skills()?["existing"].apps.rpi);
         db.save_skill(&skill)?;
         assert_eq!(db.get_all_installed_skills()?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v21_native_app_layouts_preserves_mcp_and_skill_state() -> Result<(), AppError> {
+        use crate::app_config::{AppType, InstalledSkill, McpServer};
+
+        // Both upstream AGY and pre-merge RPI builds used schema v21.
+        for native_app in [AppType::Agy, AppType::Rpi] {
+            let db = Database::memory()?;
+            let apps = serde_json::json!({"claude": true, native_app.as_str(): true});
+            let mut server: McpServer = serde_json::from_value(serde_json::json!({
+                "id": "server", "name": "Existing server",
+                "server": {"command": "echo", "args": ["preserved"]}, "apps": apps
+            }))
+            .unwrap();
+            let mut skill: InstalledSkill = serde_json::from_value(serde_json::json!({
+                "id": "skill", "name": "Existing skill", "directory": "skill",
+                "installedAt": 123, "contentHash": "original-hash", "updatedAt": 456,
+                "apps": apps
+            }))
+            .unwrap();
+            db.save_mcp_server(&server)?;
+            db.save_skill(&skill)?;
+            {
+                let conn = db.conn.lock().unwrap();
+                if native_app == AppType::Agy {
+                    conn.execute_batch(
+                        "ALTER TABLE mcp_servers DROP COLUMN enabled_rpi;
+                         ALTER TABLE skills DROP COLUMN enabled_rpi;
+                         ALTER TABLE skills DROP COLUMN enabled_pi;",
+                    )?;
+                } else {
+                    conn.execute_batch(
+                        "ALTER TABLE mcp_servers DROP COLUMN enabled_agy;
+                         ALTER TABLE skills DROP COLUMN enabled_agy;",
+                    )?;
+                }
+                Database::set_user_version(&conn, 21)?;
+                Database::create_tables_on_conn(&conn)?;
+                Database::apply_schema_migrations_on_conn(&conn)?;
+                Database::apply_schema_migrations_on_conn(&conn)?;
+                assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            }
+            assert_eq!(db.get_all_mcp_servers()?["server"].apps, server.apps);
+            let restored = db.get_installed_skill("skill")?.unwrap();
+            assert_eq!(restored.apps, skill.apps);
+            assert_eq!(restored.installed_at, 123);
+            assert_eq!(restored.content_hash.as_deref(), Some("original-hash"));
+            assert_eq!(restored.updated_at, 456);
+
+            // Updating either application's flag must preserve its sibling's state.
+            for app in [AppType::Rpi, AppType::Agy] {
+                server.apps.set_enabled_for(&app, true);
+                let updated = db
+                    .update_mcp_server_app_enabled("server", &app, true)?
+                    .unwrap();
+                assert_eq!(updated.apps, server.apps);
+                skill.apps.set_enabled_for(&app, true);
+                db.update_skill_apps("skill", &skill.apps)?;
+                assert_eq!(db.get_all_installed_skills()?["skill"].apps, skill.apps);
+            }
+            db.save_mcp_server(&server)?;
+            db.save_skill(&skill)?;
+            assert_eq!(db.get_all_mcp_servers()?["server"].apps, server.apps);
+            assert_eq!(db.get_installed_skill("skill")?.unwrap().apps, skill.apps);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn agy_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_gemini BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_codex BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 20)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for (table, flag) in [
+            ("mcp_servers", "enabled_gemini"),
+            ("skills", "enabled_codex"),
+        ] {
+            let row = conn.query_row(
+                &format!("SELECT {flag}, enabled_agy FROM {table}"),
+                [],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(row, (1, 0));
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    #[test]
+    fn agy_clean_database_persists_independent_mcp_and_skill_flags() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let mut server: crate::app_config::McpServer = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"echo"}, "apps":{"gemini":true,"agy":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        server.apps.agy = false;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Agy, false)?;
+        assert_eq!(db.get_all_mcp_servers()?["m"].apps, server.apps);
+        let skill: crate::app_config::InstalledSkill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "directory":"s", "installedAt":0, "apps":{"agy":true,"gemini":true}})).unwrap();
+        db.save_skill(&skill)?;
+        assert!(db.get_installed_skill("s")?.unwrap().apps.agy);
+        let mut apps = skill.apps;
+        apps.agy = false;
+        db.update_skill_apps("s", &apps)?;
+        let read = db.get_all_installed_skills()?;
+        assert!(!read["s"].apps.agy);
+        assert!(read["s"].apps.gemini);
         Ok(())
     }
 

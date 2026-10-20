@@ -8,6 +8,7 @@ import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 import {
   fetchModelsForConfig,
+  getAgyModels,
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
@@ -18,6 +19,7 @@ interface EndpointCandidate {
 }
 
 interface GeminiFormFieldsProps {
+  appId?: "gemini" | "agy";
   providerId?: string;
   // API Key
   shouldShowApiKey: boolean;
@@ -49,6 +51,7 @@ interface GeminiFormFieldsProps {
 }
 
 export function GeminiFormFields({
+  appId = "gemini",
   providerId,
   shouldShowApiKey,
   apiKey,
@@ -77,15 +80,29 @@ export function GeminiFormFields({
   const [isFetchingModels, setIsFetchingModels] = useState(false);
 
   const handleFetchModels = useCallback(() => {
-    if (!baseUrl || !apiKey) {
+    const nativeAgy = appId === "agy" && !apiKey;
+    const modelBaseUrl =
+      baseUrl.trim() ||
+      (appId === "agy" ? "https://generativelanguage.googleapis.com" : "");
+    if (!nativeAgy && (!modelBaseUrl || !apiKey)) {
       showFetchModelsError(null, t, {
         hasApiKey: !!apiKey,
-        hasBaseUrl: !!baseUrl,
+        hasBaseUrl: !!modelBaseUrl,
       });
       return;
     }
     setIsFetchingModels(true);
-    fetchModelsForConfig(baseUrl, apiKey)
+    (nativeAgy
+      ? getAgyModels()
+      : fetchModelsForConfig(
+          modelBaseUrl,
+          apiKey,
+          false,
+          undefined,
+          undefined,
+          appId === "agy" ? { apiFormat: "google-generative-ai" } : undefined,
+        )
+    )
       .then((models) => {
         setFetchedModels(models);
         if (models.length === 0) {
@@ -101,7 +118,7 @@ export function GeminiFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [baseUrl, apiKey, t]);
+  }, [appId, baseUrl, apiKey, t]);
 
   // 检测是否为 Google 官方（使用 OAuth）
   const isGoogleOfficial =
@@ -109,6 +126,11 @@ export function GeminiFormFields({
 
   return (
     <>
+      {appId === "agy" && (
+        <p className="rounded-lg border border-border-strong bg-subtle p-4 text-sm text-fg-2">
+          {t("provider.form.agy.connectionHint")}
+        </p>
+      )}
       {/* Google OAuth 提示 */}
       {isGoogleOfficial && (
         <div className="rounded-lg border border-border-strong bg-subtle p-4">
@@ -137,7 +159,7 @@ export function GeminiFormFields({
           value={apiKey}
           onChange={onApiKeyChange}
           category={category}
-          required
+          required={appId !== "agy" || Boolean(baseUrl.trim())}
           shouldShowLink={shouldShowApiKeyLink}
           websiteUrl={websiteUrl}
           isPartner={isPartner}
@@ -149,6 +171,7 @@ export function GeminiFormFields({
       {shouldShowSpeedTest && (
         <EndpointField
           id="baseUrl"
+          required={appId !== "agy"}
           label={t("providerForm.apiEndpoint", { defaultValue: "API 端点" })}
           value={baseUrl}
           onChange={onBaseUrlChange}
@@ -186,7 +209,11 @@ export function GeminiFormFields({
             id="gemini-model"
             value={model}
             onChange={onModelChange}
-            placeholder="gemini-3.6-flash"
+            placeholder={
+              appId === "agy" && !apiKey
+                ? "Gemini 3.8 Flash (High)"
+                : "gemini-3.6-flash"
+            }
             fetchedModels={fetchedModels}
             isLoading={isFetchingModels}
           />
@@ -196,7 +223,7 @@ export function GeminiFormFields({
       {/* 端点测速弹窗 */}
       {shouldShowSpeedTest && isEndpointModalOpen && (
         <EndpointSpeedTest
-          appId="gemini"
+          appId={appId}
           providerId={providerId}
           value={baseUrl}
           onChange={onBaseUrlChange}

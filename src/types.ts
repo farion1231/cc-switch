@@ -316,6 +316,7 @@ export interface VisibleApps {
   pi: boolean;
   rpi?: boolean;
   mcode: boolean;
+  agy: boolean;
 }
 
 // WebDAV 同步状态
@@ -765,6 +766,7 @@ export interface McpServerSpec {
 // v3.7.0: MCP 服务器应用启用状态
 export interface McpApps {
   mcode?: boolean;
+  agy?: boolean;
   claude: boolean;
   "claude-desktop"?: boolean;
   codex: boolean;

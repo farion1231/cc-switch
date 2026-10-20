@@ -208,6 +208,14 @@
     "geminiConfig": "Gemini 配置",
     "geminiConfigHint": "使用 .env 格式配置 Gemini",
     "form": {
+      "agy": {
+        "connectionHint": "不填 API Key 和请求地址时使用 agy 自身的 Google 登录。填写 Key 但不填地址时使用 Google 默认 API；第三方地址须兼容 Gemini API。切换后请新开终端或重启 agy，已运行的会话不会自动切换。登录模式的模型列表读取当前 agy 配置。 登录模式请使用模型列表中的显示名称；API 模式使用接口模型 ID。",
+        "keyFieldsHint": "地址、Key 和模型随供应商切换；Antigravity 的其他原生设置保持不变。",
+        "envFile": "启动环境变量",
+        "envFileHint": "CC Switch 会在启动 agy 时传入 API Key、请求地址和模型。其他环境变量不会应用。",
+        "configJson": "模型配置（CC Switch 格式）",
+        "configJsonHint": "这里仅支持模型设置，其他 Antigravity 选项请在 agy 中调整；MCP 在 MCP 面板中管理。"
+      },
       "gemini": {
         "model": "模型",
         "oauthTitle": "OAuth 认证模式",
@@ -401,7 +409,7 @@
       "trayStyle": "托盘样式",
       "trayStylePanel": "面板",
       "trayStyleMenu": "菜单",
-      "trayStyleHelp": "点托盘图标时弹出什么。面板：各应用在用的供应商、额度和用量，可以搜索、切换。菜单：系统原生菜单（Windows 上左键打开主界面、右键出菜单）。切换后立即生效。",
+      "trayStyleHelp": "点托盘图标时弹出什么（Windows 上左键始终打开主界面，右键弹出所选样式）。面板：各应用在用的供应商、额度和用量，可以搜索、切换。菜单：系统原生菜单。切换后立即生效。",
       "minimizeToTrayHelp": "打开时，点关闭按钮只隐藏窗口，CC Switch 留在系统托盘里继续运行（轻量模式在托盘菜单里）；关闭时点关闭按钮直接退出。",
       "terminalHelp": "点供应商卡片上的「打开终端」时用哪个终端。选的终端不可用时，改用系统默认终端。"
     },
@@ -1090,7 +1098,8 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "rpi": "rpi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "agy": "Antigravity"
   },
   "mcode": {
     "empty": {
@@ -1341,6 +1350,7 @@
     "deleteSessionEllipsis": "删除会话",
     "deleteEllipsis": "删除",
     "selectSessionLabel": "选择 {{title}}",
+    "agyDeleteHint": "请在 Antigravity 中删除会话，以同步清理运行状态",
     "mcodeDeleteHint": "请在 MiniMax Code 中删除",
     "groupMeta": "{{count}} 个会话 · {{time}}",
     "bucketToday": "今天",
@@ -2554,7 +2564,8 @@
       "cacheWrite": "缓存写入"
     },
     "prevMonth": "上个月",
-    "nextMonth": "下个月"
+    "nextMonth": "下个月",
+    "agyUsageHint": "Antigravity 显示会话日志的原始 Token；缺失的历史模型记为 unknown。日志未提供可靠计费信息，显示的 0 费用不代表免费。"
   },
   "usageScript": {
     "title": "配置用量查询",
@@ -3151,6 +3162,8 @@
       "providerKeyRequired": "供应商标识不能为空",
       "providerKeyInvalid": "供应商标识只能包含小写字母、数字和连字符",
       "providerKeyDuplicate": "该供应商标识已存在",
+      "providerKeyBuiltin": "「{{key}}」是 Hermes 内置供应商的标识。Hermes 会改用内置供应商（要它自己的环境变量 Key），这张卡的地址和 Key 不会生效。请换一个标识，例如 cc-switch-{{key}}。",
+      "providerKeyBuiltinLocked": "「{{key}}」是 Hermes 内置供应商的标识。Hermes 会改用内置供应商，这张卡的地址和 Key 不会生效。标识已锁定无法修改，请用其他标识（例如 cc-switch-{{key}}）重新添加这个供应商，再删除这张卡。",
       "apiMode": "API 模式",
       "apiModeHint": "供应商 API 协议。请根据端点选择正确的协议。",
       "apiModeChatCompletions": "OpenAI Chat Completions",

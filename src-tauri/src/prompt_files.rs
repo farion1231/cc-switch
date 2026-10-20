@@ -37,6 +37,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi | AppType::Rpi => crate::pi_config::agent_dir(app)?,
         AppType::Mcode => crate::mcode_config::data_dir(),
+        AppType::Agy => crate::agy_config::agy_dir(),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -46,7 +47,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Gemini => "GEMINI.md",
         AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw => "AGENTS.md",
         AppType::Hermes => "SOUL.md",
-        AppType::Pi | AppType::Rpi | AppType::Mcode => "AGENTS.md",
+        AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Agy => "AGENTS.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 

@@ -91,7 +91,8 @@ fn parse_provider_deeplink(
     // Validate app type
     if !matches!(
         app.as_str(),
-        "claude"
+        "agy"
+            | "claude"
             | "codex"
             | "gemini"
             | "grokbuild"
@@ -252,6 +253,7 @@ fn parse_prompt_deeplink(
         "claude"
             | "codex"
             | "gemini"
+            | "agy"
             | "grokbuild"
             | "opencode"
             | "openclaw"
@@ -261,7 +263,7 @@ fn parse_prompt_deeplink(
             | "mcode"
     ) {
         return Err(AppError::InvalidInput(format!(
-            "Invalid app type: must be 'claude', 'codex', 'gemini', 'grokbuild', 'opencode', 'openclaw', 'hermes', 'pi', 'rpi', or 'mcode', got '{app}'"
+            "Invalid app type: must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'openclaw', 'hermes', 'pi', 'rpi', or 'mcode', got '{app}'"
         )));
     }
 
@@ -335,6 +337,7 @@ fn parse_mcp_deeplink(
             "claude"
                 | "codex"
                 | "gemini"
+                | "agy"
                 | "grokbuild"
                 | "grok"
                 | "opencode"
@@ -345,7 +348,7 @@ fn parse_mcp_deeplink(
                 | "mcode"
         ) {
             return Err(AppError::InvalidInput(format!(
-                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'grokbuild', 'opencode', 'hermes', 'pi', 'rpi', or 'mcode', got '{trimmed}'"
+                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'hermes', 'pi', 'rpi', or 'mcode', got '{trimmed}'"
             )));
         }
     }
@@ -421,7 +424,7 @@ fn parse_skill_deeplink(
         directory,
         branch,
         icon: None,
-        app: Some("claude".to_string()), // Skills are Claude-only
+        app: None, // Skill links add a shared repository; app installation is a separate action.
         name: None,
         enabled: None,
         homepage: None,

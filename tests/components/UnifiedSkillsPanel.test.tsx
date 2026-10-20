@@ -898,6 +898,7 @@ describe("UnifiedSkillsPanel", () => {
           pi: false,
           rpi: false,
           mcode: false,
+          agy: false,
         },
       },
     ]);

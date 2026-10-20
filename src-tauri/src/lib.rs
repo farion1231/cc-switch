@@ -1,3 +1,6 @@
+mod agy_config;
+#[cfg(all(test, unix))]
+mod agy_smoke_tests;
 mod app_config;
 mod app_store;
 mod auto_launch;
@@ -1140,7 +1143,7 @@ pub fn run() {
                 Err(e) => log::warn!("读取启动时的深链接失败: {e}"),
             }
 
-            // 构建托盘：macOS / Windows 默认点图标（左右键）弹出托盘面板，不挂原生菜单；
+            // 构建托盘：Windows 左键打开主界面，右键默认弹出面板；macOS 左右键默认都弹出面板。
             // 设置里打开「原生托盘菜单」就挂原生菜单（`tray::apply_tray_style` 运行时切换）。
             // Linux（AppIndicator）不派发点击事件，只能出原生菜单，菜单里有一项打开面板。
             let native_menu = tray_panel::uses_native_menu();
@@ -1156,15 +1159,14 @@ pub fn run() {
                         ..
                     } = &event
                     {
-                        if !tray_panel::uses_native_menu() {
+                        if cfg!(target_os = "windows")
+                            && *button == tauri::tray::MouseButton::Left
+                        {
+                            tray_panel::hide_panel(tray.app_handle());
+                            tray::show_main_window(tray.app_handle());
+                        } else if !tray_panel::uses_native_menu() {
                             tray_panel::toggle(tray.app_handle(), rect);
                             return;
-                        }
-                        // 原生菜单：Windows 的习惯是左键打开应用、右键出菜单；macOS 左右键都出菜单。
-                        if *button == tauri::tray::MouseButton::Left
-                            && !tray::native_menu_on_left_click(true)
-                        {
-                            tray::show_main_window(tray.app_handle());
                         } else {
                             // 弹出的菜单里已经有反馈行了：算显示过，下次悬停重建时拿掉。
                             tray::mark_feedback_seen();
@@ -1566,6 +1568,7 @@ pub fn run() {
             // Fetch OpenAI-compatible and Anthropic model lists. Response data structure:
             // data[].id, data[]?.owned_by. Special: supports Zhipu OpenAI Responses models[].slug.
             commands::fetch_models_for_config,
+            commands::get_agy_models,
             commands::get_opencode_models,
             // ours: endpoint speed test + custom endpoint management
             commands::test_api_endpoints,

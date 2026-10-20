@@ -208,6 +208,14 @@
     "geminiConfig": "Gemini 設定",
     "geminiConfigHint": ".env 形式で Gemini を設定してください",
     "form": {
+      "agy": {
+        "connectionHint": "API Key と接続先を空欄にすると agy の Google ログインを使用します。Key のみを指定すると Google の標準 API を使用します。外部接続先は Gemini API に対応している必要があります。切替後は新しいターミナルを開くか agy を再起動してください。実行中のセッションは切り替わりません。ログイン時のモデル取得には現在の agy 設定を使用します。 ログイン時はモデル一覧の表示名を使用してください。API モードでは API のモデル ID を使用します。",
+        "keyFieldsHint": "エンドポイント、キー、モデルはプロバイダーとともに切り替わります。Antigravity の他のネイティブ設定は保持されます。",
+        "envFile": "起動時の環境変数",
+        "envFileHint": "CC Switch は agy 起動時に API キー、エンドポイント、モデルを渡します。他の環境変数は適用されません。",
+        "configJson": "モデル設定（CC Switch 形式）",
+        "configJsonHint": "ここではモデル設定のみ対応しています。他の Antigravity 設定は agy で変更し、MCP は MCP パネルで管理してください。"
+      },
       "gemini": {
         "model": "モデル",
         "oauthTitle": "OAuth 認証モード",
@@ -401,7 +409,7 @@
       "trayStyle": "トレイの表示",
       "trayStylePanel": "パネル",
       "trayStyleMenu": "メニュー",
-      "trayStyleHelp": "トレイアイコンをクリックしたときに開くものです。パネル：各アプリの使用中のプロバイダー、クォータ、使用量を表示し、検索して切り替えられます。メニュー：システム標準のメニュー（Windows では左クリックでメイン画面、右クリックでメニュー）。すぐに反映されます。",
+      "trayStyleHelp": "トレイアイコンをクリックしたときに開くものです（Windows では左クリックで常にメイン画面を開き、右クリックで選択した表示を開きます）。パネル：各アプリの使用中のプロバイダー、クォータ、使用量を表示し、検索して切り替えられます。メニュー：システム標準のメニュー。すぐに反映されます。",
       "minimizeToTrayHelp": "オンのときは閉じるボタンでウィンドウを隠すだけで、CC Switch はシステムトレイで動き続けます（軽量モードはトレイメニューにあります）。オフのときは閉じるボタンで終了します。",
       "terminalHelp": "プロバイダーカードの「ターミナルを開く」で使うターミナルです。使えない場合はシステムの既定のターミナルを使います。"
     },
@@ -1090,7 +1098,8 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "rpi": "rpi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "agy": "Antigravity"
   },
   "mcode": {
     "empty": {
@@ -1341,6 +1350,7 @@
     "deleteSessionEllipsis": "セッションを削除",
     "deleteEllipsis": "削除",
     "selectSessionLabel": "{{title}} を選択",
+    "agyDeleteHint": "実行状態も削除するには Antigravity でセッションを削除してください",
     "mcodeDeleteHint": "MiniMax Code で削除してください",
     "groupMeta": "{{count}} 件 · {{time}}",
     "bucketToday": "今日",
@@ -2554,7 +2564,8 @@
       "cacheWrite": "キャッシュ書き込み"
     },
     "prevMonth": "前月",
-    "nextMonth": "翌月"
+    "nextMonth": "翌月",
+    "agyUsageHint": "Antigravity はログの Token 数を表示し、過去のモデルが不明な場合は unknown と表示します。ログに信頼できる料金情報がないため、料金 0 は無料を意味しません。"
   },
   "usageScript": {
     "title": "利用状況を設定",
@@ -3151,6 +3162,8 @@
       "providerKeyRequired": "プロバイダーキーは必須です",
       "providerKeyInvalid": "プロバイダーキーは小文字、数字、ハイフンのみ使用できます",
       "providerKeyDuplicate": "このプロバイダーキーは既に存在します",
+      "providerKeyBuiltin": "「{{key}}」は Hermes 組み込みプロバイダーの ID です。Hermes は組み込みプロバイダー（専用の環境変数の API キーが必要）を使い、このカードのエンドポイントとキーは使われません。cc-switch-{{key}} など別のキーにしてください。",
+      "providerKeyBuiltinLocked": "「{{key}}」は Hermes 組み込みプロバイダーの ID です。Hermes は組み込みプロバイダーを使い、このカードのエンドポイントとキーは使われません。キーはロックされているため、別のキー（例: cc-switch-{{key}}）でこのプロバイダーを追加し直してから、このカードを削除してください。",
       "apiMode": "API モード",
       "apiModeHint": "プロバイダーの API プロトコル。エンドポイントに合わせて正しい形式を選択してください。",
       "apiModeChatCompletions": "OpenAI Chat Completions",

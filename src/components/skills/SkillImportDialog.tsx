@@ -103,6 +103,7 @@ export function SkillImportDialog({
               pi: false,
               rpi: false,
               mcode: chosen.has("mcode"),
+              agy: chosen.has("agy"),
             },
           };
         }),
