@@ -16,6 +16,9 @@ const SPEED_WINDOW: Duration = Duration::from_secs(5);
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const SPEED_REFRESH: Duration = Duration::from_millis(500);
 const SPEED_MIN_DENOMINATOR: Duration = Duration::from_millis(100);
+// Reserve one stable numeric column so status-item updates do not move neighboring icons.
+const SPEED_VALUE_WIDTH: usize = 3;
+const SPEED_PADDING: char = '\u{2007}';
 
 const DISPLAY_CURRENCIES: [&str; 6] = ["USD", "CNY", "EUR", "JPY", "TWD", "TRY"];
 const DEFAULT_CNY_RATE: f64 = 6.8;
@@ -322,14 +325,28 @@ fn build_title(settings: &AppSettings, speed: f64, daily: &DailySnapshot) -> Opt
 
 fn format_speed(speed: f64, language: &str) -> String {
     if !speed.is_finite() || speed < 0.05 {
-        return "0 tok/s".to_string();
+        return format_speed_value("0");
     }
+    let rounded = speed.round().min(999.0);
     let value = if speed < 1.0 {
         format!("{speed:.1}")
     } else {
-        format_grouped_u64(speed.round() as u64, language)
+        format!("{rounded:.0}")
     };
-    format!("{value} tok/s")
+    let value = if language.eq_ignore_ascii_case("tr") {
+        value.replace('.', ",")
+    } else {
+        value
+    };
+    format_speed_value(&value)
+}
+
+fn format_speed_value(value: &str) -> String {
+    let padding = SPEED_VALUE_WIDTH.saturating_sub(value.chars().count());
+    format!(
+        "{}{value} tok/s",
+        std::iter::repeat_n(SPEED_PADDING, padding).collect::<String>()
+    )
 }
 
 fn format_hit_rate(rate: f64) -> String {
@@ -961,7 +978,10 @@ mod tests {
             cache_hit_rate: 0.86,
         };
         assert_eq!(
-            build_title(&settings, 42.4, &daily).as_deref(),
+            build_title(&settings, 42.4, &daily)
+                .as_deref()
+                .map(|title| title.replace(SPEED_PADDING, ""))
+                .as_deref(),
             Some("42 tok/s · 128K · 37 · $0.42 · 86.0%")
         );
     }
@@ -982,14 +1002,38 @@ mod tests {
 
         let settings = settings_with_data(MenuBarDataSettings::default());
         assert_eq!(
-            build_title(&settings, 0.0, &DailySnapshot::default()).as_deref(),
+            build_title(&settings, 0.0, &DailySnapshot::default())
+                .as_deref()
+                .map(|title| title.replace(SPEED_PADDING, ""))
+                .as_deref(),
             Some("0 tok/s")
         );
     }
 
     #[test]
     fn low_speed_has_one_decimal() {
-        assert_eq!(format_speed(0.42, "en"), "0.4 tok/s");
+        assert_eq!(
+            format_speed(0.42, "en").replace(SPEED_PADDING, ""),
+            "0.4 tok/s"
+        );
+    }
+
+    #[test]
+    fn speed_value_width_stays_fixed_across_magnitudes() {
+        for speed in [0.0, 0.4, 42.0, 999.0, 999.6, 12_400.0] {
+            let title = format_speed(speed, "en");
+            let value = title.strip_suffix(" tok/s").expect("speed title has unit");
+            assert_eq!(value.chars().count(), SPEED_VALUE_WIDTH, "title={title:?}");
+        }
+
+        assert_eq!(
+            format_speed(999.6, "en").replace(SPEED_PADDING, ""),
+            "999 tok/s"
+        );
+        assert_eq!(
+            format_speed(12_400.0, "en").replace(SPEED_PADDING, ""),
+            "999 tok/s"
+        );
     }
 
     #[test]
