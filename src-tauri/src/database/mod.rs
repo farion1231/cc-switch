@@ -51,7 +51,10 @@ use std::sync::Mutex;
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub(crate) const SCHEMA_VERSION: i32 = 20;
+///
+/// 24 = 在 22 之后**追加**补列臂（23 补 enabled_mcode、24 补 enabled_pi）。不再重排既有迁移号：
+/// 旧 cursor 线的库落在 20，若把补列放在 18/19 会被跨过 → 列永久缺失（2026-10-09 实测事故）。
+pub(crate) const SCHEMA_VERSION: i32 = 24;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {

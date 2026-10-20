@@ -210,6 +210,20 @@ describe("UnifiedMcpPanel", () => {
     ).toHaveLength(3);
   });
 
+  // 回归（2026-10-12）：后端早已把 Cursor 纳入受管 MCP（`live_sync_apps()` = all 去掉
+  // OpenClaw/ClaudeDesktop，含 Cursor；`services/mcp.rs` 有 Cursor 的 sync/remove/import 分支），
+  // 但前端 `MCP_APP_IDS` 漏了 "cursor" —— 于是用户在「MCP 管理」里**根本看不到 Cursor 这一列**，
+  // 而且它在可见列表里会被静默过滤掉（`useVisibleAppIds(MCP_APP_IDS)`）。
+  it("把 cursor 纳入受管 MCP 应用（可见时就必须有它的列）", () => {
+    mocks.serversMap = { alpha: makeServer("alpha") };
+    mocks.visibleApps = ["claude", "cursor"];
+    renderPanel();
+    const header = screen.getByTestId("mcp-matrix");
+    expect(
+      within(header).getAllByRole("button", { name: /appMatrix.columnAria/ }),
+    ).toHaveLength(2);
+  });
+
   it("highlights the column header when a cell gets keyboard focus", async () => {
     mocks.serversMap = { alpha: makeServer("alpha") };
     renderPanel();

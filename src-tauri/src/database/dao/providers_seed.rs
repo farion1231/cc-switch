@@ -81,6 +81,16 @@ pub(crate) const OFFICIAL_SEEDS: &[OfficialProviderSeed] = &[
         // 空 config = 不写自定义模型表，Grok CLI 回落到自带的 xAI OAuth 登录
         settings_config_json: r#"{"config":""}"#,
     },
+    OfficialProviderSeed {
+        id: "cursor-official",
+        app_type: AppType::Cursor,
+        name: "Cursor Official",
+        website_url: "https://cursor.com",
+        icon: "cursor",
+        icon_color: "#8B5CF6",
+        // 空 env 让用户走 Cursor 内置的 API 配置
+        settings_config_json: r#"{"env":{}}"#,
+    },
 ];
 
 /// 判断给定的 provider id 是否属于内置官方种子。

@@ -78,13 +78,20 @@ const SOURCE_LABEL: Record<string, string> = {
   pip: "pip",
 };
 
-type Row = { kind: "tool"; tool: ToolName } | { kind: "desktop" };
+type Row =
+  | { kind: "tool"; tool: ToolName }
+  | { kind: "desktop" }
+  | { kind: "cursor" };
 
 const ROWS: Row[] = [
   { kind: "tool", tool: "claude" },
   { kind: "desktop" },
-  ...TOOL_NAMES.filter((tool) => tool !== "claude").map(
-    (tool): Row => ({ kind: "tool", tool }),
+  // Cursor 是桌面应用（没有 CLI 可安装/升级），但它和上面这些一样要能控制「在侧栏显示」，
+  // 所以单独占一行；位置对齐侧栏顺序（Cursor 在 hermes 之后、pi 之前）。
+  ...TOOL_NAMES.filter((tool) => tool !== "claude").flatMap((tool): Row[] =>
+    tool === "hermes"
+      ? [{ kind: "tool", tool }, { kind: "cursor" }]
+      : [{ kind: "tool", tool }],
   ),
 ];
 
@@ -373,6 +380,20 @@ export function AppsPage() {
                     </span>
                   }
                   visibility={visibilitySwitch("claude-desktop")}
+                />
+              ) : row.kind === "cursor" ? (
+                <AppRow
+                  key="cursor"
+                  app="cursor"
+                  name={
+                    <span className="truncate">{APP_DISPLAY_NAME.cursor}</span>
+                  }
+                  version={
+                    <span className="text-caption text-fg-2">
+                      {t("appsPage.cursorHelp")}
+                    </span>
+                  }
+                  visibility={visibilitySwitch("cursor")}
                 />
               ) : (
                 <ToolRow
