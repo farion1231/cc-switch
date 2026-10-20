@@ -27,6 +27,7 @@ export const APP_IDS: AppId[] = [
   "hermes",
   "pi",
   "mcode",
+  "commandcode",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -40,6 +41,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   hermes: true,
   pi: true,
   mcode: true,
+  commandcode: true,
 };
 
 /** App IDs shown in Skills panels. */
@@ -101,11 +103,12 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode"
+  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "commandcode"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "mcode",
+  "commandcode",
   "opencode",
   "openclaw",
   "hermes",
@@ -131,8 +134,11 @@ export function usesEditorView(appId: AppId): boolean {
   return EDITOR_VIEW_APP_IDS.includes(appId);
 }
 
-/** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
-export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw">;
+/** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Command Code 无 MCP 客户端；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
+export type McpAppId = Exclude<
+  AppId,
+  "claude-desktop" | "openclaw" | "commandcode"
+>;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
   "codex",
@@ -248,6 +254,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
     badgeClass:
       "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
+  },
+  commandcode: {
+    label: "Command Code",
+    icon: (
+      <ProviderIcon
+        icon="commandcode"
+        name="Command Code"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-teal-500/10 ring-1 ring-teal-500/20 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400",
+    badgeClass:
+      "bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 border-0 gap-1.5",
   },
 };
 

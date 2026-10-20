@@ -1094,6 +1094,13 @@
       "description": "MiniMax アカウントのログインは MiniMax Code 自身が管理するため、インポートは不要です。config.yaml に既にあるカスタムプロバイダーはここに自動で表示されます。右上の + から、プリセットまたはカスタムプロバイダーを追加できます。"
     }
   },
+  "commandcode": {
+    "empty": {
+      "title": "プロバイダーはまだありません",
+      "description": "Command Code アカウントのログイン（auth.json）は Command Code 自身が管理するため、インポートは不要です。providers.json に既にあるカスタムプロバイダーはここに自動で表示されます。右上の + から、プリセットまたはカスタムプロバイダーを追加できます。"
+    },
+    "providerKeyHint": "providers.json 内の一意な識別子。小文字の英数字、ハイフン、アンダースコア、ドットが使えます。組み込み id（anthropic、codex、github-copilot）は使用できません。"
+  },
   "pi": {
     "empty": {
       "title": "API キープロバイダーはまだありません",

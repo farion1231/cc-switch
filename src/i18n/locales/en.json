@@ -1094,6 +1094,13 @@
       "description": "Your MiniMax account sign-in is managed by MiniMax Code itself, so there is nothing to import. Custom providers already in config.yaml appear here automatically. Use the + button in the top-right corner to add a preset or custom provider."
     }
   },
+  "commandcode": {
+    "empty": {
+      "title": "No providers yet",
+      "description": "Your Command Code account sign-in (auth.json) is managed by Command Code itself, so there is nothing to import. Custom providers already in providers.json appear here automatically. Use the + button in the top-right corner to add a preset or custom provider."
+    },
+    "providerKeyHint": "Unique identifier in providers.json. Use lowercase letters, numbers, hyphens, underscores, and dots; built-in ids (anthropic, codex, github-copilot) are reserved."
+  },
   "pi": {
     "empty": {
       "title": "No API key providers yet",

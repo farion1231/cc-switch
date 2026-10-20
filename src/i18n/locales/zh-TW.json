@@ -1095,6 +1095,13 @@
       "description": "MiniMax 官方帳號登入由 MiniMax Code 自行管理，無需匯入；config.yaml 中已有的自訂供應商會自動顯示在這裡。點擊右上角的 +，從預設或自訂設定新增供應商。"
     }
   },
+  "commandcode": {
+    "empty": {
+      "title": "尚未新增供應商",
+      "description": "Command Code 官方帳號登入（auth.json）由 Command Code 自行管理，無需匯入；providers.json 中已有的自訂供應商會自動顯示在這裡。點擊右上角的 +，從預設或自訂設定新增供應商。"
+    },
+    "providerKeyHint": "providers.json 中的唯一識別碼，允許小寫字母、數字、連字號、底線與點，且不能使用內建 id（anthropic、codex、github-copilot）"
+  },
   "pi": {
     "empty": {
       "title": "尚未新增 API Key 供應商",

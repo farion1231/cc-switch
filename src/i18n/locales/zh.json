@@ -1094,6 +1094,13 @@
       "description": "MiniMax 官方账号登录由 MiniMax Code 自行管理，无需导入；config.yaml 里已有的自定义供应商会自动显示在这里。点击右上角 +，从预设或自定义配置添加供应商。"
     }
   },
+  "commandcode": {
+    "empty": {
+      "title": "还没有添加供应商",
+      "description": "Command Code 官方账号登录（auth.json）由 Command Code 自行管理，无需导入；providers.json 里已有的自定义供应商会自动显示在这里。点击右上角 +，从预设或自定义配置添加供应商。"
+    },
+    "providerKeyHint": "providers.json 中的唯一标识符，允许小写字母、数字、连字符、下划线和点，且不能使用内置 id（anthropic、codex、github-copilot）"
+  },
   "pi": {
     "empty": {
       "title": "还没有添加 API Key 供应商",

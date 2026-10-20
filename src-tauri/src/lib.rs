@@ -8,6 +8,7 @@ mod codex_config;
 mod codex_history_migration;
 mod codex_rollout_file;
 mod codex_state_db;
+mod commandcode_config;
 mod commands;
 mod config;
 mod database;
