@@ -2549,7 +2549,7 @@
     },
     "prevMonth": "Previous month",
     "nextMonth": "Next month",
-    "agyUsageHint": "Antigravity shows native session token counters; missing historical models are unknown. The log does not provide reliable billing data; a displayed cost of 0 does not mean free usage."
+    "agyUsageHint": "Antigravity shows the raw tokens from its session logs, priced at the matching Gemini API rates. Official subscriptions are billed by plan, so these amounts are for reference only. Older entries without a model are recorded as unknown and not priced."
   },
   "usageScript": {
     "title": "Configure Usage Query",

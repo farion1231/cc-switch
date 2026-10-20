@@ -339,6 +339,32 @@ fn remove_link(link: &Path) -> Result<(), AppError> {
         .map_err(|e| AppError::io(link, e))
 }
 
+/// 会话页的恢复命令。Key 模式的会话在私有目录里，要带上同一个 `--gemini_dir`；Key 本身
+/// 不进命令（命令会被显示和复制），一键恢复时由 [`crate::services::provider::agy_direct::key_resume_target`]
+/// 认出私有目录再补上。
+pub fn resume_command(gemini_dir: Option<&Path>, conversation: &str) -> String {
+    match gemini_dir {
+        Some(dir) => format!(
+            "agy {} --conversation={conversation}",
+            shell_word(&format!("--gemini_dir={}", dir.to_string_lossy()))
+        ),
+        None => format!("agy --conversation={conversation}"),
+    }
+}
+
+/// shell 里的一个词：只含安全字符时原样写，否则加单引号。
+fn shell_word(value: &str) -> String {
+    let plain = !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | ':' | '='));
+    if plain {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', r"'\''"))
+    }
+}
+
 /// 定位真实的 `agy`：先 PATH，再常见安装目录，最后问一次登录 shell。
 /// 从 Dock / Finder 启动时 PATH 只有系统目录，所以后两步不可省。
 /// 旧版测试装的包装脚本永远不会被返回。
@@ -825,6 +851,15 @@ mod integration_tests {
         assert!(!String::from_utf8_lossy(&fs::read(&private).unwrap()).contains("fixture"));
         assert_eq!(fs::read_link(dir.join("config")).unwrap(), shared);
         assert!(dir.join("config/mcp_config.json").is_file());
+        // The global prompt lives in the shared customization root, so the
+        // private profile loads it too.
+        let prompt = crate::prompt_files::prompt_file_path(&AppType::Agy).unwrap();
+        assert_eq!(prompt, shared.join("AGENTS.md"));
+        fs::write(&prompt, "rules").unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("config/AGENTS.md")).unwrap(),
+            "rules"
+        );
 
         // agy's own keys in the private settings survive later launches; a key
         // without an endpoint must clear any endpoint the user's shell exported.
@@ -841,6 +876,46 @@ mod integration_tests {
         let doc = read_json(&private);
         assert_eq!(doc["trustedWorkspaces"][0], "/w");
         assert!(doc.get("model").is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn key_profile_sessions_are_listed_and_resume_with_their_provider() {
+        let _home = HomeGuard::new();
+        let db = Database::memory().unwrap();
+        let row = relay("relay one");
+        db.save_provider("agy", &row).unwrap();
+        let launch = prepare_launch(&row.id, &row.settings_config).unwrap();
+        let dir = launch.gemini_dir.unwrap();
+        let logs = dir.join("antigravity-cli/brain/abc-123/.system_generated/logs");
+        fs::create_dir_all(&logs).unwrap();
+        fs::write(
+            logs.join("transcript_full.jsonl"),
+            r#"{"step_index":0,"type":"USER_INPUT","content":"hi"}"#,
+        )
+        .unwrap();
+
+        let sessions = crate::session_manager::providers::agy::scan_sessions();
+        assert_eq!(sessions.len(), 1);
+        let command = sessions[0].resume_command.clone().unwrap();
+        assert!(!command.contains("fixture"), "{command}");
+        assert_eq!(command, resume_command(Some(&dir), "abc-123"));
+        let (found, id) = agy_direct::key_resume_target(&db, &command)
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.id, "relay one");
+        assert_eq!(id, "abc-123");
+        // Login sessions and tampered ids are left to the plain command.
+        assert!(
+            agy_direct::key_resume_target(&db, "agy --conversation=abc-123")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            agy_direct::key_resume_target(&db, &format!("{command}; rm -rf /"))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

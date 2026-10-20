@@ -2549,7 +2549,7 @@
     },
     "prevMonth": "前月",
     "nextMonth": "翌月",
-    "agyUsageHint": "Antigravity はログの Token 数を表示し、過去のモデルが不明な場合は unknown と表示します。ログに信頼できる料金情報がないため、料金 0 は無料を意味しません。"
+    "agyUsageHint": "Antigravity はセッションログの生のトークン数を表示し、金額は対応する Gemini API の価格で見積もります。公式サブスクリプションはプランで課金されるため、金額は参考値です。モデルが記録されていない過去の項目は unknown として扱い、金額は計上しません。"
   },
   "usageScript": {
     "title": "利用状況を設定",

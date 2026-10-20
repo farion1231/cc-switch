@@ -14,11 +14,33 @@ use std::{
 };
 
 /// Antigravity CLI keeps sessions in `~/.gemini/antigravity-cli/brain`, while the IDE writes the
-/// same layout to `~/.gemini/antigravity/brain`. Both are scanned.
+/// same layout to `~/.gemini/antigravity/brain`. API-key providers run agy with a private
+/// `--gemini_dir` (`~/.cc-switch/agy/<provider>/`), so their sessions live under that directory's
+/// `antigravity-cli/brain`. All of them are scanned.
 pub fn session_roots() -> Vec<PathBuf> {
+    session_sources()
+        .into_iter()
+        .map(|(root, _)| root)
+        .collect()
+}
+
+/// Each root, with the private `--gemini_dir` its sessions must be resumed with.
+fn session_sources() -> Vec<(PathBuf, Option<PathBuf>)> {
     let cli = crate::agy_config::agy_dir();
     let ide = cli.with_file_name("antigravity");
-    vec![cli.join("brain"), ide.join("brain")]
+    let mut sources = vec![(cli.join("brain"), None), (ide.join("brain"), None)];
+    let mut profiles: Vec<PathBuf> = fs::read_dir(crate::agy_config::key_profiles_root())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
+        .map(|entry| entry.path())
+        .collect();
+    profiles.sort();
+    for dir in profiles {
+        sources.push((dir.join("antigravity-cli").join("brain"), Some(dir)));
+    }
+    sources
 }
 
 pub(crate) fn records(path: &Path) -> Result<Vec<Value>, String> {
@@ -39,15 +61,15 @@ pub(crate) fn records(path: &Path) -> Result<Vec<Value>, String> {
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    scan_roots(&session_roots())
+    scan_roots(&session_sources())
 }
 
 /// Missing roots are tolerated; a session id found in several roots is reported once (first wins).
-fn scan_roots(roots: &[PathBuf]) -> Vec<SessionMeta> {
+fn scan_roots(sources: &[(PathBuf, Option<PathBuf>)]) -> Vec<SessionMeta> {
     let mut seen = std::collections::HashSet::new();
     let mut sessions = Vec::new();
-    for root in roots {
-        for meta in scan_root(root) {
+    for (root, gemini_dir) in sources {
+        for meta in scan_root(root, gemini_dir.as_deref()) {
             if seen.insert(meta.session_id.clone()) {
                 sessions.push(meta);
             }
@@ -60,12 +82,13 @@ fn valid_session_id(id: &str) -> bool {
     !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
-fn scan_root(root: &Path) -> Vec<SessionMeta> {
+fn scan_root(root: &Path, gemini_dir: Option<&Path>) -> Vec<SessionMeta> {
     let mut summaries = read_summaries(
         &root
             .parent()
             .unwrap_or(root)
             .join("conversation_summaries.db"),
+        gemini_dir,
     );
     let canonical_root = root.canonicalize().ok();
     let mut sessions = Vec::new();
@@ -113,7 +136,7 @@ fn scan_root(root: &Path) -> Vec<SessionMeta> {
                     created_at: rows.iter().find_map(timestamp),
                     last_active_at: rows.iter().filter_map(timestamp).max(),
                     source_path: None,
-                    resume_command: Some(format!("agy --conversation={id}")),
+                    resume_command: Some(crate::agy_config::resume_command(gemini_dir, &id)),
                 }
             };
             meta.source_path = Some(path.to_string_lossy().into_owned());
@@ -125,7 +148,7 @@ fn scan_root(root: &Path) -> Vec<SessionMeta> {
     sessions
 }
 
-fn read_summaries(path: &Path) -> BTreeMap<String, SessionMeta> {
+fn read_summaries(path: &Path, gemini_dir: Option<&Path>) -> BTreeMap<String, SessionMeta> {
     let mut result = BTreeMap::new();
     let Ok(conn) =
         rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
@@ -170,7 +193,7 @@ fn read_summaries(path: &Path) -> BTreeMap<String, SessionMeta> {
                 created_at: None,
                 last_active_at,
                 source_path: None,
-                resume_command: Some(format!("agy --conversation={id}")),
+                resume_command: Some(crate::agy_config::resume_command(gemini_dir, &id)),
             },
         );
     }
@@ -244,7 +267,7 @@ mod tests {
             ],
         )
         .unwrap();
-        let sessions = scan_root(&dir.path().join("brain"));
+        let sessions = scan_root(&dir.path().join("brain"), None);
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].title.as_deref(), Some("Test title"));
         assert_eq!(
@@ -276,9 +299,9 @@ mod tests {
         write("antigravity", "ide-1");
         write("antigravity", "cli-1");
         let roots = vec![
-            home.path().join("antigravity-cli/brain"),
-            home.path().join("antigravity/brain"),
-            home.path().join("missing/brain"),
+            (home.path().join("antigravity-cli/brain"), None),
+            (home.path().join("antigravity/brain"), None),
+            (home.path().join("missing/brain"), None),
         ];
         let mut ids: Vec<_> = scan_roots(&roots)
             .into_iter()
@@ -303,7 +326,7 @@ mod tests {
         )
         .unwrap();
         std::os::unix::fs::symlink(outside.path(), session.join(".system_generated")).unwrap();
-        assert!(scan_root(root.path()).is_empty());
+        assert!(scan_root(root.path(), None).is_empty());
     }
 
     #[test]
@@ -317,11 +340,18 @@ mod tests {
             "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"content\":\"draft\"}\n",
             "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"content\":\"done\",\"input_tokens\":100,\"output_tokens\":12,\"cache_read_tokens\":20}\n{"
         )).unwrap();
-        let sessions = scan_root(dir.path());
+        let sessions = scan_root(dir.path(), None);
         assert_eq!(sessions.len(), 1);
         assert_eq!(
             sessions[0].resume_command.as_deref(),
             Some("agy --conversation=abc-123")
+        );
+        let private = Path::new("/home/me/.cc-switch/agy/relay");
+        assert_eq!(
+            scan_root(dir.path(), Some(private))[0]
+                .resume_command
+                .as_deref(),
+            Some("agy --gemini_dir=/home/me/.cc-switch/agy/relay --conversation=abc-123")
         );
         let messages = load_messages(&file).unwrap();
         assert_eq!(messages.len(), 2);

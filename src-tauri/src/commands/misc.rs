@@ -4816,6 +4816,27 @@ fn agy_terminal_launch(provider: &crate::provider::Provider) -> Result<ProviderL
     })
 }
 
+/// 恢复 Antigravity 第三方 Key 模式的会话：和「打开终端」同样带私有目录和 Key，再接上
+/// `--conversation`。卡上已经没有 Key 时私有目录对不上，直接报错，不退回官方登录。
+pub(crate) fn open_agy_resume_terminal(
+    provider: &crate::provider::Provider,
+    conversation: &str,
+    cwd: Option<String>,
+) -> Result<(), String> {
+    let mut launch = agy_terminal_launch(provider)?;
+    if launch.args.is_empty() {
+        return Err(format!(
+            "「{}」已不再带 API Key，无法恢复它在私有目录里的会话",
+            provider.name
+        ));
+    }
+    let resume = format!("--conversation={conversation}");
+    launch.args.push(resume.clone());
+    launch.batch_command = format!("{} {resume}", launch.batch_command);
+    let cwd = resolve_launch_cwd(cwd)?;
+    launch_provider_terminal(&launch, cwd.as_deref()).map_err(|e| format!("启动终端失败: {e}"))
+}
+
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 const AGY_DIR_BATCH_VAR: &str = "CC_SWITCH_AGY_DIR";
 

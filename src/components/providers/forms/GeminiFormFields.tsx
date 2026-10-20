@@ -80,11 +80,10 @@ export function GeminiFormFields({
   const [isFetchingModels, setIsFetchingModels] = useState(false);
 
   const handleFetchModels = useCallback(() => {
-    const nativeAgy = appId === "agy" && !apiKey;
-    const modelBaseUrl =
-      baseUrl.trim() ||
-      (appId === "agy" ? "https://generativelanguage.googleapis.com" : "");
-    if (!nativeAgy && (!modelBaseUrl || !apiKey)) {
+    // agy 两种模式都只认它自己清单里的显示名，接口的模型 ID 对不上，所以一律问本机 agy。
+    const agy = appId === "agy";
+    const modelBaseUrl = baseUrl.trim();
+    if (!agy && (!modelBaseUrl || !apiKey)) {
       showFetchModelsError(null, t, {
         hasApiKey: !!apiKey,
         hasBaseUrl: !!modelBaseUrl,
@@ -92,16 +91,9 @@ export function GeminiFormFields({
       return;
     }
     setIsFetchingModels(true);
-    (nativeAgy
-      ? getAgyModels()
-      : fetchModelsForConfig(
-          modelBaseUrl,
-          apiKey,
-          false,
-          undefined,
-          undefined,
-          appId === "agy" ? { apiFormat: "google-generative-ai" } : undefined,
-        )
+    (agy
+      ? getAgyModels({ apiKey, baseUrl: modelBaseUrl })
+      : fetchModelsForConfig(modelBaseUrl, apiKey, false)
     )
       .then((models) => {
         setFetchedModels(models);

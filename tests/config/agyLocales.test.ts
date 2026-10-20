@@ -26,7 +26,8 @@ describe("Antigravity usage limitations", () => {
       ];
       expect(text).toBe(expected.usage.agyUsageHint);
       expect(text).toContain("unknown");
-      expect(text).toContain("0");
+      // 金额按 Gemini API 价格估算，不再是写死的 0
+      expect(text).toContain("Gemini API");
       expect(text).not.toBe("usage.agyUsageHint");
     },
   );
