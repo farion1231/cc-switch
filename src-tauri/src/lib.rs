@@ -25,6 +25,8 @@ mod jsonc_document;
 mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
+#[cfg(target_os = "linux")]
+pub mod linux_rendering;
 pub mod live;
 mod mcode_config;
 mod mcp;

@@ -8,7 +8,7 @@
 //! - Windows：固定透明画布，网页只为卡片绘制不透明背景，两块卡片并成两栏；
 //!   原生窗口区域跟随卡片裁剪，画布其余部分透明且不拦截鼠标。
 //! - Linux：AppIndicator 不派发点击事件，点图标仍是原生菜单，菜单最上面一项打开面板；
-//!   使用不透明的 GTK / WebKit 窗口，避免 Wayland 下透明 surface 调整尺寸后只重绘局部。
+//!   默认使用 SHM 合成保留透明圆角；显式禁用渲染器或合成时退回不透明背景。
 //!
 //! 面板只换了外观：每一行沿用原生菜单的事件 id，点击走 `tray::handle_tray_menu_event`，
 //! 切换、路由、故障转移的行为和原生菜单一致。窗口懒创建，之后只隐藏不销毁；失焦即隐藏。
@@ -214,7 +214,7 @@ pub struct PanelPlacement {
     /// `floating`：两块卡片分开、子面板对齐到行；`joined`：并成两栏（整窗一块背景的平台）
     pub layout: &'static str,
     /// `native`：背后有系统玻璃，网页只叠一层淡色；`frosted`：系统没有可用的玻璃材质，
-    /// 网页自己画兼容的毛玻璃（半透明底色 + 高光描边）
+    /// 网页自己画兼容的毛玻璃（半透明底色 + 高光描边）；`solid`：Linux 软件绘制回退。
     pub glass: &'static str,
 }
 
@@ -355,6 +355,17 @@ fn ensure_window(app: &AppHandle) -> Option<WebviewWindow> {
     }
 }
 
+fn transparent_window() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        crate::linux_rendering::transparent_panel()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
+    }
+}
+
 fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     // 新窗口还没套过深浅色（轻量模式下面板收起即销毁，会反复新建）。
     *lock(&APPLIED_DARK) = None;
@@ -366,10 +377,8 @@ fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
             .maximizable(false)
             .minimizable(false)
             .decorations(false)
-            // Linux 的 WebKit 合成模式默认已禁用；透明 surface 再叠加网页模糊，
-            // 调整窗口尺寸或被其它窗口遮挡后可能留下未重绘的区域。
-            // TODO: 在 KDE / Wayland 上验证 WebKitGTK 的透明重绘恢复后，再评估启用透明。
-            .transparent(!cfg!(target_os = "linux"))
+            // Linux 禁用 renderer / 合成的覆盖值必须同时控制原生透明和网页背景。
+            .transparent(transparent_window())
             // Windows 使用固定透明画布，整窗系统阴影会暴露画布的外框。
             .shadow(!cfg!(target_os = "windows"))
             .always_on_top(true)
@@ -1055,6 +1064,9 @@ mod platform {
     use super::{style, CardRect, Frame};
 
     pub fn glass() -> &'static str {
+        if !super::transparent_window() {
+            return "solid";
+        }
         style::GLASS
     }
 

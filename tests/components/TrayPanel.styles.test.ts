@@ -29,10 +29,18 @@ afterEach(() => {
   else root.dataset.platform = originalPlatform;
 });
 
-function cardFor(platform: "windows" | "macos" | "linux", dark: boolean) {
+function cardFor(
+  platform: "windows" | "macos" | "linux",
+  dark: boolean,
+  solid = false,
+) {
   root.classList.toggle("dark", dark);
   root.dataset.platform = platform;
-  root.dataset.glass = platform === "macos" ? "native" : "frosted";
+  root.dataset.glass = solid
+    ? "solid"
+    : platform === "macos"
+      ? "native"
+      : "frosted";
   root.dataset.layout = platform === "macos" ? "floating" : "joined";
   canvas = document.createElement("div");
   canvas.id = "root";
@@ -47,9 +55,24 @@ function cardFor(platform: "windows" | "macos" | "linux", dark: boolean) {
 
 describe("TrayPanel backgrounds stay scoped to each platform", () => {
   it.each([false, true])(
-    "paints the whole Linux page and its cards opaque (dark=%s)",
+    "keeps the Linux canvas transparent with translucent cards (dark=%s)",
     (dark) => {
       const style = cardFor("linux", dark);
+      expect(style.backgroundColor).toBe(
+        dark ? "rgba(36, 36, 40, 0.9)" : "rgba(244, 244, 247, 0.9)",
+      );
+      for (const element of [root, document.body, canvas]) {
+        expect(getComputedStyle(element).backgroundColor).toBe(
+          "rgba(0, 0, 0, 0)",
+        );
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "paints the Linux software fallback and its cards opaque (dark=%s)",
+    (dark) => {
+      const style = cardFor("linux", dark, true);
       const background = dark ? "rgb(36, 36, 40)" : "rgb(235, 235, 237)";
       expect(style.backgroundColor).toBe(background);
       expect(getComputedStyle(root).backgroundColor).toBe(background);
