@@ -312,6 +312,44 @@ mod tests {
         result
     }
 
+    #[test]
+    #[serial]
+    fn switching_zcode_provider_updates_default_model_selection() {
+        with_test_home(|state, _home| {
+            let provider = Provider::with_id(
+                "zcode-custom".to_string(),
+                "ZCode Custom".to_string(),
+                json!({
+                    "name": "ZCode Custom",
+                    "kind": "anthropic",
+                    "options": {
+                        "baseURL": "https://api.example.com/anthropic",
+                        "apiKey": "sk-test"
+                    },
+                    "models": {
+                        "model-b": {},
+                        "model-a": {}
+                    }
+                }),
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::ZCode.as_str(), &provider)
+                .expect("store ZCode provider");
+
+            ProviderService::switch(state, AppType::ZCode, &provider.id)
+                .expect("switch ZCode provider");
+
+            let live = crate::zcode_config::read_zcode_provider_config()
+                .expect("read ZCode provider config");
+            assert_eq!(
+                live["config"]["defaultModelSelection"],
+                json!({"providerId": "zcode-custom", "modelId": "model-b"})
+            );
+        });
+    }
+
     fn codex_settings(base_url: &str, api_key: &str) -> Value {
         json!({
             "auth": {
@@ -6777,6 +6815,10 @@ impl ProviderService {
                     }
                 }
             }
+        }
+
+        if matches!(app_type, AppType::ZCode) {
+            crate::zcode_config::set_default_model_selection(&provider.id)?;
         }
 
         // 切换重写了目标应用的 live，只重投影该应用的 MCP（Grok Build 的

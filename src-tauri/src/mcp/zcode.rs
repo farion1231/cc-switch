@@ -1,7 +1,8 @@
 //! ZCode MCP 同步和导入模块
 //!
-//! ZCode 的 MCP 配置使用标准的 `type: "stdio"` 格式（与 Claude Code 一致），
-//! 因此本模块**不做任何格式转换**，直接透传读写。
+//! ZCode 的 MCP 配置使用标准的 `type: "stdio"` 格式（与 Claude Code 一致）。
+//! 连接字段可直接透传，但 ZCode 把启用状态放在服务器条目的 `enabled` 字段，
+//! 而 CC Switch 使用 `apps.zcode`，因此边界处要统一这一个字段。
 //!
 //! 与 OpenCode 的差异：OpenCode 把 MCP 和 provider 放在同一个 `opencode.json`，
 //! 且使用非标准的 `local`/`remote` 类型；ZCode 把 MCP 单独放在 `cli/config.json`，
@@ -26,14 +27,36 @@ fn should_sync_zcode_mcp() -> bool {
     zcode_config::get_zcode_dir().exists()
 }
 
+/// CC Switch 的 `apps.zcode = true` 在 ZCode 配置中必须投影为
+/// `enabled = true`，不能让统一配置里遗留的 `enabled: false` 覆盖应用状态。
+fn spec_for_zcode(server_spec: &Value) -> Result<Value, AppError> {
+    let mut spec = server_spec.clone();
+    let object = spec
+        .as_object_mut()
+        .ok_or_else(|| AppError::McpValidation("MCP 服务器连接定义必须为 JSON 对象".into()))?;
+    object.insert("enabled".to_string(), Value::Bool(true));
+    Ok(spec)
+}
+
+/// 导入统一配置后，启用状态只由 `apps.zcode` 表达。显式的
+/// `enabled = false` 会映射成 `apps.zcode = false`，而连接定义中不再保留该字段。
+fn spec_from_zcode(mut spec: Value) -> (Value, bool) {
+    let enabled = spec
+        .as_object_mut()
+        .and_then(|object| object.remove("enabled"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+    (spec, enabled)
+}
+
 // ============================================================================
 // Public API: Sync Functions
 // ============================================================================
 
 /// Sync a single MCP server to ZCode live config.
 ///
-/// ZCode uses the standard stdio format, so the spec is passed through as-is
-/// without any conversion.
+/// ZCode uses the standard connection format; only its embedded enabled flag
+/// is normalized from the CC Switch app selection.
 pub fn sync_single_server_to_zcode(
     _config: &MultiAppConfig,
     id: &str,
@@ -43,8 +66,7 @@ pub fn sync_single_server_to_zcode(
         return Ok(());
     }
 
-    // Pass through directly — ZCode uses the standard stdio format
-    zcode_config::set_mcp_server(id, server_spec.clone())
+    zcode_config::set_mcp_server(id, spec_for_zcode(server_spec)?)
 }
 
 /// Remove a single MCP server from ZCode live config
@@ -59,8 +81,8 @@ pub fn remove_server_from_zcode(id: &str) -> Result<(), AppError> {
 /// Import MCP servers from ZCode config to unified structure.
 ///
 /// Existing servers will have the ZCode app enabled without overwriting other
-/// fields. Because ZCode uses the standard stdio format, the spec is validated
-/// directly (no format conversion needed).
+/// fields. Connection fields use the standard format; the embedded enabled
+/// flag is removed because CC Switch stores that state in `apps.zcode`.
 pub fn import_from_zcode(config: &mut MultiAppConfig) -> Result<usize, AppError> {
     let mcp_map = zcode_config::get_mcp_servers()?;
     if mcp_map.is_empty() {
@@ -74,7 +96,8 @@ pub fn import_from_zcode(config: &mut MultiAppConfig) -> Result<usize, AppError>
     let mut errors = Vec::new();
 
     for (id, spec) in mcp_map {
-        // Validate the spec directly (no conversion needed — standard stdio format)
+        let (spec, zcode_enabled) = spec_from_zcode(spec);
+        // Validate the normalized standard connection spec.
         if let Err(e) = validate_server_spec(&spec) {
             log::warn!("Skip invalid ZCode MCP server '{id}': {e}");
             errors.push(format!("{id}: {e}"));
@@ -82,11 +105,19 @@ pub fn import_from_zcode(config: &mut MultiAppConfig) -> Result<usize, AppError>
         }
 
         if let Some(existing) = servers.get_mut(&id) {
-            // Existing server: just enable ZCode app
-            if !existing.apps.zcode {
-                existing.apps.zcode = true;
+            // Existing server: enable ZCode and clean up any legacy embedded
+            // enabled flag without overwriting its other connection fields.
+            let mut server_changed = existing
+                .server
+                .as_object_mut()
+                .is_some_and(|server| server.remove("enabled").is_some());
+            if existing.apps.zcode != zcode_enabled {
+                existing.apps.zcode = zcode_enabled;
+                server_changed = true;
+            }
+            if server_changed {
                 changed += 1;
-                log::info!("MCP server '{id}' enabled for ZCode");
+                log::info!("MCP server '{id}' normalized for ZCode (enabled={zcode_enabled})");
             }
         } else {
             // New server: default to only ZCode enabled
@@ -105,7 +136,7 @@ pub fn import_from_zcode(config: &mut MultiAppConfig) -> Result<usize, AppError>
                         hermes: false,
                         mcode: false,
                         pi: false,
-                        zcode: true,
+                        zcode: zcode_enabled,
                     },
                     description: None,
                     homepage: None,
@@ -158,6 +189,32 @@ mod tests {
             "headers": { "Authorization": "Bearer xxx" }
         });
         validate_server_spec(&spec).expect("sse spec is valid");
+    }
+
+    #[test]
+    fn export_forces_zcode_enabled_state() {
+        let spec = json!({
+            "type": "stdio",
+            "command": "npx",
+            "enabled": false
+        });
+
+        let exported = spec_for_zcode(&spec).expect("object spec");
+        assert_eq!(exported["enabled"], json!(true));
+        assert_eq!(spec["enabled"], json!(false), "input must not be mutated");
+    }
+
+    #[test]
+    fn import_removes_embedded_zcode_enabled_state() {
+        let (imported, enabled) = spec_from_zcode(json!({
+            "type": "stdio",
+            "command": "npx",
+            "enabled": false
+        }));
+
+        assert!(imported.get("enabled").is_none());
+        assert_eq!(imported["command"], json!("npx"));
+        assert!(!enabled);
     }
 
     #[test]

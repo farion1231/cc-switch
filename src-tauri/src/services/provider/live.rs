@@ -11,7 +11,7 @@ use toml_edit::{DocumentMut, Item, TableLike};
 use crate::app_config::AppType;
 use crate::config::{get_claude_settings_path, read_json_file};
 use crate::error::AppError;
-use crate::provider::Provider;
+use crate::provider::{Provider, ZCodeProviderConfig};
 use crate::proxy::providers::codex_oauth_auth::{CodexLiveAuthSwitchGuard, CodexOAuthManager};
 use crate::services::mcp::McpService;
 use crate::store::AppState;
@@ -1571,6 +1571,59 @@ pub fn remove_zcode_provider_from_live(provider_id: &str) -> Result<(), AppError
 /// This imports existing providers from ~/.zcode/v2/provider_config.json
 /// into the CC Switch database. Each provider found will be added to the
 /// database with is_current set to false.
+fn merge_zcode_live_config(
+    existing_value: &Value,
+    live: &ZCodeProviderConfig,
+    live_value: &Value,
+) -> Value {
+    let Ok(mut existing) = serde_json::from_value::<ZCodeProviderConfig>(existing_value.clone())
+    else {
+        return live_value.clone();
+    };
+
+    if live.name.is_some() {
+        existing.name = live.name.clone();
+    }
+    if !live.kind.trim().is_empty() {
+        existing.kind = live.kind.clone();
+    }
+    existing.options.base_url = live.options.base_url.clone();
+    existing.options.api_key = live.options.api_key.clone();
+    existing.options.extra.extend(live.options.extra.clone());
+    if live.enabled.is_some() {
+        existing.enabled = live.enabled;
+    }
+    if live.source.is_some() {
+        existing.source = live.source.clone();
+    }
+    existing.extra.extend(live.extra.clone());
+
+    let mut merged_models = indexmap::IndexMap::new();
+    for (model_id, live_model) in &live.models {
+        let mut model = existing
+            .models
+            .shift_remove(model_id)
+            .unwrap_or_else(|| live_model.clone());
+        if live_model.limit.is_some() {
+            model.limit = live_model.limit.clone();
+        }
+        if live_model.modalities.is_some() {
+            model.modalities = live_model.modalities.clone();
+        }
+        if live_model.reasoning.is_some() {
+            model.reasoning = live_model.reasoning.clone();
+        }
+        model.extra.extend(live_model.extra.clone());
+        merged_models.insert(model_id.clone(), model);
+    }
+    existing.models = merged_models;
+
+    serde_json::to_value(existing).unwrap_or_else(|error| {
+        log::warn!("Failed to merge imported ZCode provider metadata: {error}");
+        live_value.clone()
+    })
+}
+
 pub fn import_zcode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     use crate::zcode_config;
 
@@ -1604,11 +1657,17 @@ pub fn import_zcode_providers_from_live(state: &AppState) -> Result<usize, AppEr
             match state.db.get_provider_by_id(&id, "zcode") {
                 Ok(Some(existing)) => {
                     let display_name = config.name.clone().unwrap_or_else(|| existing.name.clone());
-                    if existing.settings_config != settings_config || existing.name != display_name
+                    let merged_settings_config = merge_zcode_live_config(
+                        &existing.settings_config,
+                        &config,
+                        &settings_config,
+                    );
+                    if existing.settings_config != merged_settings_config
+                        || existing.name != display_name
                     {
                         let mut provider = existing;
                         provider.name = display_name;
-                        provider.settings_config = settings_config;
+                        provider.settings_config = merged_settings_config;
                         if let Err(e) = state.db.save_provider("zcode", &provider) {
                             log::warn!(
                                 "Failed to update ZCode provider '{id}' from live config: {e}"
@@ -1652,6 +1711,54 @@ pub fn import_zcode_providers_from_live(state: &AppState) -> Result<usize, AppEr
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn zcode_live_import_preserves_rich_model_metadata_and_source() {
+        let existing = json!({
+            "name": "Old name",
+            "kind": "anthropic",
+            "source": "custom",
+            "options": {
+                "baseURL": "https://old.example",
+                "apiKey": "old-key",
+                "headers": {"X-Test": "keep"}
+            },
+            "models": {
+                "shared": {
+                    "limit": {"context": 200000, "output": 32000},
+                    "reasoning": {"enabled": true}
+                },
+                "removed-live": {"limit": {"context": 1}}
+            }
+        });
+        let live_value = json!({
+            "name": "Live name",
+            "kind": "anthropic",
+            "options": {
+                "baseURL": "https://live.example",
+                "apiKey": "live-key"
+            },
+            "enabled": false,
+            "models": {"shared": {}, "new-live": {}}
+        });
+        let live: ZCodeProviderConfig = serde_json::from_value(live_value.clone()).unwrap();
+
+        let merged = merge_zcode_live_config(&existing, &live, &live_value);
+
+        assert_eq!(merged["name"], json!("Live name"));
+        assert_eq!(merged["source"], json!("custom"));
+        assert_eq!(merged["enabled"], json!(false));
+        assert_eq!(merged["options"]["baseURL"], json!("https://live.example"));
+        assert_eq!(merged["options"]["apiKey"], json!("live-key"));
+        assert_eq!(merged["options"]["headers"], json!({"X-Test": "keep"}));
+        assert_eq!(
+            merged["models"]["shared"]["limit"],
+            json!({"context": 200000, "output": 32000})
+        );
+        assert!(merged["models"]["shared"].get("reasoning").is_some());
+        assert!(merged["models"].get("new-live").is_some());
+        assert!(merged["models"].get("removed-live").is_none());
+    }
 
     #[test]
     fn claude_common_config_remove_strips_what_old_versions_merged() {

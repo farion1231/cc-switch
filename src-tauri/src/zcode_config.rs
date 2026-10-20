@@ -5,7 +5,8 @@
 //! - Provider 配置：`~/.zcode/v2/provider_config.json`（个人供应商层）
 //! - MCP 配置：`~/.zcode/cli/config.json`，顶层有 `mcp.servers` 字段
 //!
-//! MCP 使用标准 `type: "stdio"` 格式，与 Claude Code 一致，直接透传不做转换。
+//! MCP 使用标准 `type: "stdio"` 格式，与 Claude Code 一致；连接字段直接透传，
+//! 启用状态由 MCP 同步层在 `enabled` 与 `apps.zcode` 之间归一化。
 //!
 //! # 为什么 Provider 写 `provider_config.json` 而不是 `v2/config.json`
 //!
@@ -45,14 +46,98 @@ use crate::settings::get_zcode_override_dir;
 use indexmap::IndexMap;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::fs::{File, OpenOptions};
+use std::io::{ErrorKind, Write};
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime};
 
 /// 进程级写锁：provider 写入与 MCP 同步都是"读-改-写"整个文件，
 /// 并发交错会互相覆盖（OpenCode 用同样的锁模式）。
 fn zcode_config_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+}
+
+const LOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+const STALE_LOCK_AGE: Duration = Duration::from_secs(30);
+
+struct ZCodeFileLock {
+    path: PathBuf,
+    _file: File,
+}
+
+impl ZCodeFileLock {
+    fn acquire(target: &Path) -> Result<Self, AppError> {
+        let mut lock_name = target.as_os_str().to_os_string();
+        lock_name.push(".lock");
+        let path = PathBuf::from(lock_name);
+        let deadline = Instant::now() + LOCK_WAIT_TIMEOUT;
+
+        loop {
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(mut file) => {
+                    if let Err(error) = writeln!(file, "{}", std::process::id()) {
+                        let _ = std::fs::remove_file(&path);
+                        return Err(AppError::io(&path, error));
+                    }
+                    return Ok(Self { path, _file: file });
+                }
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                    let stale = std::fs::metadata(&path)
+                        .and_then(|metadata| metadata.modified())
+                        .ok()
+                        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+                        .is_some_and(|age| age >= STALE_LOCK_AGE);
+                    if stale {
+                        match std::fs::remove_file(&path) {
+                            Ok(()) => continue,
+                            Err(remove_error) if remove_error.kind() == ErrorKind::NotFound => {
+                                continue;
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(AppError::Config(format!(
+                            "Timed out waiting for ZCode config lock: {}",
+                            path.display()
+                        )));
+                    }
+                    thread::sleep(Duration::from_millis(25));
+                }
+                Err(error) => return Err(AppError::io(&path, error)),
+            }
+        }
+    }
+}
+
+impl Drop for ZCodeFileLock {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_file(&self.path) {
+            if error.kind() != ErrorKind::NotFound {
+                log::warn!(
+                    "Failed to remove ZCode config lock '{}': {error}",
+                    self.path.display()
+                );
+            }
+        }
+    }
+}
+
+fn with_zcode_file_lock<T>(
+    target: &Path,
+    operation: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| AppError::io(parent, error))?;
+    }
+    let _process_guard = zcode_config_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _file_guard = ZCodeFileLock::acquire(target)?;
+    operation()
 }
 
 /// 获取 ZCode 配置根目录（`~/.zcode`），支持 settings 覆盖
@@ -302,9 +387,7 @@ pub fn read_zcode_provider_config() -> Result<Value, AppError> {
 /// 写入 ZCode provider 配置文件
 ///
 /// 用 `atomic_write_private`（0600）：文件里是 API key，不能写成全局可读。
-pub fn write_zcode_provider_config(config: &Value) -> Result<(), AppError> {
-    let _guard = zcode_config_lock();
-    let path = get_zcode_provider_config_path();
+fn write_zcode_provider_config_unlocked(path: &Path, config: &Value) -> Result<(), AppError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
@@ -387,6 +470,14 @@ fn remove_provider_rule(doc: &mut Value, id: &str) {
         .and_then(Value::as_array_mut)
     {
         rules.retain(|r| r.get("providerId").and_then(Value::as_str) != Some(id));
+    }
+    if cfg
+        .get("defaultModelSelection")
+        .and_then(|selection| selection.get("providerId"))
+        .and_then(Value::as_str)
+        == Some(id)
+    {
+        cfg.remove("defaultModelSelection");
     }
 }
 
@@ -595,16 +686,22 @@ pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
         }
     };
 
-    let mut doc = read_zcode_provider_config()?;
-    upsert_provider_rule(&mut doc, id, rule);
-    write_zcode_provider_config(&doc)
+    let path = get_zcode_provider_config_path();
+    with_zcode_file_lock(&path, || {
+        let mut doc = read_zcode_provider_config()?;
+        upsert_provider_rule(&mut doc, id, rule);
+        write_zcode_provider_config_unlocked(&path, &doc)
+    })
 }
 
 /// 移除一个 provider 条目（规则 + providerOrder）
 pub fn remove_provider(id: &str) -> Result<(), AppError> {
-    let mut doc = read_zcode_provider_config()?;
-    remove_provider_rule(&mut doc, id);
-    write_zcode_provider_config(&doc)
+    let path = get_zcode_provider_config_path();
+    with_zcode_file_lock(&path, || {
+        let mut doc = read_zcode_provider_config()?;
+        remove_provider_rule(&mut doc, id);
+        write_zcode_provider_config_unlocked(&path, &doc)
+    })
 }
 
 /// 以类型化结构读取所有 provider
@@ -629,9 +726,54 @@ pub fn get_typed_providers() -> Result<IndexMap<String, ZCodeProviderConfig>, Ap
 /// 以类型化结构写入一个 provider
 pub fn set_typed_provider(id: &str, config: &ZCodeProviderConfig) -> Result<(), AppError> {
     let rule = provider_config_to_rule(id, config);
-    let mut doc = read_zcode_provider_config()?;
-    upsert_provider_rule(&mut doc, id, rule);
-    write_zcode_provider_config(&doc)
+    let path = get_zcode_provider_config_path();
+    with_zcode_file_lock(&path, || {
+        let mut doc = read_zcode_provider_config()?;
+        upsert_provider_rule(&mut doc, id, rule);
+        write_zcode_provider_config_unlocked(&path, &doc)
+    })
+}
+
+fn apply_default_model_selection(doc: &mut Value, id: &str) -> Result<(), AppError> {
+    let model_id = read_provider_rules(doc)
+        .into_iter()
+        .find(|rule| rule.get("providerId").and_then(Value::as_str) == Some(id))
+        .and_then(|rule| {
+            rule.get("config")
+                .and_then(|config| config.get("modelOrder"))
+                .and_then(Value::as_array)
+                .and_then(|models| models.first())
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .ok_or_else(|| {
+            AppError::InvalidInput(format!(
+                "ZCode provider '{id}' has no selectable model; add at least one model before switching"
+            ))
+        })?;
+
+    let config = doc
+        .get_mut("config")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| AppError::Config("ZCode provider config root is invalid".into()))?;
+    config.insert(
+        "defaultModelSelection".to_string(),
+        json!({"providerId": id, "modelId": model_id}),
+    );
+    Ok(())
+}
+
+/// Make a provider's first ordered model the configured ZCode default.
+///
+/// Provider insertion and activation stay separate so adding a provider in
+/// additive mode does not unexpectedly switch the running ZCode model.
+pub fn set_default_model_selection(id: &str) -> Result<(), AppError> {
+    let path = get_zcode_provider_config_path();
+    with_zcode_file_lock(&path, || {
+        let mut doc = read_zcode_provider_config()?;
+        apply_default_model_selection(&mut doc, id)?;
+        write_zcode_provider_config_unlocked(&path, &doc)
+    })
 }
 
 // ============================================================================
@@ -661,9 +803,7 @@ pub fn read_zcode_cli_config() -> Result<Value, AppError> {
 ///
 /// 同样 0600 + 保持键序：cli/config.json 里还有 hooks 和插件状态，
 /// 重排序键会在每次 MCP 同步时制造无意义的大 diff。
-pub fn write_zcode_cli_config(config: &Value) -> Result<(), AppError> {
-    let _guard = zcode_config_lock();
-    let path = get_zcode_cli_config_path();
+fn write_zcode_cli_config_unlocked(path: &Path, config: &Value) -> Result<(), AppError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
@@ -690,40 +830,46 @@ pub fn get_mcp_servers() -> Result<Map<String, Value>, AppError> {
 
 /// 设置（新增/更新）一个 MCP server 条目（透传，不转换格式）
 pub fn set_mcp_server(id: &str, config: Value) -> Result<(), AppError> {
-    let mut full_config = read_zcode_cli_config()?;
+    let path = get_zcode_cli_config_path();
+    with_zcode_file_lock(&path, || {
+        let mut full_config = read_zcode_cli_config()?;
 
-    let mcp = full_config
-        .as_object_mut()
-        .ok_or_else(|| AppError::Config("ZCode CLI config root is not a JSON object".into()))?
-        .entry("mcp")
-        .or_insert_with(|| json!({}));
+        let mcp = full_config
+            .as_object_mut()
+            .ok_or_else(|| AppError::Config("ZCode CLI config root is not a JSON object".into()))?
+            .entry("mcp")
+            .or_insert_with(|| json!({}));
 
-    let mcp_obj = mcp
-        .as_object_mut()
-        .ok_or_else(|| AppError::Config("ZCode CLI config 'mcp' is not a JSON object".into()))?;
+        let mcp_obj = mcp.as_object_mut().ok_or_else(|| {
+            AppError::Config("ZCode CLI config 'mcp' is not a JSON object".into())
+        })?;
 
-    let servers = mcp_obj.entry("servers").or_insert_with(|| json!({}));
-
-    if let Some(servers) = servers.as_object_mut() {
+        let servers = mcp_obj.entry("servers").or_insert_with(|| json!({}));
+        let servers = servers.as_object_mut().ok_or_else(|| {
+            AppError::Config("ZCode CLI config 'mcp.servers' is not a JSON object".into())
+        })?;
         servers.insert(id.to_string(), config);
-    }
 
-    write_zcode_cli_config(&full_config)
+        write_zcode_cli_config_unlocked(&path, &full_config)
+    })
 }
 
 /// 移除一个 MCP server 条目
 pub fn remove_mcp_server(id: &str) -> Result<(), AppError> {
-    let mut config = read_zcode_cli_config()?;
+    let path = get_zcode_cli_config_path();
+    with_zcode_file_lock(&path, || {
+        let mut config = read_zcode_cli_config()?;
 
-    if let Some(servers) = config
-        .get_mut("mcp")
-        .and_then(|v| v.get_mut("servers"))
-        .and_then(|v| v.as_object_mut())
-    {
-        servers.remove(id);
-    }
+        if let Some(servers) = config
+            .get_mut("mcp")
+            .and_then(|v| v.get_mut("servers"))
+            .and_then(|v| v.as_object_mut())
+        {
+            servers.remove(id);
+        }
 
-    write_zcode_cli_config(&config)
+        write_zcode_cli_config_unlocked(&path, &config)
+    })
 }
 
 #[cfg(test)]
@@ -732,6 +878,21 @@ mod tests {
     use crate::provider::{ZCodeModel, ZCodeProviderOptions};
     use serde_json::json;
     use std::collections::HashMap;
+
+    #[test]
+    fn file_lock_exists_during_write_and_is_removed_afterward() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("provider_config.json");
+        let lock_path = temp.path().join("provider_config.json.lock");
+
+        with_zcode_file_lock(&target, || {
+            assert!(lock_path.exists());
+            Ok(())
+        })
+        .unwrap();
+
+        assert!(!lock_path.exists());
+    }
 
     fn provider(
         name: &str,
@@ -901,6 +1062,7 @@ mod tests {
         let mut doc = json!({
             "config": {
                 "providerOrder": ["a", "b"],
+                "defaultModelSelection": {"providerId": "a", "modelId": "model-a"},
                 "providerConfigRules": {"providerRules": [
                     {"providerId": "a", "config": {}},
                     {"providerId": "b", "config": {}}
@@ -914,6 +1076,43 @@ mod tests {
         let rules = read_provider_rules(&doc);
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0]["providerId"], json!("b"));
+        assert!(doc["config"].get("defaultModelSelection").is_none());
+    }
+
+    #[test]
+    fn switch_sets_the_first_ordered_model_as_default() {
+        let mut doc = json!({
+            "schemaVersion": 1,
+            "config": {
+                "providerConfigRules": {"providerRules": [{
+                    "providerId": "custom",
+                    "config": {"modelOrder": ["model-b", "model-a"]}
+                }]},
+                "modelConfigRules": {"providerModelRules": [], "manualProviderModelRules": []}
+            }
+        });
+
+        apply_default_model_selection(&mut doc, "custom").unwrap();
+
+        assert_eq!(
+            doc["config"]["defaultModelSelection"],
+            json!({"providerId": "custom", "modelId": "model-b"})
+        );
+    }
+
+    #[test]
+    fn switch_rejects_a_provider_without_models() {
+        let mut doc = json!({
+            "config": {
+                "providerConfigRules": {"providerRules": [{
+                    "providerId": "empty",
+                    "config": {"modelOrder": []}
+                }]}
+            }
+        });
+
+        let error = apply_default_model_selection(&mut doc, "empty").unwrap_err();
+        assert!(error.to_string().contains("no selectable model"));
     }
 
     #[test]

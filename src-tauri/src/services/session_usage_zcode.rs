@@ -103,15 +103,14 @@ pub fn sync_zcode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         errors: vec![],
     };
 
-    // 查询所有已完成（status != 'running'）的记录
-    let rows = match query_model_usage(&zcode_conn) {
-        Ok(rows) => rows,
-        Err(e) => {
-            // 表不存在（旧版 ZCode 或空库）时静默跳过，不当作错误
-            log::debug!("[ZCODE-SYNC] 无法查询 model_usage 表（可能 ZCode 版本不支持）: {e}");
-            return Ok(result);
-        }
-    };
+    if !model_usage_table_exists(&zcode_conn)? {
+        log::debug!("[ZCODE-SYNC] model_usage 表不存在，当前 ZCode 版本没有可导入的用量");
+        return Ok(result);
+    }
+
+    // 表存在后的任何查询/解码错误都必须上抛；SQLITE_BUSY、损坏库或 schema
+    // 漂移不能伪装成“旧版 ZCode 没有用量”。
+    let rows = query_model_usage(&zcode_conn)?;
 
     let mut has_error = false;
     for row in rows {
@@ -142,6 +141,17 @@ pub fn sync_zcode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     }
 
     Ok(result)
+}
+
+fn model_usage_table_exists(conn: &rusqlite::Connection) -> Result<bool, AppError> {
+    conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'model_usage'
+         )",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(|error| AppError::Database(format!("检查 model_usage 表失败: {error}")))
 }
 
 /// 查询所有已完成的 model_usage 记录（status != 'running'）
@@ -213,6 +223,10 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
         return Ok(false);
     }
 
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|error| AppError::Database(format!("启动 ZCode 用量导入事务失败: {error}")))?;
+
     let model_id = row
         .model_id
         .clone()
@@ -246,12 +260,25 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
     // 只用 request_id 精确判重：model_usage.id 唯一，不走指纹去重——
     // created_at 是秒级精度，同一秒内完成、token 完全相同的两次调用
     // （典型：并行 subagent）会被误判为重复，导致真实记录被永久跳过。
-    let seen: bool = conn.query_row(
+    let seen: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM session_usage_dedup WHERE data_source = ?1 AND request_id = ?2)",
         rusqlite::params!["zcode_session", request_id],
         |r| r.get(0),
     )?;
-    if seen || proxy_request_id_exists(&conn, &request_id)? {
+    if seen {
+        return Ok(false);
+    }
+    if proxy_request_id_exists(&tx, &request_id)? {
+        tx.execute(
+            "INSERT OR IGNORE INTO session_usage_dedup
+             (data_source, request_id, semantic_id, has_entry_id)
+             VALUES (?1, ?2, ?2, 1)",
+            rusqlite::params!["zcode_session", request_id],
+        )
+        .map_err(|e| AppError::Database(format!("补写 ZCode 用量去重账本失败: {e}")))?;
+        tx.commit().map_err(|error| {
+            AppError::Database(format!("提交 ZCode 用量去重账本修复失败: {error}"))
+        })?;
         return Ok(false);
     }
 
@@ -271,7 +298,7 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
     };
 
     let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) =
-        match find_model_pricing(&conn, &model_id) {
+        match find_model_pricing(&tx, &model_id) {
             Some(pricing) => {
                 let cost =
                     CostCalculator::calculate_for_app("zcode", &usage, &pricing, Decimal::from(1));
@@ -299,7 +326,7 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
 
     let status_code = status_to_code(&row.status);
 
-    let inserted_rows = conn.execute(
+    let inserted_rows = tx.execute(
         "INSERT OR IGNORE INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
@@ -338,15 +365,15 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
 
     // 同步记账到去重台账：proxy_request_logs 里 30 天前的明细会被清理，
     // 台账不清理，保证旧行不会被再次导入并重复滚入日汇总。
-    if inserted_rows > 0 {
-        conn.execute(
-            "INSERT OR IGNORE INTO session_usage_dedup
-             (data_source, request_id, semantic_id, has_entry_id)
-             VALUES (?1, ?2, ?2, 1)",
-            rusqlite::params!["zcode_session", request_id],
-        )
-        .map_err(|e| AppError::Database(format!("写入 ZCode 用量去重账本失败: {e}")))?;
-    }
+    tx.execute(
+        "INSERT OR IGNORE INTO session_usage_dedup
+         (data_source, request_id, semantic_id, has_entry_id)
+         VALUES (?1, ?2, ?2, 1)",
+        rusqlite::params!["zcode_session", request_id],
+    )
+    .map_err(|e| AppError::Database(format!("写入 ZCode 用量去重账本失败: {e}")))?;
+    tx.commit()
+        .map_err(|error| AppError::Database(format!("提交 ZCode 用量导入事务失败: {error}")))?;
 
     Ok(inserted_rows > 0)
 }
@@ -354,6 +381,24 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_row(id: &str) -> ZCodeUsageRow {
+        ZCodeUsageRow {
+            id: id.to_string(),
+            provider_id: Some("bigmodel".to_string()),
+            model_id: Some("GLM-5.2".to_string()),
+            input_tokens: 1_000,
+            output_tokens: 100,
+            reasoning_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            duration_ms: Some(1_200),
+            time_to_first_token_ms: Some(300),
+            status: "completed".to_string(),
+            started_at: Some(1_700_000_000_000),
+            session_id: Some("s1".to_string()),
+        }
+    }
 
     #[test]
     fn test_status_to_code_mapping() {
@@ -389,6 +434,80 @@ mod tests {
         assert_eq!(rows[0].input_tokens, 1000);
         assert_eq!(rows[0].reasoning_tokens, 50);
         assert_eq!(rows[0].cache_read_tokens, 300);
+    }
+
+    #[test]
+    fn missing_usage_table_is_distinct_from_broken_schema() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        assert!(!model_usage_table_exists(&conn).unwrap());
+
+        conn.execute("CREATE TABLE model_usage (id TEXT)", [])
+            .unwrap();
+        assert!(model_usage_table_exists(&conn).unwrap());
+        assert!(
+            query_model_usage(&conn).is_err(),
+            "an existing but incompatible table must surface a schema error"
+        );
+    }
+
+    #[test]
+    fn existing_proxy_row_backfills_missing_dedup_ledger() -> Result<(), AppError> {
+        let db = crate::database::Database::memory()?;
+        let row = sample_row("backfill");
+        assert!(insert_zcode_usage(&db, &row)?);
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "DELETE FROM session_usage_dedup
+                 WHERE data_source = 'zcode_session' AND request_id = 'zcode_session:backfill'",
+                [],
+            )?;
+        }
+
+        assert!(!insert_zcode_usage(&db, &row)?);
+        let ledger_rows: i64 = {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.query_row(
+                "SELECT COUNT(*) FROM session_usage_dedup
+                 WHERE data_source = 'zcode_session' AND request_id = 'zcode_session:backfill'",
+                [],
+                |result| result.get(0),
+            )?
+        };
+        assert_eq!(ledger_rows, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn ledger_failure_rolls_back_proxy_detail() -> Result<(), AppError> {
+        let db = crate::database::Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute_batch(
+                "CREATE TRIGGER reject_zcode_dedup
+                 BEFORE INSERT ON session_usage_dedup
+                 WHEN NEW.data_source = 'zcode_session'
+                 BEGIN
+                     SELECT RAISE(ABORT, 'forced ledger failure');
+                 END;",
+            )?;
+        }
+
+        let row = sample_row("atomic");
+        assert!(insert_zcode_usage(&db, &row).is_err());
+
+        let detail_rows: i64 = {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs
+                 WHERE request_id = 'zcode_session:atomic'",
+                [],
+                |result| result.get(0),
+            )?
+        };
+        assert_eq!(detail_rows, 0, "detail insert must roll back with ledger");
+        Ok(())
     }
 
     /// 回归测试（维护者审查 P1）：明细清理后，台账必须挡住旧行的重复导入，
