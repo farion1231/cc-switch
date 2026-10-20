@@ -630,8 +630,9 @@ export function TrayPanel() {
     };
   }, [begin, load]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!placement) return;
+    document.documentElement.dataset.platform = placement.platform;
     document.documentElement.dataset.glass = placement.glass;
     document.documentElement.dataset.layout = placement.layout;
   }, [placement]);
