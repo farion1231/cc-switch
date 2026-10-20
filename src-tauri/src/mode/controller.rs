@@ -1104,6 +1104,97 @@ pub async fn switch_route_locked(
     })
 }
 
+/// Compute the same direct/proxy projection used by mode changes, without writing
+/// files. The review caller applies its field selection in the existing journal.
+pub(crate) fn reviewed_codex_plan(
+    state: &AppState,
+    provider: &Provider,
+    exit_to_direct: bool,
+    prepare_auth: bool,
+) -> Result<(codex_direct::Planned, codex_direct::Prepared, PendingTarget), AppError> {
+    let app = &AppType::Codex;
+    let mode = current::mode_state(app);
+    let live = LiveNow::of(state, app, &mode).map_err(AppError::Message)?;
+    let owner = live.codex_owner();
+    let mut next_stack = settled_stack(app).map_err(AppError::Message)?;
+    let routing = mode.is_proxy() && !exit_to_direct;
+    if routing && next_stack.enabled {
+        add_default(app, &mut next_stack, provider);
+    }
+    let members = if routing {
+        published_members(state, app, &next_stack, provider).map_err(AppError::Message)?
+    } else {
+        Vec::new()
+    };
+    let base_url = if routing {
+        futures::executor::block_on(state.proxy_service.build_proxy_urls())
+            .map_err(AppError::Message)?
+            .1
+    } else {
+        String::new()
+    };
+    let spec = if routing {
+        codex_direct::Target::Proxy {
+            route: provider,
+            base_url: &base_url,
+            stack: &members,
+        }
+    } else {
+        codex_direct::Target::Direct(Some(provider))
+    };
+    let prepared = if prepare_auth {
+        codex_direct::prepare(&state.codex_oauth_manager, &owner, &spec)?
+    } else {
+        codex_direct::Prepared::default()
+    };
+    let planned = codex_direct::plan(&state.db, &owner, &spec, &prepared)?;
+    let pending = if routing {
+        PendingTarget {
+            state: Some(ModeState {
+                proxy_route: Some(provider.id.clone()),
+                // A partial write is not the complete projection's contract.
+                // Future mode operations must recalculate it.
+                contract: None,
+                ..mode
+            }),
+            stack: Some(next_stack),
+            ..Default::default()
+        }
+    } else {
+        PendingTarget {
+            pointer: Some(provider.id.clone()),
+            state: mode.is_proxy().then(|| ModeState {
+                mode: Some(Mode::Direct),
+                attached: false,
+                proxy_route: mode.proxy_route,
+                contract: None,
+            }),
+            ..Default::default()
+        }
+    };
+    Ok((planned, prepared, pending))
+}
+
+pub(crate) fn finish_reviewed_codex_switch(
+    state: &AppState,
+    provider: &Provider,
+    exited_proxy: bool,
+) {
+    futures::executor::block_on(async {
+        if current::is_proxy(&AppType::Codex) {
+            state
+                .proxy_service
+                .set_active_target(&AppType::Codex, provider)
+                .await;
+        } else if exited_proxy {
+            if let Err(error) = state.db.clear_provider_health_for_app("codex").await {
+                log::warn!("清除 codex 健康状态失败: {error}");
+            }
+            stop_server_if_unused(state).await;
+        }
+    });
+}
+
 /// 代理模式下手动换路由（拿切换锁）。不支持代理的官方供应商拒绝切入。
 pub async fn switch_route(
     state: &AppState,

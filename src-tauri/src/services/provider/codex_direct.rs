@@ -551,6 +551,7 @@ fn row_auth(provider: &Provider) -> Value {
 
 /// 在内存里算好的一次 Codex 写入。
 pub(crate) struct Planned {
+    selection: Option<super::codex_selection::Selection>,
     config: CodexConfigPatch,
     /// 第三方路由表的凭据来源：写入时按盘上有没有登录定 `requires_openai_auth`。
     stamp: Option<RouteAuth>,
@@ -567,6 +568,12 @@ pub(crate) struct Planned {
 }
 
 impl Planned {
+    pub(crate) fn catalog(&self) -> Option<&[u8]> {
+        self.catalog.as_deref()
+    }
+    pub(crate) fn set_selection(&mut self, selection: super::codex_selection::Selection) {
+        self.selection = Some(selection);
+    }
     /// `config.toml` 的补丁（编辑器显示用：在内存里对 live 做一次切换投影）。
     pub(crate) fn config(&self) -> &CodexConfigPatch {
         &self.config
@@ -755,6 +762,7 @@ pub(crate) fn plan(
         official_login.as_deref(),
     );
     Ok(Planned {
+        selection: None,
         config,
         stamp,
         catalog,
@@ -1128,6 +1136,11 @@ pub(crate) fn run_with_edits(
     // 写下去会被当成外部修改；`owner` 也是调用方按补完前的指针定的。
     let write = AppWrite::begin(db, app())?;
     let store = &write.store;
+    if let Some(selection) = &planned.selection {
+        selection.ensure_unchanged()?;
+    }
+    let write_connection = planned.selection.as_ref().is_none_or(|s| s.connection());
+    let write_catalog = planned.selection.as_ref().is_none_or(|s| s.catalog());
 
     // 切走的托管账号：采纳之后 CLI 又刷新了就停下，免得删掉新 token。
     if let Some((account, outgoing)) = &prepared.outgoing {
@@ -1143,6 +1156,9 @@ pub(crate) fn run_with_edits(
             (None, false)
         }
     };
+    if let Some(selection) = &planned.selection {
+        selection.ensure_auth(auth_pre.as_deref())?;
+    }
     let live_auth = auth_pre
         .as_deref()
         .map(|bytes| serde_json::from_slice::<Value>(bytes).unwrap_or(Value::Null));
@@ -1263,7 +1279,16 @@ pub(crate) fn run_with_edits(
                 .map_err(|e| AppError::Message(format!("序列化 Codex 登录暂存失败: {e}")))
         })
         .transpose()?;
-    let catalog_patch = planned.catalog.map(WholeFile::Write);
+    let catalog_patch =
+        planned
+            .catalog
+            .filter(|_| write_catalog)
+            .map(|bytes| -> Box<dyn LivePatch> {
+                match &planned.selection {
+                    Some(selection) => Box::new(selection.guarded_catalog(bytes)),
+                    None => Box::new(WholeFile::Write(bytes)),
+                }
+            });
     // 先应用编辑器里的全局改动（有的话），再换关键字段。
     let mut config_steps: Vec<&dyn TomlDocPatch> = Vec::new();
     if let Some(edits) = edits {
@@ -1271,10 +1296,22 @@ pub(crate) fn run_with_edits(
     }
     config_steps.push(&config);
     let config_patch = TomlSteps(config_steps);
+    let selection_patch =
+        planned
+            .selection
+            .as_ref()
+            .map(|selection| super::codex_selection::SelectionPatch {
+                selection,
+                config: &config,
+            });
+    let config_patch: &dyn LivePatch = match &selection_patch {
+        Some(patch) => patch,
+        None => &config_patch,
+    };
 
     let mut changes: Vec<FileChange<'_>> = Vec::new();
     // auth.json 放第一个：Codex CLI 恰好在这时刷新了登录，就在发布任何文件之前停下。
-    if let Some(patch) = &auth_patch {
+    if let Some(patch) = auth_patch.as_ref().filter(|_| write_connection) {
         changes.push(FileChange {
             file: LiveFile::private(&auth_path),
             patch: patch as &dyn LivePatch,
@@ -1282,21 +1319,21 @@ pub(crate) fn run_with_edits(
     }
     changes.push(FileChange {
         file: LiveFile::private(get_codex_config_path()),
-        patch: &config_patch,
+        patch: config_patch,
     });
     if let Some(patch) = &catalog_patch {
         changes.push(FileChange {
             file: LiveFile::shared(get_codex_model_catalog_path()),
-            patch,
+            patch: patch.as_ref(),
         });
     }
-    if let Some(patch) = &marker_patch {
+    if let Some(patch) = marker_patch.as_ref().filter(|_| write_connection) {
         changes.push(FileChange {
             file: LiveFile::private(&marker_path),
             patch,
         });
     }
-    if let Some(patch) = &stash_patch {
+    if let Some(patch) = stash_patch.as_ref().filter(|_| write_connection) {
         changes.push(FileChange {
             file: LiveFile::private(store.file(STASH_FILENAME)),
             patch,

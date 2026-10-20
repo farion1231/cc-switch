@@ -50,7 +50,7 @@ fn is_nested_floor(parent: &str, key: &str) -> bool {
 
 /// 全局设置的每个位置：关键字段、独有字段、CC Switch 的路由表不算。`skip_routes` 是
 /// 配置选中的路由表：它归供应商（投影时按内容收成 custom 表），也不算。
-fn entries(doc: &DocumentMut, skip_routes: &[&str]) -> Vec<Entry> {
+pub(super) fn entries(doc: &DocumentMut, skip_routes: &[&str]) -> Vec<Entry> {
     let mut entries = Vec::new();
     for (key, item) in doc.as_table().iter() {
         if floor::CODEX_FLOOR_TOP.contains(&key) || floor::CODEX_EXCLUSIVE_TOP.contains(&key) {

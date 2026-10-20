@@ -97,10 +97,16 @@ pub fn import_provider_from_deeplink(
     let app_type = AppType::from_str(&app_str)
         .map_err(|_| AppError::InvalidInput(format!("Invalid app type: {app_str}")))?;
 
+    if matches!(app_type, AppType::Codex) {
+        validate_codex_import(&merged_request)?;
+    }
+
     // Build provider configuration based on app type
     let mut provider = build_provider_from_request(&app_type, &merged_request)?;
 
-    provider.id = if matches!(app_type, AppType::OpenCode) {
+    provider.id = if matches!(app_type, AppType::Codex) {
+        format!("codex-import-{}", uuid::Uuid::new_v4().simple())
+    } else if matches!(app_type, AppType::OpenCode) {
         // Display names may be Unicode, but new OpenCode IDs must pass the editor's slug validation.
         let slug = name
             .split(|c: char| !c.is_ascii_alphanumeric())
@@ -127,7 +133,9 @@ pub fn import_provider_from_deeplink(
     // 写进应用的配置文件；旧链接没写时照旧写进去。切换式应用开关关闭时只存进列表：`add` 在
     // 还没有当前供应商时会让这家直接生效，所以走不写客户端配置的路径。
     let additive = app_type.is_additive_mode();
-    let activate = if additive {
+    let activate = if matches!(app_type, AppType::Codex) {
+        false
+    } else if additive {
         merged_request.enabled.unwrap_or(true)
     } else {
         merged_request.enabled.unwrap_or(false)
@@ -331,7 +339,7 @@ pub(crate) fn build_provider_from_request(
 ) -> Result<Provider, AppError> {
     let api_format = link_api_format(app_type, request)?;
     check_link_values(app_type, request)?;
-    let settings_config = match app_type {
+    let mut settings_config = match app_type {
         AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
         AppType::Codex => build_codex_settings(request)?,
         AppType::Gemini => build_gemini_settings(request),
@@ -346,6 +354,23 @@ pub(crate) fn build_provider_from_request(
             ))
         }
     };
+
+    if matches!(app_type, AppType::Codex) {
+        if let Some(catalog) = &request.model_catalog {
+            settings_config["modelCatalog"] = catalog.clone();
+            settings_config["modelCatalog"]["respectDeclaredReasoning"] = json!(true);
+        }
+        // Stage global fields separately: they are never projected or trusted on import.
+        // They become candidates only in the explicit activation review.
+        if let Some(config) = decode_link_config(request)? {
+            if let Some(text) = codex_link::config_text(&config)? {
+                let globals = crate::services::provider::codex_selection::import_globals(&text)?;
+                if !globals.is_empty() {
+                    settings_config["importedGlobalConfig"] = json!(globals);
+                }
+            }
+        }
+    }
 
     // Build usage script configuration if provided
     let mut meta = build_provider_meta(app_type, request)?;
@@ -453,7 +478,8 @@ fn build_provider_meta(
     let coding_plan_provider = link_coding_plan_provider(app_type, request);
 
     // Check if any usage script fields are provided
-    if coding_plan_provider.is_none()
+    if !matches!(app_type, AppType::Codex)
+        && coding_plan_provider.is_none()
         && request.usage_script.is_none()
         && request.usage_enabled.is_none()
         && request.usage_api_key.is_none()
@@ -466,10 +492,16 @@ fn build_provider_meta(
     }
 
     // Decode usage script code if provided
-    let code = if let Some(script_b64) = &request.usage_script {
+    let code = if let Some(script_b64) = request
+        .usage_script
+        .as_ref()
+        .filter(|s| !s.trim().is_empty())
+    {
         let decoded = decode_base64_param("usage_script", script_b64)?;
         String::from_utf8(decoded)
             .map_err(|e| AppError::InvalidInput(format!("Invalid UTF-8 in usage_script: {e}")))?
+    } else if matches!(app_type, AppType::Codex) {
+        include_str!("../../../resources/custom-codex-usage.js").to_string()
     } else {
         String::new()
     };
@@ -1070,6 +1102,9 @@ fn merge_codex_config(
     request: &mut DeepLinkImportRequest,
     config: &serde_json::Value,
 ) -> Result<(), AppError> {
+    if request.model_catalog.is_none() {
+        request.model_catalog = config.get("modelCatalog").cloned();
+    }
     let config_text = codex_link::config_text(config)?;
     // 先过白名单：拒绝的键在确认框打开时就报出来，而不是点了导入才失败
     let link = config_text
@@ -1125,6 +1160,50 @@ fn merge_codex_config(
         }
     }
 
+    Ok(())
+}
+
+fn validate_codex_import(request: &DeepLinkImportRequest) -> Result<(), AppError> {
+    let fail = |message: &str| AppError::InvalidInput(message.to_string());
+    let model = request
+        .model
+        .as_deref()
+        .filter(|v| !v.trim().is_empty())
+        .ok_or_else(|| fail("请在导入确认框中选择默认模型"))?;
+    let models = request
+        .model_catalog
+        .as_ref()
+        .and_then(|v| v.get("models"))
+        .and_then(serde_json::Value::as_array)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| fail("请补全模型列表和各模型的思考等级"))?;
+    let mut names = std::collections::HashSet::new();
+    for row in models {
+        let name = row
+            .get("model")
+            .and_then(serde_json::Value::as_str)
+            .filter(|v| !v.trim().is_empty())
+            .ok_or_else(|| fail("模型名称不能为空"))?;
+        if !names.insert(name) {
+            return Err(fail("模型名称不能重复"));
+        }
+        let levels = row
+            .get("reasoningLevels")
+            .and_then(serde_json::Value::as_array)
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| fail("请确认每个模型支持的思考等级"))?;
+        for level in levels {
+            if !matches!(
+                level.as_str(),
+                Some("none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra")
+            ) {
+                return Err(fail("模型目录包含未知思考等级，请在导入框中更正"));
+            }
+        }
+    }
+    if !names.contains(model) {
+        return Err(fail("默认模型必须在本次导入的模型列表中"));
+    }
     Ok(())
 }
 

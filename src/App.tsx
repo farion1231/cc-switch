@@ -192,6 +192,7 @@ function App() {
     nonce: number;
   } | null>(null);
   const [mcpManagementBusy, setMcpManagementBusy] = useState(false);
+  const [trayReviewId, setTrayReviewId] = useState<string | null>(null);
   const [skillsNavigationBusy, setSkillsNavigationBusy] = useState(false);
   const [promptNavigationBusy, setPromptNavigationBusy] = useState(false);
 
@@ -327,10 +328,18 @@ function App() {
     deleteProvider,
     saveUsageScript,
     setAsDefaultModel,
+    codexSwitchReview,
   } = useProviderActions(
     activeApp,
     isProxyRunning && isCurrentAppTakeoverActive,
   );
+  useEffect(() => {
+    if (activeApp !== "codex" || !trayReviewId || !providers[trayReviewId])
+      return;
+    const provider = providers[trayReviewId];
+    setTrayReviewId(null);
+    void switchProvider(provider);
+  }, [activeApp, trayReviewId, providers, switchProvider]);
   const handleEnablePiProvider = async (provider: Provider) => {
     try {
       await providersApi.switch(provider.id, "pi");
@@ -704,6 +713,13 @@ function App() {
       selectApp(navigation.app);
       // 托盘先换应用：新应用那格还没报上来，按它实际生效的模式
       if (navigation.intent === "add") openAddProvider(undefined);
+      if (
+        navigation.intent === "reviewSwitch" &&
+        navigation.app === "codex" &&
+        navigation.providerId
+      ) {
+        setTrayReviewId(navigation.providerId);
+      }
       if (navigation.intent === "needsRoute" && navigation.providerId) {
         setTrayNeedsRoute({
           app: navigation.app,
@@ -1667,6 +1683,7 @@ function App() {
       />
 
       <DeepLinkImportDialog />
+      {codexSwitchReview}
       <FirstRunNoticeDialog />
       <NewLayoutDialog />
       <WhatsNewNotice />

@@ -6,6 +6,11 @@ import {
   deeplinkApi,
 } from "@/lib/api/deeplink";
 import { providersApi } from "@/lib/api";
+import {
+  applyCodexImportTemplate,
+  codexImportError,
+} from "@/utils/codexImport";
+import { CodexImportFields } from "./deeplink/CodexImportFields";
 import { parseDeepLinkConfigPreview } from "@/utils/deepLinkConfigPreview";
 import {
   Dialog,
@@ -71,6 +76,7 @@ async function loadLinkIcon(url: string): Promise<string | undefined> {
  * 一直是写进去的，初始值保持打开；切换式应用和提示词默认关闭。
  */
 function initialActivation(request: DeepLinkImportRequest): boolean {
+  if (request.resource === "provider" && request.app === "codex") return false;
   if (
     request.resource === "provider" &&
     request.app &&
@@ -171,7 +177,7 @@ export function DeepLinkImportDialog() {
       if (disposed) return false;
       // 与请求一起初始化，避免弹窗先显示旧开关状态，再由 effect 更新。
       setActivateAfterImport(initialActivation(next));
-      setRequest(next);
+      setRequest(applyCodexImportTemplate(next));
       setIsOpen(true);
       return true;
     };
@@ -238,6 +244,13 @@ export function DeepLinkImportDialog() {
 
   const handleImport = async () => {
     if (!request) return;
+    if (request.resource === "provider" && request.app === "codex") {
+      const error = codexImportError(request);
+      if (error) {
+        toast.error(error);
+        return;
+      }
+    }
 
     setIsImporting(true);
 
@@ -245,7 +258,10 @@ export function DeepLinkImportDialog() {
       // 供应商和提示词的「立即生效」由用户在确认框里决定，覆盖链接里的值
       let payload: DeepLinkImportRequest =
         request.resource === "provider" || request.resource === "prompt"
-          ? { ...request, enabled: activateAfterImport }
+          ? {
+              ...request,
+              enabled: request.app === "codex" ? false : activateAfterImport,
+            }
           : request;
       if (request.resource === "provider" && request.iconUrl) {
         const icon = await linkIconTaskRef.current;
@@ -492,6 +508,12 @@ export function DeepLinkImportDialog() {
               {/* Legacy Provider View */}
               {(request.resource === "provider" || !request.resource) && (
                 <>
+                  {request.app === "codex" && (
+                    <CodexImportFields
+                      request={request}
+                      onChange={setRequest}
+                    />
+                  )}
                   {/* Provider Icon - enlarge and center near the top */}
                   {(request.icon || request.iconUrl) && (
                     <div className="flex justify-center pt-2 pb-1">
@@ -979,6 +1001,7 @@ export function DeepLinkImportDialog() {
                     </label>
                     <Switch
                       id="deeplink-activate-after-import"
+                      disabled={request.app === "codex"}
                       checked={activateAfterImport}
                       onCheckedChange={setActivateAfterImport}
                     />

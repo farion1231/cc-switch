@@ -298,11 +298,14 @@ describe("DeepLinkImportDialog", () => {
       await waitFor(() => {
         expect(screen.getByText(expected)).toBeInTheDocument();
       });
-      expect(screen.getByText("套餐额度：Kimi For Coding")).toBeInTheDocument();
+      expect(
+        screen.queryByText("套餐额度：Kimi For Coding"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByText(/response\?\.remaining/)).toBeInTheDocument();
     },
   );
 
-  it("does not show a usage row for ZenMux outside Claude", async () => {
+  it("uses the fixed usage template for Codex even on a known gateway", async () => {
     render(<DeepLinkImportDialog />, { wrapper: Wrapper });
 
     act(() => {
@@ -320,7 +323,7 @@ describe("DeepLinkImportDialog", () => {
     await waitFor(() => {
       expect(screen.getByText("ZenMux Provider")).toBeInTheDocument();
     });
-    expect(screen.queryByText("用量查询")).not.toBeInTheDocument();
+    expect(screen.getByText(/response\?\.remaining/)).toBeInTheDocument();
   });
 
   it("shows a link that arrived before the dialog mounted (cold start)", async () => {
@@ -486,11 +489,22 @@ describe("DeepLinkImportDialog", () => {
       expect(sent[0].enabled).toBe(false);
     });
 
-    it("lets the user opt into switching when the link does not ask for it", async () => {
+    it("always saves Codex imports without activation, even when enabled is requested", async () => {
       const sent = captureImport();
       const user = userEvent.setup();
       render(<DeepLinkImportDialog />, { wrapper: Wrapper });
-      act(() => deliverDeepLink(providerLink({ app: "codex" })));
+      act(() =>
+        deliverDeepLink(
+          providerLink({
+            app: "codex",
+            enabled: true,
+            model: "test-model",
+            modelCatalog: {
+              models: [{ model: "test-model", reasoningLevels: ["high"] }],
+            },
+          }),
+        ),
+      );
 
       const toggle = await screen.findByRole("switch");
       expect(toggle).not.toBeChecked();
@@ -499,12 +513,13 @@ describe("DeepLinkImportDialog", () => {
       ).toBeInTheDocument();
 
       await user.click(toggle);
+      expect(toggle).toBeDisabled();
       expect(
-        screen.getByText("deeplink.providerEnabledWarning"),
-      ).toBeInTheDocument();
+        screen.queryByText("deeplink.providerEnabledWarning"),
+      ).not.toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: "deeplink.import" }));
       await waitFor(() => expect(sent).toHaveLength(1));
-      expect(sent[0].enabled).toBe(true);
+      expect(sent[0].enabled).toBe(false);
     });
 
     it("adds additive-app providers to the app config unless the link opts out", async () => {

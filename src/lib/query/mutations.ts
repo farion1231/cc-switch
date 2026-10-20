@@ -316,8 +316,19 @@ export const useSwitchProviderMutation = (appId: AppId) => {
   const { t } = useTranslation();
 
   return useMutation({
-    mutationFn: async (providerId: string): Promise<SwitchResult> => {
-      return await providersApi.switch(providerId, appId);
+    mutationFn: async (
+      input:
+        | string
+        | {
+            id: string;
+            selection: import("@/lib/api/codexSelection").CodexSelection;
+          },
+    ): Promise<SwitchResult> => {
+      if (typeof input !== "string") {
+        const { codexSelectionApi } = await import("@/lib/api/codexSelection");
+        return codexSelectionApi.apply(input.id, input.selection);
+      }
+      return await providersApi.switch(input, appId);
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });

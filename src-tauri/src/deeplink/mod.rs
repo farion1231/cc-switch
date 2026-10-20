@@ -127,6 +127,9 @@ pub struct DeepLinkImportRequest {
     /// Optional model name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Explicit per-model declarations, completed in the import dialog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_catalog: Option<serde_json::Value>,
     /// Optional notes/description
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,

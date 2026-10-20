@@ -189,6 +189,14 @@ fn parse_provider_deeplink(
         api_key,
         icon,
         model,
+        model_catalog: params
+            .get("modelCatalog")
+            .map(|value| {
+                let bytes = super::utils::decode_base64_param("modelCatalog", value)?;
+                serde_json::from_slice(&bytes)
+                    .map_err(|e| AppError::InvalidInput(format!("Invalid modelCatalog: {e}")))
+            })
+            .transpose()?,
         notes,
         haiku_model,
         sonnet_model,
@@ -281,6 +289,7 @@ fn parse_prompt_deeplink(
         endpoint: None,
         api_key: None,
         model: None,
+        model_catalog: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -358,6 +367,7 @@ fn parse_mcp_deeplink(
         endpoint: None,
         api_key: None,
         model: None,
+        model_catalog: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -415,6 +425,7 @@ fn parse_skill_deeplink(
         endpoint: None,
         api_key: None,
         model: None,
+        model_catalog: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,

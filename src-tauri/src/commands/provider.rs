@@ -153,6 +153,40 @@ fn switch_provider_internal(
     ProviderService::switch(state, app_type, id)
 }
 
+#[tauri::command]
+pub async fn preview_codex_switch(
+    app_handle: tauri::AppHandle,
+    id: String,
+    exit_to_direct: Option<bool>,
+) -> Result<crate::services::provider::codex_selection::Preview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.try_state::<AppState>().ok_or("应用状态不可用")?;
+        crate::services::provider::codex_selection::preview_for(
+            state.inner(),
+            &id,
+            exit_to_direct.unwrap_or(false),
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn apply_codex_switch(
+    app_handle: tauri::AppHandle,
+    id: String,
+    selection: crate::services::provider::codex_selection::SelectionRequest,
+) -> Result<SwitchResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.try_state::<AppState>().ok_or("应用状态不可用")?;
+        crate::services::provider::codex_selection::commit(state.inner(), &id, selection)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
 pub fn switch_provider_test_hook(
     state: &AppState,

@@ -613,6 +613,10 @@ export function SwitchModePanel({
             directProviderId: directId,
             useProviderId,
             providerName: nameOf(useProviderId ?? directId),
+            reviewCodex:
+              !!useProviderId &&
+              app === "codex" &&
+              providers[useProviderId]?.category !== "official",
           })
         }
         onSwitchDirect={(providerId) => {
@@ -620,6 +624,8 @@ export function SwitchModePanel({
           if (provider) void onSwitch(provider, { acknowledgedRouting: true });
         }}
       />
+
+      {modeActions.codexSwitchReview}
 
       {isProxyAppId(app) && (
         <RouteSettingsSheet

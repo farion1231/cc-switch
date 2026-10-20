@@ -7,7 +7,7 @@ import {
   fireEvent,
   within,
 } from "@testing-library/react";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { providersApi } from "@/lib/api/providers";
 import {
@@ -206,6 +206,10 @@ const renderApp = (AppComponent: ComponentType) => {
 };
 
 describe("App integration with MSW", () => {
+  // Load the complete desktop module graph outside the interaction timeout.
+  beforeAll(async () => {
+    await import("@/App");
+  }, 60_000);
   beforeEach(() => {
     resetProviderState();
     toastSuccessMock.mockReset();
@@ -216,6 +220,32 @@ describe("App integration with MSW", () => {
   });
 
   it("covers basic provider flows via real hooks", async () => {
+    server.use(
+      http.post("http://tauri.local/preview_codex_switch", () =>
+        HttpResponse.json({
+          revision: "review",
+          proxy: false,
+          native: true,
+          fields: [
+            {
+              id: "connection",
+              label: "连接",
+              before: "old",
+              after: "new",
+              selected: true,
+            },
+          ],
+          models: [],
+          currentModels: [],
+          defaultModel: null,
+          currentModel: null,
+          currentEffort: null,
+        }),
+      ),
+      http.post("http://tauri.local/apply_codex_switch", () =>
+        HttpResponse.json({ warnings: [] }),
+      ),
+    );
     const { default: App } = await import("@/App");
     renderApp(App);
 
@@ -256,6 +286,7 @@ describe("App integration with MSW", () => {
     );
 
     fireEvent.click(screen.getByText("switch"));
+    fireEvent.click(await screen.findByText("确认应用所选项"));
     fireEvent.click(screen.getByText("duplicate"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toMatch(/copy/),

@@ -1,0 +1,8 @@
+{
+  "build": {
+    "beforeBuildCommand": "node node_modules/vite/bin/vite.js build"
+  },
+  "bundle": {
+    "createUpdaterArtifacts": false
+  }
+}
