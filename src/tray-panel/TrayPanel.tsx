@@ -245,11 +245,7 @@ function AppRow({
         {app.quota && <QuotaBlock quota={app.quota} texts={texts} />}
       </span>
       {app.addId ? (
-        app.addId.startsWith("nav:add:") ? (
-          <Plus className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
-        ) : (
-          <ExternalLink className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
-        )
+        <Plus className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
       ) : (
         <Chevron className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
       )}

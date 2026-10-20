@@ -2,8 +2,8 @@
 //!
 //! 结构：问题区（出问题才有）→ 反馈行（托盘里刚做完要重启才生效的操作）→ 打开 CC Switch →
 //! 切换式应用的子菜单（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build；在「应用」页
-//! 隐藏的不列）及 Pi 供应商管理入口 → 轻量模式 → 打开官方网站 / 退出 CC Switch。
-//! 其余累加式应用（OpenCode / OpenClaw / Hermes / MiniMax Code）不进托盘；托盘里不切模式、不启停路由服务。
+//! 隐藏的不列）→ 轻量模式 → 打开官方网站 / 退出 CC Switch。累加式应用（OpenCode / OpenClaw /
+//! Hermes / Pi / MiniMax Code）不进托盘；托盘里不切模式、不启停路由服务。
 //!
 //! 分三层：`collect_*` 从数据库和设备状态读出快照，`build_menu_model` 把快照变成纯数据的菜单
 //! 模型（单测覆盖这一层），`attach_*` 把模型挂到 Tauri 原生菜单上。
@@ -33,14 +33,13 @@ const COPILOT_UNIT_PREMIUM: &str = "requests";
 
 pub const TRAY_ID: &str = "cc-switch";
 
-/// 进托盘的应用，顺序和侧栏一致。Pi 只展示供应商并提供管理入口，不切换当前供应商。
-pub const TRAY_APPS: [AppType; 6] = [
+/// 进托盘的应用，顺序和侧栏一致。累加式应用没有「当前供应商」，不进托盘。
+pub const TRAY_APPS: [AppType; 5] = [
     AppType::Claude,
     AppType::ClaudeDesktop,
     AppType::Codex,
     AppType::Gemini,
     AppType::GrokBuild,
-    AppType::Pi,
 ];
 
 /// 应用全称（产品名，不翻译）。用全称是为了把 Claude Code 和 Claude Desktop 分开。
@@ -90,7 +89,6 @@ pub struct TrayTexts {
     pub projects_label: &'static str,
     pub no_project_label: &'static str,
     pub header_direct: &'static str,
-    pub manage_providers: &'static str,
     pub header_route: &'static str,
     pub header_failover: &'static str,
     pub header_stack: &'static str,
@@ -195,7 +193,6 @@ impl TrayTexts {
                 projects_label: "Projects",
                 no_project_label: "No project",
                 header_direct: "Direct",
-                manage_providers: "Manage providers",
                 header_route: "Routing",
                 header_failover: "Routing · Failover on",
                 header_stack: "Aggregation · Default provider",
@@ -256,7 +253,6 @@ impl TrayTexts {
                 texts.projects_label = "Projeler";
                 texts.no_project_label = "Proje yok";
                 texts.header_direct = "Doğrudan";
-                texts.manage_providers = "Sağlayıcıları yönet";
                 texts.header_route = "Yönlendirme";
                 texts.header_failover = "Yönlendirme · Yedek sağlayıcıya geçiş açık";
                 texts.header_stack = "Birleştirme · Varsayılan sağlayıcı";
@@ -312,7 +308,6 @@ impl TrayTexts {
                 projects_label: "プロジェクト",
                 no_project_label: "プロジェクトを使用しない",
                 header_direct: "直接接続",
-                manage_providers: "プロバイダーを管理",
                 header_route: "ルーティング",
                 header_failover: "ルーティング · フェイルオーバー有効",
                 header_stack: "集約 · デフォルトのプロバイダー",
@@ -370,7 +365,6 @@ impl TrayTexts {
                 projects_label: "專案",
                 no_project_label: "不使用專案",
                 header_direct: "直連",
-                manage_providers: "管理供應商",
                 header_route: "路由",
                 header_failover: "路由 · 故障轉移開啟中",
                 header_stack: "聚合 · 預設供應商",
@@ -426,7 +420,6 @@ impl TrayTexts {
                 projects_label: "项目",
                 no_project_label: "不使用项目",
                 header_direct: "直连",
-                manage_providers: "管理供应商",
                 header_route: "路由",
                 header_failover: "路由 · 故障转移开启中",
                 header_stack: "聚合 · 默认供应商",
@@ -1143,9 +1136,6 @@ struct AppSnapshot {
 
 impl AppSnapshot {
     fn current(&self) -> Option<&ProviderEntry> {
-        if self.app.is_additive_mode() {
-            return None;
-        }
         let id = self.current_id.as_deref()?;
         self.providers.iter().find(|p| p.id == id)
     }
@@ -1252,16 +1242,12 @@ fn collect_app_snapshot(
         .map(|(_, provider)| provider_entry(app, provider))
         .collect();
     // 代理模式下是代理路由到的那家（含故障转移切过去的）。
-    let current_id = if app.is_additive_mode() {
-        None
-    } else {
-        crate::mode::current::provider_for(
-            &app_state.db,
-            app,
-            crate::mode::current::Purpose::InUse,
-        )?
-        .filter(|id| rows.contains_key(id))
-    };
+    let current_id = crate::mode::current::provider_for(
+        &app_state.db,
+        app,
+        crate::mode::current::Purpose::InUse,
+    )?
+    .filter(|id| rows.contains_key(id));
     let mode = tray_mode(app_state, app);
 
     let queue = if mode == TrayMode::Failover {
@@ -1717,19 +1703,6 @@ fn display_names(providers: &[&ProviderEntry]) -> Vec<String> {
 
 fn provider_rows(texts: &TrayTexts, snapshot: &AppSnapshot) -> Vec<TrayEntry> {
     let app = &snapshot.app;
-    if app.is_additive_mode() {
-        let listed: Vec<&ProviderEntry> = snapshot.providers.iter().collect();
-        return listed
-            .iter()
-            .zip(display_names(&listed))
-            .map(|(provider, name)| {
-                TrayEntry::item(
-                    format!("nav:app:{}:provider:{}", app.as_str(), provider.id),
-                    name,
-                )
-            })
-            .collect();
-    }
     let current = snapshot.current_id.as_deref();
     let is_current = |p: &ProviderEntry| current == Some(p.id.as_str());
     match snapshot.mode {
@@ -1829,22 +1802,18 @@ fn app_children(
     let app = snapshot.app.as_str();
     let mut children = Vec::new();
 
-    let header = if snapshot.app.is_additive_mode() {
-        Some(texts.manage_providers.to_string())
-    } else {
-        match snapshot.mode {
-            TrayMode::Direct => Some(texts.header_direct.to_string()),
-            TrayMode::Route => Some(texts.header_route.to_string()),
-            TrayMode::Failover => Some(texts.header_failover.to_string()),
-            // 聚合：标题写出默认那家（勾着的就是它）；还没有默认时退回泛称。
-            TrayMode::Stack => Some(match snapshot.current() {
-                Some(current) => fill(
-                    texts.header_stack_default,
-                    &[("name", &truncate_chars(&current.name, MAX_NAME_CHARS))],
-                ),
-                None => texts.header_stack.to_string(),
-            }),
-        }
+    let header = match snapshot.mode {
+        TrayMode::Direct => Some(texts.header_direct.to_string()),
+        TrayMode::Route => Some(texts.header_route.to_string()),
+        TrayMode::Failover => Some(texts.header_failover.to_string()),
+        // 聚合：标题写出默认那家（勾着的就是它）；还没有默认时退回泛称。
+        TrayMode::Stack => Some(match snapshot.current() {
+            Some(current) => fill(
+                texts.header_stack_default,
+                &[("name", &truncate_chars(&current.name, MAX_NAME_CHARS))],
+            ),
+            None => texts.header_stack.to_string(),
+        }),
     };
     if let Some(header) = header {
         children.push(TrayEntry::label(format!("info:{app}:header"), header));
@@ -1900,15 +1869,6 @@ fn app_entry(
 ) -> TrayEntry {
     let app = snapshot.app.as_str();
     if snapshot.providers.is_empty() {
-        if snapshot.app.is_additive_mode() {
-            return TrayEntry::item(
-                format!("nav:app:{app}"),
-                fill(
-                    texts.open_app_page,
-                    &[("app", app_display_name(&snapshot.app))],
-                ),
-            );
-        }
         return TrayEntry::item(
             format!("nav:add:{app}"),
             format!(
@@ -2102,7 +2062,7 @@ pub struct PanelApp {
     pub header: Option<String>,
     pub attention: Option<&'static str>,
     pub quota: Option<PanelQuota>,
-    /// 还没有供应商：点这一行去添加；Pi 则打开供应商管理页。
+    /// 还没有供应商：点这一行去添加。
     pub add_id: Option<String>,
     pub add_text: String,
     pub rows: Vec<PanelRow>,
@@ -2201,11 +2161,10 @@ fn cached_reset_credits(
     }
 }
 
-/// 菜单 id 里带的供应商 id：切换、需要路由、供应商管理入口及路由阻止行。
+/// 菜单 id 里带的供应商 id：`prov:<应用>:<id>`、`nav:needs:<应用>:<id>`、`info:<应用>:blocked:<id>`。
 fn row_provider_id<'a>(id: &'a str, app: &str) -> Option<&'a str> {
     id.strip_prefix(&format!("prov:{app}:"))
         .or_else(|| id.strip_prefix(&format!("nav:needs:{app}:")))
-        .or_else(|| id.strip_prefix(&format!("nav:app:{app}:provider:")))
         .or_else(|| id.strip_prefix(&format!("info:{app}:blocked:")))
         .filter(|id| !id.is_empty())
 }
@@ -2318,14 +2277,10 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
             app: app.to_string(),
             name: app_display_name(&snapshot.app),
             current: snapshot.current().map(|p| p.name.clone()),
-            mode: if snapshot.app.is_additive_mode() {
-                texts.manage_providers
-            } else {
-                match snapshot.mode {
-                    TrayMode::Direct => texts.header_direct,
-                    TrayMode::Route | TrayMode::Failover => texts.mode_route,
-                    TrayMode::Stack => texts.mode_stack,
-                }
+            mode: match snapshot.mode {
+                TrayMode::Direct => texts.header_direct,
+                TrayMode::Route | TrayMode::Failover => texts.mode_route,
+                TrayMode::Stack => texts.mode_stack,
             },
             mode_kind: match snapshot.mode {
                 TrayMode::Direct => "direct",
@@ -2335,21 +2290,11 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
             header,
             attention: snapshot.needs_attention.then_some(texts.needs_attention),
             quota,
-            add_id: snapshot.providers.is_empty().then(|| {
-                if snapshot.app.is_additive_mode() {
-                    format!("nav:app:{app}")
-                } else {
-                    format!("nav:add:{app}")
-                }
-            }),
-            add_text: if snapshot.app.is_additive_mode() {
-                fill(
-                    texts.open_app_page,
-                    &[("app", app_display_name(&snapshot.app))],
-                )
-            } else {
-                texts.add_provider.to_string()
-            },
+            add_id: snapshot
+                .providers
+                .is_empty()
+                .then(|| format!("nav:add:{app}")),
+            add_text: texts.add_provider.to_string(),
             rows,
         });
     }
@@ -3173,7 +3118,7 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 
     let mut usage_futures = Vec::new();
 
-    for app_type in TRAY_APPS.iter().filter(|app| !app.is_additive_mode()) {
+    for app_type in TRAY_APPS.iter() {
         if !visible_apps.is_visible(app_type) {
             continue;
         }
@@ -3367,7 +3312,7 @@ mod tests {
     }
 
     #[test]
-    fn tray_lists_switch_apps_and_pi_in_sidebar_order() {
+    fn tray_lists_switch_apps_in_sidebar_order_without_additive_apps() {
         let names: Vec<&str> = TRAY_APPS.iter().map(app_display_name).collect();
         assert_eq!(
             names,
@@ -3376,12 +3321,11 @@ mod tests {
                 "Claude Desktop",
                 "Codex",
                 "Gemini CLI",
-                "Grok Build",
-                "Pi"
+                "Grok Build"
             ]
         );
         for app in TRAY_APPS {
-            assert!(app == AppType::Pi || !app.is_additive_mode());
+            assert!(!app.is_additive_mode(), "{app:?} 是累加式应用，不进托盘");
         }
     }
 
@@ -4194,70 +4138,6 @@ mod tests {
         );
         assert!(matches!(&menu[3], TrayEntry::Item { id, .. } if id == "nav:add:grokbuild"));
         assert!(matches!(&menu[8], TrayEntry::Item { id, .. } if id == "quit"));
-    }
-
-    #[test]
-    fn pi_providers_open_management_without_switching_or_claiming_a_current_provider() {
-        // 即使有旧的当前指针，也不能把 Pi 的某一家标成单一「使用中」。
-        let app = snapshot(
-            AppType::Pi,
-            TrayMode::Direct,
-            vec![entry("one", "Provider One"), entry("two", "Provider Two")],
-        );
-        assert!(app.current().is_none());
-        assert_eq!(app_row_title(&en(), &app), "Pi");
-        let children = children_of(&model(&[], &[app]), &AppType::Pi);
-        assert_eq!(
-            texts_of(&children),
-            [
-                "管理供应商",
-                "Provider One",
-                "Provider Two",
-                "---",
-                "打开 Pi 页面"
-            ]
-        );
-        for (row, provider_id) in children[1..3].iter().zip(["one", "two"]) {
-            let TrayEntry::Item { id, enabled, .. } = row else {
-                panic!("Pi providers must be navigation items, not switches");
-            };
-            assert!(enabled);
-            assert_eq!(row_provider_id(id, "pi"), Some(provider_id));
-            assert_eq!(
-                parse_nav_id(id),
-                Some(TrayNavigation {
-                    app: Some("pi".to_string()),
-                    ..Default::default()
-                })
-            );
-        }
-    }
-
-    #[test]
-    fn empty_pi_opens_its_page_instead_of_the_unsupported_add_provider_flow() {
-        let app = snapshot(AppType::Pi, TrayMode::Direct, vec![]);
-        assert!(matches!(
-            app_entry(&en(), &app, now()),
-            TrayEntry::Item { id, text, enabled: true }
-                if id == "nav:app:pi" && text == "Open Pi page"
-        ));
-    }
-
-    #[test]
-    fn pi_panel_rows_keep_provider_details_without_marking_them_in_use() {
-        let provider = provider(serde_json::json!({}), serde_json::json!({}));
-        let app = snapshot(
-            AppType::Pi,
-            TrayMode::Direct,
-            vec![provider_entry(&AppType::Pi, &provider)],
-        );
-        let providers = [(provider.id.clone(), provider)].into_iter().collect();
-        let (header, rows) = panel_rows(&UsageCache::default(), &en(), &app, &providers, now());
-        assert_eq!(header.as_deref(), Some("Manage providers"));
-        assert_eq!(rows[0].kind, "provider");
-        assert!(rows[0].enabled);
-        assert!(!rows[0].checked);
-        assert_eq!(rows[0].provider.as_ref().unwrap().name, "P1");
     }
 
     #[test]
