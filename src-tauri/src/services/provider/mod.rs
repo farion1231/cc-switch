@@ -2352,9 +2352,6 @@ requires_openai_auth = true
         )
         .await
         .expect("enter desktop route mode");
-        let gateway_url = crate::claude_desktop_config::proxy_gateway_base_url_from_db(&db)
-            .expect("running Desktop gateway");
-
         let mut updated = Provider::with_id(
             "p1".into(),
             "Desktop A".into(),
