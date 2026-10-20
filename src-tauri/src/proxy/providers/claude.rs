@@ -3043,4 +3043,44 @@ mod tests {
         .expect("conversion should succeed");
         assert!(converted.get("reasoning_effort").is_none());
     }
+
+    #[test]
+    fn openai_chat_opencode_lookalike_hosts_get_no_effort() {
+        // 只认 host 边界：notopencode.ai / opencode.ai.evil.com 不是网关。
+        for host in ["notopencode.ai", "opencode.ai.evil.com"] {
+            let provider = create_provider(json!({
+                "env": { "ANTHROPIC_BASE_URL": format!("https://{host}/v1") }
+            }));
+            let converted = transform_claude_request_for_api_format(
+                opencode_desktop_body("max"),
+                &provider,
+                "openai_chat",
+                None,
+                None,
+            )
+            .expect("conversion should succeed");
+            assert!(
+                converted.get("reasoning_effort").is_none(),
+                "{host} must not receive OpenCode-specific fields"
+            );
+        }
+    }
+
+    #[test]
+    fn openai_chat_unused_legacy_base_url_does_not_add_effort() {
+        // env 指向别家、历史 base_url 残留网关地址：请求不会去网关，不该带上网关字段。
+        let provider = create_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic" },
+            "base_url": "https://opencode.ai/zen/go/v1"
+        }));
+        let converted = transform_claude_request_for_api_format(
+            opencode_desktop_body("max"),
+            &provider,
+            "openai_chat",
+            None,
+            None,
+        )
+        .expect("conversion should succeed");
+        assert!(converted.get("reasoning_effort").is_none());
+    }
 }

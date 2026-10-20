@@ -8,37 +8,46 @@
 //!
 //! OpenCode 网关的推理接口由**平台**决定、与模型厂商无关：其自家客户端对该传输发顶层
 //! `reasoning_effort`（不发任何厂商原生 `thinking` 形状），合法档位逐模型声明，网关会
-//! 拒绝未声明的值。因此这里先按**平台身份**（provider 的 name / base URL）判定，再按
+//! 拒绝未声明的值。因此这里先按**平台身份**（活动 base URL 的 host）判定，再按
 //! **逐模型档位表**钳制——与 Codex 侧 `codexChatReasoning` 的 `effortValueMode: "zen"`
 //! 同一套语义（`codex::infer_aggregator_platform_config` 的平台规则 +
 //! [`super::transform_codex_chat::map_reasoning_effort`] 的 zen 分支）。钳制直接复用后者，
 //! 不另写一份档位序，避免两条路径的钳制语义漂移。
 
+use super::ProviderAdapter;
 use crate::provider::Provider;
 
-/// 平台身份：只认域名 `opencode.ai`，不认裸词 `opencode`，避免误伤名字里带该词的无关
-/// 供应商（与 `codex.rs` 的平台规则同口径）。Claude Code 与 Claude Desktop 都把请求地址
-/// 写在 `env.ANTHROPIC_BASE_URL`；其余键为历史/手写数据，一并识别。
+/// 平台身份只看 **adapter 真正会请求的那条 base URL** 的 host：优先级与
+/// `ClaudeAdapter::extract_base_url` 完全一致（Codex / xAI OAuth 的强制端点 →
+/// `env.ANTHROPIC_BASE_URL` → `base_url` → `baseURL` → `apiEndpoint`）。
+///
+/// 未被使用的历史字段与 provider 名字都不参与判定：名字是用户可改的自由文本，残留的
+/// `base_url` 也不会把请求发往网关（`env` 优先），据其注入会误伤别家后端。
 pub fn is_opencode_gateway(provider: &Provider) -> bool {
-    const HOST: &str = "opencode.ai";
+    super::ClaudeAdapter::new()
+        .extract_base_url(provider)
+        .is_ok_and(|url| is_opencode_url(&url))
+}
 
-    if provider.name.to_ascii_lowercase().contains(HOST) {
-        return true;
-    }
+/// host 边界：只认 `opencode.ai` 本身及其真子域（`zen.opencode.ai`）。
+///
+/// 接受 `host[:port]` 与 IPv6 方括号形态（`forwarder` 传的是 `Uri::authority()`），
+/// 也接受 `Uri::host()` 的结果；`notopencode.ai`、`opencode.ai.evil.com` 一律不命中。
+pub(crate) fn is_opencode_host(host: &str) -> bool {
+    let host = host
+        .rsplit_once(':')
+        .map_or(host, |(h, _)| h)
+        .trim_matches(['[', ']'])
+        .to_ascii_lowercase();
+    host == "opencode.ai" || host.ends_with(".opencode.ai")
+}
 
-    let settings = &provider.settings_config;
-    [
-        settings
-            .get("env")
-            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
-            .and_then(|v| v.as_str()),
-        settings.get("base_url").and_then(|v| v.as_str()),
-        settings.get("baseURL").and_then(|v| v.as_str()),
-        settings.get("apiEndpoint").and_then(|v| v.as_str()),
-    ]
-    .into_iter()
-    .flatten()
-    .any(|url| url.to_ascii_lowercase().contains(HOST))
+/// 从一条 base URL 取 host 再判边界；没有 scheme/host 的输入不命中。
+fn is_opencode_url(url: &str) -> bool {
+    let Ok(uri) = url.parse::<http::Uri>() else {
+        return false;
+    };
+    uri.host().is_some_and(is_opencode_host)
 }
 
 /// 逐模型合法档位。查表分两层：
@@ -132,20 +141,76 @@ mod tests {
     }
 
     #[test]
-    fn detects_platform_from_base_url_and_name() {
+    fn detects_platform_from_the_active_base_url() {
         assert!(is_opencode_gateway(&opencode_provider()));
         assert!(is_opencode_gateway(&provider(
             "Relay",
             json!({"base_url": "https://opencode.ai/zen/v1"})
         )));
+        // env 缺席时按适配器自己的优先级继续往下找。
         assert!(is_opencode_gateway(&provider(
-            "opencode.ai relay",
-            json!({})
+            "Relay",
+            json!({"baseURL": "https://zen.opencode.ai/v1"})
+        )));
+        assert!(is_opencode_gateway(&provider(
+            "Relay",
+            json!({"apiEndpoint": "https://opencode.ai/v1"})
         )));
         assert!(is_opencode_gateway(&provider(
             "Zen",
             json!({"env": {"ANTHROPIC_BASE_URL": "https://zen.opencode.ai/v1"}})
         )));
+    }
+
+    #[test]
+    fn provider_name_alone_is_not_a_platform_signal() {
+        // 名字是用户可改的自由文本，且没有地址本来就无法路由：不能据此判定平台。
+        assert!(!is_opencode_gateway(&provider(
+            "opencode.ai relay",
+            json!({})
+        )));
+    }
+
+    #[test]
+    fn ignores_hosts_that_only_contain_the_gateway_name() {
+        for url in [
+            "https://notopencode.ai/v1",
+            "https://opencode.ai.evil.com/v1",
+            "https://example.com/proxy/opencode.ai/v1",
+            "https://opencode.ai@evil.com/v1",
+        ] {
+            assert!(
+                !is_opencode_gateway(&provider("Relay", json!({"base_url": url}))),
+                "{url} must not be recognised as OpenCode"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_the_gateway_host_its_subdomains_and_ports() {
+        for url in [
+            "https://opencode.ai/v1",
+            "https://OPENCODE.AI:443/v1",
+            "https://zen.opencode.ai/v1",
+        ] {
+            assert!(
+                is_opencode_gateway(&provider("Relay", json!({"base_url": url}))),
+                "{url} should be recognised as OpenCode"
+            );
+        }
+    }
+
+    #[test]
+    fn unused_legacy_base_url_does_not_override_the_active_endpoint() {
+        // 与 `ClaudeAdapter::extract_base_url` 同序：env 赢，历史 base_url 只是残留。
+        let stale = provider(
+            "Relay",
+            json!({
+                "env": {"ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic"},
+                "base_url": "https://opencode.ai/zen/v1",
+            }),
+        );
+        assert!(!is_opencode_gateway(&stale));
     }
 
     #[test]

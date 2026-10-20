@@ -55,13 +55,12 @@ const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
 /// rejected with `400 MissingSessionID`. Claude Code and Codex already send
 /// headers the gateway recognises, Claude Desktop does not - the proxy fills
 /// the gap (see the injection site in `forward`).
+///
+/// The hostname boundary itself lives in
+/// `providers::opencode_chat_reasoning::is_opencode_host`, shared with the
+/// Claude → Chat transform so both paths cannot drift apart.
 fn is_opencode_upstream(upstream_host: Option<&str>) -> bool {
-    upstream_host
-        .map(|host| {
-            let host = host.rsplit_once(':').map_or(host, |(h, _)| h);
-            host.trim_matches(['[', ']']).to_ascii_lowercase()
-        })
-        .is_some_and(|host| host == "opencode.ai" || host.ends_with(".opencode.ai"))
+    upstream_host.is_some_and(super::providers::opencode_chat_reasoning::is_opencode_host)
 }
 
 /// Derive a session id that stays **stable within one conversation**: a digest
