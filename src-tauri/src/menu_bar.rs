@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
 const SPEED_WINDOW: Duration = Duration::from_secs(5);
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const SPEED_REFRESH: Duration = Duration::from_millis(500);
 const SPEED_MIN_DENOMINATOR: Duration = Duration::from_millis(100);
 
@@ -31,6 +32,7 @@ struct MenuBarRuntime {
     usage_logging_enabled: AtomicBool,
     daily_generation: AtomicU64,
     daily: Mutex<Option<DailySnapshot>>,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     day_key: Mutex<String>,
     applied_title: Mutex<Option<Option<String>>>,
 }
@@ -150,7 +152,7 @@ pub fn notify_usage_logged(app: &AppHandle) {
         .lock()
         .map(|settings| menu_bar_daily_enabled(&settings))
         .unwrap_or(false);
-    if !daily_enabled || !runtime.usage_logging_enabled.load(Ordering::Acquire) {
+    if !daily_enabled {
         return;
     }
     let app = app.clone();
@@ -159,6 +161,7 @@ pub fn notify_usage_logged(app: &AppHandle) {
     });
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 async fn run_ticker(app: AppHandle) {
     loop {
         tokio::time::sleep(SPEED_REFRESH).await;
@@ -492,7 +495,7 @@ fn visible_app_types(settings: &AppSettings) -> Vec<String> {
     let visible = settings
         .visible_apps
         .clone()
-        .unwrap_or_else(|| crate::settings::VisibleApps {
+        .unwrap_or(crate::settings::VisibleApps {
             claude: true,
             claude_desktop: true,
             codex: true,
@@ -510,6 +513,7 @@ fn visible_app_types(settings: &AppSettings) -> Vec<String> {
         .collect()
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn local_day_key() -> String {
     Local::now().format("%Y-%m-%d%:z").to_string()
 }
@@ -617,6 +621,7 @@ struct LiveSpeedRegistry {
 }
 
 impl LiveSpeedRegistry {
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn new(enabled: bool) -> Self {
         Self {
             enabled: AtomicBool::new(enabled),
@@ -871,25 +876,30 @@ fn extract_live_delta(event: &Value) -> LiveDelta {
         }
     }
 
-    delta.exact_output_tokens = event
-        .pointer("/message/usage/output_tokens")
-        .and_then(Value::as_u64)
-        .or_else(|| {
-            event
-                .pointer("/response/usage/output_tokens")
-                .and_then(Value::as_u64)
-        })
-        .or_else(|| {
-            event
-                .pointer("/usage/output_tokens")
-                .and_then(Value::as_u64)
-        })
-        .or_else(|| {
-            event
-                .pointer("/usage/completion_tokens")
-                .and_then(Value::as_u64)
-        })
-        .or_else(|| gemini_output_tokens(event));
+    // Anthropic's message_start carries an initial output_tokens value (often 1)
+    // before any output delta. Treating it as a cumulative total locks the
+    // request to exact mode and ignores the streamed text that follows.
+    if event_type != "message_start" {
+        delta.exact_output_tokens = event
+            .pointer("/message/usage/output_tokens")
+            .and_then(Value::as_u64)
+            .or_else(|| {
+                event
+                    .pointer("/response/usage/output_tokens")
+                    .and_then(Value::as_u64)
+            })
+            .or_else(|| {
+                event
+                    .pointer("/usage/output_tokens")
+                    .and_then(Value::as_u64)
+            })
+            .or_else(|| {
+                event
+                    .pointer("/usage/completion_tokens")
+                    .and_then(Value::as_u64)
+            })
+            .or_else(|| gemini_output_tokens(event));
+    }
 
     delta
 }
@@ -1055,6 +1065,30 @@ mod tests {
         let delta = extract_live_delta(&chat);
         assert!(delta.text_tokens > 0.0);
         assert_eq!(delta.exact_output_tokens, Some(12));
+    }
+
+    #[test]
+    fn anthropic_message_start_does_not_block_live_text_speed() {
+        let message_start = json!({
+            "type": "message_start",
+            "message": {
+                "usage": {"output_tokens": 1}
+            }
+        });
+        assert_eq!(extract_live_delta(&message_start).exact_output_tokens, None);
+
+        let registry = Arc::new(LiveSpeedRegistry::new(true));
+        let guard = registry.start_request().expect("request");
+        let start = Instant::now();
+        for index in 0..40 {
+            registry.add_approximate_for_test(
+                guard.id,
+                start + Duration::from_millis(index * 50),
+                "hello hello",
+            );
+        }
+        let speed = registry.speed_at(start + Duration::from_secs(2));
+        assert!(speed > 10.0, "speed={speed}");
     }
 
     #[test]

@@ -817,10 +817,9 @@ pub fn create_logged_passthrough_stream(
                                         .as_ref()
                                         .filter(|live| live.is_enabled())
                                         .and_then(|live| {
-                                            serde_json::from_str::<Value>(&data).ok().map(|value| {
-                                                live.observe_json(&value);
-                                                value
-                                            })
+                                            serde_json::from_str::<Value>(&data)
+                                                .ok()
+                                                .inspect(|value| live.observe_json(value))
                                         });
                                     let collected = match &collector {
                                         Some(c) if c.should_collect(&data) => {
