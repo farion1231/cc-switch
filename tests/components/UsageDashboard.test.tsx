@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   UsageDashboard,
   resetUsageSyncClockForTests,
@@ -17,10 +17,12 @@ const requestLogTableMock = vi.hoisted(() => vi.fn());
 const detailPanelMock = vi.hoisted(() => vi.fn());
 const usageApiMock = vi.hoisted(() => ({
   getUsageSummary: vi.fn(),
+  getSessionUsageSummary: vi.fn(),
   syncSessionUsage: vi.fn(),
   getSessionUsageLastSync: vi.fn(),
   rebuildCodexUsage: vi.fn(),
 }));
+const useSessionsQueryMock = vi.hoisted(() => vi.fn());
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -50,6 +52,16 @@ vi.mock("@/hooks/useUsageEventBridge", () => ({
 }));
 
 vi.mock("@/lib/api/usage", () => ({ usageApi: usageApiMock }));
+
+vi.mock("@/lib/query/queries", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/query/queries")>(
+    "@/lib/query/queries",
+  );
+  return {
+    ...actual,
+    useSessionsQuery: () => useSessionsQueryMock(),
+  };
+});
 
 vi.mock("@/lib/query/usage", async () => {
   const actual =
@@ -147,20 +159,26 @@ vi.mock("@/lib/query/proxy", () => ({
   }),
 }));
 
-const renderDashboard = (props: ComponentProps<typeof UsageDashboard> = {}) => {
-  const queryClient = new QueryClient({
+const renderDashboard = (
+  props: ComponentProps<typeof UsageDashboard> = {},
+  queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
     },
-  });
-  return render(
+  }),
+) => {
+  const view = render(
     <QueryClientProvider client={queryClient}>
       <UsageDashboard {...props} />
     </QueryClientProvider>,
   );
+  return { ...view, queryClient };
 };
 
 describe("UsageDashboard", () => {
+  beforeAll(() => {
+    Element.prototype.scrollIntoView = vi.fn();
+  });
   beforeEach(() => {
     resetUsageSyncClockForTests();
     useProviderStatsMock.mockReset();
@@ -186,6 +204,30 @@ describe("UsageDashboard", () => {
     useModelStatsMock.mockReturnValue({ data: [] });
     useSummaryByAppMock.mockReturnValue({ data: [] });
     usageApiMock.getUsageSummary.mockResolvedValue({ totalRequests: 5 });
+    usageApiMock.getSessionUsageSummary.mockReset().mockResolvedValue({
+      totalRequests: 3,
+      totalCost: "0.25",
+      totalInputTokens: 100,
+      totalOutputTokens: 50,
+      totalCacheCreationTokens: 0,
+      totalCacheReadTokens: 1_234,
+      successRate: 100,
+      realTotalTokens: 150,
+      cacheHitRate: 0.75,
+    });
+    useSessionsQueryMock.mockReturnValue({
+      data: [
+        {
+          providerId: "claude",
+          sessionId: "session-1",
+          title: "Daily review",
+          projectDir: "D:/projects/sample",
+        },
+      ],
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
     usageApiMock.getSessionUsageLastSync.mockReset().mockResolvedValue(null);
     usageApiMock.syncSessionUsage.mockResolvedValue({
       imported: 2,
@@ -597,6 +639,78 @@ describe("UsageDashboard", () => {
     expect(logsTab).toHaveFocus();
   });
 
+  it("queries the summary for one selected conversation", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryDefaults(["settings"], { staleTime: Infinity });
+    queryClient.setQueryData(["settings"], {
+      usageDisplay: { currency: "CNY", exchangeRates: { CNY: 7 } },
+    });
+    renderDashboard({}, queryClient);
+
+    await user.click(screen.getByRole("tab", { name: "usage.tabs.sessions" }));
+    await user.click(
+      screen.getByRole("button", { name: "usage.singleSession.select" }),
+    );
+    await user.click(screen.getByRole("option", { name: /Daily review/ }));
+
+    await waitFor(() =>
+      expect(usageApiMock.getSessionUsageSummary).toHaveBeenCalledWith(
+        "claude",
+        "session-1",
+      ),
+    );
+    expect(await screen.findByText("¥1.75")).toBeInTheDocument();
+    expect(
+      screen.getByText("usage.singleSession.totalTokens"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("150")).toBeInTheDocument();
+    expect(screen.getByText("usage.cacheReadTokens")).toBeInTheDocument();
+    expect(screen.getByText("1,234")).toBeInTheDocument();
+    expect(screen.getByText("usage.cacheHitRate")).toBeInTheDocument();
+    expect(screen.getByText("75.0%")).toBeInTheDocument();
+    expect(
+      screen.getByText("usage.singleSession.dataScopeHint"),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps aggregate filters visible on the single-session tab", async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+
+    await user.click(screen.getByRole("tab", { name: "usage.tabs.sessions" }));
+
+    expect(
+      screen.getByRole("group", { name: "usage.appFilter.label" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "usage.providerFilter.label" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "usage.modelFilter.label" }),
+    ).toBeVisible();
+  });
+
+  it("refreshes the session picker after manual session sync", async () => {
+    const user = userEvent.setup();
+    const { queryClient } = renderDashboard();
+
+    await waitFor(() =>
+      expect(usageApiMock.syncSessionUsage).toHaveBeenCalledTimes(1),
+    );
+    queryClient.setQueryData(["sessions"], []);
+    await user.click(
+      screen.getByRole("button", { name: "usage.sessionSync.syncNow" }),
+    );
+
+    await waitFor(() => {
+      expect(usageApiMock.syncSessionUsage).toHaveBeenCalledTimes(2);
+      expect(queryClient.getQueryState(["sessions"])?.isInvalidated).toBe(true);
+    });
+  });
+
   it("toggles session scanning and links to routing settings from the data sources drawer", async () => {
     const user = userEvent.setup();
     const onSessionAutoSyncEnabledChange = vi.fn();
@@ -621,6 +735,28 @@ describe("UsageDashboard", () => {
 
     expect(await screen.findByText("usage.empty.title")).toBeInTheDocument();
     expect(screen.queryByTestId("usage-hero")).not.toBeInTheDocument();
+  });
+
+  it("lets a single conversation be queried from the empty state", async () => {
+    usageApiMock.getUsageSummary.mockResolvedValue({ totalRequests: 0 });
+    const user = userEvent.setup();
+    renderDashboard();
+
+    await screen.findByText("usage.empty.title");
+    await user.click(
+      screen.getByRole("button", { name: "usage.empty.querySingleSession" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "usage.singleSession.select" }),
+    );
+    await user.click(screen.getByRole("option", { name: /Daily review/ }));
+
+    await waitFor(() =>
+      expect(usageApiMock.getSessionUsageSummary).toHaveBeenCalledWith(
+        "claude",
+        "session-1",
+      ),
+    );
   });
 
   it("still lets the pricing tab be opened from the empty state", async () => {

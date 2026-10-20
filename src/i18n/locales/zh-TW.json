@@ -2224,6 +2224,22 @@
       "syncCompleted": "同步完成：新增 {{imported}} 筆，掃描 {{files}} 個檔案，錯誤 {{errors}}",
       "syncFailed": "工作階段用量同步失敗：{{error}}"
     },
+    "singleSession": {
+      "select": "選擇一個對話",
+      "search": "搜尋對話",
+      "loadingSessions": "正在載入對話…",
+      "sessionsError": "無法載入對話清單",
+      "noSessions": "沒有可查詢的對話",
+      "noMatches": "沒有符合的對話",
+      "selectHint": "選擇一個對話查看用量摘要。",
+      "loading": "正在載入用量…",
+      "error": "用量查詢失敗。",
+      "retry": "重試",
+      "noUsage": "此對話沒有可用的用量資料。",
+      "totalTokens": "總 Token",
+      "successRate": "成功率",
+      "dataScopeHint": "僅統計最近 30 天仍保留明細的工作階段記錄；路由請求及已彙總的舊資料無法依對話查詢。"
+    },
     "rebuildCodex": {
       "title": "Codex 用量維護",
       "description": "從本機 rollout 日誌重新建構 Codex 工作階段用量",
@@ -2446,6 +2462,7 @@
       "providers": "供應商",
       "models": "模型",
       "pricing": "定價",
+      "sessions": "單一對話",
       "settings": "設定"
     },
     "sortedByRequests": "依請求數排序",
@@ -2516,7 +2533,8 @@
     "empty": {
       "title": "還沒有用量資料",
       "body": "工作階段日誌和經路由服務的請求都會記在這裡。",
-      "configurePricing": "設定模型定價"
+      "configurePricing": "設定模型定價",
+      "querySingleSession": "查詢單一對話"
     },
     "pricing": {
       "modelsDevTitle": "models.dev 同步 · {{status}}",

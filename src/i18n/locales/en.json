@@ -2223,6 +2223,22 @@
       "syncCompleted": "Sync completed: {{imported}} imported, {{files}} files scanned, {{errors}} errors",
       "syncFailed": "Session usage sync failed: {{error}}"
     },
+    "singleSession": {
+      "select": "Select a conversation",
+      "search": "Search conversations",
+      "loadingSessions": "Loading conversations…",
+      "sessionsError": "Could not load conversations",
+      "noSessions": "No conversations available",
+      "noMatches": "No matching conversations",
+      "selectHint": "Select a conversation to view its usage summary.",
+      "loading": "Loading usage…",
+      "error": "Usage query failed.",
+      "retry": "Retry",
+      "noUsage": "No usage data is available for this conversation.",
+      "totalTokens": "Total Tokens",
+      "successRate": "Success Rate",
+      "dataScopeHint": "Only session-log requests with details retained for the last 30 days are included; routed requests and older rolled-up data cannot be queried by conversation."
+    },
     "rebuildCodex": {
       "title": "Codex Usage Maintenance",
       "description": "Rebuild Codex session usage from local rollout logs",
@@ -2445,6 +2461,7 @@
       "providers": "Providers",
       "models": "Models",
       "pricing": "Pricing",
+      "sessions": "Single Conversation",
       "settings": "Settings"
     },
     "sortedByRequests": "Sorted by requests",
@@ -2515,7 +2532,8 @@
     "empty": {
       "title": "No usage data yet",
       "body": "Usage from session logs and from requests through the routing service shows up here.",
-      "configurePricing": "Configure model pricing"
+      "configurePricing": "Configure model pricing",
+      "querySingleSession": "Query One Conversation"
     },
     "pricing": {
       "modelsDevTitle": "models.dev sync · {{status}}",
