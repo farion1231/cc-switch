@@ -91,7 +91,8 @@ describe("Antigravity model discovery", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "providerForm.fetchModels" }),
     );
-    await waitFor(() => expect(api.getAgyModels).toHaveBeenCalledOnce());
+    // 打开表单时会自动取一次，点按钮再刷新一次
+    await waitFor(() => expect(api.getAgyModels).toHaveBeenCalled());
     expect(api.fetchModelsForConfig).not.toHaveBeenCalled();
   });
   it("selects the native preference name rather than a CLI alias", async () => {
