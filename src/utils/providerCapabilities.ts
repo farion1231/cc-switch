@@ -1,3 +1,4 @@
+import { parse as parseToml } from "smol-toml";
 import type { AppId } from "@/lib/api";
 import type { Provider } from "@/types";
 import { isOAuthProviderType } from "@/config/constants";
@@ -14,47 +15,170 @@ import {
 export const CODEX_OFFICIAL_PROVIDER_ID = "codex-official";
 export const GROKBUILD_OFFICIAL_PROVIDER_ID = "grokbuild-official";
 
-/** The unconfigured official entry used by the explicit native-login action. */
+const configured = (value: unknown): boolean => {
+  if (value == null || value === false) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.values(value).some(configured);
+  return true;
+};
+
+const object = (value: unknown): Record<string, unknown> | null =>
+  value != null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+
+const connectionFields = [
+  "apiKey",
+  "api_key",
+  "baseUrl",
+  "baseURL",
+  "base_url",
+  "apiBaseUrl",
+  "apiKeyHelper",
+  "awsAuthRefresh",
+  "awsCredentialExport",
+  "gcpAuthRefresh",
+  "openai_base_url",
+  "experimental_bearer_token",
+  "env_key",
+  "http_headers",
+  "env_http_headers",
+  "inferenceProvider",
+  "inferenceGatewayBaseUrl",
+  "inferenceGatewayApiKey",
+  "inferenceGatewayAuthScheme",
+  "inferenceModels",
+];
+const hasConnection = (value: Record<string, unknown>) =>
+  connectionFields.some((key) => configured(value[key]));
+
+/** Authentication/routing only; keep aligned with Provider::is_unconfigured_official. */
 export function isNativeOfficialProvider(
   appId: AppId,
   provider: Provider,
 ): boolean {
+  if (provider.category !== "official") return false;
+  const meta = provider.meta;
+  const nativeFormat =
+    appId === "claude" || appId === "claude-desktop"
+      ? "anthropic"
+      : "openai_responses";
   if (
-    provider.category !== "official" ||
-    Object.keys(provider.meta ?? {}).length > 0
+    meta &&
+    (meta.authBinding?.source === "managed_account" ||
+      configured(meta.providerType) ||
+      configured(meta.githubAccountId) ||
+      meta.isFullUrl === true ||
+      (configured(meta.apiFormat) && meta.apiFormat !== nativeFormat) ||
+      meta.claudeDesktopMode === "proxy" ||
+      Object.keys(meta.claudeDesktopModelRoutes ?? {}).length > 0 ||
+      Object.keys(meta.custom_endpoints ?? {}).length > 0)
   )
     return false;
-  const settings = provider.settingsConfig;
-  if (
-    settings == null ||
-    typeof settings !== "object" ||
-    Array.isArray(settings)
-  )
-    return false;
-  const emptyObject = (value: unknown) =>
-    value != null &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    Object.keys(value).length === 0;
-  const keys = Object.keys(settings);
+  const settings = object(provider.settingsConfig);
+  if (!settings || hasConnection(settings)) return false;
+  if (settings.env !== undefined) {
+    const env = object(settings.env);
+    if (!env) return false;
+    if (
+      Object.entries(env).some(([key, value]) => {
+        let connection = false;
+        if (appId === "claude" || appId === "claude-desktop") {
+          connection =
+            /^(ANTHROPIC_|AWS_|VERTEX_REGION_)/.test(key) ||
+            [
+              "CLAUDE_CODE_USE_BEDROCK",
+              "CLAUDE_CODE_USE_VERTEX",
+              "CLAUDE_CODE_USE_FOUNDRY",
+              "CLAUDE_CODE_USE_GATEWAY",
+              "CLAUDE_CODE_USE_MANTLE",
+              "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+              "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+              "CLOUD_ML_REGION",
+              "GOOGLE_APPLICATION_CREDENTIALS",
+              "CLAUDE_CODE_OAUTH_TOKEN",
+              "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+              "CLAUDE_CODE_OAUTH_SCOPES",
+              "CLAUDE_CODE_API_KEY_HELPER_TTL_MS",
+            ].includes(key) ||
+            (key.startsWith("CLAUDE_CODE_SKIP_") && key.endsWith("_AUTH"));
+          if (
+            key === "ANTHROPIC_MODEL" ||
+            /^ANTHROPIC_DEFAULT_.*_MODEL$/.test(key)
+          )
+            connection = false;
+        } else if (appId === "gemini") {
+          connection =
+            key.startsWith("GOOGLE_") ||
+            [
+              "GEMINI_API_KEY",
+              "GEMINI_API_KEY_AUTH_MECHANISM",
+              "GEMINI_CLI_CUSTOM_HEADERS",
+              "GEMINI_DEFAULT_AUTH_TYPE",
+              "GEMINI_CLI_USE_COMPUTE_ADC",
+              "CODE_ASSIST_ENDPOINT",
+              "CODE_ASSIST_API_VERSION",
+            ].includes(key);
+        } else {
+          connection = [
+            "OPENAI_API_KEY",
+            "CODEX_API_KEY",
+            "XAI_API_KEY",
+          ].includes(key);
+        }
+        return connection && configured(value);
+      })
+    )
+      return false;
+  }
   switch (appId) {
     case "claude":
     case "claude-desktop":
-      return keys.length === 1 && emptyObject(settings.env);
+      return true;
+    case "gemini": {
+      const selected = object(
+        object(object(settings.config)?.security)?.auth,
+      )?.selectedType;
+      return !configured(selected) || selected === "oauth-personal";
+    }
     case "codex":
+    case "grokbuild": {
+      if (settings.auth !== undefined) {
+        const auth = object(settings.auth);
+        if (
+          !auth ||
+          Object.entries(auth).some(
+            ([key, value]) =>
+              !["last_refresh", "auth_mode"].includes(key) && configured(value),
+          )
+        )
+          return false;
+      }
+      if (settings.config != null && typeof settings.config !== "string")
+        return false;
+      let config: Record<string, unknown>;
+      try {
+        config = parseToml(
+          typeof settings.config === "string" ? settings.config : "",
+        );
+      } catch {
+        return false;
+      }
+      if (hasConnection(config)) return false;
+      if (appId === "grokbuild") return !configured(config.model);
+      const providers = object(config.model_providers);
       return (
-        keys.length === 2 &&
-        emptyObject(settings.auth) &&
-        settings.config === ""
+        (!configured(config.model_provider) ||
+          config.model_provider === "openai") &&
+        (config.model_providers === undefined ||
+          (providers !== null &&
+            Object.values(providers).every((provider) => {
+              const table = object(provider);
+              return table !== null && !hasConnection(table);
+            })))
       );
-    case "gemini":
-      return (
-        keys.length === 2 &&
-        emptyObject(settings.env) &&
-        emptyObject(settings.config)
-      );
-    case "grokbuild":
-      return keys.length === 1 && settings.config === "";
+    }
     default:
       return false;
   }

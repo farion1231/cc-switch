@@ -43,14 +43,167 @@ pub struct Provider {
     pub in_failover_queue: bool,
 }
 
+fn configured(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(value) => *value,
+        Value::String(value) => !value.trim().is_empty(),
+        Value::Array(values) => !values.is_empty(),
+        Value::Object(values) => values.values().any(configured),
+        Value::Number(_) => true,
+    }
+}
+
+fn has_fields(value: &Value, fields: &[&str]) -> bool {
+    fields
+        .iter()
+        .any(|field| value.get(field).is_some_and(configured))
+}
+
+fn native_official_settings(app: &crate::app_config::AppType, settings: &Value) -> bool {
+    use crate::app_config::AppType;
+    use crate::live::floor;
+
+    const CONNECTION_FIELDS: &[&str] = &[
+        "apiKey",
+        "api_key",
+        "baseUrl",
+        "baseURL",
+        "base_url",
+        "apiBaseUrl",
+        "apiKeyHelper",
+        "awsAuthRefresh",
+        "awsCredentialExport",
+        "gcpAuthRefresh",
+        "openai_base_url",
+        "experimental_bearer_token",
+        "env_key",
+        "http_headers",
+        "env_http_headers",
+        "inferenceProvider",
+        "inferenceGatewayBaseUrl",
+        "inferenceGatewayApiKey",
+        "inferenceGatewayAuthScheme",
+        "inferenceModels",
+    ];
+    if !settings.is_object() || has_fields(settings, CONNECTION_FIELDS) {
+        return false;
+    }
+    if let Some(env) = settings.get("env") {
+        let Some(env) = env.as_object() else {
+            return false;
+        };
+        if env.iter().any(|(key, value)| {
+            let connection = match app {
+                AppType::Claude | AppType::ClaudeDesktop => {
+                    floor::claude_floor_env(key)
+                        && key != "ANTHROPIC_MODEL"
+                        && !(key.starts_with("ANTHROPIC_DEFAULT_") && key.ends_with("_MODEL"))
+                        && !matches!(
+                            key.as_str(),
+                            "CLAUDE_CODE_SUBAGENT_MODEL" | "CLAUDE_CODE_SUBAGENT_MODEL_FORCE"
+                        )
+                }
+                AppType::Gemini => floor::gemini_floor_env(key) && key != "GEMINI_MODEL",
+                _ => matches!(
+                    key.as_str(),
+                    "OPENAI_API_KEY" | "CODEX_API_KEY" | "XAI_API_KEY"
+                ),
+            };
+            connection && configured(value)
+        }) {
+            return false;
+        }
+    }
+    match app {
+        AppType::Claude | AppType::ClaudeDesktop => true,
+        AppType::Gemini => settings
+            .pointer("/config/security/auth/selectedType")
+            .is_none_or(|value| !configured(value) || value == "oauth-personal"),
+        AppType::Codex | AppType::GrokBuild => {
+            if settings.get("auth").is_some_and(|auth| {
+                !auth.is_object()
+                    || auth.as_object().is_some_and(|auth| {
+                        auth.iter().any(|(key, value)| {
+                            !matches!(key.as_str(), "last_refresh" | "auth_mode")
+                                && configured(value)
+                        })
+                    })
+            }) {
+                return false;
+            }
+            let text = match settings.get("config") {
+                None | Some(Value::Null) => "",
+                Some(Value::String(text)) => text,
+                _ => return false,
+            };
+            let Ok(config) = text
+                .parse::<toml::Value>()
+                .and_then(|v| v.try_into::<Value>())
+            else {
+                return false;
+            };
+            if has_fields(&config, CONNECTION_FIELDS) {
+                return false;
+            }
+            if *app == AppType::Codex {
+                !config
+                    .get("model_provider")
+                    .is_some_and(|v| configured(v) && v != "openai")
+                    && config.get("model_providers").is_none_or(|providers| {
+                        providers.as_object().is_some_and(|providers| {
+                            providers.values().all(|provider| {
+                                provider.is_object() && !has_fields(provider, CONNECTION_FIELDS)
+                            })
+                        })
+                    })
+            } else {
+                !config.get("model").is_some_and(configured)
+            }
+        }
+        _ => false,
+    }
+}
+
 impl Provider {
-    /// A clean native official entry, as opposed to a customized official card.
-    pub(crate) fn is_unconfigured_official(&self, settings: &Value) -> bool {
-        self.category.as_deref() == Some("official")
-            && self.settings_config == *settings
-            && self.meta.as_ref().is_none_or(|meta| {
-                serde_json::to_value(meta).is_ok_and(|value| value == serde_json::json!({}))
-            })
+    /// Native login is determined by authentication/routing, not quota queries,
+    /// display metadata or unrelated settings copied back by older versions.
+    /// Keep in sync with `isNativeOfficialProvider` in providerCapabilities.ts.
+    pub(crate) fn is_unconfigured_official(&self, app: &crate::app_config::AppType) -> bool {
+        use crate::app_config::AppType;
+        if self.category.as_deref() != Some("official") {
+            return false;
+        }
+        if let Some(meta) = &self.meta {
+            let native_format = match app {
+                AppType::Claude | AppType::ClaudeDesktop => "anthropic",
+                _ => "openai_responses",
+            };
+            if meta
+                .auth_binding
+                .as_ref()
+                .is_some_and(|binding| binding.source == AuthBindingSource::ManagedAccount)
+                || meta
+                    .provider_type
+                    .as_deref()
+                    .is_some_and(|v| !v.trim().is_empty())
+                || meta
+                    .github_account_id
+                    .as_deref()
+                    .is_some_and(|v| !v.trim().is_empty())
+                || meta.is_full_url == Some(true)
+                || meta
+                    .api_format
+                    .as_deref()
+                    .is_some_and(|v| !v.trim().is_empty() && v != native_format)
+                || meta.claude_desktop_mode == Some(ClaudeDesktopMode::Proxy)
+                || !meta.claude_desktop_model_routes.is_empty()
+                || !meta.custom_endpoints.is_empty()
+            {
+                return false;
+            }
+        }
+        native_official_settings(app, &self.settings_config)
     }
 
     /// 从现有ID创建供应商

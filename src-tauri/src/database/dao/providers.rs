@@ -835,29 +835,17 @@ impl Database {
         Ok(inserted)
     }
 
-    /// Resolve an unconfigured native official entry without overwriting saved
-    /// API keys, managed account bindings or other provider customizations.
-    pub fn ensure_official_provider(
+    /// Resolve a native official entry without persisting a newly built row.
+    /// The recoverable operation creates it only after publishing client files.
+    pub(crate) fn resolve_official_provider(
         &self,
         app_type: crate::app_config::AppType,
-    ) -> Result<Provider, AppError> {
-        use crate::database::dao::providers_seed::OFFICIAL_SEEDS;
-
-        let seed = OFFICIAL_SEEDS
-            .iter()
-            .find(|seed| seed.app_type == app_type)
-            .ok_or_else(|| {
-                AppError::Message(format!(
-                    "{} does not support official account mode",
-                    app_type.as_str()
-                ))
-            })?;
-        let settings_config: serde_json::Value = serde_json::from_str(seed.settings_config_json)
-            .map_err(|error| AppError::Database(format!("Invalid official seed: {error}")))?;
+    ) -> Result<(Provider, bool), AppError> {
+        let seed = official_seed(&app_type)?;
         let providers = self.get_all_providers(app_type.as_str())?;
         let is_native = |provider: &&Provider| {
             (provider.id == seed.id || !crate::database::is_official_seed_id(&provider.id))
-                && provider.is_unconfigured_official(&settings_config)
+                && provider.is_unconfigured_official(&app_type)
         };
         if let Some(provider) = providers.get(seed.id).filter(is_native).or_else(|| {
             providers
@@ -865,13 +853,24 @@ impl Database {
                 .filter(is_native)
                 .min_by_key(|provider| &provider.id)
         }) {
-            return Ok(provider.clone());
+            return Ok((provider.clone(), false));
         }
         let id = if providers.contains_key(seed.id) {
             uuid::Uuid::new_v4().to_string()
         } else {
             seed.id.to_string()
         };
+        Ok((self.build_official_provider(&app_type, id)?, true))
+    }
+
+    pub(crate) fn build_official_provider(
+        &self,
+        app_type: &crate::app_config::AppType,
+        id: String,
+    ) -> Result<Provider, AppError> {
+        let seed = official_seed(app_type)?;
+        let settings_config = serde_json::from_str(seed.settings_config_json)
+            .map_err(|error| AppError::Database(format!("Invalid official seed: {error}")))?;
         let mut provider = Provider::with_id(
             id,
             seed.name.to_string(),
@@ -883,7 +882,18 @@ impl Database {
         provider.icon_color = Some(seed.icon_color.to_string());
         provider.sort_index = Some(self.next_sort_index_for_app(app_type.as_str())?);
         provider.created_at = Some(chrono::Utc::now().timestamp_millis());
-        self.save_provider(app_type.as_str(), &provider)?;
+        Ok(provider)
+    }
+
+    #[cfg(test)]
+    pub fn ensure_official_provider(
+        &self,
+        app_type: crate::app_config::AppType,
+    ) -> Result<Provider, AppError> {
+        let (provider, created) = self.resolve_official_provider(app_type.clone())?;
+        if created {
+            self.save_provider(app_type.as_str(), &provider)?;
+        }
         Ok(provider)
     }
 
@@ -944,6 +954,20 @@ impl Database {
     }
 }
 
+fn official_seed(
+    app: &crate::app_config::AppType,
+) -> Result<&'static crate::database::dao::providers_seed::OfficialProviderSeed, AppError> {
+    crate::database::dao::providers_seed::OFFICIAL_SEEDS
+        .iter()
+        .find(|seed| seed.app_type == *app)
+        .ok_or_else(|| {
+            AppError::Message(format!(
+                "{} does not support official account mode",
+                app.as_str()
+            ))
+        })
+}
+
 #[cfg(test)]
 mod ensure_official_seed_tests {
     use crate::app_config::AppType;
@@ -951,6 +975,36 @@ mod ensure_official_seed_tests {
         Database, CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, CODEX_OFFICIAL_PROVIDER_ID,
         GROKBUILD_OFFICIAL_PROVIDER_ID,
     };
+
+    #[test]
+    fn ensure_official_provider_matches_frontend_auth_and_routing_cases() {
+        let cases: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/nativeOfficialProviders.json"
+        ))
+        .unwrap();
+        for case in cases.as_array().unwrap() {
+            let db = Database::memory().unwrap();
+            let app: AppType = case["app"].as_str().unwrap().parse().unwrap();
+            let provider: crate::provider::Provider =
+                serde_json::from_value(case["provider"].clone()).unwrap();
+            db.save_provider(app.as_str(), &provider).unwrap();
+            let before =
+                serde_json::to_value(db.get_provider_by_id(&provider.id, app.as_str()).unwrap())
+                    .unwrap();
+            let native = db.ensure_official_provider(app.clone()).unwrap();
+            let reuse = case["expected"].as_bool().unwrap();
+            assert_eq!(native.id == provider.id, reuse, "{}", case["name"]);
+            assert_eq!(
+                db.get_all_providers(app.as_str()).unwrap().len(),
+                if reuse { 1 } else { 2 }
+            );
+            assert_eq!(
+                serde_json::to_value(db.get_provider_by_id(&provider.id, app.as_str()).unwrap())
+                    .unwrap(),
+                before
+            );
+        }
+    }
 
     #[test]
     fn ensure_official_provider_recreates_deleted_entries_for_supported_apps() {

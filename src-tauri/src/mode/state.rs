@@ -251,6 +251,10 @@ pub struct PendingFile {
 /// 文件都写完之后要落定的状态。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PendingTarget {
+    /// Create a missing native official row at commit time, before its pointer.
+    /// No saved credentials or user metadata are copied into the journal.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub create_official: bool,
     /// 直连指针：切换成功后当前供应商是谁。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pointer: Option<String>,
@@ -286,7 +290,8 @@ impl PendingTarget {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.pointer.is_none()
+        !self.create_official
+            && self.pointer.is_none()
             && self.state.is_none()
             && self.written.is_none()
             && self.stack.is_none()

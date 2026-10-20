@@ -416,6 +416,10 @@ pub fn commit_target(
 ) -> Result<(), AppError> {
     if let Some(id) = target.pointer.as_deref() {
         let app_type: crate::app_config::AppType = app.parse()?;
+        if target.create_official && db.get_provider_by_id(id, app)?.is_none() {
+            let official = db.build_official_provider(&app_type, id.to_string())?;
+            db.save_provider(app, &official)?;
+        }
         crate::settings::set_current_provider(&app_type, Some(id))?;
         db.set_current_provider(app, id)?;
     }

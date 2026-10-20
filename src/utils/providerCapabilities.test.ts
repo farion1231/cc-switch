@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import nativeOfficialCases from "../../tests/fixtures/nativeOfficialProviders.json";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import {
@@ -17,6 +18,14 @@ const codexConfig = (wireApi: "chat_completions" | "responses") =>
   `model_provider = "custom"\n\n[model_providers.custom]\nname = "X"\nbase_url = "https://x.example/v1"\nwire_api = "${wireApi}"\n`;
 
 describe("isNativeOfficialProvider", () => {
+  it.each(nativeOfficialCases)(
+    "$name matches the backend",
+    ({ app, provider, expected }) => {
+      expect(isNativeOfficialProvider(app as AppId, provider as Provider)).toBe(
+        expected,
+      );
+    },
+  );
   it.each([
     ["claude", { env: {} }],
     ["claude-desktop", { env: {} }],
@@ -53,8 +62,8 @@ describe("isNativeOfficialProvider", () => {
 
   it.each([
     { auth: { OPENAI_API_KEY: "test-key" }, config: "" },
-    { auth: {}, config: 'model = "custom"' },
-    { auth: {}, config: "", unknown: "preserved" },
+    { auth: {}, config: 'model_provider = "custom"' },
+    { auth: { tokens: { access_token: "test-token" } }, config: "" },
   ])(
     "does not treat customized official settings as native mode",
     (settingsConfig) => {

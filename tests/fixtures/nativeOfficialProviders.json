@@ -1,0 +1,991 @@
+[
+  {
+    "name": "claude quota metadata",
+    "app": "claude",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {}
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "commonConfigEnabled": true,
+        "usage_script": {
+          "enabled": true,
+          "language": "javascript",
+          "code": "",
+          "templateType": "official_subscription"
+        }
+      }
+    },
+    "expected": true
+  },
+  {
+    "name": "claude managed binding",
+    "app": "claude",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {}
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "authBinding": {
+          "source": "managed_account",
+          "authProvider": "codex_oauth"
+        }
+      }
+    },
+    "expected": false
+  },
+  {
+    "name": "claude provider type",
+    "app": "claude",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {}
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "providerType": "codex_oauth"
+      }
+    },
+    "expected": false
+  },
+  {
+    "name": "claude provider-config binding",
+    "app": "claude",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {}
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "authBinding": {
+          "source": "provider_config"
+        }
+      }
+    },
+    "expected": true
+  },
+  {
+    "name": "claude-desktop quota metadata",
+    "app": "claude-desktop",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {}
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "commonConfigEnabled": true,
+        "usage_script": {
+          "enabled": true,
+          "language": "javascript",
+          "code": "",
+          "templateType": "official_subscription"
+        }
+      }
+    },
+    "expected": true
+  },
+  {
+    "name": "claude-desktop managed binding",
+    "app": "claude-desktop",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {}
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "authBinding": {
+          "source": "managed_account",
+          "authProvider": "codex_oauth"
+        }
+      }
+    },
+    "expected": false
+  },
+  {
+    "name": "claude-desktop provider type",
+    "app": "claude-desktop",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {}
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "providerType": "codex_oauth"
+      }
+    },
+    "expected": false
+  },
+  {
+    "name": "claude-desktop provider-config binding",
+    "app": "claude-desktop",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {}
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "authBinding": {
+          "source": "provider_config"
+        }
+      }
+    },
+    "expected": true
+  },
+  {
+    "name": "codex quota metadata",
+    "app": "codex",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "auth": {},
+        "config": ""
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "commonConfigEnabled": true,
+        "usage_script": {
+          "enabled": true,
+          "language": "javascript",
+          "code": "",
+          "templateType": "official_subscription"
+        }
+      }
+    },
+    "expected": true
+  },
+  {
+    "name": "codex managed binding",
+    "app": "codex",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "auth": {},
+        "config": ""
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "authBinding": {
+          "source": "managed_account",
+          "authProvider": "codex_oauth"
+        }
+      }
+    },
+    "expected": false
+  },
+  {
+    "name": "codex provider type",
+    "app": "codex",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "auth": {},
+        "config": ""
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "providerType": "codex_oauth"
+      }
+    },
+    "expected": false
+  },
+  {
+    "name": "codex provider-config binding",
+    "app": "codex",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "auth": {},
+        "config": ""
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "authBinding": {
+          "source": "provider_config"
+        }
+      }
+    },
+    "expected": true
+  },
+  {
+    "name": "gemini quota metadata",
+    "app": "gemini",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {},
+        "config": {}
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "commonConfigEnabled": true,
+        "usage_script": {
+          "enabled": true,
+          "language": "javascript",
+          "code": "",
+          "templateType": "official_subscription"
+        }
+      }
+    },
+    "expected": true
+  },
+  {
+    "name": "gemini managed binding",
+    "app": "gemini",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {},
+        "config": {}
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "authBinding": {
+          "source": "managed_account",
+          "authProvider": "codex_oauth"
+        }
+      }
+    },
+    "expected": false
+  },
+  {
+    "name": "gemini provider type",
+    "app": "gemini",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {},
+        "config": {}
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "providerType": "codex_oauth"
+      }
+    },
+    "expected": false
+  },
+  {
+    "name": "gemini provider-config binding",
+    "app": "gemini",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {},
+        "config": {}
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "authBinding": {
+          "source": "provider_config"
+        }
+      }
+    },
+    "expected": true
+  },
+  {
+    "name": "grokbuild quota metadata",
+    "app": "grokbuild",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "config": ""
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "commonConfigEnabled": true,
+        "usage_script": {
+          "enabled": true,
+          "language": "javascript",
+          "code": "",
+          "templateType": "official_subscription"
+        }
+      }
+    },
+    "expected": true
+  },
+  {
+    "name": "grokbuild managed binding",
+    "app": "grokbuild",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "config": ""
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "authBinding": {
+          "source": "managed_account",
+          "authProvider": "codex_oauth"
+        }
+      }
+    },
+    "expected": false
+  },
+  {
+    "name": "grokbuild provider type",
+    "app": "grokbuild",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "config": ""
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "providerType": "codex_oauth"
+      }
+    },
+    "expected": false
+  },
+  {
+    "name": "grokbuild provider-config binding",
+    "app": "grokbuild",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "config": ""
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "authBinding": {
+          "source": "provider_config"
+        }
+      }
+    },
+    "expected": true
+  },
+  {
+    "name": "Claude v3 ordinary settings",
+    "app": "claude",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {
+          "API_TIMEOUT_MS": "60000",
+          "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1",
+          "ANTHROPIC_MODEL": "claude-sonnet-4-6"
+        },
+        "hooks": {
+          "old": []
+        }
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "commonConfigEnabled": true,
+        "usage_script": {
+          "enabled": true,
+          "language": "javascript",
+          "code": "",
+          "templateType": "official_subscription"
+        }
+      }
+    },
+    "expected": true
+  },
+  {
+    "name": "Claude ANTHROPIC_API_KEY",
+    "app": "claude",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {
+          "ANTHROPIC_API_KEY": "test-value"
+        }
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Claude ANTHROPIC_AUTH_TOKEN",
+    "app": "claude",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {
+          "ANTHROPIC_AUTH_TOKEN": "test-value"
+        }
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Claude ANTHROPIC_BASE_URL",
+    "app": "claude",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {
+          "ANTHROPIC_BASE_URL": "test-value"
+        }
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Claude CLAUDE_CODE_OAUTH_TOKEN",
+    "app": "claude",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {
+          "CLAUDE_CODE_OAUTH_TOKEN": "test-value"
+        }
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Claude CLAUDE_CODE_USE_BEDROCK",
+    "app": "claude",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {
+          "CLAUDE_CODE_USE_BEDROCK": "test-value"
+        }
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Claude AWS_BEARER_TOKEN_BEDROCK",
+    "app": "claude",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {
+          "AWS_BEARER_TOKEN_BEDROCK": "test-value"
+        }
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Claude ANTHROPIC_CUSTOM_HEADERS",
+    "app": "claude",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {
+          "ANTHROPIC_CUSTOM_HEADERS": "test-value"
+        }
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Claude credential command",
+    "app": "claude",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {},
+        "apiKeyHelper": "test-command"
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Claude empty placeholders",
+    "app": "claude",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {
+          "ANTHROPIC_API_KEY": "",
+          "ANTHROPIC_BASE_URL": ""
+        }
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": true
+  },
+  {
+    "name": "Desktop routing metadata",
+    "app": "claude-desktop",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {}
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "claudeDesktopMode": "proxy"
+      }
+    },
+    "expected": false
+  },
+  {
+    "name": "Desktop gateway",
+    "app": "claude-desktop",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {},
+        "inferenceGatewayBaseUrl": "https://relay.example"
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Codex migrated settings",
+    "app": "codex",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "auth": {},
+        "config": "model = \"gpt-5.5\"\nmodel_provider = \"openai\"\n[mcp_servers.local]\ncommand = \"test-mcp\"",
+        "unknown": "kept"
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "commonConfigEnabled": true,
+        "usage_script": {
+          "enabled": true,
+          "language": "javascript",
+          "code": "",
+          "templateType": "official_subscription"
+        }
+      }
+    },
+    "expected": true
+  },
+  {
+    "name": "Codex stored OPENAI_API_KEY",
+    "app": "codex",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "auth": {
+          "OPENAI_API_KEY": "test-key"
+        },
+        "config": ""
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Codex stored tokens",
+    "app": "codex",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "auth": {
+          "tokens": {
+            "access_token": "test-token"
+          }
+        },
+        "config": ""
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Codex stored bedrock_api_key",
+    "app": "codex",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "auth": {
+          "bedrock_api_key": "test-bedrock"
+        },
+        "config": ""
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Codex stored personal_access_token",
+    "app": "codex",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "auth": {
+          "personal_access_token": "test-pat"
+        },
+        "config": ""
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Codex stored agent_identity",
+    "app": "codex",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "auth": {
+          "agent_identity": {
+            "token": "test-agent"
+          }
+        },
+        "config": ""
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Codex routing model_provider = \"custom\"",
+    "app": "codex",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "auth": {},
+        "config": "model_provider = \"custom\""
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Codex routing openai_base_url = \"https://relay.example\"",
+    "app": "codex",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "auth": {},
+        "config": "openai_base_url = \"https://relay.example\""
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Codex routing [model_providers.openai]",
+    "app": "codex",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "auth": {},
+        "config": "[model_providers.openai]\nbase_url = \"https://relay.example\""
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Codex routing [model_providers.custom]",
+    "app": "codex",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "auth": {},
+        "config": "[model_providers.custom]\nenv_key = \"TEST_KEY\""
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Codex routing [model_providers.custom]",
+    "app": "codex",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "auth": {},
+        "config": "[model_providers.custom]\nexperimental_bearer_token = \"test-key\""
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Codex routing not valid = [",
+    "app": "codex",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "auth": {},
+        "config": "not valid = ["
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Gemini harmless settings",
+    "app": "gemini",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {
+          "GEMINI_MODEL": "gemini-2.5-pro",
+          "DEBUG": "true"
+        },
+        "config": {
+          "security": {
+            "auth": {
+              "selectedType": "oauth-personal"
+            }
+          },
+          "theme": "dark"
+        }
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "commonConfigEnabled": true,
+        "usage_script": {
+          "enabled": true,
+          "language": "javascript",
+          "code": "",
+          "templateType": "official_subscription"
+        }
+      }
+    },
+    "expected": true
+  },
+  {
+    "name": "Gemini API login",
+    "app": "gemini",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {
+          "GEMINI_API_KEY": "test-key"
+        },
+        "config": {}
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Gemini gateway",
+    "app": "gemini",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {
+          "GOOGLE_GEMINI_BASE_URL": "https://relay.example"
+        },
+        "config": {}
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Gemini selected API auth",
+    "app": "gemini",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "env": {},
+        "config": {
+          "security": {
+            "auth": {
+              "selectedType": "gemini-api-key"
+            }
+          }
+        }
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  },
+  {
+    "name": "Grok v3 native body",
+    "app": "grokbuild",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "config": "[models]\ndefault = \"grok-4.5\"\n[mcp_servers.local]\ncommand = \"test-mcp\""
+      },
+      "notes": "kept",
+      "icon": "openai",
+      "meta": {
+        "commonConfigEnabled": true,
+        "usage_script": {
+          "enabled": true,
+          "language": "javascript",
+          "code": "",
+          "templateType": "official_subscription"
+        }
+      }
+    },
+    "expected": true
+  },
+  {
+    "name": "Grok custom model",
+    "app": "grokbuild",
+    "provider": {
+      "id": "native-test",
+      "name": "Official",
+      "category": "official",
+      "settingsConfig": {
+        "config": "[models]\ndefault = \"custom\"\n[model.custom]\nbase_url = \"https://relay.example\"\napi_key = \"test-key\""
+      },
+      "notes": "kept",
+      "icon": "openai"
+    },
+    "expected": false
+  }
+]

@@ -241,14 +241,21 @@ pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
             match oauth_identity(row_auth) {
                 Some(id) => {
                     stash.take(&id);
+                    stash.last = None;
                 }
                 None => {
-                    if let Some(last) = stash.last.take() {
-                        stash.logins.remove(&last);
+                    // NativeOfficial deliberately clears non-subscription auth.
+                    // Its absence on the next operation is not a user logout.
+                    if let Some(last) = stash.last.clone().filter(|id| {
+                        stash
+                            .logins
+                            .get(id)
+                            .is_some_and(codex_auth_has_chatgpt_login_material)
+                    }) {
+                        stash.take(&last);
                     }
                 }
             }
-            stash.last = None;
         }
     }
 
@@ -416,6 +423,53 @@ mod tests {
             version: STASH_VERSION,
             initialized: true,
             ..LoginStash::default()
+        }
+    }
+
+    #[test]
+    fn native_official_clearing_is_not_a_logout_on_subsequent_operations() {
+        let empty = json!({});
+        for credential in [
+            json!({"OPENAI_API_KEY": "test-personal-key"}),
+            json!({"auth_mode":"bedrockApiKey", "bedrock_api_key":"test-bedrock"}),
+            json!({"auth_mode":"personalAccessToken", "personal_access_token":"test-pat"}),
+            json!({"auth_mode":"agentIdentity", "agent_identity":{"token":"test-agent"}}),
+        ] {
+            for target in [
+                AuthTarget::ThirdParty { preserve: true },
+                AuthTarget::ThirdParty { preserve: false },
+                AuthTarget::NativeOfficial,
+            ] {
+                let cleared = plan(input(
+                    Some(&credential),
+                    AuthTarget::NativeOfficial,
+                    ready(),
+                ));
+                assert_eq!(cleared.auth, Some(None));
+                let saved = cleared.stash.unwrap();
+                let next = plan(AuthInput {
+                    leaving_official: Some(&empty),
+                    ..input(None, target, saved.clone())
+                });
+                let saved = next.stash.unwrap_or(saved);
+                assert_eq!(next.auth, None);
+                assert_eq!(
+                    saved.logins.get(&identity(&credential)),
+                    Some(&credential),
+                    "{target:?}"
+                );
+                assert_eq!(saved.last.as_deref(), Some(identity(&credential).as_str()));
+                let restored = plan(input(
+                    None,
+                    AuthTarget::Official { row_auth: &empty },
+                    saved,
+                ));
+                assert_eq!(
+                    restored.auth,
+                    Some(Some(credential.clone())),
+                    "saved login remains recoverable"
+                );
+            }
         }
     }
 

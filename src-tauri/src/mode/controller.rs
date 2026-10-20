@@ -918,13 +918,14 @@ pub async fn use_official_provider(state: &AppState, app: &AppType) -> Result<()
     require_proxy_app(app)?;
     {
         let _guard = lock_settled(state, app).await.map_err(err)?;
-        let official = state
+        let (official, create_official) = state
             .db
-            .ensure_official_provider(app.clone())
+            .resolve_official_provider(app.clone())
             .map_err(err)?;
         let mode = current::mode_state(app);
         let live_now = LiveNow::of(state, app, &mode)?;
         let target = PendingTarget {
+            create_official,
             pointer: Some(official.id.clone()),
             state: Some(ModeState {
                 mode: Some(Mode::Direct),
@@ -2771,6 +2772,111 @@ mod mode_tests {
 
     #[tokio::test]
     #[serial]
+    async fn use_official_reuses_codex_quota_card_and_preserves_stashed_credentials_across_switches(
+    ) {
+        for credential in [
+            json!({"OPENAI_API_KEY":"test-personal-key"}),
+            json!({"auth_mode":"bedrockApiKey", "bedrock_api_key":"test-bedrock"}),
+            json!({"auth_mode":"personalAccessToken", "personal_access_token":"test-pat"}),
+            json!({"auth_mode":"agentIdentity", "agent_identity":{"token":"test-agent"}}),
+        ] {
+            let _home = Home::new();
+            let _fake = fake_models(vec![], CodexKeychainLogin::Missing, None);
+            seed_codex(CODEX_USER_LIVE, Some(&credential));
+            let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+            let mut official = state.db.ensure_official_provider(AppType::Codex).unwrap();
+            official.settings_config["config"] = json!("model = \"gpt-5.5\"\n");
+            official.meta = Some(serde_json::from_value(json!({
+                "commonConfigEnabled":true,
+                "usage_script":{"enabled":true,"language":"javascript","code":"","templateType":"official_subscription"}
+            })).unwrap());
+            state.db.save_provider("codex", &official).unwrap();
+            let rows = serde_json::to_value(state.db.get_all_providers("codex").unwrap()).unwrap();
+            let stash_path = DeviceStore::for_device().file("codex-login-stash.json");
+            for switch_away in [false, true] {
+                use_official_provider(&state, &AppType::Codex)
+                    .await
+                    .unwrap();
+                assert!(codex_login_file().is_none());
+                assert_eq!(
+                    direct_provider_id(&state, &AppType::Codex)
+                        .unwrap()
+                        .as_deref(),
+                    Some(official.id.as_str())
+                );
+                if switch_away {
+                    ProviderService::switch(&state, AppType::Codex, "a").unwrap();
+                } else {
+                    use_official_provider(&state, &AppType::Codex)
+                        .await
+                        .unwrap();
+                }
+                let stash: serde_json::Value =
+                    serde_json::from_slice(&fs::read(&stash_path).unwrap()).unwrap();
+                assert!(stash["logins"]
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .any(|auth| auth == &credential));
+                assert!(stash["last"].is_string());
+                assert_eq!(
+                    serde_json::to_value(state.db.get_all_providers("codex").unwrap()).unwrap(),
+                    rows
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn use_official_failure_preserves_existing_official_card() {
+        let _home = Home::new();
+        seed_codex("invalid toml = [", None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        state.db.ensure_official_provider(AppType::Codex).unwrap();
+        let before = serde_json::to_value(state.db.get_all_providers("codex").unwrap()).unwrap();
+        assert!(use_official_provider(&state, &AppType::Codex)
+            .await
+            .is_err());
+        assert_eq!(
+            serde_json::to_value(state.db.get_all_providers("codex").unwrap()).unwrap(),
+            before
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn use_official_unpublished_intent_is_discarded_without_creating_a_card() {
+        let _home = Home::new();
+        seed_codex(CODEX_USER_LIVE, None);
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        let rows = serde_json::to_value(state.db.get_all_providers("codex").unwrap()).unwrap();
+        let config = codex_text();
+        failpoint::crash_at(Some("pending"));
+        let interrupted = use_official_provider(&state, &AppType::Codex).await;
+        failpoint::crash_at(None);
+        assert!(interrupted.is_err());
+        crate::mode::operation::recover_on_startup(&state.db);
+        assert_eq!(codex_text(), config);
+        assert_eq!(
+            serde_json::to_value(state.db.get_all_providers("codex").unwrap()).unwrap(),
+            rows
+        );
+        assert_eq!(
+            direct_provider_id(&state, &AppType::Codex)
+                .unwrap()
+                .as_deref(),
+            Some("a")
+        );
+        assert!(
+            crate::mode::state::pending(&DeviceStore::for_device(), "codex")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn use_official_without_login_leaves_codex_ready_for_native_sign_in() {
         let _home = Home::new();
         seed_codex(CODEX_USER_LIVE, Some(&json!({"OPENAI_API_KEY": "sk-a"})));
@@ -2796,9 +2902,15 @@ mod mode_tests {
         seed_codex("not valid toml = [", Some(&login));
         let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
         let previous = mode(&AppType::Codex);
+        let rows_before =
+            serde_json::to_value(state.db.get_all_providers("codex").unwrap()).unwrap();
         assert!(use_official_provider(&state, &AppType::Codex)
             .await
             .is_err());
+        assert_eq!(
+            serde_json::to_value(state.db.get_all_providers("codex").unwrap()).unwrap(),
+            rows_before
+        );
         assert_eq!(codex_text(), "not valid toml = [");
         assert_eq!(codex_login_file(), Some(login));
         assert_eq!(mode(&AppType::Codex), previous);
@@ -2824,9 +2936,15 @@ mod mode_tests {
             }
             let before = codex_text();
             let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+            let rows_before =
+                serde_json::to_value(state.db.get_all_providers("codex").unwrap()).unwrap();
             assert!(use_official_provider(&state, &AppType::Codex)
                 .await
                 .is_err());
+            assert_eq!(
+                serde_json::to_value(state.db.get_all_providers("codex").unwrap()).unwrap(),
+                rows_before
+            );
             assert_eq!(codex_text(), before);
             assert_eq!(
                 direct_provider_id(&state, &AppType::Codex)
@@ -2854,6 +2972,27 @@ mod mode_tests {
         let interrupted = use_official_provider(&state, &AppType::Codex).await;
         failpoint::crash_at(None);
         assert!(interrupted.is_err());
+        assert!(state
+            .db
+            .get_provider_by_id("codex-official", "codex")
+            .unwrap()
+            .is_none());
+        let pending = crate::mode::state::pending(&DeviceStore::for_device(), "codex")
+            .unwrap()
+            .unwrap();
+        assert!(pending.published);
+        assert!(pending.target.create_official);
+        crate::mode::operation::recover_on_startup(&state.db);
+        assert!(state
+            .db
+            .get_provider_by_id("codex-official", "codex")
+            .unwrap()
+            .is_some());
+        assert!(
+            crate::mode::state::pending(&DeviceStore::for_device(), "codex")
+                .unwrap()
+                .is_none()
+        );
         use_official_provider(&state, &AppType::Codex)
             .await
             .unwrap();
@@ -3049,9 +3188,15 @@ mod mode_tests {
             let before_auth = fs::read(crate::codex_config::get_codex_auth_path()).unwrap();
             let before_mode = mode(&AppType::Codex);
 
+            let rows_before =
+                serde_json::to_value(state.db.get_all_providers("codex").unwrap()).unwrap();
             let error = use_official_provider(&state, &AppType::Codex)
                 .await
                 .unwrap_err();
+            assert_eq!(
+                serde_json::to_value(state.db.get_all_providers("codex").unwrap()).unwrap(),
+                rows_before
+            );
             assert!(error.contains("ChatGPT"));
             assert_eq!(mode(&AppType::Codex), before_mode);
             assert_eq!(
@@ -3093,9 +3238,15 @@ mod mode_tests {
             }),
             now: Box::new(|| NOW),
         });
+        let rows_before =
+            serde_json::to_value(state.db.get_all_providers("codex").unwrap()).unwrap();
         let error = use_official_provider(&state, &AppType::Codex)
             .await
             .unwrap_err();
+        assert_eq!(
+            serde_json::to_value(state.db.get_all_providers("codex").unwrap()).unwrap(),
+            rows_before
+        );
         assert!(error.contains("retry") || error.contains("重试"));
         assert_eq!(codex_text(), changed, "preserve the concurrent edit");
         assert_eq!(codex_login_file(), Some(login));
@@ -3156,7 +3307,8 @@ mod mode_tests {
 
     #[tokio::test]
     #[serial]
-    async fn use_official_desktop_replacement_restores_native_mode_and_remains_switchable() {
+    async fn use_official_desktop_reuses_metadata_and_replaces_credentials_without_losing_switching(
+    ) {
         for customized_settings in [false, true] {
             let home = Home::new();
             let _dirs = DesktopDirs::under(&home);
@@ -3183,7 +3335,7 @@ mod mode_tests {
             enter(&state, &app, false).await.unwrap();
             use_official_provider(&state, &app).await.unwrap();
             let id = direct_provider_id(&state, &app).unwrap().unwrap();
-            assert_ne!(id, saved.id);
+            assert_eq!(id == saved.id, !customized_settings);
             let native = state
                 .db
                 .get_provider_by_id(&id, app.as_str())

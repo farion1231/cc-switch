@@ -309,7 +309,7 @@ pub fn is_compatible_direct_provider(provider: &Provider) -> bool {
 pub fn is_official_provider(provider: &Provider) -> bool {
     provider.id == CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID
         || (!crate::database::is_official_seed_id(&provider.id)
-            && provider.is_unconfigured_official(&json!({"env": {}})))
+            && provider.is_unconfigured_official(&crate::app_config::AppType::ClaudeDesktop))
 }
 
 /// 这张卡在直连模式下写不进去，要经本地路由：模型映射卡（上游模型名 Desktop 不认）、托管
