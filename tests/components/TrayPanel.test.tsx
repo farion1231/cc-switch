@@ -161,6 +161,7 @@ describe("TrayPanel window layout", () => {
     window.localStorage.removeItem("cc-switch-tray-tab");
     delete document.documentElement.dataset.glass;
     delete document.documentElement.dataset.layout;
+    delete document.documentElement.dataset.platform;
   });
 
   it("colors only the balance amount green, like the provider card", async () => {
