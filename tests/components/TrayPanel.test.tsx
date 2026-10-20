@@ -396,6 +396,70 @@ describe("TrayPanel window layout", () => {
     );
   });
 
+  it.each([
+    { scaleFactor: 1, dpr: 1.5, side: "left" as const },
+    { scaleFactor: 1, dpr: 1.5, side: "right" as const },
+    { scaleFactor: 2, dpr: 2, side: "left" as const },
+    { scaleFactor: 2, dpr: 2, side: "right" as const },
+    { scaleFactor: 2, dpr: 3, side: "left" as const },
+    { scaleFactor: 2, dpr: 3, side: "right" as const },
+  ])(
+    "fits Linux cards inside native bounds at $scaleFactor scale / $dpr DPR opening $side",
+    async ({ scaleFactor, dpr, side }) => {
+      const ratio = vi.spyOn(window, "devicePixelRatio", "get");
+      ratio.mockReturnValue(dpr);
+      const factor = dpr / scaleFactor;
+      const { container } = await openPanel({
+        ...windows,
+        platform: "linux",
+        scaleFactor,
+        side,
+      });
+      const main = container.querySelector<HTMLElement>(".tp-card")!;
+      expect(Number.parseFloat(main.style.width)).toBeCloseTo(320 / factor);
+      expect(Number.parseFloat(main.style.maxHeight)).toBeCloseTo(620 / factor);
+      const collapsed = vi.mocked(trayPanelApi.layout).mock.lastCall![0];
+      expect(collapsed.width).toBeCloseTo(320);
+      expect(collapsed.height).toBeCloseTo(320 * factor);
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Claude Code default · Direct" }),
+      );
+      await paint();
+      const sub = container.querySelector<HTMLElement>(".tp-sub")!;
+      expect(Number.parseFloat(sub.style.width)).toBeCloseTo(300 / factor);
+      const expanded = vi.mocked(trayPanelApi.layout).mock.lastCall![0];
+      expect(expanded.width).toBeCloseTo(620);
+      expect(expanded.height).toBeCloseTo(collapsed.height);
+      for (const [index, card] of [main, sub].entries()) {
+        const bounds = expanded.cards[index];
+        expect(Number.parseFloat(card.style.left) * factor).toBeCloseTo(
+          bounds.x,
+        );
+        expect(Number.parseFloat(card.style.width) * factor).toBeCloseTo(
+          bounds.width,
+        );
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(expanded.width);
+        expect(bounds.y + bounds.height).toBeLessThanOrEqual(expanded.height);
+      }
+
+      ratio.mockReturnValue(scaleFactor);
+      fireEvent.resize(window);
+      await paint();
+      expect(main).toHaveStyle({ width: "320px", maxHeight: "620px" });
+      expect(sub).toHaveStyle({ width: "300px", height: "320px" });
+      fireEvent.keyDown(window, { key: "Escape" });
+      await paint();
+      expect(trayPanelApi.layout).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          width: 320,
+          height: 320,
+          cards: [{ x: 0, y: 0, width: 320, height: 320 }],
+        }),
+      );
+    },
+  );
+
   it.each([1, 1.25, 1.5, 2])(
     "keeps native bounds consistent at %s display scaling with larger WebView text",
     async (scaleFactor) => {
