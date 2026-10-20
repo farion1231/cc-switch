@@ -1392,9 +1392,11 @@ pub fn run() {
                 });
             });
 
-            // Linux: 禁用 WebKitGTK 硬件加速，防止 EGL 初始化失败导致白屏
+            // Linux: 只有显式禁用 renderer / 合成时才沿用软件绘制。
+            // TODO: 上游修复 WebKitGTK 2.54 的软件绘制后重新评估；默认 SHM 合成下
+            // 再把主窗口设为 Never 会使 DOM / IPC 正常但画面空白，不能与默认策略混用。
             #[cfg(target_os = "linux")]
-            {
+            if !crate::linux_rendering::compositing_enabled() {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.with_webview(|webview| {
                         use webkit2gtk::{WebViewExt, SettingsExt, HardwareAccelerationPolicy};
