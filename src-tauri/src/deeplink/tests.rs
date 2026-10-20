@@ -2015,6 +2015,20 @@ fn test_deeplink_coding_plan_never_replaces_a_carried_script() {
 }
 
 #[test]
+fn test_deeplink_volcengine_plan_is_preselected_but_off() {
+    // 火山查额度要账号级 AccessKey，链接里没有：只预选套餐，不默认启用
+    let request = coding_plan_request("opencode", "https://ark.cn-beijing.volces.com/api/plan/v3");
+    let script = imported_usage_script(AppType::OpenCode, &request).unwrap();
+    assert!(!script.enabled);
+    assert_eq!(script.coding_plan_provider.as_deref(), Some("volcengine"));
+
+    let mut request = coding_plan_request("claude", "https://ark.cn-beijing.volces.com/api/coding");
+    request.usage_enabled = Some(true);
+    let script = imported_usage_script(AppType::Claude, &request).unwrap();
+    assert!(script.enabled, "usageEnabled=true 必须照办");
+}
+
+#[test]
 fn test_deeplink_non_plan_and_zenmux_outside_claude_stay_off() {
     let request = coding_plan_request("claude", "https://api.example.com/v1");
     assert!(imported_usage_script(AppType::Claude, &request).is_none());
@@ -2023,4 +2037,153 @@ fn test_deeplink_non_plan_and_zenmux_outside_claude_stay_off() {
     assert!(imported_usage_script(AppType::Codex, &request).is_none());
     let request = coding_plan_request("claude", "https://zenmux.ai/api/anthropic");
     assert!(imported_usage_script(AppType::Claude, &request).is_some());
+}
+
+#[test]
+fn agy_deeplink_provider_config_precedence_and_protocol() {
+    let config = BASE64_URL_SAFE_NO_PAD.encode(serde_json::json!({
+        "env": {"GEMINI_API_KEY": "fixture", "GOOGLE_GEMINI_BASE_URL": "https://relay.example", "GEMINI_MODEL": "env-model", "NODE_OPTIONS": "untrusted"},
+        "config": {"model": {"name": "native-model"}, "unrelated": true}
+    }).to_string());
+    let url = format!("ccswitch://v1/import?resource=provider&app=agy&name=Test&config={config}&apiFormat=gemini_native");
+    let request = parse_deeplink_url(&url).unwrap();
+    let merged = parse_and_merge_config(&request).unwrap();
+    assert_eq!(merged.model.as_deref(), Some("native-model"));
+    assert_eq!(merged.api_key.as_deref(), Some("fixture"));
+    let provider = super::provider::build_provider_from_request(&AppType::Agy, &merged).unwrap();
+    assert_eq!(
+        provider.settings_config["config"]["model"]["name"],
+        "native-model"
+    );
+    assert!(provider.settings_config["env"]
+        .get("NODE_OPTIONS")
+        .is_none());
+    assert!(provider.settings_config["config"]
+        .get("unrelated")
+        .is_none());
+    let explicit = parse_deeplink_url(&format!(
+        "{url}&model=url-model&apiKey=url-key&endpoint=https://explicit.example"
+    ))
+    .unwrap();
+    let merged = parse_and_merge_config(&explicit).unwrap();
+    assert_eq!(merged.model.as_deref(), Some("url-model"));
+    assert_eq!(merged.api_key.as_deref(), Some("url-key"));
+    assert_eq!(merged.endpoint.as_deref(), Some("https://explicit.example"));
+    for format in ["anthropic", "openai_chat", "openai_responses"] {
+        assert!(parse_deeplink_url(&format!(
+            "ccswitch://v1/import?resource=provider&app=agy&name=Test&apiFormat={format}"
+        ))
+        .is_err());
+    }
+}
+
+#[test]
+fn agy_deeplink_accepts_flat_env_and_rejects_invalid_env() {
+    for (config, valid) in [
+        (
+            serde_json::json!({"GEMINI_API_KEY":"fixture", "GEMINI_BASE_URL":"https://relay.example", "GEMINI_MODEL":"flat-model"}),
+            true,
+        ),
+        (serde_json::json!({"env": []}), false),
+    ] {
+        let encoded = BASE64_URL_SAFE_NO_PAD.encode(config.to_string());
+        let request = parse_deeplink_url(&format!(
+            "ccswitch://v1/import?resource=provider&app=agy&name=Test&config={encoded}"
+        ))
+        .unwrap();
+        let result = parse_and_merge_config(&request);
+        assert_eq!(result.is_ok(), valid);
+        if valid {
+            let merged = result.unwrap();
+            assert_eq!(merged.model.as_deref(), Some("flat-model"));
+            assert_eq!(merged.endpoint.as_deref(), Some("https://relay.example"));
+        }
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn agy_deeplink_mcp_import_merges_apps_and_writes_native_config() {
+    let _home = TestHomeGuard::new();
+    let db = Arc::new(Database::memory().unwrap());
+    let state = AppState::new(db.clone());
+    let config = BASE64_URL_SAFE_NO_PAD
+        .encode(r#"{"mcpServers":{"fixture":{"command":"echo","args":["fixture"]}}}"#);
+    // First import belongs to another app, then the same ID is enabled for agy.
+    for apps in ["codex", "agy"] {
+        let request = parse_deeplink_url(&format!(
+            "ccswitch://v1/import?resource=mcp&apps={apps}&config={config}"
+        ))
+        .unwrap();
+        let result = super::mcp::import_mcp_from_deeplink(&state, request).unwrap();
+        assert_eq!(result.imported_count, 1);
+        assert!(result.failed.is_empty());
+    }
+    let rows = db.get_all_mcp_servers().unwrap();
+    assert!(rows["fixture"].apps.agy && rows["fixture"].apps.codex);
+    let native: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(crate::config::get_home_dir().join(".gemini/config/mcp_config.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(native["mcpServers"]["fixture"]["command"], "echo");
+    assert!(parse_mcp_apps("agy,gemini").unwrap().agy);
+    assert!(parse_mcp_apps("agy,invalid").is_err());
+}
+
+#[test]
+#[serial_test::serial]
+fn agy_deeplink_prompt_import_respects_activation() {
+    let _home = TestHomeGuard::new();
+    let state = AppState::new(Arc::new(Database::memory().unwrap()));
+    let content = BASE64_URL_SAFE_NO_PAD.encode("Agy instructions");
+    let path = crate::prompt_files::prompt_file_path(&AppType::Agy).unwrap();
+    for enabled in [false, true] {
+        let request = parse_deeplink_url(&format!("ccswitch://v1/import?resource=prompt&app=agy&name=Test-{enabled}&content={content}&enabled={enabled}")).unwrap();
+        let id = import_prompt_from_deeplink(&state, request).unwrap();
+        assert_eq!(
+            state.db.get_prompts("agy").unwrap()[&id].content,
+            "Agy instructions"
+        );
+        assert_eq!(path.exists(), enabled);
+    }
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "Agy instructions");
+    assert!(!crate::gemini_config::get_gemini_dir()
+        .join("GEMINI.md")
+        .exists());
+}
+
+#[test]
+#[cfg(unix)]
+#[serial_test::serial]
+fn agy_deeplink_enabled_provider_applies_native_model() {
+    let _home = TestHomeGuard::new();
+    let state = AppState::new(Arc::new(Database::memory().unwrap()));
+    let request = parse_deeplink_url("ccswitch://v1/import?resource=provider&app=agy&name=Agy&endpoint=https://relay.example&apiKey=fixture&model=link-model&enabled=true").unwrap();
+    let id = super::provider::import_provider_from_deeplink(&state, request).unwrap();
+    let current = crate::mode::current::provider_for(
+        &state.db,
+        &AppType::Agy,
+        crate::mode::current::Purpose::Direct,
+    )
+    .unwrap();
+    assert_eq!(current.as_deref(), Some(id.as_str()));
+    let live = crate::agy_config::read_live_settings().unwrap();
+    assert_eq!(live["config"]["model"]["name"], "link-model");
+    assert_eq!(live["env"]["GEMINI_API_KEY"], "fixture");
+    assert!(!crate::config::get_home_dir().join(".gemini/.env").exists());
+}
+
+#[test]
+fn skill_deeplink_is_a_shared_repository_not_an_agy_install() {
+    let state = AppState::new(Arc::new(Database::memory().unwrap()));
+    let request =
+        parse_deeplink_url("ccswitch://v1/import?resource=skill&repo=example/skills&app=agy")
+            .unwrap();
+    assert!(request.app.is_none());
+    assert_eq!(
+        super::skill::import_skill_from_deeplink(&state, request).unwrap(),
+        "example/skills"
+    );
+    assert!(state.db.get_all_installed_skills().unwrap().is_empty());
 }

@@ -36,6 +36,7 @@ import { getAppLabel, isAdditiveAppId } from "@/config/appConfig";
 import { normalizeIconDataUri } from "@/utils/customIcon";
 import {
   CODING_PLAN_PROVIDERS,
+  codingPlanEnabledByDefault,
   detectCodingPlanProvider,
 } from "@/config/codingPlanProviders";
 
@@ -392,10 +393,11 @@ export function DeepLinkImportDialog() {
       : undefined;
 
   // 导入后用量查询是否启用：链接写了 usageEnabled 就照办；没写时带脚本或是套餐地址即启用
-  // （与后端一致）
+  // （火山要另填 AccessKey，套餐地址也不启用；与后端一致）
   const usageWillBeEnabled =
     request?.usageEnabled ??
-    (Boolean(request?.usageScript) || Boolean(codingPlan));
+    (Boolean(request?.usageScript) ||
+      (codingPlan ? codingPlanEnabledByDefault(codingPlan.id) : false));
 
   // Check if config file is present
   const hasConfigFile = !!(request?.config || request?.configUrl);
@@ -756,9 +758,16 @@ export function DeepLinkImportDialog() {
                           )}
 
                           {/* Gemini config */}
-                          {parsedConfig.type === "gemini" &&
+                          {(parsedConfig.type === "gemini" ||
+                            parsedConfig.type === "agy") &&
                             parsedConfig.env && (
                               <div className="space-y-1.5">
+                                {parsedConfig.model && (
+                                  <EnvRow
+                                    envKey="model"
+                                    value={parsedConfig.model}
+                                  />
+                                )}
                                 {Object.entries(parsedConfig.env).map(
                                   ([key, value]) => (
                                     <EnvRow

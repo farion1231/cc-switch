@@ -208,6 +208,14 @@
     "geminiConfig": "Gemini Configuration",
     "geminiConfigHint": "Use .env format to configure Gemini",
     "form": {
+      "agy": {
+        "connectionHint": "Leave the API key and endpoint empty to use agy's Google sign-in. A key without an endpoint uses Google's default API; third-party endpoints must support the Gemini API. Open a new terminal or restart agy after switching. Running sessions keep their configuration. Login-mode model discovery uses the current agy configuration. In login mode, use the display name from the model list; API mode uses API model IDs.",
+        "keyFieldsHint": "The endpoint, key and model follow the provider; other native Antigravity settings are preserved.",
+        "envFile": "Launcher environment variables",
+        "envFileHint": "CC Switch passes the API key, endpoint and model when starting agy. Other environment variables are not applied.",
+        "configJson": "Model configuration (CC Switch format)",
+        "configJsonHint": "Only model settings are supported here. Change other Antigravity options in agy; manage MCP in the MCP panel."
+      },
       "gemini": {
         "model": "Model",
         "oauthTitle": "OAuth Authentication Mode",
@@ -398,6 +406,10 @@
       "checkToolUpdates": "Check for new versions of your apps at launch",
       "checkToolUpdatesHelp": "When on, CC Switch checks your installed command-line apps for new versions each time it starts, and shows a dot on Apps in the sidebar if it finds one. Nothing is upgraded automatically.",
       "windowAndTerminal": "Window and terminal",
+      "trayStyle": "Tray style",
+      "trayStylePanel": "Panel",
+      "trayStyleMenu": "Menu",
+      "trayStyleHelp": "What opens when you click the tray icon (on Windows, left-click always opens the main window and right-click opens the selected style). Panel: each app's in-use provider, quota and usage, with search and switching. Menu: the system's native menu. Takes effect right away.",
       "minimizeToTrayHelp": "When on, the close button only hides the window and CC Switch keeps running in the system tray (lightweight mode is in the tray menu). When off, the close button quits.",
       "terminalHelp": "The terminal used by “Open terminal” on provider cards. If it isn't available, the system default terminal is used."
     },
@@ -1082,7 +1094,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "agy": "Antigravity"
   },
   "mcode": {
     "empty": {
@@ -1329,6 +1342,7 @@
     "deleteSessionEllipsis": "Delete sessions",
     "deleteEllipsis": "Delete",
     "selectSessionLabel": "Select {{title}}",
+    "agyDeleteHint": "Delete this session in Antigravity to also remove its runtime state",
     "mcodeDeleteHint": "Delete it in MiniMax Code",
     "groupMeta": "{{count}} sessions · {{time}}",
     "bucketToday": "Today",
@@ -1623,6 +1637,7 @@
       "modelflare": "Modelflare is a stable, lower-cost AI model gateway: one key reaches GPT, Claude, Gemini, Grok, and other leading models. Exclusive for CC Switch users: use the code \"CCSWITCH\" on your first top-up for 10% off!",
       "everyapi": "EveryAPI ships its own desktop client that auto-configures Claude Code, Codex, Cursor, and 20+ other tools in one click; one key reaches Claude, GPT, DeepSeek, GLM, MiniMax, Kimi, and Doubao, so switching models needs no config changes. Get ¥14 in free credit on sign-up and an extra 20% on your first top-up. Exclusive for CC Switch users: use the code \"ccswitch\" at checkout for a further 20% off, with no expiry!",
       "alltokens": "AllTokens is built on stability and honesty, aiming to make every AI call stable, genuine, and trustworthy: reliable service, transparent billing, and one platform for GPT, Claude, Gemini, Grok, DeepSeek, GLM, Kimi, and other leading models, with pay-as-you-go pricing and spending caps. Get $1 in free trial credit when you sign up!",
+      "alltokens_si": "AllTokens SI is built on stability and honesty: an enterprise AI token relay and team collaboration platform. Members, keys, usage, and balance all live in one company console, and clear permissions and spending limits keep team usage traceable and under control.",
       "openmodel": "OpenModel offers client-specific discounts of up to 90% for Codex and 60% for Claude Code across supported models. CC Switch users who register via this link and use promo code \"cc-switch\" get 10% off their first top-up!",
       "grooroute": "GrooRoute Pro is a reliable AI API relay with access to OpenAI, Claude, DeepSeek, and other mainstream models, offering pay-as-you-go and subscription plans. CC Switch users get ¥5 in free trial credit by registering via this link!"
     },
@@ -1743,6 +1758,7 @@
     "fetchModelsSuccess": "Found {{count}} models",
     "modelMetadataFilled": "Filled in context window and other parameters for {{model}} (source: {{source}}). Please double-check.",
     "modelMetadataFilledMany": "Filled in context window and other parameters for {{count}} models (source: {{source}}). Please double-check.",
+    "gptContextWindowHint": "GPT on relays usually comes from ChatGPT subscriptions, whose window is only 272K. A larger window delays compaction until the upstream rejects the request and the turn fails; only use it if this provider supports it.",
     "modelMetadataSourcePreset": "preset",
     "modelMetadataSourceBoth": "preset and models.dev",
     "modelPicker": {
@@ -2540,7 +2556,8 @@
       "cacheWrite": "Cache write"
     },
     "prevMonth": "Previous month",
-    "nextMonth": "Next month"
+    "nextMonth": "Next month",
+    "agyUsageHint": "Antigravity shows native session token counters; missing historical models are unknown. The log does not provide reliable billing data; a displayed cost of 0 does not mean free usage."
   },
   "usageScript": {
     "title": "Configure Usage Query",
@@ -3137,6 +3154,8 @@
       "providerKeyRequired": "Provider key is required",
       "providerKeyInvalid": "Provider key can only contain lowercase letters, numbers, and hyphens",
       "providerKeyDuplicate": "This provider key already exists",
+      "providerKeyBuiltin": "\"{{key}}\" is the ID of a Hermes built-in provider. Hermes will use the built-in provider (which needs its own API key environment variable) and ignore this card's endpoint and key. Use a different key, e.g. cc-switch-{{key}}.",
+      "providerKeyBuiltinLocked": "\"{{key}}\" is the ID of a Hermes built-in provider. Hermes will use the built-in provider and ignore this card's endpoint and key. The key is locked: add this provider again under another key (e.g. cc-switch-{{key}}), then delete this card.",
       "apiMode": "API Mode",
       "apiModeHint": "Provider API protocol. Choose the format that matches your endpoint.",
       "apiModeChatCompletions": "OpenAI Chat Completions",

@@ -588,7 +588,7 @@ function App() {
   useEffect(() => {
     const checkEnvOnSwitch = async () => {
       try {
-        if (activeApp === "mcode") return;
+        if (activeApp === "mcode" || activeApp === "agy") return;
         const conflicts = await checkEnvConflicts(activeApp);
 
         if (conflicts.length > 0) {
@@ -1322,7 +1322,7 @@ function App() {
               activeApp === "opencode" ? handleDisableOmoSlim : undefined
             }
             onSetAsDefault={
-              activeApp === "openclaw"
+              activeApp === "openclaw" || activeApp === "opencode"
                 ? (provider, modelId) =>
                     void setAsDefaultModel(provider, modelId)
                 : activeApp === "hermes"

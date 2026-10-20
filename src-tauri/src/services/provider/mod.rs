@@ -2,6 +2,7 @@
 //!
 //! Handles provider CRUD operations, switching, and configuration management.
 
+pub(crate) mod agy_direct;
 pub(crate) mod claude_direct;
 mod claude_editor;
 pub(crate) mod codex_client_catalog;
@@ -5644,6 +5645,10 @@ impl ProviderService {
                     gemini_direct::switch_to(state.db.as_ref(), &provider)?;
                     return Ok(true);
                 }
+                AppType::Agy => {
+                    agy_direct::switch_to(state.db.as_ref(), &provider)?;
+                    return Ok(true);
+                }
                 AppType::GrokBuild => {
                     grok_direct::switch_to(state.db.as_ref(), None, &provider)?;
                     return Ok(true);
@@ -5793,6 +5798,7 @@ impl ProviderService {
         let official = match app_type {
             AppType::Codex => codex_direct::is_official(&row),
             AppType::Gemini => gemini_direct::is_official(&row),
+            AppType::Agy => agy_direct::is_official(&row),
             _ => false,
         };
         Ok(if official {
@@ -6403,7 +6409,7 @@ impl ProviderService {
 
     /// Delete a provider
     ///
-    /// 同时检查本地 settings 和数据库的当前供应商，防止删除任一端正在使用的供应商。
+    /// 直连指针或代理路由指着的供应商不能删（见 `mode::current::is_referenced`）。
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
         if app_type == AppType::Pi {
@@ -6475,7 +6481,13 @@ impl ProviderService {
             .map_err(|error| AppError::Message(error.message))?;
         }
 
-        state.db.delete_provider(app_type.as_str(), id)
+        state.db.delete_provider(app_type.as_str(), id)?;
+        if matches!(app_type, AppType::Agy) {
+            if let Err(error) = agy_direct::release_launcher_if_unmanaged(state.db.as_ref()) {
+                log::warn!("清理 agy 启动器失败: {error}");
+            }
+        }
+        Ok(())
     }
 
     /// Remove provider from live config only (for additive mode apps like OpenCode, OpenClaw)
@@ -6680,6 +6692,10 @@ impl ProviderService {
         }
         if matches!(app_type, AppType::Gemini) {
             gemini_direct::switch_to(state.db.as_ref(), provider)?;
+            return Ok(SwitchResult::default());
+        }
+        if matches!(app_type, AppType::Agy) {
+            agy_direct::switch_to(state.db.as_ref(), provider)?;
             return Ok(SwitchResult::default());
         }
         if matches!(app_type, AppType::GrokBuild) {
@@ -7017,7 +7033,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode => Ok(String::new()),
+            AppType::Pi | AppType::Mcode | AppType::Agy => Ok(String::new()),
         }
     }
 
@@ -7035,7 +7051,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode => Ok(String::new()),
+            AppType::Pi | AppType::Mcode | AppType::Agy => Ok(String::new()),
         }
     }
 
@@ -7727,6 +7743,10 @@ impl ProviderService {
                 use crate::gemini_config::validate_gemini_settings;
                 validate_gemini_settings(&provider.settings_config)?
             }
+            AppType::Agy => {
+                use crate::gemini_config::validate_gemini_settings;
+                validate_gemini_settings(&provider.settings_config)?
+            }
             AppType::GrokBuild => {
                 let settings = provider.settings_config.as_object().ok_or_else(|| {
                     AppError::localized(
@@ -7947,7 +7967,7 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::Gemini => {
+            AppType::Gemini | AppType::Agy => {
                 use crate::gemini_config::json_to_env;
 
                 let env_map = json_to_env(&provider.settings_config)?;

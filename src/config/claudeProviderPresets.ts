@@ -1083,6 +1083,29 @@ export const providerPresets: ProviderPreset[] = [
     partnerPromotionKey: "alltokens",
     icon: "alltokens",
   },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    // 官方 CC Switch 接入文档（alltokens.si/docs/cc-switch/configure）：Anthropic
+    // base 用站点根。目录里 Claude ID 用点号（claude-sonnet-5.5，非 5-5），没有
+    // Haiku（alltokens.si/api/pricing，2026-10-19），故四档全部写明、Haiku 指向 Sonnet
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://alltokens.si",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "claude-sonnet-5.5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-sonnet-5.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5.5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5.5",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",
@@ -1438,7 +1461,7 @@ export const providerPresets: ProviderPreset[] = [
     family: "zhipu",
     regionKey: "cn",
     websiteUrl: "https://open.bigmodel.cn",
-    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/anthropic",
@@ -1458,7 +1481,7 @@ export const providerPresets: ProviderPreset[] = [
     family: "zhipu",
     regionKey: "intl",
     websiteUrl: "https://z.ai",
-    apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
+    apiKeyUrl: "https://z.ai/subscribe",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic",
@@ -1790,10 +1813,11 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL: "https://api.minimax.cn/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
-        ANTHROPIC_MODEL: "MiniMax-M3[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3[1M]",
+        ANTHROPIC_MODEL: "MiniMax-M3.1-Flash[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3.1-Flash[1M]",
+        // M3 stays selectable as Opus; a role slot also works through the local route
         ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M3[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M3[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M3.1-Flash[1M]",
       },
     },
     category: "cn_official",
@@ -1815,10 +1839,11 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL: "https://api.minimax.io/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
-        ANTHROPIC_MODEL: "MiniMax-M3[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3[1M]",
+        ANTHROPIC_MODEL: "MiniMax-M3.1-Flash[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3.1-Flash[1M]",
+        // M3 stays selectable as Opus; a role slot also works through the local route
         ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M3[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M3[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M3.1-Flash[1M]",
       },
     },
     category: "cn_official",

@@ -56,6 +56,7 @@ import {
   DirectModeFormatWarning,
   EndpointField,
   FullUrlToggle,
+  GptContextWindowHint,
   ModelDropdown,
   type DirectModeFormatNotice,
 } from "./shared";
@@ -1677,6 +1678,11 @@ export function CodexFormFields({
               <Trash2 className="h-4 w-4" />
             </Button>
           </HoverTip>
+          <GptContextWindowHint
+            modelId={row.model}
+            contextWindow={row.contextWindow}
+            className="col-span-full px-1"
+          />
         </div>
       ))}
     </div>

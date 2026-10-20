@@ -43,6 +43,7 @@ import {
   geminiProviderPresets,
   type GeminiProviderPreset,
 } from "@/config/geminiProviderPresets";
+import { usesGeminiStyleForm } from "@/config/appConfig";
 import {
   opencodeProviderPresets,
   type OpenCodeProviderPreset,
@@ -57,6 +58,7 @@ import {
   hermesProviderPresets,
   type HermesProviderPreset,
 } from "@/config/hermesProviderPresets";
+import { isHermesBuiltinProviderId } from "@/config/hermesBuiltinProviderIds";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import { HermesFormFields } from "./HermesFormFields";
@@ -471,7 +473,7 @@ function ProviderFormFull({
             )
           : appId === "codex"
             ? CODEX_DEFAULT_CONFIG
-            : appId === "gemini"
+            : usesGeminiStyleForm(appId)
               ? GEMINI_DEFAULT_CONFIG
               : appId === "opencode"
                 ? OPENCODE_DEFAULT_CONFIG
@@ -888,7 +890,7 @@ function ProviderFormFull({
           preset,
         }))
         .filter((entry) => !(entry.preset as CodexProviderPreset).hidden);
-    } else if (appId === "gemini") {
+    } else if (usesGeminiStyleForm(appId)) {
       return geminiProviderPresets.map<PresetEntry>((preset, index) => ({
         id: `gemini-${index}`,
         preset,
@@ -999,7 +1001,8 @@ function ProviderFormFull({
     resetGeminiConfig,
     envStringToObj,
   } = useGeminiConfigState({
-    initialData: appId === "gemini" ? initialData : undefined,
+    initialData: usesGeminiStyleForm(appId) ? initialData : undefined,
+    preferConfigModel: appId === "agy",
   });
 
   const projectGeminiDraft = useCallback(
@@ -1019,7 +1022,11 @@ function ProviderFormFull({
   projectGeminiDraftRef.current = projectGeminiDraft;
 
   useEffect(() => {
-    if (appId === "gemini" && !initialData && selectedPresetId === "custom") {
+    if (
+      usesGeminiStyleForm(appId) &&
+      !initialData &&
+      selectedPresetId === "custom"
+    ) {
       projectGeminiDraftRef.current({}, {});
     }
   }, [appId, initialData, selectedPresetId]);
@@ -1620,15 +1627,20 @@ function ProviderFormFull({
           );
         }
       }
-      if (appId === "gemini") {
-        if (!geminiBaseUrl.trim()) {
+      if (usesGeminiStyleForm(appId)) {
+        // agy uses its own login when both fields are empty; an API key may
+        // use Google's default endpoint without a custom base URL.
+        if (appId !== "agy" && !geminiBaseUrl.trim()) {
           issues.push(
             t("providerForm.endpointRequired", {
               defaultValue: "非官方供应商请填写 API 端点",
             }),
           );
         }
-        if (!geminiApiKey.trim()) {
+        if (
+          !geminiApiKey.trim() &&
+          (appId !== "agy" || Boolean(geminiBaseUrl.trim()))
+        ) {
           issues.push(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -1725,7 +1737,7 @@ function ProviderFormFull({
       } catch (err) {
         settingsConfig = values.settingsConfig.trim();
       }
-    } else if (appId === "gemini") {
+    } else if (usesGeminiStyleForm(appId)) {
       try {
         const envObj = envStringToObj(geminiEnv);
         const configObj = geminiConfig.trim() ? JSON.parse(geminiConfig) : {};
@@ -1903,7 +1915,7 @@ function ProviderFormFull({
       // Claude Code、Codex、Gemini CLI 的通用配置片段已冻结：沿用行里原有的标记，新增时
       // 由后端写 true（兼容旧版）。
       commonConfigEnabled:
-        appId === "claude" || appId === "codex" || appId === "gemini"
+        appId === "claude" || appId === "codex" || usesGeminiStyleForm(appId)
           ? initialData?.meta?.commonConfigEnabled
           : undefined,
       endpointAutoSelect,
@@ -2050,6 +2062,7 @@ function ProviderFormFull({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: baseUrl,
   });
 
   const {
@@ -2063,6 +2076,7 @@ function ProviderFormFull({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: codexBaseUrl,
   });
 
   const {
@@ -2076,6 +2090,7 @@ function ProviderFormFull({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: geminiBaseUrl,
   });
 
   const {
@@ -2089,6 +2104,7 @@ function ProviderFormFull({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: opencodeForm.opencodeBaseUrl,
   });
 
   // 使用 API Key 链接 hook (OpenClaw)
@@ -2103,6 +2119,7 @@ function ProviderFormFull({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: openclawForm.openclawBaseUrl,
   });
 
   // 使用 API Key 链接 hook (Hermes)
@@ -2117,6 +2134,7 @@ function ProviderFormFull({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: hermesForm.hermesBaseUrl,
   });
 
   // 使用端点测速候选 hook
@@ -2149,7 +2167,7 @@ function ProviderFormFull({
         );
         projectCodexDraft(template.auth, template.config);
       }
-      if (appId === "gemini") {
+      if (usesGeminiStyleForm(appId)) {
         resetGeminiConfig({}, {});
         projectGeminiDraft({}, {});
       }
@@ -2213,7 +2231,7 @@ function ProviderFormFull({
       return;
     }
 
-    if (appId === "gemini") {
+    if (usesGeminiStyleForm(appId)) {
       const preset = entry.preset as GeminiProviderPreset;
       const env = (preset.settingsConfig as any)?.env ?? {};
       const config = (preset.settingsConfig as any)?.config ?? {};
@@ -2291,7 +2309,7 @@ function ProviderFormFull({
       const preset = entry.preset as HermesProviderPreset;
       const config = preset.settingsConfig;
 
-      hermesForm.resetHermesState(config);
+      hermesForm.resetHermesState(config, preset.providerKey);
 
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -2538,11 +2556,25 @@ function ProviderFormFull({
                         {t("hermes.form.providerKeyInvalid")}
                       </p>
                     )}
-                  {!(
-                    additiveExistingProviderKeys.includes(
-                      hermesForm.hermesProviderKey,
-                    ) && !isProviderKeyLocked
-                  ) &&
+                  {isHermesBuiltinProviderId(hermesForm.hermesProviderKey) && (
+                    <p
+                      className="text-xs text-warning-text"
+                      data-testid="hermes-key-builtin-warning"
+                    >
+                      {t(
+                        isProviderKeyLocked
+                          ? "hermes.form.providerKeyBuiltinLocked"
+                          : "hermes.form.providerKeyBuiltin",
+                        { key: hermesForm.hermesProviderKey.trim() },
+                      )}
+                    </p>
+                  )}
+                  {!isHermesBuiltinProviderId(hermesForm.hermesProviderKey) &&
+                    !(
+                      additiveExistingProviderKeys.includes(
+                        hermesForm.hermesProviderKey,
+                      ) && !isProviderKeyLocked
+                    ) &&
                     (hermesForm.hermesProviderKey.trim() === "" ||
                       /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
                         hermesForm.hermesProviderKey,
@@ -2738,8 +2770,9 @@ function ProviderFormFull({
             />
           )}
 
-          {appId === "gemini" && (
+          {usesGeminiStyleForm(appId) && (
             <GeminiFormFields
+              appId={appId as "gemini" | "agy"}
               providerId={providerId}
               shouldShowApiKey={shouldShowApiKey(
                 form.getValues("settingsConfig"),
@@ -2875,9 +2908,10 @@ function ProviderFormFull({
               />
               {settingsConfigErrorField}
             </>
-          ) : appId === "gemini" ? (
+          ) : usesGeminiStyleForm(appId) ? (
             <>
               <GeminiConfigEditor
+                isAgy={appId === "agy"}
                 envValue={geminiEnv}
                 configValue={geminiConfig}
                 onEnvChange={handleGeminiEnvChange}

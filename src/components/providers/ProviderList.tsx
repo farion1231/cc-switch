@@ -20,6 +20,7 @@ import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import type { OpenClawProviderConfig, Provider } from "@/types";
+import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/opencodeFormUtils";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -129,6 +130,11 @@ export function ProviderList({
       queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
       enabled: appId === "opencode",
     });
+  const { data: opencodeDefaultModel } = useQuery({
+    queryKey: ["opencodeDefaultModel"],
+    queryFn: () => providersApi.getOpenCodeDefaultModel(),
+    enabled: appId === "opencode",
+  });
   const { data: openclawLiveIds, isPending: isOpenclawLiveIdsPending } =
     useOpenClawLiveProviderIds(appId === "openclaw");
   const { data: hermesLiveIds, isPending: isHermesLiveIdsPending } =
@@ -320,7 +326,40 @@ export function ProviderList({
         queue: switchMode.queue.filter((id) => known.has(id)),
       });
     }
-    const defaultPrimary = openclawDefaultModel?.primary ?? "";
+    if (appId === "agy") {
+      return buildSwitchSections({
+        app: appId,
+        t,
+        providers: filteredProviders,
+        active: "direct",
+        view: "direct",
+        directId: currentProviderId || null,
+        routeId: null,
+        failoverOn: false,
+        queue: [],
+        stackMembers: new Map(),
+        routingReason: () => "",
+        serviceRunning: false,
+        actions: {
+          switchDirect: (provider) => onSwitch(provider),
+          needsRouteDialog: () => undefined,
+          exitAndUse: (provider) => onSwitch(provider),
+          routeTo: () => undefined,
+          queueAdd: () => undefined,
+          queueRemove: () => undefined,
+          queueMove: () => undefined,
+          stackAdd: () => undefined,
+          stackRemove: () => undefined,
+          stackSetDefault: () => undefined,
+        },
+      });
+    }
+    const defaultPrimary =
+      (appId === "openclaw"
+        ? openclawDefaultModel?.primary
+        : appId === "opencode"
+          ? opencodeDefaultModel
+          : null) ?? "";
     const slash = defaultPrimary.indexOf("/");
     return buildAdditiveSections({
       app: appId,
@@ -329,14 +368,20 @@ export function ProviderList({
       isInConfig,
       currentOmoId,
       currentOmoSlimId,
-      openclawDefault:
-        appId === "openclaw" && slash > 0
+      defaultModel:
+        slash > 0
           ? {
               providerId: defaultPrimary.slice(0, slash),
               model: defaultPrimary.slice(slash + 1),
             }
           : null,
-      openclawModels: (provider) => {
+      defaultModelOptions: (provider) => {
+        if (appId === "opencode") {
+          return getOpencodeDeclaredModels(
+            provider.id,
+            provider.settingsConfig,
+          );
+        }
         const config = provider.settingsConfig as OpenClawProviderConfig;
         if (!Array.isArray(config?.models)) return [];
         return config.models
@@ -369,6 +414,7 @@ export function ProviderList({
     currentProviderId,
     onSwitch,
     openclawDefaultModel?.primary,
+    opencodeDefaultModel,
     isInConfig,
     currentOmoId,
     currentOmoSlimId,

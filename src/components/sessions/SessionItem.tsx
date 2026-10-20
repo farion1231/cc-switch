@@ -139,9 +139,14 @@ export function SessionItem({
     .join("\n");
 
   const deleteReason = !deletable
-    ? t("sessionManager.mcodeDeleteHint", {
-        defaultValue: "请在 MiniMax Code 中删除",
-      })
+    ? t(
+        session.providerId === "agy"
+          ? "sessionManager.agyDeleteHint"
+          : "sessionManager.mcodeDeleteHint",
+        {
+          defaultValue: "请在 MiniMax Code 中删除",
+        },
+      )
     : null;
 
   const row = (

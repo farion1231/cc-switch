@@ -839,3 +839,39 @@ describe("DeepLinkImportDialog", () => {
     });
   });
 });
+
+it("previews agy model and masks its key before confirmation", async () => {
+  server.use(
+    http.post(
+      "http://tauri.local/merge_deeplink_config",
+      async ({ request }) => {
+        const body = (await request.json()) as {
+          request: Record<string, unknown>;
+        };
+        return HttpResponse.json(body.request);
+      },
+    ),
+  );
+  render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+  act(() => {
+    deliverDeepLink({
+      version: "v1",
+      resource: "provider",
+      app: "agy",
+      name: "Agy fixture",
+      endpoint: "https://relay.example",
+      apiKey: "secret-agy-key",
+      config: btoa(
+        JSON.stringify({
+          env: { GEMINI_API_KEY: "secret-agy-key" },
+          config: { model: { name: "agy-preview-model" } },
+        }),
+      ),
+    });
+  });
+  await waitFor(() =>
+    expect(screen.getByText("agy-preview-model")).toBeInTheDocument(),
+  );
+  expect(screen.queryByText("secret-agy-key")).not.toBeInTheDocument();
+  expect(screen.getAllByText("secr************").length).toBeGreaterThan(0);
+});
