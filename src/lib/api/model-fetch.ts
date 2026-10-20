@@ -41,6 +41,8 @@ export function modelFetchRequestHeaders(
  * Anthropic兼容 {"data":[{"id":"xxx"}]} 文档：https://platform.claude.com/docs/en/api/models/list
  * 这两种端点的模型列表
  * 特别支持智谱 OpenAI Responses {"models":[{"slug":"xxx"}]} 端点：https://open.bigmodel.cn/api/v1/models
+ * 以及 Gemini 原生 {"models":[{"name":"models/xxx"}]} 端点（/v1/models、/v1beta/models）；
+ * 后者在自动认证模式下若 Bearer 返回 401/403，会自动改用 x-goog-api-key 重试。
  */
 export async function fetchModelsForConfig(
   baseUrl: string,
