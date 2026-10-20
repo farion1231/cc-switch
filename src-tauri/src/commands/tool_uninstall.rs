@@ -29,7 +29,7 @@ pub(super) fn candidates(
         }]);
     }
     let _ = pref;
-    let installs = enumerate_tool_installations(tool);
+    let installs = enumerate_tool_installations(tool)?;
     if installs.is_empty() {
         return Err(format!(
             "Cannot identify the installation of {} to uninstall. Check installations and try again.",
@@ -160,7 +160,7 @@ pub(super) fn uninstall(
     }
     let _ = pref;
     // Re-derive the plan for the installation the user picked, not whichever is the default now.
-    let installs = enumerate_tool_installations(tool);
+    let installs = enumerate_tool_installations(tool)?;
     let inst = installs
         .iter()
         .find(|inst| inst.path == confirmed.path)

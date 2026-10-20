@@ -273,6 +273,7 @@ export const settingsApi = {
       version: string | null;
       latest_version: string | null;
       error: string | null;
+      installed: boolean | null;
       installed_but_broken: boolean;
       env_type: "windows" | "wsl" | "macos" | "linux" | "unknown";
       wsl_distro: string | null;

@@ -555,14 +555,14 @@ function ToolRow({
   const broken = Boolean(info?.installed_but_broken);
   const isBusy = tools.busyTools.has(tool);
   const busyAction = tools.busyTools.get(tool);
-  const canUninstall = Boolean(info?.version || broken || defaultInstall);
+  const canUninstall = info?.installed === true || Boolean(defaultInstall);
   const action: Exclude<ToolLifecycleAction, "uninstall"> | null =
     (busyAction !== "uninstall" ? busyAction : undefined) ??
-    (isVersionLoading || broken
+    (isVersionLoading || broken || !info
       ? null
-      : !info?.version
+      : info.installed === false
         ? "install"
-        : isOutdated && !nodeGap
+        : info.installed === true && info.version && isOutdated && !nodeGap
           ? "update"
           : null);
   const sourceLabel = defaultInstall
@@ -598,7 +598,15 @@ function ToolRow({
       {t("appsPage.notRunnable")}
     </span>
   ) : (
-    <span className="text-caption text-fg-2">{t("common.notInstalled")}</span>
+    <span className="text-caption text-fg-2">
+      {t(
+        info?.installed === false
+          ? "common.notInstalled"
+          : info?.installed === true
+            ? "appsPage.versionUnknown"
+            : "appsPage.probeFailed",
+      )}
+    </span>
   );
 
   const actionButton = action ? (

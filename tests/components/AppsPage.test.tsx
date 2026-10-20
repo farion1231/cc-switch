@@ -212,6 +212,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       .mockImplementation(async (tools: string[]) =>
         tools.map((name) => ({
           name,
+          installed: !missing.has(name),
           version: missing.has(name)
             ? null
             : upgraded.has(name) || !outdated.has(name)
@@ -867,6 +868,87 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(mocks.warning).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [true, false, "appsPage.versionUnknown", true],
+    [null, false, "appsPage.probeFailed", false],
+    [null, true, "appsPage.probeFailed", true],
+  ] as const)(
+    "renders installed=%s with scanned install=%s without install or update actions",
+    async (installed, scanned, label, canUninstall) => {
+      const getVersions = mocks.getToolVersions.getMockImplementation()!;
+      mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+        ((await getVersions(tools)) as ToolVersions).map((tool) => ({
+          ...tool,
+          installed,
+          version: null,
+          error: "probe diagnostic",
+        })),
+      );
+      if (scanned) {
+        mocks.listToolInstallations.mockImplementation(
+          async (tools: string[]) =>
+            tools.map((tool) =>
+              report(tool, { installs: [candidate(uninstallPlan(tool))] }),
+            ),
+        );
+      }
+      await renderApps();
+      expect(card("Claude Code").getByText(label)).toBeInTheDocument();
+      expect(
+        card("Claude Code").queryByRole("button", {
+          name: /settings\.tool(Install|Update)/,
+        }),
+      ).toBeNull();
+      await waitFor(() =>
+        expect(
+          card("Claude Code").queryByRole("button", {
+            name: "appPage.moreActions",
+          }) !== null,
+        ).toBe(canUninstall),
+      );
+      if (canUninstall) {
+        await openUninstall("Claude Code");
+        expect(
+          await within(screen.getByRole("dialog")).findByRole("button", {
+            name: "settings.toolUninstall",
+          }),
+        ).toBeEnabled();
+      }
+    },
+  );
+
+  it.each([true, null] as const)(
+    "does not report an unrecognized version as not runnable after upgrade (installed=%s)",
+    async (installed) => {
+      const getVersions = mocks.getToolVersions.getMockImplementation()!;
+      await renderApps();
+      mocks.runToolLifecycleAction.mockImplementationOnce(async () => {
+        mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+          ((await getVersions(tools)) as ToolVersions).map((tool) => ({
+            ...tool,
+            installed,
+            version: null,
+            error: null,
+          })),
+        );
+      });
+      fireEvent.click(updateButton("Claude Code"));
+      await waitFor(() =>
+        expect(mocks.warning).toHaveBeenCalledWith(
+          "settings.toolActionCheckFailed",
+          {
+            description:
+              installed === true
+                ? "appsPage.versionUnknown"
+                : "appsPage.probeFailed",
+            closeButton: true,
+          },
+        ),
+      );
+      expect(mocks.success).not.toHaveBeenCalled();
+    },
+  );
+
   it("keeps uninstall available for a broken installation", async () => {
     mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
       tools.map((name) => ({
@@ -874,6 +956,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
         version: null,
         latest_version: "2.0.0",
         error: "cannot run",
+        installed: true,
         installed_but_broken: true,
         env_type: "windows",
         wsl_distro: null,
@@ -970,7 +1053,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     },
   );
 
-  it.each(["rejected", "empty"])(
+  it.each(["rejected", "empty", "unknown"])(
     "warns when uninstall succeeds but the status refresh is %s",
     async (result) => {
       const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -981,8 +1064,20 @@ describe("AppsPage concurrent CLI upgrades", () => {
             mocks.getToolVersions.mockRejectedValueOnce(
               new Error("refresh failed"),
             );
-          } else {
+          } else if (result === "empty") {
             mocks.getToolVersions.mockResolvedValueOnce([]);
+          } else {
+            const versions = (await mocks.getToolVersions([
+              "claude",
+            ])) as ToolVersions;
+            mocks.getToolVersions.mockResolvedValueOnce(
+              versions.map((tool) => ({
+                ...tool,
+                installed: null,
+                version: null,
+                error: "probe failed",
+              })),
+            );
           }
         });
         await openUninstall("Claude Code");
@@ -1002,11 +1097,18 @@ describe("AppsPage concurrent CLI upgrades", () => {
         );
         expect(mocks.error).not.toHaveBeenCalled();
         expect(mocks.success).not.toHaveBeenCalled();
-        expect(
-          card("Claude Code").getByRole("button", {
-            name: "appPage.moreActions",
-          }),
-        ).toBeEnabled();
+        expect(mocks.info).not.toHaveBeenCalledWith(
+          "settings.toolUninstallRemaining",
+          expect.anything(),
+        );
+        const menu = card("Claude Code").queryByRole("button", {
+          name: "appPage.moreActions",
+        });
+        if (result === "unknown") {
+          expect(menu).toBeNull();
+        } else {
+          expect(menu).toBeEnabled();
+        }
       } finally {
         errorLog.mockRestore();
       }
@@ -1776,6 +1878,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
       refreshed.resolve([
         {
           name: "claude",
+          installed: true,
           version: "2.0.0",
           latest_version: "2.0.0",
           error: null,
