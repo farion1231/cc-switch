@@ -485,9 +485,17 @@ export function TrayPanel() {
 
   useEffect(() => {
     const update = () => setPixelRatio(window.devicePixelRatio || 1);
+    // 跨屏时 DPR 可能晚于显示事件更新，固定画布也不一定触发 resize。
+    // 每次 DPR 变化后重新订阅，才能继续检测下一次跨屏或 WebView 缩放。
+    const media = window.matchMedia?.(`(resolution: ${pixelRatio}dppx)`);
+    media?.addEventListener("change", update);
     window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, []);
+    update();
+    return () => {
+      media?.removeEventListener("change", update);
+      window.removeEventListener("resize", update);
+    };
+  }, [pixelRatio]);
 
   const load = useCallback(async () => {
     try {

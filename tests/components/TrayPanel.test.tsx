@@ -153,6 +153,7 @@ describe("TrayPanel window layout", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     window.localStorage.removeItem("cc-switch-tray-tab");
     delete document.documentElement.dataset.glass;
     delete document.documentElement.dataset.layout;
@@ -387,6 +388,67 @@ describe("TrayPanel window layout", () => {
           ],
         }),
       );
+    },
+  );
+
+  it.each([
+    [1, 1.5, 2],
+    [2, 1.5, 1],
+  ])(
+    "updates clipping without resize when DPR arrives after show (%s → %s → %s)",
+    async (initialScale, secondScale, thirdScale) => {
+      const ratio = vi.spyOn(window, "devicePixelRatio", "get");
+      ratio.mockReturnValue(initialScale);
+      const mediaQueries: Array<
+        EventTarget & { media: string; matches: boolean }
+      > = [];
+      vi.stubGlobal("matchMedia", (query: string) => {
+        const media = Object.assign(new EventTarget(), {
+          media: query,
+          matches: query === `(resolution: ${window.devicePixelRatio}dppx)`,
+        });
+        mediaQueries.push(media);
+        return media as MediaQueryList;
+      });
+      const { container } = await openPanel({
+        ...windows,
+        scaleFactor: initialScale,
+      });
+      const main = container.querySelector<HTMLElement>(".tp-card")!;
+
+      for (const [index, scaleFactor] of [secondScale, thirdScale].entries()) {
+        const seq = index + 2;
+        // 原生窗口收到布局后才跨屏：显示事件仍读到旧屏的 DPR。
+        await act(async () => {
+          emitTauriEvent(SHOW_EVENT, { ...windows, seq, scaleFactor });
+        });
+        await paint();
+        const calls = vi.mocked(trayPanelApi.layout).mock.calls.length;
+
+        // 画布尺寸不变，没有 resize；只分发匹配状态确实改变的媒体查询事件。
+        await act(async () => {
+          ratio.mockReturnValue(scaleFactor);
+          for (const media of [...mediaQueries]) {
+            const matches = media.media === `(resolution: ${scaleFactor}dppx)`;
+            if (media.matches !== matches) {
+              media.matches = matches;
+              media.dispatchEvent(new Event("change"));
+            }
+          }
+        });
+        await paint();
+
+        expect(main).toHaveStyle({ width: "320px", maxHeight: "620px" });
+        expect(trayPanelApi.layout).toHaveBeenCalledTimes(calls + 1);
+        expect(trayPanelApi.layout).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            seq,
+            width: 620,
+            height: 760,
+            cards: [{ x: 300, y: 440, width: 320, height: 320 }],
+          }),
+        );
+      }
     },
   );
 
