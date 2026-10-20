@@ -16,7 +16,15 @@ pub struct OpenCodeModelRef {
 /// Read the current runtime's model list. No shell and no credential values in errors.
 #[tauri::command]
 pub async fn get_agy_models() -> Result<Vec<FetchedModel>, String> {
-    let settings = crate::agy_config::read_live_settings().map_err(|e| e.to_string())?;
+    // agy 的登录态不在 settings.json 里：首次使用、只用官方登录时两个原生文件都
+    // 可能还不存在。列模型只依赖 CLI 自己，配置缺失按空配置处理，不能因此报错。
+    let settings = if crate::agy_config::settings_path().exists()
+        || crate::agy_config::env_path().exists()
+    {
+        crate::agy_config::read_live_settings().map_err(|e| e.to_string())?
+    } else {
+        serde_json::json!({ "env": {} })
+    };
     let path = tokio::task::spawn_blocking(|| {
         crate::agy_config::real_agy_bin(&crate::agy_config::agy_dir().join("bin/agy"))
     })

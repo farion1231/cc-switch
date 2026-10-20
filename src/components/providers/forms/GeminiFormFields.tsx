@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Download, Info, Loader2 } from "lucide-react";
@@ -78,6 +78,21 @@ export function GeminiFormFields({
 
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const autoFetchedModelsRef = useRef(false);
+
+  // agy 官方登录没有 settings.json 可读，打开表单时直接问本机 CLI 要模型，
+  // 免得用户看到一个空模型框、也不知道能点「获取模型」。
+  useEffect(() => {
+    if (appId !== "agy" || apiKey || autoFetchedModelsRef.current) return;
+    autoFetchedModelsRef.current = true;
+    getAgyModels()
+      .then((models) => {
+        setFetchedModels(models);
+        if (!model && models.length > 0) onModelChange(models[0].id);
+      })
+      .catch((err) => console.warn("[ModelFetch] agy models unavailable:", err));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appId, apiKey]);
 
   const handleFetchModels = useCallback(() => {
     const nativeAgy = appId === "agy" && !apiKey;
