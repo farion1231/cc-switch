@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   McpConfigResponse,
   McpServer,
@@ -8,7 +8,28 @@ import type {
 } from "@/types";
 import type { AppId } from "./types";
 
+export interface McpConnectivityResult {
+  serverId: string;
+  connected: boolean;
+}
+
 export const mcpApi = {
+  async startConnectivityChecks(
+    serverIds: string[],
+    onResult: (result: McpConnectivityResult) => void,
+  ): Promise<string> {
+    const channel = new Channel<McpConnectivityResult>();
+    channel.onmessage = onResult;
+    return await invoke("start_mcp_connectivity_checks", {
+      serverIds,
+      onResult: channel,
+    });
+  },
+
+  async cancelConnectivityChecks(batchId: string): Promise<void> {
+    await invoke("cancel_mcp_connectivity_checks", { batchId });
+  },
+
   async getStatus(): Promise<McpStatus> {
     return await invoke("get_claude_mcp_status");
   },
