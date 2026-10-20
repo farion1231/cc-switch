@@ -28,10 +28,10 @@
 //! | 17 | 切到无材料官方卡时删掉第三方残留的 auth.json，真实登录不删；重选当前卡不删 | 已有 `..._official_clears_stale_third_party_auth`、`provider_service_reswitch_current_official_keeps_live_auth` |
 //! | 18 | 元数据（last_refresh、account_id）不算登录（#6277） | crate 内：`codex_config.rs` 的 `credential_login_material_only_counts_real_credentials` |
 //! | 19 | 托管账号切走：先采纳 CLI 轮换过的 refresh token，按 marker 精确删；代际无法排序时拒绝 | crate 内：`services/provider/mod.rs` 的托管账号测试 |
-//! | 20 | 进入代理不写 auth.json；第三方路由契约用字面值 `PROXY_MANAGED` | 已有 `codex_official_to_deepseek_then_takeover_...` |
+//! | 20 | 进入代理不写 auth.json；第三方路由契约用字面值 `XSEC_SHIELD_PROXY_MANAGED` | 已有 `codex_official_to_deepseek_then_takeover_...` |
 //! | 21 | 代理下官方路由不写占位凭据，客户端带自己的真实登录 | crate 内：`mode::controller` 的 `codex_routes_between_official_and_third_party_contracts` |
 //! | 22 | 退出代理不覆盖用户此刻的登录状态（期间登出就保持登出，重新登录就保留新登录） | 本文件 |
-//! | 23 | `model_catalog_json` 是关键字段：卡里自带的指针随卡写入；否则有生成的目录写 `cc-switch-model-catalog.json`，没有就删；live 里手写的值不保留 | 本文件 |
+//! | 23 | `model_catalog_json` 是关键字段：卡里自带的指针随卡写入；否则有生成的目录写 `xsec-agent-shield-model-catalog.json`，没有就删；live 里手写的值不保留 | 本文件 |
 //! | 24 | `web_search = "disabled"` 只删 CC Switch 写的哨兵值，用户的其他值保留 | 本文件 |
 //! | 25 | auth.json 删不掉时切换照常成功，返回 `codex_auth_cleanup_failed` 警告 | 本文件 |
 //!
@@ -447,9 +447,12 @@ fn normalization_never_overwrites_a_user_table() {
 
     let doc = live_config();
     assert_key_in_route(&doc, "https://relay.example/v1", "sk-legacy");
-    let mine = table(&doc["model_providers"]["cc-switch"], "cc-switch");
+    let mine = table(
+        &doc["model_providers"]["xsec-agent-shield"],
+        "xsec-agent-shield",
+    );
     let expected: Table = toml::from_str::<Table>(user_table).expect("parse user table")
-        ["model_providers"]["cc-switch"]
+        ["model_providers"]["xsec-agent-shield"]
         .as_table()
         .expect("user table")
         .clone();
@@ -667,10 +670,10 @@ fn model_catalog_pointer_ownership() {
     switch(&state, "owned").expect("switch to owned");
     assert_eq!(
         live_config()["model_catalog_json"].as_str(),
-        Some("cc-switch-model-catalog.json")
+        Some("xsec-agent-shield-model-catalog.json")
     );
     assert!(get_codex_config_path()
-        .with_file_name("cc-switch-model-catalog.json")
+        .with_file_name("xsec-agent-shield-model-catalog.json")
         .exists());
 
     switch(&state, "plain").expect("switch to plain");
@@ -694,11 +697,11 @@ fn model_catalog_pointer_ownership() {
     switch(&state, "owned").expect("switch back to owned");
     assert_eq!(
         live_config()["model_catalog_json"].as_str(),
-        Some("cc-switch-model-catalog.json"),
+        Some("xsec-agent-shield-model-catalog.json"),
         "a pointer written into config.toml by hand is replaced like any key field"
     );
     let hand_written = live_config_text().replace(
-        "model_catalog_json = \"cc-switch-model-catalog.json\"",
+        "model_catalog_json = \"xsec-agent-shield-model-catalog.json\"",
         "model_catalog_json = \"/Users/me/hand-written.json\"",
     );
     std::fs::write(get_codex_config_path(), hand_written).expect("hand-write a pointer");

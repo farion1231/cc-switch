@@ -401,7 +401,7 @@ mod tests {
     use super::*;
     use crate::live::patch::LivePatch;
 
-    const PLACEHOLDER: &str = "PROXY_MANAGED";
+    const PLACEHOLDER: &str = "XSEC_SHIELD_PROXY_MANAGED";
 
     fn row(config: &str) -> Value {
         json!({ "config": config })
@@ -567,7 +567,7 @@ web_search = "grok-4.6"
 [model."grok-4.5"]
 model = "a"
 base_url = "http://127.0.0.1:15721/grokbuild/v1"
-api_key = "PROXY_MANAGED"
+api_key = "XSEC_SHIELD_PROXY_MANAGED"
 "#;
         let official = GrokProjection::of(&row(""), true).unwrap();
         let out = apply(

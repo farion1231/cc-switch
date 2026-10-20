@@ -540,6 +540,20 @@ export function ProviderList({
   return (
     <div className="space-y-4">
       {piStateErrorNotice}
+      {sortedProviders.every(
+        (provider) => provider.id === `${appId}-official`,
+      ) && (
+        <Button
+          variant="neutral"
+          size="regular"
+          disabled={importMutation.isPending}
+          onClick={() => importMutation.mutate()}
+        >
+          {appId === "claude-desktop"
+            ? t("provider.importFromClaude")
+            : t("provider.importCurrent")}
+        </Button>
+      )}
       {searchSlot && createPortal(searchField, searchSlot)}
       {showListHeader && (
         <div

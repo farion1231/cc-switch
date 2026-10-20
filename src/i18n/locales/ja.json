@@ -54,8 +54,8 @@
   },
   "firstRunNotice": {
     "title": "XSEC Agent Shield へようこそ",
-    "bodyDefault": "XSEC Agent Shield は Claude Code / Codex / Gemini CLI の複数プロバイダーをワンクリックで切り替えられるツールです。すでにこれらのツールを設定済みの場合、XSEC Agent Shield は現在の設定を「default」という名前のプロバイダーとして自動的に保存するので、既存の設定が失われることはありません。",
-    "bodyOfficial": "リストには「Official（公式）」プリセットも用意されており、公式バージョンに戻したくなったらクリックするだけで切り替えられます。切り替える前に現在の設定は自動で default にバックアップされるので、自由に行き来できます。これが XSEC Agent Shield の仕組みです 😊",
+    "bodyDefault": "XSEC Agent Shield は起動時に、独自のデータベースに公式プロバイダーのプリセットを作成します。既存の Claude Code / Codex / Gemini CLI 設定は「現在の設定をインポート」を選んだときに取り込まれます。",
+    "bodyOfficial": "プロバイダーの選択やプロキシモードの有効化は Agent の設定を変更します。Shield を終了するとプロキシは停止し、管理対象 Agent の接続先はローカルのまま残ります。再接続するには Shield を再起動してください。",
     "confirm": "了解しました"
   },
   "apiKeyInput": {
@@ -3651,7 +3651,7 @@
         },
         "listenPort": {
           "label": "リッスンポート",
-          "placeholder": "15721",
+          "placeholder": "18721",
           "description": "ルーティングサーバーがリッスンするポート番号（1024 ~ 65535）"
         },
         "maxRetries": {
@@ -4237,7 +4237,7 @@
       "serviceDown": "{{app}} は{{mode}}モードですが、ルーティングサービスが動いていないためリクエストは失敗します。",
       "startService": "サービスを起動",
       "backToDirect": "直接接続に戻す",
-      "attachFailed": "前回の{{mode}}モードに再接続できなかったため、{{app}} は直接接続に戻りました。"
+      "attachFailed": "{{app}} の{{mode}}に再接続できませんでした。クライアント設定は保持されています。ローカルルーティングサービスを確認してください。"
     },
     "toast": {
       "enteredRoute": "{{app}} のルーティングを開始しました → {{provider}}。",

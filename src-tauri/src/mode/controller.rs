@@ -834,6 +834,11 @@ async fn enter_locked(
     );
     state.proxy_service.set_active_target(app, &route).await;
     warn_if_official_route(state, app, &route).await;
+    startup_attach_failures()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|failure| failure.app_type != app.as_str());
+    crate::tray::clear_app_problems(app);
     Ok(())
 }
 
@@ -991,25 +996,9 @@ pub async fn exit_all(state: &AppState) -> Result<(), String> {
     }
 }
 
-/// 退出 CC Switch 时：把接上代理的客户端都指回直连（模式不变，下次启动再接上），再停掉
-/// 代理服务。
-///
-/// Claude Desktop 不分离：它只在启动时读配置，运行中的 Desktop 改了文件也照样连着路由；
-/// 分离反而会在 CC Switch 关着时把 Desktop 换成直连那家（映射卡写不进去时是官方登录），
-/// 下次打开 CC Switch 又换回来，每次都要重启 Desktop。
-pub async fn detach_all(state: &AppState) {
-    for app in PROXY_APPS
-        .into_iter()
-        .filter(|app| *app != AppType::ClaudeDesktop)
-    {
-        let result = match lock_settled(state, &app).await {
-            Ok(_guard) => exit_locked(state, &app, true),
-            Err(error) => Err(error.to_string()),
-        };
-        if let Err(error) = result {
-            log::error!("退出时把 {} 指回直连失败: {error}", app.as_str());
-        }
-    }
+/// 应用退出只停止监听，保留受管客户端的本地路由和设备状态。
+/// 恢复直连必须经过用户明确的退出代理操作，不能由关闭应用隐式触发。
+pub async fn shutdown_preserving_routes(state: &AppState) {
     if state.proxy_service.is_running().await {
         if let Err(error) = state.proxy_service.stop().await {
             log::warn!("退出时停止代理服务失败: {error}");
@@ -1660,17 +1649,24 @@ pub async fn record_failover_route(
 /// 有遗留物时以 `enabled` 为准（旧版是最后一个写入者）；没有时以 `live-state.json`
 /// 为准，它还没有值就按 `enabled` 定。
 pub async fn startup(state: &AppState) {
+    let mut attach_failed = false;
     for app in PROXY_APPS {
         let result = match lock_settled(state, &app).await {
             Ok(_guard) => startup_app(state, &app).await,
             Err(error) => Err(error.to_string()),
         };
         if let Err(error) = result {
+            attach_failed = true;
             log::error!("启动时恢复 {} 的模式失败: {error}", app.as_str());
         }
     }
-    // 接上失败退回直连的应用可能已经把代理拉起来了。
-    stop_server_if_unused(state).await;
+    // Attachment can start the shared listener before account/config validation fails.
+    // Until per-agent readiness gates exist, stop it for all agents on startup failure.
+    if attach_failed {
+        shutdown_preserving_routes(state).await;
+    } else {
+        stop_server_if_unused(state).await;
+    }
     // 记一次新启动的 Codex 会读到的目录：兜住启动时补完的操作和 CC Switch 没开时的外部修改。
     codex_client_catalog::observe(&DeviceStore::for_device());
 }
@@ -1702,6 +1698,12 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
         mode.mode.map_or(enabled, |mode| mode == Mode::Proxy)
     };
 
+    // A fresh Shield installation has no ownership of the client's existing config.
+    // Merely discovering/importing a provider is not authorization to rewrite it.
+    if mode.mode.is_none() && !legacy && !enabled {
+        return Ok(());
+    }
+
     if placeholder {
         // 旧版留下的接管态：客户端里是旧契约。按「已接上」处理，下面的投影会整体换掉它。
         mode.attached = true;
@@ -1716,7 +1718,10 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
         match enter_locked(state, app, op::ATTACH, None, None).await {
             Ok(()) => return Ok(()),
             Err(error) => {
-                log::error!("启动时接上 {} 的代理失败，退回直连: {error}", app.as_str());
+                log::error!(
+                    "启动时接上 {} 的代理失败，保留现有客户端配置: {error}",
+                    app.as_str()
+                );
                 let stack = stack::supports_stack(app)
                     && settled_stack(app)
                         .map(|stack| stack.enabled)
@@ -1729,7 +1734,6 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
                         stack,
                         error: error.clone(),
                     });
-                exit_locked(state, app, false)?;
                 return Err(error);
             }
         }
@@ -1767,7 +1771,7 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
 }
 
 /// 旧版的 Desktop 映射卡拆成新版的三样：旧版给映射卡写的一律是本地路由地址，所以客户端
-/// 已经接上（`attached`，接不上退回直连时才会把它写回去）；路由那家是这张卡；直连指针改成
+/// 已经接上（`attached`，接不上时也保留原配置）；路由那家是这张卡；直连指针改成
 /// 官方卡（映射卡直连写不进去，退出路由时 Desktop 本来就会回到官方，指针要跟着一致）。
 /// 指针只改本机记录：`provider_for` 先读它，库里的 `is_current` 会随云同步到别的设备。
 /// 先落定模式再改指针：中途崩了，下次启动按已落定的路由模式接上，不会因为指针已经不是
@@ -1884,7 +1888,7 @@ pub fn app_mode_view(state: &AppState, app: &AppType) -> Result<AppModeView, Str
     })
 }
 
-/// 启动时没能接上代理、退回直连的应用。界面打开时取走一次，在应用页提示并给「重试」。
+/// 启动时没能接上代理、保留原配置的应用。界面打开时取走一次，提示并提供重试。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartupAttachFailure {
@@ -2764,8 +2768,8 @@ mod mode_tests {
         assert_eq!(result.kind, RouteSwitchKind::Stack);
         let result = ProviderService::switch(&state, AppType::Claude, "a").unwrap();
         assert_eq!(result.route.unwrap().kind, RouteSwitchKind::Stack);
-        // A detached proxy mode only remembers a target: the client is back on direct config.
-        detach_all(&state).await;
+        // Explicitly leaving proxy mode returns to direct configuration.
+        exit(&state, &AppType::Claude).await.unwrap();
         let result = set_route(&state, &AppType::Claude, "b").await.unwrap();
         assert_eq!(
             result,
@@ -2860,6 +2864,86 @@ mod mode_tests {
 
     #[tokio::test]
     #[serial]
+    async fn fresh_startup_does_not_claim_upstream_takeover_configuration() {
+        let _home = Home::new();
+        let upstream = r#"{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:15721","ANTHROPIC_AUTH_TOKEN":"PROXY_MANAGED"},"hooks":{"Stop":[]}}"#;
+        seed_settings(upstream);
+        let state = state_with(
+            AppType::Claude,
+            &[claude("a", "https://a.example", json!({}))],
+            "a",
+        )
+        .await;
+        startup(&state).await;
+        assert_eq!(fs::read(settings_path()).unwrap(), upstream.as_bytes());
+        assert!(!mode(&AppType::Claude).attached);
+        assert!(!state.proxy_service.is_running().await);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn shutdown_preserves_external_edits_and_closes_the_listener() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[claude("a", "https://a.example", json!({}))],
+            "a",
+        )
+        .await;
+        enter(&state, &AppType::Claude, false).await.unwrap();
+        let url =
+            url::Url::parse(settings()["env"]["ANTHROPIC_BASE_URL"].as_str().unwrap()).unwrap();
+        let address = ("127.0.0.1", url.port().unwrap());
+        assert!(tokio::net::TcpStream::connect(address).await.is_ok());
+        let mut edited = settings();
+        edited["external_change"] = json!("keep this exact value");
+        let bytes = serde_json::to_vec_pretty(&edited).unwrap();
+        fs::write(settings_path(), &bytes).unwrap();
+        let before_state = fs::read(DeviceStore::for_device().state_path()).unwrap();
+
+        shutdown_preserving_routes(&state).await;
+
+        assert_eq!(fs::read(settings_path()).unwrap(), bytes);
+        assert_eq!(
+            fs::read(DeviceStore::for_device().state_path()).unwrap(),
+            before_state
+        );
+        assert!(mode(&AppType::Claude).attached);
+        assert!(tokio::net::TcpStream::connect(address).await.is_err());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn startup_listener_failure_does_not_restore_direct_credentials() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[claude("a", "https://a.example", json!({}))],
+            "a",
+        )
+        .await;
+        enter(&state, &AppType::Claude, false).await.unwrap();
+        let before = fs::read(settings_path()).unwrap();
+        shutdown_preserving_routes(&state).await;
+        let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut config = state.db.get_proxy_config().await.unwrap();
+        config.listen_port = busy.local_addr().unwrap().port();
+        state.db.update_proxy_config(config).await.unwrap();
+
+        startup(&state).await;
+
+        assert_eq!(fs::read(settings_path()).unwrap(), before);
+        assert!(mode(&AppType::Claude).is_proxy() && mode(&AppType::Claude).attached);
+        assert!(!state.proxy_service.is_running().await);
+        assert!(take_startup_attach_failures()
+            .iter()
+            .any(|f| f.app_type == "claude"));
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn the_proxy_route_is_independent_of_the_direct_pointer() {
         let _home = Home::new();
         seed_settings(USER_SETTINGS);
@@ -2882,10 +2966,12 @@ mod mode_tests {
             .expect("enter again");
         assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("b"));
 
-        // 退出 CC Switch 再启动：分离时写回直连，启动时按保存的路由接上。
-        detach_all(&state).await;
-        assert!(!mode(&AppType::Claude).attached);
-        assert_eq!(settings()["env"]["ANTHROPIC_BASE_URL"], "https://a.example");
+        // Closing Shield preserves the exact managed configuration until restart.
+        let before_shutdown = fs::read(settings_path()).unwrap();
+        shutdown_preserving_routes(&state).await;
+        assert!(mode(&AppType::Claude).attached);
+        assert_eq!(fs::read(settings_path()).unwrap(), before_shutdown);
+        assert!(!state.proxy_service.is_running().await);
         startup(&state).await;
         let restarted = mode(&AppType::Claude);
         assert!(restarted.attached);
@@ -3134,7 +3220,7 @@ mod mode_tests {
         for enabled in [true, false] {
             let home = Home::new();
             seed_settings(
-                r#"{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:15721","ANTHROPIC_AUTH_TOKEN":"PROXY_MANAGED"},"hooks":{}}"#,
+                r#"{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:15721","ANTHROPIC_AUTH_TOKEN":"XSEC_SHIELD_PROXY_MANAGED"},"hooks":{}}"#,
             );
             let state = state_with(
                 AppType::Claude,
@@ -3214,13 +3300,13 @@ mod mode_tests {
         assert_eq!(
             fs::read_to_string(&env_path).unwrap(),
             format!(
-                "# my notes\nGEMINI_SANDBOX=true\nGEMINI_API_KEY=PROXY_MANAGED\nGOOGLE_GEMINI_BASE_URL={proxy_url}\n"
+                "# my notes\nGEMINI_SANDBOX=true\nGEMINI_API_KEY=XSEC_SHIELD_PROXY_MANAGED\nGOOGLE_GEMINI_BASE_URL={proxy_url}\n"
             )
         );
         exit(&state, &AppType::Gemini).await.expect("exit");
         let text = fs::read_to_string(&env_path).unwrap();
         assert!(text.contains("GEMINI_API_KEY=real-key"), "{text}");
-        assert!(!text.contains("PROXY_MANAGED"), "{text}");
+        assert!(!text.contains("XSEC_SHIELD_PROXY_MANAGED"), "{text}");
     }
 
     /// 代理换了端口：一个应用重写失败（配置文件解析不了），其余接上代理的应用照样按新
@@ -3404,7 +3490,9 @@ mod mode_tests {
             "{official_contract}"
         );
         assert!(
-            doc["model_providers"].get("cc-switch-official").is_none(),
+            doc["model_providers"]
+                .get("xsec-agent-shield-official")
+                .is_none(),
             "{official_contract}"
         );
         assert!(state
@@ -3789,7 +3877,7 @@ command = "fs-server"
         let dormant = &doc["model_providers"]["custom"];
         assert_eq!(
             dormant["base_url"].as_str(),
-            Some("http://127.0.0.1:15721/v1"),
+            Some("http://127.0.0.1:18721/v1"),
             "the dormant table points at the configured local proxy: {text}"
         );
         assert_eq!(
@@ -3891,7 +3979,7 @@ base_url = "https://c.example/v1"
 [model_providers.deepseek]
 name = "deepseek"
 base_url = "http://127.0.0.1:15721/v1"
-experimental_bearer_token = "PROXY_MANAGED"
+experimental_bearer_token = "XSEC_SHIELD_PROXY_MANAGED"
 
 [model_providers.ollama_local]
 name = "Ollama"
@@ -4906,7 +4994,10 @@ model_provider = "c"
         enter(&state, &AppType::Gemini, false).await.expect("enter");
         let proxy_url = state.proxy_service.build_proxy_urls().await.unwrap().0;
         let env = gemini_env();
-        assert!(env.contains("GEMINI_API_KEY=PROXY_MANAGED"), "{env}");
+        assert!(
+            env.contains("GEMINI_API_KEY=XSEC_SHIELD_PROXY_MANAGED"),
+            "{env}"
+        );
         assert!(
             env.contains(&format!("GOOGLE_GEMINI_BASE_URL={proxy_url}")),
             "{env}"
@@ -6140,7 +6231,7 @@ model_provider = "c"
         assert!(state.proxy_service.is_running().await);
 
         // 退出 CC Switch 不分离 Desktop：它只在启动时读配置。
-        detach_all(&state).await;
+        shutdown_preserving_routes(&state).await;
         assert!(current::mode_state(&desktop).attached);
         assert!(desktop_profile()["inferenceGatewayBaseUrl"]
             .as_str()
@@ -6406,7 +6497,7 @@ model_provider = "c"
 
     #[tokio::test]
     #[serial]
-    async fn claude_desktop_upgrade_that_cannot_attach_points_desktop_back_at_official() {
+    async fn claude_desktop_startup_failure_keeps_the_local_route() {
         let home = Home::new();
         let _dirs = DesktopDirs::under(&home);
         seed_settings(USER_SETTINGS);
@@ -6453,14 +6544,11 @@ model_provider = "c"
         startup(&state).await;
 
         let mode = current::mode_state(&desktop);
-        assert!(!mode.is_proxy() && !mode.attached);
+        assert!(mode.is_proxy() && mode.attached);
         assert!(!state.proxy_service.is_running().await);
-        // Desktop 不再指着起不来的本地路由，界面上的当前供应商也是官方。
-        assert!(desktop_profile().get("inferenceGatewayApiKey").is_none());
-        assert_eq!(
-            in_use(&state, &desktop).as_deref(),
-            Some(crate::database::CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID)
-        );
+        // A failed listener must not convert the managed profile to a direct connection.
+        assert!(desktop_profile().get("inferenceGatewayApiKey").is_some());
+        assert_eq!(in_use(&state, &desktop).as_deref(), Some("map"));
         assert!(take_startup_attach_failures()
             .iter()
             .any(|failure| failure.app_type == desktop.as_str()));
@@ -6911,7 +6999,7 @@ model_provider = "c"
             ProviderService::update(&state, AppType::Codex, None, relay.clone()).unwrap();
             check(stack);
             assert_eq!(codex_catalog(), catalog);
-            detach_all(&state).await;
+            shutdown_preserving_routes(&state).await;
             startup(&state).await;
             check(stack);
             assert_eq!(codex_catalog(), catalog);
@@ -6995,7 +7083,7 @@ model_provider = "c"
         assert_eq!(stacked["priority"], 2);
         assert_eq!(stacked["display_name"], "DeepSeek V4 Pro（DEEPSEEK）");
         // DeepSeek 官方目录的 "3000" 不带过来，窗口按它自己的行算。
-        assert_eq!(stacked["comp_hash"], "cc-switch");
+        assert_eq!(stacked["comp_hash"], "xsec-agent-shield");
         let window = stacked["context_window"].as_u64().unwrap();
         assert_eq!(
             stacked["auto_compact_token_limit"].as_u64(),

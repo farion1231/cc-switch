@@ -54,8 +54,8 @@
   },
   "firstRunNotice": {
     "title": "XSEC Agent Shield’e hoş geldiniz",
-    "bodyDefault": "XSEC Agent Shield, tek bir tıklamayla birden fazla Claude Code / Codex / Gemini CLI sağlayıcısı arasında geçiş yapmanızı sağlar. Bu araçları zaten yapılandırdıysanız, XSEC Agent Shield mevcut kurulumunuzu \"varsayılan\" adlı bir sağlayıcı olarak kaydetmiştir, böylece önceki yapılandırmalarınızın hiçbiri kaybolmaz.",
-    "bodyOfficial": "Listede “Resmî” ön ayarı da bulunur; resmî varsayılan ayarlara dönmek istediğinizde buna tıklayın. XSEC Agent Shield, geçiş yapmadan önce mevcut yapılandırmanızı “default” olarak yedekler; böylece iki yapılandırma arasında rahatça geçiş yapabilirsiniz. XSEC Agent Shield böyle çalışır 😊",
+    "bodyDefault": "XSEC Agent Shield başlangıçta kendi veritabanında resmi sağlayıcı ön ayarları oluşturur. Mevcut Claude Code / Codex / Gemini CLI ayarları yalnızca geçerli yapılandırmayı içe aktarmayı seçtiğinizde alınır.",
+    "bodyOfficial": "Sağlayıcı seçmek veya proxy modunu açmak Agent yapılandırmasını değiştirir. Shield kapatıldığında proxy durur ve yönetilen Agent uygulamalarının yerel adresleri korunur. Yeniden bağlanmak için Shield uygulamasını başlatın.",
     "confirm": "Anladım"
   },
   "apiKeyInput": {
@@ -3593,7 +3593,7 @@
         },
         "listenPort": {
           "label": "Bağlantı Noktasını Dinle",
-          "placeholder": "15721",
+          "placeholder": "18721",
           "description": "Yönlendirme sunucusunun dinlediği port numarası (1024 ~ 65535)"
         },
         "maxRetries": {
@@ -4159,7 +4159,7 @@
       "serviceDown": "{{app}}, {{mode}} modundadır ancak yönlendirme hizmeti çalışmadığından istekler başarısız olur.",
       "startService": "Hizmeti başlat",
       "backToDirect": "Doğrudan bağlantıya dön",
-      "attachFailed": "{{mode}} önceki başlangıçta yeniden bağlanamadığı için {{app}} doğrudan bağlantıya döndü."
+      "attachFailed": "{{app}} için {{mode}} yeniden bağlanamadı. İstemci yapılandırması korundu; yerel yönlendirme hizmetini kontrol edin."
     },
     "toast": {
       "enteredRoute": "{{app}} artık yönlendirme yapıyor → {{provider}}.",

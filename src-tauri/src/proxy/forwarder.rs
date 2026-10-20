@@ -45,7 +45,7 @@ use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::RwLock;
 
-const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
+const PROXY_AUTH_PLACEHOLDER: &str = "XSEC_SHIELD_PROXY_MANAGED";
 
 /// Whether the upstream belongs to the OpenCode gateway (`opencode.ai`).
 ///
@@ -4201,7 +4201,7 @@ fn reject_proxy_placeholder_for_managed_account_upstream(
     }
 
     Err(ProxyError::AuthError(
-        "Managed account proxy auth was not resolved; PROXY_MANAGED must not be sent upstream"
+        "Managed account proxy auth was not resolved; XSEC_SHIELD_PROXY_MANAGED must not be sent upstream"
             .to_string(),
     ))
 }
@@ -5168,7 +5168,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             "authorization",
-            HeaderValue::from_static("Bearer PROXY_MANAGED"),
+            HeaderValue::from_static("Bearer XSEC_SHIELD_PROXY_MANAGED"),
         );
 
         let err = reject_proxy_placeholder_for_managed_account_upstream(
@@ -5179,7 +5179,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            ProxyError::AuthError(message) if message.contains("PROXY_MANAGED")
+            ProxyError::AuthError(message) if message.contains("XSEC_SHIELD_PROXY_MANAGED")
         ));
 
         let xai_err = reject_proxy_placeholder_for_managed_account_upstream(
@@ -5189,7 +5189,7 @@ mod tests {
         .expect_err("xAI placeholder should be rejected before upstream");
         assert!(matches!(
             xai_err,
-            ProxyError::AuthError(message) if message.contains("PROXY_MANAGED")
+            ProxyError::AuthError(message) if message.contains("XSEC_SHIELD_PROXY_MANAGED")
         ));
     }
 
@@ -5198,7 +5198,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             "authorization",
-            HeaderValue::from_static("Bearer PROXY_MANAGED"),
+            HeaderValue::from_static("Bearer XSEC_SHIELD_PROXY_MANAGED"),
         );
 
         let err = reject_proxy_placeholder_for_managed_account_upstream(
@@ -5209,7 +5209,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            ProxyError::AuthError(message) if message.contains("PROXY_MANAGED")
+            ProxyError::AuthError(message) if message.contains("XSEC_SHIELD_PROXY_MANAGED")
         ));
     }
 
@@ -5218,7 +5218,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             "authorization",
-            HeaderValue::from_static("Bearer PROXY_MANAGED"),
+            HeaderValue::from_static("Bearer XSEC_SHIELD_PROXY_MANAGED"),
         );
 
         reject_proxy_placeholder_for_managed_account_upstream(
@@ -5622,7 +5622,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             http::header::AUTHORIZATION,
-            HeaderValue::from_static("Bearer PROXY_MANAGED"),
+            HeaderValue::from_static("Bearer XSEC_SHIELD_PROXY_MANAGED"),
         );
         let mut provider = test_provider_with_type(None);
         provider.id = "codex-official".to_string();

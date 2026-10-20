@@ -272,7 +272,7 @@ impl ProxyService {
         Ok((proxy_url, proxy_codex_base_url))
     }
 
-    /// 客户端文件里有没有接管占位符 `PROXY_MANAGED`（旧版接管的遗留物，或新版接上代理
+    /// 客户端文件里有没有接管占位符 `XSEC_SHIELD_PROXY_MANAGED`（旧版接管的遗留物，或新版接上代理
     /// 时写的契约）。Codex 的官方路由不带占位符，按指向本地代理的地址认。
     pub(crate) fn live_has_proxy_placeholder(&self, app_type: &AppType) -> bool {
         match app_type {

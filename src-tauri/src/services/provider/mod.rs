@@ -38,13 +38,9 @@ use crate::store::AppState;
 // Re-export sub-module functions for external access
 pub use live::{
     import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings,
-    should_import_default_config_on_startup, sync_current_to_live,
+    import_opencode_providers_from_live, initialize_startup_catalog, read_live_settings,
+    sync_current_to_live,
 };
-
-pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError> {
-    pi::import_from_live(state)
-}
 
 pub use claude_editor::{EditorSave, EditorView};
 
@@ -1993,7 +1989,7 @@ disable_response_storage = true
 model_reasoning_effort = "high"
 approval_policy = "on-request"
 experimental_bearer_token = "sk-live-secret"
-model_catalog_json = "cc-switch-model-catalog.json"
+model_catalog_json = "xsec-agent-shield-model-catalog.json"
 web_search = "disabled"
 
 [agents]
@@ -2165,7 +2161,7 @@ command = "legacy-cmd"
 
         let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
         let env = &live["env"];
-        assert_eq!(env["ANTHROPIC_API_KEY"], "PROXY_MANAGED");
+        assert_eq!(env["ANTHROPIC_API_KEY"], "XSEC_SHIELD_PROXY_MANAGED");
         assert_eq!(env["ANTHROPIC_BASE_URL"], proxy_url.as_str());
         assert!(env.get("ANTHROPIC_MODEL").is_none(), "{live}");
         assert_eq!(
@@ -3594,7 +3590,7 @@ wire_api = "responses"
     #[test]
     #[serial]
     fn deleted_codex_account_recovers_after_persisted_startup() {
-        for exit_state in ["detached", "crashed"] {
+        for exit_state in ["closed", "crashed"] {
             let _guard = test_guard();
             let _home = TempHome::new();
             crate::settings::reload_settings().unwrap();
@@ -3648,10 +3644,10 @@ wire_api = "responses"
             );
             write_json_file(&crate::codex_config::get_codex_auth_path(), &native_auth).unwrap();
             runtime.block_on(async {
-                if exit_state == "detached" {
-                    // 直连供应商的账号没了写不出来：只清掉占位符，登录不动。
-                    crate::mode::controller::detach_all(&state).await;
-                    assert!(!state
+                if exit_state == "closed" {
+                    // Normal shutdown keeps the same local route as a crash; login stays untouched.
+                    crate::mode::controller::shutdown_preserving_routes(&state).await;
+                    assert!(state
                         .proxy_service
                         .live_has_proxy_placeholder(&AppType::Codex));
                 } else {
@@ -3693,13 +3689,13 @@ wire_api = "responses"
                     .unwrap();
                 crate::initialize_common_config_snippets(&restarted);
                 crate::mode::controller::startup(&restarted).await;
-                // 路由的账号失效，接不上就退回直连。
+                // An invalid route account leaves the local route in place; no direct fallback.
                 assert!(
-                    !crate::mode::current::is_proxy(&AppType::Codex),
+                    crate::mode::current::is_proxy(&AppType::Codex),
                     "{exit_state}"
                 );
                 assert!(
-                    !restarted
+                    restarted
                         .db
                         .get_proxy_config_for_app("codex")
                         .await
@@ -3707,7 +3703,7 @@ wire_api = "responses"
                         .enabled
                 );
                 assert!(!restarted.proxy_service.is_running().await);
-                assert!(!restarted
+                assert!(restarted
                     .proxy_service
                     .live_has_proxy_placeholder(&AppType::Codex));
                 assert_eq!(fs::read(&store_path).unwrap(), persisted_accounts);
@@ -7561,11 +7557,8 @@ impl ProviderService {
         import_default_config(state, app_type)
     }
 
-    pub fn should_import_default_config_on_startup(
-        state: &AppState,
-        app_type: &AppType,
-    ) -> Result<bool, AppError> {
-        should_import_default_config_on_startup(state, app_type)
+    pub fn initialize_startup_catalog(state: &AppState) -> Result<usize, AppError> {
+        initialize_startup_catalog(state)
     }
 
     /// Read current live settings (re-export)

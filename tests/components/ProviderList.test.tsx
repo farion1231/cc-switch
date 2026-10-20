@@ -9,6 +9,7 @@ import {
   type SwitchModeProps,
 } from "@/components/providers/ProviderList";
 import { server } from "../msw/server";
+import { providersApi } from "@/lib/api/providers";
 
 vi.mock("sonner", () => ({
   toast: {
@@ -193,6 +194,34 @@ describe("ProviderList Component", () => {
     );
 
     expect(container.querySelectorAll(".border-dashed")).toHaveLength(3);
+  });
+
+  it("keeps manual import available with only the startup official preset", async () => {
+    const importDefault = vi
+      .spyOn(providersApi, "importDefault")
+      .mockResolvedValue(true);
+    const official: Provider = {
+      id: "codex-official",
+      name: "OpenAI Official",
+      category: "official",
+      settingsConfig: { auth: {}, config: "" },
+    };
+    try {
+      renderWithQueryClient(
+        <ProviderList
+          {...baseProps}
+          appId="codex"
+          providers={{ [official.id]: official }}
+        />,
+      );
+      expect(importDefault).not.toHaveBeenCalled();
+      fireEvent.click(
+        screen.getByRole("button", { name: "provider.importCurrent" }),
+      );
+      await waitFor(() => expect(importDefault).toHaveBeenCalledWith("codex"));
+    } finally {
+      importDefault.mockRestore();
+    }
   });
 
   it("should show empty state and trigger create callback when no providers exist", () => {

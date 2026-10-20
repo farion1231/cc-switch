@@ -1,6 +1,6 @@
 # 测试与验收策略
 
-日期：2026-10-19。本文件区分本轮清理验证和未来安全验收；V01–V14 尚未实现或运行。
+日期：2026-10-19；执行记录更新：2026-10-20。本文件区分已执行的工程验证与未来完整安全验收。V08/V14 的部分回归用例已实现，整体矩阵尚未通过验收。
 
 ## 本轮整理验证
 
@@ -36,6 +36,59 @@
 | Agent E2E / 安全能力 | 仍未实现；本轮未验证任何脱敏行为 |
 
 本轮失败历史：首次 `pnpm test:unit` 44 个失败，均为身份改名后的测试键/按钮断言失配（存储键前缀、NewLayoutDialog 发布说明按钮、WhatsNew 外链断言），已同步修正后全量通过；Rust 未出现测试失败。无基线失败与新回归混洌问题（上轮未跑过这些套件，本轮首次建立前端单测 + lib 单测 + 定向集成三个层次的本地基线）。
+
+## P0-02a 验证（2026-10-20）
+
+实际初轮环境：Node 24.15.0、pnpm 10.12.3、Homebrew Rust 1.97.1；这与 `.node-version` 的 22.12.0 和 Rust 1.95 锁定配置不同。随后已使用完整 Rust 1.95 工具链路径复验 Clippy；最终后端回归结果见 P0-02b1。
+
+代码范围：显式接管标识、退出/启动失败行为、未受管配置的模式启动保护，以及对应界面提示。未运行桌面程序，未接入真实 Agent 或模型服务。Rust 集成/单测使用既有临时 HOME 和本地测试服务器。
+
+| 检查 | 结果 |
+| --- | --- |
+| `pnpm typecheck` | 通过，退出码 0 |
+| `pnpm format:check` | 通过，退出码 0 |
+| `pnpm test:unit` | 231 个文件、3029 个用例通过 |
+| `pnpm build:renderer` | 通过；仍有基线浏览器数据、Tailwind 歧义、混合导入与大 chunk 警告 |
+| `cargo test --manifest-path src-tauri/Cargo.toml --lib` | 3803 通过、0 失败、9 忽略；忽略用例不计为通过 |
+| `cargo test --manifest-path src-tauri/Cargo.toml --test golden --test provider_commands --test provider_service` | 通过：golden 43、provider_commands 11、provider_service 51，共 105 项 |
+| `cargo fmt --check`、`git diff --check` | 通过 |
+| `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings` | Rust/Clippy 1.95 下通过；1.97.1 对既有 `gemini_mcp.rs` 报 `for_kv_map`，未为适配非锁定版本改写该文件 |
+| V08 / V14 | 仅覆盖下述自动化子集；双应用真机并存、kill/升级、全部启动副作用及完整安全运行时未验收 |
+
+新增 6 个 Rust 单测覆盖：
+
+- 上游 `PROXY_MANAGED` 配置没有 Shield 管理记录时，不被模式启动器改写。
+- 正常退出保持客户端文件与设备状态的原始字节，包括外部编辑；真实 TCP 监听在退出后不可连接。
+- 启动端口占用时，既有本地路由和占位符保持不变，不回填真实直连凭据。
+- Codex 上游官方接管表在切换投影中保留。
+- 上游 catalog 文件和官方接管 ID 不被判为 Shield 所有。
+- Claude Desktop 上游 profile 文件和元数据条目在 Shield 配置应用/撤销后保留。
+
+既有用例同步验证正常退出/异常退出后的账号恢复，以及 Desktop 接管失败保留路由。托盘用例改为检查“仍在代理模式”不会自动清除接管失败提示，只有成功重试或明确处理才清除。
+
+调试中发现账号校验失败可能发生在共享监听启动之后：已改为任一启动接管失败时停止共享监听，而不是仅修改测试预期。其代价是本次启动中的其他受管 Agent 也暂不可用；逐 Agent 就绪门控仍属于后续安全运行时设计。首轮旧退出语义断言、后续共享监听断言和土耳其语字符串前缀断言失败均已修正并通过单测。
+
+golden 初跑发现两处失配：新 catalog 文件名改变了排序，已核对后更新目录快照（权限仍为 600/644）；另一处用户表 fixture 已在基线改名而断言仍查旧名称，已通过 `git show HEAD` 确认是既有测试不一致，并修正断言。没有批量接受未知快照。
+
+P0-02a 不覆盖端口与全部启动导入；后续进展见下节。共享 `custom` 表与完整恢复路径仍未隔离。
+
+## P0-02b1 验证（2026-10-20）
+
+在 P0-02a 基础上验证默认端口和启动初始化修改，增加手动导入按钮及对应测试。后端明确将 `/Users/xuzhongxin/.rustup/toolchains/1.95-aarch64-apple-darwin/bin` 放在 PATH 首位，实际 `rustc` 为 1.95.0、Clippy 为 0.1.95。仅 `rustup run 1.95 cargo clippy` 在此环境仍会找到 Homebrew 的 `cargo-clippy`，不能用于证明 Clippy 版本。
+
+前端仍使用 Node 24.15.0 / pnpm 10.12.3；未把本轮结果记作 Node 22.12.0 验证。真实 Agent、桌面打包、双应用并存、nextest 全量未运行。
+
+| 检查 | 结果 |
+| --- | --- |
+| Rust 1.95 `cargo test --lib --test golden --test provider_commands --test provider_service` | lib 3805 通过、0 失败、9 忽略；golden 43、provider_commands 12、provider_service 51 全部通过，共 106 项集成测试 |
+| Rust 1.95 `cargo clippy -- -D warnings`、`cargo fmt --check` | 通过；移除遗留测试结构的未使用字段后，最终测试构建无该告警 |
+| `pnpm typecheck`、`pnpm format:check`、`pnpm build:renderer` | 通过；renderer 保留原有构建警告 |
+| `pnpm exec vitest run --maxWorkers=2 --minWorkers=2` | 最终全量 231 个文件、3030 项全部通过（120.49 秒）；首轮默认并发有 2 项 Pi 表单 5 秒超时，定向 48/48 通过后降低并发取得全量通过，未修改测试超时或 Pi 表单实现 |
+| 文档本地链接 / `git diff --check` | 5 份本轮修改文档的相对文件目标存在；diff 空白检查通过 |
+
+新增 2 项 Rust 单测、1 项后端集成测试、1 项前端组件测试：覆盖启动 catalog 初始化的数据库内容与源文件字节、显式导入可用性、新端口及既有端口保留、官方历史迁移缺少任一授权设置时保持文件不变，以及官方预设存在时手动导入按钮可达且渲染不导入。完整 Tauri setup、Pi 列表隐式同步、共享 Codex `custom` 路由、备份恢复冲突仍在 P0-02b2 范围。
+
+本子步骤初轮 Rust 回归有 3 处默认端口断言仍期待 15721；核实实际输出为 18721 后仅修正这 3 处预期，显式传入旧端口的 fixture 继续保留。新的数据库回归确认已保存的 15721 不被自动改写。
 
 ## 1. 测试层次
 

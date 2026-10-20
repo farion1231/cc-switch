@@ -21,8 +21,8 @@ pub const XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 /// provider is routed through CC Switch.  A dedicated id is an ownership
 /// marker: unlike a generic localhost `base_url`, it can be detected and
 /// cleaned up without mistaking a user's own local provider for takeover.
-pub const XSEC_SHIELD_CODEX_OFFICIAL_PROXY_PROVIDER_ID: &str = "cc-switch-official";
-pub const XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
+pub const XSEC_SHIELD_CODEX_OFFICIAL_PROXY_PROVIDER_ID: &str = "xsec-agent-shield-official";
+pub const XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME: &str = "xsec-agent-shield-model-catalog.json";
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -313,7 +313,7 @@ fn extract_codex_managed_oauth_account_id(auth: &Value) -> Option<String> {
 
     let api_key_is_clearable = auth
         .get("OPENAI_API_KEY")
-        .is_none_or(|value| value.is_null() || value.as_str() == Some("PROXY_MANAGED"));
+        .is_none_or(|value| value.is_null() || value.as_str() == Some("XSEC_SHIELD_PROXY_MANAGED"));
     if !api_key_is_clearable {
         return None;
     }
@@ -2498,7 +2498,7 @@ pub(crate) enum CodexStackRoute<'a> {
 /// 模板带来的值会随来源漂移（DeepSeek 官方目录是 "3000"，从 Codex 缓存克隆的 gpt-5.5
 /// 跟着缓存变），固定值才稳定。路由那家的行不改：它的值要和名单为空时的目录一致，否则
 /// 加进第一家、移除最后一家都会让路由上的会话恢复时被压缩一次。
-const CODEX_STACK_COMP_HASH: &str = "cc-switch";
+const CODEX_STACK_COMP_HASH: &str = "xsec-agent-shield";
 
 /// Stack 名单非空时的模型目录：路由那家的行在前，各 Stack 供应商的行按名单顺序在后，
 /// `priority` 统一重新编号。
@@ -2667,7 +2667,7 @@ fn sink_row_windows(entry: &mut Value, windows: &RowWindows, third_party: bool) 
 ///
 /// We only reverse-parse catalogs whose `model_catalog_json` path is the
 /// cc-switch–generated file (identified by filename
-/// `cc-switch-model-catalog.json`). A user-managed external catalog file is
+/// `xsec-agent-shield-model-catalog.json`). A user-managed external catalog file is
 /// left alone — surfacing its richer structure as the simplified table would
 /// be a downgrade we can't safely round-trip.
 ///
@@ -2777,7 +2777,7 @@ pub(crate) fn resolve_cc_switch_catalog_path(
     }
 
     // 词法包含不等于运行时包含：配置目录内的符号链接（如 ~/.codex/link ->
-    // /etc）能让 `link/cc-switch-model-catalog.json` 通过上面的检查，读取却
+    // /etc）能让 `link/xsec-agent-shield-model-catalog.json` 通过上面的检查，读取却
     // 落到目录外。文件存在时把真实路径 canonicalize 出来再校验一次，并把
     // canonical 路径返回给调用方——后续读取不再经过 symlink 组件。
     if resolved.exists() {
@@ -2994,7 +2994,7 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
 }
 
 /// Whether a live Codex config is the official route projected by an older CC Switch
-/// (`model_provider = "cc-switch-official"`).
+/// (`model_provider = "xsec-agent-shield-official"`).
 pub fn codex_config_has_official_proxy_route(config_text: &str) -> bool {
     if !config_text.contains(XSEC_SHIELD_CODEX_OFFICIAL_PROXY_PROVIDER_ID) {
         return false;
@@ -3258,7 +3258,7 @@ mod tests {
         crate::config::write_json_file(&get_codex_auth_path(), &auth).expect("seed live auth R1");
         crate::config::write_text_file(
             &get_codex_config_path(),
-            "# cas-guard-sentinel\nmodel = \"gpt-5.5\"\nmodel_catalog_json = \"cc-switch-model-catalog.json\"\n",
+            "# cas-guard-sentinel\nmodel = \"gpt-5.5\"\nmodel_catalog_json = \"xsec-agent-shield-model-catalog.json\"\n",
         )
         .expect("seed live config");
         crate::config::write_json_file(
@@ -4889,9 +4889,23 @@ wire_api = "responses"
     }
 
     #[test]
+    fn upstream_catalog_and_official_route_are_not_owned_by_shield() {
+        let base = PathBuf::from("/tmp/.codex");
+        let config = r#"
+model_provider = "cc-switch-official"
+model_catalog_json = "cc-switch-model-catalog.json"
+"#;
+        assert!(resolve_cc_switch_catalog_path(config, &base).is_none());
+        assert!(!codex_config_has_official_proxy_route(config));
+        assert!(codex_config_has_official_proxy_route(
+            "model_provider = \"xsec-agent-shield-official\""
+        ));
+    }
+
+    #[test]
     fn resolve_catalog_path_accepts_cc_switch_owned_file() {
         let base = PathBuf::from("/tmp/.codex");
-        let config = r#"model_catalog_json = "/tmp/.codex/cc-switch-model-catalog.json"
+        let config = r#"model_catalog_json = "/tmp/.codex/xsec-agent-shield-model-catalog.json"
 "#;
         let resolved = resolve_cc_switch_catalog_path(config, &base).expect("path resolves");
         assert_eq!(
@@ -5440,7 +5454,7 @@ wire_api = "responses"
         assert_eq!(models[1]["comp_hash"], "3000");
         assert_eq!(models[2]["visibility"], "hide", "native visibility stays");
         assert!(models[0].get("auto_compact_token_limit").is_none());
-        assert_eq!(models[3]["comp_hash"], "cc-switch");
+        assert_eq!(models[3]["comp_hash"], "xsec-agent-shield");
     }
 
     /// 打开「经典子 agent」后每一行都写 v1（官方行、Stack 行都写）；关着时官方行保持原值，
@@ -5566,7 +5580,7 @@ wire_api = "responses"
         assert_eq!(models[0]["slug"], "deepseek-v4-pro");
         assert_eq!(models[0]["comp_hash"], plain["models"][0]["comp_hash"]);
         assert_eq!(models[1]["slug"], "ccs-ds/deepseek-v4-pro");
-        assert_eq!(models[1]["comp_hash"], "cc-switch");
+        assert_eq!(models[1]["comp_hash"], "xsec-agent-shield");
     }
 
     #[test]
@@ -5976,7 +5990,7 @@ wire_api = "responses"
     #[test]
     fn resolve_catalog_finds_relative_filename() {
         let config_text = r#"model_provider = "custom"
-model_catalog_json = "cc-switch-model-catalog.json"
+model_catalog_json = "xsec-agent-shield-model-catalog.json"
 "#;
         let base_dir = PathBuf::from("/home/user/.codex");
         let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
@@ -5989,7 +6003,7 @@ model_catalog_json = "cc-switch-model-catalog.json"
 
     #[test]
     fn resolve_catalog_rejects_absolute_path_outside_config_dir() {
-        let config_text = r#"model_catalog_json = "/tmp/secret/cc-switch-model-catalog.json"
+        let config_text = r#"model_catalog_json = "/tmp/secret/xsec-agent-shield-model-catalog.json"
 "#;
         let base_dir = PathBuf::from("/home/user/.codex");
         let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
@@ -6001,7 +6015,7 @@ model_catalog_json = "cc-switch-model-catalog.json"
 
     #[test]
     fn resolve_catalog_accepts_absolute_path_inside_config_dir() {
-        let config_text = r#"model_catalog_json = "/home/user/.codex/cc-switch-model-catalog.json"
+        let config_text = r#"model_catalog_json = "/home/user/.codex/xsec-agent-shield-model-catalog.json"
 "#;
         let base_dir = PathBuf::from("/home/user/.codex");
         let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
@@ -6014,7 +6028,7 @@ model_catalog_json = "cc-switch-model-catalog.json"
 
     #[test]
     fn resolve_catalog_rejects_traversal_to_parent_directory() {
-        let config_text = r#"model_catalog_json = "../cc-switch-model-catalog.json"
+        let config_text = r#"model_catalog_json = "../xsec-agent-shield-model-catalog.json"
 "#;
         let base_dir = PathBuf::from("/home/user/.codex");
         let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
@@ -6027,7 +6041,7 @@ model_catalog_json = "cc-switch-model-catalog.json"
     #[test]
     fn resolve_catalog_rejects_symlink_escaping_config_dir() {
         // 词法包含可被符号链接绕过：~/.codex/link -> 外部目录，
-        // "link/cc-switch-model-catalog.json" 词法上在 base 内，真实读取却落到
+        // "link/xsec-agent-shield-model-catalog.json" 词法上在 base 内，真实读取却落到
         // base 外。canonicalize 之后的二次校验必须拒绝。
         let temp = tempfile::tempdir().expect("tempdir");
         let base_dir = temp.path().join("codex");
@@ -6048,7 +6062,7 @@ model_catalog_json = "cc-switch-model-catalog.json"
             return;
         }
 
-        let config_text = r#"model_catalog_json = "link/cc-switch-model-catalog.json"
+        let config_text = r#"model_catalog_json = "link/xsec-agent-shield-model-catalog.json"
 "#;
         let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
         let via_link = base_dir
@@ -6078,7 +6092,7 @@ model_catalog_json = "cc-switch-model-catalog.json"
         let catalog_file = base_dir.join(XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME);
         fs::write(&catalog_file, r#"{"models":[]}"#).expect("write catalog");
 
-        let config_text = r#"model_catalog_json = "cc-switch-model-catalog.json"
+        let config_text = r#"model_catalog_json = "xsec-agent-shield-model-catalog.json"
 "#;
         let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
         let resolved = result.expect("real file inside config dir should be accepted");

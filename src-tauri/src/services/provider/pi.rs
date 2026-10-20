@@ -23,12 +23,6 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
     state.db.get_all_providers(PI_APP)
 }
 
-pub(super) fn import_from_live(state: &AppState) -> Result<usize, AppError> {
-    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(PI_APP));
-    let native = crate::pi_config::read_pi_native_providers()?;
-    sync_native_locked(state, &native)
-}
-
 pub(super) fn add(
     state: &AppState,
     mut provider: Provider,

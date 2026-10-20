@@ -82,7 +82,7 @@ pub struct TrayTexts {
     pub show_main: &'static str,
     pub lightweight_mode: &'static str,
     pub quit: &'static str,
-    /// 有应用在用路由服务时的「退出」：写明后果（客户端指回直连、路由服务停止，下次打开自动接回）。
+    /// 有应用在用路由服务时的「退出」：写明后果（客户端保留本地路由、服务停止，下次打开重连）。
     pub quit_stops_routing: &'static str,
     pub projects_label: &'static str,
     pub no_project_label: &'static str,
@@ -186,7 +186,7 @@ impl TrayTexts {
                 show_main: "Open XSEC Agent Shield",
                 lightweight_mode: "Lightweight mode",
                 quit: "Quit XSEC Agent Shield",
-                quit_stops_routing: "Quit XSEC Agent Shield (stops the routing service)",
+                quit_stops_routing: "Quit XSEC Agent Shield (managed agents cannot connect)",
                 projects_label: "Projects",
                 no_project_label: "No project",
                 header_direct: "Direct",
@@ -205,7 +205,7 @@ impl TrayTexts {
                 needs_attention: "needs attention",
                 problem_service_down: "The routing service isn't running (port {port})",
                 problem_attach_failed:
-                    "{app}: {mode} couldn't reconnect at startup; back to direct",
+                    "{app}: {mode} couldn't reconnect; client configuration kept unchanged",
                 problem_switch_failed: "{app} didn't switch: {reason}",
                 problem_more: "{count} more issues — open XSEC Agent Shield to see them",
                 tooltip_problem: "XSEC Agent Shield · Needs attention: {problem}",
@@ -245,7 +245,7 @@ impl TrayTexts {
                 texts.show_main = "XSEC Agent Shield'i aç";
                 texts.lightweight_mode = "Hafif mod";
                 texts.quit = "XSEC Agent Shield'ten çık";
-                texts.quit_stops_routing = "XSEC Agent Shield'ten çık (yönlendirme hizmeti durur)";
+                texts.quit_stops_routing = "XSEC Agent Shield'ten çık (yönetilen ajanlar bağlanamaz)";
                 texts.projects_label = "Projeler";
                 texts.no_project_label = "Proje yok";
                 texts.header_direct = "Doğrudan";
@@ -263,7 +263,7 @@ impl TrayTexts {
                 texts.almost_out = "bitmek üzere";
                 texts.needs_attention = "ilgilenilmesi gerekiyor";
                 texts.problem_service_down = "Yönlendirme hizmeti çalışmıyor (port {port})";
-                texts.problem_attach_failed = "{app}: {mode} başlangıçta yeniden bağlanamadı; doğrudan bağlantıya dönüldü";
+                texts.problem_attach_failed = "{app}: {mode} yeniden bağlanamadı; istemci yapılandırması korundu";
                 texts.problem_switch_failed = "{app} geçiş yapamadı: {reason}";
                 texts.problem_more = "{count} sorun daha var — görmek için XSEC Agent Shield'i açın";
                 texts.tooltip_problem = "XSEC Agent Shield · İlgilenilmesi gerekiyor: {problem}";
@@ -299,7 +299,7 @@ impl TrayTexts {
                 show_main: "XSEC Agent Shield を開く",
                 lightweight_mode: "軽量モード",
                 quit: "XSEC Agent Shield を終了",
-                quit_stops_routing: "XSEC Agent Shield を終了（ルーティングサービスが停止します）",
+                quit_stops_routing: "XSEC Agent Shield を終了（管理対象エージェントは接続できません）",
                 projects_label: "プロジェクト",
                 no_project_label: "プロジェクトを使用しない",
                 header_direct: "直接接続",
@@ -317,7 +317,7 @@ impl TrayTexts {
                 almost_out: "残りわずか",
                 needs_attention: "対応が必要",
                 problem_service_down: "ルーティングサービスが動いていません（ポート {port}）",
-                problem_attach_failed: "{app}：前回の{mode}に再接続できず、直接接続に戻りました",
+                problem_attach_failed: "{app}：{mode}に再接続できません。クライアント設定は保持されています",
                 problem_switch_failed: "{app} を切り替えられませんでした：{reason}",
                 problem_more:
                     "ほかに {count} 件の問題があります。XSEC Agent Shield を開いて確認してください",
@@ -355,7 +355,7 @@ impl TrayTexts {
                 show_main: "開啟 XSEC Agent Shield",
                 lightweight_mode: "輕量模式",
                 quit: "退出 XSEC Agent Shield",
-                quit_stops_routing: "退出 XSEC Agent Shield（路由服務會停止）",
+                quit_stops_routing: "退出 XSEC Agent Shield（受管 Agent 將無法連線）",
                 projects_label: "專案",
                 no_project_label: "不使用專案",
                 header_direct: "直連",
@@ -373,7 +373,7 @@ impl TrayTexts {
                 almost_out: "快用完",
                 needs_attention: "需要處理",
                 problem_service_down: "路由服務沒在執行（連接埠 {port}）",
-                problem_attach_failed: "{app}：上次的{mode}沒能接上，已回到直連",
+                problem_attach_failed: "{app}：上次的{mode}沒能接上，已保留原有客戶端設定",
                 problem_switch_failed: "{app} 沒切換成功：{reason}",
                 problem_more: "還有 {count} 個問題，開啟 XSEC Agent Shield 查看",
                 tooltip_problem: "XSEC Agent Shield · 需要處理：{problem}",
@@ -409,7 +409,7 @@ impl TrayTexts {
                 show_main: "打开 XSEC Agent Shield",
                 lightweight_mode: "轻量模式",
                 quit: "退出 XSEC Agent Shield",
-                quit_stops_routing: "退出 XSEC Agent Shield（路由服务会停止）",
+                quit_stops_routing: "退出 XSEC Agent Shield（受管 Agent 将无法连接）",
                 projects_label: "项目",
                 no_project_label: "不使用项目",
                 header_direct: "直连",
@@ -427,7 +427,7 @@ impl TrayTexts {
                 almost_out: "快用完",
                 needs_attention: "需要处理",
                 problem_service_down: "路由服务没在运行（端口 {port}）",
-                problem_attach_failed: "{app}：上次的{mode}没能接上，已回到直连",
+                problem_attach_failed: "{app}：上次的{mode}没能接上，已保留原有客户端配置",
                 problem_switch_failed: "{app} 没切换成功：{reason}",
                 problem_more: "还有 {count} 个问题，打开 XSEC Agent Shield 查看",
                 tooltip_problem: "XSEC Agent Shield · 需要处理：{problem}",
@@ -1146,7 +1146,7 @@ impl AppSnapshot {
 enum TrayProblem {
     /// 路由服务没在跑，但有应用在用它。
     ServiceDown { port: u16 },
-    /// 启动时没能接上路由 / 聚合，已退回直连。
+    /// 启动时没能接上路由 / 聚合，保留原客户端配置。
     AttachFailed { app: AppType, stack: bool },
     /// 托盘里的切换没成功。
     SwitchFailed { app: AppType, reason: String },
@@ -1306,7 +1306,7 @@ fn collect_app_snapshot(
 
 /// 启动流程（接上路由、拉起 Desktop 映射服务）走完之前不报「路由服务没在跑」：那时它本来就还没起来。
 static STARTUP_SETTLED: AtomicBool = AtomicBool::new(false);
-/// 启动时没能接上、已退回直连的应用（托盘自己留一份，界面照样取走它的那份）。
+/// 启动时没能接上、保留原配置的应用（托盘自己留一份，界面照样取走它的那份）。
 static ATTACH_FAILURES: Lazy<Mutex<Vec<(AppType, bool)>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
 /// 托盘里切换失败的应用。规格 5.5：处理掉才消失（同一应用之后切换成功、或打开过它的页面），
@@ -1326,7 +1326,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// 启动流程走完：记下启动时退回直连的应用，重建一次菜单。
+/// 启动流程走完：记下启动时接管失败的应用，重建一次菜单。
 pub fn mark_startup_settled(app: &tauri::AppHandle) {
     {
         let mut failures = lock(&ATTACH_FAILURES);
@@ -1343,7 +1343,7 @@ pub fn mark_startup_settled(app: &tauri::AppHandle) {
 }
 
 /// 清掉某个应用的问题行，返回有没有清掉东西。
-fn clear_app_problems(app: &AppType) -> bool {
+pub(crate) fn clear_app_problems(app: &AppType) -> bool {
     let mut attach = lock(&ATTACH_FAILURES);
     let mut switch = lock(&SWITCH_FAILURES);
     let before = attach.len() + switch.len();
@@ -1379,7 +1379,7 @@ fn service_running(app_state: &AppState) -> Option<bool> {
     app_state.proxy_service.running_now()
 }
 
-/// 问题列表。`modes` 是可见应用现在的模式（重新进入路由的应用不再报「退回直连」）。
+/// 问题列表。代理模式仍可接管失败；只在显式处理或成功重试后清除错误。
 fn collect_problems(
     service_down_port: Option<u16>,
     visible: &[(AppType, bool)],
@@ -1389,14 +1389,7 @@ fn collect_problems(
         problems.push(TrayProblem::ServiceDown { port });
     }
     {
-        let mut failures = lock(&ATTACH_FAILURES);
-        // 已经重新进入路由 / 聚合的应用不再报。
-        failures.retain(|(app, _)| {
-            visible
-                .iter()
-                .find(|(visible_app, _)| visible_app == app)
-                .is_none_or(|(_, direct)| *direct)
-        });
+        let failures = lock(&ATTACH_FAILURES);
         for (app, stack) in failures.iter() {
             if visible.iter().any(|(visible_app, _)| visible_app == app) {
                 problems.push(TrayProblem::AttachFailed {
@@ -1931,7 +1924,7 @@ fn build_menu_model(
         lightweight,
     ));
     menu.push(TrayEntry::Separator);
-    // 不换成系统自带的 quit：它不经过 app.exit(0) 的退出流程，客户端指回直连、停服务只能在
+    // 不换成系统自带的 quit：它不经过 app.exit(0) 的退出流程，保留客户端路由、停服务只能在
     // RunEvent::Exit 里限时补做（见 lib.rs 的 cleanup_before_system_exit）。
     // 有应用在用路由服务时把这个后果写在「退出」上（后果不进说明，写在按钮文字里）。
     menu.push(TrayEntry::item(
@@ -4296,7 +4289,7 @@ mod tests {
             texts_of(&menu[..4]),
             [
                 "路由服务没在运行（端口 15721）",
-                "Claude Code：上次的路由没能接上，已回到直连",
+                "Claude Code：上次的路由没能接上，已保留原有客户端配置",
                 "还有 1 个问题，打开 XSEC Agent Shield 查看",
                 "---"
             ]
@@ -4444,11 +4437,11 @@ mod tests {
         assert_eq!(quit_text(&zh(), false), "退出 XSEC Agent Shield");
         assert_eq!(
             quit_text(&zh(), true),
-            "退出 XSEC Agent Shield（路由服务会停止）"
+            "退出 XSEC Agent Shield（受管 Agent 将无法连接）"
         );
         assert_eq!(
             quit_text(&en(), true),
-            "Quit XSEC Agent Shield (stops the routing service)"
+            "Quit XSEC Agent Shield (managed agents cannot connect)"
         );
         for language in ["zh", "zh-TW", "en", "ja", "tr"] {
             let texts = TrayTexts::from_language(language);
@@ -4690,25 +4683,30 @@ mod tests {
     }
 
     #[test]
-    fn problems_drop_attach_failures_once_the_app_routes_again() {
+    fn problems_keep_attach_failures_until_explicitly_resolved() {
         lock(&ATTACH_FAILURES).clear();
         lock(&SWITCH_FAILURES).clear();
         lock(&ATTACH_FAILURES).push((AppType::Claude, false));
         record_switch_failure(&AppType::Codex, "boom".to_string());
         let visible = [(AppType::Claude, true), (AppType::Codex, true)];
         assert_eq!(collect_problems(None, &visible).len(), 2);
-        // Claude Code 重新进入路由：「退回直连」的问题行消失。
+        // Proxy mode alone does not prove that attachment succeeded.
         let rerouted = [(AppType::Claude, false), (AppType::Codex, true)];
         assert_eq!(
             collect_problems(Some(15721), &rerouted),
             [
                 TrayProblem::ServiceDown { port: 15721 },
+                TrayProblem::AttachFailed {
+                    app: AppType::Claude,
+                    stack: false
+                },
                 TrayProblem::SwitchFailed {
                     app: AppType::Codex,
                     reason: "boom".to_string()
                 }
             ]
         );
+        assert!(clear_app_problems(&AppType::Claude));
         assert!(clear_app_problems(&AppType::Codex));
         assert!(!clear_app_problems(&AppType::Codex));
         assert!(collect_problems(None, &rerouted).is_empty());

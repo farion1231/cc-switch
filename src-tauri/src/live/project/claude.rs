@@ -196,7 +196,7 @@ fn legacy_bedrock_shape(row: &Value, projection: &ClaudeProjection) -> Option<Cl
 }
 
 /// 代理模式下写进客户端的凭据占位符。旧版只认这个字面值来识别接管态，不能改。
-pub const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
+pub const PROXY_TOKEN_PLACEHOLDER: &str = "XSEC_SHIELD_PROXY_MANAGED";
 
 /// 代理契约里的稳定模型别名：客户端只看到这几个名字，真实模型由代理映射。
 ///

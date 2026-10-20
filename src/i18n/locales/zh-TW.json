@@ -54,8 +54,8 @@
   },
   "firstRunNotice": {
     "title": "歡迎使用 XSEC Agent Shield",
-    "bodyDefault": "XSEC Agent Shield 可以協助您在 Claude Code / Codex / Gemini CLI 的多個供應商之間一鍵切換。如果您之前已經設定過這些工具，XSEC Agent Shield 會自動將現有設定儲存為名為 default 的供應商，確保您的設定不會遺失。",
-    "bodyOfficial": "清單中還預設了「官方 (Official)」供應商，隨時點擊即可切換回官方預設設定。切換前 XSEC Agent Shield 會自動將目前設定備份回 default，可以放心來回切換。這就是 XSEC Agent Shield 的運作方式。",
+    "bodyDefault": "XSEC Agent Shield 啟動時僅在自己的資料庫中建立官方供應商預設。既有 Claude Code / Codex / Gemini CLI 設定需要點選「匯入目前設定」後才會匯入。",
+    "bodyOfficial": "選擇供應商或啟用代理模式會修改對應 Agent 設定。關閉 Shield 會停止代理並保留受管 Agent 的本機位址；重新啟動 Shield 後再連線。",
     "confirm": "我了解了"
   },
   "apiKeyInput": {
@@ -3652,7 +3652,7 @@
         },
         "listenPort": {
           "label": "監聽連接埠",
-          "placeholder": "15721",
+          "placeholder": "18721",
           "description": "路由伺服器監聽的連接埠號（1024 ~ 65535）"
         },
         "maxRetries": {
@@ -4238,7 +4238,7 @@
       "serviceDown": "{{app}} 處於{{mode}}模式，但路由服務沒有執行，請求會失敗。",
       "startService": "啟動服務",
       "backToDirect": "回到直連",
-      "attachFailed": "上次的{{mode}}模式沒能接上，{{app}} 已回到直連。"
+      "attachFailed": "{{app}} 的{{mode}}模式沒能接上，原有客戶端設定已保留，請檢查本機路由服務。"
     },
     "toast": {
       "enteredRoute": "{{app}} 已開始路由 → {{provider}}。",

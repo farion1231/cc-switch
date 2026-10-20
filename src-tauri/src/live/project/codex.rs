@@ -23,11 +23,12 @@ use crate::live::patch::LiveWriteError;
 pub const ROUTE_ID: &str = "custom";
 /// 旧版代理官方路由写的表 id。会话按选中的 id 分桶，它让代理下的官方会话自成一桶，
 /// 表一删就 resume 不了，新版不再写；live 里留着的只清理。
-pub const OFFICIAL_PROXY_ROUTE_ID: &str = "cc-switch-official";
+pub const OFFICIAL_PROXY_ROUTE_ID: &str =
+    crate::codex_config::XSEC_SHIELD_CODEX_OFFICIAL_PROXY_PROVIDER_ID;
 /// 把内置 openai 改道到别的地址的顶层键。
 const OPENAI_BASE_URL: &str = "openai_base_url";
 /// CC Switch 生成的模型目录文件名。
-pub const CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
+pub const CATALOG_FILENAME: &str = crate::codex_config::XSEC_SHIELD_CODEX_MODEL_CATALOG_FILENAME;
 pub use super::claude::PROXY_TOKEN_PLACEHOLDER;
 /// `web_search` 的禁用值。
 pub const WEB_SEARCH_DISABLED: &str = "disabled";
@@ -47,7 +48,7 @@ const RESERVED_TABLE_IDS: &[&str] = &["openai", "ollama", "lmstudio"];
 const DEFAULT_PROVIDER_ID: &str = "openai";
 const BEDROCK_IDS: &[&str] = &["amazon-bedrock", "amazon-bedrock-runtime"];
 /// 旧版把顶层 `openai_base_url` 归一成的表 id（`cc-switch`、`cc-switch-2`…）。
-const LEGACY_REROUTE_ID: &str = "cc-switch";
+const LEGACY_REROUTE_ID: &str = "xsec-agent-shield";
 
 /// 顶层的关键字段里，直接取行里值的那几个（选路、凭据、模型目录指针另算）。
 pub(crate) const ROW_TOP_FIELDS: &[&str] = &[
@@ -1123,9 +1124,26 @@ mod tests {
     }
 
     #[test]
+    fn switching_does_not_delete_the_upstream_products_official_route() {
+        let live = r#"
+model_provider = "cc-switch-official"
+[model_providers.cc-switch-official]
+name = "CC Switch"
+base_url = "http://127.0.0.1:15721/v1"
+experimental_bearer_token = "PROXY_MANAGED"
+"#;
+        let before = live.parse::<DocumentMut>().unwrap();
+        let after = apply(official_proxy(false), live);
+        assert_eq!(
+            after["model_providers"]["cc-switch-official"].to_string(),
+            before["model_providers"]["cc-switch-official"].to_string()
+        );
+    }
+
+    #[test]
     fn the_official_proxy_route_stays_in_the_built_in_openai_bucket() {
-        // 旧版写的 cc-switch-official 表删掉；第三方留下的 custom 表改成休眠形态。
-        let live = "model_provider = \"cc-switch-official\"\nopenai_base_url = \"https://stale.example/v1\"\nmodel = \"gpt-5.5\"\n\n[model_providers.xsec-agent-shield-official]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:15721/v1\"\nrequires_openai_auth = true\n\n[model_providers.custom]\nname = \"custom\"\nbase_url = \"https://relay.example/v1\"\nexperimental_bearer_token = \"sk-relay\"\n";
+        // 旧版写的 xsec-agent-shield-official 表删掉；第三方留下的 custom 表改成休眠形态。
+        let live = "model_provider = \"xsec-agent-shield-official\"\nopenai_base_url = \"https://stale.example/v1\"\nmodel = \"gpt-5.5\"\n\n[model_providers.xsec-agent-shield-official]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:15721/v1\"\nrequires_openai_auth = true\n\n[model_providers.custom]\nname = \"custom\"\nbase_url = \"https://relay.example/v1\"\nexperimental_bearer_token = \"sk-relay\"\n";
         let doc = apply(official_proxy(false), live);
         assert!(doc.get("model_provider").is_none(), "{doc}");
         assert_eq!(doc["openai_base_url"].as_str(), Some(PROXY));

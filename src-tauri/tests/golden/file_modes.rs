@@ -171,7 +171,7 @@ fn switch_keeps_private_modes_of_existing_files() {
 
     for inventory in [after_official, after_third_party] {
         for line in inventory.lines() {
-            if line.ends_with("cc-switch-model-catalog.json 644") {
+            if line.ends_with("xsec-agent-shield-model-catalog.json 644") {
                 continue; // CC Switch 自己新建的模型目录，不是预置文件
             }
             assert!(

@@ -54,8 +54,8 @@
   },
   "firstRunNotice": {
     "title": "Welcome to XSEC Agent Shield",
-    "bodyDefault": "XSEC Agent Shield lets you switch between multiple Claude Code / Codex / Gemini CLI providers with a single click. If you already had these tools configured, XSEC Agent Shield has saved your existing setup as a provider named “default” so none of your previous configuration is lost.",
-    "bodyOfficial": "An “Official” preset is also included in the list — click it any time you want to switch back to the official default. XSEC Agent Shield automatically backs up your current config to “default” before switching, so you can move back and forth freely. That's how XSEC Agent Shield works 😊",
+    "bodyDefault": "On startup, XSEC Agent Shield creates official provider presets in its own database. Existing Claude Code / Codex / Gemini CLI settings are imported only when you choose Import current configuration.",
+    "bodyOfficial": "Selecting a provider or enabling proxy mode changes the Agent configuration. Closing Shield stops the proxy and keeps managed Agents pointed at the local endpoint; restart Shield to reconnect.",
     "confirm": "Got it"
   },
   "apiKeyInput": {
@@ -3651,7 +3651,7 @@
         },
         "listenPort": {
           "label": "Listen Port",
-          "placeholder": "15721",
+          "placeholder": "18721",
           "description": "Port number the routing server listens on (1024 ~ 65535)"
         },
         "maxRetries": {
@@ -4237,7 +4237,7 @@
       "serviceDown": "{{app}} is in {{mode}} mode but the routing service isn't running, so requests will fail.",
       "startService": "Start service",
       "backToDirect": "Back to direct",
-      "attachFailed": "{{mode}} couldn't reconnect last time, so {{app}} went back to direct."
+      "attachFailed": "{{mode}} couldn't reconnect for {{app}}. The client configuration was kept unchanged; check the local routing service."
     },
     "toast": {
       "enteredRoute": "{{app}} is now routing → {{provider}}.",

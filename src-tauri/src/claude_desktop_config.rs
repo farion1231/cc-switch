@@ -18,8 +18,8 @@ use crate::mode::stack::DesktopStackModel;
 use crate::mode::state::{self, PendingTarget};
 use crate::provider::{ClaudeDesktopMode, Provider};
 
-pub const PROFILE_ID: &str = "00000000-0000-4000-8000-000000157210";
-pub const PROFILE_NAME: &str = "CC Switch";
+pub const PROFILE_ID: &str = "7e679b2c-d01b-4b6a-a194-6fb88b67940e";
+pub const PROFILE_NAME: &str = "XSEC Agent Shield";
 
 #[cfg(any(target_os = "macos", windows, target_os = "linux", test))]
 const CONFIG_FILE: &str = "claude_desktop_config.json";
@@ -2008,7 +2008,7 @@ mod tests {
         let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
-            json!("http://127.0.0.1:15721/claude-desktop")
+            json!("http://127.0.0.1:18721/claude-desktop")
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
         assert_eq!(profile["coworkEgressAllowedHosts"], json!(["*"]));
@@ -2042,7 +2042,7 @@ mod tests {
             let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
             assert_eq!(
                 profile["inferenceGatewayBaseUrl"],
-                json!("http://127.0.0.1:15721/claude-desktop")
+                json!("http://127.0.0.1:18721/claude-desktop")
             );
             assert_eq!(
                 profile["inferenceModels"],
@@ -2566,6 +2566,33 @@ mod tests {
         assert_eq!(fs::read_to_string(&paths.meta_path).unwrap(), "[]");
         assert!(!paths.profile_path.exists());
         assert!(!paths.normal_config_path.exists());
+    }
+
+    #[test]
+    fn shield_profile_changes_preserve_the_upstream_profile_file_and_entry() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let upstream_id = "00000000-0000-4000-8000-000000157210";
+        fs::create_dir_all(&paths.config_library_path).unwrap();
+        let upstream_path = paths
+            .config_library_path
+            .join(format!("{upstream_id}.json"));
+        let upstream_bytes = br#"{"inferenceGatewayApiKey":"upstream-canary","custom":true}"#;
+        fs::write(&upstream_path, upstream_bytes).unwrap();
+        let entry = json!({"id": upstream_id, "name": "CC Switch", "note": "keep"});
+        fs::write(
+            &paths.meta_path,
+            serde_json::to_vec(&json!({
+                "appliedId": upstream_id, "entries": [entry.clone()]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        apply_provider_to_paths(&test_db(), &direct_provider("direct"), &paths).unwrap();
+        restore_official(&paths).unwrap();
+        assert_eq!(fs::read(upstream_path).unwrap(), upstream_bytes);
+        let meta: Value = read_json_file(&paths.meta_path).unwrap();
+        assert!(meta["entries"].as_array().unwrap().contains(&entry));
     }
 
     #[test]

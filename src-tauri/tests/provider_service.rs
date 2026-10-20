@@ -642,7 +642,7 @@ wire_api = "responses"
         "enabling takeover should point Codex config.toml at the local proxy"
     );
     assert!(
-        config_after_takeover.contains("PROXY_MANAGED"),
+        config_after_takeover.contains("XSEC_SHIELD_PROXY_MANAGED"),
         "enabling takeover should move the proxy placeholder into config.toml"
     );
     assert!(
@@ -669,7 +669,7 @@ wire_api = "responses"
         "disabling takeover should restore the selected DeepSeek live config"
     );
     assert!(
-        !restored_config.contains("PROXY_MANAGED"),
+        !restored_config.contains("XSEC_SHIELD_PROXY_MANAGED"),
         "restored live config must not keep the proxy placeholder"
     );
 }
@@ -2009,7 +2009,7 @@ model = "deepseek-chat"
 name = "DeepSeek"
 base_url = "http://127.0.0.1:15721/v1"
 wire_api = "responses"
-experimental_bearer_token = "PROXY_MANAGED"
+experimental_bearer_token = "XSEC_SHIELD_PROXY_MANAGED"
 "#;
     write_codex_live_atomic(&oauth_auth, Some(proxy_live_config))
         .expect("seed taken-over Codex live config");
@@ -2076,7 +2076,7 @@ wire_api = "responses"
         .expect("read config.toml");
     assert!(
         live_config.contains("https://new.deepseek.example/v1")
-            && !live_config.contains("PROXY_MANAGED"),
+            && !live_config.contains("XSEC_SHIELD_PROXY_MANAGED"),
         "a direct switch replaces leftover proxy placeholders: {live_config}"
     );
     let old_row = state
@@ -2088,7 +2088,7 @@ wire_api = "responses"
         !old_row
             .settings_config
             .to_string()
-            .contains("PROXY_MANAGED"),
+            .contains("XSEC_SHIELD_PROXY_MANAGED"),
         "leftover placeholders must not be backfilled into the outgoing provider"
     );
 }
@@ -2945,7 +2945,7 @@ fn recover_from_crash_without_backup_cleans_placeholder_instead_of_writing_it_ba
     let taken_over_live = json!({
         "env": {
             "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
-            "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED"
+            "ANTHROPIC_AUTH_TOKEN": "XSEC_SHIELD_PROXY_MANAGED"
         }
     });
     let settings_path = get_claude_settings_path();
@@ -2982,7 +2982,7 @@ fn recover_from_crash_without_backup_cleans_placeholder_instead_of_writing_it_ba
     let env = live_after.get("env").cloned().unwrap_or_else(|| json!({}));
     assert_ne!(
         env.get("ANTHROPIC_AUTH_TOKEN").and_then(|v| v.as_str()),
-        Some("PROXY_MANAGED"),
+        Some("XSEC_SHIELD_PROXY_MANAGED"),
         "recovery must not write the placeholder back to live"
     );
     assert!(

@@ -11,6 +11,26 @@ use serde_json::json;
 use std::collections::HashMap;
 use tempfile::NamedTempFile;
 
+#[tokio::test]
+async fn shield_proxy_default_is_separate_and_saved_ports_survive_initialization() {
+    let db = Database::memory().expect("memory database");
+    let mut config = db.get_global_proxy_config().await.unwrap();
+    assert_eq!(config.listen_port, 18721);
+    assert_eq!(
+        crate::proxy::types::ProxyConfig::default().listen_port,
+        18721
+    );
+
+    // A saved value is a user choice, even when it matches the upstream default.
+    config.listen_port = 15721;
+    db.update_global_proxy_config(config).await.unwrap();
+    db.create_tables().unwrap();
+    assert_eq!(
+        db.get_global_proxy_config().await.unwrap().listen_port,
+        15721
+    );
+}
+
 const LEGACY_SCHEMA_SQL: &str = r#"
     CREATE TABLE providers (
         id TEXT NOT NULL,

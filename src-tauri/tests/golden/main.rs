@@ -9,9 +9,9 @@
 //! - ② 按字段锁（普通断言）：Claude 关键字段的切换结果、Codex 的安全红线。
 //! - ③ 被替代的行为（整份覆盖、回填、片段合并、备份恢复）只在重构方案里记录，不在这里锁。
 //!
-//! 降级的旧版一侧（旧版按 `PROXY_MANAGED` 字面值识别接管态、没有备份行时按当前供应商
-//! 重建 live）随接管备份机制一起退役，发版时改用上一个正式版的二进制做降级回放。新版
-//! 这一侧由 `mode::controller` 的测试锁住：代理契约沿用这个字面值，启动时删掉旧备份行。
+//! Shield 接管使用独立的 `XSEC_SHIELD_PROXY_MANAGED` 标记，不认领 CC Switch 的
+//! `PROXY_MANAGED`。上游降级兼容不在此产品的验收范围；关闭 Shield 保留本地路由，
+//! 相关失败策略由 `mode::controller` 的测试验证。
 //!
 //! 更新快照：`XSEC_SHIELD_UPDATE_GOLDEN=1 cargo test --test golden`，再逐个审 diff。
 //! 快照变了就意味着行为变了，要能说清楚为什么。

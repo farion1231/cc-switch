@@ -101,7 +101,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
   const { data: savedClientHost } = useProxyClientHost();
   const saveClientHostMutation = useSetProxyClientHost();
   const [address, setAddress] = useState("127.0.0.1");
-  const [port, setPort] = useState("15721");
+  const [port, setPort] = useState("18721");
   const [addressError, setAddressError] = useState<string | null>(null);
   const [portError, setPortError] = useState<string | null>(null);
   const [clientHost, setClientHost] = useState("");
