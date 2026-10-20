@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use cc_switch_lib::{McpServer, McpService};
+use cc_switch_lib::{hermes_config, update_settings, AppSettings, McpServer, McpService};
 use serde_json::json;
 
 #[path = "support.rs"]
@@ -15,13 +15,28 @@ const SOURCES: [&str; 8] = [
     ".gemini/settings.json",
     ".grok/config.toml",
     ".config/opencode/opencode.json",
-    ".hermes/config.yaml",
+    ".hermes-mcp-discovery/config.yaml",
     ".minimax/mcp.json",
     ".pi/agent/mcp.json",
 ];
 
 fn reset_sources() {
     reset_test_fs();
+    // Pin the reader to the fixture directory on every OS, independently of
+    // LOCALAPPDATA, HERMES_HOME and the platform's default Hermes location.
+    let hermes_config = ensure_test_home().join(SOURCES[5]);
+    update_settings(AppSettings {
+        hermes_config_dir: Some(
+            hermes_config
+                .parent()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        ..AppSettings::default()
+    })
+    .expect("set Hermes discovery fixture directory");
+    assert_eq!(hermes_config::get_hermes_config_path(), hermes_config);
     for source in SOURCES {
         let path = ensure_test_home().join(source);
         if path.exists() {
