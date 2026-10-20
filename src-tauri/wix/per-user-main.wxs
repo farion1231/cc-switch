@@ -64,6 +64,16 @@
                 <FileSearch Id="DesktopShortcutFileSearch" Name="{{product_name}}.lnk" />
             </DirectorySearch>
         </Property>
+        <!-- Public property also allows silent installs to opt out with CREATEDESKTOPSHORTCUT=0. -->
+        <Property Id="CREATEDESKTOPSHORTCUT" Secure="yes" />
+        <!-- Initialize only once so the execute sequence does not reset an unchecked checkbox. -->
+        <SetProperty Id="CREATEDESKTOPSHORTCUT" Value="1" Before="CostFinalize" Sequence="first">
+            NOT CREATEDESKTOPSHORTCUT AND (NOT (Installed OR WIX_UPGRADE_DETECTED) OR DESKTOPSHORTCUTEXISTS)
+        </SetProperty>
+        <!-- Older installers leave shortcuts behind during an upgrade; remove one only when opted out. -->
+        <SetProperty Id="DESKTOPSHORTCUTREMOVEDIR" Value="[DesktopFolder]" Before="InstallValidate" Sequence="execute">
+            WIX_UPGRADE_DETECTED AND CREATEDESKTOPSHORTCUT &lt;&gt; "1"
+        </SetProperty>
 
         {{#if allow_downgrades}}
             <MajorUpgrade Schedule="afterInstallInitialize" AllowDowngrades="yes" />
@@ -112,19 +122,49 @@
         <CustomAction Id="LaunchApplication" Impersonate="yes" FileKey="Path" ExeCommand="[LAUNCHAPPARGS]" Return="asyncNoWait" />
 
         <UI>
+            <!-- Extend the standard install-directory page with an optional desktop shortcut. -->
+            <Dialog Id="InstallDirOptionsDlg" Width="370" Height="270" Title="!(loc.InstallDirDlg_Title)">
+                <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
+                <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+                <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+                    <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+                </Control>
+                <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.InstallDirDlgDescription)" />
+                <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.InstallDirDlgTitle)" />
+                <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
+                <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+                <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+                <Control Id="FolderLabel" Type="Text" X="20" Y="60" Width="290" Height="30" NoPrefix="yes" Text="!(loc.InstallDirDlgFolderLabel)" />
+                <Control Id="Folder" Type="PathEdit" X="20" Y="100" Width="320" Height="18" Property="WIXUI_INSTALLDIR" Indirect="yes" />
+                <Control Id="ChangeFolder" Type="PushButton" X="20" Y="120" Width="56" Height="17" Text="!(loc.InstallDirDlgChange)" />
+                <Control Id="DesktopShortcut" Type="CheckBox" X="20" Y="160" Width="320" Height="18" Property="CREATEDESKTOPSHORTCUT" CheckBoxValue="1" Text="Create a &amp;desktop shortcut" />
+            </Dialog>
+
             <!-- launch app checkbox -->
             <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
 
             <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
 
+            <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="InstallDirOptionsDlg" Order="2">LicenseAccepted = "1"</Publish>
+            <Publish Dialog="InstallDirOptionsDlg" Control="Next" Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1">1</Publish>
+            <Publish Dialog="InstallDirOptionsDlg" Control="Next" Event="DoAction" Value="WixUIValidatePath" Order="2">NOT WIXUI_DONTVALIDATEPATH</Publish>
+            <Publish Dialog="InstallDirOptionsDlg" Control="Next" Event="SpawnDialog" Value="InvalidDirDlg" Order="3"><![CDATA[NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID <> "1"]]></Publish>
+            <Publish Dialog="InstallDirOptionsDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="4">WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID = "1"</Publish>
+            <Publish Dialog="InstallDirOptionsDlg" Control="ChangeFolder" Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1">1</Publish>
+            <Publish Dialog="InstallDirOptionsDlg" Control="ChangeFolder" Event="SpawnDialog" Value="BrowseDlg" Order="2">1</Publish>
+            <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="InstallDirOptionsDlg" Order="3">NOT Installed</Publish>
+
+            {{#if license}}
+            <Publish Dialog="InstallDirOptionsDlg" Control="Back" Event="NewDialog" Value="LicenseAgreementDlg">1</Publish>
+            {{/if}}
             {{#unless license}}
             <!-- Skip license dialog -->
             <Publish Dialog="WelcomeDlg"
                      Control="Next"
                      Event="NewDialog"
-                     Value="InstallDirDlg"
+                     Value="InstallDirOptionsDlg"
                      Order="2">1</Publish>
-            <Publish Dialog="InstallDirDlg"
+            <Publish Dialog="InstallDirOptionsDlg"
                      Control="Back"
                      Event="NewDialog"
                      Value="WelcomeDlg"
@@ -137,8 +177,7 @@
         <Directory Id="TARGETDIR" Name="SourceDir">
             <Directory Id="DesktopFolder" Name="Desktop">
                 <Component Id="ApplicationShortcutDesktop" Guid="*">
-                    <!-- Fresh install: create it. Upgrade: only keep it if the user hasn't deleted it -->
-                    <Condition><![CDATA[NOT WIX_UPGRADE_DETECTED OR DESKTOPSHORTCUTEXISTS]]></Condition>
+                    <Condition>CREATEDESKTOPSHORTCUT = "1"</Condition>
                     <Shortcut Id="ApplicationDesktopShortcut"
                         Name="{{product_name}}"
                         Description="Runs {{product_name}}"
@@ -165,6 +204,7 @@
                 <!-- An MSI install can reuse a directory previously used by the portable build.
                      Remove its marker so the installed app can use the in-app updater. -->
                 <RemoveFile Id="RemovePortableMarker" Directory="INSTALLDIR" Name="portable.ini" On="install" />
+                <RemoveFile Id="RemoveDeselectedDesktopShortcut" Name="{{product_name}}.lnk" Property="DESKTOPSHORTCUTREMOVEDIR" On="install" />
                 <RegistryKey Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}">
                     <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLDIR]" KeyPath="yes" />
                 </RegistryKey>
