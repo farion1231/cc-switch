@@ -38,6 +38,8 @@ export interface PanelQuotaLine {
   warn: boolean;
   /** 这一档什么时候重置（ISO 8601） */
   resetsAt: string | null;
+  /** `text` 里要上绿色的那段数值（还有余额时的金额） */
+  emphasis: string | null;
 }
 
 export interface PanelQuota {

@@ -135,6 +135,25 @@ export function formatResetIn(
   );
 }
 
+/** 只给数值上绿色（「余额 82.10 CNY」里的金额），和主界面 `TONE_TEXT.normal` 同色。 */
+function EmphasizedText({
+  text,
+  emphasis,
+}: {
+  text: string;
+  emphasis: string | null;
+}) {
+  const at = emphasis ? text.lastIndexOf(emphasis) : -1;
+  if (!emphasis || at < 0) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, at)}
+      <span className="text-green-600 dark:text-green-400">{emphasis}</span>
+      {text.slice(at + emphasis.length)}
+    </>
+  );
+}
+
 function QuotaBlock({
   quota,
   texts,
@@ -175,7 +194,7 @@ function QuotaBlock({
                 line.warn ? "text-amber-500" : "text-muted-foreground",
               )}
             >
-              {line.text}
+              <EmphasizedText text={line.text} emphasis={line.emphasis} />
             </span>
             {line.left == null ? (
               <span />

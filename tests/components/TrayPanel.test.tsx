@@ -163,6 +163,45 @@ describe("TrayPanel window layout", () => {
     delete document.documentElement.dataset.layout;
   });
 
+  it("colors only the balance amount green, like the provider card", async () => {
+    vi.mocked(trayPanelApi.state).mockResolvedValue({
+      ...state,
+      apps: [
+        {
+          ...state.apps[0],
+          quota: {
+            lines: [
+              {
+                text: "Balance 82.10 CNY",
+                left: null,
+                warn: false,
+                resetsAt: null,
+                emphasis: "82.10 CNY",
+              },
+              {
+                text: "Balance used up",
+                left: 0,
+                warn: true,
+                resetsAt: null,
+                emphasis: null,
+              },
+            ],
+            note: null,
+            resetCredits: null,
+          },
+        },
+      ],
+    });
+    vi.mocked(trayPanelApi.placement).mockResolvedValue(windows);
+    renderPanel();
+
+    const amount = await screen.findByText("82.10 CNY");
+    expect(amount).toHaveClass("text-green-600");
+    expect(amount.parentElement).toHaveTextContent("Balance 82.10 CNY");
+    expect(amount.parentElement).not.toHaveClass("text-green-600");
+    expect(screen.getByText("Balance used up")).toHaveClass("text-amber-500");
+  });
+
   it("clips the first Windows frame without waiting for animation frames in a hidden window", async () => {
     vi.mocked(trayPanelApi.placement).mockResolvedValue(windows);
     renderPanel();
