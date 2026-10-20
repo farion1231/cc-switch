@@ -4494,6 +4494,7 @@
     "importHelpTitle": "导入会读哪些配置",
     "importHelp": "只读用户级配置。用 claude mcp add 默认加到项目里的 MCP、插件自带的 MCP 不会导入。",
     "columnName": "名称",
+    "bulkActionsHint": "点击列头的应用图标，可批量启用或停用当前列表中的 MCP。",
     "noMatch": "没有名称、命令或地址匹配“{{query}}”的 MCP",
     "clearSearch": "清除搜索",
     "listLabel": "MCP 列表",

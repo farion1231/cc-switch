@@ -699,6 +699,11 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
         </NoticeSlot>
 
         <div className="flex min-h-0 flex-1 flex-col px-6 pb-5">
+          {showList && (
+            <p className="mb-2 shrink-0 text-caption text-fg-2">
+              {t("mcpPage.bulkActionsHint")}
+            </p>
+          )}
           {isLoading ? (
             <div className="py-12 text-center text-body text-fg-2">
               {t("mcp.loading")}
