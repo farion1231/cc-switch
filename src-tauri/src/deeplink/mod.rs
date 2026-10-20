@@ -108,6 +108,9 @@ pub struct DeepLinkImportRequest {
     pub enabled: Option<bool>,
 
     // ============ Provider-specific fields ============
+    /// Suggest opt-in credential editing protection in the import confirmation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_edit_protected: Option<bool>,
     /// Provider homepage URL
     #[serde(skip_serializing_if = "Option::is_none")]
     pub homepage: Option<String>,

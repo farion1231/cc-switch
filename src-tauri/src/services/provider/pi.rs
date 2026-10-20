@@ -121,10 +121,11 @@ pub(super) fn update(
         ));
     }
 
-    state
+    let previous = state
         .db
         .get_provider_by_id(&original_id, app_type.as_str())?
         .ok_or_else(|| AppError::InvalidInput(format!("Pi provider '{original_id}' not found")))?;
+    crate::credential_edit_guard::validate_update(&app_type, &previous, &provider)?;
     strip_unsupported_pi_metadata(&mut provider);
     ProviderService::validate_provider_settings(&app_type, &provider)?;
     ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
@@ -278,6 +279,7 @@ fn strip_unsupported_pi_metadata(provider: &mut Provider) {
         return;
     };
     provider.meta = Some(ProviderMeta {
+        credential_edit_protected: meta.credential_edit_protected,
         usage_script: meta.usage_script,
         is_partner: meta.is_partner,
         partner_promotion_key: meta.partner_promotion_key,
@@ -295,6 +297,35 @@ mod tests {
     use serial_test::serial;
     use std::fs;
     use std::sync::Arc;
+
+    #[test]
+    #[serial]
+    fn credential_guard_pi_preserves_protection_and_checks_before_live_write() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        let mut original = input("model-a");
+        original.meta = Some(ProviderMeta {
+            credential_edit_protected: Some(true),
+            ..Default::default()
+        });
+        ProviderService::add(&state, AppType::Pi, original.clone(), true).unwrap();
+        let file = crate::pi_config::get_pi_models_path().unwrap();
+        let before = fs::read(&file).unwrap();
+        let mut changed = original.clone();
+        changed.settings_config["apiKey"] = json!("wrong-key");
+        assert!(ProviderService::update(&state, AppType::Pi, None, changed).is_err());
+        assert_eq!(fs::read(&file).unwrap(), before);
+        original.name = "Renamed".into();
+        ProviderService::update(&state, AppType::Pi, None, original).unwrap();
+        update_usage_script(&state, "cc-switch-test", usage_script("return {}")).unwrap();
+        assert!(crate::credential_edit_guard::is_protected(
+            &state
+                .db
+                .get_provider_by_id("cc-switch-test", PI_APP)
+                .unwrap()
+                .unwrap()
+        ));
+    }
 
     fn state() -> AppState {
         AppState::new(Arc::new(

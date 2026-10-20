@@ -3442,6 +3442,16 @@
     },
     "updatesIncomplete": "No updates found, but {{count}} repositories couldn't be read"
   },
+  "credentialProtection": {
+    "importLabel": "Protect this credential from accidental edits",
+    "importHint": "This link requests editing protection. Select this option to keep the key and its destination unchanged during ordinary edits. You can explicitly remove protection later.",
+    "title": "Credential editing protection is enabled",
+    "description": "You can edit models and other settings. To change the key, its source or its destination manually, first remove protection.",
+    "remove": "Remove protection",
+    "confirmTitle": "Remove credential editing protection?",
+    "confirmMessage": "The existing key and client configuration will stay unchanged. The editor will close without applying unsaved edits. Reopen it to edit the credential manually.",
+    "removeFailed": "Could not remove credential editing protection. Your edits have not been applied."
+  },
   "deeplink": {
     "confirmImport": "Confirm Import Provider",
     "confirmImportDescription": "The following configuration will be imported from deep link into CC Switch",

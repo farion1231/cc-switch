@@ -47,6 +47,16 @@ pub fn parse_deeplink_url(url_str: &str) -> Result<DeepLinkImportRequest, AppErr
     }
 
     // Parse query parameters
+    if url
+        .query_pairs()
+        .filter(|(key, _)| key == "credentialEditProtected")
+        .count()
+        > 1
+    {
+        return Err(AppError::InvalidInput(
+            "Duplicate credentialEditProtected parameter".into(),
+        ));
+    }
     let params: HashMap<String, String> = url.query_pairs().into_owned().collect();
 
     // Extract and validate resource type
@@ -178,7 +188,18 @@ fn parse_provider_deeplink(
         .get("usageAutoInterval")
         .and_then(|v| v.parse::<u64>().ok());
 
+    let credential_edit_protected = params
+        .get("credentialEditProtected")
+        .map(|value| match value.as_str() {
+            "true" => Ok(true),
+            "false" => Ok(false),
+            _ => Err(AppError::InvalidInput(
+                "credentialEditProtected must be true or false".into(),
+            )),
+        })
+        .transpose()?;
     let request = DeepLinkImportRequest {
+        credential_edit_protected,
         version,
         resource,
         app: Some(app),
@@ -280,6 +301,7 @@ fn parse_prompt_deeplink(
         homepage: None,
         endpoint: None,
         api_key: None,
+        credential_edit_protected: None,
         model: None,
         notes: None,
         haiku_model: None,
@@ -357,6 +379,7 @@ fn parse_mcp_deeplink(
         homepage: None,
         endpoint: None,
         api_key: None,
+        credential_edit_protected: None,
         model: None,
         notes: None,
         haiku_model: None,
@@ -414,6 +437,7 @@ fn parse_skill_deeplink(
         homepage: None,
         endpoint: None,
         api_key: None,
+        credential_edit_protected: None,
         model: None,
         notes: None,
         haiku_model: None,

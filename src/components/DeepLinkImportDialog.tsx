@@ -88,6 +88,7 @@ export function DeepLinkImportDialog() {
   const [isImporting, setIsImporting] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [activateAfterImport, setActivateAfterImport] = useState(false);
+  const [protectCredential, setProtectCredential] = useState(false);
 
   // 链接带 iconUrl 时，确认框一打开就下载图标并直接预览，不再单独询问；
   // 导入时等这次下载结束（最多几秒），拿到的图标随请求交给后端，后端保存时再完整校验
@@ -171,6 +172,7 @@ export function DeepLinkImportDialog() {
       if (disposed) return false;
       // 与请求一起初始化，避免弹窗先显示旧开关状态，再由 effect 更新。
       setActivateAfterImport(initialActivation(next));
+      setProtectCredential(false);
       setRequest(next);
       setIsOpen(true);
       return true;
@@ -247,6 +249,13 @@ export function DeepLinkImportDialog() {
         request.resource === "provider" || request.resource === "prompt"
           ? { ...request, enabled: activateAfterImport }
           : request;
+      if (request.resource === "provider") {
+        payload = {
+          ...payload,
+          credentialEditProtected:
+            request.credentialEditProtected === true && protectCredential,
+        };
+      }
       if (request.resource === "provider" && request.iconUrl) {
         const icon = await linkIconTaskRef.current;
         payload = {
@@ -514,6 +523,24 @@ export function DeepLinkImportDialog() {
                       {request.app}
                     </div>
                   </div>
+
+                  {request.credentialEditProtected === true && (
+                    <label className="flex items-start gap-3 rounded-md border border-border p-3">
+                      <input
+                        type="checkbox"
+                        checked={protectCredential}
+                        onChange={(event) =>
+                          setProtectCredential(event.target.checked)
+                        }
+                      />
+                      <span className="text-sm">
+                        {t("credentialProtection.importLabel")}
+                        <span className="block text-caption text-fg-3">
+                          {t("credentialProtection.importHint")}
+                        </span>
+                      </span>
+                    </label>
+                  )}
 
                   {/* Provider Name */}
                   <div className="grid grid-cols-3 items-center gap-4">

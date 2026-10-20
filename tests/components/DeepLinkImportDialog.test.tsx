@@ -839,3 +839,47 @@ describe("DeepLinkImportDialog", () => {
     });
   });
 });
+
+it.each([false, true])(
+  "requires an explicit credential-protection choice: %s",
+  async (chooseProtection) => {
+    const submit = vi.fn();
+    server.use(
+      http.post(
+        "http://tauri.local/import_from_deeplink_unified",
+        async ({ request }) => {
+          submit(await request.json());
+          return HttpResponse.json({ type: "provider", id: "protected" });
+        },
+      ),
+    );
+    render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+    act(() =>
+      deliverDeepLink({
+        version: "v1",
+        resource: "provider",
+        app: "claude",
+        name: "Custom",
+        endpoint: "https://example.com",
+        apiKey: "public-test-key",
+        credentialEditProtected: true,
+      }),
+    );
+    const checkbox = await screen.findByRole("checkbox", {
+      name: /credentialProtection.importLabel/,
+    });
+    expect(checkbox).not.toBeChecked();
+    const user = userEvent.setup();
+    if (chooseProtection) await user.click(checkbox);
+    await user.click(screen.getByRole("button", { name: "deeplink.import" }));
+    await waitFor(() =>
+      expect(submit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          request: expect.objectContaining({
+            credentialEditProtected: chooseProtection,
+          }),
+        }),
+      ),
+    );
+  },
+);

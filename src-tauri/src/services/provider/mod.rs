@@ -329,6 +329,116 @@ mod tests {
 
     #[test]
     #[serial]
+    fn credential_guard_editor_rejects_credential_change_before_any_live_or_row_write() {
+        with_test_home(|state, _| {
+            let mut row = Provider::with_id(
+                "guarded".into(),
+                "Guarded".into(),
+                json!({"env":{"ANTHROPIC_AUTH_TOKEN":"test-key-a", "ANTHROPIC_BASE_URL":"https://example.com", "ANTHROPIC_MODEL":"model-a"}}),
+                None,
+            );
+            row.meta = Some(ProviderMeta {
+                credential_edit_protected: Some(true),
+                ..Default::default()
+            });
+            ProviderService::add(state, AppType::Claude, row, true).unwrap();
+            let row = state
+                .db
+                .get_provider_by_id("guarded", "claude")
+                .unwrap()
+                .unwrap();
+            let view =
+                ProviderService::editor_view(state, AppType::Claude, &row.settings_config, None)
+                    .unwrap();
+            let path = get_claude_settings_path();
+            let before_file = fs::read(&path).unwrap();
+            let mut conflicting = row.clone();
+            conflicting.settings_config = view.settings.clone();
+            conflicting.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"] = json!("wrong-key");
+            conflicting.settings_config["permissions"] = json!({"allow":["Read"]});
+            let save: super::EditorSave =
+                serde_json::from_value(json!({"base":view.settings})).unwrap();
+            assert!(ProviderService::update_from_editor(
+                state,
+                AppType::Claude,
+                None,
+                conflicting,
+                Some(save)
+            )
+            .is_err());
+            assert_eq!(fs::read(&path).unwrap(), before_file);
+            assert_eq!(
+                state
+                    .db
+                    .get_provider_by_id("guarded", "claude")
+                    .unwrap()
+                    .unwrap()
+                    .settings_config,
+                row.settings_config
+            );
+            let view =
+                ProviderService::editor_view(state, AppType::Claude, &row.settings_config, None)
+                    .unwrap();
+            let mut allowed = row.clone();
+            allowed.settings_config = view.settings.clone();
+            allowed.settings_config["env"]["ANTHROPIC_MODEL"] = json!("model-b");
+            let save: super::EditorSave =
+                serde_json::from_value(json!({"base":view.settings})).unwrap();
+            ProviderService::update_from_editor(state, AppType::Claude, None, allowed, Some(save))
+                .unwrap();
+            let live: serde_json::Value =
+                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            assert_eq!(live["env"]["ANTHROPIC_AUTH_TOKEN"], "test-key-a");
+            assert_eq!(live["env"]["ANTHROPIC_MODEL"], "model-b");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn credential_guard_universal_sync_preflights_all_children() {
+        with_test_home(|state, _| {
+            let mut parent = UniversalProvider::new(
+                "managed".into(),
+                "Managed".into(),
+                "custom".into(),
+                "https://example.com".into(),
+                "test-key-a".into(),
+            );
+            parent.apps.claude = true;
+            parent.apps.codex = true;
+            parent.meta = Some(ProviderMeta {
+                credential_edit_protected: Some(true),
+                ..Default::default()
+            });
+            ProviderService::upsert_universal(state, parent.clone()).unwrap();
+            ProviderService::sync_universal_to_apps(state, "managed").unwrap();
+            let before = state
+                .db
+                .get_provider_by_id("universal-claude-managed", "claude")
+                .unwrap()
+                .unwrap();
+            // First child could otherwise be saved before discovering the protected Codex key.
+            state
+                .db
+                .remove_provider_credential_protection("claude", &before.id)
+                .unwrap();
+            parent.api_key = "test-key-b".into();
+            ProviderService::upsert_universal(state, parent).unwrap();
+            assert!(ProviderService::sync_universal_to_apps(state, "managed").is_err());
+            assert_eq!(
+                state
+                    .db
+                    .get_provider_by_id(&before.id, "claude")
+                    .unwrap()
+                    .unwrap()
+                    .settings_config,
+                before.settings_config
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn codex_editor_view_preserves_draft_and_stored_copilot_metadata() {
         with_test_home(|state, _home| {
             crate::settings::reload_settings().expect("reload settings");
@@ -5563,6 +5673,17 @@ impl ProviderService {
         Ok(true)
     }
 
+    pub fn remove_credential_protection(
+        state: &AppState,
+        app: AppType,
+        id: &str,
+    ) -> Result<(), AppError> {
+        let _guard = crate::mode::controller::lock_settled_blocking(state, &app)?;
+        state
+            .db
+            .remove_provider_credential_protection(app.as_str(), id)
+    }
+
     /// Add a new provider
     pub fn add(
         state: &AppState,
@@ -6140,6 +6261,9 @@ impl ProviderService {
         let existing_provider = state
             .db
             .get_provider_by_id(&original_id, app_type.as_str())?;
+        if let Some(previous) = &existing_provider {
+            crate::credential_edit_guard::validate_update(&app_type, previous, &provider)?;
+        }
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
@@ -7669,6 +7793,7 @@ impl ProviderService {
     }
 
     fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+        crate::credential_edit_guard::validate_supported(app_type, provider)?;
         icon::validate_icon(provider.icon.as_deref())?;
         match app_type {
             AppType::Claude => {
@@ -8180,6 +8305,22 @@ impl ProviderService {
             .ok_or_else(|| AppError::Message(format!("统一供应商 {id} 不存在")))?;
         // 子供应商经 save_provider 直接入库，不走保存校验，图标在这里把关
         icon::validate_icon(provider.icon.as_deref())?;
+
+        for (app, target) in [
+            (AppType::Claude, provider.to_claude_provider()),
+            (AppType::Codex, provider.to_codex_provider()),
+            (AppType::Gemini, provider.to_gemini_provider()),
+        ] {
+            if let Some(mut target) = target {
+                if let Some(previous) = state.db.get_provider_by_id(&target.id, app.as_str())? {
+                    let mut merged = previous.settings_config.clone();
+                    Self::merge_json(&mut merged, &target.settings_config);
+                    target.settings_config = merged;
+                    target.meta = previous.meta.clone();
+                    crate::credential_edit_guard::validate_update(&app, &previous, &target)?;
+                }
+            }
+        }
 
         // Keep DB and live projections in sync independently per application:
         // one broken config file must not prevent the other two apps from being
