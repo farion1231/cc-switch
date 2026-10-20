@@ -33,6 +33,7 @@ import {
   useHermesLiveProviderIds,
   useHermesModelConfig,
 } from "@/hooks/useHermes";
+import { useZcodeLiveProviderIds } from "@/hooks/useZcode";
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
@@ -140,6 +141,11 @@ export function ProviderList({
   const { data: hermesLiveIds, isPending: isHermesLiveIdsPending } =
     useHermesLiveProviderIds(appId === "hermes");
   const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
+
+  // ZCode: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
+  const { data: zcodeLiveIds } = useZcodeLiveProviderIds(appId === "zcode");
+
+  // OpenClaw: query default model to determine which provider is default
   const { data: openclawDefaultModel } = useOpenClawDefaultModel(
     appId === "openclaw",
   );
@@ -174,6 +180,8 @@ export function ProviderList({
           return openclawLiveIds?.includes(provider.id) ?? false;
         case "hermes":
           return hermesLiveIds?.includes(provider.id) ?? false;
+        case "zcode":
+          return zcodeLiveIds?.includes(provider.id) ?? false;
         case "pi":
           return isPiStateReady
             ? (piCurrentState?.enabledProviderIds.includes(provider.id) ??
@@ -188,6 +196,7 @@ export function ProviderList({
       opencodeLiveIds,
       openclawLiveIds,
       hermesLiveIds,
+      zcodeLiveIds,
       isPiStateReady,
       piCurrentState,
     ],
@@ -211,6 +220,10 @@ export function ProviderList({
       }
       if (appId === "hermes") {
         return (await providersApi.importHermesFromLive()) > 0;
+      }
+      if (appId === "zcode") {
+        const count = await providersApi.importZcodeFromLive();
+        return count > 0;
       }
       if (appId === "claude-desktop") {
         return (await providersApi.importClaudeDesktopFromClaude()) > 0;

@@ -38,7 +38,7 @@ use crate::store::AppState;
 // Re-export sub-module functions for external access
 pub use live::{
     import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings,
+    import_opencode_providers_from_live, import_zcode_providers_from_live, read_live_settings,
     should_import_default_config_on_startup, sync_current_to_live,
 };
 
@@ -57,7 +57,7 @@ pub(crate) use live::{
 // Internal re-exports
 use live::{
     remove_hermes_provider_from_live, remove_openclaw_provider_from_live,
-    remove_opencode_provider_from_live,
+    remove_opencode_provider_from_live, remove_zcode_provider_from_live,
 };
 use usage::validate_usage_script;
 
@@ -310,6 +310,44 @@ mod tests {
         }
 
         result
+    }
+
+    #[test]
+    #[serial]
+    fn switching_zcode_provider_updates_default_model_selection() {
+        with_test_home(|state, _home| {
+            let provider = Provider::with_id(
+                "zcode-custom".to_string(),
+                "ZCode Custom".to_string(),
+                json!({
+                    "name": "ZCode Custom",
+                    "kind": "anthropic",
+                    "options": {
+                        "baseURL": "https://api.example.com/anthropic",
+                        "apiKey": "sk-test"
+                    },
+                    "models": {
+                        "model-b": {},
+                        "model-a": {}
+                    }
+                }),
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::ZCode.as_str(), &provider)
+                .expect("store ZCode provider");
+
+            ProviderService::switch(state, AppType::ZCode, &provider.id)
+                .expect("switch ZCode provider");
+
+            let live = crate::zcode_config::read_zcode_provider_config()
+                .expect("read ZCode provider config");
+            assert_eq!(
+                live["config"]["defaultModelSelection"],
+                json!({"providerId": "zcode-custom", "modelId": "model-b"})
+            );
+        });
     }
 
     fn codex_settings(base_url: &str, api_key: &str) -> Value {
@@ -6452,6 +6490,7 @@ impl ProviderService {
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
                     AppType::Mcode => crate::mcode_config::remove_provider(id)?,
+                    AppType::ZCode => remove_zcode_provider_from_live(id)?,
                     _ => {}
                 }
             }
@@ -6528,6 +6567,9 @@ impl ProviderService {
                 remove_hermes_provider_from_live(id)?;
             }
             AppType::Mcode => crate::mcode_config::remove_provider(id)?,
+            AppType::ZCode => {
+                remove_zcode_provider_from_live(id)?;
+            }
             _ => {
                 return Err(AppError::Message(format!(
                     "App {} does not support remove from live config",
@@ -6754,6 +6796,7 @@ impl ProviderService {
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
                     AppType::Mcode => crate::mcode_config::remove_provider(&provider.id),
+                    AppType::ZCode => remove_zcode_provider_from_live(&provider.id),
                     _ => Ok(()),
                 };
 
@@ -6772,6 +6815,10 @@ impl ProviderService {
                     }
                 }
             }
+        }
+
+        if matches!(app_type, AppType::ZCode) {
+            crate::zcode_config::set_default_model_selection(&provider.id)?;
         }
 
         // 切换重写了目标应用的 live，只重投影该应用的 MCP（Grok Build 的
@@ -7018,6 +7065,7 @@ impl ProviderService {
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Pi | AppType::Mcode => Ok(String::new()),
+            AppType::ZCode => Ok(String::new()), // ZCode doesn't use common config snippets
         }
     }
 
@@ -7036,6 +7084,7 @@ impl ProviderService {
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Pi | AppType::Mcode => Ok(String::new()),
+            AppType::ZCode => Ok(String::new()), // ZCode doesn't use common config snippets
         }
     }
 
@@ -7803,6 +7852,16 @@ impl ProviderService {
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
+            AppType::ZCode => {
+                // ZCode: accept any JSON object (provider fragment with kind/options/models)
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.zcode.settings.not_object",
+                        "ZCode 配置必须是 JSON 对象",
+                        "ZCode configuration must be a JSON object",
+                    ));
+                }
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -7967,8 +8026,8 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::OpenCode => {
-                // OpenCode uses options.apiKey and options.baseURL
+            AppType::OpenCode | AppType::ZCode => {
+                // OpenCode and ZCode use options.apiKey and options.baseURL
                 let options = provider
                     .settings_config
                     .get("options")

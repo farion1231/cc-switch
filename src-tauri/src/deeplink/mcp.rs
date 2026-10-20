@@ -161,6 +161,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         hermes: false,
         mcode: false,
         pi: false,
+        zcode: false,
     };
 
     for app in apps_str.split(',') {
@@ -177,6 +178,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
             "hermes" => apps.hermes = true,
             "mcode" => apps.mcode = true,
             "pi" => apps.pi = true,
+            "zcode" => apps.zcode = true,
             other => {
                 return Err(AppError::InvalidInput(format!(
                     "Invalid app in 'apps': {other}"
@@ -218,6 +220,9 @@ mod tests {
             grokbuild: true,
             opencode: true,
             hermes: true,
+            mcode: true,
+            pi: true,
+            zcode: true,
             ..McpApps::default()
         };
         let merged = merge_mcp_apps(&existing, &target);
@@ -228,5 +233,23 @@ mod tests {
         assert!(merged.grokbuild);
         assert!(merged.opencode);
         assert!(merged.hermes);
+        assert!(merged.mcode);
+        assert!(merged.pi);
+        assert!(merged.zcode);
+    }
+
+    #[test]
+    fn parse_mcp_apps_accepts_zcode() {
+        let apps = parse_mcp_apps("zcode").expect("zcode alone is a valid apps list");
+        assert!(apps.zcode);
+        assert!(!apps.claude);
+
+        let apps = parse_mcp_apps("claude,zcode").expect("zcode combines with other apps");
+        assert!(apps.claude);
+        assert!(apps.zcode);
+
+        // OpenClaw 不支持 MCP，静默忽略而不是报错
+        let apps = parse_mcp_apps("zcode,openclaw").expect("openclaw is ignored silently");
+        assert!(apps.zcode);
     }
 }

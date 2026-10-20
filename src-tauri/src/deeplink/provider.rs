@@ -345,6 +345,7 @@ pub(crate) fn build_provider_from_request(
                 "Add MCode providers from the MCode page".into(),
             ))
         }
+        AppType::ZCode => build_zcode_settings(request),
     };
 
     // Build usage script configuration if provided
@@ -796,6 +797,42 @@ fn build_opencode_settings(
     })
 }
 
+/// Build ZCode settings configuration
+///
+/// ZCode provider fragment shape (matches cc-switch's ZCodeProviderConfig; the
+/// live file `~/.zcode/v2/provider_config.json` derives it into a rule):
+/// `{ name, kind, options: { baseURL, apiKey }, source, models: { <id>: {} } }`
+fn build_zcode_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let endpoint = get_primary_endpoint(request);
+
+    // Build options object (baseURL / apiKey)
+    let mut options = serde_json::Map::new();
+    if !endpoint.is_empty() {
+        options.insert("baseURL".to_string(), json!(endpoint));
+    }
+    if let Some(api_key) = &request.api_key {
+        options.insert("apiKey".to_string(), json!(api_key));
+    }
+
+    // Build models object (id -> empty config; ZCode fills limit/modalities later)
+    let mut models = serde_json::Map::new();
+    if let Some(model) = &request.model {
+        models.insert(model.clone(), json!({}));
+    }
+
+    let mut config = serde_json::Map::new();
+    if let Some(name) = request.name.as_deref().filter(|s| !s.is_empty()) {
+        config.insert("name".to_string(), json!(name));
+    }
+    // Default to anthropic-kind; user can adjust in UI after import.
+    config.insert("kind".to_string(), json!("anthropic"));
+    config.insert("options".to_string(), serde_json::Value::Object(options));
+    config.insert("source".to_string(), json!("custom"));
+    config.insert("models".to_string(), serde_json::Value::Object(models));
+
+    json!(config)
+}
+
 /// Build settings for OpenClaw (camelCase live config).
 /// Format: { baseUrl, apiKey, api, models }
 fn build_additive_app_settings(
@@ -978,7 +1015,7 @@ pub fn parse_and_merge_config(
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
         "grokbuild" => merge_grokbuild_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is
-        "openclaw" | "opencode" | "hermes" | "pi" => {
+        "openclaw" | "opencode" | "hermes" | "pi" | "zcode" => {
             merge_additive_config(&mut merged, &config_value)?;
             // 从 config 里补来的地址和 Key 同样要查，让确认框当场报错
             if let Ok(app_type) = AppType::from_str(request.app.as_deref().unwrap_or("")) {
