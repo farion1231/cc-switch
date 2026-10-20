@@ -321,6 +321,7 @@ fn test_build_gemini_provider_with_model() {
     use super::provider::build_provider_from_request;
 
     let request = DeepLinkImportRequest {
+        allowed_apps: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("gemini".to_string()),
@@ -376,6 +377,7 @@ fn test_build_gemini_provider_without_model() {
     use super::provider::build_provider_from_request;
 
     let request = DeepLinkImportRequest {
+        allowed_apps: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("gemini".to_string()),
@@ -424,6 +426,7 @@ fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
     use super::provider::build_provider_from_request;
 
     let request = DeepLinkImportRequest {
+        allowed_apps: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -473,6 +476,7 @@ fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
 /// 构造一个只带用量脚本字段的 provider 请求，其余保持最小。
 fn usage_script_request(code: &str, usage_enabled: Option<bool>) -> DeepLinkImportRequest {
     DeepLinkImportRequest {
+        allowed_apps: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -591,6 +595,7 @@ fn test_deeplink_usage_script_omits_explicit_credentials_that_match_provider() {
     use super::provider::build_provider_from_request;
 
     let request = DeepLinkImportRequest {
+        allowed_apps: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -641,6 +646,7 @@ fn test_deeplink_usage_script_preserves_distinct_usage_credentials() {
     use super::provider::build_provider_from_request;
 
     let request = DeepLinkImportRequest {
+        allowed_apps: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -696,6 +702,7 @@ fn test_parse_and_merge_config_claude() {
     let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
 
     let request = DeepLinkImportRequest {
+        allowed_apps: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -821,6 +828,7 @@ fn test_parse_and_merge_config_url_override() {
     let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
 
     let request = DeepLinkImportRequest {
+        allowed_apps: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -885,6 +893,7 @@ fn test_build_claude_provider_preserves_custom_env_fields() {
     let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
 
     let request = DeepLinkImportRequest {
+        allowed_apps: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -943,6 +952,7 @@ fn test_build_claude_provider_without_config_unchanged() {
     use super::provider::build_provider_from_request;
 
     let request = DeepLinkImportRequest {
+        allowed_apps: None,
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("claude".to_string()),
@@ -2037,4 +2047,74 @@ fn test_deeplink_non_plan_and_zenmux_outside_claude_stay_off() {
     assert!(imported_usage_script(AppType::Codex, &request).is_none());
     let request = coding_plan_request("claude", "https://zenmux.ai/api/anthropic");
     assert!(imported_usage_script(AppType::Claude, &request).is_some());
+}
+
+#[test]
+fn allowed_apps_parse_rejects_malformed_or_retargeted_links() {
+    let base = "ccswitch://v1/import?resource=provider&app=claude&name=Scoped&endpoint=https://example.com&apiKey=public-test-key";
+    let link = |value: &str| {
+        let mut url = url::Url::parse(base).unwrap();
+        url.query_pairs_mut().append_pair("allowedApps", value);
+        url.to_string()
+    };
+    assert!(parse_deeplink_url(base).unwrap().allowed_apps.is_none());
+    let parsed = parse_deeplink_url(&link(r#"["claude","claude-desktop"]"#)).unwrap();
+    assert_eq!(parsed.allowed_apps.unwrap(), ["claude", "claude-desktop"]);
+    for value in [
+        "[]",
+        "null",
+        "{}",
+        r#""claude""#,
+        r#"["claude","unknown"]"#,
+        r#"["claude","claude"]"#,
+        r#"["codex"]"#,
+        r#"["Claude"]"#,
+        r#"["claude",123]"#,
+        r#"["claude", ""]"#,
+    ] {
+        assert!(parse_deeplink_url(&link(value)).is_err(), "{value}");
+    }
+    let duplicate = format!("{}&allowedApps=%5B%22claude%22%5D", link(r#"["codex"]"#));
+    assert!(parse_deeplink_url(&duplicate).is_err());
+}
+
+#[test]
+fn allowed_apps_survives_inline_config_merge_and_stays_out_of_live_settings() {
+    let request = DeepLinkImportRequest {
+        version: "v1".into(), resource: "provider".into(), app: Some("claude".into()),
+        name: Some("Scoped".into()),
+        allowed_apps: Some(vec!["claude".into(), "claude-desktop".into()]),
+        config: Some(BASE64_STANDARD.encode(r#"{"env":{"ANTHROPIC_BASE_URL":"https://example.com","ANTHROPIC_AUTH_TOKEN":"public-test-key"}}"#)),
+        config_format: Some("json".into()),
+        ..Default::default()
+    };
+    let merged = parse_and_merge_config(&request).unwrap();
+    assert_eq!(merged.allowed_apps, request.allowed_apps);
+    let provider = super::provider::build_provider_from_request(&AppType::Claude, &merged).unwrap();
+    assert_eq!(provider.meta.unwrap().allowed_apps, request.allowed_apps);
+    assert!(!provider.settings_config.to_string().contains("allowedApps"));
+    // Native IPC callers must not bypass the parser's target check.
+    assert!(super::provider::build_provider_from_request(&AppType::Codex, &merged).is_err());
+}
+
+#[test]
+#[serial_test::serial]
+fn allowed_apps_import_mismatch_does_not_create_provider() {
+    let _home = TestHomeGuard::new();
+    let db = Arc::new(Database::memory().unwrap());
+    let state = AppState::new(db.clone());
+    let request = DeepLinkImportRequest {
+        version: "v1".into(),
+        resource: "provider".into(),
+        app: Some("opencode".into()),
+        name: Some("Scoped".into()),
+        endpoint: Some("https://example.com".into()),
+        homepage: Some("https://example.com".into()),
+        api_key: Some("public-test-key".into()),
+        enabled: Some(true),
+        allowed_apps: Some(vec!["claude".into()]),
+        ..Default::default()
+    };
+    assert!(super::import_provider_from_deeplink(&state, request).is_err());
+    assert!(db.get_all_providers("opencode").unwrap().is_empty());
 }

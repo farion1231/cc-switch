@@ -61,6 +61,10 @@ impl ProviderRouter {
         app_type: &str,
         current_provider: Option<Provider>,
     ) -> Result<Vec<Provider>, AppError> {
+        let app = AppType::from_str(app_type)?;
+        if let Some(provider) = &current_provider {
+            provider.validate_app_restriction(&app)?;
+        }
         let mut result = Vec::new();
         let mut total_providers = 0usize;
         let mut circuit_open_count = 0usize;
@@ -100,7 +104,9 @@ impl ProviderRouter {
                 let Some(provider) = all_providers.get(&provider_id).cloned() else {
                     continue;
                 };
-                if !provider_supports_failover(app_type, &provider) {
+                if provider.validate_app_restriction(&app).is_err()
+                    || !provider_supports_failover(app_type, &provider)
+                {
                     continue;
                 }
                 total_providers += 1;
@@ -638,5 +644,30 @@ mod tests {
         let third = router.allow_provider_request("a", "claude").await;
         assert!(third.allowed);
         assert!(third.used_half_open_permit);
+    }
+}
+
+#[cfg(test)]
+mod allowed_apps_tests {
+    use super::*;
+    use crate::provider::ProviderMeta;
+
+    #[tokio::test]
+    async fn allowed_apps_router_rejects_incompatible_current_provider() {
+        let router = ProviderRouter::new(Arc::new(Database::memory().unwrap()));
+        let mut provider = Provider::with_id(
+            "scoped".into(),
+            "Scoped".into(),
+            serde_json::json!({}),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            allowed_apps: Some(vec!["claude".into()]),
+            ..Default::default()
+        });
+        assert!(router
+            .select_providers_with_current("codex", Some(provider))
+            .await
+            .is_err());
     }
 }

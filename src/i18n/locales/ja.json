@@ -3443,6 +3443,8 @@
     "updatesIncomplete": "更新は見つかりませんでしたが、{{count}} 個のリポジトリを読み込めませんでした"
   },
   "deeplink": {
+    "allowedApps": "許可されたアプリ",
+    "allowedAppsHint": "設定の誤用を防ぐ制限です。アクセス権限はゲートウェイが検証します。",
     "confirmImport": "プロバイダーのインポートを確認",
     "confirmImportDescription": "次の設定をディープリンクから CC Switch へインポートします",
     "importPrompt": "プロンプトをインポート",

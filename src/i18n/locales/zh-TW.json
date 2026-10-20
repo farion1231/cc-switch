@@ -3444,6 +3444,8 @@
     "updatesIncomplete": "沒有發現更新，但有 {{count}} 個倉庫沒有讀到"
   },
   "deeplink": {
+    "allowedApps": "允許使用的應用程式",
+    "allowedAppsHint": "此限制用於避免設定誤用；存取權限仍由閘道驗證。",
     "confirmImport": "確認匯入供應商設定",
     "confirmImportDescription": "以下設定將匯入至 CC Switch",
     "importPrompt": "匯入提示詞",

@@ -329,6 +329,7 @@ pub(crate) fn build_provider_from_request(
     app_type: &AppType,
     request: &DeepLinkImportRequest,
 ) -> Result<Provider, AppError> {
+    crate::provider::validate_allowed_apps(request.allowed_apps.as_deref(), app_type)?;
     let api_format = link_api_format(app_type, request)?;
     check_link_values(app_type, request)?;
     let settings_config = match app_type {
@@ -349,6 +350,9 @@ pub(crate) fn build_provider_from_request(
 
     // Build usage script configuration if provided
     let mut meta = build_provider_meta(app_type, request)?;
+    if let Some(allowed) = &request.allowed_apps {
+        meta.get_or_insert_with(ProviderMeta::default).allowed_apps = Some(allowed.clone());
+    }
     if matches!(app_type, AppType::ClaudeDesktop) {
         meta.get_or_insert_with(ProviderMeta::default)
             .claude_desktop_mode = Some(ClaudeDesktopMode::Direct);

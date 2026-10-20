@@ -108,6 +108,9 @@ pub struct DeepLinkImportRequest {
     pub enabled: Option<bool>,
 
     // ============ Provider-specific fields ============
+    /// Optional configuration guard; omitted means unrestricted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_apps: Option<Vec<String>>,
     /// Provider homepage URL
     #[serde(skip_serializing_if = "Option::is_none")]
     pub homepage: Option<String>,
