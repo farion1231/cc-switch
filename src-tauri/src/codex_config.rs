@@ -16,7 +16,8 @@ use std::fs;
 use std::process::{Command, Stdio};
 use toml_edit::DocumentMut;
 
-pub const XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID: &str = "custom";
+/// Reserved Shield route; imported `custom` tables remain foreign configuration.
+pub const XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID: &str = "xsec-agent-shield-route";
 /// Temporary model-provider id used while the built-in `codex-official`
 /// provider is routed through CC Switch.  A dedicated id is an ownership
 /// marker: unlike a generic localhost `base_url`, it can be detected and
@@ -3013,7 +3014,7 @@ pub fn codex_config_has_official_proxy_route(config_text: &str) -> bool {
 
 /// live 的 `config.toml` 是不是现在的代理官方路由（`is_proxy_url` 认本地代理给 Codex 的
 /// 地址）：没开统一会话历史时不选别的 provider、顶层 `openai_base_url` 改道到代理；开了
-/// 时选 custom，表是指向代理的官方镜像。两种都没有占位 Key，只能按地址认。
+/// 时选 Shield 专属路由，表是指向代理的官方镜像。两种都没有占位 Key，只能按地址认。
 pub fn codex_config_routes_official_to_proxy(
     config_text: &str,
     is_proxy_url: impl Fn(&str) -> bool,
@@ -3060,7 +3061,7 @@ fn table_matches_codex_unified_official_provider(table: &toml_edit::Table) -> bo
 /// `inject_codex_unified_session_bucket` 的反向操作：从配置文本里剥掉注入的
 /// 统一会话路由，保证切换回填不会把它带进数据库的存储配置（关闭开关后
 /// 切换即可完全还原）。仅当形态与注入产物完全一致时才剥离；第三方模板和
-/// 用户自定义的 `custom` 条目（带 base_url 等差异字段）原样保留。
+/// 用户自定义的 `custom` 条目无条件保留；自有路由被 profile 引用时也不剥离。
 pub fn strip_codex_unified_session_bucket(config_text: &str) -> Result<String, AppError> {
     if !config_text.contains("model_provider") {
         return Ok(config_text.to_string());
@@ -3081,6 +3082,20 @@ pub fn strip_codex_unified_session_bucket(config_text: &str) -> Result<String, A
         .and_then(|item| item.as_table())
         .is_some_and(table_matches_codex_unified_official_provider);
     if !matches_injected {
+        return Ok(config_text.to_string());
+    }
+
+    // Backfilling must not leave a profile pointing at a table we stripped.
+    let profile_uses_route = doc
+        .get("profiles")
+        .and_then(|item| item.as_table_like())
+        .is_some_and(|profiles| {
+            profiles.iter().any(|(_, profile)| {
+                profile.get("model_provider").and_then(|item| item.as_str())
+                    == Some(XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID)
+            })
+        });
+    if profile_uses_route {
         return Ok(config_text.to_string());
     }
 
@@ -3132,13 +3147,13 @@ mod tests {
         for (config, expected) in [
             ("openai_base_url = \"http://127.0.0.1:15721/v1/\"\n", true),
             ("model_provider = \"openai\"\nopenai_base_url = \"http://127.0.0.1:15721/v1\"\n", true),
-            ("model_provider = \"custom\"\n[model_providers.custom]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:15721/v1\"\nrequires_openai_auth = true\n", true),
+            ("model_provider = \"xsec-agent-shield-route\"\n[model_providers.xsec-agent-shield-route]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:15721/v1\"\nrequires_openai_auth = true\n", true),
             // 别的地址（比如其他工具改道到自己的本地服务）不算。
             ("openai_base_url = \"http://127.0.0.1:10531/v1\"\n", false),
             // 选了别的 provider，改道不生效。
             ("model_provider = \"relay\"\nopenai_base_url = \"http://127.0.0.1:15721/v1\"\n", false),
             // 官方直连的统一会话镜像表没有地址。
-            ("model_provider = \"custom\"\n[model_providers.custom]\nname = \"OpenAI\"\nrequires_openai_auth = true\n", false),
+            ("model_provider = \"xsec-agent-shield-route\"\n[model_providers.xsec-agent-shield-route]\nname = \"OpenAI\"\nrequires_openai_auth = true\n", false),
             ("model = \"gpt-5.5\"\n", false),
         ] {
             assert_eq!(
@@ -3331,6 +3346,33 @@ requires_openai_auth = true
 "#;
         let untouched = strip_codex_unified_session_bucket(third_party).expect("strip");
         assert_eq!(untouched, third_party);
+    }
+
+    #[test]
+    fn unified_mirror_stripping_requires_shield_id_and_no_profile_reference() {
+        let mirror = |id: &str| {
+            format!(
+            "model_provider = '{id}'\n[model_providers.{id}]\nname = 'OpenAI'\nrequires_openai_auth = true\nsupports_websockets = true\nwire_api = 'responses'\n"
+        )
+        };
+        let foreign = mirror("custom");
+        assert_eq!(
+            strip_codex_unified_session_bucket(&foreign).unwrap(),
+            foreign
+        );
+        assert!(!codex_config_routes_official_to_proxy(
+            &format!("{foreign}base_url = 'http://127.0.0.1:18721/v1'\n"),
+            |_| true
+        ));
+        let owned = mirror(XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID);
+        assert_eq!(strip_codex_unified_session_bucket(&owned).unwrap(), "");
+        let referenced = format!(
+            "{owned}\n[profiles.side]\nmodel_provider = '{XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID}'\n"
+        );
+        assert_eq!(
+            strip_codex_unified_session_bucket(&referenced).unwrap(),
+            referenced
+        );
     }
 
     #[test]

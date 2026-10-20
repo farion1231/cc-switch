@@ -1239,7 +1239,7 @@ fn test_codex_link_config_keeps_provider_auth_fields_through_to_live() {
     let doc = row_config(&settings);
     assert_eq!(doc["model"].as_str(), Some("gpt-5.5"));
     assert_eq!(doc["model_reasoning_effort"].as_str(), Some("medium"));
-    let table = &doc["model_providers"]["custom"];
+    let table = &doc["model_providers"]["xsec-agent-shield-route"];
     assert_eq!(table["name"].as_str(), Some("Relay Auth"));
     assert_eq!(table["requires_openai_auth"].as_bool(), Some(false));
     assert_eq!(table["supports_websockets"].as_bool(), Some(true));
@@ -1280,9 +1280,12 @@ fn test_codex_link_url_params_override_the_config_and_refresh_the_bearer_token()
     let doc = row_config(&settings);
 
     // 选路一律写成 custom，链接自己的 id 不带进来
-    assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+    assert_eq!(
+        doc["model_provider"].as_str(),
+        Some("xsec-agent-shield-route")
+    );
     assert!(doc["model_providers"].get("relay").is_none());
-    let table = &doc["model_providers"]["custom"];
+    let table = &doc["model_providers"]["xsec-agent-shield-route"];
     assert_eq!(
         table["base_url"].as_str(),
         Some("https://api.relay.example/v1")
@@ -1307,7 +1310,8 @@ fn test_codex_link_config_keeps_same_origin_model_catalog_url() {
 
     let settings = import_codex_with_config(config, None, Some("custom-model")).unwrap();
     assert_eq!(
-        row_config(&settings)["model_providers"]["custom"]["model_catalog_url"].as_str(),
+        row_config(&settings)["model_providers"]["xsec-agent-shield-route"]["model_catalog_url"]
+            .as_str(),
         Some("https://api.relay.example/v1/models?format=codex")
     );
     assert_eq!(
@@ -1363,7 +1367,8 @@ fn test_codex_link_config_keeps_provider_settings_and_drops_global_ones() {
         Some("gpt-5.5-mini")
     );
     assert_eq!(
-        doc["model_providers"]["custom"]["supports_standalone_web_search"].as_bool(),
+        doc["model_providers"]["xsec-agent-shield-route"]["supports_standalone_web_search"]
+            .as_bool(),
         Some(true)
     );
     for dropped in [
@@ -1379,7 +1384,7 @@ fn test_codex_link_config_keeps_provider_settings_and_drops_global_ones() {
             "'{dropped}' must not be imported"
         );
     }
-    assert!(doc["model_providers"]["custom"]
+    assert!(doc["model_providers"]["xsec-agent-shield-route"]
         .get("unknown_future_field")
         .is_none());
 }
@@ -1419,7 +1424,9 @@ fn test_codex_link_config_drops_env_key_when_the_link_has_a_key() {
 
     let settings = import_codex_with_config(config, None, None).unwrap();
     let doc = row_config(&settings);
-    assert!(doc["model_providers"]["custom"].get("env_key").is_none());
+    assert!(doc["model_providers"]["xsec-agent-shield-route"]
+        .get("env_key")
+        .is_none());
     // 没有 env_key，切换时 Key 走 bearer token
     assert_eq!(
         projected_route_table(&settings)["experimental_bearer_token"].as_str(),
@@ -1483,11 +1490,11 @@ fn test_codex_link_accepts_a_whole_config_toml() {
         .settings_config;
     let doc = row_config(&settings);
     assert_eq!(
-        doc["model_providers"]["custom"]["supports_websockets"].as_bool(),
+        doc["model_providers"]["xsec-agent-shield-route"]["supports_websockets"].as_bool(),
         Some(true)
     );
     assert_eq!(
-        doc["model_providers"]["custom"]["name"].as_str(),
+        doc["model_providers"]["xsec-agent-shield-route"]["name"].as_str(),
         Some("Toml Relay")
     );
 }

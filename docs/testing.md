@@ -90,6 +90,31 @@ P0-02a 不覆盖端口与全部启动导入；后续进展见下节。共享 `cu
 
 本子步骤初轮 Rust 回归有 3 处默认端口断言仍期待 15721；核实实际输出为 18721 后仅修正这 3 处预期，显式传入旧端口的 fixture 继续保留。新的数据库回归确认已保存的 15721 不被自动改写。
 
+## P0-02b2.1 验证（2026-10-20）
+
+范围为 Codex 路由命名空间、外来表保留、官方历史迁移/恢复归属检查及对应回归；未修改前端运行时代码或新增依赖。沿用本机 Rust 1.95 工具链，完整 bin 路径置于 PATH 首位。基线为 `6f55f5ea`，下列结果针对本轮未提交工作区。
+
+| 检查 | 结果 |
+| --- | --- |
+| `cargo test --manifest-path src-tauri/Cargo.toml --lib --test golden --test provider_commands --test provider_service` | lib 3808 通过、0 失败、9 忽略；golden 45、provider_commands 12 通过；provider_service 首次到达该套件时 50 通过、1 个旧清理语义断言失败，修复过程见下文 |
+| `cargo test --manifest-path src-tauri/Cargo.toml --test provider_service` | 修正测试后 51/51 通过；最终三个集成套件共 108 项通过 |
+| `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings` | Rust/Clippy 1.95 下通过，无 warning |
+| `cargo fmt --check --manifest-path src-tauri/Cargo.toml` / `git diff --check` | 通过 |
+| 文档本地链接、需求原文与许可证 | 本轮 3 份修改文档的相对文件目标已核对；原始项目总结、LICENSE 与 HEAD 一致 |
+| 前端 / 桌面 / 全量 nextest | 本轮未重跑前端测试与构建；前端未变。未运行桌面应用、真实 Agent、双应用并存 smoke 或全量 nextest，不能记作 V14 完成 |
+
+新增 3 个库单测和 2 个 golden 集成测试，既有测试同步迁移路由预期：
+
+- 外来 `custom` 表的普通/inline 写法、真实测试凭据、上游/Shield 占位符、profile 引用，在 6 种路由写入分支保持原值。
+- 手动导入的表即使与数据库 ID/URL 相同，也不获得删除授权；通过公开切换入口检查表和 profile 的原文保留。生效 profile 阻止切换时，配置、mtime 和数据库快照不变。
+- 只有 Shield 自有 ID 且形态精确匹配的官方镜像可以剥离；存在 profile 引用时保留。外来 `custom` 官方形态也不能被识别为 Shield 镜像。
+- 通过公开历史迁移/恢复入口检查 JSONL 和真实临时 SQLite：只迁移 `openai`；仅按目录、目标路由和会话账本恢复；外来 `custom` 文件字节及数据库字段始终不变。
+- 同目录旧 `custom` 完成标记不会阻止新的专属桶迁移；无元数据、损坏元数据、缺失目标和旧目标备份均不能用于恢复。历史门控覆盖生效 profile 覆盖顶层选路及缺失 profile 的负例。
+
+调试记录：首轮库测试有 38 个旧路由/清理语义 fixture 或断言失配，适配后全部通过。golden 随后发现一处 deeplink 快照期待 `custom`，已核对仅更新 selector 和表头；另一处新测试要求两个外来段落保持相邻，但插入 Shield 表会改变相邻关系，改为逐段检查原文（含注释/引号）和 profile 保留。最终 provider_service 的旧断言要求清除任意表中的代理占位符，现改为检查活跃 Shield 路由使用新地址/Key、外来表完整保留、占位符不回填数据库；定向重跑 51/51 通过。未放宽生产检查或批量接受未知快照。
+
+兼容性与未验收范围：旧 `custom` 历史和旧账本保留，不自动改写或纳入新账本；新路由 ID 的任意外部预占处理、完整首写备份/冲突恢复和真实并存属于 P0-02b2.3。本轮通过只证明上述自动化子集，不证明脱敏内核或端到端安全能力已实现。
+
 ## 1. 测试层次
 
 1. 内核单元测试：规则、Unicode、重叠匹配、作用域和 token，优先 Rust 内置测试与现有测试依赖。

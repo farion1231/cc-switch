@@ -1,7 +1,7 @@
 //! Codex 的投影：供应商行 → `config.toml` 的关键字段和独有字段。
 //!
 //! 行的形状是 `{auth, config}`（`config` 是 TOML 文本）。投影只取关键字段，第三方路由
-//! 一律写成 `[model_providers.custom]`：行里用别的 id（`deepseek`）、旧形态的顶层
+//! 一律写成 `[model_providers.xsec-agent-shield-route]`：行里用别的 id（`deepseek`）、旧形态的顶层
 //! `openai_base_url` 或顶层 `base_url`、旧版留下的保留 id 表（`[model_providers.openai]`），
 //! 都在这里归一。
 //! 行里其余内容（旧版回填进来的 MCP、projects、插件）不投影，归用户和 Codex。
@@ -19,8 +19,8 @@ use crate::live::floor;
 use crate::live::patch::toml::{same_value, shape_error, TomlDocPatch};
 use crate::live::patch::LiveWriteError;
 
-/// CC Switch 写入的路由表 id。
-pub const ROUTE_ID: &str = "custom";
+/// Shield 写入的独立路由表 id；通用 custom 表不属于 Shield。
+pub const ROUTE_ID: &str = crate::codex_config::XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID;
 /// 旧版代理官方路由写的表 id。会话按选中的 id 分桶，它让代理下的官方会话自成一桶，
 /// 表一删就 resume 不了，新版不再写；live 里留着的只清理。
 pub const OFFICIAL_PROXY_ROUTE_ID: &str =
@@ -93,7 +93,7 @@ pub fn requires_openai_auth(auth: RouteAuth, login_on_disk: bool) -> bool {
 pub enum Route {
     /// 官方：不写选路，走 Codex 内置的 openai（统一会话历史时另写官方镜像表）。
     Official,
-    /// 第三方：写成 `[model_providers.custom]`。`table` 已带上 Key，`requires_openai_auth`
+    /// 第三方：写成 `[model_providers.xsec-agent-shield-route]`。`table` 已带上 Key，`requires_openai_auth`
     /// 在写入时按 [`requires_openai_auth`] 现算。
     Custom { table: Table, auth: RouteAuth },
     /// 选中 Codex 内置的其他 provider（ollama、lmstudio、bedrock），bedrock 可以带覆盖表。
@@ -450,12 +450,12 @@ fn default_route(_doc: &DocumentMut, _input: &RowInput<'_>) -> Result<Route, App
 /// 写进 `config.toml` 的路由。
 #[derive(Debug, Clone)]
 pub enum RouteWrite {
-    /// 官方直连：不写选路。live 里已有 custom 表时改写成休眠形态（本地代理地址加占位
+    /// 官方直连：不写选路。live 里已有 Shield 自有路由表时改写成休眠形态（本地代理地址加占位
     /// Key）：Codex 按 provider id 给会话分桶，表一删，第三方的旧会话就 resume 不了。
     Official { dormant_base_url: String },
-    /// 官方直连且开了「统一会话历史」：选路写 custom，表是官方镜像（认证走官方登录）。
+    /// 官方直连且开了「统一会话历史」：选路写 Shield 自有路由，表是官方镜像（认证走官方登录）。
     OfficialMirror,
-    /// 第三方（直连或代理契约）：选路写 custom。
+    /// 第三方（直连或代理契约）：选路写 Shield 自有路由。
     Custom(Table),
     /// Codex 内置的其他 provider。
     BuiltIn { id: String, table: Option<Table> },
@@ -463,7 +463,7 @@ pub enum RouteWrite {
     Default,
     /// 代理的官方路由，客户端带自己的登录。写法和官方直连对齐，进出代理不换会话的桶：
     /// 没开「统一会话历史」时不写选路，顶层 `openai_base_url` 把内置 openai 改道到代理
-    /// （会话仍记在 `openai` 下）；开了时写 custom 官方镜像表，指向代理。
+    /// （会话仍记在 `openai` 下）；开了时写 Shield 官方镜像表，指向代理。
     OfficialProxy { base_url: String, unified: bool },
 }
 
@@ -518,13 +518,6 @@ pub fn proxy_route_table(name: &str, base_url: &str, requires_openai_auth: bool)
     table
 }
 
-/// 一张能证明是 CC Switch 写进去的 provider 表：id 和地址都对得上某个供应商行的投影。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KnownTable {
-    pub id: String,
-    pub base_url: String,
-}
-
 /// Codex `config.toml` 的补丁：只改关键字段和独有字段，其余字节不碰。
 #[derive(Debug, Clone)]
 pub struct CodexConfigPatch {
@@ -538,8 +531,6 @@ pub struct CodexConfigPatch {
     pub route: RouteWrite,
     /// 生成了模型目录：行里没有自己的指针时，`model_catalog_json` 写成 CC Switch 的目录。
     pub catalog: bool,
-    /// 旧版按别的 id 写进去的表，能证明是 CC Switch 写的就删掉（里面可能有真实 Key）。
-    pub retired: Vec<KnownTable>,
 }
 
 impl TomlDocPatch for CodexConfigPatch {
@@ -733,8 +724,8 @@ impl CodexConfigPatch {
             .as_table_like_mut()
             .ok_or_else(|| shape_error(path, &["model_providers".to_string()]))?;
 
-        // 旧版留下的保留 id 表会让 Codex 整份拒绝加载：能证明是 CC Switch 写的删掉，
-        // 其余按原样改名成 cc-switch-N（不知道用户在乎其中哪些键）。
+        // 保留 id 表会让 Codex 拒绝加载，原样改名到未占用的保留前缀。
+        // 不以导入记录或凭据占位符为由删除外来表。
         for id in RESERVED_TABLE_IDS {
             let Some(item) = providers.get(id) else {
                 continue;
@@ -743,28 +734,14 @@ impl CodexConfigPatch {
                 continue;
             }
             let item = providers.remove(id).expect("present");
-            if self.is_retired(id, &item) || holds_placeholder(&item) {
-                continue;
-            }
             let renamed = first_free_id(providers, LEGACY_REROUTE_ID);
             providers.insert(&renamed, item);
         }
 
-        // 旧版按别的 id 写进去的表（含旧版代理官方路由表）、残留的代理占位表。被 profile
-        // 引用的不动。
-        let doomed: Vec<String> = providers
-            .iter()
-            .filter(|(id, item)| {
-                *id != ROUTE_ID
-                    && !referenced.iter().any(|name| name == id)
-                    && (*id == OFFICIAL_PROXY_ROUTE_ID
-                        || holds_placeholder(item)
-                        || self.is_retired(id, item))
-            })
-            .map(|(id, _)| id.to_string())
-            .collect();
-        for id in doomed {
-            providers.remove(&id);
+        // Only the retired Shield official-route ID is ours to remove. A matching
+        // URL in an imported database row or a copied placeholder is not ownership.
+        if !referenced.iter().any(|id| id == OFFICIAL_PROXY_ROUTE_ID) {
+            providers.remove(OFFICIAL_PROXY_ROUTE_ID);
         }
 
         match &self.route {
@@ -775,7 +752,7 @@ impl CodexConfigPatch {
                 }
             }
             RouteWrite::Default | RouteWrite::BuiltIn { table: None, .. } => {
-                // custom 表是 CC Switch 的，没人选它了也留着（改成不带真实 Key 的休眠形态
+                // 独立路由表归 Shield 管理，没人选它了也留着（改成不带真实 Key 的休眠形态
                 // 由切回官方负责）：这里保持原样，只保证不留真实 Key。
                 if let Some(item) = providers.get_mut(ROUTE_ID) {
                     if let Some(table) = item.as_table_like_mut() {
@@ -804,7 +781,7 @@ impl CodexConfigPatch {
                 base_url,
                 unified: false,
             } => {
-                // 之前第三方路由留下的 custom 表改成休眠形态（同样指向本地代理）。
+                // 之前第三方路由留下的 Shield 自有表改成休眠形态（同样指向本地代理）。
                 if providers.contains_key(ROUTE_ID) {
                     let dormant = proxy_route_table(ROUTE_ID, base_url, false);
                     put_table(providers, ROUTE_ID, dormant, container_inline);
@@ -845,22 +822,6 @@ impl CodexConfigPatch {
             _ => None,
         }
     }
-
-    fn is_retired(&self, id: &str, item: &Item) -> bool {
-        let base_url = item
-            .as_table_like()
-            .and_then(|table| non_empty_str(table.get("base_url")));
-        self.retired
-            .iter()
-            .any(|known| known.id == id && base_url.as_deref() == Some(known.base_url.as_str()))
-    }
-}
-
-fn holds_placeholder(item: &Item) -> bool {
-    item.as_table_like()
-        .and_then(|table| table.get("experimental_bearer_token"))
-        .and_then(Item::as_str)
-        == Some(PROXY_TOKEN_PLACEHOLDER)
 }
 
 fn first_free_id(providers: &dyn TableLike, base: &str) -> String {
@@ -1105,7 +1066,6 @@ mod tests {
             outgoing: Vec::new(),
             route,
             catalog: false,
-            retired: Vec::new(),
         };
         let mut doc = live.parse::<DocumentMut>().unwrap();
         patch
@@ -1120,6 +1080,41 @@ mod tests {
         RouteWrite::OfficialProxy {
             base_url: PROXY.to_string(),
             unified,
+        }
+    }
+
+    #[test]
+    fn foreign_custom_tables_and_profile_references_survive_every_route_write() {
+        for token in ["foreign-key", "PROXY_MANAGED", PROXY_TOKEN_PLACEHOLDER] {
+            for inline in [false, true] {
+                let table = format!("name = 'Foreign', base_url = 'https://foreign.example/v1', experimental_bearer_token = '{token}'");
+                let live = if inline {
+                    format!("model_provider = 'custom'\nmodel_providers = {{ custom = {{ {table} }} }}\n[profiles.foreign]\nmodel_provider = 'custom'\n")
+                } else {
+                    format!("model_provider = 'custom'\n[model_providers.custom] # preserve this comment\n{}\n[profiles.foreign]\nmodel_provider = 'custom'\n", table.replace(", ", "\n"))
+                };
+                let before = live.parse::<DocumentMut>().unwrap();
+                for route in [
+                    RouteWrite::Custom(proxy_route_table(ROUTE_ID, PROXY, false)),
+                    RouteWrite::Official {
+                        dormant_base_url: PROXY.to_string(),
+                    },
+                    RouteWrite::OfficialMirror,
+                    official_proxy(false),
+                    official_proxy(true),
+                    RouteWrite::Default,
+                ] {
+                    let after = apply(route, &live);
+                    assert_eq!(
+                        after["model_providers"]["custom"].to_string(),
+                        before["model_providers"]["custom"].to_string()
+                    );
+                    assert_eq!(
+                        after["profiles"].to_string(),
+                        before["profiles"].to_string()
+                    );
+                }
+            }
         }
     }
 
@@ -1143,7 +1138,7 @@ experimental_bearer_token = "PROXY_MANAGED"
     #[test]
     fn the_official_proxy_route_stays_in_the_built_in_openai_bucket() {
         // 旧版写的 xsec-agent-shield-official 表删掉；第三方留下的 custom 表改成休眠形态。
-        let live = "model_provider = \"xsec-agent-shield-official\"\nopenai_base_url = \"https://stale.example/v1\"\nmodel = \"gpt-5.5\"\n\n[model_providers.xsec-agent-shield-official]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:15721/v1\"\nrequires_openai_auth = true\n\n[model_providers.custom]\nname = \"custom\"\nbase_url = \"https://relay.example/v1\"\nexperimental_bearer_token = \"sk-relay\"\n";
+        let live = "model_provider = \"xsec-agent-shield-official\"\nopenai_base_url = \"https://stale.example/v1\"\nmodel = \"gpt-5.5\"\n\n[model_providers.xsec-agent-shield-official]\nname = \"OpenAI\"\nbase_url = \"http://127.0.0.1:15721/v1\"\nrequires_openai_auth = true\n\n[model_providers.xsec-agent-shield-route]\nname = \"custom\"\nbase_url = \"https://relay.example/v1\"\nexperimental_bearer_token = \"sk-relay\"\n";
         let doc = apply(official_proxy(false), live);
         assert!(doc.get("model_provider").is_none(), "{doc}");
         assert_eq!(doc["openai_base_url"].as_str(), Some(PROXY));

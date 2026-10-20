@@ -368,8 +368,11 @@ mod tests {
                 .expect("keyless managed Copilot preview");
                 let text = view.settings["config"].as_str().expect("config text");
                 let parsed: toml::Value = toml::from_str(text).expect("preview TOML");
-                let route = &parsed["model_providers"]["custom"];
-                assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
+                let route = &parsed["model_providers"]["xsec-agent-shield-route"];
+                assert_eq!(
+                    parsed["model_provider"].as_str(),
+                    Some("xsec-agent-shield-route")
+                );
                 assert_eq!(route["wire_api"].as_str(), Some("responses"));
                 assert!(route.get("requires_openai_auth").is_none());
                 assert!(route.get("experimental_bearer_token").is_none());
@@ -1013,7 +1016,7 @@ mod tests {
             );
 
             // 旧版「统一会话历史」注入进 live、又被回填进行里的形态，保存时剥掉。
-            unbound.settings_config["config"] = Value::String("model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"OpenAI\"\nrequires_openai_auth = true\nsupports_websockets = true\nwire_api = \"responses\"\n".to_string());
+            unbound.settings_config["config"] = Value::String("model_provider = \"xsec-agent-shield-route\"\n\n[model_providers.xsec-agent-shield-route]\nname = \"OpenAI\"\nrequires_openai_auth = true\nsupports_websockets = true\nwire_api = \"responses\"\n".to_string());
             ProviderService::update(state, AppType::Codex, Some(provider_id), unbound)
                 .expect("unbind managed account");
 

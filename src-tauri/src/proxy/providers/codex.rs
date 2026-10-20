@@ -1274,8 +1274,11 @@ wire_api = "responses"
             .unwrap();
             let config = projection.catalog_input_text();
             let parsed: TomlValue = toml::from_str(&config).unwrap();
-            assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
-            let route = &parsed["model_providers"]["custom"];
+            assert_eq!(
+                parsed["model_provider"].as_str(),
+                Some("xsec-agent-shield-route")
+            );
+            let route = &parsed["model_providers"]["xsec-agent-shield-route"];
             assert_eq!(route["wire_api"].as_str(), Some("responses"));
             assert!(route.get("requires_openai_auth").is_none());
 
@@ -1438,7 +1441,7 @@ context_window = 500000
         let mut unified_session = create_provider(json!({
             "auth": {},
             // 旧版「统一会话历史」注入进 live、又被回填进行里的形态。
-            "config": "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"OpenAI\"\nrequires_openai_auth = true\nsupports_websockets = true\nwire_api = \"responses\"\n"
+            "config": "model_provider = \"xsec-agent-shield-route\"\n\n[model_providers.xsec-agent-shield-route]\nname = \"OpenAI\"\nrequires_openai_auth = true\nsupports_websockets = true\nwire_api = \"responses\"\n"
         }));
         unified_session.category = Some("official".to_string());
         assert!(is_codex_official_provider(&unified_session));

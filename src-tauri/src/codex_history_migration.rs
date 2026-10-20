@@ -126,12 +126,12 @@ pub struct CodexProviderTemplateBucketMigrationOutcome {
     pub migrated_provider_ids: Vec<String>,
 }
 
-/// 统一会话开关的存量迁移：把官方会话（内建 "openai" 桶）迁入共享 "custom" 桶。
+/// 统一会话开关的存量迁移：把官方会话（内建 "openai" 桶）迁入 Shield 专属路由桶。
 ///
 /// 仅当用户在开启弹窗里勾选了"迁入既有官方会话"（`unify_codex_migrate_existing`）
 /// 且本轮未完成时执行；开关关闭时标记与勾选意愿都会被清除（见 `save_settings`），
 /// 重新开启并再次勾选即可补迁关闭期间产生的官方会话。
-/// custom 桶里官方与第三方会话无法区分，自动逻辑绝不反向搬回；
+/// Shield 路由桶里官方与第三方会话无法区分，自动逻辑绝不反向搬回；
 /// 用户可在关闭开关时选择按备份账本精确还原（见 `restore_codex_official_history_from_backups`）。
 /// 迁移前 jsonl / state DB 均备份到 `~/.xsec-agent-shield/backups/codex-official-history-unify-v1/`。
 pub fn maybe_migrate_codex_official_history_to_unified_bucket(
@@ -159,13 +159,13 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
             ..Default::default()
         });
     }
-    // live 必须已实际路由到共享 custom 桶才允许迁移：官方配置的注入可能被拒
-    // （已有显式 model_provider / 形态冲突的 custom 表，见
+    // live 必须已实际路由到 Shield 专属路由桶才允许迁移：官方配置的注入可能被拒
+    // （已有显式 model_provider / 形态冲突的 Shield 路由表，见
     // `inject_codex_unified_session_bucket`），live 也可能还没按开关重写。
     // 这些状态下新会话仍落 "openai" 桶，迁移只会把历史搬进当前 live 看不见的
     // 桶里。开关与迁移意愿保持不动，待 live 真正统一后（下次切换 / 启动重试）
     // 再迁。
-    if !codex_config_text_routes_custom(&read_codex_config_text().unwrap_or_default()) {
+    if !codex_config_text_routes_shield(&read_codex_config_text().unwrap_or_default()) {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("live_not_unified".to_string()),
             ..Default::default()
@@ -211,14 +211,23 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
     Ok(outcome)
 }
 
-/// live config.toml 是否路由到共享 custom 桶（会话分桶只看这个实态：
+/// live config.toml 是否路由到 Shield 专属路由桶（会话分桶只看这个实态：
 /// base_url / 接管与否都不影响 session_meta 记录的 model_provider）。
-fn codex_config_text_routes_custom(config_text: &str) -> bool {
+fn codex_config_text_routes_shield(config_text: &str) -> bool {
     config_text
         .parse::<DocumentMut>()
         .ok()
         .and_then(|doc| {
-            doc.get("model_provider")
+            let profile_route = match doc.get("profile") {
+                Some(selected) => doc
+                    .get("profiles")?
+                    .get(selected.as_str()?)?
+                    .as_table_like()?
+                    .get("model_provider"),
+                None => None,
+            };
+            profile_route
+                .or_else(|| doc.get("model_provider"))
                 .and_then(|item| item.as_str())
                 .map(|id| id.trim() == XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID)
         })
@@ -324,13 +333,13 @@ fn canonical_dir_string(dir: &Path) -> String {
         .to_string()
 }
 
-/// 在备份代际根目录写入 meta.json，记录这批备份来自哪个 Codex 目录。
+/// 在备份代际根目录写入 meta.json，记录来源 Codex 目录和迁移目标路由。
 /// 代际目录不存在（本轮没有任何文件被迁移）时跳过。
 fn write_backup_generation_meta(backup_root: &Path, codex_dir_key: &str) -> Result<(), AppError> {
     if !backup_root.exists() {
         return Ok(());
     }
-    let payload = serde_json::json!({ "codexConfigDir": codex_dir_key });
+    let payload = serde_json::json!({ "codexConfigDir": codex_dir_key, "targetProviderId": XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID });
     let bytes =
         serde_json::to_vec_pretty(&payload).map_err(|e| AppError::JsonSerialize { source: e })?;
     atomic_write(&backup_root.join("meta.json"), &bytes)
@@ -371,7 +380,7 @@ fn has_official_history_unify_backup_for_dir(ledger_parent: &Path, codex_dir_key
     })
 }
 
-/// 关闭统一会话开关时的可选还原：按迁移备份账本，把当时迁入共享 custom 桶的
+/// 关闭统一会话开关时的可选还原：按迁移备份账本，把当时迁入 Shield 专属路由桶的
 /// 官方会话精确翻回 "openai" 桶。
 ///
 /// 备份是唯一可信的归属证据：备份里 model_provider=="openai" 的会话必定源自
@@ -379,11 +388,11 @@ fn has_official_history_unify_backup_for_dir(ledger_parent: &Path, codex_dir_key
 /// 第三方，方向无法判定（产品决策：宁可留在第三方历史）。
 /// 扫描全部备份代际取并集，多次开关循环后仍能还原早期迁入的会话；
 /// 还原前改动目标先备份到独立的 restore 目录（保持迁移账本目录纯净），
-/// 且只改写当前仍为 custom 的目标，重复执行无害。
+/// 且只改写当前仍为 Shield 专属路由 的目标，重复执行无害。
 pub fn restore_codex_official_history_from_backups(
 ) -> Result<CodexOfficialHistoryRestoreOutcome, AppError> {
     let _op_guard = lock_codex_official_history_op();
-    // 开关已（重新）开启时拒绝还原：live 正路由 custom，把账本会话翻回
+    // 开关已（重新）开启时拒绝还原：live 正路由 Shield 专属桶，把账本会话翻回
     // openai 桶等于亲手制造分裂。覆盖"关闭保存成功后用户立刻重新开启，
     // 还原排在重开迁移之后才拿到 op lock"的时序。
     if crate::settings::unify_codex_session_history() {
@@ -443,7 +452,7 @@ fn restore_codex_official_history_inner(
     }
 
     if restored_jsonl_files == 0 && restored_state_rows == 0 {
-        // 账本非空但没有任何"当前仍为 custom"的目标（如重复还原）：
+        // 账本非空但没有任何"当前仍为 Shield 专属路由"的目标（如重复还原）：
         // 以 reason 告知前端，避免误报"已还原 0 项"为成功。
         return Ok(CodexOfficialHistoryRestoreOutcome {
             skipped_reason: Some("nothing_to_restore".to_string()),
@@ -460,10 +469,10 @@ fn restore_codex_official_history_inner(
 
 /// 从备份代际收集官方会话账本：jsonl 备份里 session_meta 为 "openai" 的
 /// 会话 id + state DB 备份里 model_provider 为 "openai" 的 thread id。
-/// 只采纳 meta.json 目录与当前 Codex 目录一致的代际，避免切换
+/// 只采纳 meta.json 目录与当前 Codex 目录一致、目标为 Shield 专属路由的代际，避免切换
 /// codex_config_dir 后拿旧目录的账本作用到新目录。
 /// 还原操作自身的备份（restore 目录）天然不会混入：那些副本里的 id 都是
-/// custom，解析后贡献为空。
+/// Shield 专属路由，解析后贡献为空。
 fn collect_official_ledger(
     ledger_parent: &Path,
     codex_dir_key: &str,
@@ -496,22 +505,19 @@ fn collect_official_ledger(
     Ok((session_ids, thread_ids))
 }
 
-/// 备份代际是否属于指定 Codex 目录。无 meta.json 或解析失败时宽容接受：
-/// 早期版本的备份没有 meta，而那个时期不存在切目录场景；误纳的代价也被
-/// "按会话 id 精确匹配 + 仅改写 custom"双重条件兜底。
+/// Only a valid ledger for this directory and Shield route can authorize restoration.
+/// Legacy or malformed metadata must not claim sessions in a shared provider bucket.
 fn backup_generation_matches_dir(generation: &Path, codex_dir_key: &str) -> bool {
     let Ok(text) = fs::read_to_string(generation.join("meta.json")) else {
-        return true;
+        return false;
     };
     serde_json::from_str::<Value>(&text)
         .ok()
-        .and_then(|value| {
-            value
-                .get("codexConfigDir")
-                .and_then(Value::as_str)
-                .map(|dir| dir == codex_dir_key)
+        .is_some_and(|meta| {
+            meta.get("codexConfigDir").and_then(Value::as_str) == Some(codex_dir_key)
+                && meta.get("targetProviderId").and_then(Value::as_str)
+                    == Some(XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID)
         })
-        .unwrap_or(true)
 }
 
 fn collect_official_session_ids_from_backup(path: &Path, session_ids: &mut HashSet<String>) {
@@ -1412,36 +1418,45 @@ mod tests {
     }
 
     #[test]
-    fn detects_custom_routed_codex_config_for_unify_gate() {
+    fn detects_shield_routed_codex_config_for_unify_gate() {
         // 注入产物（官方 + 统一开关）
-        assert!(codex_config_text_routes_custom(
-            r#"model_provider = "custom"
+        assert!(codex_config_text_routes_shield(
+            r#"model_provider = "xsec-agent-shield-route"
 
-[model_providers.custom]
+[model_providers.xsec-agent-shield-route]
 name = "OpenAI"
 requires_openai_auth = true
 supports_websockets = true
 wire_api = "responses"
 "#
         ));
-        // 第三方供应商的常规 custom 路由（带 base_url）同样算已统一
-        assert!(codex_config_text_routes_custom(
-            r#"model_provider = "custom"
+        // 第三方供应商经 Shield 专属路由（带 base_url）同样算已统一
+        assert!(codex_config_text_routes_shield(
+            r#"model_provider = "xsec-agent-shield-route"
 
-[model_providers.custom]
+[model_providers.xsec-agent-shield-route]
 name = "AIHubMix"
 base_url = "https://aihubmix.example/v1"
 "#
         ));
         // 注入被拒的形态：显式 openai 路由 / 无 model_provider（接管期间、空配置）
-        assert!(!codex_config_text_routes_custom(
+        assert!(!codex_config_text_routes_shield(
             "model_provider = \"openai\"\n"
         ));
-        assert!(!codex_config_text_routes_custom(
+        assert!(!codex_config_text_routes_shield(
             "base_url = \"http://127.0.0.1:15721/codex\"\n"
         ));
-        assert!(!codex_config_text_routes_custom(""));
-        assert!(!codex_config_text_routes_custom("not toml ["));
+        assert!(!codex_config_text_routes_shield(""));
+        assert!(!codex_config_text_routes_shield("not toml ["));
+        assert!(!codex_config_text_routes_shield(
+            "model_provider = 'xsec-agent-shield-route'\nprofile = 'work'\n[profiles.work]\nmodel_provider = 'custom'\n"
+        ));
+        assert!(!codex_config_text_routes_shield(
+            "model_provider = 'xsec-agent-shield-route'\nprofile = 'missing'\n"
+        ));
+        assert!(codex_config_text_routes_shield(
+            "model_provider = 'xsec-agent-shield-route'\nprofile = 'work'\n[profiles.work]\nmodel = 'test-model'\n"
+        ));
     }
 
     fn migrate_provider_templates_for_test(
@@ -1501,9 +1516,9 @@ base_url = "https://aihubmix.example/v1"
                 "Already Normalized".to_string(),
                 serde_json::json!({
                     "auth": {},
-                    "config": r#"model_provider = "custom"
+                    "config": r#"model_provider = "xsec-agent-shield-route"
 
-[model_providers.custom]
+[model_providers.xsec-agent-shield-route]
 name = "AIHubMix"
 base_url = "https://aihubmix.example/v1"
 "#
@@ -1569,7 +1584,7 @@ base_url = "https://proxy.example/v1"
                 "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s3\",\"model_provider\":\"ccswitch\"}}\n",
                 "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s4\",\"model_provider\":\"my-private-relay\"}}\n",
                 "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s5\",\"model_provider\":\"openai\"}}\n",
-                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s6\",\"model_provider\":\"custom\"}}\n",
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s6\",\"model_provider\":\"xsec-agent-shield-route\"}}\n",
             ),
         )
         .expect("write session");
@@ -1581,7 +1596,7 @@ base_url = "https://proxy.example/v1"
         let session_text = fs::read_to_string(&session_path).expect("read session");
         assert_eq!(
             session_text
-                .matches("\"model_provider\":\"custom\"")
+                .matches("\"model_provider\":\"xsec-agent-shield-route\"")
                 .count(),
             4
         );
@@ -1604,7 +1619,7 @@ base_url = "https://proxy.example/v1"
                 ('ccswitch-thread', 'ccswitch'),
                 ('manual-thread', 'my-private-relay'),
                 ('openai-thread', 'openai'),
-                ('custom-thread', 'custom');",
+                ('custom-thread', 'xsec-agent-shield-route');",
         )
         .expect("seed state db");
         drop(conn);
@@ -1627,7 +1642,7 @@ base_url = "https://proxy.example/v1"
             )
             .expect("count provider")
         };
-        assert_eq!(count_provider("custom"), 4);
+        assert_eq!(count_provider("xsec-agent-shield-route"), 4);
         assert_eq!(count_provider("my-private-relay"), 1);
         assert_eq!(count_provider("openai"), 1);
         assert!(backup_root
@@ -1670,7 +1685,7 @@ base_url = "https://proxy.example/v1"
             rightcode_config
                 .get("model_provider")
                 .and_then(|value| value.as_str()),
-            Some("custom")
+            Some("xsec-agent-shield-route")
         );
         assert!(rightcode_config
             .get("model_providers")
@@ -1683,7 +1698,7 @@ base_url = "https://proxy.example/v1"
             ccswitch_config
                 .get("model_provider")
                 .and_then(|value| value.as_str()),
-            Some("custom")
+            Some("xsec-agent-shield-route")
         );
         assert!(ccswitch_config
             .get("model_providers")
@@ -1715,7 +1730,7 @@ base_url = "https://proxy.example/v1"
             normalized_config
                 .get("model_provider")
                 .and_then(|value| value.as_str()),
-            Some("custom")
+            Some("xsec-agent-shield-route")
         );
     }
 
@@ -1738,7 +1753,7 @@ base_url = "https://proxy.example/v1"
             &session_path,
             concat!(
                 "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"openai\"}}\n",
-                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s2\",\"model_provider\":\"custom\"}}\n",
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s2\",\"model_provider\":\"xsec-agent-shield-route\"}}\n",
                 "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s3\",\"model_provider\":\"my-private-relay\"}}\n",
                 "{\"type\":\"response_item\",\"payload\":{\"text\":\"openai\"}}\n",
             ),
@@ -1752,7 +1767,7 @@ base_url = "https://proxy.example/v1"
         let session_text = fs::read_to_string(&session_path).expect("read session");
         assert_eq!(
             session_text
-                .matches("\"model_provider\":\"custom\"")
+                .matches("\"model_provider\":\"xsec-agent-shield-route\"")
                 .count(),
             2
         );
@@ -1779,7 +1794,7 @@ base_url = "https://proxy.example/v1"
             );
             INSERT INTO threads (id, model_provider) VALUES
                 ('openai-thread', 'openai'),
-                ('custom-thread', 'custom'),
+                ('custom-thread', 'xsec-agent-shield-route'),
                 ('manual-thread', 'my-private-relay');",
         )
         .expect("seed state db");
@@ -1803,7 +1818,7 @@ base_url = "https://proxy.example/v1"
             )
             .expect("count provider")
         };
-        assert_eq!(count_provider("custom"), 2);
+        assert_eq!(count_provider("xsec-agent-shield-route"), 2);
         assert_eq!(count_provider("openai"), 0);
         assert_eq!(count_provider("my-private-relay"), 1);
     }
@@ -1846,7 +1861,7 @@ base_url = "https://proxy.example/v1"
         let official_path = session_dir.join("official.jsonl");
         fs::write(
             &official_path,
-            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"custom\"}}\n",
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"xsec-agent-shield-route\"}}\n",
         )
         .expect("write official session");
         let on_period_dir = codex_dir.join("sessions/2026/06/12");
@@ -1855,7 +1870,7 @@ base_url = "https://proxy.example/v1"
         fs::write(
             &on_period_path,
             concat!(
-                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s2\",\"model_provider\":\"custom\"}}\n",
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s2\",\"model_provider\":\"xsec-agent-shield-route\"}}\n",
                 "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s3\",\"model_provider\":\"my-private-relay\"}}\n",
             ),
         )
@@ -1866,8 +1881,8 @@ base_url = "https://proxy.example/v1"
         conn.execute_batch(
             "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL);
             INSERT INTO threads (id, model_provider) VALUES
-                ('t1', 'custom'),
-                ('t2', 'custom'),
+                ('t1', 'xsec-agent-shield-route'),
+                ('t2', 'xsec-agent-shield-route'),
                 ('t3', 'openai');",
         )
         .expect("seed state db");
@@ -1877,7 +1892,8 @@ base_url = "https://proxy.example/v1"
         fs::write(
             generation.join("meta.json"),
             serde_json::to_vec_pretty(&serde_json::json!({
-                "codexConfigDir": canonical_dir_string(&codex_dir)
+                "codexConfigDir": canonical_dir_string(&codex_dir),
+                "targetProviderId": XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID
             }))
             .expect("serialize meta"),
         )
@@ -1897,7 +1913,9 @@ base_url = "https://proxy.example/v1"
         let official_text = fs::read_to_string(&official_path).expect("read official");
         assert!(official_text.contains("\"model_provider\":\"openai\""));
         let on_period_text = fs::read_to_string(&on_period_path).expect("read on-period");
-        assert!(on_period_text.contains("\"id\":\"s2\",\"model_provider\":\"custom\""));
+        assert!(
+            on_period_text.contains("\"id\":\"s2\",\"model_provider\":\"xsec-agent-shield-route\"")
+        );
         assert!(on_period_text.contains("\"model_provider\":\"my-private-relay\""));
 
         let conn = Connection::open(&state_db_path).expect("reopen state db");
@@ -1910,7 +1928,7 @@ base_url = "https://proxy.example/v1"
             .expect("thread provider")
         };
         assert_eq!(provider_of("t1"), "openai");
-        assert_eq!(provider_of("t2"), "custom");
+        assert_eq!(provider_of("t2"), "xsec-agent-shield-route");
         assert_eq!(provider_of("t3"), "openai");
         drop(conn);
 
@@ -1962,7 +1980,7 @@ base_url = "https://proxy.example/v1"
         let session_path = session_dir.join("official.jsonl");
         fs::write(
             &session_path,
-            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"custom\"}}\n",
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"xsec-agent-shield-route\"}}\n",
         )
         .expect("write session");
 
@@ -1975,7 +1993,7 @@ base_url = "https://proxy.example/v1"
         .expect("restore");
         assert_eq!(outcome.skipped_reason.as_deref(), Some("no_backup_ledger"));
         let text = fs::read_to_string(&session_path).expect("read session");
-        assert!(text.contains("\"model_provider\":\"custom\""));
+        assert!(text.contains("\"model_provider\":\"xsec-agent-shield-route\""));
     }
 
     #[test]
@@ -2003,9 +2021,9 @@ base_url = "https://proxy.example/v1"
             codex_dir_key
         ));
 
-        // 无 meta 的早期代际：宽容接受（与 restore 的账本口径一致）
+        // 无 meta 的早期代际：不具备归属证据
         fs::create_dir_all(ledger_parent.join("20260612_020202")).expect("create legacy gen");
-        assert!(has_official_history_unify_backup_for_dir(
+        assert!(!has_official_history_unify_backup_for_dir(
             &ledger_parent,
             codex_dir_key
         ));
@@ -2014,9 +2032,21 @@ base_url = "https://proxy.example/v1"
         fs::remove_dir_all(ledger_parent.join("20260612_020202")).expect("remove legacy gen");
         let matched = ledger_parent.join("20260612_030303");
         fs::create_dir_all(&matched).expect("create matched gen");
+        for invalid_meta in [
+            "not-json".to_string(),
+            serde_json::json!({"codexConfigDir": codex_dir_key}).to_string(),
+            serde_json::json!({"codexConfigDir": codex_dir_key, "targetProviderId": "custom"})
+                .to_string(),
+        ] {
+            fs::write(matched.join("meta.json"), invalid_meta).unwrap();
+            assert!(!has_official_history_unify_backup_for_dir(
+                &ledger_parent,
+                codex_dir_key
+            ));
+        }
         fs::write(
             matched.join("meta.json"),
-            format!("{{\n  \"codexConfigDir\": \"{codex_dir_key}\"\n}}"),
+            serde_json::json!({"codexConfigDir": codex_dir_key, "targetProviderId": XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID}).to_string(),
         )
         .expect("write matched meta");
         assert!(has_official_history_unify_backup_for_dir(
@@ -2033,7 +2063,7 @@ base_url = "https://proxy.example/v1"
         fs::create_dir_all(&session_dir).expect("create session dir");
         fs::write(
             session_dir.join("session.jsonl"),
-            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"custom\"}}\n",
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"s1\",\"model_provider\":\"xsec-agent-shield-route\"}}\n",
         )
         .expect("write session");
 
@@ -2049,7 +2079,7 @@ base_url = "https://proxy.example/v1"
         assert_eq!(outcome.restored_state_rows, 0);
 
         let text = fs::read_to_string(session_dir.join("session.jsonl")).expect("read session");
-        assert!(text.contains("\"model_provider\":\"custom\""));
+        assert!(text.contains("\"model_provider\":\"xsec-agent-shield-route\""));
     }
 
     #[test]
@@ -2102,7 +2132,7 @@ base_url = "https://proxy.example/v1"
         let raw = fs::read(&path).expect("read raw");
         assert_eq!(&raw[..4], &[0x28, 0xB5, 0x2F, 0xFD], "still zstd");
         let next = codex_rollout_file::read_to_string(&path).expect("read rewritten");
-        assert!(next.contains("\"model_provider\":\"custom\""));
+        assert!(next.contains("\"model_provider\":\"xsec-agent-shield-route\""));
         assert!(next.ends_with("\"content\":\"hi\"}}\n"));
         let backup = fs::read(backup_root.join("jsonl/sessions/2026/05/20/rollout-test.jsonl.zst"))
             .expect("backup kept as zst");
@@ -2139,7 +2169,7 @@ base_url = "https://proxy.example/v1"
 
         assert!(changed);
         let next = fs::read_to_string(&path).expect("read rewritten");
-        assert!(next.contains("\"model_provider\":\"custom\""));
+        assert!(next.contains("\"model_provider\":\"xsec-agent-shield-route\""));
         assert!(backup_root
             .join("jsonl/sessions/2026/05/20/rollout-test.jsonl")
             .exists());
@@ -2193,7 +2223,7 @@ base_url = "https://proxy.example/v1"
             INSERT INTO threads (id, model_provider) VALUES
                 ('a', 'aihubmix'),
                 ('b', 'openai'),
-                ('c', 'custom');",
+                ('c', 'xsec-agent-shield-route');",
         )
         .expect("seed db");
         drop(conn);
@@ -2256,7 +2286,7 @@ base_url = "https://proxy.example/v1"
         let conn = Connection::open(&db_path).expect("reopen db");
         let custom_count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM threads WHERE model_provider = 'custom'",
+                "SELECT COUNT(*) FROM threads WHERE model_provider = 'xsec-agent-shield-route'",
                 [],
                 |row| row.get(0),
             )
@@ -2431,7 +2461,7 @@ model_provider = "my-private-relay"
             "AIHubMix".to_string(),
             serde_json::json!({
                 "auth": {},
-                "config": "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"AIHubMix\"\nbase_url = \"https://aihubmix.example/v1\""
+                "config": "model_provider = \"xsec-agent-shield-route\"\n\n[model_providers.xsec-agent-shield-route]\nname = \"AIHubMix\"\nbase_url = \"https://aihubmix.example/v1\""
             }),
             None,
         );
@@ -2510,7 +2540,7 @@ model = "gpt-5.4"
             parsed
                 .get("model_provider")
                 .and_then(|value| value.as_str()),
-            Some("custom")
+            Some("xsec-agent-shield-route")
         );
         assert!(parsed
             .get("model_providers")
@@ -2519,7 +2549,7 @@ model = "gpt-5.4"
         assert_eq!(
             parsed
                 .get("model_providers")
-                .and_then(|value| value.get("custom"))
+                .and_then(|value| value.get("xsec-agent-shield-route"))
                 .and_then(|value| value.get("base_url"))
                 .and_then(|value| value.as_str()),
             Some("https://aihubmix.example/v1")
@@ -2530,7 +2560,7 @@ model = "gpt-5.4"
                 .and_then(|value| value.get("work"))
                 .and_then(|value| value.get("model_provider"))
                 .and_then(|value| value.as_str()),
-            Some("custom")
+            Some("xsec-agent-shield-route")
         );
 
         let backups: Vec<_> = fs::read_dir(backup_dir.path().join("providers"))
@@ -2586,7 +2616,7 @@ base_url = "https://aihubmix.example/v1"
             parsed
                 .get("model_provider")
                 .and_then(|value| value.as_str()),
-            Some("custom")
+            Some("xsec-agent-shield-route")
         );
         assert!(parsed
             .get("model_providers")
@@ -2595,7 +2625,7 @@ base_url = "https://aihubmix.example/v1"
         assert_eq!(
             parsed
                 .get("model_providers")
-                .and_then(|value| value.get("custom"))
+                .and_then(|value| value.get("xsec-agent-shield-route"))
                 .and_then(|value| value.get("base_url"))
                 .and_then(|value| value.as_str()),
             Some("https://aihubmix.example/v1")
@@ -2708,10 +2738,10 @@ base_url = "https://proxy.example/v1"
             "Profiled Relay".to_string(),
             serde_json::json!({
                 "auth": {},
-                "config": r#"model_provider = "custom"
+                "config": r#"model_provider = "xsec-agent-shield-route"
 profile = "work"
 
-[model_providers.custom]
+[model_providers.xsec-agent-shield-route]
 name = "Current"
 base_url = "https://current.example/v1"
 
@@ -2747,12 +2777,12 @@ model_provider = "aihubmix"
                 .and_then(|value| value.get("work"))
                 .and_then(|value| value.get("model_provider"))
                 .and_then(|value| value.as_str()),
-            Some("custom")
+            Some("xsec-agent-shield-route")
         );
         assert_eq!(
             parsed
                 .get("model_providers")
-                .and_then(|value| value.get("custom"))
+                .and_then(|value| value.get("xsec-agent-shield-route"))
                 .and_then(|value| value.get("base_url"))
                 .and_then(|value| value.as_str()),
             Some("https://current.example/v1")
@@ -2851,7 +2881,7 @@ model_provider = "aihubmix"
         fs::write(&session, &before).unwrap();
         fs::write(
             codex_dir.join("config.toml"),
-            "model_provider = \"custom\"\n",
+            "model_provider = \"xsec-agent-shield-route\"\n",
         )
         .unwrap();
 
@@ -2900,6 +2930,88 @@ model_provider = "aihubmix"
 
     #[test]
     #[serial]
+    fn public_history_migration_and_restore_leave_foreign_custom_history_untouched() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let home = IsolatedHome::new();
+        let codex_dir = home.codex_dir();
+        fs::create_dir_all(codex_dir.join("sessions")).unwrap();
+        let official_path = codex_dir.join("sessions/official.jsonl");
+        let foreign_path = codex_dir.join("sessions/foreign.jsonl");
+        let official_before = session_meta_line("official", "openai");
+        let foreign_before = session_meta_line("foreign", "custom");
+        fs::write(&official_path, &official_before).unwrap();
+        fs::write(&foreign_path, &foreign_before).unwrap();
+        let db_path = codex_dir.join(CODEX_STATE_DB_FILENAME);
+        seed_threads(&db_path, &[("official", "openai"), ("foreign", "custom")]);
+        let mut settings = crate::settings::get_settings();
+        settings.unify_codex_session_history = true;
+        settings.unify_codex_migrate_existing = Some(true);
+        crate::settings::update_settings(settings).unwrap();
+        let dir_key = canonical_dir_string(&codex_dir);
+        // A prior shared-bucket marker cannot suppress the isolated migration.
+        assert!(
+            crate::settings::mark_codex_official_history_unify_migrated_if_enabled(
+                CodexOfficialHistoryUnifyMigration {
+                    completed_at: Utc::now().to_rfc3339(),
+                    target_provider_id: "custom".to_string(),
+                    migrated_jsonl_files: 1,
+                    migrated_state_rows: 1,
+                    codex_config_dir: Some(dir_key.clone()),
+                }
+            )
+            .unwrap()
+        );
+        assert!(!crate::settings::is_codex_official_history_unify_migrated_for_dir(&dir_key));
+        fs::write(
+            codex_dir.join("config.toml"),
+            "model_provider = \"custom\"\n",
+        )
+        .unwrap();
+        let skipped = maybe_migrate_codex_official_history_to_unified_bucket().unwrap();
+        assert_eq!(skipped.skipped_reason.as_deref(), Some("live_not_unified"));
+        assert_eq!(
+            fs::read(&official_path).unwrap(),
+            official_before.as_bytes()
+        );
+        assert_eq!(thread_provider(&db_path, "official"), "openai");
+        assert!(!has_codex_official_history_unify_backup());
+
+        fs::write(
+            codex_dir.join("config.toml"),
+            format!("model_provider = \"{XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID}\"\n"),
+        )
+        .unwrap();
+        let migrated = maybe_migrate_codex_official_history_to_unified_bucket().unwrap();
+        assert_eq!(migrated.migrated_jsonl_files, 1);
+        assert_eq!(migrated.migrated_state_rows, 1);
+        assert_eq!(
+            thread_provider(&db_path, "official"),
+            XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID
+        );
+        assert_eq!(fs::read(&foreign_path).unwrap(), foreign_before.as_bytes());
+        assert_eq!(thread_provider(&db_path, "foreign"), "custom");
+        assert!(crate::settings::is_codex_official_history_unify_migrated_for_dir(&dir_key));
+        assert!(has_codex_official_history_unify_backup());
+
+        let mut settings = crate::settings::get_settings();
+        settings.unify_codex_session_history = false;
+        crate::settings::update_settings(settings).unwrap();
+        let restored = restore_codex_official_history_from_backups().unwrap();
+        assert_eq!(restored.restored_jsonl_files, 1);
+        assert_eq!(restored.restored_state_rows, 1);
+        assert_eq!(
+            fs::read(&official_path).unwrap(),
+            official_before.as_bytes()
+        );
+        assert_eq!(thread_provider(&db_path, "official"), "openai");
+        assert_eq!(fs::read(&foreign_path).unwrap(), foreign_before.as_bytes());
+        assert_eq!(thread_provider(&db_path, "foreign"), "custom");
+    }
+
+    #[test]
+    #[serial]
     fn migrates_legacy_official_route_sessions_to_openai_bucket() {
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
@@ -2909,7 +3021,7 @@ model_provider = "aihubmix"
         let session_dir = codex_dir.join("sessions/2026/09/01");
         fs::create_dir_all(&session_dir).expect("create session dir");
         // 休眠 custom 表保持原样：迁移不碰 config.toml。
-        let config = "model = \"gpt-5.5\"\n\n[model_providers.custom]\nname = \"custom\"\nbase_url = \"http://127.0.0.1:15721/v1\"\nexperimental_bearer_token = \"XSEC_SHIELD_PROXY_MANAGED\"\n";
+        let config = "model = \"gpt-5.5\"\n\n[model_providers.xsec-agent-shield-route]\nname = \"xsec-agent-shield-route\"\nbase_url = \"http://127.0.0.1:15721/v1\"\nexperimental_bearer_token = \"XSEC_SHIELD_PROXY_MANAGED\"\n";
         fs::write(codex_dir.join("config.toml"), config).expect("write config");
 
         let plain = session_dir.join("rollout-legacy.jsonl");
@@ -2930,7 +3042,11 @@ model_provider = "aihubmix"
         )
         .expect("write zst session");
         let third_party = session_dir.join("rollout-custom.jsonl");
-        fs::write(&third_party, session_meta_line("s3", "custom")).expect("write custom session");
+        fs::write(
+            &third_party,
+            session_meta_line("s3", "xsec-agent-shield-route"),
+        )
+        .expect("write custom session");
 
         let state_db = codex_dir.join(CODEX_STATE_DB_FILENAME);
         seed_threads(
@@ -2938,7 +3054,7 @@ model_provider = "aihubmix"
             &[
                 ("s1", "xsec-agent-shield-official"),
                 ("s2", "xsec-agent-shield-official"),
-                ("s3", "custom"),
+                ("s3", "xsec-agent-shield-route"),
                 ("s4", "openai"),
             ],
         );
@@ -2962,12 +3078,12 @@ model_provider = "aihubmix"
         assert!(decoded.contains("\"model_provider\":\"openai\""));
         assert_eq!(
             fs::read_to_string(&third_party).expect("read custom"),
-            session_meta_line("s3", "custom")
+            session_meta_line("s3", "xsec-agent-shield-route")
         );
 
         assert_eq!(thread_provider(&state_db, "s1"), "openai");
         assert_eq!(thread_provider(&state_db, "s2"), "openai");
-        assert_eq!(thread_provider(&state_db, "s3"), "custom");
+        assert_eq!(thread_provider(&state_db, "s3"), "xsec-agent-shield-route");
         assert_eq!(thread_provider(&state_db, "s4"), "openai");
 
         assert_eq!(
@@ -3032,7 +3148,7 @@ model_provider = "aihubmix"
             id
         ));
         assert!(!codex_config_selects_provider(
-            "model_provider = \"custom\"\n\n[model_providers.xsec-agent-shield-official]\nname = \"OpenAI\"\n",
+            "model_provider = \"xsec-agent-shield-route\"\n\n[model_providers.xsec-agent-shield-official]\nname = \"OpenAI\"\n",
             id
         ));
         assert!(!codex_config_selects_provider("not = [valid", id));

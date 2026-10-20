@@ -302,8 +302,8 @@ requires_openai_auth = true
 
     assert_eq!(
         parsed.get("model_provider").and_then(|v| v.as_str()),
-        Some("custom"),
-        "every third-party route is written as the custom table"
+        Some("xsec-agent-shield-route"),
+        "every third-party route is written as the Shield route table"
     );
 
     let model_providers = parsed
@@ -312,19 +312,19 @@ requires_openai_auth = true
         .expect("model_providers table exists");
     assert_eq!(
         model_providers
-            .get("custom")
+            .get("xsec-agent-shield-route")
             .and_then(|v| v.get("base_url"))
             .and_then(|v| v.as_str()),
         Some("https://aihubmix.example/v1"),
-        "the custom table points at the newly selected supplier endpoint"
+        "the Shield route table points at the newly selected supplier endpoint"
     );
     assert!(
         model_providers.get("aihubmix").is_none(),
         "the row's own table id is not written"
     );
     assert!(
-        model_providers.get("rightcode").is_none(),
-        "the old version's table for old-provider (same id and address as its row) is retired"
+        model_providers.get("rightcode").is_some(),
+        "an imported row with the same id and address does not authorize deleting a foreign table"
     );
 
     let providers = state
@@ -467,13 +467,13 @@ requires_openai_auth = true
     let parsed_live: toml::Value = toml::from_str(&live_config).expect("parse live config");
     assert_eq!(
         parsed_live.get("model_provider").and_then(|v| v.as_str()),
-        Some("custom"),
-        "third-party routes are always written as the custom table"
+        Some("xsec-agent-shield-route"),
+        "third-party routes are always written as the Shield route table"
     );
     assert_eq!(
         parsed_live
             .get("model_providers")
-            .and_then(|v| v.get("custom"))
+            .and_then(|v| v.get("xsec-agent-shield-route"))
             .and_then(|v| v.get("experimental_bearer_token"))
             .and_then(|v| v.as_str()),
         Some("bridge-key"),
@@ -482,7 +482,7 @@ requires_openai_auth = true
     assert_eq!(
         parsed_live
             .get("model_providers")
-            .and_then(|v| v.get("custom"))
+            .and_then(|v| v.get("xsec-agent-shield-route"))
             .and_then(|v| v.get("requires_openai_auth"))
             .and_then(|v| v.as_bool()),
         Some(true)
@@ -494,8 +494,8 @@ requires_openai_auth = true
         parsed_live
             .get("model_providers")
             .and_then(|v| v.get("rightcode"))
-            .is_none(),
-        "the table an old version wrote for legacy-provider is retired: {live_config}"
+            .is_some(),
+        "an imported row cannot authorize deleting the foreign rightcode table: {live_config}"
     );
 
     ProviderService::switch(&state, AppType::Codex, "plain-provider")
@@ -925,10 +925,10 @@ openai_base_url = "https://relay.example/v1"
         "the top-level reroute must be rewritten away; got:\n{live_config}"
     );
     assert!(
-        live_config.contains("[model_providers.custom]")
+        live_config.contains("[model_providers.xsec-agent-shield-route]")
             && live_config.contains("base_url = \"https://relay.example/v1\"")
             && live_config.contains("experimental_bearer_token = \"third-party-key\""),
-        "routing and key must move into the custom provider table; got:\n{live_config}"
+        "routing and key must move into the Shield route table; got:\n{live_config}"
     );
 
     let auth_value: serde_json::Value =
@@ -990,8 +990,8 @@ experimental_bearer_token = "config-carried-key"
         "the top-level reroute must be rewritten away; got:\n{live_config}"
     );
     assert!(
-        live_config.contains("[model_providers.custom]"),
-        "the custom provider table must be created; got:\n{live_config}"
+        live_config.contains("[model_providers.xsec-agent-shield-route]"),
+        "the Shield route table must be created; got:\n{live_config}"
     );
     assert_eq!(
         xsec_agent_shield_lib::extract_codex_experimental_bearer_token(&live_config).as_deref(),
@@ -1047,9 +1047,9 @@ openai_base_url = "https://relay.example/v1"
         .expect("read config.toml");
     assert!(
         !live_config.contains("openai_base_url")
-            && live_config.contains("[model_providers.custom]")
+            && live_config.contains("[model_providers.xsec-agent-shield-route]")
             && live_config.contains("experimental_bearer_token = \"third-party-key\""),
-        "routing and key must move into the custom provider table; got:\n{live_config}"
+        "routing and key must move into the Shield route table; got:\n{live_config}"
     );
 }
 
@@ -1505,9 +1505,13 @@ fn reapply_codex_official_live_rewrites_only_the_session_routing() {
     assert!(xsec_agent_shield_lib::reapply_current_codex_official_live(&state).expect("reapply"));
     let unified = read_live();
     let doc: toml::Value = toml::from_str(&unified).expect("parse");
-    assert_eq!(doc["model_provider"].as_str(), Some("custom"), "{unified}");
     assert_eq!(
-        doc["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
+        doc["model_provider"].as_str(),
+        Some("xsec-agent-shield-route"),
+        "{unified}"
+    );
+    assert_eq!(
+        doc["model_providers"]["xsec-agent-shield-route"]["requires_openai_auth"].as_bool(),
         Some(true),
         "the unified bucket is the official mirror: {unified}"
     );
@@ -1980,7 +1984,7 @@ fn sync_current_provider_for_app_leaves_the_proxy_contract_alone() {
 }
 
 #[test]
-fn switch_codex_in_direct_mode_replaces_leftover_proxy_placeholders() {
+fn switch_codex_in_direct_mode_keeps_foreign_placeholder_out_of_the_active_route() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     enable_codex_official_auth_preservation();
@@ -2074,10 +2078,24 @@ wire_api = "responses"
 
     let live_config = std::fs::read_to_string(xsec_agent_shield_lib::get_codex_config_path())
         .expect("read config.toml");
-    assert!(
-        live_config.contains("https://new.deepseek.example/v1")
-            && !live_config.contains("XSEC_SHIELD_PROXY_MANAGED"),
-        "a direct switch replaces leftover proxy placeholders: {live_config}"
+    let live: toml::Value = toml::from_str(&live_config).unwrap();
+    assert_eq!(
+        live["model_provider"].as_str(),
+        Some("xsec-agent-shield-route")
+    );
+    let active = &live["model_providers"]["xsec-agent-shield-route"];
+    assert_eq!(
+        active["base_url"].as_str(),
+        Some("https://new.deepseek.example/v1")
+    );
+    assert_eq!(
+        active["experimental_bearer_token"].as_str(),
+        Some("new-key")
+    );
+    let before: toml::Value = toml::from_str(proxy_live_config).unwrap();
+    assert_eq!(
+        live["model_providers"]["deepseek"], before["model_providers"]["deepseek"],
+        "a copied placeholder does not authorize deleting a foreign table"
     );
     let old_row = state
         .db

@@ -3438,7 +3438,7 @@ mod mode_tests {
             "Relay".to_string(),
             json!({
                 "auth": { "OPENAI_API_KEY": "sk-relay" },
-                "config": "model_provider = \"custom\"\nmodel = \"gpt-5.4\"\n\n[model_providers.custom]\nname = \"custom\"\nbase_url = \"https://relay.example/v1\"\nwire_api = \"responses\"\n"
+                "config": "model_provider = \"xsec-agent-shield-route\"\nmodel = \"gpt-5.4\"\n\n[model_providers.xsec-agent-shield-route]\nname = \"custom\"\nbase_url = \"https://relay.example/v1\"\nwire_api = \"responses\"\n"
             }),
             None,
         );
@@ -3499,7 +3499,7 @@ mod mode_tests {
             .proxy_service
             .live_has_proxy_placeholder(&AppType::Codex));
         // 第三方路由留下的 custom 表改成休眠形态：指向本地代理、只有占位 Key。
-        let dormant = &doc["model_providers"]["custom"];
+        let dormant = &doc["model_providers"]["xsec-agent-shield-route"];
         assert_eq!(
             dormant["experimental_bearer_token"].as_str(),
             Some(PROXY_TOKEN_PLACEHOLDER)
@@ -3565,7 +3565,7 @@ mod mode_tests {
                     .map(str::to_string)
             };
             let bucket = if unified {
-                Some("custom".to_string())
+                Some("xsec-agent-shield-route".to_string())
             } else {
                 None
             };
@@ -3577,7 +3577,7 @@ mod mode_tests {
             let doc: toml::Table = toml::from_str(&contract).unwrap();
             if unified {
                 assert!(doc.get("openai_base_url").is_none(), "{contract}");
-                let mirror = &doc["model_providers"]["custom"];
+                let mirror = &doc["model_providers"]["xsec-agent-shield-route"];
                 assert_eq!(mirror["name"].as_str(), Some("OpenAI"));
                 assert_eq!(mirror["requires_openai_auth"].as_bool(), Some(true));
                 assert_eq!(mirror["supports_websockets"].as_bool(), Some(false));
@@ -3689,7 +3689,7 @@ mod mode_tests {
     /// live 里 A 的关键字段之外，都是用户和 Codex 自己的东西。
     const CODEX_USER_LIVE: &str = r#"# 用户的注释
 approval_policy = "on-request"
-model_provider = "custom"
+model_provider = "xsec-agent-shield-route"
 model = "gpt-a"
 model_context_window = 200000
 
@@ -3700,7 +3700,7 @@ trust_level = "trusted"
 default_subagent_model = "gpt-a-mini"
 max_threads = 4
 
-[model_providers.custom]
+[model_providers.xsec-agent-shield-route]
 name = "a"
 base_url = "https://a.example/v1"
 wire_api = "responses"
@@ -3751,9 +3751,12 @@ command = "fs-server"
         ProviderService::switch(&state, AppType::Codex, "b").expect("switch to b");
         let on_b = codex_text();
         let doc = codex_doc();
-        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert_eq!(
+            doc["model_provider"].as_str(),
+            Some("xsec-agent-shield-route")
+        );
         assert_eq!(doc["model"].as_str(), Some("gpt-b"));
-        let route = &doc["model_providers"]["custom"];
+        let route = &doc["model_providers"]["xsec-agent-shield-route"];
         assert_eq!(route["base_url"].as_str(), Some("https://b.example/v1"));
         assert_eq!(route["experimental_bearer_token"].as_str(), Some("sk-b"));
         assert!(!on_b.contains("sk-a"), "A's key is gone: {on_b}");
@@ -3874,7 +3877,7 @@ command = "fs-server"
         let text = codex_text();
         let doc = codex_doc();
         assert!(doc.get("model_provider").is_none(), "{text}");
-        let dormant = &doc["model_providers"]["custom"];
+        let dormant = &doc["model_providers"]["xsec-agent-shield-route"];
         assert_eq!(
             dormant["base_url"].as_str(),
             Some("http://127.0.0.1:18721/v1"),
@@ -3955,7 +3958,8 @@ command = "fs-server"
 
     #[tokio::test]
     #[serial]
-    async fn codex_migration_retires_only_tables_cc_switch_wrote() {
+    async fn codex_switch_preserves_foreign_tables_even_when_imported_or_containing_a_placeholder()
+    {
         let _home = Home::new();
         set_preservation(true);
         // 旧版按行的 id 整份写进来的表：a（id 和地址都对得上 a 的行）、b 的地址被用户改过、
@@ -3996,10 +4000,13 @@ model_provider = "c"
         ProviderService::switch(&state, AppType::Codex, "b").expect("switch to b");
         let text = codex_text();
         let providers = codex_doc()["model_providers"].as_table().unwrap().clone();
-        assert!(!providers.contains_key("a"), "provably ours: {text}");
         assert!(
-            !providers.contains_key("deepseek"),
-            "placeholder leftover: {text}"
+            providers.contains_key("a"),
+            "imported rows do not prove ownership: {text}"
+        );
+        assert!(
+            providers.contains_key("deepseek"),
+            "a copied placeholder does not prove ownership: {text}"
         );
         assert!(
             providers.contains_key("b"),
@@ -4010,7 +4017,10 @@ model_provider = "c"
             providers.contains_key("ollama_local"),
             "the user's own table"
         );
-        assert!(!text.contains("sk-a"), "{text}");
+        assert!(
+            text.contains("sk-a"),
+            "foreign credentials are preserved: {text}"
+        );
     }
 
     #[tokio::test]
@@ -4309,7 +4319,7 @@ model_provider = "c"
             ProviderService::switch(&state, AppType::Codex, "b").expect("to b");
             let doc = codex_doc();
             assert_eq!(
-                doc["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
+                doc["model_providers"]["xsec-agent-shield-route"]["requires_openai_auth"].as_bool(),
                 Some(preserve),
                 "the login lives in the keyring, auth.json says nothing (preserve={preserve})"
             );
@@ -4597,7 +4607,7 @@ model_provider = "c"
             "model = \"gpt-a\"\nmodel_verbosity = \"high\"\n",
         );
         seed_codex(
-            &format!("profile = \"work\"\n{live}\n[profiles.work]\nmodel_provider = \"custom\"\n"),
+            &format!("profile = \"work\"\n{live}\n[profiles.work]\nmodel_provider = \"xsec-agent-shield-route\"\n"),
             None,
         );
         let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
@@ -4632,7 +4642,7 @@ model_provider = "c"
         );
         assert_eq!(
             doc["profiles"]["work"]["model_provider"].as_str(),
-            Some("custom")
+            Some("xsec-agent-shield-route")
         );
         let stored = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
         assert!(!stored.settings_config["config"]
@@ -4756,15 +4766,18 @@ model_provider = "c"
         let view = ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
             .expect("view a");
         let shown = view.settings["config"].as_str().unwrap();
-        assert!(shown.contains("[model_providers.custom]\n"), "{shown}");
+        assert!(
+            shown.contains("[model_providers.xsec-agent-shield-route]\n"),
+            "{shown}"
+        );
         let mut edited = view.settings.clone();
         edited["config"] = json!(shown
             .replace(
-                "model_provider = \"custom\"",
+                "model_provider = \"xsec-agent-shield-route\"",
                 "model_provider = \"deepseek\""
             )
             .replace(
-                "[model_providers.custom]\n",
+                "[model_providers.xsec-agent-shield-route]\n",
                 "[model_providers.deepseek]\nexperimental_bearer_token = \"sk-secret\"\n",
             ));
         row.settings_config = edited;
@@ -6932,11 +6945,18 @@ model_provider = "c"
                 .expect("enter proxy");
             let check = |published_stack: bool| {
                 let doc = codex_doc();
-                assert_eq!(doc["model_provider"].as_str(), Some("custom"));
-                let proxy = &doc["model_providers"]["custom"];
+                assert_eq!(
+                    doc["model_provider"].as_str(),
+                    Some("xsec-agent-shield-route")
+                );
+                let proxy = &doc["model_providers"]["xsec-agent-shield-route"];
                 assert_eq!(
                     proxy["name"].as_str(),
-                    Some(if name == "OpenAI" { "OpenAI" } else { "custom" })
+                    Some(if name == "OpenAI" {
+                        "OpenAI"
+                    } else {
+                        "xsec-agent-shield-route"
+                    })
                 );
                 assert_eq!(
                     proxy
@@ -7012,8 +7032,8 @@ model_provider = "c"
                 .await
                 .unwrap();
             let doc = codex_doc();
-            let proxy = &doc["model_providers"]["custom"];
-            assert_eq!(proxy["name"].as_str(), Some("custom"));
+            let proxy = &doc["model_providers"]["xsec-agent-shield-route"];
+            assert_eq!(proxy["name"].as_str(), Some("xsec-agent-shield-route"));
             assert!(proxy.get("capabilities").is_none());
             assert!(proxy.get("stream_max_retries").is_none());
             assert!(proxy.get("stream_idle_timeout_ms").is_none());
@@ -8480,7 +8500,7 @@ model_provider = "c"
     fn codex_keyless_template() -> Value {
         json!({
             "auth": { "OPENAI_API_KEY": "" },
-            "config": "model_provider = \"custom\"\nmodel = \"gpt-5.6-sol\"\n\n[model_providers.custom]\nname = \"custom\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
+            "config": "model_provider = \"xsec-agent-shield-route\"\nmodel = \"gpt-5.6-sol\"\n\n[model_providers.xsec-agent-shield-route]\nname = \"custom\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
         })
     }
 
@@ -8505,11 +8525,11 @@ model_provider = "c"
             let doc: toml::Table = toml::from_str(&shown).unwrap();
             assert_eq!(
                 doc["model_provider"].as_str(),
-                Some("custom"),
+                Some("xsec-agent-shield-route"),
                 "{label}: {shown}"
             );
             assert!(doc.get("openai_base_url").is_none(), "{label}: {shown}");
-            let route = &doc["model_providers"]["custom"];
+            let route = &doc["model_providers"]["xsec-agent-shield-route"];
             assert_eq!(
                 route["requires_openai_auth"].as_bool(),
                 Some(true),
@@ -8580,7 +8600,8 @@ model_provider = "c"
             .expect("view")
             .settings;
         let mut doc: toml_edit::DocumentMut = base["config"].as_str().unwrap().parse().unwrap();
-        doc["model_providers"]["custom"]["requires_openai_auth"] = toml_edit::value(true);
+        doc["model_providers"]["xsec-agent-shield-route"]["requires_openai_auth"] =
+            toml_edit::value(true);
         let mut edited = base.clone();
         edited["config"] = json!(doc.to_string());
         edited["auth"]["OPENAI_API_KEY"] = json!("");

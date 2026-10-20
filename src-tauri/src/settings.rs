@@ -1040,14 +1040,18 @@ where
     Ok(())
 }
 
-/// 统一会话迁移标记是否覆盖指定目录。标记里没记目录（不应出现的旧格式）
-/// 视为不匹配——重跑迁移是幂等的，宁可重迁也不漏迁。
+/// 统一会话迁移标记是否覆盖指定目录与当前 Shield 目标路由。
+/// 缺少目录或指向旧共享桶的标记均不匹配；不自动搬动旧共享桶的数据。
 pub fn is_codex_official_history_unify_migrated_for_dir(codex_dir: &str) -> bool {
     get_settings()
         .local_migrations
         .as_ref()
         .and_then(|migrations| migrations.codex_official_history_unify_v1.as_ref())
-        .is_some_and(|migration| migration.codex_config_dir.as_deref() == Some(codex_dir))
+        .is_some_and(|migration| {
+            migration.codex_config_dir.as_deref() == Some(codex_dir)
+                && migration.target_provider_id
+                    == crate::codex_config::XSEC_SHIELD_CODEX_MODEL_PROVIDER_ID
+        })
 }
 
 /// 条件写入迁移完成标记：仅当此刻开关仍开启且迁移意愿仍在时才写。

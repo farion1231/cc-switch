@@ -60,6 +60,58 @@ use crate::util::{official, provider, seed_providers, write_home_file};
 const RESERVED_IDS: &[&str] = &["openai", "ollama", "lmstudio"];
 const BEDROCK_IDS: &[&str] = &["amazon-bedrock", "amazon-bedrock-runtime"];
 
+#[test]
+fn imported_custom_table_is_preserved_while_shield_switches_its_own_route() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    set_login_preservation(true);
+    let foreign = "[model_providers.custom] # user-owned\nname = 'Foreign'\nbase_url = 'https://foreign.example/v1'\nexperimental_bearer_token = 'foreign-canary'\nwire_api = 'responses'\n\n[profiles.side]\nmodel_provider = 'custom'\n";
+    let state = setup(
+        vec![codex(
+            "imported",
+            Some("foreign-canary"),
+            &format!("model_provider = 'custom'\n{foreign}"),
+        )],
+        true,
+    );
+    write_home_file(
+        ".codex/config.toml",
+        &format!("model_provider = 'custom'\n{foreign}"),
+    );
+    switch(&state, "imported").unwrap();
+    let doc = live_config();
+    assert_eq!(route(&doc).unwrap().0, "xsec-agent-shield-route");
+    // Inserting Shield's table may separate the two foreign sections; each
+    // existing section, including its comments and quoting, must stay intact.
+    let foreign_sections = foreign.split_once("\n[profiles.side]").unwrap();
+    let profile = format!("[profiles.side]{}", foreign_sections.1);
+    assert!(live_config_text().contains(foreign_sections.0.trim_end()));
+    assert!(live_config_text().contains(&profile));
+    switch(&state, "codex-official").unwrap();
+    assert!(live_config_text().contains(foreign_sections.0.trim_end()));
+    assert!(live_config_text().contains(&profile));
+    assert_eq!(live_auth().as_deref(), Some(OAUTH_LOGIN));
+}
+
+#[test]
+fn active_foreign_custom_profile_refuses_switch_without_side_effects() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    set_login_preservation(true);
+    let state = setup(
+        vec![codex(
+            "relay",
+            Some("sk-relay"),
+            &relay_config("custom", "https://relay.example/v1"),
+        )],
+        true,
+    );
+    write_home_file(".codex/config.toml", "profile = 'work'\n[profiles.work]\nmodel_provider = 'custom'\n[model_providers.custom]\nname = 'Foreign'\nbase_url = 'https://foreign.example/v1'\n");
+    let before = snapshot(&state, "relay");
+    assert!(switch(&state, "relay").is_err());
+    assert_eq!(snapshot(&state, "relay"), before);
+}
+
 const OAUTH_LOGIN: &str = r#"{"auth_mode":"chatgpt","OPENAI_API_KEY":null,"tokens":{"id_token":"id-token","access_token":"access-token","refresh_token":"refresh-token","account_id":"account-1"},"last_refresh":"2026-09-01T00:00:00Z"}"#;
 
 fn set_login_preservation(on: bool) {

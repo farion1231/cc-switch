@@ -37,8 +37,8 @@ use crate::live::patch::toml::{value_text, TomlDocPatch, TomlSteps};
 use crate::live::patch::{Guarded, LivePatch, WholeFile};
 use crate::live::project::codex::{
     official_mirror_table, proxy_route_table, requires_openai_auth, row_catalog_pointer,
-    without_row_catalog, CodexConfigPatch, CodexProjection, KnownTable, Route, RouteAuth,
-    RouteWrite, RowInput, ROUTE_ID, WEB_SEARCH_DISABLED,
+    without_row_catalog, CodexConfigPatch, CodexProjection, Route, RouteAuth, RouteWrite, RowInput,
+    ROUTE_ID, WEB_SEARCH_DISABLED,
 };
 use crate::mode::contract::CONTRACT_VERSION;
 use crate::mode::operation::{AppWrite, FileChange, OperationReport};
@@ -419,17 +419,14 @@ pub(crate) fn outgoing_exclusive(owner: &Owner<'_>) -> Vec<(String, TomlValue)> 
     }
 }
 
-/// 数据库里所有 Codex 行能证明的事：它们的投影写过哪些表、第三方的 Key、官方卡里存着的
-/// 登录（登录暂存第一次建立时用）。
+/// 数据库中的第三方 Key 和官方登录，仅用于凭据切换；不能据此认领 live 路由表。
 struct RowFacts {
-    retired: Vec<KnownTable>,
     third_party_keys: Vec<String>,
     official_logins: Vec<Value>,
 }
 
 fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
     let mut facts = RowFacts {
-        retired: Vec::new(),
         third_party_keys: Vec::new(),
         official_logins: Vec::new(),
     };
@@ -447,46 +444,6 @@ fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
         }
         if let Some(key) = auth.and_then(extract_codex_auth_api_key) {
             facts.third_party_keys.push(key);
-        }
-        let Some(doc) = provider
-            .settings_config
-            .get("config")
-            .and_then(Value::as_str)
-            .and_then(|text| text.parse::<toml_edit::DocumentMut>().ok())
-        else {
-            continue;
-        };
-        let providers = doc.get("model_providers").and_then(Item::as_table_like);
-        let base_url_of = |id: &str| {
-            providers
-                .and_then(|table| table.get(id))
-                .and_then(Item::as_table_like)
-                .and_then(|table| table.get("base_url"))
-                .and_then(Item::as_str)
-                .map(|url| url.trim().to_string())
-        };
-        // 旧版整份写入时，路由表用的是行自己的 id（custom 是 CC Switch 现在写的，不算）。
-        let selector = doc
-            .get("model_provider")
-            .and_then(Item::as_str)
-            .map(str::trim)
-            .filter(|id| !id.is_empty() && *id != ROUTE_ID);
-        if let Some((id, base_url)) = selector.and_then(|id| Some((id, base_url_of(id)?))) {
-            facts.retired.push(KnownTable {
-                id: id.to_string(),
-                base_url,
-            });
-        }
-        if let Some(base_url) = doc
-            .get("openai_base_url")
-            .and_then(Item::as_str)
-            .map(|url| url.trim().to_string())
-            .filter(|url| !url.is_empty())
-        {
-            facts.retired.push(KnownTable {
-                id: "cc-switch".to_string(),
-                base_url,
-            });
         }
     }
     Ok(facts)
@@ -703,7 +660,6 @@ pub(crate) fn plan(
         outgoing: outgoing_exclusive(owner),
         route,
         catalog: catalog.is_some(),
-        retired: facts.retired,
     };
     let official_login = match &auth {
         AuthGoal::Official(row_auth) => codex_login::official_login_requirement(row_auth),
