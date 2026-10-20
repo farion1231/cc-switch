@@ -27,7 +27,10 @@ import {
 } from "@/lib/query/failover";
 import { useModeActions } from "@/hooks/useModeActions";
 import { getRoutingReason } from "@/utils/routingReason";
-import { CODEX_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
+import {
+  CODEX_OFFICIAL_PROVIDER_ID,
+  isNativeOfficialProvider,
+} from "@/utils/providerCapabilities";
 import { routeSwitchNotification } from "@/utils/routeSwitchNotification";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { Button } from "@/components/ui/button";
@@ -149,6 +152,8 @@ export function SwitchModePanel({
   const [routeSettingsOpen, setRouteSettingsOpen] = useState(false);
   const [stackSettingsOpen, setStackSettingsOpen] = useState(false);
   const [confirmFailover, setConfirmFailover] = useState(false);
+  const [confirmOfficial, setConfirmOfficial] = useState(false);
+  const [officialError, setOfficialError] = useState("");
   // 关掉的是哪一份提示（后端的 staleRevision）：目录或登录又变了就是新的一份，重新显示。
   const [staleDismissed, setStaleDismissed] = useState<string | null>(null);
   useEffect(() => {
@@ -370,6 +375,40 @@ export function SwitchModePanel({
   };
 
   const notices: React.ReactNode[] = [];
+  const nativeOfficialActive =
+    active === "direct" &&
+    directId != null &&
+    providers[directId] != null &&
+    isNativeOfficialProvider(app, providers[directId]);
+  notices.push(
+    <Notice
+      key="official"
+      tone="neutral"
+      className="flex-wrap [&>div:last-child]:max-w-full"
+      title={t(
+        nativeOfficialActive ? "mode.official.active" : "mode.official.hint",
+        { app: appName },
+      )}
+      actions={
+        <Button
+          variant="neutral"
+          size="compact"
+          className="h-auto min-h-7 whitespace-normal text-start"
+          disabled={isLoading || !modeView || modeActions.pending}
+          onClick={() => {
+            setOfficialError("");
+            setConfirmOfficial(true);
+          }}
+        >
+          {t(
+            nativeOfficialActive
+              ? "mode.official.reapply"
+              : "mode.official.action",
+          )}
+        </Button>
+      }
+    />,
+  );
   if (active !== "direct" && proxyStatus !== undefined && !serviceRunning) {
     notices.push(
       <Notice
@@ -646,6 +685,42 @@ export function SwitchModePanel({
           }
         />
       )}
+
+      <ConfirmDialog
+        isOpen={confirmOfficial}
+        variant="info"
+        title={t(
+          nativeOfficialActive
+            ? "mode.official.reapply"
+            : "mode.official.action",
+        )}
+        message={[
+          t("mode.official.confirm", { app: appName }),
+          modeActions.restartHint,
+        ]
+          .filter(Boolean)
+          .join("\n\n")}
+        pending={modeActions.pending}
+        error={officialError}
+        confirmText={t("mode.official.confirmAction")}
+        onConfirm={() => {
+          setOfficialError("");
+          void modeActions
+            .useOfficial()
+            .then(() => {
+              setView("direct");
+              setConfirmOfficial(false);
+            })
+            .catch((error) =>
+              setOfficialError(
+                t("mode.toast.failed", {
+                  detail: extractErrorMessage(error) || t("common.unknown"),
+                }),
+              ),
+            );
+        }}
+        onCancel={() => setConfirmOfficial(false)}
+      />
 
       <ConfirmDialog
         isOpen={confirmFailover}

@@ -4192,6 +4192,15 @@
     "viewUsage": "View usage for this app"
   },
   "mode": {
+    "official": {
+      "action": "Stop using channels",
+      "confirmAction": "Use official account",
+      "reapply": "Reapply official configuration",
+      "active": "{{app}} is using native official configuration. Sign in to your official account in the client if needed.",
+      "hint": "Use your official {{app}} account instead of a custom API channel.",
+      "confirm": "Return {{app}} to its official account login and exit routing or aggregation for this app. Saved channels will remain available. Existing official login credentials are restored when available; otherwise sign in through the client.",
+      "success": "{{app}} is now using the official account mode."
+    },
     "tabsLabel": "Connection mode",
     "names": {
       "direct": "Direct",

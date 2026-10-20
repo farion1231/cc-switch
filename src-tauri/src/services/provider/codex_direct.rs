@@ -400,6 +400,7 @@ fn auth_target<'a>(goal: &'a AuthGoal, op_name: &str) -> AuthTarget<'a> {
         AuthGoal::KeepNative => AuthTarget::ProxyThirdParty {
             restore_last: op_name == op::ENTER || op_name == op::ATTACH,
         },
+        AuthGoal::Official(_) if op_name == op::USE_OFFICIAL => AuthTarget::NativeOfficial,
         AuthGoal::Official(row_auth) => AuthTarget::Official { row_auth },
         AuthGoal::Managed(auth) => AuthTarget::Managed { auth },
     }
@@ -1137,11 +1138,21 @@ pub(crate) fn run_with_edits(
     let auth_path = get_codex_auth_path();
     let (auth_pre, auth_readable) = match read_current(&auth_path) {
         Ok(pre) => (pre, true),
+        Err(error) if op == op::USE_OFFICIAL => return Err(error.into()),
         Err(err) => {
             log::warn!("读取 Codex auth.json 失败，这次不改动它: {err}");
             (None, false)
         }
     };
+    if op == op::USE_OFFICIAL {
+        if let Some(bytes) = &auth_pre {
+            serde_json::from_slice::<Value>(bytes).map_err(|error| AppError::localized(
+                "codex.native_auth_invalid",
+                format!("Codex auth.json 无法解析（{error}）。本次没有写入任何文件，请修复后重试"),
+                format!("Codex auth.json cannot be parsed ({error}). Nothing was written; repair it and try again"),
+            ))?;
+        }
+    }
     let live_auth = auth_pre
         .as_deref()
         .map(|bytes| serde_json::from_slice::<Value>(bytes).unwrap_or(Value::Null));

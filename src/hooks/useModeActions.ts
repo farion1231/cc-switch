@@ -2,7 +2,8 @@ import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
-import type { AppId } from "@/lib/api";
+import { settingsApi, type AppId } from "@/lib/api";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import { providersApi } from "@/lib/api/providers";
 import { proxyApi } from "@/lib/api/proxy";
 import { proxyKeys } from "@/lib/query/proxy";
@@ -116,5 +117,37 @@ export function useModeActions(app: AppId) {
     [app, appName, refresh, restartHint, t],
   );
 
-  return { enter, exitToDirect, pending, restartHint };
+  const useOfficial = useCallback(async () => {
+    setPending(true);
+    try {
+      await providersApi.useOfficialProvider(app);
+      if (app === "claude") {
+        try {
+          const settings = await settingsApi.get();
+          if (settings.enableClaudePluginIntegration) {
+            await settingsApi.applyClaudePluginConfig({ official: true });
+          }
+        } catch (error) {
+          toast.warning(
+            extractErrorMessage(error) ||
+              t("notifications.syncClaudePluginFailed"),
+          );
+        }
+      }
+      await refresh();
+      toast.success(
+        t("mode.official.success", { app: appName }) + restartHint,
+        {
+          closeButton: true,
+        },
+      );
+    } catch (error) {
+      await refresh();
+      throw error;
+    } finally {
+      setPending(false);
+    }
+  }, [app, appName, refresh, restartHint, t]);
+
+  return { enter, exitToDirect, useOfficial, pending, restartHint };
 }

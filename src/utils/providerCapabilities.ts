@@ -14,6 +14,52 @@ import {
 export const CODEX_OFFICIAL_PROVIDER_ID = "codex-official";
 export const GROKBUILD_OFFICIAL_PROVIDER_ID = "grokbuild-official";
 
+/** The unconfigured official entry used by the explicit native-login action. */
+export function isNativeOfficialProvider(
+  appId: AppId,
+  provider: Provider,
+): boolean {
+  if (
+    provider.category !== "official" ||
+    Object.keys(provider.meta ?? {}).length > 0
+  )
+    return false;
+  const settings = provider.settingsConfig;
+  if (
+    settings == null ||
+    typeof settings !== "object" ||
+    Array.isArray(settings)
+  )
+    return false;
+  const emptyObject = (value: unknown) =>
+    value != null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 0;
+  const keys = Object.keys(settings);
+  switch (appId) {
+    case "claude":
+    case "claude-desktop":
+      return keys.length === 1 && emptyObject(settings.env);
+    case "codex":
+      return (
+        keys.length === 2 &&
+        emptyObject(settings.auth) &&
+        settings.config === ""
+      );
+    case "gemini":
+      return (
+        keys.length === 2 &&
+        emptyObject(settings.env) &&
+        emptyObject(settings.config)
+      );
+    case "grokbuild":
+      return keys.length === 1 && settings.config === "";
+    default:
+      return false;
+  }
+}
+
 export type CodexOfficialIdentity =
   | "native_login"
   | "managed_account"

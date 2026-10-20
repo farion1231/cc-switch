@@ -352,6 +352,18 @@ pub fn ensure_codex_official_provider(state: State<'_, AppState>) -> Result<bool
 }
 
 #[tauri::command]
+pub async fn use_official_provider(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+    app: String,
+) -> Result<(), String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    crate::mode::controller::use_official_provider(state.inner(), &app_type).await?;
+    crate::tray::refresh_tray_menu(&app_handle);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn ensure_grokbuild_official_provider(state: State<'_, AppState>) -> Result<bool, String> {
     state
         .db

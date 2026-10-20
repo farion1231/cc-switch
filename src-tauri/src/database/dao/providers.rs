@@ -835,6 +835,61 @@ impl Database {
         Ok(inserted)
     }
 
+    /// Resolve an unconfigured native official entry without overwriting saved
+    /// API keys, managed account bindings or other provider customizations.
+    pub fn ensure_official_provider(
+        &self,
+        app_type: crate::app_config::AppType,
+    ) -> Result<Provider, AppError> {
+        use crate::database::dao::providers_seed::OFFICIAL_SEEDS;
+
+        let seed = OFFICIAL_SEEDS
+            .iter()
+            .find(|seed| seed.app_type == app_type)
+            .ok_or_else(|| {
+                AppError::Message(format!(
+                    "{} does not support official account mode",
+                    app_type.as_str()
+                ))
+            })?;
+        let settings_config: serde_json::Value = serde_json::from_str(seed.settings_config_json)
+            .map_err(|error| AppError::Database(format!("Invalid official seed: {error}")))?;
+        let providers = self.get_all_providers(app_type.as_str())?;
+        let is_native = |provider: &&Provider| {
+            provider.category.as_deref() == Some("official")
+                && provider.settings_config == settings_config
+                && provider.meta.as_ref().is_none_or(|meta| {
+                    serde_json::to_value(meta).is_ok_and(|value| value == serde_json::json!({}))
+                })
+        };
+        if let Some(provider) = providers.get(seed.id).filter(is_native).or_else(|| {
+            providers
+                .values()
+                .filter(is_native)
+                .min_by_key(|provider| &provider.id)
+        }) {
+            return Ok(provider.clone());
+        }
+        let id = if providers.contains_key(seed.id) {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            seed.id.to_string()
+        };
+        let mut provider = Provider::with_id(
+            id,
+            seed.name.to_string(),
+            settings_config,
+            Some(seed.website_url.to_string()),
+        );
+        provider.category = Some("official".to_string());
+        provider.icon = Some(seed.icon.to_string());
+        provider.icon_color = Some(seed.icon_color.to_string());
+        provider.sort_index = Some(self.next_sort_index_for_app(app_type.as_str())?);
+        provider.created_at = Some(chrono::Utc::now().timestamp_millis());
+        self.save_provider(app_type.as_str(), &provider)?;
+        Ok(provider)
+    }
+
     /// 按 id 兜底插入单条 official seed（仅当目标表中该 id 不存在时插入）。
     ///
     /// 与 `init_default_official_providers` 不同：
@@ -899,6 +954,77 @@ mod ensure_official_seed_tests {
         Database, CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, CODEX_OFFICIAL_PROVIDER_ID,
         GROKBUILD_OFFICIAL_PROVIDER_ID,
     };
+
+    #[test]
+    fn ensure_official_provider_recreates_deleted_entries_for_supported_apps() {
+        let db = Database::memory().expect("memory db");
+        for app in [
+            AppType::Claude,
+            AppType::ClaudeDesktop,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::GrokBuild,
+        ] {
+            let official = db.ensure_official_provider(app.clone()).unwrap();
+            assert_eq!(official.category.as_deref(), Some("official"));
+            db.delete_provider(app.as_str(), &official.id).unwrap();
+            let restored = db.ensure_official_provider(app).unwrap();
+            assert_eq!(restored.id, official.id);
+            assert_eq!(restored.settings_config, official.settings_config);
+        }
+    }
+
+    #[test]
+    fn ensure_official_provider_preserves_customized_entries_and_reuses_native_entry() {
+        let db = Database::memory().expect("memory db");
+        assert!(db.ensure_official_provider(AppType::OpenCode).is_err());
+        let mut official = db.ensure_official_provider(AppType::Codex).unwrap();
+        official.category = Some("custom".to_string());
+        db.save_provider("codex", &official).unwrap();
+        let native = db.ensure_official_provider(AppType::Codex).unwrap();
+        assert_ne!(native.id, official.id);
+        assert_eq!(
+            db.ensure_official_provider(AppType::Codex).unwrap().id,
+            native.id
+        );
+        assert_eq!(
+            db.get_provider_by_id(&official.id, "codex")
+                .unwrap()
+                .unwrap()
+                .category,
+            Some("custom".to_string())
+        );
+    }
+
+    #[test]
+    fn ensure_official_provider_does_not_reuse_keys_or_managed_bindings() {
+        use crate::provider::ProviderMeta;
+        for settings in [
+            serde_json::json!({"auth": {"OPENAI_API_KEY": "saved-test-key"}, "config": ""}),
+            serde_json::json!({"auth": {}, "config": "model = \"custom\""}),
+            serde_json::json!({"auth": {}, "config": ""}),
+        ] {
+            let db = Database::memory().unwrap();
+            let mut saved = db.ensure_official_provider(AppType::Codex).unwrap();
+            saved.settings_config = settings;
+            saved.meta = Some(serde_json::from_value::<ProviderMeta>(serde_json::json!({
+                "authBinding": {"source": "managed_account", "authProvider": "codex_oauth", "accountId": "test-managed"}
+            })).unwrap());
+            db.save_provider("codex", &saved).unwrap();
+            let native = db.ensure_official_provider(AppType::Codex).unwrap();
+            assert_ne!(native.id, saved.id);
+            assert_eq!(
+                native.settings_config,
+                serde_json::json!({"auth": {}, "config": ""})
+            );
+            assert!(native.meta.is_none());
+            let after = db.get_provider_by_id(&saved.id, "codex").unwrap().unwrap();
+            assert_eq!(
+                serde_json::to_value(after).unwrap(),
+                serde_json::to_value(saved).unwrap()
+            );
+        }
+    }
 
     #[test]
     fn ensure_inserts_when_missing() {

@@ -1461,6 +1461,7 @@ pub fn run() {
             commands::import_claude_desktop_providers_from_claude,
             commands::ensure_claude_desktop_official_provider,
             commands::ensure_codex_official_provider,
+            commands::use_official_provider,
             commands::ensure_grokbuild_official_provider,
             commands::get_claude_config_status,
             commands::get_config_status,

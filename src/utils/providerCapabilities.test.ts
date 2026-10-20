@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import {
+  isNativeOfficialProvider,
   providerNeedsRouting,
   resolveCodexOfficialIdentity,
   supportsOfficialProxyTakeover,
@@ -14,6 +15,62 @@ function mkProvider(overrides: Partial<Provider> = {}): Provider {
 // wire_api 取自 config.toml；chat_completions 需转换（需路由），responses 直连。
 const codexConfig = (wireApi: "chat_completions" | "responses") =>
   `model_provider = "custom"\n\n[model_providers.custom]\nname = "X"\nbase_url = "https://x.example/v1"\nwire_api = "${wireApi}"\n`;
+
+describe("isNativeOfficialProvider", () => {
+  it.each([
+    ["claude", { env: {} }],
+    ["claude-desktop", { env: {} }],
+    ["codex", { auth: {}, config: "" }],
+    ["gemini", { env: {}, config: {} }],
+    ["grokbuild", { config: "" }],
+  ] as const)(
+    "recognizes the unconfigured %s entry with IPC default metadata",
+    (app, settingsConfig) => {
+      expect(
+        isNativeOfficialProvider(
+          app,
+          mkProvider({ category: "official", settingsConfig, meta: {} }),
+        ),
+      ).toBe(true);
+      expect(
+        isNativeOfficialProvider(
+          app,
+          mkProvider({ category: "custom", settingsConfig }),
+        ),
+      ).toBe(false);
+      expect(
+        isNativeOfficialProvider(
+          app,
+          mkProvider({
+            category: "official",
+            settingsConfig,
+            meta: { providerType: "codex_oauth" },
+          }),
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it.each([
+    { auth: { OPENAI_API_KEY: "test-key" }, config: "" },
+    { auth: {}, config: 'model = "custom"' },
+    { auth: {}, config: "", unknown: "preserved" },
+  ])(
+    "does not treat customized official settings as native mode",
+    (settingsConfig) => {
+      expect(
+        isNativeOfficialProvider(
+          "codex",
+          mkProvider({
+            id: "codex-official",
+            category: "official",
+            settingsConfig,
+          }),
+        ),
+      ).toBe(false);
+    },
+  );
+});
 
 describe("providerNeedsRouting", () => {
   it("allows explicit Codex Official cards during takeover", () => {

@@ -161,6 +161,10 @@ export const providersApi = {
     return await invoke("ensure_codex_official_provider");
   },
 
+  async useOfficialProvider(appId: AppId): Promise<void> {
+    return await invoke("use_official_provider", { app: appId });
+  },
+
   async ensureGrokBuildOfficialProvider(): Promise<boolean> {
     return await invoke("ensure_grokbuild_official_provider");
   },

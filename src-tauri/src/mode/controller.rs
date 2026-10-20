@@ -523,12 +523,32 @@ fn write_direct(
     target: ModeState,
 ) -> Result<(), String> {
     let direct = direct_provider(state, app)?;
-    let pending_target = PendingTarget::mode(target);
-    let attached = matches!(live_now, LiveNow::Proxy { .. });
+    write_direct_provider(
+        state,
+        app,
+        op_name,
+        live_now,
+        PendingTarget::mode(target),
+        direct.as_ref(),
+    )
+}
+
+/// Explicit selections also write in direct mode and never silently fall back
+/// to another provider. Files, the selected provider and mode commit together.
+fn write_direct_provider(
+    state: &AppState,
+    app: &AppType,
+    op_name: &str,
+    live_now: &LiveNow,
+    pending_target: PendingTarget,
+    direct: Option<&Provider>,
+) -> Result<(), String> {
+    let explicit = pending_target.pointer.is_some();
+    let attached = explicit || matches!(live_now, LiveNow::Proxy { .. });
     match app {
         AppType::Claude => {
             let empty = ClaudeProjection::default();
-            let projection = usable_direct(app, direct.as_ref())
+            let projection = usable_direct(app, direct)
                 .map(|provider| ClaudeProjection::of(&provider.settings_config));
             let patch = direct_patch(
                 live_now.claude_exclusive_owner().as_ref(),
@@ -547,7 +567,7 @@ fn write_direct(
                 commit_state(state, app, &pending_target)?;
                 return Ok(());
             }
-            let target = usable_direct(app, direct.as_ref());
+            let target = usable_direct(app, direct);
             let owner = live_now.codex_owner();
             if let Err(error) = codex_direct::write_direct(
                 &state.db,
@@ -557,6 +577,9 @@ fn write_direct(
                 target,
                 pending_target.clone(),
             ) {
+                if explicit {
+                    return Err(err(error));
+                }
                 // 直连供应商写不出来（比如绑定的托管账号已被删除）也不能让客户端一直指着
                 // 代理：退一步只清空关键字段。
                 log::warn!("写回直连的 Codex 配置失败，只清空关键字段: {error}");
@@ -572,27 +595,45 @@ fn write_direct(
             }
         }
         AppType::Gemini => {
-            let projection = attached.then(|| {
-                direct_or_empty(
-                    app,
-                    direct.as_ref(),
-                    gemini_direct::projection,
-                    GeminiProjection::empty,
-                )
-            });
+            let projection = if explicit {
+                direct
+                    .map(gemini_direct::projection)
+                    .transpose()
+                    .map_err(err)?
+            } else {
+                attached.then(|| {
+                    direct_or_empty(
+                        app,
+                        direct,
+                        gemini_direct::projection,
+                        GeminiProjection::empty,
+                    )
+                })
+            };
             gemini_direct::run(&state.db, op_name, projection.as_ref(), pending_target)
                 .map_err(err)?;
         }
         AppType::GrokBuild => {
-            let projection = attached.then(|| {
-                direct_or_empty(app, direct.as_ref(), grok_direct::projection, || {
-                    GrokProjection { table: None }
+            let projection = if explicit {
+                direct
+                    .map(grok_direct::projection)
+                    .transpose()
+                    .map_err(err)?
+            } else {
+                attached.then(|| {
+                    direct_or_empty(app, direct, grok_direct::projection, || GrokProjection {
+                        table: None,
+                    })
                 })
-            });
+            };
             grok_direct::run(
                 &state.db,
                 op_name,
-                None,
+                if explicit {
+                    live_now.direct_owner()
+                } else {
+                    None
+                },
                 projection.as_ref(),
                 pending_target,
             )
@@ -601,10 +642,15 @@ fn write_direct(
         AppType::ClaudeDesktop => {
             // 直连那家写不进去（模型映射卡、配置不全）也不能让 Desktop 一直指着路由：退回官方。
             let profile = if attached {
-                claude_desktop_config::direct_target(direct.as_ref()).unwrap_or_else(|error| {
-                    log::warn!("写回直连的 Claude Desktop 配置失败，改为官方: {error}");
-                    None
-                })
+                let result = claude_desktop_config::direct_target(direct);
+                if explicit {
+                    result.map_err(err)?
+                } else {
+                    result.unwrap_or_else(|error| {
+                        log::warn!("写回直连的 Claude Desktop 配置失败，改为官方: {error}");
+                        None
+                    })
+                }
             } else {
                 None
             };
@@ -857,6 +903,45 @@ pub async fn exit(state: &AppState, app: &AppType) -> Result<(), String> {
     {
         let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
         exit_locked(state, app, false)?;
+    }
+    if let Err(error) = state.db.clear_provider_health_for_app(app.as_str()).await {
+        log::warn!("清除 {} 健康状态失败: {error}", app.as_str());
+    }
+    stop_server_if_unused(state).await;
+    Ok(())
+}
+
+/// Cancel this app's custom channel and return to its official login flow.
+/// Reuses the normal projections and recoverable write operation, keeping the
+/// saved route, aggregation members and provider rows available for later use.
+pub async fn use_official_provider(state: &AppState, app: &AppType) -> Result<(), String> {
+    require_proxy_app(app)?;
+    {
+        let _guard = lock_settled(state, app).await.map_err(err)?;
+        let official = state
+            .db
+            .ensure_official_provider(app.clone())
+            .map_err(err)?;
+        let mode = current::mode_state(app);
+        let live_now = LiveNow::of(state, app, &mode)?;
+        let target = PendingTarget {
+            pointer: Some(official.id.clone()),
+            state: Some(ModeState {
+                mode: Some(Mode::Direct),
+                attached: false,
+                proxy_route: mode.proxy_route,
+                contract: None,
+            }),
+            ..PendingTarget::default()
+        };
+        write_direct_provider(
+            state,
+            app,
+            op::USE_OFFICIAL,
+            &live_now,
+            target,
+            Some(&official),
+        )?;
     }
     if let Err(error) = state.db.clear_provider_health_for_app(app.as_str()).await {
         log::warn!("清除 {} 健康状态失败: {error}", app.as_str());
@@ -2585,6 +2670,309 @@ mod mode_tests {
         .await
         .expect("ephemeral port");
         AppState::new(db)
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn use_official_restores_codex_login_from_direct_route_and_stack() {
+        for proxy in [None, Some(false), Some(true)] {
+            let _home = Home::new();
+            set_preservation(false);
+            let login = chatgpt_login("test-account");
+            seed_codex(CODEX_USER_LIVE, Some(&login));
+            let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+            ProviderService::switch(&state, AppType::Codex, "a").unwrap();
+            assert!(codex_login_file().is_none(), "native login was stashed");
+            if let Some(stack) = proxy {
+                enter(&state, &AppType::Codex, stack).await.unwrap();
+            }
+            let saved = state.db.get_all_providers("codex").unwrap();
+            let stack_before = settled_stack(&AppType::Codex).unwrap();
+
+            use_official_provider(&state, &AppType::Codex)
+                .await
+                .unwrap();
+
+            let view = app_mode_view(&state, &AppType::Codex).unwrap();
+            assert_eq!(view.mode, "direct");
+            assert!(!view.attached);
+            assert_eq!(view.direct_provider_id.as_deref(), Some("codex-official"));
+            assert_eq!(view.route_provider_id.as_deref(), proxy.map(|_| "a"));
+            assert_eq!(codex_login_file(), Some(login.clone()));
+            let doc = codex_doc();
+            assert!(doc.get("model_provider").is_none());
+            assert!(doc.get("openai_base_url").is_none());
+            assert!(!codex_text().contains("https://a.example"));
+            assert_eq!(doc["approval_policy"].as_str(), Some("on-request"));
+            assert_eq!(
+                doc["projects"]["/work"]["trust_level"].as_str(),
+                Some("trusted")
+            );
+            for (id, row) in saved {
+                let after = state.db.get_provider_by_id(&id, "codex").unwrap().unwrap();
+                assert_eq!(after.settings_config, row.settings_config);
+            }
+            assert_eq!(settled_stack(&AppType::Codex).unwrap(), stack_before);
+            assert!(!state.proxy_service.is_running().await);
+            // Repeated use is safe and retains the current native login.
+            use_official_provider(&state, &AppType::Codex)
+                .await
+                .unwrap();
+            assert_eq!(codex_login_file(), Some(login));
+            ProviderService::switch(&state, AppType::Codex, "a").unwrap();
+            assert_eq!(codex_doc()["model_provider"].as_str(), Some("custom"));
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn use_official_preserves_an_edited_official_card_and_restores_subscription() {
+        let _home = Home::new();
+        set_preservation(false);
+        let login = chatgpt_login("native-account");
+        seed_codex(CODEX_USER_LIVE, Some(&login));
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        ProviderService::switch(&state, AppType::Codex, "a").unwrap();
+        let mut saved = state.db.ensure_official_provider(AppType::Codex).unwrap();
+        saved.settings_config["auth"] = json!({"OPENAI_API_KEY": "test-saved-official-key"});
+        state.db.save_provider("codex", &saved).unwrap();
+        ProviderService::switch(&state, AppType::Codex, &saved.id).unwrap();
+        assert_eq!(
+            codex_login_file(),
+            Some(saved.settings_config["auth"].clone())
+        );
+
+        use_official_provider(&state, &AppType::Codex)
+            .await
+            .unwrap();
+        assert_eq!(codex_login_file(), Some(login.clone()));
+        let selected = direct_provider_id(&state, &AppType::Codex)
+            .unwrap()
+            .unwrap();
+        assert_ne!(selected, saved.id);
+        let after = state
+            .db
+            .get_provider_by_id(&saved.id, "codex")
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.settings_config, saved.settings_config);
+        let count = state.db.get_all_providers("codex").unwrap().len();
+        use_official_provider(&state, &AppType::Codex)
+            .await
+            .unwrap();
+        assert_eq!(state.db.get_all_providers("codex").unwrap().len(), count);
+        assert_eq!(codex_login_file(), Some(login));
+        ProviderService::switch(&state, AppType::Codex, &saved.id).unwrap();
+        assert_eq!(
+            codex_login_file(),
+            Some(saved.settings_config["auth"].clone())
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn use_official_without_login_leaves_codex_ready_for_native_sign_in() {
+        let _home = Home::new();
+        seed_codex(CODEX_USER_LIVE, Some(&json!({"OPENAI_API_KEY": "sk-a"})));
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        use_official_provider(&state, &AppType::Codex)
+            .await
+            .unwrap();
+        assert!(codex_login_file().is_none());
+        assert!(codex_doc().get("model_provider").is_none());
+        assert_eq!(
+            direct_provider_id(&state, &AppType::Codex)
+                .unwrap()
+                .as_deref(),
+            Some("codex-official")
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn use_official_invalid_codex_config_keeps_pointer_mode_and_login() {
+        let _home = Home::new();
+        let login = chatgpt_login("test-account");
+        seed_codex("not valid toml = [", Some(&login));
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        let previous = mode(&AppType::Codex);
+        assert!(use_official_provider(&state, &AppType::Codex)
+            .await
+            .is_err());
+        assert_eq!(codex_text(), "not valid toml = [");
+        assert_eq!(codex_login_file(), Some(login));
+        assert_eq!(mode(&AppType::Codex), previous);
+        assert_eq!(
+            direct_provider_id(&state, &AppType::Codex)
+                .unwrap()
+                .as_deref(),
+            Some("a")
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn use_official_unreadable_codex_auth_keeps_configuration_and_pointer() {
+        for malformed_file in [false, true] {
+            let _home = Home::new();
+            seed_codex(CODEX_USER_LIVE, None);
+            let auth = crate::codex_config::get_codex_auth_path();
+            if malformed_file {
+                std::fs::write(&auth, b"invalid auth json").unwrap();
+            } else {
+                std::fs::create_dir(&auth).unwrap();
+            }
+            let before = codex_text();
+            let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+            assert!(use_official_provider(&state, &AppType::Codex)
+                .await
+                .is_err());
+            assert_eq!(codex_text(), before);
+            assert_eq!(
+                direct_provider_id(&state, &AppType::Codex)
+                    .unwrap()
+                    .as_deref(),
+                Some("a")
+            );
+            if malformed_file {
+                assert_eq!(std::fs::read(&auth).unwrap(), b"invalid auth json");
+            } else {
+                assert!(auth.is_dir());
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn use_official_recovers_an_interrupted_codex_switch() {
+        let _home = Home::new();
+        let login = chatgpt_login("test-account");
+        seed_codex(CODEX_USER_LIVE, Some(&login));
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        enter(&state, &AppType::Codex, false).await.unwrap();
+        failpoint::crash_at(Some("published:0"));
+        let interrupted = use_official_provider(&state, &AppType::Codex).await;
+        failpoint::crash_at(None);
+        assert!(interrupted.is_err());
+        use_official_provider(&state, &AppType::Codex)
+            .await
+            .unwrap();
+        assert_eq!(
+            app_mode_view(&state, &AppType::Codex).unwrap().mode,
+            "direct"
+        );
+        assert_eq!(
+            direct_provider_id(&state, &AppType::Codex)
+                .unwrap()
+                .as_deref(),
+            Some("codex-official")
+        );
+        assert_eq!(codex_login_file(), Some(login));
+        assert!(codex_doc().get("model_provider").is_none());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn use_official_clears_claude_channel_but_keeps_user_settings() {
+        let _home = Home::new();
+        seed_settings(USER_SETTINGS);
+        let state = state_with(
+            AppType::Claude,
+            &[claude("a", "https://a.example", json!({}))],
+            "a",
+        )
+        .await;
+        enter(&state, &AppType::Claude, false).await.unwrap();
+        use_official_provider(&state, &AppType::Claude)
+            .await
+            .unwrap();
+        let live = settings();
+        assert!(live["env"].get("ANTHROPIC_BASE_URL").is_none());
+        assert!(live["env"].get("ANTHROPIC_AUTH_TOKEN").is_none());
+        assert_eq!(live["env"]["DISABLE_TELEMETRY"], "1");
+        assert_eq!(live["hooks"], json!({ "Stop": [] }));
+        assert_eq!(
+            direct_provider_id(&state, &AppType::Claude)
+                .unwrap()
+                .as_deref(),
+            Some("claude-official")
+        );
+        assert!(state
+            .db
+            .get_provider_by_id("a", "claude")
+            .unwrap()
+            .is_some());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn use_official_restores_gemini_google_login() {
+        let _home = Home::new();
+        seed_gemini(GEMINI_USER_ENV, GEMINI_USER_SETTINGS);
+        let [a, _] = gemini_a_vertex();
+        let state = state_with(AppType::Gemini, &[a], "a").await;
+        enter(&state, &AppType::Gemini, false).await.unwrap();
+        use_official_provider(&state, &AppType::Gemini)
+            .await
+            .unwrap();
+        assert_eq!(gemini_env(), "# my notes\nGEMINI_SANDBOX=docker\nDEBUG=1\n");
+        assert_eq!(
+            gemini_settings()["security"]["auth"]["selectedType"],
+            "oauth-personal"
+        );
+        assert_eq!(
+            direct_provider_id(&state, &AppType::Gemini)
+                .unwrap()
+                .as_deref(),
+            Some("gemini-official")
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn use_official_restores_grok_and_preserves_unrelated_models() {
+        let _home = Home::new();
+        seed_grok(GROK_USER_LIVE);
+        let state = state_with(AppType::GrokBuild, &[grok_row("a", "grok-4.5", "")], "a").await;
+        ProviderService::switch(&state, AppType::GrokBuild, "a").unwrap();
+        use_official_provider(&state, &AppType::GrokBuild)
+            .await
+            .unwrap();
+        assert_eq!(grok_tables(), vec!["mine"]);
+        assert_eq!(grok_doc()["ui"]["theme"].as_str(), Some("dark"));
+        assert_eq!(
+            direct_provider_id(&state, &AppType::GrokBuild)
+                .unwrap()
+                .as_deref(),
+            Some("grokbuild-official")
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn use_official_restores_desktop_without_stopping_other_app_routes() {
+        let home = Home::new();
+        let _dirs = DesktopDirs::under(&home);
+        let app = AppType::ClaudeDesktop;
+        let state = state_with(app.clone(), &[desktop_card("a", false)], "a").await;
+        let claude = claude("b", "https://b.example", json!({}));
+        state.db.save_provider("claude", &claude).unwrap();
+        crate::settings::set_current_provider(&AppType::Claude, Some("b")).unwrap();
+        enter(&state, &AppType::Claude, false).await.unwrap();
+        enter(&state, &app, false).await.unwrap();
+        use_official_provider(&state, &app).await.unwrap();
+        assert_eq!(app_mode_view(&state, &app).unwrap().mode, "direct");
+        assert_eq!(
+            direct_provider_id(&state, &app).unwrap().as_deref(),
+            Some("claude-desktop-official")
+        );
+        assert!(state.proxy_service.is_running().await);
+        assert!(current::is_proxy(&AppType::Claude));
+        let status = crate::claude_desktop_config::get_status(&state.db, true).unwrap();
+        assert!(!status.configured);
+        assert!(status.actual_base_url.is_none());
+        assert!(desktop_profile().get("inferenceProvider").is_none());
+        exit(&state, &AppType::Claude).await.unwrap();
     }
 
     fn settings_path() -> std::path::PathBuf {

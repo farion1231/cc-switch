@@ -202,6 +202,7 @@ impl AppLiveState {
 pub mod op {
     /// 切换供应商（会改指针）。
     pub const SWITCH: &str = "switch";
+    pub const USE_OFFICIAL: &str = "use_official";
     /// 把当前供应商重新写进客户端文件（编辑、同步等）。
     pub const APPLY: &str = "apply";
     /// 进入代理模式：客户端文件写成代理契约。

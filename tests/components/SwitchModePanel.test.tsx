@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -110,6 +116,212 @@ beforeEach(() => {
   vi.mocked(toast.success).mockClear();
   // jsdom 没有 scrollIntoView，确认框里的下拉打开时会调
   Element.prototype.scrollIntoView = vi.fn();
+});
+
+describe("SwitchModePanel — official account", () => {
+  it("shows native configuration status and offers reapplying it for client-side auth changes", async () => {
+    const user = userEvent.setup();
+    mockMode("direct", null, "native");
+    renderPanel("codex", {
+      native: {
+        ...provider("native"),
+        category: "official",
+        settingsConfig: { auth: {}, config: "" },
+      },
+    });
+    expect(await screen.findByText("mode.official.active")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "mode.official.action" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "mode.official.reapply" }),
+    ).toBeEnabled();
+    await user.click(
+      screen.getByRole("button", { name: "mode.official.reapply" }),
+    );
+    expect(screen.getByRole("dialog")).toHaveAccessibleName(
+      "mode.official.reapply",
+    );
+  });
+
+  it("keeps the native-login action available for an official API-key card", async () => {
+    mockMode("direct", null, "codex-official");
+    renderPanel("codex", {
+      "codex-official": {
+        ...provider("codex-official"),
+        category: "official",
+        settingsConfig: { auth: { OPENAI_API_KEY: "test-key" }, config: "" },
+      },
+    });
+    const action = await screen.findByRole("button", {
+      name: "mode.official.action",
+    });
+    await waitFor(() => expect(action).toBeEnabled());
+    expect(screen.queryByText("mode.official.active")).not.toBeInTheDocument();
+  });
+  it.each(["direct", "route", "stack"] as const)(
+    "returns Codex to official login through one command from %s mode",
+    async (mode) => {
+      const user = userEvent.setup();
+      mockMode(mode, "custom");
+      const calls: unknown[] = [];
+      server.use(
+        http.post(
+          `${TAURI_ENDPOINT}/use_official_provider`,
+          async ({ request }) => {
+            calls.push(await request.json());
+            return HttpResponse.json(null);
+          },
+        ),
+      );
+      const onSwitch = vi.fn();
+      renderPanel("codex", { custom: provider("custom") }, onSwitch);
+
+      const action = await screen.findByRole("button", {
+        name: "mode.official.action",
+      });
+      await waitFor(() => expect(action).toBeEnabled());
+      await user.click(action);
+      expect(calls).toEqual([]);
+      const dialog = screen.getByRole("dialog");
+      expect(dialog).toHaveTextContent("mode.official.confirm");
+      await user.click(
+        within(dialog).getByRole("button", {
+          name: "mode.official.confirmAction",
+        }),
+      );
+
+      await waitFor(() => expect(calls).toEqual([{ app: "codex" }]));
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+      );
+      expect(onSwitch).not.toHaveBeenCalled();
+      expect(toast.success).toHaveBeenCalled();
+      expect(screen.getByTestId("card-custom")).toBeInTheDocument();
+    },
+  );
+
+  it("does not change configuration when confirmation is cancelled", async () => {
+    const user = userEvent.setup();
+    mockMode("direct", "custom");
+    const request = vi.fn(() => HttpResponse.json(null));
+    server.use(http.post(`${TAURI_ENDPOINT}/use_official_provider`, request));
+    renderPanel("codex", { custom: provider("custom") });
+    const action = await screen.findByRole("button", {
+      name: "mode.official.action",
+    });
+    await waitFor(() => expect(action).toBeEnabled());
+    await user.click(action);
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "common.cancel",
+      }),
+    );
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it.each(["claude", "claude-desktop", "gemini", "grokbuild"] as const)(
+    "targets only the selected %s app, including an empty provider list",
+    async (app) => {
+      const user = userEvent.setup();
+      mockMode("direct", null);
+      const calls: unknown[] = [];
+      server.use(
+        http.post(
+          `${TAURI_ENDPOINT}/use_official_provider`,
+          async ({ request }) => {
+            calls.push(await request.json());
+            return HttpResponse.json(null);
+          },
+        ),
+      );
+      renderPanel(app, {});
+      const action = await screen.findByRole("button", {
+        name: "mode.official.action",
+      });
+      await waitFor(() => expect(action).toBeEnabled());
+      await user.click(action);
+      await user.click(
+        within(screen.getByRole("dialog")).getByRole("button", {
+          name: "mode.official.confirmAction",
+        }),
+      );
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+      );
+      expect(calls).toEqual([{ app }]);
+    },
+  );
+
+  it("disables confirmation and cancellation while the configuration is being changed", async () => {
+    const user = userEvent.setup();
+    mockMode("direct", "custom");
+    let release: () => void = () => undefined;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const request = vi.fn(async () => {
+      await pending;
+      return HttpResponse.json(null);
+    });
+    server.use(http.post(`${TAURI_ENDPOINT}/use_official_provider`, request));
+    renderPanel("codex", { custom: provider("custom") });
+    const action = await screen.findByRole("button", {
+      name: "mode.official.action",
+    });
+    await waitFor(() => expect(action).toBeEnabled());
+    await user.click(action);
+    const dialog = screen.getByRole("dialog");
+    const confirm = within(dialog).getByRole("button", {
+      name: "mode.official.confirmAction",
+    });
+    await user.click(confirm);
+    await waitFor(() => expect(confirm).toBeDisabled());
+    expect(
+      within(dialog).getByRole("button", { name: "common.cancel" }),
+    ).toBeDisabled();
+    await user.click(confirm);
+    release();
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the dialog open after failure and allows retrying", async () => {
+    const user = userEvent.setup();
+    mockMode("route", "custom");
+    let attempts = 0;
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/use_official_provider`, () => {
+        attempts += 1;
+        return attempts === 1
+          ? HttpResponse.text("configuration is read-only", { status: 500 })
+          : HttpResponse.json(null);
+      }),
+    );
+    renderPanel("codex", { custom: provider("custom") });
+    const action = await screen.findByRole("button", {
+      name: "mode.official.action",
+    });
+    await waitFor(() => expect(action).toBeEnabled());
+    await user.click(action);
+    const confirm = within(screen.getByRole("dialog")).getByRole("button", {
+      name: "mode.official.confirmAction",
+    });
+    await user.click(confirm);
+    await waitFor(() =>
+      expect(screen.getByRole("dialog")).toHaveTextContent("mode.toast.failed"),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("mode.toast.failed");
+    await waitFor(() => expect(confirm).toHaveFocus());
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(attempts).toBe(2);
+  });
 });
 
 describe("SwitchModePanel — Stack mode", () => {

@@ -193,6 +193,8 @@ pub(crate) enum AuthTarget<'a> {
     ProxyThirdParty { restore_last: bool },
     /// 没绑托管账号的官方卡（直连，或代理的官方路由）。
     Official { row_auth: &'a Value },
+    /// Explicitly stop using API channels and return to native subscription login.
+    NativeOfficial,
     /// 托管账号：整份写它的登录。
     Managed { auth: &'a Value },
 }
@@ -274,6 +276,42 @@ pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
         }
         AuthTarget::Official { row_auth } => {
             official(row_auth, native, managed || residue, &mut stash)
+        }
+        AuthTarget::NativeOfficial => {
+            if native.is_some_and(codex_auth_has_credential_login_material) {
+                None
+            } else {
+                // API-key logins remain available for ordinary official-card
+                // switching, but must not displace a subscription login here.
+                let saved_id = stash
+                    .last
+                    .as_ref()
+                    .filter(|id| {
+                        stash
+                            .logins
+                            .get(*id)
+                            .is_some_and(codex_auth_has_credential_login_material)
+                    })
+                    .cloned()
+                    .or_else(|| {
+                        let mut candidates = stash
+                            .logins
+                            .iter()
+                            .filter(|(_, auth)| codex_auth_has_credential_login_material(auth));
+                        let (id, _) = candidates.next()?;
+                        // Without a most-recent subscription, do not choose
+                        // arbitrarily between several saved accounts.
+                        candidates.next().is_none().then(|| id.clone())
+                    });
+                let restored = saved_id.and_then(|id| stash.take(&id));
+                if let Some(live) = native {
+                    stash.put(live);
+                }
+                match restored {
+                    Some(saved) => Some(Some(saved)),
+                    None => input.live.is_some().then_some(None),
+                }
+            }
         }
     };
 
@@ -378,6 +416,60 @@ mod tests {
             initialized: true,
             ..LoginStash::default()
         }
+    }
+
+    #[test]
+    fn native_official_restores_subscription_instead_of_api_key_and_preserves_both() {
+        let alice = login("alice");
+        let api_key = json!({"OPENAI_API_KEY": "test-official-api-key"});
+        let mut stash = ready();
+        stash.put(&alice);
+        stash.put(&api_key);
+        let restored = plan(input(Some(&api_key), AuthTarget::NativeOfficial, stash));
+        assert_eq!(restored.auth, Some(Some(alice)));
+        assert_eq!(
+            restored.stash.unwrap().logins.get("api-key"),
+            Some(&api_key)
+        );
+    }
+
+    #[test]
+    fn native_official_without_subscription_clears_but_stashes_api_key() {
+        let api_key = json!({"OPENAI_API_KEY": "test-official-api-key"});
+        let result = plan(input(Some(&api_key), AuthTarget::NativeOfficial, ready()));
+        assert_eq!(result.auth, Some(None));
+        assert_eq!(result.stash.unwrap().logins.get("api-key"), Some(&api_key));
+    }
+
+    #[test]
+    fn native_official_keeps_current_subscription_and_does_not_restore_a_stashed_key() {
+        let alice = login("alice");
+        let mut stash = ready();
+        stash.put(&json!({"OPENAI_API_KEY": "test-official-api-key"}));
+        assert_eq!(
+            plan(input(
+                Some(&alice),
+                AuthTarget::NativeOfficial,
+                stash.clone()
+            ))
+            .auth,
+            None
+        );
+        assert_eq!(
+            plan(input(None, AuthTarget::NativeOfficial, stash)).auth,
+            None
+        );
+    }
+
+    #[test]
+    fn native_official_does_not_choose_between_ambiguous_saved_subscriptions() {
+        let mut stash = ready();
+        stash.put(&login("alice"));
+        stash.put(&login("bob"));
+        stash.put(&json!({"OPENAI_API_KEY": "test-official-api-key"}));
+        let result = plan(input(None, AuthTarget::NativeOfficial, stash));
+        assert_eq!(result.auth, None);
+        assert!(result.stash.is_none());
     }
 
     #[test]

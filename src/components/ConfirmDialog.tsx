@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -24,6 +24,7 @@ interface ConfirmDialogProps {
   checkboxLabel?: string;
   checkboxDefaultChecked?: boolean;
   pending?: boolean;
+  error?: string;
   onConfirm: (checkboxChecked: boolean) => void;
   onCancel: () => void;
 }
@@ -39,10 +40,12 @@ export function ConfirmDialog({
   checkboxLabel,
   checkboxDefaultChecked = false,
   pending = false,
+  error,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
   const { t } = useTranslation();
+  const confirmRef = useRef<HTMLButtonElement>(null);
   const [checkboxChecked, setCheckboxChecked] = useState(
     checkboxDefaultChecked,
   );
@@ -52,6 +55,10 @@ export function ConfirmDialog({
       setCheckboxChecked(checkboxDefaultChecked);
     }
   }, [isOpen, checkboxDefaultChecked]);
+
+  useEffect(() => {
+    if (isOpen && error && !pending) confirmRef.current?.focus();
+  }, [isOpen, error, pending]);
 
   const IconComponent = variant === "info" ? Info : AlertTriangle;
   const iconClass =
@@ -76,6 +83,14 @@ export function ConfirmDialog({
             {message}
           </DialogDescription>
         </DialogHeader>
+        {error ? (
+          <p
+            role="alert"
+            className="break-words px-6 pt-3 text-sm text-destructive"
+          >
+            {error}
+          </p>
+        ) : null}
         {checkboxLabel ? (
           <label className="flex cursor-pointer select-none items-start gap-2 px-6 pt-3">
             <Checkbox
@@ -92,6 +107,7 @@ export function ConfirmDialog({
             {cancelText || t("common.cancel")}
           </Button>
           <Button
+            ref={confirmRef}
             variant={variant === "info" ? "default" : "destructive"}
             disabled={pending}
             onClick={() =>
