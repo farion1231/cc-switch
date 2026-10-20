@@ -404,8 +404,15 @@ pub fn get_or_create_gateway_token(db: &Database) -> Result<String, AppError> {
 pub fn direct_gateway_credentials(
     provider: &Provider,
 ) -> Result<DirectGatewayCredentials, AppError> {
-    let env = provider
-        .settings_config
+    // Direct mode writes this token into Claude Desktop's local profile. Keep
+    // the provider row as a template, and only resolve the credential for this
+    // consumer. Proxy mode deliberately does not call this function: its
+    // managed gateway token has a separate lifecycle.
+    let resolved_settings = crate::services::api_key_vars::resolve::resolve_settings(
+        &crate::app_config::AppType::ClaudeDesktop,
+        &provider.settings_config,
+    )?;
+    let env = resolved_settings
         .get("env")
         .and_then(Value::as_object)
         .ok_or_else(|| {

@@ -1,5 +1,12 @@
 fn main() {
-    tauri_build::build();
+    // The linker embeds the same manifest for the app and its test executables.
+    // Keep Tauri's icon/version resources without embedding a second copy.
+    #[cfg(target_os = "windows")]
+    let attributes = tauri_build::Attributes::new()
+        .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest());
+    #[cfg(not(target_os = "windows"))]
+    let attributes = tauri_build::Attributes::new();
+    tauri_build::try_build(attributes).expect("failed to run Tauri build script");
 
     // Windows: Embed Common Controls v6 manifest for test binaries
     //
@@ -7,10 +14,8 @@ fn main() {
     // the standard Tauri application manifest. Without Common Controls v6,
     // `tauri::test` calls fail with STATUS_ENTRYPOINT_NOT_FOUND.
     //
-    // This workaround:
-    // 1. Embeds the manifest into test binaries via /MANIFEST:EMBED
-    // 2. Uses /MANIFEST:NO for the main binary to avoid duplicate resources
-    //    (Tauri already handles manifest embedding for the app binary)
+    // Embed once through the linker for all targets, including library unit
+    // tests. Cargo's rustc-link-arg-tests only covers integration-test targets.
     #[cfg(target_os = "windows")]
     {
         let manifest_path = std::path::PathBuf::from(
@@ -21,8 +26,6 @@ fn main() {
 
         println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
         println!("cargo:rustc-link-arg={}", manifest_arg);
-        // Avoid duplicate manifest resources in binary builds.
-        println!("cargo:rustc-link-arg-bins=/MANIFEST:NO");
         println!("cargo:rerun-if-changed={}", manifest_path.display());
     }
 }

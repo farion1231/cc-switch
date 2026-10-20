@@ -91,7 +91,12 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "api_key_vars",
 ];
+
+/// 本机专用、含敏感值的表：任何导出（手动导出 / 云同步）都不带数据，任何导入
+/// （SQL 导入 / 云同步下载 / 本地备份恢复）都保留本机现有数据、丢弃外来数据。
+pub(crate) const LOCAL_SECRET_TABLES: &[&str] = &["api_key_vars"];
 
 /// Tables whose local data is preserved from the live database during WebDAV import.
 /// Excludes ephemeral tables like provider_health that can safely rebuild at runtime.
@@ -117,7 +122,7 @@ impl Database {
     /// 导出为 SQLite 兼容的 SQL 文本（内存字符串，完整导出）
     pub fn export_sql_string(&self) -> Result<String, AppError> {
         let snapshot = self.snapshot_to_memory()?;
-        Self::dump_sql(&snapshot, &[])
+        Self::dump_sql(&snapshot, LOCAL_SECRET_TABLES)
     }
 
     /// Export SQL for sync (WebDAV), skipping local-only tables' data
@@ -224,6 +229,8 @@ impl Database {
         Self::apply_schema_migrations_on_conn(&temp_conn)?;
         // 导入和同步不经过保存时的校验：坏的自定义图标在这里清掉，不带进主库
         crate::services::provider::icon::strip_invalid_custom_icons(&temp_conn)?;
+        // 外来数据中的 API Key 变量（定义、脚本目录与值）一律丢弃，下面再复原本机的
+        Self::clear_local_secret_tables(&temp_conn)?;
         on_staging_ready()?;
 
         let backup_file_guard = lock_backup_file_operations()?;
@@ -237,6 +244,7 @@ impl Database {
             if !preserve_tables.is_empty() {
                 Self::restore_tables(&main_conn, &temp_conn, preserve_tables)?;
             }
+            Self::restore_tables(&main_conn, &temp_conn, LOCAL_SECRET_TABLES)?;
             let backup = Backup::new(&temp_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
             Self::complete_backup(&backup, "替换主数据库")?;
@@ -291,6 +299,19 @@ impl Database {
             "仅支持导入由 CC Switch 导出的 SQL 备份文件。",
             "Only SQL backups exported by CC Switch are supported.",
         ))
+    }
+
+    fn clear_local_secret_tables(conn: &Connection) -> Result<(), AppError> {
+        for table in LOCAL_SECRET_TABLES {
+            if Self::table_exists(conn, table)? {
+                conn.execute(
+                    &format!("DELETE FROM {}", Self::quote_identifier(table)),
+                    [],
+                )
+                .map_err(|e| AppError::Database(format!("清空表 {table} 失败: {e}")))?;
+            }
+        }
+        Ok(())
     }
 
     fn restore_tables(
@@ -1076,6 +1097,9 @@ impl Database {
                 &[backup_path.as_path()],
             )?;
             before_replace(safety_backup.as_deref())?;
+            // 本地备份里的 API Key 变量可能已过期：保留本机当前的
+            Self::clear_local_secret_tables(&staging_conn)?;
+            Self::restore_tables(&main_conn, &staging_conn, LOCAL_SECRET_TABLES)?;
             let backup = Backup::new(&staging_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
             Self::complete_backup(&backup, "恢复主数据库")?;

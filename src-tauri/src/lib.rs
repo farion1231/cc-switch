@@ -66,6 +66,7 @@ pub use mcp::{
 };
 pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
+pub use services::api_key_vars;
 pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService},
     provider::{reapply_current_codex_official_live, EditorSave, EditorView},
@@ -679,6 +680,12 @@ pub fn run() {
                 }
             }
 
+            // 在恢复客户端文件、创建代理和托盘之前同步加载变量，避免启动任务
+            // 先于 AppState 注册执行时跳过缓存，或启动流程读到尚未加载的引用。
+            let api_key_var_count = db.load_api_key_var_cache()?;
+            if api_key_var_count > 0 {
+                log::info!("[ApiKeyVars] 已加载 {api_key_var_count} 个变量");
+            }
             let app_state = AppState::new(db);
 
             // 设置 AppHandle 用于代理故障转移时的 UI 更新
@@ -1305,6 +1312,14 @@ pub fn run() {
                 // 定下各应用的直连 / 代理模式（处理旧版遗留的接管状态），再把代理模式的
                 // 应用接上。要排在通用配置片段的自动提取之后：它读的是直连的 live。
                 crate::mode::controller::startup(&state).await;
+                // SQLite 中的新 Key 可能已提交，而上次写入客户端文件未完成。
+                // 模式恢复后先补写有效的缓存值，再启动脚本调度，避免重复刷新或并发投影。
+                if let Err(error) =
+                    crate::services::api_key_vars::reconcile_cached_values_on_startup(&state).await
+                {
+                    log::warn!("[ApiKeyVars] 启动时恢复缓存 Key 失败: {error}");
+                }
+                crate::services::api_key_vars::start_worker(app_handle.clone());
                 // 启动流程走完：托盘这时才开始报「路由服务没在运行」，并记下退回直连的应用。
                 crate::tray::mark_startup_settled(&app_handle);
                 // Codex 官方做路由、发布了 Stack 模型时，官方模型列表过期就在后台刷新。
@@ -1454,6 +1469,16 @@ pub fn run() {
             commands::delete_provider,
             commands::remove_provider_from_live_config,
             commands::switch_provider,
+            commands::list_api_key_vars,
+            commands::upsert_api_key_var,
+            commands::delete_api_key_var,
+            commands::resolve_api_key_var_script,
+            commands::test_api_key_var,
+            commands::get_api_key_var_template,
+            commands::download_api_key_var_template,
+            commands::refresh_api_key_var,
+            commands::check_api_key_ref,
+            commands::check_api_key_refs,
             commands::import_default_config,
             commands::get_claude_desktop_status,
             commands::get_claude_desktop_default_routes,

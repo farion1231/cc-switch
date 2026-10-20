@@ -731,6 +731,7 @@ export function ClaudeFormFields({
       {/* API Key 输入框（非 OAuth 预设时显示） */}
       {shouldShowApiKey && !usesOAuth && (
         <ApiKeySection
+          allowVarRef
           value={apiKey}
           onChange={onApiKeyChange}
           category={category}

@@ -19,6 +19,8 @@ interface ApiKeySectionProps {
   required?: boolean;
   isPartner?: boolean;
   partnerPromotionKey?: string;
+  /** 允许 `{{NAME}}` 引用 API Key 变量 */
+  allowVarRef?: boolean;
 }
 
 export function ApiKeySection({
@@ -33,6 +35,7 @@ export function ApiKeySection({
   disabled,
   required = false,
   partnerPromotionKey,
+  allowVarRef = true,
 }: ApiKeySectionProps) {
   const { t } = useTranslation();
 
@@ -75,6 +78,7 @@ export function ApiKeySection({
       }
       disabled={isDisabled}
       required={isRequired}
+      allowVarRef={allowVarRef && !isDisabled}
       labelAside={
         showLink ? (
           <a

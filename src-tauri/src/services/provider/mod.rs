@@ -159,6 +159,8 @@ mod tests {
     use crate::claude_desktop_config::PROFILE_ID;
     use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
     use crate::database::Database;
+    use crate::live::engine::DeviceStore;
+    use crate::mode::state::{Mode, ModeState};
     use crate::provider::{
         AuthBinding, AuthBindingSource, ClaudeModelConfig, ProviderMeta, UniversalProvider,
         UsageScript,
@@ -310,6 +312,37 @@ mod tests {
         }
 
         result
+    }
+
+    #[test]
+    fn editor_switchability_ignores_unreadable_stack_for_unprojected_literal_draft() {
+        with_test_home(|state, _home| {
+            let store = DeviceStore::for_device();
+            std::fs::create_dir_all(store.state_path())
+                .expect("make the Stack registry unreadable as a file");
+            assert!(crate::mode::stack::is_member(&AppType::Claude, "draft").is_err());
+            let draft = Provider::with_id(
+                "draft".into(),
+                "Draft".into(),
+                json!({"env": {"ANTHROPIC_AUTH_TOKEN": "literal-draft-key"}}),
+                None,
+            );
+            let proxy_with_another_route = ModeState {
+                mode: Some(Mode::Proxy),
+                attached: true,
+                proxy_route: Some("route".into()),
+                contract: None,
+            };
+
+            ProviderService::ensure_editor_provider_switchable_if_projected(
+                state,
+                &AppType::Claude,
+                &proxy_with_another_route,
+                &draft,
+                false,
+            )
+            .expect("an unprojected literal draft remains storable");
+        });
     }
 
     fn codex_settings(base_url: &str, api_key: &str) -> Value {
@@ -4043,6 +4076,65 @@ wire_api = "responses"
 
     #[test]
     #[serial]
+    fn opencode_v2_reimport_preserves_template_from_legacy_full_wrapper() {
+        use crate::provider::OpenCodeConfigFormat;
+
+        with_test_home(|state, _| {
+            crate::services::api_key_vars::resolve::cache_set(
+                "OPENCODE_V2_TEMPLATE",
+                true,
+                Some("resolved-opencode-secret"),
+            );
+            let id = "wrapped-v2-template";
+            let fragment = json!({
+                "settings": {
+                    "baseURL": "https://api.example.com/v1",
+                    "apiKey": "{{OPENCODE_V2_TEMPLATE}}"
+                }
+            });
+            let mut wrapped_settings = json!({"providers": {}});
+            wrapped_settings["providers"][id] = fragment;
+            let mut provider = Provider::with_id(
+                id.to_string(),
+                "Wrapped V2".to_string(),
+                wrapped_settings,
+                None,
+            );
+            provider.meta = Some(ProviderMeta {
+                opencode_config_format: Some(OpenCodeConfigFormat::V2),
+                ..Default::default()
+            });
+
+            // Existing synced rows can still be full-config wrappers. Enabling
+            // projects the resolved V2 fragment, then a live import must put
+            // the original template back in the database.
+            ProviderService::add(state, AppType::OpenCode, provider, true)
+                .expect("enable wrapped V2 provider");
+            assert_eq!(
+                crate::opencode_config::read_opencode_config().unwrap()["providers"][id]
+                    ["settings"]["apiKey"],
+                json!("resolved-opencode-secret")
+            );
+
+            assert_eq!(import_opencode_providers_from_live(state).unwrap(), 1);
+            let saved = state
+                .db
+                .get_provider_by_id(id, AppType::OpenCode.as_str())
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                saved.settings_config["settings"]["apiKey"],
+                json!("{{OPENCODE_V2_TEMPLATE}}")
+            );
+            assert_eq!(
+                saved.meta.unwrap().opencode_config_format,
+                Some(OpenCodeConfigFormat::V2)
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn malformed_native_opencode_provider_allows_legacy_import_update_and_sync() {
         use crate::provider::OpenCodeConfigFormat;
         for native in [
@@ -5474,7 +5566,13 @@ impl ProviderService {
                     if let Some(name) = config.get("name").and_then(Value::as_str) {
                         provider.name = name.into();
                     }
-                    provider.settings_config = config.clone();
+                    provider.settings_config =
+                        crate::services::api_key_vars::resolve::preserve_refs(
+                            &AppType::Mcode,
+                            &provider.settings_config,
+                            config,
+                        )
+                        .unwrap_or_else(|| config.clone());
                 }
                 Self::set_provider_live_config_managed(provider, native.contains_key(id));
                 state.db.save_provider("mcode", provider)?;
@@ -5512,17 +5610,22 @@ impl ProviderService {
         create: bool,
     ) -> Result<bool, AppError> {
         let previous = state.db.get_provider_by_id(&provider.id, "mcode")?;
-        state.db.save_provider("mcode", provider)?;
+        state.db.save_provider_from_user("mcode", provider)?;
         if write_live {
-            let config = provider.settings_config.clone();
-            let written = if create {
-                crate::mcode_config::add_provider(&provider.id, config)
-            } else {
-                crate::mcode_config::set_provider(&provider.id, config)
-            };
+            let written = crate::services::api_key_vars::resolve::resolve_settings(
+                &AppType::Mcode,
+                &provider.settings_config,
+            )
+            .and_then(|config| {
+                if create {
+                    crate::mcode_config::add_provider(&provider.id, config.into_owned())
+                } else {
+                    crate::mcode_config::set_provider(&provider.id, config.into_owned())
+                }
+            });
             if let Err(error) = written {
                 match previous {
-                    Some(previous) => state.db.save_provider("mcode", &previous)?,
+                    Some(previous) => state.db.restore_provider_snapshot("mcode", &previous)?,
                     None => state.db.delete_provider("mcode", &provider.id)?,
                 }
                 return Err(error);
@@ -5608,7 +5711,9 @@ impl ProviderService {
         let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
 
         // Save to database
-        state.db.save_provider(app_type.as_str(), &provider)?;
+        state
+            .db
+            .save_provider_from_user(app_type.as_str(), &provider)?;
 
         // Additive mode apps (OpenCode, OpenClaw): optionally write to live config.
         if app_type.is_additive_mode() {
@@ -5688,7 +5793,9 @@ impl ProviderService {
             crate::mode::current::Purpose::Direct,
         )?;
         if current.is_some() {
-            state.db.save_provider(app_type.as_str(), &provider)?;
+            state
+                .db
+                .save_provider_from_user(app_type.as_str(), &provider)?;
             return Ok(true);
         }
 
@@ -5697,7 +5804,9 @@ impl ProviderService {
         let previous = state
             .db
             .get_provider_by_id(&provider.id, app_type.as_str())?;
-        state.db.save_provider(app_type.as_str(), &provider)?;
+        state
+            .db
+            .save_provider_from_user(app_type.as_str(), &provider)?;
         let written = codex_direct::write_direct(
             state.db.as_ref(),
             &state.codex_oauth_manager,
@@ -5713,7 +5822,9 @@ impl ProviderService {
                 return Err(error);
             }
             let rollback = match &previous {
-                Some(previous) => state.db.save_provider(app_type.as_str(), previous),
+                Some(previous) => state
+                    .db
+                    .restore_provider_snapshot(app_type.as_str(), previous),
                 None => state.db.delete_provider(app_type.as_str(), &provider.id),
             };
             if let Err(rollback) = rollback {
@@ -5903,8 +6014,13 @@ impl ProviderService {
 
         let mode = crate::mode::current::mode_state(&app_type);
         let key_fields = kind.writes_key_fields(state, &app_type, &mode, &provider.id)?;
+        Self::ensure_editor_provider_switchable_if_projected(
+            state, &app_type, &mode, &provider, key_fields,
+        )?;
 
-        state.db.save_provider(app_type.as_str(), &provider)?;
+        state
+            .db
+            .save_provider_from_user(app_type.as_str(), &provider)?;
         let written = if key_fields {
             codex_editor::write_live(
                 state.db.as_ref(),
@@ -5978,8 +6094,13 @@ impl ProviderService {
         let mode = crate::mode::current::mode_state(&app_type);
         let key_fields = kind.writes_key_fields(state, &app_type, &mode, &provider.id)?;
         let set_pointer = kind == EditorSaveKind::Add;
+        Self::ensure_editor_provider_switchable_if_projected(
+            state, &app_type, &mode, &provider, key_fields,
+        )?;
 
-        state.db.save_provider(app_type.as_str(), &provider)?;
+        state
+            .db
+            .save_provider_from_user(app_type.as_str(), &provider)?;
         let written = match &edits {
             Edits::Gemini(edits) => gemini_editor::write_live(
                 state.db.as_ref(),
@@ -6015,7 +6136,9 @@ impl ProviderService {
             return Err(error);
         }
         let rollback = match existing {
-            Some(existing) => state.db.save_provider(app_type.as_str(), existing),
+            Some(existing) => state
+                .db
+                .restore_provider_snapshot(app_type.as_str(), existing),
             None => state.db.delete_provider(app_type.as_str(), provider_id),
         };
         if let Err(rollback) = rollback {
@@ -6039,6 +6162,38 @@ impl ProviderService {
             state, app_type, provider,
         ))
         .map_err(AppError::Message)
+    }
+
+    /// 编辑器保存只有在本次会将该行投影到客户端时才要求引用的变量可切换。普通草稿
+    /// 可以先保留尚未刷新或已过期的模板；直连关键字段、代理路由和 Stack 成员会立即
+    /// 重投影，因此必须在写数据库之前拒绝过期引用。
+    fn ensure_editor_provider_switchable_if_projected(
+        state: &AppState,
+        app_type: &AppType,
+        mode: &crate::mode::state::ModeState,
+        provider: &Provider,
+        writes_key_fields: bool,
+    ) -> Result<(), AppError> {
+        let proxy_projects_provider = mode.is_proxy()
+            && if mode.routes_to(&provider.id) {
+                true
+            } else {
+                crate::mode::stack::is_member(app_type, &provider.id).unwrap_or_else(|error| {
+                    // Keep this fallback aligned with resync_saved_row_locked: a broken
+                    // Stack registry must not prevent an unrelated literal draft from
+                    // being saved when no client projection will run.
+                    log::warn!("读取 {} 的 Stack 模型失败: {error}", app_type.as_str());
+                    false
+                })
+            };
+        if writes_key_fields || proxy_projects_provider {
+            crate::services::api_key_vars::ensure_provider_switchable(
+                &state.db,
+                app_type,
+                &provider.settings_config,
+            )?;
+        }
+        Ok(())
     }
 
     fn add_claude_from_editor(
@@ -6065,13 +6220,22 @@ impl ProviderService {
             crate::mode::current::Purpose::Direct,
         )?
         .is_none();
-        state.db.save_provider(app_type.as_str(), &provider)?;
-
         let key_fields = first.then_some(claude_editor::KeyFieldWrite {
             prev: None,
             target: &provider,
             set_pointer: true,
         });
+        let mode = crate::mode::current::mode_state(&app_type);
+        Self::ensure_editor_provider_switchable_if_projected(
+            state,
+            &app_type,
+            &mode,
+            &provider,
+            key_fields.is_some(),
+        )?;
+        state
+            .db
+            .save_provider_from_user(app_type.as_str(), &provider)?;
         let written =
             claude_editor::write_live(state.db.as_ref(), &plan, editor.on_conflict, key_fields);
         Self::keep_row_if_written(state, &app_type, &provider.id, existing.as_ref(), written)
@@ -6111,8 +6275,17 @@ impl ProviderService {
                 target: &provider,
                 set_pointer: false,
             });
+        Self::ensure_editor_provider_switchable_if_projected(
+            state,
+            &app_type,
+            &mode,
+            &provider,
+            key_fields.is_some(),
+        )?;
 
-        state.db.save_provider(app_type.as_str(), &provider)?;
+        state
+            .db
+            .save_provider_from_user(app_type.as_str(), &provider)?;
         let written =
             claude_editor::write_live(state.db.as_ref(), &plan, editor.on_conflict, key_fields)
                 .and_then(|()| Self::resync_proxy_for_saved_row(state, &app_type, &provider));
@@ -6213,7 +6386,9 @@ impl ProviderService {
             Self::set_provider_live_config_managed(&mut provider, false);
             let was_current = crate::mode::current::local_direct_pointer(&app_type).as_deref()
                 == Some(original_id.as_str());
-            state.db.save_provider(app_type.as_str(), &provider)?;
+            state
+                .db
+                .save_provider_from_user(app_type.as_str(), &provider)?;
             state.db.delete_provider(app_type.as_str(), &original_id)?;
 
             if was_current {
@@ -6244,7 +6419,10 @@ impl ProviderService {
                 if is_current {
                     crate::services::OmoService::write_provider_config_to_file(&provider, variant)?;
                 }
-                if let Err(err) = state.db.save_provider(app_type.as_str(), &provider) {
+                if let Err(err) = state
+                    .db
+                    .save_provider_from_user(app_type.as_str(), &provider)
+                {
                     if is_current {
                         if let Err(rollback_err) =
                             crate::services::OmoService::write_config_to_file(state, variant)
@@ -6277,7 +6455,9 @@ impl ProviderService {
 
             // Save to database after live-config presence is resolved so parse errors
             // do not report failure after already mutating DB state.
-            state.db.save_provider(app_type.as_str(), &provider)?;
+            state
+                .db
+                .save_provider_from_user(app_type.as_str(), &provider)?;
 
             if !live_config_managed {
                 return Ok(true);
@@ -6315,16 +6495,45 @@ impl ProviderService {
             return Err(desktop_needs_routing_error());
         }
 
-        // Save to database
-        state.db.save_provider(app_type.as_str(), &provider)?;
+        let writes_live = is_direct_current || mode.is_proxy();
+        // DB-only drafts may intentionally reference a variable with no
+        // current value. Once this row owns the direct/proxy live config,
+        // validate it before persisting so an expired reference cannot leave
+        // the catalog changed after the live writer rejects it.
+        if writes_live {
+            crate::services::api_key_vars::ensure_provider_switchable(
+                &state.db,
+                &app_type,
+                &provider.settings_config,
+            )?;
+        }
 
-        if is_direct_current || mode.is_proxy() {
-            let outcome = live::sync_live_for_provider_respecting_mode(
+        state
+            .db
+            .save_provider_from_user(app_type.as_str(), &provider)?;
+
+        if writes_live {
+            let outcome = match live::sync_live_for_provider_respecting_mode(
                 state,
                 &app_type,
                 &provider,
                 existing_provider.as_ref(),
-            )?;
+            ) {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    if let Some(existing) = existing_provider.as_ref() {
+                        if let Err(rollback) = state
+                            .db
+                            .restore_provider_snapshot(app_type.as_str(), existing)
+                        {
+                            return Err(AppError::Message(format!(
+                                "保存供应商后同步 live 配置失败: {error}; 恢复供应商数据同时失败: {rollback}"
+                            )));
+                        }
+                    }
+                    return Err(error);
+                }
+            };
             if outcome == LiveSyncOutcome::WroteLive {
                 // MCP is stored in the database and projected after a successful
                 // live write. Keep the failure best-effort so the provider save
@@ -6356,14 +6565,18 @@ impl ProviderService {
         let app_type = AppType::Codex;
         let mode = crate::mode::current::mode_state(&app_type);
         if !mode.is_proxy() && !is_direct_current {
-            state.db.save_provider(app_type.as_str(), provider)?;
+            state
+                .db
+                .save_provider_from_user(app_type.as_str(), provider)?;
             return Ok(true);
         }
         if !mode.is_proxy() {
             codex_direct::preflight(state.db.as_ref(), provider)?;
         }
 
-        state.db.save_provider(app_type.as_str(), provider)?;
+        state
+            .db
+            .save_provider_from_user(app_type.as_str(), provider)?;
         let written = if mode.is_proxy() {
             Self::resync_proxy_for_saved_row(state, &app_type, provider)
         } else {
@@ -6382,7 +6595,10 @@ impl ProviderService {
                 return Err(error);
             }
             if let Some(existing) = existing {
-                if let Err(rollback) = state.db.save_provider(app_type.as_str(), existing) {
+                if let Err(rollback) = state
+                    .db
+                    .restore_provider_snapshot(app_type.as_str(), existing)
+                {
                     return Err(AppError::Message(format!(
                         "更新 Codex 供应商失败: {error}; 恢复供应商数据同时失败: {rollback}"
                     )));
@@ -6590,6 +6806,12 @@ impl ProviderService {
         let _provider = providers
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+        // 引用了无法解析的 API Key 变量（未定义 / 已停用 / 尚无值）时拒绝切换
+        crate::services::api_key_vars::ensure_provider_switchable(
+            &state.db,
+            &app_type,
+            &_provider.settings_config,
+        )?;
 
         // OMO providers are switched through their own exclusive path.
         if matches!(app_type, AppType::OpenCode) && _provider.category.as_deref() == Some("omo") {
@@ -6608,11 +6830,25 @@ impl ProviderService {
         // 失败后重试也按补完后的指针删上一家的独有字段。
         let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
 
+        // The switch lock serializes native writes, but another workflow may
+        // have refreshed (or invalidated) this variable while we waited for
+        // it. Re-check the persisted expiry immediately before publishing a
+        // route or rewriting a client file.
+        let provider = state
+            .db
+            .get_provider_by_id(id, app_type.as_str())?
+            .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+        crate::services::api_key_vars::ensure_provider_switchable(
+            &state.db,
+            &app_type,
+            &provider.settings_config,
+        )?;
+
         if crate::mode::current::is_proxy(&app_type) {
             // 代理模式：只换代理路由，直连指针不变。契约没变时客户端文件不读也不写；
             // 变了在同一个操作里先改写客户端，再发布路由。
-            if _provider.category.as_deref() == Some("official")
-                && !official_provider_supports_proxy_takeover(&app_type, _provider)
+            if provider.category.as_deref() == Some("official")
+                && !official_provider_supports_proxy_takeover(&app_type, &provider)
             {
                 return Err(AppError::localized(
                     "switch.official_blocked_by_proxy",
@@ -6630,7 +6866,7 @@ impl ProviderService {
                 id
             );
             let route = futures::executor::block_on(crate::mode::controller::switch_route_locked(
-                state, &app_type, _provider,
+                state, &app_type, &provider,
             ))
             .map_err(|e| AppError::Message(format!("切换路由失败: {e}")))?;
             // MCP 不随路由变：客户端文件没按直连重写。
@@ -6641,6 +6877,7 @@ impl ProviderService {
         }
 
         // Normal mode: full switch with Live config write
+        let providers = state.db.get_all_providers(app_type.as_str())?;
         Self::switch_normal(state, app_type, id, &providers)
     }
 
@@ -6710,14 +6947,16 @@ impl ProviderService {
 
         let mut result = SwitchResult::default();
 
-        // Additive mode apps skip setting is_current (no such concept).
+        // 写 live（Claude Desktop、累加式应用；切换式应用在上面各自的分支里写完了）。
+        write_live_for_state(state, &app_type, provider)?;
+
+        // The remaining non-additive caller is Claude Desktop. Publish the
+        // current pointer only after its profile has been written, so an
+        // expiry check at the write boundary leaves both pointers untouched.
         if !app_type.is_additive_mode() {
             crate::settings::set_current_provider(&app_type, Some(id))?;
             state.db.set_current_provider(app_type.as_str(), id)?;
         }
-
-        // 写 live（Claude Desktop、累加式应用；切换式应用在上面各自的分支里写完了）。
-        write_live_for_state(state, &app_type, provider)?;
 
         // Hermes is additive, so "switching" doesn't overwrite a live config file
         // — we instead update the top-level `model:` section to point at this
@@ -6914,6 +7153,14 @@ impl ProviderService {
             return Ok(());
         }
         McpService::sync_enabled_for_app(state, &app_type)
+    }
+
+    pub(crate) fn sync_api_key_var_for_provider(
+        state: &AppState,
+        app_type: &AppType,
+        provider_id: &str,
+    ) -> Result<bool, AppError> {
+        live::sync_api_key_var_for_provider(state, app_type, provider_id)
     }
 
     pub fn migrate_legacy_common_config_usage(
@@ -8139,6 +8386,12 @@ impl ProviderService {
         provider: UniversalProvider,
     ) -> Result<bool, AppError> {
         icon::validate_icon(provider.icon.as_deref())?;
+        if crate::services::api_key_vars::resolve::is_malformed_ref(&provider.api_key) {
+            return Err(crate::services::api_key_vars::resolve::unresolved_error(
+                &provider.api_key,
+                &crate::services::api_key_vars::resolve::RefStatus::Malformed,
+            ));
+        }
         // 保存统一供应商
         state.db.save_universal_provider(&provider)?;
 
@@ -8198,7 +8451,9 @@ impl ProviderService {
                 claude_provider.created_at = existing.created_at;
                 claude_provider.sort_index = existing.sort_index;
             }
-            state.db.save_provider("claude", &claude_provider)?;
+            state
+                .db
+                .save_provider_from_synchronization("claude", &claude_provider)?;
             Self::project_universal_child_to_live(
                 state,
                 AppType::Claude,
@@ -8223,7 +8478,9 @@ impl ProviderService {
                 codex_provider.created_at = existing.created_at;
                 codex_provider.sort_index = existing.sort_index;
             }
-            state.db.save_provider("codex", &codex_provider)?;
+            state
+                .db
+                .save_provider_from_synchronization("codex", &codex_provider)?;
             Self::project_universal_child_to_live(
                 state,
                 AppType::Codex,
@@ -8247,7 +8504,9 @@ impl ProviderService {
                 gemini_provider.created_at = existing.created_at;
                 gemini_provider.sort_index = existing.sort_index;
             }
-            state.db.save_provider("gemini", &gemini_provider)?;
+            state
+                .db
+                .save_provider_from_synchronization("gemini", &gemini_provider)?;
             Self::project_universal_child_to_live(
                 state,
                 AppType::Gemini,

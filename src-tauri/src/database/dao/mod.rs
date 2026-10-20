@@ -2,6 +2,7 @@
 //!
 //! Database access operations for each domain
 
+pub mod api_key_vars;
 pub mod custom_icons;
 pub mod failover;
 pub mod mcp;

@@ -14,6 +14,10 @@ fn merge_settings_for_save(
     mut incoming: crate::settings::AppSettings,
     existing: &crate::settings::AppSettings,
 ) -> crate::settings::AppSettings {
+    // 设置页暂无 node 路径输入项：前端未携带时保留现有值
+    if incoming.api_key_refresh_node_path.is_none() {
+        incoming.api_key_refresh_node_path = existing.api_key_refresh_node_path.clone();
+    }
     match (&mut incoming.webdav_sync, &existing.webdav_sync) {
         // incoming 没有 webdav → 保留现有
         (None, _) => {

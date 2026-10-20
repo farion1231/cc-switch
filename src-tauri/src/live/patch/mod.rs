@@ -145,6 +145,9 @@ pub enum LiveWriteError {
     /// 写完之后客户端实际走的路由不是目标供应商：当前生效的 profile 覆盖了选路。
     #[error("Codex 当前生效的 profile \"{profile}\" 覆盖了 {key}")]
     Route { profile: String, key: String },
+    /// 要写入的内容里出现了无法解析的 API Key 变量引用 `{{NAME}}`。
+    #[error("{path} 将写入未解析的 API Key 变量 {name}，没有写入")]
+    UnresolvedRef { path: PathBuf, name: String },
 }
 
 /// 编辑冲突的错误码。命令返回 JSON 字符串，前端据此让用户选保留哪一边。
@@ -200,6 +203,17 @@ impl From<LiveWriteError> for crate::error::AppError {
                     "The active Codex profile \"{profile}\" ([profiles.{profile}]) sets {key}, so requests would keep following it instead of the target provider. Remove {key} from that profile or change the top-level profile. Nothing was written"
                 ),
             ),
+            LiveWriteError::UnresolvedRef { path, name } => {
+                let base = crate::services::api_key_vars::resolve::unresolved_error(
+                    &name,
+                    &crate::services::api_key_vars::resolve::lookup(&name).0,
+                );
+                log::warn!(
+                    "[ApiKeyVars] 拒绝向 {} 写入未解析的变量引用 {name}",
+                    path.display()
+                );
+                base
+            }
             LiveWriteError::EditConflict { path, keys } => AppError::Message(
                 serde_json::json!({
                     "code": EDIT_CONFLICT_CODE,

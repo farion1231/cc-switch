@@ -5,10 +5,51 @@
 use crate::database::{lock_conn, to_json_string, Database};
 use crate::error::AppError;
 use crate::provider::UniversalProvider;
+use rusqlite::{OptionalExtension, Transaction};
 use std::collections::HashMap;
 
 /// 统一供应商的 Settings Key
-const UNIVERSAL_PROVIDERS_KEY: &str = "universal_providers";
+pub(crate) const UNIVERSAL_PROVIDERS_KEY: &str = "universal_providers";
+
+/// Rewrite whole-field API-key variable references inside the unified-provider
+/// settings value. The caller owns the surrounding transaction so a variable
+/// rename and every dependent configuration change commit together.
+pub(crate) fn rewrite_api_key_var_refs_in_tx(
+    tx: &Transaction<'_>,
+    old: &str,
+    new: &str,
+) -> Result<usize, AppError> {
+    let raw: Option<String> = tx
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            [UNIVERSAL_PROVIDERS_KEY],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let Some(raw) = raw else {
+        return Ok(0);
+    };
+
+    let mut providers: HashMap<String, UniversalProvider> = serde_json::from_str(&raw)
+        .map_err(|e| AppError::Database(format!("解析统一供应商数据失败: {e}")))?;
+    let mut rewritten = 0;
+    for provider in providers.values_mut() {
+        if crate::services::api_key_vars::resolve::parse_ref(&provider.api_key) == Some(old) {
+            provider.api_key = format!("{{{{{new}}}}}");
+            rewritten += 1;
+        }
+    }
+    if rewritten > 0 {
+        let json = to_json_string(&providers)?;
+        tx.execute(
+            "UPDATE settings SET value = ?1 WHERE key = ?2",
+            [&json, UNIVERSAL_PROVIDERS_KEY],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    }
+    Ok(rewritten)
+}
 
 impl Database {
     /// 获取所有统一供应商

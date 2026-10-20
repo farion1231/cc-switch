@@ -72,7 +72,7 @@ pub fn view(
     category: Option<&str>,
 ) -> Result<EditorView, AppError> {
     let official = category == Some("official");
-    let Ok(projection) = GrokProjection::of(settings_config, official) else {
+    let Ok(projection) = GrokProjection::of_raw(settings_config, official) else {
         return Ok(EditorView {
             settings: settings_config.clone(),
             inactive: Vec::new(),
@@ -107,7 +107,7 @@ pub fn view(
 
 /// 行里 CC Switch 的表名（按投影的规则解析；解析不了按 `models.default`）。
 fn row_table_name(settings: &Value) -> Option<String> {
-    if let Ok(projection) = GrokProjection::of(settings, false) {
+    if let Ok(projection) = GrokProjection::of_raw(settings, false) {
         return projection.table_name().map(str::to_string);
     }
     config_text(settings)
@@ -150,8 +150,8 @@ pub(crate) fn plan_save(
 ) -> Result<GrokEditorPlan, AppError> {
     let edited_doc = parse_text(config_text(edited), "edited")?;
     let base_doc = parse_text(config_text(base), "base")?;
-    let projection = GrokProjection::of(edited, official)?;
-    let base_table = GrokProjection::of(base, official)
+    let projection = GrokProjection::of_raw(edited, official)?;
+    let base_table = GrokProjection::of_raw(base, official)
         .ok()
         .and_then(|base| base.table_name().map(str::to_string));
     let cc_tables: Vec<&str> = [projection.table_name(), base_table.as_deref()]
@@ -322,5 +322,22 @@ model = "m"
         .unwrap();
         assert_eq!(plan.row_settings, json!({ "config": "" }));
         assert!(plan.edits.is_empty());
+    }
+
+    #[test]
+    fn saving_a_new_variable_reference_keeps_its_template() {
+        crate::services::api_key_vars::resolve::cache_set(
+            "EDITOR_GROK_REF",
+            true,
+            Some("sk-editor-grok"),
+        );
+        let edited = json!({
+            "config": ROW.replace("key-a", "{{EDITOR_GROK_REF}}")
+        });
+
+        let plan = plan_save(None, &edited, &edited, false, ConflictPolicy::Refuse).expect("plan");
+        let text = plan.row_settings["config"].as_str().expect("config");
+        assert!(text.contains("{{EDITOR_GROK_REF}}"), "{text}");
+        assert!(!text.contains("sk-editor-grok"), "{text}");
     }
 }

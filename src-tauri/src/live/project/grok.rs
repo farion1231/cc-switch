@@ -39,6 +39,20 @@ impl GrokProjection {
         if official {
             return Ok(Self { table: None });
         }
+        // Key 字段里的 `{{NAME}}` 变量引用在这里换成当前值
+        let resolved = crate::services::api_key_vars::resolve::resolve_settings_lossy(
+            &crate::app_config::AppType::GrokBuild,
+            settings,
+        );
+        Self::of_raw(&resolved, false)
+    }
+
+    /// Project a provider row for editor display or persistence without resolving
+    /// API-key variable templates. Resolution is only for live/proxy writes.
+    pub(crate) fn of_raw(settings: &Value, official: bool) -> Result<Self, AppError> {
+        if official {
+            return Ok(Self { table: None });
+        }
         let text = settings
             .get("config")
             .and_then(Value::as_str)

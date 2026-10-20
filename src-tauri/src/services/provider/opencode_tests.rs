@@ -3,6 +3,7 @@ use crate::app_config::AppType;
 use crate::database::Database;
 use crate::opencode_config;
 use crate::provider::Provider;
+use crate::services::api_key_vars::runner::{ApiKeyRefreshConfig, ApiKeyRefreshState};
 use crate::settings::{get_settings, update_settings, AppSettings};
 use crate::store::AppState;
 use serde_json::json;
@@ -104,6 +105,126 @@ fn opencode_builtin_import_is_read_only_and_existing_override_is_editable() {
     assert_eq!(saved["opencode-go"]["options"]["apiKey"], "edited-test-key");
     assert!(saved["opencode-go"].get("npm").is_none());
     assert!(saved["opencode-go"]["options"].get("baseURL").is_none());
+}
+
+#[test]
+#[serial]
+fn opencode_reimport_preserves_wrapper_templates_after_restart() {
+    const KEY_NAME: &str = "ASTRA_OPENCODE_RESTART_KEY";
+    const STALE_NATIVE_VALUE: &str = "stale-native-value";
+    const REFRESHED_VALUE: &str = "refreshed-cache-value";
+
+    let fixture = Fixture::new();
+    let template = format!("{{{{{KEY_NAME}}}}}");
+    let cases = [
+        (
+            "astra-restart-v1",
+            json!({
+                "provider": {
+                    "astra-restart-v1": {"options": {"apiKey": template.clone()}}
+                }
+            }),
+            "/options/apiKey",
+        ),
+        (
+            "astra-restart-v2",
+            json!({
+                "providers": {
+                    "astra-restart-v2": {"settings": {"apiKey": template.clone()}}
+                }
+            }),
+            "/settings/apiKey",
+        ),
+    ];
+
+    // Use the real on-disk test database. The initial process records the
+    // refreshed B value, then exits; loading a second Database is the startup
+    // path that discards cache history containing the old A value.
+    let first_process = AppState::new(Arc::new(Database::init().unwrap()));
+    first_process
+        .db
+        .upsert_api_key_var(
+            None,
+            KEY_NAME,
+            &ApiKeyRefreshConfig {
+                enabled: true,
+                script_dir: fixture._dir.path().to_string_lossy().into_owned(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    first_process
+        .db
+        .update_api_key_var_result(
+            KEY_NAME,
+            Some(STALE_NATIVE_VALUE),
+            &ApiKeyRefreshState::default(),
+        )
+        .unwrap();
+    first_process
+        .db
+        .update_api_key_var_result(
+            KEY_NAME,
+            Some(REFRESHED_VALUE),
+            &ApiKeyRefreshState::default(),
+        )
+        .unwrap();
+    for (id, stored_template, _) in &cases {
+        let provider = Provider::with_id(
+            (*id).into(),
+            format!("Astra {id}"),
+            stored_template.clone(),
+            None,
+        );
+        first_process
+            .db
+            .save_provider(AppType::OpenCode.as_str(), &provider)
+            .unwrap();
+    }
+    drop(first_process);
+
+    let stale_native = json!({
+        "provider": {"astra-restart-v1": {"options": {"apiKey": STALE_NATIVE_VALUE}}},
+        "providers": {"astra-restart-v2": {"settings": {"apiKey": STALE_NATIVE_VALUE}}}
+    });
+    let stale_bytes = serde_json::to_vec(&stale_native).unwrap();
+    fs::write(&fixture.config_path, &stale_bytes).unwrap();
+
+    let restarted = AppState::new(Arc::new(Database::init().unwrap()));
+    assert_eq!(restarted.db.load_api_key_var_cache().unwrap(), 1);
+    assert_eq!(
+        crate::services::api_key_vars::resolve::known_values(KEY_NAME),
+        vec![REFRESHED_VALUE]
+    );
+
+    assert_eq!(import_opencode_providers_from_live(&restarted).unwrap(), 2);
+    for (id, _, api_key_path) in &cases {
+        let saved = restarted
+            .db
+            .get_provider_by_id(id, AppType::OpenCode.as_str())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            saved.settings_config.pointer(api_key_path),
+            Some(&serde_json::Value::String(template.clone()))
+        );
+        assert!(!saved
+            .settings_config
+            .to_string()
+            .contains(STALE_NATIVE_VALUE));
+    }
+    // Re-import is read-only: stale native bytes model the durable state left
+    // by an earlier failed propagation before this simulated restart.
+    assert_eq!(fs::read(&fixture.config_path).unwrap(), stale_bytes);
+    let export = restarted.db.export_sql_string().unwrap();
+    assert!(export.contains(&template));
+    assert!(!export.contains(STALE_NATIVE_VALUE));
+    assert!(!export.contains(REFRESHED_VALUE));
+    crate::services::api_key_vars::resolve::cache_load(std::iter::empty::<(
+        String,
+        bool,
+        Option<String>,
+    )>());
 }
 
 #[test]
