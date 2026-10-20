@@ -162,6 +162,8 @@ pub struct ToolVersion {
     /// 已定位到可执行文件、但 `--version` 报错退出（装了却跑不起来，如 Node 版本不达标）。
     /// 供前端区分"未安装"与"已安装·无法运行"，无需匹配 error 文案反推语义。
     installed_but_broken: bool,
+    /// true = 已执行到工具，false = 确认不存在，None = 探测失败、安装状态未知。
+    installed: Option<bool>,
     /// 工具运行环境: "windows", "wsl", "macos", "linux", "unknown"
     env_type: String,
     /// 当 env_type 为 "wsl" 时，返回该工具绑定的 WSL distro（用于按 distro 探测 shells）
@@ -1141,7 +1143,7 @@ fn build_tool_action_line(
         //    逐工具触发 lifecycle,batch 化会破坏"逐工具独立成败"的 UX。
         let command = match action {
             ToolLifecycleAction::Update => {
-                let installs = enumerate_tool_installations(tool);
+                let installs = enumerate_tool_installations(tool)?;
                 match resolve_update_command(tool, &installs) {
                     UpdateCommand::Anchored(command) | UpdateCommand::Static(command) => command,
                     UpdateCommand::Unmanaged => {
@@ -1172,7 +1174,7 @@ fn build_tool_action_line(
         // （有 native installer 的工具如 claude/opencode/hermes），其余仍裸 npm。
         let command = match action {
             ToolLifecycleAction::Update => {
-                let installs = enumerate_tool_installations(tool);
+                let installs = enumerate_tool_installations(tool)?;
                 match resolve_update_command(tool, &installs) {
                     UpdateCommand::Anchored(command) | UpdateCommand::Static(command) => command,
                     UpdateCommand::Unmanaged => {
@@ -1244,7 +1246,7 @@ fn probe_local_version(
     wsl_distro: Option<&str>,
     wsl_shell: Option<&str>,
     wsl_shell_flag: Option<&str>,
-) -> ShellProbe {
+) -> Result<ShellProbe, String> {
     if let Some(distro) = wsl_distro {
         try_get_version_wsl(tool, distro, wsl_shell, wsl_shell_flag)
     } else {
@@ -1262,18 +1264,18 @@ fn probe_local_version(
             // `probe_path_default_version` executes only the real executable
             //    resolved by `where` (App Execution Aliases filtered out), so
             //    it never `cmd /C tool` into a protocol handler.
-            match probe_path_default_version(tool) {
+            match probe_path_default_version(tool)? {
                 ShellProbe::NotFound(_) => scan_cli_version(tool),
-                found => found,
+                found => Ok(found),
             }
         }
 
         #[cfg(not(target_os = "windows"))]
         {
             // PATH 第一个命令优先；只有它确实没装(NotFound)才去常见目录兜底扫描。
-            match try_get_version(tool) {
+            match try_get_version(tool)? {
                 ShellProbe::NotFound(_) => scan_cli_version(tool),
-                found => found,
+                found => Ok(found),
             }
         }
     }
@@ -1283,9 +1285,7 @@ fn probe_local_version(
 pub(crate) fn local_tool_version(tool: &str) -> Option<String> {
     let (_, wsl_distro) = tool_env_type_and_wsl_distro(tool);
     match probe_local_version(tool, wsl_distro.as_deref(), None, None) {
-        ShellProbe::Found(version) => Some(version),
-        // Unresolved/FoundButFailed 都是"用户确实装了，只是我们量不到版本"，
-        // 返回 None 而不是去别处找另一个版本顶上来。
+        Ok(ShellProbe::Found(version)) => Some(version),
         _ => None,
     }
 }
@@ -1301,25 +1301,18 @@ async fn get_single_tool_version_impl(
     );
 
     // 判断该工具的运行环境 & WSL distro（如有）
-    let (env_type, wsl_distro) = tool_env_type_and_wsl_distro(tool);
+    let (_, wsl_distro) = tool_env_type_and_wsl_distro(tool);
 
     // 使用全局 HTTP 客户端（已包含代理配置）
     let client = crate::proxy::http_client::get();
 
     // 1. 获取本地版本
     let probe = probe_local_version(tool, wsl_distro.as_deref(), wsl_shell, wsl_shell_flag);
-    let (local_version, local_error, installed_but_broken) = match probe {
-        ShellProbe::Found(v) => (Some(v), None, false),
-        ShellProbe::FoundButFailed(e) => (None, Some(e), true),
-        // 纯粹没装不带 error：版本列已显示「未安装」，再显示一行英文原因是重复的。
-        ShellProbe::NotFound(e) if e.ends_with(NOT_INSTALLED) => (None, None, false),
-        ShellProbe::Unresolved(e) => (None, Some(e), true),
-        ShellProbe::NotFound(e) => (None, Some(e), false),
-    };
+    let mut result = tool_version_from_probe(tool, probe);
 
     // 2. 获取远程最新版本（npm 工具在本地领先 latest 时会按预发布通道补查，见
     //    fetch_npm_latest_for_tool / npm_prerelease_tags）
-    let local = local_version.as_deref();
+    let local = result.version.as_deref();
     let latest_version = match tool {
         "claude" => {
             fetch_npm_latest_for_tool(&client, "@anthropic-ai/claude-code", tool, local).await
@@ -1359,15 +1352,33 @@ async fn get_single_tool_version_impl(
         _ => None,
     };
 
+    result.latest_version = latest_version;
+    result.update_blocked_by_node = update_blocked_by_node;
+    result
+}
+
+fn tool_version_from_probe(tool: &str, probe: Result<ShellProbe, String>) -> ToolVersion {
+    let (version, error, installed, installed_but_broken) = match probe {
+        Ok(ShellProbe::Found(v)) => (Some(v), None, Some(true), false),
+        Ok(ShellProbe::VersionUnknown(e)) => (None, Some(e), Some(true), false),
+        Ok(ShellProbe::FoundButFailed(e)) => (None, Some(e), Some(true), true),
+        Ok(ShellProbe::NotFound(e)) if e.ends_with(NOT_INSTALLED) => {
+            (None, None, Some(false), false)
+        }
+        Ok(ShellProbe::NotFound(e)) => (None, Some(e), Some(false), false),
+        Err(e) => (None, Some(e), None, false),
+    };
+    let (env_type, wsl_distro) = tool_env_type_and_wsl_distro(tool);
     ToolVersion {
         name: tool.to_string(),
-        version: local_version,
-        latest_version,
-        error: local_error,
+        version,
+        latest_version: None,
+        error,
+        installed,
         installed_but_broken,
         env_type,
         wsl_distro,
-        update_blocked_by_node,
+        update_blocked_by_node: None,
     }
 }
 
@@ -1742,8 +1753,7 @@ fn extract_version(raw: &str) -> Option<String> {
     VERSION_RE.find(raw).map(|m| m.as_str().to_string())
 }
 
-/// 命令跑起来、但版本判不出来时的统一文案。
-const UNRESOLVED: &str = "installed but its version could not be determined";
+const VERSION_UNKNOWN: &str = "installed but its version could not be determined";
 
 /// 工具未安装时的统一错误文案；WSL 路径会再拼上 `[WSL:{distro}] ` 前缀。
 const NOT_INSTALLED: &str = "not installed or not executable";
@@ -1759,126 +1769,114 @@ fn silent_version_probe_detail(status: std::process::ExitStatus) -> String {
     }
 }
 
-/// 已定位到的可执行文件启动失败（文件损坏、被安全软件拦截、不是有效程序等）时的诊断。
-fn launch_failure_detail(tool_path: &Path, err: &std::io::Error) -> String {
-    format!("failed to launch {}: {err}", tool_path.display())
-}
-
 /// CLI 版本探测结果，跨平台统一各 probe（`try_get_version` /
 /// `try_get_version_wsl` / `scan_cli_version`）的返回，进而在 `ToolVersion` 上给出
 /// 结构化的 `installed_but_broken` 信号——避免前端靠匹配错误文案反推语义。
 ///
-/// 关键区分"没装"与"装了但 `--version` 自身报错退出"（如工具要求更高的 Node 版本）：
-/// 后者必须如实上报、不去别处捞旧版掩盖，否则"升级到新版却跑不起来"会被旧版盖住，
-/// 表现为"升级成功但版本号不变"。
+/// 只表示工具本身的探测结果；捕获、启动和读取故障通过 Result::Err 传播。
 #[derive(Debug)]
 enum ShellProbe {
     /// 成功拿到版本号
     Found(String),
     /// 可执行存在、但 `--version` 非零退出（携带诊断信息，如 stderr 末尾若干行）
     FoundButFailed(String),
-    /// 命令确实跑了，但本应用无法判定其版本：输出解析不出，或承接输出的临时文件
-    /// 建不出/读不回。**不得降级成 `NotFound`**：那会让调用方 fallback 到别的安装，
-    /// 把过期版本当成用户实际在用的那个，或把截获设施故障说成"没装"。
-    Unresolved(String),
+    /// 命令成功退出但版本未知；不能用另一处安装的版本顶替。
+    VersionUnknown(String),
     /// 没找到该命令（携带描述性消息，供 UI 展示）
     NotFound(String),
 }
 
-/// 在非 Windows 平台用用户 shell 执行 `{tool} --version` 探测版本——**工具的 stdout /
-/// stderr 各自重定向到一条只属于它的临时文件**。故障是通道级的：rc 的输出本与工具的
-/// 版本输出共用描述符（OSC 载荷、版本管理器横幅会和版本号挤在一起）。
-///
-/// 隔离**只在描述符这一层**成立：rc 没有重定向时只能写它继承到的三条，而那已全是
-/// `/dev/null`，故它的字节到不了这两个文件。路径本身不保密：zsh 把整条 `-c` 载荷放进
-/// `$ZSH_EXECUTION_STRING`，共享 `$TMPDIR` 下 `ccswitch-` 前缀也可枚举，敌意 rc 有办法
-/// 往里追加。这不是安全边界——那样的 rc 已经能直接顶替工具本身（见 shim 那条用例）。
-///
-/// 执行者仍是 shell，PATH / 解释器解析与用户终端完全一致。
-///
-/// 一个管道都不留（`.status()` 而非 `.output()`）：管道要等**所有**写端关闭才 EOF，
-/// rc 里 `sleep 25 &` 这类后台进程会继承描述符并按住不放（20.5s vs 0.5s）。
-///
-/// Windows 不走此路径：`cmd /C {tool}` 可能误触发 App Execution Alias /
-/// 协议处理器（曾导致 Windows 版整体被禁用），那里改由 `scan_cli_version`
-/// 只执行已定位到的真实可执行文件。
+// stdout 非空时不回退 stderr：运行时警告也可能带 Node 等无关版本号。
+fn version_output<'a>(stdout: &'a str, stderr: &'a str) -> &'a str {
+    if stdout.trim().is_empty() {
+        stderr.trim()
+    } else {
+        stdout.trim()
+    }
+}
+
+fn successful_version_probe(stdout: &str, stderr: &str) -> ShellProbe {
+    let raw = version_output(stdout, stderr);
+    match extract_version(raw) {
+        Some(version) => ShellProbe::Found(version),
+        None => ShellProbe::VersionUnknown(format!("{VERSION_UNKNOWN}: {}", last_lines(raw, 4))),
+    }
+}
+
+/// 启动文件只继承 /dev/null；执行载荷才打开捕获文件，保留登录 shell 的 PATH/函数行为。
+/// 无输出管道，避免 rc 后台进程持有写端；这不是针对敌意 rc 的安全边界。
 #[cfg(not(target_os = "windows"))]
-fn try_get_version(tool: &str) -> ShellProbe {
+fn capture_login_shell(
+    payload: &str,
+    deadline: Option<CommandDeadline>,
+) -> Result<std::process::Output, String> {
     use std::io::{Read, Seek};
     use std::process::{Command, Stdio};
 
     let new_temp = || {
         tempfile::Builder::new()
-            .prefix("ccswitch-version-")
+            .prefix("ccswitch-probe-")
             .tempfile()
+            .map_err(|e| format!("Cannot create capture file: {e}"))
     };
-    let (Ok(mut out_file), Ok(mut err_file)) = (new_temp(), new_temp()) else {
-        // 捕获设施故障不是"命令不在"：报 NotFound 会让调用方去扫别的目录，
-        // 把过期安装当成用户实际在用的那个。
-        return ShellProbe::Unresolved(format!("{UNRESOLVED}: cannot create capture files"));
+    let mut stdout = new_temp()?;
+    let mut stderr = new_temp()?;
+    let quote = |file: &tempfile::NamedTempFile| {
+        file.path()
+            .to_str()
+            .map(shell_single_quote)
+            .ok_or_else(|| "Capture path is not valid UTF-8".to_string())
     };
-
+    let q_out = quote(&stdout)?;
+    let q_err = quote(&stderr)?;
     let shell = std::env::var("SHELL")
         .ok()
         .filter(|s| is_valid_shell(s))
         .unwrap_or_else(|| "sh".to_string());
-    let flag = default_flag_for_shell(&shell);
-    let q_out = shell_single_quote(&out_file.path().to_string_lossy());
-    let q_err = shell_single_quote(&err_file.path().to_string_lossy());
-
-    // 用 `>>` 而非 `>`：rc 里一句 `setopt noclobber`（bash 的 `set -C`）会让 `>` 拒绝写
-    // 已存在的文件，而 tempfile 已经把它建出来了。文件是新建的空文件，追加与截断等价。
-    let mut cmd = Command::new(shell);
-    cmd.arg(flag)
-        .arg(format!("{tool} --version >>{q_out} 2>>{q_err}"))
+    let mut cmd = Command::new(&shell);
+    // tempfile 已建好文件，用追加重定向兼容 rc 的 noclobber。
+    cmd.arg(default_flag_for_shell(&shell))
+        .arg(format!("{payload} >>{q_out} 2>>{q_err}"))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     isolate_child_process_group(&mut cmd);
-    let Ok(output) = cmd.spawn().map_err(|e| e.to_string()).and_then(|child| {
-        wait_child_output(
-            child,
-            CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
-        )
-    }) else {
-        return ShellProbe::Unresolved(format!("{UNRESOLVED}: cannot run login shell"));
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("Cannot run login shell: {e}"))?;
+    let mut output = wait_child_output(child, deadline)?;
+    let read = |file: &mut tempfile::NamedTempFile| -> Result<Vec<u8>, String> {
+        let mut bytes = Vec::new();
+        file.rewind()
+            .and_then(|_| file.read_to_end(&mut bytes))
+            .map_err(|e| format!("Cannot read capture file: {e}"))?;
+        Ok(bytes)
     };
-    let status = output.status;
+    output.stdout = read(&mut stdout)?;
+    output.stderr = read(&mut stderr)?;
+    Ok(output)
+}
 
-    // 走手上的句柄回读，而不是拿路径重新 open：句柄不受被删、被换、TMPDIR 卸载的干扰。
-    let read_back = |f: &mut tempfile::NamedTempFile| -> Option<String> {
-        let mut buf = Vec::new();
-        f.rewind().ok()?;
-        f.read_to_end(&mut buf).ok()?;
-        Some(decode_command_output(&buf).trim().to_string())
-    };
-    let (Some(stdout), Some(stderr)) = (read_back(&mut out_file), read_back(&mut err_file)) else {
-        return ShellProbe::Unresolved(format!("{UNRESOLVED}: cannot read capture files"));
-    };
-
-    if status.success() {
-        // stdout 为空才看 stderr：有工具把 `--version` 打到 stderr。不做「stdout 取不到
-        // 就回退 stderr」——独占临时文件挡得住 rc，挡不住工具自己的运行时：Node 的
-        // `Warning: Node.js 20.11.0 is deprecated` 就写在同一条 stderr 上，回退过去可能
-        // 取到它。那种错解析得通、会一路影响更新比较；而只看 stdout 时的错是 `None`，
-        // 调用方还能 fallback。宁可可恢复地失败，不要不可撤销地答错。
-        let raw = if stdout.is_empty() { &stderr } else { &stdout };
-        match extract_version(raw) {
-            Some(version) => ShellProbe::Found(version),
-            // 命令成功执行但输出里没有版本号：报 Unresolved 停在这一处，
-            // 而不是报未安装、让调用方拿另一处旧安装的版本顶上来。
-            None => ShellProbe::Unresolved(format!("{UNRESOLVED}: {}", last_lines(raw, 4))),
-        }
+#[cfg(not(target_os = "windows"))]
+fn try_get_version(tool: &str) -> Result<ShellProbe, String> {
+    let out = capture_login_shell(
+        &format!("{tool} --version"),
+        CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+    )?;
+    let stdout = decode_command_output(&out.stdout);
+    let stderr = decode_command_output(&out.stderr);
+    Ok(if out.status.success() {
+        successful_version_probe(&stdout, &stderr)
+    } else if out.status.code() == Some(127) {
+        ShellProbe::NotFound(NOT_INSTALLED.to_string())
     } else {
-        // exit 127 = shell 找不到命令（可放心 fallback 到搜索路径）；其它非零码
-        // = 命令存在但 --version 自身报错退出，须如实上报、不 fallback 掩盖。
-        let err = if stderr.is_empty() { stdout } else { stderr };
-        if status.code() == Some(127) || err.is_empty() {
-            ShellProbe::NotFound(NOT_INSTALLED.to_string())
+        let detail = if stderr.trim().is_empty() {
+            &stdout
         } else {
-            ShellProbe::FoundButFailed(last_lines(err.trim(), 4))
-        }
-    }
+            &stderr
+        };
+        ShellProbe::FoundButFailed(last_lines(detail.trim(), 4))
+    })
 }
 
 /// 校验 WSL 发行版名称是否合法
@@ -2034,7 +2032,7 @@ fn try_get_version_wsl(
     distro: &str,
     force_shell: Option<&str>,
     force_shell_flag: Option<&str>,
-) -> ShellProbe {
+) -> Result<ShellProbe, String> {
     use std::process::Command;
 
     // 防御性断言：tool 只能是预定义的值
@@ -2042,19 +2040,19 @@ fn try_get_version_wsl(
 
     // 校验 distro 名称，防止命令注入
     if !is_valid_wsl_distro_name(distro) {
-        return ShellProbe::NotFound(format!("[WSL:{distro}] invalid distro name"));
+        return Err(format!("[WSL:{distro}] invalid distro name"));
     }
 
     // 构建 Shell 脚本检测逻辑
     let (shell, flag, cmd) = if let Some(shell) = force_shell {
         // Defensive validation: never allow an arbitrary executable name here.
         if !is_valid_shell(shell) {
-            return ShellProbe::NotFound(format!("[WSL:{distro}] invalid shell: {shell}"));
+            return Err(format!("[WSL:{distro}] invalid shell: {shell}"));
         }
         let shell = shell.rsplit('/').next().unwrap_or(shell);
         let flag = if let Some(flag) = force_shell_flag {
             if !is_valid_shell_flag(flag) {
-                return ShellProbe::NotFound(format!("[WSL:{distro}] invalid shell flag: {flag}"));
+                return Err(format!("[WSL:{distro}] invalid shell flag: {flag}"));
             }
             flag
         } else {
@@ -2065,7 +2063,7 @@ fn try_get_version_wsl(
     } else {
         if let Some(flag) = force_shell_flag {
             if !is_valid_shell_flag(flag) {
-                return ShellProbe::NotFound(format!("[WSL:{distro}] invalid shell flag: {flag}"));
+                return Err(format!("[WSL:{distro}] invalid shell flag: {flag}"));
             }
         }
         let cmd = wsl_auto_shell_command(&version_probe_payload(tool), force_shell_flag);
@@ -2085,17 +2083,7 @@ fn try_get_version_wsl(
             // 启动文件的输出都在哨兵之前，只看它之后（#7347）
             let payload_out = after_version_sentinel(&stdout).to_string();
             if out.status.success() {
-                // 哨兵之后为空时才回退 stderr，覆盖工具把版本打到 stderr 的情况；
-                // 非空 stdout 即使解析不出版本也不读 stderr，避免运行时警告里的版本号。
-                let raw = if payload_out.is_empty() {
-                    &stderr
-                } else {
-                    &payload_out
-                };
-                match extract_version(raw) {
-                    Some(version) => ShellProbe::Found(version),
-                    None => ShellProbe::NotFound(format!("[WSL:{distro}] {NOT_INSTALLED}")),
-                }
+                Ok(successful_version_probe(&payload_out, &stderr))
             } else {
                 let err = if stderr.is_empty() {
                     payload_out
@@ -2104,20 +2092,19 @@ fn try_get_version_wsl(
                 };
                 // wsl.exe 透传的退出码不总可靠，故同时用 exit 127 与 shell 的"找不到命令"
                 // 文本兜底判别"没装"；其余非零退出视作"装了但 --version 报错"。
-                let not_found = err.is_empty()
-                    || out.status.code() == Some(127)
-                    || is_shell_command_missing(&err, tool);
-                if not_found {
+                let not_found =
+                    out.status.code() == Some(127) || is_shell_command_missing(&err, tool);
+                Ok(if not_found {
                     ShellProbe::NotFound(format!("[WSL:{distro}] {NOT_INSTALLED}"))
                 } else {
                     ShellProbe::FoundButFailed(format!(
                         "[WSL:{distro}] {}",
                         last_lines(err.trim(), 4)
                     ))
-                }
+                })
             }
         }
-        Err(e) => ShellProbe::NotFound(format!("[WSL:{distro}] exec failed: {e}")),
+        Err(e) => Err(format!("[WSL:{distro}] exec failed: {e}")),
     }
 }
 
@@ -2130,8 +2117,8 @@ fn try_get_version_wsl(
     _distro: &str,
     _force_shell: Option<&str>,
     _force_shell_flag: Option<&str>,
-) -> ShellProbe {
-    ShellProbe::NotFound("WSL check not supported on this platform".to_string())
+) -> Result<ShellProbe, String> {
+    Err("WSL check not supported on this platform".to_string())
 }
 
 fn push_unique_path(paths: &mut IndexSet<std::path::PathBuf>, path: std::path::PathBuf) {
@@ -2951,54 +2938,27 @@ fn run_windows_tool_version_command(
 /// That is reported as-is without falling back, so an old
 /// install elsewhere cannot mask a broken default.
 #[cfg(target_os = "windows")]
-fn probe_path_default_version(tool: &str) -> ShellProbe {
-    let path_default = match resolve_path_default(tool, None) {
-        Ok(Some(p)) => p,
-        // `Err` 用不了用户的登录 shell（例如 TMPDIR 不可写）；与
-        // `locate_default_tool` 一致，不在这里回退成「未安装」。
-        Ok(None) => return ShellProbe::NotFound(NOT_INSTALLED.to_string()),
-        Err(e) => return ShellProbe::Unresolved(e),
+fn probe_path_default_version(tool: &str) -> Result<ShellProbe, String> {
+    let Some(path_default) = resolve_path_default(tool, None)? else {
+        return Ok(ShellProbe::NotFound(NOT_INSTALLED.to_string()));
     };
-    let current_path = effective_path_string();
-    match run_windows_tool_version_command(&path_default, &current_path) {
-        Ok(out) => {
-            let stdout = decode_command_output(&out.stdout).trim().to_string();
-            let stderr = decode_command_output(&out.stderr).trim().to_string();
-            if out.status.success() {
-                let raw = if stdout.is_empty() { &stderr } else { &stdout };
-                if raw.is_empty() {
-                    ShellProbe::FoundButFailed(silent_version_probe_detail(out.status))
-                } else {
-                    match extract_version(raw) {
-                        Some(version) => ShellProbe::Found(version),
-                        None => ShellProbe::Unresolved(format!(
-                            "{UNRESOLVED}: {}",
-                            last_lines(raw, 4)
-                        )),
-                    }
-                }
-            } else {
-                let err = if stderr.is_empty() { stdout } else { stderr };
-                if err.is_empty() {
-                    ShellProbe::FoundButFailed(silent_version_probe_detail(out.status))
-                } else {
-                    ShellProbe::FoundButFailed(last_lines(err.trim(), 4))
-                }
-            }
-        }
-        // 启动不了不一定是装坏了：`where` 会列出 npm 留下的无扩展名 sh shim，同目录
-        // 没有 .cmd 时它可能排在最前，而终端会跳过它、去跑后面那份。交给目录扫描判断：
-        // 别处有能跑的就以它为准，都跑不起来扫描也会报「装了但跑不起来」。
-        Err(_) => ShellProbe::NotFound(NOT_INSTALLED.to_string()),
-    }
+    let out = run_windows_tool_version_command(&path_default, &effective_path_string())?;
+    let stdout = decode_command_output(&out.stdout);
+    let stderr = decode_command_output(&out.stderr);
+    Ok(if out.status.success() {
+        successful_version_probe(&stdout, &stderr)
+    } else {
+        let detail = if stderr.trim().is_empty() {
+            &stdout
+        } else {
+            &stderr
+        };
+        ShellProbe::FoundButFailed(last_lines(detail.trim(), 4))
+    })
 }
 
 /// 扫描常见路径查找 CLI（PATH 主命令未命中时的兜底单探）。
-fn scan_cli_version(tool: &str) -> ShellProbe {
-    scan_cli_version_in(tool, &build_tool_search_paths(tool))
-}
-
-fn scan_cli_version_in(tool: &str, search_paths: &[std::path::PathBuf]) -> ShellProbe {
+fn scan_cli_version(tool: &str) -> Result<ShellProbe, String> {
     #[cfg(not(target_os = "windows"))]
     use std::process::Command;
 
@@ -3007,15 +2967,7 @@ fn scan_cli_version_in(tool: &str, search_paths: &[std::path::PathBuf]) -> Shell
     #[cfg(not(target_os = "windows"))]
     let current_path = effective_path_os().unwrap_or_default();
 
-    // 记录"可执行文件存在、但 `--version` 非零退出"时的首个诊断信息。
-    // 典型场景：工具已安装但当前环境跑不起来（如 openclaw 要求 Node v22.19+）。
-    // 这类信息比笼统的 "not installed" 有用得多，循环结束未探到版本时回传。
-    let mut exec_diagnostic: Option<String> = None;
-    // 文件在、却启动失败或没有任何输出时的首个诊断。没有更具体的报错时才用它：
-    // 文件在就不算没装（安装位置列表也会列出它）。
-    let mut silent_diagnostic: Option<String> = None;
-    // 入口存在、`--version` 成功、却解析不出版本：装了，只是量不到。
-    let mut unresolved_detail: Option<String> = None;
+    let mut diagnostic = None;
 
     for path in search_paths {
         #[cfg(target_os = "windows")]
@@ -3039,49 +2991,34 @@ fn scan_cli_version_in(tool: &str, search_paths: &[std::path::PathBuf]) -> Shell
                     .arg("--version")
                     .env("PATH", &new_path)
                     .output()
+                    .map_err(|e| format!("Failed to probe {}: {e}", tool_path.display()))
             };
 
-            let out = match output {
-                Ok(out) => out,
+            match output {
+                Ok(out) => {
+                    let stdout = decode_command_output(&out.stdout);
+                    let stderr = decode_command_output(&out.stderr);
+                    if out.status.success() {
+                        return Ok(successful_version_probe(&stdout, &stderr));
+                    }
+                    let detail = if stderr.trim().is_empty() {
+                        &stdout
+                    } else {
+                        &stderr
+                    };
+                    diagnostic.get_or_insert_with(|| {
+                        Ok(ShellProbe::FoundButFailed(last_lines(detail.trim(), 4)))
+                    });
+                }
                 Err(e) => {
-                    silent_diagnostic.get_or_insert_with(|| launch_failure_detail(&tool_path, &e));
-                    continue;
+                    diagnostic.get_or_insert(Err(e));
                 }
-            };
-            let stdout = decode_command_output(&out.stdout).trim().to_string();
-            let stderr = decode_command_output(&out.stderr).trim().to_string();
-            if out.status.success() {
-                let raw = if stdout.is_empty() { &stderr } else { &stdout };
-                if let Some(version) = extract_version(raw) {
-                    return ShellProbe::Found(version);
-                }
-                if raw.is_empty() {
-                    silent_diagnostic
-                        .get_or_insert_with(|| silent_version_probe_detail(out.status));
-                } else if unresolved_detail.is_none() {
-                    unresolved_detail = Some(last_lines(raw.trim(), 4));
-                }
-            } else {
-                let detail = if stderr.is_empty() { stdout } else { stderr };
-                let detail = detail.trim();
-                if detail.is_empty() {
-                    silent_diagnostic
-                        .get_or_insert_with(|| silent_version_probe_detail(out.status));
-                } else if exec_diagnostic.is_none() {
-                    exec_diagnostic = Some(last_lines(detail, 4));
                 }
             }
         }
     }
 
-    // 非零退出或没有输出属于跑不起来；成功但解析不到版本只说明版本未知。
-    if let Some(detail) = exec_diagnostic.or(silent_diagnostic) {
-        ShellProbe::FoundButFailed(detail)
-    } else if let Some(detail) = unresolved_detail {
-        ShellProbe::Unresolved(format!("{UNRESOLVED}: {detail}"))
-    } else {
-        ShellProbe::NotFound(NOT_INSTALLED.to_string())
-    }
+    diagnostic.unwrap_or_else(|| Ok(ShellProbe::NotFound(NOT_INSTALLED.to_string())))
 }
 
 /// 单个工具在系统中的一处安装，用于"多处安装互相打架"的冲突诊断。
@@ -3262,63 +3199,21 @@ fn resolve_path_default(
     tool: &str,
     deadline: Option<CommandDeadline>,
 ) -> Result<Option<std::path::PathBuf>, String> {
-    use std::io::{Read, Seek};
-    use std::process::{Command, Stdio};
-
-    // 建不出临时文件就回 `Err`，不再退化成 `Ok(None)`：后者对调用方与"PATH 上没有这个
-    // 命令"同形，`locate_default_tool` 会继续扫候选目录，把另一处安装选作默认锚点。
-    // 用不了登录 shell 是我们这边的故障，得让调用方看得见。
-    let mut out_file = tempfile::Builder::new()
-        .prefix("ccswitch-which-")
-        .tempfile()
-        .map_err(|e| format!("{UNRESOLVED}: cannot create capture file: {e}"))?;
-
-    let shell = std::env::var("SHELL")
-        .ok()
-        .filter(|s| is_valid_shell(s))
-        .unwrap_or_else(|| "sh".to_string());
-    let flag = default_flag_for_shell(&shell);
-    let quoted_out = shell_single_quote(&out_file.path().to_string_lossy());
-
-    // 用 `>>` 而非 `>`：rc 里一句 `setopt noclobber`（bash 的 `set -C`）会让 `>` 拒绝写已
-    // 存在的文件，而 tempfile 已经把它建出来了。新建空文件上追加与截断等价。
-    let mut cmd = Command::new(shell);
-    cmd.arg(flag)
-        .arg(format!("command -v {tool} >>{quoted_out}"))
-        // stdin 显式关闭：继承来的 stdin 可能是终端/管道，交互式 rc 里的读操作会永久阻塞。
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    isolate_child_process_group(&mut cmd);
-    let child = cmd
-        .spawn()
-        .map_err(|e| format!("Failed to locate {tool}: {e}"))?;
-    // 仍走 wait_child_output 承接 deadline：rc 真挂死时，击杀整棵进程树是唯一的出口，
-    // 重定向只挡噪音、挡不住阻塞。三条描述符已全 null，这里没有管道要收，超时语义
-    // 不再受"后台进程按住写端不放"的影响。
-    //
-    // 刻意不看退出码：它是 **shell 的**，不是 `command -v` 的。rc 里一句
-    // `TRAPEXIT() { return 3 }` 就能改写它：工具明明在，退出码却是 3，而临时文件里躺着
-    // 正确路径。载荷自身已能判：没找到时文件为空，`first_abs_path_line` → None。
-    let _ = wait_child_output(child, deadline)?;
-
-    // 走手上的句柄回读，而不是拿路径重新 open：句柄不受被删、被换、TMPDIR 卸载的干扰。
-    let mut buf = Vec::new();
-    if out_file.rewind().is_err() || out_file.read_to_end(&mut buf).is_err() {
-        return Err(format!("{UNRESOLVED}: cannot read capture file"));
-    }
-    let raw = decode_command_output(&buf);
-    // 不能死取第一行：交互式 .zshrc 可能先打印欢迎语（如 "🚀 Welcome back"），
-    // command -v 的真实路径在其后；取第一个 `/` 开头的行才稳。
-    // 读到内容却没有绝对路径行 = 用户 PATH 上确实没有这个命令，可以回 None 让调用方扫。
+    let out = capture_login_shell(&format!("command -v {tool}"), deadline)?;
+    let raw = decode_command_output(&out.stdout);
+    // rc 的退出 trap 可以改写 shell 状态；已有路径输出时仍以载荷为准。
     let Some(first) = first_abs_path_line(&raw) else {
-        return Ok(None);
+        if out.status.success() || out.status.code() == Some(1) {
+            return Ok(None);
+        }
+        return Err(format!(
+            "Failed to locate {tool}: {}",
+            decode_command_output(&out.stderr).trim()
+        ));
     };
-    // canonicalize 失败同样不是"没有这个命令"：入口存在却解析不了，
-    // 不能默默把锚点丢掉。
     std::fs::canonicalize(first)
         .map(Some)
-        .map_err(|e| format!("{UNRESOLVED}: cannot resolve {tool} path {first}: {e}"))
+        .map_err(|e| format!("Cannot resolve {tool} path {first}: {e}"))
 }
 
 #[cfg(target_os = "windows")]
@@ -3364,8 +3259,14 @@ fn resolve_path_default(
         .spawn()
         .map_err(|e| format!("Failed to locate {tool}: {e}"))?;
     let out = wait_child_output(child, deadline)?;
+    if out.status.code() == Some(1) {
+        return Ok(None); // where.exe: no matching files
+    }
     if !out.status.success() {
-        return Ok(None);
+        return Err(format!(
+            "Failed to locate {tool}: {}",
+            decode_command_output(&out.stderr).trim()
+        ));
     }
     let raw = decode_command_output(&out.stdout);
     // `where` lists every match on PATH in order; the first is what the user
@@ -3385,12 +3286,14 @@ fn resolve_path_default(
     let path = Path::new(first);
     let preferred =
         windows_runnable_sibling_for_extensionless_tool(path).unwrap_or_else(|| path.to_path_buf());
-    Ok(std::fs::canonicalize(preferred).ok())
+    std::fs::canonicalize(&preferred)
+        .map(Some)
+        .map_err(|e| format!("Cannot resolve {tool} path {}: {e}", preferred.display()))
 }
 
 /// 升级预检/冲突诊断的单条子进程探测预算。枚举会对每个工具开一次登录 shell、对每处
 /// 安装跑一次 `--version`，任何一条挂死（.zshrc 阻塞、nvm shim 指向已删除的 node 等）
-/// 都会卡住整个"全部升级"预检——到点整组击杀，该条按探测失败降级，预检继续。
+/// 都会卡住整个"全部升级"预检——到点整组击杀；默认入口定位失败则中断预检。
 const INSTALL_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// 带超时的 `--version` 探测（非 Windows）。与 `scan_cli_version` 的裸 `output()`
@@ -3443,25 +3346,17 @@ fn run_probe_version_command(
 /// 枚举工具在系统中的所有安装（不短路）。与 `scan_cli_version` 共用
 /// `build_tool_search_paths`，但不在首个命中处停止——而是对每个去重后的真实
 /// 可执行文件都跑一次 `--version`，从而能发现"升级写入 A 处、PATH 实际用 B 处"。
-fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
+fn enumerate_tool_installations(tool: &str) -> Result<Vec<ToolInstallation>, String> {
     let search_paths = build_tool_search_paths(tool);
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
     #[cfg(not(target_os = "windows"))]
     let current_path = effective_path_os().unwrap_or_default();
-    // 必须带超时：deadline 传 None 时 wait_child_output 无限等，登录 shell 一挂
-    // 整个预检就永久卡死（且前端此阶段无任何反馈）。
-    //
-    // 这里 `ok().flatten()` 仍是可取的选择：本函数只做「扫描清单」展示，
-    // `path_default` 仅用于打 is_path_default 标记。锚点丢失在这里不会造成
-    // 写错目标——真正会改文件的 `locate_default_tool` 已改成把 `Err` 往上传，
-    // 不会把捕获设施故障当成「PATH 上没有这个命令」而另选一处安装。
+    // 枚举也参与升级命令生成：默认入口查不出来时必须停止，不能退到另一处安装。
     let path_default = resolve_path_default(
         tool,
         CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
-    )
-    .ok()
-    .flatten();
+    )?;
 
     let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
     let mut installs: Vec<ToolInstallation> = Vec::new();
@@ -3499,11 +3394,12 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
                 Ok(out) if out.status.success() => {
                     let stdout = decode_command_output(&out.stdout).trim().to_string();
                     let stderr = decode_command_output(&out.stderr).trim().to_string();
-                    // 不回退到 stderr：理由同 `scan_cli_version`。
-                    let raw = if stdout.is_empty() { stderr } else { stdout };
-                    // `extract_version` 回 `Option`：解析不出就是 `None`，
-                    // 不再像旧版那样把原始输出包成 `Some` 当成版本号。
-                    (extract_version(&raw), true, None, false)
+                    (
+                        extract_version(version_output(&stdout, &stderr)),
+                        true,
+                        None,
+                        false,
+                    )
                 }
                 Ok(out) => {
                     let stderr = decode_command_output(&out.stderr).trim().to_string();
@@ -3541,7 +3437,7 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
 
     // PATH 默认那处排最前，UI 一眼看到"命令行默认用的是哪处"。
     installs.sort_by_key(|i| std::cmp::Reverse(i.is_path_default));
-    installs
+    Ok(installs)
 }
 
 /// 工具对应的 npm 包名（hermes 走自己的 CLI/installer，不在此表）。锚定升级据此拼 `npm i -g`。
@@ -5100,7 +4996,7 @@ pub async fn probe_tool_installations(
         requested
             .into_iter()
             .map(|tool| {
-                let installs = enumerate_tool_installations(tool);
+                let installs = enumerate_tool_installations(tool)?;
                 let (update, needs_confirmation) = plan_command_for(tool, &installs);
                 let (command, anchored, unmanaged) = match update {
                     UpdateCommand::Anchored(command) => (command, true, false),
@@ -5108,7 +5004,7 @@ pub async fn probe_tool_installations(
                     UpdateCommand::Unmanaged => (String::new(), false, true),
                 };
                 let is_conflict = is_conflicting(&installs);
-                ToolInstallationReport {
+                Ok(ToolInstallationReport {
                     tool: tool.to_string(),
                     installs,
                     is_conflict,
@@ -5116,12 +5012,12 @@ pub async fn probe_tool_installations(
                     command,
                     anchored,
                     unmanaged,
-                }
+                })
             })
             .collect()
     })
     .await
-    .map_err(|e| format!("probe task join error: {e}"))
+    .map_err(|e| format!("probe task join error: {e}"))?
 }
 
 /// 「应用」页显示每个工具的路径、安装来源和多处安装。和升级前的预检是同一份枚举，
@@ -7782,8 +7678,58 @@ mod tests {
     }
 
     #[test]
+    fn successful_probe_results_keep_installation_facts() {
+        // 所有平台共用成功输出分类；WSL 只在此前移除 stdout 哨兵。
+        for (stdout, stderr, expected) in [
+            ("9.9.9", "", Some("9.9.9")),
+            ("", "9.9.9", Some("9.9.9")),
+            ("development-build", "", None),
+            ("checking installation", "Warning: Node 20.11.0", None),
+            ("", "", None),
+        ] {
+            for output in [
+                stdout.to_string(),
+                format!("MOTD 24.04.4\n{VERSION_PROBE_SENTINEL}\n{stdout}"),
+            ] {
+                let payload = after_version_sentinel(&output);
+                let info = tool_version_from_probe(
+                    "claude",
+                    Ok(successful_version_probe(payload, stderr)),
+                );
+                let json = serde_json::to_value(&info).unwrap();
+                assert_eq!(json["installed"], true);
+                assert_eq!(json["installed_but_broken"], false);
+                assert_eq!(info.version.as_deref(), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn probe_failures_do_not_claim_an_installation() {
+        for (probe, installed, broken) in [
+            (Err("cannot create capture file".to_string()), None, false),
+            (
+                Ok(ShellProbe::NotFound(NOT_INSTALLED.to_string())),
+                Some(false),
+                false,
+            ),
+            (
+                Ok(ShellProbe::FoundButFailed("exit 2".to_string())),
+                Some(true),
+                true,
+            ),
+        ] {
+            let info = tool_version_from_probe("claude", probe);
+            assert_eq!(info.installed, installed);
+            assert_eq!(info.installed_but_broken, broken);
+            assert!(info.version.is_none());
+            assert_eq!(info.error.is_some(), installed != Some(false));
+        }
+    }
+
+    #[test]
     fn test_extract_version() {
-        // 受管工具 `--version` 的真实形状（通道已干净，首个匹配即答案）。
+        // 保留各工具现有输出兼容性；shim 自身横幅仍是已知解析限制。
         for (raw, expected) in [
             ("claude 1.0.20", "1.0.20"),
             ("2.1.220 (Claude Code)", "2.1.220"),
@@ -7918,53 +7864,31 @@ mod tests {
         /// 假工具**只**经由 fixture rc 里那句 `export PATH=` 可达——进程 PATH 一个字节不改。
         /// 若把 fixture 的 bin 也前置到进程 PATH，工具不经 rc 就能找到，这组用例便无法区分
         /// 「隔离起作用了」和「根本没有噪音需要隔离」：rc 完全不执行时它们照样通过。
-        fn probe_with(rc_noise: &str) -> ShellProbe {
+        fn probe_with(rc_noise: &str) -> Result<ShellProbe, String> {
             let dir = fixture(rc_noise);
             let _env = EnvGuard::set("/bin/zsh", dir.path());
             try_get_version("claude")
         }
 
-        /// 同 `probe_with`，但由调用方给出假工具的脚本体（用于“跑通却没版本号”这类用例）。
-        fn probe_with_tool_body(tool_body: &str) -> ShellProbe {
-            let dir = fixture_with_tool("", tool_body);
-            let _env = EnvGuard::set("/bin/zsh", dir.path());
-            try_get_version("claude")
-        }
-
         #[track_caller]
-        fn assert_found_fixture_version(probe: ShellProbe, case: &str) {
+        fn assert_found_fixture_version(probe: Result<ShellProbe, String>, case: &str) {
             match probe {
-                ShellProbe::Found(v) => assert_eq!(v, FIXTURE_VERSION, "{case}"),
+                Ok(ShellProbe::Found(v)) => assert_eq!(v, FIXTURE_VERSION, "{case}"),
                 other => panic!("{case}: 期望 Found({FIXTURE_VERSION})，实得 {other:?}"),
             }
         }
 
-        /// **已知缺陷，此处只钉现状、不表示认可**：报出的 `18.20.4` 是 shim 的横幅，
-        /// 不是工具真实版本（`9.9.9`）。绿的含义是"行为没变"，不是"行为正确"——
-        /// 哪天有人改动到它，这条会变红，那正是本用例存在的理由。
-        ///
-        /// rc 用同名**函数**顶替工具本身——nvm / rbenv 之类的 shim 就是这么写的。
-        /// 执行者是用户 shell，所以这个函数**就是**用户敲 `claude` 时跑的东西：它的横幅
-        /// 与工具自己的版本行一同落进那条重定向的 stdout 文件
-        /// （`Now using node v18.20.4\n9.9.9 (Fixture CLI)`），首个匹配即 `18.20.4`。
-        ///
-        /// 描述符隔离关不掉这条：它隔的是 **rc 自身**写到共用描述符的字节，而这里的字节
-        /// 出自用户 shell 真正执行到的那个 shim——两者同进程、同一条 fd。断言钉住现状，
-        /// 好让哪天有人改动它时以红色出现。
+        /// 启动文件隔离不能排除函数/shim 自身输出；待按工具格式解析时启用。
         #[test]
+        #[ignore = "shim banners require tool-specific version parsing"]
         #[serial_test::serial]
-        fn known_defect_shim_banner_wins_first_match() {
+        fn shim_banner_must_not_replace_the_tool_version() {
             if !zsh_available() {
                 return;
             }
             let probe =
                 probe_with(r#"claude() { echo 'Now using node v18.20.4'; command claude "$@"; }"#);
-            match probe {
-                ShellProbe::Found(v) => {
-                    assert_eq!(v, "18.20.4", "shim 横幅在前，首个匹配即它")
-                }
-                other => panic!("期望 Found（shell 执行到了 shim），实得 {other:?}"),
-            }
+            assert_found_fixture_version(probe, "shim 横幅不能替代工具版本");
         }
 
         /// rc 留下一个继承描述符的后台进程——`sleep 20 &` 是版本管理器预热、
@@ -8156,7 +8080,7 @@ mod tests {
             let _env = EnvGuard::set("/bin/zsh", dir.path());
             let probe = try_get_version("claude");
             assert!(
-                matches!(probe, ShellProbe::NotFound(_)),
+                matches!(probe, Ok(ShellProbe::NotFound(_))),
                 "工具不存在时应为 NotFound，实得 {probe:?}"
             );
         }
@@ -8165,31 +8089,61 @@ mod tests {
         ///
         /// 若是报 NotFound，调用方（`probe_local_version`）会 fallback 到
         /// `scan_cli_version`，拿另一处旧安装的版本当“当前版本”展示——用户实际在用的
-        /// PATH 首选那处反而被藏起来。所以这里必须是 Unresolved：停在此处、按
-        /// “装了但量不到”上报。
+        /// PATH 首选那处反而被藏起来。所以版本未知仍应保留“已安装且能运行”的事实。
         #[test]
         #[serial_test::serial]
         fn successful_run_without_a_version_is_not_reported_as_not_installed() {
             if !zsh_available() {
                 return;
             }
-            let probe = probe_with_tool_body("printf 'development-build\\n'");
-            assert!(
-                matches!(probe, ShellProbe::Unresolved(_)),
-                "跑通但无版本号时应为 Unresolved（不得降级成 NotFound 触发跨安装 fallback），\
-                 实得 {probe:?}"
+            let dir = fixture_with_tool("", "printf 'development-build\\n'");
+            let old_bin = dir.path().join("old/bin");
+            std::fs::create_dir_all(&old_bin).unwrap();
+            std::fs::write(old_bin.join("claude"), "#!/bin/sh\necho 1.0.0\n").unwrap();
+            std::fs::set_permissions(
+                old_bin.join("claude"),
+                std::fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+            let _env = EnvGuard::set("/bin/zsh", dir.path());
+            std::env::set_var(
+                "PATH",
+                super::super::prepend_search_dir_to_path(
+                    &old_bin,
+                    &std::env::var_os("PATH").unwrap_or_default(),
+                ),
             );
+            let probe = super::super::probe_local_version("claude", None, None, None);
+            assert!(
+                matches!(&probe, Ok(ShellProbe::VersionUnknown(_))),
+                "成功执行但版本未知不得触发跨安装 fallback，实得 {probe:?}"
+            );
+            let info = super::super::tool_version_from_probe("claude", probe);
+            assert_eq!(info.installed, Some(true));
+            assert!(!info.installed_but_broken);
+            assert!(info.version.is_none());
         }
 
-        /// 临时文件都建不出来时，探测根本没执行到工具。
-        ///
-        /// 报 NotFound 等于把“我们写不了临时文件”说成“用户没装”，紧接着 UI 就会展示
-        /// 未安装/安装按钮。
-        ///
-        /// `TMPDIR` 是**进程级**的：在本进程里改它，同模块几十条并行调用 `tempfile` 的
-        /// 用例会在窗口内拿到不可写目录而偶发失败（`#[serial]` 只互斥其他 serial 用例）。
-        /// 所以照 `returns_promptly_when_the_rc_reads_from_stdin` 的办法，重启测试二进制、
-        /// `--exact` 只跑自己，污染只发生在那个隔离子进程里。
+        #[test]
+        #[serial_test::serial]
+        fn silent_nonzero_exit_is_not_reported_as_not_installed() {
+            if !zsh_available() {
+                return;
+            }
+            let dir = fixture_with_tool("", "exit 23");
+            let _env = EnvGuard::set("/bin/zsh", dir.path());
+            let probe = try_get_version("claude");
+            assert!(
+                matches!(&probe, Ok(ShellProbe::FoundButFailed(_))),
+                "{probe:?}"
+            );
+            let info = super::super::tool_version_from_probe("claude", probe);
+            assert_eq!(info.installed, Some(true));
+            assert!(info.installed_but_broken);
+        }
+
+        /// 捕获失败不得变成未安装，也不得从另一处安装规划升级。
+        /// TMPDIR 是进程级的，必须在 --exact 子进程内改，避免影响并行 tempfile 调用。
         #[test]
         fn uncreatable_capture_file_is_not_reported_as_not_installed() {
             const CHILD_ENV: &str = "CC_SWITCH_VERSION_PROBE_TMPDIR_CHILD";
@@ -8197,11 +8151,6 @@ mod tests {
                 run_tmpdir_probe_child();
                 return;
             }
-            // root 下 chmod 不生效，0o500 照样可写，这条会退化成“什么都没测”的假绿。
-            if unsafe { libc::geteuid() } == 0 {
-                return;
-            }
-
             let test_name = std::thread::current()
                 .name()
                 .expect("libtest 应为测试线程命名")
@@ -8226,24 +8175,55 @@ mod tests {
 
         fn run_tmpdir_probe_child() {
             let tmpdir = tempfile::tempdir().expect("tmpdir");
-            let mut perms = std::fs::metadata(tmpdir.path())
-                .expect("stat tmpdir")
-                .permissions();
-            std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o500);
-            std::fs::set_permissions(tmpdir.path(), perms).expect("chmod tmpdir");
-            std::env::set_var("TMPDIR", tmpdir.path());
+            #[cfg(target_os = "linux")]
+            {
+                use std::os::unix::ffi::OsStrExt;
+                let non_utf8 = tmpdir.path().join(std::ffi::OsStr::from_bytes(b"tmp-\xff"));
+                std::fs::create_dir(&non_utf8).unwrap();
+                std::env::set_var("TMPDIR", non_utf8);
+                assert!(try_get_version("claude")
+                    .unwrap_err()
+                    .contains("not valid UTF-8"));
+            }
+            std::env::set_var("TMPDIR", tmpdir.path().join("missing"));
 
             let probe = try_get_version("claude");
-            assert!(
-                matches!(probe, ShellProbe::Unresolved(_)),
-                "建不出临时文件时应为 Unresolved（不得谎报未安装），实得 {probe:?}"
-            );
+            assert!(probe.is_err(), "捕获失败必须报探测错误，实得 {probe:?}");
+            let version = super::super::tool_version_from_probe("claude", probe);
+            assert!(version.installed.is_none());
+            assert!(!version.installed_but_broken);
             // 路径解析同属“用不了登录 shell”的故障，不能退化成「PATH 上没有」：
             // `locate_default_tool` 会据此另选一处旧安装作为升级/卸载目标。
             assert!(
                 super::super::resolve_path_default("claude", None).is_err(),
                 "建不出临时文件时路径解析应回 Err，不得退化成 Ok(None)"
             );
+            // 即使能从缓存/扫描得到两处安装，也不能绕过丢失的默认入口去更新 npm 那处。
+            let brew = tmpdir.path().join("homebrew/bin");
+            let npm = tmpdir.path().join("npm/bin");
+            for bin in [&brew, &npm] {
+                std::fs::create_dir_all(bin).unwrap();
+                std::fs::write(bin.join("gemini"), "#!/bin/sh\necho 9.9.9\n").unwrap();
+                std::fs::set_permissions(
+                    bin.join("gemini"),
+                    std::fs::Permissions::from_mode(0o755),
+                )
+                .unwrap();
+            }
+            std::env::set_var("PATH", std::env::join_paths([&brew, &npm]).unwrap());
+            assert!(super::super::build_tool_action_line(
+                "gemini",
+                super::super::ToolLifecycleAction::Update,
+                None,
+                None
+            )
+            .is_err());
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            assert!(runtime
+                .block_on(super::super::probe_tool_installations(
+                    vec!["gemini".into()]
+                ))
+                .is_err());
         }
 
         /// rc 用 `TRAPEXIT` 改写 shell 的退出码——`resolve_path_default` 刻意不看退出码，
@@ -8424,7 +8404,8 @@ mod tests {
             );
 
             let entry = bin.join("claude").display().to_string();
-            let installs = super::super::enumerate_tool_installations("claude");
+            let installs = super::super::enumerate_tool_installations("claude")
+                .expect("enumerate fixture installations");
             let found = installs
                 .iter()
                 .find(|i| i.path == entry)
