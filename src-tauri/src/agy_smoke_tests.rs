@@ -14,15 +14,28 @@ impl Drop for RestoreHome {
     }
 }
 
-async fn native(bin: &Path, home: &Path, real: &str, args: &[&str]) -> std::process::Output {
+/// 按「在终端中打开」的方式跑真实 agy：Key 卡带私有 `--gemini_dir` 和只给这个进程的环境变量。
+async fn native(
+    bin: &str,
+    home: &Path,
+    launch: &agy_config::AgyLaunch,
+    args: &[&str],
+) -> std::process::Output {
     let mut cmd = tokio::process::Command::new(bin);
+    if let Some(dir) = &launch.gemini_dir {
+        cmd.arg(format!("--gemini_dir={}", dir.display()));
+    }
     cmd.args(args)
         .current_dir(home.join("workspace"))
         .env("HOME", home)
-        .env("AGY_REAL_BIN", real)
         .env_remove("GEMINI_API_KEY")
         .env_remove("GOOGLE_GEMINI_BASE_URL")
         .kill_on_drop(true);
+    for (name, value) in &launch.env {
+        if let Some(value) = value {
+            cmd.env(name, value);
+        }
+    }
     tokio::time::timeout(std::time::Duration::from_secs(100), cmd.output())
         .await
         .expect("native agy timed out")
@@ -45,42 +58,19 @@ async fn agy_live_provider_skill_session_and_tokens() {
     let db = Arc::new(Database::memory().unwrap());
     let row = Provider::with_id("smoke".into(), "Smoke".into(), settings.clone(), None);
     db.save_provider("agy", &row).unwrap();
-    crate::services::provider::agy_direct::switch_to(&db, &row).unwrap();
-    assert_eq!(
-        crate::mode::current::provider_for(
-            &db,
-            &AppType::Agy,
-            crate::mode::current::Purpose::Direct
-        )
-        .unwrap()
-        .as_deref(),
-        Some("smoke")
-    );
-    let bin = agy_config::agy_dir().join("bin/agy");
-
+    let launch = crate::services::provider::agy_direct::terminal_launch(&row).unwrap();
+    let private_settings = launch
+        .gemini_dir
+        .as_ref()
+        .expect("smoke fixture must be an API-key provider")
+        .join("antigravity-cli/settings.json");
     let key = settings["env"]["GEMINI_API_KEY"].as_str().unwrap();
-    let base = settings["env"]["GOOGLE_GEMINI_BASE_URL"]
-        .as_str()
-        .filter(|v| !v.is_empty())
-        .unwrap_or("https://generativelanguage.googleapis.com");
-    let models = crate::services::model_fetch::fetch_models(
-        base,
-        key,
-        false,
-        None,
-        None,
-        Some("google-generative-ai"),
-        None,
-    )
-    .await
-    .expect("CCS model discovery");
-    let live = agy_config::read_live_settings().unwrap();
-    let model = live["config"]["model"]["name"].as_str().unwrap();
+    // The key stays out of every file CC Switch writes.
+    assert!(!String::from_utf8_lossy(&fs::read(&private_settings).unwrap()).contains(key));
     assert!(
-        models.iter().any(|m| m.id == model),
-        "configured model absent from API catalog"
+        !String::from_utf8_lossy(&fs::read(agy_config::settings_path()).unwrap_or_default())
+            .contains(key)
     );
-    println!("SMOKE model_catalog={} selected={model}", models.len());
 
     // Install through the existing import + toggle path, then let the real CLI load it.
     let skill_dir = agy_config::customizations_dir().join("skills/ccs-smoke");
@@ -126,7 +116,7 @@ for line in sys.stdin:
 "#).unwrap();
     let spec = json!({"command":"python3","args":[server, events]});
     crate::mcp::agy::sync("ccs-smoke", Some(&spec)).unwrap();
-    let list = native(&bin, home, &real, &["mcp", "list"]).await;
+    let list = native(&real, home, &launch, &["mcp", "list"]).await;
     assert!(list.status.success());
     assert!(String::from_utf8_lossy(&list.stdout).contains("ccs-smoke"));
     crate::mcp::agy::sync("ccs-smoke", None).unwrap();
@@ -137,21 +127,21 @@ for line in sys.stdin:
     // to this fixture (including its SSOT target), never to the real home directory.
     let skill_file = skill_dir.join("SKILL.md");
     let mut native_settings: Value =
-        serde_json::from_slice(&fs::read(agy_config::settings_path()).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(&private_settings).unwrap()).unwrap();
     native_settings["permissions"] = json!({"allow":[
         format!("read_file({})", skill_file.display()),
         format!("read_file({})", skill_file.canonicalize().unwrap().display())
     ]});
     fs::write(
-        agy_config::settings_path(),
+        &private_settings,
         serde_json::to_vec(&native_settings).unwrap(),
     )
     .unwrap();
 
     let output = native(
-        &bin,
-        home,
         &real,
+        home,
+        &launch,
         &[
             "--print",
             "/ccs-smoke",

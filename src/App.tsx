@@ -1251,7 +1251,10 @@ function App() {
     onDuplicate: handleDuplicateProvider,
     onConfigureUsage: setUsageProvider,
     onOpenWebsite: handleOpenWebsite,
-    onOpenTerminal: activeApp === "claude" ? setTerminalProvider : undefined,
+    onOpenTerminal:
+      activeApp === "claude" || activeApp === "agy"
+        ? setTerminalProvider
+        : undefined,
     onCreate: () => openAddProvider(currentModeView),
     searchOpen: providerSearchOpen,
     onSearchOpenChange: setProviderSearchOpen,

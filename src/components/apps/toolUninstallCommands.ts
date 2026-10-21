@@ -81,6 +81,11 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
       command: "brew uninstall --cask codex",
       environments: ["macos"],
     },
+    {
+      tool: "agy",
+      command: "brew uninstall --cask antigravity-cli",
+      environments: ["macos"],
+    },
   ],
   hermes: [{ tool: "hermes", command: "hermes uninstall --yes" }],
 };
