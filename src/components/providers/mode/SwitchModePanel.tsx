@@ -44,7 +44,7 @@ import {
   queueMoveSortUpdates,
 } from "@/components/providers/presentation";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import { ModeTabs } from "./ModeTabs";
+import { ModeTabs, MODE_TONE } from "./ModeTabs";
 import { ModeDialog, type ModeDialogState } from "./ModeDialog";
 import {
   sameStackSubagent,
@@ -560,7 +560,7 @@ export function SwitchModePanel({
                       ? Boolean(directId && providers[directId])
                       : serviceRunning
                   )
-                    ? "bg-success"
+                    ? MODE_TONE[active].dot
                     : "bg-fg-3",
                 )}
               />

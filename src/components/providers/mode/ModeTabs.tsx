@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 
 const MODE_ICON = { direct: Plug, route: Route, stack: Layers } as const;
 
-/** 模式色只用在 tab、侧栏标签、当前卡片和激活条的 CTA 上（B4.7）。 */
+/** 模式色用于页头状态、tab、侧栏标签、当前卡片和激活条的 CTA。 */
 export const MODE_TONE: Record<
   AppMode,
   { soft: string; text: string; dot: string; border: string }
