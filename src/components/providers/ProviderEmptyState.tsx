@@ -1,5 +1,6 @@
 import { Download, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { HelpTip } from "@/components/ui/help-tip";
 import { Button } from "@/components/ui/button";
 import type { AppId } from "@/lib/api/types";
 
@@ -11,7 +12,7 @@ interface ProviderEmptyStateProps {
 
 /**
  * 供应商页空状态（v7 PANELS_BRIEF 空状态规则）：列表区居中，标题 15/600 +
- * 一段 13px --text-2 + 按钮。页头已经有实心的「添加供应商」，这里一律描边。
+ * 操作按钮。通用说明收进帮助卡；页头已有实心的「添加供应商」，这里一律描边。
  */
 export function ProviderEmptyState({
   appId,
@@ -37,11 +38,11 @@ export function ProviderEmptyState({
           ? t(`${emptyCopyNs}.empty.title`)
           : t("provider.noProviders")}
       </h2>
-      <p className="mt-2 max-w-lg text-body text-fg-2">
-        {emptyCopyNs
-          ? t(`${emptyCopyNs}.empty.description`)
-          : t("provider.noProvidersDescription")}
-      </p>
+      {emptyCopyNs && (
+        <p className="mt-2 max-w-lg text-body text-fg-2">
+          {t(`${emptyCopyNs}.empty.description`)}
+        </p>
+      )}
       {(onImport || onCreate) && (
         <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
           {onImport && (
@@ -58,12 +59,15 @@ export function ProviderEmptyState({
               {t("provider.addProvider")}
             </Button>
           )}
+          {!emptyCopyNs && (onImport || showKeyFieldsHint) && (
+            <HelpTip title={t("provider.noProviders")}>
+              {onImport && <p>{t("provider.noProvidersDescription")}</p>}
+              {showKeyFieldsHint && (
+                <p>{t("provider.noProvidersDescriptionKeyFields")}</p>
+              )}
+            </HelpTip>
+          )}
         </div>
-      )}
-      {showKeyFieldsHint && (
-        <p className="mt-4 max-w-lg text-caption text-fg-3">
-          {t("provider.noProvidersDescriptionKeyFields")}
-        </p>
       )}
     </div>
   );
