@@ -28,9 +28,31 @@ fn parse_app_type(app: &str) -> Result<AppType, String> {
 // ========== 统一管理命令 ==========
 
 /// 获取所有已安装的 Skills
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillWithSource {
+    #[serde(flatten)]
+    skill: InstalledSkill,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_path: Option<String>,
+}
+
 #[tauri::command]
-pub fn get_installed_skills(app_state: State<'_, AppState>) -> Result<Vec<InstalledSkill>, String> {
-    SkillService::get_all_installed(&app_state.db).map_err(|e| e.to_string())
+pub fn get_installed_skills(
+    app_state: State<'_, AppState>,
+) -> Result<Vec<SkillWithSource>, String> {
+    SkillService::get_all_installed(&app_state.db)
+        .map(|skills| {
+            skills
+                .into_iter()
+                .map(|skill| SkillWithSource {
+                    source_path: crate::settings::get_linked_skill_source(&skill.directory)
+                        .map(|source| source.path),
+                    skill,
+                })
+                .collect()
+        })
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -113,6 +135,24 @@ pub fn import_skills_from_apps(
     app_state: State<'_, AppState>,
 ) -> Result<Vec<InstalledSkill>, String> {
     SkillService::import_from_apps(&app_state.db, imports).map_err(|e| e.to_string())
+}
+
+/// Link an explicitly selected workspace/tool-owned original without copying it.
+#[tauri::command]
+pub fn link_skill_source(
+    path: String,
+    current_app: String,
+    replace_existing: Option<bool>,
+    app_state: State<'_, AppState>,
+) -> Result<InstalledSkill, String> {
+    let app = parse_app_type(&current_app)?;
+    SkillService::link_source_confirmed(
+        &app_state.db,
+        std::path::Path::new(&path),
+        &app,
+        replace_existing.unwrap_or(false),
+    )
+    .map_err(|error| error.to_string())
 }
 
 // ========== 发现功能命令 ==========

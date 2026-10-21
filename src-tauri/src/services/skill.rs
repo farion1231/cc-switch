@@ -20,6 +20,8 @@ use crate::config::get_app_config_dir;
 use crate::database::Database;
 use crate::error::format_skill_error;
 
+mod linked_sources;
+
 // ========== Skills state coordination ==========
 
 /// Coordinates the database `skills` state with the filesystem SSOT.
@@ -772,6 +774,16 @@ impl SkillService {
     }
 
     fn validate_skill_storage_destination(ssot_dir: &Path) -> Result<()> {
+        for source in crate::settings::get_settings()
+            .linked_skill_sources
+            .values()
+        {
+            if Self::paths_overlap(ssot_dir, Path::new(&source.path)) {
+                return Err(anyhow!(
+                    "Skill storage must not overlap an externally owned source"
+                ));
+            }
+        }
         for app in AppType::all() {
             if matches!(app, AppType::ClaudeDesktop) {
                 continue;
@@ -1051,6 +1063,10 @@ impl SkillService {
         let skill = db
             .get_installed_skill(id)?
             .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
+
+        if crate::settings::get_linked_skill_source(&skill.directory).is_some() {
+            return Self::unlink_source(db, &skill);
+        }
 
         // DB 行可能被同步导入污染（远端快照 raw SQL 直接灌库，绕过安装期校验），
         // 也可能是 v3.11.0 引入 sanitize_install_name 之前留下的存量脏值
@@ -1514,6 +1530,12 @@ impl SkillService {
         // （把远端仓库内容写到任意路径）。校验必须在这三者之前。
         Self::require_valid_directory(&skill.directory)?;
 
+        if crate::settings::get_linked_skill_source(&skill.directory).is_some() {
+            return Err(anyhow!(
+                "Update this linked Skill in its original directory: {skill_id}"
+            ));
+        }
+
         let (owner, name, branch) = match (&skill.repo_owner, &skill.repo_name) {
             (Some(o), Some(n)) => (
                 o.clone(),
@@ -1908,6 +1930,10 @@ impl SkillService {
                     continue;
                 }
             };
+            if crate::settings::get_linked_skill_source(&directory).is_some() {
+                result.skipped_count += 1;
+                continue;
+            }
             let src = old_dir.join(&directory);
             let dst = new_dir.join(&directory);
 
@@ -2150,6 +2176,17 @@ impl SkillService {
             .get_installed_skill(id)?
             .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
 
+        if crate::settings::get_linked_skill_source(&skill.directory).is_some() {
+            if enabled {
+                Self::sync_linked_source(&skill.directory, app)?;
+            } else {
+                Self::remove_linked_projection(&skill.directory, app, false)?;
+            }
+            skill.apps.set_enabled_for(app, enabled);
+            db.update_skill_apps(id, &skill.apps)?;
+            return Ok(());
+        }
+
         if matches!(app, AppType::Agy) {
             if !enabled && !skill.apps.agy {
                 return Ok(());
@@ -2320,6 +2357,9 @@ impl SkillService {
                     continue;
                 }
             };
+            if crate::settings::get_linked_skill_source(&dir_name).is_some() {
+                return Err(anyhow!("Skill already has an external source: {dir_name}"));
+            }
             // 在所有候选目录中查找
             let mut source_path: Option<PathBuf> = None;
 
@@ -2673,6 +2713,9 @@ impl SkillService {
         // directory 可能来自被污染的 DB 行（如同步导入的远端快照），join 前必须校验。
         let directory = Self::require_valid_directory(directory)?;
 
+        if crate::settings::get_linked_skill_source(&directory).is_some() {
+            return Self::sync_linked_source(&directory, app);
+        }
         let ssot_dir = Self::get_ssot_dir()?;
         let source = ssot_dir.join(&directory);
 
@@ -2870,6 +2913,9 @@ impl SkillService {
         // directory 可能来自被污染的 DB 行（如同步导入的远端快照），
         // 这里执行的是删除操作，join 前必须校验，防止任意目录删除。
         let directory = Self::require_valid_directory(directory)?;
+        if crate::settings::get_linked_skill_source(&directory).is_some() {
+            return Self::remove_linked_projection(&directory, app, false);
+        }
 
         let ssot_dir = Self::get_ssot_dir()?;
         let app_dir = Self::get_distinct_app_skills_dir(&ssot_dir, app)?;
@@ -2964,7 +3010,18 @@ impl SkillService {
 
                 if let Some(skill) = indexed_skills.get(&dir_name.to_lowercase()) {
                     if !skill.apps.is_enabled_for(app) {
-                        Self::remove_path(&path)?;
+                        if crate::settings::get_linked_skill_source(&skill.directory).is_some() {
+                            if let Err(error) =
+                                Self::remove_linked_projection(&skill.directory, app, false)
+                            {
+                                failed.push(SkillSyncFailure {
+                                    directory: skill.directory.clone(),
+                                    error: format!("{error:#}"),
+                                });
+                            }
+                        } else {
+                            Self::remove_path(&path)?;
+                        }
                     }
                     continue;
                 }
@@ -4736,6 +4793,11 @@ fn save_repos_from_lock(
 /// 首次启动迁移：扫描应用目录，重建数据库
 pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
     let _state_guard = skill_state_write_guard();
+    let linked_skills: Vec<_> = db
+        .get_all_installed_skills()?
+        .into_values()
+        .filter(|skill| crate::settings::get_linked_skill_source(&skill.directory).is_some())
+        .collect();
     let ssot_dir = SkillService::get_ssot_dir()?;
     let agents_lock = parse_agents_lock();
     let snapshot: Vec<LegacySkillMigrationRow> =
@@ -4755,6 +4817,9 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 
     if has_snapshot {
         for row in &snapshot {
+            if crate::settings::get_linked_skill_source(&row.directory).is_some() {
+                continue;
+            }
             // snapshot 存在 settings 表里，而 settings 在同步范围内、可被远端快照
             // 覆盖。下面 discovered 的每个 key 都会被 join 成路径并写回 skills 表，
             // 所以脏值必须在进入 discovered 之前就滤掉。
@@ -4790,6 +4855,9 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
             }
 
             let dir_name = entry.file_name().to_string_lossy().to_string();
+            if crate::settings::get_linked_skill_source(&dir_name).is_some() {
+                continue;
+            }
             if dir_name.starts_with('.') {
                 continue;
             }
@@ -4817,6 +4885,9 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 
     // 重建数据库
     db.clear_skills()?;
+    for skill in linked_skills {
+        db.save_skill(&skill)?;
+    }
 
     // 将 lock 文件中发现的仓库保存到 skill_repos
     save_repos_from_lock(db, &agents_lock, discovered.keys());

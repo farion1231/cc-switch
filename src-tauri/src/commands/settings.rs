@@ -48,6 +48,9 @@ fn merge_settings_for_save(
     // 开关）后、前端 query 缓存刷新前的一次全量保存会把旧 marker 重放回来，
     // 重新开启时被"复活"的标记挡住而漏迁。
     incoming.local_migrations = existing.local_migrations.clone();
+    // Source registrations and exact link ownership are backend-owned. A stale
+    // frontend settings form must not forget them or grant ownership of a link.
+    incoming.linked_skill_sources = existing.linked_skill_sources.clone();
     // 客户端地址只经 set_proxy_client_host 保存（它还要重写客户端）；全量保存带的是前端
     // 缓存里的旧值，透传会把刚保存的地址冲掉。
     incoming.proxy_client_host = existing.proxy_client_host.clone();
@@ -81,7 +84,7 @@ pub async fn save_settings(
             != existing.codex_stack_subagent_reasoning_effort
         || merged.codex_stack_auto_review_model != existing.codex_stack_auto_review_model;
     let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
-    crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
+    crate::settings::update_frontend_settings(merged).map_err(|e| e.to_string())?;
 
     // 原生托盘菜单 / 托盘面板当场切换，不用重启。
     if tray_style_changed {
@@ -98,7 +101,7 @@ pub async fn save_settings(
             rollback.codex_stack_subagent_reasoning_effort =
                 existing.codex_stack_subagent_reasoning_effort.clone();
             rollback.codex_stack_auto_review_model = existing.codex_stack_auto_review_model.clone();
-            if let Err(rollback_err) = crate::settings::update_settings(rollback) {
+            if let Err(rollback_err) = crate::settings::update_frontend_settings(rollback) {
                 log::error!("回滚 Codex 聚合设置失败: {rollback_err}");
             }
             return Err(format!(
@@ -119,7 +122,7 @@ pub async fn save_settings(
             crate::services::provider::reapply_current_codex_official_live(state.inner())
         {
             log::warn!("统一 Codex 会话历史开关变更后重写 live 配置失败，回滚设置: {err}");
-            if let Err(rollback_err) = crate::settings::update_settings(existing) {
+            if let Err(rollback_err) = crate::settings::update_frontend_settings(existing) {
                 log::error!("回滚统一会话开关设置失败: {rollback_err}");
             }
             return Err(format!(
@@ -406,6 +409,34 @@ mod tests {
         CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
         WebDavSyncSettings,
     };
+
+    #[test]
+    fn save_settings_cannot_forget_or_forge_linked_source_ownership() {
+        let mut existing = AppSettings::default();
+        existing.linked_skill_sources.insert(
+            "local-probe".into(),
+            crate::settings::LinkedSkillSource {
+                path: "/workspace/local-probe".into(),
+                projections: Default::default(),
+            },
+        );
+        let mut stale = AppSettings::default();
+        assert_eq!(
+            merge_settings_for_save(stale.clone(), &existing).linked_skill_sources,
+            existing.linked_skill_sources
+        );
+        stale.linked_skill_sources.insert(
+            "other".into(),
+            crate::settings::LinkedSkillSource {
+                path: "/outside/other".into(),
+                projections: Default::default(),
+            },
+        );
+        assert_eq!(
+            merge_settings_for_save(stale, &existing).linked_skill_sources,
+            existing.linked_skill_sources
+        );
+    }
 
     #[test]
     fn save_settings_should_keep_the_existing_proxy_client_host() {

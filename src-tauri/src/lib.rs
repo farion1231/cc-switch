@@ -72,7 +72,7 @@ pub use provider::{Provider, ProviderMeta};
 pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService},
     provider::{reapply_current_codex_official_live, EditorSave, EditorView},
-    skill::{migrate_skills_to_ssot, ImportSkillSelection},
+    skill::{migrate_skills_to_ssot, ImportSkillSelection, SkillStorageLocation, SyncMethod},
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
     SkillService, SpeedtestService,
 };
@@ -1636,6 +1636,7 @@ pub fn run() {
             commands::toggle_skill_app,
             commands::scan_unmanaged_skills,
             commands::import_skills_from_apps,
+            commands::link_skill_source,
             commands::discover_available_skills,
             commands::check_skill_updates,
             commands::resync_skills_to_apps,
