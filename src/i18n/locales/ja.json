@@ -4228,7 +4228,7 @@
     },
     "active": "有効",
     "activeTitle": "{{mode}}が有効",
-    "noProvider": "（未選択）",
+    "noProvider": "未選択",
     "failover": "フェイルオーバー",
     "routeSettings": "ルーティング設定",
     "routeSettingsTitle": "ルーティング設定",

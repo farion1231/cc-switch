@@ -4228,7 +4228,7 @@
     },
     "active": "active",
     "activeTitle": "{{mode}} is active",
-    "noProvider": "(none)",
+    "noProvider": "none",
     "failover": "Failover",
     "routeSettings": "Routing settings",
     "routeSettingsTitle": "Routing settings",

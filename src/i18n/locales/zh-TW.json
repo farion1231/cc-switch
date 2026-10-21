@@ -4229,7 +4229,7 @@
     },
     "active": "生效中",
     "activeTitle": "{{mode}}生效中",
-    "noProvider": "（未選擇）",
+    "noProvider": "未選擇",
     "failover": "故障轉移",
     "routeSettings": "路由設定",
     "routeSettingsTitle": "路由設定",
