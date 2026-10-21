@@ -3308,6 +3308,7 @@
     "uninstallSuccess": "スキル {{name}} をアンインストールしました",
     "uninstallPiPreserved": "Pi のコピーが CC Switch 管理下であることを確認できなかったため、そのまま残しました: {{path}}",
     "uninstallPiCleanupIncomplete": "Pi のクリーンアップを完了できませんでした。Pi Skills ディレクトリにコピーが残っていないか手動で確認してください。",
+    "uninstallCleanupIncomplete": "次のアプリのディレクトリを削除できませんでした。残されたスキルは引き続きアプリに読み込まれる可能性があります：{{details}}",
     "uninstallFailed": "アンインストールに失敗しました",
     "update": "更新",
     "updating": "更新中...",

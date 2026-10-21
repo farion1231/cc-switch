@@ -56,6 +56,7 @@ export interface SkillUninstallResult {
   backupPath?: string;
   preservedPiPath?: string;
   piCleanupIncomplete?: boolean;
+  cleanupFailures?: Array<{ app: string; path?: string | null; error: string }>;
 }
 
 export interface SkillBackupEntry {

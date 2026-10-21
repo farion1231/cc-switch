@@ -3308,6 +3308,7 @@
     "uninstallSuccess": "技能 {{name}} 已卸载",
     "uninstallPiPreserved": "无法确认该 Pi 副本由 CC Switch 管理，已保留：{{path}}",
     "uninstallPiCleanupIncomplete": "Pi 清理未能完成，请手动检查 Pi Skills 目录中是否有残留副本。",
+    "uninstallCleanupIncomplete": "以下应用目录未能清理，保留的技能仍可能被应用加载：{{details}}",
     "uninstallFailed": "卸载失败",
     "update": "更新",
     "updating": "更新中...",

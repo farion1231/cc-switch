@@ -550,6 +550,33 @@ describe("UnifiedSkillsPanel", () => {
     );
   });
 
+  it("warns when uninstall leaves an app copy in place", async () => {
+    m.installed = [makeSkill()];
+    m.uninstall.mockResolvedValueOnce({
+      cleanupFailures: [
+        {
+          app: "claude",
+          path: "/tmp/.claude/skills/alpha-skill",
+          error: "local edits preserved",
+        },
+      ],
+    });
+    renderPanel();
+    await openMenu("skillsPage.rowMoreAria", "skillsPage.uninstallEllipsis");
+    await userEvent.click(
+      screen.getByRole("button", { name: "skills.uninstall" }),
+    );
+    await waitFor(() =>
+      expect(m.toastWarning).toHaveBeenCalledWith(
+        "skills.uninstallSuccess",
+        expect.objectContaining({
+          description: "skills.uninstallCleanupIncomplete",
+        }),
+      ),
+    );
+    expect(m.toastSuccess).not.toHaveBeenCalled();
+  });
+
   it("filters to Skills with updates from the header count and updates them after confirming", async () => {
     m.installed = [
       makeSkill({ id: "a", name: "A" }),
