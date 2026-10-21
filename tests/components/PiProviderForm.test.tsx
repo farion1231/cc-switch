@@ -61,9 +61,7 @@ describe("PiProviderForm", () => {
     );
 
     // 表单直接铺在添加页里，不再套一层卡片
-    expect(container.querySelector("#provider-form")).not.toHaveClass(
-      "glass",
-    );
+    expect(container.querySelector("#provider-form")).not.toHaveClass("glass");
     expect(screen.getByLabelText("provider.name")).toBeInTheDocument();
     expect(screen.getByLabelText("provider.notes")).toBeInTheDocument();
     expect(screen.getByLabelText("provider.websiteUrl")).toBeInTheDocument();
@@ -159,8 +157,8 @@ describe("PiProviderForm", () => {
     expect(
       within(
         document.querySelector("#pi-provider-compat") as HTMLElement,
-      ).queryByRole("button", { name: /pi\.form\.compatibility/ }),
-    ).not.toBeInTheDocument();
+      ).getByRole("button", { name: "pi.form.compatibility" }),
+    ).toHaveAttribute("aria-expanded", "false");
     expect(
       screen.getByText("pi.form.noCompatibilityOptions"),
     ).toBeInTheDocument();

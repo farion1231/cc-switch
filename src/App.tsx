@@ -1139,7 +1139,7 @@ function App() {
         ? t("appPage.openclawConfig")
         : currentView === "hermesMemory"
           ? t("appPage.memory")
-          : t("appPage.providers");
+          : undefined;
 
   const renderAppPageHeader = () => (
     <AppPageHeader
