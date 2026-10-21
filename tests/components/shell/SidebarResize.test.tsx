@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { sidebarWidth, useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
@@ -56,6 +56,21 @@ afterEach(() => {
 });
 
 describe("sidebar resize", () => {
+  it("flushes the final width when the last frame is cancelled and saved state is unchanged", () => {
+    render(<Harness />);
+    down();
+    move(280);
+    const callback = vi
+      .mocked(window.requestAnimationFrame)
+      .mock.calls.at(-1)![0];
+    act(() => callback(16));
+    expect(nav()).toHaveStyle({ width: "280px" });
+    move(200);
+    up();
+    expect(nav()).toHaveStyle({ width: "200px" });
+    expect(localStorage.getItem("cc-switch-sidebar-width")).toBe("200");
+  });
+
   it("saves a resize, snaps closed, and restores that width when dragged out", () => {
     render(<Harness />);
     down();

@@ -79,7 +79,11 @@ export function useSidebarResize(
       if (cancel) {
         if (restore && navRef.current)
           navRef.current.style.width = `${current.initial}px`;
-      } else save(current.next);
+      } else {
+        // Flush the last pointer position even when React's saved width is unchanged.
+        if (navRef.current) navRef.current.style.width = `${current.next}px`;
+        save(current.next);
+      }
       if (current.target.hasPointerCapture?.(current.id))
         current.target.releasePointerCapture(current.id);
     },
