@@ -2,7 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    // 必须早于 GTK / WebKit 初始化：按运行时版本选择 SHM 合成或旧版软件绘制。
+    // 必须在 GTK / WebKit 初始化前设置渲染策略。
     #[cfg(target_os = "linux")]
     {
         cc_switch_lib::linux_rendering::configure_environment();
