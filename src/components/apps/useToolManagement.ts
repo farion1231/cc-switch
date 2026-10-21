@@ -49,6 +49,7 @@ export const TOOL_NAMES = [
   "pi",
   "mcode",
   "dsh",
+  "agy",
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 export type ToolLifecycleAction = "install" | "update" | "uninstall";
@@ -122,6 +123,10 @@ const MCODE_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy By
   "irm https://filecdn.minimax.chat/public/install.ps1 | iex",
 )}`;
 
+const AGY_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
+  "irm https://antigravity.google/cli/install.ps1 | iex",
+)}`;
+
 // 与后端 npm_install_command_for("claude") 保持一致：原生依赖和 postinstall 缺一不可，
 // 否则 bin/claude.exe 会保留文本占位文件，在 Windows 上报兼容性错误。
 const CLAUDE_NPM_INSTALL_COMMAND =
@@ -149,7 +154,9 @@ ${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/herm
 # Pi
 npm i -g @earendil-works/pi-coding-agent@latest
 # MiniMax Code
-${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}`;
+${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}
+# Antigravity CLI
+${posixScriptInstallCommand("https://antigravity.google/cli/install.sh")}`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${CLAUDE_NPM_INSTALL_COMMAND}
@@ -168,7 +175,9 @@ ${HERMES_WINDOWS_INSTALL_COMMAND}
 # Pi
 npm i -g @earendil-works/pi-coding-agent@latest
 # MiniMax Code
-${MCODE_WINDOWS_INSTALL_COMMAND}`;
+${MCODE_WINDOWS_INSTALL_COMMAND}
+# Antigravity CLI
+${AGY_WINDOWS_INSTALL_COMMAND}`;
 
 export const ONE_CLICK_INSTALL_COMMANDS = isWindows()
   ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
@@ -185,6 +194,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   pi: "Pi",
   mcode: "MiniMax Code",
   dsh: "DeepSeek Harness",
+  agy: "Antigravity CLI",
 };
 
 // 后端返回的 tool 是 string；这里收敛唯一的 ToolName 断言与兜底，供升级确认
@@ -204,6 +214,7 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   pi: "pi",
   mcode: "mcode",
   dsh: "deepseek-harness",
+  agy: "agy",
 };
 
 // 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。

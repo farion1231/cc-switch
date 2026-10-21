@@ -180,13 +180,15 @@
     "managedByHermes": "Hermes Managed",
     "managedByHermesHint": "Defined in Hermes' providers: dict. Edit or remove it via Hermes Web UI.",
     "openTerminal": "Open Terminal",
+    "openTerminalWithProvider": "Open Terminal with This Provider",
     "terminalOpened": "Terminal opened",
     "terminalOpenFailed": "Failed to open terminal",
     "openTerminalDialog": {
       "title": "Open a terminal in which folder?",
-      "description": "A terminal opens in the folder you pick and starts Claude Code with \"{{name}}\"'s settings. Usually you'd pick your project folder.",
+      "description": "A terminal opens in the folder you pick and starts {{app}} with \"{{name}}\"'s settings. Usually you'd pick your project folder.",
       "isolationTitle": "This terminal is isolated",
       "isolationBody": "It stays on \"{{name}}\": switching providers in CC Switch later won't affect it, and it won't change the provider CC Switch is currently using.",
+      "isolationBodyAgy": "The key and endpoint of \"{{name}}\" go only to agy in this terminal and are never written to a file; running agy directly in another terminal still uses your Google sign-in.",
       "noDir": "No folder selected",
       "choose": "Choose Folder…",
       "change": "Change…",
@@ -208,6 +210,15 @@
     "geminiConfig": "Gemini Configuration",
     "geminiConfigHint": "Use .env format to configure Gemini",
     "form": {
+      "agy": {
+        "endpointHelp": "Leave empty for Google's default API. Third-party endpoints must support the Gemini API and agy's built-in Gemini models.",
+        "modelHelp": "Use the display name from the model list (Fetch Models). Applies to that session only.",
+        "keyFieldsHint": "The model, key and endpoint are only used by \"Open Terminal\" and are never written to Antigravity's own settings.",
+        "envFile": "Launcher environment variables",
+        "envFileHint": "When agy is started from the card's \"Open Terminal\", CC Switch passes the API key and endpoint to that one agy process only and never writes them to a file. Other environment variables are not applied.",
+        "configJson": "Model configuration (CC Switch format)",
+        "configJsonHint": "Only model settings are supported here. Change other Antigravity options in agy; manage MCP in the MCP panel."
+      },
       "gemini": {
         "model": "Model",
         "oauthTitle": "OAuth Authentication Mode",
@@ -398,6 +409,10 @@
       "checkToolUpdates": "Check for new versions of your apps at launch",
       "checkToolUpdatesHelp": "When on, CC Switch checks your installed command-line apps for new versions each time it starts, and shows a dot on Apps in the sidebar if it finds one. Nothing is upgraded automatically.",
       "windowAndTerminal": "Window and terminal",
+      "trayStyle": "Tray style",
+      "trayStylePanel": "Panel",
+      "trayStyleMenu": "Menu",
+      "trayStyleHelp": "What opens when you click the tray icon (on Windows, left-click always opens the main window and right-click opens the selected style). Panel: each app's in-use provider, quota and usage, with search and switching. Menu: the system's native menu. Takes effect right away.",
       "minimizeToTrayHelp": "When on, the close button only hides the window and CC Switch keeps running in the system tray (lightweight mode is in the tray menu). When off, the close button quits.",
       "terminalHelp": "The terminal used by “Open terminal” on provider cards. If it isn't available, the system default terminal is used."
     },
@@ -1086,7 +1101,8 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "deepseek-harness": "DeepSeek Harness",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "agy": "Antigravity"
   },
   "mcode": {
     "empty": {
@@ -1367,6 +1383,7 @@
     "deleteSessionEllipsis": "Delete sessions",
     "deleteEllipsis": "Delete",
     "selectSessionLabel": "Select {{title}}",
+    "agyDeleteHint": "Delete this session in Antigravity to also remove its runtime state",
     "mcodeDeleteHint": "Delete it in MiniMax Code",
     "groupMeta": "{{count}} sessions · {{time}}",
     "bucketToday": "Today",
@@ -1661,6 +1678,7 @@
       "modelflare": "Modelflare is a stable, lower-cost AI model gateway: one key reaches GPT, Claude, Gemini, Grok, and other leading models. Exclusive for CC Switch users: use the code \"CCSWITCH\" on your first top-up for 10% off!",
       "everyapi": "EveryAPI ships its own desktop client that auto-configures Claude Code, Codex, Cursor, and 20+ other tools in one click; one key reaches Claude, GPT, DeepSeek, GLM, MiniMax, Kimi, and Doubao, so switching models needs no config changes. Get ¥14 in free credit on sign-up and an extra 20% on your first top-up. Exclusive for CC Switch users: use the code \"ccswitch\" at checkout for a further 20% off, with no expiry!",
       "alltokens": "AllTokens is built on stability and honesty, aiming to make every AI call stable, genuine, and trustworthy: reliable service, transparent billing, and one platform for GPT, Claude, Gemini, Grok, DeepSeek, GLM, Kimi, and other leading models, with pay-as-you-go pricing and spending caps. Get $1 in free trial credit when you sign up!",
+      "alltokens_si": "AllTokens SI is built on stability and honesty: an enterprise AI token relay and team collaboration platform. Members, keys, usage, and balance all live in one company console, and clear permissions and spending limits keep team usage traceable and under control.",
       "openmodel": "OpenModel offers client-specific discounts of up to 90% for Codex and 60% for Claude Code across supported models. CC Switch users who register via this link and use promo code \"cc-switch\" get 10% off their first top-up!",
       "grooroute": "GrooRoute Pro is a reliable AI API relay with access to OpenAI, Claude, DeepSeek, and other mainstream models, offering pay-as-you-go and subscription plans. CC Switch users get ¥5 in free trial credit by registering via this link!"
     },
@@ -1781,6 +1799,7 @@
     "fetchModelsSuccess": "Found {{count}} models",
     "modelMetadataFilled": "Filled in context window and other parameters for {{model}} (source: {{source}}). Please double-check.",
     "modelMetadataFilledMany": "Filled in context window and other parameters for {{count}} models (source: {{source}}). Please double-check.",
+    "gptContextWindowHint": "GPT on relays usually comes from ChatGPT subscriptions, whose window is only 272K. A larger window delays compaction until the upstream rejects the request and the turn fails; only use it if this provider supports it.",
     "modelMetadataSourcePreset": "preset",
     "modelMetadataSourceBoth": "preset and models.dev",
     "modelPicker": {
@@ -2578,7 +2597,8 @@
       "cacheWrite": "Cache write"
     },
     "prevMonth": "Previous month",
-    "nextMonth": "Next month"
+    "nextMonth": "Next month",
+    "agyUsageHint": "Antigravity shows the raw tokens from its session logs, priced at the matching Gemini API rates. Official subscriptions are billed by plan, so these amounts are for reference only. Older entries without a model are recorded as unknown and not priced."
   },
   "usageScript": {
     "title": "Configure Usage Query",
@@ -2599,6 +2619,7 @@
     "tokenPlanHint": "Automatically uses the provider's API Key and Base URL to query Token Plan quota",
     "balanceHint": "Automatically uses the provider's API Key to query account balance",
     "officialSubscriptionHint": "Reads the local CLI OAuth credentials and calls the official API to query subscription quota. Disabled by default and only requests after you enable it.",
+    "officialSubscriptionHintAgy": "Runs agy's built-in /usage command to check the signed-in account's quota. Sign-in credentials are not read; each check takes about 10 seconds. Disabled by default and only runs after you enable it.",
     "resetDate": "Reset date",
     "premiumRequests": "Premium Requests",
     "credentialsConfig": "Credentials",
@@ -3175,6 +3196,8 @@
       "providerKeyRequired": "Provider key is required",
       "providerKeyInvalid": "Provider key can only contain lowercase letters, numbers, and hyphens",
       "providerKeyDuplicate": "This provider key already exists",
+      "providerKeyBuiltin": "\"{{key}}\" is the ID of a Hermes built-in provider. Hermes will use the built-in provider (which needs its own API key environment variable) and ignore this card's endpoint and key. Use a different key, e.g. cc-switch-{{key}}.",
+      "providerKeyBuiltinLocked": "\"{{key}}\" is the ID of a Hermes built-in provider. Hermes will use the built-in provider and ignore this card's endpoint and key. The key is locked: add this provider again under another key (e.g. cc-switch-{{key}}), then delete this card.",
       "apiMode": "API Mode",
       "apiModeHint": "Provider API protocol. Choose the format that matches your endpoint.",
       "apiModeChatCompletions": "OpenAI Chat Completions",
@@ -4131,6 +4154,10 @@
       "geminiPro": "Pro",
       "geminiFlash": "Flash",
       "geminiFlashLite": "Lite",
+      "agyGeminiFiveHour": "Gemini 5h",
+      "agyGeminiWeekly": "Gemini Wk",
+      "agyThirdPartyFiveHour": "Claude 5h",
+      "agyThirdPartyWeekly": "Claude Wk",
       "monthly": "Mo",
       "credits": "Credits",
       "copilotPremium": "Premium"
@@ -4144,6 +4171,12 @@
     "geminiPro": "Pro",
     "geminiFlash": "Flash",
     "geminiFlashLite": "Flash Lite",
+    "agyGemini": "Gemini",
+    "agyThirdParty": "Claude/GPT",
+    "agyGeminiFiveHour": "Gemini 5-hour",
+    "agyGeminiWeekly": "Gemini weekly",
+    "agyThirdPartyFiveHour": "Claude/GPT 5-hour",
+    "agyThirdPartyWeekly": "Claude/GPT weekly",
     "weeklyLimit": "Weekly",
     "monthly": "Monthly",
     "credits": "Credits",
@@ -4215,7 +4248,8 @@
       "openclaw": "Installs with npm",
       "hermes": "Installs with the official script",
       "pi": "Installs with npm",
-      "mcode": "Installs with the official script, falls back to npm"
+      "mcode": "Installs with the official script, falls back to npm",
+      "agy": "Installs with the official script"
     }
   },
   "appPage": {

@@ -338,7 +338,7 @@ export function AddProviderDialog({
                 preset.endpointCandidates.forEach(addUrl);
               }
             }
-          } else if (appId === "gemini") {
+          } else if (appId === "gemini" || appId === "agy") {
             const presets = geminiProviderPresets;
             const presetIndex = parseInt(
               values.presetId.replace("gemini-", ""),
@@ -390,7 +390,7 @@ export function AddProviderDialog({
               addUrl(extractedBaseUrl);
             }
           }
-        } else if (appId === "gemini") {
+        } else if (appId === "gemini" || appId === "agy") {
           const env = parsedConfig.env as Record<string, any> | undefined;
           if (env?.GOOGLE_GEMINI_BASE_URL) {
             addUrl(env.GOOGLE_GEMINI_BASE_URL);

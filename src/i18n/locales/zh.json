@@ -180,13 +180,15 @@
     "managedByHermes": "Hermes 托管",
     "managedByHermesHint": "该条目定义在 Hermes 的 providers: dict，请在 Hermes Web UI 中编辑或删除。",
     "openTerminal": "打开终端",
+    "openTerminalWithProvider": "使用此供应商打开终端",
     "terminalOpened": "终端已打开",
     "terminalOpenFailed": "打开终端失败",
     "openTerminalDialog": {
       "title": "在哪个目录打开终端？",
-      "description": "会在你选的目录里打开一个终端，并用「{{name}}」的配置启动 Claude Code。一般选你的项目文件夹。",
+      "description": "会在你选的目录里打开一个终端，并用「{{name}}」的配置启动 {{app}}。一般选你的项目文件夹。",
       "isolationTitle": "这个终端是隔离的",
       "isolationBody": "它固定使用「{{name}}」，之后在 CC Switch 里切换供应商不会影响它；它也不会改动 CC Switch 里正在使用的供应商。",
+      "isolationBodyAgy": "「{{name}}」的 Key 和地址只传给这个终端里的 agy，不写进任何文件；在别的终端里直接运行 agy 仍是 Google 登录。",
       "noDir": "还没选目录",
       "choose": "选择文件夹…",
       "change": "更换…",
@@ -208,6 +210,15 @@
     "geminiConfig": "Gemini 配置",
     "geminiConfigHint": "使用 .env 格式配置 Gemini",
     "form": {
+      "agy": {
+        "endpointHelp": "留空用 Google 默认 API。第三方地址须兼容 Gemini API，并支持 agy 内置的 Gemini 模型。",
+        "modelHelp": "填模型列表里的显示名称，可点「获取模型列表」选择。只对那次会话生效。",
+        "keyFieldsHint": "模型、Key 和地址都只在「打开终端」时使用，不写进 Antigravity 自己的设置。",
+        "envFile": "启动环境变量",
+        "envFileHint": "从卡片「打开终端」启动 agy 时，CC Switch 只把 API Key 和请求地址传给那一个 agy 进程，不写进任何文件。其他环境变量不会应用。",
+        "configJson": "模型配置（CC Switch 格式）",
+        "configJsonHint": "这里仅支持模型设置，其他 Antigravity 选项请在 agy 中调整；MCP 在 MCP 面板中管理。"
+      },
       "gemini": {
         "model": "模型",
         "oauthTitle": "OAuth 认证模式",
@@ -398,6 +409,10 @@
       "checkToolUpdates": "启动时检查各应用的新版本",
       "checkToolUpdatesHelp": "打开后，每次启动 CC Switch 会查一次已安装的命令行应用有没有新版本，查到了就在侧栏「应用」上显示一个圆点。不会自动升级。",
       "windowAndTerminal": "窗口与终端",
+      "trayStyle": "托盘样式",
+      "trayStylePanel": "面板",
+      "trayStyleMenu": "菜单",
+      "trayStyleHelp": "点托盘图标时弹出什么（Windows 上左键始终打开主界面，右键弹出所选样式）。面板：各应用在用的供应商、额度和用量，可以搜索、切换。菜单：系统原生菜单。切换后立即生效。",
       "minimizeToTrayHelp": "打开时，点关闭按钮只隐藏窗口，CC Switch 留在系统托盘里继续运行（轻量模式在托盘菜单里）；关闭时点关闭按钮直接退出。",
       "terminalHelp": "点供应商卡片上的「打开终端」时用哪个终端。选的终端不可用时，改用系统默认终端。"
     },
@@ -1086,7 +1101,8 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "deepseek-harness": "DeepSeek Harness",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "agy": "Antigravity"
   },
   "mcode": {
     "empty": {
@@ -1367,6 +1383,7 @@
     "deleteSessionEllipsis": "删除会话",
     "deleteEllipsis": "删除",
     "selectSessionLabel": "选择 {{title}}",
+    "agyDeleteHint": "请在 Antigravity 中删除会话，以同步清理运行状态",
     "mcodeDeleteHint": "请在 MiniMax Code 中删除",
     "groupMeta": "{{count}} 个会话 · {{time}}",
     "bucketToday": "今天",
@@ -1661,6 +1678,7 @@
       "modelflare": "Modelflare 是稳定、低成本的 AI 模型网关，一个 Key 即可调用 GPT、Claude、Gemini、Grok 等主流模型。CC Switch 用户专享福利：首次充值使用优惠码 \"CCSWITCH\" 可享 9 折优惠！",
       "everyapi": "EveryAPI 自带桌面客户端，Claude Code、Codex、Cursor 等 20 多个工具一键自动配置；一把密钥直接调用 Claude、GPT、DeepSeek、GLM、MiniMax、Kimi、豆包，换模型不用改配置。注册即送 14 元额度，首充额外加送 20%；CC Switch 用户专享：付款时使用折扣码 \"ccswitch\" 再打 8 折，不限时！",
       "alltokens": "AllTokens 秉持「稳定为基，真实为本」，致力于让每一次 AI 调用都稳定、真实、值得托付：服务可靠、计费透明，一个平台接入 GPT、Claude、Gemini、Grok、DeepSeek、GLM、Kimi 等主流模型，按量计费、支持配额上限。注册即送 1 美元体验金！",
+      "alltokens_si": "AllTokens SI 秉持「稳定为基，真实为本」，是专为企业打造的 AI Token 中转与团队协作平台：成员、密钥、用量与余额统一纳入企业控制台，以清晰的权限与额度配置，让团队协作有据可查、安心可控。",
       "openmodel": "OpenModel 为 Codex 和 Claude Code 提供客户端专属折扣，所支持的模型通过 Codex 调用最高优惠 90%、通过 Claude Code 调用最高优惠 60%。CC Switch 用户通过此链接注册并使用优惠码 \"cc-switch\"，即可享受首次充值九折优惠！",
       "grooroute": "GrooRoute Pro 是可靠流畅的 AI API 中转服务平台，接入 OpenAI、Claude、DeepSeek 等主流大模型，支持按量计费与订阅套餐。CC Switch 用户通过此链接注册即可获得免费 5 元体验额度！"
     },
@@ -1781,6 +1799,7 @@
     "fetchModelsSuccess": "获取到 {{count}} 个模型",
     "modelMetadataFilled": "已补全 {{model}} 的上下文等参数（来源：{{source}}），请核对",
     "modelMetadataFilledMany": "已补全 {{count}} 个模型的上下文等参数（来源：{{source}}），请核对",
+    "gptContextWindowHint": "中转站的 GPT 多来自 ChatGPT 订阅，窗口只有 272K。窗口写大了不会提前压缩，等上游拒收时这一轮会失败；确认这家支持更大窗口再这样填。",
     "modelMetadataSourcePreset": "预设",
     "modelMetadataSourceBoth": "预设和 models.dev",
     "modelPicker": {
@@ -2578,7 +2597,8 @@
       "cacheWrite": "缓存写入"
     },
     "prevMonth": "上个月",
-    "nextMonth": "下个月"
+    "nextMonth": "下个月",
+    "agyUsageHint": "Antigravity 显示会话日志里的原始 Token，金额按对应的 Gemini API 价格估算；官方订阅按套餐计费，这里的金额只作参考。缺失的历史模型记为 unknown，不计金额。"
   },
   "usageScript": {
     "title": "配置用量查询",
@@ -2599,6 +2619,7 @@
     "tokenPlanHint": "自动使用供应商的 API Key 和 Base URL 查询 Token Plan 额度",
     "balanceHint": "自动使用供应商的 API Key 查询账户余额",
     "officialSubscriptionHint": "读取本机 CLI 的 OAuth 凭据，并调用官方接口查询订阅额度。默认关闭，只有启用后才会请求。",
+    "officialSubscriptionHintAgy": "运行 agy 自带的 /usage 命令查询登录账号的额度，不读取登录凭据，每次查询约需 10 秒。默认关闭，只有启用后才会请求。",
     "resetDate": "重置日期",
     "premiumRequests": "Premium 请求",
     "credentialsConfig": "凭证配置",
@@ -3175,6 +3196,8 @@
       "providerKeyRequired": "供应商标识不能为空",
       "providerKeyInvalid": "供应商标识只能包含小写字母、数字和连字符",
       "providerKeyDuplicate": "该供应商标识已存在",
+      "providerKeyBuiltin": "「{{key}}」是 Hermes 内置供应商的标识。Hermes 会改用内置供应商（要它自己的环境变量 Key），这张卡的地址和 Key 不会生效。请换一个标识，例如 cc-switch-{{key}}。",
+      "providerKeyBuiltinLocked": "「{{key}}」是 Hermes 内置供应商的标识。Hermes 会改用内置供应商，这张卡的地址和 Key 不会生效。标识已锁定无法修改，请用其他标识（例如 cc-switch-{{key}}）重新添加这个供应商，再删除这张卡。",
       "apiMode": "API 模式",
       "apiModeHint": "供应商 API 协议。请根据端点选择正确的协议。",
       "apiModeChatCompletions": "OpenAI Chat Completions",
@@ -4131,6 +4154,10 @@
       "geminiPro": "Pro",
       "geminiFlash": "Flash",
       "geminiFlashLite": "Lite",
+      "agyGeminiFiveHour": "Gemini 5 小时",
+      "agyGeminiWeekly": "Gemini 每周",
+      "agyThirdPartyFiveHour": "Claude 5 小时",
+      "agyThirdPartyWeekly": "Claude 每周",
       "monthly": "每月",
       "credits": "额度",
       "copilotPremium": "高级请求"
@@ -4144,6 +4171,12 @@
     "geminiPro": "Pro",
     "geminiFlash": "Flash",
     "geminiFlashLite": "Flash Lite",
+    "agyGemini": "Gemini",
+    "agyThirdParty": "Claude/GPT",
+    "agyGeminiFiveHour": "Gemini 5 小时",
+    "agyGeminiWeekly": "Gemini 每周",
+    "agyThirdPartyFiveHour": "Claude/GPT 5 小时",
+    "agyThirdPartyWeekly": "Claude/GPT 每周",
     "weeklyLimit": "每周",
     "monthly": "每月",
     "credits": "额度",
@@ -4215,7 +4248,8 @@
       "openclaw": "通过 npm 安装",
       "hermes": "安装时运行官方安装脚本",
       "pi": "通过 npm 安装",
-      "mcode": "安装时运行官方安装脚本，失败时改用 npm"
+      "mcode": "安装时运行官方安装脚本，失败时改用 npm",
+      "agy": "安装时运行官方安装脚本"
     }
   },
   "appPage": {

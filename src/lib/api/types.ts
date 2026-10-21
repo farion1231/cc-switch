@@ -10,4 +10,5 @@ export type AppId =
   | "hermes"
   | "pi"
   | "deepseek-harness"
-  | "mcode";
+  | "mcode"
+  | "agy";

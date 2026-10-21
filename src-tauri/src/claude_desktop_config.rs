@@ -738,7 +738,7 @@ pub(crate) fn configured_proxy_model_routes(
             next_catalog_safe_route_id(&result, &reserved_route_ids)
         };
         result.push(ResolvedModelRoute {
-            route_id: repaired_route_id,
+            route_id: published_route_id(repaired_route_id, upstream_model, &reserved_route_ids),
             upstream_model: upstream_model.to_string(),
             label_override: route
                 .label_override
@@ -765,6 +765,21 @@ pub(crate) fn configured_proxy_model_routes(
     }
 
     Ok(result)
+}
+
+/// 发布给 Desktop 的模型名。Desktop 按这个名字决定请求参数：映射表里的 Opus / Sonnet 键固定是
+/// `claude-opus-5` / `claude-sonnet-5`，目标是 5.5 时照写，5.5 上游会拒收按 5 组的请求（#8082）。
+/// 和 Claude Code 的路由契约一样换成目录里的 5.5 名字；映射表里的键不变，旧 profile 发来的
+/// 原键仍按键查到目标（见 [`legacy_raw_route_upstream_model`]）。用户自己配了这个名字的路由
+/// 时不换，免得两条撞名。
+fn published_route_id(
+    route_id: String,
+    upstream_model: &str,
+    reserved: &std::collections::HashSet<String>,
+) -> String {
+    crate::live::project::claude::point_release_client_id(&route_id, upstream_model)
+        .filter(|catalog_id| !reserved.contains(*catalog_id))
+        .map_or(route_id, str::to_string)
 }
 
 fn next_catalog_safe_route_id(
@@ -2069,6 +2084,79 @@ mod tests {
         let err = map_proxy_request_model(json!({"model": "claude-opus-4-8"}), &provider)
             .expect_err("unknown route should fail");
         assert!(err.to_string().contains("claude-opus-4-8"));
+    }
+
+    #[test]
+    fn claude_desktop_proxy_publishes_catalog_ids_for_point_release_targets() {
+        let route = |model: &str| ClaudeDesktopModelRoute {
+            model: model.to_string(),
+            label_override: None,
+            supports_1m: None,
+        };
+        let mut provider = proxy_provider("proxy");
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes = std::collections::HashMap::from([
+            ("claude-opus-5".to_string(), route("claude-opus-5.5")),
+            (
+                "claude-sonnet-5".to_string(),
+                route("anthropic/claude-sonnet-5-5-20261001"),
+            ),
+            ("claude-haiku-4-5".to_string(), route("glm-5")),
+        ]);
+
+        let names = |provider: &Provider| -> Vec<String> {
+            proxy_model_routes(provider)
+                .expect("routes")
+                .into_iter()
+                .map(|route| route.route_id)
+                .collect()
+        };
+        assert_eq!(
+            names(&provider),
+            ["claude-haiku-4-5", "claude-opus-5-5", "claude-sonnet-5-5"]
+        );
+        let models = model_list_response(&provider).expect("model list");
+        assert_eq!(models["data"][1]["id"], json!("claude-opus-5-5"));
+
+        // 新名字、旧 profile 里的原键、带日期的全名都落到同一个目标。
+        for (requested, upstream) in [
+            ("claude-opus-5-5", "claude-opus-5.5"),
+            ("claude-opus-5", "claude-opus-5.5"),
+            ("claude-opus-5-5-20261001[1m]", "claude-opus-5.5"),
+            ("claude-sonnet-5-5", "anthropic/claude-sonnet-5-5-20261001"),
+            ("claude-sonnet-5", "anthropic/claude-sonnet-5-5-20261001"),
+            ("claude-haiku-4-5", "glm-5"),
+        ] {
+            let mapped =
+                map_proxy_request_model(json!({ "model": requested }), &provider).expect(requested);
+            assert_eq!(mapped["model"], json!(upstream), "{requested}");
+        }
+
+        // 用户自己配了 claude-opus-5-5 这条路由时，原键不换名，两条各走各的。
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes
+            .insert(
+                "claude-opus-5-5".to_string(),
+                route("claude-opus-5-5-thinking"),
+            );
+        assert_eq!(
+            names(&provider),
+            [
+                "claude-haiku-4-5",
+                "claude-opus-5",
+                "claude-opus-5-5",
+                "claude-sonnet-5-5"
+            ]
+        );
+        let mapped = map_proxy_request_model(json!({ "model": "claude-opus-5" }), &provider)
+            .expect("original key");
+        assert_eq!(mapped["model"], json!("claude-opus-5.5"));
     }
 
     #[test]

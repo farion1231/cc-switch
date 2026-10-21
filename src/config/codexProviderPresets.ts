@@ -1529,6 +1529,24 @@ requires_openai_auth = true`,
     partnerPromotionKey: "alltokens",
     icon: "alltokens",
   },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    // GPT 分组（alltokens.si/api/pricing，2026-10-19）。目录只声明 Chat，但
+    // new-api 的 OpenAI 渠道同样转发 /v1/responses，按 Codex 惯例走 Responses
+    config: generateThirdPartyConfig(
+      "alltokens_si",
+      "https://alltokens.si/v1",
+      "gpt-5.6-sol",
+    ),
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",
@@ -1692,7 +1710,7 @@ requires_openai_auth = true`,
     family: "zhipu",
     regionKey: "cn",
     websiteUrl: "https://open.bigmodel.cn",
-    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code",
     auth: generateThirdPartyAuth(""),
     // 智谱三端点分立（docs.bigmodel.cn/cn/coding-plan/tool/others）：Anthropic
     // /api/anthropic、OpenAI Chat /api/coding/paas/v4、OpenAI Responses /api/v1，
@@ -1757,7 +1775,7 @@ requires_openai_auth = true`,
     family: "zhipu",
     regionKey: "intl",
     websiteUrl: "https://z.ai",
-    apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
+    apiKeyUrl: "https://z.ai/subscribe",
     auth: generateThirdPartyAuth(""),
     // 国际站同上（docs.z.ai/devpack/tool/others + devpack/tool/codex，2026-09-04
     // 核对）：Responses 端点 /api/v1，官方 models.json 仅列 glm-5.3。
@@ -4255,8 +4273,7 @@ requires_openai_auth = true`,
     // 官方列 low/medium/high/xhigh/max，无 none/minimal）；GLM-5.3 平台声明
     // low/high/max；DeepSeek V4 Pro 0813 平台未写，退回 DeepSeek 官方
     // low/high/max。每档都含 high，与 config 的 model_reasoning_effort = "high"
-    // 一致，无需 defaultReasoningLevel。窗口取平台模型表，GPT 按
-    // GPT_CONTEXT_WINDOW_CAP 封顶；GPT-6.1 Sol 超 272K
+    // 一致，无需 defaultReasoningLevel。窗口取平台模型表；GPT-6.1 Sol 超 272K
     // 按长上下文价计费（docs.digitalocean.com/products/inference/details/
     // pricing）。Tier 1 / Tier 2 账号只能用 gpt-oss，GPT-6.1 Sol 须 Tier 3+。
     // 首行 = 默认模型，须与 config 的 model 一致
@@ -4264,7 +4281,7 @@ requires_openai_auth = true`,
       {
         model: "openai-gpt-6-1-sol",
         displayName: "GPT-6.1 Sol",
-        contextWindow: 272000,
+        contextWindow: 1050000,
         inputModalities: ["text", "image"],
         reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
       },

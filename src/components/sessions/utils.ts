@@ -17,6 +17,7 @@ export const SESSION_APP_IDS = [
   "openclaw",
   "mcode",
   "deepseek-harness",
+  "agy",
 ] as const satisfies readonly AppId[];
 
 export type SessionAppId = (typeof SESSION_APP_IDS)[number];
@@ -36,11 +37,14 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   pi: ["~/.pi/agent/sessions"],
   mcode: ["~/.minimax"],
   "deepseek-harness": ["~/.dsh/sessions"],
+  agy: [
+    "~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs",
+  ],
 };
 
 /** MiniMax Code 的会话只能在 MiniMax Code 里删（后端也会拒绝）。 */
 export const canDeleteSession = (session: SessionMeta) =>
-  Boolean(session.sourcePath) && session.providerId !== "mcode";
+  Boolean(session.sourcePath) && !["mcode", "agy"].includes(session.providerId);
 
 export interface SessionProjectGroup {
   key: string;

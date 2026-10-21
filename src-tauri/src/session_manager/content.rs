@@ -657,6 +657,7 @@ fn project_dir_for(source: &ValidatedSource) -> Option<PathBuf> {
         "hermes" => hermes::scan_sessions(),
         "pi" => pi::scan_sessions(),
         "mcode" => mcode::scan_sessions(),
+        "agy" => super::providers::agy::scan_sessions(),
         _ => return None,
     };
     let project = sessions

@@ -8,6 +8,7 @@ import {
   type CSSProperties,
 } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { useQueryClient } from "@tanstack/react-query";
 import i18n from "i18next";
 import {
   AlertTriangle,
@@ -24,6 +25,7 @@ import {
 import { AppGlyph } from "@/components/shell/AppGlyph";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { cn } from "@/lib/utils";
+import type { AppMode } from "@/types/proxy";
 import {
   CHANGED_EVENT,
   SHOW_EVENT,
@@ -36,6 +38,7 @@ import {
   type PanelTexts,
   type TrayPanelState,
 } from "./api";
+import { aimingAt, type Point } from "./menuAim";
 import { usePanelTheme } from "./usePanelTheme";
 import { UsageTab } from "./UsageTab";
 
@@ -49,9 +52,12 @@ const CANVAS_MAX_HEIGHT = 760;
 /** 分开摆时窗口四周留的透明边距，给卡片的阴影（系统窗口阴影已关掉） */
 const SHADOW_MARGIN = 16;
 const SUB_MAX_HEIGHT = 540;
-/** 悬停多久展开子面板；已经展开时换一个应用多等一会儿，斜着移向子面板时不误切 */
-const HOVER_OPEN_MS = 90;
-const HOVER_SWITCH_MS = 180;
+/** 悬停多久展开子面板；已经展开时换应用不等，只有鼠标正朝子面板移动才暂缓 */
+const HOVER_OPEN_MS = 50;
+/** 正朝子面板移动时隔这么久再看一次：鼠标停下了或偏离了就切换 */
+const AIM_RECHECK_MS = 120;
+/** 鼠标停在主面板里不是应用行的项上（`hovered` 的取值） */
+const OTHER_ITEM = "";
 
 const ROW_HOVER = "hover:bg-black/[0.06] dark:hover:bg-white/[0.08]";
 const FOCUS_RING =
@@ -79,10 +85,10 @@ function syncLanguage() {
 }
 
 /** 分开摆时窗口的纵向范围（相对贴图标那条边）。 */
-function floatingCanvas(p: PanelPlacement) {
+function floatingCanvas(p: PanelPlacement, maxHeight = CANVAS_MAX_HEIGHT) {
   return p.edge === "top"
-    ? { top: 0, bottom: Math.min(p.boundsBottom, CANVAS_MAX_HEIGHT) }
-    : { top: Math.max(p.boundsTop, -CANVAS_MAX_HEIGHT), bottom: 0 };
+    ? { top: 0, bottom: Math.min(p.boundsBottom, maxHeight) }
+    : { top: Math.max(p.boundsTop, -maxHeight), bottom: 0 };
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -91,14 +97,61 @@ function clamp(value: number, min: number, max: number) {
 
 // ─── 额度 ────────────────────────────────────────────────────────────────────
 
-/** 重置时间写短：今天只写时刻，其余写月/日 + 时刻；已经过了的不写。 */
-function formatResetTime(iso: string, now: Date): string | null {
+/**
+ * 还有多久重置，写短：最多两级（天+小时、小时+分、分），零的那级不写；
+ * 不足一分钟按一分钟算，已经过了的不写。
+ */
+export function formatResetIn(
+  iso: string,
+  now: Date,
+  texts: PanelTexts,
+): string | null {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime()) || at <= now) return null;
-  const time = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
-  return at.toDateString() === now.toDateString()
-    ? time
-    : `${at.getMonth() + 1}/${at.getDate()} ${time}`;
+  const totalMinutes = Math.max(
+    1,
+    Math.floor((at.getTime() - now.getTime()) / 60_000),
+  );
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  const unit = (template: string, n: number) =>
+    template.replace("{n}", String(n));
+  const parts =
+    days > 0
+      ? [
+          unit(texts.durationDays, days),
+          hours > 0 && unit(texts.durationHours, hours),
+        ]
+      : hours > 0
+        ? [
+            unit(texts.durationHours, hours),
+            minutes > 0 && unit(texts.durationMinutes, minutes),
+          ]
+        : [unit(texts.durationMinutes, minutes)];
+  return texts.resetsIn.replace(
+    "{when}",
+    parts.filter(Boolean).join(texts.durationSep),
+  );
+}
+
+/** 只给数值上绿色（「余额 82.10 CNY」里的金额），和主界面 `TONE_TEXT.normal` 同色。 */
+function EmphasizedText({
+  text,
+  emphasis,
+}: {
+  text: string;
+  emphasis: string | null;
+}) {
+  const at = emphasis ? text.lastIndexOf(emphasis) : -1;
+  if (!emphasis || at < 0) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, at)}
+      <span className="text-green-600 dark:text-green-400">{emphasis}</span>
+      {text.slice(at + emphasis.length)}
+    </>
+  );
 }
 
 function QuotaBlock({
@@ -115,22 +168,38 @@ function QuotaBlock({
     return null;
   }
   const now = new Date();
+  const lines = quota.lines.slice(0, compact ? 2 : 3).map((line) => ({
+    ...line,
+    when: line.resetsAt ? formatResetIn(line.resetsAt, now, texts) : null,
+  }));
+  // 各档共用一张网格（文字 | 进度条 | 多久重置），进度条的起止才对得齐；
+  // 整块都没有重置时间时不留第三列，免得右边空出一截间距。
+  const hasWhen = lines.some((line) => line.when);
   return (
-    <div className={cn("flex flex-col gap-1", compact ? "mt-1" : "mt-1.5")}>
-      {quota.lines.slice(0, compact ? 2 : 3).map((line, index) => {
-        const when = line.resetsAt ? formatResetTime(line.resetsAt, now) : null;
+    <div
+      className={cn(
+        "grid items-center gap-x-2 gap-y-1",
+        hasWhen
+          ? "grid-cols-[auto_minmax(1.5rem,1fr)_auto]"
+          : "grid-cols-[auto_minmax(1.5rem,1fr)]",
+        compact ? "mt-1" : "mt-1.5",
+      )}
+    >
+      {lines.map((line, index) => {
         return (
-          <div key={index} className="flex items-center gap-2">
+          <div key={index} className="contents">
             <span
               className={cn(
-                "shrink-0 text-[11px] tabular-nums",
+                "whitespace-nowrap text-[11px] tabular-nums",
                 line.warn ? "text-amber-500" : "text-muted-foreground",
               )}
             >
-              {line.text}
+              <EmphasizedText text={line.text} emphasis={line.emphasis} />
             </span>
-            {line.left != null && (
-              <span className="h-1 min-w-6 flex-1 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+            {line.left == null ? (
+              <span />
+            ) : (
+              <span className="h-1 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
                 <span
                   className={cn(
                     "block h-full rounded-full",
@@ -144,27 +213,36 @@ function QuotaBlock({
                 />
               </span>
             )}
-            {when && (
-              <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground">
-                {texts.resetsAt.replace("{when}", when)}
+            {hasWhen && (
+              <span className="justify-self-end whitespace-nowrap text-[10.5px] tabular-nums text-muted-foreground">
+                {line.when}
               </span>
             )}
           </div>
         );
       })}
       {quota.resetCredits != null && quota.resetCredits > 0 && (
-        <span className="text-[11px] text-muted-foreground">
+        <span className="col-span-full text-[11px] text-muted-foreground">
           {texts.resetCredits.replace("{count}", String(quota.resetCredits))}
         </span>
       )}
       {quota.note && (
-        <span className="text-[11px] text-amber-500">{quota.note}</span>
+        <span className="col-span-full text-[11px] text-amber-500">
+          {quota.note}
+        </span>
       )}
     </div>
   );
 }
 
 // ─── 主面板的应用行 ───────────────────────────────────────────────────────────
+
+// 模式名用主界面的模式色（与 ModeTabs 的 MODE_TONE.text 同一组 token），一眼分出直连 / 路由 / 聚合。
+const MODE_TEXT: Record<AppMode, string> = {
+  direct: "text-direct-text",
+  route: "text-route-text",
+  stack: "text-stack-text",
+};
 
 function AppRow({
   app,
@@ -184,9 +262,6 @@ function AppRow({
   onOpen: () => void;
 }) {
   const Chevron = side === "left" ? ChevronLeft : ChevronRight;
-  const subtitle = app.addId
-    ? app.addText
-    : [app.current, app.mode].filter(Boolean).join(" · ");
   return (
     <button
       type="button"
@@ -196,7 +271,8 @@ function AppRow({
       onMouseLeave={onLeave}
       onClick={onOpen}
       className={cn(
-        "flex w-full items-start gap-3 rounded-[10px] px-2.5 py-2 text-left transition-colors",
+        // 图标 | 名称 | 箭头；额度另起一行，从名称列一直铺到箭头下方，进度条才不被箭头那一列挤短
+        "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 rounded-[10px] px-2.5 py-2 text-left",
         FOCUS_RING,
         active ? "bg-blue-500/[0.16]" : ROW_HOVER,
       )}
@@ -204,7 +280,7 @@ function AppRow({
       <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-black/[0.05] dark:bg-white/[0.08]">
         <AppGlyph app={app.app} size={20} badgeClassName="bg-transparent" />
       </span>
-      <span className="min-w-0 flex-1">
+      <span className="min-w-0">
         <span className="flex items-center gap-1.5">
           <span
             className={cn(
@@ -221,14 +297,27 @@ function AppRow({
           )}
         </span>
         <span className="block truncate text-xs text-muted-foreground">
-          {subtitle}
+          {app.addId ? (
+            app.addText
+          ) : (
+            <>
+              {app.current && `${app.current} · `}
+              <span className={cn("font-medium", MODE_TEXT[app.modeKind])}>
+                {app.mode}
+              </span>
+            </>
+          )}
         </span>
-        {app.quota && <QuotaBlock quota={app.quota} texts={texts} />}
       </span>
       {app.addId ? (
         <Plus className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
       ) : (
         <Chevron className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
+      )}
+      {app.quota && (
+        <span className="col-span-2 col-start-2 min-w-0">
+          <QuotaBlock quota={app.quota} texts={texts} />
+        </span>
       )}
     </button>
   );
@@ -268,6 +357,7 @@ function SubRow({
   const provider = row.provider;
   const hint =
     provider?.hint && !row.text.includes(provider.hint) ? provider.hint : null;
+  const inUse = row.checked && provider != null;
   return (
     <button
       type="button"
@@ -275,7 +365,11 @@ function SubRow({
       disabled={!row.enabled}
       onClick={() => onAction(row.id)}
       className={cn(
-        "flex w-full gap-2.5 rounded-lg px-2.5 py-1.5 text-left transition-colors",
+        // 图标 | 名称 | 使用中；额度另起一行铺到「使用中」下方，免得被那一列挤窄
+        "grid w-full gap-x-2.5 rounded-lg px-2.5 py-1.5 text-left",
+        inUse
+          ? "grid-cols-[auto_minmax(0,1fr)_auto]"
+          : "grid-cols-[auto_minmax(0,1fr)]",
         // 带额度的行高，图标和「使用中」贴着第一行
         provider?.quota ? "items-start" : "items-center",
         FOCUS_RING,
@@ -294,7 +388,7 @@ function SubRow({
           />
         ) : null}
       </span>
-      <span className="min-w-0 flex-1">
+      <span className="min-w-0">
         <span className="block truncate text-[13px] font-medium">
           {row.text}
         </span>
@@ -303,13 +397,15 @@ function SubRow({
             {hint}
           </span>
         )}
-        {provider?.quota && (
-          <QuotaBlock quota={provider.quota} texts={texts} compact />
-        )}
       </span>
-      {row.checked && provider && (
-        <span className="shrink-0 text-[11px] font-medium text-blue-500">
+      {inUse && (
+        <span className="text-[11px] font-medium text-blue-500">
           {texts.inUse}
+        </span>
+      )}
+      {provider?.quota && (
+        <span className="min-w-0 [grid-column:2/-1]">
+          <QuotaBlock quota={provider.quota} texts={texts} compact />
         </span>
       )}
     </button>
@@ -400,7 +496,7 @@ function FooterButton({
       title={title}
       onClick={onClick}
       className={cn(
-        "flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors",
+        "flex min-w-0 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px]",
         FOCUS_RING,
         ROW_HOVER,
         className,
@@ -417,43 +513,97 @@ function FooterButton({
 // ─── 面板 ─────────────────────────────────────────────────────────────────────
 
 export function TrayPanel() {
-  const [placement, setPlacement] = useState<PanelPlacement | null>(null);
+  const [nativePlacement, setPlacement] = useState<PanelPlacement | null>(null);
+  const [pixelRatio, setPixelRatio] = useState(window.devicePixelRatio || 1);
+  // Windows 文本大小 / WebView 缩放可能让 CSS 像素和屏幕逻辑像素不再一一对应。
+  const coordinateScale =
+    nativePlacement?.platform === "windows"
+      ? pixelRatio / nativePlacement.scaleFactor
+      : 1;
+  const placement = useMemo(
+    () =>
+      nativePlacement && {
+        ...nativePlacement,
+        boundsTop: nativePlacement.boundsTop / coordinateScale,
+        boundsBottom: nativePlacement.boundsBottom / coordinateScale,
+        mainWidth: nativePlacement.mainWidth / coordinateScale,
+        subWidth: nativePlacement.subWidth / coordinateScale,
+        gap: nativePlacement.gap / coordinateScale,
+        radius: nativePlacement.radius / coordinateScale,
+      },
+    [nativePlacement, coordinateScale],
+  );
   const [state, setState] = useState<TrayPanelState | null>(null);
   const [tab, setTab] = useState<Tab>(readTab);
   const [openApp, setOpenApp] = useState<string | null>(null);
+  /** 子面板是从另一个应用换过来的（不是刚展开）：内容做一次很短的淡入 */
+  const [swapped, setSwapped] = useState(false);
   const [query, setQuery] = useState("");
   const [shownCount, setShownCount] = useState(0);
   const theme = usePanelTheme(shownCount);
+  const queryClient = useQueryClient();
 
   const mainRef = useRef<HTMLDivElement>(null);
   const subRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const hoverTimer = useRef<number | undefined>(undefined);
+  /** 最近几次鼠标位置，判断是不是正朝子面板移动 */
+  const trail = useRef<Point[]>([]);
+  /** 上次因为「正朝子面板移动」而暂缓切换时的鼠标位置 */
+  const aimedAt = useRef<Point | null>(null);
+  const hovered = useRef<string | null>(null);
+  const lastState = useRef("");
   const layoutFrame = useRef<number | undefined>(undefined);
   const lastLayout = useRef("");
   const placementRef = useRef(placement);
   placementRef.current = placement;
+  const openAppRef = useRef(openApp);
+  openAppRef.current = openApp;
+
+  useEffect(() => {
+    const update = () => setPixelRatio(window.devicePixelRatio || 1);
+    // 跨屏时 DPR 可能晚于显示事件更新，固定画布也不一定触发 resize。
+    // 每次 DPR 变化后重新订阅，才能继续检测下一次跨屏或 WebView 缩放。
+    const media = window.matchMedia?.(`(resolution: ${pixelRatio}dppx)`);
+    media?.addEventListener("change", update);
+    window.addEventListener("resize", update);
+    update();
+    return () => {
+      media?.removeEventListener("change", update);
+      window.removeEventListener("resize", update);
+    };
+  }, [pixelRatio]);
 
   const load = useCallback(async () => {
     try {
-      setState(await trayPanelApi.state());
+      const next = await trayPanelApi.state();
+      // 额度刷新会连着通知好几次，内容没变就不重新渲染
+      const key = JSON.stringify(next);
+      if (key === lastState.current) return;
+      lastState.current = key;
+      setState(next);
     } catch (error) {
       console.error("[TrayPanel] 读取托盘面板数据失败", error);
     }
   }, []);
 
-  // 每次弹出：收起子面板、清空搜索、先取数据再排版，显示出来就是新内容
+  // 每次弹出：收起子面板、清空搜索、先取数据再排版，显示出来就是新内容。
+  // 设置（币种、趋势图样式）也重新读：面板窗口只隐藏不销毁，主窗口改了设置这边收不到。
   const begin = useCallback(
     async (next: PanelPlacement) => {
       syncLanguage();
       setOpenApp(null);
       setQuery("");
-      await load();
+      await Promise.all([
+        load(),
+        queryClient.invalidateQueries({ queryKey: ["settings"] }),
+      ]);
       lastLayout.current = "";
       setShownCount((count) => count + 1);
+      setPixelRatio(window.devicePixelRatio || 1);
       setPlacement(next);
     },
-    [load],
+    [load, queryClient],
   );
 
   useEffect(() => {
@@ -505,16 +655,13 @@ export function TrayPanel() {
     const windowsJoined = p.platform === "windows" && !floating;
     const fixedCanvas = floating || windowsJoined;
 
-    main.style.minHeight = "";
-    if (sub) sub.style.minHeight = "";
-    let mainHeight = main.offsetHeight;
-    let subHeight = sub ? sub.offsetHeight : 0;
-    if (sub && !floating) {
-      // 两栏：一样高，整窗一块背景不留空
-      const height = Math.max(mainHeight, subHeight);
-      main.style.minHeight = sub.style.minHeight = `${height}px`;
-      mainHeight = subHeight = height;
+    const mainHeight = main.getBoundingClientRect().height;
+    if (sub) {
+      // 两栏以主面板的高度为准，供应商列表在子面板内部滚动。
+      // 底部弹出时不能让子面板撑高主面板，否则应用行会移到鼠标下面，反复触发切换。
+      sub.style.height = floating ? "" : `${mainHeight}px`;
     }
+    const subHeight = sub ? sub.getBoundingClientRect().height : 0;
 
     const mainTop = p.edge === "top" ? 0 : -mainHeight;
     let subX = p.side === "left" ? 0 : p.mainWidth + p.gap;
@@ -526,7 +673,7 @@ export function TrayPanel() {
     if (fixedCanvas) {
       // macOS 和 Windows 在这次弹出期间固定窗口范围，不让展开 / 切换子面板
       // 触发 WebView resize。Windows 的原生窗口区域只露出实际的卡片，其余区域可点击穿透。
-      const canvas = floatingCanvas(p);
+      const canvas = floatingCanvas(p, CANVAS_MAX_HEIGHT / coordinateScale);
       top = canvas.top;
       bottom = canvas.bottom;
       mainX = p.side === "left" ? p.subWidth + p.gap : 0;
@@ -574,11 +721,16 @@ export function TrayPanel() {
 
     const layout = {
       seq: p.seq,
-      width,
-      height: Math.ceil(bottom - top),
-      offsetX: mainX,
-      offsetY: top,
-      cards,
+      width: width * coordinateScale,
+      height: Math.ceil((bottom - top) * coordinateScale),
+      offsetX: mainX * coordinateScale,
+      offsetY: top * coordinateScale,
+      cards: cards.map((card) => ({
+        x: card.x * coordinateScale,
+        y: card.y * coordinateScale,
+        width: card.width * coordinateScale,
+        height: card.height * coordinateScale,
+      })),
       dark: theme.explicit,
     };
     const key = JSON.stringify(layout);
@@ -600,7 +752,7 @@ export function TrayPanel() {
     } else {
       void trayPanelApi.layout(layout);
     }
-  }, [openApp, theme.explicit]);
+  }, [openApp, theme.explicit, coordinateScale]);
 
   useEffect(
     () => () => {
@@ -628,17 +780,82 @@ export function TrayPanel() {
 
   const openSub = useCallback((app: PanelApp | null) => {
     window.clearTimeout(hoverTimer.current);
-    setOpenApp(app && !app.addId ? app.app : null);
+    const next = app && !app.addId ? app.app : null;
+    const previous = openAppRef.current;
+    setSwapped(previous !== null && next !== null && previous !== next);
+    setOpenApp(next);
     setQuery("");
   }, []);
 
+  useEffect(() => {
+    const onMove = (event: MouseEvent) => {
+      const points = trail.current;
+      points.push({ x: event.clientX, y: event.clientY });
+      if (points.length > 3) points.shift();
+    };
+    window.addEventListener("mousemove", onMove);
+    return () => window.removeEventListener("mousemove", onMove);
+  }, []);
+
+  /**
+   * 子面板开着时换到另一个应用（`null`＝移到了主面板里别的项上，收起子面板）：
+   * 鼠标正斜着朝子面板移动（途经别的行）就先不换，隔一会儿再看；鼠标停下了、
+   * 偏离了，或本来就是竖着移，立即切换。
+   */
+  const switchTo = (app: PanelApp | null) => {
+    if (hovered.current !== (app?.app ?? OTHER_ITEM)) return;
+    const points = trail.current;
+    const current = points[points.length - 1];
+    const sub = subRef.current?.getBoundingClientRect();
+    const side = placementRef.current?.side ?? "right";
+    const stopped =
+      aimedAt.current !== null &&
+      current !== undefined &&
+      aimedAt.current.x === current.x &&
+      aimedAt.current.y === current.y;
+    if (
+      !stopped &&
+      sub &&
+      points.length >= 2 &&
+      aimingAt(points[0], current, sub, side)
+    ) {
+      aimedAt.current = current;
+      hoverTimer.current = window.setTimeout(
+        () => switchTo(app),
+        AIM_RECHECK_MS,
+      );
+      return;
+    }
+    aimedAt.current = null;
+    openSub(app);
+  };
+
   const hoverApp = (app: PanelApp) => {
     window.clearTimeout(hoverTimer.current);
+    hovered.current = app.app;
+    aimedAt.current = null;
     if (openApp === app.app) return;
-    hoverTimer.current = window.setTimeout(
-      () => openSub(app),
-      openApp ? HOVER_SWITCH_MS : HOVER_OPEN_MS,
-    );
+    if (openApp) {
+      switchTo(app);
+      return;
+    }
+    hoverTimer.current = window.setTimeout(() => openSub(app), HOVER_OPEN_MS);
+  };
+
+  // 和原生菜单一样：移到主面板里别的项（标签、设置、底部按钮）上就收起子面板；
+  // 移出整个面板不收，手滑出去再回来不用重新展开
+  const hoverOtherItem = (event: React.MouseEvent) => {
+    if (!openApp || hovered.current === OTHER_ITEM) return;
+    if (!(event.target as HTMLElement).closest("[data-other-item]")) return;
+    window.clearTimeout(hoverTimer.current);
+    hovered.current = OTHER_ITEM;
+    aimedAt.current = null;
+    switchTo(null);
+  };
+
+  const leaveApp = () => {
+    window.clearTimeout(hoverTimer.current);
+    hovered.current = null;
   };
 
   const changeTab = (next: Tab) => {
@@ -731,19 +948,19 @@ export function TrayPanel() {
   };
 
   const mainMaxHeight = useMemo(() => {
-    if (!placement) return MAIN_MAX_HEIGHT;
+    if (!placement) return MAIN_MAX_HEIGHT / coordinateScale;
     const room =
       placement.edge === "top" ? placement.boundsBottom : -placement.boundsTop;
-    return Math.max(200, Math.min(MAIN_MAX_HEIGHT, room));
-  }, [placement]);
+    return Math.max(0, Math.min(MAIN_MAX_HEIGHT / coordinateScale, room));
+  }, [placement, coordinateScale]);
   const subMaxHeight = useMemo(() => {
-    if (!placement) return SUB_MAX_HEIGHT;
+    if (!placement) return SUB_MAX_HEIGHT / coordinateScale;
     const room =
       placement.layout === "floating"
         ? floatingCanvas(placement).bottom - floatingCanvas(placement).top
         : placement.boundsBottom - placement.boundsTop;
-    return Math.max(200, Math.min(SUB_MAX_HEIGHT, room));
-  }, [placement]);
+    return Math.max(0, Math.min(SUB_MAX_HEIGHT / coordinateScale, room));
+  }, [placement, coordinateScale]);
 
   if (!state || !placement) return null;
   const { texts } = state;
@@ -762,13 +979,17 @@ export function TrayPanel() {
       <div
         ref={mainRef}
         className="tp-card"
+        onMouseOver={hoverOtherItem}
         style={{
           width: placement.mainWidth,
           maxHeight: mainMaxHeight,
           ...cornerStyle("main"),
         }}
       >
-        <div className="flex shrink-0 items-center px-4 pb-2 pt-3">
+        <div
+          data-other-item
+          className="flex shrink-0 items-center px-4 pb-2 pt-3"
+        >
           <span className="text-[15px] font-semibold">CC Switch</span>
           <button
             type="button"
@@ -785,7 +1006,7 @@ export function TrayPanel() {
           </button>
         </div>
 
-        <div className="shrink-0 px-3 pb-2">
+        <div data-other-item className="shrink-0 px-3 pb-2">
           <div
             role="tablist"
             className="flex rounded-lg bg-black/[0.06] p-0.5 dark:bg-white/[0.08]"
@@ -818,6 +1039,7 @@ export function TrayPanel() {
                 <button
                   key={problem.id}
                   type="button"
+                  data-other-item
                   onClick={() => action(problem.id)}
                   className={cn(
                     "flex items-start gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs text-amber-600 dark:text-amber-400",
@@ -842,7 +1064,7 @@ export function TrayPanel() {
                   active={openEntry?.app === app.app}
                   side={placement.side}
                   onHover={() => hoverApp(app)}
-                  onLeave={() => window.clearTimeout(hoverTimer.current)}
+                  onLeave={leaveApp}
                   onOpen={() =>
                     app.addId
                       ? action(app.addId)
@@ -856,7 +1078,10 @@ export function TrayPanel() {
           )}
         </div>
 
-        <div className="shrink-0 border-t border-black/[0.08] px-1.5 py-1.5 dark:border-white/[0.08]">
+        <div
+          data-other-item
+          className="shrink-0 border-t border-black/[0.08] px-1.5 py-1.5 dark:border-white/[0.08]"
+        >
           <button
             type="button"
             role="switch"
@@ -910,14 +1135,16 @@ export function TrayPanel() {
           ref={subRef}
           className="tp-card tp-sub"
           data-side={placement.side}
+          data-swap={swapped || undefined}
           onMouseEnter={() => window.clearTimeout(hoverTimer.current)}
           style={{
             width: placement.subWidth,
-            maxHeight: subMaxHeight,
+            maxHeight: joined ? mainMaxHeight : subMaxHeight,
             ...cornerStyle("sub"),
           }}
         >
           <SubPanel
+            key={openEntry.app}
             app={openEntry}
             texts={texts}
             query={query}

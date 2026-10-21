@@ -51,7 +51,7 @@ describe("TrayPanel backgrounds stay scoped to each platform", () => {
     (dark) => {
       const style = cardFor("macos", dark);
       expect(style.backgroundColor).toBe(
-        dark ? "rgba(24, 24, 27, 0.08)" : "rgba(255, 255, 255, 0.06)",
+        dark ? "rgba(30, 30, 33, 0.62)" : "rgba(246, 246, 248, 0.72)",
       );
       expect(style.boxShadow).toContain("0 6px 16px");
       expect(getComputedStyle(root).backgroundColor).toBe("rgba(0, 0, 0, 0)");

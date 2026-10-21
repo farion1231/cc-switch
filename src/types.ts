@@ -318,6 +318,7 @@ export interface VisibleApps {
   pi: boolean;
   "deepseek-harness": boolean;
   mcode: boolean;
+  agy: boolean;
 }
 
 // WebDAV 同步状态
@@ -425,6 +426,8 @@ export interface Settings {
   showProviderSearch?: boolean;
   // 启动时检查已安装的命令行应用有没有新版本（默认关）
   checkToolUpdatesOnStartup?: boolean;
+  // 点托盘图标出原生菜单，不出托盘面板（macOS / Windows；Linux 一律原生菜单；默认关，没写过视为关，即用托盘面板）
+  nativeTrayMenu?: boolean;
   // Preserve Codex ChatGPT login in auth.json when switching third-party providers
   preserveCodexOfficialAuthOnSwitch?: boolean;
   // Run official Codex under the shared "custom" provider id so future
@@ -766,6 +769,7 @@ export interface McpServerSpec {
 // v3.7.0: MCP 服务器应用启用状态
 export interface McpApps {
   mcode?: boolean;
+  agy?: boolean;
   claude: boolean;
   "claude-desktop"?: boolean;
   codex: boolean;
