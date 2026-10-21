@@ -107,6 +107,16 @@ describe("extractBaseUrlForUsageDetection", () => {
     expect(
       extractBaseUrlForUsageDetection("mcode", { options: { baseURL: kimi } }),
     ).toBe(kimi);
+    // DSH 用大写 baseURL，空串时回退 baseUrl（对齐后端 resolve_usage_credentials）
+    expect(
+      extractBaseUrlForUsageDetection("deepseek-harness", { baseURL: kimi }),
+    ).toBe(kimi);
+    expect(
+      extractBaseUrlForUsageDetection("deepseek-harness", {
+        baseURL: "",
+        baseUrl: kimi,
+      }),
+    ).toBe(kimi);
   });
 
   it("returns null for unknown apps", () => {

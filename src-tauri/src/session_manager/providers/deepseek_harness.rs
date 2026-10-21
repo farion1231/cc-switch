@@ -1,13 +1,16 @@
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{self, BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use serde_json::Value;
 
 use crate::session_manager::model::SessionBlock;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::utils::{extract_text, path_basename, truncate_summary, TITLE_MAX_CHARS};
+use super::utils::{
+    extract_text, path_basename, truncate_summary, FileParseCache, TITLE_MAX_CHARS,
+};
 
 const PROVIDER_ID: &str = "deepseek-harness";
 const SESSION_FILE_NAME: &str = "session.jsonl.zstd";
@@ -18,6 +21,10 @@ const MAX_SESSION_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_DECOMPRESSED_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_EVENTS: usize = 500_000;
 
+/// 会话页每次打开都会全量扫描；没变过的文件直接复用上次的解析结果。
+/// zstd 解压比 claude/codex 的明文解析更贵，缓存收益更大。
+static PARSE_CACHE: LazyLock<FileParseCache> = LazyLock::new(FileParseCache::new);
+
 pub fn session_roots() -> Vec<PathBuf> {
     vec![crate::deepseek_harness_config::get_dsh_home().join("sessions")]
 }
@@ -27,7 +34,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     let Ok(entries) = fs::read_dir(&root) else {
         return Vec::new();
     };
-    let mut sessions = Vec::new();
+    let mut files = Vec::new();
     for project in entries.flatten() {
         let project_path = project.path();
         if !project_path.is_dir() {
@@ -38,18 +45,21 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
         };
         for session_dir in session_dirs.flatten() {
             let file = session_dir.path().join(SESSION_FILE_NAME);
-            if !file.is_file() {
-                continue;
-            }
-            match parse_session(&file) {
-                Ok(meta) => sessions.push(meta),
-                Err(error) => {
-                    log::debug!("Skipping invalid DSH session {}: {error}", file.display())
-                }
+            if file.is_file() {
+                files.push(file);
             }
         }
     }
-    sessions
+    PARSE_CACHE.scan(files, scan_session_file)
+}
+
+/// 适配 [`FileParseCache`] 的解析入口：解析失败按 io 错误上抛，
+/// 让缓存跳过且不记住「没有会话」，下轮扫描重试。
+fn scan_session_file(path: &Path) -> io::Result<Option<SessionMeta>> {
+    match parse_session(path) {
+        Ok(meta) => Ok(Some(meta)),
+        Err(error) => Err(io::Error::new(io::ErrorKind::InvalidData, error)),
+    }
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
@@ -358,6 +368,23 @@ mod tests {
             write_session(home, "proj", "session-abc", &fixture_events());
             let sessions = scan_sessions();
             assert_eq!(sessions.len(), 1);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn rescan_reuses_the_cache_and_drops_deleted_sessions() {
+        with_temp_home(|home| {
+            let file = write_session(home, "proj", "session-abc", &fixture_events());
+            let first = scan_sessions();
+            assert_eq!(first.len(), 1);
+            // 第二次扫描命中解析缓存，结果保持一致
+            let second = scan_sessions();
+            assert_eq!(second.len(), 1);
+            assert_eq!(second[0].session_id, first[0].session_id);
+            // 删除后按本轮文件列表重建缓存，不再返回已删会话
+            delete_session(&home.join("sessions"), &file, "session-abc").unwrap();
+            assert!(scan_sessions().is_empty());
         });
     }
 
