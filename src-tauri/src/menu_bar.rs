@@ -523,6 +523,7 @@ fn visible_app_types(settings: &AppSettings) -> Vec<String> {
             hermes: true,
             pi: true,
             mcode: true,
+            agy: true,
         });
     AppType::all()
         .filter(|app| visible.is_visible(app))
