@@ -222,7 +222,7 @@ export function useProviderActions(
           activeApp === "codex" && requiresCodexReview(provider);
         const selection = needsReview
           ? await codexReview.review(provider.id).catch((error) => {
-              toast.error("无法预览 Codex 配置", {
+              toast.error(t("codexCustomization.review.previewFailed"), {
                 description: extractErrorMessage(error),
               });
               return null;
@@ -272,7 +272,7 @@ export function useProviderActions(
             messageKey = "notifications.codexRestartRequired";
             defaultMessage = "切换成功，请重启客户端以生效";
             if (selection && !selection.selected.includes("connection")) {
-              messageKey = "notifications.codexSelectedFieldsApplied";
+              messageKey = "codexCustomization.review.applied";
               defaultMessage =
                 "已应用所选配置，连接保持不变；重启 Codex 后生效";
             }

@@ -4900,5 +4900,55 @@
       "refresh": "重新整理額度",
       "refreshAria": "重新整理 {{login}} 的額度"
     }
+  },
+  "codexCustomization": {
+    "import": {
+      "title": "Codex 固定匯入範本",
+      "label": "Codex 自訂匯入",
+      "description": "每次新增一份，保留舊設定。補齊模型及支援的等級後儲存；稍後手動啟用時選擇覆寫項目。",
+      "endpoint": "API 位址",
+      "apiKey": "API 金鑰",
+      "modelRow": "模型 {{index}}",
+      "modelId": "模型 ID",
+      "remove": "移除",
+      "levelsHint": "建議僅勾選此服務商明確支援的等級。未宣告的等級需要你確認。",
+      "addModel": "新增模型",
+      "defaultModel": "預設模型",
+      "chooseModel": "請選擇（採用匯入值，缺少時補填）",
+      "usageHint": "餘額指令碼：優先使用匯入內容，缺少時使用固定範本。可在下方預覽，儲存後仍可編輯。"
+    },
+    "error": {
+      "endpoint": "請填寫 API 位址",
+      "apiKey": "請填寫 API 金鑰",
+      "models": "請新增模型清單",
+      "modelName": "請填寫每個模型的名稱",
+      "duplicate": "模型名稱不能重複",
+      "defaultModel": "請選擇清單中的預設模型",
+      "levels": "請逐一確認模型支援的思考等級"
+    },
+    "review": {
+      "title": "啟用前選擇覆寫項目",
+      "proxy": "目前處於路由模式，請在下方確認路由。模型聚合與用戶端設定繼續由路由模式管理。",
+      "native": "官方帳號使用原有帳號切換流程。自訂匯入規則適用於第三方服務商。",
+      "exit": "確認後同時回到直連並套用所選欄位。必須勾選連線資訊；取消時設定和模式均保持原樣。",
+      "routing": "目前為路由／聚合模式。連線項目控制路由，模型目錄包含聚合模型；其他欄位預設保留。",
+      "direct": "建議覆寫連線、模型目錄和匯入的預設模型；其他欄位預設保留。未勾選連線資訊時，僅套用所選設定，目前服務商保持不變。",
+      "before": "現有值",
+      "after": "匯入／目標值",
+      "unset": "未設定",
+      "chooseModel": "請選擇預設模型",
+      "effort": "預設思考等級",
+      "effortWithCurrent": "預設思考等級（原值：{{current}}）",
+      "chooseEffort": "原值不適用或未設定，請選擇",
+      "invalid": "請確認有效的模型目錄、預設模型及思考等級。未宣告的等級請先在服務商編輯器中補齊。",
+      "cancel": "取消",
+      "apply": "確認套用所選項目",
+      "connection": "連線資訊（位址、憑證、路由）",
+      "catalog": "模型目錄",
+      "route": "代理路由",
+      "account": "使用官方帳號設定",
+      "previewFailed": "無法預覽 Codex 設定",
+      "applied": "已套用所選設定，連線保持不變；重新啟動 Codex 後生效"
+    }
   }
 }

@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
 import {
   Dialog,
@@ -21,6 +22,7 @@ export function CodexSwitchReview({
   preview: CodexSwitchPreview;
   onClose: (selection: CodexSelection | null) => void;
 }) {
+  const { t } = useTranslation();
   const [selected, setSelected] = useState(() =>
     preview.fields.filter((f) => f.selected).map((f) => f.id),
   );
@@ -55,17 +57,17 @@ export function CodexSwitchReview({
         className="max-w-3xl max-h-[90vh] overflow-y-auto"
       >
         <DialogHeader>
-          <DialogTitle>启用前选择覆盖项</DialogTitle>
+          <DialogTitle>{t("codexCustomization.review.title")}</DialogTitle>
           <DialogDescription>
             {preview.proxy
-              ? "当前处于代理模式，下面确认代理路由。模型聚合与客户端配置继续由 v4.0.17 的路由契约管理。"
+              ? t("codexCustomization.review.proxy")
               : preview.native
-                ? "官方账号使用 v4.0.17 的账号切换流程。定制导入规则用于第三方服务商。"
+                ? t("codexCustomization.review.native")
                 : preview.exitToDirect
-                  ? "确认后同时回到直连并应用所选字段。连接信息必须勾选；取消时配置和模式均保持原样。"
+                  ? t("codexCustomization.review.exit")
                   : preview.routing
-                    ? "当前为代理 / 聚合模式。连接项控制代理路由，模型目录包含聚合模型；其他字段默认保留。"
-                    : "建议覆盖连接、模型目录和导入的默认模型；其他字段默认保留。未勾选连接信息时，仅应用所选配置，当前服务商保持不变。"}
+                    ? t("codexCustomization.review.routing")
+                    : t("codexCustomization.review.direct")}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -83,19 +85,23 @@ export function CodexSwitchReview({
                     )
                   }
                 />
-                {field.label}
+                {t(field.label, { defaultValue: field.label })}
               </label>
               <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
                 <div>
-                  <span className="text-muted-foreground">现有值</span>
+                  <span className="text-muted-foreground">
+                    {t("codexCustomization.review.before")}
+                  </span>
                   <pre className="whitespace-pre-wrap break-all">
-                    {field.before || "（未设置）"}
+                    {field.before || t("codexCustomization.review.unset")}
                   </pre>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">导入 / 目标值</span>
+                  <span className="text-muted-foreground">
+                    {t("codexCustomization.review.after")}
+                  </span>
                   <pre className="whitespace-pre-wrap break-all">
-                    {field.after || "（未设置）"}
+                    {field.after || t("codexCustomization.review.unset")}
                   </pre>
                 </div>
               </div>
@@ -104,15 +110,17 @@ export function CodexSwitchReview({
           {!preview.proxy && !preview.native && changesModels && (
             <>
               <label className="block text-sm">
-                默认模型
+                {t("codexCustomization.import.defaultModel")}
                 <select
-                  aria-label="默认模型"
+                  aria-label={t("codexCustomization.import.defaultModel")}
                   className="mt-1 w-full rounded border bg-background p-2"
                   disabled={!selected.includes('["model"]')}
                   value={effectiveModel}
                   onChange={(e) => setModel(e.target.value)}
                 >
-                  <option value="">请选择默认模型</option>
+                  <option value="">
+                    {t("codexCustomization.review.chooseModel")}
+                  </option>
                   {models.map((row) => (
                     <option key={row.model} value={row.model}>
                       {row.model}
@@ -121,14 +129,20 @@ export function CodexSwitchReview({
                 </select>
               </label>
               <label className="block text-sm">
-                默认思考等级（原值：{preview.currentEffort ?? "未设置"}）
+                {t("codexCustomization.review.effortWithCurrent", {
+                  current:
+                    preview.currentEffort ??
+                    t("codexCustomization.review.unset"),
+                })}
                 <select
-                  aria-label="默认思考等级"
+                  aria-label={t("codexCustomization.review.effort")}
                   className="mt-1 w-full rounded border bg-background p-2"
                   value={levels.includes(effort) ? effort : ""}
                   onChange={(e) => setEffort(e.target.value)}
                 >
-                  <option value="">原值不适用或未设置，请选择</option>
+                  <option value="">
+                    {t("codexCustomization.review.chooseEffort")}
+                  </option>
                   {levels.map((level) => (
                     <option key={level} value={level}>
                       {level}
@@ -138,7 +152,7 @@ export function CodexSwitchReview({
               </label>
               {!valid && (
                 <p role="alert" className="text-sm text-warning-text">
-                  请确认有效的模型目录、默认模型及思考等级。未声明的档位请先在供应商编辑器中补全。
+                  {t("codexCustomization.review.invalid")}
                 </p>
               )}
             </>
@@ -146,7 +160,7 @@ export function CodexSwitchReview({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onClose(null)}>
-            取消
+            {t("codexCustomization.review.cancel")}
           </Button>
           <Button
             disabled={!valid || !selected.length}
@@ -160,7 +174,7 @@ export function CodexSwitchReview({
               })
             }
           >
-            确认应用所选项
+            {t("codexCustomization.review.apply")}
           </Button>
         </DialogFooter>
       </DialogContent>

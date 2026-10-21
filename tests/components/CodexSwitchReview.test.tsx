@@ -61,10 +61,12 @@ describe("Codex activation review", () => {
       />,
     );
     expect(
-      screen.getByRole("button", { name: "确认应用所选项" }),
+      screen.getByRole("button", { name: "codexCustomization.review.apply" }),
     ).toBeEnabled();
     expect(
-      screen.queryByRole("combobox", { name: "默认思考等级" }),
+      screen.queryByRole("combobox", {
+        name: "codexCustomization.review.effort",
+      }),
     ).not.toBeInTheDocument();
   });
   it("requires the connection field when leaving proxy mode", async () => {
@@ -77,11 +79,11 @@ describe("Codex activation review", () => {
     );
     await userEvent.click(screen.getByRole("checkbox", { name: "连接" }));
     expect(
-      screen.getByRole("button", { name: "确认应用所选项" }),
+      screen.getByRole("button", { name: "codexCustomization.review.apply" }),
     ).toBeDisabled();
     await userEvent.click(screen.getByRole("checkbox", { name: "连接" }));
     await userEvent.click(
-      screen.getByRole("button", { name: "确认应用所选项" }),
+      screen.getByRole("button", { name: "codexCustomization.review.apply" }),
     );
     expect(close).toHaveBeenCalledWith(
       expect.objectContaining({ exitToDirect: true }),
@@ -91,11 +93,13 @@ describe("Codex activation review", () => {
     const close = vi.fn();
     render(<CodexSwitchReview preview={preview} onClose={close} />);
     expect(screen.getByRole("checkbox", { name: "MCP" })).not.toBeChecked();
-    expect(screen.getByRole("combobox", { name: "默认思考等级" })).toHaveValue(
-      "medium",
-    );
+    expect(
+      screen.getByRole("combobox", {
+        name: "codexCustomization.review.effort",
+      }),
+    ).toHaveValue("medium");
     await userEvent.click(
-      screen.getByRole("button", { name: "确认应用所选项" }),
+      screen.getByRole("button", { name: "codexCustomization.review.apply" }),
     );
     expect(close).toHaveBeenCalledWith({
       revision: "snapshot",
@@ -113,34 +117,40 @@ describe("Codex activation review", () => {
       />,
     );
     expect(
-      screen.getByRole("button", { name: "确认应用所选项" }),
+      screen.getByRole("button", { name: "codexCustomization.review.apply" }),
     ).toBeDisabled();
     await userEvent.selectOptions(
-      screen.getByRole("combobox", { name: "默认思考等级" }),
+      screen.getByRole("combobox", {
+        name: "codexCustomization.review.effort",
+      }),
       "high",
     );
     expect(
-      screen.getByRole("button", { name: "确认应用所选项" }),
+      screen.getByRole("button", { name: "codexCustomization.review.apply" }),
     ).toBeEnabled();
   });
   it("cancels without an apply request", async () => {
     const close = vi.fn();
     render(<CodexSwitchReview preview={preview} onClose={close} />);
-    await userEvent.click(screen.getByRole("button", { name: "取消" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "codexCustomization.review.cancel" }),
+    );
     expect(close).toHaveBeenCalledWith(null);
   });
   it("validates against the retained catalog when the new catalog is unchecked", async () => {
     render(<CodexSwitchReview preview={preview} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole("checkbox", { name: "目录" }));
     expect(
-      screen.getByRole("button", { name: "确认应用所选项" }),
+      screen.getByRole("button", { name: "codexCustomization.review.apply" }),
     ).toBeDisabled();
     await userEvent.selectOptions(
-      screen.getByRole("combobox", { name: "默认模型" }),
+      screen.getByRole("combobox", {
+        name: "codexCustomization.import.defaultModel",
+      }),
       "old",
     );
     expect(
-      screen.getByRole("button", { name: "确认应用所选项" }),
+      screen.getByRole("button", { name: "codexCustomization.review.apply" }),
     ).toBeEnabled();
   });
 });

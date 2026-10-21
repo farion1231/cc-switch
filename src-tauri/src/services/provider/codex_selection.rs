@@ -241,7 +241,7 @@ fn mask(item: &Item, key: &str) -> Item {
 fn display(doc: &DocumentMut, path: &[String]) -> String {
     item_at(doc, path)
         .map(|item| render(&mask(item, path.last().map(String::as_str).unwrap_or(""))))
-        .unwrap_or_else(|| "（未设置）".to_string())
+        .unwrap_or_default()
 }
 fn connection_display(doc: &DocumentMut) -> String {
     CONNECTION
@@ -360,14 +360,14 @@ fn make_preview(
     let mut fields = vec![
         Field {
             id: "connection".into(),
-            label: "连接信息（地址、凭据、路由）".into(),
+            label: "codexCustomization.review.connection".into(),
             before: connection_display(&base),
             after: connection_display(&proposed),
             selected: true,
         },
         Field {
             id: "catalog".into(),
-            label: "模型目录".into(),
+            label: "codexCustomization.review.catalog".into(),
             before: display(&base, &["model_catalog_json".into()]),
             after: display(&proposed, &["model_catalog_json".into()]),
             selected: true,
@@ -401,7 +401,7 @@ fn make_preview(
             id: "[\"model\"]".into(),
             label: "model".into(),
             before: display(&base, &["model".into()]),
-            after: "请选择默认模型".into(),
+            after: String::new(),
             selected: true,
         });
     }
@@ -465,7 +465,7 @@ pub fn preview_for(state: &AppState, id: &str, exit_to_direct: bool) -> Result<P
             exit_to_direct,
             fields: vec![Field {
                 id: "connection".into(),
-                label: "代理路由".into(),
+                label: "codexCustomization.review.route".into(),
                 before: crate::mode::current::mode_state(&AppType::Codex)
                     .proxy_route
                     .unwrap_or_default(),
@@ -490,9 +490,9 @@ pub fn preview_for(state: &AppState, id: &str, exit_to_direct: bool) -> Result<P
             native: true,
             fields: vec![Field {
                 id: "connection".into(),
-                label: "使用官方账号配置".into(),
-                before: "当前连接与模型设置".into(),
-                after: format!("{}（按 v4.0.17 官方账号切换规则写入）", provider.name),
+                label: "codexCustomization.review.account".into(),
+                before: String::new(),
+                after: provider.name.clone(),
                 selected: true,
             }],
             ..preview

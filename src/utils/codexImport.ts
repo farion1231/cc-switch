@@ -61,15 +61,16 @@ export function applyCodexImportTemplate(
 export function codexImportError(
   request: DeepLinkImportRequest,
 ): string | undefined {
-  if (!request.endpoint?.trim()) return "请填写 API 地址";
-  if (!request.apiKey?.trim()) return "请填写 API Key";
+  if (!request.endpoint?.trim()) return "codexCustomization.error.endpoint";
+  if (!request.apiKey?.trim()) return "codexCustomization.error.apiKey";
   const models = request.modelCatalog?.models ?? [];
-  if (!models.length) return "请添加模型列表";
+  if (!models.length) return "codexCustomization.error.models";
   const names = models.map((row) => row.model.trim());
-  if (names.some((name) => !name)) return "请填写每个模型的名称";
-  if (new Set(names).size !== names.length) return "模型名称不能重复";
+  if (names.some((name) => !name)) return "codexCustomization.error.modelName";
+  if (new Set(names).size !== names.length)
+    return "codexCustomization.error.duplicate";
   if (!request.model || !names.includes(request.model))
-    return "请选择列表中的默认模型";
+    return "codexCustomization.error.defaultModel";
   if (
     models.some(
       (row) =>
@@ -77,7 +78,7 @@ export function codexImportError(
         row.reasoningLevels.some((level) => !reasoningLevels.includes(level)),
     )
   ) {
-    return "请逐个确认模型支持的思考等级";
+    return "codexCustomization.error.levels";
   }
 }
 

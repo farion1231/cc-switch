@@ -4899,5 +4899,55 @@
       "refresh": "Refresh quota",
       "refreshAria": "Refresh quota for {{login}}"
     }
+  },
+  "codexCustomization": {
+    "import": {
+      "title": "Codex custom import template",
+      "label": "Custom Codex import",
+      "description": "Each import creates a new provider and keeps existing configurations. Complete the models and supported reasoning levels, then save. Choose which fields to replace when activating later.",
+      "endpoint": "API endpoint",
+      "apiKey": "API key",
+      "modelRow": "Model {{index}}",
+      "modelId": "Model ID",
+      "remove": "Remove",
+      "levelsHint": "Select only reasoning levels explicitly supported by this provider. Confirm any levels that were not declared.",
+      "addModel": "Add model",
+      "defaultModel": "Default model",
+      "chooseModel": "Select a model (use the imported value or supply one)",
+      "usageHint": "Usage script: use the imported script if supplied, otherwise the custom template. Preview it below; you can edit it after saving."
+    },
+    "error": {
+      "endpoint": "Enter an API endpoint",
+      "apiKey": "Enter an API key",
+      "models": "Add at least one model",
+      "modelName": "Enter a name for every model",
+      "duplicate": "Model names must be unique",
+      "defaultModel": "Choose a default model from the list",
+      "levels": "Confirm the supported reasoning levels for each model"
+    },
+    "review": {
+      "title": "Choose fields to replace before activating",
+      "proxy": "Routing is active. Confirm the route below. Routing mode continues to manage model aggregation and client configuration.",
+      "native": "Official accounts use the standard account switch. Custom import rules apply to third-party providers.",
+      "exit": "Confirm to return to Direct and apply the selected fields together. Connection must be selected. Cancelling keeps the configuration and mode unchanged.",
+      "routing": "Routing or Aggregation is active. Connection controls the route and the catalog includes aggregated models. Other fields are preserved by default.",
+      "direct": "Replace the connection, catalog and imported default model as needed; other fields are preserved by default. Without Connection, only the selected settings change and the current provider stays active.",
+      "before": "Current value",
+      "after": "Imported / target value",
+      "unset": "Not set",
+      "chooseModel": "Select the default model",
+      "effort": "Default reasoning level",
+      "effortWithCurrent": "Default reasoning level (current: {{current}})",
+      "chooseEffort": "Select a level; the current value is unsupported or unset",
+      "invalid": "Confirm a valid catalog, default model and reasoning level. Add undeclared levels in the provider editor first.",
+      "cancel": "Cancel",
+      "apply": "Apply selected fields",
+      "connection": "Connection (endpoint, credentials, route)",
+      "catalog": "Model catalog",
+      "route": "Proxy route",
+      "account": "Use official account settings",
+      "previewFailed": "Unable to preview Codex configuration",
+      "applied": "Selected settings applied; the connection is unchanged. Restart Codex to apply."
+    }
   }
 }

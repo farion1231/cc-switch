@@ -28,7 +28,7 @@ describe("fixed Codex import policy", () => {
     } as unknown as DeepLinkImportRequest;
     const result = applyCodexImportTemplate(malformed);
     expect(result.modelCatalog?.models[0].reasoningLevels).toEqual([]);
-    expect(codexImportError(result)).toContain("思考等级");
+    expect(codexImportError(result)).toBe("codexCustomization.error.levels");
   });
   it("preserves explicitly imported declarations and script while disabling activation", () => {
     const incoming = { ...request, usageScript: btoa("({ imported: true })") };
@@ -52,21 +52,23 @@ describe("fixed Codex import policy", () => {
       modelCatalog: { models: [] },
     });
     expect(result.modelCatalog?.models).toEqual([]);
-    expect(codexImportError(result)).toBe("请添加模型列表");
+    expect(codexImportError(result)).toBe("codexCustomization.error.models");
     expect(
       codexImportError({
         ...request,
         modelCatalog: { models: [{ model: "model-a" }] },
       }),
-    ).toBe("请逐个确认模型支持的思考等级");
+    ).toBe("codexCustomization.error.levels");
   });
   it("requires a default model and complete connection values", () => {
-    expect(codexImportError({ ...request, model: undefined })).toContain(
-      "默认模型",
+    expect(codexImportError({ ...request, model: undefined })).toBe(
+      "codexCustomization.error.defaultModel",
     );
-    expect(codexImportError({ ...request, apiKey: "" })).toContain("API Key");
-    expect(codexImportError({ ...request, endpoint: "" })).toContain(
-      "API 地址",
+    expect(codexImportError({ ...request, apiKey: "" })).toBe(
+      "codexCustomization.error.apiKey",
+    );
+    expect(codexImportError({ ...request, endpoint: "" })).toBe(
+      "codexCustomization.error.endpoint",
     );
   });
 });

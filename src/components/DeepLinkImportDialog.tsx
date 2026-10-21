@@ -250,7 +250,7 @@ export function DeepLinkImportDialog() {
     if (isCustomCodexImport(request)) {
       const error = codexImportError(request);
       if (error) {
-        toast.error(error);
+        toast.error(t(error));
         return;
       }
     }

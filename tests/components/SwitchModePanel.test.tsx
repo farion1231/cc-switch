@@ -183,14 +183,14 @@ describe("SwitchModePanel — Stack mode", () => {
         screen.getByRole("button", { name: "mode.dialog.confirmDirect" }),
       );
       const reviewDialog = (
-        await screen.findByText("启用前选择覆盖项")
+        await screen.findByText("codexCustomization.review.title")
       ).closest('[role="dialog"]')!;
       const layer = (element: Element) =>
         Number(element.className.match(/\bz-(?:\[)?(\d+)/)?.[1] ?? 0);
       expect(layer(reviewDialog)).toBeGreaterThan(layer(modeDialog));
       await user.click(
         screen.getByRole("button", {
-          name: action === "cancel" ? "取消" : "确认应用所选项",
+          name: `codexCustomization.review.${action === "cancel" ? "cancel" : "apply"}`,
         }),
       );
       if (action === "error") {
