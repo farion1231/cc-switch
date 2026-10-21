@@ -23,7 +23,15 @@ let running: {
   animation: Animation;
   cover: HTMLElement;
   edge: () => number;
+  cleanup: () => void;
 } | null = null;
+
+export function stopSidebarAnimation() {
+  if (!running) return;
+  const previous = running;
+  previous.cleanup();
+  previous.animation.cancel();
+}
 
 /**
  * 侧栏开合不过渡 width：宽度动画每帧都要在主线程重排，WKWebView 主线程渲染还限在 60fps 左右，ProMotion 屏上看着发顿。
@@ -40,13 +48,7 @@ function animateToggle(nav: HTMLElement, fromWidth: number, toWidth: number) {
 
   // 上一次还没滑完就再切：从当前看到的边缘位置接着滑，不跳
   const startEdge = running ? running.edge() : fromWidth;
-  if (running) {
-    // cancel 事件是异步派发的，旧盖板和层级在这里同步收拾掉，免得它晚到时拆掉新动画的
-    const previous = running;
-    running = null;
-    previous.animation.cancel();
-    previous.cover.remove();
-  }
+  stopSidebarAnimation();
   nav.style.removeProperty("z-index");
   main.style.removeProperty("z-index");
   if (startEdge === toWidth) return;
@@ -88,7 +90,6 @@ function animateToggle(nav: HTMLElement, fromWidth: number, toWidth: number) {
         : 0;
     return (expanding ? left : left + width) + x;
   };
-  running = { animation, cover, edge };
   const cleanup = () => {
     if (running?.animation !== animation) return;
     running = null;
@@ -96,6 +97,7 @@ function animateToggle(nav: HTMLElement, fromWidth: number, toWidth: number) {
     nav.style.removeProperty("z-index");
     main.style.removeProperty("z-index");
   };
+  running = { animation, cover, edge, cleanup };
   animation.onfinish = cleanup;
   animation.oncancel = cleanup;
 }
@@ -165,8 +167,9 @@ export function useSidebarCollapsed(navRef: RefObject<HTMLElement | null>) {
 
   const setCollapsed = useCallback(
     (next: boolean) => {
-      animateFrom.current =
-        navRef.current?.getBoundingClientRect().width ?? null;
+      animateFrom.current = navRef.current?.hasAttribute("data-resizing")
+        ? null
+        : (navRef.current?.getBoundingClientRect().width ?? null);
       applyPreference(next);
     },
     [navRef, applyPreference],

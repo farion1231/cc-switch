@@ -73,7 +73,7 @@ describe("sidebar resize", () => {
     expect(localStorage.getItem("cc-switch-sidebar-width")).toBe("200");
   });
 
-  it("saves a resize, snaps closed, and restores that width when dragged out", () => {
+  it("saves a resize and follows the pointer when dragged back out", () => {
     render(<Harness />);
     down();
     move(280);
@@ -87,9 +87,9 @@ describe("sidebar resize", () => {
     up();
     const rail = parseFloat(nav().style.width);
     down(rail);
-    move(rail + 30);
+    move(220);
     expect(screen.getByText("expanded")).toBeInTheDocument();
-    expect(nav()).toHaveStyle({ width: "280px" });
+    expect(nav()).toHaveStyle({ width: "220px" });
     up();
   });
   it("keeps one drag alive across collapse, expansion and further resizing", () => {
@@ -98,14 +98,41 @@ describe("sidebar resize", () => {
     move(120);
     expect(screen.getByText("collapsed")).toBeInTheDocument();
     expect(nav()).toHaveAttribute("data-resizing", "true");
-    move(150);
+    move(160);
     expect(screen.getByText("expanded")).toBeInTheDocument();
     move(190);
     up();
-    expect(nav()).toHaveStyle({ width: "240px" });
-    expect(localStorage.getItem("cc-switch-sidebar-width")).toBe("240");
+    expect(nav()).toHaveStyle({ width: "190px" });
+    expect(localStorage.getItem("cc-switch-sidebar-width")).toBe("190");
     expect(document.documentElement.style.cursor).toBe("");
   });
+  it.each(["ltr", "rtl"])(
+    "keeps the original grab offset through diagonal round trips (%s)",
+    (direction) => {
+      render(<Harness />);
+      nav().style.direction = direction;
+      const sign = direction === "rtl" ? -1 : 1;
+      const start = 403;
+      down(start);
+      for (let pass = 0; pass < 5; pass++) {
+        for (const requested of [120, 140, 140, 160, 500, 230]) {
+          fireEvent.pointerMove(handle(), {
+            pointerId: 1,
+            clientX: start + (requested - 200) * sign,
+            clientY: pass * 75 + requested,
+          });
+          if (requested === 140)
+            expect(screen.getByText("collapsed")).toBeInTheDocument();
+        }
+      }
+      up();
+      expect(nav()).toHaveStyle({ width: "230px" });
+      down(start + 30 * sign);
+      move(start);
+      up();
+      expect(nav()).toHaveStyle({ width: "200px" });
+    },
+  );
   it("cancels a snapped drag back to its original mode and width", () => {
     render(<Harness />);
     down();
@@ -117,7 +144,7 @@ describe("sidebar resize", () => {
     fireEvent.click(screen.getByText("Toggle"));
     const rail = parseFloat(nav().style.width);
     down(rail);
-    move(rail + 30);
+    move(220);
     fireEvent.pointerCancel(handle());
     expect(screen.getByText("collapsed")).toBeInTheDocument();
     expect(nav()).toHaveStyle({ width: `${rail}px` });
@@ -128,7 +155,7 @@ describe("sidebar resize", () => {
     render(<Harness />);
     down();
     move(120);
-    move(150);
+    move(160);
     fireEvent.keyDown(window, { key: "Escape" });
     expect(localStorage.getItem("cc-switch-sidebar-collapsed")).toBeNull();
     expect(screen.getByText("expanded")).toBeInTheDocument();
@@ -142,7 +169,7 @@ describe("sidebar resize", () => {
   it("does not collapse from an ordinary small resize, and Escape cancels without saving", () => {
     render(<Harness />);
     down();
-    move(150);
+    move(160);
     expect(screen.getByText("expanded")).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
     up();

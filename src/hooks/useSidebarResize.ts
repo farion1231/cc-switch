@@ -11,6 +11,7 @@ import {
 import {
   SIDEBAR_EXPANDED_WIDTH,
   sidebarRailWidth,
+  stopSidebarAnimation,
 } from "./useSidebarCollapsed";
 
 export const SIDEBAR_MIN_WIDTH = 180;
@@ -49,7 +50,6 @@ export function useSidebarResize(
     initial: number;
     restorePreference: () => void;
     collapsed: boolean;
-    anchor: number;
     next: number;
     direction: number;
     frame: number | null;
@@ -101,7 +101,9 @@ export function useSidebarResize(
     // Internal snaps keep capture; only an external button/shortcut ends the drag.
     if (drag.current && drag.current.collapsed !== collapsed)
       finish(true, false);
-  }, [collapsed, finish]);
+    else if (drag.current && navRef.current)
+      navRef.current.style.width = `${drag.current.next}px`;
+  }, [collapsed, finish, navRef]);
 
   useEffect(() => {
     const onResize = () => {
@@ -128,6 +130,7 @@ export function useSidebarResize(
     if (event.button !== 0 || drag.current || !navRef.current) return;
     event.preventDefault();
     event.currentTarget.focus();
+    stopSidebarAnimation();
     const initial = navRef.current.getBoundingClientRect().width;
     drag.current = {
       id: event.pointerId,
@@ -136,7 +139,6 @@ export function useSidebarResize(
       initial,
       restorePreference: restoreCollapsedPreference,
       collapsed,
-      anchor: initial,
       next: initial,
       direction: getComputedStyle(navRef.current).direction === "rtl" ? -1 : 1,
       frame: null,
@@ -152,19 +154,16 @@ export function useSidebarResize(
     const current = drag.current;
     if (!current || current.id !== event.pointerId) return;
     const requested =
-      current.anchor + (event.clientX - current.x) * current.direction;
+      current.initial + (event.clientX - current.x) * current.direction;
     // Leave a deliberate gap below the minimum width before snapping closed.
     if (
       (!current.collapsed && requested <= 130) ||
-      (current.collapsed && requested >= sidebarRailWidth() + 24)
+      (current.collapsed && requested >= 154)
     ) {
       if (current.frame !== null) cancelAnimationFrame(current.frame);
       current.frame = null;
       current.collapsed = !current.collapsed;
-      current.next = current.collapsed ? sidebarRailWidth() : width;
-      // Start the next segment at the snapped edge, without releasing the pointer.
-      current.anchor = current.next;
-      current.x = event.clientX;
+      current.next = current.collapsed ? sidebarRailWidth() : clamp(requested);
       setCollapsed(current.collapsed);
       return;
     }
