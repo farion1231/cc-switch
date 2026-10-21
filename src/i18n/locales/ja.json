@@ -1962,7 +1962,8 @@
     "pricingModelSourceRequest": "リクエストモデル",
     "pricingModelSourceResponse": "レスポンスモデル",
     "pricingModelSourceHint": "リクエストモデルまたはレスポンスモデルで価格を照合するかを選択"
-  },  "codexConfig": {
+  },
+  "codexConfig": {
     "authJson": "auth.json (JSON) *",
     "authJsonPlaceholder": "{\n  \"OPENAI_API_KEY\": \"sk-your-api-key-here\"\n}",
     "authJsonHint": "Codex の auth.json 設定内容",

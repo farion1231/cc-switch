@@ -1,6 +1,10 @@
 //! 请求转发器
 //!
 //! 负责将请求转发到上游Provider，支持故障转移
+//!
+//! clippy 1.99 起 `result_large_err` 告警 `ForwardError` 体积；Box 化属上游重构，
+//! 官方 pin 1.95 clippy 无此告警，先允许。
+#![allow(clippy::result_large_err)]
 
 use super::hyper_client::{ProxyResponse, MAX_RESPONSE_BODY_BYTES};
 use super::{
@@ -7796,6 +7800,7 @@ mod tests {
             let ProxyError::UpstreamError {
                 status: 400,
                 body: Some(body),
+                ..
             } = error
             else {
                 return false;

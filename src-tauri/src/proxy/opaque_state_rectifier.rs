@@ -779,6 +779,7 @@ mod tests {
         let ProxyError::UpstreamError {
             status,
             body: Some(body),
+            ..
         } = unreadable_agent_task_error()
         else {
             panic!("upstream error");

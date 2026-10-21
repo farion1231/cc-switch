@@ -194,7 +194,7 @@ export interface ProviderMeta {
   loadBalance?: {
     maxConcurrentRequests?: number;
     maxConcurrentByModel?: Record<string, number>;
-  };  // API 格式（Claude / Codex 供应商使用）
+  }; // API 格式（Claude / Codex 供应商使用）
   // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   // - "openai_responses": OpenAI Responses API 格式，需要格式转换

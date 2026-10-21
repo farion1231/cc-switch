@@ -4145,6 +4145,7 @@ mod stack_tests {
                 "code": 400, "status": "INVALID_ARGUMENT",
                 "message": "The input token count exceeds the maximum number of tokens allowed 1048576."
             } }).to_string()),
+            retry_after_secs: None,
         };
         for endpoint in ["/responses", "/v1/responses?beta=true"] {
             let response = build_codex_proxy_error_response(&ctx, endpoint, &error, true).unwrap();
@@ -4185,6 +4186,7 @@ mod stack_tests {
             body: Some(
                 json!({ "error": { "code": 400, "message": "Invalid API key" } }).to_string(),
             ),
+            retry_after_secs: None,
         };
         let response =
             build_codex_proxy_error_response(&ctx, "/responses", &unrelated, true).unwrap();

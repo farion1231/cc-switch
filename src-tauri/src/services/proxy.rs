@@ -44,11 +44,6 @@ pub struct LoadBalanceStatus {
     pub cooling: Vec<LoadBalanceCooldownInfo>,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct HotSwitchOutcome {
-    pub logical_target_changed: bool,
-}
-
 /// 重启失败时写回库的那份配置：设置页只动四个全局字段，旧接口是整份七个字段。
 enum SavedProxyConfig {
     Global(GlobalProxyConfig),

@@ -75,7 +75,6 @@ pub fn get_error_message(error: &ProxyError) -> String {
                 .unwrap_or("上游未返回错误内容");
             format!("上游错误 ({status}): {body}")
         }
-        }
         ProxyError::Timeout(msg) => format!("请求超时: {msg}"),
         ProxyError::ForwardFailed(msg) => format!("转发失败: {msg}"),
         ProxyError::NoAvailableProvider => "无可用 Provider".to_string(),
@@ -163,6 +162,7 @@ mod tests {
         let error_empty = ProxyError::UpstreamError {
             status: 502,
             body: Some("   ".to_string()),
+            retry_after_secs: None,
         };
         assert_eq!(
             get_error_message(&error_empty),
@@ -172,6 +172,7 @@ mod tests {
         let error_none = ProxyError::UpstreamError {
             status: 502,
             body: None,
+            retry_after_secs: None,
         };
         assert_eq!(
             get_error_message(&error_none),

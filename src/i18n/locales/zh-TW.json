@@ -1963,7 +1963,8 @@
     "pricingModelSourceRequest": "請求模型",
     "pricingModelSourceResponse": "回傳模型",
     "pricingModelSourceHint": "選擇依請求模型還是回傳模型進行定價比對"
-  },  "codexConfig": {
+  },
+  "codexConfig": {
     "authJson": "auth.json (JSON) *",
     "authJsonPlaceholder": "{\n    \"OPENAI_API_KEY\": \"sk-your-api-key-here\"\n}",
     "authJsonHint": "Codex auth.json 設定內容",
