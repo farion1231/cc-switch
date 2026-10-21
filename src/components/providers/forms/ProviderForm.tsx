@@ -193,6 +193,21 @@ export const normalizeCodexCatalogModelsForSave = (
       ?.filter((level) => typeof level === "string" && level.trim())
       .map((level) => level.trim());
     const defaultReasoningLevel = item.defaultReasoningLevel?.trim();
+    const seenTiers = new Set<string>();
+    const serviceTiers = item.serviceTiers?.flatMap((tier) => {
+      const id = typeof tier?.id === "string" ? tier.id.trim() : "";
+      if (!id || seenTiers.has(id)) return [];
+      seenTiers.add(id);
+      return [
+        {
+          id,
+          name: typeof tier.name === "string" ? tier.name.trim() || id : id,
+          description:
+            typeof tier.description === "string" ? tier.description.trim() : "",
+        },
+      ];
+    });
+    const defaultServiceTier = item.defaultServiceTier?.trim();
 
     normalized.push({
       model,
@@ -210,6 +225,12 @@ export const normalizeCodexCatalogModelsForSave = (
         ? { reasoningLevels }
         : {}),
       ...(defaultReasoningLevel ? { defaultReasoningLevel } : {}),
+      ...(serviceTiers ? { serviceTiers } : {}),
+      ...(defaultServiceTier &&
+      (defaultServiceTier === "default" ||
+        serviceTiers?.some((tier) => tier.id === defaultServiceTier))
+        ? { defaultServiceTier }
+        : {}),
     });
   }
 
