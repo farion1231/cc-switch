@@ -252,4 +252,6 @@ export interface AppProxyConfig {
   circuitTimeoutSeconds: number;
   circuitErrorRateThreshold: number;
   circuitMinRequests: number;
+  /** 负载均衡模式："off" 主备 | "session" 会话粘性轮询 */
+  loadBalanceMode: "off" | "session";
 }

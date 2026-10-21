@@ -3,11 +3,59 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Save, Loader2, Info } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { useAppProxyConfig, useUpdateAppProxyConfig } from "@/lib/query/proxy";
+import {
+  useAppProxyConfig,
+  useLoadBalanceStatus,
+  useUpdateAppProxyConfig,
+} from "@/lib/query/proxy";
 
+/** 负载均衡模式取值（与后端 is_valid_load_balance_mode 对齐） */
+type LoadBalanceMode = "off" | "session";
+
+/** session 模式下的实时指示：池 N 账号 · 在途 X · 冷却中 Y（5s 轮询） */
+function LoadBalanceLiveIndicator({ appType }: { appType: string }) {
+  const { t } = useTranslation();
+  const { data } = useLoadBalanceStatus(appType, true);
+  if (!data) {
+    return (
+      <p className="text-xs text-muted-foreground/70">
+        {t("proxy.loadBalance.liveLoading", "读取负载状态…")}
+      </p>
+    );
+  }
+  const coolingDetail = data.cooling
+    .map(
+      (entry) =>
+        `${entry.providerName} · ${Math.ceil(entry.remainingSecs / 60)}${t(
+          "proxy.loadBalance.minuteUnit",
+          "分钟",
+        )}`,
+    )
+    .join("\n");
+  return (
+    <p
+      className="text-xs text-muted-foreground"
+      title={coolingDetail || undefined}
+    >
+      {t("proxy.loadBalance.live", {
+        pool: data.poolSize,
+        inflight: data.inFlight,
+        cooling: data.cooling.length,
+        defaultValue: `池 ${data.poolSize} 账号 · 在途 ${data.inFlight} · 冷却中 ${data.cooling.length}`,
+      })}
+    </p>
+  );
+}
 export interface AutoFailoverConfigPanelProps {
   appType: string;
   disabled?: boolean;
@@ -24,6 +72,7 @@ export function AutoFailoverConfigPanel({
   // 使用字符串状态以支持完全清空数字输入框
   const [formData, setFormData] = useState({
     autoFailoverEnabled: false,
+    loadBalanceMode: "off" as LoadBalanceMode,
     maxRetries: "3",
     streamingFirstByteTimeout: "60",
     streamingIdleTimeout: "120",
@@ -39,6 +88,8 @@ export function AutoFailoverConfigPanel({
     if (config) {
       setFormData({
         autoFailoverEnabled: config.autoFailoverEnabled,
+        loadBalanceMode:
+          config.loadBalanceMode === "session" ? "session" : "off",
         maxRetries: String(config.maxRetries),
         streamingFirstByteTimeout: String(config.streamingFirstByteTimeout),
         streamingIdleTimeout: String(config.streamingIdleTimeout),
@@ -163,6 +214,7 @@ export function AutoFailoverConfigPanel({
         appType,
         enabled: config.enabled,
         autoFailoverEnabled: formData.autoFailoverEnabled,
+        loadBalanceMode: formData.loadBalanceMode,
         maxRetries: raw.maxRetries,
         streamingFirstByteTimeout: raw.streamingFirstByteTimeout,
         streamingIdleTimeout: raw.streamingIdleTimeout,
@@ -188,6 +240,8 @@ export function AutoFailoverConfigPanel({
     if (config) {
       setFormData({
         autoFailoverEnabled: config.autoFailoverEnabled,
+        loadBalanceMode:
+          config.loadBalanceMode === "session" ? "session" : "off",
         maxRetries: String(config.maxRetries),
         streamingFirstByteTimeout: String(config.streamingFirstByteTimeout),
         streamingIdleTimeout: String(config.streamingIdleTimeout),
@@ -260,6 +314,40 @@ export function AutoFailoverConfigPanel({
                   "请求失败时的重试次数（0-10）",
                 )}
               </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor={`loadBalanceMode-${appType}`}>
+                {t("proxy.loadBalance.modeLabel", "负载均衡模式")}
+              </Label>
+              <Select
+                value={formData.loadBalanceMode}
+                onValueChange={(value) =>
+                  setFormData({
+                    ...formData,
+                    loadBalanceMode: value as LoadBalanceMode,
+                  })
+                }
+                disabled={isDisabled}
+              >
+                <SelectTrigger id={`loadBalanceMode-${appType}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="off">
+                    {t("proxy.loadBalance.off", "关闭（主备）")}
+                  </SelectItem>
+                  <SelectItem value="session">
+                    {t("proxy.loadBalance.session", "会话粘性轮询")}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {t("proxy.loadBalance.hint")}
+              </p>
+              {formData.loadBalanceMode === "session" && (
+                <LoadBalanceLiveIndicator appType={appType} />
+              )}
             </div>
 
             <div className="space-y-2">
