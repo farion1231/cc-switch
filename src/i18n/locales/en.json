@@ -3560,7 +3560,8 @@
       "envHijack": "This config sets environment variables that change how processes load code (e.g. injecting libraries or replacing CA certificates). Import only from a source you trust.",
       "privateEndpoint": "This address points at localhost or a private network. Do not import unless it is your own local service.",
       "shellCommand": "This config runs a full command line through a shell — what actually executes is in the arguments. Review each line."
-    }
+    },
+    "enableInRpiAfterImport": "Enable in rpi after import"
   },
   "iconPicker": {
     "search": "Search Icons",

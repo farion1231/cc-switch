@@ -541,6 +541,21 @@ describe("DeepLinkImportDialog", () => {
       ).not.toBeInTheDocument();
     });
 
+    it.each([
+      { app: "pi", label: "deeplink.enableInPiAfterImport" },
+      { app: "rpi", label: "deeplink.enableInRpiAfterImport" },
+    ])(
+      "uses the native enable wording for $app deeplink imports",
+      async ({ app, label }) => {
+        render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+        act(() => deliverDeepLink(providerLink({ app })));
+
+        const toggle = await screen.findByRole("switch");
+        expect(toggle).toBeChecked();
+        expect(screen.getByText(label)).toBeInTheDocument();
+      },
+    );
+
     it("lets the user decide whether an imported prompt is enabled", async () => {
       const sent = captureImport();
       const user = userEvent.setup();

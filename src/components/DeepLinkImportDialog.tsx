@@ -982,8 +982,10 @@ export function DeepLinkImportDialog() {
                           className="text-sm font-medium"
                         >
                           {request.app && isAdditiveAppId(request.app)
-                            ? request.app === "pi"
-                              ? t("deeplink.enableInPiAfterImport")
+                            ? request.app === "pi" || request.app === "rpi"
+                              ? request.app === "rpi"
+                                ? t("deeplink.enableInRpiAfterImport")
+                                : t("deeplink.enableInPiAfterImport")
                               : t("deeplink.addToAppAfterImport", {
                                   app: getAppLabel(request.app),
                                 })

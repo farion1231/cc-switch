@@ -3560,7 +3560,8 @@
       "envHijack": "该配置包含可改变进程加载行为的环境变量（如注入动态库、替换 CA 证书），请确认来源可信。",
       "privateEndpoint": "该地址指向本机或内网。若非你自建的本地服务，请勿导入。",
       "shellCommand": "该配置通过 shell 执行一整段命令，实际运行的内容在参数里，请逐行核对。"
-    }
+    },
+    "enableInRpiAfterImport": "导入后立即在 rpi 中启用"
   },
   "iconPicker": {
     "search": "搜索图标",

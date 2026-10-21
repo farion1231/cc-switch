@@ -3561,7 +3561,8 @@
       "envHijack": "該設定包含可改變處理程序載入行為的環境變數（例如注入動態程式庫、替換 CA 憑證），請確認來源可信。",
       "privateEndpoint": "該位址指向本機或內部網路。若非你自建的本機服務，請勿匯入。",
       "shellCommand": "該設定透過 shell 執行整段命令，實際執行的內容在參數裡，請逐行核對。"
-    }
+    },
+    "enableInRpiAfterImport": "匯入後立即在 rpi 中啟用"
   },
   "iconPicker": {
     "search": "搜尋圖示",
