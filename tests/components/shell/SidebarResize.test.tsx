@@ -24,6 +24,7 @@ function Harness() {
         <button onClick={toggle}>Toggle</button>
         <div role="separator" {...resizeHandle} />
       </nav>
+      <main id="content-area" />
       <output>{collapsed ? "collapsed" : "expanded"}</output>
     </>
   );
@@ -133,6 +134,58 @@ describe("sidebar resize", () => {
       expect(nav()).toHaveStyle({ width: "200px" });
     },
   );
+  it("animates the inward snap but interrupts it when the pointer pulls back out", () => {
+    const cancel = vi.fn();
+    const animate = vi.fn(() => ({ cancel, onfinish: null, oncancel: null }));
+    vi.stubGlobal("matchMedia", () => ({ matches: false }));
+    Object.defineProperty(HTMLElement.prototype, "animate", {
+      configurable: true,
+      value: animate,
+    });
+    try {
+      render(<Harness />);
+      down();
+      move(120);
+      expect(animate).toHaveBeenCalledTimes(1);
+      expect(animate.mock.calls[0]).toEqual([
+        [
+          { transform: "none" },
+          { transform: expect.stringMatching(/^translateX\(-/) },
+        ],
+        expect.objectContaining({ duration: 200 }),
+      ]);
+      move(230);
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(nav()).toHaveStyle({ width: "230px" });
+      expect(animate).toHaveBeenCalledTimes(1);
+      move(120);
+      fireEvent.keyDown(window, { key: "Escape" });
+      expect(cancel).toHaveBeenCalledTimes(2);
+      expect(nav()).toHaveStyle({ width: "200px" });
+      expect(nav().style.zIndex).toBe("");
+      expect(document.querySelector('[aria-hidden="true"]')).toBeNull();
+    } finally {
+      delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
+    }
+  });
+  it("skips the snap animation with reduced motion", () => {
+    const animate = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "animate", {
+      configurable: true,
+      value: animate,
+    });
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    try {
+      render(<Harness />);
+      down();
+      move(120);
+      expect(screen.getByText("collapsed")).toBeInTheDocument();
+      expect(animate).not.toHaveBeenCalled();
+      up();
+    } finally {
+      delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
+    }
+  });
   it("cancels a snapped drag back to its original mode and width", () => {
     render(<Harness />);
     down();

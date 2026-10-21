@@ -167,9 +167,10 @@ export function useSidebarCollapsed(navRef: RefObject<HTMLElement | null>) {
 
   const setCollapsed = useCallback(
     (next: boolean) => {
-      animateFrom.current = navRef.current?.hasAttribute("data-resizing")
-        ? null
-        : (navRef.current?.getBoundingClientRect().width ?? null);
+      animateFrom.current =
+        !next && navRef.current?.hasAttribute("data-resizing")
+          ? null
+          : (navRef.current?.getBoundingClientRect().width ?? null);
       applyPreference(next);
     },
     [navRef, applyPreference],

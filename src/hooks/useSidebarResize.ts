@@ -81,6 +81,7 @@ export function useSidebarResize(
       document.documentElement.style.userSelect = current.selection;
       navRef.current?.removeAttribute("data-resizing");
       if (cancel) {
+        stopSidebarAnimation();
         if (restore) {
           if (navRef.current)
             navRef.current.style.width = `${current.initial}px`;
@@ -121,6 +122,7 @@ export function useSidebarResize(
     window.addEventListener("keydown", onKey);
     return () => {
       finish(true);
+      stopSidebarAnimation();
       window.removeEventListener("resize", onResize);
       window.removeEventListener("keydown", onKey);
     };
@@ -163,6 +165,7 @@ export function useSidebarResize(
       if (current.frame !== null) cancelAnimationFrame(current.frame);
       current.frame = null;
       current.collapsed = !current.collapsed;
+      if (!current.collapsed) stopSidebarAnimation();
       current.next = current.collapsed ? sidebarRailWidth() : clamp(requested);
       setCollapsed(current.collapsed);
       return;
