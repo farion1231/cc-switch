@@ -1,14 +1,11 @@
-//! Linux 的 WebKitGTK 渲染策略，必须在 GTK / WebKit 初始化前配置。
-//!
-//! WebKitGTK 2.44+ 使用合成 + SHM 保留透明窗口，旧版默认沿用软件绘制。
-//! 用户仍可用 WebKit 原有环境变量覆盖；禁用渲染器或合成时面板退回不透明。
+//! Linux WebKitGTK 渲染策略，须在 GTK / WebKit 初始化前配置。
 
 use std::ffi::OsStr;
 
 const DISABLE_DMABUF: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
 const DISABLE_COMPOSITING: &str = "WEBKIT_DISABLE_COMPOSITING_MODE";
 
-/// 只补齐未设置的值；这组参数作用于整个进程，而非单个 WebView。
+/// 设置进程级默认值，保留用户的环境变量覆盖。
 pub fn configure_environment() {
     // SAFETY: 版本查询只返回所加载库的版本常量，不需要初始化 GTK / WebKit。
     let (major, minor) = unsafe {
@@ -25,10 +22,7 @@ pub fn configure_environment() {
 }
 
 fn environment_defaults(major: u32, minor: u32) -> [(&'static str, &'static str); 3] {
-    // TODO: 上游透明软件绘制和 DMA-BUF 驱动兼容性修复后，重新评估默认路径。
-    // 当前不能简单禁用整个 renderer：WebKitGTK 2.54.1 的透明软件绘制会丢失局部内容。
-    // 关联 #8556：禁用软件绘制的透明路径，使用 SHM 合成保留透明窗口。
-    // 2.42 不识别 FORCE_SHM，不能用它替代原有的禁用参数；从稳定版 2.44 起才默认启用。
+    // SHM 合成规避透明软件绘制缺失（#8556）；2.42 不支持 FORCE_SHM，旧版沿用软件绘制。
     let disable = if (major, minor) >= (2, 44) { "0" } else { "1" };
     [
         (DISABLE_DMABUF, disable),
@@ -47,7 +41,7 @@ fn compositing_requested(
         .all(|value| value.is_none_or(|value| value == "0"))
 }
 
-/// 主窗口与面板必须遵循相同的合成开关；WebView 级别的 Never 会绕开 SHM 合成。
+/// 主窗口与面板共用的合成开关。
 pub(crate) fn compositing_enabled() -> bool {
     compositing_requested(
         std::env::var_os(DISABLE_DMABUF).as_deref(),

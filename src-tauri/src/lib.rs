@@ -1462,9 +1462,7 @@ pub fn run() {
                 });
             });
 
-            // Linux: 禁用 renderer / 合成时沿用软件绘制（包括旧版 WebKit 的默认策略）。
-            // TODO: 上游修复 WebKitGTK 2.54 的软件绘制后重新评估；默认 SHM 合成下
-            // 再把主窗口设为 Never 会使 DOM / IPC 正常但画面空白，不能与默认策略混用。
+            // 仅在禁用合成时强制软件绘制，避免 Never 策略使 SHM 合成窗口白屏。
             #[cfg(target_os = "linux")]
             if !crate::linux_rendering::compositing_enabled() {
                 if let Some(window) = app.get_webview_window("main") {

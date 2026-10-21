@@ -515,8 +515,7 @@ function FooterButton({
 export function TrayPanel() {
   const [nativePlacement, setPlacement] = useState<PanelPlacement | null>(null);
   const [pixelRatio, setPixelRatio] = useState(window.devicePixelRatio || 1);
-  // Windows 文本大小及 Linux WebKit 缩放可能让 CSS 像素与屏幕逻辑像素不同。
-  // X11 下 DPR 可为 1.5 而原生窗口缩放为 1；忽略差异会裁掉卡片右侧和底部。
+  // 将 CSS 像素换算为原生窗口逻辑像素，适配文本和 WebKit 缩放。
   const coordinateScale =
     nativePlacement &&
     (nativePlacement.platform === "windows" ||
