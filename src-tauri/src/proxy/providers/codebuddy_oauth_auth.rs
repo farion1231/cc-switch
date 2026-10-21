@@ -20,7 +20,6 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -349,6 +348,7 @@ pub struct CodebuddyOAuthManager {
     access_tokens: Arc<RwLock<HashMap<String, CachedAccessToken>>>,
     refresh_locks: Arc<RwLock<HashMap<String, Arc<Mutex<()>>>>>,
     pending_states: Arc<RwLock<HashMap<String, PendingAuth>>>,
+    poll_lock: Arc<Mutex<()>>,
     mutation_lock: Arc<Mutex<()>>,
     storage_path: PathBuf,
 }
@@ -361,6 +361,7 @@ impl CodebuddyOAuthManager {
             access_tokens: Arc::new(RwLock::new(HashMap::new())),
             refresh_locks: Arc::new(RwLock::new(HashMap::new())),
             pending_states: Arc::new(RwLock::new(HashMap::new())),
+            poll_lock: Arc::new(Mutex::new(())),
             mutation_lock: Arc::new(Mutex::new(())),
             storage_path: data_dir.join("codebuddy_oauth_auth.json"),
         };
@@ -426,6 +427,7 @@ impl CodebuddyOAuthManager {
         &self,
         state: &str,
     ) -> Result<Option<CodebuddyOAuthAccount>, CodebuddyOAuthError> {
+        let _poll_guard = self.poll_lock.lock().await;
         let now_ms = chrono::Utc::now().timestamp_millis();
         let mut entry = self
             .pending_states
@@ -472,6 +474,7 @@ impl CodebuddyOAuthManager {
 
     /// 取消尚未完成的登录。
     pub async fn cancel_auth(&self, state: &str) -> bool {
+        let _mutation_guard = self.mutation_lock.lock().await;
         self.pending_states.write().await.remove(state).is_some()
     }
 
@@ -1235,64 +1238,8 @@ impl CodebuddyOAuthManager {
     }
 
     fn write_store_atomic(&self, content: &str) -> Result<(), CodebuddyOAuthError> {
-        let parent = self
-            .storage_path
-            .parent()
-            .ok_or_else(|| CodebuddyOAuthError::IoError("无效的存储路径".to_string()))?;
-        fs::create_dir_all(parent)?;
-        let file_name = self
-            .storage_path
-            .file_name()
-            .ok_or_else(|| CodebuddyOAuthError::IoError("无效的存储文件名".to_string()))?
-            .to_string_lossy();
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let temporary_path = parent.join(format!("{file_name}.tmp.{nonce}"));
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-            let result = (|| -> Result<(), std::io::Error> {
-                let mut file = fs::OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
-                    .mode(0o600)
-                    .open(&temporary_path)?;
-                file.write_all(content.as_bytes())?;
-                file.flush()?;
-                fs::rename(&temporary_path, &self.storage_path)?;
-                fs::set_permissions(&self.storage_path, fs::Permissions::from_mode(0o600))?;
-                Ok(())
-            })();
-            if result.is_err() {
-                let _ = fs::remove_file(&temporary_path);
-            }
-            result?;
-        }
-
-        #[cfg(windows)]
-        {
-            let result = (|| -> Result<(), std::io::Error> {
-                let mut file = fs::OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
-                    .open(&temporary_path)?;
-                file.write_all(content.as_bytes())?;
-                file.flush()?;
-                if self.storage_path.exists() {
-                    fs::remove_file(&self.storage_path)?;
-                }
-                fs::rename(&temporary_path, &self.storage_path)?;
-                Ok(())
-            })();
-            if result.is_err() {
-                let _ = fs::remove_file(&temporary_path);
-            }
-            result?;
-        }
-        Ok(())
+        crate::config::atomic_write_private(&self.storage_path, content.as_bytes())
+            .map_err(|error| CodebuddyOAuthError::IoError(error.to_string()))
     }
 }
 
@@ -1335,7 +1282,7 @@ fn parse_auth_state_response(value: &Value) -> Result<StartAuthState, CodebuddyO
     })
 }
 
-/// 只允许绝对 http(s)、无 userinfo、无控制字符、host 非空的授权链接；
+/// 只允许绝对 HTTPS、无 userinfo、无控制字符、host 非空的授权链接；
 /// 如果 URL 自带 state query，则必须与响应 state 一致。
 fn validate_auth_url(auth_url: &str, state: &str) -> Result<(), CodebuddyOAuthError> {
     let invalid =
@@ -1353,7 +1300,7 @@ fn validate_auth_url(auth_url: &str, state: &str) -> Result<(), CodebuddyOAuthEr
         return Err(invalid());
     }
     let url = url::Url::parse(auth_url).map_err(|_| invalid())?;
-    if !matches!(url.scheme(), "http" | "https") {
+    if url.scheme() != "https" {
         return Err(invalid());
     }
     let Some(host) = url.host_str() else {

@@ -261,7 +261,7 @@ pub async fn auth_poll_for_account(
             }
         }
         AUTH_PROVIDER_CODEBUDDY_OAUTH => {
-            let auth_manager = codebuddy_state.0.write().await;
+            let auth_manager = codebuddy_state.0.read().await;
             match auth_manager.poll_for_account(&device_code).await {
                 Ok(account) => {
                     let default_account_id = auth_manager.get_status().await.default_account_id;
