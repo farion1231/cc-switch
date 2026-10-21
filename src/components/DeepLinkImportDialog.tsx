@@ -262,7 +262,10 @@ export function DeepLinkImportDialog() {
         request.resource === "provider" || request.resource === "prompt"
           ? {
               ...request,
-              enabled: request.app === "codex" ? false : activateAfterImport,
+              enabled:
+                request.resource === "provider" && request.app === "codex"
+                  ? false
+                  : activateAfterImport,
             }
           : request;
       if (request.resource === "provider" && request.iconUrl) {

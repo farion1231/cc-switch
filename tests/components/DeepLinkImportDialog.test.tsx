@@ -522,6 +522,27 @@ describe("DeepLinkImportDialog", () => {
       expect(sent[0].enabled).toBe(false);
     });
 
+    it("enables a Codex prompt when requested", async () => {
+      const sent = captureImport();
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+      act(() =>
+        deliverDeepLink({
+          version: "v1",
+          resource: "prompt",
+          app: "codex",
+          name: "Review",
+          content: btoa("# review"),
+          enabled: true,
+        }),
+      );
+      expect(await screen.findByRole("switch")).toBeChecked();
+      await userEvent.click(
+        screen.getByRole("button", { name: "deeplink.import" }),
+      );
+      await waitFor(() => expect(sent).toHaveLength(1));
+      expect(sent[0].enabled).toBe(true);
+    });
+
     it("only imports Antigravity providers, even when the link asks to enable", async () => {
       const sent = captureImport();
       const user = userEvent.setup();
