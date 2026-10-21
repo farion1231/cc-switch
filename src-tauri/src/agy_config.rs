@@ -370,13 +370,22 @@ fn shell_word(value: &str) -> String {
 /// 旧版测试装的包装脚本永远不会被返回。
 pub(crate) fn real_agy_bin() -> Option<PathBuf> {
     let path_var = std::env::var_os("PATH").unwrap_or_default();
+    // install.ps1 installs to %LOCALAPPDATA%\agy\bin, which a GUI process's PATH may lack.
+    let system_dirs: Vec<PathBuf> = if cfg!(windows) {
+        dirs::data_local_dir()
+            .map(|dir| dir.join("agy").join("bin"))
+            .into_iter()
+            .collect()
+    } else {
+        vec![
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ]
+    };
     resolve_real_agy(
         &path_var,
         &get_home_dir(),
-        &[
-            PathBuf::from("/opt/homebrew/bin"),
-            PathBuf::from("/usr/local/bin"),
-        ],
+        &system_dirs,
         !cfg!(test) && cfg!(unix),
     )
 }

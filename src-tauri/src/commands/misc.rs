@@ -170,8 +170,8 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 9] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode",
+const VALID_TOOLS: [&str; 10] = [
+    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "agy",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -626,6 +626,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "hermes" => "Hermes",
         "pi" => "Pi",
         "mcode" => "MiniMax Code",
+        "agy" => "Antigravity CLI",
         _ => "Unknown",
     }
 }
@@ -663,6 +664,12 @@ const HERMES_INSTALL_UNIX: &str =
 const HERMES_UPDATE_UNIX: &str =
     "hermes update || bash -c 'tmp=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 
+/// Antigravity CLI 官方 installer：把原生二进制放进 `~/.local/bin`，再跑 `agy install`
+/// 把该目录加进 shell 配置。目标处已有 `agy` 时它只提示已安装、exit 0，所以只用于新装；
+/// 升级一律走 `agy update`（实测非 TTY 下照常检查并安装）。
+const AGY_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://antigravity.google/cli/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+
 #[cfg(target_os = "windows")]
 const HERMES_INSTALL_WINDOWS_SCRIPT: &str =
     "irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1 | iex";
@@ -671,6 +678,8 @@ const GROK_INSTALL_WINDOWS_SCRIPT: &str = "irm https://x.ai/cli/install.ps1 | ie
 #[cfg(target_os = "windows")]
 const MCODE_INSTALL_WINDOWS_SCRIPT: &str =
     "irm https://filecdn.minimax.chat/public/install.ps1 | iex";
+#[cfg(target_os = "windows")]
+const AGY_INSTALL_WINDOWS_SCRIPT: &str = "irm https://antigravity.google/cli/install.ps1 | iex";
 #[cfg(target_os = "windows")]
 const CODEX_INSTALL_WINDOWS_SCRIPT: &str = "irm https://chatgpt.com/codex/install.ps1 | iex";
 
@@ -698,6 +707,14 @@ fn grok_install_windows_command() -> String {
     format!(
         "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
         powershell_encoded_command(GROK_INSTALL_WINDOWS_SCRIPT)
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn agy_install_windows_command() -> String {
+    format!(
+        "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(AGY_INSTALL_WINDOWS_SCRIPT)
     )
 }
 
@@ -874,7 +891,7 @@ fn npm_install_extra_args(tool: &str) -> &'static str {
 // `cmd.output()` 正是非 TTY，放进来会让 `mcode update || <fallback>` 的兜底永不触发。
 fn official_update_args(tool: &str) -> Option<&'static str> {
     match tool {
-        "claude" | "codex" | "grok" | "hermes" => Some("update"),
+        "claude" | "codex" | "grok" | "hermes" | "agy" => Some("update"),
         "openclaw" => Some("update --yes"),
         "opencode" => Some("upgrade"),
         _ => None,
@@ -924,6 +941,22 @@ fn tool_action_shell_command_for_shell(
                 shell,
             ));
         }
+    }
+
+    // 没有 npm 包。重跑 installer 不会升级（已安装就直接退出），升级失败也不拿它兜底。
+    if tool == "agy" {
+        return Some(match (action, shell) {
+            (ToolLifecycleAction::Install, LifecycleCommandShell::Posix) => {
+                AGY_INSTALL_UNIX.to_string()
+            }
+            #[cfg(target_os = "windows")]
+            (ToolLifecycleAction::Install, LifecycleCommandShell::WindowsBatch) => {
+                agy_install_windows_command()
+            }
+            #[cfg(not(target_os = "windows"))]
+            (ToolLifecycleAction::Install, LifecycleCommandShell::WindowsBatch) => return None,
+            (ToolLifecycleAction::Update, _) => "agy update".to_string(),
+        });
     }
 
     if tool == "hermes" {
@@ -1212,6 +1245,7 @@ async fn get_single_tool_version_impl(
             fetch_npm_latest_for_tool(&client, "@earendil-works/pi-coding-agent", tool, local).await
         }
         "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
+        "agy" => fetch_agy_latest_version(&client).await,
         _ => None,
     };
 
@@ -1416,6 +1450,36 @@ async fn fetch_npm_latest_for_tool(
 const LATEST_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Helper function to fetch latest version from GitHub releases
+/// Antigravity CLI 的 installer 和自升级共用的发布清单：`manifests/<平台>.json` 的 `version`。
+async fn fetch_agy_latest_version(client: &reqwest::Client) -> Option<String> {
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        "linux" => "linux",
+        "windows" => "windows",
+        _ => return None,
+    };
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        _ => return None,
+    };
+    let url = format!(
+        "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/{os}_{arch}.json"
+    );
+    let resp = client
+        .get(&url)
+        .timeout(LATEST_PROBE_TIMEOUT)
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?;
+    let json = resp.json::<serde_json::Value>().await.ok()?;
+    json.get("version")
+        .and_then(|v| v.as_str())
+        .and_then(release_display_version)
+}
+
 async fn fetch_github_latest_version(client: &reqwest::Client, repo: &str) -> Option<String> {
     let url = format!("https://api.github.com/repos/{repo}/releases/latest");
     let resp = client
@@ -2458,6 +2522,10 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
                     &mut search_paths,
                     local_data.join("Programs").join("claude"),
                 );
+            }
+            if tool == "agy" {
+                // Antigravity CLI official install.ps1 location.
+                push_unique_path(&mut search_paths, local_data.join("agy").join("bin"));
             }
         }
         if let Some(appdata) = dirs::data_dir() {
@@ -3689,7 +3757,8 @@ fn package_manager_anchored_command_from_paths(
 fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) -> Option<String> {
     let real_lower = real_target.to_ascii_lowercase();
 
-    if tool == "hermes" {
+    // Antigravity 原生二进制自升级（Homebrew cask 也标了 auto_updates，`brew upgrade` 默认跳过它）。
+    if tool == "hermes" || tool == "agy" {
         return anchored_official_update_command(tool, bin_path);
     }
     if tool == "claude"
@@ -3802,7 +3871,8 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
 /// 才返 None 让上游兜回静态命令、`anchored=false`。
 #[cfg(target_os = "windows")]
 fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) -> Option<String> {
-    if tool == "hermes" {
+    // Antigravity 原生二进制自升级（Homebrew cask 也标了 auto_updates，`brew upgrade` 默认跳过它）。
+    if tool == "hermes" || tool == "agy" {
         return anchored_official_update_command(tool, bin_path);
     }
     if tool == "grok" && is_grok_native_install(bin_path, real_target) {
@@ -4458,6 +4528,7 @@ fn posix_install_command_for(tool: &str) -> String {
         "opencode" => installer_with_npm_fallback(OPENCODE_INSTALL_UNIX, tool),
         "mcode" => installer_with_npm_fallback(MCODE_INSTALL_UNIX, tool),
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
+        "agy" => AGY_INSTALL_UNIX.to_string(),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
     }
 }
@@ -8541,6 +8612,18 @@ mod tests {
         }
 
         #[test]
+        fn agy_updates_itself_even_from_a_homebrew_cask() {
+            // The cask is auto_updates, so `brew upgrade` skips it; agy replaces its own binary.
+            for real in [
+                "/opt/homebrew/Caskroom/antigravity-cli/1.3.4,5524158944247808/antigravity",
+                "/opt/homebrew/bin/agy",
+            ] {
+                let cmd = anchored_command_from_paths("agy", "/opt/homebrew/bin/agy", real);
+                assert_eq!(cmd.as_deref(), Some("/opt/homebrew/bin/agy update"));
+            }
+        }
+
+        #[test]
         fn opencode_native_install_uses_cli_upgrade_without_package_fallback() {
             // opencode install.sh 装到 ~/.opencode/bin（独立二进制、无同级 npm）：
             // 不能锚定到 `<dir>/npm`（必失败），但可以锚定到 CLI 自身跑官方 upgrade。
@@ -9248,6 +9331,19 @@ mod tests {
                 !cmd.contains('|') && !cmd.contains("python") && !cmd.contains("pip"),
                 "should not depend on pipefail or system Python/pip: {cmd}"
             );
+        }
+
+        #[test]
+        fn agy_installs_with_official_script_and_updates_without_reinstalling() {
+            let cmd = install_command_for("agy");
+            assert!(
+                cmd.contains("curl -fsSL https://antigravity.google/cli/install.sh -o $tmp")
+                    && !cmd.contains('|')
+                    && !cmd.contains("npm"),
+                "should use only the official installer: {cmd}"
+            );
+            // The installer exits 0 when agy already exists, so it must not back up `agy update`.
+            assert_eq!(static_fallback_command("agy"), "agy update");
         }
 
         #[test]
