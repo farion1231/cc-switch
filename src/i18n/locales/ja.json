@@ -4147,6 +4147,7 @@
     "mainLabel": "メインナビゲーション",
     "skipToContent": "メインコンテンツへスキップ",
     "expandSidebar": "サイドバーを展開",
+    "resizeSidebar": "サイドバーの幅を調整",
     "collapseSidebar": "サイドバーを折りたたむ",
     "appsGroup": "アプリ",
     "today": "今日 {{value}}",

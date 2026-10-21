@@ -100,8 +100,10 @@ function animateToggle(nav: HTMLElement, fromWidth: number, toWidth: number) {
   animation.oncancel = cleanup;
 }
 
-export const sidebarWidth = (collapsed: boolean) =>
-  collapsed ? sidebarRailWidth() : SIDEBAR_EXPANDED_WIDTH;
+export const sidebarWidth = (
+  collapsed: boolean,
+  expandedWidth = SIDEBAR_EXPANDED_WIDTH,
+) => (collapsed ? sidebarRailWidth() : expandedWidth);
 
 function readManualPreference(): boolean | null {
   try {
@@ -143,20 +145,32 @@ export function useSidebarCollapsed(navRef: RefObject<HTMLElement | null>) {
     const from = animateFrom.current;
     animateFrom.current = null;
     if (from !== null && navRef.current) {
-      animateToggle(navRef.current, from, sidebarWidth(collapsed));
+      animateToggle(
+        navRef.current,
+        from,
+        navRef.current.getBoundingClientRect().width,
+      );
     }
   }, [collapsed, navRef]);
 
-  const toggle = useCallback(() => {
-    const next = !collapsed;
-    animateFrom.current = sidebarWidth(collapsed);
-    setManual(next);
-    try {
-      localStorage.setItem(STORAGE_KEY, String(next));
-    } catch {
-      // 记不住也不影响这次切换
-    }
-  }, [collapsed]);
+  const setCollapsed = useCallback(
+    (next: boolean) => {
+      animateFrom.current =
+        navRef.current?.getBoundingClientRect().width ?? null;
+      setManual(next);
+      try {
+        localStorage.setItem(STORAGE_KEY, String(next));
+      } catch {
+        // 记不住也不影响这次切换
+      }
+    },
+    [navRef],
+  );
+
+  const toggle = useCallback(
+    () => setCollapsed(!collapsed),
+    [collapsed, setCollapsed],
+  );
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -169,5 +183,5 @@ export function useSidebarCollapsed(navRef: RefObject<HTMLElement | null>) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [toggle]);
 
-  return { collapsed, toggle };
+  return { collapsed, toggle, setCollapsed };
 }

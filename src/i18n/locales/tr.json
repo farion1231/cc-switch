@@ -4056,6 +4056,7 @@
     "mainLabel": "Ana gezinme",
     "skipToContent": "Ana içeriğe atla",
     "expandSidebar": "Kenar çubuğunu genişlet",
+    "resizeSidebar": "Kenar çubuğunu yeniden boyutlandır",
     "collapseSidebar": "Kenar çubuğunu daralt",
     "appsGroup": "Uygulamalar",
     "today": "Bugün {{value}}",

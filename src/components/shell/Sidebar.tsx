@@ -41,6 +41,8 @@ import {
   type SidebarTodayItem,
 } from "@/components/usage/format";
 import { useSidebarStatus, type AppNavStatus } from "@/hooks/useSidebarStatus";
+import { useSlidingIndicator } from "@/components/ui/sliding-indicator";
+import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { DRAG_REGION_ATTR, DRAG_REGION_STYLE, isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
@@ -75,7 +77,12 @@ type DirectoryProps = SidebarProps & { collapsed: boolean };
 export function Sidebar(props: SidebarProps) {
   const { t } = useTranslation();
   const navRef = useRef<HTMLElement>(null);
-  const { collapsed, toggle } = useSidebarCollapsed(navRef);
+  const { collapsed, toggle, setCollapsed } = useSidebarCollapsed(navRef);
+  const { width, min, max, resizeHandle } = useSidebarResize(
+    navRef,
+    collapsed,
+    setCollapsed,
+  );
   const { view } = props;
   const inSettings = view === "settings";
 
@@ -86,7 +93,7 @@ export function Sidebar(props: SidebarProps) {
       className={cn(
         "relative flex h-full shrink-0 flex-col overflow-hidden whitespace-nowrap border-e border-border bg-sidebar text-body text-fg-1",
       )}
-      style={{ width: sidebarWidth(collapsed) }}
+      style={{ width: sidebarWidth(collapsed, width) }}
     >
       <a
         href="#main-content"
@@ -100,6 +107,20 @@ export function Sidebar(props: SidebarProps) {
       ) : (
         <MainDirectory {...props} collapsed={collapsed} />
       )}
+      <div
+        {...resizeHandle}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t("nav.resizeSidebar")}
+        aria-valuemin={min}
+        aria-valuemax={max}
+        aria-valuenow={Math.round(sidebarWidth(collapsed, width))}
+        tabIndex={0}
+        className="group absolute inset-y-0 end-0 z-10 flex w-1.5 cursor-col-resize touch-none items-center justify-center outline-none hover:bg-fg-3/10 focus-visible:bg-fg-3/10"
+        style={NO_DRAG}
+      >
+        <span className="h-12 w-0.5 scale-y-75 rounded-full bg-fg-3 opacity-0 transition-[opacity,transform] duration-150 group-hover:scale-y-100 group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none" />
+      </div>
     </nav>
   );
 }
@@ -230,6 +251,10 @@ function MainDirectory({
   } = useSidebarStatus();
   const apps = APP_IDS.filter((app) => visibleApps[app]);
   const onAppPage = isAppPage(view);
+  const indicator = useSlidingIndicator<HTMLDivElement>(
+    '[aria-current="page"]',
+    onAppPage ? activeApp : null,
+  );
 
   // 选了的项里是 0 的不写（没配定价时金额总是 0）；命中率在今天还没有请求时不写；
   // 全都没有就整个不显示。两项都有时只写数、上下两行（「今日」放进悬停和读屏）：
@@ -302,10 +327,12 @@ function MainDirectory({
         )}
       >
         <div
+          ref={indicator.ref}
           role="group"
           aria-label={t("nav.appsGroup")}
-          className="flex shrink-0 flex-col"
+          className="relative flex shrink-0 flex-col"
         >
+          <SidebarSelection indicator={indicator} />
           {apps.map((app) => (
             <AppNavItem
               key={app}
@@ -449,8 +476,8 @@ function AppNavItem({
           aria-label={tip}
           aria-current={selected ? "page" : undefined}
           className={cn(
-            "mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
-            selected && "bg-selected hover:bg-selected",
+            "relative mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
+            selected && "hover:bg-transparent",
           )}
         >
           <span className="relative flex">
@@ -479,8 +506,8 @@ function AppNavItem({
       onClick={onSelect}
       aria-current={selected ? "page" : undefined}
       className={cn(
-        "mx-2 flex h-7 w-[184px] shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
-        selected && "bg-selected font-medium hover:bg-selected",
+        "relative mx-2 flex h-7 w-[calc(100%-16px)] shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
+        selected && "font-medium hover:bg-transparent",
       )}
     >
       <AppGlyph app={app} size={16} badgeClassName={badgeBg} />
@@ -528,6 +555,7 @@ function AlertGlyph({ className }: { className?: string }) {
 function NavItem({
   collapsed,
   compact = false,
+  sliding = false,
   selected,
   icon: Icon,
   label,
@@ -543,6 +571,7 @@ function NavItem({
   collapsed: boolean;
   /** 底栏两格并排：宽度由父级平分 */
   compact?: boolean;
+  sliding?: boolean;
   selected: boolean;
   icon: IconComponent;
   label: string;
@@ -610,8 +639,11 @@ function NavItem({
           aria-label={title ?? accessibleName}
           aria-current={selected ? "page" : undefined}
           className={cn(
-            "mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
-            selected && "bg-selected hover:bg-selected",
+            "relative mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
+            selected &&
+              (sliding
+                ? "hover:bg-transparent"
+                : "bg-selected hover:bg-selected"),
           )}
         >
           {glyph(20)}
@@ -640,9 +672,12 @@ function NavItem({
         aria-label={trailingLabel ? accessibleName : undefined}
         aria-current={selected ? "page" : undefined}
         className={cn(
-          "flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
-          compact ? "min-w-0 flex-1" : "mx-2 w-[184px]",
-          selected && "bg-selected font-medium hover:bg-selected",
+          "relative flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
+          compact ? "min-w-0 flex-1" : "mx-2 w-[calc(100%-16px)]",
+          selected &&
+            (sliding
+              ? "font-medium hover:bg-transparent"
+              : "bg-selected font-medium hover:bg-selected"),
         )}
       >
         {glyph(18)}
@@ -705,6 +740,10 @@ function SettingsDirectory({
   onExitSettings,
 }: DirectoryProps) {
   const { t } = useTranslation();
+  const indicator = useSlidingIndicator<HTMLDivElement>(
+    '[aria-current="page"]',
+    settingsSection,
+  );
   const { hasUpdate } = useUpdate();
   const { data: version } = useQuery({
     queryKey: ["app-version"],
@@ -738,13 +777,19 @@ function SettingsDirectory({
         </div>
       )}
       <div
+        ref={indicator.ref}
         role="group"
         aria-label={t("nav.settings")}
-        className={cn("flex min-h-0 flex-1 flex-col", collapsed && "mt-2")}
+        className={cn(
+          "relative flex min-h-0 flex-1 flex-col",
+          collapsed && "mt-2",
+        )}
       >
+        <SidebarSelection indicator={indicator} />
         {SETTINGS_ITEMS.map(({ section, icon }) => (
           <NavItem
             key={section}
+            sliding
             collapsed={collapsed}
             selected={settingsSection === section}
             icon={icon}
@@ -771,3 +816,27 @@ function SettingsDirectory({
 }
 
 export type { SidebarProps };
+
+function SidebarSelection({
+  indicator,
+}: {
+  indicator: ReturnType<typeof useSlidingIndicator<HTMLDivElement>>;
+}) {
+  const { rect, animate } = indicator;
+  if (!rect) return null;
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "pointer-events-none absolute left-0 top-0 rounded-control bg-selected",
+        animate &&
+          "transition-transform duration-200 ease-out motion-reduce:transition-none",
+      )}
+      style={{
+        width: rect.width,
+        height: rect.height,
+        transform: `translate(${rect.x}px, ${rect.y}px)`,
+      }}
+    />
+  );
+}
