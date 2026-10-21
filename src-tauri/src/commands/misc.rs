@@ -5820,23 +5820,30 @@ fn windows_start_command(
 }
 
 /// 同 `run_windows_start_command`，额外给启动的终端设置环境变量（`start` 会继承）。
+///
+/// stdio 指向 NUL、只等 `cmd` 的退出码，不能用 `output()` 捕获：`start` 打开的终端会
+/// 继承这里的 stdout/stderr 管道句柄，管道要等那个窗口和里面的进程全部退出才到 EOF，
+/// 调用就一直挂到用户关掉终端，界面也一直转圈（#6712）。启动失败仍能从退出码看出来。
 #[cfg(target_os = "windows")]
 fn run_windows_start_command_with_env(
     args: &[&str],
     terminal_name: &str,
     envs: &[(&str, &str)],
 ) -> Result<(), String> {
-    let output = windows_start_command(args, envs, &effective_path_string())
-        .output()
+    use std::process::Stdio;
+
+    let status = windows_start_command(args, envs, &effective_path_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
         .map_err(|e| format!("启动 {} 失败: {e}", terminal_name))?;
 
-    if !output.status.success() {
-        let stderr = decode_command_output(&output.stderr);
+    if !status.success() {
         return Err(format!(
-            "{} 启动失败 (exit code: {:?}): {}",
+            "{} 启动失败 (exit code: {:?})",
             terminal_name,
-            output.status.code(),
-            stderr
+            status.code()
         ));
     }
 
