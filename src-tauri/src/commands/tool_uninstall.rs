@@ -874,7 +874,9 @@ mod tests {
         use std::os::windows::process::CommandExt;
         use std::time::Duration;
 
-        const TEST_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+        // 30s 在负载高的 Windows runner 上历史上被击穿两次（npm.cmd 冷启动要走完
+        // 整个 cmd/PATH 解析）；抬到 120s，仍在 nextest profile 的 180s 硬顶之内。
+        const TEST_PROBE_TIMEOUT: Duration = Duration::from_secs(120);
         const FIXTURE_ROOT: &str = "CC_SWITCH_TEST_NPM_UNINSTALL_ROOT";
         if let Some(root) = std::env::var_os(FIXTURE_ROOT) {
             let root = PathBuf::from(root);

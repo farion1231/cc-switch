@@ -94,7 +94,13 @@ describe("SessionManagerPage", () => {
       clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
     });
 
-    const now = Date.now();
+    // 分桶按本地日历日切分；CI 可能在 UTC 00:00–05:00 跑，直接用 Date.now()
+    // 会让 now-5h 落到前一天，令「今天」分组凭空消失。锚到当天中午避开这条边界。
+    const now = (() => {
+      const d = new Date();
+      d.setHours(12, 0, 0, 0);
+      return d.getTime();
+    })();
     const sessions: SessionMeta[] = [
       {
         providerId: "codex",
