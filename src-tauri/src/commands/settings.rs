@@ -99,13 +99,17 @@ pub async fn save_settings(
     if stack_settings_changed {
         if let Err(err) = crate::mode::controller::resync_codex_stack_catalog(state.inner()).await {
             log::warn!("Codex 聚合设置变更后重写客户端配置失败，回滚设置: {err}");
-            let mut rollback = crate::settings::get_settings();
-            rollback.codex_stack_classic_tools = existing.codex_stack_classic_tools;
-            rollback.codex_stack_subagent_model = existing.codex_stack_subagent_model.clone();
-            rollback.codex_stack_subagent_reasoning_effort =
+            let rollback_classic_tools = existing.codex_stack_classic_tools;
+            let rollback_subagent_model = existing.codex_stack_subagent_model.clone();
+            let rollback_reasoning_effort =
                 existing.codex_stack_subagent_reasoning_effort.clone();
-            rollback.codex_stack_auto_review_model = existing.codex_stack_auto_review_model.clone();
-            if let Err(rollback_err) = crate::settings::update_settings(rollback) {
+            let rollback_review_model = existing.codex_stack_auto_review_model.clone();
+            if let Err(rollback_err) = crate::settings::mutate_settings(|s| {
+                s.codex_stack_classic_tools = rollback_classic_tools;
+                s.codex_stack_subagent_model = rollback_subagent_model;
+                s.codex_stack_subagent_reasoning_effort = rollback_reasoning_effort;
+                s.codex_stack_auto_review_model = rollback_review_model;
+            }) {
                 log::error!("回滚 Codex 聚合设置失败: {rollback_err}");
             }
             return Err(format!(
@@ -126,7 +130,12 @@ pub async fn save_settings(
             crate::services::provider::reapply_current_codex_official_live(state.inner())
         {
             log::warn!("统一 Codex 会话历史开关变更后重写 live 配置失败，回滚设置: {err}");
-            if let Err(rollback_err) = crate::settings::mutate_settings(|s| *s = existing.clone()) {
+            let rollback_unify = existing.unify_codex_session_history;
+            let rollback_migrate_existing = existing.unify_codex_migrate_existing;
+            if let Err(rollback_err) = crate::settings::mutate_settings(|s| {
+                s.unify_codex_session_history = rollback_unify;
+                s.unify_codex_migrate_existing = rollback_migrate_existing;
+            }) {
                 log::error!("回滚统一会话开关设置失败: {rollback_err}");
             }
             return Err(format!(

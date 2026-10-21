@@ -271,7 +271,7 @@ fn handle_deeplink_url(
     focus_main_window: bool,
     source: &str,
 ) -> bool {
-    if !url_str.starts_with("ccswitch://") {
+    if !url_str.starts_with("ccswitch-light://") && !url_str.starts_with("ccswitch://") {
         return false;
     }
 
@@ -1165,7 +1165,7 @@ pub fn run() {
             // Linux（AppIndicator）不派发点击事件，只能出原生菜单，菜单里有一项打开面板。
             let native_menu = tray_panel::uses_native_menu();
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
-                .tooltip("CC Switch") // 鼠标悬停提示
+                .tooltip("CC Switch Light") // 鼠标悬停提示
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click {
                         button:

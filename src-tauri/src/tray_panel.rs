@@ -360,7 +360,7 @@ fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     *lock(&APPLIED_DARK) = None;
     let window =
         WebviewWindowBuilder::new(app, PANEL_LABEL, WebviewUrl::App("tray-panel.html".into()))
-            .title("CC Switch")
+            .title("CC Switch Light")
             .inner_size(MAIN_WIDTH, 420.0)
             .resizable(false)
             .maximizable(false)
