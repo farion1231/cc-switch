@@ -1156,7 +1156,9 @@ function App() {
         ) : undefined
       }
       subtitle={
-        activeApp === "openclaw" || activeApp === "hermes"
+        activeApp === "openclaw" ||
+        activeApp === "hermes" ||
+        (currentView === "providers" && modeAppId)
           ? undefined
           : appPageName
       }
