@@ -37,6 +37,10 @@ mod lightweight;
 mod s3_sync;
 mod usage;
 mod webdav_sync;
+#[cfg(target_os = "windows")]
+mod windows_console;
+#[cfg(target_os = "windows")]
+mod windows_terminal;
 mod workspace;
 
 pub use agy_account::*;
