@@ -41,7 +41,11 @@ export function stopSidebarAnimation() {
  * - 收起：盖板是侧栏底色，先挡住内容区左边那段，往左滑进侧栏底下，把内容露出来。
  * 盖板的边就是这段时间的分隔线。
  */
-function animateToggle(nav: HTMLElement, fromWidth: number, toWidth: number) {
+export function animateSidebarToggle(
+  nav: HTMLElement,
+  fromWidth: number,
+  toWidth: number,
+) {
   const main = document.getElementById("content-area");
   if (!main || typeof main.animate !== "function") return;
   if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
@@ -147,7 +151,7 @@ export function useSidebarCollapsed(navRef: RefObject<HTMLElement | null>) {
     const from = animateFrom.current;
     animateFrom.current = null;
     if (from !== null && navRef.current) {
-      animateToggle(
+      animateSidebarToggle(
         navRef.current,
         from,
         navRef.current.getBoundingClientRect().width,
@@ -167,10 +171,9 @@ export function useSidebarCollapsed(navRef: RefObject<HTMLElement | null>) {
 
   const setCollapsed = useCallback(
     (next: boolean) => {
-      animateFrom.current =
-        !next && navRef.current?.hasAttribute("data-resizing")
-          ? null
-          : (navRef.current?.getBoundingClientRect().width ?? null);
+      animateFrom.current = navRef.current?.hasAttribute("data-resizing")
+        ? null
+        : (navRef.current?.getBoundingClientRect().width ?? null);
       applyPreference(next);
     },
     [navRef, applyPreference],

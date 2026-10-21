@@ -12,6 +12,7 @@ import {
   SIDEBAR_EXPANDED_WIDTH,
   sidebarRailWidth,
   stopSidebarAnimation,
+  animateSidebarToggle,
 } from "./useSidebarCollapsed";
 
 export const SIDEBAR_MIN_WIDTH = 180;
@@ -51,6 +52,7 @@ export function useSidebarResize(
     restorePreference: () => void;
     collapsed: boolean;
     next: number;
+    animateFrom: number | null;
     direction: number;
     frame: number | null;
     cursor: string;
@@ -102,8 +104,14 @@ export function useSidebarResize(
     // Internal snaps keep capture; only an external button/shortcut ends the drag.
     if (drag.current && drag.current.collapsed !== collapsed)
       finish(true, false);
-    else if (drag.current && navRef.current)
-      navRef.current.style.width = `${drag.current.next}px`;
+    else if (drag.current && navRef.current) {
+      const current = drag.current;
+      navRef.current.style.width = `${current.next}px`;
+      if (current.animateFrom !== null) {
+        animateSidebarToggle(navRef.current, current.animateFrom, current.next);
+        current.animateFrom = null;
+      }
+    }
   }, [collapsed, finish, navRef]);
 
   useEffect(() => {
@@ -142,6 +150,7 @@ export function useSidebarResize(
       restorePreference: restoreCollapsedPreference,
       collapsed,
       next: initial,
+      animateFrom: null,
       direction: getComputedStyle(navRef.current).direction === "rtl" ? -1 : 1,
       frame: null,
       cursor: document.documentElement.style.cursor,
@@ -164,13 +173,15 @@ export function useSidebarResize(
     ) {
       if (current.frame !== null) cancelAnimationFrame(current.frame);
       current.frame = null;
+      current.animateFrom =
+        navRef.current?.getBoundingClientRect().width ?? null;
       current.collapsed = !current.collapsed;
-      if (!current.collapsed) stopSidebarAnimation();
       current.next = current.collapsed ? sidebarRailWidth() : clamp(requested);
       setCollapsed(current.collapsed);
       return;
     }
     if (current.collapsed) return;
+    if (clamp(requested) !== current.next) stopSidebarAnimation();
     current.next = clamp(requested);
     if (current.frame !== null) return;
     current.frame = requestAnimationFrame(() => {

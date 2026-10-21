@@ -134,7 +134,13 @@ describe("sidebar resize", () => {
       expect(nav()).toHaveStyle({ width: "200px" });
     },
   );
-  it("animates the inward snap but interrupts it when the pointer pulls back out", () => {
+  it("animates both snaps and yields to further pointer movement", () => {
+    vi.stubGlobal(
+      "DOMMatrixReadOnly",
+      class {
+        m41 = 0;
+      },
+    );
     const cancel = vi.fn();
     const animate = vi.fn(() => ({ cancel, onfinish: null, oncancel: null }));
     vi.stubGlobal("matchMedia", () => ({ matches: false }));
@@ -157,10 +163,19 @@ describe("sidebar resize", () => {
       move(230);
       expect(cancel).toHaveBeenCalledTimes(1);
       expect(nav()).toHaveStyle({ width: "230px" });
-      expect(animate).toHaveBeenCalledTimes(1);
+      expect(animate).toHaveBeenCalledTimes(2);
+      expect(animate.mock.calls[1]).toEqual([
+        [
+          { transform: "none" },
+          { transform: expect.stringMatching(/^translateX\([0-9]/) },
+        ],
+        expect.objectContaining({ duration: 200 }),
+      ]);
+      move(240);
+      expect(cancel).toHaveBeenCalledTimes(2);
       move(120);
       fireEvent.keyDown(window, { key: "Escape" });
-      expect(cancel).toHaveBeenCalledTimes(2);
+      expect(cancel).toHaveBeenCalledTimes(3);
       expect(nav()).toHaveStyle({ width: "200px" });
       expect(nav().style.zIndex).toBe("");
       expect(document.querySelector('[aria-hidden="true"]')).toBeNull();
