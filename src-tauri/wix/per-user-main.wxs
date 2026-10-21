@@ -49,7 +49,10 @@
         <!-- Keep a running instance from holding the files this install replaces. AUTOLAUNCHAPP is only
              passed by the in-app updater, which has already run the app's exit cleanup, so a leftover
              instance is terminated there. A manual install only gets a polite close request and never
-             kills an instance the user may still be using. -->
+             kills an instance the user may still be using.
+             Newer tauri-plugin-updater versions only pass AUTOLAUNCHAPP while restart_after_install is
+             enabled (the default). If that is ever turned off, an update install falls back to the polite
+             close request and nothing is terminated. -->
         <util:CloseApplication Id="TerminateAppForUpdate" Target="cc-switch.exe"
                                CloseMessage="no" TerminateProcess="0" RebootPrompt="no">AUTOLAUNCHAPP</util:CloseApplication>
         <util:CloseApplication Id="CloseAppForInstall" Target="cc-switch.exe"
