@@ -150,16 +150,34 @@ fn parse_session_lines(path: &Path, head: Vec<String>, tail: Vec<String>) -> Opt
         }
     }
 
-    // Extract last_active_at, summary, and custom-title from tail lines (reverse order)
+    // Extract last_active_at, summary, custom-title, and the relocated project
+    // directory from tail lines (reverse order).
+    //
+    // Ordinary records carry the Bash tool's tracked working directory, which drifts
+    // into subdirectories as commands run; it is not the session's project. A `/cd`
+    // is recorded separately as `{"type":"relocated","relocatedCwd":...}`, and Claude
+    // Code resolves a session against the last such record (falling back to the first
+    // `cwd` near the start of the transcript).
     let mut last_active_at: Option<i64> = None;
     let mut summary: Option<String> = None;
     let mut custom_title: Option<String> = None;
+    let mut relocated_project_dir: Option<String> = None;
 
     for line in tail.iter().rev() {
         let value: Value = match serde_json::from_str(line) {
             Ok(parsed) => parsed,
             Err(_) => continue,
         };
+        if relocated_project_dir.is_none()
+            && value.get("type").and_then(Value::as_str) == Some("relocated")
+        {
+            relocated_project_dir = value
+                .get("relocatedCwd")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+        }
         if last_active_at.is_none() {
             last_active_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
         }
@@ -184,9 +202,19 @@ fn parse_session_lines(path: &Path, head: Vec<String>, tail: Vec<String>) -> Opt
                 }
             }
         }
-        if last_active_at.is_some() && summary.is_some() && custom_title.is_some() {
+        if last_active_at.is_some()
+            && summary.is_some()
+            && custom_title.is_some()
+            && relocated_project_dir.is_some()
+        {
             break;
         }
+    }
+
+    // `/cd` moved the session; the last relocated record wins over the cwd the
+    // transcript started with. Sessions without a relocated record keep that cwd.
+    if relocated_project_dir.is_some() {
+        project_dir = relocated_project_dir;
     }
 
     let session_id = session_id.or_else(|| infer_session_id_from_filename(path));
@@ -1850,6 +1878,66 @@ mod tests {
 
         let meta = parse_session(&path).unwrap();
         assert_eq!(meta.title.as_deref(), Some("fix-login-bug"));
+    }
+
+    #[test]
+    fn parse_session_prefers_last_relocated_cwd_after_cd() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-cd.jsonl");
+        let mut lines = vec![
+            r#"{"type":"user","sessionId":"session-cd","cwd":"/tmp/project-a","timestamp":"2026-03-06T10:00:00Z","message":{"role":"user","content":"start"}}"#
+                .to_string(),
+        ];
+        // Pad past the 16 KB boundary so the parser takes the seek-to-tail branch.
+        for i in 1..=160 {
+            lines.push(format!(
+                r#"{{"type":"assistant","cwd":"/tmp/project-a","timestamp":"2026-03-06T10:{:02}:00Z","message":{{"role":"assistant","content":"step {i} {}"}}}}"#,
+                i % 60,
+                "x".repeat(100)
+            ));
+        }
+        lines.push(
+            r#"{"type":"relocated","relocatedCwd":"/tmp/project-b","sessionId":"session-cd","timestamp":"2026-03-06T11:00:00Z"}"#
+                .to_string(),
+        );
+        lines.push(
+            r#"{"type":"relocated","relocatedCwd":"/tmp/project-c","sessionId":"session-cd","timestamp":"2026-03-06T11:05:00Z"}"#
+                .to_string(),
+        );
+        for i in 0..3 {
+            lines.push(format!(
+                r#"{{"type":"assistant","cwd":"/tmp/project-c/subdir","timestamp":"2026-03-06T11:{:02}:00Z","message":{{"role":"assistant","content":"after cd {i}"}}}}"#,
+                10 + i
+            ));
+        }
+        std::fs::write(&path, format!("{}\n", lines.join("\n"))).expect("write");
+        assert!(std::fs::metadata(&path).expect("metadata").len() > 16_384);
+
+        let meta = parse_session(&path).unwrap();
+        // The last `relocated` record wins, and the drifting `cwd` of later
+        // records (the Bash tool's tracked directory) is ignored.
+        assert_eq!(meta.project_dir.as_deref(), Some("/tmp/project-c"));
+    }
+
+    #[test]
+    fn parse_session_ignores_drifting_cwd_without_relocated_record() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-cwd-drift.jsonl");
+        let mut lines = vec![
+            r#"{"type":"user","sessionId":"session-cwd-drift","cwd":"/tmp/project-a","timestamp":"2026-03-06T10:00:00Z","message":{"role":"user","content":"start"}}"#
+                .to_string(),
+        ];
+        for i in 0..40 {
+            lines.push(format!(
+                r#"{{"type":"assistant","cwd":"/tmp/project-a/subdir","timestamp":"2026-03-06T10:{:02}:00Z","message":{{"role":"assistant","content":"drifted {i}"}}}}"#,
+                i % 60
+            ));
+        }
+        std::fs::write(&path, format!("{}\n", lines.join("\n"))).expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        // A Bash `cd` into a subdirectory must not move the session's project.
+        assert_eq!(meta.project_dir.as_deref(), Some("/tmp/project-a"));
     }
 
     #[test]
