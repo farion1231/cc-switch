@@ -74,16 +74,28 @@ fn parse_usage(stdout: &[u8]) -> Option<Vec<QuotaTier>> {
         return None;
     }
     let groups = output.command?.data?.groups;
-    let mut tiers: Vec<QuotaTier> = groups
+    collect_tiers(
+        groups
+            .into_iter()
+            .flat_map(|group| group.buckets)
+            .map(|bucket| (bucket.id, bucket.remaining_fraction, bucket.reset_time)),
+    )
+}
+
+/// 一组额度桶（id、剩余比例、重置时间）→ 排好序的档；一档都认不出时返回 `None`。
+/// agy 的 `/usage` 和直接查 Google 额度接口（`agy_account::quota`）返回的是同一组桶。
+pub(crate) fn collect_tiers(
+    buckets: impl IntoIterator<Item = (Option<String>, Option<f64>, Option<String>)>,
+) -> Option<Vec<QuotaTier>> {
+    let mut tiers: Vec<QuotaTier> = buckets
         .into_iter()
-        .flat_map(|group| group.buckets)
-        .filter_map(|bucket| {
-            let name = tier_name(bucket.id.as_deref()?)?;
-            let remaining = bucket.remaining_fraction?.clamp(0.0, 1.0);
+        .filter_map(|(id, remaining, reset_time)| {
+            let name = tier_name(id.as_deref()?)?;
+            let remaining = remaining?.clamp(0.0, 1.0);
             Some(QuotaTier {
                 name: name.to_string(),
                 utilization: (1.0 - remaining) * 100.0,
-                resets_at: bucket.reset_time,
+                resets_at: reset_time,
                 used_value_usd: None,
                 max_value_usd: None,
             })

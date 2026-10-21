@@ -9,9 +9,12 @@
 //!   token）；不认识的号直接收录，切走也不会丢。认不出格式的整条暂存到 `agy-login-stash.json`。
 //! - 从 CC Switch 删账号只删自己的副本，永远不动钥匙串（不替 agy 登出）。
 //! - 不自动换号：额度用完、请求出错都不切，切换只由用户触发。
+//! - 查额度时令牌快过期就续期，续期结果只存 CC Switch 的副本，不写钥匙串：agy 在用的号由
+//!   agy 自己续期（Google 不轮换 refresh token，两边各自的 access token 同时有效）。
 
 pub mod keychain;
 pub mod oauth;
+pub mod quota;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -23,6 +26,7 @@ use serde_json::Value;
 use tokio::sync::{oneshot, Mutex};
 
 use crate::error::AppError;
+use crate::services::subscription::QuotaTier;
 use keychain::AgyLoginStore;
 use oauth::{AgyOAuthError, TokenResponse};
 
@@ -30,6 +34,8 @@ const STORE_FILENAME: &str = "agy_accounts.json";
 const STASH_FILENAME: &str = "agy-login-stash.json";
 /// 浏览器登录最多等这么久，过了就当放弃。
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// access token 剩不到这么久就先续期再查额度。
+const TOKEN_MARGIN: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AccountData {
@@ -102,6 +108,15 @@ pub struct AgyAccountStatus {
     pub current_account_id: Option<String>,
     /// 这个平台能不能切号（目前只有 macOS）
     pub supported: bool,
+}
+
+/// 查某个账号额度失败的原因。
+#[derive(Debug)]
+pub enum AccountQuotaError {
+    NotFound,
+    /// refresh token 失效，只能重新登录
+    NeedsReauth,
+    Failed(String),
 }
 
 pub struct LoginStart {
@@ -366,6 +381,88 @@ impl AgyAccountManager {
 
     pub async fn list(&self) -> Vec<AgyAccount> {
         sorted_accounts(&*self.store.lock().await)
+    }
+
+    // ---------- 额度 ----------
+
+    /// 用这个账号自己的令牌查剩余额度（不用先切号）。令牌被拒时强制续期再试一次。
+    pub async fn quota(&self, account_id: &str) -> Result<Vec<QuotaTier>, AccountQuotaError> {
+        let token = self.access_token(account_id).await?;
+        match quota::fetch(&token).await {
+            Ok(tiers) => Ok(tiers),
+            Err(quota::QuotaError::Unauthorized) => {
+                let token = self.refresh_account(account_id).await?;
+                quota::fetch(&token)
+                    .await
+                    .map_err(|error| AccountQuotaError::Failed(error.to_string()))
+            }
+            Err(error) => Err(AccountQuotaError::Failed(error.to_string())),
+        }
+    }
+
+    /// 这个账号还能用的 access token。agy 在用的号先从钥匙串收回 agy 续过的那份。
+    async fn access_token(&self, account_id: &str) -> Result<String, AccountQuotaError> {
+        {
+            let mut store = self.store.lock().await;
+            if keychain::supported() {
+                if let Ok(live) = self.read_live().await {
+                    if absorb(&mut store, live, false).1 {
+                        if let Err(error) = self.persist(&store) {
+                            log::warn!("[AgyAccount] 保存账号文件失败: {error}");
+                        }
+                    }
+                }
+            }
+            let account = store
+                .accounts
+                .get(account_id)
+                .ok_or(AccountQuotaError::NotFound)?;
+            if account.requires_reauth {
+                return Err(AccountQuotaError::NeedsReauth);
+            }
+            if let Some(token) = oauth::usable_access_token(&account.credential, TOKEN_MARGIN) {
+                return Ok(token.to_string());
+            }
+        }
+        self.refresh_account(account_id).await
+    }
+
+    /// 续期并存回 CC Switch 的副本（不写钥匙串）。续期时不持锁，存回前确认副本没被换掉。
+    async fn refresh_account(&self, account_id: &str) -> Result<String, AccountQuotaError> {
+        let refresh_token = {
+            let store = self.store.lock().await;
+            let account = store
+                .accounts
+                .get(account_id)
+                .ok_or(AccountQuotaError::NotFound)?;
+            refresh_token_of(&account.credential)
+                .ok_or(AccountQuotaError::NeedsReauth)?
+                .to_string()
+        };
+        let outcome = oauth::refresh(&refresh_token).await;
+        let mut store = self.store.lock().await;
+        let account = store.accounts.get_mut(account_id).filter(|account| {
+            refresh_token_of(&account.credential) == Some(refresh_token.as_str())
+        });
+        let result = match outcome {
+            Ok(tokens) => {
+                if let Some(account) = account {
+                    oauth::apply_refresh(&mut account.credential, &tokens);
+                }
+                Ok(tokens.access_token)
+            }
+            Err(AgyOAuthError::InvalidGrant) => {
+                if let Some(account) = account {
+                    account.requires_reauth = true;
+                }
+                Err(AccountQuotaError::NeedsReauth)
+            }
+            Err(error) => return Err(AccountQuotaError::Failed(error.to_string())),
+        };
+        if let Err(error) = self.persist(&store) {
+            log::warn!("[AgyAccount] 保存账号文件失败: {error}");
+        }
+        result
     }
 
     // ---------- 内部 ----------

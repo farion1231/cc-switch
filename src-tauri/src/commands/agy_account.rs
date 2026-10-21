@@ -2,7 +2,10 @@
 
 use std::sync::Arc;
 
-use crate::services::agy_account::AgyAccountManager;
+use crate::services::agy_account::{AccountQuotaError, AgyAccountManager};
+use crate::services::subscription::{CredentialStatus, SubscriptionQuota};
+
+const TOOL: &str = "agy";
 
 pub struct AgyAccountState(pub Arc<AgyAccountManager>);
 
@@ -12,4 +15,35 @@ pub async fn agy_account_is_running() -> Result<bool, String> {
     tokio::task::spawn_blocking(crate::services::agy_account::agy_running)
         .await
         .map_err(|error| error.to_string())
+}
+
+/// 授权中心逐个账号显示的剩余额度：用该账号自己的令牌直接查，不用先切号。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn agy_account_quota(
+    account_id: String,
+    state: tauri::State<'_, AgyAccountState>,
+) -> Result<SubscriptionQuota, String> {
+    Ok(match state.0.quota(&account_id).await {
+        Ok(tiers) => SubscriptionQuota {
+            tool: TOOL.to_string(),
+            credential_status: CredentialStatus::Valid,
+            credential_message: None,
+            success: true,
+            tiers,
+            extra_usage: None,
+            reset_credits: None,
+            credits_balance: None,
+            error: None,
+            queried_at: Some(chrono::Utc::now().timestamp_millis()),
+        },
+        Err(AccountQuotaError::NotFound) => SubscriptionQuota::not_found(TOOL),
+        Err(AccountQuotaError::NeedsReauth) => SubscriptionQuota::error(
+            TOOL,
+            CredentialStatus::Expired,
+            "Antigravity sign-in expired".to_string(),
+        ),
+        Err(AccountQuotaError::Failed(message)) => {
+            SubscriptionQuota::error(TOOL, CredentialStatus::Valid, message)
+        }
+    })
 }

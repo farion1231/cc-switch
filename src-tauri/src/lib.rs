@@ -1819,6 +1819,7 @@ pub fn run() {
             commands::auth_set_default_account,
             commands::auth_logout,
             commands::agy_account_is_running,
+            commands::agy_account_quota,
             // Copilot OAuth commands (multi-account support)
             commands::copilot_start_device_flow,
             commands::copilot_poll_for_auth,

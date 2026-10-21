@@ -232,6 +232,18 @@ pub async fn exchange_code(
     .await
 }
 
+/// 用 refresh token 换新的 access token（Google 续期时一般不轮换 refresh token）。
+pub async fn refresh(refresh_token: &str) -> Result<TokenResponse, AgyOAuthError> {
+    let secret = client_secret();
+    post_token(&[
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token),
+        ("client_id", CLIENT_ID),
+        ("client_secret", &secret),
+    ])
+    .await
+}
+
 async fn post_token(form: &[(&str, &str)]) -> Result<TokenResponse, AgyOAuthError> {
     let response = crate::proxy::http_client::get()
         .post(TOKEN_ENDPOINT)
@@ -313,9 +325,81 @@ pub fn new_credential(tokens: &TokenResponse) -> Option<Value> {
     }))
 }
 
+/// 续期结果写回登录数据：只换 access token、过期时间，Google 给了新 id_token 就一起换。
+/// refresh token 不轮换，原样保留；其余字段（以后 agy 新增的）也不动。
+pub fn apply_refresh(credential: &mut Value, tokens: &TokenResponse) {
+    let expires_in = tokens.expires_in.unwrap_or(3599);
+    if let Some(token) = credential.get_mut("token").and_then(Value::as_object_mut) {
+        token.insert("access_token".into(), json!(tokens.access_token));
+        token.insert("expiry".into(), json!(expiry_from_now(expires_in)));
+        token.insert("expires_in".into(), json!(expires_in));
+        if let Some(refresh_token) = tokens.refresh_token.as_deref().filter(|t| !t.is_empty()) {
+            token.insert("refresh_token".into(), json!(refresh_token));
+        }
+    }
+    if let Some(id_token) = tokens.id_token.as_deref().filter(|t| !t.is_empty()) {
+        credential["id_token"] = json!(id_token);
+    }
+}
+
+/// 登录数据里的 access token 还能用至少 `margin` 时返回它；过期、快过期或读不出过期时间返回 `None`。
+pub fn usable_access_token(credential: &Value, margin: Duration) -> Option<&str> {
+    let token = credential.pointer("/token/access_token")?.as_str()?;
+    let expiry = credential.pointer("/token/expiry")?.as_str()?;
+    let expiry = chrono::DateTime::parse_from_rfc3339(expiry).ok()?;
+    let margin = chrono::Duration::from_std(margin).ok()?;
+    (!token.is_empty() && expiry > chrono::Utc::now() + margin).then_some(token)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refresh_keeps_the_refresh_token_and_unknown_fields() {
+        let mut credential = json!({
+            "token": {"access_token": "old", "refresh_token": "r", "expiry": "x", "expires_in": 1},
+            "auth_method": "consumer", "id_token": "old-id", "future": true
+        });
+        apply_refresh(
+            &mut credential,
+            &TokenResponse {
+                access_token: "new".into(),
+                token_type: Some("Bearer".into()),
+                expires_in: Some(3599),
+                refresh_token: None,
+                id_token: Some("new-id".into()),
+            },
+        );
+        assert_eq!(credential["token"]["access_token"], "new");
+        assert_eq!(credential["token"]["refresh_token"], "r");
+        assert_eq!(credential["token"]["expires_in"], 3599);
+        assert_eq!(credential["id_token"], "new-id");
+        assert_eq!(credential["future"], true);
+        // 刚续期的令牌可用
+        assert_eq!(
+            usable_access_token(&credential, Duration::from_secs(120)),
+            Some("new")
+        );
+    }
+
+    #[test]
+    fn expired_or_unreadable_access_tokens_are_not_usable() {
+        let margin = Duration::from_secs(120);
+        let soon = (chrono::Local::now() + chrono::Duration::seconds(60))
+            .to_rfc3339_opts(chrono::SecondsFormat::Micros, false);
+        let with_expiry = |expiry: &str| json!({"token": {"access_token": "a", "expiry": expiry}});
+        assert_eq!(usable_access_token(&with_expiry(&soon), margin), None);
+        assert_eq!(
+            usable_access_token(&with_expiry("2020-01-01T00:00:00+08:00"), margin),
+            None
+        );
+        assert_eq!(usable_access_token(&with_expiry("garbage"), margin), None);
+        assert_eq!(
+            usable_access_token(&json!({"token": {"access_token": "a"}}), margin),
+            None
+        );
+    }
 
     #[test]
     fn authorization_url_carries_pkce_and_offline_access() {

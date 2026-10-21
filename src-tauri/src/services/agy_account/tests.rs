@@ -184,6 +184,20 @@ mod switching {
         assert_eq!(mode & 0o777, 0o600);
     }
 
+    #[tokio::test]
+    async fn quota_uses_the_token_agy_refreshed_for_the_live_account() {
+        let (_dir, login, manager) = manager();
+        add(&manager, "alice").await;
+        let mut live = credential("alice", "renewed-by-agy");
+        live["token"]["expiry"] = json!(in_an_hour());
+        set_live(&login, &live);
+        assert_eq!(
+            manager.access_token("alice").await.unwrap(),
+            "renewed-by-agy"
+        );
+        assert_eq!(*login.writes.lock().unwrap(), 0, "查额度不写钥匙串");
+    }
+
     /// 真机钥匙串冒烟：读写一条测试专用的条目（不是 agy 那条），确认 `security -i` 写入、
     /// 原地更新、读回都正常。默认不跑：`cargo test agy_account -- --ignored`。
     #[test]
@@ -224,4 +238,46 @@ async fn unknown_login_flow_reports_an_error() {
     let (_dir, _login, manager) = manager();
     assert!(manager.poll_login("nope").await.is_err());
     assert!(!manager.cancel_login("nope").await);
+}
+
+fn in_an_hour() -> String {
+    (chrono::Local::now() + chrono::Duration::hours(1))
+        .to_rfc3339_opts(chrono::SecondsFormat::Micros, false)
+}
+
+#[tokio::test]
+async fn quota_token_comes_from_the_stored_copy_while_fresh() {
+    let (_dir, _login, manager) = manager();
+    add(&manager, "bob").await;
+    manager
+        .store
+        .lock()
+        .await
+        .accounts
+        .get_mut("bob")
+        .unwrap()
+        .credential["token"]["expiry"] = json!(in_an_hour());
+    assert_eq!(manager.access_token("bob").await.unwrap(), "fresh");
+}
+
+#[tokio::test]
+async fn quota_token_is_refused_for_unknown_or_expired_accounts() {
+    let (_dir, _login, manager) = manager();
+    assert!(matches!(
+        manager.access_token("nobody").await,
+        Err(AccountQuotaError::NotFound)
+    ));
+    add(&manager, "bob").await;
+    manager
+        .store
+        .lock()
+        .await
+        .accounts
+        .get_mut("bob")
+        .unwrap()
+        .requires_reauth = true;
+    assert!(matches!(
+        manager.access_token("bob").await,
+        Err(AccountQuotaError::NeedsReauth)
+    ));
 }
