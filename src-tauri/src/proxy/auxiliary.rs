@@ -186,6 +186,19 @@ pub fn override_model(body: &mut Value, model: &str) -> bool {
     true
 }
 
+/// 诊断同名协议字段的类型，不记录字段内容或请求正文。
+pub fn context_management_type(body: &Value) -> &'static str {
+    match body.get("context_management") {
+        None => "absent",
+        Some(Value::Null) => "null",
+        Some(Value::Bool(_)) => "boolean",
+        Some(Value::Number(_)) => "number",
+        Some(Value::String(_)) => "string",
+        Some(Value::Array(_)) => "array",
+        Some(Value::Object(_)) => "object",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,6 +208,23 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(REQUEST_CLASS_HEADER, class.parse().unwrap());
         headers
+    }
+
+    #[test]
+    fn context_management_diagnostics_only_report_shape() {
+        for (body, expected) in [
+            (json!({}), "absent"),
+            (json!({"context_management": null}), "null"),
+            (json!({"context_management": {"edits": []}}), "object"),
+            (json!({"context_management": []}), "array"),
+            (json!({"context_management": "private content"}), "string"),
+            (json!({"context_management": true}), "boolean"),
+            (json!({"context_management": 1}), "number"),
+        ] {
+            let original = body.clone();
+            assert_eq!(context_management_type(&body), expected);
+            assert_eq!(body, original);
+        }
     }
 
     // ---- 请求头锚点 ----

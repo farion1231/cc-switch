@@ -356,6 +356,8 @@ pub struct RequestForwarder {
     session_id: String,
     /// Session ID 是否由客户端提供；生成值不能作为上游缓存身份。
     session_client_provided: bool,
+    /// 同一次请求的出站尝试共享关联 ID，不记录请求正文。
+    request_trace_id: String,
     /// 整流器配置
     rectifier_config: RectifierConfig,
     /// 优化器配置
@@ -499,6 +501,7 @@ impl RequestForwarder {
             current_provider_id_at_start,
             session_id,
             session_client_provided,
+            request_trace_id: uuid::Uuid::new_v4().to_string(),
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
@@ -810,11 +813,29 @@ impl RequestForwarder {
             s.total_requests = s.total_requests.saturating_add(1);
             s.last_request_at = Some(chrono::Utc::now().to_rfc3339());
         }
+        let auxiliary_request = matches!(app_type, AppType::Claude)
+            && super::auxiliary::routed_request_class(&headers).is_some();
         let result = self
             .forward_with_retry_inner(
                 app_type, method, endpoint, body, headers, extensions, providers,
             )
             .await;
+        if auxiliary_request {
+            match &result {
+                Ok(forwarded) => log::info!(
+                    "[Claude] [AUX-008] 上游响应头已收到, request={}, session={}, provider={}, status={}",
+                    self.request_trace_id,
+                    self.session_id,
+                    forwarded.provider.id,
+                    forwarded.response.status(),
+                ),
+                Err(_) => log::info!(
+                    "[Claude] [AUX-008] 转发失败, request={}, session={}",
+                    self.request_trace_id,
+                    self.session_id,
+                ),
+            }
+        }
         // 把 guard 注入到 Ok 结果，让它随响应一起流转到 response_processor，
         // 在流式 body 的 future 内才真正 drop。
         // Err 路径：guard 在函数 scope 内随返回值落地时自动 drop。
@@ -1456,7 +1477,7 @@ impl RequestForwarder {
                                 providers.len(),
                                 &e,
                             );
-                            log::warn!("[{app_type_str}] [{log_code}] {log_message}");
+                            log::warn!("[{app_type_str}] [{log_code}] {log_message}, request={}, session={}", self.request_trace_id, self.session_id);
 
                             last_error = Some(e);
                             last_provider = Some(provider.clone());
@@ -1470,9 +1491,11 @@ impl RequestForwarder {
                             // 上游故障，不打。
                             if matches!(category, ErrorCategory::NonRetryable) {
                                 log::warn!(
-                                    "[{app_type_str}] [{code}] provider={} 失败且不重试: {}",
+                                    "[{app_type_str}] [{code}] provider={} 失败且不重试: {}, request={}, session={}",
                                     provider.name,
                                     summarize_proxy_error(&e),
+                                    self.request_trace_id,
+                                    self.session_id,
                                     code = log_ups::FAILURE,
                                 );
                             }
@@ -2248,6 +2271,20 @@ impl RequestForwarder {
         );
         let request_is_streaming =
             is_streaming_request(&effective_endpoint, &filtered_body, headers);
+        if matches!(app_type, AppType::Claude)
+            && super::auxiliary::routed_request_class(headers).is_some()
+        {
+            log::info!(
+                "[Claude] [AUX-007] request={}, session={}, provider={}, model={}, api_format={}, stream={}, context_management_type={}",
+                self.request_trace_id,
+                self.session_id,
+                provider.id,
+                outbound_model.as_deref().unwrap_or("unknown"),
+                resolved_claude_api_format.as_deref().unwrap_or("anthropic"),
+                request_is_streaming,
+                super::auxiliary::context_management_type(&filtered_body),
+            );
+        }
         let force_identity_encoding = needs_transform
             || codex_responses_to_chat
             || codex_responses_to_anthropic
@@ -4882,6 +4919,7 @@ mod tests {
             current_provider_id_at_start: String::new(),
             session_id: String::new(),
             session_client_provided: false,
+            request_trace_id: "test-request".to_string(),
             rectifier_config: RectifierConfig::default(),
             optimizer_config: OptimizerConfig::default(),
             copilot_optimizer_config: CopilotOptimizerConfig::default(),

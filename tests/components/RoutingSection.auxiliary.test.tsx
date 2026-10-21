@@ -34,6 +34,8 @@ vi.mock("@/lib/query/proxy", () => ({
     data: { running: true, port: 15721 },
   }),
   useUpdateGlobalProxyConfig: () => ({ mutateAsync: vi.fn() }),
+  useProxyClientHost: () => ({ data: null }),
+  useSetProxyClientHost: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 vi.mock("@/hooks/useProxyStatus", () => ({

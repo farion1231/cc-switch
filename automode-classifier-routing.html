@@ -1,0 +1,306 @@
+<title>Auto Mode 分类器分流</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+  :root {
+    --bg: #f6f5f1;
+    --surface: #ffffff;
+    --ink: #1c2128;
+    --ink-2: #4a5260;
+    --ink-3: #7a8290;
+    --line: #dcd9d0;
+    --accent: #1f5f8b;
+    --accent-soft: #e4eef6;
+    --ok: #2c6e49;
+    --ok-soft: #e1f0e6;
+    --warn: #9a5b12;
+    --warn-soft: #f8eddb;
+    --code-bg: #ecebe6;
+    --sans: "IBM Plex Sans", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15181d;
+      --surface: #1d2127;
+      --ink: #e6e4dd;
+      --ink-2: #b4b2a9;
+      --ink-3: #7f7e77;
+      --line: #333841;
+      --accent: #6ea8d6;
+      --accent-soft: #1d2f3e;
+      --ok: #7fc59a;
+      --ok-soft: #1b2f24;
+      --warn: #e0a85a;
+      --warn-soft: #3a2a14;
+      --code-bg: #262b33;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15181d;
+    --surface: #1d2127;
+    --ink: #e6e4dd;
+    --ink-2: #b4b2a9;
+    --ink-3: #7f7e77;
+    --line: #333841;
+    --accent: #6ea8d6;
+    --accent-soft: #1d2f3e;
+    --ok: #7fc59a;
+    --ok-soft: #1b2f24;
+    --warn: #e0a85a;
+    --warn-soft: #3a2a14;
+    --code-bg: #262b33;
+  }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.65;
+    padding-inline: 16px;
+    padding-block: 40px 80px;
+  }
+  .wrap { max-width: 800px; margin: 0 auto; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 20px; margin-bottom: 32px; }
+  .eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); font-family: var(--mono); }
+  h1 { font-size: 30px; line-height: 1.2; margin: 8px 0 12px; text-wrap: balance; font-weight: 600; }
+  .lede { color: var(--ink-2); font-size: 16px; max-width: 62ch; margin: 0; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 14px; font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+  h2 { font-size: 20px; margin: 44px 0 12px; font-weight: 600; text-wrap: balance; }
+  h3 { font-size: 15px; margin: 24px 0 8px; font-weight: 600; color: var(--ink-2); }
+  p { margin: 0 0 12px; max-width: 70ch; }
+  ul, ol { padding-left: 22px; margin: 0 0 12px; max-width: 70ch; }
+  li { margin-bottom: 6px; }
+  code { font-family: var(--mono); font-size: 13px; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; overflow-x: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; margin: 0 0 16px; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .tbl { overflow-x: auto; margin: 0 0 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); font-weight: 500; background: var(--bg); }
+  tr:last-child td { border-bottom: none; }
+  td code { white-space: nowrap; }
+  .tag { display: inline-block; font-family: var(--mono); font-size: 11px; padding: 1px 7px; border-radius: 3px; white-space: nowrap; }
+  .tag.ok { background: var(--ok-soft); color: var(--ok); }
+  .tag.warn { background: var(--warn-soft); color: var(--warn); }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--ink-2); margin: 0 0 16px; }
+  .callout { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 0 0 16px; }
+  .callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout p:last-child { margin-bottom: 0; }
+  .steps li { margin-bottom: 10px; }
+  .todo { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 18px; }
+  .todo ol { margin: 0; }
+  .src { color: var(--ink-3); font-size: 12.5px; font-family: var(--mono); }
+  footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--ink-3); font-size: 12.5px; }
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">交接文档 · Claude Code 网关路由</div>
+  <h1>让 Auto Mode 分类器流量走单独供应商</h1>
+  <p class="lede">目标：在 Claude Code 与上游之间的 LLM 网关里，识别出 auto mode 权限分类器发出的请求，并把它们转发到与主对话不同的供应商。本文汇总已核实的请求特征、相关环境变量、推荐实现和验证方法。</p>
+  <div class="meta">
+    <span>分析对象 Claude Code 2.1.278</span>
+    <span>构建 2026-09-19 · sha 809c9806</span>
+    <span>整理日期 2026-09-21</span>
+  </div>
+</header>
+
+<h2>1. 一句话结论</h2>
+<p>可以做，但不能只靠 <code>x-claude-code-request-class</code>。这个头只有三个取值：<code>main</code>、<code>subagent</code>、<code>auxiliary</code>（外加 <code>compaction</code> 和 <code>workflow</code> 两个特例）。分类器和标题生成、记忆抽取等所有 side query 一样都是 <code>auxiliary</code>。要把分类器从其它辅助请求里单独挑出来，必须看 <code>anthropic-beta</code> 头（条件性存在）或请求体特征（稳定存在）。</p>
+
+<div class="legend">
+  <span><span class="tag ok">已核实</span> 直接读到了二进制里的代码或变更日志</span>
+  <span><span class="tag warn">推断</span> 仅从符号名或上下文推断，需要执行者验证</span>
+</div>
+
+<h2>2. 已核实的事实</h2>
+<ul>
+  <li><span class="tag ok">已核实</span> 2.1.273 变更日志原文：新增 <code>x-claude-code-request-class</code>、<code>x-claude-code-agent-type</code>、<code>x-claude-code-prev-tool-durations</code>、<code>x-claude-code-compaction</code>、<code>x-claude-code-context-compacted</code> 请求头，"for LLM gateways"，通过 <code>CLAUDE_CODE_GATEWAY_HINT_HEADERS=1</code> 开启。</li>
+  <li><span class="tag ok">已核实</span> 分类器是客户端发起的独立 API 请求，走和主对话同一个 base URL。分类器分两阶段，两阶段的 <code>querySource</code> 都是 <code>"auto_mode"</code>。另外存在 <code>"auto_mode_critique"</code> 和 <code>"auto_mode_setup_propose"</code> 两个来源，属于 auto mode 的辅助请求。</li>
+  <li><span class="tag ok">已核实</span> <code>x-claude-code-request-class</code> 的映射函数：querySource 以 <code>repl_main_thread</code> 开头或等于 <code>sdk</code> 为 <code>main</code>；以 <code>agent:</code> 开头或等于 <code>hook_agent</code> 为 <code>subagent</code>；其余一律 <code>auxiliary</code>。外层再把 <code>compact</code> 改为 <code>compaction</code>，workflow 内子代理改为 <code>workflow</code>。所以 <code>auto_mode</code>、标题生成、记忆抽取、compact 检查等共用 <code>auxiliary</code>，该头无法单独识别分类器。</li>
+  <li><span class="tag ok">已核实</span> 分类器专属 beta：<code>anthropic-beta: auto-mode-classifier-2026-07-16</code>。但只在 provider 判定为 firstParty 且另外两个条件成立时才附加，走 Bedrock、Vertex 或被识别为 gateway 登录方式时不附加。存在时是最干净的头级信号。</li>
+  <li><span class="tag ok">已核实</span> <code>cc_workload</code> 和 User-Agent 里的 <code>workload/...</code> 来自 AsyncLocalStorage，在一轮对话开始时按 turn 设置（例如 cron 触发），不按请求类型区分，对本需求无用。</li>
+  <li><span class="tag ok">已核实</span> 开关逻辑：环境变量 <code>CLAUDE_CODE_GATEWAY_HINT_HEADERS</code> 若设置则以其为准；否则若登录方式被识别为 gateway 则默认开启；否则仅第一方 API 时依赖远程 feature flag。</li>
+  <li><span class="tag ok">已核实</span> 分类器请求强制携带归因头（<code>forceAttributionHeader: true</code>），格式为 <code>x-anthropic-billing-header: cc_version=...; cc_entrypoint=...</code>。该头对主对话也会发送，不能用于区分。</li>
+  <li><span class="tag ok">已核实</span> 分类器请求体特征：<code>skipSystemPromptPrefix: true</code>（不带 Claude Code 主 system prompt 前缀）；messages 里把对话包在两个独立的 text block <code>"&lt;transcript&gt;\n"</code> 和 <code>"&lt;/transcript&gt;\n"</code> 之间；第二阶段设 <code>stop_sequences: ["&lt;/block&gt;"]</code> 或 <code>["&lt;/severity&gt;"]</code>；显式设置 <code>temperature</code>。</li>
+  <li><span class="tag ok">已核实</span> max_tokens：第一阶段 fast 为 256 加余量，thinking 变体为 64 加余量；第二阶段为 8192 加余量。</li>
+  <li><span class="tag ok">已核实</span> 分类器模型由独立函数 <code>getPermissionClassifierExternalDefault</code> 与 <code>getPermissionClassifierFlagshipRerouteTarget</code> 决定，与主对话模型解耦。默认值没有读到。</li>
+  <li><span class="tag ok">已核实</span> 存在环境变量 <code>CLAUDE_CODE_AUTO_MODE_SERVER</code>，控制 <code>thirdPartyServerClassifierEnabled</code>。未设置时，默认为"非（禁用实验 beta 且不由宿主管理供应商）"。</li>
+</ul>
+
+<h2>3. 可用于路由的信号</h2>
+<div class="tbl">
+<table>
+  <thead><tr><th>信号</th><th>位置</th><th>可靠性</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>anthropic-beta</code> 含 <code>auto-mode-classifier-2026-07-16</code></td><td>请求头</td><td><span class="tag ok">已核实</span></td><td>分类器专属。仅在 firstParty provider 且附加条件成立时出现，抓包确认你的部署下是否存在。若存在，用它做第一判定。</td></tr>
+    <tr><td><code>x-claude-code-request-class</code> = <code>auxiliary</code></td><td>请求头</td><td><span class="tag ok">已核实</span></td><td>需要 <code>CLAUDE_CODE_GATEWAY_HINT_HEADERS=1</code>。只能把分类器和主对话、子代理分开，不能和其它辅助请求分开。用作预过滤，减少需要解析 body 的请求数。</td></tr>
+    <tr><td><code>stop_sequences</code> 含 <code>&lt;/block&gt;</code> 或 <code>&lt;/severity&gt;</code></td><td>请求体</td><td><span class="tag ok">已核实</span></td><td>主对话不会设置这两个 stop sequence。覆盖第二阶段和带 severity 的第一阶段，不覆盖 fast 第一阶段。</td></tr>
+    <tr><td>messages 含独立 text block <code>&lt;transcript&gt;\n</code></td><td>请求体</td><td><span class="tag ok">已核实</span></td><td>覆盖分类器所有阶段。检查 <code>messages[].content[].text</code> 是否恰好等于该字符串。</td></tr>
+    <tr><td>system 不以 Claude Code 主 prompt 前缀开头</td><td>请求体</td><td><span class="tag ok">已核实</span></td><td>辅助信号，单独使用会误伤其它 side query（如标题生成、compact）。</td></tr>
+    <tr><td><code>model</code> 字段</td><td>请求体</td><td><span class="tag warn">推断</span></td><td>分类器模型独立配置，通常与主对话不同，但用户手动改主模型后可能重合，不建议作为唯一依据。</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>4. 相关环境变量</h2>
+<div class="tbl">
+<table>
+  <thead><tr><th>变量</th><th>作用</th><th>建议</th></tr></thead>
+  <tbody>
+    <tr><td><code>CLAUDE_CODE_GATEWAY_HINT_HEADERS</code></td><td>开启网关提示头，包括 request-class</td><td>设为 <code>1</code></td></tr>
+    <tr><td><code>CLAUDE_CODE_AUTO_MODE_SERVER</code></td><td>是否启用"第三方服务端分类器"。启用时分类器可能作为 beta 附在主请求上由服务端执行，网关看不到独立请求</td><td>设为 <code>0</code>，强制走客户端独立请求（推断，见第 7 节）</td></tr>
+    <tr><td><code>CLAUDE_CODE_ATTRIBUTION_HEADER</code></td><td>为 0 时关闭归因头</td><td>不要关闭，保留 <code>cc_workload</code> 作为交叉信号</td></tr>
+    <tr><td><code>ANTHROPIC_CUSTOM_HEADERS</code></td><td>用户自定义头，所有请求统一附加</td><td>无法按请求类型区分，不适合本需求</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>5. 推荐实现</h2>
+<p>在网关的请求处理入口按下面顺序判定，命中任一条即视为分类器请求并转发到分类器专用上游。头信号优先，体信号兜底。</p>
+<pre><code>function isAutoModeClassifier(req):
+    betas = req.headers.get("anthropic-beta", "")
+    if "auto-mode-classifier-" in betas:        # 分类器专属 beta，存在即命中
+        return True
+
+    cls = req.headers.get("x-claude-code-request-class")
+    if cls is not None and cls != "auxiliary":  # main / subagent / compaction / workflow 直接放行
+        return False
+
+    body = req.json
+    stops = body.get("stop_sequences", [])
+    if "&lt;/block&gt;" in stops or "&lt;/severity&gt;" in stops:
+        return True
+
+    for msg in body.get("messages", []):
+        content = msg.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if block.get("type") == "text" and block.get("text") == "&lt;transcript&gt;\n":
+                    return True
+    return False</code></pre>
+
+<p>转发到不同供应商时要处理的兼容点：</p>
+<ul>
+  <li>分类器请求可能带 <code>anthropic-beta</code> 和 <code>extraBodyParams</code>。代码里有"beta 被拒绝（HTTP 400）后去掉该 beta 重试"的逻辑，所以目标供应商不支持某个 beta 时返回 400 即可，客户端会自行降级并记住。</li>
+  <li>分类器解析响应文本中的 XML 标签（<code>&lt;block&gt;</code>、<code>&lt;severity&gt;</code>）。目标供应商必须原样返回文本，不能做内容改写或截断。</li>
+  <li><code>stop_reason</code> 为 <code>refusal</code> 时客户端会判定为"被安全机制拒绝"并阻止操作。目标供应商如果不产生这个值，行为是安全侧的。</li>
+  <li>分类器有超时和 deadline，按阶段区分。目标供应商延迟过高会导致分类器超时，auto mode 退回人工确认。</li>
+</ul>
+
+<h2>6. 验证步骤</h2>
+<ol class="steps">
+  <li>启动 Claude Code 时设置 <code>CLAUDE_CODE_GATEWAY_HINT_HEADERS=1</code>，<code>ANTHROPIC_BASE_URL</code> 指向网关。</li>
+  <li>网关开启请求日志，至少记录：所有 <code>x-claude-code-*</code> 头、<code>x-anthropic-billing-header</code>、<code>anthropic-beta</code>、<code>model</code>、<code>max_tokens</code>、<code>stop_sequences</code>、system 前 80 字符。</li>
+  <li>进入 auto mode，让 Claude 执行一个会触发权限判定的操作，例如写文件或运行非只读 shell 命令。</li>
+  <li>在日志里找到主对话请求之外的额外请求。用第 3 节的信号逐一核对，记录 <code>x-claude-code-request-class</code> 的实际值和 <code>cc_workload</code> 的实际值，回填到第 5 节的 <code>CLASSIFIER_CLASSES</code>。</li>
+  <li>启用路由规则，再触发一次权限判定，确认分类器上游收到了请求、主对话上游没收到，且 Claude Code 端显示 "Allowed by auto mode classifier" 或 "Denied by auto mode classifier" 而不是回退到人工确认。</li>
+  <li>覆盖 fast 第一阶段：确认没有 stop_sequences 的小 max_tokens 请求也被 transcript 规则命中。</li>
+</ol>
+
+<h2>7. 未确认项</h2>
+<div class="todo">
+<ol>
+  <li><strong><code>anthropic-beta: auto-mode-classifier-2026-07-16</code> 在你的部署下是否出现。</strong> 附加条件之一是 provider 为 firstParty，另两个条件的函数没读到。抓包一次即知，不出现就完全依赖 body 规则。</li>
+  <li><strong>分类器默认模型。</strong> 由 <code>getPermissionClassifierExternalDefault</code> 决定，值未读到。同样抓包即得。</li>
+  <li><strong><code>CLAUDE_CODE_AUTO_MODE_SERVER</code> 的完整语义。</strong> 符号名显示存在 <code>serverClassifierRequest</code>、<code>serverClassifierResults</code>、<code>isThirdPartyServerClassifierRefused</code>、<code>serverClassifierFallbackChoice</code>。推断：服务端分类器模式下，判定结果随主请求返回；第三方上游拒绝该 beta 后客户端会记住并提示 fallback 选择。需要在两种取值下各抓一次包对比。</li>
+  <li><strong><code>auto_mode_critique</code> 和 <code>auto_mode_setup_propose</code> 是否也要分流。</strong> 它们不是权限判定本身。建议先只分流 <code>auto_mode</code>，观察后再决定。</li>
+</ol>
+</div>
+
+<h2>8. 风险</h2>
+<div class="callout warn">
+<p><strong>auto mode 本身会阻止对它的分析。</strong> 本文的信息来自对本机二进制的字符串与代码片段检索。在 auto mode 下执行这类检索时，分类器会以 "Auto-Mode Bypass" 为由拒绝命令。执行本任务的 agent 若需要继续读二进制，请在非 auto 模式下运行，或提前添加允许规则。</p>
+</div>
+<ul>
+  <li>分流后分类器质量取决于目标供应商的模型。分类器 prompt 是为 Anthropic 模型调的，换供应商可能提高误判率，两个方向都可能。</li>
+  <li>分类器请求体包含完整对话 transcript。转发到另一供应商等于把对话内容也发过去，注意数据合规。</li>
+  <li>Claude Code 升级后 querySource 或头名可能变化。把路由规则做成配置而不是硬编码，并保留体信号兜底。</li>
+</ul>
+
+<h2>9. 区分 auxiliary 下的各类请求</h2>
+<p>所有非主线程、非子代理的请求在 <code>x-claude-code-request-class</code> 里都是 <code>auxiliary</code>（compact 除外，见下）。<code>forkLabel</code> 只用于遥测，不进请求头。要细分到"标题生成、记忆抽取、auto mode"这一级，只能靠请求体。二进制里的辅助请求按构造方式分三类，每类的识别位置不同。</p>
+
+<h3>三种构造方式</h3>
+<ul>
+  <li><strong>A. 独立 side query。</strong> 自带 system prompt，不带 Claude Code 主 prompt 前缀，无 tools，通常有很小的 <code>max_tokens</code>。识别位置：<code>system</code> 开头或 <code>messages[0]</code> 开头。</li>
+  <li><strong>B. 带 JSON schema 的 side query。</strong> 同 A，但多数带 <code>output_format: {type: "json_schema"}</code>。识别位置：<code>system</code> 开头加 schema 字段名。</li>
+  <li><strong>C. fork 主对话。</strong> 复用主对话的 system prompt、tools 和完整 messages，只在末尾追加一条 user 消息。model 也是主模型。识别位置：<strong>最后一条 user 消息的开头</strong>。这类请求除了 request-class 头以外，和主对话请求长得几乎一样。</li>
+</ul>
+
+<h3>各 querySource 的识别特征</h3>
+<div class="tbl">
+<table>
+  <thead><tr><th>querySource</th><th>用途</th><th>类型</th><th>识别特征</th></tr></thead>
+  <tbody>
+    <tr><td><code>auto_mode</code></td><td>权限分类器</td><td>A</td><td>见第 3 节。beta 头 <code>auto-mode-classifier-2026-07-16</code>（条件性）；messages 含独立 text block <code>&lt;transcript&gt;\n</code>；stop_sequences 含 <code>&lt;/block&gt;</code> 或 <code>&lt;/severity&gt;</code></td></tr>
+    <tr><td><code>auto_mode_critique</code></td><td>审查用户自定义 auto mode 规则</td><td>A</td><td>max_tokens 4096；用户消息以 "Here is the full c" 开头；仅在用户手动运行规则审查时触发</td></tr>
+    <tr><td><code>auto_mode_setup_propose</code></td><td>/auto-mode-setup 提议规则</td><td>B</td><td>带 json_schema 输出；仅在用户运行 setup 时触发</td></tr>
+    <tr><td><code>generate_session_title</code></td><td>会话标题</td><td>B</td><td>system 以 "You are naming a coding session so the user can pick it out of a long list of sessions." 开头；user 含 <code>&lt;session&gt;</code>；schema 只有 <code>title</code></td></tr>
+    <tr><td><code>rename_generate_name</code></td><td>/rename 生成 kebab-case 名</td><td>B 或 C</td><td>system（或 fork 时最后一条 user）以 "Generate a short kebab-case name (2-4 words)" 开头；schema 只有 <code>name</code></td></tr>
+    <tr><td><code>teleport_generate_title</code></td><td>远程会话标题和分支名</td><td>B</td><td>user 含 "Please generate a title and branch name for this session"；schema 为 <code>title</code> 加 <code>branch</code></td></tr>
+    <tr><td><code>tool_use_summary_generation</code></td><td>工具调用摘要标签</td><td>B</td><td>system 以 "Write a short summary label describing what these tool calls accomplished." 开头；user 以 "Label:" 结尾</td></tr>
+    <tr><td><code>extract_memories</code></td><td>记忆抽取</td><td>C</td><td>最后一条 user 以 "You are now acting as the memory extraction subagent." 开头。接了 MCP 记忆服务时该文本由 MCP 提供，内容可变</td></tr>
+    <tr><td><code>compact</code></td><td>上下文压缩</td><td>C</td><td>request-class 为 <code>compaction</code>，且开提示头时附带 <code>x-claude-code-compaction</code>；最后一条 user 以 "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools." 开头并含 "Your task is to create a detailed summary of the conversation so far"</td></tr>
+    <tr><td><code>agent_summary</code></td><td>子代理状态一句话</td><td>C</td><td>最后一条 user 以 "Describe your most recent action in 3-5 words using present tense (-ing)." 开头</td></tr>
+    <tr><td><code>prompt_suggestion</code></td><td>输入框建议</td><td>C</td><td>最后一条 user 以 "[SUGGESTION MODE: Suggest what the user might naturally type next into Claude Code.]" 开头</td></tr>
+    <tr><td><code>side_question</code></td><td>/btw 旁路提问</td><td>C</td><td>最后一条 user 含 <code>&lt;system-reminder&gt;</code>，其中有 "Simply answer the question with the information you have."</td></tr>
+    <tr><td><code>away_summary</code></td><td>离开后回来的回顾</td><td>C</td><td>最后一条 user 以 "The user stepped away and is coming back. Recap in under 40 words" 开头</td></tr>
+    <tr><td><code>auto_dream</code></td><td>记忆整理（dream）</td><td>C</td><td>最后一条 user 含 "Sessions since last consolidation"</td></tr>
+    <tr><td><code>agent_namer</code></td><td>后台代理命名</td><td>A</td><td>max_tokens 32 加余量；user 以 "2-4 word lowercase label for t" 开头</td></tr>
+    <tr><td><code>narration</code></td><td>状态栏一句话</td><td>A</td><td>system 为 "You write the terminal status line for an AI coding agent, in its voice, from a digest of its current turn."；max_tokens 2560</td></tr>
+    <tr><td><code>agent_classifier</code></td><td>后台代理状态分类</td><td>A</td><td>max_tokens 1024 加余量；system 带 cache_control。提示词开头未读到</td></tr>
+    <tr><td><code>insights</code></td><td>/insights 会话分析</td><td>B</td><td>user 以 "Summarize this portion of a Claude Code session transcript." 开头；max_tokens 500</td></tr>
+    <tr><td><code>feedback</code></td><td>/bug 生成 issue 标题</td><td>B</td><td>system 含 "Your response will be directly used as the title of the Github issue"</td></tr>
+    <tr><td><code>model_validation</code></td><td>校验模型名是否存在</td><td>A</td><td>max_tokens 1；user 为 "Hi"</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>网关实现建议</h3>
+<pre><code>function classifyAuxiliary(req):
+    h = req.headers
+    if "auto-mode-classifier-" in h.get("anthropic-beta", ""):
+        return "auto_mode"
+    cls = h.get("x-claude-code-request-class")
+    if cls == "compaction" or "x-claude-code-compaction" in h:
+        return "compact"
+    if cls in ("main", "subagent", "workflow"):
+        return cls
+
+    body = req.json
+    sys_text = first_text(body.get("system"))          # string 或 [{type:"text",text}]
+    last_user = last_user_text(body["messages"])        # 最后一条 role=user 的首个 text block
+    stops = body.get("stop_sequences", [])
+
+    # A/B 类：看 system 开头
+    if sys_text.startswith("You are naming a coding session"):          return "generate_session_title"
+    if sys_text.startswith("Generate a short kebab-case name"):          return "rename_generate_name"
+    if sys_text.startswith("Write a short summary label"):               return "tool_use_summary_generation"
+    if sys_text.startswith("You write the terminal status line"):        return "narration"
+    if "title of the Github issue" in sys_text:                          return "feedback"
+
+    # auto mode 分类器（无 beta 头时）
+    if has_text_block(body["messages"], "&lt;transcript&gt;\n") or set(stops) &amp; {"&lt;/block&gt;", "&lt;/severity&gt;"}:
+        return "auto_mode"
+
+    # C 类：看最后一条 user 消息开头
+    if last_user.startswith("You are now acting as the memory extraction subagent."): return "extract_memories"
+    if last_user.startswith("CRITICAL: Respond with TEXT ONLY."):                     return "compact"
+    if last_user.startswith("[SUGGESTION MODE:"):                                      return "prompt_suggestion"
+    if last_user.startswith("Describe your most recent action in 3-5 words"):        return "agent_summary"
+    if last_user.startswith("The user stepped away and is coming back."):            return "away_summary"
+    if "Sessions since last consolidation" in last_user:                              return "auto_dream"
+    if "Simply answer the question with the information you have." in last_user:     return "side_question"
+    if "Please generate a title and branch name for this session" in last_user:      return "teleport_generate_title"
+    if last_user.startswith("Summarize this portion of a Claude Code session"):      return "insights"
+    if last_user.startswith("2-4 word lowercase label"):                              return "agent_namer"
+    if body.get("max_tokens") == 1 and last_user == "Hi":                            return "model_validation"
+    return "auxiliary_other"</code></pre>
+<p>注意事项：提示词文本随版本变化，把这些前缀做成配置表并在升级后回归一次。C 类请求的 messages 很大，只解析最后一条 user 消息即可，不要扫描全文。</p>
+
+<h3>证据来源</h3>
+<p class="src">/root/.local/share/claude/versions/2.1.278（Bun 打包的 ELF，内嵌 JS）。关键片段：变更日志 "## 2.1.273" 段；<code>var XAn="x-claude-code-request-class"</code> 附近的头组装逻辑；<code>querySource:"auto_mode"</code> 两处的请求构造；<code>function GV()</code> 的开关逻辑；<code>function y5t()</code> 的 AUTO_MODE_SERVER 逻辑；<code>x-anthropic-billing-header</code> 的组装函数。</p>
+
+<footer>此文档为工程交接材料，描述的是客户端 2.1.278 的观察结果，不是官方接口承诺。</footer>
+</div>
