@@ -50,7 +50,10 @@ export function CodexSwitchReview({
         if (!open) onClose(null);
       }}
     >
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent
+        zIndex="top"
+        className="max-w-3xl max-h-[90vh] overflow-y-auto"
+      >
         <DialogHeader>
           <DialogTitle>启用前选择覆盖项</DialogTitle>
           <DialogDescription>
