@@ -189,20 +189,36 @@ export function UsageDashboard({
 }: UsageDashboardProps = {}) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
-  const [range, setRange] = useState<UsageRangeSelection>(() => ({
-    preset: readRememberedChoice(
+  const [appType, setAppType] = useState<AppTypeFilter>(initialAppType);
+  const [ranges, setRanges] = useState(() => {
+    const fallback = readRememberedChoice(
       USAGE_CHOICE_KEYS.range,
       REMEMBERED_RANGE_PRESETS,
       "today",
-    ),
-  }));
+    );
+    const selections = new Map<AppTypeFilter, UsageRangeSelection>();
+    for (const app of ["all", ...KNOWN_APP_TYPES] as const) {
+      selections.set(app, {
+        preset: readRememberedChoice(
+          `${USAGE_CHOICE_KEYS.range}.${app}`,
+          REMEMBERED_RANGE_PRESETS,
+          fallback,
+        ),
+      });
+    }
+    return selections;
+  });
+  const range: UsageRangeSelection = ranges.get(appType) ?? { preset: "today" };
   const applyRange = (next: UsageRangeSelection) => {
-    setRange(next);
+    setRanges((previous) => new Map(previous).set(appType, next));
+    // ponytail: Keep custom dates in page memory; reopen the last preset to avoid stale ranges.
     if (next.preset !== "custom") {
-      writeRememberedChoice(USAGE_CHOICE_KEYS.range, next.preset);
+      writeRememberedChoice(
+        `${USAGE_CHOICE_KEYS.range}.${appType}`,
+        next.preset,
+      );
     }
   };
-  const [appType, setAppType] = useState<AppTypeFilter>(initialAppType);
   const [providerName, setProviderName] = useState<string | undefined>(
     undefined,
   );
