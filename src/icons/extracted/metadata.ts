@@ -1122,6 +1122,14 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["dit", "dit.ai", "aggregator", "marketplace", "exchange"],
     defaultColor: "currentColor",
   },
+  haoai: {
+    name: "haoai",
+    displayName: "hao.ai",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["haoai", "hao.ai", "hao", "aggregator", "gateway"],
+    defaultColor: "currentColor",
+  },
   everyapi: {
     name: "everyapi",
     displayName: "EveryAPI",

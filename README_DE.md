@@ -64,6 +64,11 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
+<td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
+<td>Danke an hao.ai für die Unterstützung dieses Projekts! hao.ai ist ein schnelles, stabiles, einheitliches LLM-API-Gateway für Entwickler und Teams. Mit einem API-Key und einer einheitlichen Schnittstelle greifen Sie auf GPT, Claude, xAI Grok und weitere führende Modelle zu – kompatibel mit gängigen Protokollen und SDKs wie OpenAI und Anthropic. Die Plattform bietet Modell-Routing, Failover, Teamverwaltung und vollständige Aufrufprotokolle, mit Modellpreisen ab 15 % der offiziellen Referenzpreise – so lassen sich AI-Anwendungen einfacher, stabiler und günstiger bauen. hao.ai bietet CC Switch-Nutzern einen besonderen Vorteil: Wer sich über <a href="https://hao.ai/invite/DTBZS3OR">diesen Link</a> registriert, erhält bei der ersten Bestellung 5 % Bonusguthaben!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL"><img src="assets/partners/logos/fenno-banner.png" alt="Fenno.ai" width="150"></a></td>
 <td>Danke an Fenno.ai für die Unterstützung dieses Projekts! Fenno.ai ist ein stabiler und effizienter API-Relay-Dienstleister, der sich derzeit hauptsächlich auf Codex-Relay konzentriert. Er ist mit den OpenAI- und Anthropic-Protokollen kompatibel und lässt sich flexibel mit Codex, Claude Code, OpenCode und anderen gängigen Coding-Tools nutzen. Er unterstützt zuverlässig Workloads auf Unternehmensniveau von Hunderten Milliarden Tokens pro Tag und bietet B2B-Abrechnung sowie Rechnungsstellung für Unternehmen im In- und Ausland. Fenno.ai bietet einen exklusiven Vorteil für CC-Switch-Nutzer: Abonnieren Sie über <a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">diesen Link</a> den $1,99-Trial-Plan im Wert von $50 Guthaben (7 Tage gültig) und erhalten Sie bis zu 20% Empfehlungsprämien — je mehr Einladungen, desto mehr Belohnung!</td>
 </tr>

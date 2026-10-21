@@ -141,6 +141,22 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "pateway",
   },
   {
+    name: "hao.ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    auth: grokAuth(),
+    // xAI 协议另有地址 /x-ai/v1（hao.ai/docs/develop/authentication，2026-10-21）
+    config: grokPresetConfig(
+      "hao.ai",
+      "https://api.hao.ai/x-ai/v1",
+      "x-ai/grok-4.7",
+    ),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
+  },
+  {
     name: "FennoAI",
     websiteUrl: "https://api.fenno.ai",
     apiKeyUrl:

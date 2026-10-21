@@ -64,6 +64,11 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
+<td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
+<td>本プロジェクトのスポンサーである hao.ai に感謝いたします！hao.ai は、開発者とチーム向けの高速で安定した LLM 統合 API ゲートウェイです。1 つの API キーと統一インターフェースで GPT、Claude、xAI Grok などの主要モデルにアクセスでき、OpenAI や Anthropic などの一般的なプロトコルと SDK に対応しています。モデルルーティング、フェイルオーバー、チーム管理、完全な呼び出しログを備え、モデル価格は公式参考価格の最大 85% オフ。AI アプリケーションをよりシンプルに、より安定して、より低コストで構築できます。hao.ai は CC Switch ユーザー向けに特別特典を用意しています：<a href="https://hao.ai/invite/DTBZS3OR">このリンク</a>から登録すると、初回注文で 5% のボーナスクレジットを受け取れます！</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL"><img src="assets/partners/logos/fenno-banner.png" alt="Fenno.ai" width="150"></a></td>
 <td>Fenno.ai のご支援に感謝します！Fenno.ai は安定かつ高効率な API 中継サービスプロバイダーで、現在は主に Codex の中継を提供しています。OpenAI および Anthropic プロトコルに対応し、Codex・Claude Code・OpenCode などの主要なコーディングツールから柔軟に利用できます。1 日あたり数千億トークンというエンタープライズ級の呼び出し需要を安定して支え、国内外の法人による B2B 決済・請求書発行に対応しています。Fenno.ai は CC Switch 利用者限定の特典を用意しています：<a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">こちらのリンク</a>から 1.99 ドルで 50 ドル相当の Trial プラン（有効期間 7 日間）を購入でき、友達紹介で最大 20% の特典がもらえます。紹介すればするほどお得です！</td>
 </tr>

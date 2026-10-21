@@ -298,6 +298,25 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "pateway",
   },
   {
+    name: "hao.ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    category: "aggregator",
+    baseUrl: "https://api.hao.ai/anthropic",
+    mode: "direct",
+    apiFormat: "anthropic",
+    // 模型目录 hao.ai/models（2026-10-21）的 ID 都带 anthropic/ 前缀，按目录映射
+    modelRoutes: mappedRoutes(
+      "anthropic/claude-sonnet-5-5",
+      "anthropic/claude-opus-5-5",
+      "anthropic/claude-haiku-5-5",
+      true,
+    ),
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
+  },
+  {
     name: "FennoAI",
     websiteUrl: "https://api.fenno.ai",
     apiKeyUrl:

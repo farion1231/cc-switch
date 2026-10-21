@@ -515,6 +515,23 @@ requires_openai_auth = true`,
     icon: "pateway",
   },
   {
+    name: "hao.ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    // 接入文档 hao.ai/docs/integrations/codex/model-provider：/v1 + Responses；
+    // 模型 ID 带 openai/ 前缀（hao.ai/models，2026-10-21）
+    config: generateThirdPartyConfig(
+      "hao_ai",
+      "https://api.hao.ai/v1",
+      "openai/gpt-5.6-sol",
+    ),
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
+  },
+  {
     name: "FennoAI",
     websiteUrl: "https://api.fenno.ai",
     apiKeyUrl:

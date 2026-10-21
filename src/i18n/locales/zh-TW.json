@@ -1621,6 +1621,7 @@
       "ccsub": "CCSub 是穩定、實惠的 AI API 中轉平台，Claude Code 官方訂閱的超強平替，一個 Key 覆蓋全部模型，價格約為官方 1/3。",
       "subrouter": "SubRouter 是中轉站聚合平台，一個 Key 可接入多個模型與供應商。",
       "qiniu": "七牛雲是多協定 AI 中轉平台，一個 Key 即可呼叫原生 Claude、GPT、Gemini 模型，相容 Anthropic、OpenAI、Gemini 多種介面。",
+      "haoai": "hao.ai 是面向開發者與團隊的高速、穩定大模型統一 API 閘道：一個 Key 即可接入 GPT、Claude、Grok 等主流模型，相容 OpenAI、Anthropic 協定，提供模型路由、故障回退與完整呼叫日誌，價格低至官方參考價的 1.5 折。CC Switch 使用者透過此連結註冊，首單可享 5% 贈送額度！",
       "fenno": "Fenno.ai 是穩定高效的 API 中轉服務商，可接入多種主流模型。CC Switch 使用者專屬福利：透過此連結訂閱 1.99 刀 /50 刀額度的 Trial 方案，有效期 7 天！",
       "teamorouter": "TeamoRouter 是企業級 Agentic LLM 閘道，價格最高可達 90% 折扣。為 CC Switch 的使用者提供了特別福利：新使用者透過此連結註冊，首次充值享 10% 折扣！",
       "ppio": "PPIO 是中國領先的獨立 Agentic Cloud 服務商，一個 API Key 調用全部旗艦開源模型。透過此連結註冊並完成實名認證，即可獲得 ¥10 代金券。",

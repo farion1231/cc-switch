@@ -259,6 +259,25 @@ export const providerPresets: ProviderPreset[] = [
     icon: "pateway",
   },
   {
+    name: "hao.ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    // 接入文档 hao.ai/docs/integrations/claude-code/model-provider 与
+    // hao.ai/vibe-coding（2026-10-21 核对）：Anthropic Messages 在 /anthropic，
+    // 只配地址和 Key、模型留空即用 Claude Code 默认模型。目录里的 ID 带 anthropic/
+    // 前缀，但官方给 Claude Code 的配置不覆盖模型
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.hao.ai/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
+  },
+  {
     name: "FennoAI",
     websiteUrl: "https://api.fenno.ai",
     apiKeyUrl:

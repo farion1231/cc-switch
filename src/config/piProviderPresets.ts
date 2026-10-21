@@ -304,6 +304,30 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "hao.ai",
+    providerKey: "cc-switch-hao-ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    settingsConfig: {
+      name: "hao.ai",
+      baseUrl: "https://api.hao.ai/anthropic",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", {
+          id: "anthropic/claude-opus-5-5",
+        }),
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "anthropic/claude-sonnet-5-5",
+        }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
+  },
+  {
     name: "FennoAI",
     providerKey: "cc-switch-fenno-ai",
     websiteUrl: "https://api.fenno.ai",

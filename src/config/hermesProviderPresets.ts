@@ -332,6 +332,36 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "hao.ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    settingsConfig: {
+      name: "hao_ai",
+      base_url: "https://api.hao.ai/anthropic",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: [
+        {
+          id: "anthropic/claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          context_length: 1000000,
+        },
+        {
+          id: "anthropic/claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          context_length: 1000000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "anthropic/claude-opus-5-5", provider: "hao_ai" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
+  },
+  {
     name: "FennoAI",
     websiteUrl: "https://api.fenno.ai",
     apiKeyUrl:
