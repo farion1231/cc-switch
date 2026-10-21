@@ -93,6 +93,19 @@ function detectPreset(url: string): string {
   return "custom";
 }
 
+/** Match an S3 endpoint to one of the preset providers, or "custom". */
+function detectS3Preset(endpoint?: string | null): string {
+  const value = endpoint?.trim().toLowerCase() ?? "";
+  // No endpoint means the AWS default endpoint is in use.
+  if (!value) return "aws-s3";
+  if (value.includes(".r2.cloudflarestorage.com")) return "s3-r2";
+  if (value.includes(".aliyuncs.com")) return "s3-oss";
+  if (value.includes(".myqcloud.com")) return "s3-cos";
+  if (value.includes(".myhuaweicloud.com")) return "s3-obs";
+  if (value.includes("amazonaws.com")) return "aws-s3";
+  return "s3-custom";
+}
+
 // ─── S3 service presets ──────────────────────────────────────
 
 interface S3Preset {
@@ -275,7 +288,12 @@ export function WebdavSyncSection({
   }));
 
   // ─── S3 form state ─────────────────────────────────────────
-  const [s3Preset, setS3Preset] = useState("aws-s3");
+  // Keep the saved preset id so an explicit choice (MinIO, whose endpoint cannot
+  // be inferred) survives reopening the page; fall back to the endpoint for
+  // configs saved before the preset was persisted (#6663).
+  const [s3Preset, setS3Preset] = useState(
+    () => s3Config?.preset || detectS3Preset(s3Config?.endpoint),
+  );
   const [s3Region, setS3Region] = useState(s3Config?.region ?? "");
   const [s3Bucket, setS3Bucket] = useState(s3Config?.bucket ?? "");
   const [s3AccessKeyId, setS3AccessKeyId] = useState(
@@ -390,6 +408,7 @@ export function WebdavSyncSection({
     setS3AccessKeyId(s3Config.accessKeyId ?? "");
     setS3SecretAccessKey(s3Config.secretAccessKey ?? "");
     setS3Endpoint(s3Config.endpoint ?? "");
+    setS3Preset(s3Config.preset || detectS3Preset(s3Config.endpoint));
     setS3RemoteRoot(s3Config.remoteRoot ?? "cc-switch-sync");
     setS3Profile(s3Config.profile ?? "default");
     setS3AutoSync(s3Config.autoSync ?? false);
@@ -723,6 +742,7 @@ export function WebdavSyncSection({
       endpoint: s3Endpoint.trim() || undefined,
       remoteRoot: s3RemoteRoot.trim() || "cc-switch-sync",
       profile: s3Profile.trim() || "default",
+      preset: s3Preset,
     };
   }, [
     s3Enabled,
@@ -734,6 +754,7 @@ export function WebdavSyncSection({
     s3Endpoint,
     s3RemoteRoot,
     s3Profile,
+    s3Preset,
   ]);
 
   // ─── S3 Handlers ──────────────────────────────────────────
