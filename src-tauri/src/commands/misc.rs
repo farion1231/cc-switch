@@ -394,7 +394,7 @@ fn run_tool_lifecycle_silently(command_line: &str, _label: &str) -> Result<(), S
     // GUI App 继承的是 launchd 的窄 PATH，而锚定探测用的是登录 shell —— 见
     // `login_shell_path` doc。命令自身用绝对路径不受影响，但工具**内部** spawn 的
     // npm/node 等子进程、以及 install 链里裸的 npm fallback 都需要真实 PATH。
-    if let Some(login_path) = login_shell_path() {
+    if let Some(login_path) = login_shell_path(None) {
         let inherited = std::env::var("PATH").unwrap_or_default();
         cmd.env("PATH", merge_path_segments(&login_path, &inherited));
     }
@@ -2934,7 +2934,8 @@ fn merge_path_segments(primary: &str, extra: &str) -> String {
 }
 
 /// 用与 `resolve_path_default` 相同的登录 shell 解析用户的真实 PATH，
-/// 供 `run_tool_lifecycle_silently` 注入给安装/升级脚本。
+/// 供 `run_tool_lifecycle_silently` 注入给安装/升级脚本，也供
+/// `run_detected_tool_command_with_timeout` 注入给运行时调用的 CLI。
 ///
 /// **要解决的不对称**：探测阶段（`try_get_version` / `resolve_path_default`）跑的是
 /// `$SHELL -lic`，会读 `.zshrc`/`.zprofile`，看得到 nvm / homebrew / volta；而执行阶段
@@ -2954,20 +2955,27 @@ fn merge_path_segments(primary: &str, extra: &str) -> String {
 /// 任何 shell 下格式都正确。写绝对路径又绕过了 alias / function / PATH 三重不确定性
 /// （交互式 shell 会加载用户 alias）。
 ///
-/// 解析不到时返回 `None`，调用方保持原有行为（不注入），不引入新的失败模式。
+/// 解析不到（含超过 `deadline`）时返回 `None`，调用方保持原有行为（不注入），
+/// 不引入新的失败模式。
 #[cfg(not(target_os = "windows"))]
-fn login_shell_path() -> Option<String> {
-    use std::process::Command;
+fn login_shell_path(deadline: Option<CommandDeadline>) -> Option<String> {
+    use std::process::{Command, Stdio};
     let shell = std::env::var("SHELL")
         .ok()
         .filter(|s| is_valid_shell(s))
         .unwrap_or_else(|| "sh".to_string());
     let flag = default_flag_for_shell(&shell);
-    let out = Command::new(shell)
-        .arg(flag)
+    let mut cmd = Command::new(shell);
+    cmd.arg(flag)
         .arg("/usr/bin/env")
-        .output()
-        .ok()?;
+        // 与 `resolve_path_default` 相同：交互式 rc 不能读到继承来的 stdin，
+        // 也不能因持有控制终端被作业控制停住。
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    isolate_child_process_group(&mut cmd);
+    let child = cmd.spawn().ok()?;
+    let out = wait_child_output(child, deadline).ok()?;
     if !out.status.success() {
         return None;
     }
@@ -4162,10 +4170,20 @@ pub(crate) fn run_detected_tool_command_with_timeout(
         .ok_or_else(|| format!("Invalid {tool} executable path"))?;
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
+    // GUI 启动时继承的是 launchd 的窄 PATH（/usr/bin:/bin:/usr/sbin:/sbin）。npm 装的 CLI
+    // 是 `#!/usr/bin/env node` 脚本，node 常不在工具自己的目录里（如 codex 在
+    // /opt/homebrew/bin、node 在 /usr/local/bin），只补工具目录会 exit 127（#8653）。
+    // 与安装/升级同样补上登录 shell 的 PATH。
     #[cfg(not(target_os = "windows"))]
-    let current_path = std::env::var_os("PATH")
-        .map(|value| value.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let current_path = {
+        let inherited = std::env::var_os("PATH")
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        match login_shell_path(deadline) {
+            Some(login_path) => merge_path_segments(&login_path, &inherited),
+            None => inherited,
+        }
+    };
 
     #[cfg(target_os = "windows")]
     {
