@@ -52,6 +52,12 @@ export interface ProxyTakeoverStatus {
   hermes: boolean;
 }
 
+/** Applied under the backend switch lock, not inferred from a possibly stale UI mode. */
+export interface RouteSwitchResult {
+  kind: "remembered" | "route" | "stack";
+  clientConfigChanged: boolean;
+}
+
 /** 应用当前的连接方式。 */
 export type AppMode = "direct" | "route" | "stack";
 
@@ -79,6 +85,8 @@ export interface ProxyStackMember {
   modelIds: string[];
   /** 这家是默认那家（代理路由）：模型走默认路由，`modelIds` 等默认换到别家后才发布。 */
   route: boolean;
+  /** 这家不做默认、只做成员时发布几个模型（换默认的预览用；默认那家的 `modelIds` 可能为空）。 */
+  memberModels: number;
 }
 
 /**
@@ -124,6 +132,17 @@ export interface CodexStaleClients {
   unverified?: boolean;
 }
 
+/** Codex 聚合设置里「子代理模型」下拉的一项：发布的模型和它在合并目录里的推理强度档位。 */
+export interface ProxyStackSubagentModel {
+  /** 发布给客户端的模型 id（`ccs-<key>/<model>`），也是写进 `[agents]` 的值。 */
+  id: string;
+  providerId: string;
+  /** `<模型显示名>（<供应商名>）`，和 Codex 模型选择器里一样。 */
+  displayName: string;
+  efforts: string[];
+  defaultEffort?: string;
+}
+
 /** Stack 模式的状态、名单和提示。 */
 export interface ProxyStack {
   /** 在 Stack 模式（代理模式且 Stack 模式开着）。 */
@@ -134,6 +153,8 @@ export interface ProxyStack {
   staleClients?: CodexStaleClients;
   /** `staleClients` 对应的目录和登录：关掉提示后这个值变了（同一个供应商上又改了目录），重新显示。 */
   staleRevision?: string;
+  /** Codex：聚合设置里「子代理模型」下拉的选项，发布 Stack 模型的成员按名单顺序。 */
+  subagentModels?: ProxyStackSubagentModel[];
 }
 
 /** 重启 Codex 守护进程的结果：`notRunning` 表示它没在运行，什么都没做。 */

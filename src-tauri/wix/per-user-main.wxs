@@ -142,6 +142,9 @@
 
         <DirectoryRef Id="INSTALLDIR">
             <Component Id="RegistryEntries" Guid="*">
+                <!-- An MSI install can reuse a directory previously used by the portable build.
+                     Remove its marker so the installed app can use the in-app updater. -->
+                <RemoveFile Id="RemovePortableMarker" Directory="INSTALLDIR" Name="portable.ini" On="install" />
                 <RegistryKey Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}">
                     <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLDIR]" KeyPath="yes" />
                 </RegistryKey>

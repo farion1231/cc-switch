@@ -91,6 +91,14 @@ export const handlers = [
     success(getLiveProviderIds("opencode")),
   ),
 
+  http.post(`${TAURI_ENDPOINT}/get_opencode_default_model`, () =>
+    success(null),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/set_opencode_default_model`, () =>
+    success(null),
+  ),
+
   http.post(`${TAURI_ENDPOINT}/get_openclaw_live_provider_ids`, () =>
     success(getLiveProviderIds("openclaw")),
   ),
@@ -406,6 +414,10 @@ export const handlers = [
   ),
 
   http.post(`${TAURI_ENDPOINT}/set_proxy_stack_member`, () => success(null)),
+
+  http.post(`${TAURI_ENDPOINT}/codex_forces_multi_agent_v2`, () =>
+    success(false),
+  ),
 
   http.post(`${TAURI_ENDPOINT}/restart_codex_app_server_daemon`, () =>
     success("restarted"),

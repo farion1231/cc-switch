@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +7,7 @@ import {
   UsageDashboard,
   resetUsageSyncClockForTests,
 } from "@/components/usage/UsageDashboard";
+import type { UsageRangeSelection } from "@/types/usage";
 
 const useProviderStatsMock = vi.hoisted(() => vi.fn());
 const useModelStatsMock = vi.hoisted(() => vi.fn());
@@ -116,12 +117,24 @@ vi.mock("@/components/usage/UsageDateRangePicker", () => ({
     onApply,
   }: {
     triggerLabel: string;
-    onApply: (selection: { preset: "all" }) => void;
+    onApply: (selection: UsageRangeSelection) => void;
   }) => (
     <>
       <button type="button">{triggerLabel}</button>
       <button type="button" onClick={() => onApply({ preset: "all" })}>
         pick-all
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          onApply({
+            preset: "custom",
+            customStartDate: 1_700_000_000,
+            customEndDate: 1_700_086_400,
+          })
+        }
+      >
+        pick-custom
       </button>
     </>
   ),
@@ -200,12 +213,64 @@ describe("UsageDashboard", () => {
     );
   });
 
+  it("reopens on the last tab and preset range, but not on a custom range", async () => {
+    const user = userEvent.setup();
+    const first = renderDashboard();
+
+    await user.click(screen.getByRole("button", { name: "pick-all" }));
+    await user.click(screen.getByRole("tab", { name: "usage.tabs.models" }));
+    first.unmount();
+
+    const second = renderDashboard();
+    expect(await screen.findByTestId("usage-heatmap")).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "usage.tabs.models" }),
+    ).toHaveAttribute("aria-selected", "true");
+
+    // 自定义范围不记：下次还是上一个预设
+    await user.click(screen.getByRole("button", { name: "pick-custom" }));
+    expect(usageHeroMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        range: expect.objectContaining({ preset: "custom" }),
+      }),
+    );
+    second.unmount();
+
+    renderDashboard();
+    expect(usageHeroMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ range: { preset: "all" } }),
+    );
+  });
+
+  it("ignores a remembered tab or range it does not recognise", () => {
+    localStorage.setItem("cc-switch.usage.tab", "pricing");
+    localStorage.setItem("cc-switch.usage.rangePreset", "custom");
+    renderDashboard();
+
+    expect(
+      screen.getByRole("tab", { name: "usage.requestLogs" }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(usageHeroMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ range: { preset: "today" } }),
+    );
+  });
+
   it("shows the saved refresh interval in the header menu", () => {
     renderDashboard({ refreshIntervalMs: 5000 });
 
     expect(
       screen.getByRole("button", {
         name: "usage.refreshInterval: usage.refreshMenu.label:5",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("treats a legacy 'off' interval as the 60 second default", () => {
+    renderDashboard({ refreshIntervalMs: 0 });
+
+    expect(
+      screen.getByRole("button", {
+        name: "usage.refreshInterval: usage.refreshMenu.label:60",
       }),
     ).toBeInTheDocument();
   });
@@ -284,7 +349,7 @@ describe("UsageDashboard", () => {
 
     await user.click(
       screen.getByRole("button", {
-        name: "usage.refreshInterval: usage.refreshMenu.label:30",
+        name: "usage.refreshInterval: usage.refreshMenu.label:60",
       }),
     );
     await user.click(
@@ -310,7 +375,7 @@ describe("UsageDashboard", () => {
 
     await user.click(
       screen.getByRole("button", {
-        name: "usage.refreshInterval: usage.refreshMenu.label:30",
+        name: "usage.refreshInterval: usage.refreshMenu.label:60",
       }),
     );
     await user.click(
@@ -325,7 +390,7 @@ describe("UsageDashboard", () => {
     await waitFor(() =>
       expect(
         screen.getByRole("button", {
-          name: "usage.refreshInterval: usage.refreshMenu.label:30",
+          name: "usage.refreshInterval: usage.refreshMenu.label:60",
         }),
       ).toBeInTheDocument(),
     );
@@ -338,12 +403,16 @@ describe("UsageDashboard", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "usage.syncStatus.auto",
     );
+    // 打开页面会先自动扫一次，等它结束后再手动同步
+    await waitFor(() =>
+      expect(usageApiMock.syncSessionUsage).toHaveBeenCalledTimes(1),
+    );
     await user.click(
       screen.getByRole("button", { name: "usage.sessionSync.syncNow" }),
     );
 
     await waitFor(() =>
-      expect(usageApiMock.syncSessionUsage).toHaveBeenCalledTimes(1),
+      expect(usageApiMock.syncSessionUsage).toHaveBeenCalledTimes(2),
     );
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent(
@@ -388,12 +457,36 @@ describe("UsageDashboard", () => {
     );
   });
 
-  it("says when automatic scanning is off", () => {
+  it("does not scan until settings load, and never once they say scanning is off", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const view = render(
+      <QueryClientProvider client={client}>
+        <UsageDashboard settingsReady={false} />
+      </QueryClientProvider>,
+    );
+    await act(async () => {});
+    expect(usageApiMock.syncSessionUsage).not.toHaveBeenCalled();
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <UsageDashboard settingsReady sessionAutoSyncEnabled={false} />
+      </QueryClientProvider>,
+    );
+    await act(async () => {});
+    expect(usageApiMock.syncSessionUsage).not.toHaveBeenCalled();
+  });
+
+  it("says when automatic scanning is off and hides the scan interval", () => {
     renderDashboard({ sessionAutoSyncEnabled: false });
 
     expect(screen.getByRole("status")).toHaveTextContent(
       "usage.syncStatus.off",
     );
+    expect(
+      screen.queryByRole("button", { name: /usage\.refreshInterval/ }),
+    ).not.toBeInTheDocument();
+    expect(usageApiMock.syncSessionUsage).not.toHaveBeenCalled();
   });
 
   it("opens the request detail drawer from a log row", async () => {
@@ -423,11 +516,47 @@ describe("UsageDashboard", () => {
       ),
     );
 
-    await user.click(screen.getByRole("tab", { name: "usage.tabs.pricing" }));
+    await user.click(screen.getByRole("tab", { name: "usage.tabs.settings" }));
     expect(screen.getByTestId("pricing-config-panel")).toBeInTheDocument();
     expect(
-      screen.getByRole("tab", { name: "usage.tabs.pricing" }),
+      screen.getByRole("tab", { name: "usage.tabs.settings" }),
     ).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("draws the request log with the columns picked in settings", () => {
+    renderDashboard({
+      usageDisplay: { currency: "CNY", requestLogColumns: { app: false } },
+    });
+
+    // 改过的列按设置走，没改过的按默认（新列默认不显示），时间列总在
+    const columns = requestLogTableMock.mock.lastCall?.[0].columns;
+    expect(columns).toContain("time");
+    expect(columns).not.toContain("app");
+    expect(columns).not.toContain("statusCode");
+  });
+
+  it("puts the amount display above pricing in the settings tab", async () => {
+    const user = userEvent.setup();
+    renderDashboard({
+      usageDisplay: { currency: "CNY" },
+      onUsageDisplayChange: vi.fn(),
+    });
+
+    // 头部不再有单独的显示按钮
+    expect(
+      screen.queryByRole("button", { name: "usage.display.title" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "usage.tabs.settings" }));
+    const display = screen.getByRole("heading", {
+      name: "usage.display.title",
+    });
+    const pricing = screen.getByRole("heading", { name: "usage.tabs.pricing" });
+    expect(
+      display.compareDocumentPosition(pricing) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.getByRole("textbox")).toHaveValue("6.8");
+    expect(screen.getByTestId("pricing-config-panel")).toBeInTheDocument();
   });
 
   it("wires the tabs to the tabpanel and supports arrow / Home / End keys", async () => {
@@ -456,13 +585,13 @@ describe("UsageDashboard", () => {
 
     await user.keyboard("{End}");
     expect(
-      screen.getByRole("tab", { name: "usage.tabs.pricing" }),
+      screen.getByRole("tab", { name: "usage.tabs.settings" }),
     ).toHaveFocus();
     await user.keyboard("{ArrowRight}");
     expect(logsTab).toHaveAttribute("aria-selected", "true");
     await user.keyboard("{ArrowLeft}");
     expect(
-      screen.getByRole("tab", { name: "usage.tabs.pricing" }),
+      screen.getByRole("tab", { name: "usage.tabs.settings" }),
     ).toHaveAttribute("aria-selected", "true");
     await user.keyboard("{Home}");
     expect(logsTab).toHaveFocus();
@@ -510,7 +639,7 @@ describe("UsageDashboard", () => {
       await screen.findByTestId("pricing-config-panel"),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("tab", { name: "usage.tabs.pricing" }),
+      screen.getByRole("tab", { name: "usage.tabs.settings" }),
     ).toHaveAttribute("aria-selected", "true");
     // 空库里没有可看的概览，不画全是 0 的卡
     expect(screen.queryByTestId("usage-hero")).not.toBeInTheDocument();

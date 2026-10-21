@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { toast } from "sonner";
 import type { Provider } from "@/types";
-import type { ProxyAppId } from "@/config/appConfig";
+import type { ModeAppId } from "@/config/appConfig";
 import type { AppMode } from "@/types/proxy";
 import { SwitchModePanel } from "@/components/providers/mode/SwitchModePanel";
 import { server } from "../msw/server";
@@ -81,7 +81,7 @@ function mockMode(
 }
 
 function renderPanel(
-  app: ProxyAppId,
+  app: ModeAppId,
   providers: Record<string, Provider>,
   onSwitch = vi.fn(),
 ) {
@@ -113,6 +113,65 @@ beforeEach(() => {
 });
 
 describe("SwitchModePanel — Stack mode", () => {
+  it("opens the Codex aggregation settings from the Stack tab only", async () => {
+    const user = userEvent.setup();
+    mockMode("stack", "route");
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({
+          active: true,
+          members: [
+            { providerId: "route", modelIds: [], route: true },
+            {
+              providerId: "deepseek",
+              modelIds: ["ccs-deepseek/deepseek-v4-flash"],
+              route: false,
+            },
+          ],
+          subagentModels: [
+            {
+              id: "ccs-deepseek/deepseek-v4-flash",
+              providerId: "deepseek",
+              displayName: "DeepSeek V4 Flash（deepseek）",
+              efforts: ["high"],
+            },
+          ],
+        }),
+      ),
+    );
+    renderPanel("codex", {
+      route: provider("route"),
+      deepseek: provider("deepseek"),
+    });
+
+    await user.click(
+      await screen.findByRole("button", { name: "mode.stackSettings.title" }),
+    );
+    expect(
+      await screen.findByRole("combobox", {
+        name: "mode.stackSettings.subagentModel",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("has no aggregation settings for Claude Code", async () => {
+    mockMode("stack", "route");
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({
+          active: true,
+          members: [{ providerId: "route", modelIds: ["m"], route: true }],
+        }),
+      ),
+    );
+    renderPanel("claude", { route: provider("route") });
+
+    await screen.findByTestId("card-route");
+    expect(
+      screen.queryByRole("button", { name: "mode.stackSettings.title" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("adds and removes Stack members through the backend", async () => {
     mockMode("stack", "route");
     const setCalls: unknown[] = [];
@@ -121,8 +180,18 @@ describe("SwitchModePanel — Stack mode", () => {
         HttpResponse.json({
           active: true,
           members: [
-            { providerId: "route", modelIds: ["m-route"], route: true },
-            { providerId: "kimi", modelIds: ["m-kimi"], route: false },
+            {
+              providerId: "route",
+              modelIds: ["m-route"],
+              route: true,
+              memberModels: 1,
+            },
+            {
+              providerId: "kimi",
+              modelIds: ["m-kimi"],
+              route: false,
+              memberModels: 1,
+            },
           ],
         }),
       ),
@@ -156,7 +225,14 @@ describe("SwitchModePanel — Stack mode", () => {
       http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
         HttpResponse.json({
           active: true,
-          members: [{ providerId: "route", modelIds: [], route: true }],
+          members: [
+            {
+              providerId: "route",
+              modelIds: [],
+              route: true,
+              memberModels: 0,
+            },
+          ],
           notice: "officialModelsUnavailable",
           noticeReasons: ["loginStale", "noCli"],
         }),
@@ -180,7 +256,14 @@ describe("SwitchModePanel — Stack mode", () => {
       http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
         HttpResponse.json({
           active,
-          members: [{ providerId: "route", modelIds: [], route: true }],
+          members: [
+            {
+              providerId: "route",
+              modelIds: [],
+              route: true,
+              memberModels: 0,
+            },
+          ],
           staleClients: { daemon: true, others: false },
         }),
       );
@@ -277,6 +360,126 @@ describe("SwitchModePanel — Stack mode", () => {
   });
 });
 
+describe("SwitchModePanel — Claude Desktop", () => {
+  it("offers all three modes, without failover or route settings", async () => {
+    mockMode("route", "map", "direct");
+    let failoverReads = 0;
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_auto_failover_enabled`, () => {
+        failoverReads += 1;
+        return HttpResponse.json(false);
+      }),
+      http.post(`${TAURI_ENDPOINT}/get_failover_queue`, () => {
+        failoverReads += 1;
+        return HttpResponse.json([]);
+      }),
+    );
+
+    renderPanel("claude-desktop", {
+      direct: provider("direct"),
+      map: provider("map"),
+    });
+
+    expect(await screen.findByText("→ map")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /mode\.names\.stack/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(failoverReads).toBe(0);
+  });
+
+  it("enters Stack with Desktop's own notes and asks for a restart", async () => {
+    const user = userEvent.setup();
+    mockMode("route", "map", "direct");
+    const calls: unknown[] = [];
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({
+          active: false,
+          members: [
+            { providerId: "map", modelIds: [], route: true, memberModels: 1 },
+            {
+              providerId: "kimi",
+              modelIds: ["claude-fable-ccs-473908"],
+              route: false,
+              memberModels: 1,
+            },
+          ],
+        }),
+      ),
+      http.post(
+        `${TAURI_ENDPOINT}/set_proxy_takeover_for_app`,
+        async ({ request }) => {
+          calls.push(await request.json());
+          return HttpResponse.json(null);
+        },
+      ),
+    );
+
+    renderPanel("claude-desktop", {
+      direct: provider("direct"),
+      map: provider("map"),
+      kimi: provider("kimi"),
+    });
+
+    await user.click(
+      await screen.findByRole("button", { name: /mode\.names\.stack/ }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "mode.activate.stack" }),
+    );
+    expect(
+      await screen.findByText("mode.dialog.desktopStackNoteMembers"),
+    ).toBeVisible();
+    expect(
+      screen.getByText("mode.dialog.desktopRouteNoteRestart"),
+    ).toBeVisible();
+    // Claude Code 的 /model 说明和故障转移说明不适用于 Desktop
+    expect(
+      screen.queryByText("mode.dialog.stackNoteMembers"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("mode.dialog.stackNoteNoFailover"),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("mode.dialog.confirmStack"));
+    await waitFor(() =>
+      expect(calls).toEqual([
+        { appType: "claude-desktop", enabled: true, stack: true, route: "map" },
+      ]),
+    );
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        "mode.toast.enteredStackDesktop",
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("shows the Desktop config check in the notice slot", async () => {
+    mockMode("route", "map", "direct");
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_claude_desktop_status`, () =>
+        HttpResponse.json({
+          supported: true,
+          configured: true,
+          mode: "proxy",
+          missingRouteMappings: true,
+          staleRawModels: false,
+          gatewayTokenConfigured: true,
+          proxyRunning: true,
+        }),
+      ),
+    );
+
+    renderPanel("claude-desktop", { map: provider("map") });
+
+    expect(
+      await screen.findByText("claudeDesktop.statusMissingRouteMappings"),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("SwitchModePanel — mode layer", () => {
   function captureTakeover() {
     const calls: unknown[] = [];
@@ -291,6 +494,140 @@ describe("SwitchModePanel — mode layer", () => {
     );
     return calls;
   }
+
+  it("picks the Codex sub-agent model in the enter-Stack dialog and saves it before entering", async () => {
+    const user = userEvent.setup();
+    mockMode("direct", null, "a");
+    const order: string[] = [];
+    const saved: Record<string, unknown>[] = [];
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({
+          active: false,
+          members: [
+            { providerId: "deepseek", modelIds: ["x"], route: false },
+            { providerId: "kimi", modelIds: ["y"], route: false },
+          ],
+          subagentModels: [
+            {
+              id: "ccs-deepseek/deepseek-v4-flash",
+              providerId: "deepseek",
+              displayName: "DeepSeek V4 Flash（deepseek）",
+              efforts: ["high"],
+            },
+            {
+              id: "ccs-kimi/kimi-k3",
+              providerId: "kimi",
+              displayName: "Kimi K3（kimi）",
+              efforts: ["medium"],
+            },
+          ],
+        }),
+      ),
+      http.post(`${TAURI_ENDPOINT}/save_settings`, async ({ request }) => {
+        const { settings } = (await request.json()) as {
+          settings: Record<string, unknown>;
+        };
+        order.push("save");
+        saved.push(settings);
+        return HttpResponse.json(true);
+      }),
+      http.post(`${TAURI_ENDPOINT}/set_proxy_takeover_for_app`, () => {
+        order.push("enter");
+        return HttpResponse.json(null);
+      }),
+    );
+    renderPanel("codex", {
+      a: provider("a"),
+      deepseek: provider("deepseek"),
+      kimi: provider("kimi"),
+    });
+
+    await user.click(
+      await screen.findByRole("button", { name: /mode\.names\.stack/ }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "mode.activate.stack" }),
+    );
+    expect(await screen.findByText("mode.dialog.stackTitle")).toBeVisible();
+
+    // 经典工具默认开着：选了别家的模型也不用提醒
+    const classic = screen.getByRole("switch", {
+      name: "settings.codexStackClassicSubagents",
+    });
+    expect(classic).toBeChecked();
+    const model = screen.getByRole("combobox", {
+      name: "mode.stackSettings.subagentModel",
+    });
+    expect(model).toHaveTextContent("mode.stackSettings.followMain");
+    await user.click(model);
+    await user.click(
+      await screen.findByRole("option", { name: "Kimi K3（kimi）" }),
+    );
+    expect(classic).toBeChecked();
+    expect(
+      screen.queryByTestId("stack-subagent-classic-off"),
+    ).not.toBeInTheDocument();
+    // 关掉经典工具：子代理收不到任务，提醒必须打开（不替用户勾回去）
+    await user.click(classic);
+    expect(classic).not.toBeChecked();
+    expect(
+      await screen.findByTestId("stack-subagent-classic-off"),
+    ).toBeInTheDocument();
+    await user.click(classic);
+
+    // 换成 Kimi 当默认：它自己的模型不能当子代理，选过的那个标成已不在聚合里
+    const pick = screen.getByRole("combobox", {
+      name: "mode.dialog.stackDefault",
+    });
+    await user.click(pick);
+    await user.click(await screen.findByRole("option", { name: "kimi" }));
+    expect(
+      await screen.findByTestId("stack-subagent-unavailable"),
+    ).toBeInTheDocument();
+    await user.click(pick);
+    await user.click(await screen.findByRole("option", { name: "a" }));
+    expect(
+      screen.queryByTestId("stack-subagent-unavailable"),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("mode.dialog.confirmStack"));
+    await waitFor(() => expect(order).toEqual(["save", "enter"]));
+    expect(saved[0]).toMatchObject({
+      codexStackSubagentModel: "ccs-kimi/kimi-k3",
+      codexStackClassicTools: true,
+    });
+  });
+
+  it("enters Stack without saving settings when the dialog's sub-agent choice is unchanged", async () => {
+    const user = userEvent.setup();
+    mockMode("direct", null, "a");
+    let saves = 0;
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({ active: false, members: [] }),
+      ),
+      http.post(`${TAURI_ENDPOINT}/save_settings`, () => {
+        saves += 1;
+        return HttpResponse.json(true);
+      }),
+    );
+    const calls = captureTakeover();
+    renderPanel("codex", { a: provider("a") });
+
+    await user.click(
+      await screen.findByRole("button", { name: /mode\.names\.stack/ }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "mode.activate.stack" }),
+    );
+    await screen.findByRole("combobox", {
+      name: "mode.stackSettings.subagentModel",
+    });
+    await user.click(screen.getByText("mode.dialog.confirmStack"));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(saves).toBe(0);
+  });
 
   it("enters Stack from the notice and picks the default in the dialog", async () => {
     const user = userEvent.setup();
@@ -356,12 +693,19 @@ describe("SwitchModePanel — mode layer", () => {
         const body = (await request.json()) as { providerId: string };
         routeCalls.push(body);
         route = body.providerId;
-        return HttpResponse.json(null);
+        return HttpResponse.json({
+          kind: "remembered",
+          clientConfigChanged: false,
+        });
       }),
     );
     const takeover = captureTakeover();
     const onSwitch = vi.fn();
-    renderPanel("claude", { a: provider("a"), kimi: provider("kimi") }, onSwitch);
+    renderPanel(
+      "claude",
+      { a: provider("a"), kimi: provider("kimi") },
+      onSwitch,
+    );
 
     await user.click(
       await screen.findByRole("button", { name: /mode\.names\.stack/ }),
@@ -376,13 +720,15 @@ describe("SwitchModePanel — mode layer", () => {
     expect(onSwitch).not.toHaveBeenCalled();
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith(
-        "mode.toast.defaultRemembered",
+        "已记住供应商 kimi，客户端接入路由或聚合后使用。",
         expect.anything(),
       ),
     );
     // 记下的那家成了「切换后的默认」：自己不再有「设为默认」，原来那家有了
     await screen.findByTestId("menu-setDefault-a");
-    expect(screen.queryByTestId("menu-setDefault-kimi")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("menu-setDefault-kimi"),
+    ).not.toBeInTheDocument();
 
     // 确认框预选它
     await user.click(
@@ -401,8 +747,18 @@ describe("SwitchModePanel — mode layer", () => {
         HttpResponse.json({
           active: true,
           members: [
-            { providerId: "route", modelIds: ["m-route"], route: true },
-            { providerId: "kimi", modelIds: ["m-kimi"], route: false },
+            {
+              providerId: "route",
+              modelIds: ["m-route"],
+              route: true,
+              memberModels: 1,
+            },
+            {
+              providerId: "kimi",
+              modelIds: ["m-kimi"],
+              route: false,
+              memberModels: 1,
+            },
           ],
         }),
       ),
@@ -420,7 +776,9 @@ describe("SwitchModePanel — mode layer", () => {
     fireEvent.click(await screen.findByTestId("menu-setDefault-kimi"));
     fireEvent.click(screen.getByTestId("menu-setDefault-other"));
     expect(onSwitch.mock.calls.map(([p]) => p)).toEqual([kimi, other]);
-    expect(screen.queryByTestId("menu-setDefault-route")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("menu-setDefault-route"),
+    ).not.toBeInTheDocument();
     expect(routeCalls).toEqual([]);
   });
 

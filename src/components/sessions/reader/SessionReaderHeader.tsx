@@ -34,11 +34,11 @@ import { HoverTip } from "@/components/ui/hover-tip";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { fieldClass } from "@/components/ui/input";
 import { useSessionUsageSummary } from "@/lib/query/usage";
+import { DRAG_REGION_ATTR } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import type { SessionMeta, TurnIndex } from "@/types";
 import {
   fmtInt,
-  fmtUsd,
   formatTokensCompact,
   getLocaleFromLanguage,
   getResolvedLang,
@@ -56,6 +56,7 @@ import { useReaderT } from "./i18n";
 import { PathChip } from "./PathChip";
 import { formatDuration } from "./toolSummary";
 import type { ReaderFilter } from "./turns";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 
 export const readerIconButton =
   "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40";
@@ -384,7 +385,11 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
           <AppGlyph app={appId} size={16} badgeClassName="bg-app" />
         ) : undefined
       }
-      title={<span title={title}>{title}</span>}
+      title={
+        <span {...DRAG_REGION_ATTR} title={title}>
+          {title}
+        </span>
+      }
       titleExtra={
         <span className="sr-only">
           {t("sessionManager.sessionOf", {
@@ -504,6 +509,7 @@ const Sep = () => (
  */
 function SessionUsageSummary({ session }: { session: SessionMeta }) {
   const { i18n } = useTranslation();
+  const { money } = useMoneyFormat();
   const rt = useReaderT();
   const { data } = useSessionUsageSummary(
     session.providerId,
@@ -531,7 +537,7 @@ function SessionUsageSummary({ session }: { session: SessionMeta }) {
         {cost !== null && (
           <>
             {" · "}
-            {fmtUsd(cost, 2)}
+            {money(cost, 2)}
           </>
         )}
       </span>
