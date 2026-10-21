@@ -400,6 +400,36 @@ impl AgyAccountManager {
         }
     }
 
+    /// agy 现在登着的号的额度（跟随 agy 登录的卡片用）。钥匙串里没有认得出的已收录账号时
+    /// 返回 `None`（没登录、读不到、格式不认识、或用户在 CC Switch 里删过这个号），由调用方
+    /// 改问 agy 自己。
+    pub async fn live_quota(&self) -> Option<Result<Vec<QuotaTier>, AccountQuotaError>> {
+        let account_id = self.live_account_id().await?;
+        Some(self.quota(&account_id).await)
+    }
+
+    /// 把钥匙串里的登录收进账号表，返回它对应的已收录账号。
+    async fn live_account_id(&self) -> Option<String> {
+        if !keychain::supported() {
+            return None;
+        }
+        let mut store = self.store.lock().await;
+        let live = match self.read_live().await {
+            Ok(live) => live,
+            Err(error) => {
+                log::warn!("[AgyAccount] 读取 agy 当前登录失败: {error}");
+                return None;
+            }
+        };
+        let (id, changed) = absorb(&mut store, live, false);
+        if changed {
+            if let Err(error) = self.persist(&store) {
+                log::warn!("[AgyAccount] 保存账号文件失败: {error}");
+            }
+        }
+        id
+    }
+
     /// 这个账号还能用的 access token。agy 在用的号先从钥匙串收回 agy 续过的那份。
     async fn access_token(&self, account_id: &str) -> Result<String, AccountQuotaError> {
         {

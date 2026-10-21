@@ -17,13 +17,33 @@ pub async fn agy_account_is_running() -> Result<bool, String> {
         .map_err(|error| error.to_string())
 }
 
-/// 授权中心逐个账号显示的剩余额度：用该账号自己的令牌直接查，不用先切号。
+/// 授权中心逐个账号、以及绑了账号的官方卡显示的剩余额度：用该账号自己的令牌直接查，不用先切号。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn agy_account_quota(
     account_id: String,
     state: tauri::State<'_, AgyAccountState>,
 ) -> Result<SubscriptionQuota, String> {
-    Ok(match state.0.quota(&account_id).await {
+    agy_quota(&state.0, Some(&account_id)).await
+}
+
+/// Antigravity 官方登录的额度。指定账号就查它；不指定就查 agy 现在登着的号。都用 CC Switch
+/// 存的令牌直接问 Google（约 1 秒），认不出 agy 的登录、或这个平台不能切号时，改问 agy 的
+/// `/usage`（要先启动 agy，七八秒）。不能切号的平台忽略绑定，和打开终端一致。
+pub(crate) async fn agy_quota(
+    manager: &AgyAccountManager,
+    account_id: Option<&str>,
+) -> Result<SubscriptionQuota, String> {
+    if !crate::services::agy_account::keychain::supported() {
+        return crate::services::subscription_agy::get_agy_subscription_quota().await;
+    }
+    let result = match account_id {
+        Some(account_id) => manager.quota(account_id).await,
+        None => match manager.live_quota().await {
+            Some(result) => result,
+            None => return crate::services::subscription_agy::get_agy_subscription_quota().await,
+        },
+    };
+    Ok(match result {
         Ok(tiers) => SubscriptionQuota {
             tool: TOOL.to_string(),
             credential_status: CredentialStatus::Valid,

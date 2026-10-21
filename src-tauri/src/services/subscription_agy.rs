@@ -1,7 +1,9 @@
-//! Antigravity CLI 官方登录的剩余额度。
-//!
-//! 不读登录凭据：凭据在系统钥匙串里，归 agy 自己管。额度直接问 agy 的 `/usage` 命令
+//! Antigravity CLI 官方登录的剩余额度：问 agy 自己的 `/usage` 命令
 //! （`agy -p /usage --output-format json`），这条命令不调模型、不新建会话。
+//!
+//! 这是后备路径：能切号的平台（macOS）先用 CC Switch 存的令牌直接问 Google
+//! （`commands::agy_account::agy_quota`，约 1 秒），认不出 agy 的登录时才走这里；
+//! 启动 agy 要七八秒。
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

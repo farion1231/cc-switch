@@ -198,6 +198,27 @@ mod switching {
         assert_eq!(*login.writes.lock().unwrap(), 0, "查额度不写钥匙串");
     }
 
+    #[tokio::test]
+    async fn following_cards_query_the_account_agy_is_signed_in_with() {
+        let (_dir, login, manager) = manager();
+        assert_eq!(
+            manager.live_account_id().await,
+            None,
+            "agy 没登录时改问 agy"
+        );
+
+        add(&manager, "alice").await;
+        set_live(&login, &credential("bob", "b1"));
+        // 还没收录的号也收进来，之后直接查
+        assert_eq!(manager.live_account_id().await.as_deref(), Some("bob"));
+        assert_eq!(manager.list().await.len(), 2);
+
+        // 在 CC Switch 里删掉的号不再收回来，改问 agy
+        manager.remove("bob").await.unwrap();
+        assert_eq!(manager.live_account_id().await, None);
+        assert_eq!(*login.writes.lock().unwrap(), 0);
+    }
+
     /// 真机钥匙串冒烟：读写一条测试专用的条目（不是 agy 那条），确认 `security -i` 写入、
     /// 原地更新、读回都正常。默认不跑：`cargo test agy_account -- --ignored`。
     #[test]
