@@ -11,7 +11,8 @@
     <?error Unsupported value of sys.BUILDARCH=$(sys.BUILDARCH)?>
 <?endif?>
 
-<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
     <Product
             Id="*"
             Name="{{product_name}}"
@@ -33,10 +34,29 @@
         <!-- reinstall all files; rewrite all registry entries; reinstall all shortcuts -->
         <Property Id="REINSTALLMODE" Value="amus" />
 
+        <!-- Never let this installer restart the machine (#8534). The in-app updater runs
+             `msiexec /passive /promptrestart`; with no restart option, passive mode reboots without any
+             prompt as soon as a file is still in use. Updaters shipped in older releases do not pass
+             REBOOT=ReallySuppress themselves, so the package has to carry it. Files that are still
+             in use are then replaced on the next restart instead. -->
+        <Property Id="REBOOT" Value="ReallySuppress" />
+
         <!-- Auto launch app after installation, useful for passive mode which usually used in updates -->
         <Property Id="AUTOLAUNCHAPP" Secure="yes" />
         <!-- Property to forward cli args to the launched app to not lose those of the pre-update instance -->
         <Property Id="LAUNCHAPPARGS" Secure="yes" />
+
+        <!-- Keep a running instance from holding the files this install replaces. AUTOLAUNCHAPP is only
+             passed by the in-app updater, which has already run the app's exit cleanup, so a leftover
+             instance is terminated there. A manual install only gets a polite close request and never
+             kills an instance the user may still be using.
+             Newer tauri-plugin-updater versions only pass AUTOLAUNCHAPP while restart_after_install is
+             enabled (the default). If that is ever turned off, an update install falls back to the polite
+             close request and nothing is terminated. -->
+        <util:CloseApplication Id="TerminateAppForUpdate" Target="cc-switch.exe"
+                               CloseMessage="no" TerminateProcess="0" RebootPrompt="no">AUTOLAUNCHAPP</util:CloseApplication>
+        <util:CloseApplication Id="CloseAppForInstall" Target="cc-switch.exe"
+                               CloseMessage="yes" RebootPrompt="no">NOT AUTOLAUNCHAPP</util:CloseApplication>
 
         <!-- Whether the desktop shortcut is still there before this install runs (AppSearch runs before the old version is removed) -->
         <Property Id="DESKTOPSHORTCUTEXISTS">
