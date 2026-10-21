@@ -684,7 +684,7 @@ const AGY_INSTALL_WINDOWS_SCRIPT: &str = "irm https://antigravity.google/cli/ins
 const CODEX_INSTALL_WINDOWS_SCRIPT: &str = "irm https://chatgpt.com/codex/install.ps1 | iex";
 
 #[cfg(target_os = "windows")]
-fn powershell_encoded_command(script: &str) -> String {
+pub(super) fn powershell_encoded_command(script: &str) -> String {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
 
     let mut bytes = Vec::with_capacity(script.len() * 2);
@@ -2022,7 +2022,7 @@ fn should_skip_cli_path_env_dir(path: &Path) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn is_windows_app_execution_alias_dir(path: &Path) -> bool {
+pub(super) fn is_windows_app_execution_alias_dir(path: &Path) -> bool {
     let normalized = path
         .to_string_lossy()
         .replace('/', "\\")
@@ -2233,7 +2233,7 @@ fn extend_mise_node_search_paths(paths: &mut IndexSet<std::path::PathBuf>, home:
 /// so a Node that only exists in `fnm env` shells is still visible, while every
 /// explicit PATH entry keeps precedence.
 #[cfg(target_os = "windows")]
-fn effective_path_string() -> String {
+pub(super) fn effective_path_string() -> String {
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
     use winreg::RegKey;
 
@@ -4806,29 +4806,23 @@ fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
 }
 
 /// 在终端里启动的一次供应商会话：跑什么命令、只给它哪些环境变量、退出后删哪些临时
-/// 文件。打开终端那一层（各家终端的 AppleScript、Linux 候选列表、Windows start）对所有
-/// 应用共用，只有这里按应用不同。
-struct ProviderLaunch {
+/// 文件。打开终端那一层（各家终端的 AppleScript、Linux 候选列表、Windows 的
+/// `windows_terminal`）对所有应用共用，只有这里按应用不同。
+pub(super) struct ProviderLaunch {
     /// 启动前打印的说明
-    title: &'static str,
+    pub(super) title: &'static str,
     /// 说明下面打印的路径（只在 macOS / Linux 打印）
     #[cfg_attr(windows, allow(dead_code))]
-    detail: Option<PathBuf>,
-    program: &'static str,
-    /// macOS / Linux 的参数，交给用户 shell 执行前逐个加引号
-    #[cfg_attr(windows, allow(dead_code))]
-    args: Vec<String>,
-    /// Windows .bat 里执行的命令
-    #[cfg_attr(not(windows), allow(dead_code))]
-    batch_command: String,
+    pub(super) detail: Option<PathBuf>,
+    pub(super) program: &'static str,
+    /// macOS / Linux 交给用户 shell 执行前逐个加引号；Windows 经环境变量传进 .bat，
+    /// 非 ASCII 的路径不进 .bat 字节（#8034）。
+    pub(super) args: Vec<String>,
     /// 只给这一个进程的环境变量；`None` 表示要清掉（用户 rc 里可能 export 过同名变量）。
     /// macOS / Linux 写进 0600 的临时文件、读完立即删除；Windows 写进 .bat 的 `setlocal` 段。
-    env: Vec<(&'static str, Option<String>)>,
-    /// 只在 .bat 里设置、给 `batch_command` 引用的变量（比如可能含非 ASCII 的路径）
-    #[cfg_attr(not(windows), allow(dead_code))]
-    batch_vars: Vec<(&'static str, String)>,
+    pub(super) env: Vec<(&'static str, Option<String>)>,
     /// 退出时删除的临时文件，都在系统临时目录里
-    cleanup: Vec<PathBuf>,
+    pub(super) cleanup: Vec<PathBuf>,
 }
 
 /// Claude Code：把卡上的 env 写进临时 settings 文件，`claude --settings <文件>` 启动。
@@ -4838,10 +4832,6 @@ fn claude_terminal_launch(
 ) -> Result<ProviderLaunch, String> {
     let config_file = unique_temp_path(&format!("claude_{provider_id}"), "json");
     write_claude_config(&config_file, env_vars)?;
-    let config_name = config_file
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
     Ok(ProviderLaunch {
         title: "Using provider-specific claude config:",
         detail: Some(config_file.clone()),
@@ -4850,14 +4840,7 @@ fn claude_terminal_launch(
             "--settings".to_string(),
             config_file.to_string_lossy().into_owned(),
         ],
-        // 配置文件和 .bat 同在 temp_dir（%TEMP% 含用户名），用 %~dp0 引用：目录由 cmd
-        // 运行时展开，不进 .bat 字节，非 ASCII 用户名下也不会乱码（#8034）。
-        batch_command: format!(
-            "claude --settings \"%~dp0{}\"",
-            escape_windows_batch_value(&config_name)
-        ),
         env: Vec::new(),
-        batch_vars: Vec::new(),
         cleanup: vec![config_file],
     })
 }
@@ -4914,22 +4897,15 @@ fn agy_terminal_launch(provider: &crate::provider::Provider) -> Result<ProviderL
     let launch = crate::services::provider::agy_direct::terminal_launch(provider)
         .map_err(|e| e.to_string())?;
     let Some(dir) = launch.gemini_dir else {
-        let (args, batch_command, batch_vars) = match launch.model {
-            Some(model) => (
-                vec![format!("--model={model}")],
-                format!("agy \"--model=%{AGY_MODEL_BATCH_VAR}%\""),
-                vec![(AGY_MODEL_BATCH_VAR, model)],
-            ),
-            None => (Vec::new(), "agy".to_string(), Vec::new()),
-        };
         return Ok(ProviderLaunch {
             title: "Starting Antigravity CLI with your signed-in account",
             detail: None,
             program: "agy",
-            args,
-            batch_command,
+            args: launch
+                .model
+                .map(|model| vec![format!("--model={model}")])
+                .unwrap_or_default(),
             env: launch.env,
-            batch_vars,
             cleanup: Vec::new(),
         });
     };
@@ -4938,9 +4914,7 @@ fn agy_terminal_launch(provider: &crate::provider::Provider) -> Result<ProviderL
         detail: Some(dir.clone()),
         program: "agy",
         args: vec![format!("--gemini_dir={}", dir.to_string_lossy())],
-        batch_command: format!("agy \"--gemini_dir=%{AGY_DIR_BATCH_VAR}%\""),
         env: launch.env,
-        batch_vars: vec![(AGY_DIR_BATCH_VAR, dir.to_string_lossy().into_owned())],
         cleanup: Vec::new(),
     })
 }
@@ -4960,17 +4934,10 @@ pub(crate) fn open_agy_resume_terminal(
             provider.name
         ));
     }
-    let resume = format!("--conversation={conversation}");
-    launch.args.push(resume.clone());
-    launch.batch_command = format!("{} {resume}", launch.batch_command);
+    launch.args.push(format!("--conversation={conversation}"));
     let cwd = resolve_launch_cwd(cwd)?;
     launch_provider_terminal(&launch, cwd.as_deref()).map_err(|e| format!("启动终端失败: {e}"))
 }
-
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-const AGY_DIR_BATCH_VAR: &str = "CC_SWITCH_AGY_DIR";
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-const AGY_MODEL_BATCH_VAR: &str = "CC_SWITCH_AGY_MODEL";
 
 /// macOS / Linux 的启动脚本里，环境变量先以这个前缀的名字读进来，再由 `env` 改名交给
 /// 程序：用户 shell 的 rc 文件在中间执行，直接用原名会被 rc 里的 export 覆盖。
@@ -4978,7 +4945,7 @@ const AGY_MODEL_BATCH_VAR: &str = "CC_SWITCH_AGY_MODEL";
 const LAUNCH_ENV_PREFIX: &str = "CC_SWITCH_LAUNCH_ENV_";
 
 /// 同一进程里连开几个终端也不会撞名。
-fn unique_temp_path(stem: &str, ext: &str) -> PathBuf {
+pub(super) fn unique_temp_path(stem: &str, ext: &str) -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let nanos = std::time::SystemTime::now()
@@ -5011,7 +4978,7 @@ fn launch_provider_terminal(launch: &ProviderLaunch, cwd: Option<&Path>) -> Resu
 
     #[cfg(target_os = "windows")]
     {
-        let result = launch_windows_terminal(launch, cwd);
+        let result = super::windows_terminal::launch_provider_terminal(launch, cwd);
         if result.is_err() {
             for file in &launch.cleanup {
                 let _ = std::fs::remove_file(file);
@@ -5628,219 +5595,9 @@ fn which_command(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Windows: 根据用户首选终端启动
-#[cfg(target_os = "windows")]
-fn launch_windows_terminal(launch: &ProviderLaunch, cwd: Option<&Path>) -> Result<(), String> {
-    let preferred = crate::settings::get_preferred_terminal();
-    let terminal = preferred.as_deref().unwrap_or("cmd");
-
-    let bat_file = unique_temp_path("cc_switch_launcher", "bat");
-    let (cwd_command, cwd_env) = build_windows_cwd_command(cwd);
-    let mut launch_env: Vec<(String, String)> = cwd_env
-        .map(|value| (WINDOWS_CWD_ENV.to_string(), value))
-        .into_iter()
-        .collect();
-    let (set_lines, extra_env) = build_windows_launch_env(launch);
-    launch_env.extend(extra_env);
-    let launch_env: Vec<(&str, &str)> = launch_env
-        .iter()
-        .map(|(key, value)| (key.as_str(), value.as_str()))
-        .collect();
-    let cleanup: String = launch
-        .cleanup
-        .iter()
-        .filter_map(|file| file.file_name())
-        .map(|name| {
-            format!(
-                "del \"%~dp0{}\" >nul 2>&1\r\n",
-                escape_windows_batch_value(&name.to_string_lossy())
-            )
-        })
-        .collect();
-
-    // setlocal 段里设的变量（含 Key）在程序退出后随 endlocal 撤掉，不留在这个 cmd 会话里。
-    let content = format!(
-        "@echo off\r\n{cwd_command}setlocal\r\n{set_lines}echo {title}\r\n{command}\r\nendlocal\r\n{cleanup}del \"%~f0\" >nul 2>&1\r\n",
-        title = escape_windows_batch_value(launch.title),
-        command = launch.batch_command,
-    );
-
-    std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
-
-    let bat_path = bat_file.to_string_lossy();
-    let ps_cmd = format!("& '{}'", bat_path);
-
-    // Try the preferred terminal first
-    let result = match terminal {
-        "powershell" => run_windows_start_command_with_env(
-            &["powershell", "-NoExit", "-Command", &ps_cmd],
-            "PowerShell",
-            &launch_env,
-        ),
-        "wt" => run_windows_start_command_with_env(
-            &["wt", "cmd", "/K", &bat_path],
-            "Windows Terminal",
-            &launch_env,
-        ),
-        // "cmd" or default
-        _ => run_windows_start_command_with_env(&["cmd", "/K", &bat_path], "cmd", &launch_env),
-    };
-
-    // If preferred terminal fails and it's not the default, try cmd as fallback
-    if result.is_err() && terminal != "cmd" {
-        log::warn!(
-            "首选终端 {} 启动失败，回退到 cmd: {:?}",
-            terminal,
-            result.as_ref().err()
-        );
-        return run_windows_start_command_with_env(&["cmd", "/K", &bat_path], "cmd", &launch_env);
-    }
-
-    result
-}
-
 #[cfg_attr(windows, allow(dead_code))]
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
-}
-
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn is_windows_unc_path(path: &str) -> bool {
-    path.starts_with(r"\\")
-}
-
-/// .bat 里 `setlocal` 段的 `set` 行，以及要经启动进程环境传入的变量。纯 ASCII 的值直接
-/// 写进文件（`%` 双写）；含非 ASCII 的按 #8034 的办法经环境变量转一手，免得按代码页乱码。
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn build_windows_launch_env(launch: &ProviderLaunch) -> (String, Vec<(String, String)>) {
-    let mut lines = String::new();
-    let mut carried = Vec::new();
-    let entries = launch
-        .env
-        .iter()
-        .map(|(name, value)| (*name, value.clone()))
-        .chain(
-            launch
-                .batch_vars
-                .iter()
-                .map(|(name, value)| (*name, Some(value.clone()))),
-        );
-    for (index, (name, value)) in entries.enumerate() {
-        match value {
-            None => lines.push_str(&format!("set \"{name}=\"\r\n")),
-            Some(value) if value.is_ascii() => {
-                lines.push_str(&format!("set \"{name}={}\"\r\n", value.replace('%', "%%")))
-            }
-            Some(value) => {
-                let carrier = format!("CC_SWITCH_INTERNAL_ENV_{index}");
-                lines.push_str(&format!(
-                    "set \"{name}=%{carrier}%\"\r\nset \"{carrier}=\"\r\n"
-                ));
-                carried.push((carrier, value));
-            }
-        }
-    }
-    (lines, carried)
-}
-
-/// 非 ASCII 的项目目录经这个环境变量传给 Claude 启动 .bat。
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-const WINDOWS_CWD_ENV: &str = "CC_SWITCH_INTERNAL_CWD";
-
-/// 生成切到项目目录的 .bat 行，第二项是需要给启动进程设置的 `WINDOWS_CWD_ENV` 值。
-///
-/// cmd 按控制台代码页解码 .bat 字节，非 ASCII 路径以 UTF-8 写进文件会乱码（#8034）；
-/// 环境变量在 Windows 内部保持 Unicode，所以这类路径改由环境变量传入。纯 ASCII
-/// 路径照旧写进文件，不依赖终端继承环境变量（旧版 Windows Terminal 不继承）。
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn build_windows_cwd_command_str(path: &str) -> (String, Option<String>) {
-    let (target, env_value, cleanup) = if path.is_ascii() {
-        (escape_windows_batch_value(path), None, String::new())
-    } else {
-        (
-            format!("%{WINDOWS_CWD_ENV}%"),
-            Some(path.to_string()),
-            format!("set \"{WINDOWS_CWD_ENV}=\"\r\n"),
-        )
-    };
-
-    let command = if is_windows_unc_path(path) {
-        // `cmd.exe` cannot make a UNC path current via `cd`; `pushd` maps it first.
-        format!("pushd \"{target}\" || exit /b 1\r\n{cleanup}")
-    } else {
-        format!("cd /d \"{target}\" || exit /b 1\r\n{cleanup}")
-    };
-    (command, env_value)
-}
-
-#[cfg(target_os = "windows")]
-fn build_windows_cwd_command(cwd: Option<&Path>) -> (String, Option<String>) {
-    cwd.map(|dir| build_windows_cwd_command_str(&dir.to_string_lossy()))
-        .unwrap_or_default()
-}
-
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn escape_windows_batch_value(value: &str) -> String {
-    value
-        .replace('^', "^^")
-        .replace('%', "%%")
-        .replace('&', "^&")
-        .replace('|', "^|")
-        .replace('<', "^<")
-        .replace('>', "^>")
-        .replace('(', "^(")
-        .replace(')', "^)")
-}
-/// Windows: Run a start command with common error handling
-#[cfg(target_os = "windows")]
-fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), String> {
-    run_windows_start_command_with_env(args, terminal_name, &[])
-}
-
-/// 组装 `cmd /C start ...`。终端里跑的 `claude` 等命令按这里的 PATH 查找：CC Switch
-/// 被 MSI 自动重启后只剩机器级 PATH（#6061），或是在装 CLI 之前就已启动，进程 PATH
-/// 都会缺用户级条目（#3877、#8446）。和检测、生命周期命令（#8173）一样用补全后的 PATH，
-/// 只影响启动的终端，不改 CC Switch 自身的环境；Windows Terminal 从命令行开新标签时
-/// 也沿用调用方的环境。
-#[cfg(target_os = "windows")]
-fn windows_start_command(
-    args: &[&str],
-    envs: &[(&str, &str)],
-    effective_path: &str,
-) -> std::process::Command {
-    let mut command = std::process::Command::new("cmd");
-    command
-        .arg("/C")
-        .arg("start")
-        .args(args)
-        .env("PATH", effective_path)
-        .envs(envs.iter().copied())
-        .creation_flags(CREATE_NO_WINDOW);
-    command
-}
-
-/// 同 `run_windows_start_command`，额外给启动的终端设置环境变量（`start` 会继承）。
-#[cfg(target_os = "windows")]
-fn run_windows_start_command_with_env(
-    args: &[&str],
-    terminal_name: &str,
-    envs: &[(&str, &str)],
-) -> Result<(), String> {
-    let output = windows_start_command(args, envs, &effective_path_string())
-        .output()
-        .map_err(|e| format!("启动 {} 失败: {e}", terminal_name))?;
-
-    if !output.status.success() {
-        let stderr = decode_command_output(&output.stderr);
-        return Err(format!(
-            "{} 启动失败 (exit code: {:?}): {}",
-            terminal_name,
-            output.status.code(),
-            stderr
-        ));
-    }
-
-    Ok(())
 }
 
 /// 打开用户首选终端并在其中执行一段可信命令脚本。脚本尾部 `read -r` / `pause`
@@ -5850,7 +5607,9 @@ fn run_windows_start_command_with_env(
 /// **Security**：`command_line` 会被原样拼进 shell/batch 脚本，调用方必须
 /// 保证它是可信字符串（当前只由后端硬编码调用）。
 pub(crate) fn launch_terminal_running(command_line: &str, label: &str) -> Result<(), String> {
+    #[cfg(not(target_os = "windows"))]
     let temp_dir = std::env::temp_dir();
+    #[cfg(not(target_os = "windows"))]
     let pid = std::process::id();
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -5979,47 +5738,7 @@ read -r _
 
     #[cfg(target_os = "windows")]
     {
-        let preferred = crate::settings::get_preferred_terminal();
-        let terminal = preferred.as_deref().unwrap_or("cmd");
-
-        let bat_file = temp_dir.join(format!("cc_switch_{}_{}.bat", label, pid));
-        let content = format!(
-            "@echo off\r\necho [cc-switch] Starting: {label}\r\necho.\r\n{cmd}\r\necho.\r\necho [cc-switch] Command exited. Press any key to close.\r\npause >nul\r\ndel \"%~f0\" >nul 2>&1\r\n",
-            label = label,
-            cmd = command_line,
-        );
-        std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
-
-        let bat_path = bat_file.to_string_lossy();
-        let ps_cmd = format!("& '{}'", bat_path);
-
-        let result = match terminal {
-            "powershell" => run_windows_start_command(
-                &["powershell", "-NoExit", "-Command", &ps_cmd],
-                "PowerShell",
-            ),
-            "wt" => run_windows_start_command(&["wt", "cmd", "/K", &bat_path], "Windows Terminal"),
-            _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"),
-        };
-
-        let final_result = if result.is_err() && terminal != "cmd" {
-            log::warn!(
-                "首选终端 {} 启动失败，回退到 cmd: {:?}",
-                terminal,
-                result.as_ref().err()
-            );
-            run_windows_start_command(&["cmd", "/K", &bat_path], "cmd")
-        } else {
-            result
-        };
-
-        // The .bat self-deletes (`del "%~f0"`) after it runs, but that only
-        // fires if *some* terminal actually launched it. If every attempt
-        // failed, sweep the temp file ourselves to avoid pollution.
-        if final_result.is_err() {
-            let _ = std::fs::remove_file(&bat_file);
-        }
-        final_result
+        super::windows_terminal::launch_command_terminal(label, command_line)
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -6324,53 +6043,6 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn windows_start_command_passes_restored_path_to_the_terminal() {
-        let root = tempfile::tempdir().unwrap();
-        let tool_dir = root.path().join("claude 用户 & bin");
-        std::fs::create_dir_all(&tool_dir).unwrap();
-        std::fs::write(
-            tool_dir.join("cc_switch_start_test_tool.cmd"),
-            "@echo restored-terminal-path\r\n@exit /b 0\r\n",
-        )
-        .unwrap();
-
-        // `start /B /WAIT` runs the child in the same hidden console, so the
-        // test observes what the launched terminal would resolve.
-        let args = [
-            "/B",
-            "/WAIT",
-            "cmd",
-            "/D",
-            "/C",
-            "cc_switch_start_test_tool",
-        ];
-        let system_path = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32");
-        let inherited = system_path.to_str().unwrap();
-        let effective = merge_path_segments_win(&[inherited, tool_dir.to_str().unwrap()]);
-        let parent_path = std::env::var_os("PATH");
-
-        let missing = windows_start_command(&args, &[], inherited)
-            .current_dir(root.path())
-            .output()
-            .unwrap();
-        assert!(
-            !decode_command_output(&missing.stdout).contains("restored-terminal-path"),
-            "the tool must be absent on the narrow PATH: {missing:?}"
-        );
-
-        let restored = windows_start_command(&args, &[], &effective)
-            .current_dir(root.path())
-            .output()
-            .unwrap();
-        assert!(
-            decode_command_output(&restored.stdout).contains("restored-terminal-path"),
-            "{restored:?}"
-        );
-        assert_eq!(std::env::var_os("PATH"), parent_path);
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
     fn windows_lifecycle_preserves_process_path_priority_and_failure() {
         let root = tempfile::tempdir().unwrap();
         let preferred = root.path().join("process tools");
@@ -6538,15 +6210,10 @@ mod tests {
             detail: Some(PathBuf::from("/home/me/.cc-switch/agy/relay")),
             program: "agy",
             args: vec!["--gemini_dir=/home/me/.cc-switch/agy/relay".to_string()],
-            batch_command: format!("agy \"--gemini_dir=%{AGY_DIR_BATCH_VAR}%\""),
             env: vec![
                 ("GEMINI_API_KEY", Some("k'$(echo no)`x`%PATH%".to_string())),
                 ("GOOGLE_GEMINI_BASE_URL", None),
             ],
-            batch_vars: vec![(
-                AGY_DIR_BATCH_VAR,
-                r"C:\Users\张三\.cc-switch\agy\relay".to_string(),
-            )],
             cleanup: Vec::new(),
         }
     }
@@ -6589,21 +6256,12 @@ mod tests {
             unix_launch_command(&launch),
             "agy '--model=Gemini 3.1 Pro (High)'"
         );
-        assert_eq!(
-            launch.batch_command,
-            format!("agy \"--model=%{AGY_MODEL_BATCH_VAR}%\"")
-        );
-        assert_eq!(
-            launch.batch_vars,
-            vec![(AGY_MODEL_BATCH_VAR, "Gemini 3.1 Pro (High)".to_string())]
-        );
         // 带了 `--model` 的官方卡也没有私有目录，会话恢复不会把它当成 Key 卡（在开终端前就报错）。
         assert!(open_agy_resume_terminal(&row, "abc", None).is_err());
 
         row.settings_config = serde_json::json!({"env":{},"config":{}});
         let launch = agy_terminal_launch(&row).unwrap();
         assert_eq!(unix_launch_command(&launch), "agy");
-        assert_eq!(launch.batch_command, "agy");
     }
 
     #[cfg(unix)]
@@ -6658,25 +6316,6 @@ mod tests {
             "env file is removed right after reading"
         );
         assert!(!script.exists());
-    }
-
-    #[test]
-    fn windows_launch_env_scopes_values_and_carries_non_ascii_paths() {
-        let (lines, carried) = build_windows_launch_env(&agy_key_launch());
-        assert_eq!(
-            lines,
-            "set \"GEMINI_API_KEY=k'$(echo no)`x`%%PATH%%\"\r\n\
-             set \"GOOGLE_GEMINI_BASE_URL=\"\r\n\
-             set \"CC_SWITCH_AGY_DIR=%CC_SWITCH_INTERNAL_ENV_2%\"\r\n\
-             set \"CC_SWITCH_INTERNAL_ENV_2=\"\r\n"
-        );
-        assert_eq!(
-            carried,
-            vec![(
-                "CC_SWITCH_INTERNAL_ENV_2".to_string(),
-                r"C:\Users\张三\.cc-switch\agy\relay".to_string()
-            )]
-        );
     }
 
     #[cfg(unix)]
@@ -10285,51 +9924,5 @@ mod tests {
             build_macos_ghostty_applescript(p).contains(expected),
             "Ghostty did not keep the non-exec launcher"
         );
-    }
-
-    #[test]
-    fn build_windows_cwd_command_str_uses_cd_for_drive_paths() {
-        let (command, env) = build_windows_cwd_command_str(r"C:\work\repo");
-
-        assert_eq!(command, "cd /d \"C:\\work\\repo\" || exit /b 1\r\n");
-        assert_eq!(env, None);
-    }
-
-    #[test]
-    fn build_windows_cwd_command_str_uses_pushd_for_unc_paths() {
-        let (command, _) = build_windows_cwd_command_str(r"\\wsl$\Ubuntu\home\coder\repo");
-
-        assert_eq!(
-            command,
-            "pushd \"\\\\wsl$\\Ubuntu\\home\\coder\\repo\" || exit /b 1\r\n"
-        );
-    }
-
-    #[test]
-    fn build_windows_cwd_command_str_escapes_batch_metacharacters() {
-        let (command, _) = build_windows_cwd_command_str(r"\\server\share\100%&(test)");
-
-        assert_eq!(
-            command,
-            "pushd \"\\\\server\\share\\100%%^&^(test^)\" || exit /b 1\r\n"
-        );
-    }
-
-    #[test]
-    fn build_windows_cwd_command_str_passes_non_ascii_paths_via_env() {
-        // cmd 按控制台代码页解码 .bat，中文路径不能写进文件（#8034）。
-        let path = r"C:\Users\林增文\项目";
-        let (command, env) = build_windows_cwd_command_str(path);
-
-        assert!(command.is_ascii(), "batch line must stay ASCII: {command}");
-        assert_eq!(
-            command,
-            "cd /d \"%CC_SWITCH_INTERNAL_CWD%\" || exit /b 1\r\nset \"CC_SWITCH_INTERNAL_CWD=\"\r\n"
-        );
-        assert_eq!(env.as_deref(), Some(path));
-
-        let (unc_command, unc_env) = build_windows_cwd_command_str(r"\\server\共享\repo");
-        assert!(unc_command.starts_with("pushd \"%CC_SWITCH_INTERNAL_CWD%\" || exit /b 1\r\n"));
-        assert_eq!(unc_env.as_deref(), Some(r"\\server\共享\repo"));
     }
 }
