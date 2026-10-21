@@ -16,6 +16,12 @@ export const subscriptionKeys = {
   quota: (appId: AppId) => [...subscriptionKeys.all, "quota", appId] as const,
 };
 
+export const codebuddyOauthQuotaKeys = {
+  all: ["codebuddy_oauth", "quota"] as const,
+  byAccount: (accountId: string | null) =>
+    ["codebuddy_oauth", "quota", accountId ?? "default"] as const,
+};
+
 /**
  * reject 且无可展示值时的失败占位：首次查询就失败（data 为 undefined），或
  * react-query 保留的旧成功已超出 keep-last-good 窗口——合成一个失败结果，让
@@ -228,7 +234,7 @@ export function useCodebuddyOauthQuotaByAccountId(
 ): UseQueryResult<CodebuddyQuota> {
   const { enabled = true, autoQuery = false } = options;
   return useQuery({
-    queryKey: ["codebuddy_oauth", "quota", accountId ?? "default"],
+    queryKey: codebuddyOauthQuotaKeys.byAccount(accountId),
     queryFn: () => subscriptionApi.getCodebuddyOauthQuota(accountId),
     enabled,
     refetchInterval: autoQuery ? REFETCH_INTERVAL : false,

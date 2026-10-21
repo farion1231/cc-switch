@@ -5,6 +5,7 @@ import { toast } from "@/lib/toast";
 import { authApi, settingsApi } from "@/lib/api";
 import { CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR } from "@/lib/api/auth";
 import { copyText } from "@/lib/clipboard";
+import { codebuddyOauthQuotaKeys } from "@/lib/query/subscription";
 import type {
   ManagedAuthProvider,
   ManagedAuthStatus,
@@ -32,6 +33,13 @@ export function useManagedAuth(
         queryClient.invalidateQueries({ queryKey: ["providers", app] }),
       ),
     );
+  const invalidateCodebuddyQuotas = useCallback(
+    () =>
+      queryClient.invalidateQueries({
+        queryKey: codebuddyOauthQuotaKeys.all,
+      }),
+    [queryClient],
+  );
 
   const [pollingState, setPollingState] = useState<PollingState>("idle");
   const [deviceCode, setDeviceCode] =
@@ -98,6 +106,9 @@ export function useManagedAuth(
           await queryClient.invalidateQueries({
             queryKey: ["managed-auth-status", authProvider],
           });
+          if (authProvider === "codebuddy_oauth") {
+            await invalidateCodebuddyQuotas();
+          }
         }
         return cancelled;
       } catch (e) {
@@ -105,10 +116,13 @@ export function useManagedAuth(
         await queryClient.invalidateQueries({
           queryKey: ["managed-auth-status", authProvider],
         });
+        if (authProvider === "codebuddy_oauth") {
+          await invalidateCodebuddyQuotas();
+        }
         return false;
       }
     },
-    [authProvider, queryClient],
+    [authProvider, invalidateCodebuddyQuotas, queryClient],
   );
 
   const queueBackendCancellation = useCallback(
@@ -193,6 +207,9 @@ export function useManagedAuth(
             setPollingState("success");
             await refetchStatus();
             await queryClient.invalidateQueries({ queryKey });
+            if (authProvider === "codebuddy_oauth") {
+              await invalidateCodebuddyQuotas();
+            }
             if (completionGeneration !== flowGenerationRef.current) return;
             setPollingState("idle");
             setDeviceCode(null);
@@ -265,7 +282,10 @@ export function useManagedAuth(
           queryKey: ["providers", "codex"],
         });
       } else if (authProvider === "codebuddy_oauth") {
-        await invalidateCodebuddyProviders();
+        await Promise.all([
+          invalidateCodebuddyProviders(),
+          invalidateCodebuddyQuotas(),
+        ]);
       }
     },
   });
@@ -298,7 +318,10 @@ export function useManagedAuth(
           queryKey: ["providers", "codex"],
         });
       } else if (authProvider === "codebuddy_oauth") {
-        await invalidateCodebuddyProviders();
+        await Promise.all([
+          invalidateCodebuddyProviders(),
+          invalidateCodebuddyQuotas(),
+        ]);
       }
     },
   });
@@ -309,6 +332,9 @@ export function useManagedAuth(
     onSuccess: async () => {
       await refetchStatus();
       await queryClient.invalidateQueries({ queryKey });
+      if (authProvider === "codebuddy_oauth") {
+        await invalidateCodebuddyQuotas();
+      }
     },
     onError: (e) => {
       console.error("[ManagedAuth] Failed to set default account:", e);
