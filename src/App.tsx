@@ -66,6 +66,7 @@ import {
   type SettingsSection,
   type View,
 } from "@/lib/navigation";
+import { PageFrame } from "@/components/shell/PageFrame";
 import { Sidebar } from "@/components/shell/Sidebar";
 import { useUpdate } from "@/contexts/UpdateContext";
 import { NewLayoutDialog } from "@/components/shell/NewLayoutDialog";
@@ -1558,7 +1559,7 @@ function App() {
               }}
             />
           )}
-          <div
+          <PageFrame
             key={
               currentView === "settings"
                 ? "settings"
@@ -1566,10 +1567,10 @@ function App() {
                   ? "app"
                   : currentView
             }
-            className="flex min-h-0 flex-1 flex-col"
+            transitionKey={`${currentView}:${isAppPage(currentView) ? activeApp : currentView === "settings" ? settingsSection : ""}`}
           >
             {renderContent()}
-          </div>
+          </PageFrame>
         </main>
       </div>
 
