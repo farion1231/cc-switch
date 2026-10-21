@@ -338,6 +338,7 @@ describe("UsageDashboard", () => {
         hermes: true,
         pi: false,
         mcode: false,
+        deveco: false,
         agy: false,
       },
     });

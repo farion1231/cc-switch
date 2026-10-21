@@ -169,6 +169,11 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
     );
     merge_sync_step(
         &mut result,
+        "DevEco Code",
+        crate::services::session_usage_deveco::sync_deveco_usage(db),
+    );
+    merge_sync_step(
+        &mut result,
         "Antigravity",
         crate::services::session_usage_agy::sync_agy_usage(db),
     );

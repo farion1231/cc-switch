@@ -162,6 +162,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         hermes: false,
         mcode: false,
         pi: false,
+        deveco: false,
     };
 
     for app in apps_str.split(',') {
@@ -178,6 +179,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
             }
             "hermes" => apps.hermes = true,
             "mcode" => apps.mcode = true,
+            "deveco" => apps.deveco = true,
             "pi" => apps.pi = true,
             other => {
                 return Err(AppError::InvalidInput(format!(

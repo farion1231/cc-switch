@@ -48,6 +48,7 @@ export const TOOL_NAMES = [
   "hermes",
   "pi",
   "mcode",
+  "deveco",
   "agy",
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -192,6 +193,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   hermes: "Hermes",
   pi: "Pi",
   mcode: "MiniMax Code",
+  deveco: "DevEco Code",
   agy: "Antigravity CLI",
 };
 
@@ -211,6 +213,7 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   hermes: "hermes",
   pi: "pi",
   mcode: "mcode",
+  deveco: "deveco",
   agy: "agy",
 };
 

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { APP_IDS } from "@/config/appConfig";
 
 const mocks = vi.hoisted(() => ({
   getAll: vi.fn(),
@@ -103,7 +104,7 @@ describe("NewLayoutDialog", () => {
   it("stays closed when no app has providers", async () => {
     mocks.getAll.mockResolvedValue({});
     renderDialog();
-    await waitFor(() => expect(mocks.getAll).toHaveBeenCalledTimes(11));
+    await waitFor(() => expect(mocks.getAll).toHaveBeenCalledTimes(APP_IDS.length));
     expect(screen.queryByText("newLayoutNotice.title")).not.toBeInTheDocument();
   });
 

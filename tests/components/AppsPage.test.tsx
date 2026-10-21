@@ -1290,7 +1290,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     });
     const { AppsPage } = await import("@/components/apps/AppsPage");
     const view = mountApps(AppsPage);
-    await waitFor(() => expect(mocks.getToolVersions).toHaveBeenCalledTimes(10));
+    await waitFor(() => expect(mocks.getToolVersions).toHaveBeenCalledTimes(11));
     view.unmount();
     const remounted = await renderApps();
     fireEvent.click(updateButton("Claude Code"));

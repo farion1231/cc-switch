@@ -15,6 +15,7 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   hermes: "Hermes",
   pi: "Pi",
   mcode: "MiniMax Code",
+  deveco: "DevEco Code",
   agy: "Antigravity",
 };
 
@@ -29,6 +30,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   hermes: "hermes",
   pi: "pi",
   mcode: "minimax",
+  deveco: "deveco",
   agy: "antigravity",
 };
 
