@@ -635,6 +635,49 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
   ];
 }
 
+// ─── 启动器式应用（Antigravity）──────────────────────────────────────────────
+
+export interface LaunchInput {
+  app: AppId;
+  t: TFunction;
+  providers: Provider[];
+  openTerminal: (provider: Provider) => void;
+}
+
+/**
+ * Antigravity：第三方 Key 只能经环境变量交给 CC Switch 打开的那个 agy，管不到用户自己敲的
+ * `agy`，所以没有「启用 / 使用中」，每张卡的主操作就是「打开终端」，哪张都能删。
+ */
+export function buildLaunchSections(input: LaunchInput): ProviderSection[] {
+  const { app, t, providers, openTerminal } = input;
+  return [
+    {
+      key: "all",
+      items: providers.map((p) => ({
+        provider: p,
+        presentation: {
+          chips: isOfficialAccount(app, p)
+            ? [
+                {
+                  key: "official",
+                  label: t("providerCard.chip.official"),
+                  tone: "outline",
+                },
+              ]
+            : [],
+          buttons: [
+            {
+              key: "openTerminal",
+              label: t("provider.openTerminalWithProvider"),
+              onClick: () => openTerminal(p),
+            },
+          ],
+        },
+      })),
+    },
+  ];
+}
+
 // ─── 共存式应用（OpenCode / OpenClaw / Hermes / Pi / MiniMax Code）───────────
 
 export interface AdditiveInput {

@@ -259,7 +259,14 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
   },
   agy: {
     label: "Antigravity",
-    icon: <GeminiIcon size={14} />,
+    icon: (
+      <ProviderIcon
+        icon="antigravity"
+        name="Antigravity"
+        size={14}
+        showFallback={false}
+      />
+    ),
     activeClass:
       "bg-sky-500/10 ring-1 ring-sky-500/20 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300",
     badgeClass:

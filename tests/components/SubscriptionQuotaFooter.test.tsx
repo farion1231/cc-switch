@@ -194,6 +194,41 @@ describe("Claude Fable subscription quota", () => {
   });
 });
 
+describe("Antigravity quota groups", () => {
+  const agyTiers: QuotaTier[] = [
+    { name: "agy_gemini_five_hour", utilization: 10, resetsAt: null },
+    {
+      name: "agy_gemini_weekly",
+      utilization: 40,
+      resetsAt: "2026-09-12T00:00:00Z",
+    },
+    { name: "agy_third_party_five_hour", utilization: 95, resetsAt: null },
+    { name: "agy_third_party_weekly", utilization: 20, resetsAt: null },
+  ];
+
+  it("keeps one line per group on the card: the window with the least left", () => {
+    renderQuota(agyTiers);
+    const lines = screen.getByRole("button").children;
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toHaveTextContent("Gemini 剩余 60%");
+    expect(lines[1]).toHaveTextContent("Claude/GPT 剩余 5%");
+    // 倒计时跟着留下的那档（Gemini 每周）
+    expect(screen.getByText("2d12h")).toBeInTheDocument();
+  });
+
+  it("lists every group and window when expanded", () => {
+    renderQuota(agyTiers, false);
+    for (const name of [
+      "Gemini 5 小时: 剩余 90%",
+      "Gemini 每周: 剩余 60%",
+      "Claude/GPT 5 小时: 剩余 5%",
+      "Claude/GPT 每周: 剩余 80%",
+    ]) {
+      expect(screen.getByRole("meter", { name })).toBeInTheDocument();
+    }
+  });
+});
+
 describe("credential failures", () => {
   const failed = (credentialStatus: SubscriptionQuota["credentialStatus"]) =>
     renderQuota([], true, {

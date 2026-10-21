@@ -180,13 +180,15 @@
     "managedByHermes": "Hermes 託管",
     "managedByHermesHint": "該專案定義於 Hermes 的 providers: dict，請在 Hermes Web UI 中編輯或刪除。",
     "openTerminal": "開啟終端機",
+    "openTerminalWithProvider": "使用此供應商開啟終端機",
     "terminalOpened": "終端機已開啟",
     "terminalOpenFailed": "開啟終端機失敗",
     "openTerminalDialog": {
       "title": "要在哪個目錄開啟終端機？",
-      "description": "會在你選的目錄裡開啟一個終端機，並用「{{name}}」的設定啟動 Claude Code。一般選你的專案資料夾。",
+      "description": "會在你選的目錄裡開啟一個終端機，並用「{{name}}」的設定啟動 {{app}}。一般選你的專案資料夾。",
       "isolationTitle": "這個終端機是隔離的",
       "isolationBody": "它固定使用「{{name}}」，之後在 CC Switch 裡切換供應商不會影響它；它也不會改動 CC Switch 裡正在使用的供應商。",
+      "isolationBodyAgy": "「{{name}}」的 Key 和位址只傳給這個終端機裡的 agy，不寫進任何檔案；在別的終端機裡直接執行 agy 仍是 Google 登入。",
       "noDir": "還沒選目錄",
       "choose": "選擇資料夾…",
       "change": "更換…",
@@ -209,10 +211,11 @@
     "geminiConfigHint": "使用 .env 格式設定 Gemini",
     "form": {
       "agy": {
-        "connectionHint": "不填 API Key 和請求位址時使用 agy 本身的 Google 登入。填寫 Key 但不填位址時使用 Google 預設 API；第三方位址須相容 Gemini API。切換後請開啟新終端或重新啟動 agy，執行中的工作階段不會自動切換。登入模式的模型清單讀取目前的 agy 設定。 登入模式請使用模型清單中的顯示名稱；API 模式使用介面模型 ID。",
-        "keyFieldsHint": "位址、Key 和模型隨供應商切換；Antigravity 的其他原生設定保持不變。",
+        "endpointHelp": "留空用 Google 預設 API。第三方位址須相容 Gemini API，並支援 agy 內建的 Gemini 模型。",
+        "modelHelp": "填模型清單裡的顯示名稱，可點「取得模型清單」選擇。只對那次工作階段生效。",
+        "keyFieldsHint": "模型、Key 和位址都只在「開啟終端機」時使用，不寫進 Antigravity 自己的設定。",
         "envFile": "啟動環境變數",
-        "envFileHint": "CC Switch 會在啟動 agy 時傳入 API Key、請求位址和模型。其他環境變數不會套用。",
+        "envFileHint": "從卡片「開啟終端機」啟動 agy 時，CC Switch 只把 API Key 和請求位址傳給那一個 agy 行程，不寫進任何檔案。其他環境變數不會套用。",
         "configJson": "模型設定（CC Switch 格式）",
         "configJsonHint": "這裡僅支援模型設定，其他 Antigravity 選項請在 agy 中調整；MCP 在 MCP 面板中管理。"
       },
@@ -2550,7 +2553,7 @@
     },
     "prevMonth": "上個月",
     "nextMonth": "下個月",
-    "agyUsageHint": "Antigravity 顯示工作階段日誌的原始 Token；缺失的歷史模型記為 unknown。日誌未提供可靠計費資訊，顯示的 0 費用不代表免費。"
+    "agyUsageHint": "Antigravity 顯示工作階段日誌裡的原始 Token，金額按對應的 Gemini API 價格估算；官方訂閱按方案計費，這裡的金額僅供參考。缺少模型的歷史記錄記為 unknown，不計金額。"
   },
   "usageScript": {
     "title": "設定用量查詢",
@@ -2571,6 +2574,7 @@
     "tokenPlanHint": "自動使用供應商的 API Key 和 Base URL 查詢 Token Plan 額度",
     "balanceHint": "自動使用供應商的 API Key 查詢帳號餘額",
     "officialSubscriptionHint": "讀取本機 CLI 的 OAuth 憑證，並呼叫官方介面查詢訂閱額度。預設關閉，只有啟用後才會請求。",
+    "officialSubscriptionHintAgy": "執行 agy 內建的 /usage 指令查詢登入帳號的額度，不讀取登入憑證，每次查詢約需 10 秒。預設關閉，只有啟用後才會請求。",
     "resetDate": "重設日期",
     "premiumRequests": "Premium 請求",
     "credentialsConfig": "憑證設定",
@@ -4105,6 +4109,10 @@
       "geminiPro": "Pro",
       "geminiFlash": "Flash",
       "geminiFlashLite": "Lite",
+      "agyGeminiFiveHour": "Gemini 5 小時",
+      "agyGeminiWeekly": "Gemini 每週",
+      "agyThirdPartyFiveHour": "Claude 5 小時",
+      "agyThirdPartyWeekly": "Claude 每週",
       "monthly": "每月",
       "credits": "額度",
       "copilotPremium": "進階請求"
@@ -4118,6 +4126,12 @@
     "geminiPro": "Pro",
     "geminiFlash": "Flash",
     "geminiFlashLite": "Flash Lite",
+    "agyGemini": "Gemini",
+    "agyThirdParty": "Claude/GPT",
+    "agyGeminiFiveHour": "Gemini 5 小時",
+    "agyGeminiWeekly": "Gemini 每週",
+    "agyThirdPartyFiveHour": "Claude/GPT 5 小時",
+    "agyThirdPartyWeekly": "Claude/GPT 每週",
     "weeklyLimit": "每週",
     "monthly": "每月",
     "credits": "額度",
@@ -4189,7 +4203,8 @@
       "openclaw": "透過 npm 安裝",
       "hermes": "安裝時執行官方安裝腳本",
       "pi": "透過 npm 安裝",
-      "mcode": "安裝時執行官方安裝腳本，失敗時改用 npm"
+      "mcode": "安裝時執行官方安裝腳本，失敗時改用 npm",
+      "agy": "安裝時執行官方安裝腳本"
     }
   },
   "appPage": {
@@ -4214,7 +4229,7 @@
     },
     "active": "生效中",
     "activeTitle": "{{mode}}生效中",
-    "noProvider": "（未選擇）",
+    "noProvider": "未選擇",
     "failover": "故障轉移",
     "routeSettings": "路由設定",
     "routeSettingsTitle": "路由設定",

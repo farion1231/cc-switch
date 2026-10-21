@@ -31,9 +31,13 @@ const provider = {
   },
 } as Provider;
 
-function renderDialog(onClose = vi.fn(), target: Provider = provider) {
+function renderDialog(
+  onClose = vi.fn(),
+  target: Provider = provider,
+  appId: "claude" | "agy" = "claude",
+) {
   render(
-    <OpenTerminalDialog provider={target} appId="claude" onClose={onClose} />,
+    <OpenTerminalDialog provider={target} appId={appId} onClose={onClose} />,
   );
   return onClose;
 }
@@ -130,6 +134,38 @@ describe("OpenTerminalDialog", () => {
       name: "Claude Official",
       settingsConfig: { env: {} },
     } as Provider);
+    expect(
+      screen.queryByText("provider.openTerminalDialog.isolationTitle"),
+    ).not.toBeInTheDocument();
+  });
+
+  // agy 带 Key 的卡用自己的私有目录启动；官方登录卡跟着全局登录走
+  it("treats only Antigravity key cards as isolated", () => {
+    renderDialog(
+      vi.fn(),
+      {
+        id: "relay",
+        name: "Relay",
+        settingsConfig: { env: { GEMINI_API_KEY: "k" } },
+      } as Provider,
+      "agy",
+    );
+    expect(
+      screen.getByText("provider.openTerminalDialog.isolationTitle"),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the isolation notice for the Antigravity login card", () => {
+    renderDialog(
+      vi.fn(),
+      {
+        id: "login",
+        name: "Google",
+        category: "official",
+        settingsConfig: { env: {}, config: { model: { name: "m" } } },
+      } as Provider,
+      "agy",
+    );
     expect(
       screen.queryByText("provider.openTerminalDialog.isolationTitle"),
     ).not.toBeInTheDocument();

@@ -180,13 +180,15 @@
     "managedByHermes": "Hermes Managed",
     "managedByHermesHint": "Defined in Hermes' providers: dict. Edit or remove it via Hermes Web UI.",
     "openTerminal": "Open Terminal",
+    "openTerminalWithProvider": "Open Terminal with This Provider",
     "terminalOpened": "Terminal opened",
     "terminalOpenFailed": "Failed to open terminal",
     "openTerminalDialog": {
       "title": "Open a terminal in which folder?",
-      "description": "A terminal opens in the folder you pick and starts Claude Code with \"{{name}}\"'s settings. Usually you'd pick your project folder.",
+      "description": "A terminal opens in the folder you pick and starts {{app}} with \"{{name}}\"'s settings. Usually you'd pick your project folder.",
       "isolationTitle": "This terminal is isolated",
       "isolationBody": "It stays on \"{{name}}\": switching providers in CC Switch later won't affect it, and it won't change the provider CC Switch is currently using.",
+      "isolationBodyAgy": "The key and endpoint of \"{{name}}\" go only to agy in this terminal and are never written to a file; running agy directly in another terminal still uses your Google sign-in.",
       "noDir": "No folder selected",
       "choose": "Choose Folder…",
       "change": "Change…",
@@ -209,10 +211,11 @@
     "geminiConfigHint": "Use .env format to configure Gemini",
     "form": {
       "agy": {
-        "connectionHint": "Leave the API key and endpoint empty to use agy's Google sign-in. A key without an endpoint uses Google's default API; third-party endpoints must support the Gemini API. Open a new terminal or restart agy after switching. Running sessions keep their configuration. Login-mode model discovery uses the current agy configuration. In login mode, use the display name from the model list; API mode uses API model IDs.",
-        "keyFieldsHint": "The endpoint, key and model follow the provider; other native Antigravity settings are preserved.",
+        "endpointHelp": "Leave empty for Google's default API. Third-party endpoints must support the Gemini API and agy's built-in Gemini models.",
+        "modelHelp": "Use the display name from the model list (Fetch Models). Applies to that session only.",
+        "keyFieldsHint": "The model, key and endpoint are only used by \"Open Terminal\" and are never written to Antigravity's own settings.",
         "envFile": "Launcher environment variables",
-        "envFileHint": "CC Switch passes the API key, endpoint and model when starting agy. Other environment variables are not applied.",
+        "envFileHint": "When agy is started from the card's \"Open Terminal\", CC Switch passes the API key and endpoint to that one agy process only and never writes them to a file. Other environment variables are not applied.",
         "configJson": "Model configuration (CC Switch format)",
         "configJsonHint": "Only model settings are supported here. Change other Antigravity options in agy; manage MCP in the MCP panel."
       },
@@ -2549,7 +2552,7 @@
     },
     "prevMonth": "Previous month",
     "nextMonth": "Next month",
-    "agyUsageHint": "Antigravity shows native session token counters; missing historical models are unknown. The log does not provide reliable billing data; a displayed cost of 0 does not mean free usage."
+    "agyUsageHint": "Antigravity shows the raw tokens from its session logs, priced at the matching Gemini API rates. Official subscriptions are billed by plan, so these amounts are for reference only. Older entries without a model are recorded as unknown and not priced."
   },
   "usageScript": {
     "title": "Configure Usage Query",
@@ -2570,6 +2573,7 @@
     "tokenPlanHint": "Automatically uses the provider's API Key and Base URL to query Token Plan quota",
     "balanceHint": "Automatically uses the provider's API Key to query account balance",
     "officialSubscriptionHint": "Reads the local CLI OAuth credentials and calls the official API to query subscription quota. Disabled by default and only requests after you enable it.",
+    "officialSubscriptionHintAgy": "Runs agy's built-in /usage command to check the signed-in account's quota. Sign-in credentials are not read; each check takes about 10 seconds. Disabled by default and only runs after you enable it.",
     "resetDate": "Reset date",
     "premiumRequests": "Premium Requests",
     "credentialsConfig": "Credentials",
@@ -4104,6 +4108,10 @@
       "geminiPro": "Pro",
       "geminiFlash": "Flash",
       "geminiFlashLite": "Lite",
+      "agyGeminiFiveHour": "Gemini 5h",
+      "agyGeminiWeekly": "Gemini Wk",
+      "agyThirdPartyFiveHour": "Claude 5h",
+      "agyThirdPartyWeekly": "Claude Wk",
       "monthly": "Mo",
       "credits": "Credits",
       "copilotPremium": "Premium"
@@ -4117,6 +4125,12 @@
     "geminiPro": "Pro",
     "geminiFlash": "Flash",
     "geminiFlashLite": "Flash Lite",
+    "agyGemini": "Gemini",
+    "agyThirdParty": "Claude/GPT",
+    "agyGeminiFiveHour": "Gemini 5-hour",
+    "agyGeminiWeekly": "Gemini weekly",
+    "agyThirdPartyFiveHour": "Claude/GPT 5-hour",
+    "agyThirdPartyWeekly": "Claude/GPT weekly",
     "weeklyLimit": "Weekly",
     "monthly": "Monthly",
     "credits": "Credits",
@@ -4188,7 +4202,8 @@
       "openclaw": "Installs with npm",
       "hermes": "Installs with the official script",
       "pi": "Installs with npm",
-      "mcode": "Installs with the official script, falls back to npm"
+      "mcode": "Installs with the official script, falls back to npm",
+      "agy": "Installs with the official script"
     }
   },
   "appPage": {
@@ -4213,7 +4228,7 @@
     },
     "active": "active",
     "activeTitle": "{{mode}} is active",
-    "noProvider": "(none)",
+    "noProvider": "none",
     "failover": "Failover",
     "routeSettings": "Routing settings",
     "routeSettingsTitle": "Routing settings",

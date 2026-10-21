@@ -180,13 +180,15 @@
     "managedByHermes": "Hermes 管理",
     "managedByHermesHint": "Hermes の providers: dict で定義されています。Hermes Web UI で編集または削除してください。",
     "openTerminal": "ターミナルを開く",
+    "openTerminalWithProvider": "このプロバイダーでターミナルを開く",
     "terminalOpened": "ターミナルを開きました",
     "terminalOpenFailed": "ターミナルを開けませんでした",
     "openTerminalDialog": {
       "title": "どのフォルダでターミナルを開きますか？",
-      "description": "選んだフォルダでターミナルを開き、「{{name}}」の設定で Claude Code を起動します。通常はプロジェクトのフォルダを選びます。",
+      "description": "選んだフォルダでターミナルを開き、「{{name}}」の設定で {{app}} を起動します。通常はプロジェクトのフォルダを選びます。",
       "isolationTitle": "このターミナルは分離されています",
       "isolationBody": "常に「{{name}}」を使います。あとで CC Switch でプロバイダーを切り替えても影響を受けず、CC Switch で使用中のプロバイダーも変更しません。",
+      "isolationBodyAgy": "「{{name}}」のキーとエンドポイントはこのターミナルの agy にだけ渡され、ファイルには書き込まれません。別のターミナルで直接 agy を実行した場合は Google ログインのままです。",
       "noDir": "フォルダが未選択です",
       "choose": "フォルダを選択…",
       "change": "変更…",
@@ -209,10 +211,11 @@
     "geminiConfigHint": ".env 形式で Gemini を設定してください",
     "form": {
       "agy": {
-        "connectionHint": "API Key と接続先を空欄にすると agy の Google ログインを使用します。Key のみを指定すると Google の標準 API を使用します。外部接続先は Gemini API に対応している必要があります。切替後は新しいターミナルを開くか agy を再起動してください。実行中のセッションは切り替わりません。ログイン時のモデル取得には現在の agy 設定を使用します。 ログイン時はモデル一覧の表示名を使用してください。API モードでは API のモデル ID を使用します。",
-        "keyFieldsHint": "エンドポイント、キー、モデルはプロバイダーとともに切り替わります。Antigravity の他のネイティブ設定は保持されます。",
+        "endpointHelp": "空欄なら Google の標準 API を使います。外部接続先は Gemini API と agy 内蔵の Gemini モデルに対応している必要があります。",
+        "modelHelp": "モデル一覧の表示名を入力してください（「モデル一覧を取得」から選べます）。そのセッションにのみ適用されます。",
+        "keyFieldsHint": "モデル、キー、エンドポイントは「ターミナルを開く」でのみ使われ、Antigravity 自身の設定には書き込みません。",
         "envFile": "起動時の環境変数",
-        "envFileHint": "CC Switch は agy 起動時に API キー、エンドポイント、モデルを渡します。他の環境変数は適用されません。",
+        "envFileHint": "カードの「ターミナルを開く」から agy を起動すると、CC Switch は API キーとエンドポイントをその agy プロセスだけに渡し、ファイルには書き込みません。他の環境変数は適用されません。",
         "configJson": "モデル設定（CC Switch 形式）",
         "configJsonHint": "ここではモデル設定のみ対応しています。他の Antigravity 設定は agy で変更し、MCP は MCP パネルで管理してください。"
       },
@@ -2549,7 +2552,7 @@
     },
     "prevMonth": "前月",
     "nextMonth": "翌月",
-    "agyUsageHint": "Antigravity はログの Token 数を表示し、過去のモデルが不明な場合は unknown と表示します。ログに信頼できる料金情報がないため、料金 0 は無料を意味しません。"
+    "agyUsageHint": "Antigravity はセッションログの生のトークン数を表示し、金額は対応する Gemini API の価格で見積もります。公式サブスクリプションはプランで課金されるため、金額は参考値です。モデルが記録されていない過去の項目は unknown として扱い、金額は計上しません。"
   },
   "usageScript": {
     "title": "利用状況を設定",
@@ -2570,6 +2573,7 @@
     "tokenPlanHint": "プロバイダーのAPI KeyとBase URLを使用してToken Planクォータを自動クエリ",
     "balanceHint": "プロバイダーのAPI Keyを使用してアカウント残高を自動クエリ",
     "officialSubscriptionHint": "ローカル CLI の OAuth 認証情報を読み取り、公式 API でサブスクリプション枠を照会します。既定では無効で、有効化した後のみリクエストします。",
+    "officialSubscriptionHintAgy": "agy 組み込みの /usage コマンドを実行して、ログイン中のアカウントの枠を照会します。ログイン認証情報は読み取りません。1 回の照会に約 10 秒かかります。既定では無効で、有効化した後のみ実行します。",
     "resetDate": "リセット日",
     "premiumRequests": "Premium リクエスト",
     "credentialsConfig": "認証情報",
@@ -4104,6 +4108,10 @@
       "geminiPro": "Pro",
       "geminiFlash": "Flash",
       "geminiFlashLite": "Lite",
+      "agyGeminiFiveHour": "Gemini 5h",
+      "agyGeminiWeekly": "Gemini 週",
+      "agyThirdPartyFiveHour": "Claude 5h",
+      "agyThirdPartyWeekly": "Claude 週",
       "monthly": "月",
       "credits": "クレジット",
       "copilotPremium": "プレミアム"
@@ -4117,6 +4125,12 @@
     "geminiPro": "Pro",
     "geminiFlash": "Flash",
     "geminiFlashLite": "Flash Lite",
+    "agyGemini": "Gemini",
+    "agyThirdParty": "Claude/GPT",
+    "agyGeminiFiveHour": "Gemini 5時間",
+    "agyGeminiWeekly": "Gemini 週間",
+    "agyThirdPartyFiveHour": "Claude/GPT 5時間",
+    "agyThirdPartyWeekly": "Claude/GPT 週間",
     "weeklyLimit": "週間",
     "monthly": "月間",
     "credits": "クレジット",
@@ -4188,7 +4202,8 @@
       "openclaw": "npm でインストール",
       "hermes": "公式インストールスクリプトでインストール",
       "pi": "npm でインストール",
-      "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います"
+      "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います",
+      "agy": "公式インストールスクリプトでインストール"
     }
   },
   "appPage": {
@@ -4213,7 +4228,7 @@
     },
     "active": "有効",
     "activeTitle": "{{mode}}が有効",
-    "noProvider": "（未選択）",
+    "noProvider": "未選択",
     "failover": "フェイルオーバー",
     "routeSettings": "ルーティング設定",
     "routeSettingsTitle": "ルーティング設定",

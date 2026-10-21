@@ -180,13 +180,15 @@
     "managedByHermes": "Hermes 托管",
     "managedByHermesHint": "该条目定义在 Hermes 的 providers: dict，请在 Hermes Web UI 中编辑或删除。",
     "openTerminal": "打开终端",
+    "openTerminalWithProvider": "使用此供应商打开终端",
     "terminalOpened": "终端已打开",
     "terminalOpenFailed": "打开终端失败",
     "openTerminalDialog": {
       "title": "在哪个目录打开终端？",
-      "description": "会在你选的目录里打开一个终端，并用「{{name}}」的配置启动 Claude Code。一般选你的项目文件夹。",
+      "description": "会在你选的目录里打开一个终端，并用「{{name}}」的配置启动 {{app}}。一般选你的项目文件夹。",
       "isolationTitle": "这个终端是隔离的",
       "isolationBody": "它固定使用「{{name}}」，之后在 CC Switch 里切换供应商不会影响它；它也不会改动 CC Switch 里正在使用的供应商。",
+      "isolationBodyAgy": "「{{name}}」的 Key 和地址只传给这个终端里的 agy，不写进任何文件；在别的终端里直接运行 agy 仍是 Google 登录。",
       "noDir": "还没选目录",
       "choose": "选择文件夹…",
       "change": "更换…",
@@ -209,10 +211,11 @@
     "geminiConfigHint": "使用 .env 格式配置 Gemini",
     "form": {
       "agy": {
-        "connectionHint": "不填 API Key 和请求地址时使用 agy 自身的 Google 登录。填写 Key 但不填地址时使用 Google 默认 API；第三方地址须兼容 Gemini API。切换后请新开终端或重启 agy，已运行的会话不会自动切换。登录模式的模型列表读取当前 agy 配置。 登录模式请使用模型列表中的显示名称；API 模式使用接口模型 ID。",
-        "keyFieldsHint": "地址、Key 和模型随供应商切换；Antigravity 的其他原生设置保持不变。",
+        "endpointHelp": "留空用 Google 默认 API。第三方地址须兼容 Gemini API，并支持 agy 内置的 Gemini 模型。",
+        "modelHelp": "填模型列表里的显示名称，可点「获取模型列表」选择。只对那次会话生效。",
+        "keyFieldsHint": "模型、Key 和地址都只在「打开终端」时使用，不写进 Antigravity 自己的设置。",
         "envFile": "启动环境变量",
-        "envFileHint": "CC Switch 会在启动 agy 时传入 API Key、请求地址和模型。其他环境变量不会应用。",
+        "envFileHint": "从卡片「打开终端」启动 agy 时，CC Switch 只把 API Key 和请求地址传给那一个 agy 进程，不写进任何文件。其他环境变量不会应用。",
         "configJson": "模型配置（CC Switch 格式）",
         "configJsonHint": "这里仅支持模型设置，其他 Antigravity 选项请在 agy 中调整；MCP 在 MCP 面板中管理。"
       },
@@ -2549,7 +2552,7 @@
     },
     "prevMonth": "上个月",
     "nextMonth": "下个月",
-    "agyUsageHint": "Antigravity 显示会话日志的原始 Token；缺失的历史模型记为 unknown。日志未提供可靠计费信息，显示的 0 费用不代表免费。"
+    "agyUsageHint": "Antigravity 显示会话日志里的原始 Token，金额按对应的 Gemini API 价格估算；官方订阅按套餐计费，这里的金额只作参考。缺失的历史模型记为 unknown，不计金额。"
   },
   "usageScript": {
     "title": "配置用量查询",
@@ -2570,6 +2573,7 @@
     "tokenPlanHint": "自动使用供应商的 API Key 和 Base URL 查询 Token Plan 额度",
     "balanceHint": "自动使用供应商的 API Key 查询账户余额",
     "officialSubscriptionHint": "读取本机 CLI 的 OAuth 凭据，并调用官方接口查询订阅额度。默认关闭，只有启用后才会请求。",
+    "officialSubscriptionHintAgy": "运行 agy 自带的 /usage 命令查询登录账号的额度，不读取登录凭据，每次查询约需 10 秒。默认关闭，只有启用后才会请求。",
     "resetDate": "重置日期",
     "premiumRequests": "Premium 请求",
     "credentialsConfig": "凭证配置",
@@ -4104,6 +4108,10 @@
       "geminiPro": "Pro",
       "geminiFlash": "Flash",
       "geminiFlashLite": "Lite",
+      "agyGeminiFiveHour": "Gemini 5 小时",
+      "agyGeminiWeekly": "Gemini 每周",
+      "agyThirdPartyFiveHour": "Claude 5 小时",
+      "agyThirdPartyWeekly": "Claude 每周",
       "monthly": "每月",
       "credits": "额度",
       "copilotPremium": "高级请求"
@@ -4117,6 +4125,12 @@
     "geminiPro": "Pro",
     "geminiFlash": "Flash",
     "geminiFlashLite": "Flash Lite",
+    "agyGemini": "Gemini",
+    "agyThirdParty": "Claude/GPT",
+    "agyGeminiFiveHour": "Gemini 5 小时",
+    "agyGeminiWeekly": "Gemini 每周",
+    "agyThirdPartyFiveHour": "Claude/GPT 5 小时",
+    "agyThirdPartyWeekly": "Claude/GPT 每周",
     "weeklyLimit": "每周",
     "monthly": "每月",
     "credits": "额度",
@@ -4188,7 +4202,8 @@
       "openclaw": "通过 npm 安装",
       "hermes": "安装时运行官方安装脚本",
       "pi": "通过 npm 安装",
-      "mcode": "安装时运行官方安装脚本，失败时改用 npm"
+      "mcode": "安装时运行官方安装脚本，失败时改用 npm",
+      "agy": "安装时运行官方安装脚本"
     }
   },
   "appPage": {
@@ -4213,7 +4228,7 @@
     },
     "active": "生效中",
     "activeTitle": "{{mode}}生效中",
-    "noProvider": "（未选择）",
+    "noProvider": "未选择",
     "failover": "故障转移",
     "routeSettings": "路由设置",
     "routeSettingsTitle": "路由设置",
