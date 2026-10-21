@@ -4,7 +4,7 @@ import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
-import type { WebDavSyncSettings } from "@/types";
+import type { S3SyncSettings, WebDavSyncSettings } from "@/types";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
@@ -82,6 +82,11 @@ const { settingsApiMock } = vi.hoisted(() => ({
     webdavSyncUpload: vi.fn(),
     webdavSyncDownload: vi.fn(),
     webdavSyncClearSettings: vi.fn(),
+    s3TestConnection: vi.fn(),
+    s3SyncSaveSettings: vi.fn(),
+    s3SyncFetchRemoteInfo: vi.fn(),
+    s3SyncUpload: vi.fn(),
+    s3SyncDownload: vi.fn(),
   },
 }));
 
@@ -100,7 +105,10 @@ const baseConfig: WebDavSyncSettings = {
   status: {},
 };
 
-function renderSection(config?: WebDavSyncSettings) {
+function renderSection(
+  config?: WebDavSyncSettings,
+  s3Config?: S3SyncSettings,
+) {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -109,7 +117,7 @@ function renderSection(config?: WebDavSyncSettings) {
   });
   const view = render(
     <QueryClientProvider client={client}>
-      <WebdavSyncSection config={config} />
+      <WebdavSyncSection config={config} s3Config={s3Config} />
     </QueryClientProvider>,
   );
   return { ...view, client };
@@ -130,8 +138,18 @@ describe("WebdavSyncSection", () => {
     settingsApiMock.webdavSyncClearSettings.mockResolvedValue({
       success: true,
     });
+    settingsApiMock.s3TestConnection.mockReset();
+    settingsApiMock.s3SyncSaveSettings.mockReset();
+    settingsApiMock.s3SyncFetchRemoteInfo.mockReset();
+    settingsApiMock.s3SyncUpload.mockReset();
+    settingsApiMock.s3SyncDownload.mockReset();
 
     settingsApiMock.webdavSyncSaveSettings.mockResolvedValue({ success: true });
+    settingsApiMock.s3TestConnection.mockResolvedValue({
+      success: true,
+      message: "ok",
+    });
+    settingsApiMock.s3SyncSaveSettings.mockResolvedValue({ success: true });
     settingsApiMock.webdavTestConnection.mockResolvedValue({
       success: true,
       message: "ok",
@@ -664,6 +682,94 @@ describe("WebdavSyncSection", () => {
       expect(toastErrorMock).toHaveBeenCalledWith(
         "settings.webdavSync.downloadFailed",
       );
+    });
+  });
+
+  describe("S3 provider preset", () => {
+    const baseS3Config: S3SyncSettings = {
+      enabled: true,
+      autoSync: false,
+      region: "auto",
+      bucket: "cc-switch",
+      accessKeyId: "key",
+      secretAccessKey: "secret",
+      remoteRoot: "cc-switch-sync",
+      profile: "default",
+      status: {},
+    };
+
+    // Sync-type selector comes first, S3 preset selector second.
+    const s3PresetSelect = () =>
+      screen.getAllByTestId("webdav-preset-select")[1] as HTMLSelectElement;
+
+    it("shows the saved R2 preset instead of falling back to AWS S3", () => {
+      renderSection(undefined, {
+        ...baseS3Config,
+        endpoint: "https://0123456789abcdef.r2.cloudflarestorage.com",
+      });
+
+      expect(s3PresetSelect().value).toBe("s3-r2");
+    });
+
+    it.each([
+      ["https://oss-cn-hangzhou.aliyuncs.com", "s3-oss"],
+      ["https://cos.ap-guangzhou.myqcloud.com", "s3-cos"],
+      ["https://obs.cn-north-4.myhuaweicloud.com", "s3-obs"],
+      ["https://minio.internal:9000", "s3-custom"],
+    ])("restores the preset for %s", (endpoint, expected) => {
+      renderSection(undefined, { ...baseS3Config, endpoint });
+
+      expect(s3PresetSelect().value).toBe(expected);
+    });
+
+    it("uses AWS S3 when the endpoint is empty", () => {
+      renderSection(undefined, { ...baseS3Config, endpoint: "" });
+
+      expect(s3PresetSelect().value).toBe("aws-s3");
+    });
+
+    it("keeps an explicit preset that the endpoint cannot be inferred from", () => {
+      renderSection(undefined, {
+        ...baseS3Config,
+        endpoint: "https://minio.internal:9000",
+        preset: "s3-minio",
+      });
+
+      expect(s3PresetSelect().value).toBe("s3-minio");
+    });
+
+    it("saves the selected preset so it survives reopening", async () => {
+      renderSection(undefined, baseS3Config);
+
+      fireEvent.change(s3PresetSelect(), { target: { value: "s3-minio" } });
+      fireEvent.click(
+        screen.getByRole("button", { name: "settings.s3Sync.save" }),
+      );
+
+      await waitFor(() => {
+        expect(settingsApiMock.s3SyncSaveSettings).toHaveBeenCalledWith(
+          expect.objectContaining({ preset: "s3-minio" }),
+          false,
+        );
+      });
+    });
+
+    it("repopulates the preset when the saved config arrives later", () => {
+      const view = renderSection(undefined, undefined);
+
+      view.rerender(
+        <QueryClientProvider client={view.client}>
+          <WebdavSyncSection
+            s3Config={{
+              ...baseS3Config,
+              endpoint: "https://oss-cn-hangzhou.aliyuncs.com",
+              preset: "s3-oss",
+            }}
+          />
+        </QueryClientProvider>,
+      );
+
+      expect(s3PresetSelect().value).toBe("s3-oss");
     });
   });
 });
