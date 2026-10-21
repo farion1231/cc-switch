@@ -5,7 +5,12 @@ import { PageFrame } from "@/components/shell/PageFrame";
 
 function Child() {
   const [count, setCount] = useState(0);
-  return <button onClick={() => setCount(count + 1)}>{count}</button>;
+  return (
+    <>
+      <header>Page title</header>
+      <button onClick={() => setCount(count + 1)}>{count}</button>
+    </>
+  );
 }
 afterEach(() => {
   vi.restoreAllMocks();
@@ -40,6 +45,11 @@ it("keeps live child state and cancels interrupted transitions", () => {
   );
   expect(screen.getByRole("button")).toHaveTextContent("1");
   expect(animate).toHaveBeenCalledTimes(2);
+  expect(
+    animate.mock.contexts.every(
+      (element) => element === screen.getByText("Page title"),
+    ),
+  ).toBe(true);
   expect(cancel).toHaveBeenCalledTimes(1);
   unmount();
   expect(cancel).toHaveBeenCalledTimes(2);

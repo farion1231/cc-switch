@@ -41,7 +41,6 @@ import {
   type SidebarTodayItem,
 } from "@/components/usage/format";
 import { useSidebarStatus, type AppNavStatus } from "@/hooks/useSidebarStatus";
-import { useSlidingIndicator } from "@/components/ui/sliding-indicator";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { DRAG_REGION_ATTR, DRAG_REGION_STYLE, isMac } from "@/lib/platform";
@@ -251,10 +250,6 @@ function MainDirectory({
   } = useSidebarStatus();
   const apps = APP_IDS.filter((app) => visibleApps[app]);
   const onAppPage = isAppPage(view);
-  const indicator = useSlidingIndicator<HTMLDivElement>(
-    '[aria-current="page"]',
-    onAppPage ? activeApp : null,
-  );
 
   // 选了的项里是 0 的不写（没配定价时金额总是 0）；命中率在今天还没有请求时不写；
   // 全都没有就整个不显示。两项都有时只写数、上下两行（「今日」放进悬停和读屏）：
@@ -327,12 +322,14 @@ function MainDirectory({
         )}
       >
         <div
-          ref={indicator.ref}
           role="group"
           aria-label={t("nav.appsGroup")}
           className="relative flex shrink-0 flex-col"
         >
-          <SidebarSelection indicator={indicator} />
+          <SidebarSelection
+            index={onAppPage ? apps.indexOf(activeApp) : -1}
+            collapsed={collapsed}
+          />
           {apps.map((app) => (
             <AppNavItem
               key={app}
@@ -740,10 +737,6 @@ function SettingsDirectory({
   onExitSettings,
 }: DirectoryProps) {
   const { t } = useTranslation();
-  const indicator = useSlidingIndicator<HTMLDivElement>(
-    '[aria-current="page"]',
-    settingsSection,
-  );
   const { hasUpdate } = useUpdate();
   const { data: version } = useQuery({
     queryKey: ["app-version"],
@@ -777,7 +770,6 @@ function SettingsDirectory({
         </div>
       )}
       <div
-        ref={indicator.ref}
         role="group"
         aria-label={t("nav.settings")}
         className={cn(
@@ -785,7 +777,12 @@ function SettingsDirectory({
           collapsed && "mt-2",
         )}
       >
-        <SidebarSelection indicator={indicator} />
+        <SidebarSelection
+          index={SETTINGS_ITEMS.findIndex(
+            ({ section }) => section === settingsSection,
+          )}
+          collapsed={collapsed}
+        />
         {SETTINGS_ITEMS.map(({ section, icon }) => (
           <NavItem
             key={section}
@@ -817,26 +814,23 @@ function SettingsDirectory({
 
 export type { SidebarProps };
 
+/** Rows have fixed heights; move the highlight without synchronous layout measurements. */
 function SidebarSelection({
-  indicator,
+  index,
+  collapsed,
 }: {
-  indicator: ReturnType<typeof useSlidingIndicator<HTMLDivElement>>;
+  index: number;
+  collapsed: boolean;
 }) {
-  const { rect, animate } = indicator;
-  if (!rect) return null;
+  if (index < 0) return null;
   return (
     <span
       aria-hidden="true"
       className={cn(
-        "pointer-events-none absolute left-0 top-0 rounded-control bg-selected",
-        animate &&
-          "transition-transform duration-200 ease-out motion-reduce:transition-none",
+        "pointer-events-none absolute top-0 rounded-control bg-selected transition-transform duration-200 ease-out motion-reduce:transition-none",
+        collapsed ? "inset-x-0 mx-auto h-8 w-12" : "inset-x-2 h-7",
       )}
-      style={{
-        width: rect.width,
-        height: rect.height,
-        transform: `translate(${rect.x}px, ${rect.y}px)`,
-      }}
+      style={{ transform: `translateY(${index * (collapsed ? 2 : 1.75)}rem)` }}
     />
   );
 }

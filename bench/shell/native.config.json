@@ -1,0 +1,6 @@
+{
+  "build": {
+    "devUrl": "http://localhost:3011",
+    "beforeDevCommand": "node node_modules/vite/bin/vite.js preview --config bench/shell/vite.config.ts"
+  }
+}

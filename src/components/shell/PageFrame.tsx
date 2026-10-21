@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 
-/** One live page: entering never waits for an exit animation or remounts its children. */
+/** Animate the page header only: moving long content layers stalls native WebKit. */
 export function PageFrame({
   children,
   transitionKey,
@@ -10,7 +10,7 @@ export function PageFrame({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    const element = ref.current;
+    const element = ref.current?.querySelector("header");
     const preference = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     if (!element?.animate || preference?.matches) return;
     const animation = element.animate(

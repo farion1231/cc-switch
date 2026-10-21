@@ -47,12 +47,14 @@ function Benchmark() {
     setResult("");
     await pause(500);
     const phases: Record<string, unknown> = {};
+    let backgroundFrames = 0;
     for (const phase of ["navigation", "resize"] as const) {
       const frames: number[] = [],
         paints: number[] = [];
       let collecting = true,
         previous = await frame();
       const sample = (time: number) => {
+        if (document.hidden || !document.hasFocus()) backgroundFrames++;
         frames.push(time - previous);
         previous = time;
         if (collecting) requestAnimationFrame(sample);
@@ -97,6 +99,8 @@ function Benchmark() {
           viewport: [innerWidth, innerHeight],
           reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
           rows,
+          backgroundFrames,
+          validForegroundRun: backgroundFrames === 0,
           phases,
         },
         null,
@@ -174,7 +178,11 @@ function Benchmark() {
           className="mt-2 whitespace-pre-wrap text-xs"
           aria-label="Benchmark result"
         >
-          {result}
+          {result.split("\n").map((line, index) => (
+            <span key={index} style={{ display: "block" }}>
+              {line}
+            </span>
+          ))}
         </pre>
       </aside>
     </div>
