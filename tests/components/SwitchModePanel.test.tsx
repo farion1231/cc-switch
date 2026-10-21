@@ -874,6 +874,31 @@ describe("SwitchModePanel — mode layer", () => {
     );
   });
 
+  it.each(["route", "stack"] as const)(
+    "keeps %s status gray when the service runs but the app is detached",
+    async (mode) => {
+      mockMode(mode, "a");
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/get_app_mode`, () =>
+          HttpResponse.json({
+            mode,
+            attached: false,
+            routeProviderId: "a",
+            directProviderId: "a",
+          }),
+        ),
+      );
+      renderPanel("claude", { a: provider("a") });
+      await screen.findByLabelText(new RegExp(`mode.status.${mode}Lead`));
+      expect(
+        screen.getByTestId("connection-header").querySelector(".bg-fg-3"),
+      ).not.toBeNull();
+      expect(
+        screen.getByTestId("connection-header").querySelector(`.bg-${mode}`),
+      ).toBeNull();
+    },
+  );
+
   it("shows only the route target in the status line, not the local address", async () => {
     mockMode("route", "route");
     server.use(

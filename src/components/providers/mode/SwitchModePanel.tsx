@@ -558,7 +558,9 @@ export function SwitchModePanel({
                   (
                     active === "direct"
                       ? Boolean(directId && providers[directId])
-                      : serviceRunning
+                      : serviceRunning &&
+                        modeView?.attached &&
+                        Boolean(routeId && providers[routeId])
                   )
                     ? MODE_TONE[active].dot
                     : "bg-fg-3",
