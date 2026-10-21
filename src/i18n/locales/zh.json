@@ -421,7 +421,7 @@
     "tabAdvanced": "高级",
     "tabProxy": "路由",
     "authCenter": {
-      "description": "把 GitHub Copilot、ChatGPT、xAI 订阅当作供应商用。凭据由路由服务注入，相关供应商要在路由模式下使用（Codex 官方登录绑定除外）。",
+      "description": "把 GitHub Copilot、ChatGPT、xAI 订阅当作供应商用。凭据由路由服务注入，相关供应商要在路由模式下使用（Codex 官方登录绑定除外）。Antigravity 账号用来切换 agy 的官方登录。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 账号",
       "codexOauthDescription": "管理 ChatGPT 账号",
@@ -4840,7 +4840,8 @@
       "helpTitle": "{{service}} 账号怎么用",
       "copilotHelp": "用于 Claude Code、Claude Desktop 的 GitHub Copilot 预设。没指定账号的供应商用「默认」账号。",
       "chatgptHelp": "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
-      "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。"
+      "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。",
+      "agyHelp": "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。"
     },
     "addAccount": "添加账号",
     "groupMenu": "{{service}} 的更多操作",
@@ -4871,7 +4872,9 @@
       "copy": "复制验证码",
       "copied": "验证码已复制。",
       "open": "打开授权页面",
-      "note": "已在浏览器打开授权页面，完成后这里会自动更新。注意 {{service}} 的使用条款。"
+      "note": "已在浏览器打开授权页面，完成后这里会自动更新。注意 {{service}} 的使用条款。",
+      "browserNote": "已在浏览器打开 {{service}} 的登录页，登录并同意授权后这里会自动更新。",
+      "reopen": "重新打开登录页"
     },
     "toast": {
       "added": "已添加 {{service}} 账号。",
@@ -4882,6 +4885,18 @@
       "loading": "正在查询额度…",
       "refresh": "刷新额度",
       "refreshAria": "刷新 {{login}} 的额度"
+    },
+    "agy": {
+      "reauthNote": "登录凭据已失效，切不过去",
+      "addedOn": "{{date}}添加",
+      "statusLoadFailed": "无法读取 Antigravity 账号，请重试。",
+      "empty": "还没有 Antigravity 账号。agy 里已登录的号会自动出现在这里。",
+      "login": "用 Google 登录",
+      "current": "agy 在用",
+      "switchTo": "切换 agy 到这个账号",
+      "removeNote": "不会让 agy 退出登录：agy 现在登着的号删掉后仍然可用。",
+      "switched": "已切换，新开的 agy 会使用这个账号。",
+      "switchedWhileRunning": "已切换。检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，请退出后重新打开。"
     }
   }
 }

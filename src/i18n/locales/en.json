@@ -421,7 +421,7 @@
     "tabAdvanced": "Advanced",
     "tabProxy": "Routing",
     "authCenter": {
-      "description": "Use GitHub Copilot, ChatGPT and xAI subscriptions as providers. The routing service injects their credentials, so these providers run in Routing mode (except Codex's official-login binding).",
+      "description": "Use GitHub Copilot, ChatGPT and xAI subscriptions as providers. The routing service injects their credentials, so these providers run in Routing mode (except Codex's official-login binding). Antigravity accounts switch agy's official sign-in.",
       "beta": "Beta",
       "copilotDescription": "Manage GitHub Copilot accounts",
       "codexOauthDescription": "Manage ChatGPT accounts",
@@ -4840,7 +4840,8 @@
       "helpTitle": "How {{service}} accounts are used",
       "copilotHelp": "Used by GitHub Copilot presets in Claude Code and Claude Desktop. Providers without a chosen account use the Default one.",
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
-      "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one."
+      "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
+      "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it."
     },
     "addAccount": "Add account",
     "groupMenu": "More actions for {{service}}",
@@ -4871,7 +4872,9 @@
       "copy": "Copy code",
       "copied": "Code copied.",
       "open": "Open the authorization page",
-      "note": "The authorization page is open in your browser; this updates on its own when you finish. Mind {{service}}'s terms of use."
+      "note": "The authorization page is open in your browser; this updates on its own when you finish. Mind {{service}}'s terms of use.",
+      "browserNote": "The {{service}} sign-in page is open in your browser. Sign in and grant access, and this updates automatically.",
+      "reopen": "Reopen sign-in page"
     },
     "toast": {
       "added": "{{service}} account added.",
@@ -4882,6 +4885,18 @@
       "loading": "Checking quota…",
       "refresh": "Refresh quota",
       "refreshAria": "Refresh quota for {{login}}"
+    },
+    "agy": {
+      "reauthNote": "Sign-in expired, can't switch to it",
+      "addedOn": "Added {{date}}",
+      "statusLoadFailed": "Couldn't read Antigravity accounts. Try again.",
+      "empty": "No Antigravity accounts yet. The account agy is signed in with appears here automatically.",
+      "login": "Sign in with Google",
+      "current": "In use by agy",
+      "switchTo": "Switch agy to this account",
+      "removeNote": "agy stays signed in: if agy is using this account, it keeps working after removal.",
+      "switched": "Switched. New agy sessions will use this account.",
+      "switchedWhileRunning": "Switched. agy is running: open agy sessions keep using the previous account and may write it back. Quit agy and open it again."
     }
   }
 }

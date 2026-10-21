@@ -454,7 +454,7 @@ fn fill(slot: &mut Option<String>, value: Option<String>) -> bool {
 fn upsert(store: &mut StoreFile, credential: Value, claims: &oauth::IdentityClaims) -> AgyAccount {
     let sub = claims.sub.clone().unwrap_or_default();
     store.dismissed.retain(|id| *id != sub);
-    let now = chrono::Utc::now().timestamp_millis();
+    let now = chrono::Utc::now().timestamp();
     let entry = store
         .accounts
         .entry(sub.clone())

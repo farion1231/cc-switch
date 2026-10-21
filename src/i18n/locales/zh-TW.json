@@ -421,7 +421,7 @@
     "tabAdvanced": "進階",
     "tabProxy": "路由",
     "authCenter": {
-      "description": "把 GitHub Copilot、ChatGPT、xAI 訂閱當作供應商用。憑證由路由服務注入，相關供應商要在路由模式下使用（Codex 官方登入綁定除外）。",
+      "description": "把 GitHub Copilot、ChatGPT、xAI 訂閱當作供應商用。憑證由路由服務注入，相關供應商要在路由模式下使用（Codex 官方登入綁定除外）。Antigravity 帳號用來切換 agy 的官方登入。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 帳號",
       "codexOauthDescription": "管理 ChatGPT 帳號",
@@ -4841,7 +4841,8 @@
       "helpTitle": "{{service}} 帳號怎麼用",
       "copilotHelp": "用於 Claude Code、Claude Desktop 的 GitHub Copilot 預設。沒指定帳號的供應商用「預設」帳號。",
       "chatgptHelp": "用於 Claude Code、Claude Desktop 的 ChatGPT 預設，以及 Codex 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
-      "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。"
+      "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。",
+      "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。"
     },
     "addAccount": "新增帳號",
     "groupMenu": "{{service}} 的更多操作",
@@ -4872,7 +4873,9 @@
       "copy": "複製驗證碼",
       "copied": "驗證碼已複製。",
       "open": "開啟授權頁面",
-      "note": "已在瀏覽器開啟授權頁面，完成後這裡會自動更新。注意 {{service}} 的使用條款。"
+      "note": "已在瀏覽器開啟授權頁面，完成後這裡會自動更新。注意 {{service}} 的使用條款。",
+      "browserNote": "已在瀏覽器開啟 {{service}} 的登入頁，登入並同意授權後這裡會自動更新。",
+      "reopen": "重新開啟登入頁"
     },
     "toast": {
       "added": "已新增 {{service}} 帳號。",
@@ -4883,6 +4886,18 @@
       "loading": "正在查詢額度…",
       "refresh": "重新整理額度",
       "refreshAria": "重新整理 {{login}} 的額度"
+    },
+    "agy": {
+      "reauthNote": "登入憑證已失效，無法切換過去",
+      "addedOn": "{{date}}新增",
+      "statusLoadFailed": "無法讀取 Antigravity 帳號，請重試。",
+      "empty": "還沒有 Antigravity 帳號。agy 裡已登入的帳號會自動出現在這裡。",
+      "login": "使用 Google 登入",
+      "current": "agy 使用中",
+      "switchTo": "將 agy 切換到這個帳號",
+      "removeNote": "不會讓 agy 登出：agy 目前登入的帳號刪除後仍然可用。",
+      "switched": "已切換，新開的 agy 會使用這個帳號。",
+      "switchedWhileRunning": "已切換。偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，請結束後重新開啟。"
     }
   }
 }
