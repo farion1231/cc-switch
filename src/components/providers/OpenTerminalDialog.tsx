@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Folder, Loader2, X } from "lucide-react";
 import {
   Dialog,
@@ -11,7 +12,9 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
-import { providersApi, settingsApi } from "@/lib/api";
+import { authApi, providersApi, settingsApi } from "@/lib/api";
+import { resolveManagedAccountId } from "@/lib/authBinding";
+import { isMac } from "@/lib/platform";
 import type { AppId } from "@/lib/api/types";
 import type { Provider } from "@/types";
 import { toast } from "@/lib/toast";
@@ -116,6 +119,31 @@ export function OpenTerminalDialog({
   const [recent, setRecent] = useState<string[]>([]);
   const [dir, setDir] = useState<string | null>(null);
   const [opening, setOpening] = useState(false);
+  const queryClient = useQueryClient();
+
+  // Antigravity 官方卡绑了账号：打开前会把 agy 的全局登录切过去，先说清楚
+  const boundAgyAccount =
+    appId === "agy" && provider && provider.category === "official" && isMac()
+      ? resolveManagedAccountId(provider.meta, "agy_oauth")
+      : null;
+  const { data: agyStatus } = useQuery({
+    queryKey: ["managed-auth-status", "agy_oauth"],
+    queryFn: () => authApi.authGetStatus("agy_oauth"),
+    enabled: boundAgyAccount !== null,
+  });
+  const agyWillSwitch =
+    boundAgyAccount !== null &&
+    agyStatus !== undefined &&
+    agyStatus.default_account_id !== boundAgyAccount;
+  const { data: agyRunning } = useQuery({
+    queryKey: ["agy-running", provider?.id],
+    queryFn: () => authApi.agyAccountIsRunning(),
+    enabled: agyWillSwitch,
+    staleTime: 0,
+  });
+  const agyTargetLogin = agyStatus?.accounts.find(
+    (account) => account.id === boundAgyAccount,
+  )?.login;
 
   useEffect(() => {
     if (!provider) return;
@@ -152,6 +180,11 @@ export function OpenTerminalDialog({
         [dir, ...recent.filter((item) => item !== dir)].slice(0, MAX_RECENT),
       );
       toast.success(t("provider.terminalOpened"));
+      if (agyWillSwitch) {
+        void queryClient.invalidateQueries({
+          queryKey: ["managed-auth-status", "agy_oauth"],
+        });
+      }
       onClose();
     } catch (error) {
       console.error("[OpenTerminalDialog] Failed to open terminal", error);
@@ -193,6 +226,31 @@ export function OpenTerminalDialog({
                   : "provider.openTerminalDialog.isolationBody",
                 { name: provider.name },
               )}
+            </Notice>
+          )}
+
+          {agyWillSwitch && (
+            <Notice
+              tone={agyRunning ? "warning" : "neutral"}
+              title={t("provider.openTerminalDialog.agySwitchTitle", {
+                defaultValue: "会切换 agy 的登录",
+              })}
+            >
+              {t("provider.openTerminalDialog.agySwitchBody", {
+                defaultValue:
+                  "打开前把 agy 的登录切换到 {{account}}，之后新开的 agy 都用这个号。",
+                account:
+                  agyTargetLogin ??
+                  t("provider.form.agy.accountMissing", {
+                    defaultValue: "不在这台电脑上的账号",
+                  }),
+              })}
+              {agyRunning &&
+                " " +
+                  t("provider.openTerminalDialog.agySwitchRunning", {
+                    defaultValue:
+                      "检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，最好先退出它们。",
+                  })}
             </Notice>
           )}
 

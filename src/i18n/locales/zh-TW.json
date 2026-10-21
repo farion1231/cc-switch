@@ -194,7 +194,10 @@
       "change": "更換…",
       "recent": "最近用過",
       "forget": "從最近用過中移除",
-      "confirm": "開啟終端機"
+      "confirm": "開啟終端機",
+      "agySwitchTitle": "會切換 agy 的登入",
+      "agySwitchBody": "開啟前把 agy 的登入切換到 {{account}}，之後新開的 agy 都用這個帳號。",
+      "agySwitchRunning": "偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，最好先結束它們。"
     },
     "name": "名稱",
     "namePlaceholder": "例如：Claude 官方",
@@ -217,7 +220,11 @@
         "envFile": "啟動環境變數",
         "envFileHint": "從卡片「開啟終端機」啟動 agy 時，CC Switch 只把 API Key 和請求位址傳給那一個 agy 行程，不寫進任何檔案。其他環境變數不會套用。",
         "configJson": "模型設定（CC Switch 格式）",
-        "configJsonHint": "這裡僅支援模型設定，其他 Antigravity 選項請在 agy 中調整；MCP 在 MCP 面板中管理。"
+        "configJsonHint": "這裡僅支援模型設定，其他 Antigravity 選項請在 agy 中調整；MCP 在 MCP 面板中管理。",
+        "account": "帳號",
+        "accountFollow": "跟隨 agy 目前登入",
+        "accountMissing": "不在這台電腦上的帳號",
+        "accountHelp": "選了帳號的話，「開啟終端機」前會先把 agy 的登入切換到它（全域生效，之後新開的 agy 都用它）。帳號在授權中心新增。"
       },
       "gemini": {
         "model": "模型",

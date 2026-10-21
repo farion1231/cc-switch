@@ -194,7 +194,10 @@
       "change": "Change…",
       "recent": "Recent",
       "forget": "Remove from recent",
-      "confirm": "Open Terminal"
+      "confirm": "Open Terminal",
+      "agySwitchTitle": "This switches agy's sign-in",
+      "agySwitchBody": "Before opening, agy's sign-in switches to {{account}}, and agy sessions started afterwards use this account.",
+      "agySwitchRunning": "agy is running: open agy sessions keep the previous account and may write it back. Quit them first if you can."
     },
     "name": "Name",
     "namePlaceholder": "e.g., Claude Official",
@@ -217,7 +220,11 @@
         "envFile": "Launcher environment variables",
         "envFileHint": "When agy is started from the card's \"Open Terminal\", CC Switch passes the API key and endpoint to that one agy process only and never writes them to a file. Other environment variables are not applied.",
         "configJson": "Model configuration (CC Switch format)",
-        "configJsonHint": "Only model settings are supported here. Change other Antigravity options in agy; manage MCP in the MCP panel."
+        "configJsonHint": "Only model settings are supported here. Change other Antigravity options in agy; manage MCP in the MCP panel.",
+        "account": "Account",
+        "accountFollow": "Follow agy's current sign-in",
+        "accountMissing": "An account not on this computer",
+        "accountHelp": "With an account selected, Open Terminal first switches agy's sign-in to it (this applies globally: agy sessions started afterwards use it). Add accounts in the Auth Center."
       },
       "gemini": {
         "model": "Model",

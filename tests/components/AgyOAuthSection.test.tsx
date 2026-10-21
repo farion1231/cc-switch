@@ -11,6 +11,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/components/providers/forms/hooks/useManagedAuth", () => ({
   useManagedAuth: mocks.useManagedAuth,
 }));
+// 「N 个供应商在用」要读供应商列表（React Query）；这里不关心，给空
+vi.mock("@/components/providers/forms/hooks/useManagedAccountUsers", () => ({
+  useManagedAccountUsers: () => () => [],
+}));
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
