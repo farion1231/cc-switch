@@ -346,6 +346,25 @@ export const providerPresets: ProviderPreset[] = [
     icon: "grooroute",
   },
   {
+    name: "DIT.ai",
+    websiteUrl: "https://dit.ai",
+    apiKeyUrl: "https://dit.ai/register",
+    // 协议文档 dit.ai/docs、模型目录 dit.ai/models（2026-10-21 核对）：Anthropic
+    // Messages 在站点根、Key 走 Bearer。Claude 系有 sonnet-5 / opus-5 / sonnet-5-5 /
+    // opus-5-5，Haiku 只有带日期的 claude-haiku-4-5-20251001，没有 haiku-5-5
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.dit.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5-20251001",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "dit",
+    icon: "dit",
+  },
+  {
     name: "TokenFactory",
     nameKey: "providerForm.presets.tokenfactory",
     websiteUrl: "https://tokenfactory.cn",

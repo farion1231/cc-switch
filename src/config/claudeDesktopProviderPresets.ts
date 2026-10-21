@@ -388,6 +388,26 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "grooroute",
   },
   {
+    name: "DIT.ai",
+    websiteUrl: "https://dit.ai",
+    apiKeyUrl: "https://dit.ai/register",
+    category: "aggregator",
+    baseUrl: "https://api.dit.ai",
+    mode: "direct",
+    apiFormat: "anthropic",
+    // 网关没有不带日期的 claude-haiku-4-5（dit.ai/models，2026-10-21），透传会让
+    // Haiku 档 404，所以映射到带日期的 ID
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5-5",
+      "claude-opus-5-5",
+      "claude-haiku-4-5-20251001",
+      true,
+    ),
+    isPartner: true,
+    partnerPromotionKey: "dit",
+    icon: "dit",
+  },
+  {
     name: "TokenFactory",
     nameKey: "providerForm.presets.tokenfactory",
     websiteUrl: "https://tokenfactory.cn",

@@ -1633,7 +1633,8 @@
       "alltokens": "AllTokens is built on stability and honesty, aiming to make every AI call stable, genuine, and trustworthy: reliable service, transparent billing, and one platform for GPT, Claude, Gemini, Grok, DeepSeek, GLM, Kimi, and other leading models, with pay-as-you-go pricing and spending caps. Get $1 in free trial credit when you sign up!",
       "alltokens_si": "AllTokens SI is built on stability and honesty: an enterprise AI token relay and team collaboration platform. Members, keys, usage, and balance all live in one company console, and clear permissions and spending limits keep team usage traceable and under control.",
       "openmodel": "OpenModel offers client-specific discounts of up to 90% for Codex and 60% for Claude Code across supported models. CC Switch users who register via this link and use promo code \"cc-switch\" get 10% off their first top-up!",
-      "grooroute": "GrooRoute Pro is a reliable AI API relay with access to OpenAI, Claude, DeepSeek, and other mainstream models, offering pay-as-you-go and subscription plans. CC Switch users get ¥5 in free trial credit by registering via this link!"
+      "grooroute": "GrooRoute Pro is a reliable AI API relay with access to OpenAI, Claude, DeepSeek, and other mainstream models, offering pay-as-you-go and subscription plans. CC Switch users get ¥5 in free trial credit by registering via this link!",
+      "dit": "DIT.ai is an AI token exchange for lower-cost multi-provider routing: one OpenAI-compatible API reaches 50+ leading models including GPT, Claude, Gemini, DeepSeek, Grok, and Llama, with providers competing across 160+ routes, typically 30–70% below official pricing. CC Switch users can register via this link and use promo code \"ccswitch\" to claim a $5 welcome coupon!"
     },
     "presets": {
       "ucloud": "Compshare",

@@ -192,6 +192,17 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "grooroute",
   },
   {
+    name: "DIT.ai",
+    websiteUrl: "https://dit.ai",
+    apiKeyUrl: "https://dit.ai/register",
+    auth: grokAuth(),
+    config: grokPresetConfig("DIT.ai", "https://api.dit.ai/v1", "grok-4.7"),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "dit",
+    icon: "dit",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",

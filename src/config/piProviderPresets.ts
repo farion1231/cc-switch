@@ -422,6 +422,26 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "grooroute",
   },
   {
+    name: "DIT.ai",
+    providerKey: "cc-switch-dit-ai",
+    websiteUrl: "https://dit.ai",
+    apiKeyUrl: "https://dit.ai/register",
+    settingsConfig: {
+      name: "DIT.ai",
+      baseUrl: "https://api.dit.ai",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "dit",
+    icon: "dit",
+  },
+  {
     name: "TokenFactory",
     nameKey: "providerForm.presets.tokenfactory",
     providerKey: "cc-switch-tokenfactory",
