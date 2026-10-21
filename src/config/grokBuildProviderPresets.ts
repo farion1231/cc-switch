@@ -99,18 +99,6 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "packycode",
   },
   {
-    name: "ZetaAPI",
-    websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/u117",
-    auth: grokAuth(),
-    config: grokPresetConfig("ZetaAPI", "https://api.zetaapi.ai/v1"),
-    endpointCandidates: ["https://api.zetaapi.ai/v1"],
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "zetaapi",
-    icon: "zetaapi",
-  },
-  {
     name: "APINebula",
     websiteUrl: "https://apinebula.ai",
     apiKeyUrl: "https://apinebula.ai/VjM74M",
