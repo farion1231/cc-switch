@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -82,6 +82,43 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     scan_session_file(path).ok().flatten()
 }
 
+/// Claude Code keeps session metadata (`last-prompt`, `custom-title`, `relocated`, …)
+/// within the last 64 KiB of the transcript instead of appending it after every turn,
+/// so a `/cd` record can sit tens of kilobytes before EOF. The 30-line head/tail
+/// window used for titles is not enough to find it.
+const RELOCATED_TAIL_BYTES: u64 = 64 * 1024;
+
+/// Last `/cd` target recorded in the transcript, read from the same 64 KiB window
+/// Claude Code itself uses. `None` when the transcript has no relocated record.
+fn last_relocated_cwd(path: &Path) -> Option<String> {
+    let mut file = File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let start = len.saturating_sub(RELOCATED_TAIL_BYTES);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf);
+    let mut lines: Vec<&str> = text.lines().collect();
+    // Seeking into the middle of a line leaves a partial first line.
+    if start > 0 && !lines.is_empty() {
+        lines.remove(0);
+    }
+    lines
+        .into_iter()
+        .rev()
+        .filter(|line| line.contains("\"relocated\""))
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|value| value.get("type").and_then(Value::as_str) == Some("relocated"))
+        .find_map(|value| {
+            value
+                .get("relocatedCwd")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|cwd| !cwd.is_empty())
+                .map(str::to_string)
+        })
+}
+
 /// 列表扫描用：读不了（权限、文件被占用等）返回 `Err`，不进解析缓存、下轮重试；
 /// 读到了但不是会话返回 `Ok(None)`，可以缓存。
 fn scan_session_file(path: &Path) -> std::io::Result<Option<SessionMeta>> {
@@ -89,10 +126,16 @@ fn scan_session_file(path: &Path) -> std::io::Result<Option<SessionMeta>> {
         return Ok(None);
     }
     let (head, tail) = read_head_tail_lines(path, 10, 30)?;
-    Ok(parse_session_lines(path, head, tail))
+    let relocated_cwd = last_relocated_cwd(path);
+    Ok(parse_session_lines(path, head, tail, relocated_cwd))
 }
 
-fn parse_session_lines(path: &Path, head: Vec<String>, tail: Vec<String>) -> Option<SessionMeta> {
+fn parse_session_lines(
+    path: &Path,
+    head: Vec<String>,
+    tail: Vec<String>,
+    relocated_cwd: Option<String>,
+) -> Option<SessionMeta> {
     let mut session_id: Option<String> = None;
     let mut project_dir: Option<String> = None;
     let mut created_at: Option<i64> = None;
@@ -150,34 +193,16 @@ fn parse_session_lines(path: &Path, head: Vec<String>, tail: Vec<String>) -> Opt
         }
     }
 
-    // Extract last_active_at, summary, custom-title, and the relocated project
-    // directory from tail lines (reverse order).
-    //
-    // Ordinary records carry the Bash tool's tracked working directory, which drifts
-    // into subdirectories as commands run; it is not the session's project. A `/cd`
-    // is recorded separately as `{"type":"relocated","relocatedCwd":...}`, and Claude
-    // Code resolves a session against the last such record (falling back to the first
-    // `cwd` near the start of the transcript).
+    // Extract last_active_at, summary, and custom-title from tail lines (reverse order).
     let mut last_active_at: Option<i64> = None;
     let mut summary: Option<String> = None;
     let mut custom_title: Option<String> = None;
-    let mut relocated_project_dir: Option<String> = None;
 
     for line in tail.iter().rev() {
         let value: Value = match serde_json::from_str(line) {
             Ok(parsed) => parsed,
             Err(_) => continue,
         };
-        if relocated_project_dir.is_none()
-            && value.get("type").and_then(Value::as_str) == Some("relocated")
-        {
-            relocated_project_dir = value
-                .get("relocatedCwd")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string);
-        }
         if last_active_at.is_none() {
             last_active_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
         }
@@ -202,19 +227,19 @@ fn parse_session_lines(path: &Path, head: Vec<String>, tail: Vec<String>) -> Opt
                 }
             }
         }
-        if last_active_at.is_some()
-            && summary.is_some()
-            && custom_title.is_some()
-            && relocated_project_dir.is_some()
-        {
+        if last_active_at.is_some() && summary.is_some() && custom_title.is_some() {
             break;
         }
     }
 
     // `/cd` moved the session; the last relocated record wins over the cwd the
     // transcript started with. Sessions without a relocated record keep that cwd.
-    if relocated_project_dir.is_some() {
-        project_dir = relocated_project_dir;
+    //
+    // Ordinary records are deliberately ignored: their `cwd` is the Bash tool's
+    // tracked working directory and drifts into subdirectories as commands run,
+    // which must not move the session.
+    if relocated_cwd.is_some() {
+        project_dir = relocated_cwd;
     }
 
     let session_id = session_id.or_else(|| infer_session_id_from_filename(path));
@@ -1888,7 +1913,7 @@ mod tests {
             r#"{"type":"user","sessionId":"session-cd","cwd":"/tmp/project-a","timestamp":"2026-03-06T10:00:00Z","message":{"role":"user","content":"start"}}"#
                 .to_string(),
         ];
-        // Pad past the 16 KB boundary so the parser takes the seek-to-tail branch.
+        // Pad past the 16 KB boundary so the head/tail reader takes its seek branch.
         for i in 1..=160 {
             lines.push(format!(
                 r#"{{"type":"assistant","cwd":"/tmp/project-a","timestamp":"2026-03-06T10:{:02}:00Z","message":{{"role":"assistant","content":"step {i} {}"}}}}"#,
@@ -1917,6 +1942,37 @@ mod tests {
         // The last `relocated` record wins, and the drifting `cwd` of later
         // records (the Bash tool's tracked directory) is ignored.
         assert_eq!(meta.project_dir.as_deref(), Some("/tmp/project-c"));
+    }
+
+    #[test]
+    fn parse_session_finds_relocated_cwd_beyond_the_tail_window() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-cd-far.jsonl");
+        let mut lines = vec![
+            r#"{"type":"user","sessionId":"session-cd-far","cwd":"/tmp/project-a","timestamp":"2026-03-06T10:00:00Z","message":{"role":"user","content":"start"}}"#
+                .to_string(),
+            r#"{"type":"relocated","relocatedCwd":"/tmp/project-worktree","sessionId":"session-cd-far","timestamp":"2026-03-06T11:00:00Z"}"#
+                .to_string(),
+        ];
+        // The metadata block is not rewritten after every turn, so push the last
+        // relocated record past both the 16 KiB and the 30-line tail window.
+        for i in 0..120 {
+            lines.push(format!(
+                r#"{{"type":"assistant","cwd":"/tmp/project-worktree","timestamp":"2026-03-06T11:{:02}:00Z","message":{{"role":"assistant","content":"after cd {i} {}"}}}}"#,
+                i % 60,
+                "y".repeat(240)
+            ));
+        }
+        std::fs::write(&path, format!("{}\n", lines.join("\n"))).expect("write");
+
+        let (_, tail) = read_head_tail_lines(&path, 10, 30).expect("head/tail");
+        assert!(
+            !tail.iter().any(|line| line.contains("\"relocated\"")),
+            "test fixture must place the relocated record outside the 30-line tail"
+        );
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(meta.project_dir.as_deref(), Some("/tmp/project-worktree"));
     }
 
     #[test]
