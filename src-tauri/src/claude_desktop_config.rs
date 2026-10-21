@@ -121,6 +121,20 @@ pub struct ResolvedModelRoute {
     pub upstream_model: String,
     pub label_override: Option<String>,
     pub supports_1m: bool,
+    /// 写进 profile 的 `maxEffort`；不在 `MAX_EFFORT_LEVELS` 里的一律当没填。
+    pub max_effort: Option<String>,
+}
+
+/// Claude Desktop 认的努力程度档位，和 profile 的 `inferenceModels[].maxEffort` 一致。
+const MAX_EFFORT_LEVELS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+
+/// 把用户填的最大强度收敛成 Desktop 认的档位；认不出来的返回 None（不写这个键），
+/// 免得写个 Desktop 当 low 处理的值上去。
+fn normalize_max_effort(value: Option<&str>) -> Option<String> {
+    let trimmed = value?.trim().to_ascii_lowercase();
+    MAX_EFFORT_LEVELS
+        .contains(&trimmed.as_str())
+        .then_some(trimmed)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,6 +142,7 @@ struct InferenceModelSpec {
     name: String,
     label_override: Option<String>,
     supports_1m: bool,
+    max_effort: Option<String>,
 }
 
 /// 直连模式下把 `provider` 写进 Desktop 的配置（同步、编辑当前那家）。模型映射卡要经路由，
@@ -371,7 +386,7 @@ pub fn is_claude_safe_model_id(model: &str) -> bool {
 }
 
 fn inference_model_json(spec: &InferenceModelSpec) -> Value {
-    if spec.supports_1m || spec.label_override.is_some() {
+    if spec.supports_1m || spec.label_override.is_some() || spec.max_effort.is_some() {
         let mut item = json!({ "name": spec.name });
         if let Some(label_override) = spec.label_override.as_deref() {
             item["labelOverride"] = json!(label_override);
@@ -381,6 +396,10 @@ fn inference_model_json(spec: &InferenceModelSpec) -> Value {
             // 只有 `supports1m` 时 Desktop 每个模型列两行（原名 + 「1M context window」）。
             // 加上 `prefer1m`（1.21459.0 起）只列原名，交给内嵌 CLI 时自动补 `[1m]`。
             item["prefer1m"] = json!(true);
+        }
+        if let Some(max_effort) = spec.max_effort.as_deref() {
+            // 这个模型允许的最高努力程度；更高的档在 Desktop 里会被隐藏。
+            item["maxEffort"] = json!(max_effort);
         }
         item
     } else {
@@ -535,7 +554,26 @@ pub fn validate_proxy_provider(provider: &Provider) -> Result<(), AppError> {
         }
     }
 
-    proxy_model_routes(provider)?;
+    let routes = proxy_model_routes(provider)?;
+    if routes.is_empty() {
+        // 没配映射时请求按原样直通，上游收到的是 Anthropic Messages 请求，所以仍要求这张卡
+        // 是原生 Anthropic 格式（地址和凭据在下面单独校验）。
+        if let Some(api_format) = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.api_format.as_deref())
+        {
+            if !matches!(api_format, "" | "anthropic") {
+                return Err(AppError::localized(
+                    "claude_desktop.provider.api_format_unsupported",
+                    format!("Claude Desktop 第一阶段只支持原生 Anthropic Messages API（{api_format}）"),
+                    format!(
+                        "Claude Desktop phase 1 only supports native Anthropic Messages API ({api_format})"
+                    ),
+                ));
+            }
+        }
+    }
 
     if !has_proxy_base_url_and_key(provider) {
         return Err(AppError::localized(
@@ -656,6 +694,7 @@ fn direct_inference_model_specs(provider: &Provider) -> Result<Vec<InferenceMode
                 .filter(|value| !value.is_empty())
                 .map(str::to_string),
             supports_1m,
+            max_effort: normalize_max_effort(route.max_effort.as_deref()),
         });
     }
 
@@ -670,31 +709,19 @@ fn direct_inference_model_specs(provider: &Provider) -> Result<Vec<InferenceMode
     Ok(result)
 }
 
-fn uses_default_proxy_routes(provider: &Provider) -> bool {
-    !is_official_provider(provider)
-        && !needs_routing(provider)
-        && provider
-            .meta
-            .as_ref()
-            .is_none_or(|meta| meta.claude_desktop_model_routes.is_empty())
+/// 这张卡没有配任何模型路由映射：请求里的模型名按原样直通上游，不替用户补一套默认模型。
+fn has_no_explicit_routes(provider: &Provider) -> bool {
+    provider
+        .meta
+        .as_ref()
+        .is_none_or(|meta| meta.claude_desktop_model_routes.is_empty())
 }
 
 pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>, AppError> {
-    // 原生直连卡允许留空模型列表。先用同名角色路由进入代理，之后才能保存模型映射，
-    // 否则「先开路由」和「先存映射」会互相阻挡。显式映射卡仍须配置模型。
-    if uses_default_proxy_routes(provider) {
-        validate_direct_provider(provider)?;
-        let mut routes = DEFAULT_PROXY_ROUTES
-            .iter()
-            .map(|route| ResolvedModelRoute {
-                route_id: route.route_id.to_string(),
-                upstream_model: route.route_id.to_string(),
-                label_override: None,
-                supports_1m: false,
-            })
-            .collect::<Vec<_>>();
-        routes.sort_by(|a, b| a.route_id.cmp(&b.route_id));
-        return Ok(routes);
+    // 没配映射就不再拿 `DEFAULT_PROXY_ROUTES` 补满四条：那会让 Desktop 的模型列表每次
+    // 同步都被刷成固定的四档，用户在 Desktop 里删掉的又回来。空列表表示直通。
+    if has_no_explicit_routes(provider) {
+        return Ok(Vec::new());
     }
 
     configured_proxy_model_routes(provider)
@@ -729,7 +756,8 @@ pub(crate) fn configured_proxy_model_routes(
         let supports_1m = route.supports_1m.unwrap_or(false);
         let route_id = route_id.trim();
         let upstream_model = route.model.trim();
-        if route_id.is_empty() || upstream_model.is_empty() {
+        // 停用的档仍保存在映射里，但不发布：模型列表和请求映射都看不到它。
+        if route_id.is_empty() || upstream_model.is_empty() || route.enabled == Some(false) {
             continue;
         }
         let repaired_route_id = if is_claude_safe_model_id(route_id) {
@@ -750,6 +778,7 @@ pub(crate) fn configured_proxy_model_routes(
                     (!is_claude_safe_model_id(route_id)).then(|| upstream_model.to_string())
                 }),
             supports_1m,
+            max_effort: normalize_max_effort(route.max_effort.as_deref()),
         });
     }
 
@@ -861,8 +890,8 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
     let requested = strip_one_m_suffix_for_route_lookup(&requested_raw);
 
     let routes = proxy_model_routes(provider)?;
-    // 默认列表只提供进入路由时的角色菜单，不把原生的日期后缀或版本别名改成默认 ID。
-    if uses_default_proxy_routes(provider) && is_claude_safe_model_id(requested) {
+    // 没配映射：请求里的模型名原样发出去，不改成默认 ID，也不拒绝非 Claude 名字。
+    if routes.is_empty() {
         body["model"] = json!(requested);
         return Ok(normalize_upstream_request(body, provider));
     }
@@ -1135,6 +1164,7 @@ pub fn gateway_base_url(proxy_url: &str) -> String {
 ///
 /// 聚合模式下 `stack` 是其他几家发布的模型，排在路由那家后面（第一项是默认模型，仍是路由
 /// 那家的），并关掉模型发现：列表完全由这里决定。Desktop 最多收 200 条，多出的不写。
+/// 路由那家和聚合都没给出模型时不写 `inferenceModels`，列表留给用户在 Desktop 里自己维护。
 pub fn route_profile(
     db: &Database,
     route: &Provider,
@@ -1155,11 +1185,13 @@ pub fn route_profile(
             name: route.route_id,
             label_override: route.label_override,
             supports_1m: route.supports_1m,
+            max_effort: route.max_effort,
         })
         .chain(stack.iter().map(|model| InferenceModelSpec {
             name: model.id.clone(),
             label_override: Some(model.label.clone()),
             supports_1m: model.supports_1m,
+            max_effort: None,
         }))
         .collect::<Vec<_>>();
     if model_specs.len() > MAX_INFERENCE_MODELS {
@@ -1169,10 +1201,12 @@ pub fn route_profile(
         );
         model_specs.truncate(MAX_INFERENCE_MODELS);
     }
+    // 一个模型都没有时不写 `inferenceModels`：Desktop 里那份列表归用户，CC Switch 不碰。
+    let specs = (!model_specs.is_empty()).then_some(model_specs.as_slice());
     let mut profile = build_gateway_profile(
         &gateway_base_url(proxy_url),
         &get_or_create_gateway_token(db)?,
-        Some(model_specs.as_slice()),
+        specs,
     );
     if !stack.is_empty() {
         profile["modelDiscoveryEnabled"] = json!(false);
@@ -1772,6 +1806,8 @@ mod tests {
                     model: "kimi-k2".to_string(),
                     label_override: Some("Kimi K2".to_string()),
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             )]),
             ..Default::default()
@@ -1797,6 +1833,8 @@ mod tests {
                     model: "mimo-v2.5-pro".to_string(),
                     label_override: Some("MiMo v2.5 Pro".to_string()),
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             )]),
             ..Default::default()
@@ -1825,6 +1863,8 @@ mod tests {
                     model: "gpt-5.4".to_string(),
                     label_override: Some("GPT-5.4".to_string()),
                     supports_1m: Some(false),
+                    max_effort: None,
+                    enabled: None,
                 },
             )]),
             ..Default::default()
@@ -1843,6 +1883,8 @@ mod tests {
                     model: "claude-sonnet-4-6".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             )]),
             ..Default::default()
@@ -1939,24 +1981,12 @@ mod tests {
                 profile["inferenceGatewayBaseUrl"],
                 json!("http://127.0.0.1:15721/claude-desktop")
             );
-            assert_eq!(
-                profile["inferenceModels"],
-                json!([
-                    "claude-fable-5",
-                    "claude-haiku-4-5",
-                    "claude-opus-5",
-                    "claude-sonnet-5"
-                ])
-            );
+            // 没配映射就不写模型列表：Desktop 里那份归用户，同步和重启都不刷。
+            assert!(profile.get("inferenceModels").is_none(), "{profile}");
             let models = model_list_response(&provider).expect("local model discovery");
             configured_proxy_model_routes(&provider)
-                .expect_err("bootstrap defaults must not become a configured catalog");
-            assert_eq!(models["data"].as_array().expect("models").len(), 4);
-            assert!(models["data"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|model| model.get("supports1m").is_none()));
+                .expect_err("an empty catalog must not become a configured catalog");
+            assert!(models["data"].as_array().expect("models").is_empty());
             assert_eq!(serde_json::to_value(&provider).unwrap(), before);
             assert!(direct_profile(&provider)
                 .expect("direct profile remains valid")
@@ -1966,49 +1996,137 @@ mod tests {
     }
 
     #[test]
-    fn claude_desktop_native_default_routes_preserve_requested_model_versions() {
+    fn claude_desktop_no_routes_passes_the_requested_model_through() {
         let provider = direct_provider("native");
         for model in [
             "claude-haiku-4-5-20251001",
             "claude-opus-4-8",
             "anthropic/claude-sonnet-4-6",
+            "deepseek-v4-pro",
         ] {
             let mapped = map_proxy_request_model(
                 json!({"model": format!("{model} [1M]"), "messages": []}),
                 &provider,
             )
-            .expect("native model should pass through without a version rewrite");
+            .expect("no configured route should pass the model through unchanged");
             assert_eq!(mapped["model"], json!(model));
         }
-        map_proxy_request_model(json!({"model": "unconfigured-model"}), &provider)
-            .expect_err("default native routes must not accept arbitrary model names");
     }
 
     #[test]
-    fn claude_desktop_mapping_provider_still_requires_explicit_routes() {
-        let mut provider = proxy_provider("mapping");
+    fn claude_desktop_native_card_without_routes_passes_through() {
+        let mut provider = direct_provider("native");
+        let meta = provider.meta.as_mut().expect("meta");
+        meta.claude_desktop_mode = Some(ClaudeDesktopMode::Proxy);
+        meta.claude_desktop_model_routes.clear();
+
+        validate_proxy_provider(&provider).expect("an empty mapping falls back to pass-through");
+        let profile = route_profile(&test_db(), &provider, "http://127.0.0.1:15721", &[])
+            .expect("an empty mapping must not become a written model list");
+        assert!(profile.get("inferenceModels").is_none(), "{profile}");
+    }
+
+    #[test]
+    fn claude_desktop_pass_through_requires_a_native_provider() {
+        let mut provider = direct_provider("invalid-native");
+        provider.meta.as_mut().expect("meta").api_format = Some("openai_chat".to_string());
+        validate_proxy_provider(&provider).expect_err("pass-through requires native API format");
+
+        provider.meta.as_mut().expect("meta").api_format = Some("anthropic".to_string());
+        provider.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"] = json!("");
+        validate_proxy_provider(&provider).expect_err("pass-through requires credentials");
+    }
+
+    #[test]
+    fn claude_desktop_disabled_route_stays_stored_but_is_not_published() {
+        let mut provider = proxy_provider("proxy");
         provider
             .meta
             .as_mut()
             .expect("meta")
-            .claude_desktop_model_routes
-            .clear();
+            .claude_desktop_model_routes = std::collections::HashMap::from([
+            (
+                "claude-sonnet-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "deepseek-v4-pro".to_string(),
+                    label_override: None,
+                    supports_1m: None,
+                    max_effort: None,
+                    enabled: None,
+                },
+            ),
+            (
+                "claude-opus-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "grok-4.7".to_string(),
+                    label_override: Some("Opus 5.5".to_string()),
+                    supports_1m: Some(true),
+                    max_effort: Some("max".to_string()),
+                    enabled: Some(false),
+                },
+            ),
+        ]);
 
-        let error = validate_proxy_provider(&provider).expect_err("mapping is required");
-        assert!(error.to_string().contains("至少需要一个模型路由映射"));
-        route_profile(&test_db(), &provider, "http://127.0.0.1:15721", &[])
-            .expect_err("an empty mapping must not silently become native defaults");
+        let routes = proxy_model_routes(&provider).expect("routes");
+        assert_eq!(routes.len(), 1, "{routes:?}");
+        assert_eq!(routes[0].route_id, "claude-sonnet-5");
+        let profile =
+            route_profile(&test_db(), &provider, "http://127.0.0.1:15721", &[]).expect("profile");
+        let models = profile["inferenceModels"].as_array().expect("models");
+        assert_eq!(models.len(), 1, "{models:?}");
+        let published = models[0]
+            .as_str()
+            .unwrap_or_else(|| models[0]["name"].as_str().unwrap());
+        assert_eq!(published, "claude-sonnet-5");
     }
 
     #[test]
-    fn claude_desktop_default_routes_do_not_bypass_native_provider_validation() {
-        let mut provider = direct_provider("invalid-native");
-        provider.meta.as_mut().expect("meta").api_format = Some("openai_chat".to_string());
-        proxy_model_routes(&provider).expect_err("native defaults require native API format");
+    fn claude_desktop_writes_each_route_max_effort_and_drops_unknown_levels() {
+        let mut provider = proxy_provider("proxy");
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes = std::collections::HashMap::from([
+            (
+                "claude-opus-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "deepseek-v4-pro".to_string(),
+                    label_override: None,
+                    supports_1m: Some(false),
+                    max_effort: Some("MAX".to_string()),
+                    enabled: None,
+                },
+            ),
+            (
+                "claude-haiku-4-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "deepseek-v4-flash".to_string(),
+                    label_override: None,
+                    supports_1m: Some(false),
+                    max_effort: Some("turbo".to_string()),
+                    enabled: None,
+                },
+            ),
+        ]);
 
-        provider.meta.as_mut().expect("meta").api_format = Some("anthropic".to_string());
-        provider.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"] = json!("");
-        proxy_model_routes(&provider).expect_err("native defaults require credentials");
+        let profile =
+            route_profile(&test_db(), &provider, "http://127.0.0.1:15721", &[]).expect("profile");
+        let models = profile["inferenceModels"].as_array().expect("models");
+        // 只有 name 的模型是纯字符串条目，其余是对象。
+        let by_role = |role: &str| {
+            models
+                .iter()
+                .find(|model| match model {
+                    Value::String(name) => name.contains(role),
+                    other => other["name"].as_str().unwrap_or_default().contains(role),
+                })
+                .unwrap_or_else(|| panic!("{role}: {models:?}"))
+        };
+        // 写进去时统一小写；Desktop 只认这几个档位。
+        assert_eq!(by_role("opus")["maxEffort"], json!("max"), "{models:?}");
+        // 认不出来的档位不写这个键，免得 Desktop 当成 low 处理。
+        assert!(by_role("haiku").get("maxEffort").is_none(), "{models:?}");
     }
 
     #[test]
@@ -2092,6 +2210,8 @@ mod tests {
             model: model.to_string(),
             label_override: None,
             supports_1m: None,
+            max_effort: None,
+            enabled: None,
         };
         let mut provider = proxy_provider("proxy");
         provider
@@ -2176,6 +2296,8 @@ mod tests {
                     model: "deepseek-v4-pro".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             ),
             (
@@ -2184,6 +2306,8 @@ mod tests {
                     model: "deepseek-v4-pro".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             ),
             (
@@ -2192,6 +2316,8 @@ mod tests {
                     model: "deepseek-v4-flash".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             ),
         ]);
@@ -2232,6 +2358,8 @@ mod tests {
                     model: "upstream-opus".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             ),
             (
@@ -2240,6 +2368,8 @@ mod tests {
                     model: "upstream-sonnet".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             ),
         ]);
@@ -2281,6 +2411,8 @@ mod tests {
                 model: "upstream-sonnet".to_string(),
                 label_override: None,
                 supports_1m: Some(true),
+                max_effort: None,
+                enabled: None,
             },
         )]);
 
@@ -2308,6 +2440,8 @@ mod tests {
                     model: "upstream-opus".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             ),
             (
@@ -2316,6 +2450,8 @@ mod tests {
                     model: "upstream-fable".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             ),
         ]);
@@ -2346,6 +2482,8 @@ mod tests {
                 model: "upstream-opus-new".to_string(),
                 label_override: None,
                 supports_1m: Some(true),
+                max_effort: None,
+                enabled: None,
             },
         )]);
         provider
@@ -2367,6 +2505,8 @@ mod tests {
                 model: "upstream-opus-legacy".to_string(),
                 label_override: None,
                 supports_1m: Some(true),
+                max_effort: None,
+                enabled: None,
             },
         )]);
         provider
@@ -2490,6 +2630,8 @@ mod tests {
                         model: "deepseek-v4-pro".to_string(),
                         label_override: None,
                         supports_1m: Some(true),
+                        max_effort: None,
+                        enabled: None,
                     },
                 ),
                 (
@@ -2498,6 +2640,8 @@ mod tests {
                         model: "legacy-upstream".to_string(),
                         label_override: None,
                         supports_1m: Some(false),
+                        max_effort: None,
+                        enabled: None,
                     },
                 ),
                 (
@@ -2506,6 +2650,8 @@ mod tests {
                         model: "claude-sonnet-5".to_string(),
                         label_override: None,
                         supports_1m: Some(false),
+                        max_effort: None,
+                        enabled: None,
                     },
                 ),
             ]),
@@ -2558,6 +2704,8 @@ mod tests {
                     model: "upstream-sonnet".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             ),
             (
@@ -2566,6 +2714,8 @@ mod tests {
                     model: "upstream-opus".to_string(),
                     label_override: None,
                     supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
                 },
             ),
         ]);
@@ -2711,9 +2861,10 @@ mod tests {
         assert_eq!(profile["coworkEgressAllowedHosts"], json!(["corp.example"]));
         assert_eq!(profile["disableDeploymentModeChooser"], json!(true));
         assert_eq!(profile["inferenceProvider"], json!("gateway"));
-        assert!(
-            profile.get("inferenceModels").is_none(),
-            "the previous provider's models must not linger"
+        // `inferenceModels` 不归 CC Switch 独占：这家没配映射时不写，桌面里那份列表原样保留。
+        assert_eq!(
+            profile["inferenceModels"],
+            json!([{ "name": "claude-sonnet-4-6", "supports1m": true, "prefer1m": true }])
         );
     }
 

@@ -124,6 +124,10 @@ export interface ClaudeDesktopModelRoute {
   model: string;
   labelOverride?: string;
   supports1m?: boolean;
+  /** 该模型允许的最高努力程度（Claude Desktop profile 的 `maxEffort`）。留空表示不设上限。 */
+  maxEffort?: string;
+  /** 这一档是否启用。缺省按启用处理；false 时不写进 Claude Desktop 的模型列表。 */
+  enabled?: boolean;
 }
 
 export type CodexChatThinkingParam =

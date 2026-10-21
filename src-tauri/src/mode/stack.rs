@@ -1467,6 +1467,8 @@ mod tests {
                                 model: model.to_string(),
                                 label_override: label.map(str::to_string),
                                 supports_1m: one_m.then_some(true),
+                                max_effort: None,
+                                enabled: None,
                             },
                         )
                     })
