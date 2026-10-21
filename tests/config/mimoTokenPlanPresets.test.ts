@@ -14,13 +14,13 @@ describe("Xiaomi MiMo Token Plan presets", () => {
     );
 
     expect(payAsYouGo?.suggestedDefaults?.model?.primary).toBe(
-      "xiaomimimo/mimo-v2.5-pro",
+      "xiaomimimo/mimo-v2.6-pro",
     );
     expect(tokenPlan?.suggestedDefaults?.model?.primary).toBe(
-      "xiaomi-mimo-token-plan/mimo-v2.5-pro",
+      "xiaomi-mimo-token-plan/mimo-v2.6-pro",
     );
     expect(tokenPlan?.suggestedDefaults?.modelCatalog).toHaveProperty(
-      "xiaomi-mimo-token-plan/mimo-v2.5-pro",
+      "xiaomi-mimo-token-plan/mimo-v2.6-pro",
     );
     expect(tokenPlan?.suggestedDefaults?.modelCatalog).toHaveProperty(
       "xiaomi-mimo-token-plan/mimo-v2.5",
@@ -39,13 +39,11 @@ describe("Xiaomi MiMo Token Plan presets", () => {
       "my-mimo-plan",
     );
 
-    expect(rebased.model?.primary).toBe("my-mimo-plan/mimo-v2.5-pro");
-    expect(rebased.modelCatalog).toHaveProperty(
-      "my-mimo-plan/mimo-v2.5-pro",
-    );
+    expect(rebased.model?.primary).toBe("my-mimo-plan/mimo-v2.6-pro");
+    expect(rebased.modelCatalog).toHaveProperty("my-mimo-plan/mimo-v2.6-pro");
     expect(rebased.modelCatalog).toHaveProperty("my-mimo-plan/mimo-v2.5");
     expect(rebased.modelCatalog).not.toHaveProperty(
-      "xiaomi-mimo-token-plan/mimo-v2.5-pro",
+      "xiaomi-mimo-token-plan/mimo-v2.6-pro",
     );
   });
 });

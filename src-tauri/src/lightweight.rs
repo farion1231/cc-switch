@@ -31,6 +31,8 @@ pub fn enter_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
     if let Err(e) = crate::settings::set_lightweight_mode_preference(true) {
         log::warn!("持久化轻量模式偏好失败: {e}");
     }
+    // 托盘面板也是一个 WebView：收着的当场释放，开着的（在面板里点的轻量模式）收起时释放。
+    crate::tray_panel::release_if_lightweight(app);
     crate::tray::refresh_tray_menu(app);
     log::info!("进入轻量模式");
     Ok(())
@@ -45,7 +47,7 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
         let _ = window.set_focus();
         #[cfg(target_os = "linux")]
         {
-            crate::linux_fix::nudge_main_window(window.clone());
+            crate::linux_fix::nudge_main_window(window.clone(), "lightweight-exit");
         }
         #[cfg(target_os = "windows")]
         {
@@ -80,7 +82,7 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
         let _ = window.set_focus();
         #[cfg(target_os = "linux")]
         {
-            crate::linux_fix::nudge_main_window(window.clone());
+            crate::linux_fix::nudge_main_window(window.clone(), "lightweight-recreated");
         }
     }
 

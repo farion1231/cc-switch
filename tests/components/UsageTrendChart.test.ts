@@ -131,11 +131,30 @@ describe("formatUsageTrendTokenTickLabel", () => {
       "19.5亿",
     );
     expect(formatUsageTrendTokenTickLabel(65_000_000, zhTwFormatter)).toBe(
-      "6500萬",
+      "6.5千萬",
     );
     expect(formatUsageTrendTokenTickLabel(600_000_000, enFormatter)).toBe(
       "600M",
     );
+  });
+
+  it("writes four-digit wan / yi ticks with a thousand unit in CJK", () => {
+    const zh = createUsageTrendTokenTickFormatter("zh-CN");
+    const zhTw = createUsageTrendTokenTickFormatter("zh-TW");
+    const ja = createUsageTrendTokenTickFormatter("ja-JP");
+    const en = createUsageTrendTokenTickFormatter("en-US");
+
+    expect(formatUsageTrendTokenTickLabel(50_000_000, zh)).toBe("5千万");
+    expect(formatUsageTrendTokenTickLabel(15_000_000, zh)).toBe("1.5千万");
+    expect(formatUsageTrendTokenTickLabel(200_000_000_000, zh)).toBe("2千亿");
+    expect(formatUsageTrendTokenTickLabel(50_000_000, zhTw)).toBe("5千萬");
+    expect(formatUsageTrendTokenTickLabel(50_000_000, ja)).toBe("5千万");
+    expect(formatUsageTrendTokenTickLabel(200_000_000_000, ja)).toBe("2千億");
+    // 三位以内照旧，进位到 10 的交回原格式
+    expect(formatUsageTrendTokenTickLabel(5_000_000, zh)).toBe("500万");
+    expect(formatUsageTrendTokenTickLabel(100_000_000, zh)).toBe("1亿");
+    expect(formatUsageTrendTokenTickLabel(99_600_000, zh)).toBe("9960万");
+    expect(formatUsageTrendTokenTickLabel(50_000_000, en)).toBe("50M");
   });
 
   it("keeps zero and small-thousand token ticks readable", () => {
