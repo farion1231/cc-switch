@@ -63,18 +63,33 @@ function DirLabel({ dir }: { dir: string }) {
   );
 }
 
+/** 对话框里说「启动 X」用的产品名 */
+const TERMINAL_APP_NAMES: Partial<Record<AppId, string>> = {
+  claude: "Claude Code",
+  agy: "Antigravity CLI",
+};
+
 /**
- * 终端经 `claude --settings <临时文件>` 启动，临时文件只放这张卡的 env，没写的键仍从
- * ~/.claude/settings.json 读。卡上同时有地址和凭据才压得住全局配置；官方登录卡 env 为空，
- * 会跟着全局走（账号凭据也是全局一份），不能说它隔离。
+ * Claude Code：终端经 `claude --settings <临时文件>` 启动，临时文件只放这张卡的 env，没写的
+ * 键仍从 ~/.claude/settings.json 读。卡上同时有地址和凭据才压得住全局配置；官方登录卡 env
+ * 为空，会跟着全局走（账号凭据也是全局一份），不能说它隔离。
+ *
+ * Antigravity：带 Key 的卡用自己的私有 `--gemini_dir` 启动，Key 只给这个 agy 进程；官方
+ * 登录卡直接跑原生 agy，跟着全局设置和登录走。
  */
-export function terminalIsIsolated(provider: Provider): boolean {
+export function terminalIsIsolated(
+  provider: Provider,
+  appId: AppId = "claude",
+): boolean {
   const env = (provider.settingsConfig as { env?: unknown } | undefined)?.env;
   if (!env || typeof env !== "object") return false;
   const filled = (key: string) => {
     const value = (env as Record<string, unknown>)[key];
     return typeof value === "string" && value.trim() !== "";
   };
+  if (appId === "agy") {
+    return provider.category !== "official" && filled("GEMINI_API_KEY");
+  }
   return (
     filled("ANTHROPIC_BASE_URL") &&
     (filled("ANTHROPIC_AUTH_TOKEN") || filled("ANTHROPIC_API_KEY"))
@@ -89,7 +104,7 @@ interface OpenTerminalDialogProps {
 }
 
 /**
- * 「打开终端」：先说明要选的是启动 Claude Code 的目录，再让用户选。
+ * 「打开终端」：先说明要选的是启动 CLI 的目录，再让用户选。
  * 默认填上次成功打开的目录，最近用过的几个点一下就能换，不必每次都走系统选文件夹窗口。
  */
 export function OpenTerminalDialog({
@@ -163,16 +178,21 @@ export function OpenTerminalDialog({
           <DialogDescription>
             {t("provider.openTerminalDialog.description", {
               name: provider?.name ?? "",
+              app: TERMINAL_APP_NAMES[appId] ?? "Claude Code",
             })}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 px-6 py-3">
-          {provider && terminalIsIsolated(provider) && (
+          {provider && terminalIsIsolated(provider, appId) && (
             <Notice title={t("provider.openTerminalDialog.isolationTitle")}>
-              {t("provider.openTerminalDialog.isolationBody", {
-                name: provider.name,
-              })}
+              {/* Antigravity 没有「切换」，Claude Code 那句「之后切换不会影响它」对它不成立 */}
+              {t(
+                appId === "agy"
+                  ? "provider.openTerminalDialog.isolationBodyAgy"
+                  : "provider.openTerminalDialog.isolationBody",
+                { name: provider.name },
+              )}
             </Notice>
           )}
 

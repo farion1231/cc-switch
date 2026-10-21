@@ -55,6 +55,7 @@ fn app_display_name(app: &AppType) -> &'static str {
         AppType::Hermes => "Hermes",
         AppType::Pi => "Pi",
         AppType::Mcode => "MiniMax Code",
+        AppType::Agy => "Antigravity",
     }
 }
 
@@ -586,6 +587,8 @@ struct QuotaLine {
     /// 档名（重置说明用；余额等没有档名）。
     label: Option<&'static str>,
     resets_at: Option<String>,
+    /// 要上色的那段数值（还有余额时的金额，照卡片 `balanceLine` 的 `emphasis`）；其余为空。
+    emphasis: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -630,6 +633,7 @@ fn tier_line(
         left,
         label: Some(label),
         resets_at,
+        emphasis: None,
     }
 }
 
@@ -727,6 +731,7 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
             left: -1.0,
             label: None,
             resets_at: None,
+            emphasis: None,
         });
     }
     let unit = data.unit.as_deref();
@@ -742,16 +747,18 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
     if let Some(remaining) = data.remaining {
         // 余额不提示「快用完」，只有用完才算（和卡片 `quotaRules.balanceLine` 一致）
         let left = if remaining <= 0.0 { 0.0 } else { f64::INFINITY };
-        let text = if remaining <= 0.0 {
-            texts.balance_used_up.to_string()
+        let (text, emphasis) = if remaining <= 0.0 {
+            (texts.balance_used_up.to_string(), None)
         } else {
-            fill(texts.balance, &[("value", &amount(remaining, unit))])
+            let value = amount(remaining, unit);
+            (fill(texts.balance, &[("value", &value)]), Some(value))
         };
         return Some(QuotaLine {
             text,
             left,
             label: None,
             resets_at: None,
+            emphasis,
         });
     }
     data.used.map(|used| QuotaLine {
@@ -759,6 +766,7 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
         left: f64::INFINITY,
         label: None,
         resets_at: None,
+        emphasis: None,
     })
 }
 
@@ -2088,6 +2096,8 @@ pub struct PanelQuotaLine {
     pub warn: bool,
     /// 这一档什么时候重置（ISO 8601），前端按本地时间写。
     pub resets_at: Option<String>,
+    /// `text` 里要上绿色的那段数值（还有余额时的金额）；其余为空。
+    pub emphasis: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2127,6 +2137,7 @@ fn panel_quota(
                     left: line.left.is_finite().then(|| line.left.clamp(0.0, 100.0)),
                     warn: line.left < WARN_BELOW_PERCENT,
                     resets_at: line.resets_at.clone(),
+                    emphasis: line.emphasis.clone(),
                 })
                 .collect(),
             note: None,
@@ -3657,6 +3668,14 @@ mod tests {
             one(balance(0.0, Some(100.0))),
             Some(("余额已用完".to_string(), false))
         );
+
+        // 面板只给还有的余额金额上绿色；用完的那句不带
+        let emphasis = |data| match format_script_result(&zh(), &usage_result(true, vec![data])) {
+            Some(QuotaView::Lines(lines)) => lines[0].emphasis.clone(),
+            _ => panic!("expected quota lines"),
+        };
+        assert_eq!(emphasis(balance(82.1, None)), Some("82.10 CNY".to_string()));
+        assert_eq!(emphasis(balance(0.0, Some(100.0))), None);
     }
 
     #[test]

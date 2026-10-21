@@ -1,4 +1,5 @@
-//! 托盘面板：点托盘图标（左右键都一样）在图标旁弹出一块玻璃面板，列出各应用和在用的供应商；
+//! 托盘面板：Windows 右键点托盘图标、macOS 左右键点图标时，在图标旁弹出一块玻璃面板，
+//! 列出各应用和在用的供应商；Windows 左键点图标始终打开主界面。
 //! 悬停 / 点一个应用，在旁边展开它的供应商子面板，可搜索、切换。
 //!
 //! - macOS：窗口透明，按前端回报的卡片位置在网页下面垫原生玻璃——macOS 26 用
@@ -85,8 +86,13 @@ pub struct PanelTexts {
     pub open_panel: &'static str,
     pub config_tab: &'static str,
     pub usage_tab: &'static str,
-    /// 某一档的重置时间：`{when}`
-    pub resets_at: &'static str,
+    /// 某一档还有多久重置：`{when}` 是下面几个单位拼出的时长
+    pub resets_in: &'static str,
+    /// 时长单位：`{n}` 是数字；最多取两级（天+小时、小时+分），中间用 `duration_sep` 隔开
+    pub duration_days: &'static str,
+    pub duration_hours: &'static str,
+    pub duration_minutes: &'static str,
+    pub duration_sep: &'static str,
     /// 可用的额度重置次数：`{count}`
     pub reset_credits: &'static str,
 }
@@ -110,7 +116,11 @@ impl PanelTexts {
                 open_panel: "Open quick panel",
                 config_tab: "Configuration",
                 usage_tab: "Usage",
-                resets_at: "Resets {when}",
+                resets_in: "Resets in {when}",
+                duration_days: "{n}d",
+                duration_hours: "{n}h",
+                duration_minutes: "{n}m",
+                duration_sep: " ",
                 reset_credits: "{count} resets available",
             },
             "ja" => Self {
@@ -125,7 +135,11 @@ impl PanelTexts {
                 open_panel: "クイックパネルを開く",
                 config_tab: "構成",
                 usage_tab: "使用量",
-                resets_at: "{when} にリセット",
+                resets_in: "{when}後にリセット",
+                duration_days: "{n}日",
+                duration_hours: "{n}時間",
+                duration_minutes: "{n}分",
+                duration_sep: "",
                 reset_credits: "リセット可能 {count} 回",
             },
             "zh-TW" => Self {
@@ -140,7 +154,11 @@ impl PanelTexts {
                 open_panel: "開啟快捷面板",
                 config_tab: "配置",
                 usage_tab: "用量",
-                resets_at: "{when} 重置",
+                resets_in: "{when}後重置",
+                duration_days: "{n}天",
+                duration_hours: "{n}小時",
+                duration_minutes: "{n}分",
+                duration_sep: "",
                 reset_credits: "可重置 {count} 次",
             },
             _ => Self {
@@ -155,7 +173,11 @@ impl PanelTexts {
                 open_panel: "打开快捷面板",
                 config_tab: "配置",
                 usage_tab: "用量",
-                resets_at: "{when} 重置",
+                resets_in: "{when}后重置",
+                duration_days: "{n}天",
+                duration_hours: "{n}小时",
+                duration_minutes: "{n}分",
+                duration_sep: "",
                 reset_credits: "可重置 {count} 次",
             },
         }
@@ -176,6 +198,8 @@ pub struct PanelPlacement {
     pub seq: u64,
     /// 窗口平台；Windows 使用固定画布配合原生窗口区域，避免展开子面板时调整 WebView 大小。
     pub platform: &'static str,
+    /// 图标所在显示器的 DPI 缩放；前端据此区分屏幕逻辑像素和 WebView CSS 像素。
+    pub scale_factor: f64,
     /// 子面板在主面板的哪一边：`left` / `right`
     pub side: &'static str,
     /// 主面板哪条边贴着图标：`top`（向下弹出）/ `bottom`（向上弹出）
@@ -228,12 +252,21 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 /// 主面板放在图标旁边：水平居中于图标、不出工作区；图标在屏幕下半（Windows 任务栏）时向上弹出。
 /// 子面板默认向右展开，右边放不下就向左。`icon` 和 `work` 是同一显示器上的逻辑坐标。
-fn place(icon: (f64, f64, f64, f64), work: Area, seq: u64) -> (f64, f64, PanelPlacement) {
+fn place(
+    icon: (f64, f64, f64, f64),
+    work: Area,
+    seq: u64,
+    scale_factor: f64,
+) -> (f64, f64, PanelPlacement) {
     let (ix, iy, iw, ih) = icon;
     let gap = style::CARD_GAP;
+    let available_width = (work.right - work.left - SCREEN_MARGIN * 2.0 - gap).max(1.0);
+    let width_scale = (available_width / (MAIN_WIDTH + SUB_WIDTH)).min(1.0);
+    let main_width = MAIN_WIDTH * width_scale;
+    let sub_width = SUB_WIDTH * width_scale;
     let min_x = work.left + SCREEN_MARGIN;
-    let max_x = (work.right - SCREEN_MARGIN - MAIN_WIDTH).max(min_x);
-    let x = (ix + iw / 2.0 - MAIN_WIDTH / 2.0).clamp(min_x, max_x);
+    let max_x = (work.right - SCREEN_MARGIN - main_width).max(min_x);
+    let mut x = (ix + iw / 2.0 - main_width / 2.0).clamp(min_x, max_x);
 
     let upward = iy + ih / 2.0 > (work.top + work.bottom) / 2.0;
     let (edge, y) = if upward {
@@ -242,23 +275,31 @@ fn place(icon: (f64, f64, f64, f64), work: Area, seq: u64) -> (f64, f64, PanelPl
         ("top", (iy + ih + ICON_GAP).max(work.top))
     };
 
-    let room_right = work.right - SCREEN_MARGIN - (x + MAIN_WIDTH + gap);
+    let room_right = work.right - SCREEN_MARGIN - (x + main_width + gap);
     let room_left = x - gap - (work.left + SCREEN_MARGIN);
-    let side = if room_right >= SUB_WIDTH || room_right >= room_left {
+    let side = if room_right >= sub_width || room_right >= room_left {
         "right"
     } else {
         "left"
     };
 
+    // 两栏都要留在当前显示器内；高缩放的小屏幕上按可用宽度收窄。
+    x = if side == "left" {
+        x.max(min_x + sub_width + gap)
+    } else {
+        x.min(work.right - SCREEN_MARGIN - main_width - gap - sub_width)
+    };
+
     let placement = PanelPlacement {
         seq,
         platform: std::env::consts::OS,
+        scale_factor,
         side,
         edge,
         bounds_top: work.top + SCREEN_MARGIN - y,
         bounds_bottom: work.bottom - SCREEN_MARGIN - y,
-        main_width: MAIN_WIDTH,
-        sub_width: SUB_WIDTH,
+        main_width,
+        sub_width,
         gap,
         radius: style::RADIUS,
         layout: style::LAYOUT,
@@ -315,6 +356,8 @@ fn ensure_window(app: &AppHandle) -> Option<WebviewWindow> {
 }
 
 fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    // 新窗口还没套过深浅色（轻量模式下面板收起即销毁，会反复新建）。
+    *lock(&APPLIED_DARK) = None;
     let window =
         WebviewWindowBuilder::new(app, PANEL_LABEL, WebviewUrl::App("tray-panel.html".into()))
             .title("CC Switch")
@@ -354,6 +397,34 @@ fn hide_window(window: &WebviewWindow) {
     let _ = window.hide();
     // 面板里已经显示过反馈行了，下次弹出不再显示。
     crate::tray::mark_feedback_seen();
+    release_if_lightweight(window.app_handle());
+}
+
+/// 轻量模式要释放全部 WebView（Windows 上只要还剩一个，WebView2 进程就都留着）：
+/// 面板收起后销毁，下次点托盘再新建。先挪出当前调用栈、再回主线程销毁，不在面板自己的
+/// 事件回调或命令里同步拆掉它；回到主线程时再确认一次仍是收起状态，期间又弹出就留着。
+pub fn release_if_lightweight(app: &AppHandle) {
+    if !crate::lightweight::is_lightweight_mode() || panel_window(app).is_none() {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let Some(window) = panel_window(&handle) else {
+                return;
+            };
+            if !crate::lightweight::is_lightweight_mode()
+                || PENDING_REVEAL.load(Ordering::Acquire)
+                || window.is_visible().unwrap_or(false)
+            {
+                return;
+            }
+            if let Err(e) = window.destroy() {
+                log::warn!("[TrayPanel] 轻量模式下销毁面板窗口失败: {e}");
+            }
+        });
+    });
 }
 
 pub fn hide_panel(app: &AppHandle) {
@@ -378,7 +449,12 @@ fn show_at(app: &AppHandle, window: &WebviewWindow, icon: (f64, f64, f64, f64)) 
         return;
     };
     let seq = SEQ.fetch_add(1, Ordering::AcqRel) + 1;
-    let (x, y, placement) = place((px / scale, py / scale, pw / scale, ph / scale), work, seq);
+    let (x, y, placement) = place(
+        (px / scale, py / scale, pw / scale, ph / scale),
+        work,
+        seq,
+        scale,
+    );
     *lock(&ANCHOR) = Some(Anchor {
         x,
         y,
@@ -414,12 +490,11 @@ fn show_at(app: &AppHandle, window: &WebviewWindow, icon: (f64, f64, f64, f64)) 
 
 /// 点托盘图标：开着就关，关着就在图标旁弹出。`rect` 是点击事件带的图标矩形。
 pub fn toggle(app: &AppHandle, rect: &tauri::Rect) {
-    let Some(window) = ensure_window(app) else {
-        return;
-    };
-    if window.is_visible().unwrap_or(false) {
-        hide_window(&window);
-        return;
+    if let Some(window) = panel_window(app) {
+        if window.is_visible().unwrap_or(false) {
+            hide_window(&window);
+            return;
+        }
     }
     let just_blurred = lock(&LAST_BLUR_HIDE)
         .take()
@@ -427,6 +502,10 @@ pub fn toggle(app: &AppHandle, rect: &tauri::Rect) {
     if just_blurred {
         return;
     }
+    // 判断完「关」再建窗口：轻量模式下失焦收起时面板已销毁，这次点击只是关，不新建。
+    let Some(window) = ensure_window(app) else {
+        return;
+    };
     // 托盘矩形本来就是物理像素；万一是逻辑的，按 1 倍算也只是位置略偏。
     let pos = rect.position.to_physical::<f64>(1.0);
     let size = rect.size.to_physical::<f64>(1.0);
@@ -541,6 +620,8 @@ mod platform {
     /// macOS 26 上还会描一圈深色边。阴影由网页给每块卡片画（窗口四周留了边距）。
     pub fn init(window: &WebviewWindow) {
         let _ = window.set_shadow(false);
+        // 轻量模式下面板会销毁重建：旧窗口的玻璃挂在已销毁的视图上，丢掉，按新窗口重新垫。
+        let _ = window.run_on_main_thread(|| GLASS.with(|glass| glass.borrow_mut().clear()));
     }
 
     fn ns_window(window: &WebviewWindow) -> Option<&NSWindow> {
@@ -1122,7 +1203,7 @@ mod tests {
 
     #[test]
     fn menu_bar_icon_opens_downward_and_flips_submenu_left_near_the_right_edge() {
-        let (x, y, placement) = place((1300.0, 0.0, 22.0, 24.0), WORK, 1);
+        let (x, y, placement) = place((1300.0, 0.0, 22.0, 24.0), WORK, 1, 1.0);
         assert_eq!(placement.edge, "top");
         assert_eq!(y, 24.0 + ICON_GAP);
         assert_eq!(x, WORK.right - SCREEN_MARGIN - MAIN_WIDTH);
@@ -1131,7 +1212,7 @@ mod tests {
 
     #[test]
     fn icon_on_the_left_expands_submenu_to_the_right() {
-        let (x, _, placement) = place((200.0, 0.0, 22.0, 24.0), WORK, 1);
+        let (x, _, placement) = place((200.0, 0.0, 22.0, 24.0), WORK, 1, 1.0);
         assert_eq!(x, 200.0 + 11.0 - MAIN_WIDTH / 2.0);
         assert_eq!(placement.side, "right");
     }
@@ -1144,9 +1225,48 @@ mod tests {
             right: 1920.0,
             bottom: 1032.0,
         };
-        let (_, y, placement) = place((1700.0, 1040.0, 24.0, 40.0), work, 1);
+        let (_, y, placement) = place((1700.0, 1040.0, 24.0, 40.0), work, 1, 1.0);
         assert_eq!(placement.edge, "bottom");
         assert_eq!(y, work.bottom);
         assert_eq!(placement.bounds_top, SCREEN_MARGIN - y);
+    }
+
+    #[test]
+    fn both_columns_fit_scaled_work_areas_including_negative_monitor_coordinates() {
+        for (width, height) in [(1280.0, 720.0), (1366.0, 768.0), (2560.0, 1440.0)] {
+            for scale in [1.0, 1.25, 1.5, 2.0, 2.5, 3.0] {
+                for physical_left in [0.0, -width] {
+                    let work = Area {
+                        left: physical_left / scale,
+                        top: 0.0,
+                        right: (physical_left + width) / scale,
+                        bottom: (height - 48.0) / scale,
+                    };
+                    // 左侧、居中及右侧图标均须为主 / 子面板预留足够的宽度。
+                    for fraction in [0.1, 0.5, 0.95] {
+                        let (x, y, p) = place(
+                            (
+                                work.left + (work.right - work.left) * fraction,
+                                height / scale - 40.0 / scale,
+                                24.0 / scale,
+                                40.0 / scale,
+                            ),
+                            work,
+                            1,
+                            scale,
+                        );
+                        let (left, right) = if p.side == "left" {
+                            (x - p.gap - p.sub_width, x + p.main_width)
+                        } else {
+                            (x, x + p.main_width + p.gap + p.sub_width)
+                        };
+                        assert!(left >= work.left + SCREEN_MARGIN - 0.001);
+                        assert!(right <= work.right - SCREEN_MARGIN + 0.001);
+                        assert!(y <= work.bottom);
+                        assert_eq!(p.scale_factor, scale);
+                    }
+                }
+            }
+        }
     }
 }

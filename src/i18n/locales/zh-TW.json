@@ -180,13 +180,15 @@
     "managedByHermes": "Hermes 託管",
     "managedByHermesHint": "該專案定義於 Hermes 的 providers: dict，請在 Hermes Web UI 中編輯或刪除。",
     "openTerminal": "開啟終端機",
+    "openTerminalWithProvider": "使用此供應商開啟終端機",
     "terminalOpened": "終端機已開啟",
     "terminalOpenFailed": "開啟終端機失敗",
     "openTerminalDialog": {
       "title": "要在哪個目錄開啟終端機？",
-      "description": "會在你選的目錄裡開啟一個終端機，並用「{{name}}」的設定啟動 Claude Code。一般選你的專案資料夾。",
+      "description": "會在你選的目錄裡開啟一個終端機，並用「{{name}}」的設定啟動 {{app}}。一般選你的專案資料夾。",
       "isolationTitle": "這個終端機是隔離的",
       "isolationBody": "它固定使用「{{name}}」，之後在 CC Switch 裡切換供應商不會影響它；它也不會改動 CC Switch 裡正在使用的供應商。",
+      "isolationBodyAgy": "「{{name}}」的 Key 和位址只傳給這個終端機裡的 agy，不寫進任何檔案；在別的終端機裡直接執行 agy 仍是 Google 登入。",
       "noDir": "還沒選目錄",
       "choose": "選擇資料夾…",
       "change": "更換…",
@@ -208,6 +210,15 @@
     "geminiConfig": "Gemini 設定",
     "geminiConfigHint": "使用 .env 格式設定 Gemini",
     "form": {
+      "agy": {
+        "endpointHelp": "留空用 Google 預設 API。第三方位址須相容 Gemini API，並支援 agy 內建的 Gemini 模型。",
+        "modelHelp": "填模型清單裡的顯示名稱，可點「取得模型清單」選擇。只對那次工作階段生效。",
+        "keyFieldsHint": "模型、Key 和位址都只在「開啟終端機」時使用，不寫進 Antigravity 自己的設定。",
+        "envFile": "啟動環境變數",
+        "envFileHint": "從卡片「開啟終端機」啟動 agy 時，CC Switch 只把 API Key 和請求位址傳給那一個 agy 行程，不寫進任何檔案。其他環境變數不會套用。",
+        "configJson": "模型設定（CC Switch 格式）",
+        "configJsonHint": "這裡僅支援模型設定，其他 Antigravity 選項請在 agy 中調整；MCP 在 MCP 面板中管理。"
+      },
       "gemini": {
         "model": "模型",
         "oauthTitle": "OAuth 驗證模式",
@@ -408,7 +419,7 @@
       "trayStyle": "系統匣樣式",
       "trayStylePanel": "面板",
       "trayStyleMenu": "選單",
-      "trayStyleHelp": "點系統匣圖示時彈出什麼。面板：各應用使用中的供應商、額度與用量，可以搜尋、切換。選單：系統原生選單（Windows 上左鍵開啟主視窗、右鍵出選單）。切換後立即生效。",
+      "trayStyleHelp": "點系統匣圖示時彈出什麼（Windows 上左鍵一律開啟主視窗，右鍵彈出所選樣式）。面板：各應用使用中的供應商、額度與用量，可以搜尋、切換。選單：系統原生選單。切換後立即生效。",
       "minimizeToTrayHelp": "開啟時，點關閉按鈕只隱藏視窗，CC Switch 留在系統匣裡繼續執行（輕量模式在系統匣選單裡）；關閉時點關閉按鈕直接結束。",
       "terminalHelp": "點供應商卡片上的「開啟終端機」時用哪個終端機。選的終端機無法使用時，改用系統預設終端機。"
     },
@@ -468,7 +479,6 @@
         "title": "整流器",
         "description": "自動修復 API 請求中的相容性問題",
         "enabled": "啟用整流器",
-        "enabledDescription": "總開關，關閉後所有整流功能將被停用",
         "requestGroup": "請求整流",
         "responseGroup": "回應整流",
         "thinkingSignature": "Thinking 簽章整流",
@@ -505,7 +515,6 @@
           "debug": "偵錯",
           "trace": "追蹤"
         },
-        "levelHint": "日誌層級說明：",
         "levelDesc": {
           "error": "僅嚴重錯誤",
           "warn": "錯誤 + 警告資訊",
@@ -646,7 +655,6 @@
     },
     "webdavSync": {
       "title": "WebDAV 雲端同步",
-      "description": "透過 WebDAV 在多裝置間同步資料庫和技能設定。",
       "baseUrl": "WebDAV 伺服器位址",
       "baseUrlPlaceholder": "https://dav.jianguoyun.com/dav/",
       "username": "WebDAV 帳號",
@@ -687,8 +695,6 @@
         "synologyHint": "請先在 Synology「套件中心」安裝並啟用 WebDAV Server 套件。",
         "custom": "自訂"
       },
-      "remoteRootDefault": "預設: cc-switch-sync",
-      "profileDefault": "預設: default",
       "saveAndTestSuccess": "設定已儲存，連線正常",
       "saveAndTestFailed": "設定已儲存，但連線測試失敗：{{error}}",
       "noRemoteData": "雲端沒有找到同步資料",
@@ -761,9 +767,7 @@
       "endpointHint": "多數 S3 相容服務需要填寫",
       "endpointPlaceholder": "例如 https://s3-compatible.example.com",
       "remoteRoot": "遠端根目錄",
-      "remoteRootDefault": "預設: cc-switch-sync",
       "profile": "同步設定檔名稱",
-      "profileDefault": "預設: default",
       "autoSync": "自動同步",
       "autoSyncHint": "開啟後每次資料庫變更都會自動上傳到 S3。",
       "enabled": "啟用 S3 同步",
@@ -1094,7 +1098,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "agy": "Antigravity"
   },
   "mcode": {
     "empty": {
@@ -1334,6 +1339,7 @@
     "deleteEllipsis": "刪除",
     "selectSessionLabel": "選擇 {{title}}",
     "mcodeDeleteHint": "請在 MiniMax Code 中刪除",
+    "agyDeleteHint": "請在 Antigravity 中刪除工作階段，以同步清理執行狀態",
     "groupMeta": "{{count}} 個工作階段 · {{time}}",
     "bucketToday": "今天",
     "bucketYesterday": "昨天",
@@ -2026,16 +2032,13 @@
     "npmPackage": "API 格式",
     "nativeConfigHint": "請在下方以 JSON 編輯 OpenCode V2 原生設定。儲存時保留供應商和模型欄位。",
     "selectPackage": "選擇 API 格式",
-    "npmPackageHint": "選擇 AI 服務的 API 格式",
     "builtinDefaults": "使用 OpenCode 內建供應商預設值",
     "customProviderRequired": "新的供應商識別碼需要填寫 npm 套件和至少一個模型；只有設定中已有的同名供應商可以沿用預設定義",
     "duplicateRequiresDefinition": "此供應商缺少 npm 套件或模型定義，無法直接複製。請先補齊 npm 套件和至少一個模型，再複製為自訂供應商。",
     "duplicateRequiresNativeDefinition": "此 V2 原生供應商缺少 package 或模型定義，無法直接複製。請先補齊 package 和至少一個模型，再以新的識別碼複製。",
     "nativeCustomProviderRequired": "新的供應商識別碼需要填寫 package 和至少一個模型；只有設定中已有的同名供應商可以沿用預設定義",
     "baseUrl": "Base URL",
-    "baseUrlHint": "自訂 API 端點位址",
     "models": "模型設定",
-    "modelsHint": "設定可用的模型及其顯示名稱",
     "addModel": "手動新增",
     "modelId": "模型 ID",
     "modelName": "顯示名稱",
@@ -2546,7 +2549,8 @@
       "cacheWrite": "快取寫入"
     },
     "prevMonth": "上個月",
-    "nextMonth": "下個月"
+    "nextMonth": "下個月",
+    "agyUsageHint": "Antigravity 顯示工作階段日誌裡的原始 Token，金額按對應的 Gemini API 價格估算；官方訂閱按方案計費，這裡的金額僅供參考。缺少模型的歷史記錄記為 unknown，不計金額。"
   },
   "usageScript": {
     "title": "設定用量查詢",
@@ -2567,6 +2571,7 @@
     "tokenPlanHint": "自動使用供應商的 API Key 和 Base URL 查詢 Token Plan 額度",
     "balanceHint": "自動使用供應商的 API Key 查詢帳號餘額",
     "officialSubscriptionHint": "讀取本機 CLI 的 OAuth 憑證，並呼叫官方介面查詢訂閱額度。預設關閉，只有啟用後才會請求。",
+    "officialSubscriptionHintAgy": "執行 agy 內建的 /usage 指令查詢登入帳號的額度，不讀取登入憑證，每次查詢約需 10 秒。預設關閉，只有啟用後才會請求。",
     "resetDate": "重設日期",
     "premiumRequests": "Premium 請求",
     "credentialsConfig": "憑證設定",
@@ -3011,7 +3016,6 @@
       "title": "每日記憶",
       "sectionTitle": "每日記憶",
       "cardTitle": "每日記憶檔案",
-      "cardDescription": "瀏覽管理每日記憶",
       "createToday": "新增記憶",
       "empty": "暫無每日記憶檔案",
       "loadFailed": "載入每日記憶檔案失敗",
@@ -3042,7 +3046,6 @@
     "selectProtocol": "選擇 API 協定",
     "apiProtocolHint": "選擇與供應商 API 相容的協定類型。大多數供應商使用 OpenAI Completions 格式。",
     "baseUrl": "API 端點",
-    "baseUrlHint": "供應商的 API 端點位址。",
     "models": "模型設定",
     "addModel": "新增模型",
     "selectDefaultModel": "選擇預設模型",
@@ -3066,7 +3069,6 @@
     "userAgentHint": "部分供應商需要瀏覽器 User-Agent 才能正常存取。",
     "env": {
       "title": "環境變數",
-      "description": "管理 openclaw.json 中的環境變數設定（API Key、自訂變數等）",
       "editorHint": "以 JSON 形式編輯整個 env 節點。支援 env.vars、env.shellEnv 等巢狀物件。",
       "objectRequired": "OpenClaw 的 env 必須是 JSON 物件。",
       "invalidJson": "OpenClaw 的 env 必須是合法 JSON。",
@@ -3081,7 +3083,6 @@
     },
     "tools": {
       "title": "工具權限",
-      "description": "管理 openclaw.json 中的工具權限設定（允許/拒絕清單）",
       "profile": "權限模式",
       "profileMinimal": "最小權限",
       "profileCoding": "編碼",
@@ -3135,7 +3136,6 @@
   "hermes": {
     "form": {
       "baseUrl": "API 端點",
-      "baseUrlHint": "供應商的 API 端點位址。",
       "providerKey": "供應商標識",
       "providerKeyPlaceholder": "my-provider",
       "providerKeyHint": "只能使用小寫字母、數字和連字號。用作 config.yaml 中的供應商名稱。",
@@ -3143,8 +3143,9 @@
       "providerKeyRequired": "供應商標識不能為空",
       "providerKeyInvalid": "供應商標識只能包含小寫字母、數字和連字號",
       "providerKeyDuplicate": "該供應商標識已存在",
+      "providerKeyBuiltin": "「{{key}}」是 Hermes 內建供應商的標識。Hermes 會改用內建供應商（需要它自己的環境變數 Key），這張卡的位址和 Key 不會生效。請換一個標識，例如 cc-switch-{{key}}。",
+      "providerKeyBuiltinLocked": "「{{key}}」是 Hermes 內建供應商的標識。Hermes 會改用內建供應商，這張卡的位址和 Key 不會生效。標識已鎖定無法修改，請用其他標識（例如 cc-switch-{{key}}）重新新增這個供應商，再刪除這張卡。",
       "apiMode": "API 模式",
-      "apiModeHint": "供應商 API 協定。請根據端點選擇正確的協定。",
       "apiModeChatCompletions": "OpenAI Chat Completions",
       "apiModeAnthropicMessages": "Anthropic Messages",
       "apiModeCodexResponses": "OpenAI Responses",
@@ -4099,6 +4100,10 @@
       "geminiPro": "Pro",
       "geminiFlash": "Flash",
       "geminiFlashLite": "Lite",
+      "agyGeminiFiveHour": "Gemini 5 小時",
+      "agyGeminiWeekly": "Gemini 每週",
+      "agyThirdPartyFiveHour": "Claude 5 小時",
+      "agyThirdPartyWeekly": "Claude 每週",
       "monthly": "每月",
       "credits": "額度",
       "copilotPremium": "進階請求"
@@ -4112,6 +4117,12 @@
     "geminiPro": "Pro",
     "geminiFlash": "Flash",
     "geminiFlashLite": "Flash Lite",
+    "agyGemini": "Gemini",
+    "agyThirdParty": "Claude/GPT",
+    "agyGeminiFiveHour": "Gemini 5 小時",
+    "agyGeminiWeekly": "Gemini 每週",
+    "agyThirdPartyFiveHour": "Claude/GPT 5 小時",
+    "agyThirdPartyWeekly": "Claude/GPT 每週",
     "weeklyLimit": "每週",
     "monthly": "每月",
     "credits": "額度",
@@ -4183,7 +4194,8 @@
       "openclaw": "透過 npm 安裝",
       "hermes": "安裝時執行官方安裝腳本",
       "pi": "透過 npm 安裝",
-      "mcode": "安裝時執行官方安裝腳本，失敗時改用 npm"
+      "mcode": "安裝時執行官方安裝腳本，失敗時改用 npm",
+      "agy": "安裝時執行官方安裝腳本"
     }
   },
   "appPage": {
@@ -4208,7 +4220,7 @@
     },
     "active": "生效中",
     "activeTitle": "{{mode}}生效中",
-    "noProvider": "（未選擇）",
+    "noProvider": "未選擇",
     "failover": "故障轉移",
     "routeSettings": "路由設定",
     "routeSettingsTitle": "路由設定",

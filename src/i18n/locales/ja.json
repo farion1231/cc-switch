@@ -180,13 +180,15 @@
     "managedByHermes": "Hermes 管理",
     "managedByHermesHint": "Hermes の providers: dict で定義されています。Hermes Web UI で編集または削除してください。",
     "openTerminal": "ターミナルを開く",
+    "openTerminalWithProvider": "このプロバイダーでターミナルを開く",
     "terminalOpened": "ターミナルを開きました",
     "terminalOpenFailed": "ターミナルを開けませんでした",
     "openTerminalDialog": {
       "title": "どのフォルダでターミナルを開きますか？",
-      "description": "選んだフォルダでターミナルを開き、「{{name}}」の設定で Claude Code を起動します。通常はプロジェクトのフォルダを選びます。",
+      "description": "選んだフォルダでターミナルを開き、「{{name}}」の設定で {{app}} を起動します。通常はプロジェクトのフォルダを選びます。",
       "isolationTitle": "このターミナルは分離されています",
       "isolationBody": "常に「{{name}}」を使います。あとで CC Switch でプロバイダーを切り替えても影響を受けず、CC Switch で使用中のプロバイダーも変更しません。",
+      "isolationBodyAgy": "「{{name}}」のキーとエンドポイントはこのターミナルの agy にだけ渡され、ファイルには書き込まれません。別のターミナルで直接 agy を実行した場合は Google ログインのままです。",
       "noDir": "フォルダが未選択です",
       "choose": "フォルダを選択…",
       "change": "変更…",
@@ -208,6 +210,15 @@
     "geminiConfig": "Gemini 設定",
     "geminiConfigHint": ".env 形式で Gemini を設定してください",
     "form": {
+      "agy": {
+        "endpointHelp": "空欄なら Google の標準 API を使います。外部接続先は Gemini API と agy 内蔵の Gemini モデルに対応している必要があります。",
+        "modelHelp": "モデル一覧の表示名を入力してください（「モデル一覧を取得」から選べます）。そのセッションにのみ適用されます。",
+        "keyFieldsHint": "モデル、キー、エンドポイントは「ターミナルを開く」でのみ使われ、Antigravity 自身の設定には書き込みません。",
+        "envFile": "起動時の環境変数",
+        "envFileHint": "カードの「ターミナルを開く」から agy を起動すると、CC Switch は API キーとエンドポイントをその agy プロセスだけに渡し、ファイルには書き込みません。他の環境変数は適用されません。",
+        "configJson": "モデル設定（CC Switch 形式）",
+        "configJsonHint": "ここではモデル設定のみ対応しています。他の Antigravity 設定は agy で変更し、MCP は MCP パネルで管理してください。"
+      },
       "gemini": {
         "model": "モデル",
         "oauthTitle": "OAuth 認証モード",
@@ -408,7 +419,7 @@
       "trayStyle": "トレイの表示",
       "trayStylePanel": "パネル",
       "trayStyleMenu": "メニュー",
-      "trayStyleHelp": "トレイアイコンをクリックしたときに開くものです。パネル：各アプリの使用中のプロバイダー、クォータ、使用量を表示し、検索して切り替えられます。メニュー：システム標準のメニュー（Windows では左クリックでメイン画面、右クリックでメニュー）。すぐに反映されます。",
+      "trayStyleHelp": "トレイアイコンをクリックしたときに開くものです（Windows では左クリックで常にメイン画面を開き、右クリックで選択した表示を開きます）。パネル：各アプリの使用中のプロバイダー、クォータ、使用量を表示し、検索して切り替えられます。メニュー：システム標準のメニュー。すぐに反映されます。",
       "minimizeToTrayHelp": "オンのときは閉じるボタンでウィンドウを隠すだけで、CC Switch はシステムトレイで動き続けます（軽量モードはトレイメニューにあります）。オフのときは閉じるボタンで終了します。",
       "terminalHelp": "プロバイダーカードの「ターミナルを開く」で使うターミナルです。使えない場合はシステムの既定のターミナルを使います。"
     },
@@ -468,7 +479,6 @@
         "title": "整流器",
         "description": "API リクエストの互換性問題を自動修正",
         "enabled": "整流器を有効化",
-        "enabledDescription": "マスタースイッチ、オフにするとすべての整流機能が無効になります",
         "requestGroup": "リクエスト整流",
         "responseGroup": "レスポンス整流",
         "thinkingSignature": "Thinking 署名整流",
@@ -505,7 +515,6 @@
           "debug": "デバッグ",
           "trace": "トレース"
         },
-        "levelHint": "ログレベルの説明：",
         "levelDesc": {
           "error": "重大なエラーのみ",
           "warn": "エラー + 警告",
@@ -646,7 +655,6 @@
     },
     "webdavSync": {
       "title": "WebDAV クラウド同期",
-      "description": "WebDAV を使ってデバイス間でデータベースとスキル設定を同期します。",
       "baseUrl": "WebDAV サーバー URL",
       "baseUrlPlaceholder": "https://example.com/remote.php/dav/files/user",
       "username": "ユーザー名",
@@ -687,8 +695,6 @@
         "synologyHint": "Synology の「パッケージセンター」で WebDAV Server パッケージをインストール・有効化してください。",
         "custom": "カスタム"
       },
-      "remoteRootDefault": "デフォルト: cc-switch-sync",
-      "profileDefault": "デフォルト: default",
       "saveAndTestSuccess": "設定を保存しました。接続正常です",
       "saveAndTestFailed": "設定を保存しましたが、接続テストに失敗しました：{{error}}",
       "noRemoteData": "クラウドに同期データが見つかりません",
@@ -761,9 +767,7 @@
       "endpointHint": "多くの S3 互換サービスでは必須です",
       "endpointPlaceholder": "例: https://s3-compatible.example.com",
       "remoteRoot": "リモートルートディレクトリ",
-      "remoteRootDefault": "デフォルト: cc-switch-sync",
       "profile": "同期プロファイル名",
-      "profileDefault": "デフォルト: default",
       "autoSync": "自動同期",
       "autoSyncHint": "有効にすると、データベース変更のたびに S3 へ自動アップロードします。",
       "enabled": "S3 同期を有効化",
@@ -1093,7 +1097,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "agy": "Antigravity"
   },
   "mcode": {
     "empty": {
@@ -1332,6 +1337,7 @@
     "deleteSessionEllipsis": "セッションを削除",
     "deleteEllipsis": "削除",
     "selectSessionLabel": "{{title}} を選択",
+    "agyDeleteHint": "実行状態も削除するには Antigravity でセッションを削除してください",
     "mcodeDeleteHint": "MiniMax Code で削除してください",
     "groupMeta": "{{count}} 件 · {{time}}",
     "bucketToday": "今日",
@@ -2025,16 +2031,13 @@
     "npmPackage": "API フォーマット",
     "nativeConfigHint": "OpenCode V2 ネイティブ設定は下の JSON で編集します。保存時にプロバイダーとモデルのフィールドを保持します。",
     "selectPackage": "API フォーマットを選択",
-    "npmPackageHint": "AI サービスの API フォーマットを選択",
     "builtinDefaults": "OpenCode 組み込みプロバイダーの既定値を使用",
     "customProviderRequired": "新しいプロバイダー ID には npm パッケージと少なくとも1つのモデルが必要です。設定に既に存在する同じ ID のプロバイダーのみ既定の定義を継承できます。",
     "duplicateRequiresDefinition": "npm パッケージまたはモデル定義が不足しているため、そのまま複製できません。npm パッケージと少なくとも1つのモデルを指定してから、カスタムプロバイダーとして複製してください。",
     "duplicateRequiresNativeDefinition": "この V2 ネイティブプロバイダーには package またはモデル定義が不足しているため、そのまま複製できません。package と少なくとも1つのモデルを指定してから、新しい ID で複製してください。",
     "nativeCustomProviderRequired": "新しいプロバイダー ID には package と少なくとも1つのモデルが必要です。設定に既に存在する同じ ID のプロバイダーのみ既定の定義を継承できます。",
     "baseUrl": "Base URL",
-    "baseUrlHint": "カスタム API エンドポイント URL",
     "models": "モデル設定",
-    "modelsHint": "利用可能なモデルとその表示名を設定",
     "addModel": "手動で追加",
     "modelId": "モデル ID",
     "modelName": "表示名",
@@ -2545,7 +2548,8 @@
       "cacheWrite": "キャッシュ書き込み"
     },
     "prevMonth": "前月",
-    "nextMonth": "翌月"
+    "nextMonth": "翌月",
+    "agyUsageHint": "Antigravity はセッションログの生のトークン数を表示し、金額は対応する Gemini API の価格で見積もります。公式サブスクリプションはプランで課金されるため、金額は参考値です。モデルが記録されていない過去の項目は unknown として扱い、金額は計上しません。"
   },
   "usageScript": {
     "title": "利用状況を設定",
@@ -2566,6 +2570,7 @@
     "tokenPlanHint": "プロバイダーのAPI KeyとBase URLを使用してToken Planクォータを自動クエリ",
     "balanceHint": "プロバイダーのAPI Keyを使用してアカウント残高を自動クエリ",
     "officialSubscriptionHint": "ローカル CLI の OAuth 認証情報を読み取り、公式 API でサブスクリプション枠を照会します。既定では無効で、有効化した後のみリクエストします。",
+    "officialSubscriptionHintAgy": "agy 組み込みの /usage コマンドを実行して、ログイン中のアカウントの枠を照会します。ログイン認証情報は読み取りません。1 回の照会に約 10 秒かかります。既定では無効で、有効化した後のみ実行します。",
     "resetDate": "リセット日",
     "premiumRequests": "Premium リクエスト",
     "credentialsConfig": "認証情報",
@@ -3010,7 +3015,6 @@
       "title": "デイリーメモリー",
       "sectionTitle": "デイリーメモリー",
       "cardTitle": "デイリーメモリーファイル",
-      "cardDescription": "デイリーメモリーの閲覧・管理",
       "createToday": "メモリーを追加",
       "empty": "デイリーメモリーファイルはまだありません",
       "loadFailed": "デイリーメモリーファイルの読み込みに失敗しました",
@@ -3041,7 +3045,6 @@
     "selectProtocol": "API プロトコルを選択",
     "apiProtocolHint": "プロバイダーの API と互換性のあるプロトコルタイプを選択してください。ほとんどのプロバイダーは OpenAI Completions 形式を使用します。",
     "baseUrl": "API エンドポイント",
-    "baseUrlHint": "プロバイダーの API エンドポイントアドレス。",
     "models": "モデル設定",
     "addModel": "モデルを追加",
     "selectDefaultModel": "デフォルトモデルを選択",
@@ -3065,7 +3068,6 @@
     "userAgentHint": "一部のプロバイダーはブラウザの User-Agent ヘッダーが必要です。",
     "env": {
       "title": "環境変数",
-      "description": "openclaw.json の環境変数設定を管理（APIキー、カスタム変数など）",
       "editorHint": "env セクション全体を JSON として編集します。env.vars や env.shellEnv などのネストしたオブジェクトにも対応しています。",
       "objectRequired": "OpenClaw の env は JSON オブジェクトである必要があります。",
       "invalidJson": "OpenClaw の env は有効な JSON である必要があります。",
@@ -3080,7 +3082,6 @@
     },
     "tools": {
       "title": "ツール権限",
-      "description": "openclaw.json のツール権限設定を管理（許可/拒否リスト）",
       "profile": "権限プロファイル",
       "profileMinimal": "最小",
       "profileCoding": "コーディング",
@@ -3134,7 +3135,6 @@
   "hermes": {
     "form": {
       "baseUrl": "API エンドポイント",
-      "baseUrlHint": "プロバイダーの API エンドポイント URL。",
       "providerKey": "プロバイダーキー",
       "providerKeyPlaceholder": "my-provider",
       "providerKeyHint": "小文字、数字、ハイフンのみ。config.yaml のプロバイダー名として使用されます。",
@@ -3142,8 +3142,9 @@
       "providerKeyRequired": "プロバイダーキーは必須です",
       "providerKeyInvalid": "プロバイダーキーは小文字、数字、ハイフンのみ使用できます",
       "providerKeyDuplicate": "このプロバイダーキーは既に存在します",
+      "providerKeyBuiltin": "「{{key}}」は Hermes 組み込みプロバイダーの ID です。Hermes は組み込みプロバイダー（専用の環境変数の API キーが必要）を使い、このカードのエンドポイントとキーは使われません。cc-switch-{{key}} など別のキーにしてください。",
+      "providerKeyBuiltinLocked": "「{{key}}」は Hermes 組み込みプロバイダーの ID です。Hermes は組み込みプロバイダーを使い、このカードのエンドポイントとキーは使われません。キーはロックされているため、別のキー（例: cc-switch-{{key}}）でこのプロバイダーを追加し直してから、このカードを削除してください。",
       "apiMode": "API モード",
-      "apiModeHint": "プロバイダーの API プロトコル。エンドポイントに合わせて正しい形式を選択してください。",
       "apiModeChatCompletions": "OpenAI Chat Completions",
       "apiModeAnthropicMessages": "Anthropic Messages",
       "apiModeCodexResponses": "OpenAI Responses",
@@ -4098,6 +4099,10 @@
       "geminiPro": "Pro",
       "geminiFlash": "Flash",
       "geminiFlashLite": "Lite",
+      "agyGeminiFiveHour": "Gemini 5h",
+      "agyGeminiWeekly": "Gemini 週",
+      "agyThirdPartyFiveHour": "Claude 5h",
+      "agyThirdPartyWeekly": "Claude 週",
       "monthly": "月",
       "credits": "クレジット",
       "copilotPremium": "プレミアム"
@@ -4111,6 +4116,12 @@
     "geminiPro": "Pro",
     "geminiFlash": "Flash",
     "geminiFlashLite": "Flash Lite",
+    "agyGemini": "Gemini",
+    "agyThirdParty": "Claude/GPT",
+    "agyGeminiFiveHour": "Gemini 5時間",
+    "agyGeminiWeekly": "Gemini 週間",
+    "agyThirdPartyFiveHour": "Claude/GPT 5時間",
+    "agyThirdPartyWeekly": "Claude/GPT 週間",
     "weeklyLimit": "週間",
     "monthly": "月間",
     "credits": "クレジット",
@@ -4182,7 +4193,8 @@
       "openclaw": "npm でインストール",
       "hermes": "公式インストールスクリプトでインストール",
       "pi": "npm でインストール",
-      "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います"
+      "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います",
+      "agy": "公式インストールスクリプトでインストール"
     }
   },
   "appPage": {
@@ -4207,7 +4219,7 @@
     },
     "active": "有効",
     "activeTitle": "{{mode}}が有効",
-    "noProvider": "（未選択）",
+    "noProvider": "未選択",
     "failover": "フェイルオーバー",
     "routeSettings": "ルーティング設定",
     "routeSettingsTitle": "ルーティング設定",
