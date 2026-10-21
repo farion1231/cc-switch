@@ -160,6 +160,14 @@ const S3_PRESETS: S3Preset[] = [
   },
 ];
 
+/** Restore the saved preset, ignoring ids this build does not know. */
+function resolveS3Preset(config?: S3SyncSettings): string {
+  const saved = config?.preset;
+  return saved && S3_PRESETS.some((preset) => preset.id === saved)
+    ? saved
+    : detectS3Preset(config?.endpoint);
+}
+
 /** Format an RFC 3339 date string for display; falls back to raw string. */
 function formatDate(rfc3339: string): string {
   const d = new Date(rfc3339);
@@ -289,9 +297,7 @@ export function WebdavSyncSection({
   // Keep the saved preset id so an explicit choice (MinIO, whose endpoint cannot
   // be inferred) survives reopening the page; fall back to the endpoint for
   // configs saved before the preset was persisted (#6663).
-  const [s3Preset, setS3Preset] = useState(
-    () => s3Config?.preset || detectS3Preset(s3Config?.endpoint),
-  );
+  const [s3Preset, setS3Preset] = useState(() => resolveS3Preset(s3Config));
   const [s3Region, setS3Region] = useState(s3Config?.region ?? "");
   const [s3Bucket, setS3Bucket] = useState(s3Config?.bucket ?? "");
   const [s3AccessKeyId, setS3AccessKeyId] = useState(
@@ -398,7 +404,7 @@ export function WebdavSyncSection({
     setS3AccessKeyId(s3Config.accessKeyId ?? "");
     setS3SecretAccessKey(s3Config.secretAccessKey ?? "");
     setS3Endpoint(s3Config.endpoint ?? "");
-    setS3Preset(s3Config.preset || detectS3Preset(s3Config.endpoint));
+    setS3Preset(resolveS3Preset(s3Config));
     setS3RemoteRoot(s3Config.remoteRoot ?? "cc-switch-sync");
     setS3Profile(s3Config.profile ?? "default");
     setS3AutoSync(s3Config.autoSync ?? false);

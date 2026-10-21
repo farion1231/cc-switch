@@ -627,6 +627,16 @@ describe("WebdavSyncSection", () => {
       expect(s3PresetSelect().value).toBe("s3-minio");
     });
 
+    it("falls back to the endpoint when the saved preset is unknown", () => {
+      renderSection(undefined, {
+        ...baseS3Config,
+        endpoint: "https://oss-cn-hangzhou.aliyuncs.com",
+        preset: "s3-from-a-newer-version",
+      });
+
+      expect(s3PresetSelect().value).toBe("s3-oss");
+    });
+
     it("saves the selected preset so it survives reopening", async () => {
       renderSection(undefined, baseS3Config);
 
