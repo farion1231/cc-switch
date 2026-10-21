@@ -30,7 +30,7 @@ python3 - "$KEY.pub" <<'PY' || fail "updater pubkey in tauri.conf.json does not 
 import base64, json, sys
 conf = json.load(open("src-tauri/tauri.conf.json"))
 embedded = base64.b64decode(conf["plugins"]["updater"]["pubkey"]).decode().strip()
-actual = open(sys.argv[1]).read().strip()
+actual = base64.b64decode(open(sys.argv[1]).read()).decode().strip()
 sys.exit(0 if embedded == actual else 1)
 PY
 
