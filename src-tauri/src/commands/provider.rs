@@ -661,7 +661,7 @@ async fn query_provider_usage_inner(
         let team_organization_id = usage_script.and_then(|s| s.team_organization_id.clone());
         let team_project_id = usage_script.and_then(|s| s.team_project_id.clone());
 
-        let quota = crate::services::coding_plan::get_coding_plan_quota(
+        let outcome = crate::services::coding_plan::query_coding_plan(
             &base_url,
             &api_key,
             access_key_id.as_deref(),
@@ -672,6 +672,17 @@ async fn query_provider_usage_inner(
         )
         .await
         .map_err(|e| format!("Failed to query coding plan: {e}"))?;
+
+        // 智谱按量账户没有 Coding Plan：有套餐显示套餐，没有就显示账户余额（#8465），
+        // 不再显示「查询失败」让人以为供应商坏了。卡片和托盘都按余额样式显示这条结果。
+        let quota = match outcome {
+            crate::services::coding_plan::CodingPlanOutcome::Quota(quota) => quota,
+            crate::services::coding_plan::CodingPlanOutcome::ZhipuNoPlan(_) => {
+                return crate::services::balance::query_zhipu_balance(&base_url, &api_key)
+                    .await
+                    .map_err(|e| format!("Failed to query balance: {e}"));
+            }
+        };
 
         // 将 SubscriptionQuota 转换为 UsageResult
         if !quota.success {
@@ -1011,6 +1022,17 @@ pub fn get_opencode_live_provider_ids() -> Result<Vec<String>, String> {
     crate::opencode_config::get_providers()
         .map(|providers| providers.keys().cloned().collect())
         .map_err(|e| e.to_string())
+}
+
+/// OpenCode 顶层 `model`（`<provider>/<model>`）
+#[tauri::command]
+pub fn get_opencode_default_model() -> Result<Option<String>, String> {
+    crate::opencode_config::get_default_model().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_opencode_default_model(model: String) -> Result<(), String> {
+    crate::opencode_config::set_default_model(&model).map_err(|e| e.to_string())
 }
 
 // ============================================================================

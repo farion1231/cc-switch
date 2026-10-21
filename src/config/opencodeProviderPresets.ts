@@ -38,24 +38,36 @@ export interface PresetModelVariant {
   variants?: Record<string, Record<string, unknown>>;
 }
 
+// MiniMax-M3.1-Flash 的思考不可关：禁用 OpenCode 自带的 none 档，
+// 并把 effort 档位（low…max）直接传给接口。
+const MINIMAX_M31_VARIANTS = {
+  none: { disabled: true },
+  low: { reasoningEffort: "low" },
+  medium: { reasoningEffort: "medium" },
+  high: { reasoningEffort: "high" },
+  xhigh: { reasoningEffort: "xhigh" },
+  max: { reasoningEffort: "max" },
+};
+
 export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
   string,
   PresetModelVariant[]
 > = {
   "@ai-sdk/openai-compatible": [
     {
+      id: "MiniMax-M3.1-Flash",
+      name: "MiniMax M3.1 Flash",
+      contextLimit: 1000000,
+      outputLimit: 131072,
+      modalities: { input: ["text", "image"], output: ["text"] },
+      variants: MINIMAX_M31_VARIANTS,
+    },
+    {
       id: "MiniMax-M3",
       name: "MiniMax M3",
       contextLimit: 1000000,
       outputLimit: 131072,
       modalities: { input: ["text", "image"], output: ["text"] },
-    },
-    {
-      id: "MiniMax-M2.7",
-      name: "MiniMax M2.7",
-      contextLimit: 204800,
-      outputLimit: 131072,
-      modalities: { input: ["text"], output: ["text"] },
     },
     {
       id: "glm-5.1",
@@ -501,34 +513,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "ZetaAPI",
-    websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/u117",
-    settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
-      name: "ZetaAPI",
-      options: {
-        baseURL: "https://api.zetaapi.ai/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol", reasoning: true },
-      },
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "zetaapi",
-    icon: "zetaapi",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-  {
     name: "APINebula",
     websiteUrl: "https://apinebula.ai",
     apiKeyUrl: "https://apinebula.ai/VjM74M",
@@ -591,6 +575,45 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         editorValue: "",
       },
     },
+  },
+  {
+    name: "hao.ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "hao.ai",
+      options: {
+        baseURL: "https://api.hao.ai/anthropic/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "anthropic/claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "anthropic/claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
   },
   {
     name: "FennoAI",
@@ -707,6 +730,54 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     icon: "openmodel",
   },
   {
+    name: "EveryAPI",
+    websiteUrl: "https://everyapi.ai",
+    apiKeyUrl:
+      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
+    // GPT 系列只开放 Responses（api.everyapi.ai/api/pricing 的
+    // supported_endpoint_types 为 openai-response，2026-10-17 核对）
+    settingsConfig: {
+      npm: "@ai-sdk/openai",
+      name: "EveryAPI",
+      options: {
+        baseURL: "https://api.everyapi.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-5.6-sol": {
+          name: "GPT-5.6 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-sol": {
+          name: "GPT-6 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "everyapi",
+    icon: "everyapi",
+  },
+  {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
     apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
@@ -744,6 +815,45 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "grooroute",
     icon: "grooroute",
+  },
+  {
+    name: "DIT.ai",
+    websiteUrl: "https://dit.ai",
+    apiKeyUrl: "https://dit.ai/register",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "DIT.ai",
+      options: {
+        baseURL: "https://api.dit.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-opus-5-5": {
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "claude-sonnet-5-5": {
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "dit",
+    icon: "dit",
   },
   {
     name: "TokenFactory",
@@ -1895,54 +2005,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     icon: "modelflare",
   },
   {
-    name: "EveryAPI",
-    websiteUrl: "https://everyapi.ai",
-    apiKeyUrl:
-      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
-    // GPT 系列只开放 Responses（api.everyapi.ai/api/pricing 的
-    // supported_endpoint_types 为 openai-response，2026-10-17 核对）
-    settingsConfig: {
-      npm: "@ai-sdk/openai",
-      name: "EveryAPI",
-      options: {
-        baseURL: "https://api.everyapi.ai/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "gpt-5.6-sol": {
-          name: "GPT-5.6 Sol",
-          reasoning: true,
-          limit: { context: 272000, output: 128000 },
-          modalities: { input: ["text", "image"], output: ["text"] },
-        },
-        "gpt-6-sol": {
-          name: "GPT-6 Sol",
-          reasoning: true,
-          limit: { context: 272000, output: 128000 },
-          modalities: { input: ["text", "image"], output: ["text"] },
-        },
-        "gpt-6-astra": {
-          name: "GPT-6 Astra",
-          reasoning: true,
-          limit: { context: 272000, output: 128000 },
-          modalities: { input: ["text", "image"], output: ["text"] },
-        },
-      },
-    },
-    category: "aggregator",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    isPartner: true,
-    partnerPromotionKey: "everyapi",
-    icon: "everyapi",
-  },
-  {
     name: "AllTokens",
     websiteUrl: "https://alltokens.cc",
     apiKeyUrl: "https://alltokens.cc/register",
@@ -1988,6 +2050,54 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "alltokens",
     icon: "alltokens",
+  },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    // new-api 网关，目录见 alltokens.si/api/pricing（2026-10-19 核对）：GPT 分组
+    // 只声明 Chat Completions，窗口按中转口径封顶 272K
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "AllTokens SI",
+      options: {
+        baseURL: "https://alltokens.si/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-5.6-sol": {
+          name: "GPT-5.6 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-sol": {
+          name: "GPT-6 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
@@ -2146,7 +2256,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     family: "zhipu",
     regionKey: "cn",
     websiteUrl: "https://open.bigmodel.cn",
-    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "Zhipu GLM",
@@ -2187,7 +2297,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     family: "zhipu",
     regionKey: "intl",
     websiteUrl: "https://z.ai",
-    apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
+    apiKeyUrl: "https://z.ai/subscribe",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "Zhipu GLM en",
@@ -3089,6 +3199,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
+        "MiniMax-M3.1-Flash": {
+          name: "MiniMax M3.1 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+          variants: MINIMAX_M31_VARIANTS,
+        },
         "MiniMax-M3": {
           name: "MiniMax M3",
           reasoning: true,
@@ -3127,6 +3244,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
+        "MiniMax-M3.1-Flash": {
+          name: "MiniMax M3.1 Flash",
+          reasoning: true,
+          limit: { context: 1000000, output: 131072 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+          variants: MINIMAX_M31_VARIANTS,
+        },
         "MiniMax-M3": {
           name: "MiniMax M3",
           reasoning: true,

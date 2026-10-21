@@ -154,10 +154,12 @@ describe("CodebuddyOAuthSection", () => {
     ).not.toBeInTheDocument();
     // 但保留重新打开授权页面的入口和说明
     expect(
-      screen.getByRole("button", { name: "打开授权页面" }),
+      screen.getByRole("button", { name: "重新打开登录页" }),
     ).toBeInTheDocument();
     expect(screen.getByText(/等待授权中/)).toBeInTheDocument();
-    expect(screen.getByText(/已在浏览器打开授权页面/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/已在浏览器打开 CodeBuddy 的登录页/),
+    ).toBeInTheDocument();
   });
 
   it("renders the empty state with a CodeBuddy login button", () => {

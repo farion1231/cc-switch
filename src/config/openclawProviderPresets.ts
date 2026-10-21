@@ -388,42 +388,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "ZetaAPI",
-    websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/u117",
-    settingsConfig: {
-      baseUrl: "https://api.zetaapi.ai/v1",
-      apiKey: "",
-      api: "openai-completions",
-      models: [
-        {
-          id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          contextWindow: 272000,
-        },
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "zetaapi",
-    icon: "zetaapi",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "zetaapi/gpt-5.6-sol",
-      },
-      modelCatalog: {
-        "zetaapi/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
-      },
-    },
-  },
-  {
     name: "APINebula",
     websiteUrl: "https://apinebula.ai",
     apiKeyUrl: "https://apinebula.ai/VjM74M",
@@ -509,6 +473,55 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         "aicodemirror/claude-sonnet-5": { alias: "Sonnet" },
       },
     },
+  },
+  {
+    name: "hao.ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    settingsConfig: {
+      baseUrl: "https://api.hao.ai/anthropic",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "anthropic/claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+        {
+          id: "anthropic/claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "haoai/anthropic/claude-opus-5-5",
+        fallbacks: ["haoai/anthropic/claude-sonnet-5-5"],
+      },
+      modelCatalog: {
+        "haoai/anthropic/claude-opus-5-5": { alias: "Opus" },
+        "haoai/anthropic/claude-sonnet-5-5": { alias: "Sonnet" },
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
   },
   {
     name: "FennoAI",
@@ -669,6 +682,66 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     icon: "openmodel",
   },
   {
+    name: "EveryAPI",
+    websiteUrl: "https://everyapi.ai",
+    apiKeyUrl:
+      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
+    // GPT 系列只开放 Responses（api.everyapi.ai/api/pricing 的
+    // supported_endpoint_types 为 openai-response，2026-10-17 核对）
+    settingsConfig: {
+      baseUrl: "https://api.everyapi.ai/v1",
+      apiKey: "",
+      api: "openai-responses",
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-6-sol",
+          name: "GPT-6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-6-astra",
+          name: "GPT-6 Astra",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "everyapi/gpt-5.6-sol",
+        fallbacks: ["everyapi/gpt-6-sol"],
+      },
+      modelCatalog: {
+        "everyapi/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
+        "everyapi/gpt-6-sol": { alias: "GPT-6 Sol" },
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "everyapi",
+    icon: "everyapi",
+  },
+  {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
     apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
@@ -716,6 +789,55 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "grooroute",
     icon: "grooroute",
+  },
+  {
+    name: "DIT.ai",
+    websiteUrl: "https://dit.ai",
+    apiKeyUrl: "https://dit.ai/register",
+    settingsConfig: {
+      baseUrl: "https://api.dit.ai",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          name: "Claude Opus 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+        {
+          id: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "dit/claude-opus-5-5",
+        fallbacks: ["dit/claude-sonnet-5-5"],
+      },
+      modelCatalog: {
+        "dit/claude-opus-5-5": { alias: "Opus" },
+        "dit/claude-sonnet-5-5": { alias: "Sonnet" },
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "dit",
+    icon: "dit",
   },
   {
     name: "TokenFactory",
@@ -2476,66 +2598,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     icon: "modelflare",
   },
   {
-    name: "EveryAPI",
-    websiteUrl: "https://everyapi.ai",
-    apiKeyUrl:
-      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
-    // GPT 系列只开放 Responses（api.everyapi.ai/api/pricing 的
-    // supported_endpoint_types 为 openai-response，2026-10-17 核对）
-    settingsConfig: {
-      baseUrl: "https://api.everyapi.ai/v1",
-      apiKey: "",
-      api: "openai-responses",
-      models: [
-        {
-          id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 272000,
-          maxTokens: 128000,
-        },
-        {
-          id: "gpt-6-sol",
-          name: "GPT-6 Sol",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 272000,
-          maxTokens: 128000,
-        },
-        {
-          id: "gpt-6-astra",
-          name: "GPT-6 Astra",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 272000,
-          maxTokens: 128000,
-        },
-      ],
-    },
-    category: "aggregator",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "everyapi/gpt-5.6-sol",
-        fallbacks: ["everyapi/gpt-6-sol"],
-      },
-      modelCatalog: {
-        "everyapi/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
-        "everyapi/gpt-6-sol": { alias: "GPT-6 Sol" },
-      },
-    },
-    isPartner: true,
-    partnerPromotionKey: "everyapi",
-    icon: "everyapi",
-  },
-  {
     name: "AllTokens",
     websiteUrl: "https://alltokens.cc",
     apiKeyUrl: "https://alltokens.cc/register",
@@ -2593,6 +2655,66 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "alltokens",
     icon: "alltokens",
+  },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    // new-api 网关，目录见 alltokens.si/api/pricing（2026-10-19 核对）：GPT 分组
+    // 只声明 Chat Completions，窗口按中转口径封顶 272K
+    settingsConfig: {
+      baseUrl: "https://alltokens.si/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-6-sol",
+          name: "GPT-6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-6-astra",
+          name: "GPT-6 Astra",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "alltokens-si/gpt-5.6-sol",
+        fallbacks: ["alltokens-si/gpt-6-sol"],
+      },
+      modelCatalog: {
+        "alltokens-si/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
+        "alltokens-si/gpt-6-sol": { alias: "GPT-6 Sol" },
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
@@ -2813,7 +2935,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     family: "zhipu",
     regionKey: "cn",
     websiteUrl: "https://open.bigmodel.cn",
-    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code",
     settingsConfig: {
       baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
       apiKey: "",
@@ -2862,7 +2984,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     family: "zhipu",
     regionKey: "intl",
     websiteUrl: "https://z.ai",
-    apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
+    apiKeyUrl: "https://z.ai/subscribe",
     settingsConfig: {
       baseUrl: "https://api.z.ai/api/coding/paas/v4",
       apiKey: "",
@@ -4081,46 +4203,18 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "MiniMax-M3",
-          name: "MiniMax M3",
+          id: "MiniMax-M3.1-Flash",
+          name: "MiniMax M3.1 Flash",
           reasoning: true,
           input: ["text", "image"],
           contextWindow: 1000000,
           maxTokens: 131072,
-          cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
+          cost: { input: 0.15, output: 0.6, cacheRead: 0.015, cacheWrite: 0 },
+          compat: {
+            supportsReasoningEffort: true,
+            supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+          },
         },
-      ],
-    },
-    category: "cn_official",
-    theme: {
-      backgroundColor: "#f64551",
-      textColor: "#FFFFFF",
-    },
-    icon: "minimax",
-    iconColor: "#FF6B6B",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: { primary: "minimax/MiniMax-M3" },
-      modelCatalog: { "minimax/MiniMax-M3": { alias: "MiniMax" } },
-    },
-  },
-  {
-    name: "MiniMax en",
-    family: "minimax",
-    regionKey: "intl",
-    websiteUrl: "https://platform.minimax.io",
-    apiKeyUrl: "https://platform.minimax.io/subscribe/coding-plan",
-    settingsConfig: {
-      baseUrl: "https://api.minimax.io/v1",
-      apiKey: "",
-      api: "openai-completions",
-      models: [
         {
           id: "MiniMax-M3",
           name: "MiniMax M3",
@@ -4147,8 +4241,66 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "minimax-en/MiniMax-M3" },
-      modelCatalog: { "minimax-en/MiniMax-M3": { alias: "MiniMax" } },
+      model: { primary: "minimax/MiniMax-M3.1-Flash" },
+      modelCatalog: {
+        "minimax/MiniMax-M3.1-Flash": { alias: "MiniMax" },
+      },
+    },
+  },
+  {
+    name: "MiniMax en",
+    family: "minimax",
+    regionKey: "intl",
+    websiteUrl: "https://platform.minimax.io",
+    apiKeyUrl: "https://platform.minimax.io/subscribe/coding-plan",
+    settingsConfig: {
+      baseUrl: "https://api.minimax.io/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "MiniMax-M3.1-Flash",
+          name: "MiniMax M3.1 Flash",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 131072,
+          cost: { input: 0.15, output: 0.6, cacheRead: 0.015, cacheWrite: 0 },
+          compat: {
+            supportsReasoningEffort: true,
+            supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+          },
+        },
+        {
+          id: "MiniMax-M3",
+          name: "MiniMax M3",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 131072,
+          cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "cn_official",
+    theme: {
+      backgroundColor: "#f64551",
+      textColor: "#FFFFFF",
+    },
+    icon: "minimax",
+    iconColor: "#FF6B6B",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "minimax-en/MiniMax-M3.1-Flash" },
+      modelCatalog: {
+        "minimax-en/MiniMax-M3.1-Flash": { alias: "MiniMax" },
+      },
     },
   },
   {
@@ -5282,7 +5434,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "GPT-6 Astra",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 272000,
+          contextWindow: 1050000,
           maxTokens: 128000,
           cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
         },
@@ -5291,7 +5443,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "GPT-6.1 Sol",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 272000,
+          contextWindow: 1050000,
           maxTokens: 128000,
           cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
         },
@@ -5877,7 +6029,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "GPT-6.1 Sol",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 272000,
+          contextWindow: 1050000,
           maxTokens: 128000,
           cost: { input: 2, output: 10, cacheRead: 0.1 },
         },
@@ -5886,7 +6038,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           name: "GPT-6 Luna",
           reasoning: true,
           input: ["text", "image"],
-          contextWindow: 272000,
+          contextWindow: 1050000,
           maxTokens: 128000,
           cost: { input: 0.1, output: 0.5, cacheRead: 0.01 },
         },

@@ -75,6 +75,9 @@ interface ManagedAccountsGroupProps {
   onAdd: () => void;
   /** Copilot 选部署类型的那块；有它时不显示空状态那行 */
   chooser?: React.ReactNode;
+  /** 「默认」徽标和 ⋯ 里「设为默认」的文案（Antigravity 是「agy 在用」「切换 agy 到这个账号」） */
+  defaultLabel?: string;
+  setDefaultLabel?: string;
   /** ⋯ 里有没有「重新登录」（Copilot 没有） */
   canReauth: boolean;
   onReauth: (accountId: string) => void;
@@ -111,6 +114,8 @@ export function ManagedAccountsGroup({
   loginLabel,
   onAdd,
   chooser,
+  defaultLabel,
+  setDefaultLabel,
   canReauth,
   onReauth,
   onSetDefault,
@@ -308,6 +313,8 @@ export function ManagedAccountsGroup({
           <AccountRow
             key={account.id}
             account={account}
+            defaultLabel={defaultLabel}
+            setDefaultLabel={setDefaultLabel}
             canReauth={canReauth}
             busy={busy}
             pendingId={pendingId}
@@ -368,39 +375,57 @@ export function ManagedAccountsGroup({
                 {t("common.cancel", { defaultValue: "取消" })}
               </Button>
             </div>
-            {login.deviceCode && (
+            {login.deviceCode && !login.deviceCode.user_code && (
+              <div className="flex flex-wrap items-center gap-2 text-caption text-fg-2">
+                <span className="min-w-0 flex-1">
+                  {t("authCenter.pending.browserNote", {
+                    defaultValue:
+                      "已在浏览器打开 {{service}} 的登录页，登录并同意授权后这里会自动更新。",
+                    service: name,
+                  })}
+                </span>
+                <Button
+                  type="button"
+                  variant="quiet"
+                  size="compact"
+                  className="gap-1"
+                  onClick={openPage}
+                >
+                  <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.5} />
+                  {t("authCenter.pending.reopen", {
+                    defaultValue: "重新打开登录页",
+                  })}
+                </Button>
+              </div>
+            )}
+            {login.deviceCode?.user_code && (
               <>
                 <div className="flex flex-wrap items-center gap-2 text-caption text-fg-2">
-                  {/* CodeBuddy 只有浏览器授权链接，没有 user code：不渲染验证码块和复制按钮 */}
-                  {login.deviceCode.user_code && (
-                    <>
-                      <span>
-                        {t("authCenter.pending.enterCode", {
-                          defaultValue: "在浏览器中输入验证码：",
-                        })}
-                      </span>
-                      <code className="inline-flex h-7 items-center rounded-control border border-border-strong bg-surface px-2.5 font-mono text-section tracking-[1px] text-fg-1">
-                        {login.deviceCode.user_code}
-                      </code>
-                      <HoverTip
-                        content={t("authCenter.pending.copy", {
-                          defaultValue: "复制验证码",
-                        })}
-                      >
-                        <Button
-                          type="button"
-                          variant="quiet"
-                          size="icon-compact"
-                          aria-label={t("authCenter.pending.copy", {
-                            defaultValue: "复制验证码",
-                          })}
-                          onClick={() => void copyCode()}
-                        >
-                          <Copy className="h-3.5 w-3.5" strokeWidth={1.5} />
-                        </Button>
-                      </HoverTip>
-                    </>
-                  )}
+                  <span>
+                    {t("authCenter.pending.enterCode", {
+                      defaultValue: "在浏览器中输入验证码：",
+                    })}
+                  </span>
+                  <code className="inline-flex h-7 items-center rounded-control border border-border-strong bg-surface px-2.5 font-mono text-section tracking-[1px] text-fg-1">
+                    {login.deviceCode.user_code}
+                  </code>
+                  <HoverTip
+                    content={t("authCenter.pending.copy", {
+                      defaultValue: "复制验证码",
+                    })}
+                  >
+                    <Button
+                      type="button"
+                      variant="quiet"
+                      size="icon-compact"
+                      aria-label={t("authCenter.pending.copy", {
+                        defaultValue: "复制验证码",
+                      })}
+                      onClick={() => void copyCode()}
+                    >
+                      <Copy className="h-3.5 w-3.5" strokeWidth={1.5} />
+                    </Button>
+                  </HoverTip>
                   <HoverTip
                     content={t("authCenter.pending.open", {
                       defaultValue: "打开授权页面",
@@ -500,6 +525,8 @@ function AccountAvatar({
 
 interface AccountRowProps {
   account: GroupAccountRow;
+  defaultLabel?: string;
+  setDefaultLabel?: string;
   canReauth: boolean;
   busy: boolean;
   pendingId: string;
@@ -512,6 +539,8 @@ interface AccountRowProps {
 
 function AccountRow({
   account,
+  defaultLabel,
+  setDefaultLabel,
   canReauth,
   busy,
   pendingId,
@@ -539,7 +568,8 @@ function AccountRow({
           </span>
           {account.isDefault && (
             <span className={cn(PILL, "border border-border-strong text-fg-2")}>
-              {t("authCenter.default", { defaultValue: "默认" })}
+              {defaultLabel ??
+                t("authCenter.default", { defaultValue: "默认" })}
             </span>
           )}
           {account.needsReauth && (
@@ -608,7 +638,8 @@ function AccountRow({
               onSelect={() => onSetDefault(account.id)}
               className="h-[30px] rounded-control px-2.5 text-body"
             >
-              {t("authCenter.setDefault", { defaultValue: "设为默认" })}
+              {setDefaultLabel ??
+                t("authCenter.setDefault", { defaultValue: "设为默认" })}
             </DropdownMenuItem>
           )}
           {canReauth && (

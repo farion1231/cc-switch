@@ -157,8 +157,8 @@ pub fn import_provider_from_deeplink(
         }
     }
 
-    // If enabled=true, set as current provider
-    if !additive && activate {
+    // If enabled=true, set as current provider. Antigravity 没有「启用」，只导入。
+    if !additive && activate && app_type != AppType::Agy {
         ProviderService::switch(state, app_type.clone(), &provider_id)?;
         log::info!("Provider '{provider_id}' set as current for {app_type:?}");
     }
@@ -208,7 +208,7 @@ impl ApiFormat {
             }
             (AppType::Claude, GeminiNative) => Some("gemini_native"),
             (AppType::Codex | AppType::GrokBuild, Anthropic) => Some("anthropic"),
-            (AppType::Gemini, GeminiNative) => Some("gemini_native"),
+            (AppType::Gemini | AppType::Agy, GeminiNative) => Some("gemini_native"),
             (AppType::OpenCode, Anthropic) => Some("@ai-sdk/anthropic"),
             (AppType::OpenCode, OpenAiChat) => Some("@ai-sdk/openai-compatible"),
             (AppType::OpenCode, OpenAiResponses) => Some("@ai-sdk/openai"),
@@ -229,7 +229,7 @@ impl ApiFormat {
         match app_type {
             AppType::Claude | AppType::ClaudeDesktop => Self::Anthropic,
             AppType::Codex | AppType::GrokBuild => Self::OpenAiResponses,
-            AppType::Gemini => Self::GeminiNative,
+            AppType::Gemini | AppType::Agy => Self::GeminiNative,
             _ => Self::OpenAiChat,
         }
     }
@@ -344,6 +344,17 @@ pub(crate) fn build_provider_from_request(
             return Err(AppError::InvalidInput(
                 "Add MCode providers from the MCode page".into(),
             ))
+        }
+        AppType::Agy => {
+            let mut settings = build_gemini_settings(request);
+            settings["env"]
+                .as_object_mut()
+                .unwrap()
+                .remove("GEMINI_MODEL");
+            if let Some(model) = &request.model {
+                settings["config"] = json!({"model": {"name": model}});
+            }
+            settings
         }
     };
 
@@ -476,10 +487,12 @@ fn build_provider_meta(
 
     // 套餐地址且没带脚本：和在应用里新建一样，按套餐额度查询并默认启用
     // （链接写了 `usageEnabled` 仍照办）。额度走后端固定端点，不执行任何脚本。
+    // 火山例外：查额度要账号级 AccessKey，链接里没有，默认启用只会显示「额度没查到」，
+    // 所以只预选套餐不启用（前端 `codingPlanEnabledByDefault` 与此一致）。
     if let (Some(provider_id), true) = (coding_plan_provider, code.is_empty()) {
         return Ok(Some(ProviderMeta {
             usage_script: Some(UsageScript {
-                enabled: request.usage_enabled.unwrap_or(true),
+                enabled: request.usage_enabled.unwrap_or(provider_id != "volcengine"),
                 language: "javascript".to_string(),
                 code,
                 timeout: Some(10),
@@ -974,6 +987,7 @@ pub fn parse_and_merge_config(
         "claude" => merge_claude_config(&mut merged, &config_value)?,
         "codex" => merge_codex_config(&mut merged, &config_value)?,
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
+        "agy" => merge_agy_config(&mut merged, &config_value)?,
         "grokbuild" => merge_grokbuild_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is
         "openclaw" | "opencode" | "hermes" | "pi" => {
@@ -1124,6 +1138,27 @@ fn merge_codex_config(
     }
 
     Ok(())
+}
+
+/// Import only credentials, endpoint and model; arbitrary native settings are not applied.
+fn merge_agy_config(
+    request: &mut DeepLinkImportRequest,
+    config: &serde_json::Value,
+) -> Result<(), AppError> {
+    let env = config.get("env").unwrap_or(config);
+    if !env.is_object() {
+        return Err(AppError::InvalidInput(
+            "Antigravity config/env must be an object".into(),
+        ));
+    }
+    // Match the regular editor: URL model > config.model.name > GEMINI_MODEL.
+    if request.model.is_none() {
+        request.model = config
+            .pointer("/config/model/name")
+            .and_then(|value| value.as_str())
+            .map(str::to_string);
+    }
+    merge_gemini_config(request, env)
 }
 
 /// Merge Gemini configuration from config file

@@ -2457,17 +2457,6 @@ pub fn chat_error_to_response_error(body: Option<&Value>) -> Value {
         });
     };
 
-    if let Some(text) = value.as_str() {
-        return json!({
-            "error": {
-                "message": text,
-                "type": "upstream_error",
-                "code": serde_json::Value::Null,
-                "param": serde_json::Value::Null,
-            }
-        });
-    }
-
     let source = value.get("error").unwrap_or(value);
 
     let message = source
@@ -2489,11 +2478,21 @@ pub fn chat_error_to_response_error(body: Option<&Value>) -> Value {
         .map(ToString::to_string)
         .unwrap_or_else(|| "upstream_error".to_string());
 
-    let code = source
+    let mut code = source
         .get("code")
         .cloned()
         .or_else(|| source.pointer("/base_resp/status_code").cloned())
         .unwrap_or(serde_json::Value::Null);
+
+    // Gemini uses numeric HTTP codes (or no code at all) for this error. Codex
+    // only recognizes context_length_exceeded as a context-budget failure;
+    // INVALID_ARGUMENT/upstream_error cannot trigger its compaction recovery.
+    if message
+        .to_ascii_lowercase()
+        .contains("input token count exceeds the maximum number of tokens allowed")
+    {
+        code = json!("context_length_exceeded");
+    }
 
     let param = source
         .get("param")
@@ -6241,6 +6240,29 @@ mod tests {
         assert_eq!(result["error"]["type"], "invalid_request_error");
         assert_eq!(result["error"]["code"], "invalid_api_key");
         assert_eq!(result["error"]["param"], "api_key");
+    }
+
+    #[test]
+    fn gemini_input_overflow_errors() {
+        let message = "The input token count exceeds the maximum number of tokens allowed 1048576.";
+        for input in [
+            json!({ "error": { "code": 400, "status": "INVALID_ARGUMENT", "message": message } }),
+            json!({ "error": { "type": "invalid_request_error", "message": message } }),
+            json!({ "detail": message }),
+            json!(message),
+        ] {
+            let result = chat_error_to_response_error(Some(&input));
+            assert_eq!(result["error"]["code"], "context_length_exceeded");
+            assert_eq!(result["error"]["message"], message);
+        }
+        let ordinary_error = json!({ "error": {
+            "code": 400, "status": "INVALID_ARGUMENT",
+            "message": "max_output_tokens exceeds the maximum number of tokens allowed 65536."
+        } });
+        assert_eq!(
+            chat_error_to_response_error(Some(&ordinary_error))["error"]["code"],
+            400
+        );
     }
 
     #[test]

@@ -257,27 +257,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "packycode",
   },
   {
-    name: "ZetaAPI",
-    providerKey: "cc-switch-zeta-api",
-    websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/u117",
-    settingsConfig: {
-      name: "ZetaAPI",
-      baseUrl: "https://api.zetaapi.ai/v1",
-      api: "openai-completions",
-      apiKey: "",
-      models: [
-        piModel("openai/gpt-5.6-sol", {
-          id: "gpt-5.6-sol",
-        }),
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "zetaapi",
-    icon: "zetaapi",
-  },
-  {
     name: "APINebula",
     providerKey: "cc-switch-apinebula",
     websiteUrl: "https://apinebula.ai",
@@ -323,6 +302,30 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     partnerPromotionKey: "aicodemirror",
     icon: "aicodemirror",
     iconColor: "#000000",
+  },
+  {
+    name: "hao.ai",
+    providerKey: "cc-switch-hao-ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    settingsConfig: {
+      name: "hao.ai",
+      baseUrl: "https://api.hao.ai/anthropic",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", {
+          id: "anthropic/claude-opus-5-5",
+        }),
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "anthropic/claude-sonnet-5-5",
+        }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
   },
   {
     name: "FennoAI",
@@ -399,6 +402,30 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "openmodel",
   },
   {
+    name: "EveryAPI",
+    providerKey: "cc-switch-everyapi",
+    websiteUrl: "https://everyapi.ai",
+    apiKeyUrl:
+      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
+    // GPT 系列只开放 Responses（api.everyapi.ai/api/pricing 的
+    // supported_endpoint_types 为 openai-response，2026-10-17 核对）
+    settingsConfig: {
+      name: "EveryAPI",
+      baseUrl: "https://api.everyapi.ai/v1",
+      api: "openai-responses",
+      apiKey: "",
+      models: [
+        piModel("openai/gpt-5.6-sol", { id: "gpt-5.6-sol" }),
+        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
+        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "everyapi",
+    icon: "everyapi",
+  },
+  {
     name: "GrooRoute Pro",
     providerKey: "cc-switch-grooroute-pro",
     websiteUrl: "https://grooroute.pro",
@@ -417,6 +444,26 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "grooroute",
     icon: "grooroute",
+  },
+  {
+    name: "DIT.ai",
+    providerKey: "cc-switch-dit-ai",
+    websiteUrl: "https://dit.ai",
+    apiKeyUrl: "https://dit.ai/register",
+    settingsConfig: {
+      name: "DIT.ai",
+      baseUrl: "https://api.dit.ai",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "dit",
+    icon: "dit",
   },
   {
     name: "TokenFactory",
@@ -1199,30 +1246,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "modelflare",
   },
   {
-    name: "EveryAPI",
-    providerKey: "cc-switch-everyapi",
-    websiteUrl: "https://everyapi.ai",
-    apiKeyUrl:
-      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
-    // GPT 系列只开放 Responses（api.everyapi.ai/api/pricing 的
-    // supported_endpoint_types 为 openai-response，2026-10-17 核对）
-    settingsConfig: {
-      name: "EveryAPI",
-      baseUrl: "https://api.everyapi.ai/v1",
-      api: "openai-responses",
-      apiKey: "",
-      models: [
-        piModel("openai/gpt-5.6-sol", { id: "gpt-5.6-sol" }),
-        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
-        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "everyapi",
-    icon: "everyapi",
-  },
-  {
     name: "AllTokens",
     providerKey: "cc-switch-alltokens",
     websiteUrl: "https://alltokens.cc",
@@ -1244,6 +1267,30 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "alltokens",
     icon: "alltokens",
+  },
+  {
+    name: "AllTokens SI",
+    providerKey: "cc-switch-alltokens-si",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    // new-api 网关，目录见 alltokens.si/api/pricing（2026-10-19 核对）：GPT 分组
+    // 只声明 Chat Completions，窗口按中转口径封顶 272K
+    settingsConfig: {
+      name: "AllTokens SI",
+      baseUrl: "https://alltokens.si/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("openai/gpt-5.6-sol", { id: "gpt-5.6-sol" }),
+        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
+        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
   },
   {
     name: "Amux",
@@ -1338,7 +1385,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     regionKey: "cn",
     providerKey: "cc-switch-zhipu-glm",
     websiteUrl: "https://open.bigmodel.cn",
-    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code",
     settingsConfig: {
       name: "Zhipu GLM",
       baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
@@ -1361,7 +1408,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     regionKey: "intl",
     providerKey: "cc-switch-zhipu-glm-en",
     websiteUrl: "https://z.ai",
-    apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
+    apiKeyUrl: "https://z.ai/subscribe",
     settingsConfig: {
       name: "Zhipu GLM en",
       baseUrl: "https://api.z.ai/api/coding/paas/v4",
@@ -1698,6 +1745,10 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
+        piModel("minimax/minimax-m3.1-flash", {
+          id: "MiniMax-M3.1-Flash",
+          maxTokens: 131072,
+        }),
         piModel("minimax/minimax-m3", {
           id: "MiniMax-M3",
           maxTokens: 131072,
@@ -1725,6 +1776,10 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
+        piModel("minimax/minimax-m3.1-flash", {
+          id: "MiniMax-M3.1-Flash",
+          maxTokens: 131072,
+        }),
         piModel("minimax/minimax-m3", {
           id: "MiniMax-M3",
           maxTokens: 131072,
@@ -2284,7 +2339,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       // 走 /coding-agent/v1 Chat（vercel.com/docs/ai-gateway/coding-agents/pi 与
       // vercel.com/docs/cli/ai-gateway，2026-10-14 核对）。Gemini 3.8 Flash 按
       // GET https://ai-gateway.vercel.sh/v1/models 同日元数据覆盖窗口与最大输出；
-      // Haiku 5.5、GPT-6.1 Sol 目录里还没有条目，暂不收
+      // GPT 按 API 计费、窗口 1.05M，不用 catalog 的订阅窗口；Haiku 5.5、GPT-6.1 Sol 目录里还没有条目，暂不收
       baseUrl: "https://ai-gateway.vercel.sh/coding-agent/v1",
       api: "openai-completions",
       apiKey: "",
@@ -2295,7 +2350,10 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("anthropic/claude-sonnet-5.5", {
           id: "anthropic/claude-sonnet-5.5",
         }),
-        piModel("openai/gpt-6-astra", { id: "openai/gpt-6-astra" }),
+        piModel("openai/gpt-6-astra", {
+          id: "openai/gpt-6-astra",
+          contextWindow: 1_050_000,
+        }),
         piModel("google/gemini-3.8-flash", {
           id: "google/gemini-3.8-flash",
           contextWindow: 1_000_000,

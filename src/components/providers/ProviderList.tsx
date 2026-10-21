@@ -20,6 +20,7 @@ import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import type { OpenClawProviderConfig, Provider } from "@/types";
+import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/opencodeFormUtils";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -50,6 +51,7 @@ import { usePiCurrentState } from "@/lib/query/pi";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import {
   buildAdditiveSections,
+  buildLaunchSections,
   buildSwitchSections,
   type CardPresentation,
   type ProviderSection,
@@ -129,6 +131,11 @@ export function ProviderList({
       queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
       enabled: appId === "opencode",
     });
+  const { data: opencodeDefaultModel } = useQuery({
+    queryKey: ["opencodeDefaultModel"],
+    queryFn: () => providersApi.getOpenCodeDefaultModel(),
+    enabled: appId === "opencode",
+  });
   const { data: openclawLiveIds, isPending: isOpenclawLiveIdsPending } =
     useOpenClawLiveProviderIds(appId === "openclaw");
   const { data: hermesLiveIds, isPending: isHermesLiveIdsPending } =
@@ -320,7 +327,20 @@ export function ProviderList({
         queue: switchMode.queue.filter((id) => known.has(id)),
       });
     }
-    const defaultPrimary = openclawDefaultModel?.primary ?? "";
+    if (appId === "agy") {
+      return buildLaunchSections({
+        app: appId,
+        t,
+        providers: filteredProviders,
+        openTerminal: (provider) => onOpenTerminal?.(provider),
+      });
+    }
+    const defaultPrimary =
+      (appId === "openclaw"
+        ? openclawDefaultModel?.primary
+        : appId === "opencode"
+          ? opencodeDefaultModel
+          : null) ?? "";
     const slash = defaultPrimary.indexOf("/");
     return buildAdditiveSections({
       app: appId,
@@ -329,14 +349,20 @@ export function ProviderList({
       isInConfig,
       currentOmoId,
       currentOmoSlimId,
-      openclawDefault:
-        appId === "openclaw" && slash > 0
+      defaultModel:
+        slash > 0
           ? {
               providerId: defaultPrimary.slice(0, slash),
               model: defaultPrimary.slice(slash + 1),
             }
           : null,
-      openclawModels: (provider) => {
+      defaultModelOptions: (provider) => {
+        if (appId === "opencode") {
+          return getOpencodeDeclaredModels(
+            provider.id,
+            provider.settingsConfig,
+          );
+        }
         const config = provider.settingsConfig as OpenClawProviderConfig;
         if (!Array.isArray(config?.models)) return [];
         return config.models
@@ -366,9 +392,10 @@ export function ProviderList({
     t,
     sortedProviders,
     filteredProviders,
-    currentProviderId,
     onSwitch,
+    onOpenTerminal,
     openclawDefaultModel?.primary,
+    opencodeDefaultModel,
     isInConfig,
     currentOmoId,
     currentOmoSlimId,
@@ -428,9 +455,11 @@ export function ProviderList({
     );
   }
 
-  // 「当前」只用来决定额度自动刷新：Pi 没有当前项，OMO / Hermes 各看自己的当前项
+  // 「当前」只用来决定额度显示和自动刷新：Pi 没有当前项，OMO / Hermes 各看自己的当前项；
+  // Antigravity 没有「启用」，每张卡都随时能打开，额度一律照常显示
   const isCurrentFor = (provider: Provider) => {
     if (appId === "pi") return false;
+    if (appId === "agy") return true;
     if (provider.category === "omo") return provider.id === currentOmoId;
     if (provider.category === "omo-slim")
       return provider.id === currentOmoSlimId;
@@ -453,7 +482,8 @@ export function ProviderList({
         onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
       }
       onOpenWebsite={onOpenWebsite}
-      onOpenTerminal={onOpenTerminal}
+      // Antigravity 的「打开终端」已经是主按钮，「更多」菜单里不再重复
+      onOpenTerminal={appId === "agy" ? undefined : onOpenTerminal}
       onTest={handleTest}
       isTesting={isChecking(provider.id)}
     />

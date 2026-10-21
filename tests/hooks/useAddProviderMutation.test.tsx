@@ -71,6 +71,26 @@ beforeEach(() => {
 });
 
 describe("useAddProviderMutation", () => {
+  it("adds an agy profile without silently activating it", async () => {
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useAddProviderMutation("agy"), {
+      wrapper,
+    });
+    await act(async () =>
+      result.current.mutateAsync({
+        name: "Relay",
+        settingsConfig: { env: { GEMINI_API_KEY: "fixture" } },
+        addToLive: false,
+      }),
+    );
+    expect(apiMocks.add).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Relay" }),
+      "agy",
+      false,
+      undefined,
+    );
+  });
+
   it("duplicates Claude Desktop official providers with a fresh id", async () => {
     const { wrapper } = createWrapper();
     const { result } = renderHook(

@@ -1,6 +1,7 @@
 use tauri::State;
 
 use crate::app_config::AppType;
+use crate::commands::agy_account::AgyAccountState;
 use crate::commands::codebuddy_oauth::CodebuddyOAuthState;
 use crate::commands::codex_oauth::CodexOAuthState;
 use crate::commands::copilot::CopilotAuthState;
@@ -11,12 +12,14 @@ use crate::proxy::providers::copilot_auth::{
     CopilotAuthError, GitHubAccount, GitHubDeviceCodeResponse,
 };
 use crate::proxy::providers::xai_oauth_auth::{XaiOAuthAccount, XaiOAuthError};
+use crate::services::agy_account::AgyAccount;
 use crate::store::AppState;
 
 const AUTH_PROVIDER_GITHUB_COPILOT: &str = "github_copilot";
 const AUTH_PROVIDER_CODEX_OAUTH: &str = "codex_oauth";
 const AUTH_PROVIDER_XAI_OAUTH: &str = "xai_oauth";
 const AUTH_PROVIDER_CODEBUDDY_OAUTH: &str = "codebuddy_oauth";
+const AUTH_PROVIDER_AGY_OAUTH: &str = "agy_oauth";
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ManagedAuthAccount {
@@ -64,6 +67,7 @@ fn ensure_auth_provider(auth_provider: &str) -> Result<&'static str, String> {
         AUTH_PROVIDER_CODEX_OAUTH => Ok(AUTH_PROVIDER_CODEX_OAUTH),
         AUTH_PROVIDER_XAI_OAUTH => Ok(AUTH_PROVIDER_XAI_OAUTH),
         AUTH_PROVIDER_CODEBUDDY_OAUTH => Ok(AUTH_PROVIDER_CODEBUDDY_OAUTH),
+        AUTH_PROVIDER_AGY_OAUTH => Ok(AUTH_PROVIDER_AGY_OAUTH),
         _ => Err(format!("Unsupported auth provider: {auth_provider}")),
     }
 }
@@ -129,6 +133,23 @@ fn map_codebuddy_account(
     }
 }
 
+fn map_agy_account(account: AgyAccount, current_account_id: Option<&str>) -> ManagedAuthAccount {
+    ManagedAuthAccount {
+        is_default: current_account_id == Some(account.id.as_str()),
+        login: account.label(),
+        avatar_url: account.picture,
+        authenticated_at: account.authenticated_at,
+        github_domain: "google.com".to_string(),
+        reauth_required: false,
+        requires_reauth: account.requires_reauth,
+        provider: AUTH_PROVIDER_AGY_OAUTH.to_string(),
+        id: account.id,
+        email: None,
+        enterprise_name: None,
+        account_type: None,
+    }
+}
+
 fn map_device_code_response(
     provider: &str,
     response: GitHubDeviceCodeResponse,
@@ -143,6 +164,7 @@ fn map_device_code_response(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn auth_start_login(
     auth_provider: String,
@@ -152,6 +174,7 @@ pub async fn auth_start_login(
     codex_state: State<'_, CodexOAuthState>,
     xai_state: State<'_, XaiOAuthState>,
     codebuddy_state: State<'_, CodebuddyOAuthState>,
+    agy_state: State<'_, AgyAccountState>,
 ) -> Result<ManagedAuthDeviceCodeResponse, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -193,12 +216,27 @@ pub async fn auth_start_login(
             let response = auth_manager.start_auth().await.map_err(|e| e.to_string())?;
             Ok(map_device_code_response(auth_provider, response))
         }
+        // 浏览器登录没有用户码：device_code 放这次登录的 id，verification_uri 放授权页地址
+        AUTH_PROVIDER_AGY_OAUTH => {
+            if target_account_id.is_some() {
+                return Err("Targeted re-authentication is only supported for Codex OAuth".into());
+            }
+            let start = agy_state.0.start_login().await.map_err(|e| e.to_string())?;
+            Ok(ManagedAuthDeviceCodeResponse {
+                provider: auth_provider.to_string(),
+                device_code: start.flow_id,
+                user_code: String::new(),
+                verification_uri: start.auth_url,
+                expires_in: start.expires_in,
+                interval: 1,
+            })
+        }
         _ => unreachable!(),
     }
 }
 
-#[tauri::command(rename_all = "camelCase")]
 #[allow(clippy::too_many_arguments)]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn auth_poll_for_account(
     auth_provider: String,
     device_code: String,
@@ -208,6 +246,7 @@ pub async fn auth_poll_for_account(
     codex_state: State<'_, CodexOAuthState>,
     xai_state: State<'_, XaiOAuthState>,
     codebuddy_state: State<'_, CodebuddyOAuthState>,
+    agy_state: State<'_, AgyAccountState>,
 ) -> Result<Option<ManagedAuthAccount>, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -273,6 +312,23 @@ pub async fn auth_poll_for_account(
                 Err(e) => Err(e.to_string()),
             }
         }
+        AUTH_PROVIDER_AGY_OAUTH => {
+            let Some(account) = agy_state
+                .0
+                .poll_login(&device_code)
+                .await
+                .map_err(|e| e.to_string())?
+            else {
+                return Ok(None);
+            };
+            let current = agy_state
+                .0
+                .status()
+                .await
+                .ok()
+                .and_then(|status| status.current_account_id);
+            Ok(Some(map_agy_account(account, current.as_deref())))
+        }
         _ => unreachable!(),
     }
 }
@@ -283,6 +339,7 @@ pub async fn auth_cancel_login(
     device_code: String,
     codex_state: State<'_, CodexOAuthState>,
     codebuddy_state: State<'_, CodebuddyOAuthState>,
+    agy_state: State<'_, AgyAccountState>,
 ) -> Result<bool, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -291,7 +348,8 @@ pub async fn auth_cancel_login(
             let auth_manager = codebuddy_state.0.read().await;
             Ok(auth_manager.cancel_auth(&device_code).await)
         }
-        _ => Err("Login cancellation is only supported for Codex OAuth".to_string()),
+        AUTH_PROVIDER_AGY_OAUTH => Ok(agy_state.0.cancel_login(&device_code).await),
+        _ => Err("Login cancellation is only supported for Codex OAuth, CodeBuddy OAuth and Antigravity OAuth".to_string()),
     }
 }
 
@@ -302,6 +360,7 @@ pub async fn auth_list_accounts(
     codex_state: State<'_, CodexOAuthState>,
     xai_state: State<'_, XaiOAuthState>,
     codebuddy_state: State<'_, CodebuddyOAuthState>,
+    agy_state: State<'_, AgyAccountState>,
 ) -> Result<Vec<ManagedAuthAccount>, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -345,6 +404,15 @@ pub async fn auth_list_accounts(
                 .map(|account| map_codebuddy_account(account, default_account_id.as_deref()))
                 .collect())
         }
+        AUTH_PROVIDER_AGY_OAUTH => {
+            let status = agy_state.0.status().await.map_err(|e| e.to_string())?;
+            let current = status.current_account_id;
+            Ok(status
+                .accounts
+                .into_iter()
+                .map(|account| map_agy_account(account, current.as_deref()))
+                .collect())
+        }
         _ => unreachable!(),
     }
 }
@@ -356,6 +424,7 @@ pub async fn auth_get_status(
     codex_state: State<'_, CodexOAuthState>,
     xai_state: State<'_, XaiOAuthState>,
     codebuddy_state: State<'_, CodebuddyOAuthState>,
+    agy_state: State<'_, AgyAccountState>,
 ) -> Result<ManagedAuthStatus, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -427,10 +496,27 @@ pub async fn auth_get_status(
                     .collect(),
             })
         }
+        // 「默认账号」在这里是 agy 当前登录的那个号
+        AUTH_PROVIDER_AGY_OAUTH => {
+            let status = agy_state.0.status().await.map_err(|e| e.to_string())?;
+            let current = status.current_account_id;
+            Ok(ManagedAuthStatus {
+                provider: auth_provider.to_string(),
+                authenticated: !status.accounts.is_empty(),
+                default_account_id: current.clone(),
+                migration_error: None,
+                accounts: status
+                    .accounts
+                    .into_iter()
+                    .map(|account| map_agy_account(account, current.as_deref()))
+                    .collect(),
+            })
+        }
         _ => unreachable!(),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn auth_remove_account(
     auth_provider: String,
@@ -439,6 +525,7 @@ pub async fn auth_remove_account(
     copilot_state: State<'_, CopilotAuthState>,
     xai_state: State<'_, XaiOAuthState>,
     codebuddy_state: State<'_, CodebuddyOAuthState>,
+    agy_state: State<'_, AgyAccountState>,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -474,6 +561,12 @@ pub async fn auth_remove_account(
                 })?;
             Ok(())
         }
+        // 只删 CC Switch 里的副本，不替 agy 登出
+        AUTH_PROVIDER_AGY_OAUTH => agy_state
+            .0
+            .remove(&account_id)
+            .await
+            .map_err(|e| e.to_string()),
         _ => unreachable!(),
     }
 }
@@ -534,6 +627,7 @@ pub async fn auth_set_default_account(
     codex_state: State<'_, CodexOAuthState>,
     xai_state: State<'_, XaiOAuthState>,
     codebuddy_state: State<'_, CodebuddyOAuthState>,
+    agy_state: State<'_, AgyAccountState>,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -565,6 +659,12 @@ pub async fn auth_set_default_account(
                 .await
                 .map_err(|e| e.to_string())
         }
+        // 切 agy 的全局登录（写钥匙串）
+        AUTH_PROVIDER_AGY_OAUTH => agy_state
+            .0
+            .switch_to(&account_id)
+            .await
+            .map_err(|e| e.to_string()),
         _ => unreachable!(),
     }
 }
@@ -576,6 +676,7 @@ pub async fn auth_logout(
     copilot_state: State<'_, CopilotAuthState>,
     xai_state: State<'_, XaiOAuthState>,
     codebuddy_state: State<'_, CodebuddyOAuthState>,
+    agy_state: State<'_, AgyAccountState>,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
     match auth_provider {
@@ -606,6 +707,12 @@ pub async fn auth_logout(
                 })?;
             Ok(())
         }
+        AUTH_PROVIDER_AGY_OAUTH => agy_state
+            .0
+            .remove_all()
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
         _ => unreachable!(),
     }
 }

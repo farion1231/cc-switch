@@ -430,6 +430,7 @@ export function ClaudeDesktopProviderForm({
     selectedPresetId,
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
+    formBaseUrl: baseUrl,
   });
 
   const applyDesktopPreset = (preset: ClaudeDesktopProviderPreset) => {

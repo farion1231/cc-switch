@@ -635,6 +635,49 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
   ];
 }
 
+// ─── 启动器式应用（Antigravity）──────────────────────────────────────────────
+
+export interface LaunchInput {
+  app: AppId;
+  t: TFunction;
+  providers: Provider[];
+  openTerminal: (provider: Provider) => void;
+}
+
+/**
+ * Antigravity：第三方 Key 只能经环境变量交给 CC Switch 打开的那个 agy，管不到用户自己敲的
+ * `agy`，所以没有「启用 / 使用中」，每张卡的主操作就是「打开终端」，哪张都能删。
+ */
+export function buildLaunchSections(input: LaunchInput): ProviderSection[] {
+  const { app, t, providers, openTerminal } = input;
+  return [
+    {
+      key: "all",
+      items: providers.map((p) => ({
+        provider: p,
+        presentation: {
+          chips: isOfficialAccount(app, p)
+            ? [
+                {
+                  key: "official",
+                  label: t("providerCard.chip.official"),
+                  tone: "outline",
+                },
+              ]
+            : [],
+          buttons: [
+            {
+              key: "openTerminal",
+              label: t("provider.openTerminalWithProvider"),
+              onClick: () => openTerminal(p),
+            },
+          ],
+        },
+      })),
+    },
+  ];
+}
+
 // ─── 共存式应用（OpenCode / OpenClaw / Hermes / Pi / MiniMax Code）───────────
 
 export interface AdditiveInput {
@@ -645,10 +688,10 @@ export interface AdditiveInput {
   /** OpenCode：当前启用的 OMO / OMO Slim */
   currentOmoId?: string | null;
   currentOmoSlimId?: string | null;
-  /** OpenClaw：默认模型属于哪家、它的模型名 */
-  openclawDefault?: { providerId: string; model: string } | null;
-  /** OpenClaw：每家可选的模型 */
-  openclawModels?: (provider: Provider) => { id: string; name?: string }[];
+  /** OpenClaw / OpenCode：默认模型属于哪家、它的模型名 */
+  defaultModel?: { providerId: string; model: string } | null;
+  /** OpenClaw / OpenCode：每家可选的模型 */
+  defaultModelOptions?: (provider: Provider) => { id: string; name?: string }[];
   /** Hermes：model.provider 指向的那家 */
   hermesCurrentId?: string | null;
   isHermesManaged?: (provider: Provider) => boolean;
@@ -759,40 +802,46 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     let isDefault = false;
     let removeReason: string | undefined = piBlocked;
 
-    if (app === "openclaw") {
-      isDefault = input.openclawDefault?.providerId === p.id;
+    // OpenCode 的顶层 model 一直允许移走所指的那家，这里不改；OpenClaw 不能
+    if (app === "openclaw" || app === "opencode") {
+      isDefault = input.defaultModel?.providerId === p.id;
       if (isDefault) {
         status = { label: t("providerCard.status.default"), dot: "muted" };
         chips.push({
           key: "defaultModel",
           label: t("providerCard.chip.defaultModel", {
-            model: input.openclawDefault?.model ?? "",
+            model: input.defaultModel?.model ?? "",
           }),
           tone: "outline",
         });
-        removeReason = t("providerCard.reason.defaultCannotRemove");
+        if (app === "openclaw") {
+          removeReason = t("providerCard.reason.defaultCannotRemove");
+        }
       } else {
-        const models = input.openclawModels?.(p) ?? [];
-        buttons.push({
-          key: "setDefault",
-          label: t("providerCard.action.setDefault"),
-          onClick: () => actions.setDefault(p, models[0]?.id),
-          menu:
-            models.length > 1
-              ? {
-                  title: t("openclaw.selectDefaultModel"),
-                  options: models.map((model) => ({
-                    key: model.id,
-                    label: model.name?.trim() || model.id,
-                    detail:
-                      model.name?.trim() && model.name.trim() !== model.id
-                        ? model.id
-                        : undefined,
-                    onSelect: () => actions.setDefault(p, model.id),
-                  })),
-                }
-              : undefined,
-        });
+        const models = input.defaultModelOptions?.(p) ?? [];
+        // OpenCode 内置供应商可以不列模型（运行时才有），给不出选项就不显示
+        if (app === "openclaw" || models.length > 0) {
+          buttons.push({
+            key: "setDefault",
+            label: t("providerCard.action.setDefault"),
+            onClick: () => actions.setDefault(p, models[0]?.id),
+            menu:
+              models.length > 1
+                ? {
+                    title: t("openclaw.selectDefaultModel"),
+                    options: models.map((model) => ({
+                      key: model.id,
+                      label: model.name?.trim() || model.id,
+                      detail:
+                        model.name?.trim() && model.name.trim() !== model.id
+                          ? model.id
+                          : undefined,
+                      onSelect: () => actions.setDefault(p, model.id),
+                    })),
+                  }
+                : undefined,
+          });
+        }
       }
     }
 

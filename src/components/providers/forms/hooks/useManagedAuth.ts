@@ -88,11 +88,11 @@ export function useManagedAuth(
 
   const cancelBackendFlow = useCallback(
     async (deviceCode: string | null): Promise<boolean> => {
-      // 只有 codex / codebuddy 的后端会缓存待取消的登录状态；
-      // copilot / xAI 的 device code 过期即失效，取消只需停前端轮询。
+      // Codex、CodeBuddy 缓存登录状态，Antigravity 还占着本机回调服务，需要通知后端取消。
       if (
         (authProvider !== "codex_oauth" &&
-          authProvider !== "codebuddy_oauth") ||
+          authProvider !== "codebuddy_oauth" &&
+          authProvider !== "agy_oauth") ||
         !deviceCode
       ) {
         return true;
@@ -158,15 +158,16 @@ export function useManagedAuth(
       setPollingState("polling");
       setError(null);
 
-      // CodeBuddy 没有 user code（只有浏览器授权链接），空值时不要复制空串。
-      if (response.user_code) {
+      // 浏览器登录（CodeBuddy、Antigravity）没有验证码，别把剪贴板清空。
+      const browserFlow = !response.user_code;
+      if (!browserFlow) {
         try {
           await copyText(response.user_code);
         } catch (e) {
           console.debug("[ManagedAuth] Failed to copy user code:", e);
         }
-        if (request.generation !== flowGenerationRef.current) return;
       }
+      if (request.generation !== flowGenerationRef.current) return;
 
       try {
         await settingsApi.openExternal(response.verification_uri);
@@ -177,7 +178,11 @@ export function useManagedAuth(
 
       // Add a small buffer on top of GitHub's suggested interval to avoid
       // hitting slow_down responses too aggressively during device polling.
-      const interval = Math.max((response.interval || 5) + 3, 8) * 1000;
+      // Antigravity only checks a local callback result; CodeBuddy polls its server.
+      const interval =
+        browserFlow && authProvider === "agy_oauth"
+          ? 1500
+          : Math.max((response.interval || 5) + 3, 8) * 1000;
       const expiresAt = Date.now() + response.expires_in * 1000;
 
       const pollOnce = async () => {
@@ -330,6 +335,24 @@ export function useManagedAuth(
     mutationFn: (accountId: string) =>
       authApi.authSetDefaultAccount(authProvider, accountId),
     onSuccess: async () => {
+      // Antigravity 的「默认」就是 agy 的全局登录：切完提醒已经开着的 agy 还用原来的号
+      if (authProvider === "agy_oauth") {
+        const running = await authApi.agyAccountIsRunning().catch(() => false);
+        if (running) {
+          toast.warning(
+            t("authCenter.agy.switchedWhileRunning", {
+              defaultValue:
+                "已切换。检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，请退出后重新打开。",
+            }),
+          );
+        } else {
+          toast.success(
+            t("authCenter.agy.switched", {
+              defaultValue: "已切换，新开的 agy 会使用这个账号。",
+            }),
+          );
+        }
+      }
       await refetchStatus();
       await queryClient.invalidateQueries({ queryKey });
       if (authProvider === "codebuddy_oauth") {
