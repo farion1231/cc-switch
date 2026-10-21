@@ -4555,6 +4555,7 @@
       "sameName": "已有的同名 MCP 只打開了對應應用的開關，設定仍以 CC Switch 裡的為準。",
       "failedTitle": "有應用沒有讀到",
       "filesTitle": "讀取了哪些檔案",
+      "extraSourceLabel": "其他來源",
       "claudeNote": "（頂層 mcpServers）",
       "ok": "知道了"
     },

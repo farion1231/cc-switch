@@ -722,6 +722,7 @@ impl McpService {
             ("mcode", mcp::mcode::import(state)),
             ("agy", mcp::agy::import(state)),
             ("pi", mcp::pi::import(state)),
+            ("vscode", mcp::vscode::import(state)),
         ];
         for (app, result) in results {
             match result {
