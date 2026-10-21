@@ -4462,6 +4462,10 @@
       "text": "Credits 約 {{usd}}",
       "usd": "約 {{usd}}",
       "detail": "Credits 残高 {{balance}} · API 価格換算で約 {{usd}} · 上限に達した後にのみ消費"
+    },
+    "windows": {
+      "title": "各枠の残量",
+      "showAll": "各枠の残量を表示"
     }
   },
   "appMatrix": {

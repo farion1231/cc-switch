@@ -4463,6 +4463,10 @@
       "text": "Credits 約 {{usd}}",
       "usd": "約 {{usd}}",
       "detail": "Credits 餘額 {{balance}} · 按 API 價折算約 {{usd}} · 額度用完後才扣"
+    },
+    "windows": {
+      "title": "各檔額度",
+      "showAll": "查看各檔額度"
     }
   },
   "appMatrix": {

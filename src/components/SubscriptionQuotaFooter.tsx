@@ -11,7 +11,9 @@ import {
   creditsLine,
   failedLines,
   resetCreditsLine,
+  resetText,
   tierLine,
+  type QuotaBreakdown,
   type QuotaDisplay,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
@@ -91,6 +93,34 @@ function collapseInlineGroups(tiers: QuotaTier[]): QuotaTier[] {
   return tiers.filter((tier) =>
     [...kept.values()].some((keptTier) => keptTier === tier),
   );
+}
+
+/**
+ * 卡片按组合并过档位时（Antigravity），整列做成一个下拉逐档列出：
+ * 「Gemini 5 小时  4h59m后重置  剩余 100%」。没合并时不需要（null）
+ */
+export function tierBreakdown(
+  t: TFunction,
+  tiers: QuotaTier[],
+  display: QuotaDisplay = "left",
+): QuotaBreakdown | null {
+  const known = tiers.filter((tier) => tier.name in TIER_I18N_KEYS);
+  if (collapseInlineGroups(known).length === known.length) return null;
+  return {
+    title: t("quota.windows.title"),
+    openLabel: t("quota.windows.showAll"),
+    items: known.map((tier) => {
+      const label = tierLabel(t, tier.name);
+      const line = tierLine(t, tier, label, { display });
+      return {
+        key: tier.name,
+        label,
+        hint: resetText(t, line) ?? undefined,
+        value: line.value ?? line.text,
+        tone: line.tone,
+      };
+    }),
+  };
 }
 
 export function tierLabel(t: TFunction, name: string): string {
@@ -254,6 +284,7 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
         queriedAt={quota.queriedAt}
         loading={loading}
         onRefresh={refetch}
+        breakdown={tierBreakdown(t, quota.tiers || [], display) ?? undefined}
       />
     );
   }

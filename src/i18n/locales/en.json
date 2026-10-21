@@ -4462,6 +4462,10 @@
       "text": "Credits ≈ {{usd}}",
       "usd": "≈ {{usd}}",
       "detail": "Credits balance {{balance}} · ≈ {{usd}} at API prices · used only after your limits run out"
+    },
+    "windows": {
+      "title": "All limits",
+      "showAll": "Show all limits"
     }
   },
   "appMatrix": {
