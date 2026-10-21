@@ -250,7 +250,7 @@ export function ProviderList({
 
   const [confirmDesktopRefresh, setConfirmDesktopRefresh] = useState(false);
   const queryClient = useQueryClient();
-  const importMutation = useMutation({
+  const importMutation = useMutation<boolean, unknown, boolean>({
     mutationFn: async (replaceExisting = false): Promise<boolean> => {
       if (appId === "opencode") {
         return (await providersApi.importOpenCodeFromLive()) > 0;
