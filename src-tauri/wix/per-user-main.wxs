@@ -70,10 +70,6 @@
         <SetProperty Id="CREATEDESKTOPSHORTCUT" Value="1" Before="CostFinalize" Sequence="first">
             NOT CREATEDESKTOPSHORTCUT AND (NOT (Installed OR WIX_UPGRADE_DETECTED) OR DESKTOPSHORTCUTEXISTS)
         </SetProperty>
-        <!-- Older installers leave shortcuts behind during an upgrade; remove one only when opted out. -->
-        <SetProperty Id="DESKTOPSHORTCUTREMOVEDIR" Value="[DesktopFolder]" Before="InstallValidate" Sequence="execute">
-            WIX_UPGRADE_DETECTED AND CREATEDESKTOPSHORTCUT &lt;&gt; "1"
-        </SetProperty>
 
         {{#if allow_downgrades}}
             <MajorUpgrade Schedule="afterInstallInitialize" AllowDowngrades="yes" />
@@ -83,6 +79,35 @@
 
         <InstallExecuteSequence>
             <RemoveShortcuts>Installed AND NOT UPGRADINGPRODUCTCODE</RemoveShortcuts>
+        </InstallExecuteSequence>
+
+        <!-- The desktop shortcut is optional, so failing to create or remove it (read-only or redirected
+             Desktop, security software, ...) must not abort or roll back the install (#5667). A Shortcut
+             table row has no way to tolerate that, so the desktop shortcut is a copy of the Start Menu
+             shortcut made by custom actions that ignore their own failure. Copying keeps the target,
+             working directory and AppUserModelID of the Start Menu shortcut. CAQuietExec reads its
+             command line from the property that shares the action's Id. -->
+        <CustomAction Id="CreateDesktopShortcut" BinaryKey="WixCA" DllEntry="CAQuietExec"
+                      Execute="deferred" Impersonate="yes" Return="ignore" />
+        <SetProperty Id="CreateDesktopShortcut" Before="CreateDesktopShortcut" Sequence="execute"
+                     Value="&quot;[SystemFolder]cmd.exe&quot; /c copy /y &quot;[ApplicationProgramsFolder]{{product_name}}.lnk&quot; &quot;[DesktopFolder]{{product_name}}.lnk&quot;">
+            NOT REMOVE AND CREATEDESKTOPSHORTCUT = "1"
+        </SetProperty>
+
+        <!-- Removed on a real uninstall, and on an upgrade where the user opted out: older installers leave
+             their desktop shortcut behind when they are replaced. -->
+        <CustomAction Id="RemoveDesktopShortcut" BinaryKey="WixCA" DllEntry="CAQuietExec"
+                      Execute="deferred" Impersonate="yes" Return="ignore" />
+        <SetProperty Id="RemoveDesktopShortcut" Before="RemoveDesktopShortcut" Sequence="execute"
+                     Value="&quot;[SystemFolder]cmd.exe&quot; /c del /f /q &quot;[DesktopFolder]{{product_name}}.lnk&quot;">
+            (REMOVE = "ALL" AND NOT UPGRADINGPRODUCTCODE) OR (WIX_UPGRADE_DETECTED AND DESKTOPSHORTCUTEXISTS AND NOT REMOVE AND CREATEDESKTOPSHORTCUT &lt;&gt; "1")
+        </SetProperty>
+
+        <InstallExecuteSequence>
+            <Custom Action="RemoveDesktopShortcut" After="RemoveShortcuts">
+                (REMOVE = "ALL" AND NOT UPGRADINGPRODUCTCODE) OR (WIX_UPGRADE_DETECTED AND DESKTOPSHORTCUTEXISTS AND NOT REMOVE AND CREATEDESKTOPSHORTCUT &lt;&gt; "1")
+            </Custom>
+            <Custom Action="CreateDesktopShortcut" After="CreateShortcuts">NOT REMOVE AND CREATEDESKTOPSHORTCUT = "1"</Custom>
         </InstallExecuteSequence>
 
         <Media Id="1" Cabinet="app.cab" EmbedCab="yes" />
@@ -175,20 +200,9 @@
         <UIRef Id="WixUI_InstallDir" />
 
         <Directory Id="TARGETDIR" Name="SourceDir">
-            <Directory Id="DesktopFolder" Name="Desktop">
-                <Component Id="ApplicationShortcutDesktop" Guid="*">
-                    <Condition>CREATEDESKTOPSHORTCUT = "1"</Condition>
-                    <Shortcut Id="ApplicationDesktopShortcut"
-                        Name="{{product_name}}"
-                        Description="Runs {{product_name}}"
-                        Target="[!Path]"
-                        WorkingDirectory="INSTALLDIR">
-                        <ShortcutProperty Key="System.AppUserModel.ID" Value="{{bundle_id}}"/>
-                    </Shortcut>
-                    <RemoveFolder Id="DesktopFolder" On="uninstall" />
-                    <RegistryValue Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}" Name="Desktop Shortcut" Type="integer" Value="1" KeyPath="yes" />
-                </Component>
-            </Directory>
+            <!-- No component: the desktop shortcut is made by the CreateDesktopShortcut custom action.
+                 The directory keeps [DesktopFolder] available to AppSearch and to those actions. -->
+            <Directory Id="DesktopFolder" Name="Desktop" />
             <Directory Id="LocalAppDataFolder">
                 <Directory Id="TauriLocalAppDataPrograms" Name="Programs">
                     <Directory Id="INSTALLDIR" Name="{{product_name}}"/>
@@ -204,7 +218,6 @@
                 <!-- An MSI install can reuse a directory previously used by the portable build.
                      Remove its marker so the installed app can use the in-app updater. -->
                 <RemoveFile Id="RemovePortableMarker" Directory="INSTALLDIR" Name="portable.ini" On="install" />
-                <RemoveFile Id="RemoveDeselectedDesktopShortcut" Name="{{product_name}}.lnk" Property="DESKTOPSHORTCUTREMOVEDIR" On="install" />
                 <RegistryKey Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}">
                     <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLDIR]" KeyPath="yes" />
                 </RegistryKey>
@@ -327,7 +340,6 @@
                 <ComponentRef Id="Path"/>
                 <ComponentRef Id="CMP_UninstallShortcut" />
                 <ComponentRef Id="ApplicationShortcut" />
-                <ComponentRef Id="ApplicationShortcutDesktop" />
             </Feature>
 
             <Feature
