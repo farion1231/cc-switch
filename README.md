@@ -84,6 +84,11 @@ Register now via <a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/">this lin
 </tr>
 
 <tr>
+<td width="180"><a href="https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite"><img src="assets/partners/logos/everyapi-banner.jpg" alt="EveryAPI" width="150"></a></td>
+<td>Thanks to EveryAPI for sponsoring this project! EveryAPI is dedicated to providing developers with a stable, efficient, and cost-effective API relay service, supporting mainstream AI coding tools such as Claude, Codex, and Gemini along with a range of advanced models. No complex setup is needed: connect in moments and code faster, build AI applications sooner. Whether for day-to-day development, project debugging, or AI-assisted programming, EveryAPI delivers a convenient, smooth experience. EveryAPI makes AI development simpler and every call more worthwhile! EveryAPI offers a special perk for CC Switch users: register via <a href="https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite">this link</a> to get ¥14 in free credit, 20% off your first top-up with the code <strong>ccswitch</strong>, and GPT models from just 15% of the official price!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://grooroute.pro/sign-up?aff=qqm9"><img src="assets/partners/logos/grooroute-banner.jpg" alt="GrooRoute Pro" width="150"></a></td>
 <td>Thanks to GrooRoute Pro for sponsoring this project! GrooRoute Pro is a reliable, smooth AI API relay platform with access to OpenAI, Claude, DeepSeek, and other mainstream models. Deployed on overseas servers, it lets you choose your own pricing-multiplier tier and offers both pay-as-you-go billing and subscription plans, so you can use it however suits you best — with stable routes and fast responses that make calling all kinds of AI capabilities easier. Exclusive benefit for CC Switch users: register via <a href="https://grooroute.pro/sign-up?aff=qqm9">this link</a> to get ¥5 in free trial credit!</td>
 </tr>

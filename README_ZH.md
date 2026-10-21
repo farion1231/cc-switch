@@ -84,6 +84,11 @@ Claude Code / Codex / Gemini 官方渠道低至 3.8 / 0.2 / 0.9 折，充值更�
 </tr>
 
 <tr>
+<td width="180"><a href="https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite"><img src="assets/partners/logos/everyapi-banner.jpg" alt="EveryAPI" width="150"></a></td>
+<td>感谢 EveryAPI 赞助了本项目！EveryAPI 致力于为开发者提供稳定、高效、高性价比的 API 中转服务，支持 Claude、Codex、Gemini 等主流 AI 编程工具及多种先进模型。无需复杂配置，轻松接入，助力开发者高效编程、快速构建 AI 应用。无论是日常开发、项目调试还是 AI 辅助编程，EveryAPI 都能为你提供便捷、流畅的使用体验。EveryAPI，让 AI 开发更简单，让每一次调用都更有价值！EveryAPI 为 CC Switch 的用户提供了特别福利，通过<a href="https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite">此链接</a>注册即送 14 元，首充使用折扣码 <strong>ccswitch</strong> 享 20% 优惠，GPT 低至 1.5 折！</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://grooroute.pro/sign-up?aff=qqm9"><img src="assets/partners/logos/grooroute-banner.jpg" alt="GrooRoute Pro" width="150"></a></td>
 <td>感谢 GrooRoute Pro 赞助了本项目！GrooRoute Pro 是可靠流畅的 AI API 中转服务平台，接入 OpenAI、Claude、DeepSeek 等多款主流大模型。平台采用海外服务器部署，支持倍率档位自选，兼具按量计费与订阅套餐两种方案，多种使用方式灵活可选，线路稳定、响应迅速，让使用者可以更轻松便捷地调用各类 AI 能力。GrooRoute Pro 为 CC Switch 用户准备了专属福利，点击<a href="https://grooroute.pro/sign-up?aff=qqm9">此链接</a>注册即可获得免费 5 元体验额度！</td>
 </tr>

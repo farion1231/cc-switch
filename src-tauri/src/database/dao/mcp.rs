@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use rusqlite::{params, OptionalExtension, Row};
 
 const MCP_SERVER_SELECT: &str =
-    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi FROM mcp_servers";
+    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy FROM mcp_servers";
 
 fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     let id: String = row.get(0)?;
@@ -44,6 +44,7 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
                 hermes: enabled_hermes,
                 mcode: row.get(13)?,
                 pi: row.get(14)?,
+                agy: row.get(15)?,
             },
             description,
             homepage,
@@ -96,6 +97,7 @@ impl Database {
             AppType::Mcode => Some("enabled_mcode"),
             AppType::Pi => Some("enabled_pi"),
             AppType::ClaudeDesktop | AppType::OpenClaw => None,
+            AppType::Agy => Some("enabled_agy"),
         };
 
         if let Some(column) = column {
@@ -124,8 +126,8 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO mcp_servers (
                 id, name, server_config, description, homepage, docs, tags,
-                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 server.id,
                 server.name,
@@ -145,6 +147,7 @@ impl Database {
                 server.apps.hermes,
                 server.apps.mcode,
                 server.apps.pi,
+                server.apps.agy,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

@@ -11,7 +11,9 @@ import {
   creditsLine,
   failedLines,
   resetCreditsLine,
+  resetText,
   tierLine,
+  type QuotaBreakdown,
   type QuotaDisplay,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
@@ -50,6 +52,11 @@ export const TIER_I18N_KEYS: Record<string, string> = {
   gemini_pro: "subscription.geminiPro",
   gemini_flash: "subscription.geminiFlash",
   gemini_flash_lite: "subscription.geminiFlashLite",
+  // Antigravity：Gemini 一组、Claude 和 GPT 一组，各有 5 小时和每周两档
+  agy_gemini_five_hour: "subscription.agyGeminiFiveHour",
+  agy_gemini_weekly: "subscription.agyGeminiWeekly",
+  agy_third_party_five_hour: "subscription.agyThirdPartyFiveHour",
+  agy_third_party_weekly: "subscription.agyThirdPartyWeekly",
   // Token Plan（five_hour 已在上方官方映射中）
   weekly_limit: "subscription.sevenDay",
   // 火山方舟 Agent Plan / Coding Plan 的月窗口
@@ -62,6 +69,59 @@ export const TIER_I18N_KEYS: Record<string, string> = {
 
 /** 卡片上不显示的档（展开时仍列出） */
 const HIDDEN_INLINE_TIERS = new Set(["seven_day_sonnet"]);
+
+/**
+ * 卡片上按组只留剩余最少的一档、标签写组名（展开时仍逐档列出）：
+ * Antigravity 的 Gemini、Claude 和 GPT 两组各有 5 小时和每周两档，四档在卡片上放不下
+ */
+const INLINE_TIER_GROUPS: Record<string, string> = {
+  agy_gemini_five_hour: "subscription.agyGemini",
+  agy_gemini_weekly: "subscription.agyGemini",
+  agy_third_party_five_hour: "subscription.agyThirdParty",
+  agy_third_party_weekly: "subscription.agyThirdParty",
+};
+
+function collapseInlineGroups(tiers: QuotaTier[]): QuotaTier[] {
+  const kept = new Map<string, QuotaTier>();
+  for (const tier of tiers) {
+    const group = INLINE_TIER_GROUPS[tier.name] ?? tier.name;
+    const current = kept.get(group);
+    if (!current || tier.utilization > current.utilization) {
+      kept.set(group, tier);
+    }
+  }
+  return tiers.filter((tier) =>
+    [...kept.values()].some((keptTier) => keptTier === tier),
+  );
+}
+
+/**
+ * 卡片按组合并过档位时（Antigravity），整列做成一个下拉逐档列出：
+ * 「Gemini 5 小时  4h59m后重置  剩余 100%」。没合并时不需要（null）
+ */
+export function tierBreakdown(
+  t: TFunction,
+  tiers: QuotaTier[],
+  display: QuotaDisplay = "left",
+): QuotaBreakdown | null {
+  const known = tiers.filter((tier) => tier.name in TIER_I18N_KEYS);
+  if (collapseInlineGroups(known).length === known.length) return null;
+  return {
+    title: t("quota.windows.title"),
+    openLabel: t("quota.windows.showAll"),
+    items: known.map((tier) => {
+      const label = tierLabel(t, tier.name);
+      const line = tierLine(t, tier, label, { display });
+      return {
+        key: tier.name,
+        label,
+        hint: resetText(t, line) ?? undefined,
+        value: line.value ?? line.text,
+        tone: line.tone,
+      };
+    }),
+  };
+}
 
 export function tierLabel(t: TFunction, name: string): string {
   return TIER_I18N_KEYS[name] ? t(TIER_I18N_KEYS[name]) : name;
@@ -82,19 +142,20 @@ export function tierLines(
     display = "left",
   }: { inline?: boolean; display?: QuotaDisplay } = {},
 ): { label: string; line: QuotaLine }[] {
-  return tiers
+  const known = tiers
     .filter((tier) => tier.name in TIER_I18N_KEYS)
-    .filter((tier) => !inline || !HIDDEN_INLINE_TIERS.has(tier.name))
-    .map((tier) => {
-      const label = tierLabel(t, tier.name);
-      return {
-        label,
-        line: tierLine(t, tier, label, {
-          short: tierShortLabel(t, tier.name),
-          display,
-        }),
-      };
-    });
+    .filter((tier) => !inline || !HIDDEN_INLINE_TIERS.has(tier.name));
+  return (inline ? collapseInlineGroups(known) : known).map((tier) => {
+    const group = inline ? INLINE_TIER_GROUPS[tier.name] : undefined;
+    const label = group ? t(group) : tierLabel(t, tier.name);
+    return {
+      label,
+      line: tierLine(t, tier, label, {
+        short: group ? label : tierShortLabel(t, tier.name),
+        display,
+      }),
+    };
+  });
 }
 
 /**
@@ -223,6 +284,7 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
         queriedAt={quota.queriedAt}
         loading={loading}
         onRefresh={refetch}
+        breakdown={tierBreakdown(t, quota.tiers || [], display) ?? undefined}
       />
     );
   }

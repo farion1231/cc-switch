@@ -61,9 +61,7 @@ describe("PiProviderForm", () => {
     );
 
     // 表单直接铺在添加页里，不再套一层卡片
-    expect(container.querySelector("#provider-form")).not.toHaveClass(
-      "glass",
-    );
+    expect(container.querySelector("#provider-form")).not.toHaveClass("glass");
     expect(screen.getByLabelText("provider.name")).toBeInTheDocument();
     expect(screen.getByLabelText("provider.notes")).toBeInTheDocument();
     expect(screen.getByLabelText("provider.websiteUrl")).toBeInTheDocument();
@@ -159,8 +157,8 @@ describe("PiProviderForm", () => {
     expect(
       within(
         document.querySelector("#pi-provider-compat") as HTMLElement,
-      ).queryByRole("button", { name: /pi\.form\.compatibility/ }),
-    ).not.toBeInTheDocument();
+      ).getByRole("button", { name: "pi.form.compatibility" }),
+    ).toHaveAttribute("aria-expanded", "false");
     expect(
       screen.getByText("pi.form.noCompatibilityOptions"),
     ).toBeInTheDocument();
@@ -1377,9 +1375,10 @@ describe("PiProviderForm", () => {
     await user.click(
       screen.getByRole("button", { name: "展开或收起模型详情" }),
     );
+    // models.dev 按地址认出了这家，GPT 窗口照用它登记的值，不封顶。
     await waitFor(() =>
       expect(screen.getByLabelText("pi.form.contextWindow")).toHaveValue(
-        272000,
+        400000,
       ),
     );
     expect(screen.getByLabelText("pi.form.maxTokens")).toHaveValue(128000);
