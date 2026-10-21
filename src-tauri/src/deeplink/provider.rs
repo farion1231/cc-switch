@@ -1239,7 +1239,6 @@ fn merge_agy_config(
     }
     merge_gemini_config(request, env)
 }
-}
 
 /// Merge Gemini configuration from config file
 fn merge_gemini_config(
