@@ -2927,6 +2927,16 @@ impl SkillService {
         }
 
         if skill_path.exists() || Self::is_symlink(&skill_path) {
+            // A stale row restored from a local DB/SQL backup may no longer
+            // have a linked-source registration. Its app directory can still
+            // be the user's original, not a managed projection. Do not let a
+            // missing SSOT slot turn a routine disable into recursive deletion.
+            let managed_source = ssot_dir.join(&directory);
+            if !managed_source.is_dir() || !managed_source.join("SKILL.md").is_file() {
+                return Err(anyhow!(
+                    "Refusing to remove Skill from {app:?}: managed source is missing; this may be an externally owned original: {directory}"
+                ));
+            }
             if matches!(app, AppType::Pi | AppType::Mcode | AppType::Agy) {
                 let source = ssot_dir.join(&directory);
                 Self::ensure_pi_skill_destination_matches(&source, &skill_path, &directory)?;

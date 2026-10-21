@@ -3043,6 +3043,94 @@ mod tests {
         assert!(source.join("SKILL.md").is_file());
     }
 
+    #[test]
+    #[cfg(unix)]
+    #[serial]
+    fn restoring_unlinked_skill_row_cannot_delete_original_in_host_directory() {
+        use crate::app_config::AppType;
+        use crate::services::skill::SkillService;
+        use std::sync::Arc;
+
+        let test_home = TestHomeGuard::new();
+        let _settings = SettingsGuard {
+            previous: get_settings(),
+        };
+        update_settings(AppSettings::default()).unwrap();
+        let db = Arc::new(Database::init().unwrap());
+
+        // A real original in the app's native root has no managed SSOT slot.
+        let source = test_home.path().join(".claude/skills/restore-orphan-probe");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: restore-orphan-probe\n---\n",
+        )
+        .unwrap();
+        let installed = SkillService::link_source(&db, &source, &AppType::Claude).unwrap();
+        let backup = db.backup_database_file().unwrap().unwrap();
+        let filename = backup.file_name().unwrap().to_string_lossy().into_owned();
+
+        SkillService::uninstall(&db, &installed.id).unwrap();
+        assert!(!get_settings()
+            .linked_skill_sources
+            .contains_key("restore-orphan-probe"));
+        assert!(source.join("SKILL.md").is_file());
+
+        db.restore_from_backup(&filename).unwrap();
+        // The backup contains a stale Skill row but no longer has its local
+        // registration: never turn that row into ownership of the real folder.
+        let toggle = SkillService::toggle_app(&db, &installed.id, &AppType::Claude, false);
+        assert!(
+            source.join("SKILL.md").is_file(),
+            "disabling a restored orphan row must not delete a user's original"
+        );
+        assert!(
+            toggle.is_err(),
+            "a stale row with no managed source should fail closed"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial]
+    fn importing_unlinked_skill_row_cannot_delete_original_in_host_directory() {
+        use crate::app_config::AppType;
+        use crate::services::skill::SkillService;
+        use std::sync::Arc;
+
+        let test_home = TestHomeGuard::new();
+        let _settings = SettingsGuard {
+            previous: get_settings(),
+        };
+        update_settings(AppSettings::default()).unwrap();
+        let db = Arc::new(Database::init().unwrap());
+
+        let source = test_home.path().join(".claude/skills/import-orphan-probe");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: import-orphan-probe\n---\n",
+        )
+        .unwrap();
+        let installed = SkillService::link_source(&db, &source, &AppType::Claude).unwrap();
+        let sql = db.export_sql_string().unwrap();
+
+        SkillService::uninstall(&db, &installed.id).unwrap();
+        assert!(!get_settings()
+            .linked_skill_sources
+            .contains_key("import-orphan-probe"));
+        assert!(source.join("SKILL.md").is_file());
+
+        db.import_sql_string(&sql).unwrap();
+        assert!(db.get_installed_skill(&installed.id).unwrap().is_some());
+        let toggle = SkillService::toggle_app(&db, &installed.id, &AppType::Claude, false);
+        assert!(toggle.is_err(), "an imported orphan row must fail closed");
+        assert!(
+            source.join("SKILL.md").is_file(),
+            "disabling an imported orphan row must not delete a user's original"
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     #[serial]
