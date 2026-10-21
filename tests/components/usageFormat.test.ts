@@ -228,6 +228,12 @@ describe("usage format helpers", () => {
     expect(getAggregateTokensPerSecond(undefined, 1_000)).toBeNull();
   });
 
+  it("formats compact Chinese token counts with 万/亿 and 萬/億", () => {
+    expect(formatTokensCompact(48_210, "zh-CN")).toBe("4.82万");
+    expect(formatTokensCompact(99_995_000, "zh-CN")).toBe("1亿");
+    expect(formatTokensCompact(123_456_789, "zh-TW")).toBe("1.23億");
+  });
+
   it("formats compact token counts with K/M/B and three significant digits", () => {
     expect(formatTokensCompact(9_999, "en-US")).toBe("9,999");
     expect(formatTokensCompact(48_210, "en-US")).toBe("48.2K");
