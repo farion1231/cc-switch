@@ -1,5 +1,5 @@
 /**
- * Claude Code 的 CodeBuddy 供应商：账号选择、保存 meta.authBinding、未登录校验。
+ * Claude Code、Codex 的 CodeBuddy 供应商：账号选择、保存 meta.authBinding、未登录校验。
  *
  * 账号状态来自 useCodebuddyOauth（真实 hook 会走 React Query + Tauri），这里直接
  * 用替身给出登录状态；其余表单 hook 与 golden 测试保持一致。
@@ -119,12 +119,15 @@ const ACCOUNTS = [
   { id: "cb-2", login: "second@example.com", requires_reauth: false },
 ];
 
-function renderForm(onSubmit: (values: ProviderFormValues) => void) {
+function renderForm(
+  onSubmit: (values: ProviderFormValues) => void,
+  appId: "claude" | "codex" = "claude",
+) {
   const queryClient = createTestQueryClient();
   return render(
     <QueryClientProvider client={queryClient}>
       <ProviderForm
-        appId="claude"
+        appId={appId}
         submitLabel={SUBMIT_LABEL}
         onSubmit={onSubmit}
         onCancel={vi.fn()}
@@ -192,6 +195,67 @@ describe("ProviderForm CodeBuddy managed account", () => {
     codebuddyAuth.accounts = [];
     const onSubmit = vi.fn<(values: ProviderFormValues) => void>();
     renderForm(onSubmit);
+
+    clickCodeBuddyPreset();
+    await waitFor(() => {
+      expect(screen.getByText("CodeBuddy OAuth 认证")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: SUBMIT_LABEL }));
+
+    await waitFor(() => {
+      expect(toastMocks.error).toHaveBeenCalledWith("请先登录 CodeBuddy 账号");
+    });
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("saves a Codex CodeBuddy card with the account binding and Chat format", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn<(values: ProviderFormValues) => void>();
+    renderForm(onSubmit, "codex");
+
+    clickCodeBuddyPreset();
+    await waitFor(() => {
+      expect(screen.getByText("CodeBuddy OAuth 认证")).toBeInTheDocument();
+    });
+    // 地址和 API Key 由本地代理固定，表单里不显示
+    expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
+
+    // Codex 表单里还有其它下拉框，按当前显示的「使用默认账号」找账号选择框
+    const accountSelect = screen
+      .getAllByRole("combobox")
+      .find((element) => element.textContent?.includes("默认账号"));
+    expect(accountSelect).toBeDefined();
+    await user.click(accountSelect!);
+    await user.click(
+      await screen.findByRole("option", { name: /first@example\.com/ }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: SUBMIT_LABEL }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(toastMocks.error).not.toHaveBeenCalled();
+
+    const values = onSubmit.mock.calls[0][0];
+    expect(values.meta?.providerType).toBe("codebuddy_oauth");
+    expect(values.meta?.apiFormat).toBe("openai_chat");
+    expect(values.meta?.authBinding).toEqual({
+      source: "managed_account",
+      authProvider: "codebuddy_oauth",
+      accountId: "cb-1",
+    });
+    expect(values.meta?.codexChatReasoning).toMatchObject({
+      supportsEffort: true,
+      effortParam: "reasoning_effort",
+    });
+    expect(values.settingsConfig).toContain("requires_openai_auth = false");
+  });
+
+  it("blocks saving a Codex CodeBuddy card when no account is logged in", async () => {
+    codebuddyAuth.isAuthenticated = false;
+    codebuddyAuth.accounts = [];
+    const onSubmit = vi.fn<(values: ProviderFormValues) => void>();
+    renderForm(onSubmit, "codex");
 
     clickCodeBuddyPreset();
     await waitFor(() => {

@@ -319,7 +319,7 @@ describe("useManagedAuth", () => {
   );
 
   it.each(["remove", "logout"] as const)(
-    "refreshes Claude Code and Claude Desktop providers after CodeBuddy %s",
+    "refreshes Claude Code, Claude Desktop and Codex providers after CodeBuddy %s",
     async (operation) => {
       const queryClient = new QueryClient({
         defaultOptions: {
@@ -327,7 +327,7 @@ describe("useManagedAuth", () => {
           mutations: { retry: false },
         },
       });
-      for (const app of ["claude", "claude-desktop", "codex"]) {
+      for (const app of ["claude", "claude-desktop", "codex", "gemini"]) {
         queryClient.setQueryData(["providers", app], { current: app });
       }
       const { result } = renderHook(() => useManagedAuth("codebuddy_oauth"), {
@@ -341,7 +341,7 @@ describe("useManagedAuth", () => {
           : result.current.logout(),
       );
 
-      for (const app of ["claude", "claude-desktop"]) {
+      for (const app of ["claude", "claude-desktop", "codex"]) {
         await waitFor(() =>
           expect(
             queryClient.getQueryState(["providers", app])?.isInvalidated,
@@ -349,7 +349,7 @@ describe("useManagedAuth", () => {
         );
       }
       expect(
-        queryClient.getQueryState(["providers", "codex"])?.isInvalidated,
+        queryClient.getQueryState(["providers", "gemini"])?.isInvalidated,
       ).toBe(false);
     },
   );

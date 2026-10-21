@@ -4769,7 +4769,7 @@
       "copilotHelp": "Claude Code ve Claude Desktop'deki GitHub Copilot ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "chatgptHelp": "Claude Code ve Claude Desktop'deki ChatGPT ön ayarları ve Codex'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
-      "codebuddyHelp": "Claude Code ve Claude Desktop'taki CodeBuddy (Tencent copilot.tencent.com) sağlayıcısı için kullanılır. Belirli bir hesap seçmeyen sağlayıcılar varsayılan hesabı kullanır."
+      "codebuddyHelp": "Claude Code, Claude Desktop ve Codex'teki CodeBuddy (Tencent copilot.tencent.com) sağlayıcısı için kullanılır. Belirli bir hesap seçmeyen sağlayıcılar varsayılan hesabı kullanır."
     },
     "addAccount": "Hesap ekle",
     "groupMenu": "{{service}} için daha fazla eylem",

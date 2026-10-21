@@ -479,7 +479,8 @@ pub async fn auth_remove_account(
 }
 
 /// Apps whose providers can bind a CodeBuddy account.
-const CODEBUDDY_PROVIDER_APPS: [AppType; 2] = [AppType::Claude, AppType::ClaudeDesktop];
+const CODEBUDDY_PROVIDER_APPS: [AppType; 3] =
+    [AppType::Claude, AppType::ClaudeDesktop, AppType::Codex];
 
 /// Serialize CodeBuddy account removal with managed provider add/switch/hot-switch
 /// in every app that can bind it, so a switch that preflighted a bundle cannot keep a

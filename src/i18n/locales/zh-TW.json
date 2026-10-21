@@ -4849,7 +4849,7 @@
       "copilotHelp": "用於 Claude Code、Claude Desktop 的 GitHub Copilot 預設。沒指定帳號的供應商用「預設」帳號。",
       "chatgptHelp": "用於 Claude Code、Claude Desktop 的 ChatGPT 預設，以及 Codex 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
       "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。",
-      "codebuddyHelp": "用於 Claude Code、Claude Desktop 的 CodeBuddy（騰訊 copilot.tencent.com）供應商。沒指定帳號的供應商使用「預設」帳號。"
+      "codebuddyHelp": "用於 Claude Code、Claude Desktop、Codex 的 CodeBuddy（騰訊 copilot.tencent.com）供應商。沒指定帳號的供應商使用「預設」帳號。"
     },
     "addAccount": "新增帳號",
     "groupMenu": "{{service}} 的更多操作",

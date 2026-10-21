@@ -52,7 +52,7 @@ interface CodebuddyOAuthSectionProps {
  * CodeBuddy（国内站 copilot.tencent.com）账号区。
  *
  * manage 模式用于授权中心（登录、多账号、默认账号、移除、重新登录、额度）；
- * select 模式用于 Claude Code、Claude Desktop 的 CodeBuddy 供应商表单（选账号 + 登录）。
+ * select 模式用于 Claude Code、Claude Desktop、Codex 的 CodeBuddy 供应商表单（选账号 + 登录）。
  */
 export const CodebuddyOAuthSection: React.FC<CodebuddyOAuthSectionProps> = ({
   className,
@@ -169,7 +169,7 @@ export const CodebuddyOAuthSection: React.FC<CodebuddyOAuthSectionProps> = ({
         iconName="codebuddy"
         help={t("authCenter.group.codebuddyHelp", {
           defaultValue:
-            "用于 Claude Code、Claude Desktop 的 CodeBuddy（腾讯 copilot.tencent.com）供应商。没指定账号的供应商用「默认」账号。",
+            "用于 Claude Code、Claude Desktop、Codex 的 CodeBuddy（腾讯 copilot.tencent.com）供应商。没指定账号的供应商用「默认」账号。",
         })}
         helpSide={helpSide}
         accounts={rows}

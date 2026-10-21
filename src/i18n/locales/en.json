@@ -4848,7 +4848,7 @@
       "copilotHelp": "Used by GitHub Copilot presets in Claude Code and Claude Desktop. Providers without a chosen account use the Default one.",
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
       "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
-      "codebuddyHelp": "Used for the CodeBuddy (Tencent copilot.tencent.com) provider in Claude Code and Claude Desktop. Providers without a specific account use the default account."
+      "codebuddyHelp": "Used for the CodeBuddy (Tencent copilot.tencent.com) provider in Claude Code, Claude Desktop and Codex. Providers without a specific account use the default account."
     },
     "addAccount": "Add account",
     "groupMenu": "More actions for {{service}}",

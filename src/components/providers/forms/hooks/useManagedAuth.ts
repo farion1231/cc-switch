@@ -28,7 +28,7 @@ export function useManagedAuth(
   // 删号或登出时后端会解绑这些应用里绑定该账号的 CodeBuddy 供应商，卡片要跟着刷新。
   const invalidateCodebuddyProviders = () =>
     Promise.all(
-      ["claude", "claude-desktop"].map((app) =>
+      ["claude", "claude-desktop", "codex"].map((app) =>
         queryClient.invalidateQueries({ queryKey: ["providers", app] }),
       ),
     );

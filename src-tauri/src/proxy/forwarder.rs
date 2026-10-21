@@ -57,14 +57,16 @@ const CODEBUDDY_API_HOST: &str = "copilot.tencent.com";
 /// CodeBuddy CLI 请求携带的 Origin/Referer（上游按 CLI 形态校验）。
 const CODEBUDDY_ORIGIN: &str = "https://www.codebuddy.cn";
 
-/// CodeBuddy 上游的渠道校验：system / assistant 消息里出现 Claude Code 的这两句固定
-/// 文案时返回 400（code 11128 "unapproved channel"）。身份句只在文本开头命中且不区分
-/// 大小写，分支说明出现在任意位置都会命中；user / tool 消息、工具定义和工具调用参数
-/// 不参与校验。转发前只改写这两类消息，且只对 `codebuddy_oauth` 供应商生效。
+/// CodeBuddy 上游的渠道校验：system / assistant 消息里出现客户端的固定文案时返回 400
+/// （code 11128 "unapproved channel"）。Claude Code 和 Codex 的身份句只在文本开头命中且
+/// 不区分大小写，Claude Code 的分支说明出现在任意位置都会命中；user / tool 消息、工具
+/// 定义和工具调用参数不参与校验。转发前只改写这两类消息，且只对 `codebuddy_oauth`
+/// 供应商生效。
 ///
-/// 身份句的匹配串不带句尾标点，以同时覆盖 Agent SDK 的
-/// `…for Claude, running within the Claude Agent SDK.` 变体。
-const CODEBUDDY_CHANNEL_CHECK_REWRITES: [(&str, &str); 2] = [
+/// Claude Code 身份句的匹配串不带句尾标点，以同时覆盖 Agent SDK 的
+/// `…for Claude, running within the Claude Agent SDK.` 变体。Codex 的身份句（模型不在
+/// 模型目录里时 Codex 内置的提示词开头）要连同后面两句完整出现才会命中，只改第一句即可。
+const CODEBUDDY_CHANNEL_CHECK_REWRITES: [(&str, &str); 3] = [
     (
         "You are Claude Code, Anthropic's official CLI for Claude",
         "You are Claude Code, Anthropic's official command-line tool for Claude",
@@ -72,6 +74,10 @@ const CODEBUDDY_CHANNEL_CHECK_REWRITES: [(&str, &str); 2] = [
     (
         "Main branch (you will usually use this for PRs)",
         "Base branch (you will usually use this for PRs)",
+    ),
+    (
+        "You are a coding agent running in the Codex CLI, a terminal-based coding assistant.",
+        "You are a coding agent running in the Codex command-line tool, a terminal-based coding assistant.",
     ),
 ];
 
@@ -6037,6 +6043,28 @@ mod tests {
         );
         assert_eq!(body["messages"][4], before["messages"][4]);
         assert_eq!(body["tools"], before["tools"]);
+    }
+
+    #[test]
+    fn codebuddy_rewrites_codex_fallback_identity_in_converted_chat_body() {
+        // Responses → Chat 转换后 Codex 的 developer 指令落在 system 消息里。
+        let identity = "You are a coding agent running in the Codex CLI, a terminal-based coding assistant. Codex CLI is an open source project led by OpenAI. You are expected to be precise, safe, and helpful.";
+        let mut body = json!({
+            "model": "glm-5.3",
+            "messages": [
+                { "role": "system", "content": format!("{identity}\n\n# How you work") },
+                { "role": "user", "content": identity }
+            ]
+        });
+
+        let rewritten = rewrite_codebuddy_channel_check_phrases(&mut body);
+
+        assert_eq!(rewritten, 1);
+        assert_eq!(
+            body["messages"][0]["content"],
+            json!("You are a coding agent running in the Codex command-line tool, a terminal-based coding assistant. Codex CLI is an open source project led by OpenAI. You are expected to be precise, safe, and helpful.\n\n# How you work")
+        );
+        assert_eq!(body["messages"][1]["content"], json!(identity));
     }
 
     #[test]

@@ -960,9 +960,9 @@ function ProviderFormFull({
   const isXaiOauthProvider =
     (appId === "claude" || appId === "codex") &&
     (presetProviderType === "xai_oauth" || initialProviderType === "xai_oauth");
-  // 这个表单里只有 Claude Code 提供 CodeBuddy；Claude Desktop 用 ClaudeDesktopProviderForm。
+  // 这个表单里 Claude Code 和 Codex 提供 CodeBuddy；Claude Desktop 用 ClaudeDesktopProviderForm。
   const isCodebuddyOauthProvider =
-    appId === "claude" &&
+    (appId === "claude" || appId === "codex") &&
     (presetProviderType === "codebuddy_oauth" ||
       initialProviderType === "codebuddy_oauth");
   const wasCodexOfficialManagedOauthBound =
@@ -1634,16 +1634,26 @@ function ProviderFormFull({
           );
         }
       } else if (appId === "codex") {
-        // 托管 OAuth 预设（Copilot/xAI）：端点由 adapter 硬定向、token 由代理注入，
+        // 托管 OAuth 预设（Copilot/xAI/CodeBuddy）：端点由 adapter 硬定向、token 由代理注入，
         // 两项都不需要用户填写
-        if (!isCopilotProvider && !isXaiOauthProvider && !codexBaseUrl.trim()) {
+        if (
+          !isCopilotProvider &&
+          !isXaiOauthProvider &&
+          !isCodebuddyOauthProvider &&
+          !codexBaseUrl.trim()
+        ) {
           issues.push(
             t("providerForm.endpointRequired", {
               defaultValue: "非官方供应商请填写 API 端点",
             }),
           );
         }
-        if (!isCopilotProvider && !isXaiOauthProvider && !codexApiKey.trim()) {
+        if (
+          !isCopilotProvider &&
+          !isXaiOauthProvider &&
+          !isCodebuddyOauthProvider &&
+          !codexApiKey.trim()
+        ) {
           issues.push(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -2024,7 +2034,9 @@ function ProviderFormFull({
           : appId === "codex" && category !== "official" && !isCopilotProvider
             ? isXaiOauthProvider
               ? "openai_responses"
-              : localCodexApiFormat
+              : isCodebuddyOauthProvider
+                ? "openai_chat"
+                : localCodexApiFormat
             : undefined,
       codexCopilotApiFormat:
         appId === "codex" &&
@@ -2724,6 +2736,10 @@ function ProviderFormFull({
               isXaiOauthAuthenticated={isXaiOauthAuthenticated}
               selectedXaiAccountId={selectedXaiAccountId}
               onXaiAccountSelect={setSelectedXaiAccountId}
+              isCodebuddyOauthPreset={isCodebuddyOauthProvider}
+              isCodebuddyOauthAuthenticated={isCodebuddyOauthAuthenticated}
+              selectedCodebuddyAccountId={selectedCodebuddyAccountId}
+              onCodebuddyAccountSelect={setSelectedCodebuddyAccountId}
               codexApiKey={codexApiKey}
               onApiKeyChange={handleCodexApiKeyChange}
               category={category}
