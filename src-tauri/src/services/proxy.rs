@@ -12,7 +12,7 @@ use crate::proxy::types::*;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tauri::Emitter;
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 
 use crate::live::project::claude::PROXY_TOKEN_PLACEHOLDER;
 
@@ -23,6 +23,9 @@ pub struct ProxyService {
     /// AppHandle，用于传递给 ProxyServer 以支持故障转移时的 UI 更新
     app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
     switch_locks: SwitchLockManager,
+    /// SSE 广播通道发送端：用于在状态变更时通知前端 React Query invalidate
+    /// （覆盖"远程 API 改了状态但 UI 不刷新"这个回归问题）
+    sse_tx: Arc<RwLock<Option<broadcast::Sender<String>>>>,
 }
 
 /// 重启失败时写回库的那份配置：设置页只动四个全局字段，旧接口是整份七个字段。
@@ -63,6 +66,7 @@ impl ProxyService {
             server: Arc::new(RwLock::new(None)),
             app_handle: Arc::new(RwLock::new(None)),
             switch_locks: SwitchLockManager::new(),
+            sse_tx: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -70,6 +74,29 @@ impl ProxyService {
     pub fn set_app_handle(&self, handle: tauri::AppHandle) {
         futures::executor::block_on(async {
             *self.app_handle.write().await = Some(handle);
+        });
+    }
+
+    /// 设置 SSE 广播通道（在 remote server 启动后调用）
+    pub fn set_sse_tx(&self, tx: broadcast::Sender<String>) {
+        futures::executor::block_on(async {
+            *self.sse_tx.write().await = Some(tx);
+        });
+    }
+
+    /// 向前端 SSE 订阅者广播事件（让 UI 主动 invalidate React Query）。
+    /// 这是"控制面 API 改状态 → 数据面 UI 刷新"的关键桥接。
+    ///
+    /// 调用点在上游 4.0.14 重构后的新入口：`commands::proxy::start_proxy_server`
+    /// 与 `commands::proxy::stop_proxy_with_restore`（旧版
+    /// `start_with_takeover` / `stop_with_restore` 已被 mode 模块取代）。
+    pub(crate) fn broadcast_event(&self, event: serde_json::Value) {
+        let tx = self.sse_tx.clone();
+        let event = event.to_string();
+        futures::executor::block_on(async {
+            if let Some(tx) = tx.read().await.as_ref() {
+                let _ = tx.send(event);
+            }
         });
     }
 

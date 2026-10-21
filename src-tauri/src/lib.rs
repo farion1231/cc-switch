@@ -38,6 +38,7 @@ mod prompt;
 mod prompt_files;
 mod provider;
 mod proxy;
+mod remote;
 mod services;
 mod session_manager;
 mod settings;
@@ -69,6 +70,11 @@ pub use mcp::{
 };
 pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
+pub use remote::config::startup_remote_config;
+pub use remote::{
+    allowed_hosts, allowed_origins, BindScope, CorsMode, ManagedRemoteServer, RemoteConfig,
+    TAURI_WEBVIEW_ORIGINS,
+};
 pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService},
     provider::{reapply_current_codex_official_live, EditorSave, EditorView},
@@ -1218,6 +1224,41 @@ pub fn run() {
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
+            // 启动 Remote Management HTTP Server
+            {
+                let app_settings = crate::settings::get_settings();
+                // 暴露边界的权威存储是 exposure.json：启动时必须读它，否则
+                // 重启会把用户确认过的绑定范围 / CORS / 白名单悄悄抹回默认值。
+                // `startup_remote_config` 同时承担旧设置迁移：老用户只开过
+                // `remote_tailscale_enabled` 时，在文件里没有显式档位的前提下
+                // 按 `Tailscale` 处理。
+                let remote_config = remote::config::startup_remote_config(
+                    &crate::config::get_app_config_dir(),
+                    app_settings.remote_enabled,
+                    app_settings.remote_port,
+                    app_settings.remote_tailscale_enabled,
+                );
+
+                // 注入空的 ManagedRemoteServer，供后续命令使用
+                app.manage(remote::ManagedRemoteServer::new(Arc::new(tokio::sync::RwLock::new(None))));
+
+                // 异步启动 remote server（仅当 enabled 时）
+                if remote_config.enabled {
+                    let app_handle = app.handle().clone();
+                    let config = remote_config.clone();
+                    tauri::async_runtime::spawn(async move {
+                        match remote::start_remote(&app_handle, config).await {
+                            Ok(urls) => log::info!("[Remote] Management server started on: {}", urls.join(", ")),
+                            Err(e) => log::warn!("[Remote] Failed to start management server: {e}"),
+                        }
+                        // sse_tx 的注入由 start_remote 自己负责（首次开启远程管理
+                        // 走的就是那条路，注入放在这里会漏掉它）。
+                    });
+                } else {
+                    log::info!("[Remote] Remote management server disabled");
+                }
+            }
+
             // 初始化 SkillService
             let skill_service = SkillService::new();
             app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
@@ -1449,6 +1490,22 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // 远程服务一族（13 条，生命周期 5 + 地址枚举 1 + 审批 4 + 配置 3）：
+            // 生命周期 5 条、审批 4 条、对外暴露边界 3 条（读 / 改 CORS 与白名单，
+            // 以及两段式绑定范围里「点火」的那一段）。
+            commands::start_remote_server,
+            commands::stop_remote_server,
+            commands::restart_remote_server,
+            commands::check_tailscale_available,
+            commands::get_tailscale_ip,
+            commands::list_network_addresses,
+            commands::approve_pairing,
+            commands::reject_pairing,
+            commands::list_paired_clients,
+            commands::revoke_client,
+            commands::get_remote_config,
+            commands::set_remote_config,
+            commands::request_bind_scope_change,
             commands::get_providers,
             commands::get_current_provider,
             commands::add_provider,
@@ -2331,6 +2388,33 @@ fn relaunch_macos_bundle(env: &tauri::Env) {
         Ok(status) => log::warn!("open -n 重启失败（{status}），回落直接启动"),
         Err(err) => log::warn!("open -n 重启失败（{err}），回落直接启动"),
     }
+}
+
+/// 远程命令族的 handler，供行为级闸门在 Tauri IPC 层真调一遍。
+///
+/// **不是**测试自己另写的一份清单：这里登记的就是 `run()` 里那一批命令函数本身
+/// （同一个 `#[tauri::command]` 包装、同一份签名），命令签名一改，这里编不过。
+/// 有了它，`set_remote_config` 才能以它的真实签名接收对抗载荷 ——
+/// 「读源码看形参」那种判据证明不了渲染层真的越不过去。
+///
+/// 少了 `start` / `restart` / `stop_remote_server` 三条：它们走
+/// `remote::start_remote`，那条路要真绑网卡，而 `RemoteApp` / `AppHandleSink`
+/// 持有的是 Wry 专属的 `AppHandle`。审批那两条同理由 `AppHandle<Wry>` 钉死 ——
+/// 它们没跟着泛型化，是为了让 `commands::remote` 里那条读源码的结构锁原封不动。
+/// 其余远程命令（对外暴露边界 3 条 + 三个无 app 形参的查询 + 客户端管理 2 条）
+/// 整族都在。
+pub fn remote_invoke_handler<R: tauri::Runtime>(
+) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+    tauri::generate_handler![
+        commands::check_tailscale_available,
+        commands::get_tailscale_ip,
+        commands::list_network_addresses,
+        commands::list_paired_clients,
+        commands::revoke_client,
+        commands::get_remote_config,
+        commands::set_remote_config,
+        commands::request_bind_scope_change,
+    ]
 }
 
 #[cfg(test)]

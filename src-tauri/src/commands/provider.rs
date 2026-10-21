@@ -150,7 +150,29 @@ fn switch_provider_internal(
     app_type: AppType,
     id: &str,
 ) -> Result<SwitchResult, AppError> {
+    // 故障转移开启时供应商由队列推进，手动切换会把队列的 P1 顶掉。
+    let (_, auto_failover) = state.db.get_proxy_flags_sync(app_type.as_str());
+    if manual_switch_blocked(crate::mode::current::is_proxy(&app_type), auto_failover) {
+        return Err(AppError::localized(
+            "switch.blocked_by_failover",
+            "故障转移已开启，无法手动切换供应商；请先关闭故障转移",
+            "Cannot switch providers while automatic failover is enabled. Disable failover first.",
+        ));
+    }
     ProviderService::switch(state, app_type, id)
+}
+
+/// 手动切换是否要被拦下：**只在「路由模式 + failover 开启」时拦**。
+///
+/// failover 只在路由模式下由队列推进，直连模式下压根没有队列在推 —— 那里
+/// `auto_failover` 可能残留着（用户从路由模式切回直连，标志位没跟着清），
+/// 此时按旧判据会把手动切换一并挡死，用户看到的是「明明没开故障转移，却提示
+/// 故障转移已开启，无法切换」。两个条件缺一不可。
+///
+/// 抽成纯函数是为了让它可被表驱动穷举：`is_proxy` 读的是模式状态文件，
+/// handler 里那一处调用点没法在单测里摆出四种组合。
+pub(crate) fn manual_switch_blocked(is_proxy: bool, auto_failover: bool) -> bool {
+    is_proxy && auto_failover
 }
 
 #[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
@@ -170,6 +192,7 @@ pub async fn switch_provider(
 ) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     let handle = app_handle.clone();
+    let id_for_broadcast = id.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let state = handle
             .try_state::<AppState>()
@@ -178,6 +201,14 @@ pub async fn switch_provider(
     })
     .await
     .map_err(|e| format!("供应商切换任务执行失败: {e}"))??;
+
+    // 广播给远程浏览器（SSE）
+    let app_handle = app_handle.clone();
+    let app_type_str = app.as_str().to_string();
+    tauri::async_runtime::spawn(async move {
+        crate::remote::broadcast_provider_switch(&app_handle, &app_type_str, &id_for_broadcast)
+            .await;
+    });
     Ok(result)
 }
 
@@ -590,7 +621,7 @@ fn resolve_coding_plan_credentials(
     }
 }
 
-async fn query_provider_usage_inner(
+pub async fn query_provider_usage_inner(
     state: &AppState,
     copilot_state: &CopilotAuthState,
     xai_state: &XaiOAuthState,
@@ -1339,5 +1370,31 @@ mod native_query_credentials_tests {
 
         assert_eq!(base_url, "https://provider.zenmux.example/v1");
         assert_eq!(api_key, "sk-provider");
+    }
+}
+
+#[cfg(test)]
+mod manual_switch_blocked_tests {
+    use super::manual_switch_blocked;
+
+    /// 手动切换只在「路由模式 + failover 开启」这一格被拦下。
+    ///
+    /// 四格穷举：真正的行为变更在 `(false, true)` 那一格 —— 直连模式下
+    /// failover 标志可能残留（用户从路由模式切回直连，标志没跟着清），
+    /// 旧判据只看标志，于是把手动切换一并挡死，提示语还写着「故障转移已开启」。
+    #[test]
+    fn only_routing_mode_with_failover_blocks_manual_switch() {
+        for (is_proxy, auto_failover, expected) in [
+            (false, true, false),
+            (true, true, true),
+            (true, false, false),
+            (false, false, false),
+        ] {
+            assert_eq!(
+                manual_switch_blocked(is_proxy, auto_failover),
+                expected,
+                "is_proxy={is_proxy} auto_failover={auto_failover} 必须判为 {expected}"
+            );
+        }
     }
 }
