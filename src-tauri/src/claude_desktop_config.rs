@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -27,9 +27,13 @@ const CONFIG_FILE: &str = "claude_desktop_config.json";
 const CONFIG_LIBRARY_DIR: &str = "configLibrary";
 const GATEWAY_TOKEN_SETTING_KEY: &str = "claude_desktop_gateway_token";
 /// 上次成功写进 Desktop profile 的 `inferenceModels`。不在 profile 里，避免 Desktop 拒收未知键。
+/// 活数据在设备本地文件；这个键只留给升级前写在 settings 表里的旧副本。
 const OWNED_INFERENCE_MODELS_KEY: &str = "claude_desktop.owned_inference_models";
 /// 用户自己的模型列表。有映射的卡覆盖菜单时先放这里，切回没配映射的卡再还原。
+/// 活数据在设备本地文件；这个键只留给升级前的旧副本。
 const USER_INFERENCE_MODELS_KEY: &str = "claude_desktop.user_inference_models";
+/// 本机的模型列表快照和用户暂存。不进数据库，避免被 WebDAV / S3 整表覆盖。
+const INFERENCE_MODELS_STATE_FILE: &str = "claude-desktop-inference-models.json";
 const CLAUDE_DESKTOP_PROXY_PREFIX: &str = "/claude-desktop";
 pub const DEFAULT_CREATED_AT: &str = "2024-01-01T00:00:00Z";
 /// `inferenceModels` 的上限（Desktop 的 schema 写着 `maxItems: 200`）。
@@ -1009,6 +1013,8 @@ fn legacy_raw_route_upstream_model(provider: &Provider, requested: &str) -> Opti
         .claude_desktop_model_routes
         .iter()
         .find(|(route_id, _)| route_id.trim() == requested)
+        // 停用档不按原键命中，否则旧会话用停用前的名字会发到已停用的上游。
+        .filter(|(_, route)| route.enabled != Some(false))
         .and_then(|(_, route)| {
             let upstream_model = route.model.trim();
             (!upstream_model.is_empty()).then(|| upstream_model.to_string())
@@ -1261,7 +1267,7 @@ pub fn route_profile(
     Ok(profile)
 }
 
-/// 本次对 profile 里 `inferenceModels` 的处理。快照和用户暂存都在 CC Switch 自己的库里。
+/// 本次对 profile 里 `inferenceModels` 的处理。快照和用户暂存写在这台设备的本地文件里。
 struct InferenceModelsDecision {
     write: InferenceModelsWrite,
     /// 写入成功后认领的列表。`None` 表示磁盘上剩下的不是我们写的。
@@ -1319,7 +1325,7 @@ fn write_profile_at_paths(
         ],
         target,
     )?;
-    persist_inference_models_decision(db, &decision);
+    persist_inference_models_decision(db, &paths.device, &decision);
     Ok(())
 }
 
@@ -1385,7 +1391,7 @@ fn restore_official_at_paths(
         });
     }
     write_desktop_files(db, paths, op, &changes, target)?;
-    persist_inference_models_decision(db, &decision);
+    persist_inference_models_decision(db, &paths.device, &decision);
     Ok(())
 }
 
@@ -1415,8 +1421,9 @@ fn reconcile_inference_models(
 ) -> InferenceModelsDecision {
     let disk_entries = read_disk_inference_models(&paths.profile_path);
     let incoming_entries = incoming.and_then(Value::as_array).cloned();
-    let snapshot = load_model_list(db, OWNED_INFERENCE_MODELS_KEY);
-    let previous_stash = load_model_list(db, USER_INFERENCE_MODELS_KEY).unwrap_or_default();
+    let record = load_inference_models_record(db, &paths.device);
+    let snapshot = record.owned;
+    let previous_stash = record.user;
     let incoming_names: Vec<String> = incoming_entries
         .iter()
         .flatten()
@@ -1538,39 +1545,118 @@ fn read_disk_inference_models(path: &Path) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-fn load_model_list(db: &Database, key: &str) -> Option<Vec<Value>> {
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+struct InferenceModelsRecord {
+    /// 上次我们写进菜单的列表。没有这个字段表示还没有快照。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    owned: Option<Vec<Value>>,
+    /// 覆盖菜单前暂存的用户列表。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    user: Vec<Value>,
+}
+
+fn load_inference_models_record(db: &Database, device: &DeviceStore) -> InferenceModelsRecord {
+    let path = device.file(INFERENCE_MODELS_STATE_FILE);
+    match std::fs::read(&path) {
+        Ok(bytes) => match serde_json::from_slice::<InferenceModelsRecord>(&bytes) {
+            Ok(record) => {
+                clear_legacy_inference_model_settings(db);
+                record
+            }
+            Err(error) => {
+                log::warn!(
+                    "Claude Desktop 模型列表记录无法解析，本次不按我们写过的列表清理: {error}"
+                );
+                InferenceModelsRecord::default()
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            migrate_legacy_inference_model_settings(db, device)
+        }
+        Err(error) => {
+            log::warn!("读取 Claude Desktop 模型列表记录失败，本次不按我们写过的列表清理: {error}");
+            InferenceModelsRecord::default()
+        }
+    }
+}
+
+/// 设备文件还不存在时，把升级前写在 settings 表里的旧副本迁过来。写成功才删旧键，
+/// 避免迁移失败后两头都没有。
+fn migrate_legacy_inference_model_settings(
+    db: &Database,
+    device: &DeviceStore,
+) -> InferenceModelsRecord {
+    let record = InferenceModelsRecord {
+        owned: load_legacy_model_list(db, OWNED_INFERENCE_MODELS_KEY),
+        user: load_legacy_model_list(db, USER_INFERENCE_MODELS_KEY).unwrap_or_default(),
+    };
+    if record.owned.is_none() && record.user.is_empty() {
+        return record;
+    }
+    match write_inference_models_record(device, &record) {
+        Ok(()) => clear_legacy_inference_model_settings(db),
+        Err(error) => {
+            log::warn!("把 Claude Desktop 模型列表记录迁出设置表失败，下次切换再试: {error}");
+        }
+    }
+    record
+}
+
+fn load_legacy_model_list(db: &Database, key: &str) -> Option<Vec<Value>> {
     match db.get_setting(key) {
         Ok(Some(raw)) => serde_json::from_str(&raw).ok(),
         Ok(None) => None,
         Err(error) => {
-            log::warn!("读取 Claude Desktop 模型列表记录失败，本次不按我们写过的列表清理: {error}");
+            log::warn!(
+                "读取 Claude Desktop 模型列表旧设置失败，本次不按我们写过的列表清理: {error}"
+            );
             None
         }
     }
 }
 
-fn persist_inference_models_decision(db: &Database, decision: &InferenceModelsDecision) {
-    if let Err(error) =
-        persist_model_list(db, OWNED_INFERENCE_MODELS_KEY, decision.owned.as_deref())
-    {
+fn persist_inference_models_decision(
+    db: &Database,
+    device: &DeviceStore,
+    decision: &InferenceModelsDecision,
+) {
+    let record = InferenceModelsRecord {
+        owned: decision.owned.clone(),
+        user: decision.stash.clone(),
+    };
+    if let Err(error) = write_inference_models_record(device, &record) {
         log::warn!(
-            "保存 Claude Desktop 模型列表快照失败，下次切换可能暂时分不清我们写的列表: {error}"
+            "保存 Claude Desktop 模型列表记录失败，下次切换可能暂时分不清我们写的列表: {error}"
         );
+        return;
     }
-    let stash = (!decision.stash.is_empty()).then_some(decision.stash.as_slice());
-    if let Err(error) = persist_model_list(db, USER_INFERENCE_MODELS_KEY, stash) {
-        log::warn!("保存 Claude Desktop 用户模型列表失败，切回没配映射的卡时可能找不回: {error}");
-    }
+    clear_legacy_inference_model_settings(db);
 }
 
-fn persist_model_list(db: &Database, key: &str, list: Option<&[Value]>) -> Result<(), AppError> {
-    match list {
-        Some(list) => {
-            let raw =
-                serde_json::to_string(list).map_err(|source| AppError::JsonSerialize { source })?;
-            db.set_setting(key, &raw)
+fn write_inference_models_record(
+    device: &DeviceStore,
+    record: &InferenceModelsRecord,
+) -> Result<(), AppError> {
+    // 空记录也留下文件：文件在，就不再读 settings。否则云同步把旧键写回来之后，
+    // 下一次切换又会把另一台设备的列表当成这台的。
+    crate::config::write_json_file_private(&device.file(INFERENCE_MODELS_STATE_FILE), record)
+}
+
+fn clear_legacy_inference_model_settings(db: &Database) {
+    for key in [OWNED_INFERENCE_MODELS_KEY, USER_INFERENCE_MODELS_KEY] {
+        match db.get_setting(key) {
+            Ok(None) => {}
+            Ok(Some(_)) => {
+                if let Err(error) = db.delete_setting(key) {
+                    log::warn!(
+                        "清除 Claude Desktop 模型列表旧设置失败，云同步仍可能带回这份本机状态: {error}"
+                    );
+                }
+            }
+            Err(error) => {
+                log::warn!("检查 Claude Desktop 模型列表旧设置失败: {error}");
+            }
         }
-        None => db.delete_setting(key),
     }
 }
 
@@ -2800,6 +2886,46 @@ mod tests {
     }
 
     #[test]
+    fn claude_desktop_disabled_exact_route_falls_back_to_an_enabled_tier() {
+        // 停用前选过 Haiku，或旧会话继续用 claude-haiku-4-5 这个名字时，
+        // 不能发到已停用的 Haiku 上游，要落到已启用的 Sonnet。
+        let mut provider = proxy_provider("proxy");
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes = std::collections::HashMap::from([
+            (
+                "claude-sonnet-4-6".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "upstream-sonnet".to_string(),
+                    label_override: None,
+                    supports_1m: Some(true),
+                    max_effort: None,
+                    enabled: None,
+                },
+            ),
+            (
+                "claude-haiku-4-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "upstream-haiku".to_string(),
+                    label_override: None,
+                    supports_1m: None,
+                    max_effort: None,
+                    enabled: Some(false),
+                },
+            ),
+        ]);
+
+        let mapped = map_proxy_request_model(
+            json!({"model": "claude-haiku-4-5", "messages": []}),
+            &provider,
+        )
+        .expect("exact name of a disabled tier should fall back");
+        assert_eq!(mapped["model"], json!("upstream-sonnet"));
+    }
+
+    #[test]
     fn claude_desktop_proxy_maps_fable_to_dedicated_route() {
         // Desktop 1.12603.1+ fail-all 校验已放行 claude-fable-5，用户可显式配置
         // 独立 fable 档；此时 fable 请求精确命中 fable 档，不再降级到 opus。
@@ -3273,6 +3399,63 @@ mod tests {
         apply_provider_to_paths(&db, &direct_provider("a"), &paths).expect("back to a");
         let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
         assert_eq!(profile["inferenceModels"], user_list);
+    }
+
+    #[test]
+    fn claude_desktop_inference_model_records_stay_on_this_device() {
+        let temp = TempDir::new().expect("tempdir");
+        let device = DeviceStore::at(temp.path().join(".cc-switch"));
+        let db = test_db();
+        let owned = json!([{ "name": "claude-sonnet-4-6" }]);
+        let user = json!(["claude-opus-4-8"]);
+        db.set_setting(
+            OWNED_INFERENCE_MODELS_KEY,
+            &serde_json::to_string(&owned).unwrap(),
+        )
+        .unwrap();
+        db.set_setting(
+            USER_INFERENCE_MODELS_KEY,
+            &serde_json::to_string(&user).unwrap(),
+        )
+        .unwrap();
+
+        let loaded = load_inference_models_record(&db, &device);
+        assert_eq!(loaded.owned, owned.as_array().cloned());
+        assert_eq!(loaded.user, user.as_array().cloned().unwrap());
+        assert!(db
+            .get_setting(OWNED_INFERENCE_MODELS_KEY)
+            .unwrap()
+            .is_none());
+        assert!(db.get_setting(USER_INFERENCE_MODELS_KEY).unwrap().is_none());
+        assert!(device.file(INFERENCE_MODELS_STATE_FILE).exists());
+
+        // 云同步把旧键写回来时，本机文件优先，并把设置表里的键清掉。
+        db.set_setting(OWNED_INFERENCE_MODELS_KEY, "[]").unwrap();
+        let again = load_inference_models_record(&db, &device);
+        assert_eq!(again.owned, owned.as_array().cloned());
+        assert!(db
+            .get_setting(OWNED_INFERENCE_MODELS_KEY)
+            .unwrap()
+            .is_none());
+
+        persist_inference_models_decision(
+            &db,
+            &device,
+            &InferenceModelsDecision {
+                write: InferenceModelsWrite::Leave,
+                owned: Some(vec![json!("claude-sonnet-5")]),
+                stash: vec![json!("mine")],
+            },
+        );
+        assert!(db
+            .get_setting(OWNED_INFERENCE_MODELS_KEY)
+            .unwrap()
+            .is_none());
+        assert!(db.get_setting(USER_INFERENCE_MODELS_KEY).unwrap().is_none());
+        let on_disk: Value =
+            read_json_file(&device.file(INFERENCE_MODELS_STATE_FILE)).expect("device record");
+        assert_eq!(on_disk["owned"], json!(["claude-sonnet-5"]));
+        assert_eq!(on_disk["user"], json!(["mine"]));
     }
 
     #[test]
