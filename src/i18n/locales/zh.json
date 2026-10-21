@@ -4848,7 +4848,7 @@
       "copilotHelp": "用于 Claude Code、Claude Desktop 的 GitHub Copilot 预设。没指定账号的供应商用「默认」账号。",
       "chatgptHelp": "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
       "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。",
-      "codebuddyHelp": "用于 Claude Code 的 CodeBuddy（腾讯 copilot.tencent.com）供应商。没指定账号的供应商用「默认」账号。"
+      "codebuddyHelp": "用于 Claude Code、Claude Desktop 的 CodeBuddy（腾讯 copilot.tencent.com）供应商。没指定账号的供应商用「默认」账号。"
     },
     "addAccount": "添加账号",
     "groupMenu": "{{service}} 的更多操作",

@@ -25,6 +25,14 @@ export function useManagedAuth(
   const { t } = useTranslation();
   const queryKey = ["managed-auth-status", authProvider];
 
+  // 删号或登出时后端会解绑这些应用里绑定该账号的 CodeBuddy 供应商，卡片要跟着刷新。
+  const invalidateCodebuddyProviders = () =>
+    Promise.all(
+      ["claude", "claude-desktop"].map((app) =>
+        queryClient.invalidateQueries({ queryKey: ["providers", app] }),
+      ),
+    );
+
   const [pollingState, setPollingState] = useState<PollingState>("idle");
   const [deviceCode, setDeviceCode] =
     useState<ManagedAuthDeviceCodeResponse | null>(null);
@@ -257,10 +265,7 @@ export function useManagedAuth(
           queryKey: ["providers", "codex"],
         });
       } else if (authProvider === "codebuddy_oauth") {
-        // CodeBuddy 账号只会绑定到 Claude Code 的供应商，删号后让卡片立刻更新。
-        await queryClient.invalidateQueries({
-          queryKey: ["providers", "claude"],
-        });
+        await invalidateCodebuddyProviders();
       }
     },
   });
@@ -293,9 +298,7 @@ export function useManagedAuth(
           queryKey: ["providers", "codex"],
         });
       } else if (authProvider === "codebuddy_oauth") {
-        await queryClient.invalidateQueries({
-          queryKey: ["providers", "claude"],
-        });
+        await invalidateCodebuddyProviders();
       }
     },
   });

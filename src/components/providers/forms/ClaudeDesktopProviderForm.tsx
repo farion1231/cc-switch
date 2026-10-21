@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { BasicFormFields } from "./BasicFormFields";
+import { CodebuddyOAuthSection } from "./CodebuddyOAuthSection";
 import { CodexOAuthSection } from "./CodexOAuthSection";
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import { XaiOAuthSection } from "./XaiOAuthSection";
@@ -48,6 +49,7 @@ import {
   type ClaudeDesktopRoleId,
 } from "@/config/claudeDesktopProviderPresets";
 import {
+  fetchCodebuddyOauthModels,
   fetchCodexOauthModels,
   fetchModelsForConfig,
   fetchXaiOauthModels,
@@ -65,6 +67,7 @@ import {
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import type { ManagedAuthProvider } from "@/lib/api";
 import { useCopilotAuth, useCodexOauth, useXaiOauth } from "./hooks";
+import { useCodebuddyOauth } from "./hooks/useCodebuddyOauth";
 import { isOAuthProviderType } from "@/config/constants";
 
 export type ClaudeDesktopProviderFormValues = ProviderFormData & {
@@ -284,6 +287,9 @@ export function ClaudeDesktopProviderForm({
   const [selectedXaiAccountId, setSelectedXaiAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "xai_oauth"));
+  const [selectedCodebuddyAccountId, setSelectedCodebuddyAccountId] = useState<
+    string | null
+  >(() => resolveManagedAccountId(initialData?.meta, "codebuddy_oauth"));
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
   );
@@ -396,6 +402,10 @@ export function ClaudeDesktopProviderForm({
     isAuthenticated: isXaiOauthAuthenticated,
     accounts: xaiOauthAccounts,
   } = useXaiOauth();
+  const {
+    isAuthenticated: isCodebuddyOauthAuthenticated,
+    accounts: codebuddyOauthAccounts,
+  } = useCodebuddyOauth();
   const isOfficial =
     initialData?.category === "official" ||
     activePreset?.category === "official";
@@ -559,6 +569,7 @@ export function ClaudeDesktopProviderForm({
     selectedGitHubAccountId,
     selectedCodexAccountId,
     selectedXaiAccountId,
+    selectedCodebuddyAccountId,
   ]);
 
   const handleFetchManagedModels = async () => {
@@ -599,6 +610,16 @@ export function ClaudeDesktopProviderForm({
         return;
       }
       request = fetchXaiOauthModels(selectedXaiAccountId);
+    } else if (activeProviderType === "codebuddy_oauth") {
+      if (!isCodebuddyOauthAuthenticated) {
+        toast.error(
+          t("codebuddyOauth.loginRequired", {
+            defaultValue: "请先登录 CodeBuddy 账号",
+          }),
+        );
+        return;
+      }
+      request = fetchCodebuddyOauthModels(selectedCodebuddyAccountId);
     } else {
       return;
     }
@@ -734,6 +755,11 @@ export function ClaudeDesktopProviderForm({
       xaiOauthAccounts.some(
         (account) => account.id === accountId && !account.requires_reauth,
       );
+    const selectedCodebuddyAccountIsUsable = (accountId: string | null) =>
+      accountId === null ||
+      codebuddyOauthAccounts.some(
+        (account) => account.id === accountId && !account.requires_reauth,
+      );
     const managedAuthState =
       activeProviderType === "github_copilot"
         ? {
@@ -762,7 +788,16 @@ export function ClaudeDesktopProviderForm({
                   defaultValue: "请先登录 xAI 账号",
                 }),
               }
-            : null;
+            : activeProviderType === "codebuddy_oauth"
+              ? {
+                  authenticated: isCodebuddyOauthAuthenticated,
+                  accountId: selectedCodebuddyAccountId,
+                  accounts: codebuddyOauthAccounts,
+                  loginMessage: t("codebuddyOauth.loginRequired", {
+                    defaultValue: "请先登录 CodeBuddy 账号",
+                  }),
+                }
+              : null;
     if (managedAuthState && !managedAuthState.authenticated) {
       toast.error(managedAuthState.loginMessage);
       return;
@@ -772,12 +807,14 @@ export function ClaudeDesktopProviderForm({
         ? selectedCodexAccountIsUsable(selectedCodexAccountId)
         : activeProviderType === "xai_oauth"
           ? selectedXaiAccountIsUsable(selectedXaiAccountId)
-          : managedAuthState
-            ? selectedAccountExists(
-                managedAuthState.accountId,
-                managedAuthState.accounts,
-              )
-            : true;
+          : activeProviderType === "codebuddy_oauth"
+            ? selectedCodebuddyAccountIsUsable(selectedCodebuddyAccountId)
+            : managedAuthState
+              ? selectedAccountExists(
+                  managedAuthState.accountId,
+                  managedAuthState.accounts,
+                )
+              : true;
     if (managedAuthState && !selectedManagedAccountIsUsable) {
       toast.error(
         t("managedAuth.selectedAccountUnavailable", {
@@ -880,9 +917,11 @@ export function ClaudeDesktopProviderForm({
       apiFormat:
         activeProviderType === "xai_oauth"
           ? "openai_responses"
-          : effectiveMode === "proxy"
-            ? apiFormat
-            : "anthropic",
+          : activeProviderType === "codebuddy_oauth"
+            ? "openai_chat"
+            : effectiveMode === "proxy"
+              ? apiFormat
+              : "anthropic",
     };
 
     meta.claudeDesktopModelRoutes = routeMap;
@@ -906,7 +945,13 @@ export function ClaudeDesktopProviderForm({
                 authProvider: "xai_oauth",
                 accountId: selectedXaiAccountId ?? undefined,
               }
-            : undefined;
+            : activeProviderType === "codebuddy_oauth"
+              ? {
+                  source: "managed_account",
+                  authProvider: "codebuddy_oauth",
+                  accountId: selectedCodebuddyAccountId ?? undefined,
+                }
+              : undefined;
     meta.codexFastMode =
       activeProviderType === "codex_oauth" ? codexFastMode : undefined;
 
@@ -1013,6 +1058,12 @@ export function ClaudeDesktopProviderForm({
                     fastModeEnabled={codexFastMode}
                     onFastModeChange={setCodexFastMode}
                   />
+                ) : activeProviderType === "codebuddy_oauth" ? (
+                  <CodebuddyOAuthSection
+                    mode="select"
+                    selectedAccountId={selectedCodebuddyAccountId}
+                    onAccountSelect={setSelectedCodebuddyAccountId}
+                  />
                 ) : (
                   <XaiOAuthSection
                     selectedAccountId={selectedXaiAccountId}
@@ -1109,49 +1160,51 @@ export function ClaudeDesktopProviderForm({
 
               {needsModelMapping && (
                 <div className="space-y-4 border-t border-border pt-4">
-                  {activeProviderType !== "xai_oauth" && (
-                    <div className="space-y-2">
-                      <Label>
-                        {t("providerForm.apiFormat", {
-                          defaultValue: "上游格式",
-                        })}
-                      </Label>
-                      <Select
-                        value={apiFormat}
-                        onValueChange={(value) =>
-                          setApiFormat(value as ClaudeApiFormat)
-                        }
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="anthropic">
-                            {t("providerForm.apiFormatAnthropic", {
-                              defaultValue: "Anthropic Messages (原生)",
-                            })}
-                          </SelectItem>
-                          <SelectItem value="openai_chat">
-                            {t("providerForm.apiFormatOpenAIChat", {
-                              defaultValue:
-                                "OpenAI Chat Completions (需开启路由)",
-                            })}
-                          </SelectItem>
-                          <SelectItem value="openai_responses">
-                            {t("providerForm.apiFormatOpenAIResponses", {
-                              defaultValue: "OpenAI Responses API (需开启路由)",
-                            })}
-                          </SelectItem>
-                          <SelectItem value="gemini_native">
-                            {t("providerForm.apiFormatGeminiNative", {
-                              defaultValue:
-                                "Gemini Native generateContent (需开启路由)",
-                            })}
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
+                  {activeProviderType !== "xai_oauth" &&
+                    activeProviderType !== "codebuddy_oauth" && (
+                      <div className="space-y-2">
+                        <Label>
+                          {t("providerForm.apiFormat", {
+                            defaultValue: "上游格式",
+                          })}
+                        </Label>
+                        <Select
+                          value={apiFormat}
+                          onValueChange={(value) =>
+                            setApiFormat(value as ClaudeApiFormat)
+                          }
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="anthropic">
+                              {t("providerForm.apiFormatAnthropic", {
+                                defaultValue: "Anthropic Messages (原生)",
+                              })}
+                            </SelectItem>
+                            <SelectItem value="openai_chat">
+                              {t("providerForm.apiFormatOpenAIChat", {
+                                defaultValue:
+                                  "OpenAI Chat Completions (需开启路由)",
+                              })}
+                            </SelectItem>
+                            <SelectItem value="openai_responses">
+                              {t("providerForm.apiFormatOpenAIResponses", {
+                                defaultValue:
+                                  "OpenAI Responses API (需开启路由)",
+                              })}
+                            </SelectItem>
+                            <SelectItem value="gemini_native">
+                              {t("providerForm.apiFormatGeminiNative", {
+                                defaultValue:
+                                  "Gemini Native generateContent (需开启路由)",
+                              })}
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
 
                   <div className="space-y-3">
                     <div className="space-y-1 border-t border-border pt-4">

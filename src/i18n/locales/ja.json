@@ -4848,7 +4848,7 @@
       "copilotHelp": "Claude Code、Claude Desktop の GitHub Copilot プリセットで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
       "chatgptHelp": "Claude Code、Claude Desktop の ChatGPT プリセットと、Codex の公式ログインのバインドで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
       "xaiHelp": "Claude Code、Claude Desktop、Codex の xAI プリセットで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
-      "codebuddyHelp": "Claude Code の CodeBuddy（Tencent copilot.tencent.com）プロバイダーで使います。アカウントを指定しないプロバイダーは「デフォルト」アカウントを使います。"
+      "codebuddyHelp": "Claude Code、Claude Desktop の CodeBuddy（Tencent copilot.tencent.com）プロバイダーで使います。アカウントを指定しないプロバイダーは「デフォルト」アカウントを使います。"
     },
     "addAccount": "アカウントを追加",
     "groupMenu": "{{service}} のその他の操作",

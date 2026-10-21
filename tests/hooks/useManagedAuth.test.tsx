@@ -318,6 +318,42 @@ describe("useManagedAuth", () => {
     },
   );
 
+  it.each(["remove", "logout"] as const)(
+    "refreshes Claude Code and Claude Desktop providers after CodeBuddy %s",
+    async (operation) => {
+      const queryClient = new QueryClient({
+        defaultOptions: {
+          queries: { retry: false },
+          mutations: { retry: false },
+        },
+      });
+      for (const app of ["claude", "claude-desktop", "codex"]) {
+        queryClient.setQueryData(["providers", app], { current: app });
+      }
+      const { result } = renderHook(() => useManagedAuth("codebuddy_oauth"), {
+        wrapper: createWrapper(queryClient),
+      });
+      await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
+
+      act(() =>
+        operation === "remove"
+          ? result.current.removeAccount("acct-1")
+          : result.current.logout(),
+      );
+
+      for (const app of ["claude", "claude-desktop"]) {
+        await waitFor(() =>
+          expect(
+            queryClient.getQueryState(["providers", app])?.isInvalidated,
+          ).toBe(true),
+        );
+      }
+      expect(
+        queryClient.getQueryState(["providers", "codex"])?.isInvalidated,
+      ).toBe(false);
+    },
+  );
+
   it("shows a success toast after removing an account", async () => {
     const { result } = renderHook(() => useManagedAuth("codex_oauth"), {
       wrapper: createWrapper(),

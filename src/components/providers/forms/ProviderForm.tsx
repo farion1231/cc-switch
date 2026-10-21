@@ -960,7 +960,7 @@ function ProviderFormFull({
   const isXaiOauthProvider =
     (appId === "claude" || appId === "codex") &&
     (presetProviderType === "xai_oauth" || initialProviderType === "xai_oauth");
-  // CodeBuddy 凭据注入只接入了 Claude Code。
+  // 这个表单里只有 Claude Code 提供 CodeBuddy；Claude Desktop 用 ClaudeDesktopProviderForm。
   const isCodebuddyOauthProvider =
     appId === "claude" &&
     (presetProviderType === "codebuddy_oauth" ||

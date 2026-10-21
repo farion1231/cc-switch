@@ -105,10 +105,10 @@ impl Database {
 
     /// Detach providers of **any** app type bound to the given managed accounts.
     ///
-    /// Used when a managed account is deleted/logged out: Claude Code providers
-    /// bound to a CodeBuddy account (or future providers bound to other managed
-    /// account types) must not keep pointing at a missing account. Raw `meta`
-    /// JSON is edited in place so unrelated and future metadata survives.
+    /// Used when a managed account is deleted/logged out: providers bound to it
+    /// (e.g. CodeBuddy providers in Claude Code and Claude Desktop) must not keep
+    /// pointing at a missing account. Raw `meta` JSON is edited in place so
+    /// unrelated and future metadata survives.
     pub(crate) fn unbind_managed_accounts(
         &self,
         auth_provider: &str,

@@ -34,13 +34,32 @@ describe("CodeBuddy OAuth provider presets", () => {
     );
   });
 
-  it("stays Claude Code only (no Codex / Claude Desktop preset)", () => {
-    // CodeBuddy 凭据注入只接入了 Claude Code 的路由链路，其他应用不提供该预设。
+  it("pins the Claude Desktop preset to proxy Chat mode without 1M", () => {
+    const preset = claudeDesktopProviderPresets.find(
+      (entry) => entry.name === "CodeBuddy",
+    );
+    expect(preset).toMatchObject({
+      websiteUrl: "https://copilot.tencent.com",
+      category: "third_party",
+      baseUrl: "https://copilot.tencent.com",
+      mode: "proxy",
+      apiFormat: "openai_chat",
+      providerType: "codebuddy_oauth",
+      requiresOAuth: true,
+      icon: "codebuddy",
+      iconColor: "#6C4DFF",
+    });
+    expect(preset!.modelRoutes).toEqual([
+      expect.objectContaining({
+        upstreamModel: "glm-5.3",
+        supports1m: false,
+      }),
+    ]);
+  });
+
+  it("has no Codex preset", () => {
     expect(
       codexProviderPresets.some((entry) => entry.name === "CodeBuddy"),
-    ).toBe(false);
-    expect(
-      claudeDesktopProviderPresets.some((entry) => entry.name === "CodeBuddy"),
     ).toBe(false);
   });
 });

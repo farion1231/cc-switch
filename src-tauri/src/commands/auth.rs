@@ -460,13 +460,7 @@ pub async fn auth_remove_account(
                 .map_err(|e| e.to_string())
         }
         AUTH_PROVIDER_CODEBUDDY_OAUTH => {
-            // Serialize account removal with managed provider add/switch/hot-switch for
-            // Claude Code, so a switch that preflighted a bundle cannot keep a binding
-            // pointing at an account this command just deleted.
-            let _switch_guard = app_state
-                .proxy_service
-                .lock_switch_for_app(AppType::Claude.as_str())
-                .await;
+            let _switch_guards = lock_codebuddy_provider_switches(app_state.inner()).await;
             let auth_manager = codebuddy_state.0.write().await;
             auth_manager
                 .remove_account(&account_id)
@@ -482,6 +476,28 @@ pub async fn auth_remove_account(
         }
         _ => unreachable!(),
     }
+}
+
+/// Apps whose providers can bind a CodeBuddy account.
+const CODEBUDDY_PROVIDER_APPS: [AppType; 2] = [AppType::Claude, AppType::ClaudeDesktop];
+
+/// Serialize CodeBuddy account removal with managed provider add/switch/hot-switch
+/// in every app that can bind it, so a switch that preflighted a bundle cannot keep a
+/// binding pointing at an account the caller is deleting. No other path holds more
+/// than one app's switch lock, so taking them in this fixed order cannot deadlock.
+async fn lock_codebuddy_provider_switches(
+    app_state: &AppState,
+) -> Vec<tokio::sync::OwnedMutexGuard<()>> {
+    let mut guards = Vec::with_capacity(CODEBUDDY_PROVIDER_APPS.len());
+    for app in &CODEBUDDY_PROVIDER_APPS {
+        guards.push(
+            app_state
+                .proxy_service
+                .lock_switch_for_app(app.as_str())
+                .await,
+        );
+    }
+    guards
 }
 
 pub(crate) async fn remove_codex_oauth_account_with_switch_lock(
@@ -572,10 +588,7 @@ pub async fn auth_logout(
             auth_manager.clear_auth().await.map_err(|e| e.to_string())
         }
         AUTH_PROVIDER_CODEBUDDY_OAUTH => {
-            let _switch_guard = app_state
-                .proxy_service
-                .lock_switch_for_app(AppType::Claude.as_str())
-                .await;
+            let _switch_guards = lock_codebuddy_provider_switches(app_state.inner()).await;
             let auth_manager = codebuddy_state.0.write().await;
             let removed: Vec<String> = auth_manager
                 .list_accounts()
