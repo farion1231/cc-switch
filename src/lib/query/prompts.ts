@@ -22,6 +22,7 @@ export const PROMPT_APP_IDS: AppId[] = [
   "pi",
   "mcode",
   "deveco",
+  "agy",
 ];
 
 /** 应用页对应的提示词应用；不支持提示词的返回 null。 */

@@ -24,6 +24,7 @@ fn invalid_json_format_error(error: serde_json::Error) -> String {
 
     match lang.as_str() {
         "en" => format!("Invalid JSON format: {error}"),
+        "tr" => format!("Geçersiz JSON biçimi: {error}"),
         "ja" => format!("JSON形式が無効です: {error}"),
         _ => format!("无效的 JSON 格式: {error}"),
     }
@@ -36,6 +37,7 @@ fn invalid_toml_format_error(error: toml_edit::TomlError) -> String {
 
     match lang.as_str() {
         "en" => format!("Invalid TOML format: {error}"),
+        "tr" => format!("Geçersiz TOML biçimi: {error}"),
         "ja" => format!("TOML形式が無効です: {error}"),
         _ => format!("无效的 TOML 格式: {error}"),
     }
@@ -161,6 +163,13 @@ pub async fn get_config_status(
                 path,
             })
         }
+        AppType::Agy => {
+            let dir = crate::agy_config::agy_dir();
+            Ok(ConfigStatus {
+                exists: crate::agy_config::settings_path().exists(),
+                path: dir.to_string_lossy().into_owned(),
+            })
+        }
     }
 }
 
@@ -188,6 +197,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
             .unwrap()
             .to_path_buf(),
         AppType::DevEco => crate::deveco_config::get_deveco_dir(),
+        AppType::Agy => crate::agy_config::agy_dir(),
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -212,6 +222,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
             .unwrap()
             .to_path_buf(),
         AppType::DevEco => crate::deveco_config::get_deveco_dir(),
+        AppType::Agy => crate::agy_config::agy_dir(),
     };
 
     if !config_dir.exists() {

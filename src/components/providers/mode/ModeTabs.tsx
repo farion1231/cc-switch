@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 
 const MODE_ICON = { direct: Plug, route: Route, stack: Layers } as const;
 
-/** 模式色只用在 tab、侧栏标签、当前卡片和激活条的 CTA 上（B4.7）。 */
+/** 模式色用于页头状态、tab、侧栏标签、当前卡片和激活条的 CTA。 */
 export const MODE_TONE: Record<
   AppMode,
   { soft: string; text: string; dot: string; border: string }
@@ -43,14 +43,16 @@ interface ModeTabsProps {
   active: AppMode;
   view: AppMode;
   onView: (mode: AppMode) => void;
-  /** 状态行：「前导 + 值」，空间不够先截前导；值仅在独自超出整栏时才截断 */
-  status?: { lead: string; value: string };
   failover?: {
     enabled: boolean;
     disabled?: boolean;
     onChange: (enabled: boolean) => void;
   };
   onOpenRouteSettings?: () => void;
+  /** Codex 聚合页签上的「聚合设置」（子代理模型、经典子代理） */
+  onOpenStackSettings?: () => void;
+  /** 供应商搜索框挂在状态行右侧（由列表通过 portal 渲染进来） */
+  searchSlotRef?: (node: HTMLDivElement | null) => void;
 }
 
 /**
@@ -63,9 +65,10 @@ export function ModeTabs({
   active,
   view,
   onView,
-  status,
   failover,
   onOpenRouteSettings,
+  onOpenStackSettings,
+  searchSlotRef,
 }: ModeTabsProps) {
   const { t } = useTranslation();
   const indicator = useSlidingIndicator<HTMLDivElement>(
@@ -134,15 +137,13 @@ export function ModeTabs({
         ))}
       </HelpTip>
 
-      {status && (status.lead || status.value) && (
-        <div className="flex min-w-0 flex-1 items-center gap-1 text-caption text-fg-2">
-          {status.lead && <span className="truncate">{status.lead}</span>}
-          <span className="max-w-full shrink-0 truncate" title={status.value}>
-            {status.value}
-          </span>
-        </div>
+      <div className="flex-1" />
+      {searchSlotRef && (
+        <div
+          ref={searchSlotRef}
+          className="flex min-w-0 shrink items-center empty:hidden"
+        />
       )}
-      {!status && <div className="flex-1" />}
 
       {failover && (
         <HoverTip content={t("mode.failover")}>
@@ -169,6 +170,19 @@ export function ModeTabs({
             className="h-8 w-8 shrink-0 px-0"
             aria-label={t("mode.routeSettings")}
             onClick={onOpenRouteSettings}
+          >
+            <Settings2 className="h-4 w-4" strokeWidth={1.75} />
+          </Button>
+        </HoverTip>
+      )}
+      {onOpenStackSettings && (
+        <HoverTip content={t("mode.stackSettings.title")}>
+          <Button
+            variant="quiet"
+            size="compact"
+            className="h-8 w-8 shrink-0 px-0"
+            aria-label={t("mode.stackSettings.title")}
+            onClick={onOpenStackSettings}
           >
             <Settings2 className="h-4 w-4" strokeWidth={1.75} />
           </Button>

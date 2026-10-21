@@ -2,6 +2,7 @@
 //!
 //! Handles provider CRUD operations, switching, and configuration management.
 
+pub(crate) mod agy_direct;
 pub(crate) mod claude_direct;
 mod claude_editor;
 pub(crate) mod codex_client_catalog;
@@ -64,6 +65,15 @@ use usage::validate_usage_script;
 /// Codex official providers are safe to select during takeover: Codex keeps
 /// ownership of the active ChatGPT login and the proxy only forwards the
 /// authenticated request. Other apps' official providers retain the block.
+/// Claude Desktop 直连模式下用不了要经路由的卡。
+fn desktop_needs_routing_error() -> AppError {
+    AppError::localized(
+        "switch.desktop_needs_routing",
+        "这个供应商要经本地路由才能用（模型映射或托管账号），请先把 Claude Desktop 切到路由模式",
+        "This provider only works through local routing (model mapping or a managed account); switch Claude Desktop to the routing mode first",
+    )
+}
+
 pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &Provider) -> bool {
     matches!(app_type, AppType::Codex)
         && crate::proxy::providers::is_codex_official_provider(provider)
@@ -138,6 +148,9 @@ pub struct ProviderService;
 #[serde(rename_all = "camelCase")]
 pub struct SwitchResult {
     pub warnings: Vec<String>,
+    /// Present only when this operation selected a local proxy target.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route: Option<crate::mode::controller::RouteSwitchResult>,
 }
 
 #[cfg(test)]
@@ -2280,11 +2293,17 @@ requires_openai_auth = true
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     #[tokio::test]
     #[serial]
-    async fn update_current_claude_desktop_provider_syncs_profile_when_proxy_takeover_is_active() {
+    async fn update_claude_desktop_route_provider_rewrites_profile_in_route_mode() {
         let home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
 
         let db = Arc::new(Database::memory().expect("init db"));
+        db.update_proxy_config(ProxyConfig {
+            listen_port: 0,
+            ..Default::default()
+        })
+        .await
+        .expect("ephemeral proxy port");
         let state = AppState::new(db.clone());
 
         let mut original = Provider::with_id(
@@ -2318,27 +2337,17 @@ requires_openai_auth = true
         crate::settings::set_current_provider(&AppType::ClaudeDesktop, Some("p1"))
             .expect("set local current provider");
 
-        // Claude Desktop keeps backup state from takeover startup; this sentinel only
-        // marks takeover as active so provider updates rewrite the 3P profile.
-        db.save_live_backup("claude-desktop", "{}")
-            .await
-            .expect("seed live backup");
-        {
-            let mut config = db
-                .get_proxy_config_for_app("claude-desktop")
-                .await
-                .expect("get app proxy config");
-            config.enabled = true;
-            db.update_proxy_config_for_app(config)
-                .await
-                .expect("update app proxy config");
-        }
-
-        state
-            .proxy_service
-            .start()
-            .await
-            .expect("start proxy service");
+        // 路由模式路由到这张映射卡：编辑它要按新行重写指向本地路由的 profile。
+        crate::mode::controller::enter_with_route(
+            &state,
+            &AppType::ClaudeDesktop,
+            false,
+            Some("p1"),
+        )
+        .await
+        .expect("enter desktop route mode");
+        let gateway_url = crate::claude_desktop_config::proxy_gateway_base_url_from_db(&db)
+            .expect("running Desktop gateway");
 
         let mut updated = Provider::with_id(
             "p1".into(),
@@ -2365,32 +2374,34 @@ requires_openai_auth = true
             ..Default::default()
         });
 
-        ProviderService::update(&state, AppType::ClaudeDesktop, None, updated.clone())
-            .expect("update current provider");
-
-        let backup = db
-            .get_live_backup("claude-desktop")
-            .await
-            .expect("get live backup")
-            .expect("backup exists");
-        assert_eq!(
-            backup.original_config, "{}",
-            "Claude Desktop provider edits should not rewrite takeover backup"
-        );
+        // 同步命令里取切换锁会阻塞运行时线程：放到阻塞线程池里（同 `switch_provider` 命令）。
+        let update_state = state.clone();
+        let update_row = updated.clone();
+        tokio::task::spawn_blocking(move || {
+            ProviderService::update(&update_state, AppType::ClaudeDesktop, None, update_row)
+        })
+        .await
+        .expect("join update")
+        .expect("update route provider");
 
         let profile_path = claude_desktop_profile_path(home.dir.path());
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
-            json!("http://127.0.0.1:15721/claude-desktop"),
+            json!(gateway_url),
             "desktop profile should stay pointed at the local gateway during takeover"
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
         assert_eq!(
             profile["inferenceModels"],
-            json!([{ "name": "claude-sonnet-4-6", "labelOverride": "DeepSeek V4 Flash Updated", "supports1m": true }]),
+            json!([{ "name": "claude-sonnet-4-6", "labelOverride": "DeepSeek V4 Flash Updated", "supports1m": true, "prefer1m": true }]),
             "provider edits should propagate into the Claude Desktop 3P profile during takeover"
         );
+        state
+            .proxy_service
+            .stop()
+            .await
+            .expect("stop proxy service");
     }
 
     #[test]
@@ -5907,8 +5918,24 @@ impl ProviderService {
                     gemini_direct::switch_to(state.db.as_ref(), &provider)?;
                     return Ok(true);
                 }
+                // Antigravity 的卡只用来打开终端，添加不写任何文件。
+                AppType::Agy => return Ok(true),
                 AppType::GrokBuild => {
                     grok_direct::switch_to(state.db.as_ref(), None, &provider)?;
+                    return Ok(true);
+                }
+                AppType::ClaudeDesktop => {
+                    // 要经路由的卡直连写不进去，路由模式下配置文件归路由那家：只存行。
+                    if !crate::mode::current::is_proxy(&app_type)
+                        && !crate::claude_desktop_config::needs_routing(&provider)
+                    {
+                        crate::claude_desktop_config::write_direct(
+                            state.db.as_ref(),
+                            crate::mode::state::op::SWITCH,
+                            Some(&provider),
+                            crate::mode::state::PendingTarget::pointer(Some(provider.id.clone())),
+                        )?;
+                    }
                     return Ok(true);
                 }
                 _ => {}
@@ -6042,6 +6069,7 @@ impl ProviderService {
         let official = match app_type {
             AppType::Codex => codex_direct::is_official(&row),
             AppType::Gemini => gemini_direct::is_official(&row),
+            AppType::Agy => agy_direct::is_official(&row),
             _ => false,
         };
         Ok(if official {
@@ -6559,6 +6587,15 @@ impl ProviderService {
                 is_direct_current,
             );
         }
+        // Desktop 直连模式下正在用的这张卡改成了要经路由的（模型映射、托管账号）：直连写不
+        // 进去，存了行也同步不到 Desktop。先进入路由模式再改。
+        if matches!(app_type, AppType::ClaudeDesktop)
+            && is_direct_current
+            && !mode.is_proxy()
+            && crate::claude_desktop_config::needs_routing(&provider)
+        {
+            return Err(desktop_needs_routing_error());
+        }
 
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
@@ -6648,7 +6685,7 @@ impl ProviderService {
 
     /// Delete a provider
     ///
-    /// 同时检查本地 settings 和数据库的当前供应商，防止删除任一端正在使用的供应商。
+    /// 直连指针或代理路由指着的供应商不能删（见 `mode::current::is_referenced`）。
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
         if app_type == AppType::Pi {
@@ -6713,8 +6750,11 @@ impl ProviderService {
             return Ok(());
         }
 
-        // For other apps: 本地记录、DB、代理路由任何一处指着它都不能删
-        if crate::mode::current::is_referenced(&state.db, &app_type, id)? {
+        // For other apps: 本地记录、DB、代理路由任何一处指着它都不能删。Antigravity 没有
+        // 「启用」，旧版留下的直连指针不拦删除。
+        if app_type != AppType::Agy
+            && crate::mode::current::is_referenced(&state.db, &app_type, id)?
+        {
             return Err(AppError::Message(
                 "无法删除当前正在使用的供应商".to_string(),
             ));
@@ -6729,7 +6769,8 @@ impl ProviderService {
             .map_err(|error| AppError::Message(error.message))?;
         }
 
-        state.db.delete_provider(app_type.as_str(), id)
+        state.db.delete_provider(app_type.as_str(), id)?;
+        Ok(())
     }
 
     /// Remove provider from live config only (for additive mode apps like OpenCode, OpenClaw)
@@ -6826,7 +6867,8 @@ impl ProviderService {
             }
             // 规则拒绝：什么都没改。
             Err(error @ AppError::Localized { key, .. })
-                if *key == "switch.official_blocked_by_proxy" =>
+                if *key == "switch.official_blocked_by_proxy"
+                    || *key == "agy.switch.unsupported" =>
             {
                 log::info!("[SWITCH] {app} 拒绝切到 {id}: {error}");
             }
@@ -6846,6 +6888,14 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::enable(state, id);
         }
+        // Antigravity 的卡只作用于它打开的终端，没有「启用」（见 agy_config 模块说明）。
+        if app_type == AppType::Agy {
+            return Err(AppError::localized(
+                "agy.switch.unsupported",
+                "Antigravity 的卡片不需要启用，用「打开终端」启动即可",
+                "Antigravity cards are not enabled; use Open terminal to start one",
+            ));
+        }
 
         // Check if provider exists
         let providers = state.db.get_all_providers(app_type.as_str())?;
@@ -6862,10 +6912,6 @@ impl ProviderService {
         if matches!(app_type, AppType::OpenCode)
             && _provider.category.as_deref() == Some("omo-slim")
         {
-            return Self::switch_normal(state, app_type, id, &providers);
-        }
-
-        if matches!(app_type, AppType::ClaudeDesktop) {
             return Self::switch_normal(state, app_type, id, &providers);
         }
 
@@ -6895,12 +6941,15 @@ impl ProviderService {
                     .unwrap_or("（无）"),
                 id
             );
-            futures::executor::block_on(crate::mode::controller::switch_route_locked(
+            let route = futures::executor::block_on(crate::mode::controller::switch_route_locked(
                 state, &app_type, _provider,
             ))
             .map_err(|e| AppError::Message(format!("切换路由失败: {e}")))?;
             // MCP 不随路由变：客户端文件没按直连重写。
-            return Ok(SwitchResult::default());
+            return Ok(SwitchResult {
+                route: Some(route),
+                ..Default::default()
+            });
         }
 
         // Normal mode: full switch with Live config write
@@ -6947,6 +6996,9 @@ impl ProviderService {
         }
         if matches!(app_type, AppType::GrokBuild) {
             return Self::switch_grok_direct(state, provider, providers);
+        }
+        if matches!(app_type, AppType::ClaudeDesktop) {
+            return Self::switch_desktop_direct(state, provider);
         }
 
         // OMO ↔ OMO Slim are mutually exclusive; activating one removes the other's config file.
@@ -7047,6 +7099,24 @@ impl ProviderService {
         }
 
         Ok(result)
+    }
+
+    /// Claude Desktop 直连切换：配置文件和指针在同一个操作里提交。模型映射卡、托管 OAuth 要经
+    /// 本地路由，直连写不进去（界面上先弹「需要路由」）。
+    fn switch_desktop_direct(
+        state: &AppState,
+        provider: &Provider,
+    ) -> Result<SwitchResult, AppError> {
+        if crate::claude_desktop_config::needs_routing(provider) {
+            return Err(desktop_needs_routing_error());
+        }
+        crate::claude_desktop_config::write_direct(
+            state.db.as_ref(),
+            crate::mode::state::op::SWITCH,
+            Some(provider),
+            crate::mode::state::PendingTarget::pointer(Some(provider.id.clone())),
+        )?;
+        Ok(SwitchResult::default())
     }
 
     /// Claude Code 直连切换：只替换关键字段和独有字段，文件和指针在同一个操作里提交。
@@ -7260,7 +7330,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode | AppType::DevEco => Ok(String::new()),
+            AppType::Pi | AppType::Mcode | AppType::DevEco | AppType::Agy => Ok(String::new()),
         }
     }
 
@@ -7278,7 +7348,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode | AppType::DevEco => Ok(String::new()),
+            AppType::Pi | AppType::Mcode | AppType::DevEco | AppType::Agy => Ok(String::new()),
         }
     }
 
@@ -7970,6 +8040,10 @@ impl ProviderService {
                 use crate::gemini_config::validate_gemini_settings;
                 validate_gemini_settings(&provider.settings_config)?
             }
+            AppType::Agy => {
+                use crate::gemini_config::validate_gemini_settings;
+                validate_gemini_settings(&provider.settings_config)?
+            }
             AppType::GrokBuild => {
                 let settings = provider.settings_config.as_object().ok_or_else(|| {
                     AppError::localized(
@@ -8193,7 +8267,7 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::Gemini => {
+            AppType::Gemini | AppType::Agy => {
                 use crate::gemini_config::json_to_env;
 
                 let env_map = json_to_env(&provider.settings_config)?;

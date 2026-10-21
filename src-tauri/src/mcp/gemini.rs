@@ -84,6 +84,7 @@ pub fn import_from_gemini(config: &mut MultiAppConfig) -> Result<usize, AppError
                     name: id.clone(),
                     server: spec.clone(),
                     apps: McpApps {
+                        agy: false,
                         claude: false,
                         codex: false,
                         gemini: true,

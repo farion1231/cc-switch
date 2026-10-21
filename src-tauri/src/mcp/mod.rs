@@ -12,6 +12,7 @@
 //! - `deveco` - DevEco Code MCP 同步和导入（复用 OpenCode 的格式转换）
 //! - `hermes` - Hermes MCP 同步和导入
 
+pub mod agy;
 mod claude;
 mod codex;
 mod gemini;

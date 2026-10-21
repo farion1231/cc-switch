@@ -229,7 +229,8 @@ export type AppType =
   | "opencode"
   | "pi"
   | "mcode"
-  | "deveco";
+  | "deveco"
+  | "agy";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -242,6 +243,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "pi",
   "mcode",
   "deveco",
+  "agy",
 ];
 
 /**

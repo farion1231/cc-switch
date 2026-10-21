@@ -1,7 +1,12 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientProvider,
+  useQuery,
+} from "@tanstack/react-query";
+import { Profiler } from "react";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { http, HttpResponse } from "msw";
 import i18n from "i18next";
@@ -9,6 +14,7 @@ import { emitTauriEvent } from "../msw/tauriMocks";
 import { server } from "../msw/server";
 import { peekPendingDeepLink, setPendingDeepLink } from "../msw/state";
 import { pngDataUri } from "../fixtures/customIcon";
+import { toast } from "@/lib/toast";
 
 // jsdom 没有 canvas，重新编码这一步换成可控的假实现
 const { normalizeIconDataUri } = vi.hoisted(() => ({
@@ -53,6 +59,111 @@ const Wrapper = ({ children }: { children: React.ReactNode }) => (
 );
 
 describe("DeepLinkImportDialog", () => {
+  it.each([
+    { app: "opencode", enabled: true, fails: false, refreshes: true },
+    { app: "opencode", enabled: false, fails: false, refreshes: true },
+    { app: "opencode", enabled: true, fails: true, refreshes: false },
+    { app: "claude", enabled: true, fails: false, refreshes: false },
+  ])(
+    "refreshes OpenCode live data only after its successful import: %j",
+    async ({ app, enabled, fails, refreshes }) => {
+      const success = vi.spyOn(toast, "success");
+      const failure = vi.spyOn(toast, "error");
+      const client = new QueryClient({
+        defaultOptions: { queries: { staleTime: Infinity, retry: false } },
+      });
+      let liveIds: string[] = [];
+      let models: string[] = [];
+      const readLiveIds = vi.fn(async () => liveIds);
+      const readModels = vi.fn(async () => models);
+      const importProvider = vi.fn(async () => {
+        if (fails)
+          return HttpResponse.json(
+            { message: "Import failed" },
+            { status: 500 },
+          );
+        if (app === "opencode" && enabled) {
+          liveIds = ["imported-provider"];
+          models = ["imported-provider/model"];
+        }
+        return HttpResponse.json({ type: "provider", id: "imported-provider" });
+      });
+      server.use(
+        http.post(
+          "http://tauri.local/import_from_deeplink_unified",
+          importProvider,
+        ),
+      );
+      function LiveState() {
+        const ids = useQuery({
+          queryKey: ["opencodeLiveProviderIds"],
+          queryFn: readLiveIds,
+        });
+        const runtimeModels = useQuery({
+          queryKey: ["opencode", "runtime-models"],
+          queryFn: readModels,
+        });
+        return (
+          <>
+            <output data-testid="live-ids">{JSON.stringify(ids.data)}</output>
+            <output data-testid="runtime-models">
+              {JSON.stringify(runtimeModels.data)}
+            </output>
+          </>
+        );
+      }
+      render(
+        <QueryClientProvider client={client}>
+          <LiveState />
+          <DeepLinkImportDialog />
+        </QueryClientProvider>,
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("live-ids")).toHaveTextContent("[]"),
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("runtime-models")).toHaveTextContent("[]"),
+      );
+      act(() =>
+        deliverDeepLink({
+          version: "v1",
+          resource: "provider",
+          app,
+          enabled,
+          name: "Imported Provider",
+          endpoint: "https://example.com/v1",
+          apiKey: "public-test-key",
+        }),
+      );
+      const user = userEvent.setup();
+      await user.click(
+        await screen.findByRole("button", { name: "deeplink.import" }),
+      );
+      await waitFor(() => expect(importProvider).toHaveBeenCalledTimes(1));
+      if (fails) {
+        await waitFor(() => expect(failure).toHaveBeenCalled());
+      } else {
+        await waitFor(() => expect(success).toHaveBeenCalled());
+      }
+      expect(readLiveIds).toHaveBeenCalledTimes(refreshes ? 2 : 1);
+      expect(readModels).toHaveBeenCalledTimes(refreshes ? 2 : 1);
+      const shouldBeLive = refreshes && enabled;
+      await waitFor(() =>
+        expect(screen.getByTestId("live-ids")).toHaveTextContent(
+          shouldBeLive ? '["imported-provider"]' : "[]",
+        ),
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("runtime-models")).toHaveTextContent(
+          shouldBeLive ? '["imported-provider/model"]' : "[]",
+        ),
+      );
+      client.clear();
+      success.mockRestore();
+      failure.mockRestore();
+    },
+  );
+
   it("renders masked usage access token and user id for provider imports", async () => {
     render(<DeepLinkImportDialog />, { wrapper: Wrapper });
 
@@ -151,6 +262,66 @@ describe("DeepLinkImportDialog", () => {
       });
     },
   );
+
+  // 套餐地址、不带脚本：后端按套餐额度查询并默认启用，徽章与后端一致
+  it.each([
+    {
+      app: "codex",
+      endpoint: "https://api.kimi.com/coding/v1",
+      usageEnabled: undefined,
+      expected: "已启用",
+    },
+    {
+      app: "codex",
+      endpoint: "https://api.kimi.com/coding/v1",
+      usageEnabled: false,
+      expected: "未启用",
+    },
+  ])(
+    "shows the plan quota badge as $expected for $app with usageEnabled $usageEnabled",
+    async ({ app, endpoint, usageEnabled, expected }) => {
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+
+      act(() => {
+        deliverDeepLink({
+          version: "v1",
+          resource: "provider",
+          app,
+          name: "Plan Provider",
+          homepage: "https://example.com",
+          endpoint,
+          apiKey: "sk-provider-key",
+          ...(usageEnabled === undefined ? {} : { usageEnabled }),
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText(expected)).toBeInTheDocument();
+      });
+      expect(screen.getByText("套餐额度：Kimi For Coding")).toBeInTheDocument();
+    },
+  );
+
+  it("does not show a usage row for ZenMux outside Claude", async () => {
+    render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+
+    act(() => {
+      deliverDeepLink({
+        version: "v1",
+        resource: "provider",
+        app: "codex",
+        name: "ZenMux Provider",
+        homepage: "https://example.com",
+        endpoint: "https://zenmux.ai/api/v1",
+        apiKey: "sk-provider-key",
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("ZenMux Provider")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("用量查询")).not.toBeInTheDocument();
+  });
 
   it("shows a link that arrived before the dialog mounted (cold start)", async () => {
     // 冷启动时链接早于前端监听到达，后端已暂存；组件挂载后必须主动取一次
@@ -253,11 +424,50 @@ describe("DeepLinkImportDialog", () => {
       ...extra,
     });
 
+    it.each([
+      {
+        resource: "provider",
+        app: "opencode",
+      },
+      {
+        resource: "prompt",
+        app: "claude",
+        content: btoa("# review"),
+        enabled: true,
+      },
+    ])(
+      "shows the correct activation state on the first $resource render",
+      async (link) => {
+        const renderedStates: Array<string | null> = [];
+        render(
+          <Profiler
+            id="deeplink-activation"
+            onRender={() => {
+              // Observe every committed render, before passive effects can fix a stale value.
+              const toggle = screen.queryByRole("switch");
+              if (toggle)
+                renderedStates.push(toggle.getAttribute("aria-checked"));
+            }}
+          >
+            <DeepLinkImportDialog />
+          </Profiler>,
+          { wrapper: Wrapper },
+        );
+        act(() => deliverDeepLink(providerLink(link)));
+
+        await screen.findByRole("switch");
+        expect(renderedStates.length).toBeGreaterThan(0);
+        expect(new Set(renderedStates)).toEqual(new Set(["true"]));
+      },
+    );
+
     it("starts from the link's enabled and lets the user turn switching off", async () => {
       const sent = captureImport();
       const user = userEvent.setup();
       render(<DeepLinkImportDialog />, { wrapper: Wrapper });
-      act(() => deliverDeepLink(providerLink({ app: "claude", enabled: true })));
+      act(() =>
+        deliverDeepLink(providerLink({ app: "claude", enabled: true })),
+      );
 
       const toggle = await screen.findByRole("switch");
       expect(toggle).toBeChecked();
@@ -284,7 +494,9 @@ describe("DeepLinkImportDialog", () => {
 
       const toggle = await screen.findByRole("switch");
       expect(toggle).not.toBeChecked();
-      expect(screen.getByText("deeplink.switchAfterImport")).toBeInTheDocument();
+      expect(
+        screen.getByText("deeplink.switchAfterImport"),
+      ).toBeInTheDocument();
 
       await user.click(toggle);
       expect(
@@ -293,6 +505,25 @@ describe("DeepLinkImportDialog", () => {
       await user.click(screen.getByRole("button", { name: "deeplink.import" }));
       await waitFor(() => expect(sent).toHaveLength(1));
       expect(sent[0].enabled).toBe(true);
+    });
+
+    it("only imports Antigravity providers, even when the link asks to enable", async () => {
+      const sent = captureImport();
+      const user = userEvent.setup();
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+      act(() => deliverDeepLink(providerLink({ app: "agy", enabled: true })));
+
+      const importButton = await screen.findByRole("button", {
+        name: "deeplink.import",
+      });
+      // Antigravity 的卡没有「启用」，不给开关也不提示改发请求
+      expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("deeplink.providerEnabledWarning"),
+      ).not.toBeInTheDocument();
+      await user.click(importButton);
+      await waitFor(() => expect(sent).toHaveLength(1));
+      expect(sent[0].enabled).toBe(false);
     });
 
     it("adds additive-app providers to the app config unless the link opts out", async () => {
@@ -626,4 +857,40 @@ describe("DeepLinkImportDialog", () => {
       expect(screen.queryByText("Merging Provider")).not.toBeInTheDocument();
     });
   });
+});
+
+it("previews agy model and masks its key before confirmation", async () => {
+  server.use(
+    http.post(
+      "http://tauri.local/merge_deeplink_config",
+      async ({ request }) => {
+        const body = (await request.json()) as {
+          request: Record<string, unknown>;
+        };
+        return HttpResponse.json(body.request);
+      },
+    ),
+  );
+  render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+  act(() => {
+    deliverDeepLink({
+      version: "v1",
+      resource: "provider",
+      app: "agy",
+      name: "Agy fixture",
+      endpoint: "https://relay.example",
+      apiKey: "secret-agy-key",
+      config: btoa(
+        JSON.stringify({
+          env: { GEMINI_API_KEY: "secret-agy-key" },
+          config: { model: { name: "agy-preview-model" } },
+        }),
+      ),
+    });
+  });
+  await waitFor(() =>
+    expect(screen.getByText("agy-preview-model")).toBeInTheDocument(),
+  );
+  expect(screen.queryByText("secret-agy-key")).not.toBeInTheDocument();
+  expect(screen.getAllByText("secr************").length).toBeGreaterThan(0);
 });

@@ -204,6 +204,106 @@ describe("useProviderActions", () => {
     );
   });
 
+  it.each(["codex", "gemini", "grokbuild", "claude-desktop"] as const)(
+    "reports a %s route switch without a restart when the client config is unchanged",
+    async (app) => {
+      switchProviderMutateAsync.mockResolvedValueOnce({
+        warnings: [],
+        route: { kind: "route", clientConfigChanged: false },
+      });
+      const { wrapper } = createWrapper();
+      const { result } = renderHook(() => useProviderActions(app, true), {
+        wrapper,
+      });
+      await act(async () => {
+        await result.current.switchProvider(
+          createProvider({ category: "custom" }),
+        );
+      });
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        "路由已切换至 Test Provider，后续新请求将使用该供应商。",
+        { closeButton: true },
+      );
+    },
+  );
+
+  it("keeps a client reload hint when a routed switch rewrites Codex configuration", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce({
+      warnings: [],
+      route: { kind: "route", clientConfigChanged: true },
+    });
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useProviderActions("codex", true), {
+      wrapper,
+    });
+    await act(async () => {
+      await result.current.switchProvider(
+        createProvider({ category: "custom" }),
+      );
+    });
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "路由目标已设为 Test Provider。客户端配置也已更新；重启 Codex 以加载更新后的配置。",
+      { closeButton: true },
+    );
+  });
+
+  it("describes the aggregation default without claiming to reroute selected aggregated models", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce({
+      warnings: [],
+      route: { kind: "stack", clientConfigChanged: false },
+    });
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useProviderActions("codex", true), {
+      wrapper,
+    });
+    await act(async () => {
+      await result.current.switchProvider(
+        createProvider({ category: "custom" }),
+      );
+    });
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "聚合默认供应商已设为 Test Provider；已选聚合模型仍使用各自的供应商。",
+      { closeButton: true },
+    );
+  });
+
+  it("uses the operation result even if the UI takeover status is stale", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce({
+      warnings: [],
+      route: { kind: "route", clientConfigChanged: false },
+    });
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useProviderActions("codex", false), {
+      wrapper,
+    });
+    await act(async () => {
+      await result.current.switchProvider(
+        createProvider({ category: "custom" }),
+      );
+    });
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "路由已切换至 Test Provider，后续新请求将使用该供应商。",
+      { closeButton: true },
+    );
+  });
+
+  it("does not infer a hot switch solely from the UI takeover flag", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce({ warnings: [] });
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useProviderActions("codex", true), {
+      wrapper,
+    });
+    await act(async () => {
+      await result.current.switchProvider(
+        createProvider({ category: "custom" }),
+      );
+    });
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "切换成功，请重启客户端以生效",
+      { closeButton: true },
+    );
+  });
+
   it("asks for a Gemini CLI restart after switching, since it reads .env only at startup", async () => {
     switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();
@@ -372,7 +472,28 @@ describe("useProviderActions", () => {
     expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
   });
 
-  it("does not warn for Claude Desktop model mapping, which starts routing itself", async () => {
+  it("does not warn for a Claude Desktop mapping card while Desktop is in route mode", async () => {
+    switchProviderMutateAsync.mockResolvedValue(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: { claudeDesktopMode: "proxy" },
+    });
+
+    const { result } = renderHook(
+      () => useProviderActions("claude-desktop", true),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastWarningMock).not.toHaveBeenCalled();
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+  });
+
+  it("warns for a Claude Desktop mapping card in direct mode", async () => {
     switchProviderMutateAsync.mockResolvedValue(undefined);
     const { wrapper } = createWrapper();
     const provider = createProvider({
@@ -389,8 +510,7 @@ describe("useProviderActions", () => {
       await result.current.switchProvider(provider);
     });
 
-    expect(toastWarningMock).not.toHaveBeenCalled();
-    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+    expect(toastWarningMock).toHaveBeenCalled();
   });
 
   it("allows the native Codex official provider during takeover", async () => {

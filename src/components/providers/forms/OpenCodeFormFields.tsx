@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "@/lib/toast";
 import { Plus, Trash2, ChevronRight } from "lucide-react";
-import { ApiKeySection, ModelDropdown } from "./shared";
+import { ApiKeySection, GptContextWindowHint, ModelDropdown } from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -637,12 +637,6 @@ export function OpenCodeFormFields({
             ))}
           </SelectContent>
         </Select>
-        <p className="text-xs text-fg-2">
-          {t("opencode.npmPackageHint", {
-            defaultValue:
-              "Select the AI SDK package that matches your provider.",
-          })}
-        </p>
       </div>
 
       {/* API Key */}
@@ -667,12 +661,6 @@ export function OpenCodeFormFields({
           onValueChange={onBaseUrlChange}
           placeholder="https://api.example.com/v1"
         />
-        <p className="text-xs text-fg-2">
-          {t("opencode.baseUrlHint", {
-            defaultValue:
-              "The base URL for the API endpoint. Leave empty to use the default endpoint for official SDKs.",
-          })}
-        </p>
       </div>
 
       <RequestHeadersEditor
@@ -908,6 +896,10 @@ export function OpenCodeFormFields({
                             }
                             placeholder="1048576"
                           />
+                          <GptContextWindowHint
+                            modelId={key}
+                            contextWindow={model.limit?.context}
+                          />
                         </div>
                         <div className="space-y-1">
                           <FormLabel
@@ -1112,13 +1104,6 @@ export function OpenCodeFormFields({
             ))}
           </div>
         )}
-
-        <p className="text-xs text-fg-2">
-          {t("opencode.modelsHint", {
-            defaultValue:
-              "Configure available models. Model ID is the API identifier, Display Name is shown in the UI.",
-          })}
-        </p>
       </div>
     </>
   );
