@@ -93,10 +93,13 @@ grep -Fq "Authority=$IDENTITY" <<<"$SIGN_INFO" || fail "app is not signed by $ID
 # runtime + timestamp so both layers carry the flag notarization expects.
 if ! grep -q 'Runtime Version' <<<"$SIGN_INFO"; then
   codesign --force --timestamp --options runtime --sign "$IDENTITY" "$APP"
+  SIGN_INFO="$(codesign -dv --verbose=4 "$APP" 2>&1)"
 fi
 codesign --verify --deep --strict --verbose=2 "$APP"
-codesign -dv --verbose=4 "$APP" 2>&1 | grep -q 'Runtime Version' || fail "hardened runtime missing from app signature"
-codesign -dv --verbose=4 "$APP/Contents/MacOS/$BIN_NAME" 2>&1 | grep -q 'Runtime Version' || fail "hardened runtime missing from the main executable"
+# grep under `pipefail` would make codesign die of SIGPIPE and fail the pipeline.
+grep -q 'Runtime Version' <<<"$SIGN_INFO" || fail "hardened runtime missing from app signature"
+EXE_INFO="$(codesign -dv --verbose=4 "$APP/Contents/MacOS/$BIN_NAME" 2>&1)"
+grep -q 'Runtime Version' <<<"$EXE_INFO" || fail "hardened runtime missing from the main executable"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
