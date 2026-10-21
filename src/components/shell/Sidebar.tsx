@@ -76,11 +76,13 @@ type DirectoryProps = SidebarProps & { collapsed: boolean };
 export function Sidebar(props: SidebarProps) {
   const { t } = useTranslation();
   const navRef = useRef<HTMLElement>(null);
-  const { collapsed, toggle, setCollapsed } = useSidebarCollapsed(navRef);
+  const { collapsed, toggle, setCollapsed, restoreCollapsedPreference } =
+    useSidebarCollapsed(navRef);
   const { width, min, max, resizeHandle } = useSidebarResize(
     navRef,
     collapsed,
     setCollapsed,
+    restoreCollapsedPreference,
   );
   const { view } = props;
   const inSettings = view === "settings";

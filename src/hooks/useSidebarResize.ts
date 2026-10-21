@@ -38,6 +38,7 @@ export function useSidebarResize(
   navRef: RefObject<HTMLElement | null>,
   collapsed: boolean,
   setCollapsed: (value: boolean) => void,
+  restoreCollapsedPreference: () => void,
 ) {
   const [width, setWidth] = useState(readWidth);
   const [max, setMax] = useState(maximum);
@@ -46,6 +47,9 @@ export function useSidebarResize(
     target: HTMLElement;
     x: number;
     initial: number;
+    restorePreference: () => void;
+    collapsed: boolean;
+    anchor: number;
     next: number;
     direction: number;
     frame: number | null;
@@ -77,12 +81,15 @@ export function useSidebarResize(
       document.documentElement.style.userSelect = current.selection;
       navRef.current?.removeAttribute("data-resizing");
       if (cancel) {
-        if (restore && navRef.current)
-          navRef.current.style.width = `${current.initial}px`;
+        if (restore) {
+          if (navRef.current)
+            navRef.current.style.width = `${current.initial}px`;
+          current.restorePreference();
+        }
       } else {
         // Flush the last pointer position even when React's saved width is unchanged.
         if (navRef.current) navRef.current.style.width = `${current.next}px`;
-        save(current.next);
+        if (!current.collapsed) save(current.next);
       }
       if (current.target.hasPointerCapture?.(current.id))
         current.target.releasePointerCapture(current.id);
@@ -91,8 +98,9 @@ export function useSidebarResize(
   );
 
   useLayoutEffect(() => {
-    // A button/shortcut toggle also ends an in-progress resize.
-    finish(true, false);
+    // Internal snaps keep capture; only an external button/shortcut ends the drag.
+    if (drag.current && drag.current.collapsed !== collapsed)
+      finish(true, false);
   }, [collapsed, finish]);
 
   useEffect(() => {
@@ -126,6 +134,9 @@ export function useSidebarResize(
       target: event.currentTarget,
       x: event.clientX,
       initial,
+      restorePreference: restoreCollapsedPreference,
+      collapsed,
+      anchor: initial,
       next: initial,
       direction: getComputedStyle(navRef.current).direction === "rtl" ? -1 : 1,
       frame: null,
@@ -141,17 +152,23 @@ export function useSidebarResize(
     const current = drag.current;
     if (!current || current.id !== event.pointerId) return;
     const requested =
-      current.initial + (event.clientX - current.x) * current.direction;
+      current.anchor + (event.clientX - current.x) * current.direction;
     // Leave a deliberate gap below the minimum width before snapping closed.
     if (
-      (!collapsed && requested <= 130) ||
-      (collapsed && requested >= sidebarRailWidth() + 24)
+      (!current.collapsed && requested <= 130) ||
+      (current.collapsed && requested >= sidebarRailWidth() + 24)
     ) {
-      finish(true, false);
-      setCollapsed(!collapsed);
+      if (current.frame !== null) cancelAnimationFrame(current.frame);
+      current.frame = null;
+      current.collapsed = !current.collapsed;
+      current.next = current.collapsed ? sidebarRailWidth() : width;
+      // Start the next segment at the snapped edge, without releasing the pointer.
+      current.anchor = current.next;
+      current.x = event.clientX;
+      setCollapsed(current.collapsed);
       return;
     }
-    if (collapsed) return;
+    if (current.collapsed) return;
     current.next = clamp(requested);
     if (current.frame !== null) return;
     current.frame = requestAnimationFrame(() => {
@@ -195,7 +212,7 @@ export function useSidebarResize(
       onPointerMove,
       onKeyDown,
       onPointerUp: (event: PointerEvent<HTMLDivElement>) => {
-        if (drag.current?.id === event.pointerId) finish(collapsed);
+        if (drag.current?.id === event.pointerId) finish(false);
       },
       onPointerCancel: () => finish(true),
       onLostPointerCapture: () => finish(true),

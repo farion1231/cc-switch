@@ -6,11 +6,13 @@ import { sidebarWidth, useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
 
 function Harness() {
   const ref = useRef<HTMLElement>(null);
-  const { collapsed, toggle, setCollapsed } = useSidebarCollapsed(ref);
+  const { collapsed, toggle, setCollapsed, restoreCollapsedPreference } =
+    useSidebarCollapsed(ref);
   const { width, resizeHandle } = useSidebarResize(
     ref,
     collapsed,
     setCollapsed,
+    restoreCollapsedPreference,
   );
   return (
     <>
@@ -81,12 +83,61 @@ describe("sidebar resize", () => {
     down(280);
     move(120);
     expect(screen.getByText("collapsed")).toBeInTheDocument();
-    expect(document.documentElement.style.cursor).toBe("");
+    expect(document.documentElement.style.cursor).toBe("col-resize");
+    up();
     const rail = parseFloat(nav().style.width);
     down(rail);
     move(rail + 30);
     expect(screen.getByText("expanded")).toBeInTheDocument();
     expect(nav()).toHaveStyle({ width: "280px" });
+    up();
+  });
+  it("keeps one drag alive across collapse, expansion and further resizing", () => {
+    render(<Harness />);
+    down();
+    move(120);
+    expect(screen.getByText("collapsed")).toBeInTheDocument();
+    expect(nav()).toHaveAttribute("data-resizing", "true");
+    move(150);
+    expect(screen.getByText("expanded")).toBeInTheDocument();
+    move(190);
+    up();
+    expect(nav()).toHaveStyle({ width: "240px" });
+    expect(localStorage.getItem("cc-switch-sidebar-width")).toBe("240");
+    expect(document.documentElement.style.cursor).toBe("");
+  });
+  it("cancels a snapped drag back to its original mode and width", () => {
+    render(<Harness />);
+    down();
+    move(120);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.getByText("expanded")).toBeInTheDocument();
+    expect(nav()).toHaveStyle({ width: "200px" });
+    expect(localStorage.getItem("cc-switch-sidebar-width")).toBeNull();
+    fireEvent.click(screen.getByText("Toggle"));
+    const rail = parseFloat(nav().style.width);
+    down(rail);
+    move(rail + 30);
+    fireEvent.pointerCancel(handle());
+    expect(screen.getByText("collapsed")).toBeInTheDocument();
+    expect(nav()).toHaveStyle({ width: `${rail}px` });
+  });
+  it("restores automatic window behavior after cancelling a snap round trip", () => {
+    localStorage.removeItem("cc-switch-sidebar-collapsed");
+    vi.stubGlobal("innerWidth", 1200);
+    render(<Harness />);
+    down();
+    move(120);
+    move(150);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(localStorage.getItem("cc-switch-sidebar-collapsed")).toBeNull();
+    expect(screen.getByText("expanded")).toBeInTheDocument();
+    vi.stubGlobal("innerWidth", 900);
+    fireEvent(window, new Event("resize"));
+    expect(screen.getByText("collapsed")).toBeInTheDocument();
+    vi.stubGlobal("innerWidth", 1200);
+    fireEvent(window, new Event("resize"));
+    expect(screen.getByText("expanded")).toBeInTheDocument();
   });
   it("does not collapse from an ordinary small resize, and Escape cancels without saving", () => {
     render(<Harness />);

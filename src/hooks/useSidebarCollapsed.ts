@@ -153,19 +153,30 @@ export function useSidebarCollapsed(navRef: RefObject<HTMLElement | null>) {
     }
   }, [collapsed, navRef]);
 
+  const applyPreference = useCallback((next: boolean | null) => {
+    setManual(next);
+    try {
+      if (next === null) localStorage.removeItem(STORAGE_KEY);
+      else localStorage.setItem(STORAGE_KEY, String(next));
+    } catch {
+      // Storage is optional; keep the in-memory preference.
+    }
+  }, []);
+
   const setCollapsed = useCallback(
     (next: boolean) => {
       animateFrom.current =
         navRef.current?.getBoundingClientRect().width ?? null;
-      setManual(next);
-      try {
-        localStorage.setItem(STORAGE_KEY, String(next));
-      } catch {
-        // 记不住也不影响这次切换
-      }
+      applyPreference(next);
     },
-    [navRef],
+    [navRef, applyPreference],
   );
+
+  // A drag captures this callback before its first snap changes the preference.
+  const restoreCollapsedPreference = useCallback(() => {
+    animateFrom.current = null;
+    applyPreference(manual);
+  }, [manual, applyPreference]);
 
   const toggle = useCallback(
     () => setCollapsed(!collapsed),
@@ -183,5 +194,5 @@ export function useSidebarCollapsed(navRef: RefObject<HTMLElement | null>) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [toggle]);
 
-  return { collapsed, toggle, setCollapsed };
+  return { collapsed, toggle, setCollapsed, restoreCollapsedPreference };
 }
