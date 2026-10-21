@@ -321,6 +321,24 @@ paru -S cc-switch-bin
 > **注意**：首次启动时，CC Switch 会自动把 Claude Code、Codex、Gemini CLI、Grok Build 的现有配置导入为名为 `default` 的供应商，并为这几个工具和 Claude Desktop 添加官方供应商，原有配置不会丢失。
 
 各项功能的详细用法请查阅 **[用户手册](docs/user-manual/zh/README.md)**，涵盖供应商管理、MCP/提示词/Skills、本地路由与故障转移等全部功能。
+### 远程管理
+
+从局域网内任何浏览器控制 CC Switch。
+
+1. **启用**：设置 → 远程管理 → 打开**启用**开关
+2. **访问**：在浏览器中打开 `http://localhost:4000`（默认端口，可在设置中修改）
+3. **Tailscale**：可选开启 Tailscale，实现外网访问
+
+**API 接口** (`http://localhost:4000/api/`)
+
+| 方法 | 接口 | 说明 |
+|------|------|------|
+| GET | `/health` | 服务器状态 |
+| GET | `/providers` | 获取所有供应商列表 |
+| GET | `/current` | 获取当前激活的供应商 |
+| POST | `/switch` | 切换供应商（请求体：`{ provider_id }`）|
+| GET | `/events` | SSE 实时更新流 |
+
 
 ## 功能特性
 
@@ -398,6 +416,7 @@ paru -S cc-switch-bin
 
 ### 系统与平台
 
+- **远程管理** — 内置 HTTP 服务器，提供 Web UI 和 REST API，可在局域网内任何设备上切换供应商
 - **云同步** — 通过 WebDAV（坚果云、Nextcloud、群晖 NAS 等）或 S3 兼容存储（AWS S3、Cloudflare R2、阿里云 OSS、腾讯云 COS 等）在多台设备之间同步；也可以把 CC Switch 配置目录放到 Dropbox、OneDrive、iCloud 等网盘文件夹中
 - **CLI 工具管理** — 在侧栏的「应用」页查看 Claude Code、Codex 等命令行工具的当前版本和最新版本，一键安装、升级或全部升级，并诊断重复安装；Windows 上还能管理 WSL 里的工具（见常见问题）
 - **Deep Link**（`ccswitch://`）— 通过链接一键导入供应商、MCP 服务器和提示词，或添加技能仓库。用 [在线生成器](https://ccswitch.io/deplink.html) 生成链接；站长想在网站上放导入按钮，见 [站长接入指南](https://github.com/farion1231/cc-switch/blob/main/docs/guides/deeplink-site-integration-guide-zh.md)
