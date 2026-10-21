@@ -1628,8 +1628,8 @@ function ProviderFormFull({
         }
       }
       if (usesGeminiStyleForm(appId)) {
-        // agy uses its own login when both fields are empty; an API key may
-        // use Google's default endpoint without a custom base URL.
+        // agy 只填 Key 不填地址是合法用法（走 Google 默认 API）；不填 Key 的登录模式就是官方卡，
+        // 不该再存一张非官方的。
         if (appId !== "agy" && !geminiBaseUrl.trim()) {
           issues.push(
             t("providerForm.endpointRequired", {
@@ -1637,10 +1637,7 @@ function ProviderFormFull({
             }),
           );
         }
-        if (
-          !geminiApiKey.trim() &&
-          (appId !== "agy" || Boolean(geminiBaseUrl.trim()))
-        ) {
+        if (!geminiApiKey.trim()) {
           issues.push(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",

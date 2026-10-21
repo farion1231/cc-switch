@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Download, Info, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { HelpTip } from "@/components/ui/help-tip";
 import { toast } from "@/lib/toast";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
@@ -118,11 +119,6 @@ export function GeminiFormFields({
 
   return (
     <>
-      {appId === "agy" && (
-        <p className="rounded-lg border border-border-strong bg-subtle p-4 text-sm text-fg-2">
-          {t("provider.form.agy.connectionHint")}
-        </p>
-      )}
       {/* Google OAuth 提示 */}
       {isGoogleOfficial && (
         <div className="rounded-lg border border-border-strong bg-subtle p-4">
@@ -151,7 +147,7 @@ export function GeminiFormFields({
           value={apiKey}
           onChange={onApiKeyChange}
           category={category}
-          required={appId !== "agy" || Boolean(baseUrl.trim())}
+          required
           shouldShowLink={shouldShowApiKeyLink}
           websiteUrl={websiteUrl}
           isPartner={isPartner}
@@ -170,6 +166,9 @@ export function GeminiFormFields({
           placeholder={t("providerForm.apiEndpointPlaceholder", {
             defaultValue: "https://your-api-endpoint.com/",
           })}
+          help={
+            appId === "agy" ? t("provider.form.agy.endpointHelp") : undefined
+          }
           onManageClick={() => onEndpointModalToggle(true)}
         />
       )}
@@ -178,9 +177,20 @@ export function GeminiFormFields({
       {shouldShowModelField && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <FormLabel htmlFor="gemini-model">
-              {t("provider.form.gemini.model", { defaultValue: "模型" })}
-            </FormLabel>
+            <div className="flex items-center gap-0.5">
+              <FormLabel htmlFor="gemini-model">
+                {t("provider.form.gemini.model", { defaultValue: "模型" })}
+              </FormLabel>
+              {appId === "agy" && (
+                <HelpTip
+                  title={t("provider.form.gemini.model", {
+                    defaultValue: "模型",
+                  })}
+                >
+                  {t("provider.form.agy.modelHelp")}
+                </HelpTip>
+              )}
+            </div>
             <Button
               type="button"
               variant="outline"

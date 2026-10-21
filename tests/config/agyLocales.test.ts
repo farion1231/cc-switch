@@ -51,7 +51,7 @@ describe("Antigravity locale parity", () => {
     expect(reference).toEqual(
       expect.arrayContaining([
         "apps.agy",
-        "provider.form.agy.connectionHint",
+        "provider.form.agy.modelHelp",
         "sessionManager.agyDeleteHint",
       ]),
     );

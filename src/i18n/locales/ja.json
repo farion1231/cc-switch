@@ -180,6 +180,7 @@
     "managedByHermes": "Hermes 管理",
     "managedByHermesHint": "Hermes の providers: dict で定義されています。Hermes Web UI で編集または削除してください。",
     "openTerminal": "ターミナルを開く",
+    "openTerminalWithProvider": "このプロバイダーでターミナルを開く",
     "terminalOpened": "ターミナルを開きました",
     "terminalOpenFailed": "ターミナルを開けませんでした",
     "openTerminalDialog": {
@@ -210,7 +211,8 @@
     "geminiConfigHint": ".env 形式で Gemini を設定してください",
     "form": {
       "agy": {
-        "connectionHint": "API Key と接続先を空欄にすると agy の Google ログインを使い、Key を入力するとサードパーティモードになります。どちらのモードもカードの「ターミナルを開く」から起動した agy にのみ適用され、Key と接続先はその 1 つのプロセスにだけ渡し、モデルはそのセッションにだけ適用されます。ターミナルで直接 agy を実行した場合は Google ログインのままで、モデルは agy 自身の /model で決まります。Key のみを指定すると Google の標準 API を使用します。外部接続先は Gemini API と agy 内蔵の Gemini モデルに対応している必要があります。どちらのモードでもモデル一覧の表示名を入力してください。",
+        "endpointHelp": "空欄なら Google の標準 API を使います。外部接続先は Gemini API と agy 内蔵の Gemini モデルに対応している必要があります。",
+        "modelHelp": "モデル一覧の表示名を入力してください（「モデル一覧を取得」から選べます）。そのセッションにのみ適用されます。",
         "keyFieldsHint": "モデル、キー、エンドポイントは「ターミナルを開く」でのみ使われ、Antigravity 自身の設定には書き込みません。",
         "envFile": "起動時の環境変数",
         "envFileHint": "カードの「ターミナルを開く」から agy を起動すると、CC Switch は API キーとエンドポイントをその agy プロセスだけに渡し、ファイルには書き込みません。他の環境変数は適用されません。",

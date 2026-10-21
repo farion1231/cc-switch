@@ -668,7 +668,7 @@ export function buildLaunchSections(input: LaunchInput): ProviderSection[] {
           buttons: [
             {
               key: "openTerminal",
-              label: t("provider.openTerminal"),
+              label: t("provider.openTerminalWithProvider"),
               onClick: () => openTerminal(p),
             },
           ],

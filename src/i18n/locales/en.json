@@ -180,6 +180,7 @@
     "managedByHermes": "Hermes Managed",
     "managedByHermesHint": "Defined in Hermes' providers: dict. Edit or remove it via Hermes Web UI.",
     "openTerminal": "Open Terminal",
+    "openTerminalWithProvider": "Open Terminal with This Provider",
     "terminalOpened": "Terminal opened",
     "terminalOpenFailed": "Failed to open terminal",
     "openTerminalDialog": {
@@ -210,7 +211,8 @@
     "geminiConfigHint": "Use .env format to configure Gemini",
     "form": {
       "agy": {
-        "connectionHint": "Leave the API key and endpoint empty to use agy's Google sign-in; with a key, the provider runs in third-party mode. Both modes only apply to agy started from the card's \"Open Terminal\": the key and endpoint go to that one process, and the model applies to that session only. Running agy directly in a terminal still uses your Google sign-in, with the model chosen by agy's own /model. A key without an endpoint uses Google's default API; third-party endpoints must support the Gemini API and agy's built-in Gemini models. In both modes, use the display name from the model list.",
+        "endpointHelp": "Leave empty for Google's default API. Third-party endpoints must support the Gemini API and agy's built-in Gemini models.",
+        "modelHelp": "Use the display name from the model list (Fetch Models). Applies to that session only.",
         "keyFieldsHint": "The model, key and endpoint are only used by \"Open Terminal\" and are never written to Antigravity's own settings.",
         "envFile": "Launcher environment variables",
         "envFileHint": "When agy is started from the card's \"Open Terminal\", CC Switch passes the API key and endpoint to that one agy process only and never writes them to a file. Other environment variables are not applied.",
