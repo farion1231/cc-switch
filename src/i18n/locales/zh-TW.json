@@ -2549,8 +2549,7 @@
       "cacheWrite": "快取寫入"
     },
     "prevMonth": "上個月",
-    "nextMonth": "下個月",
-    "agyUsageHint": "Antigravity 顯示工作階段日誌裡的原始 Token，金額按對應的 Gemini API 價格估算；官方訂閱按方案計費，這裡的金額僅供參考。缺少模型的歷史記錄記為 unknown，不計金額。"
+    "nextMonth": "下個月"
   },
   "usageScript": {
     "title": "設定用量查詢",

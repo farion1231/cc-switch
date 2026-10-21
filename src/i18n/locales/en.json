@@ -2548,8 +2548,7 @@
       "cacheWrite": "Cache write"
     },
     "prevMonth": "Previous month",
-    "nextMonth": "Next month",
-    "agyUsageHint": "Antigravity shows the raw tokens from its session logs, priced at the matching Gemini API rates. Official subscriptions are billed by plan, so these amounts are for reference only. Older entries without a model are recorded as unknown and not priced."
+    "nextMonth": "Next month"
   },
   "usageScript": {
     "title": "Configure Usage Query",

@@ -2548,8 +2548,7 @@
       "cacheWrite": "缓存写入"
     },
     "prevMonth": "上个月",
-    "nextMonth": "下个月",
-    "agyUsageHint": "Antigravity 显示会话日志里的原始 Token，金额按对应的 Gemini API 价格估算；官方订阅按套餐计费，这里的金额只作参考。缺失的历史模型记为 unknown，不计金额。"
+    "nextMonth": "下个月"
   },
   "usageScript": {
     "title": "配置用量查询",

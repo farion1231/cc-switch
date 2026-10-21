@@ -758,12 +758,6 @@ export function UsageDashboard({
         controls="usage-tabpanel"
         trailing={tabTrailing}
       />
-
-      {appType === "agy" && (
-        <p className="px-6 py-3 text-sm text-fg-2" role="note">
-          {t("usage.agyUsageHint")}
-        </p>
-      )}
       <div
         role="tabpanel"
         id="usage-tabpanel"

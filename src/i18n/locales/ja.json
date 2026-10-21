@@ -2548,8 +2548,7 @@
       "cacheWrite": "キャッシュ書き込み"
     },
     "prevMonth": "前月",
-    "nextMonth": "翌月",
-    "agyUsageHint": "Antigravity はセッションログの生のトークン数を表示し、金額は対応する Gemini API の価格で見積もります。公式サブスクリプションはプランで課金されるため、金額は参考値です。モデルが記録されていない過去の項目は unknown として扱い、金額は計上しません。"
+    "nextMonth": "翌月"
   },
   "usageScript": {
     "title": "利用状況を設定",
