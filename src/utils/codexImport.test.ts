@@ -15,6 +15,12 @@ const request: DeepLinkImportRequest = {
   },
 };
 describe("fixed Codex import policy", () => {
+  it("leaves a legacy Codex link unchanged when it has no model catalog", () => {
+    const legacy = { ...request, modelCatalog: undefined };
+    expect(applyCodexImportTemplate(legacy)).toBe(legacy);
+    expect(legacy.enabled).toBe(true);
+    expect(legacy.usageScript).toBeUndefined();
+  });
   it("keeps malformed declarations editable without assuming any reasoning support", () => {
     const malformed = {
       ...request,
@@ -43,7 +49,7 @@ describe("fixed Codex import policy", () => {
     const result = applyCodexImportTemplate({
       ...request,
       model: undefined,
-      modelCatalog: undefined,
+      modelCatalog: { models: [] },
     });
     expect(result.modelCatalog?.models).toEqual([]);
     expect(codexImportError(result)).toBe("请添加模型列表");

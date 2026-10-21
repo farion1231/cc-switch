@@ -14,6 +14,14 @@ export const reasoningLevels = [
   "ultra",
 ];
 
+export function isCustomCodexImport(request: DeepLinkImportRequest): boolean {
+  return (
+    request.resource === "provider" &&
+    request.app === "codex" &&
+    request.modelCatalog != null
+  );
+}
+
 export function requiresCodexReview(provider: Provider | undefined): boolean {
   return (
     !!provider &&
@@ -25,8 +33,7 @@ export function requiresCodexReview(provider: Provider | undefined): boolean {
 export function applyCodexImportTemplate(
   request: DeepLinkImportRequest,
 ): DeepLinkImportRequest {
-  if (request.resource !== "provider" || request.app !== "codex")
-    return request;
+  if (!isCustomCodexImport(request)) return request;
   const rawModels = request.modelCatalog?.models;
   const models: CodexCatalogModel[] = Array.isArray(rawModels)
     ? rawModels.map((row) => ({

@@ -1989,8 +1989,7 @@ fn imported_usage_script(
 }
 
 #[test]
-fn test_deeplink_default_scripts_follow_custom_codex_policy() {
-    // Codex 使用固定模板；其他应用保留上游套餐识别。
+fn test_deeplink_legacy_links_keep_coding_plan_detection() {
     for (app, app_type) in [
         ("claude", AppType::Claude),
         ("codex", AppType::Codex),
@@ -2001,15 +2000,6 @@ fn test_deeplink_default_scripts_follow_custom_codex_policy() {
         let script = imported_usage_script(app_type, &request)
             .unwrap_or_else(|| panic!("{app} 应自动开启套餐用量"));
         assert!(script.enabled, "{app}");
-        if app == "codex" {
-            assert_eq!(
-                script.code,
-                include_str!("../../../resources/custom-codex-usage.js")
-            );
-            assert!(script.template_type.is_none());
-            assert!(script.coding_plan_provider.is_none());
-            continue;
-        }
         assert_eq!(script.template_type.as_deref(), Some("token_plan"));
         assert_eq!(script.coding_plan_provider.as_deref(), Some("kimi"));
         assert!(script.code.is_empty());
@@ -2050,17 +2040,24 @@ fn test_deeplink_volcengine_plan_is_preselected_but_off() {
 }
 
 #[test]
-fn test_deeplink_non_plan_keeps_upstream_rules_except_codex_template() {
+fn test_deeplink_non_plan_uses_custom_template_only_with_explicit_catalog() {
     let request = coding_plan_request("claude", "https://api.example.com/v1");
     assert!(imported_usage_script(AppType::Claude, &request).is_none());
 
-    let request = coding_plan_request("codex", "https://zenmux.ai/api/v1");
+    let mut request = coding_plan_request("codex", "https://zenmux.ai/api/v1");
+    assert!(imported_usage_script(AppType::Codex, &request).is_none());
+    request.model_catalog =
+        Some(serde_json::json!({"models": [{"model": "custom", "reasoningLevels": ["high"]}]}));
     let script = imported_usage_script(AppType::Codex, &request).unwrap();
     assert_eq!(
         script.code,
         include_str!("../../../resources/custom-codex-usage.js")
     );
     assert!(script.enabled);
+    request.endpoint = Some("https://api.kimi.com/coding/v1".into());
+    let script = imported_usage_script(AppType::Codex, &request).unwrap();
+    assert!(script.template_type.is_none());
+    assert!(script.code.contains("response?.remaining"));
     let request = coding_plan_request("claude", "https://zenmux.ai/api/anthropic");
     assert!(imported_usage_script(AppType::Claude, &request).is_some());
 }

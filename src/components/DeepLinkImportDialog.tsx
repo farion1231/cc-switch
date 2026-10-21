@@ -9,6 +9,7 @@ import { providersApi } from "@/lib/api";
 import {
   applyCodexImportTemplate,
   codexImportError,
+  isCustomCodexImport,
 } from "@/utils/codexImport";
 import { CodexImportFields } from "./deeplink/CodexImportFields";
 import { parseDeepLinkConfigPreview } from "@/utils/deepLinkConfigPreview";
@@ -76,7 +77,7 @@ async function loadLinkIcon(url: string): Promise<string | undefined> {
  * 一直是写进去的，初始值保持打开；切换式应用和提示词默认关闭。
  */
 function initialActivation(request: DeepLinkImportRequest): boolean {
-  if (request.resource === "provider" && request.app === "codex") return false;
+  if (isCustomCodexImport(request)) return false;
   // Antigravity 的卡没有「启用」，只导入（后端同样忽略 enabled）
   if (request.resource === "provider" && request.app === "agy") return false;
   if (
@@ -246,7 +247,7 @@ export function DeepLinkImportDialog() {
 
   const handleImport = async () => {
     if (!request) return;
-    if (request.resource === "provider" && request.app === "codex") {
+    if (isCustomCodexImport(request)) {
       const error = codexImportError(request);
       if (error) {
         toast.error(error);
@@ -262,10 +263,9 @@ export function DeepLinkImportDialog() {
         request.resource === "provider" || request.resource === "prompt"
           ? {
               ...request,
-              enabled:
-                request.resource === "provider" && request.app === "codex"
-                  ? false
-                  : activateAfterImport,
+              enabled: isCustomCodexImport(request)
+                ? false
+                : activateAfterImport,
             }
           : request;
       if (request.resource === "provider" && request.iconUrl) {
@@ -513,7 +513,7 @@ export function DeepLinkImportDialog() {
               {/* Legacy Provider View */}
               {(request.resource === "provider" || !request.resource) && (
                 <>
-                  {request.app === "codex" && (
+                  {isCustomCodexImport(request) && (
                     <CodexImportFields
                       request={request}
                       onChange={setRequest}
@@ -1016,7 +1016,7 @@ export function DeepLinkImportDialog() {
                         </label>
                         <Switch
                           id="deeplink-activate-after-import"
-                          disabled={request.app === "codex"}
+                          disabled={isCustomCodexImport(request)}
                           checked={activateAfterImport}
                           onCheckedChange={setActivateAfterImport}
                         />

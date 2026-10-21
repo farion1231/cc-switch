@@ -97,14 +97,14 @@ pub fn import_provider_from_deeplink(
     let app_type = AppType::from_str(&app_str)
         .map_err(|_| AppError::InvalidInput(format!("Invalid app type: {app_str}")))?;
 
-    if matches!(app_type, AppType::Codex) {
+    if is_custom_codex_import(&merged_request) {
         validate_codex_import(&merged_request)?;
     }
 
     // Build provider configuration based on app type
     let mut provider = build_provider_from_request(&app_type, &merged_request)?;
 
-    provider.id = if matches!(app_type, AppType::Codex) {
+    provider.id = if is_custom_codex_import(&merged_request) {
         format!("codex-import-{}", uuid::Uuid::new_v4().simple())
     } else if matches!(app_type, AppType::OpenCode) {
         // Display names may be Unicode, but new OpenCode IDs must pass the editor's slug validation.
@@ -133,7 +133,7 @@ pub fn import_provider_from_deeplink(
     // 写进应用的配置文件；旧链接没写时照旧写进去。切换式应用开关关闭时只存进列表：`add` 在
     // 还没有当前供应商时会让这家直接生效，所以走不写客户端配置的路径。
     let additive = app_type.is_additive_mode();
-    let activate = if matches!(app_type, AppType::Codex) {
+    let activate = if is_custom_codex_import(&merged_request) {
         false
     } else if additive {
         merged_request.enabled.unwrap_or(true)
@@ -366,7 +366,7 @@ pub(crate) fn build_provider_from_request(
         }
     };
 
-    if matches!(app_type, AppType::Codex) {
+    if is_custom_codex_import(request) {
         if let Some(catalog) = &request.model_catalog {
             settings_config["modelCatalog"] = catalog.clone();
             settings_config["modelCatalog"]["respectDeclaredReasoning"] = json!(true);
@@ -489,7 +489,7 @@ fn build_provider_meta(
     let coding_plan_provider = link_coding_plan_provider(app_type, request);
 
     // Check if any usage script fields are provided
-    if !matches!(app_type, AppType::Codex)
+    if !is_custom_codex_import(request)
         && coding_plan_provider.is_none()
         && request.usage_script.is_none()
         && request.usage_enabled.is_none()
@@ -511,7 +511,7 @@ fn build_provider_meta(
         let decoded = decode_base64_param("usage_script", script_b64)?;
         String::from_utf8(decoded)
             .map_err(|e| AppError::InvalidInput(format!("Invalid UTF-8 in usage_script: {e}")))?
-    } else if matches!(app_type, AppType::Codex) {
+    } else if is_custom_codex_import(request) {
         include_str!("../../../resources/custom-codex-usage.js").to_string()
     } else {
         String::new()
@@ -1173,6 +1173,12 @@ fn merge_codex_config(
     }
 
     Ok(())
+}
+
+fn is_custom_codex_import(request: &DeepLinkImportRequest) -> bool {
+    request.resource == "provider"
+        && request.app.as_deref() == Some("codex")
+        && request.model_catalog.is_some()
 }
 
 fn validate_codex_import(request: &DeepLinkImportRequest) -> Result<(), AppError> {

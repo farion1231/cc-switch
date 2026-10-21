@@ -300,8 +300,10 @@ describe("DeepLinkImportDialog", () => {
       });
       expect(
         screen.queryByText("套餐额度：Kimi For Coding"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText(/response\?\.remaining/),
       ).not.toBeInTheDocument();
-      expect(screen.getByText(/response\?\.remaining/)).toBeInTheDocument();
     },
   );
 
@@ -314,6 +316,7 @@ describe("DeepLinkImportDialog", () => {
         resource: "provider",
         app: "codex",
         name: "ZenMux Provider",
+        modelCatalog: { models: [] },
         homepage: "https://example.com",
         endpoint: "https://zenmux.ai/api/v1",
         apiKey: "sk-provider-key",
@@ -520,6 +523,24 @@ describe("DeepLinkImportDialog", () => {
       await user.click(screen.getByRole("button", { name: "deeplink.import" }));
       await waitFor(() => expect(sent).toHaveLength(1));
       expect(sent[0].enabled).toBe(false);
+    });
+
+    it("preserves activation and omits the custom template for legacy Codex links", async () => {
+      const sent = captureImport();
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+      act(() =>
+        deliverDeepLink(
+          providerLink({ app: "codex", model: "gpt-test", enabled: true }),
+        ),
+      );
+      expect(await screen.findByRole("switch")).toBeChecked();
+      await userEvent.click(
+        screen.getByRole("button", { name: "deeplink.import" }),
+      );
+      await waitFor(() => expect(sent).toHaveLength(1));
+      expect(sent[0]).toMatchObject({ enabled: true, model: "gpt-test" });
+      expect(sent[0].modelCatalog).toBeUndefined();
+      expect(sent[0].usageScript).toBeUndefined();
     });
 
     it("enables a Codex prompt when requested", async () => {
