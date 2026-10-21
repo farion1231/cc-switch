@@ -2998,7 +2998,9 @@ fn handle_provider_click(
     if mode == TrayMode::Direct && provider_needs_routing(app_type, &provider) {
         return Ok(ClickOutcome::NeedsRoute);
     }
-    if *app_type == AppType::Codex {
+    if *app_type == AppType::Codex
+        && crate::services::provider::codex_selection::requires_review(&provider)
+    {
         return Ok(ClickOutcome::NeedsReview);
     }
     crate::services::ProviderService::switch(state, app_type.clone(), provider_id)?;

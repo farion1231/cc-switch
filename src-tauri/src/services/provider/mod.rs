@@ -331,6 +331,37 @@ mod tests {
 
     #[test]
     #[serial]
+    fn customized_review_scope_preserves_ordinary_codex_switches() {
+        with_test_home(|state, _| {
+            let mut provider = Provider::with_id(
+                "ordinary-codex".into(),
+                "Ordinary".into(),
+                json!({"auth": {"OPENAI_API_KEY": "test-key"}, "config": "model = 'test-model'\nmodel_provider = 'custom'\n[model_providers.custom]\nname = 'Relay'\nbase_url = 'https://relay.example/v1'\nwire_api = 'responses'\n"}),
+                None,
+            );
+            state.db.save_provider("codex", &provider).unwrap();
+            assert!(!codex_selection::requires_review(&provider));
+            ProviderService::switch(state, AppType::Codex, &provider.id).unwrap();
+            assert_eq!(
+                state.db.get_current_provider("codex").unwrap().as_deref(),
+                Some(provider.id.as_str())
+            );
+            provider.id = "catalog-without-custom-marker".into();
+            provider.settings_config["modelCatalog"] =
+                json!({"models": [{"model": "test-model", "reasoningLevels": ["high"]}]});
+            state.db.save_provider("codex", &provider).unwrap();
+            ProviderService::switch(state, AppType::Codex, &provider.id).unwrap();
+            provider.id = "custom-import".into();
+            provider.settings_config["modelCatalog"]["respectDeclaredReasoning"] = json!(true);
+            state.db.save_provider("codex", &provider).unwrap();
+            assert!(codex_selection::requires_review(&provider));
+            assert!(ProviderService::switch(state, AppType::Codex, &provider.id).is_err());
+            provider.category = Some("official".into());
+            assert!(!codex_selection::requires_review(&provider));
+        });
+    }
+
+    #[test]
     fn customized_codex_review_is_read_only_rejects_stale_and_applies_selected_fields() {
         with_test_home(|state, home| {
             crate::settings::reload_settings().unwrap();
@@ -6834,13 +6865,7 @@ impl ProviderService {
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
 
-        if app_type == AppType::Codex
-            && _provider
-                .settings_config
-                .pointer("/modelCatalog/respectDeclaredReasoning")
-                .and_then(Value::as_bool)
-                == Some(true)
-        {
+        if app_type == AppType::Codex && codex_selection::requires_review(_provider) {
             return Err(AppError::Message(
                 "此 Codex 配置需要先确认覆盖项，请从供应商页面启用（托盘会打开确认窗口）".into(),
             ));

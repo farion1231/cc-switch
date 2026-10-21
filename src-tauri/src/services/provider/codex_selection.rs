@@ -30,6 +30,15 @@ const CONNECTION: &[&str] = &[
 ];
 const EFFORT: &str = "model_reasoning_effort";
 
+pub(crate) fn requires_review(provider: &Provider) -> bool {
+    !codex_direct::is_official(provider)
+        && provider
+            .settings_config
+            .pointer("/modelCatalog/respectDeclaredReasoning")
+            .and_then(Value::as_bool)
+            == Some(true)
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SelectionRequest {

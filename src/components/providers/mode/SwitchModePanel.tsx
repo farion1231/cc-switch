@@ -1,3 +1,4 @@
+import { requiresCodexReview } from "@/utils/codexImport";
 import { createPortal } from "react-dom";
 import { badgeVariants } from "@/components/ui/badge";
 import { HoverTip } from "@/components/ui/hover-tip";
@@ -658,7 +659,7 @@ export function SwitchModePanel({
             reviewCodex:
               !!useProviderId &&
               app === "codex" &&
-              providers[useProviderId]?.category !== "official",
+              requiresCodexReview(providers[useProviderId]),
           })
         }
         onSwitchDirect={(providerId) => {

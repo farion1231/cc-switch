@@ -1,5 +1,6 @@
 import type { DeepLinkImportRequest } from "@/lib/api/deeplink";
-import type { CodexCatalogModel } from "@/types";
+import type { CodexCatalogModel, Provider } from "@/types";
+import { isOfficialAccount } from "@/utils/providerCapabilities";
 import usageTemplate from "../../resources/custom-codex-usage.js?raw";
 
 export const reasoningLevels = [
@@ -12,6 +13,14 @@ export const reasoningLevels = [
   "max",
   "ultra",
 ];
+
+export function requiresCodexReview(provider: Provider | undefined): boolean {
+  return (
+    !!provider &&
+    !isOfficialAccount("codex", provider) &&
+    provider.settingsConfig?.modelCatalog?.respectDeclaredReasoning === true
+  );
+}
 
 export function applyCodexImportTemplate(
   request: DeepLinkImportRequest,

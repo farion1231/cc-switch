@@ -1,3 +1,4 @@
+import { requiresCodexReview } from "@/utils/codexImport";
 import { useCallback } from "react";
 import { useCodexSwitchReview } from "@/components/providers/CodexSwitchReview";
 import { useQueryClient } from "@tanstack/react-query";
@@ -217,16 +218,17 @@ export function useProviderActions(
       }
 
       try {
-        const selection =
-          activeApp === "codex"
-            ? await codexReview.review(provider.id).catch((error) => {
-                toast.error("无法预览 Codex 配置", {
-                  description: extractErrorMessage(error),
-                });
-                return null;
-              })
-            : null;
-        if (activeApp === "codex" && !selection) return;
+        const needsReview =
+          activeApp === "codex" && requiresCodexReview(provider);
+        const selection = needsReview
+          ? await codexReview.review(provider.id).catch((error) => {
+              toast.error("无法预览 Codex 配置", {
+                description: extractErrorMessage(error),
+              });
+              return null;
+            })
+          : null;
+        if (needsReview && !selection) return;
         const result = await switchProviderMutation.mutateAsync(
           selection ? { id: provider.id, selection } : provider.id,
         );

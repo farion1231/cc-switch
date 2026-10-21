@@ -158,6 +158,19 @@ beforeEach(() => {
 });
 
 describe("useProviderActions", () => {
+  it.each(["custom", "official"] as const)(
+    "keeps one-click switching for ordinary Codex %s cards without a catalog",
+    async (category) => {
+      const { wrapper } = createWrapper();
+      const { result } = renderHook(() => useProviderActions("codex"), {
+        wrapper,
+      });
+      const provider = createProvider({ category });
+      await act(() => result.current.switchProvider(provider));
+      expect(codexReviewMock).not.toHaveBeenCalled();
+      expect(switchRequestMock).toHaveBeenCalledWith(provider.id);
+    },
+  );
   it("does not switch Codex when the field review is cancelled", async () => {
     codexReviewMock.mockResolvedValueOnce(null);
     const { wrapper } = createWrapper();
@@ -165,14 +178,26 @@ describe("useProviderActions", () => {
       wrapper,
     });
     await act(async () => {
-      await result.current.switchProvider(createProvider());
+      await result.current.switchProvider(
+        createProvider({
+          category: "custom",
+          settingsConfig: {
+            modelCatalog: { respectDeclaredReasoning: true, models: [] },
+          },
+        }),
+      );
     });
     expect(switchRequestMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).not.toHaveBeenCalled();
   });
   it("passes the reviewed snapshot and selection to the Codex mutation", async () => {
     const { wrapper } = createWrapper();
-    const provider = createProvider();
+    const provider = createProvider({
+      category: "custom",
+      settingsConfig: {
+        modelCatalog: { respectDeclaredReasoning: true, models: [] },
+      },
+    });
     const { result } = renderHook(() => useProviderActions("codex"), {
       wrapper,
     });
