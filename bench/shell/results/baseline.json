@@ -1,0 +1,173 @@
+{
+  "revision": "340da34d",
+  "runs": [
+    {
+      "timestamp": "2026-10-21T07:19:13.540Z",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+      "viewport": [
+        1280,
+        720
+      ],
+      "reducedMotion": false,
+      "rows": 300,
+      "phases": {
+        "navigation": {
+          "frameMs": {
+            "n": 902,
+            "p50": 16.7,
+            "p95": 17.3,
+            "max": 17.7
+          },
+          "inputToTwoFramesMs": {
+            "n": 60,
+            "p50": 28.9,
+            "p95": 37.8,
+            "max": 42.2
+          },
+          "framesOver50ms": 0
+        },
+        "resize": {
+          "frameMs": {
+            "n": 181,
+            "p50": 16.7,
+            "p95": 17.5,
+            "max": 17.7
+          },
+          "inputToTwoFramesMs": {
+            "n": 0,
+            "p50": 0,
+            "p95": 0,
+            "max": 0
+          },
+          "framesOver50ms": 0
+        }
+      }
+    },
+    {
+      "timestamp": "2026-10-21T07:19:44.892Z",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+      "viewport": [
+        1280,
+        720
+      ],
+      "reducedMotion": false,
+      "rows": 300,
+      "phases": {
+        "navigation": {
+          "frameMs": {
+            "n": 903,
+            "p50": 16.7,
+            "p95": 17.3,
+            "max": 17.8
+          },
+          "inputToTwoFramesMs": {
+            "n": 60,
+            "p50": 28.9,
+            "p95": 40.7,
+            "max": 44.4
+          },
+          "framesOver50ms": 0
+        },
+        "resize": {
+          "frameMs": {
+            "n": 181,
+            "p50": 16.7,
+            "p95": 17.1,
+            "max": 17.7
+          },
+          "inputToTwoFramesMs": {
+            "n": 0,
+            "p50": 0,
+            "p95": 0,
+            "max": 0
+          },
+          "framesOver50ms": 0
+        }
+      }
+    },
+    {
+      "timestamp": "2026-10-21T07:22:19.235Z",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+      "viewport": [
+        1280,
+        720
+      ],
+      "reducedMotion": false,
+      "rows": 300,
+      "phases": {
+        "navigation": {
+          "frameMs": {
+            "n": 684,
+            "p50": 16.7,
+            "p95": 66.7,
+            "max": 150
+          },
+          "inputToTwoFramesMs": {
+            "n": 60,
+            "p50": 30.3,
+            "p95": 150,
+            "max": 195.8
+          },
+          "framesOver50ms": 47
+        },
+        "resize": {
+          "frameMs": {
+            "n": 181,
+            "p50": 16.7,
+            "p95": 17,
+            "max": 17.6
+          },
+          "inputToTwoFramesMs": {
+            "n": 0,
+            "p50": 0,
+            "p95": 0,
+            "max": 0
+          },
+          "framesOver50ms": 0
+        }
+      }
+    },
+    {
+      "timestamp": "2026-10-21T07:23:06.371Z",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+      "viewport": [
+        1280,
+        720
+      ],
+      "reducedMotion": false,
+      "rows": 300,
+      "phases": {
+        "navigation": {
+          "frameMs": {
+            "n": 864,
+            "p50": 16.7,
+            "p95": 17.7,
+            "max": 101
+          },
+          "inputToTwoFramesMs": {
+            "n": 60,
+            "p50": 29.6,
+            "p95": 62,
+            "max": 168.9
+          },
+          "framesOver50ms": 10
+        },
+        "resize": {
+          "frameMs": {
+            "n": 181,
+            "p50": 16.7,
+            "p95": 32.6,
+            "max": 50.4
+          },
+          "inputToTwoFramesMs": {
+            "n": 0,
+            "p50": 0,
+            "p95": 0,
+            "max": 0
+          },
+          "framesOver50ms": 1
+        }
+      }
+    }
+  ]
+}

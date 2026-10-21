@@ -1,0 +1,131 @@
+{
+  "revision": "working tree based on 340da34d",
+  "runs": [
+    {
+      "timestamp": "2026-10-21T07:30:37.232Z",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+      "viewport": [
+        1280,
+        720
+      ],
+      "reducedMotion": false,
+      "rows": 300,
+      "phases": {
+        "navigation": {
+          "frameMs": {
+            "n": 903,
+            "p50": 16.7,
+            "p95": 17.3,
+            "max": 17.7
+          },
+          "inputToTwoFramesMs": {
+            "n": 60,
+            "p50": 29,
+            "p95": 40.2,
+            "max": 43
+          },
+          "framesOver50ms": 0
+        },
+        "resize": {
+          "frameMs": {
+            "n": 181,
+            "p50": 16.7,
+            "p95": 17.3,
+            "max": 17.7
+          },
+          "inputToTwoFramesMs": {
+            "n": 0,
+            "p50": 0,
+            "p95": 0,
+            "max": 0
+          },
+          "framesOver50ms": 0
+        }
+      }
+    },
+    {
+      "timestamp": "2026-10-21T07:31:14.917Z",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+      "viewport": [
+        1280,
+        720
+      ],
+      "reducedMotion": false,
+      "rows": 300,
+      "phases": {
+        "navigation": {
+          "frameMs": {
+            "n": 905,
+            "p50": 16.7,
+            "p95": 17.3,
+            "max": 17.7
+          },
+          "inputToTwoFramesMs": {
+            "n": 60,
+            "p50": 28.9,
+            "p95": 41.8,
+            "max": 45.7
+          },
+          "framesOver50ms": 0
+        },
+        "resize": {
+          "frameMs": {
+            "n": 181,
+            "p50": 16.7,
+            "p95": 17.3,
+            "max": 17.7
+          },
+          "inputToTwoFramesMs": {
+            "n": 0,
+            "p50": 0,
+            "p95": 0,
+            "max": 0
+          },
+          "framesOver50ms": 0
+        }
+      }
+    },
+    {
+      "timestamp": "2026-10-21T07:31:52.336Z",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+      "viewport": [
+        1280,
+        720
+      ],
+      "reducedMotion": false,
+      "rows": 300,
+      "phases": {
+        "navigation": {
+          "frameMs": {
+            "n": 903,
+            "p50": 16.7,
+            "p95": 17.1,
+            "max": 17.7
+          },
+          "inputToTwoFramesMs": {
+            "n": 60,
+            "p50": 28.9,
+            "p95": 37.5,
+            "max": 47.2
+          },
+          "framesOver50ms": 0
+        },
+        "resize": {
+          "frameMs": {
+            "n": 181,
+            "p50": 16.7,
+            "p95": 17.3,
+            "max": 17.6
+          },
+          "inputToTwoFramesMs": {
+            "n": 0,
+            "p50": 0,
+            "p95": 0,
+            "max": 0
+          },
+          "framesOver50ms": 0
+        }
+      }
+    }
+  ]
+}
