@@ -104,7 +104,7 @@
     "tabUniversal": "統一プロバイダー",
     "noProviders": "まだプロバイダーがありません",
     "noProvidersDescription": "既存の設定がある場合は「現在の設定をインポート」をクリックしてください。すべてのデータが default プロバイダーに安全に保存されます",
-    "noProvidersDescriptionKeyFields": "プロバイダーを切り替えても置き換わるのはキー、リクエスト URL、モデルだけです。プラグインなどのその他の設定は設定ファイルに残り、すべてのプロバイダーに適用されます",
+    "noProvidersDescriptionKeyFields": "切り替わるのはキー、URL、モデルのみです。その他の設定は共通です。",
     "importCurrent": "現在の設定をインポート",
     "importFromClaude": "Claude Code の既存プロバイダーをインポート",
     "importCurrentDescription": "現在使用中の設定をデフォルトプロバイダーとしてインポート",

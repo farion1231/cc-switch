@@ -12,7 +12,7 @@ interface ProviderEmptyStateProps {
 
 /**
  * 供应商页空状态（v7 PANELS_BRIEF 空状态规则）：列表区居中，标题 15/600 +
- * 操作按钮。通用说明收进帮助卡；页头已有实心的「添加供应商」，这里一律描边。
+ * 操作按钮。辅助说明收进帮助卡；页头已有实心的「添加供应商」，这里一律描边。
  */
 export function ProviderEmptyState({
   appId,
@@ -59,15 +59,17 @@ export function ProviderEmptyState({
               {t("provider.addProvider")}
             </Button>
           )}
-          {!emptyCopyNs && (onImport || showKeyFieldsHint) && (
+          {!emptyCopyNs && onImport && (
             <HelpTip title={t("provider.noProviders")}>
-              {onImport && <p>{t("provider.noProvidersDescription")}</p>}
-              {showKeyFieldsHint && (
-                <p>{t("provider.noProvidersDescriptionKeyFields")}</p>
-              )}
+              {t("provider.noProvidersDescription")}
             </HelpTip>
           )}
         </div>
+      )}
+      {showKeyFieldsHint && (
+        <p className="mt-4 max-w-lg text-body text-fg-2">
+          {t("provider.noProvidersDescriptionKeyFields")}
+        </p>
       )}
     </div>
   );
