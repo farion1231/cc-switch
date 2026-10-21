@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 use crate::error::AppError;
-use crate::services::skill::{skill_state_read_guard, skill_state_write_guard};
+use crate::services::skill::{skill_state_read_guard, skill_state_write_guard, SkillService};
 
 // Re-export archive functions for use by transport layers.
 pub(crate) use super::webdav_sync::archive::{
@@ -391,6 +391,8 @@ pub(crate) fn apply_snapshot(
     // are backed up/replaced and the corresponding database snapshot is applied.
     let _skill_state_guard = skill_state_write_guard();
     let skills_backup = backup_current_skills()?;
+    SkillService::checkpoint_copy_deployments(db)
+        .map_err(|error| AppError::Message(format!("保存 Skill 部署记录失败: {error:#}")))?;
 
     // Replace skills first, then import database; roll back skills on DB failure.
     restore_skills_zip(skills_zip)?;
