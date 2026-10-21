@@ -1,4 +1,4 @@
-import { Download, Plus } from "lucide-react";
+import { Download, Plus, Server } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { HelpTip } from "@/components/ui/help-tip";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,9 @@ export function ProviderEmptyState({
 
   return (
     <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
+      <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-border bg-subtle text-fg-2">
+        <Server className="h-6 w-6" strokeWidth={1.5} aria-hidden="true" />
+      </div>
       <h2 className="text-section text-fg-1">
         {emptyCopyNs
           ? t(`${emptyCopyNs}.empty.title`)
@@ -41,6 +44,11 @@ export function ProviderEmptyState({
       {emptyCopyNs && (
         <p className="mt-2 max-w-lg text-body text-fg-2">
           {t(`${emptyCopyNs}.empty.description`)}
+        </p>
+      )}
+      {showKeyFieldsHint && (
+        <p className="mt-2 max-w-lg text-body text-fg-2">
+          {t("provider.noProvidersDescriptionKeyFields")}
         </p>
       )}
       {(onImport || onCreate) && (
@@ -65,11 +73,6 @@ export function ProviderEmptyState({
             </HelpTip>
           )}
         </div>
-      )}
-      {showKeyFieldsHint && (
-        <p className="mt-4 max-w-lg text-body text-fg-2">
-          {t("provider.noProvidersDescriptionKeyFields")}
-        </p>
       )}
     </div>
   );

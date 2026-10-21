@@ -104,7 +104,7 @@
     "tabUniversal": "Evrensel",
     "noProviders": "Henüz sağlayıcı yok",
     "noProvidersDescription": "Zaten bir yapılandırmanız varsa “Mevcut Yapılandırmayı İçe Aktar” düğmesine tıklayın. Tüm veriler varsayılan sağlayıcıya güvenli bir şekilde kaydedilecektir.",
-    "noProvidersDescriptionKeyFields": "Geçiş yalnızca anahtarı, uç noktayı ve modeli değiştirir. Diğer ayarlar ortaktır.",
+    "noProvidersDescriptionKeyFields": "Sağlayıcıların değiştirilmesi yalnızca anahtarın, uç noktanın ve modelin yerini alır; eklentiler ve diğer ayarlar yapılandırma dosyasında kalır ve her sağlayıcıya uygulanır",
     "importCurrent": "Mevcut Yapılandırmayı İçe Aktar",
     "importFromClaude": "Mevcut sağlayıcıları Claude Code'den içe aktarın",
     "importCurrentDescription": "Geçerli canlı yapılandırmayı varsayılan sağlayıcı olarak içe aktar",

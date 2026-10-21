@@ -104,7 +104,7 @@
     "tabUniversal": "通用供應商",
     "noProviders": "還沒有供應商",
     "noProvidersDescription": "如果您已有設定，請點擊「匯入目前設定」，所有資料將安全儲存在 default 供應商中",
-    "noProvidersDescriptionKeyFields": "切換僅影響 Key、位址和模型，其他設定共用",
+    "noProvidersDescriptionKeyFields": "切換供應商只會替換 Key、請求位址和模型，外掛程式等其他設定會保留在設定檔中，對所有供應商生效",
     "importCurrent": "匯入目前設定",
     "importFromClaude": "將 Claude Code 中已有的供應商匯入",
     "importCurrentDescription": "將目前正在使用的設定匯入為預設供應商",

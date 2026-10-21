@@ -104,7 +104,7 @@
     "tabUniversal": "统一供应商",
     "noProviders": "还没有供应商",
     "noProvidersDescription": "如果你已有配置，请点击\"导入当前配置\"，所有数据将安全保存在 default 供应商中",
-    "noProvidersDescriptionKeyFields": "切换仅影响 Key、地址和模型，其他配置共用",
+    "noProvidersDescriptionKeyFields": "切换供应商只替换 Key、请求地址和模型，插件等其他设置保留在配置文件里，对所有供应商生效",
     "importCurrent": "导入当前配置",
     "importFromClaude": "将 Claude Code 中已有的供应商导入",
     "importCurrentDescription": "将当前正在使用的配置导入为默认供应商",
