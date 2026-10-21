@@ -18,6 +18,16 @@ vi.mock("@/components/SubscriptionQuotaFooter", () => ({
 vi.mock("@/components/CopilotQuotaFooter", () => ({ default: () => null }));
 vi.mock("@/components/CodexOauthQuotaFooter", () => ({ default: () => null }));
 vi.mock("@/components/XaiOauthQuotaFooter", () => ({ default: () => null }));
+vi.mock("@/components/AgyAccountQuotaFooter", () => ({
+  default: ({ accountId }: { accountId: string }) => (
+    <span data-testid="agy-account-quota">{accountId}</span>
+  ),
+}));
+const platform = vi.hoisted(() => ({ mac: true }));
+vi.mock("@/lib/platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/platform")>()),
+  isMac: () => platform.mac,
+}));
 vi.mock("@/lib/query/failover", () => ({
   useProviderHealth: () => ({ data: undefined }),
 }));
@@ -107,5 +117,32 @@ describe("ProviderCard Antigravity official quota", () => {
       },
     });
     expect(screen.queryByTestId("subscription-quota")).not.toBeInTheDocument();
+  });
+
+  const bound: Provider = {
+    ...official,
+    meta: {
+      ...official.meta,
+      authBinding: {
+        source: "managed_account",
+        authProvider: "agy_oauth",
+        accountId: "sub-b",
+      },
+    },
+  };
+
+  it("shows the bound account's quota, not agy's current sign-in", () => {
+    platform.mac = true;
+    renderCard(bound);
+    expect(screen.getByTestId("agy-account-quota")).toHaveTextContent("sub-b");
+    expect(screen.queryByTestId("subscription-quota")).not.toBeInTheDocument();
+  });
+
+  it("ignores the binding where accounts cannot be switched", () => {
+    platform.mac = false;
+    renderCard(bound);
+    expect(screen.getByTestId("subscription-quota")).toHaveTextContent("agy");
+    expect(screen.queryByTestId("agy-account-quota")).not.toBeInTheDocument();
+    platform.mac = true;
   });
 });
