@@ -2340,7 +2340,7 @@ fn codex_proxy_error_json(
     error: &ProxyError,
 ) -> Value {
     let (mut body, upstream_status) = match error {
-        ProxyError::UpstreamError { status, body } => {
+        ProxyError::UpstreamError { status, body, .. } => {
             let parsed_body = body
                 .as_deref()
                 .map(|body| serde_json::from_str::<Value>(body).unwrap_or_else(|_| json!(body)));
@@ -4040,6 +4040,7 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
     fn codex_proxy_upstream_error_normalizes_nonstandard_body() {
         let error = ProxyError::UpstreamError {
             status: 502,
+            retry_after_secs: None,
             body: Some(
                 r#"{"base_resp":{"status_code":2013,"status_msg":"upstream gateway failed"}}"#
                     .to_string(),
@@ -4060,6 +4061,7 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
         // （见 issue #666：长上下文 / 大图 / 大日志撞上游体积上限）
         let error = ProxyError::UpstreamError {
             status: 413,
+            retry_after_secs: None,
             body: Some(
                 "<html>\r\n<head><title>413 Request Entity Too Large</title></head>\r\n\
                  <body>\r\n<center><h1>413 Request Entity Too Large</h1></center>\r\n\
@@ -4143,6 +4145,7 @@ mod stack_tests {
                 "code": 400, "status": "INVALID_ARGUMENT",
                 "message": "The input token count exceeds the maximum number of tokens allowed 1048576."
             } }).to_string()),
+            retry_after_secs: None,
         };
         for endpoint in ["/responses", "/v1/responses?beta=true"] {
             let response = build_codex_proxy_error_response(&ctx, endpoint, &error, true).unwrap();
@@ -4183,6 +4186,7 @@ mod stack_tests {
             body: Some(
                 json!({ "error": { "code": 400, "message": "Invalid API key" } }).to_string(),
             ),
+            retry_after_secs: None,
         };
         let response =
             build_codex_proxy_error_response(&ctx, "/responses", &unrelated, true).unwrap();

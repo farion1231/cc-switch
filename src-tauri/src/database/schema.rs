@@ -138,6 +138,7 @@ impl Database {
             circuit_failure_threshold INTEGER NOT NULL DEFAULT 4, circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
             circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60, circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
             circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+            load_balance_mode TEXT NOT NULL DEFAULT 'off',
             default_cost_multiplier TEXT NOT NULL DEFAULT '1',
             pricing_model_source TEXT NOT NULL DEFAULT 'response',
             created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -555,6 +556,7 @@ impl Database {
                         Self::set_user_version(conn, 18)?;
                     }
                     18 => {
+                        log::info!("迁移数据库从 v18 到 v19（MCP 增加 mcode 支持）");
                         for table in ["mcp_servers", "skills"] {
                             if Self::table_exists(conn, table)? {
                                 Self::add_column_if_missing(
@@ -591,6 +593,11 @@ impl Database {
                             }
                         }
                         Self::set_user_version(conn, 21)?;
+                    }
+                    21 => {
+                        log::info!("迁移数据库从 v21 到 v22（负载均衡模式列）");
+                        Self::migrate_v21_to_v22(conn)?;
+                        Self::set_user_version(conn, 22)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1637,6 +1644,22 @@ impl Database {
                 "session_log_sync",
                 "last_tail_fingerprint",
                 "INTEGER",
+            )?;
+        }
+        Ok(())
+    }
+
+    /// v20 -> v21: proxy_config 增加负载均衡模式列（会话粘性负载均衡）。
+    ///
+    /// 全量 DB 走 `add_column_if_missing`（对含列的新 DDL 库为 no-op）；
+    /// v13→v14 等旧路径重建的 proxy_config 不含该列，也由此补齐，默认 'off'。
+    fn migrate_v21_to_v22(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "proxy_config")? {
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "load_balance_mode",
+                "TEXT NOT NULL DEFAULT 'off'",
             )?;
         }
         Ok(())
@@ -3901,7 +3924,7 @@ mod tests {
         conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_gemini BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_codex BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
         Database::set_user_version(&conn, 20)?;
         Database::apply_schema_migrations_on_conn(&conn)?;
-        assert_eq!(Database::get_user_version(&conn)?, 21);
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         for (table, flag) in [
             ("mcp_servers", "enabled_gemini"),
             ("skills", "enabled_codex"),

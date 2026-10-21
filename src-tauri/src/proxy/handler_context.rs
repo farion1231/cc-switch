@@ -174,7 +174,13 @@ impl RequestContext {
                     // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
                     state
                         .provider_router
-                        .select_providers_with_current(app_type_str, current_provider)
+                        .select_providers_for_session_with_current(
+                            app_type_str,
+                            current_provider,
+                            &session_id,
+                            session_result.client_provided,
+                            &request_model,
+                        )
                         .await
                         .map_err(|e| match e {
                             crate::error::AppError::AllProvidersCircuitOpen => {

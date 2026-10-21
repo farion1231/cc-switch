@@ -294,6 +294,9 @@ pub struct ForwardResult {
     /// 活跃连接 RAII guard：随响应一起流转到 response_processor / handle_claude_transform，
     /// 最终被 move 进流式 body future（或非流式响应作用域），覆盖整个响应生命周期。
     pub(crate) connection_guard: Option<ActiveConnectionGuard>,
+    /// 该次请求占用的在途计数句柄；wrapper 会移交给 connection_guard，
+    /// 随响应流结束递减（负载均衡）
+    pub(crate) in_flight: Option<crate::proxy::load_balance::InFlightHandle>,
 }
 
 pub struct ForwardError {
@@ -313,6 +316,8 @@ pub struct ForwardError {
 /// 不需要每条出口路径都手动调用。
 pub(crate) struct ActiveConnectionGuard {
     status: Arc<RwLock<ProxyStatus>>,
+    /// 随响应生命周期递减的在途计数（负载均衡用；原子量，Drop 同步递减）
+    in_flight: Vec<Arc<std::sync::atomic::AtomicIsize>>,
 }
 
 impl ActiveConnectionGuard {
@@ -321,12 +326,25 @@ impl ActiveConnectionGuard {
             let mut s = status.write().await;
             s.active_connections = s.active_connections.saturating_add(1);
         }
-        Self { status }
+        Self {
+            status,
+            in_flight: Vec::new(),
+        }
+    }
+
+    /// 挂载在途计数（forwarder 成功路径调用；所有权移交给 guard，
+    /// 随响应流结束由 Drop 统一递减）
+    pub(crate) fn attach_counters(&mut self, counters: Vec<Arc<std::sync::atomic::AtomicIsize>>) {
+        self.in_flight.extend(counters);
     }
 }
 
 impl Drop for ActiveConnectionGuard {
     fn drop(&mut self) {
+        // 在途计数是纯原子量：同步递减，无 runtime 也不泄漏
+        for counter in &self.in_flight {
+            counter.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        }
         // Drop 不能 await：把减量操作调度到 tokio runtime
         let status = self.status.clone();
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
@@ -609,6 +627,7 @@ impl RequestForwarder {
 
     /// 请求成功：记熔断器成功，更新「正在使用」和成功统计。实际用的不是请求开始时那家，
     /// 就计一次故障转移，并异步把当前供应商切过去（同步 UI/托盘）。
+    #[allow(clippy::too_many_arguments)]
     async fn finish_success(
         &self,
         provider: &Provider,
@@ -619,6 +638,7 @@ impl RequestForwarder {
             Option<String>,
             Option<String>,
         ),
+        in_flight: Option<crate::proxy::load_balance::InFlightHandle>,
         codex_upstream_format: Option<CodexUpstreamFormat>,
     ) -> ForwardResult {
         let result = ForwardResult {
@@ -628,6 +648,7 @@ impl RequestForwarder {
             codex_upstream_format,
             outbound_model,
             connection_guard: None,
+            in_flight,
         };
         if !self.routing_state_enabled() {
             return result;
@@ -679,6 +700,20 @@ impl RequestForwarder {
     ) {
         if !self.routing_state_enabled() {
             return;
+        }
+        // 429/403 限流冷却：与熔断器分工（熔断管错误率，冷却管限流）。挂在统一失败
+        // 助手上，主路径与整流重试子路径的同账号失败都覆盖到（设计 4.1）。
+        if let ProxyError::UpstreamError {
+            status,
+            body,
+            retry_after_secs,
+            ..
+        } = error
+        {
+            if crate::proxy::load_balance::is_rate_limit_status(*status, body.as_deref()) {
+                self.router
+                    .record_lb_rate_limit(app_type_str, &provider.id, *retry_after_secs);
+            }
         }
         let _ = self
             .router
@@ -748,12 +783,14 @@ impl RequestForwarder {
                 )
                 .await;
         }
-        let guard = ActiveConnectionGuard::acquire(self.status.clone()).await;
+        let mut guard = ActiveConnectionGuard::acquire(self.status.clone()).await;
         {
             let mut s = self.status.write().await;
             s.total_requests = s.total_requests.saturating_add(1);
             s.last_request_at = Some(chrono::Utc::now().to_rfc3339());
         }
+        // 路由选中账号（列表首位）：failover 实际落到别家时用于会话重映射
+        let selected_provider_id = providers.first().map(|p| p.id.clone());
         let result = self
             .forward_with_retry_inner(
                 app_type, method, endpoint, body, headers, extensions, providers,
@@ -762,10 +799,32 @@ impl RequestForwarder {
         // 把 guard 注入到 Ok 结果，让它随响应一起流转到 response_processor，
         // 在流式 body 的 future 内才真正 drop。
         // Err 路径：guard 在函数 scope 内随返回值落地时自动 drop。
-        result.map(|mut fr| {
-            fr.connection_guard = Some(guard);
-            fr
-        })
+        match result {
+            Ok(mut fr) => {
+                let app_type_str = app_type.as_str();
+                // 在途计数所有权移交给连接 guard：随响应流结束统一递减
+                if let Some(handle) = fr.in_flight.take() {
+                    guard.attach_counters(vec![handle.detach()]);
+                }
+                if let Some(selected) = selected_provider_id.as_deref() {
+                    if fr.provider.id != selected && self.session_client_provided {
+                        // 实际服务账号 ≠ 路由选中账号（failover 成功）→ 会话重映射
+                        // （设计 4.1 迁移回写：成功后会话跟随实际成功账号）
+                        self.router.remap_session(
+                            app_type_str,
+                            &self.session_id,
+                            true,
+                            &fr.provider.id,
+                        );
+                    }
+                }
+                // 该账号成功服务：清限流冷却、重置退避计数
+                self.router.record_lb_success(app_type_str, &fr.provider.id);
+                fr.connection_guard = Some(guard);
+                Ok(fr)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// 实际转发逻辑（不包含客户端维度的入口/出口计数）
@@ -848,6 +907,14 @@ impl RequestForwarder {
                 continue;
             }
 
+            // 负载均衡在途计数：该账号该模型在途 +1（粘性命中也计数，仅选号时不查上限）。
+            // 迭代失败随作用域 Drop 递减；成功移入 ForwardResult 随响应生命周期递减。
+            let mut in_flight_handle = Some(self.router.acquire_for_provider(
+                app_type_str,
+                provider,
+                &body,
+            ));
+
             // PRE-SEND 优化器：每个 provider 独立决定是否优化
             // clone body 以避免 Bedrock 优化字段泄漏到非 Bedrock provider（failover 场景）
             let mut provider_body =
@@ -896,6 +963,7 @@ impl RequestForwarder {
                             app_type_str,
                             used_half_open_permit,
                             forwarded,
+                            in_flight_handle.take(),
                             attempted_codex_upstream_format,
                         )
                         .await);
@@ -959,6 +1027,7 @@ impl RequestForwarder {
                                             app_type_str,
                                             used_half_open_permit,
                                             forwarded,
+                                            in_flight_handle.take(),
                                             media_retry_codex_upstream_format,
                                         )
                                         .await);
@@ -1048,6 +1117,7 @@ impl RequestForwarder {
                                             app_type_str,
                                             used_half_open_permit,
                                             forwarded,
+                                            in_flight_handle.take(),
                                             opaque_retry_codex_upstream_format,
                                         )
                                         .await);
@@ -1154,6 +1224,7 @@ impl RequestForwarder {
                                                 app_type_str,
                                                 used_half_open_permit,
                                                 forwarded,
+                                                in_flight_handle.take(),
                                                 signature_retry_codex_upstream_format,
                                             )
                                             .await);
@@ -1253,6 +1324,7 @@ impl RequestForwarder {
                                             app_type_str,
                                             used_half_open_permit,
                                             forwarded,
+                                            in_flight_handle.take(),
                                             budget_retry_codex_upstream_format,
                                         )
                                         .await);
@@ -2848,6 +2920,14 @@ impl RequestForwarder {
             // 自动解压 feature，这里拿到的是原始字节；不解压的话，压缩过的错误体会
             // 在 from_utf8 处变成非 UTF-8 而被丢弃，隐藏掉上游的限流/鉴权等详情。
             let encoding = get_content_encoding(response.headers());
+            // Retry-After（秒格式；HTTP-date 不解析，冷却退避兜底）。封顶 10m 防上游异常值。
+            // 必须在 bytes_with_limit（消耗 response）之前取。
+            let retry_after_secs = response
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .map(|s| s.min(crate::proxy::load_balance::COOLDOWN_MAX_SECS));
             let raw = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES).await?;
             let decoded = match encoding {
                 Some(encoding) => {
@@ -2865,6 +2945,7 @@ impl RequestForwarder {
             Err(ProxyError::UpstreamError {
                 status: status_code,
                 body: body_text,
+                retry_after_secs,
             })
         }
     }
@@ -3425,7 +3506,7 @@ fn build_terminal_failure_log(
 
 fn summarize_proxy_error(error: &ProxyError) -> String {
     match error {
-        ProxyError::UpstreamError { status, body } => {
+        ProxyError::UpstreamError { status, body, .. } => {
             let body_summary = body
                 .as_deref()
                 .map(summarize_upstream_body)
@@ -4789,6 +4870,7 @@ mod tests {
                     "codex",
                     false,
                     (response, None, Some("resolved-model".to_string())),
+                    None,
                     format,
                 )
                 .await;
@@ -4808,6 +4890,7 @@ mod tests {
         let error = ProxyError::UpstreamError {
             status: 429,
             body: Some(r#"{"error":{"message":"rate limit exceeded"}}"#.to_string()),
+            retry_after_secs: None,
         };
 
         let (code, message) = build_retryable_failure_log("PackyCode-response", 1, 1, &error);
@@ -5573,14 +5656,17 @@ mod tests {
             ProxyError::UpstreamError {
                 status: 401,
                 body: None,
+                retry_after_secs: None,
             },
             ProxyError::UpstreamError {
                 status: 403,
                 body: None,
+                retry_after_secs: None,
             },
             ProxyError::UpstreamError {
                 status: 429,
                 body: None,
+                retry_after_secs: None,
             },
             ProxyError::Timeout("timeout".to_string()),
         ] {
@@ -5610,6 +5696,7 @@ mod tests {
                 &ProxyError::UpstreamError {
                     status: 401,
                     body: None,
+                    retry_after_secs: None,
                 },
                 &provider,
             ),
@@ -6753,6 +6840,7 @@ mod tests {
     fn image_unsupported_error() -> ProxyError {
         ProxyError::UpstreamError {
             status: 400,
+            retry_after_secs: None,
             body: Some(
                 r#"{"error":{"message":"This model does not support image input"}}"#.to_string(),
             ),
@@ -6843,6 +6931,7 @@ mod tests {
         let body = body_with_codex_input_image("deepseek-v4-flash");
         let error = ProxyError::UpstreamError {
             status: 400,
+            retry_after_secs: None,
             body: Some(
                 r#"{"error":{"message":"Failed to deserialize the JSON body into the target type: messages[11]: unknown variant image_url, expected text"}}"#
                     .to_string(),
@@ -6890,6 +6979,7 @@ mod tests {
         let context_error = ProxyError::UpstreamError {
             status: 400,
             body: Some(r#"{"error":{"message":"maximum context length exceeded"}}"#.to_string()),
+            retry_after_secs: None,
         };
 
         assert!(!fwd.media_retry_should_trigger("Codex", false, &body, &context_error));
@@ -7495,6 +7585,7 @@ mod tests {
             let unsupported = ProxyError::UpstreamError {
                 status: 400,
                 body: Some("unsupported input item".to_string()),
+                retry_after_secs: None,
             };
             let forwarder = forwarder(false);
             let gate = |app_type: AppType, provider: &Provider| {
@@ -7540,6 +7631,7 @@ mod tests {
             let unsupported = ProxyError::UpstreamError {
                 status: 400,
                 body: Some("unsupported input item".to_string()),
+                retry_after_secs: None,
             };
 
             assert_eq!(
@@ -7704,6 +7796,7 @@ mod tests {
             let ProxyError::UpstreamError {
                 status: 400,
                 body: Some(body),
+                ..
             } = error
             else {
                 return false;
