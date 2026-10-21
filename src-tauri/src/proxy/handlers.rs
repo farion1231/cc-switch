@@ -1144,7 +1144,11 @@ async fn handle_responses_for_app(
     // Native Responses passthrough to a strict gateway (xAI): restore flattened
     // function-call names *and* rewrite whole-float tool arguments. The integer
     // rewrite must run even when the request had no namespace tools.
-    if super::providers::provider_needs_responses_namespace_flatten(&ctx.provider) {
+    if super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)
+        || (matches!(app_type, AppType::Codex)
+            && crate::settings::unify_codex_session_history()
+            && !super::providers::is_codex_official_provider(&ctx.provider))
+    {
         return handle_codex_xai_native_responses_rewrite(
             response,
             &ctx,
@@ -1550,6 +1554,10 @@ async fn handle_codex_xai_native_responses_rewrite(
     >,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
+    let xai_compat = super::providers::provider_needs_responses_namespace_flatten(&ctx.provider);
+    let portable_history = matches!(ctx.app_type, AppType::Codex)
+        && crate::settings::unify_codex_session_history()
+        && !super::providers::is_codex_official_provider(&ctx.provider);
 
     // Error bodies (and any non-SSE, non-success response) never contain
     // restorable function calls; hand them to the generic passthrough so error
@@ -1569,11 +1577,31 @@ async fn handle_codex_xai_native_responses_rewrite(
     if response.is_sse() {
         let builder = rewritten_sse_response_builder(status, response.headers());
 
-        let restore_stream =
-            transform_codex_responses_xai_sanitize::create_xai_native_responses_sse_stream(
-                response.bytes_stream(),
-                restore_map,
-            );
+        let restore_stream: std::pin::Pin<
+            Box<dyn futures::Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send>,
+        > = if xai_compat {
+            Box::pin(
+                transform_codex_responses_xai_sanitize::create_xai_native_responses_sse_stream(
+                    response.bytes_stream(),
+                    restore_map,
+                ),
+            )
+        } else {
+            Box::pin(
+                super::providers::responses_late_arguments::create_late_arguments_repair_stream(
+                    response.bytes_stream(),
+                ),
+            )
+        };
+        let restore_stream: std::pin::Pin<
+            Box<dyn futures::Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send>,
+        > = if portable_history {
+            Box::pin(super::codex_portable_history::project_stream(
+                restore_stream,
+            ))
+        } else {
+            restore_stream
+        };
         let usage_collector =
             create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
         let logged_stream = create_logged_passthrough_stream(
@@ -1609,13 +1637,18 @@ async fn handle_codex_xai_native_responses_rewrite(
     // this only guards against a malformed upstream).
     let restored_bytes = match serde_json::from_slice::<Value>(&body_bytes) {
         Ok(mut value) => {
-            transform_codex_responses_namespace::restore_response_namespaces(
-                &mut value,
-                &restore_map,
-            );
-            transform_codex_responses_xai_sanitize::normalize_xai_function_call_integer_arguments(
-                &mut value,
-            );
+            if xai_compat {
+                transform_codex_responses_namespace::restore_response_namespaces(
+                    &mut value,
+                    &restore_map,
+                );
+                transform_codex_responses_xai_sanitize::normalize_xai_function_call_integer_arguments(
+                    &mut value,
+                );
+            }
+            if portable_history {
+                super::codex_portable_history::project_response(&mut value);
+            }
             if let Some(usage) =
                 TokenUsage::from_codex_response_auto(&value).filter(TokenUsage::has_billable_tokens)
             {

@@ -1480,6 +1480,12 @@ impl RequestForwarder {
         if matches!(app_type, AppType::Codex)
             && crate::settings::unify_codex_session_history()
             && super::providers::is_codex_responses_endpoint(endpoint)
+        {
+            super::codex_portable_history::project_request(&mut mapped_body);
+        }
+        if matches!(app_type, AppType::Codex)
+            && crate::settings::unify_codex_session_history()
+            && super::providers::is_codex_responses_endpoint(endpoint)
             && !super::providers::is_codex_official_provider(provider)
         {
             if let Some(body) = mapped_body.as_object_mut() {

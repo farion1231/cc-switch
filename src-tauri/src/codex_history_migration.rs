@@ -277,12 +277,7 @@ fn migrate_unified_history_to_builtin_openai(
     let sources: BTreeSet<String> =
         std::iter::once(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string()).collect();
     let backup = migration_backup_root("codex-unified-openai-history-v2");
-    let migrated_jsonl_files = migrate_codex_jsonl_files_to(
-        &codex_dir,
-        &sources,
-        OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID,
-        &backup,
-    )?;
+    let migrated_jsonl_files = migrate_portable_history_to_openai(&codex_dir, &sources, &backup)?;
     let migrated_state_rows = migrate_codex_state_dbs_to(
         &codex_dir,
         &sources,
@@ -318,6 +313,52 @@ fn codex_config_text_routes_custom(config_text: &str) -> bool {
                 .map(|id| id.trim() == CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
         })
         .unwrap_or(false)
+}
+
+fn migrate_portable_history_to_openai(
+    codex_dir: &Path,
+    sources: &BTreeSet<String>,
+    backup: &Path,
+) -> Result<usize, AppError> {
+    let mut files = Vec::new();
+    collect_jsonl_files(&codex_dir.join("sessions"), &mut files, 0, 8);
+    collect_jsonl_files(&codex_dir.join("archived_sessions"), &mut files, 0, 4);
+    let sources: HashSet<String> = sources.iter().cloned().collect();
+    let mut changed = 0;
+    for file in files {
+        let content =
+            codex_rollout_file::read_to_string(&file).map_err(|e| AppError::io(&file, e))?;
+        let belongs_to_shared_bucket = content.lines().take(4).any(|line| {
+            rewrite_codex_session_meta_line(line, &sources, OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID)
+                .is_some()
+        });
+        if !belongs_to_shared_bucket {
+            continue;
+        }
+        if rewrite_codex_session_file_lines(&file, codex_dir, backup, |line| {
+            if let Some(meta) = rewrite_codex_session_meta_line(
+                line,
+                &sources,
+                OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID,
+            ) {
+                return Some(meta);
+            }
+            if !line.contains("web_search_call") {
+                return None;
+            }
+            let mut event: Value = serde_json::from_str(line).ok()?;
+            if event.get("type").and_then(Value::as_str) != Some("response_item") {
+                return None;
+            }
+            let message =
+                crate::proxy::codex_portable_history::project_item(event.get("payload")?)?;
+            event["payload"] = message;
+            serde_json::to_string(&event).ok()
+        })? {
+            changed += 1;
+        }
+    }
+    Ok(changed)
 }
 
 /// v3.17–v3.20 官方账号走本地路由时，会话记在 `cc-switch-official` 桶下；v4 起这张表
@@ -2988,7 +3029,7 @@ model_provider = "aihubmix"
         assert_eq!(thread_provider(&db, "other"), "unrelated");
         let migrated = fs::read_to_string(&file).unwrap();
         assert!(migrated.contains("\"model_provider\":\"openai\""));
-        assert!(migrated.contains(search.trim()));
+        assert!(!migrated.contains("\"type\":\"web_search_call\""));
         assert!(migrated.contains("evidence"));
         assert_eq!(
             fs::read_to_string(sessions.join("rollout-official.jsonl")).unwrap(),
