@@ -61,9 +61,18 @@ export async function fetchModelsForConfig(
   });
 }
 
-/** Models reported by the locally installed Antigravity runtime. */
-export async function getAgyModels(): Promise<FetchedModel[]> {
-  return invoke("get_agy_models");
+/**
+ * Models reported by the locally installed Antigravity runtime. With an API key it asks agy's
+ * API-key mode, which only accepts its built-in Gemini models (by display name).
+ */
+export async function getAgyModels(options?: {
+  apiKey?: string;
+  baseUrl?: string;
+}): Promise<FetchedModel[]> {
+  return invoke("get_agy_models", {
+    apiKey: options?.apiKey || null,
+    baseUrl: options?.baseUrl || null,
+  });
 }
 
 export interface OpenCodeModelRef {

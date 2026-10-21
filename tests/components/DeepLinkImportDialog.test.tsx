@@ -507,6 +507,25 @@ describe("DeepLinkImportDialog", () => {
       expect(sent[0].enabled).toBe(true);
     });
 
+    it("only imports Antigravity providers, even when the link asks to enable", async () => {
+      const sent = captureImport();
+      const user = userEvent.setup();
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+      act(() => deliverDeepLink(providerLink({ app: "agy", enabled: true })));
+
+      const importButton = await screen.findByRole("button", {
+        name: "deeplink.import",
+      });
+      // Antigravity 的卡没有「启用」，不给开关也不提示改发请求
+      expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("deeplink.providerEnabledWarning"),
+      ).not.toBeInTheDocument();
+      await user.click(importButton);
+      await waitFor(() => expect(sent).toHaveLength(1));
+      expect(sent[0].enabled).toBe(false);
+    });
+
     it("adds additive-app providers to the app config unless the link opts out", async () => {
       render(<DeepLinkImportDialog />, { wrapper: Wrapper });
       act(() => deliverDeepLink(providerLink({ app: "opencode" })));

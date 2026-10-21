@@ -71,6 +71,8 @@ async function loadLinkIcon(url: string): Promise<string | undefined> {
  * 一直是写进去的，初始值保持打开；切换式应用和提示词默认关闭。
  */
 function initialActivation(request: DeepLinkImportRequest): boolean {
+  // Antigravity 的卡没有「启用」，只导入（后端同样忽略 enabled）
+  if (request.resource === "provider" && request.app === "agy") return false;
   if (
     request.resource === "provider" &&
     request.app &&
@@ -967,36 +969,41 @@ export function DeepLinkImportDialog() {
                     </div>
                   )}
 
-                  {/*
-                    导入后是否立即生效由用户决定，链接里的 enabled 只是初始值。切换式应用打开后
-                    会立即切到这家，客户端流量随之改走链接里的地址，所以打开时要给出提示。
-                  */}
-                  <div className="flex items-center justify-between gap-4 pt-2 border-t border-border">
-                    <label
-                      htmlFor="deeplink-activate-after-import"
-                      className="text-sm font-medium"
-                    >
-                      {request.app && isAdditiveAppId(request.app)
-                        ? request.app === "pi"
-                          ? t("deeplink.enableInPiAfterImport")
-                          : t("deeplink.addToAppAfterImport", {
-                              app: getAppLabel(request.app),
-                            })
-                        : t("deeplink.switchAfterImport")}
-                    </label>
-                    <Switch
-                      id="deeplink-activate-after-import"
-                      checked={activateAfterImport}
-                      onCheckedChange={setActivateAfterImport}
-                    />
-                  </div>
-                  {activateAfterImport &&
-                    !(request.app && isAdditiveAppId(request.app)) && (
-                      <div className="text-warning-text text-sm flex items-start gap-2">
-                        <span aria-hidden="true">⚠️</span>
-                        <span>{t("deeplink.providerEnabledWarning")}</span>
+                  {/* Antigravity 的卡没有「启用」，只导入，不给这个开关 */}
+                  {request.app !== "agy" && (
+                    <>
+                      {/*
+                        导入后是否立即生效由用户决定，链接里的 enabled 只是初始值。切换式应用打开后
+                        会立即切到这家，客户端流量随之改走链接里的地址，所以打开时要给出提示。
+                      */}
+                      <div className="flex items-center justify-between gap-4 pt-2 border-t border-border">
+                        <label
+                          htmlFor="deeplink-activate-after-import"
+                          className="text-sm font-medium"
+                        >
+                          {request.app && isAdditiveAppId(request.app)
+                            ? request.app === "pi"
+                              ? t("deeplink.enableInPiAfterImport")
+                              : t("deeplink.addToAppAfterImport", {
+                                  app: getAppLabel(request.app),
+                                })
+                            : t("deeplink.switchAfterImport")}
+                        </label>
+                        <Switch
+                          id="deeplink-activate-after-import"
+                          checked={activateAfterImport}
+                          onCheckedChange={setActivateAfterImport}
+                        />
                       </div>
-                    )}
+                      {activateAfterImport &&
+                        !(request.app && isAdditiveAppId(request.app)) && (
+                          <div className="text-warning-text text-sm flex items-start gap-2">
+                            <span aria-hidden="true">⚠️</span>
+                            <span>{t("deeplink.providerEnabledWarning")}</span>
+                          </div>
+                        )}
+                    </>
+                  )}
 
                   {/* Warning */}
                   <div className="rounded-lg bg-warning-soft p-3 text-sm text-warning-text">

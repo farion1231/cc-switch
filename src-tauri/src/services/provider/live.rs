@@ -419,7 +419,7 @@ pub(crate) fn write_live_for_state(
         return Ok(());
     }
     if matches!(app_type, AppType::Agy) {
-        super::agy_direct::reapply(db, provider)?;
+        // 卡片只作用于它打开的终端，全量同步不写真实 settings.json。
         return Ok(());
     }
 
@@ -1104,7 +1104,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         AppType::Agy => {
             let live = crate::agy_config::read_live_settings()?;
             // agy 首次启动就会写出空的 settings.json；没有 Key、端点、模型的配置
-            // 不是用户的供应商，导入它只会让后续全量同步接管启动器和 shell。
+            // 不是用户的供应商，不导入。
             if !crate::agy_config::has_managed_content(&live) {
                 return Ok(false);
             }
@@ -1143,6 +1143,9 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             } else {
                 "custom"
             }
+        } else if matches!(app_type, AppType::Agy) {
+            // Key 只在进程环境里，从不落盘：从 live 导入的一定是 agy 自己的登录。
+            "official"
         } else {
             "custom"
         }
