@@ -1256,6 +1256,13 @@ pub fn run() {
                 log::info!("✓ XaiOAuthManager initialized");
             }
 
+            // Antigravity 官方账号（授权中心加号、切 agy 的全局登录）
+            {
+                use crate::services::agy_account::AgyAccountManager;
+                let manager = AgyAccountManager::new(crate::config::get_app_config_dir());
+                app.manage(commands::AgyAccountState(Arc::new(manager)));
+            }
+
             // 初始化全局出站代理 HTTP 客户端
             {
                 let db = &app.state::<AppState>().db;
@@ -1811,6 +1818,7 @@ pub fn run() {
             commands::auth_remove_account,
             commands::auth_set_default_account,
             commands::auth_logout,
+            commands::agy_account_is_running,
             // Copilot OAuth commands (multi-account support)
             commands::copilot_start_device_flow,
             commands::copilot_poll_for_auth,
