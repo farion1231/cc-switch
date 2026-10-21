@@ -357,6 +357,31 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "openmodel",
   },
   {
+    name: "EveryAPI",
+    websiteUrl: "https://everyapi.ai",
+    apiKeyUrl:
+      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
+    category: "aggregator",
+    baseUrl: "https://api.everyapi.ai",
+    // 网关没有 claude-haiku-4-5（api.everyapi.ai/api/pricing，2026-10-17），
+    // 不能透传，按 5.5 系列映射
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5-5",
+      "claude-opus-5-5",
+      "claude-haiku-5-5",
+      true,
+    ),
+    endpointCandidates: [
+      "https://api.everyapi.ai",
+      "https://api-cn.everyapi.ai",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "everyapi",
+    icon: "everyapi",
+  },
+  {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
     apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
@@ -1012,31 +1037,6 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "modelflare",
     icon: "modelflare",
-  },
-  {
-    name: "EveryAPI",
-    websiteUrl: "https://everyapi.ai",
-    apiKeyUrl:
-      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
-    category: "aggregator",
-    baseUrl: "https://api.everyapi.ai",
-    // 网关没有 claude-haiku-4-5（api.everyapi.ai/api/pricing，2026-10-17），
-    // 不能透传，按 5.5 系列映射
-    mode: "direct",
-    apiFormat: "anthropic",
-    modelRoutes: mappedRoutes(
-      "claude-sonnet-5-5",
-      "claude-opus-5-5",
-      "claude-haiku-5-5",
-      true,
-    ),
-    endpointCandidates: [
-      "https://api.everyapi.ai",
-      "https://api-cn.everyapi.ai",
-    ],
-    isPartner: true,
-    partnerPromotionKey: "everyapi",
-    icon: "everyapi",
   },
   {
     name: "AllTokens",

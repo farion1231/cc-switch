@@ -84,6 +84,11 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
+<td width="180"><a href="https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite"><img src="assets/partners/logos/everyapi-banner.jpg" alt="EveryAPI" width="150"></a></td>
+<td>本プロジェクトのスポンサーである EveryAPI に感謝いたします！EveryAPI は、開発者に安定・高効率・高コストパフォーマンスな API 中継サービスを提供することに力を注いでおり、Claude、Codex、Gemini などの主要な AI コーディングツールと多数の先進的なモデルに対応しています。複雑な設定は不要で手軽に接続でき、開発者の効率的なコーディングと AI アプリケーションの迅速な構築を支援します。日々の開発、プロジェクトのデバッグ、AI 支援プログラミングのいずれにおいても、EveryAPI は便利でスムーズな利用体験を提供します。EveryAPI は AI 開発をよりシンプルに、すべての呼び出しをより価値あるものにします！CC Switch ユーザー向けの特典として、<a href="https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite">こちらのリンク</a>から登録すると 14 元分のクレジットを進呈、初回チャージは割引コード <strong>ccswitch</strong> で 20% オフ、GPT は公式価格の 15% から利用できます！</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://grooroute.pro/sign-up?aff=qqm9"><img src="assets/partners/logos/grooroute-banner.jpg" alt="GrooRoute Pro" width="150"></a></td>
 <td>本プロジェクトのスポンサーである GrooRoute Pro に感謝いたします！GrooRoute Pro は信頼性が高くスムーズな AI API 中継サービスプラットフォームで、OpenAI、Claude、DeepSeek など多数の主要モデルに対応しています。海外サーバーで運用されており、料金倍率のプランを自由に選択でき、従量課金とサブスクリプションの 2 つの料金体系から柔軟に選べます。回線は安定しており応答も速く、さまざまな AI 機能をより手軽に利用できます。CC Switch ユーザー向けの特典として、<a href="https://grooroute.pro/sign-up?aff=qqm9">こちらのリンク</a>から登録すると 5 元分の無料お試しクレジットがもらえます！</td>
 </tr>

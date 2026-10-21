@@ -84,6 +84,11 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
+<td width="180"><a href="https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite"><img src="assets/partners/logos/everyapi-banner.jpg" alt="EveryAPI" width="150"></a></td>
+<td>Danke an EveryAPI für die Unterstützung dieses Projekts! EveryAPI hat sich zum Ziel gesetzt, Entwicklern einen stabilen, effizienten und preiswerten API-Relay-Dienst zu bieten, und unterstützt gängige AI-Coding-Tools wie Claude, Codex und Gemini sowie eine Vielzahl moderner Modelle. Ohne aufwendige Konfiguration ist die Anbindung schnell erledigt — so programmieren Sie effizienter und bauen AI-Anwendungen schneller. Ob alltägliche Entwicklung, Projekt-Debugging oder AI-gestütztes Programmieren: EveryAPI sorgt für ein bequemes, reibungsloses Nutzungserlebnis. EveryAPI macht AI-Entwicklung einfacher und jeden Aufruf wertvoller! Exklusiver Vorteil für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite">diesen Link</a> und erhalten Sie 14 ¥ Startguthaben, mit dem Code <strong>ccswitch</strong> 20 % Rabatt auf die erste Aufladung und GPT-Modelle ab 15 % des offiziellen Preises!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://grooroute.pro/sign-up?aff=qqm9"><img src="assets/partners/logos/grooroute-banner.jpg" alt="GrooRoute Pro" width="150"></a></td>
 <td>Danke an GrooRoute Pro für die Unterstützung dieses Projekts! GrooRoute Pro ist eine zuverlässige und reibungslose AI-API-Relay-Plattform mit Zugang zu OpenAI, Claude, DeepSeek und weiteren gängigen Modellen. Die Plattform läuft auf Servern im Ausland, lässt Sie die Preismultiplikator-Stufe selbst wählen und bietet sowohl nutzungsbasierte Abrechnung als auch Abo-Pakete — flexibel nutzbar, mit stabilen Verbindungen und schnellen Antwortzeiten, damit Sie KI-Funktionen aller Art bequem nutzen können. Exklusiver Vorteil für CC-Switch-Nutzer: Registrieren Sie sich über <a href="https://grooroute.pro/sign-up?aff=qqm9">diesen Link</a> und erhalten Sie ein kostenloses Testguthaben von 5 ¥!</td>
 </tr>
