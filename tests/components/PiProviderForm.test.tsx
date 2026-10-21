@@ -185,8 +185,8 @@ describe("PiProviderForm", () => {
     expect(
       within(
         document.querySelector("#pi-provider-compat") as HTMLElement,
-      ).queryByRole("button", { name: /pi\.form\.compatibility/ }),
-    ).not.toBeInTheDocument();
+      ).getByRole("button", { name: "pi.form.compatibility" }),
+    ).toHaveAttribute("aria-expanded", "false");
     expect(
       screen.getByText("pi.form.noCompatibilityOptions"),
     ).toBeInTheDocument();

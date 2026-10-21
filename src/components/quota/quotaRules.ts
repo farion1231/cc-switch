@@ -95,6 +95,8 @@ export function countdownStr(
 /** 档位窗口的长短：卡片第一行写最短的那档；不认识的档排最后 */
 const TIER_WINDOW_ORDER: Record<string, number> = {
   five_hour: 0,
+  agy_gemini_five_hour: 0,
+  agy_third_party_five_hour: 0,
   gemini_pro: 1,
   gemini_flash: 1,
   gemini_flash_lite: 1,

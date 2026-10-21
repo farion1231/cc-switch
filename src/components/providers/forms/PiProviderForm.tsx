@@ -1534,11 +1534,6 @@ export function PiProviderForm({
                   )}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-fg-2">
-                {t("opencode.npmPackageHint", {
-                  defaultValue: "选择 AI 服务的 API 接口格式",
-                })}
-              </p>
             </Field>
 
             <ApiKeySection
@@ -1561,11 +1556,6 @@ export function PiProviderForm({
                 onChange={handleBaseUrlChange}
                 placeholder="https://api.example.com/v1"
               />
-              <p className="text-xs text-fg-2">
-                {t("opencode.baseUrlHint", {
-                  defaultValue: "自定义 API 端点地址",
-                })}
-              </p>
             </div>
 
             <RequestHeadersEditor
@@ -2102,12 +2092,6 @@ export function PiProviderForm({
                   })}
                 </div>
               )}
-
-              <p className="text-xs text-fg-2">
-                {t("opencode.modelsHint", {
-                  defaultValue: "配置可用的模型及其显示名称。",
-                })}
-              </p>
             </div>
           </fieldset>
         )}

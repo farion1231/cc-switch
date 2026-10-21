@@ -22,12 +22,14 @@ import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
+import AgyAccountQuotaFooter from "@/components/AgyAccountQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import {
   extractCodexExperimentalBearerToken,
   extractProviderBaseUrl,
 } from "@/utils/providerConfigUtils";
 import { resolveManagedAccountId } from "@/lib/authBinding";
+import { isMac } from "@/lib/platform";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
@@ -146,6 +148,17 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
   return false;
 }
 
+/** Antigravity 卡片直接显示当前模型，省得进编辑才知道。 */
+function extractAgyModel(provider: Provider): string | null {
+  const config = provider.settingsConfig as Record<string, any>;
+  const model = config?.config?.model?.name;
+  if (typeof model === "string" && model.trim()) return model.trim();
+  const envModel = config?.env?.GEMINI_MODEL;
+  return typeof envModel === "string" && envModel.trim()
+    ? envModel.trim()
+    : null;
+}
+
 const extractApiUrl = (provider: Provider, fallbackText: string) => {
   if (provider.notes?.trim()) {
     return provider.notes.trim();
@@ -217,6 +230,11 @@ export function ProviderCard({
     return extractApiUrl(provider, fallbackUrlText);
   }, [provider, fallbackUrlText]);
 
+  const agyModel = useMemo(
+    () => (appId === "agy" ? extractAgyModel(provider) : null),
+    [appId, provider],
+  );
+
   const isClickableUrl = useMemo(() => {
     if (provider.notes?.trim()) {
       return false;
@@ -232,7 +250,8 @@ export function ProviderCard({
     provider.meta?.usage_script?.enabled ?? isBoundCodexOfficial;
   const isOfficial = isOfficialProvider(provider, appId);
   const supportsOfficialSubscription =
-    isOfficial && ["claude", "codex", "gemini", "grokbuild"].includes(appId);
+    isOfficial &&
+    ["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId);
   const isOfficialSubscriptionUsage =
     provider.meta?.usage_script?.templateType ===
     TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
@@ -248,6 +267,11 @@ export function ProviderCard({
       : provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
   // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
   const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
+  // Antigravity 官方卡绑了授权中心的账号：额度查绑定的号（只有 macOS 能切号，其他平台忽略绑定）
+  const agyBoundAccountId =
+    appId === "agy" && isOfficial && isMac()
+      ? resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || null
+      : null;
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery = isAdditiveAppId(appId) ? isInConfig : isCurrent;
@@ -420,6 +444,12 @@ export function ProviderCard({
                 </span>
               )}
             </div>
+          ) : agyModel ? (
+            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
+              <span className="min-w-0 truncate" title={agyModel}>
+                {agyModel}
+              </span>
+            </div>
           ) : displayUrl ? (
             <button
               type="button"
@@ -469,14 +499,25 @@ export function ProviderCard({
                 />
               ) : isOfficial ? (
                 officialSubscriptionEnabled ? (
-                  <SubscriptionQuotaFooter
-                    appId={appId}
-                    inline={true}
-                    isCurrent={isCurrent}
-                    autoQueryInterval={
-                      provider.meta?.usage_script?.autoQueryInterval ?? 0
-                    }
-                  />
+                  agyBoundAccountId ? (
+                    <AgyAccountQuotaFooter
+                      accountId={agyBoundAccountId}
+                      inline={true}
+                      isCurrent={isCurrent}
+                      autoQueryInterval={
+                        provider.meta?.usage_script?.autoQueryInterval ?? 0
+                      }
+                    />
+                  ) : (
+                    <SubscriptionQuotaFooter
+                      appId={appId}
+                      inline={true}
+                      isCurrent={isCurrent}
+                      autoQueryInterval={
+                        provider.meta?.usage_script?.autoQueryInterval ?? 0
+                      }
+                    />
+                  )
                 ) : null
               ) : hasMultiplePlans ? (
                 <span className="text-caption text-fg-2">

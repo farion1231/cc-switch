@@ -157,8 +157,8 @@ pub fn import_provider_from_deeplink(
         }
     }
 
-    // If enabled=true, set as current provider
-    if !additive && activate {
+    // If enabled=true, set as current provider. Antigravity 没有「启用」，只导入。
+    if !additive && activate && app_type != AppType::Agy {
         ProviderService::switch(state, app_type.clone(), &provider_id)?;
         log::info!("Provider '{provider_id}' set as current for {app_type:?}");
     }
