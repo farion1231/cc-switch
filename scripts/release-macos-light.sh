@@ -87,7 +87,16 @@ case "$ARCHS" in
   *) fail "expected a universal binary, got: $ARCHS" ;;
 esac
 codesign --verify --deep --strict --verbose=2 "$APP"
+SIGN_INFO="$(codesign -dv --verbose=4 "$APP" 2>&1)"
+grep -Fq "Authority=$IDENTITY" <<<"$SIGN_INFO" || fail "app is not signed by $IDENTITY"
+# Tauri passes --options runtime to executables only; sign the bundle itself with
+# runtime + timestamp so both layers carry the flag notarization expects.
+if ! grep -q 'Runtime Version' <<<"$SIGN_INFO"; then
+  codesign --force --timestamp --options runtime --sign "$IDENTITY" "$APP"
+fi
+codesign --verify --deep --strict --verbose=2 "$APP"
 codesign -dv --verbose=4 "$APP" 2>&1 | grep -q 'Runtime Version' || fail "hardened runtime missing from app signature"
+codesign -dv --verbose=4 "$APP/Contents/MacOS/$BIN_NAME" 2>&1 | grep -q 'Runtime Version' || fail "hardened runtime missing from the main executable"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
