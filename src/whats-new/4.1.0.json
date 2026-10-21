@@ -3,10 +3,10 @@
   "items": [
     {
       "type": "new",
-      "zh": "轻量模式会被记住，下次启动自动恢复",
-      "zh-TW": "輕量模式會被記住，下次啟動自動恢復",
-      "en": "Lightweight mode is remembered and restored on the next launch",
-      "ja": "軽量モードを記憶し、次回起動時に自動で復元"
+      "zh": "全新安装默认进入轻量模式，仅常驻托盘",
+      "zh-TW": "全新安裝預設進入輕量模式，僅常駐系統匣",
+      "en": "Fresh installs start in lightweight mode, living in the tray only",
+      "ja": "新規インストールでは軽量モードで起動し、トレイのみで動作"
     },
     {
       "type": "improve",

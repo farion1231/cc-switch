@@ -419,8 +419,9 @@ pub struct AppSettings {
     /// 记住的轻量模式偏好：勾选过托盘"轻量模式"后，关闭主窗口或重启应用
     /// 都会自动回到轻量模式（销毁主窗口、仅托盘运行），直到用户在托盘取消
     /// 勾选。纯后端状态（仅托盘可改），前端保存设置时不透传，见
-    /// `commands::settings::merge_settings_for_save`。
-    #[serde(default)]
+    /// `commands::settings::merge_settings_for_save`。Light 版默认开启：
+    /// 老配置里没有这个字段时也按开启处理，用户可在托盘取消。
+    #[serde(default = "default_lightweight_mode")]
     pub lightweight_mode: bool,
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
@@ -630,6 +631,10 @@ fn default_session_auto_sync_enabled() -> bool {
     true
 }
 
+fn default_lightweight_mode() -> bool {
+    true
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -640,7 +645,7 @@ impl Default for AppSettings {
             skip_claude_onboarding: false,
             launch_on_startup: false,
             silent_startup: false,
-            lightweight_mode: false,
+            lightweight_mode: true,
             enable_local_proxy: false,
             enable_stack_mode: false,
             proxy_confirmed: None,
@@ -1673,6 +1678,15 @@ mod tests {
         assert!(!missing.native_tray_menu);
         let menu: AppSettings = serde_json::from_str(r#"{"nativeTrayMenu":true}"#).unwrap();
         assert!(menu.native_tray_menu);
+    }
+
+    #[test]
+    fn lightweight_mode_defaults_on_and_keeps_a_saved_off_choice() {
+        assert!(AppSettings::default().lightweight_mode);
+        let missing: AppSettings = serde_json::from_str("{}").unwrap();
+        assert!(missing.lightweight_mode);
+        let off: AppSettings = serde_json::from_str(r#"{"lightweightMode":false}"#).unwrap();
+        assert!(!off.lightweight_mode);
     }
 
     #[test]
