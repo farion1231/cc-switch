@@ -4135,7 +4135,7 @@
     },
     "active": "aktif",
     "activeTitle": "{{mode}} aktif",
-    "noProvider": "(yok)",
+    "noProvider": "yok",
     "failover": "Yedek sağlayıcıya geçiş",
     "routeSettings": "Yönlendirme ayarları",
     "routeSettingsTitle": "Yönlendirme ayarları",
