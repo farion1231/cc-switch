@@ -5,15 +5,19 @@
 //! 里不带 `antigravity` 一律 403「没有有效许可」），所以 UA 写成
 //! `cc-switch/<版本> (antigravity)`：照实报 CC Switch，只补上服务端要的那个词。
 //! 只查额度，不调模型、不做预热，也不据额度自动换号。
+//!
+//! 没有使用资格的号（如 Google 判定未满 18 岁）同样回 403「没有有效许可」，这时再问一次
+//! `loadCodeAssist`，把 Google 给的不合格原因原样显示，免得看着像 CC Switch 的问题。
 
 use std::time::Duration;
 
 use serde::Deserialize;
+use serde_json::{json, Value};
 
 use crate::services::subscription::QuotaTier;
 use crate::services::subscription_agy::collect_tiers;
 
-const QUOTA_URL: &str = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
+const API_BASE: &str = "https://cloudcode-pa.googleapis.com/v1internal";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_BODY: usize = 256 * 1024;
 
@@ -22,6 +26,9 @@ pub enum QuotaError {
     /// 令牌被拒（401）：续期也救不回来时要重新登录
     #[error("Google rejected the sign-in (401)")]
     Unauthorized,
+    /// 账号没有 Antigravity 使用资格，带 Google 给的原因
+    #[error("{0}")]
+    Ineligible(String),
     #[error("Google returned {status}: {message}")]
     Http { status: u16, message: String },
     #[error("network error: {0}")]
@@ -58,6 +65,20 @@ struct SummaryBucket {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LoadCodeAssistResponse {
+    current_tier: Option<Value>,
+    #[serde(default)]
+    ineligible_tiers: Vec<IneligibleTier>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct IneligibleTier {
+    reason_message: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct ErrorBody {
     error: Option<ErrorDetail>,
 }
@@ -72,21 +93,14 @@ fn user_agent() -> String {
 }
 
 pub async fn fetch(access_token: &str) -> Result<Vec<QuotaTier>, QuotaError> {
-    let response = crate::proxy::http_client::get()
-        .post(QUOTA_URL)
-        .timeout(REQUEST_TIMEOUT)
-        .bearer_auth(access_token)
-        .header(reqwest::header::USER_AGENT, user_agent())
-        .json(&serde_json::json!({}))
-        .send()
-        .await?;
-    let status = response.status();
-    let body = response.bytes().await?;
-    if body.len() > MAX_BODY {
-        return Err(QuotaError::Parse);
-    }
+    let (status, body) = post(access_token, "retrieveUserQuotaSummary", json!({})).await?;
     if status == reqwest::StatusCode::UNAUTHORIZED {
         return Err(QuotaError::Unauthorized);
+    }
+    if status == reqwest::StatusCode::FORBIDDEN {
+        if let Some(reason) = ineligible_reason(access_token).await {
+            return Err(QuotaError::Ineligible(reason));
+        }
     }
     if !status.is_success() {
         return Err(QuotaError::Http {
@@ -95,6 +109,42 @@ pub async fn fetch(access_token: &str) -> Result<Vec<QuotaTier>, QuotaError> {
         });
     }
     parse(&body).ok_or(QuotaError::Parse)
+}
+
+/// 账号没有使用资格时返回 Google 给的原因；有资格或问不到时返回 `None`。
+async fn ineligible_reason(access_token: &str) -> Option<String> {
+    let (status, body) = post(
+        access_token,
+        "loadCodeAssist",
+        json!({"metadata": {"ideType": "ANTIGRAVITY"}}),
+    )
+    .await
+    .ok()?;
+    status
+        .is_success()
+        .then(|| parse_ineligible_reason(&body))
+        .flatten()
+}
+
+async fn post(
+    access_token: &str,
+    method: &str,
+    body: Value,
+) -> Result<(reqwest::StatusCode, bytes::Bytes), QuotaError> {
+    let response = crate::proxy::http_client::get()
+        .post(format!("{API_BASE}:{method}"))
+        .timeout(REQUEST_TIMEOUT)
+        .bearer_auth(access_token)
+        .header(reqwest::header::USER_AGENT, user_agent())
+        .json(&body)
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.bytes().await?;
+    if body.len() > MAX_BODY {
+        return Err(QuotaError::Parse);
+    }
+    Ok((status, body))
 }
 
 fn parse(body: &[u8]) -> Option<Vec<QuotaTier>> {
@@ -112,6 +162,18 @@ fn parse(body: &[u8]) -> Option<Vec<QuotaTier>> {
                 )
             }),
     )
+}
+
+/// 只有不合格档、没有当前档时才算没资格。
+fn parse_ineligible_reason(body: &[u8]) -> Option<String> {
+    let response: LoadCodeAssistResponse = serde_json::from_slice(body).ok()?;
+    if response.current_tier.is_some() {
+        return None;
+    }
+    response
+        .ineligible_tiers
+        .into_iter()
+        .find_map(|tier| tier.reason_message.filter(|message| !message.is_empty()))
 }
 
 /// Google 错误体里的 `error.message`，截短；拿不到时为空串。
@@ -177,6 +239,20 @@ mod tests {
         let body = br#"{"error":{"code":403,"message":"You do not have a valid license"}}"#;
         assert_eq!(error_message(body), "You do not have a valid license");
         assert_eq!(error_message(b"oops"), "");
+    }
+
+    #[test]
+    fn ineligibility_reason_comes_from_load_code_assist() {
+        let ineligible = br#"{"ineligibleTiers":[{"reasonCode":"RESTRICTED_AGE","reasonMessage":"Your current account is not eligible for Antigravity.","tierId":"free-tier"}],"allowedTiers":[{"id":"standard-tier"}]}"#;
+        assert_eq!(
+            parse_ineligible_reason(ineligible).as_deref(),
+            Some("Your current account is not eligible for Antigravity.")
+        );
+        // 有当前档就是有资格（403 另有原因）
+        let eligible =
+            br#"{"currentTier":{"id":"free-tier"},"ineligibleTiers":[{"reasonMessage":"x"}]}"#;
+        assert_eq!(parse_ineligible_reason(eligible), None);
+        assert_eq!(parse_ineligible_reason(b"{}"), None);
     }
 
     #[test]
