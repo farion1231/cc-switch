@@ -15,6 +15,12 @@ vi.mock("@/components/providers/forms/hooks/useManagedAuth", () => ({
 vi.mock("@/components/providers/forms/hooks/useManagedAccountUsers", () => ({
   useManagedAccountUsers: () => () => [],
 }));
+// 额度列单独查询（React Query）；这里只看每个号有没有挂上
+vi.mock("@/components/settings/auth/AccountQuota", () => ({
+  AgyAccountQuota: ({ accountId }: { accountId: string }) => (
+    <span data-testid="agy-quota">{accountId}</span>
+  ),
+}));
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
@@ -114,5 +120,21 @@ describe("AgyOAuthSection", () => {
     expect(mocks.openExternal).toHaveBeenCalledWith(
       "https://accounts.google.com/o/oauth2/v2/auth?x=1",
     );
+  });
+
+  it("shows quota for every account that can still sign in", () => {
+    const auth = baseAuth();
+    auth.accounts = [
+      account("a", "a@example.com"),
+      { ...account("b", "b@example.com"), requires_reauth: true },
+      account("c", "c@example.com"),
+    ];
+    auth.defaultAccountId = "a";
+    mocks.useManagedAuth.mockReturnValue(auth);
+    render(<AgyOAuthSection />);
+
+    const quotas = screen.getAllByTestId("agy-quota").map((el) => el.textContent);
+    // 不只是 agy 在用的号，其他号也查；登录失效的不查
+    expect(quotas).toEqual(["a", "c"]);
   });
 });

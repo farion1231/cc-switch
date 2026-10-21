@@ -203,3 +203,26 @@ export function useXaiOauthQuotaByAccountId(
 
   return useQuotaKeepLastGood(query, accountId ?? "default");
 }
+
+/**
+ * Antigravity 账号的剩余额度（按账号 ID，用该账号自己的令牌直接查，不用先切号）。
+ * 授权中心逐个账号显示时用。
+ */
+export function useAgyAccountQuota(
+  accountId: string,
+  options: UseCodexOauthQuotaOptions = {},
+) {
+  const { enabled = true, autoQuery = false } = options;
+  const query = useQuery({
+    queryKey: ["agy_oauth", "quota", accountId],
+    queryFn: () => subscriptionApi.getAgyAccountQuota(accountId),
+    enabled,
+    refetchInterval: autoQuery ? REFETCH_INTERVAL : false,
+    refetchIntervalInBackground: autoQuery,
+    refetchOnWindowFocus: autoQuery,
+    staleTime: REFETCH_INTERVAL,
+    retry: 1,
+  });
+
+  return useQuotaKeepLastGood(query, accountId);
+}

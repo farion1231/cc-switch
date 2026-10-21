@@ -21,6 +21,7 @@ import {
   type GroupAccountRow,
 } from "@/components/settings/auth/ManagedAccountsGroup";
 import { signedInDate } from "@/components/settings/auth/accountDetails";
+import { AgyAccountQuota } from "@/components/settings/auth/AccountQuota";
 
 interface AgyOAuthSectionProps {
   /** 授权中心里最后一组的「?」向上弹 */
@@ -89,6 +90,9 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
       isDefault: defaultAccountId === account.id,
       needsReauth: account.requires_reauth,
       users: accountUsers([account.id]),
+      quota: account.requires_reauth ? undefined : (
+        <AgyAccountQuota accountId={account.id} login={account.login} />
+      ),
     };
   });
 
