@@ -58,7 +58,7 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["ccswitch-light"]
+        "schemes": ["ccswitch-light", "ccswitch"]
       }
     },
     "updater": {
