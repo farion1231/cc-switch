@@ -1136,6 +1136,9 @@ impl Database {
                 &[backup_path.as_path()],
             )?;
             before_replace(safety_backup.as_deref())?;
+            // Keep device-local Skill registrations when restoring an older DB.
+            // Otherwise settings and symlinks outlive their missing skills rows.
+            Self::restore_linked_skill_rows(&main_conn, &staging_conn)?;
             let backup = Backup::new(&staging_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
             Self::complete_backup(&backup, "恢复主数据库")?;
@@ -2990,6 +2993,54 @@ mod tests {
             "safety backup must exactly represent the live state being replaced"
         );
         Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial]
+    fn restoring_database_backup_preserves_linked_skill_registration_and_route() {
+        use crate::app_config::AppType;
+        use crate::services::skill::SkillService;
+        use std::sync::Arc;
+
+        let test_home = TestHomeGuard::new();
+        let _settings = SettingsGuard {
+            previous: get_settings(),
+        };
+        update_settings(AppSettings::default()).unwrap();
+        let db = Arc::new(Database::init().unwrap());
+
+        // The selected backup predates this device-local source registration.
+        let backup = db.backup_database_file().unwrap().unwrap();
+        let filename = backup.file_name().unwrap().to_string_lossy().into_owned();
+        let source = test_home.path().join("workspace/restore-linked-probe");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: restore-linked-probe\n---\n",
+        )
+        .unwrap();
+        let installed = SkillService::link_source(&db, &source, &AppType::Codex).unwrap();
+        let route = test_home.path().join(".codex/skills/restore-linked-probe");
+        let original = source.canonicalize().unwrap();
+        assert_eq!(std::fs::read_link(&route).unwrap(), original);
+
+        db.restore_from_backup(&filename).unwrap();
+
+        let restored = db
+            .get_installed_skill(&installed.id)
+            .unwrap()
+            .expect("restore must retain the locally registered Skill row");
+        assert_eq!(restored.directory, installed.directory);
+        assert_eq!(std::fs::read_link(&route).unwrap(), original);
+        assert!(get_settings()
+            .linked_skill_sources
+            .contains_key("restore-linked-probe"));
+
+        // The restored registration must still be manageable from the UI.
+        SkillService::uninstall(&db, &installed.id).unwrap();
+        assert!(std::fs::symlink_metadata(&route).is_err());
+        assert!(source.join("SKILL.md").is_file());
     }
 
     #[cfg(windows)]

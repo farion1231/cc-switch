@@ -91,6 +91,7 @@ impl SkillService {
         }
         apps.set_enabled_for(current_app, true);
         let mut old_routes = Vec::new();
+        let mut seen_old_routes = std::collections::HashSet::new();
         // A real original or a pre-existing foreign link remains owned by its
         // existing tool. Reflect that exposure without taking ownership of it.
         for app in AppType::all() {
@@ -109,7 +110,13 @@ impl SkillService {
                             let at_slot = resolved.file_name() == slot.file_name()
                                 && matches!((resolved.parent().and_then(|p| p.canonicalize().ok()), slot.parent().and_then(|p| p.canonicalize().ok())), (Some(left), Some(right)) if left == right);
                             if at_slot {
-                                old_routes.push((destination, target));
+                                // Overrides can make multiple apps share one physical
+                                // link. Remove it only once, even through path aliases.
+                                let physical_route =
+                                    root.canonicalize().unwrap_or(root.clone()).join(&directory);
+                                if seen_old_routes.insert(physical_route) {
+                                    old_routes.push((destination, target));
+                                }
                                 continue;
                             }
                         }

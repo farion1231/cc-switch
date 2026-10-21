@@ -406,6 +406,54 @@ fn confirmed_conversion_of_an_imported_snapshot_preserves_the_selected_host_orig
 }
 
 #[test]
+fn conversion_deduplicates_shared_skills_directory_overrides() {
+    let _guard = support::test_mutex()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    support::reset_test_fs();
+    let home = support::ensure_test_home();
+    let source = home.join(".claude/skills/shared-override-probe");
+    write_original(&source);
+    let state = support::create_test_state().unwrap();
+    let imported = SkillService::import_from_apps(
+        &state.db,
+        vec![ImportSkillSelection {
+            directory: "shared-override-probe".into(),
+            apps: SkillApps {
+                claude: true,
+                codex: true,
+                ..Default::default()
+            },
+        }],
+    )
+    .unwrap()
+    .remove(0);
+    let route = home.join(".codex/skills/shared-override-probe");
+    let slot = home.join(".cc-switch/skills/shared-override-probe");
+    assert_eq!(fs::read_link(&route).unwrap(), slot);
+
+    // Both app types now resolve to the same physical old symlink.
+    update_settings(AppSettings {
+        claude_config_dir: Some(home.join(".codex").to_string_lossy().into_owned()),
+        ..Default::default()
+    })
+    .unwrap();
+    let converted =
+        SkillService::link_source_confirmed(&state.db, &source, &AppType::Codex, true).unwrap();
+    assert_eq!(converted.id, imported.id);
+    assert_eq!(
+        fs::read_link(&route).unwrap(),
+        source.canonicalize().unwrap()
+    );
+    assert!(fs::symlink_metadata(&slot).is_err());
+    assert!(source.join("SKILL.md").is_file());
+
+    SkillService::uninstall(&state.db, &converted.id).unwrap();
+    assert!(fs::symlink_metadata(&route).is_err());
+    assert!(source.join("SKILL.md").is_file());
+}
+
+#[test]
 fn conversion_rejects_independent_app_copies_without_changing_any_content() {
     let _guard = support::test_mutex()
         .lock()
