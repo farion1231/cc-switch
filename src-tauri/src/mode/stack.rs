@@ -126,6 +126,14 @@ pub fn encode(app: &AppType, key: &str, model: &str, one_m: bool) -> String {
     }
 }
 
+/// 聚合写进 Desktop 菜单的 id：`claude-fable-ccs-` 加 6 位数字。用户自己维护的列表里不会有这种名字。
+pub fn is_desktop_stack_id(id: &str) -> bool {
+    let Some(rest) = id.strip_prefix(DESKTOP_PREFIX) else {
+        return false;
+    };
+    rest.len() == DESKTOP_CODE_DIGITS && rest.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 /// Claude Desktop Stack 模型 id 里的数字：key 和上游模型名的 FNV-1a 散列取 6 位。不用标准库的
 /// 散列：它不保证跨版本稳定，客户端会一直带着选中过的 id。
 fn desktop_code(key: &str, model: &str) -> String {

@@ -190,8 +190,8 @@ pub const DESKTOP_PROFILE_FLOOR: &[&str] = &[
     "inferenceGatewayBaseUrl",
     "inferenceGatewayApiKey",
     "inferenceGatewayAuthScheme",
-    // `inferenceModels` 不在这里：没配模型映射时 CC Switch 不写这个键，留在 Desktop 里的
-    // 列表归用户，切换和重启都不动它。配了映射时照常写入并覆盖。
+    // `inferenceModels` 不在这里：没配映射时不能按关键字段清掉，否则用户自己在
+    // Desktop 里维护的列表会一起没。我们写过的列表在写入路径里按快照清理。
     // 聚合模式写 false（列表完全由 CC Switch 决定），其余模式清掉
     "modelDiscoveryEnabled",
 ];

@@ -1236,10 +1236,9 @@ fn check_stack_member(app: &AppType, provider: &Provider) -> Result<(), String> 
     }
     match app {
         AppType::Codex => codex_direct::check_stack_member(provider).map_err(err)?,
-        // 映射表不完整的卡发布不出模型，做默认时写入也会失败
+        // 没有启用模型的卡发布不出条目。拒绝加入，不改这张卡。
         AppType::ClaudeDesktop => {
-            claude_desktop_config::validate_proxy_provider(provider).map_err(err)?;
-            claude_desktop_config::configured_proxy_model_routes(provider).map_err(err)?;
+            claude_desktop_config::ensure_desktop_stack_member(provider).map_err(err)?;
         }
         _ => {}
     }
