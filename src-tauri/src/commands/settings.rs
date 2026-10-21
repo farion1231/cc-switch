@@ -725,8 +725,10 @@ mod tests {
     /// 否则托盘刚勾选的偏好会被前端缓存的旧值冲掉。
     #[test]
     fn save_settings_should_preserve_lightweight_mode_preference() {
-        let mut existing = AppSettings::default();
-        existing.lightweight_mode = true;
+        let existing = AppSettings {
+            lightweight_mode: true,
+            ..AppSettings::default()
+        };
 
         // 前端缓存里偏好还是旧值（false），全量保存时不能覆盖后端的 true
         let incoming = AppSettings::default();
