@@ -30,10 +30,9 @@ impl AutoSyncSuppressionGuard {
 
 impl Drop for AutoSyncSuppressionGuard {
     fn drop(&mut self) {
-        let _ =
-            AUTO_SYNC_SUPPRESS_DEPTH.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
-                Some(value.saturating_sub(1))
-            });
+        let _ = AUTO_SYNC_SUPPRESS_DEPTH.try_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
+            Some(value.saturating_sub(1))
+        });
     }
 }
 

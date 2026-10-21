@@ -189,7 +189,6 @@ fn make_forwarder(
     session_id: &str,
     client_provided: bool,
 ) -> RequestForwarder {
-    let db = Arc::new(Database::memory().unwrap());
     RequestForwarder::new(
         router,
         5, // non_streaming_timeout（秒）

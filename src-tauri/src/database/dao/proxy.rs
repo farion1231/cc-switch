@@ -889,6 +889,7 @@ mod tests {
             "session"
         );
     }
+    #[tokio::test]
     async fn test_pricing_model_source_round_trip_and_validation() -> Result<(), AppError> {
         let db = Database::memory()?;
 

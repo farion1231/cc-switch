@@ -363,7 +363,9 @@
   border-top: 2px solid hsl(var(--border));
 }
 
-[data-tauri-drag-region] {
+/* Windows 使用 Tauri 的事件拖拽。原生拖拽 CSS 会触发 WebView2 的
+   UpdateDraggableRegions，可能导致高 CPU 或挂起 */
+.is-mac [data-tauri-drag-region] {
   -webkit-app-region: drag;
 }
 

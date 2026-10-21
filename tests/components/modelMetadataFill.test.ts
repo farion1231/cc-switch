@@ -86,15 +86,27 @@ describe("fillOpenClawModel", () => {
 });
 
 describe("fillHermesModel", () => {
-  it("fills context_length only when blank", () => {
+  it("fills context_length and supports_vision only when blank", () => {
     expect(fillHermesModel({ id: "m" }, metadata)).toEqual({
       id: "m",
       context_length: 262144,
+      supports_vision: true,
     });
-    expect(fillHermesModel({ id: "m", context_length: 1 }, metadata)).toEqual({
-      id: "m",
-      context_length: 1,
-    });
+    expect(
+      fillHermesModel(
+        { id: "m", context_length: 1, supports_vision: true },
+        metadata,
+      ),
+    ).toEqual({ id: "m", context_length: 1, supports_vision: true });
+  });
+
+  it("only fills supports_vision towards true and keeps an explicit false", () => {
+    expect(
+      fillHermesModel({ id: "m" }, { inputModalities: ["text"] }),
+    ).toEqual({ id: "m" });
+    expect(
+      fillHermesModel({ id: "m", supports_vision: false }, metadata),
+    ).toEqual({ id: "m", context_length: 262144, supports_vision: false });
   });
 });
 

@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "@/lib/toast";
 import { Plus, Trash2, ChevronRight } from "lucide-react";
-import { ApiKeySection, ModelDropdown } from "./shared";
+import { ApiKeySection, GptContextWindowHint, ModelDropdown } from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -898,6 +898,10 @@ export function OpenCodeFormFields({
                               )
                             }
                             placeholder="1048576"
+                          />
+                          <GptContextWindowHint
+                            modelId={key}
+                            contextWindow={model.limit?.context}
                           />
                         </div>
                         <div className="space-y-1">
