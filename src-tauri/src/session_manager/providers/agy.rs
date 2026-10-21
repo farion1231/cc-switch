@@ -126,7 +126,8 @@ fn scan_root(root: &Path, gemini_dir: Option<&Path>) -> Vec<SessionMeta> {
                 let first = rows
                     .iter()
                     .find(|v| v["type"] == "USER_INPUT")
-                    .and_then(|v| v["content"].as_str());
+                    .and_then(|v| v["content"].as_str())
+                    .map(user_request);
                 SessionMeta {
                     provider_id: "agy".into(),
                     session_id: id.clone(),
@@ -200,6 +201,17 @@ fn read_summaries(path: &Path, gemini_dir: Option<&Path>) -> BTreeMap<String, Se
     result
 }
 
+/// agy stores each prompt wrapped in `<USER_REQUEST>`, followed by context it adds itself
+/// (`<ADDITIONAL_METADATA>`, `<USER_SETTINGS_CHANGE>`, ...). Only the part the user typed is shown.
+fn user_request(content: &str) -> &str {
+    content
+        .split_once("<USER_REQUEST>")
+        .and_then(|(_, rest)| rest.split_once("</USER_REQUEST>"))
+        .map(|(inner, _)| inner.trim())
+        .filter(|inner| !inner.is_empty())
+        .unwrap_or(content)
+}
+
 pub(crate) fn timestamp(value: &Value) -> Option<i64> {
     parse_timestamp_to_ms(&value["created_at"])
 }
@@ -214,6 +226,11 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             _ => "system",
         };
         let content = value["content"].as_str().unwrap_or("");
+        let content = if role == "user" {
+            user_request(content)
+        } else {
+            content
+        };
         // Keep unrecognized steps visible instead of silently dropping future tool/event types.
         let content = if content.is_empty() {
             serde_json::to_string_pretty(&value).unwrap_or_default()
@@ -327,6 +344,27 @@ mod tests {
         .unwrap();
         std::os::unix::fs::symlink(outside.path(), session.join(".system_generated")).unwrap();
         assert!(scan_root(root.path(), None).is_empty());
+    }
+
+    #[test]
+    fn agy_shows_only_the_typed_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let logs = dir.path().join("abc-123/.system_generated/logs");
+        fs::create_dir_all(&logs).unwrap();
+        let file = logs.join("transcript_full.jsonl");
+        fs::write(&file, concat!(
+            "{\"step_index\":0,\"type\":\"USER_INPUT\",\"content\":\"<USER_REQUEST>\\nfix the build\\n</USER_REQUEST>\\n<ADDITIONAL_METADATA>\\nThe current local time is: 2026-10-21T08:40:35+08:00.\\n</ADDITIONAL_METADATA>\"}\n",
+            "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"content\":\"<USER_REQUEST> stays in replies\"}\n",
+            "{\"step_index\":2,\"type\":\"USER_INPUT\",\"content\":\"plain prompt\"}\n",
+        )).unwrap();
+        assert_eq!(
+            scan_root(dir.path(), None)[0].title.as_deref(),
+            Some("fix the build")
+        );
+        let messages = load_messages(&file).unwrap();
+        assert_eq!(messages[0].content, "fix the build");
+        assert_eq!(messages[1].content, "<USER_REQUEST> stays in replies");
+        assert_eq!(messages[2].content, "plain prompt");
     }
 
     #[test]

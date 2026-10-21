@@ -1091,7 +1091,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             {selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION && (
               <div className="space-y-2 border-t border-white/10 pt-3">
                 <p className="text-sm text-fg-2">
-                  {t("usageScript.officialSubscriptionHint")}
+                  {appId === "agy"
+                    ? t("usageScript.officialSubscriptionHintAgy")
+                    : t("usageScript.officialSubscriptionHint")}
                 </p>
               </div>
             )}
