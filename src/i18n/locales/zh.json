@@ -849,6 +849,17 @@
     "enableClaudePluginIntegrationDescription": "开启后 VS Code Claude Code 插件的供应商将随本软件切换",
     "skipClaudeOnboarding": "跳过 Claude Code 初次安装确认",
     "skipClaudeOnboardingDescription": "Claude Code 第一次启动时会先走一遍引导流程，要求选主题并登录 Anthropic 账号。如果你用的是第三方供应商，不需要登录官方账号，开启后就能跳过这一步直接使用。原理是在 ~/.claude.json 里写入 hasCompletedOnboarding: true；关闭时删除该字段，下次启动会重新出现引导。",
+    "remoteEnabled": "启用远程管理服务",
+    "remoteManagement": "远程管理",
+    "remoteEnabledDescription": "通过浏览器远程切换 Provider。",
+    "remotePort": "服务端口",
+    "remotePortDescription": "远程管理 HTTP 服务的监听端口（1024-65535）。",
+    "remoteRestart": "重启服务",
+    "remoteRestarting": "重启中...",
+    "remoteRestartSuccess": "远程管理服务已重启。",
+    "remoteRestartFailed": "远程管理服务重启失败。",
+    "remoteStatusRunning": "运行中",
+    "remoteStatusStopped": "已停止",
     "codexAuth": "Codex 应用增强",
     "preserveCodexOfficialAuthOnSwitch": "非接管切换时保留官方登录",
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未开启路由接管时切换第三方供应商是否保留 Codex 官方登录；路由接管期间始终保留",
@@ -4128,6 +4139,75 @@
     "expiredHint": "请运行 {{tool}} 命令刷新登录",
     "queryFailed": "查询失败",
     "refresh": "刷新"
+  },
+  "remote": {
+    "approval": {
+      "title": "需要设备授权",
+      "evidence": {
+        "tailnet": "Tailnet 网络",
+        "loopback": "本机回环地址",
+        "unavailable": "无法核实对端身份",
+        "nodeName": "节点名",
+        "nodeStableId": "节点稳定 ID",
+        "loginName": "账号",
+        "peerAddr": "对端地址",
+        "loopbackDescription": "来自本机进程。",
+        "notInTailnet": "不在零信任覆盖网络内",
+        "notInTailnetDescription": "该地址不在你的零信任覆盖网络（如 Tailscale）内，无法准确识别对端的唯一身份",
+        "unavailableDescription": "无法通过零信任覆盖网络（如 Tailscale）核实该地址的归属，无法准确识别对端的唯一身份",
+        "degradedPeerAddr": "已确认对端地址：{{addr}}",
+        "degradedCaution": "请谨慎批准。",
+        "degradedAck": "我已知悉：对端 IP 已确认，但无法准确识别其唯一身份，仍要批准。"
+      },
+      "userCode": {
+        "label": "验证码",
+        "empty": "暂无验证码——请在该设备上打开链接以继续。"
+      },
+      "foreignAccount": {
+        "warning": "该设备登录的是另一个账号，请先切换账号再授权。",
+        "ack": "我已在另一台设备上核实过账号。"
+      },
+      "approve": "批准",
+      "reject": "拒绝",
+      "close": "关闭",
+      "failed": "无法完成该审批请求。",
+      "client": {
+        "label": "发起设备"
+      },
+      "defaultAction": {
+        "approve": "建议动作：批准",
+        "reject": "建议动作：拒绝"
+      }
+    },
+    "settings": {
+      "bindScope": {
+        "label": "绑定范围",
+        "confirm": "确认绑定范围",
+        "description": "远程管理服务监听在哪些网络接口上。",
+        "loopback": "仅本机",
+        "loopbackDescription": "只监听 127.0.0.1，其他设备无法连接。",
+        "tailscale": "仅 Tailscale",
+        "tailscaleDescription": "同时监听 127.0.0.1 与 Tailscale IP，Tailnet 内的设备可以连接。",
+        "allInterfaces": "全部网卡",
+        "allInterfacesDescription": "监听 0.0.0.0，任何能访问本机局域网或 Tailscale 地址的设备都可以连接。",
+        "widenTitle": "确认放宽绑定范围？",
+        "widenTransition": "当前：{{current}} → 目标：{{target}}",
+        "newAddresses": "新增可达地址：",
+        "allInterfacesAddress": "全部网卡（0.0.0.0），端口 {{port}}",
+        "credentialNote": "非回环来源的请求仍然必须持有配对凭证。",
+        "cancel": "取消",
+        "applied": "绑定范围已更新。",
+        "notApplied": "绑定范围未改变。",
+        "failed": "修改绑定范围失败。",
+        "tailscaleUnavailable": "Tailscale 未安装或未运行，请先安装 Tailscale。"
+      },
+      "cors": {
+        "mode": "CORS 模式"
+      },
+      "origin": {
+        "whitelist": "来源白名单"
+      }
+    }
   },
   "nav": {
     "mainLabel": "主导航",
