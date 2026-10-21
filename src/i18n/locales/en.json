@@ -187,6 +187,7 @@
       "description": "A terminal opens in the folder you pick and starts {{app}} with \"{{name}}\"'s settings. Usually you'd pick your project folder.",
       "isolationTitle": "This terminal is isolated",
       "isolationBody": "It stays on \"{{name}}\": switching providers in CC Switch later won't affect it, and it won't change the provider CC Switch is currently using.",
+      "isolationBodyAgy": "The key and endpoint of \"{{name}}\" go only to agy in this terminal and are never written to a file; running agy directly in another terminal still uses your Google sign-in.",
       "noDir": "No folder selected",
       "choose": "Choose Folder…",
       "change": "Change…",
@@ -209,8 +210,8 @@
     "geminiConfigHint": "Use .env format to configure Gemini",
     "form": {
       "agy": {
-        "connectionHint": "Leave the API key and endpoint empty to use agy's Google sign-in; after switching, new agy sessions use the model set here. With a key, the provider runs in third-party mode: the key only applies to agy started from the card's \"Open Terminal\", and running agy directly in a terminal still uses your Google sign-in. A key without an endpoint uses Google's default API; third-party endpoints must support the Gemini API and agy's built-in Gemini models. In both modes, use the display name from the model list.",
-        "keyFieldsHint": "The model follows the provider; the key and endpoint are used by \"Open Terminal\". Other native Antigravity settings are preserved.",
+        "connectionHint": "Leave the API key and endpoint empty to use agy's Google sign-in; with a key, the provider runs in third-party mode. Both modes only apply to agy started from the card's \"Open Terminal\": the key and endpoint go to that one process, and the model applies to that session only. Running agy directly in a terminal still uses your Google sign-in, with the model chosen by agy's own /model. A key without an endpoint uses Google's default API; third-party endpoints must support the Gemini API and agy's built-in Gemini models. In both modes, use the display name from the model list.",
+        "keyFieldsHint": "The model, key and endpoint are only used by \"Open Terminal\" and are never written to Antigravity's own settings.",
         "envFile": "Launcher environment variables",
         "envFileHint": "When agy is started from the card's \"Open Terminal\", CC Switch passes the API key and endpoint to that one agy process only and never writes them to a file. Other environment variables are not applied.",
         "configJson": "Model configuration (CC Switch format)",

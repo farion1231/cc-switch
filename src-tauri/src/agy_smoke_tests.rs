@@ -58,17 +58,6 @@ async fn agy_live_provider_skill_session_and_tokens() {
     let db = Arc::new(Database::memory().unwrap());
     let row = Provider::with_id("smoke".into(), "Smoke".into(), settings.clone(), None);
     db.save_provider("agy", &row).unwrap();
-    crate::services::provider::agy_direct::switch_to(&db, &row).unwrap();
-    assert_eq!(
-        crate::mode::current::provider_for(
-            &db,
-            &AppType::Agy,
-            crate::mode::current::Purpose::Direct
-        )
-        .unwrap()
-        .as_deref(),
-        Some("smoke")
-    );
     let launch = crate::services::provider::agy_direct::terminal_launch(&row).unwrap();
     let private_settings = launch
         .gemini_dir

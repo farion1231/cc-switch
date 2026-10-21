@@ -66,7 +66,7 @@ pub async fn get_agy_models(
         .map_err(|_| "Antigravity model discovery timed out".to_string())?
         .map_err(|_| "Antigravity CLI not found; install agy first".to_string())?;
     if !output.status.success() {
-        return Err("Antigravity could not list models. Check the active provider and sign in with agy for official models.".into());
+        return Err("Antigravity could not list models. Check the API key and endpoint, or sign in with agy for official models.".into());
     }
     Ok(parse_agy_models(&String::from_utf8_lossy(&output.stdout)))
 }

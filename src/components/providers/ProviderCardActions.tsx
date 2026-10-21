@@ -17,6 +17,7 @@ import {
   Power,
   PowerOff,
   Route,
+  SquareTerminal,
   Star,
   type LucideIcon,
 } from "lucide-react";
@@ -55,6 +56,7 @@ const BUTTON_ICON: Record<string, LucideIcon> = {
   enable: Power,
   use: Power,
   disable: PowerOff,
+  openTerminal: SquareTerminal,
 };
 
 interface ProviderCardActionsProps {

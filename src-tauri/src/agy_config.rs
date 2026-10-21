@@ -1,19 +1,20 @@
 //! Antigravity CLI (`agy`) 的 live 配置。
 //!
 //! `agy` 只从进程环境读取 `GEMINI_API_KEY` 和 `GOOGLE_GEMINI_BASE_URL`，`settings.json`
-//! 只负责 `modelProvider` 和 `model`（只认显示名，写模型 ID 会被静默忽略）。所以分两种卡：
+//! 只负责 `modelProvider` 和 `model`（只认显示名）。CC Switch 管不到用户自己敲的 `agy`，
+//! 所以卡片没有「启用」，只有「打开终端」，每张卡只作用于它打开的那个终端：
 //!
-//! - **官方登录卡**：切换时按键补丁改 `~/.gemini/antigravity-cli/settings.json` 的
-//!   `model`，并去掉 `modelProvider`，其余键不动。登录凭据由 agy 自己保管（不在
-//!   `~/.gemini` 里），在哪个终端敲 `agy` 都生效。
-//! - **第三方 Key 卡**：只在 CC Switch 打开的终端里生效。启动命令是
-//!   `agy --gemini_dir=<私有目录>`，私有目录在 `~/.cc-switch/agy/<供应商>/`，它的
-//!   `antigravity-cli/settings.json` 写 `modelProvider: gemini` 和模型，`config` 软链回
-//!   `~/.gemini/config`（MCP、Skills、提示词照常共享）；Key 和地址只经子进程环境传入。
-//!   真实 `settings.json` 只去掉 `modelProvider`，保证直接敲 `agy` 仍是官方登录。
+//! - **官方登录卡**：`agy --model=<显示名>`（没设模型就是 `agy`），模型只对这次会话生效。
+//!   登录凭据由 agy 自己保管（不在 `~/.gemini` 里）。
+//! - **第三方 Key 卡**：`agy --gemini_dir=<私有目录>`，私有目录在
+//!   `~/.cc-switch/agy/<供应商>/`，它的 `antigravity-cli/settings.json` 写
+//!   `modelProvider: gemini` 和模型，`config` 软链回 `~/.gemini/config`（MCP、Skills、
+//!   提示词照常共享）；Key 和地址只经子进程环境传入。
 //!
-//! 不改 shell 启动文件，也不装包装脚本。#8268 的测试版装过的，启动时由
-//! [`remove_legacy_launcher`] 只删带标记的内容。
+//! 真实的 `~/.gemini/antigravity-cli/settings.json` 一律不写，直接敲 `agy` 永远是官方登录，
+//! 模型由 agy 自己的 `/model` 管。唯一的例外是撤掉 #8268 测试版留下的 `modelProvider`：
+//! 测试版还装过包装脚本、改过 shell 启动文件，启动时由 [`remove_legacy_launcher`] 只删带
+//! 标记的内容。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -138,19 +139,10 @@ fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|s| !s.trim().is_empty())
 }
 
-/// 真实 `settings.json` 的补丁：永远是登录模式。Key 卡不碰 `model`，免得改掉官方登录
-/// 正在用的模型。
-fn live_settings_patch(projection: &AgyProjection) -> JsonPatch {
-    let mut patch = JsonPatch::default();
-    patch.remove.push(KeyPath::new(&["modelProvider"]));
-    if !projection.is_key_mode() {
-        let model = KeyPath::new(&["model"]);
-        match &projection.model {
-            Some(name) => patch.set.push((model, json!(name))),
-            None => patch.remove.push(model),
-        }
-    }
-    patch
+/// 配置里是否带有值得导入的真实内容（Key、端点或模型）。
+pub(crate) fn has_managed_content(settings: &Value) -> bool {
+    let projection = AgyProjection::of(settings);
+    projection.api_key.is_some() || projection.base_url.is_some() || projection.model.is_some()
 }
 
 /// 私有目录里 `settings.json` 的补丁：Key 模式加上卡上的模型。
@@ -167,64 +159,32 @@ fn key_profile_patch(projection: &AgyProjection) -> JsonPatch {
     patch
 }
 
-/// 配置里是否带有值得托管的真实内容（Key、端点或模型）。
-pub(crate) fn has_managed_content(settings: &Value) -> bool {
-    let projection = AgyProjection::of(settings);
-    projection.api_key.is_some() || projection.base_url.is_some() || projection.model.is_some()
-}
-
-/// 切换：只改真实 `settings.json`，和当前供应商指针在同一个可恢复操作里提交。
-pub(crate) fn apply_managed(
-    db: &crate::database::Database,
-    settings: &Value,
-    operation: &str,
-    target: crate::mode::state::PendingTarget,
-) -> Result<crate::mode::operation::OperationReport, AppError> {
-    let patch = live_settings_patch(&AgyProjection::of(settings));
-    apply_live_patch(db, &patch, operation, target)
-}
-
-/// 只去掉真实 `settings.json` 里的 `modelProvider`，模型不动。
+/// 撤掉 #8268 测试版写进真实 `settings.json` 的 `modelProvider`，模型和其余键不动。
+/// 这是 CC Switch 对真实 `settings.json` 唯一的写入。
 pub(crate) fn release_model_provider(
     db: &crate::database::Database,
 ) -> Result<crate::mode::operation::OperationReport, AppError> {
-    let mut patch = JsonPatch::default();
-    patch.remove.push(KeyPath::new(&["modelProvider"]));
-    apply_live_patch(
-        db,
-        &patch,
-        crate::mode::state::op::APPLY,
-        crate::mode::state::PendingTarget::default(),
-    )
-}
-
-fn apply_live_patch(
-    db: &crate::database::Database,
-    patch: &JsonPatch,
-    operation: &str,
-    target: crate::mode::state::PendingTarget,
-) -> Result<crate::mode::operation::OperationReport, AppError> {
     use crate::live::engine::LiveFile;
     use crate::mode::operation::{AppWrite, FileChange};
+    use crate::mode::state::{op, PendingTarget};
     let write = AppWrite::begin(db, "agy")?;
     let path = settings_path();
-    let pre = if path.exists() {
-        Some(fs::read(&path).map_err(|e| AppError::io(&path, e))?)
-    } else {
-        None
-    };
-    // 先验证：文件坏了就停，不改指针。
-    patch.apply(&path, pre.as_deref()).map_err(AppError::from)?;
-    // agy 还没写出 settings.json、补丁又只有删除时，没必要替它创建一个空文件。
-    let changes = if pre.is_none() && patch.set.is_empty() {
-        Vec::new()
-    } else {
-        vec![FileChange {
+    if !path.exists() {
+        return write.run(op::APPLY, &[], PendingTarget::default());
+    }
+    let pre = fs::read(&path).map_err(|e| AppError::io(&path, e))?;
+    let mut patch = JsonPatch::default();
+    patch.remove.push(KeyPath::new(&["modelProvider"]));
+    // 先验证：文件坏了就停。
+    patch.apply(&path, Some(&pre)).map_err(AppError::from)?;
+    write.run(
+        op::APPLY,
+        &[FileChange {
             file: LiveFile::private(path),
-            patch,
-        }]
-    };
-    write.run(operation, &changes, target)
+            patch: &patch,
+        }],
+        PendingTarget::default(),
+    )
 }
 
 /// 在终端里启动这张卡要用的参数。
@@ -232,6 +192,8 @@ fn apply_live_patch(
 pub(crate) struct AgyLaunch {
     /// Key 模式的私有 `--gemini_dir`；官方登录卡为 `None`，直接跑原生 `agy`。
     pub gemini_dir: Option<PathBuf>,
+    /// 官方登录卡的 `--model`（显示名，只对这次会话生效）；Key 卡的模型写在私有目录里，为 `None`。
+    pub model: Option<String>,
     /// 只给这一个 agy 进程的环境变量；`None` 表示要清掉（用户 rc 里可能 export 过）。
     pub env: Vec<(&'static str, Option<String>)>,
 }
@@ -242,6 +204,7 @@ pub(crate) fn prepare_launch(provider_id: &str, settings: &Value) -> Result<AgyL
     if !projection.is_key_mode() {
         return Ok(AgyLaunch {
             gemini_dir: None,
+            model: projection.model,
             env: Vec::new(),
         });
     }
@@ -249,6 +212,7 @@ pub(crate) fn prepare_launch(provider_id: &str, settings: &Value) -> Result<AgyL
     prepare_key_profile(&dir, &projection)?;
     Ok(AgyLaunch {
         gemini_dir: Some(dir),
+        model: None,
         env: vec![
             ("GEMINI_API_KEY", projection.api_key.clone()),
             ("GOOGLE_GEMINI_BASE_URL", projection.base_url.clone()),
@@ -579,38 +543,16 @@ mod tests {
     }
 
     #[test]
-    fn login_card_sets_model_and_drops_model_provider() {
-        let p = projection(json!({"env":{},"config":{"model":{"name":"Gemini 3.8 Flash (Low)"}}}));
-        let doc = patched(
-            &live_settings_patch(&p),
-            r#"{"modelProvider":"gemini","model":"old","trustedWorkspaces":["/Users/me"]}"#,
-        );
-        assert!(doc.get("modelProvider").is_none());
-        assert_eq!(doc["model"], "Gemini 3.8 Flash (Low)");
-        assert_eq!(doc["trustedWorkspaces"][0], "/Users/me");
-
-        let blank = projection(json!({"env":{},"config":{}}));
-        let doc = patched(&live_settings_patch(&blank), r#"{"model":"old"}"#);
-        assert!(doc.get("model").is_none());
-    }
-
-    #[test]
-    fn key_card_keeps_the_login_model_in_the_real_settings() {
+    fn key_profile_patch_sets_key_mode_and_the_card_model() {
         let p = projection(json!({
             "env":{"GEMINI_API_KEY":"fixture","GOOGLE_GEMINI_BASE_URL":"https://example.test"},
             "config":{"model":{"name":"Gemini 3.1 Pro (High)"}}
         }));
-        let doc = patched(
-            &live_settings_patch(&p),
-            r#"{"modelProvider":"gemini","model":"Gemini 3.8 Flash (Medium)"}"#,
-        );
-        assert!(doc.get("modelProvider").is_none());
-        assert_eq!(doc["model"], "Gemini 3.8 Flash (Medium)");
-
         let doc = patched(&key_profile_patch(&p), r#"{"theme":"dark"}"#);
         assert_eq!(doc["modelProvider"], "gemini");
         assert_eq!(doc["model"], "Gemini 3.1 Pro (High)");
         assert_eq!(doc["theme"], "dark");
+        assert!(!serde_json::to_string(&doc).unwrap().contains("fixture"));
     }
 
     #[test]
@@ -643,7 +585,7 @@ mod integration_tests {
     use crate::database::Database;
     use crate::mode::{
         current::{provider_for, Purpose},
-        operation::{failpoint, AppWrite},
+        operation::failpoint,
     };
     use crate::provider::Provider;
     use crate::services::provider::agy_direct;
@@ -711,90 +653,44 @@ mod integration_tests {
 
     #[test]
     #[serial]
-    fn switch_recovers_interrupted_files_and_pointer() {
+    fn cards_never_write_the_real_settings_credentials_or_shell_files() {
+        use crate::services::ProviderService;
         let home = HomeGuard::new();
-        let db = Database::memory().unwrap();
         fs::create_dir_all(agy_dir()).unwrap();
-        fs::write(
-            settings_path(),
-            r#"{"trustedWorkspaces":["keep"],"theme":"dark"}"#,
-        )
-        .unwrap();
-        // Sibling Gemini files are never targets of an Antigravity switch.
+        let original = r#"{"model":"Gemini 3.8 Flash (Medium)","theme":"dark"}"#;
+        fs::write(settings_path(), original).unwrap();
+        // Sibling Gemini files are never targets either.
         let sibling = home.path().join(".gemini/settings.json");
         fs::write(&sibling, "{\"keep\":true}").unwrap();
-        let row = provider(
+        let db = Arc::new(Database::memory().unwrap());
+        let state = AppState::new(db.clone());
+        let login = provider(
             "login",
-            json!({"env":{},"config":{"model":{"name":"Gemini 3.8 Flash (Low)"}}}),
+            json!({"env":{},"config":{"model":{"name":"Gemini 3.1 Pro (High)"}}}),
             true,
         );
-        db.save_provider("agy", &row).unwrap();
-        failpoint::crash_at(Some("published:0"));
-        let result = agy_direct::switch_to(&db, &row);
-        failpoint::crash_at(None);
-        assert!(result.is_err());
-        // The file is published but the pointer is not committed yet.
-        assert_eq!(
-            read_json(&settings_path())["model"],
-            "Gemini 3.8 Flash (Low)"
-        );
+        let relay = relay("relay");
+        for row in [&login, &relay] {
+            assert!(ProviderService::add(&state, AppType::Agy, row.clone(), true).unwrap());
+            let error = ProviderService::switch(&state, AppType::Agy, &row.id).unwrap_err();
+            assert!(error.to_string().contains("Open terminal"), "{error}");
+        }
         assert_eq!(
             provider_for(&db, &AppType::Agy, Purpose::Direct).unwrap(),
             None
         );
-        // begin completes the partially published operation and requests a retry.
-        assert!(AppWrite::begin(&db, "agy").is_err());
-        assert_eq!(
-            provider_for(&db, &AppType::Agy, Purpose::Direct)
-                .unwrap()
-                .as_deref(),
-            Some("login")
-        );
-        agy_direct::switch_to(&db, &row).unwrap();
-        assert_eq!(
-            provider_for(&db, &AppType::Agy, Purpose::Direct)
-                .unwrap()
-                .as_deref(),
-            Some("login")
-        );
-        assert_eq!(
-            read_live_settings().unwrap()["config"]["model"]["name"],
-            "Gemini 3.8 Flash (Low)"
-        );
-        let doc = read_json(&settings_path());
-        assert_eq!(doc["theme"], "dark");
-        assert_eq!(doc["trustedWorkspaces"][0], "keep");
+
+        // A pointer left by an older version is neither re-applied by a full
+        // sync nor a reason to refuse deleting the card.
+        db.set_current_provider("agy", "login").unwrap();
+        if let Err(error) = ProviderService::sync_current_to_live(&state) {
+            assert!(!error.to_string().contains("provider/agy"), "{error}");
+        }
+        ProviderService::delete(&state, AppType::Agy, "login").unwrap();
+
+        prepare_launch(&relay.id, &relay.settings_config).unwrap();
+        assert_eq!(fs::read_to_string(settings_path()).unwrap(), original);
         assert_eq!(fs::read_to_string(&sibling).unwrap(), "{\"keep\":true}");
-        fs::write(settings_path(), "broken").unwrap();
-        assert!(agy_direct::switch_to(&db, &row).is_err());
-        assert_eq!(fs::read_to_string(settings_path()).unwrap(), "broken");
-        assert!(read_live_settings().is_err());
-    }
-
-    #[test]
-    #[serial]
-    fn key_card_switch_never_writes_credentials_or_shell_files() {
-        let home = HomeGuard::new();
-        let db = Database::memory().unwrap();
-        fs::create_dir_all(agy_dir()).unwrap();
-        fs::write(
-            settings_path(),
-            r#"{"model":"Gemini 3.8 Flash (Medium)","modelProvider":"gemini"}"#,
-        )
-        .unwrap();
-        let row = relay("relay");
-        db.save_provider("agy", &row).unwrap();
-        agy_direct::switch_to(&db, &row).unwrap();
-
-        let doc = read_json(&settings_path());
-        assert!(doc.get("modelProvider").is_none());
-        assert_eq!(doc["model"], "Gemini 3.8 Flash (Medium)");
-        assert_eq!(
-            provider_for(&db, &AppType::Agy, Purpose::Direct)
-                .unwrap()
-                .as_deref(),
-            Some("relay")
-        );
         for file in walk(home.path()) {
             let text = fs::read(&file).unwrap_or_default();
             assert!(
@@ -808,23 +704,6 @@ mod integration_tests {
         for name in [".zshenv", ".zprofile", ".zshrc", ".bashrc", ".profile"] {
             assert!(!home.path().join(name).exists());
         }
-    }
-
-    #[test]
-    #[serial]
-    fn switching_without_a_settings_file_does_not_create_one_for_key_cards() {
-        let _home = HomeGuard::new();
-        let db = Database::memory().unwrap();
-        let row = relay("relay");
-        db.save_provider("agy", &row).unwrap();
-        agy_direct::switch_to(&db, &row).unwrap();
-        assert!(!settings_path().exists());
-        assert_eq!(
-            provider_for(&db, &AppType::Agy, Purpose::Direct)
-                .unwrap()
-                .as_deref(),
-            Some("relay")
-        );
     }
 
     #[test]
@@ -938,8 +817,10 @@ mod integration_tests {
         );
         let launch = prepare_launch(&row.id, &row.settings_config).unwrap();
         assert_eq!(launch.gemini_dir, None);
+        assert_eq!(launch.model.as_deref(), Some("Gemini 3.8 Flash (Low)"));
         assert!(launch.env.is_empty());
         assert!(!key_profiles_root().exists());
+        assert!(!settings_path().exists());
     }
 
     #[test]
@@ -955,11 +836,10 @@ mod integration_tests {
         );
         assert!(db.get_all_providers("agy").unwrap().is_empty());
 
-        // A stored provider without managed content is not applied either.
+        // A stored provider is not applied by a full sync either.
         let blank = provider("blank", json!({"env":{},"config":{}}), false);
         db.save_provider("agy", &blank).unwrap();
         db.set_current_provider("agy", "blank").unwrap();
-        agy_direct::reapply(&db, &blank).unwrap();
         let result = crate::services::ProviderService::sync_current_to_live(&state);
         if let Err(error) = &result {
             assert!(!error.to_string().contains("provider/agy"), "{error}");
@@ -1071,13 +951,17 @@ mod integration_tests {
         )
         .unwrap();
         let db = Database::memory().unwrap();
-        let row = relay("relay");
-        db.save_provider("agy", &row).unwrap();
-        db.set_current_provider("agy", "relay").unwrap();
         agy_direct::migrate_legacy_launcher(&db).unwrap();
         let doc = read_json(&settings_path());
         assert!(doc.get("modelProvider").is_none());
+        assert_eq!(doc["model"], "Gemini 3.1 Pro (High)");
         assert!(!agy_dir().join("env").exists());
+
+        // Without a legacy install nothing is touched, not even a stray modelProvider.
+        let untouched = r#"{"modelProvider":"gemini"}"#;
+        fs::write(settings_path(), untouched).unwrap();
+        agy_direct::migrate_legacy_launcher(&db).unwrap();
+        assert_eq!(fs::read_to_string(settings_path()).unwrap(), untouched);
     }
 
     fn fake_agy(dir: &Path) -> PathBuf {

@@ -2161,13 +2161,14 @@ fn agy_deeplink_enabled_key_provider_stays_out_of_live_files() {
     let state = AppState::new(Arc::new(Database::memory().unwrap()));
     let request = parse_deeplink_url("ccswitch://v1/import?resource=provider&app=agy&name=Agy&endpoint=https://relay.example&apiKey=fixture&model=link-model&enabled=true").unwrap();
     let id = super::provider::import_provider_from_deeplink(&state, request).unwrap();
+    // Antigravity cards have no "enable": enabled=true only imports the card.
     let current = crate::mode::current::provider_for(
         &state.db,
         &AppType::Agy,
         crate::mode::current::Purpose::Direct,
     )
     .unwrap();
-    assert_eq!(current.as_deref(), Some(id.as_str()));
+    assert_eq!(current, None);
     // A key card never creates or changes the native settings: it only applies
     // to agy started from "Open Terminal" with its private profile.
     assert!(!crate::agy_config::settings_path().exists());

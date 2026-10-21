@@ -4858,20 +4858,28 @@ fn claude_terminal_launch(
     })
 }
 
-/// Antigravity CLI：官方登录卡直接跑 `agy`；Key 卡用它的私有 `--gemini_dir`，Key 和地址
-/// 只经环境变量传给这一个进程。
+/// Antigravity CLI：官方登录卡跑 `agy`，卡上设了模型就加 `--model`（只对这次会话生效）；
+/// Key 卡用它的私有 `--gemini_dir`，Key 和地址只经环境变量传给这一个进程。
 fn agy_terminal_launch(provider: &crate::provider::Provider) -> Result<ProviderLaunch, String> {
     let launch = crate::services::provider::agy_direct::terminal_launch(provider)
         .map_err(|e| e.to_string())?;
     let Some(dir) = launch.gemini_dir else {
+        let (args, batch_command, batch_vars) = match launch.model {
+            Some(model) => (
+                vec![format!("--model={model}")],
+                format!("agy \"--model=%{AGY_MODEL_BATCH_VAR}%\""),
+                vec![(AGY_MODEL_BATCH_VAR, model)],
+            ),
+            None => (Vec::new(), "agy".to_string(), Vec::new()),
+        };
         return Ok(ProviderLaunch {
             title: "Starting Antigravity CLI with your signed-in account",
             detail: None,
             program: "agy",
-            args: Vec::new(),
-            batch_command: "agy".to_string(),
+            args,
+            batch_command,
             env: launch.env,
-            batch_vars: Vec::new(),
+            batch_vars,
             cleanup: Vec::new(),
         });
     };
@@ -4895,7 +4903,8 @@ pub(crate) fn open_agy_resume_terminal(
     cwd: Option<String>,
 ) -> Result<(), String> {
     let mut launch = agy_terminal_launch(provider)?;
-    if launch.args.is_empty() {
+    // 只有 Key 卡有私有目录（启动前打印的那行路径）；官方卡的参数可能只有 `--model`。
+    if launch.detail.is_none() {
         return Err(format!(
             "「{}」已不再带 API Key，无法恢复它在私有目录里的会话",
             provider.name
@@ -4910,6 +4919,8 @@ pub(crate) fn open_agy_resume_terminal(
 
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 const AGY_DIR_BATCH_VAR: &str = "CC_SWITCH_AGY_DIR";
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const AGY_MODEL_BATCH_VAR: &str = "CC_SWITCH_AGY_MODEL";
 
 /// macOS / Linux 的启动脚本里，环境变量先以这个前缀的名字读进来，再由 `env` 改名交给
 /// 程序：用户 shell 的 rc 文件在中间执行，直接用原名会被 rc 里的 export 覆盖。
@@ -6510,6 +6521,39 @@ mod tests {
             "agy --gemini_dir=/home/me/.cc-switch/agy/relay"
         );
         assert_eq!(unix_launch_env_file(&plain), "");
+    }
+
+    #[test]
+    fn agy_login_launch_picks_the_model_for_this_session_only() {
+        let mut row = crate::provider::Provider::with_id(
+            "login".into(),
+            "Google".into(),
+            serde_json::json!({"env":{},"config":{"model":{"name":"Gemini 3.1 Pro (High)"}}}),
+            None,
+        );
+        row.category = Some("official".into());
+        let launch = agy_terminal_launch(&row).unwrap();
+        assert!(launch.env.is_empty());
+        assert_eq!(launch.detail, None);
+        assert_eq!(
+            unix_launch_command(&launch),
+            "agy '--model=Gemini 3.1 Pro (High)'"
+        );
+        assert_eq!(
+            launch.batch_command,
+            format!("agy \"--model=%{AGY_MODEL_BATCH_VAR}%\"")
+        );
+        assert_eq!(
+            launch.batch_vars,
+            vec![(AGY_MODEL_BATCH_VAR, "Gemini 3.1 Pro (High)".to_string())]
+        );
+        // 带了 `--model` 的官方卡也没有私有目录，会话恢复不会把它当成 Key 卡（在开终端前就报错）。
+        assert!(open_agy_resume_terminal(&row, "abc", None).is_err());
+
+        row.settings_config = serde_json::json!({"env":{},"config":{}});
+        let launch = agy_terminal_launch(&row).unwrap();
+        assert_eq!(unix_launch_command(&launch), "agy");
+        assert_eq!(launch.batch_command, "agy");
     }
 
     #[cfg(unix)]

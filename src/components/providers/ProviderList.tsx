@@ -51,6 +51,7 @@ import { usePiCurrentState } from "@/lib/query/pi";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import {
   buildAdditiveSections,
+  buildLaunchSections,
   buildSwitchSections,
   type CardPresentation,
   type ProviderSection,
@@ -327,31 +328,11 @@ export function ProviderList({
       });
     }
     if (appId === "agy") {
-      return buildSwitchSections({
+      return buildLaunchSections({
         app: appId,
         t,
         providers: filteredProviders,
-        active: "direct",
-        view: "direct",
-        directId: currentProviderId || null,
-        routeId: null,
-        failoverOn: false,
-        queue: [],
-        stackMembers: new Map(),
-        routingReason: () => "",
-        serviceRunning: false,
-        actions: {
-          switchDirect: (provider) => onSwitch(provider),
-          needsRouteDialog: () => undefined,
-          exitAndUse: (provider) => onSwitch(provider),
-          routeTo: () => undefined,
-          queueAdd: () => undefined,
-          queueRemove: () => undefined,
-          queueMove: () => undefined,
-          stackAdd: () => undefined,
-          stackRemove: () => undefined,
-          stackSetDefault: () => undefined,
-        },
+        openTerminal: (provider) => onOpenTerminal?.(provider),
       });
     }
     const defaultPrimary =
@@ -411,8 +392,8 @@ export function ProviderList({
     t,
     sortedProviders,
     filteredProviders,
-    currentProviderId,
     onSwitch,
+    onOpenTerminal,
     openclawDefaultModel?.primary,
     opencodeDefaultModel,
     isInConfig,
@@ -474,9 +455,11 @@ export function ProviderList({
     );
   }
 
-  // 「当前」只用来决定额度自动刷新：Pi 没有当前项，OMO / Hermes 各看自己的当前项
+  // 「当前」只用来决定额度显示和自动刷新：Pi 没有当前项，OMO / Hermes 各看自己的当前项；
+  // Antigravity 没有「启用」，每张卡都随时能打开，额度一律照常显示
   const isCurrentFor = (provider: Provider) => {
     if (appId === "pi") return false;
+    if (appId === "agy") return true;
     if (provider.category === "omo") return provider.id === currentOmoId;
     if (provider.category === "omo-slim")
       return provider.id === currentOmoSlimId;
@@ -499,7 +482,8 @@ export function ProviderList({
         onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
       }
       onOpenWebsite={onOpenWebsite}
-      onOpenTerminal={onOpenTerminal}
+      // Antigravity 的「打开终端」已经是主按钮，「更多」菜单里不再重复
+      onOpenTerminal={appId === "agy" ? undefined : onOpenTerminal}
       onTest={handleTest}
       isTesting={isChecking(provider.id)}
     />

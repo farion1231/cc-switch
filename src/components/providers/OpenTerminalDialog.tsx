@@ -186,9 +186,13 @@ export function OpenTerminalDialog({
         <div className="space-y-4 px-6 py-3">
           {provider && terminalIsIsolated(provider, appId) && (
             <Notice title={t("provider.openTerminalDialog.isolationTitle")}>
-              {t("provider.openTerminalDialog.isolationBody", {
-                name: provider.name,
-              })}
+              {/* Antigravity 没有「切换」，Claude Code 那句「之后切换不会影响它」对它不成立 */}
+              {t(
+                appId === "agy"
+                  ? "provider.openTerminalDialog.isolationBodyAgy"
+                  : "provider.openTerminalDialog.isolationBody",
+                { name: provider.name },
+              )}
             </Notice>
           )}
 
