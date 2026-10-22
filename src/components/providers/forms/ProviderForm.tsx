@@ -97,6 +97,7 @@ import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
 import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
+import { KimiProviderForm } from "./KimiProviderForm";
 import { AgyAccountSelect } from "./AgyOAuthSection";
 import { isMac } from "@/lib/platform";
 import { McodeProviderForm } from "./McodeProviderForm";
@@ -291,6 +292,8 @@ export interface ProviderFormProps {
   onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
   onSubmittingChange?: (isSubmitting: boolean) => void;
   onSubmitReadyChange?: (isReady: boolean) => void;
+  /** Native account login supplies its own actions instead of the provider-save footer. */
+  onAccountLoginChange?: (accountLogin: boolean) => void;
   initialData?: {
     name?: string;
     websiteUrl?: string;
@@ -325,6 +328,7 @@ export interface ProviderFormProps {
 }
 
 export function ProviderForm(props: ProviderFormProps) {
+  if (props.appId === "kimi") return <KimiProviderForm {...props} />;
   if (props.appId === "mcode") return <McodeProviderForm {...props} />;
   if (props.appId === "pi") {
     return <PiProviderForm {...props} />;
