@@ -2989,7 +2989,8 @@ fn probe_path_default_version(tool: &str) -> Result<ShellProbe, String> {
     let Some(path_default) = resolve_path_default(tool, None)? else {
         return Ok(ShellProbe::NotFound(NOT_INSTALLED.to_string()));
     };
-    let out = run_windows_tool_version_command(&path_default, &effective_path_string())?;
+    let out = run_windows_tool_version_command(&path_default, &effective_path_string())
+        .map_err(|e| format!("Failed to probe {}: {e}", path_default.display()))?;
     let stdout = decode_command_output(&out.stdout);
     let stderr = decode_command_output(&out.stderr);
     Ok(if out.status.success() {
@@ -3006,6 +3007,13 @@ fn probe_path_default_version(tool: &str) -> Result<ShellProbe, String> {
 
 /// 扫描常见路径查找 CLI（PATH 主命令未命中时的兜底单探）。
 fn scan_cli_version(tool: &str) -> Result<ShellProbe, String> {
+    scan_cli_version_in(tool, &build_tool_search_paths(tool))
+}
+
+fn scan_cli_version_in(
+    tool: &str,
+    search_paths: &[std::path::PathBuf],
+) -> Result<ShellProbe, String> {
     #[cfg(not(target_os = "windows"))]
     use std::process::Command;
 
@@ -3014,7 +3022,8 @@ fn scan_cli_version(tool: &str) -> Result<ShellProbe, String> {
     #[cfg(not(target_os = "windows"))]
     let current_path = effective_path_os().unwrap_or_default();
 
-    let mut diagnostic = None;
+    let mut exec_diagnostic: Option<String> = None;
+    let mut silent_diagnostic: Option<String> = None;
 
     for path in search_paths {
         #[cfg(target_os = "windows")]
@@ -3030,7 +3039,8 @@ fn scan_cli_version(tool: &str) -> Result<ShellProbe, String> {
             }
 
             #[cfg(target_os = "windows")]
-            let output = run_windows_tool_version_command(&tool_path, &new_path);
+            let output = run_windows_tool_version_command(&tool_path, &new_path)
+                .map_err(|e| format!("Failed to probe {}: {e}", tool_path.display()));
 
             #[cfg(not(target_os = "windows"))]
             let output = {
@@ -3041,31 +3051,38 @@ fn scan_cli_version(tool: &str) -> Result<ShellProbe, String> {
                     .map_err(|e| format!("Failed to probe {}: {e}", tool_path.display()))
             };
 
-            match output {
-                Ok(out) => {
-                    let stdout = decode_command_output(&out.stdout);
-                    let stderr = decode_command_output(&out.stderr);
-                    if out.status.success() {
-                        return Ok(successful_version_probe(&stdout, &stderr));
-                    }
-                    let detail = if stderr.trim().is_empty() {
-                        &stdout
-                    } else {
-                        &stderr
-                    };
-                    diagnostic.get_or_insert_with(|| {
-                        Ok(ShellProbe::FoundButFailed(last_lines(detail.trim(), 4)))
-                    });
-                }
+            let out = match output {
+                Ok(out) => out,
                 Err(e) => {
-                    diagnostic.get_or_insert(Err(e));
+                    silent_diagnostic.get_or_insert_with(|| {
+                        format!("failed to launch {}: {e}", tool_path.display())
+                    });
+                    continue;
                 }
+            };
+            let stdout = decode_command_output(&out.stdout);
+            let stderr = decode_command_output(&out.stderr);
+            if out.status.success() {
+                if version_output(&stdout, &stderr).is_empty() {
+                    silent_diagnostic
+                        .get_or_insert_with(|| silent_version_probe_detail(out.status));
+                    continue;
                 }
+                return Ok(successful_version_probe(&stdout, &stderr));
+            }
+            let detail = version_output(&stdout, &stderr);
+            if detail.is_empty() {
+                silent_diagnostic.get_or_insert_with(|| silent_version_probe_detail(out.status));
+            } else if exec_diagnostic.is_none() {
+                exec_diagnostic = Some(last_lines(detail, 4));
             }
         }
     }
 
-    diagnostic.unwrap_or_else(|| Ok(ShellProbe::NotFound(NOT_INSTALLED.to_string())))
+    Ok(match exec_diagnostic.or(silent_diagnostic) {
+        Some(detail) => ShellProbe::FoundButFailed(detail),
+        None => ShellProbe::NotFound(NOT_INSTALLED.to_string()),
+    })
 }
 
 /// 单个工具在系统中的一处安装，用于"多处安装互相打架"的冲突诊断。
@@ -3250,7 +3267,8 @@ fn resolve_path_default(
     let raw = decode_command_output(&out.stdout);
     // rc 的退出 trap 可以改写 shell 状态；已有路径输出时仍以载荷为准。
     let Some(first) = first_abs_path_line(&raw) else {
-        if out.status.success() || out.status.code() == Some(1) {
+        // dash/fish 的 command -v 用 127 表示命令不存在。
+        if out.status.success() || matches!(out.status.code(), Some(1) | Some(127)) {
             return Ok(None);
         }
         return Err(format!(
@@ -8151,6 +8169,30 @@ mod tests {
             }
         }
 
+        #[test]
+        #[serial_test::serial]
+        fn dash_missing_command_does_not_fail_installation_enumeration() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let _env = EnvGuard::set("/bin/dash", dir.path());
+            std::env::set_var("PATH", "/usr/bin:/bin");
+            let tool = "__cc_switch_missing_tool_5817__";
+            assert_eq!(
+                super::super::resolve_path_default(tool, None).unwrap(),
+                None
+            );
+            assert!(super::super::enumerate_tool_installations(tool)
+                .unwrap()
+                .is_empty());
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            let reports = runtime
+                .block_on(super::super::probe_tool_installations(vec![
+                    "claude".into(),
+                    "codex".into(),
+                ]))
+                .expect("a missing tool must not fail the whole batch");
+            assert_eq!(reports.len(), 2);
+        }
+
         /// 对照：工具确实不存在时必须仍报 NotFound。
         /// 缺了这条，一个「永远返回 Found」的实现也能通过上面几条。
         #[test]
@@ -12061,9 +12103,12 @@ mod tests {
         let same_name_dir = root.path().join("same-name-dir");
         std::fs::create_dir_all(same_name_dir.join("kimi")).expect("dir should be created");
 
-        let broken_detail = |paths: &[PathBuf]| match scan_cli_version_in("kimi", paths) {
+        let broken_detail = |paths: &[PathBuf]| match scan_cli_version_in("kimi", paths)
+            .expect("scanning existing candidates should not fail")
+        {
             ShellProbe::FoundButFailed(detail) => detail,
             ShellProbe::Found(v) => panic!("expected broken, got version {v}"),
+            ShellProbe::VersionUnknown(e) => panic!("expected broken, got unknown version: {e}"),
             ShellProbe::NotFound(e) => panic!("expected broken, got not found: {e}"),
         };
 
@@ -12078,11 +12123,11 @@ mod tests {
         // 别处有能跑的安装仍以它为准
         assert!(matches!(
             scan_cli_version_in("kimi", &[silent, working]),
-            ShellProbe::Found(v) if v == "1.2.3"
+            Ok(ShellProbe::Found(v)) if v == "1.2.3"
         ));
         assert!(matches!(
             scan_cli_version_in("kimi", &[empty, same_name_dir]),
-            ShellProbe::NotFound(_)
+            Ok(ShellProbe::NotFound(_))
         ));
     }
 
