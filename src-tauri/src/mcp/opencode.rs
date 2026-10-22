@@ -19,16 +19,17 @@ use crate::app_config::{McpApps, McpServer, MultiAppConfig};
 use crate::error::AppError;
 use crate::opencode_config;
 
-use super::validation::validate_server_spec;
+use super::validation::{spec_transport_type, validate_server_spec};
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
 /// Check if OpenCode MCP sync should proceed
-fn should_sync_opencode_mcp() -> bool {
+fn should_sync_opencode_mcp() -> Result<bool, AppError> {
     // Skip if OpenCode config directory doesn't exist
-    opencode_config::get_opencode_dir().exists()
+    let dir = opencode_config::get_opencode_dir();
+    dir.try_exists().map_err(|e| AppError::io(&dir, e))
 }
 
 // ============================================================================
@@ -45,7 +46,7 @@ pub fn convert_to_opencode_format(spec: &Value) -> Result<Value, AppError> {
         .as_object()
         .ok_or_else(|| AppError::McpValidation("MCP spec must be a JSON object".into()))?;
 
-    let typ = obj.get("type").and_then(|v| v.as_str()).unwrap_or("stdio");
+    let typ = spec_transport_type(spec);
 
     let mut result = serde_json::Map::new();
 
@@ -186,7 +187,7 @@ pub fn sync_single_server_to_opencode(
     id: &str,
     server_spec: &Value,
 ) -> Result<(), AppError> {
-    if !should_sync_opencode_mcp() {
+    if !should_sync_opencode_mcp()? {
         return Ok(());
     }
 
@@ -199,7 +200,7 @@ pub fn sync_single_server_to_opencode(
 
 /// Remove a single MCP server from OpenCode live config
 pub fn remove_server_from_opencode(id: &str) -> Result<(), AppError> {
-    if !should_sync_opencode_mcp() {
+    if !should_sync_opencode_mcp()? {
         return Ok(());
     }
 
@@ -255,12 +256,16 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
                     name: id.clone(),
                     server: unified_spec,
                     apps: McpApps {
+                        agy: false,
                         claude: false,
                         codex: false,
                         gemini: false,
                         grokbuild: false,
                         opencode: true,
                         hermes: false,
+                        mcode: false,
+                        kimi: false,
+                        pi: false,
                     },
                     description: None,
                     homepage: None,
@@ -322,6 +327,16 @@ mod tests {
         assert_eq!(result["url"], "https://example.com/mcp");
         assert_eq!(result["headers"]["Authorization"], "Bearer xxx");
         assert_eq!(result["enabled"], true);
+    }
+
+    #[test]
+    fn test_convert_url_without_type_to_remote() {
+        let spec = json!({ "url": "https://mcp.example.com/mcp" });
+
+        let result = convert_to_opencode_format(&spec).unwrap();
+        assert_eq!(result["type"], "remote");
+        assert_eq!(result["url"], "https://mcp.example.com/mcp");
+        assert!(result.get("command").is_none());
     }
 
     #[test]

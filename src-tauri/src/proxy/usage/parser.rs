@@ -10,10 +10,22 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 fn openai_cache_read_tokens(usage: &Value) -> u32 {
-    usage
-        .get("cache_read_input_tokens")
-        .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
-        .or_else(|| usage.pointer("/prompt_tokens_details/cached_tokens"))
+    // 每环要求「存在且非 0」：显式 0 按未上报处理，链继续向后找（#8041：
+    // 部分中转把靠前字段硬编码为桩 0，真值只在低顺位字段）。官方端点同值
+    // 非 0 不受影响；真 0 命中时各候选同为 0/缺失，结果不变。
+    fn provided_nonzero(value: Option<&Value>) -> Option<&Value> {
+        value.filter(|value| value.as_u64().is_some_and(|tokens| tokens > 0))
+    }
+    provided_nonzero(usage.get("cache_read_input_tokens"))
+        .or_else(|| provided_nonzero(usage.pointer("/input_tokens_details/cached_tokens")))
+        .or_else(|| provided_nonzero(usage.pointer("/prompt_tokens_details/cached_tokens")))
+        // DeepSeek Chat 的文档化缓存命中字段，末位兜底：官方端点目前把同值
+        // 镜像进未文档化的 prompt_tokens_details.cached_tokens（上面标准字段
+        // 非 0 时已命中），仅当上游只发文档字段、不发镜像时本兜底生效（如部分
+        // 中转），并防御未文档化镜像将来消失。prompt_tokens 本身已含命中+未命中
+        // （miss 见 prompt_cache_miss_tokens，仅作参考、无需在此扣减），
+        // 故命中数直接作 cache_read 即可。
+        .or_else(|| provided_nonzero(usage.get("prompt_cache_hit_tokens")))
         .and_then(Value::as_u64)
         .unwrap_or(0) as u32
 }
@@ -23,6 +35,14 @@ fn openai_cache_write_tokens(usage: &Value) -> u32 {
         .get("cache_creation_input_tokens")
         .or_else(|| usage.pointer("/input_tokens_details/cache_write_tokens"))
         .or_else(|| usage.pointer("/prompt_tokens_details/cache_write_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32
+}
+
+/// Claude usage 中按 1 小时 TTL 写入的缓存 token（`cache_creation_input_tokens` 的子集）
+pub(crate) fn claude_cache_creation_1h_tokens(usage: &Value) -> u32 {
+    usage
+        .pointer("/cache_creation/ephemeral_1h_input_tokens")
         .and_then(Value::as_u64)
         .unwrap_or(0) as u32
 }
@@ -54,6 +74,8 @@ pub struct TokenUsage {
     pub output_tokens: u32,
     pub cache_read_tokens: u32,
     pub cache_creation_tokens: u32,
+    /// `cache_creation_tokens` 中按 1 小时 TTL 写入的部分（Claude 单独计价）
+    pub cache_creation_1h_tokens: u32,
     /// 从响应中提取的实际模型名称（如果可用）
     pub model: Option<String>,
     /// 从响应中提取的消息 ID（用于跨源去重）
@@ -114,6 +136,7 @@ impl TokenUsage {
                 .get("cache_creation_input_tokens")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
+            cache_creation_1h_tokens: claude_cache_creation_1h_tokens(usage),
             model,
             message_id,
         })
@@ -160,6 +183,8 @@ impl TokenUsage {
                                 .and_then(|v| v.as_u64())
                                 .unwrap_or(0)
                                 as u32;
+                            usage.cache_creation_1h_tokens =
+                                claude_cache_creation_1h_tokens(msg_usage);
                         }
                     }
                     "message_delta" => {
@@ -202,6 +227,8 @@ impl TokenUsage {
                                     }
                                     if let Some(cache_creation) = delta_cache_creation {
                                         usage.cache_creation_tokens = cache_creation;
+                                        usage.cache_creation_1h_tokens =
+                                            claude_cache_creation_1h_tokens(delta_usage);
                                     }
                                 }
                             }
@@ -216,6 +243,8 @@ impl TokenUsage {
                             if usage.cache_creation_tokens == 0 {
                                 if let Some(cache_creation) = delta_cache_creation {
                                     usage.cache_creation_tokens = cache_creation;
+                                    usage.cache_creation_1h_tokens =
+                                        claude_cache_creation_1h_tokens(delta_usage);
                                 }
                             }
                         }
@@ -272,6 +301,7 @@ impl TokenUsage {
             output_tokens: output_tokens? as u32,
             cache_read_tokens: cached_tokens,
             cache_creation_tokens: cache_write_tokens,
+            cache_creation_1h_tokens: 0,
             model,
             message_id: response_id(body, "id"),
         })
@@ -301,7 +331,7 @@ impl TokenUsage {
         }
     }
 
-    /// 智能 Codex 流式响应解析 - 自动检测 OpenAI 或 Codex 格式
+    /// 智能 Codex 流式响应解析 - 自动检测 Codex Responses / Images / OpenAI 格式
     pub fn from_codex_stream_events_auto(events: &[Value]) -> Option<Self> {
         log::debug!("[Codex] 智能解析流式事件，共 {} 个事件", events.len());
 
@@ -315,6 +345,20 @@ impl TokenUsage {
                     }
                 }
             }
+        }
+
+        // Images API 流式格式 (image_generation.completed 事件)：usage 直接挂在
+        // 事件顶层，字段形态与 Codex 非流式响应一致；倒序取最后一个能按该形态
+        // 解析的事件，跳过前面不含 usage 的 partial_image 事件。解析不成立时
+        // 继续走下面的 OpenAI 回退，不改变既有路径
+        if let Some(usage) = events
+            .iter()
+            .rev()
+            .filter(|event| event.pointer("/usage/input_tokens").is_some())
+            .find_map(Self::from_codex_response)
+        {
+            log::debug!("[Codex] 找到顶层 usage.input_tokens 事件");
+            return Some(usage);
         }
 
         // 回退到 OpenAI Chat Completions 格式 (最后一个 chunk 包含 usage)
@@ -345,6 +389,7 @@ impl TokenUsage {
             output_tokens: completion_tokens as u32,
             cache_read_tokens: cached_tokens,
             cache_creation_tokens: cache_write_tokens,
+            cache_creation_1h_tokens: 0,
             model,
             message_id: response_id(body, "id"),
         })
@@ -395,6 +440,7 @@ impl TokenUsage {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
             cache_creation_tokens: 0,
+            cache_creation_1h_tokens: 0,
             model,
             message_id: response_id(body, "responseId"),
         })
@@ -450,6 +496,7 @@ impl TokenUsage {
                 output_tokens: total_output,
                 cache_read_tokens: total_cache_read,
                 cache_creation_tokens: 0,
+                cache_creation_1h_tokens: 0,
                 model,
                 message_id,
             })
@@ -1018,6 +1065,112 @@ mod tests {
     }
 
     #[test]
+    fn test_openai_response_deepseek_cache_hit_fields() {
+        // DeepSeek Chat 格式（issue #6073 关联）：缓存命中/未命中单列在文档化的
+        // prompt_cache_hit_tokens / prompt_cache_miss_tokens，prompt_tokens 含两者。
+        // 当上游只发这套文档字段、不镜像 prompt_tokens_details.cached_tokens 时
+        // （如部分中转），缺了本兜底缓存命中会被记 0、费用相对官网按全价虚高。
+        let response = json!({
+            "model": "deepseek-v4-flash",
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 100,
+                "prompt_cache_hit_tokens": 600,
+                "prompt_cache_miss_tokens": 400,
+                "total_tokens": 1100
+            }
+        });
+
+        let usage = TokenUsage::from_openai_response(&response).unwrap();
+        assert_eq!(usage.input_tokens, 1000);
+        assert_eq!(usage.output_tokens, 100);
+        assert_eq!(usage.cache_read_tokens, 600);
+        assert_eq!(usage.cache_creation_tokens, 0);
+        assert_eq!(usage.model, Some("deepseek-v4-flash".to_string()));
+    }
+
+    #[test]
+    fn openai_cache_read_prefers_nonzero_standard_field_over_deepseek_specific() {
+        // 两套字段同现时非 0 标准字段仍权威：顺位不因 #8041 的「0 让位」改变。
+        let response = json!({
+            "model": "deepseek-v4-flash",
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 10,
+                "prompt_tokens_details": { "cached_tokens": 200 },
+                "prompt_cache_hit_tokens": 600
+            }
+        });
+        let usage = TokenUsage::from_openai_response(&response).unwrap();
+        assert_eq!(usage.cache_read_tokens, 200);
+    }
+
+    #[test]
+    fn openai_cache_read_falls_through_explicit_zero_top_field() {
+        // #8041：部分中转把首环 cache_read_input_tokens 硬编码为桩 0、真值
+        // 只放在 prompt_cache_hit_tokens。显式 0 按「未上报」处理继续向后找，
+        // 不能 Some(0) 短路整条 or_else 链。
+        let response = json!({
+            "model": "deepseek-v4-flash",
+            "usage": {
+                "prompt_tokens": 6650,
+                "completion_tokens": 16,
+                "cache_read_input_tokens": 0,
+                "prompt_cache_hit_tokens": 6400
+            }
+        });
+        let usage = TokenUsage::from_openai_response(&response).unwrap();
+        assert_eq!(usage.cache_read_tokens, 6400);
+    }
+
+    #[test]
+    fn openai_cache_read_falls_through_explicit_zero_mirror_field() {
+        // #8041 同机理（报告者补充）：桩 0 也可能落在镜像字段上，
+        // prompt_tokens_details.cached_tokens 显式 0 时同样让位。
+        let response = json!({
+            "model": "deepseek-v4-flash",
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 10,
+                "prompt_tokens_details": { "cached_tokens": 0 },
+                "prompt_cache_hit_tokens": 600
+            }
+        });
+        let usage = TokenUsage::from_openai_response(&response).unwrap();
+        assert_eq!(usage.cache_read_tokens, 600);
+    }
+
+    #[test]
+    fn test_openai_stream_deepseek_cache_hit_fields() {
+        // 流式路径：usage 在末尾 chunk 上，DeepSeek 缓存命中同样要被提取。
+        let events = vec![
+            json!({
+                "id": "chatcmpl-ds",
+                "model": "deepseek-v4-flash",
+                "choices": [{"delta": {"content": "Hi"}}]
+            }),
+            json!({
+                "id": "chatcmpl-ds",
+                "model": "deepseek-v4-flash",
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": 800,
+                    "completion_tokens": 50,
+                    "prompt_cache_hit_tokens": 512,
+                    "prompt_cache_miss_tokens": 288,
+                    "total_tokens": 850
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_openai_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 800);
+        assert_eq!(usage.output_tokens, 50);
+        assert_eq!(usage.cache_read_tokens, 512);
+        assert_eq!(usage.message_id.as_deref(), Some("chatcmpl-ds"));
+    }
+
+    #[test]
     fn test_codex_response_auto_codex_format() {
         // Codex 格式 (input_tokens/output_tokens)
         let response = json!({
@@ -1096,5 +1249,44 @@ mod tests {
         assert_eq!(usage.input_tokens, 100);
         assert_eq!(usage.output_tokens, 50);
         assert_eq!(usage.model, Some("gpt-4o".to_string()));
+    }
+
+    #[test]
+    fn test_codex_stream_events_auto_image_generation_completed() {
+        // Images API 流式格式：usage 挂在 image_generation.completed 事件顶层，
+        // 字段形态与 Codex 非流式响应一致 (input_tokens / output_tokens)
+        let events = vec![
+            json!({
+                "type": "image_generation.partial_image",
+                "b64_json": "cGFydGlhbA==",
+                "partial_image_index": 0
+            }),
+            json!({
+                "type": "image_generation.completed",
+                "b64_json": "aW1hZ2U=",
+                "created_at": 1778832973,
+                "usage": {
+                    "input_tokens": 1474,
+                    "input_tokens_details": {
+                        "image_tokens": 1457,
+                        "text_tokens": 17
+                    },
+                    "output_tokens": 1372,
+                    "output_tokens_details": {
+                        "image_tokens": 1372,
+                        "text_tokens": 0
+                    },
+                    "total_tokens": 2846
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_codex_stream_events_auto(&events)
+            .expect("image_generation.completed usage should be parsed");
+        assert_eq!(usage.input_tokens, 1474);
+        assert_eq!(usage.output_tokens, 1372);
+        assert_eq!(usage.cache_read_tokens, 0);
+        assert_eq!(usage.cache_creation_tokens, 0);
+        assert_eq!(usage.model, None);
     }
 }

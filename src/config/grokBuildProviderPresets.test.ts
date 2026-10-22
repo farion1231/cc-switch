@@ -7,7 +7,6 @@ import {
   extractCodexBaseUrl,
   extractCodexModelName,
 } from "../utils/providerConfigUtils";
-import { GROK_BUILD_DEFAULT_MODEL } from "../utils/grokBuildConfig";
 
 describe("grokBuildProviderPresets", () => {
   it("has unique preset names", () => {
@@ -23,7 +22,7 @@ describe("grokBuildProviderPresets", () => {
     }
   });
 
-  it("excludes providers with no Grok models upstream", () => {
+  it("excludes providers deliberately kept off the roster", () => {
     const names = new Set(grokBuildProviderPresets.map((p) => p.name));
     const excluded = [
       "OpenAI Official",
@@ -40,6 +39,8 @@ describe("grokBuildProviderPresets", () => {
       "Novita AI",
       "Nvidia",
       "AtlasCloud",
+      // 上游已有 grok-4.5（2026-08 起），但订阅制网关是否收录待产品决策，
+      // 目前按刻意排除锁定（理由不再是"上游无 Grok"）。
       "OpenCode Go",
     ];
     for (const name of excluded) {
@@ -48,12 +49,10 @@ describe("grokBuildProviderPresets", () => {
   });
 
   it("uses a Grok default model on every preset", () => {
+    // 只要求是 Grok 系列（可带 x-ai/ 这类厂商前缀），版本号随各家上架情况而定
     for (const preset of grokBuildProviderPresets) {
       const model = extractCodexModelName(preset.config);
-      expect(
-        model === GROK_BUILD_DEFAULT_MODEL || model === "x-ai/grok-4.5",
-        `${preset.name}: ${model}`,
-      ).toBe(true);
+      expect(model, preset.name).toMatch(/^(?:[\w.-]+\/)?grok-[\w.-]+$/);
     }
   });
 

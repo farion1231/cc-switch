@@ -1,13 +1,10 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Button } from "@/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import { HoverTip } from "@/components/ui/hover-tip";
 import {
   Select,
   SelectContent,
@@ -15,9 +12,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { toast } from "sonner";
-import { Download, Plus, Trash2, ChevronRight, Loader2 } from "lucide-react";
-import { ApiKeySection, ModelDropdown } from "./shared";
+import { toast } from "@/lib/toast";
+import { Plus, Trash2, ChevronRight } from "lucide-react";
+import { ApiKeySection, GptContextWindowHint, ModelDropdown } from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -29,9 +26,22 @@ import {
   getModelExtraFields,
   isKnownModelKey,
   OPENCODE_EXTRA_OPTION_DRAFT_PREFIX,
-  OPENCODE_HEADER_DRAFT_PREFIX,
 } from "./helpers/opencodeFormUtils";
+import { RequestHeadersEditor } from "./RequestHeadersEditor";
+import {
+  findRequestHeaderValue,
+  normalizeRequestHeaders,
+} from "./helpers/requestHeaders";
+import {
+  FetchedModelPicker,
+  type FetchedModelSelection,
+} from "./FetchedModelPicker";
 import type { ProviderCategory, OpenCodeModel } from "@/types";
+import { useCommittableRef } from "@/hooks/useLatestRef";
+import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
+import type { PresetModelSource } from "@/lib/modelMetadata";
+import { opencodePresetModelSources } from "@/config/presetModelMetadata";
+import { fillOpenCodeModel, metadataFilledAnything } from "./modelMetadataFill";
 
 /**
  * Model ID input with local state to prevent focus loss.
@@ -56,12 +66,13 @@ function ModelIdInput({
   }, [modelId]);
 
   return (
-    <Input
+    <ImeSafeInput
       value={localValue}
-      onChange={(e) => setLocalValue(e.target.value)}
-      onBlur={() => {
-        if (localValue !== modelId && localValue.trim()) {
-          onChange(localValue);
+      onValueChange={setLocalValue}
+      onBlur={(event) => {
+        const nextValue = event.currentTarget.value;
+        if (nextValue !== modelId && nextValue.trim()) {
+          onChange(nextValue);
         }
       }}
       placeholder={placeholder}
@@ -98,11 +109,11 @@ function ExtraOptionKeyInput({
   }, [isPlaceholderKey, optionKey]);
 
   return (
-    <Input
+    <ImeSafeInput
       value={localValue}
-      onChange={(e) => setLocalValue(e.target.value)}
-      onBlur={() => {
-        const trimmed = localValue.trim();
+      onValueChange={setLocalValue}
+      onBlur={(event) => {
+        const trimmed = event.currentTarget.value.trim();
         if (trimmed && trimmed !== optionKey) {
           const accepted = onChange(trimmed);
           if (accepted === false) {
@@ -137,11 +148,11 @@ function ModelOptionKeyInput({
   }, [optionKey]);
 
   return (
-    <Input
+    <ImeSafeInput
       value={localValue}
-      onChange={(e) => setLocalValue(e.target.value)}
-      onBlur={() => {
-        const trimmed = localValue.trim();
+      onValueChange={setLocalValue}
+      onBlur={(event) => {
+        const trimmed = event.currentTarget.value.trim();
         if (trimmed && trimmed !== optionKey) {
           onChange(trimmed);
         }
@@ -157,6 +168,10 @@ function ModelOptionKeyInput({
 }
 
 interface OpenCodeFormFieldsProps {
+  allowBuiltinDefaults?: boolean;
+  /** 选中拉取到的模型时补参数所查的预设（MiniMax Code 传自己的）。 */
+  presetModelSources?: () => readonly PresetModelSource[];
+  apiFormats?: ReadonlyArray<{ value: string; label: string }>;
   // NPM Package
   npm: string;
   onNpmChange: (value: string) => void;
@@ -188,6 +203,9 @@ interface OpenCodeFormFieldsProps {
 }
 
 export function OpenCodeFormFields({
+  allowBuiltinDefaults = false,
+  presetModelSources = opencodePresetModelSources,
+  apiFormats = opencodeNpmPackages,
   npm,
   onNpmChange,
   apiKey,
@@ -210,42 +228,67 @@ export function OpenCodeFormFields({
 
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
-  const [extraOptionsOpen, setExtraOptionsOpen] = useState(
-    () => Object.keys(extraOptions).length > 0,
-  );
+  const modelFetchGeneration = useRef(0);
 
   useEffect(() => {
-    if (Object.keys(extraOptions).length > 0) {
-      setExtraOptionsOpen(true);
-    }
-  }, [extraOptions]);
+    setFetchedModels((prev) => (prev.length === 0 ? prev : []));
+    setIsFetchingModels(false);
+    return () => {
+      // Ignore responses for a previous endpoint/key or an unmounted form.
+      modelFetchGeneration.current += 1;
+    };
+  }, [baseUrl, apiKey, headers]);
 
   const handleFetchModels = useCallback(() => {
-    if (!baseUrl || !apiKey) {
+    const requestHeaders = normalizeRequestHeaders(headers);
+    const hasCredentials =
+      Boolean(apiKey) || Object.keys(requestHeaders).length > 0;
+    if (!baseUrl || !hasCredentials) {
       showFetchModelsError(null, t, {
-        hasApiKey: !!apiKey,
-        hasBaseUrl: !!baseUrl,
+        hasApiKey: hasCredentials,
+        hasBaseUrl: Boolean(baseUrl),
       });
       return;
     }
+
+    const customUserAgent = findRequestHeaderValue(
+      requestHeaders,
+      "user-agent",
+    );
+
+    const generation = ++modelFetchGeneration.current;
+    setFetchedModels([]);
     setIsFetchingModels(true);
-    fetchModelsForConfig(baseUrl, apiKey)
-      .then((models) => {
+    fetchModelsForConfig(
+      baseUrl,
+      apiKey,
+      undefined,
+      undefined,
+      customUserAgent,
+      { requestHeaders },
+    )
+      .then((result) => {
+        if (generation !== modelFetchGeneration.current) return;
+        const models = [
+          ...new Map(result.map((model) => [model.id, model])).values(),
+        ];
         setFetchedModels(models);
+        // 拉到模型时直接打开选择弹窗，不再提示成功。
         if (models.length === 0) {
           toast.info(t("providerForm.fetchModelsEmpty"));
-        } else {
-          toast.success(
-            t("providerForm.fetchModelsSuccess", { count: models.length }),
-          );
         }
       })
       .catch((err) => {
+        if (generation !== modelFetchGeneration.current) return;
         console.warn("[ModelFetch] Failed:", err);
         showFetchModelsError(err, t);
       })
-      .finally(() => setIsFetchingModels(false));
-  }, [baseUrl, apiKey, t]);
+      .finally(() => {
+        if (generation === modelFetchGeneration.current) {
+          setIsFetchingModels(false);
+        }
+      });
+  }, [baseUrl, apiKey, headers, t]);
 
   // Track which models have expanded options panel
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
@@ -267,6 +310,48 @@ export function OpenCodeFormFields({
       ...models,
       [newKey]: { name: "" },
     });
+  };
+
+  // 选中拉取到的模型时补上它已知的 limit 和模态（只补空着的）。
+  // 补全可能晚到，要用最新的列表和回调提交。
+  const [modelsRef, commitModels] = useCommittableRef(models, onModelsChange);
+  const fillModelMetadata = useModelMetadataFill({
+    baseUrl,
+    presets: presetModelSources,
+    prefetch: fetchedModels.length > 0,
+  });
+  const fillModelMetadataFor = (id: string, silent?: boolean) =>
+    fillModelMetadata(
+      id,
+      (metadata) => {
+        const current = modelsRef.current;
+        if (!Object.prototype.hasOwnProperty.call(current, id)) return false;
+        const filled = fillOpenCodeModel(current[id], metadata);
+        if (!metadataFilledAnything(current[id], filled)) return false;
+        commitModels({ ...current, [id]: filled });
+        return true;
+      },
+      { silent },
+    );
+
+  const handleApplyFetchedModels = ({ add, remove }: FetchedModelSelection) => {
+    const next = { ...models };
+    for (const id of remove) delete next[id];
+    const additions = Object.fromEntries(
+      add
+        .filter((id) => !Object.prototype.hasOwnProperty.call(next, id))
+        .map((id) => [id, { name: id }]),
+    );
+    commitModels({ ...next, ...additions });
+    if (remove.length > 0) {
+      setExpandedModels((prev) => {
+        const kept = new Set(prev);
+        for (const id of remove) kept.delete(id);
+        return kept;
+      });
+    }
+    // 弹窗里已经显示过这些参数，补完不再提示。
+    for (const id of Object.keys(additions)) fillModelMetadataFor(id, true);
   };
 
   // Remove a model entry
@@ -293,7 +378,7 @@ export function OpenCodeFormFields({
         newModels[k] = v;
       }
     }
-    onModelsChange(newModels);
+    commitModels(newModels);
     // Update expanded set if this model was expanded
     if (expandedModels.has(oldKey)) {
       setExpandedModels((prev) => {
@@ -340,47 +425,6 @@ export function OpenCodeFormFields({
     onModelsChange({
       ...models,
       [modelKey]: nextModel,
-    });
-  };
-
-  // Header handlers
-  const handleAddHeader = () => {
-    const newKey = `${OPENCODE_HEADER_DRAFT_PREFIX}${Date.now()}`;
-    onHeadersChange({
-      ...headers,
-      [newKey]: "",
-    });
-  };
-
-  const handleRemoveHeader = (key: string) => {
-    const newHeaders = { ...headers };
-    delete newHeaders[key];
-    onHeadersChange(newHeaders);
-  };
-
-  const handleHeaderKeyChange = (oldKey: string, newKey: string): boolean => {
-    const trimmedKey = newKey.trim();
-    if (!trimmedKey || oldKey === trimmedKey) return false;
-
-    const normalizedKey = trimmedKey.toLowerCase();
-    const hasDuplicate = Object.keys(headers).some(
-      (key) => key !== oldKey && key.toLowerCase() === normalizedKey,
-    );
-    if (hasDuplicate) return false;
-
-    const newHeaders: Record<string, string> = {};
-    for (const [key, value] of Object.entries(headers)) {
-      if (key === oldKey) newHeaders[trimmedKey] = value;
-      else newHeaders[key] = value;
-    }
-    onHeadersChange(newHeaders);
-    return true;
-  };
-
-  const handleHeaderValueChange = (key: string, value: string) => {
-    onHeadersChange({
-      ...headers,
-      [key]: value,
     });
   };
 
@@ -525,10 +569,22 @@ export function OpenCodeFormFields({
 
   const handleExtraOptionKeyChange = (oldKey: string, newKey: string) => {
     if (oldKey === newKey) return;
+    const trimmed = newKey.trim();
+    // Renaming onto an existing key collapses two rows into one string map,
+    // which can no longer tell "the target row was replaced" from "it was
+    // untouched", so the merge would silently keep the target's stale value
+    // type. Reject like the model extra-field editor does.
+    if (
+      trimmed &&
+      trimmed !== oldKey &&
+      Object.prototype.hasOwnProperty.call(extraOptions, trimmed)
+    ) {
+      return false;
+    }
     const newOptions: Record<string, string> = {};
     for (const [k, v] of Object.entries(extraOptions)) {
       if (k === oldKey) {
-        newOptions[newKey.trim() || oldKey] = v;
+        newOptions[trimmed || oldKey] = v;
       } else {
         newOptions[k] = v;
       }
@@ -555,25 +611,23 @@ export function OpenCodeFormFields({
         <Select value={npm} onValueChange={onNpmChange}>
           <SelectTrigger id="opencode-npm">
             <SelectValue
-              placeholder={t("opencode.selectPackage", {
-                defaultValue: "Select a package",
-              })}
+              placeholder={
+                allowBuiltinDefaults
+                  ? t("opencode.builtinDefaults")
+                  : t("opencode.selectPackage", {
+                      defaultValue: "Select a package",
+                    })
+              }
             />
           </SelectTrigger>
           <SelectContent>
-            {opencodeNpmPackages.map((pkg) => (
+            {apiFormats.map((pkg) => (
               <SelectItem key={pkg.value} value={pkg.value}>
                 {pkg.label}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
-        <p className="text-xs text-muted-foreground">
-          {t("opencode.npmPackageHint", {
-            defaultValue:
-              "Select the AI SDK package that matches your provider.",
-          })}
-        </p>
       </div>
 
       {/* API Key */}
@@ -592,31 +646,32 @@ export function OpenCodeFormFields({
         <FormLabel htmlFor="opencode-baseurl">
           {t("opencode.baseUrl", { defaultValue: "Base URL" })}
         </FormLabel>
-        <Input
+        <ImeSafeInput
           id="opencode-baseurl"
           value={baseUrl}
-          onChange={(e) => onBaseUrlChange(e.target.value)}
+          onValueChange={onBaseUrlChange}
           placeholder="https://api.example.com/v1"
         />
-        <p className="text-xs text-muted-foreground">
-          {t("opencode.baseUrlHint", {
-            defaultValue:
-              "The base URL for the API endpoint. Leave empty to use the default endpoint for official SDKs.",
-          })}
-        </p>
       </div>
 
-      {/* Headers Editor */}
-      <div className="space-y-2 border-l border-border-default pl-3">
+      <RequestHeadersEditor
+        headers={headers}
+        onHeadersChange={onHeadersChange}
+      />
+
+      {/* Extra Options Editor */}
+      <div className="space-y-2 border-l border-border pl-3">
         <div className="flex items-start justify-between gap-3">
-          <div className="max-w-3xl space-y-1">
+          <div className="space-y-1">
             <FormLabel>
-              {t("opencode.headers", { defaultValue: "Headers" })}
+              {t("opencode.extraOptions", {
+                defaultValue: "Extra SDK Options",
+              })}
             </FormLabel>
-            <p className="text-xs text-muted-foreground">
-              {t("opencode.headersHint", {
+            <p className="text-xs text-fg-2">
+              {t("opencode.extraOptionsHint", {
                 defaultValue:
-                  "Optional HTTP headers sent with provider requests, such as HTTP-Referer or X-Title.",
+                  "Advanced SDK options not exposed by the structured fields.",
               })}
             </p>
           </div>
@@ -624,113 +679,7 @@ export function OpenCodeFormFields({
             type="button"
             variant="outline"
             size="sm"
-            onClick={handleAddHeader}
-            aria-label={t("opencode.addHeader", { defaultValue: "Add header" })}
-            className="h-7 gap-1"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            {t("opencode.addHeader", { defaultValue: "Add" })}
-          </Button>
-        </div>
-
-        <div className="max-w-3xl">
-          {Object.keys(headers).length === 0 ? (
-            <p className="text-sm text-muted-foreground py-1">
-              {t("opencode.noHeaders", {
-                defaultValue: "No custom headers configured",
-              })}
-            </p>
-          ) : (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground px-1 mb-1">
-                <span className="flex-1">
-                  {t("opencode.headerName", { defaultValue: "Header" })}
-                </span>
-                <span className="flex-1">
-                  {t("opencode.headerValue", { defaultValue: "Value" })}
-                </span>
-                <span className="w-9" />
-              </div>
-              {Object.entries(headers).map(([key, value]) => (
-                <div key={key} className="flex items-center gap-2">
-                  <ExtraOptionKeyInput
-                    optionKey={key}
-                    onChange={(newKey) => handleHeaderKeyChange(key, newKey)}
-                    placeholder={t("opencode.headerNamePlaceholder", {
-                      defaultValue: "X-Title",
-                    })}
-                    placeholderPrefixes={[OPENCODE_HEADER_DRAFT_PREFIX]}
-                  />
-                  <Input
-                    value={value}
-                    onChange={(e) =>
-                      handleHeaderValueChange(key, e.target.value)
-                    }
-                    placeholder={t("opencode.headerValuePlaceholder", {
-                      defaultValue: "CC Switch",
-                    })}
-                    className="flex-1"
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleRemoveHeader(key)}
-                    aria-label={t("opencode.removeHeader", {
-                      defaultValue: "Remove header",
-                    })}
-                    className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Extra Options Editor */}
-      <Collapsible
-        open={extraOptionsOpen}
-        onOpenChange={setExtraOptionsOpen}
-        className="space-y-2 border-l border-border-default pl-3"
-      >
-        <div className="flex items-start justify-between gap-3">
-          <CollapsibleTrigger asChild>
-            <button
-              type="button"
-              className="flex min-w-0 max-w-3xl flex-1 items-start gap-2 text-left"
-            >
-              <ChevronRight
-                className={cn(
-                  "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform",
-                  extraOptionsOpen && "rotate-90",
-                )}
-              />
-              <span className="space-y-1">
-                <span className="block text-sm font-medium text-foreground">
-                  {t("opencode.extraOptions", {
-                    defaultValue: "Extra SDK Options",
-                  })}
-                </span>
-                <span className="block text-xs text-muted-foreground">
-                  {t("opencode.extraOptionsHint", {
-                    defaultValue:
-                      "Advanced SDK options not exposed by the structured fields.",
-                  })}
-                </span>
-              </span>
-            </button>
-          </CollapsibleTrigger>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setExtraOptionsOpen(true);
-              handleAddExtraOption();
-            }}
+            onClick={handleAddExtraOption}
             className="h-7 gap-1"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -738,16 +687,16 @@ export function OpenCodeFormFields({
           </Button>
         </div>
 
-        <CollapsibleContent className="max-w-3xl space-y-2">
+        <div>
           {Object.keys(extraOptions).length === 0 ? (
-            <p className="text-sm text-muted-foreground py-1">
+            <p className="text-sm text-fg-2 py-1">
               {t("opencode.noExtraOptions", {
                 defaultValue: "No extra SDK options configured",
               })}
             </p>
           ) : (
             <div className="space-y-2">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground px-1 mb-1">
+              <div className="flex items-center gap-2 text-xs text-fg-2 px-1 mb-1">
                 <span className="flex-1">
                   {t("opencode.extraOptionKey", { defaultValue: "Key" })}
                 </span>
@@ -767,54 +716,50 @@ export function OpenCodeFormFields({
                       defaultValue: "timeout",
                     })}
                   />
-                  <Input
+                  <ImeSafeInput
                     value={value}
-                    onChange={(e) =>
-                      handleExtraOptionValueChange(key, e.target.value)
+                    onValueChange={(nextValue) =>
+                      handleExtraOptionValueChange(key, nextValue)
                     }
                     placeholder={t("opencode.extraOptionValuePlaceholder", {
                       defaultValue: "600000",
                     })}
                     className="flex-1"
                   />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleRemoveExtraOption(key)}
-                    className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <HoverTip content={t("common.delete")}>
+                    <Button
+                      aria-label={t("common.delete")}
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleRemoveExtraOption(key)}
+                      className="h-9 w-9 text-fg-2 hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </HoverTip>
                 </div>
               ))}
             </div>
           )}
-        </CollapsibleContent>
-      </Collapsible>
+        </div>
+      </div>
 
       {/* Models Editor */}
-      <div className="space-y-3">
+      <div className="space-y-3 border-l border-border pl-3">
         <div className="flex items-center justify-between">
           <FormLabel>
             {t("opencode.models", { defaultValue: "Models" })}
           </FormLabel>
           <div className="flex gap-1">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleFetchModels}
-              disabled={isFetchingModels}
-              className="h-7 gap-1"
-            >
-              {isFetchingModels ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Download className="h-3.5 w-3.5" />
-              )}
-              {t("providerForm.fetchModels")}
-            </Button>
+            <FetchedModelPicker
+              models={fetchedModels}
+              configuredModelIds={Object.keys(models)}
+              onApply={handleApplyFetchedModels}
+              onFetch={handleFetchModels}
+              isFetching={isFetchingModels}
+              metadataSource={{ baseUrl, presets: presetModelSources }}
+            />
             <Button
               type="button"
               variant="outline"
@@ -823,20 +768,20 @@ export function OpenCodeFormFields({
               className="h-7 gap-1"
             >
               <Plus className="h-3.5 w-3.5" />
-              {t("opencode.addModel", { defaultValue: "Add" })}
+              {t("opencode.addModel", { defaultValue: "Add manually" })}
             </Button>
           </div>
         </div>
 
         {Object.keys(models).length === 0 ? (
-          <p className="text-sm text-muted-foreground py-2">
+          <p className="text-sm text-fg-2 py-2">
             {t("opencode.noModels", {
               defaultValue: "No models configured. Click Add to add a model.",
             })}
           </p>
         ) : (
           <div className="space-y-2">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground px-1 mb-1">
+            <div className="flex items-center gap-2 text-xs text-fg-2 px-1 mb-1">
               <span className="w-9" />
               <span className="flex-1">
                 {t("opencode.modelId", { defaultValue: "模型 ID" })}
@@ -878,27 +823,33 @@ export function OpenCodeFormFields({
                     {fetchedModels.length > 0 && (
                       <ModelDropdown
                         models={fetchedModels}
-                        onSelect={(id) => handleModelIdChange(key, id)}
+                        onSelect={(id) => {
+                          handleModelIdChange(key, id);
+                          fillModelMetadataFor(id);
+                        }}
                       />
                     )}
                   </div>
-                  <Input
+                  <ImeSafeInput
                     value={model.name}
-                    onChange={(e) => handleModelNameChange(key, e.target.value)}
+                    onValueChange={(value) => handleModelNameChange(key, value)}
                     placeholder={t("opencode.modelName", {
                       defaultValue: "Display Name",
                     })}
                     className="flex-1"
                   />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleRemoveModel(key)}
-                    className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <HoverTip content={t("common.delete")}>
+                    <Button
+                      aria-label={t("common.delete")}
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleRemoveModel(key)}
+                      className="h-9 w-9 text-fg-2 hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </HoverTip>
                 </div>
 
                 {/* Expanded model details */}
@@ -906,7 +857,7 @@ export function OpenCodeFormFields({
                   <div className="ml-9 pl-4 border-l-2 border-muted space-y-3">
                     {/* Token limits (model.limit) */}
                     <div className="space-y-2">
-                      <span className="text-xs font-medium text-muted-foreground">
+                      <span className="text-xs font-medium text-fg-2">
                         {t("opencode.modelLimits", {
                           defaultValue: "Token Limits",
                         })}
@@ -915,7 +866,7 @@ export function OpenCodeFormFields({
                         <div className="space-y-1">
                           <FormLabel
                             htmlFor={`opencode-${key}-limit-context`}
-                            className="text-xs text-muted-foreground"
+                            className="text-xs text-fg-2"
                           >
                             {t("opencode.limitContext", {
                               defaultValue: "Context",
@@ -936,11 +887,15 @@ export function OpenCodeFormFields({
                             }
                             placeholder="1048576"
                           />
+                          <GptContextWindowHint
+                            modelId={key}
+                            contextWindow={model.limit?.context}
+                          />
                         </div>
                         <div className="space-y-1">
                           <FormLabel
                             htmlFor={`opencode-${key}-limit-output`}
-                            className="text-xs text-muted-foreground"
+                            className="text-xs text-fg-2"
                           >
                             {t("opencode.limitOutput", {
                               defaultValue: "Output",
@@ -968,7 +923,7 @@ export function OpenCodeFormFields({
                     {/* Model Properties (extra fields like variants, cost) */}
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-muted-foreground">
+                        <span className="text-xs font-medium text-fg-2">
                           {t("opencode.modelExtraFields", {
                             defaultValue: "模型属性",
                           })}
@@ -984,7 +939,7 @@ export function OpenCodeFormFields({
                         </Button>
                       </div>
                       {Object.keys(getModelExtraFields(model)).length === 0 ? (
-                        <p className="text-xs text-muted-foreground py-1">
+                        <p className="text-xs text-fg-2 py-1">
                           {t("opencode.noModelExtraFields", {
                             defaultValue:
                               "模型属性 (variants, cost 等)，点击 + 添加",
@@ -1010,13 +965,13 @@ export function OpenCodeFormFields({
                                   },
                                 )}
                               />
-                              <Input
+                              <ImeSafeInput
                                 value={fValue}
-                                onChange={(e) =>
+                                onValueChange={(value) =>
                                   handleModelExtraFieldValueChange(
                                     key,
                                     fKey,
-                                    e.target.value,
+                                    value,
                                   )
                                 }
                                 placeholder={t(
@@ -1027,17 +982,20 @@ export function OpenCodeFormFields({
                                 )}
                                 className="flex-1"
                               />
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() =>
-                                  handleRemoveModelExtraField(key, fKey)
-                                }
-                                className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
+                              <HoverTip content={t("common.delete")}>
+                                <Button
+                                  aria-label={t("common.delete")}
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() =>
+                                    handleRemoveModelExtraField(key, fKey)
+                                  }
+                                  className="h-9 w-9 text-fg-2 hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </HoverTip>
                             </div>
                           ),
                         )
@@ -1047,7 +1005,7 @@ export function OpenCodeFormFields({
                     {/* SDK Options (model.options) */}
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-muted-foreground">
+                        <span className="text-xs font-medium text-fg-2">
                           {t("opencode.sdkOptions", {
                             defaultValue: "SDK 选项",
                           })}
@@ -1063,7 +1021,7 @@ export function OpenCodeFormFields({
                         </Button>
                       </div>
                       {Object.keys(model.options || {}).length === 0 ? (
-                        <p className="text-xs text-muted-foreground py-1">
+                        <p className="text-xs text-fg-2 py-1">
                           {t("opencode.noModelOptions", {
                             defaultValue: "模型选项，点击 + 添加",
                           })}
@@ -1091,17 +1049,17 @@ export function OpenCodeFormFields({
                                   },
                                 )}
                               />
-                              <Input
+                              <ImeSafeInput
                                 value={
                                   typeof optValue === "string"
                                     ? optValue
                                     : JSON.stringify(optValue)
                                 }
-                                onChange={(e) =>
+                                onValueChange={(value) =>
                                   handleModelOptionValueChange(
                                     key,
                                     optKey,
-                                    e.target.value,
+                                    value,
                                   )
                                 }
                                 placeholder={t(
@@ -1112,17 +1070,20 @@ export function OpenCodeFormFields({
                                 )}
                                 className="flex-1"
                               />
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() =>
-                                  handleRemoveModelOption(key, optKey)
-                                }
-                                className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
+                              <HoverTip content={t("common.delete")}>
+                                <Button
+                                  aria-label={t("common.delete")}
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() =>
+                                    handleRemoveModelOption(key, optKey)
+                                  }
+                                  className="h-9 w-9 text-fg-2 hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </HoverTip>
                             </div>
                           ),
                         )
@@ -1134,13 +1095,6 @@ export function OpenCodeFormFields({
             ))}
           </div>
         )}
-
-        <p className="text-xs text-muted-foreground">
-          {t("opencode.modelsHint", {
-            defaultValue:
-              "Configure available models. Model ID is the API identifier, Display Name is shown in the UI.",
-          })}
-        </p>
       </div>
     </>
   );

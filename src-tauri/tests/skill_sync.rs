@@ -29,7 +29,7 @@ fn symlink_dir(src: &std::path::Path, dest: &std::path::Path) {
 
 #[test]
 fn import_from_apps_respects_explicit_app_selection() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -74,7 +74,7 @@ fn import_from_apps_respects_explicit_app_selection() {
 
 #[test]
 fn import_from_apps_does_not_rewrite_selected_app_directory() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -121,7 +121,7 @@ fn import_from_apps_does_not_rewrite_selected_app_directory() {
 
 #[test]
 fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -169,7 +169,7 @@ fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
 
 #[test]
 fn uninstall_skill_creates_backup_before_removing_ssot() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -237,7 +237,7 @@ fn uninstall_skill_creates_backup_before_removing_ssot() {
 
 #[test]
 fn restore_skill_backup_restores_files_to_ssot_and_current_app() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -316,7 +316,7 @@ fn restore_skill_backup_restores_files_to_ssot_and_current_app() {
 
 #[test]
 fn delete_skill_backup_removes_backup_directory() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -381,7 +381,7 @@ fn delete_skill_backup_removes_backup_directory() {
 
 #[test]
 fn migration_snapshot_overrides_multi_source_directory_inference() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 

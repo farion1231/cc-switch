@@ -1,9 +1,11 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
+  extractCodexAgentsString,
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
   setCodexBaseUrl as setCodexBaseUrlInConfig,
+  setCodexAgentsString,
   setCodexModelName as setCodexModelNameInConfig,
   updateCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
@@ -29,6 +31,71 @@ function pickCodexApiKey(
   return extractCodexExperimentalBearerToken(configText) || "";
 }
 
+// 目录行 load 映射（隐藏字段白名单重建）。抽成可导出的纯函数，与
+// normalizeCodexCatalogModelsForSave 成对做 load→save 回环测试——
+// 任一侧丢字段都会静默清空供应商的逐模型声明（reasoningLevels、
+// baseInstructions 等），且 UI 无可察觉。
+export const mapCodexCatalogModelForForm = (item: any): CodexCatalogModel => {
+  // 隐藏字段（原生 Responses profile 用）不在行 UI 暴露，但必须 load→save
+  // 原样保留，否则编辑保存 MiMo/MiniMax 等会丢官方 base_instructions、
+  // 并行工具、图像模态。DB SSOT 为 camelCase、live 反解兜底可能为 snake_case，
+  // 双格式兼容（与 displayName/contextWindow 一致）。
+  const supportsParallelToolCalls =
+    typeof item?.supportsParallelToolCalls === "boolean"
+      ? item.supportsParallelToolCalls
+      : typeof item?.supports_parallel_tool_calls === "boolean"
+        ? item.supports_parallel_tool_calls
+        : undefined;
+  const inputModalities = Array.isArray(item?.inputModalities)
+    ? item.inputModalities
+    : Array.isArray(item?.input_modalities)
+      ? item.input_modalities
+      : undefined;
+  const baseInstructions =
+    typeof item?.baseInstructions === "string"
+      ? item.baseInstructions
+      : typeof item?.base_instructions === "string"
+        ? item.base_instructions
+        : undefined;
+  const reasoningLevels = Array.isArray(item?.reasoningLevels)
+    ? item.reasoningLevels
+    : Array.isArray(item?.reasoning_levels)
+      ? item.reasoning_levels
+      : undefined;
+  const defaultReasoningLevel =
+    typeof item?.defaultReasoningLevel === "string"
+      ? item.defaultReasoningLevel
+      : typeof item?.default_reasoning_level === "string"
+        ? item.default_reasoning_level
+        : undefined;
+  return {
+    model: typeof item?.model === "string" ? item.model : "",
+    displayName:
+      typeof item?.displayName === "string"
+        ? item.displayName
+        : typeof item?.display_name === "string"
+          ? item.display_name
+          : "",
+    contextWindow:
+      typeof item?.contextWindow === "string" ||
+      typeof item?.contextWindow === "number"
+        ? item.contextWindow
+        : typeof item?.context_window === "string" ||
+            typeof item?.context_window === "number"
+          ? item.context_window
+          : "",
+    ...(supportsParallelToolCalls !== undefined
+      ? { supportsParallelToolCalls }
+      : {}),
+    ...(inputModalities ? { inputModalities } : {}),
+    ...(baseInstructions ? { baseInstructions } : {}),
+    ...(reasoningLevels && reasoningLevels.length > 0
+      ? { reasoningLevels }
+      : {}),
+    ...(defaultReasoningLevel ? { defaultReasoningLevel } : {}),
+  };
+};
+
 /**
  * 管理 Codex 配置状态
  * Codex 配置包含两部分：auth.json (JSON) 和 config.toml (TOML 字符串)
@@ -42,6 +109,8 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
   const [codexCatalogModels, setCodexCatalogModels] = useState<
     CodexCatalogModel[]
   >([]);
+  // 自动审批（Auto Review）用的模型：`modelCatalog.autoReviewModel`，空串 = 用 Codex 的默认
+  const [codexAutoReviewModel, setCodexAutoReviewModel] = useState("");
   const [codexAuthError, setCodexAuthError] = useState("");
 
   const isUpdatingCodexBaseUrlRef = useRef(false);
@@ -53,10 +122,6 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
 
     const config = initialData.settingsConfig;
     if (typeof config === "object" && config !== null) {
-      // 设置 auth.json
-      const auth = (config as any).auth || {};
-      setCodexAuthState(JSON.stringify(auth, null, 2));
-
       // 设置 config.toml
       const configStr =
         typeof (config as any).config === "string"
@@ -64,58 +129,23 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
           : "";
       setCodexConfigState(configStr);
 
+      // 设置 auth.json
+      const auth = (config as any).auth || {};
+      setCodexAuthState(JSON.stringify(auth, null, 2));
+
       const modelCatalog = (config as any).modelCatalog;
       const rawCatalogModels = Array.isArray(modelCatalog?.models)
         ? modelCatalog.models
         : [];
       setCodexCatalogModels(
         rawCatalogModels
-          .map((item: any) => {
-            // 隐藏字段（原生 Responses profile 用）不在行 UI 暴露，但必须 load→save
-            // 原样保留，否则编辑保存 MiMo/MiniMax 等会丢官方 base_instructions、
-            // 并行工具、图像模态。DB SSOT 为 camelCase、live 反解兜底可能为 snake_case，
-            // 双格式兼容（与 displayName/contextWindow 一致）。
-            const supportsParallelToolCalls =
-              typeof item?.supportsParallelToolCalls === "boolean"
-                ? item.supportsParallelToolCalls
-                : typeof item?.supports_parallel_tool_calls === "boolean"
-                  ? item.supports_parallel_tool_calls
-                  : undefined;
-            const inputModalities = Array.isArray(item?.inputModalities)
-              ? item.inputModalities
-              : Array.isArray(item?.input_modalities)
-                ? item.input_modalities
-                : undefined;
-            const baseInstructions =
-              typeof item?.baseInstructions === "string"
-                ? item.baseInstructions
-                : typeof item?.base_instructions === "string"
-                  ? item.base_instructions
-                  : undefined;
-            return {
-              model: typeof item?.model === "string" ? item.model : "",
-              displayName:
-                typeof item?.displayName === "string"
-                  ? item.displayName
-                  : typeof item?.display_name === "string"
-                    ? item.display_name
-                    : "",
-              contextWindow:
-                typeof item?.contextWindow === "string" ||
-                typeof item?.contextWindow === "number"
-                  ? item.contextWindow
-                  : typeof item?.context_window === "string" ||
-                      typeof item?.context_window === "number"
-                    ? item.context_window
-                    : "",
-              ...(supportsParallelToolCalls !== undefined
-                ? { supportsParallelToolCalls }
-                : {}),
-              ...(inputModalities ? { inputModalities } : {}),
-              ...(baseInstructions ? { baseInstructions } : {}),
-            };
-          })
+          .map(mapCodexCatalogModelForForm)
           .filter((item: CodexCatalogModel) => item.model.trim()),
+      );
+      setCodexAutoReviewModel(
+        typeof modelCatalog?.autoReviewModel === "string"
+          ? modelCatalog.autoReviewModel.trim()
+          : "",
       );
 
       // 提取 Base URL
@@ -255,6 +285,39 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     [setCodexConfig],
   );
 
+  // 子代理的默认模型和推理强度（`[agents]` 表）：直接从 TOML 读，改动实时写回，清空则删键
+  const codexSubagentModel = useMemo(
+    () => extractCodexAgentsString(codexConfig, "default_subagent_model") || "",
+    [codexConfig],
+  );
+  const codexSubagentReasoningEffort = useMemo(
+    () =>
+      extractCodexAgentsString(
+        codexConfig,
+        "default_subagent_reasoning_effort",
+      ) || "",
+    [codexConfig],
+  );
+
+  const handleCodexSubagentModelChange = useCallback(
+    (model: string) => {
+      const sanitized = model.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+      setCodexConfig((prev) =>
+        setCodexAgentsString(prev, "default_subagent_model", sanitized),
+      );
+    },
+    [setCodexConfig],
+  );
+
+  const handleCodexSubagentReasoningEffortChange = useCallback(
+    (effort: string) => {
+      setCodexConfig((prev) =>
+        setCodexAgentsString(prev, "default_subagent_reasoning_effort", effort),
+      );
+    },
+    [setCodexConfig],
+  );
+
   // 处理 config 变化（同步 Base URL）
   const handleCodexConfigChange = useCallback(
     (value: string) => {
@@ -283,6 +346,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       setCodexAuth(authString);
       setCodexConfig(config);
       setCodexCatalogModels(modelCatalogModels);
+      setCodexAutoReviewModel("");
 
       const baseUrl = extractCodexBaseUrl(config);
       setCodexBaseUrl(baseUrl || "");
@@ -298,14 +362,20 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     codexApiKey,
     codexBaseUrl,
     codexModel,
+    codexSubagentModel,
+    codexSubagentReasoningEffort,
     codexCatalogModels,
+    codexAutoReviewModel,
     codexAuthError,
     setCodexAuth,
     setCodexConfig,
     setCodexCatalogModels,
+    setCodexAutoReviewModel,
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelChange,
+    handleCodexSubagentModelChange,
+    handleCodexSubagentReasoningEffortChange,
     handleCodexConfigChange,
     resetCodexConfig,
     getCodexAuthApiKey,

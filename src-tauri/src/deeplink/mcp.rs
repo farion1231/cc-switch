@@ -153,12 +153,16 @@ pub fn import_mcp_from_deeplink(
 /// Parse apps string into McpApps struct
 pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
     let mut apps = McpApps {
+        agy: false,
         claude: false,
         codex: false,
         gemini: false,
         grokbuild: false,
         opencode: false,
         hermes: false,
+        mcode: false,
+        kimi: false,
+        pi: false,
     };
 
     for app in apps_str.split(',') {
@@ -166,6 +170,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
             "claude" => apps.claude = true,
             "codex" => apps.codex = true,
             "gemini" => apps.gemini = true,
+            "agy" => apps.agy = true,
             "grokbuild" | "grok" => apps.grokbuild = true,
             "opencode" => apps.opencode = true,
             "openclaw" => {
@@ -173,6 +178,9 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
                 log::debug!("OpenClaw doesn't support MCP, ignoring in apps parameter");
             }
             "hermes" => apps.hermes = true,
+            "mcode" => apps.mcode = true,
+            "kimi" => apps.kimi = true,
+            "pi" => apps.pi = true,
             other => {
                 return Err(AppError::InvalidInput(format!(
                     "Invalid app in 'apps': {other}"

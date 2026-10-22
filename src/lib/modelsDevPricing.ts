@@ -1,36 +1,9 @@
 import type { ModelPricing, ModelsDevSyncConfig } from "@/types/usage";
-
-export const MODELS_DEV_API_URL = "https://models.dev/api.json";
-const MODELS_DEV_FETCH_TIMEOUT_MS = 15_000;
-
-export interface ModelsDevCost {
-  input?: number;
-  output?: number;
-  cache_read?: number;
-  cache_write?: number;
-}
-
-export interface ModelsDevModalities {
-  input?: string[];
-  output?: string[];
-}
-
-export interface ModelsDevModel {
-  id?: string;
-  name?: string;
-  release_date?: string;
-  cost?: ModelsDevCost;
-  modalities?: ModelsDevModalities;
-  status?: string;
-}
-
-export interface ModelsDevProvider {
-  id?: string;
-  name?: string;
-  models?: Record<string, ModelsDevModel>;
-}
-
-export type ModelsDevResponse = Record<string, ModelsDevProvider>;
+import {
+  normalizeModelsDevModelId,
+  type ModelsDevModel,
+  type ModelsDevResponse,
+} from "./modelsDev";
 
 export interface ModelsDevEntry {
   key: string;
@@ -81,16 +54,6 @@ const isTextPricingModel = (modelId: string, model?: ModelsDevModel) => {
   );
 };
 
-export function normalizeModelIdForPricing(modelId: string): string {
-  const afterSlash = modelId.slice(modelId.lastIndexOf("/") + 1);
-  const beforeColon = afterSlash.split(":")[0] ?? "";
-  let normalized = beforeColon.trim().replace(/@/g, "-").toLowerCase();
-  if (normalized.endsWith("[1m]")) {
-    normalized = normalized.slice(0, -"[1m]".length).trim();
-  }
-  return normalized;
-}
-
 export function formatPrice(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "0";
   if (value >= 1e12) return "0";
@@ -109,7 +72,7 @@ export function flattenModels(data: ModelsDevResponse): ModelsDevEntry[] {
       const input = typeof cost?.input === "number" ? cost.input : null;
       const output = typeof cost?.output === "number" ? cost.output : null;
       if (input === null && output === null) continue;
-      const normalizedId = normalizeModelIdForPricing(modelId);
+      const normalizedId = normalizeModelsDevModelId(modelId);
       if (!normalizedId) continue;
       entries.push({
         key: `${providerId}/${modelId}`,
@@ -134,25 +97,6 @@ export function flattenModels(data: ModelsDevResponse): ModelsDevEntry[] {
       a.modelName.localeCompare(b.modelName),
   );
   return entries;
-}
-
-export async function fetchModelsDevPricing(): Promise<ModelsDevResponse> {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(
-    () => controller.abort(),
-    MODELS_DEV_FETCH_TIMEOUT_MS,
-  );
-  try {
-    const response = await fetch(MODELS_DEV_API_URL, {
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    return (await response.json()) as ModelsDevResponse;
-  } finally {
-    window.clearTimeout(timeout);
-  }
 }
 
 const COMMON_MODEL_LIMIT_PER_FAMILY = 6;

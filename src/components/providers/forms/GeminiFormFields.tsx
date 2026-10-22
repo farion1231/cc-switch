@@ -3,11 +3,13 @@ import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Download, Info, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { toast } from "sonner";
+import { HelpTip } from "@/components/ui/help-tip";
+import { toast } from "@/lib/toast";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 import {
   fetchModelsForConfig,
+  getAgyModels,
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
@@ -18,6 +20,7 @@ interface EndpointCandidate {
 }
 
 interface GeminiFormFieldsProps {
+  appId?: "gemini" | "agy";
   providerId?: string;
   // API Key
   shouldShowApiKey: boolean;
@@ -49,6 +52,7 @@ interface GeminiFormFieldsProps {
 }
 
 export function GeminiFormFields({
+  appId = "gemini",
   providerId,
   shouldShowApiKey,
   apiKey,
@@ -77,15 +81,21 @@ export function GeminiFormFields({
   const [isFetchingModels, setIsFetchingModels] = useState(false);
 
   const handleFetchModels = useCallback(() => {
-    if (!baseUrl || !apiKey) {
+    // agy 两种模式都只认它自己清单里的显示名，接口的模型 ID 对不上，所以一律问本机 agy。
+    const agy = appId === "agy";
+    const modelBaseUrl = baseUrl.trim();
+    if (!agy && (!modelBaseUrl || !apiKey)) {
       showFetchModelsError(null, t, {
         hasApiKey: !!apiKey,
-        hasBaseUrl: !!baseUrl,
+        hasBaseUrl: !!modelBaseUrl,
       });
       return;
     }
     setIsFetchingModels(true);
-    fetchModelsForConfig(baseUrl, apiKey)
+    (agy
+      ? getAgyModels({ apiKey, baseUrl: modelBaseUrl })
+      : fetchModelsForConfig(modelBaseUrl, apiKey, false)
+    )
       .then((models) => {
         setFetchedModels(models);
         if (models.length === 0) {
@@ -101,7 +111,7 @@ export function GeminiFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [baseUrl, apiKey, t]);
+  }, [appId, baseUrl, apiKey, t]);
 
   // 检测是否为 Google 官方（使用 OAuth）
   const isGoogleOfficial =
@@ -111,16 +121,16 @@ export function GeminiFormFields({
     <>
       {/* Google OAuth 提示 */}
       {isGoogleOfficial && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-950">
+        <div className="rounded-lg border border-border-strong bg-subtle p-4">
           <div className="flex gap-3">
-            <Info className="h-5 w-5 flex-shrink-0 text-blue-600 dark:text-blue-400" />
+            <Info className="h-5 w-5 flex-shrink-0 text-fg-1" />
             <div className="space-y-1">
-              <p className="text-sm font-medium text-blue-900 dark:text-blue-100">
+              <p className="text-sm font-medium text-fg-1">
                 {t("provider.form.gemini.oauthTitle", {
                   defaultValue: "OAuth 认证模式",
                 })}
               </p>
-              <p className="text-sm text-blue-700 dark:text-blue-300">
+              <p className="text-sm text-fg-1">
                 {t("provider.form.gemini.oauthHint", {
                   defaultValue:
                     "Google 官方使用 OAuth 个人认证，无需填写 API Key。首次使用时会自动打开浏览器进行登录。",
@@ -137,6 +147,7 @@ export function GeminiFormFields({
           value={apiKey}
           onChange={onApiKeyChange}
           category={category}
+          required
           shouldShowLink={shouldShowApiKeyLink}
           websiteUrl={websiteUrl}
           isPartner={isPartner}
@@ -148,12 +159,16 @@ export function GeminiFormFields({
       {shouldShowSpeedTest && (
         <EndpointField
           id="baseUrl"
+          required={appId !== "agy"}
           label={t("providerForm.apiEndpoint", { defaultValue: "API 端点" })}
           value={baseUrl}
           onChange={onBaseUrlChange}
           placeholder={t("providerForm.apiEndpointPlaceholder", {
             defaultValue: "https://your-api-endpoint.com/",
           })}
+          help={
+            appId === "agy" ? t("provider.form.agy.endpointHelp") : undefined
+          }
           onManageClick={() => onEndpointModalToggle(true)}
         />
       )}
@@ -162,9 +177,20 @@ export function GeminiFormFields({
       {shouldShowModelField && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <FormLabel htmlFor="gemini-model">
-              {t("provider.form.gemini.model", { defaultValue: "模型" })}
-            </FormLabel>
+            <div className="flex items-center gap-0.5">
+              <FormLabel htmlFor="gemini-model">
+                {t("provider.form.gemini.model", { defaultValue: "模型" })}
+              </FormLabel>
+              {appId === "agy" && (
+                <HelpTip
+                  title={t("provider.form.gemini.model", {
+                    defaultValue: "模型",
+                  })}
+                >
+                  {t("provider.form.agy.modelHelp")}
+                </HelpTip>
+              )}
+            </div>
             <Button
               type="button"
               variant="outline"
@@ -185,7 +211,11 @@ export function GeminiFormFields({
             id="gemini-model"
             value={model}
             onChange={onModelChange}
-            placeholder="gemini-3.6-flash"
+            placeholder={
+              appId === "agy" && !apiKey
+                ? "Gemini 3.8 Flash (High)"
+                : "gemini-3.6-flash"
+            }
             fetchedModels={fetchedModels}
             isLoading={isFetchingModels}
           />
@@ -195,7 +225,7 @@ export function GeminiFormFields({
       {/* 端点测速弹窗 */}
       {shouldShowSpeedTest && isEndpointModalOpen && (
         <EndpointSpeedTest
-          appId="gemini"
+          appId={appId}
           providerId={providerId}
           value={baseUrl}
           onChange={onBaseUrlChange}

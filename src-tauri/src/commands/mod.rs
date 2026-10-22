@@ -1,11 +1,13 @@
 #![allow(non_snake_case)]
 
+mod agy_account;
 mod auth;
 mod balance;
 mod codex_oauth;
 mod coding_plan;
 mod config;
 mod copilot;
+mod custom_icon;
 mod deeplink;
 mod env;
 mod failover;
@@ -17,6 +19,7 @@ mod misc;
 mod model_fetch;
 mod omo;
 mod openclaw;
+mod pi;
 mod plugin;
 mod profile;
 mod prompt;
@@ -36,12 +39,14 @@ mod usage;
 mod webdav_sync;
 mod workspace;
 
+pub use agy_account::*;
 pub use auth::*;
 pub use balance::*;
 pub use codex_oauth::*;
 pub use coding_plan::*;
 pub use config::*;
 pub use copilot::*;
+pub use custom_icon::*;
 pub use deeplink::*;
 pub use env::*;
 pub use failover::*;
@@ -53,6 +58,7 @@ pub use misc::*;
 pub use model_fetch::*;
 pub use omo::*;
 pub use openclaw::*;
+pub(crate) use pi::*;
 pub use plugin::*;
 pub use profile::*;
 pub use prompt::*;

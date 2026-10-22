@@ -1,11 +1,20 @@
+import { readLocalCache, writeLocalCache } from "@/lib/localCache";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { promptsApi, type Prompt, type AppId } from "@/lib/api";
 
 const EMPTY_PROMPTS: Record<string, Prompt> = {};
 
-export function usePromptActions(appId: AppId) {
+interface PromptActionsOptions {
+  /** false：成功时不弹通用 toast（提示词页自己写带后果和撤销的 toast）；失败照样提示 */
+  notify?: boolean;
+}
+
+export function usePromptActions(
+  appId: AppId,
+  { notify = true }: PromptActionsOptions = {},
+) {
   const { t } = useTranslation();
   const [prompts, setPrompts] = useState<Record<string, Prompt>>({});
   const [promptsAppId, setPromptsAppId] = useState<AppId | null>(null);
@@ -14,9 +23,15 @@ export function usePromptActions(appId: AppId) {
     null,
   );
   const [currentFileAppId, setCurrentFileAppId] = useState<AppId | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
   const reloadGenerationRef = useRef(0);
   const currentAppIdRef = useRef(appId);
   const promptsAppIdRef = useRef<AppId | null>(null);
+  // 最近一次从后端读到的列表（写操作之后调用方要拿新列表比对，比如启用时多出来的「原始提示词」）
+  const latestLoadedRef = useRef<{
+    appId: AppId;
+    prompts: Record<string, Prompt>;
+  } | null>(null);
   currentAppIdRef.current = appId;
 
   const visiblePrompts = promptsAppId === appId ? prompts : EMPTY_PROMPTS;
@@ -56,26 +71,33 @@ export function usePromptActions(appId: AppId) {
       reloadGenerationRef.current === requestGeneration &&
       currentAppIdRef.current === requestAppId;
 
-    setLoading(true);
+    // 先显示上次的列表（本地缓存），后台读到最新的再替换；没有缓存才显示「加载中」
+    const cacheKey = `prompts.${requestAppId}.v1`;
+    const cached = readLocalCache<Record<string, Prompt>>(cacheKey);
+    if (cached && promptsAppIdRef.current !== requestAppId) {
+      updatePromptsForApp(requestAppId, () => cached);
+    }
+    setLoading(!cached);
     try {
       const data = await promptsApi.getPrompts(requestAppId);
       if (!isCurrentRequest()) return false;
+      latestLoadedRef.current = { appId: requestAppId, prompts: data };
       updatePromptsForApp(requestAppId, () => data);
+      writeLocalCache(cacheKey, data);
 
-      // 同时加载当前文件内容
       try {
         const content = await promptsApi.getCurrentFileContent(requestAppId);
         if (!isCurrentRequest()) return false;
         setCurrentFileContent(content);
         setCurrentFileAppId(requestAppId);
-      } catch (error) {
+      } catch {
         if (isCurrentRequest()) {
           setCurrentFileContent(null);
           setCurrentFileAppId(requestAppId);
         }
       }
       return true;
-    } catch (error) {
+    } catch {
       if (isCurrentRequest()) {
         toast.error(t("prompts.loadFailed"));
       }
@@ -97,14 +119,22 @@ export function usePromptActions(appId: AppId) {
         }));
         const refreshed =
           currentAppIdRef.current === appId ? await reload() : false;
-        toast.success(t("prompts.saveSuccess"), { closeButton: true });
+        if (notify) {
+          toast.success(t("prompts.saveSuccess"), {
+            closeButton: true,
+            description:
+              appId === "pi" && prompt.enabled
+                ? t("pi.prompts.reloadNotice")
+                : undefined,
+          });
+        }
         return refreshed;
       } catch (error) {
         toast.error(t("prompts.saveFailed"));
         throw error;
       }
     },
-    [appId, reload, t, updatePromptsForApp],
+    [appId, notify, reload, t, updatePromptsForApp],
   );
 
   const deletePrompt = useCallback(
@@ -118,14 +148,16 @@ export function usePromptActions(appId: AppId) {
         });
         const refreshed =
           currentAppIdRef.current === appId ? await reload() : false;
-        toast.success(t("prompts.deleteSuccess"), { closeButton: true });
+        if (notify) {
+          toast.success(t("prompts.deleteSuccess"), { closeButton: true });
+        }
         return refreshed;
       } catch (error) {
         toast.error(t("prompts.deleteFailed"));
         throw error;
       }
     },
-    [appId, reload, t, updatePromptsForApp],
+    [appId, notify, reload, t, updatePromptsForApp],
   );
 
   const enablePrompt = useCallback(
@@ -142,23 +174,64 @@ export function usePromptActions(appId: AppId) {
         );
         const refreshed =
           currentAppIdRef.current === appId ? await reload() : false;
-        toast.success(t("prompts.enableSuccess"), { closeButton: true });
+        if (notify) {
+          toast.success(t("prompts.enableSuccess"), { closeButton: true });
+        }
         return refreshed;
       } catch (error) {
         toast.error(t("prompts.enableFailed"));
         throw error;
       }
     },
-    [appId, reload, t, updatePromptsForApp],
+    [appId, notify, reload, t, updatePromptsForApp],
   );
 
   const toggleEnabled = useCallback(
     async (id: string, enabled: boolean) => {
-      // Optimistic update
+      if (appId === "pi") {
+        setTogglingId(id);
+        try {
+          if (enabled) {
+            await promptsApi.enablePrompt(appId, id);
+          } else {
+            const prompt = visiblePrompts[id];
+            if (!prompt) {
+              throw new Error(`Prompt ${id} does not exist`);
+            }
+            await promptsApi.upsertPrompt(appId, id, {
+              ...prompt,
+              enabled: false,
+            });
+          }
+          const refreshed =
+            currentAppIdRef.current === appId ? await reload() : false;
+          if (notify) {
+            toast.success(
+              t(
+                enabled
+                  ? "pi.prompts.usePromptSuccess"
+                  : "pi.prompts.stopUsingSuccess",
+              ),
+              {
+                closeButton: true,
+                description: t("pi.prompts.reloadNotice"),
+              },
+            );
+          }
+          return refreshed;
+        } catch (error) {
+          toast.error(
+            enabled ? t("prompts.enableFailed") : t("prompts.disableFailed"),
+          );
+          throw error;
+        } finally {
+          setTogglingId(null);
+        }
+      }
+
       const previousPrompts = visiblePrompts;
       const mutationGeneration = reloadGenerationRef.current;
 
-      // 如果要启用当前提示词，先禁用其他所有提示词
       if (enabled) {
         const updatedPrompts = Object.keys(visiblePrompts).reduce(
           (acc, key) => {
@@ -184,18 +257,20 @@ export function usePromptActions(appId: AppId) {
       try {
         if (enabled) {
           await promptsApi.enablePrompt(appId, id);
-          toast.success(t("prompts.enableSuccess"), { closeButton: true });
+          if (notify) {
+            toast.success(t("prompts.enableSuccess"), { closeButton: true });
+          }
         } else {
-          // 禁用提示词 - 需要后端支持
           await promptsApi.upsertPrompt(appId, id, {
             ...visiblePrompts[id],
             enabled: false,
           });
-          toast.success(t("prompts.disableSuccess"), { closeButton: true });
+          if (notify) {
+            toast.success(t("prompts.disableSuccess"), { closeButton: true });
+          }
         }
         return currentAppIdRef.current === appId ? await reload() : false;
       } catch (error) {
-        // Rollback on failure
         if (
           currentAppIdRef.current === appId &&
           reloadGenerationRef.current === mutationGeneration
@@ -208,7 +283,7 @@ export function usePromptActions(appId: AppId) {
         throw error;
       }
     },
-    [appId, reload, t, updatePromptsForApp, visiblePrompts],
+    [appId, notify, reload, t, updatePromptsForApp, visiblePrompts],
   );
 
   const importFromFile = useCallback(async () => {
@@ -217,23 +292,35 @@ export function usePromptActions(appId: AppId) {
       if (currentAppIdRef.current === appId) {
         await reload();
       }
-      toast.success(t("prompts.importSuccess"), { closeButton: true });
+      if (notify) {
+        toast.success(t("prompts.importSuccess"), { closeButton: true });
+      }
       return id;
     } catch (error) {
       toast.error(t("prompts.importFailed"));
       throw error;
     }
-  }, [appId, reload, t]);
+  }, [appId, notify, reload, t]);
+
+  /** 最近一次读到的当前应用列表；还没读过或读的是别的应用时返回 null。 */
+  const getLatestPrompts = useCallback((): Record<string, Prompt> | null => {
+    const latest = latestLoadedRef.current;
+    return latest && latest.appId === currentAppIdRef.current
+      ? latest.prompts
+      : null;
+  }, []);
 
   return {
     prompts: visiblePrompts,
     loading,
     currentFileContent: visibleCurrentFileContent,
+    togglingId,
     reload,
     savePrompt,
     deletePrompt,
     enablePrompt,
     toggleEnabled,
     importFromFile,
+    getLatestPrompts,
   };
 }
