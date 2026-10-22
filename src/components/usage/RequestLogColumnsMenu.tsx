@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Columns3 } from "lucide-react";
 import type { UsageDisplaySettings } from "@/types";
@@ -24,13 +24,27 @@ export function RequestLogColumnsMenu({
   const { t } = useTranslation();
   const savedColumns = value?.requestLogColumns;
   const [columnOverrides, setColumnOverrides] = useState(savedColumns ?? {});
-  useEffect(() => setColumnOverrides(savedColumns ?? {}), [savedColumns]);
+  // 连着勾几列时保存会并发：还有保存没回来就不拿读回的设置覆盖（先回来的旧值会冲掉后勾的列），
+  // 失败也只在最后一次保存回来时退回，退回到设置里当时实际存的
+  const pendingSaves = useRef(0);
+  const latestSaved = useRef(savedColumns);
+  useEffect(() => {
+    latestSaved.current = savedColumns;
+    if (pendingSaves.current === 0) setColumnOverrides(savedColumns ?? {});
+  }, [savedColumns]);
   const logColumns = resolveRequestLogColumns(columnOverrides);
 
   const saveColumnOverrides = async (next: Record<string, boolean>) => {
     setColumnOverrides(next);
-    if ((await onChange({ ...value, requestLogColumns: next })) === false) {
-      setColumnOverrides(savedColumns ?? {});
+    pendingSaves.current += 1;
+    let saved = false;
+    try {
+      saved = (await onChange({ ...value, requestLogColumns: next })) !== false;
+    } finally {
+      pendingSaves.current -= 1;
+      if (pendingSaves.current === 0) {
+        setColumnOverrides(saved ? next : (latestSaved.current ?? {}));
+      }
     }
   };
 

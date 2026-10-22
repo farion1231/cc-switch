@@ -2387,7 +2387,8 @@
       "justNow": "剛剛同步",
       "minutesAgo": "{{count}} 分鐘前同步",
       "syncing": "同步中…",
-      "tip": "點擊立即同步"
+      "tip": "點擊立即同步",
+      "tipOff": "自動掃描已關閉：只在手動同步時掃描工作階段日誌。點擊立即同步"
     },
     "refreshMenu": {
       "label": "每 {{seconds}} 秒掃描"

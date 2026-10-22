@@ -638,6 +638,8 @@ export function RequestLogTable({
           stickyCol[part],
           index === pinnedStart.length - 1 && scrolled && stickyCol.startEdge,
         ),
+        // ponytail: 只量了第一列，偏移只对最多两列固定成立（requestLogPinnedStart 取前两列）；
+        // 要固定第三列时改成量每个固定列、按累计宽度偏移
         style: { insetInlineStart: index === 0 ? 0 : firstWidth },
       };
     }

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
@@ -87,6 +87,7 @@ import {
 } from "./rememberedChoice";
 import { fmtInt, formatRelativeTime, getLocaleFromLanguage } from "./format";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
+import { useElementWidth } from "./usageTable";
 
 // 用量页打开时扫描会话日志的间隔；旧版存过的「关」(0) 等无效值回落到默认
 const DEFAULT_REFRESH_INTERVAL_MS = 60000;
@@ -125,22 +126,6 @@ let lastManualSessionSyncAt: number | null = null;
 /** 测试用：重置模块级的上次同步时间。 */
 export function resetUsageSyncClockForTests() {
   lastManualSessionSyncAt = null;
-}
-
-/** 容器宽度（ResizeObserver）；测量不到（jsdom）时返回 0。 */
-function useContainerWidth<T extends HTMLElement>() {
-  const ref = useRef<T | null>(null);
-  const [width, setWidth] = useState(0);
-  useLayoutEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    const measure = () => setWidth(element.getBoundingClientRect().width);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-  return [ref, width] as const;
 }
 
 /** 每 30 秒重渲染一次，让「N 分钟前同步」跟着走。 */
@@ -347,7 +332,7 @@ export function UsageDashboard({
     rollingRange: range.preset !== "custom" || !!range.liveEndTime,
   });
   const lastSyncAt = Math.max(lastManualSyncAt ?? 0, lastScanAt ?? 0) || null;
-  const [containerRef, measuredWidth] = useContainerWidth<HTMLDivElement>();
+  const [containerRef, measuredWidth] = useElementWidth<HTMLDivElement>();
   const now = useMinuteTicker();
 
   // 测量不到（测试环境）按宽窗口排
@@ -519,7 +504,7 @@ export function UsageDashboard({
   } / ${model ?? t("usage.allModels")}`;
 
   // ── 页头 ─────────────────────────────────────────────────────────────
-  // 同步按钮只说一件事：最近一次同步是什么时候；自动扫描开没开在设置抽屉里看
+  // 同步按钮只说一件事：最近一次同步是什么时候；自动扫描关着时悬停提示里说明
   const syncedLabel = useMemo(() => {
     if (lastSyncAt == null) return undefined;
     const minutes = Math.max(0, Math.floor((now - lastSyncAt) / 60_000));
@@ -539,7 +524,13 @@ export function UsageDashboard({
 
   const headerActions = (
     <div className="flex h-8 shrink-0 items-stretch overflow-hidden rounded-control border border-border-strong bg-surface">
-      <HoverTip content={t("usage.syncStatus.tip")}>
+      <HoverTip
+        content={
+          sessionAutoSyncEnabled
+            ? t("usage.syncStatus.tip")
+            : t("usage.syncStatus.tipOff")
+        }
+      >
         <button
           type="button"
           className="inline-flex items-center gap-1.5 whitespace-nowrap pe-3 ps-2.5 text-body font-medium tabular-nums text-fg-1 transition-colors hover:bg-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:text-fg-2"
@@ -730,28 +721,31 @@ export function UsageDashboard({
   // ── 明细面板 ─────────────────────────────────────────────────────────
   const scopedAppType = appType === "all" ? undefined : appType;
 
-  // 页签上的计数：和各表格同样的查询参数，react-query 会合并成一次请求
-  const { data: firstLogPage } = useRequestLogs({
+  // 页签上的计数：和各表格同样的查询参数，react-query 会合并成一次请求。
+  // 只查当前页签：其余页签显示上次查到的数（缓存），筛选变了、还没查过的就不显示
+  const logCount = useRequestLogs({
     filters: { appType: scopedAppType, providerName, model, statusCode },
     range,
     page: 0,
     pageSize: logPageSize,
-    options: refetch,
+    options: { ...refetch, enabled: tab === "logs" },
   });
-  const { data: providerRows } = useProviderStats(
+  const providerCount = useProviderStats(
     range,
     { appType, providerName, model },
-    refetch,
+    { ...refetch, enabled: tab === "providers" },
   );
-  const { data: modelRows } = useModelStats(
+  const modelCount = useModelStats(
     range,
     { appType, providerName, model },
-    refetch,
+    { ...refetch, enabled: tab === "models" },
   );
   const tabCount: Record<UsageTab, number | undefined> = {
-    logs: firstLogPage?.total,
-    providers: providerRows?.length,
-    models: modelRows?.length,
+    logs: logCount.isPlaceholderData ? undefined : logCount.data?.total,
+    providers: providerCount.isPlaceholderData
+      ? undefined
+      : providerCount.data?.length,
+    models: modelCount.isPlaceholderData ? undefined : modelCount.data?.length,
   };
   const tabLabel: Record<UsageTab, string> = {
     logs: t("usage.requestLogs"),

@@ -10,7 +10,7 @@ import {
   getLocaleFromLanguage,
   parseFiniteNumber,
 } from "./format";
-import type { UsageTrendStatLike } from "./UsageTrendChart";
+import { hitRateOf, type UsageTrendStatLike } from "./UsageTrendChart";
 import { UsageTooltipCard } from "./UsageTooltipCard";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import type { UsageMetric } from "./rememberedChoice";
@@ -32,7 +32,10 @@ interface UsageHeatmapProps {
 interface DayCell {
   key: string;
   date: Date;
-  value: number;
+  /** 按当前指标分档的值；null = 这天没有可画的数据（画成底色） */
+  value: number | null;
+  /** 命中率指标时悬停卡片里显示 */
+  hitRate: number | null;
   tokens: number;
   requests: number;
   cost: number;
@@ -107,16 +110,12 @@ function spanCountFor(
   return before > 0 ? 1 + Math.ceil(before / (WEEKS * 7)) : 1;
 }
 
-function metricValue(stat: UsageTrendStatLike, metric: UsageMetric): number {
+function metricValue(
+  stat: UsageTrendStatLike,
+  metric: Exclude<UsageMetric, "hitRate">,
+): number {
   if (metric === "requests") return stat.requestCount ?? 0;
   if (metric === "cost") return parseFiniteNumber(stat.totalCost) ?? 0;
-  if (metric === "hitRate") {
-    const cacheable =
-      stat.totalInputTokens +
-      stat.totalCacheCreationTokens +
-      stat.totalCacheReadTokens;
-    return cacheable > 0 ? stat.totalCacheReadTokens / cacheable : 0;
-  }
   return (
     stat.totalInputTokens +
     stat.totalOutputTokens +
@@ -125,17 +124,30 @@ function metricValue(stat: UsageTrendStatLike, metric: UsageMetric): number {
   );
 }
 
-/** 按非零天的四分位分档，避免个别高峰日把其余格子都压成最浅 */
-function buildThresholds(values: number[]): number[] {
-  const sorted = values.filter((v) => v > 0).sort((a, b) => a - b);
+/** 格子分档用的值：用量类指标 0 就是没用；命中率 0% 是真实数据，只有没有输入时才是空 */
+function heatValue(
+  stat: UsageTrendStatLike | undefined,
+  metric: UsageMetric,
+): number | null {
+  if (!stat) return null;
+  if (metric === "hitRate") return hitRateOf(stat);
+  const value = metricValue(stat, metric);
+  return value > 0 ? value : null;
+}
+
+/** 按有数据的天的四分位分档，避免个别高峰日把其余格子都压成最浅 */
+function buildThresholds(values: (number | null)[]): number[] {
+  const sorted = values
+    .filter((v): v is number => v != null)
+    .sort((a, b) => a - b);
   if (sorted.length === 0) return [Infinity, Infinity, Infinity];
   const at = (q: number) =>
     sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))];
   return [at(0.25), at(0.5), at(0.75)];
 }
 
-function levelOf(value: number, thresholds: number[]): number {
-  if (value <= 0) return 0;
+function levelOf(value: number | null, thresholds: number[]): number {
+  if (value == null) return 0;
   if (value <= thresholds[0]) return 1;
   if (value <= thresholds[1]) return 2;
   if (value <= thresholds[2]) return 3;
@@ -207,7 +219,8 @@ function buildSpan(
       const cell: DayCell = {
         key: dayKey(date),
         date,
-        value: stat ? metricValue(stat, metric) : 0,
+        value: heatValue(stat, metric),
+        hitRate: stat ? hitRateOf(stat) : null,
         tokens: stat ? metricValue(stat, "tokens") : 0,
         requests: stat?.requestCount ?? 0,
         cost: stat ? metricValue(stat, "cost") : 0,
@@ -421,6 +434,7 @@ export function UsageHeatmap({
             tokens={hover.cell.tokens}
             requests={hover.cell.requests}
             cost={hover.cell.cost}
+            hitRate={metric === "hitRate" ? hover.cell.hitRate : undefined}
           />
         </div>
       )}

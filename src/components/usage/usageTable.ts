@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 
 /**
  * 用量统计里几张表（请求日志、供应商、模型、定价）共用的样式：
@@ -59,11 +59,12 @@ export function useScrolledFromStart<T extends HTMLElement>() {
   return [setElement, scrolled] as const;
 }
 
-/** 元素宽度（ResizeObserver）；用回调 ref，元素晚挂上也能量到 */
+/** 元素宽度（ResizeObserver）；用回调 ref，元素晚挂上也能量到；测量不到（jsdom）时返回 0 */
 export function useElementWidth<T extends HTMLElement>() {
   const [element, setElement] = useState<T | null>(null);
   const [width, setWidth] = useState(0);
-  useEffect(() => {
+  // 在绘制前量：页面按宽度切紧凑布局，晚一帧会先闪一下宽布局
+  useLayoutEffect(() => {
     if (!element) return;
     const measure = () => setWidth(element.offsetWidth);
     measure();

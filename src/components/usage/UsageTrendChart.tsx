@@ -68,7 +68,8 @@ export interface UsageTrendChartPoint {
   hitRate: number | null;
 }
 
-function hitRateOf(stat: UsageTrendStatLike): number | null {
+/** 缓存命中率（0–1）；分母（新增输入 + 缓存写入 + 缓存命中）为 0 时没有意义，返回 null */
+export function hitRateOf(stat: UsageTrendStatLike): number | null {
   const cacheable =
     stat.totalInputTokens +
     stat.totalCacheCreationTokens +

@@ -2386,7 +2386,8 @@
       "justNow": "Synced just now",
       "minutesAgo": "Synced {{count}} min ago",
       "syncing": "Syncing…",
-      "tip": "Click to sync now"
+      "tip": "Click to sync now",
+      "tipOff": "Auto scan is off: session logs are scanned only when you sync manually. Click to sync now"
     },
     "refreshMenu": {
       "label": "Scan every {{seconds}}s"

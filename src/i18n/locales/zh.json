@@ -2386,7 +2386,8 @@
       "justNow": "刚刚同步",
       "minutesAgo": "{{count}} 分钟前同步",
       "syncing": "同步中…",
-      "tip": "点击立即同步"
+      "tip": "点击立即同步",
+      "tipOff": "自动扫描已关闭：只在手动同步时扫描会话日志。点击立即同步"
     },
     "refreshMenu": {
       "label": "每 {{seconds}} 秒扫描"

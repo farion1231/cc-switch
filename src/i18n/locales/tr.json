@@ -2332,7 +2332,8 @@
       "justNow": "Az önce eşitlendi",
       "minutesAgo": "{{count}} dk önce eşitlendi",
       "syncing": "Eşitleniyor…",
-      "tip": "Şimdi eşitlemek için tıklayın"
+      "tip": "Şimdi eşitlemek için tıklayın",
+      "tipOff": "Otomatik tarama kapalı: oturum günlükleri yalnızca manuel olarak eşitlediğinizde taranır. Şimdi eşitlemek için tıklayın"
     },
     "refreshMenu": {
       "label": "Her {{seconds}} saniyede tara"
@@ -2468,6 +2469,16 @@
       "title": "Kullanım ayarları",
       "pricingSummary": "Model başına milyon token fiyatlarını ayarlayın veya models.dev'den eşitleyin",
       "managePricing": "Fiyatlandırmayı yönet…"
+    },
+    "logColumns": {
+      "reset": "Varsayılana sıfırla",
+      "cacheWrite": "Önbellek Yazma",
+      "hitRate": "İsabet Oranı",
+      "hitRateTip": "Önbelleğe alınabilir {{total}} girdinin {{read}} kadarı önbellekten geldi",
+      "duration": "Toplam Süre"
+    },
+    "display": {
+      "logColumns": "İstek günlüğü sütunları"
     }
   },
   "usageScript": {
