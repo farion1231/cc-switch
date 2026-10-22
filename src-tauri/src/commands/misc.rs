@@ -1040,6 +1040,11 @@ fn tool_action_shell_command(tool: &str, action: ToolLifecycleAction) -> Option<
 /// 强制生成 POSIX 版命令。
 #[cfg(target_os = "windows")]
 fn wsl_tool_action_shell_command(tool: &str, action: ToolLifecycleAction) -> Option<String> {
+    // The WSL installation may be V1 or V2. Let its CLI choose the channel;
+    // falling back to opencode-ai could overwrite an existing V2 installation.
+    if tool == "opencode" && matches!(action, ToolLifecycleAction::Update) {
+        return Some("opencode upgrade".into());
+    }
     match action {
         ToolLifecycleAction::Install => {
             let command = posix_install_command_for(tool);
@@ -1263,15 +1268,7 @@ async fn get_single_tool_version_impl(
         "codex" => fetch_npm_latest_for_tool(&client, "@openai/codex", tool, local).await,
         "gemini" => fetch_npm_latest_for_tool(&client, "@google/gemini-cli", tool, local).await,
         "grok" => fetch_npm_latest_for_tool(&client, "@xai-official/grok", tool, local).await,
-        "opencode" => {
-            if let Some(version) =
-                fetch_npm_latest_for_tool(&client, "opencode-ai", tool, local).await
-            {
-                Some(version)
-            } else {
-                fetch_github_latest_version(&client, "anomalyco/opencode").await
-            }
-        }
+        "opencode" => fetch_opencode_latest_version(&client, local).await,
         "openclaw" => fetch_npm_latest_for_tool(&client, "openclaw", tool, local).await,
         "hermes" => fetch_hermes_latest_version(&client, local).await,
         "pi" => {
@@ -1476,6 +1473,20 @@ async fn fetch_npm_latest_for_tool(
 ) -> Option<String> {
     let dist_tags = fetch_npm_dist_tags(client, package).await?;
     pick_latest_version(&dist_tags, npm_prerelease_tags(tool), local_version)
+}
+
+async fn fetch_opencode_latest_version(
+    client: &reqwest::Client,
+    local_version: Option<&str>,
+) -> Option<String> {
+    let package = npm_package_for_version("opencode", local_version)?;
+    let version = match fetch_npm_latest_for_tool(client, package, "opencode", local_version).await
+    {
+        Some(version) => version,
+        None => fetch_github_latest_version(client, "anomalyco/opencode").await?,
+    };
+    // The shared GitHub release feed can point at a different major version.
+    (npm_package_for_version("opencode", Some(&version)) == Some(package)).then_some(version)
 }
 
 /// 版本探测请求的请求级超时。全局客户端是给代理转发用的（总超时 600s / 连接 30s），
@@ -3286,6 +3297,21 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
     }
 }
 
+/// Updates must stay on the installed OpenCode major; new installs retain V1.
+fn npm_package_for_version(tool: &str, version: Option<&str>) -> Option<&'static str> {
+    if tool != "opencode" {
+        return npm_package_for(tool);
+    }
+    match version {
+        None => npm_package_for(tool),
+        Some(version) => match parse_semver(version.trim().trim_start_matches('v'))?.0[0] {
+            1 => Some("opencode-ai"),
+            2 => Some("@opencode/cli"),
+            _ => None,
+        },
+    }
+}
+
 /// 取路径的父目录(纯字符串截断,不碰 fs):`/a/b/npm` → `/a/b`、`C:\a\b\npm.cmd`
 /// → `C:\a\b`、混合分隔符 `C:\a/b\npm` → `C:\a/b`。无父目录返回空串。
 ///
@@ -4438,6 +4464,25 @@ fn run_wsl_tool_command(
 fn installs_anchored_command(tool: &str, installs: &[ToolInstallation]) -> Option<String> {
     let inst = default_install(installs)?;
     let real = inst.real.to_string_lossy();
+    if tool == "opencode"
+        && npm_package_for_version(tool, inst.version.as_deref()) == Some("@opencode/cli")
+    {
+        // V2 owns its package/installer selection and Windows binary replacement.
+        // Never fall back to installing V1 when its updater fails.
+        #[cfg(not(target_os = "windows"))]
+        {
+            if is_brew_managed_path(&real) {
+                return anchored_command_from_paths(tool, &inst.path, &real);
+            }
+            return Some(format!(
+                "PATH={}:\"$PATH\" {}",
+                shell_single_quote(&parent_dir(&inst.path)),
+                anchored_official_update_command(tool, &inst.path)?
+            ));
+        }
+        #[cfg(target_os = "windows")]
+        return anchored_official_update_command(tool, &inst.path);
+    }
     // Codex 平台分发包损坏自愈：主包在但平台二进制缺失时 codex 跑不起来
     // （runnable=false），此时正常锚定的 `npm i -g @latest` 是 no-op 修不好——改用
     // uninstall+install 重装补回平台二进制。**但仅限会锚定到 sibling npm 的 node 管理器
@@ -4493,6 +4538,22 @@ enum UpdateCommand {
 }
 
 fn resolve_update_command(tool: &str, installs: &[ToolInstallation]) -> UpdateCommand {
+    if tool == "opencode"
+        && !default_install(installs).is_some_and(|inst| {
+            match inst
+                .version
+                .as_deref()
+                .and_then(|version| npm_package_for_version(tool, Some(version)))
+            {
+                Some("opencode-ai") => true,
+                Some("@opencode/cli") => inst.runnable,
+                _ => false,
+            }
+        })
+    {
+        // Without a working, identified major, an npm fallback could downgrade V2.
+        return UpdateCommand::Unmanaged;
+    }
     if let Some(command) = installs_anchored_command(tool, installs) {
         return UpdateCommand::Anchored(command);
     }
@@ -7635,6 +7696,142 @@ mod tests {
                 assert_eq!(is_native_executable(&path), expected, "{name}");
             }
             assert!(!is_native_executable(&dir.path().join("missing")));
+        }
+    }
+
+    mod opencode_v2_updates {
+        use super::super::*;
+
+        fn install(path: &str, version: Option<&str>, is_default: bool) -> ToolInstallation {
+            ToolInstallation {
+                path: path.into(),
+                real: PathBuf::from(path),
+                version: version.map(str::to_string),
+                runnable: true,
+                error: None,
+                exited_with_error: false,
+                source: "system".into(),
+                is_path_default: is_default,
+            }
+        }
+
+        #[test]
+        fn version_queries_select_the_installed_major() {
+            for (version, package) in [
+                (None, Some("opencode-ai")),
+                (Some("1.2.3"), Some("opencode-ai")),
+                (Some("2.0.21"), Some("@opencode/cli")),
+                (Some("v2.1.0-beta.1"), Some("@opencode/cli")),
+                (Some("2.0.21+linux.1"), Some("@opencode/cli")),
+                (Some("3.0.0"), None),
+                (Some("unknown"), None),
+                (Some("2.0.21+238.gabcdef"), None),
+            ] {
+                assert_eq!(npm_package_for_version("opencode", version), package);
+            }
+            assert_eq!(
+                npm_package_for_version("codex", Some("2.0.0")),
+                npm_package_for("codex")
+            );
+        }
+
+        #[test]
+        fn v2_update_does_not_install_the_v1_package() {
+            let dir = tempfile::tempdir().unwrap();
+            let bin = dir.path().join(".nvm/versions/node/v22/bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            let (entry, npm) = if cfg!(target_os = "windows") {
+                ("opencode.cmd", "npm.cmd")
+            } else {
+                ("opencode", "npm")
+            };
+            std::fs::write(bin.join(entry), "").unwrap();
+            std::fs::write(bin.join(npm), "").unwrap();
+            let mut installed = install(&bin.join(entry).to_string_lossy(), Some("2.0.21"), true);
+            installed.real = bin.join("node_modules/@opencode/cli/bin/opencode");
+            let UpdateCommand::Anchored(command) = resolve_update_command("opencode", &[installed])
+            else {
+                panic!("the installed V2 CLI should handle its own upgrade");
+            };
+            assert!(command.contains("upgrade"), "{command}");
+            assert!(!command.contains("opencode-ai"), "{command}");
+            assert!(!command.contains("||"), "{command}");
+        }
+
+        #[test]
+        fn unknown_or_ambiguous_major_never_falls_back_to_v1() {
+            for version in [None, Some("unknown"), Some("3.0.0")] {
+                assert_eq!(
+                    resolve_update_command(
+                        "opencode",
+                        &[install("/tools/opencode", version, true)]
+                    ),
+                    UpdateCommand::Unmanaged
+                );
+            }
+            assert_eq!(
+                resolve_update_command("opencode", &[]),
+                UpdateCommand::Unmanaged
+            );
+            let mut installs = [
+                install("/v1/opencode", Some("1.2.3"), false),
+                install("/v2/opencode", Some("2.0.21"), false),
+            ];
+            assert_eq!(
+                resolve_update_command("opencode", &installs),
+                UpdateCommand::Unmanaged
+            );
+            installs[0].is_path_default = true;
+            assert_eq!(
+                resolve_update_command("opencode", &installs),
+                resolve_update_command("opencode", &installs[..1])
+            );
+        }
+
+        #[test]
+        fn broken_v2_does_not_fall_back_to_v1() {
+            let mut installed = install("/tools/opencode", Some("2.0.21"), true);
+            installed.runnable = false;
+            installed.exited_with_error = true;
+            assert_eq!(
+                resolve_update_command("opencode", &[installed]),
+                UpdateCommand::Unmanaged
+            );
+        }
+
+        #[test]
+        fn v2_default_is_used_instead_of_another_installation() {
+            let installs = [
+                install("/v1/opencode", Some("1.2.3"), false),
+                install("/v2 with spaces/opencode", Some("2.0.21"), true),
+            ];
+            let UpdateCommand::Anchored(command) = resolve_update_command("opencode", &installs)
+            else {
+                panic!("V2 must be anchored to the default installation");
+            };
+            assert!(command.contains("/v2 with spaces/opencode"), "{command}");
+            assert!(!command.contains("/v1/"), "{command}");
+            assert!(!command.contains("opencode-ai"), "{command}");
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        #[test]
+        fn v2_homebrew_remains_owned_by_homebrew() {
+            let mut installed = install("/opt/homebrew/bin/opencode", Some("2.0.21"), true);
+            installed.real = PathBuf::from("/opt/homebrew/Cellar/opencode-v2/2.0.21/bin/opencode");
+            assert_eq!(
+                resolve_update_command("opencode", &[installed]),
+                UpdateCommand::Anchored("/opt/homebrew/bin/brew upgrade opencode-v2".into())
+            );
+        }
+
+        #[cfg(target_os = "windows")]
+        #[test]
+        fn wsl_update_has_no_v1_package_fallback() {
+            assert_eq!(
+                wsl_tool_action_shell_command("opencode", ToolLifecycleAction::Update),
+                Some("opencode upgrade".into())
+            );
         }
     }
 
