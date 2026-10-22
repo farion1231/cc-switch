@@ -21,7 +21,8 @@ import {
   qoderAccountPreset,
   QODER_ACCOUNT_PRESET_ID,
 } from "@/config/qoderProviderPresets";
-import { QoderAccountLogin } from "./QoderAccountLogin";
+import { AuthSettingsPanel } from "./AuthSettingsPanel";
+import type { AuthCenterTarget } from "@/lib/api";
 import { ProviderPresetSelector } from "./forms/ProviderPresetSelector";
 import { PresetStepContext, type PresetStepState } from "./forms/presetStep";
 
@@ -64,8 +65,6 @@ export function QoderProviderDialog({
   provider,
   providers,
   currentModel,
-  accountLogin = false,
-  onUseAccount,
   onSave,
   onClose,
 }: {
@@ -74,8 +73,6 @@ export function QoderProviderDialog({
   provider?: QoderProvider;
   providers: Record<string, QoderProvider>;
   currentModel: string;
-  accountLogin?: boolean;
-  onUseAccount: () => Promise<void>;
   onSave: (
     id: string,
     provider: QoderProvider,
@@ -85,14 +82,11 @@ export function QoderProviderDialog({
 }) {
   const { t } = useTranslation();
   const [step, setStep] = useState<"pick" | "form">(
-    originalId || accountLogin ? "form" : "pick",
+    originalId ? "form" : "pick",
   );
   const [pickerHost, setPickerHost] = useState<HTMLDivElement | null>(null);
-  const [accountActionHost, setAccountActionHost] =
-    useState<HTMLDivElement | null>(null);
-  const [presetId, setPresetId] = useState(
-    accountLogin ? QODER_ACCOUNT_PRESET_ID : "custom",
-  );
+  const [authTarget, setAuthTarget] = useState<AuthCenterTarget | null>(null);
+  const [presetId, setPresetId] = useState("custom");
   const isAccountLogin = !originalId && presetId === QODER_ACCOUNT_PRESET_ID;
   const presetEntries = useMemo(
     () => [
@@ -180,8 +174,12 @@ export function QoderProviderDialog({
       setBusy(false);
     }
   };
-  const canReturnToPicker = !originalId && !accountLogin && step === "form";
+  const canReturnToPicker = !originalId && step === "form";
   const close = () => {
+    if (authTarget) {
+      setAuthTarget(null);
+      return;
+    }
     if (busy) return;
     if (canReturnToPicker) setStep("pick");
     else onClose();
@@ -243,11 +241,6 @@ export function QoderProviderDialog({
               <ProviderPresetSelector
                 selectedPresetId={presetId}
                 presetEntries={presetEntries}
-                barAction={
-                  isAccountLogin ? (
-                    <div ref={setAccountActionHost} />
-                  ) : undefined
-                }
                 onPresetChange={(selectedId) => {
                   const preset = presetEntries.find(
                     (entry) => entry.id === selectedId,
@@ -273,14 +266,22 @@ export function QoderProviderDialog({
             )}
             {isAccountLogin ? (
               step === "form" && (
-                <QoderAccountLogin
-                  app={app}
-                  actionSlot={accountActionHost}
-                  onUseAccount={async () => {
-                    await onUseAccount();
-                    onClose();
-                  }}
-                />
+                <div className="mt-6 space-y-3">
+                  <p className="text-body text-fg-2">
+                    {t("qoder.loginDescription")}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="neutral"
+                    onClick={() =>
+                      setAuthTarget(
+                        app === "qoder-cn" ? "qoder_cn_oauth" : "qoder_oauth",
+                      )
+                    }
+                  >
+                    {t("qoder.manageAccounts")}
+                  </Button>
+                </div>
               )
             ) : (
               <fieldset
@@ -624,6 +625,10 @@ export function QoderProviderDialog({
           </form>
         </div>
       </PresetStepContext.Provider>
+      <AuthSettingsPanel
+        target={authTarget}
+        onClose={() => setAuthTarget(null)}
+      />
     </FullScreenPanel>
   );
 }

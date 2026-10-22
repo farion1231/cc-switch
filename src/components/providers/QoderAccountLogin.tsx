@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { ExternalLink, Loader2, Plus, Trash2 } from "lucide-react";
+import { ExternalLink, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { settingsApi } from "@/lib/api";
@@ -16,15 +15,23 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { cn } from "@/lib/utils";
+import { ProviderIcon } from "@/components/ProviderIcon";
+import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export function QoderAccountLogin({
   app,
-  onUseAccount,
-  actionSlot,
+  onAppChange,
 }: {
   app: QoderAppId;
-  onUseAccount: () => Promise<void>;
-  actionSlot?: HTMLElement | null;
+  onAppChange: (app: QoderAppId) => void;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -36,6 +43,7 @@ export function QoderAccountLogin({
   });
   const [flowId, setFlowId] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [error, setError] = useState("");
   const [deleting, setDeleting] = useState<QoderAccount | null>(null);
   const [removing, setRemoving] = useState(false);
@@ -44,8 +52,6 @@ export function QoderAccountLogin({
   const activeFlow = useRef<string | null>(null);
   const openedFlow = useRef<string | null>(null);
   const completedFlow = useRef<string | null>(null);
-  const useAccount = useRef(onUseAccount);
-  useAccount.current = onUseAccount;
   const progress = useQuery({
     queryKey: qoderKeys.login(app, flowId),
     queryFn: () => qoderApi.pollLogin(app, flowId!),
@@ -58,8 +64,9 @@ export function QoderAccountLogin({
   useEffect(
     () => () => {
       generation.current += 1;
-      if (activeFlow.current)
-        void qoderApi.cancelLogin(app, activeFlow.current).catch(() => {});
+      const id = activeFlow.current;
+      activeFlow.current = null;
+      if (id) void qoderApi.cancelLogin(app, id).catch(() => {});
     },
     [app],
   );
@@ -104,6 +111,9 @@ export function QoderAccountLogin({
           const status = await qoderApi.getAuthStatus(app);
           if (current !== generation.current) return;
           queryClient.setQueryData(qoderKeys.auth(app), status);
+          await queryClient.invalidateQueries({
+            queryKey: qoderKeys.models(app),
+          });
           if (
             !status.accounts?.some((account) => account.id === result.accountId)
           )
@@ -118,13 +128,14 @@ export function QoderAccountLogin({
     }
   }, [app, flowId, progress.data, progress.error, queryClient, t]);
 
-  const start = async () => {
-    if (working) return;
+  const start = async (accountId?: string) => {
+    if (working || removing) return;
     const current = ++generation.current;
     setWorking(true);
+    setStarting(true);
     setError("");
     try {
-      const id = await qoderApi.startLogin(app);
+      const id = await qoderApi.startLogin(app, accountId);
       if (current !== generation.current) {
         await qoderApi.cancelLogin(app, id);
         return;
@@ -134,8 +145,10 @@ export function QoderAccountLogin({
     } catch (cause) {
       if (current === generation.current) setError(extractErrorMessage(cause));
     } finally {
-      if (current === generation.current && !activeFlow.current)
-        setWorking(false);
+      if (current === generation.current) {
+        setStarting(false);
+        if (!activeFlow.current) setWorking(false);
+      }
     }
   };
 
@@ -150,7 +163,7 @@ export function QoderAccountLogin({
       } else {
         await qoderApi.setModel(app, "auto");
       }
-      await useAccount.current();
+      await queryClient.invalidateQueries({ queryKey: qoderKeys.models(app) });
     } catch (cause) {
       setError(extractErrorMessage(cause));
     } finally {
@@ -165,6 +178,7 @@ export function QoderAccountLogin({
     try {
       const status = await qoderApi.deleteAccount(app, deleting.id);
       queryClient.setQueryData(qoderKeys.auth(app), status);
+      await queryClient.invalidateQueries({ queryKey: qoderKeys.models(app) });
       setDeleting(null);
     } catch (cause) {
       setDeleteError(extractErrorMessage(cause));
@@ -188,13 +202,14 @@ export function QoderAccountLogin({
       ) : (
         <Plus className="h-3.5 w-3.5" />
       )}
-      {t("qoder.addAccount")}
+      {t(accounts.length ? "qoder.addAccount" : "qoder.loginWithBrowser")}
     </Button>
   );
   const cancel = async () => {
     generation.current += 1;
     const id = activeFlow.current;
     setFlowId(null);
+    setStarting(false);
     try {
       if (id) await qoderApi.cancelLogin(app, id);
     } catch (cause) {
@@ -207,13 +222,46 @@ export function QoderAccountLogin({
   };
 
   return (
-    <div className="mt-6 space-y-4">
-      {actionSlot ? (
-        createPortal(addButton, actionSlot)
-      ) : actionSlot === undefined ? (
-        <div className="flex justify-end">{addButton}</div>
-      ) : null}
+    <section
+      aria-label={APP_DISPLAY_NAME[app]}
+      className="space-y-4 rounded-panel border border-border bg-surface p-4"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <ProviderIcon icon="qoder" name={APP_DISPLAY_NAME[app]} size={24} />
+          <h3 className="text-strong text-fg-1">{APP_DISPLAY_NAME[app]}</h3>
+        </div>
+        {addButton}
+      </div>
       <p className="text-body text-fg-2">{t("qoder.loginDescription")}</p>
+      <div className="flex flex-wrap items-center gap-3">
+        <Label htmlFor="qoder-auth-edition">{t("qoder.edition")}</Label>
+        <Select
+          value={app}
+          disabled={working || removing}
+          onValueChange={(value) => onAppChange(value as QoderAppId)}
+        >
+          <SelectTrigger id="qoder-auth-edition" className="w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="qoder">{t("qoder.globalEdition")}</SelectItem>
+            <SelectItem value="qoder-cn">{t("qoder.chinaEdition")}</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button
+          type="button"
+          variant="quiet"
+          size="icon-compact"
+          disabled={working || removing || auth.isFetching}
+          aria-label={t("qoder.refreshAccounts")}
+          onClick={() => void auth.refetch()}
+        >
+          <RefreshCw
+            className={cn("h-4 w-4", auth.isFetching && "animate-spin")}
+          />
+        </Button>
+      </div>
       {auth.isLoading && <Loader2 className="h-4 w-4 animate-spin" />}
       {auth.isError && (
         <Notice
@@ -279,6 +327,15 @@ export function QoderAccountLogin({
               </div>
               <Button
                 type="button"
+                variant="quiet"
+                size="compact"
+                disabled={working || removing || !auth.data?.installed}
+                onClick={() => void start(account.id)}
+              >
+                {t("qoder.signInAgain")}
+              </Button>
+              <Button
+                type="button"
                 variant="neutral"
                 size="compact"
                 disabled={working || removing || !auth.data?.installed}
@@ -331,25 +388,19 @@ export function QoderAccountLogin({
         </Notice>
       )}
       <div className="flex gap-2">
-        {accounts.length === 0 && (
-          <>
-            <Button
-              type="button"
-              variant="solid"
-              size="regular"
-              disabled={working || removing || !auth.data?.installed}
-              onClick={() => void (auth.data?.loggedIn ? select() : start())}
-            >
-              {working && <Loader2 className="h-4 w-4 animate-spin" />}
-              {t(
-                auth.data?.loggedIn
-                  ? "qoder.useAccount"
-                  : "qoder.loginWithBrowser",
-              )}
-            </Button>
-          </>
+        {accounts.length === 0 && auth.data?.loggedIn && (
+          <Button
+            type="button"
+            variant="solid"
+            size="regular"
+            disabled={working || removing || !auth.data?.installed}
+            onClick={() => void select()}
+          >
+            {working && <Loader2 className="h-4 w-4 animate-spin" />}
+            {t("qoder.useAccount")}
+          </Button>
         )}
-        {flowId && (
+        {(starting || flowId) && (
           <Button
             type="button"
             variant="neutral"
@@ -378,6 +429,6 @@ export function QoderAccountLogin({
           if (!removing) setDeleting(null);
         }}
       />
-    </div>
+    </section>
   );
 }

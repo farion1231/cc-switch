@@ -5,6 +5,7 @@ import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSectio
 import { XaiOAuthSection } from "@/components/providers/forms/XaiOAuthSection";
 import { AgyOAuthSection } from "@/components/providers/forms/AgyOAuthSection";
 import { ClaudeOfficialSection } from "@/components/providers/forms/ClaudeOfficialSection";
+import { QoderAuthSection } from "@/components/providers/QoderAuthSection";
 import { KimiAccountLogin } from "@/components/providers/KimiAccountLogin";
 import { isMac } from "@/lib/platform";
 import type { AuthCenterTarget } from "@/lib/api";
@@ -19,7 +20,7 @@ interface AuthCenterPanelProps {
 }
 
 /**
- * 授权中心：Claude 官方账号、GitHub Copilot、ChatGPT、xAI、Kimi Code，一组一张卡片；
+ * 授权中心：Claude 官方账号、GitHub Copilot、ChatGPT、xAI、Kimi Code、Qoder，一组一张卡片；
  * macOS 上另有 Antigravity 一组（切 agy 的官方登录，目前只实现了 macOS 钥匙串）。
  * 侧栏的「授权中心」页和供应商表单里「管理账号」打开的全屏页共用。
  */
@@ -34,23 +35,28 @@ export function AuthCenterPanel({
   const xaiOauthSectionRef = useRef<HTMLDivElement | null>(null);
   const agyOauthSectionRef = useRef<HTMLDivElement | null>(null);
   const kimiOauthSectionRef = useRef<HTMLDivElement | null>(null);
+  const qoderSectionRef = useRef<HTMLDivElement | null>(null);
+  const qoderApp =
+    authScrollTarget === "qoder_oauth"
+      ? "qoder"
+      : authScrollTarget === "qoder_cn_oauth"
+        ? "qoder-cn"
+        : undefined;
   const showAgy = isMac();
 
   useEffect(() => {
     if (!authScrollTarget) return;
 
-    const sectionRef =
-      authScrollTarget === "kimi_oauth"
-        ? kimiOauthSectionRef
-        : authScrollTarget === "claude_official"
-          ? claudeOfficialSectionRef
-          : authScrollTarget === "github_copilot"
-            ? copilotSectionRef
-            : authScrollTarget === "codex_oauth"
-              ? codexOauthSectionRef
-              : authScrollTarget === "agy_oauth"
-                ? agyOauthSectionRef
-                : xaiOauthSectionRef;
+    const sectionRef = {
+      claude_official: claudeOfficialSectionRef,
+      github_copilot: copilotSectionRef,
+      codex_oauth: codexOauthSectionRef,
+      xai_oauth: xaiOauthSectionRef,
+      agy_oauth: agyOauthSectionRef,
+      kimi_oauth: kimiOauthSectionRef,
+      qoder_oauth: qoderSectionRef,
+      qoder_cn_oauth: qoderSectionRef,
+    }[authScrollTarget];
 
     const frame = requestAnimationFrame(() => {
       const prefersReducedMotion = window.matchMedia(
@@ -87,6 +93,9 @@ export function AuthCenterPanel({
       </div>
       <div ref={kimiOauthSectionRef} className="scroll-mt-4">
         <KimiAccountLogin helpSide={showAgy ? "bottom" : "top"} />
+      </div>
+      <div ref={qoderSectionRef} className="scroll-mt-4">
+        <QoderAuthSection key={qoderApp} initialApp={qoderApp} />
       </div>
       {showAgy && (
         <div ref={agyOauthSectionRef} className="scroll-mt-4">
