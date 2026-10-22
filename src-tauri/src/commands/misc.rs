@@ -862,6 +862,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
+        "dsh" => Some("npm i -g @deepseek-ai/dsh@latest"),
         _ => None,
     }
 }
@@ -1156,7 +1157,16 @@ fn probe_local_version(
     wsl_shell_flag: Option<&str>,
 ) -> ShellProbe {
     if tool == "dsh" {
-        try_get_dsh_desktop_version()
+        // 桌面 app（新/旧名）优先；都没装时回退 CLI 探测——npm 全局包
+        // (@deepseek-ai/dsh) 装的 `dsh` 同样是有效安装，不能误报"未安装"。
+        let desktop = try_get_dsh_desktop_version();
+        if !matches!(desktop, ShellProbe::NotFound(_)) {
+            return desktop;
+        }
+        if let Some(distro) = wsl_distro {
+            return try_get_version_wsl(tool, distro, wsl_shell, wsl_shell_flag);
+        }
+        try_get_version(tool)
     } else if let Some(distro) = wsl_distro {
         try_get_version_wsl(tool, distro, wsl_shell, wsl_shell_flag)
     } else {
@@ -1277,10 +1287,19 @@ async fn get_single_tool_version_impl(
 
 #[cfg(target_os = "macos")]
 fn try_get_dsh_desktop_version() -> ShellProbe {
-    let plist = std::path::Path::new("/Applications/DSH Desktop.app/Contents/Info.plist");
-    if !plist.exists() {
+    // 官方 0.2.x-rc.x 起应用名为 "DeepSeek Harness.app"；旧版（≤2.x 壳构建）
+    // 叫 "DSH Desktop.app"。两者都试，兼容升级/改名前后的安装。
+    let candidates = [
+        "/Applications/DeepSeek Harness.app/Contents/Info.plist",
+        "/Applications/DSH Desktop.app/Contents/Info.plist",
+    ];
+    let plist = candidates
+        .iter()
+        .map(std::path::Path::new)
+        .find(|path| path.exists());
+    let Some(plist) = plist else {
         return ShellProbe::NotFound(NOT_INSTALLED.to_string());
-    }
+    };
     match std::process::Command::new("/usr/bin/plutil")
         .args(["-extract", "CFBundleShortVersionString", "raw", "-o", "-"])
         .arg(plist)
@@ -3278,6 +3297,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "openclaw" => Some("openclaw"),
         "pi" => Some("@earendil-works/pi-coding-agent"),
         "mcode" => Some("@minimax-ai/code"),
+        "dsh" => Some("@deepseek-ai/dsh"),
         _ => None,
     }
 }
@@ -7038,18 +7058,21 @@ mod tests {
     }
 
     #[test]
-    fn dsh_environment_check_is_detection_only() {
+    fn dsh_lifecycle_uses_official_npm_package() {
         assert!(VALID_TOOLS.contains(&"dsh"));
         assert_eq!(tool_display_name("dsh"), "DeepSeek Harness");
-        assert_eq!(npm_package_for("dsh"), None);
+        // 官方 CLI 发行渠道是 npm scoped 包 @deepseek-ai/dsh；安装/升级走 npm。
+        assert_eq!(npm_package_for("dsh"), Some("@deepseek-ai/dsh"));
+        // 桌面 app 自带更新器，无原生自升级命令；npm 是唯一生命周期通道。
         assert_eq!(official_update_args("dsh"), None);
         for action in [ToolLifecycleAction::Install, ToolLifecycleAction::Update] {
-            assert!(tool_action_shell_command_for_shell(
-                "dsh",
-                action,
-                LifecycleCommandShell::Posix,
-            )
-            .is_none());
+            let command =
+                tool_action_shell_command_for_shell("dsh", action, LifecycleCommandShell::Posix);
+            assert_eq!(
+                command.as_deref(),
+                Some("npm i -g @deepseek-ai/dsh@latest"),
+                "dsh {action:?} must fall back to the official npm package"
+            );
         }
     }
 

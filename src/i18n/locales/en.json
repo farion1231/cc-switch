@@ -4240,7 +4240,8 @@
       "hermes": "Installs with the official script",
       "pi": "Installs with npm",
       "mcode": "Installs with the official script, falls back to npm",
-      "agy": "Installs with the official script"
+      "agy": "Installs with the official script",
+      "dsh": "Installs with npm"
     }
   },
   "appPage": {

@@ -559,7 +559,7 @@ function ToolRow({
     tool !== "dsh" && Boolean(info?.version || broken || defaultInstall);
   const action: Exclude<ToolLifecycleAction, "uninstall"> | null =
     (busyAction !== "uninstall" ? busyAction : undefined) ??
-    (tool === "dsh" || isVersionLoading || broken
+    (isVersionLoading || broken
       ? null
       : !info?.version
         ? "install"
