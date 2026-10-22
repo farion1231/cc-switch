@@ -76,6 +76,8 @@ import type { UsageDisplaySettings } from "@/types";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { UsageHeatmap } from "./UsageHeatmap";
 import {
+  LOG_PAGE_SIZES,
+  type LogPageSize,
   USAGE_CHOICE_KEYS,
   USAGE_METRICS,
   type UsageMetric,
@@ -150,6 +152,8 @@ function useMinuteTicker() {
   }, []);
   return now;
 }
+
+const LOG_PAGE_SIZE_OPTIONS = LOG_PAGE_SIZES.map(Number);
 
 const menuContentClass =
   "min-w-[200px] max-w-[320px] rounded-panel border-border bg-surface p-1 shadow-v7-md";
@@ -311,6 +315,14 @@ export function UsageDashboard({
     USAGE_METRICS,
     "tokens",
   );
+  // 请求日志每页几条：记在本机；页签计数的查询也用它，和表格合并成一次请求
+  const [logPageSizeChoice, setLogPageSizeChoice] =
+    useRememberedChoice<LogPageSize>(
+      USAGE_CHOICE_KEYS.logPageSize,
+      LOG_PAGE_SIZES,
+      "20",
+    );
+  const logPageSize = Number(logPageSizeChoice);
   // 定价对话框：抽屉里和空状态都能打开，新装的人往往先配好 models.dev 同步再开始用
   const [pricingOpen, setPricingOpen] = useState(false);
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(() =>
@@ -723,7 +735,7 @@ export function UsageDashboard({
     filters: { appType: scopedAppType, providerName, model, statusCode },
     range,
     page: 0,
-    pageSize: 20,
+    pageSize: logPageSize,
     options: refetch,
   });
   const { data: providerRows } = useProviderStats(
@@ -854,6 +866,11 @@ export function UsageDashboard({
             refreshIntervalMs={0}
             onOpenDetail={setDetailRequestId}
             columns={logColumns}
+            pageSize={logPageSize}
+            pageSizeOptions={LOG_PAGE_SIZE_OPTIONS}
+            onPageSizeChange={(size) =>
+              setLogPageSizeChoice(String(size) as LogPageSize)
+            }
           />
         )}
         {tab === "providers" && (

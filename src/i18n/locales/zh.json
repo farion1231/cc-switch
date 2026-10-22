@@ -2247,6 +2247,8 @@
       "actionEllipsis": "重建 Codex 用量"
     },
     "totalRecords": "共 {{total}} 条记录",
+    "pageSize": "每页 {{count}} 条",
+    "pageSizeLabel": "每页条数",
     "goToPage": "跳转",
     "pageInputPlaceholder": "页码",
     "modelPricing": "模型定价",

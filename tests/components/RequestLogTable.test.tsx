@@ -525,6 +525,52 @@ describe("RequestLogTable optional columns", () => {
     }
   });
 
+  it("does not animate rows that only appear because the page size grew", () => {
+    const animate = vi.fn();
+    const original = Element.prototype.animate;
+    Element.prototype.animate = animate;
+    const logsOf = (...ids: string[]) => ({
+      data: {
+        data: ids.map((requestId) => ({
+          ...base,
+          requestId,
+          appType: "claude",
+          inputTokens: 1,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+          latencyMs: 100,
+          statusCode: 200,
+        })),
+        total: 40,
+        page: 0,
+        pageSize: ids.length,
+      },
+      isLoading: false,
+    });
+    try {
+      useRequestLogsMock.mockReturnValue(logsOf("a", "b"));
+      const { rerender } = render(
+        <RequestLogTable
+          range={{ preset: "today" }}
+          refreshIntervalMs={0}
+          pageSize={10}
+        />,
+      );
+      // 每页从 10 条调到 20 条：c、d 是这一屏多出来的，不是刚进来的请求
+      useRequestLogsMock.mockReturnValue(logsOf("a", "b", "c", "d"));
+      rerender(
+        <RequestLogTable
+          range={{ preset: "today" }}
+          refreshIntervalMs={0}
+          pageSize={20}
+        />,
+      );
+      expect(animate).not.toHaveBeenCalled();
+    } finally {
+      Element.prototype.animate = original;
+    }
+  });
+
   it("formats hit percentages without rounding up to 100", () => {
     expect(formatHitPercent(1)).toBe("100%");
     expect(formatHitPercent(0.99996)).toBe("99.9%");

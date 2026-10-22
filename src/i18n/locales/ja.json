@@ -2247,6 +2247,8 @@
       "actionEllipsis": "Codex 使用量を再構築"
     },
     "totalRecords": "全 {{total}} 件",
+    "pageSize": "{{count}} 件/ページ",
+    "pageSizeLabel": "1 ページの件数",
     "goToPage": "移動",
     "pageInputPlaceholder": "ページ",
     "modelPricing": "モデル料金",

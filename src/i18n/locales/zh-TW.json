@@ -2248,6 +2248,8 @@
       "actionEllipsis": "重建 Codex 用量"
     },
     "totalRecords": "共 {{total}} 筆紀錄",
+    "pageSize": "每頁 {{count}} 筆",
+    "pageSizeLabel": "每頁筆數",
     "goToPage": "跳轉",
     "pageInputPlaceholder": "頁碼",
     "modelPricing": "模型定價",

@@ -2247,6 +2247,8 @@
       "actionEllipsis": "Rebuild Codex Usage"
     },
     "totalRecords": "{{total}} records total",
+    "pageSize": "{{count}} per page",
+    "pageSizeLabel": "Rows per page",
     "goToPage": "Go",
     "pageInputPlaceholder": "Page",
     "modelPricing": "Model Pricing",

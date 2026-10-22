@@ -62,6 +62,10 @@ interface RequestLogTableProps {
   onOpenDetail?: (requestId: string) => void;
   /** 要显示的列（按表格顺序）；不传按默认列 */
   columns?: RequestLogColumnId[];
+  /** 每页几条（页面记住用户的选择）；不传按 20 */
+  pageSize?: number;
+  pageSizeOptions?: readonly number[];
+  onPageSizeChange?: (size: number) => void;
 }
 
 const pad2 = (value: number) => String(value).padStart(2, "0");
@@ -180,11 +184,13 @@ export function RequestLogTable({
   refreshIntervalMs,
   onOpenDetail,
   columns = DEFAULT_COLUMNS,
+  pageSize = 20,
+  pageSizeOptions,
+  onPageSizeChange,
 }: RequestLogTableProps) {
   const { t, i18n } = useTranslation();
   const { money, usdHint } = useMoneyFormat();
   const [page, setPage] = useState(0);
-  const pageSize = 20;
 
   const effectiveFilters: LogFilters = {
     appType:
@@ -222,8 +228,10 @@ export function RequestLogTable({
   // 看着的那行往哪走了一眼就能跟上。只在第一页、筛选没变时做；减少动态效果时只留底色
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
   const shownRef = useRef<{ view: string; ids: string[] } | null>(null);
+  // 翻页、换每页条数、换筛选都算换了一屏：多出来的行不是「新来的」，不播进场动画
   const view = JSON.stringify([
     page,
+    pageSize,
     dashboardAppType,
     providerName,
     model,
@@ -681,6 +689,16 @@ export function RequestLogTable({
         totalPages={totalPages}
         total={total}
         onPageChange={setPage}
+        pageSize={pageSize}
+        pageSizeOptions={pageSizeOptions}
+        onPageSizeChange={
+          onPageSizeChange &&
+          ((next) => {
+            // 换条数后停在包含当前第一行的那一页
+            setPage(Math.floor((page * pageSize) / next));
+            onPageSizeChange(next);
+          })
+        }
       />
     </div>
   );

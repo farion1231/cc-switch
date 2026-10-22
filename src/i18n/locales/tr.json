@@ -2193,6 +2193,8 @@
       "actionEllipsis": "Codex Kullanımını Yeniden Oluşturun"
     },
     "totalRecords": "Toplam {{total}} kayıt",
+    "pageSize": "Sayfa başına {{count}}",
+    "pageSizeLabel": "Sayfa başına satır",
     "goToPage": "Git",
     "pageInputPlaceholder": "Sayfa",
     "modelPricing": "Model Fiyatlandırması",
