@@ -13,13 +13,22 @@ use super::utils::{
 };
 
 const PROVIDER_ID: &str = "deepseek-harness";
-const SESSION_FILE_NAME: &str = "session.jsonl.zstd";
+/// DSH Desktop v2.0.17 起新会话写 `session.v4.jsonl.zstd`（事件结构与旧版兼容，
+/// usage 从 `data.message.usage` 移到 `data.usage`，解析层已兼容两者）；
+/// 旧版本写 `session.jsonl.zstd`。同一会话目录两者不会并存，扫描时两个都收。
+const SESSION_FILE_NAME_V4: &str = "session.v4.jsonl.zstd";
+const SESSION_FILE_NAME_LEGACY: &str = "session.jsonl.zstd";
 /// Compressed size guard; decompressed content is bounded by the event limit.
 const MAX_SESSION_BYTES: u64 = 64 * 1024 * 1024;
 /// Decompressed size guard against zip-bomb-style payloads; bytes beyond the
 /// limit are silently treated as EOF.
 const MAX_DECOMPRESSED_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_EVENTS: usize = 500_000;
+
+fn session_file_name(path: &Path) -> Option<&str> {
+    let name = path.file_name()?.to_str()?;
+    (name == SESSION_FILE_NAME_V4 || name == SESSION_FILE_NAME_LEGACY).then_some(name)
+}
 
 /// 会话页每次打开都会全量扫描；没变过的文件直接复用上次的解析结果。
 /// zstd 解压比 claude/codex 的明文解析更贵，缓存收益更大。
@@ -44,9 +53,16 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
             continue;
         };
         for session_dir in session_dirs.flatten() {
-            let file = session_dir.path().join(SESSION_FILE_NAME);
-            if file.is_file() {
-                files.push(file);
+            let dir = session_dir.path();
+            // 同一目录优先 v4；旧版文件只在没有 v4 时收录，避免同一会话出现两条。
+            let v4 = dir.join(SESSION_FILE_NAME_V4);
+            if v4.is_file() {
+                files.push(v4);
+                continue;
+            }
+            let legacy = dir.join(SESSION_FILE_NAME_LEGACY);
+            if legacy.is_file() {
+                files.push(legacy);
             }
         }
     }
@@ -100,9 +116,9 @@ pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool
     if session_id.contains(['/', '\\']) || session_id == "." || session_id == ".." {
         return Err("Invalid DSH session ID".to_string());
     }
-    if path.file_name().and_then(|n| n.to_str()) != Some(SESSION_FILE_NAME) {
+    if session_file_name(path).is_none() {
         return Err(format!(
-            "DSH session source must be a {SESSION_FILE_NAME} file: {}",
+            "DSH session source must be a {SESSION_FILE_NAME_V4} or {SESSION_FILE_NAME_LEGACY} file: {}",
             path.display()
         ));
     }
@@ -327,6 +343,16 @@ mod tests {
     use serial_test::serial;
 
     fn write_session(home: &Path, project: &str, id: &str, events: &[Value]) -> PathBuf {
+        write_session_file(home, project, id, SESSION_FILE_NAME_LEGACY, events)
+    }
+
+    fn write_session_file(
+        home: &Path,
+        project: &str,
+        id: &str,
+        file_name: &str,
+        events: &[Value],
+    ) -> PathBuf {
         let dir = home.join("sessions").join(project).join(id);
         fs::create_dir_all(&dir).unwrap();
         let payload = events
@@ -335,7 +361,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let compressed = zstd::stream::encode_all(payload.as_bytes(), 3).unwrap();
-        let file = dir.join(SESSION_FILE_NAME);
+        let file = dir.join(file_name);
         fs::write(&file, compressed).unwrap();
         file
     }
@@ -418,7 +444,7 @@ mod tests {
         with_temp_home(|home| {
             let dir = home.join("sessions").join("proj").join("session-bad");
             fs::create_dir_all(&dir).unwrap();
-            fs::write(dir.join(SESSION_FILE_NAME), b"not zstd at all").unwrap();
+            fs::write(dir.join(SESSION_FILE_NAME_LEGACY), b"not zstd at all").unwrap();
             write_session(home, "proj", "session-abc", &fixture_events());
             let sessions = scan_sessions();
             assert_eq!(sessions.len(), 1);
@@ -438,6 +464,35 @@ mod tests {
             assert_eq!(second[0].session_id, first[0].session_id);
             // 删除后按本轮文件列表重建缓存，不再返回已删会话
             delete_session(&home.join("sessions"), &file, "session-abc").unwrap();
+            assert!(scan_sessions().is_empty());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn v4_sessions_are_scanned_and_usage_read_from_data_root() {
+        with_temp_home(|home| {
+            // v2.0.17 的 v4 文件：文件名带 .v4，usage 挂在 data.usage（不在 message 里）
+            let events = vec![
+                serde_json::json!({"type":"session","version":4,"id":"session-v4","createdAt":1792483262099_i64,"cwd":"/Users/andy/Documents"}),
+                serde_json::json!({"type":"request/header","seq":12,"time":1792640339967_i64,"data":{"header":{"config":{"provider":"yuzuvalley","model":"deepseek-flash"}}}}),
+                serde_json::json!({"type":"assistant/message","seq":17,"time":1792640343104_i64,"data":{"turn":1,"step":1,"usage":{"inputTokens":567,"outputTokens":567,"totalTokens":8942,"cacheReadTokens":7808},"message":{"id":"16b568e1","role":"assistant","content":[]}}}),
+            ];
+            let file =
+                write_session_file(home, "proj", "session-v4", SESSION_FILE_NAME_V4, &events);
+
+            let sessions = scan_sessions();
+            assert_eq!(sessions.len(), 1, "v4 文件必须被扫描到");
+            assert_eq!(sessions[0].session_id, "session-v4");
+
+            let rows = usage_records(&file).unwrap();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0]["id"], "16b568e1");
+            assert_eq!(rows[0]["model"], "deepseek-flash");
+            assert_eq!(rows[0]["usage"]["inputTokens"], 567);
+
+            // 删除路径同样接受 v4 文件名
+            delete_session(&home.join("sessions"), &file, "session-v4").unwrap();
             assert!(scan_sessions().is_empty());
         });
     }
