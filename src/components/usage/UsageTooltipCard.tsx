@@ -54,8 +54,10 @@ export function UsageTooltipCard({
       <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 text-body">
         {rows.map((row) => (
           <div key={row.label} className="contents">
-            <span className="text-fg-2">{row.label}</span>
-            <span className="text-end tabular-nums text-fg-1">{row.value}</span>
+            <span className="whitespace-nowrap text-fg-2">{row.label}</span>
+            <span className="whitespace-nowrap text-end tabular-nums text-fg-1">
+              {row.value}
+            </span>
           </div>
         ))}
       </div>
