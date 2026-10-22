@@ -23,6 +23,7 @@ import {
 } from "@/utils/errorUtils";
 import { useUpsertMcpServer } from "@/hooks/useMcp";
 import { cn } from "@/lib/utils";
+import { TagInput } from "@/components/ui/tag-input";
 import { NeutralBadge } from "./AppMatrix";
 import {
   CHECKBOX_CLASS,
@@ -57,7 +58,7 @@ type AppsState = Record<McpAppId, boolean>;
 interface MetaDraft {
   name: string;
   description: string;
-  tags: string;
+  tags: string[];
   homepage: string;
   docs: string;
 }
@@ -82,7 +83,7 @@ interface McpFormModalProps {
 const emptyMeta = (): MetaDraft => ({
   name: "",
   description: "",
-  tags: "",
+  tags: [],
   homepage: "",
   docs: "",
 });
@@ -93,7 +94,7 @@ function metaOf(server?: McpServer): MetaDraft {
     // 显示名和键名一样时不必重复填
     name: server.name && server.name !== server.id ? server.name : "",
     description: server.description ?? "",
-    tags: (server.tags ?? []).join(", "),
+    tags: Array.isArray(server.tags) ? [...server.tags] : [],
     homepage: server.homepage ?? "",
     docs: server.docs ?? "",
   };
@@ -129,6 +130,25 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     () => Object.keys(existingServers),
     [existingServers],
   );
+
+  const allExistingTags = useMemo(() => {
+    const set = new Set<string>();
+    for (const server of Object.values(existingServers)) {
+      if (Array.isArray(server.tags)) {
+        for (const tag of server.tags) {
+          if (tag && tag.trim()) set.add(tag.trim());
+        }
+      }
+    }
+    for (const preset of mcpPresets) {
+      if (Array.isArray(preset.tags)) {
+        for (const tag of preset.tags) {
+          if (tag && tag.trim()) set.add(tag.trim());
+        }
+      }
+    }
+    return Array.from(set).sort();
+  }, [existingServers]);
 
   const [name, setName] = useState(editingId ?? "");
   const [conn, setConn] = useState<McpDraftConnection>(() =>
@@ -194,7 +214,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     setMeta({
       name: withDesc.name && withDesc.name !== preset.id ? withDesc.name : "",
       description: withDesc.description ?? "",
-      tags: (withDesc.tags ?? []).join(", "),
+      tags: Array.isArray(withDesc.tags) ? [...withDesc.tags] : [],
       homepage: withDesc.homepage ?? "",
       docs: withDesc.docs ?? "",
     });
@@ -347,10 +367,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     assign("description");
     assign("homepage");
     assign("docs");
-    const tags = metaDraft.tags
-      .split(/[,，]/)
-      .map((tag) => tag.trim())
-      .filter(Boolean);
+    const tags = metaDraft.tags.map((tag) => tag.trim()).filter(Boolean);
     if (tags.length) entry.tags = tags;
     else delete entry.tags;
     return entry;
@@ -1259,17 +1276,15 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     <label htmlFor="mcp-meta-tags" className={LABEL_CLASS}>
                       {t("mcpPage.drawer.tags")}
                     </label>
-                    <input
+                    <TagInput
                       id="mcp-meta-tags"
-                      type="text"
-                      className={FIELD_CLASS}
                       value={meta.tags}
+                      suggestions={allExistingTags}
                       placeholder={t("mcpPage.drawer.tagsPlaceholder")}
-                      autoComplete="off"
-                      onChange={(event) =>
+                      onChange={(tags) =>
                         setMeta((prev) => ({
                           ...prev,
-                          tags: event.target.value,
+                          tags,
                         }))
                       }
                     />
