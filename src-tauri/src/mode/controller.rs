@@ -3864,6 +3864,33 @@ command = "fs-server"
 
     #[tokio::test]
     #[serial]
+    async fn codex_switch_keeps_a_saved_threads_legacy_route_without_rewriting_history() {
+        let _home = Home::new();
+        set_preservation(true);
+        let live = "model_provider = \"a\"\n[model_providers.a]\nname = \"a\"\nbase_url = \"https://a.example/v1\"\nexperimental_bearer_token = \"sk-a\"\n";
+        seed_codex(live, None);
+        let history = crate::codex_config::get_codex_config_dir().join("sessions/saved.jsonl");
+        std::fs::create_dir_all(history.parent().unwrap()).unwrap();
+        let original =
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"saved\",\"model_provider\":\"a\"}}\n";
+        std::fs::write(&history, original).unwrap();
+        let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
+        ProviderService::switch(&state, AppType::Codex, "b").unwrap();
+        let doc = codex_doc();
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert_eq!(
+            doc["model_providers"]["custom"]["base_url"].as_str(),
+            Some("https://b.example/v1")
+        );
+        assert_eq!(
+            doc["model_providers"]["a"]["base_url"].as_str(),
+            Some("https://a.example/v1")
+        );
+        assert_eq!(std::fs::read_to_string(history).unwrap(), original);
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn codex_migration_retires_only_tables_cc_switch_wrote() {
         let _home = Home::new();
         set_preservation(true);

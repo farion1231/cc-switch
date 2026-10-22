@@ -350,13 +350,16 @@
     },
     "unifyCodexHistory": {
       "title": "Birleşik Codex oturum geçmişi",
-      "message": "Etkinleştirildiğinde Codex CLI’nin devam edilebilir oturum listesinde resmî abonelik ve üçüncü taraf oturumları birlikte görünür (Codex masaüstü uygulaması yakın tarihli bir güncellemeden beri tüm oturumları gösterebilir ve bu ayardan etkilenmez). Not: Diğer arka uç encrypted_content içindeki akıl yürütme verilerinin şifresini çözemediği için eski bir oturuma farklı bir sağlayıcıyla devam etmek başarısız olabilir.\n\nMevcut resmî oturum geçmişinizi de paylaşılan listeye taşıyabilirsiniz (önce ~/.cc-switch/backups konumuna yedeklenir; bu ayarı kapatırken geri yükleyebilirsiniz).",
+      "message": "Resmî abonelikler ve üçüncü taraf API’ler, Codex CLI ve masaüstünde custom bağlantı kimliğini paylaşacak. Bağlantıyı değiştirdikten sonra açık sohbetleri yeniden açın. Hedef sunucu eski şifreli akıl yürütme içeriğini desteklemeyebilir.\n\nMevcut resmî geçmişi de taşıyabilirsiniz; önce yedek alınır ve ayar kapatılırken geri yüklenebilir.",
       "migrateExisting": "Ayrıca mevcut resmi oturum geçmişini taşıyın",
       "confirm": "Anladım, etkinleştir"
     },
+    "codexManagedHistory": {
+      "message": "Önce Codex uygulamasından çıkın. CC Switch kartlarında tanımlı eski üçüncü taraf bağlantı kimlikleri yedeklenerek ortak bağlantıya taşınır. Bu sohbetler seçili bağlantıyı kullanır. Yönetilmeyen bağlantılar, mesajlar ve şifreli içerik değiştirilmez. Güvenle işlenemeyen dosyalar atlanıp sayılır, diğerleri taşınmaya devam eder. Yeniden denemeden önce günlükleri, eski yapılandırmayı ve yedekleri kontrol edin."
+    },
     "unifyCodexHistoryOff": {
       "title": "Birleşik oturum geçmişini kapat",
-      "message": "Kapatıldığında Codex CLI, resmi abonelik ve üçüncü taraf sağlayıcılar için ayrı oturum listelerine geri döner (masaüstü uygulaması tüm oturumları göstermeye devam eder). Bu açıkken oluşturulan oturumlar birbirinden ayrılamaz, dolayısıyla üçüncü taraf geçmişinde kalırlar ve CLI bunları resmi abonelik altında göstermez.",
+      "message": "Resmî abonelikler yeniden openai bağlantı kimliğini kullanacak. custom altında oluşturulan sohbetler bu kimliği korur; masaüstünde görünmeleri bağlantılarının güncellendiği anlamına gelmez. Önceden taşınan resmî geçmiş, yedek kayıtlarına göre geri yüklenebilir.",
       "restoreBackup": "Etkinleştirme zamanında taşınan resmi oturumları resmi geçmişe geri yükleyin (yedekten tam geri yükleme)",
       "confirm": "Kapat"
     },
@@ -822,7 +825,13 @@
     "preserveCodexOfficialAuthOnSwitch": "Doğrudan geçişler için resmi giriş bilgilerini koruyun",
     "preserveCodexOfficialAuthOnSwitchDescription": "Yerel yönlendirme kapalıyken üçüncü taraf anahtarları kontrol eder. Devralma yönlendirmesi her zaman Codex resmi giriş bilgilerini korur.",
     "unifyCodexSessionHistory": "Birleşik Codex oturum geçmişi",
-    "unifyCodexSessionHistoryDescription": "Yalnızca Codex CLI'yi etkiler: devam edilebilir oturum listesi yalnızca mevcut sağlayıcının oturumlarını gösterir. Etkinleştirildiğinde resmi abonelik, paylaşılan \"özel\" sağlayıcı kimliği altında çalışır, böylece resmi ve üçüncü taraf oturumları tek bir listede görünür. Codex masaüstü uygulaması, yeni bir güncellemeden bu yana tüm oturumları gösterebilir, dolayısıyla yalnızca masaüstü kullanıcılarının buna ihtiyacı yoktur. İsteğe bağlı olarak mevcut resmi oturumları (öncelikle yedeklenen) taşıyabilir ve kapattığınızda bunları yedeklemeden geri yükleyebilirsiniz. Not: eski bir oturumun sağlayıcılar arasında sürdürülmesi başarısız olabilir, çünkü encrypted_content mantığının şifresi yalnızca onu oluşturan arka uç tarafından çözülebilir.",
+    "unifyCodexSessionHistoryDescription": "Resmî abonelikler ve üçüncü taraf API’ler custom bağlantı kimliğini paylaşır; böylece kayıtlı sohbetler bağlantı değişikliklerini izleyebilir. Bu ayar Codex masaüstü için de geçerlidir: tüm sohbetleri göstermek kayıtlı bağlantıyı güncellemez. Yeni ayarları kullanmak için açık sohbetleri yeniden açın. Mevcut resmî geçmiş yedeklenerek taşınabilir ve ayar kapatıldığında geri yüklenebilir. Sağlayıcılar arasında devam etmek, eski şifreli akıl yürütme içeriğinin desteklenmesine de bağlıdır.",
+    "codexManagedHistory": "Eski üçüncü taraf sohbetlerini taşı",
+    "codexManagedHistoryAction": "Eski sohbetleri taşı",
+    "codexManagedHistoryCompleted": "Eski üçüncü taraf sohbetleri kontrol edildi: {{files}} dosya ve {{rows}} dizin kaydı taşındı. Sohbetleri yeniden açın; eski ayarlar kullanılıyorsa Codex uygulamasını kendiniz yeniden başlatın.",
+    "codexManagedHistoryPartial": "{{files}} dosya ve {{rows}} dizin kaydı taşındı; {{skippedFiles}} dosya ve {{skippedRows}} dizin kaydı atlandı. CC Switch günlüklerini kontrol edin ve atlanan öğeleri eski bağlantı yapılandırmasıyla elle işleyin.",
+    "codexHistoryMigrationFailed": "Bazı Codex geçmiş bağlantıları taşınamadı",
+    "codexHistoryMigrationRecovery": "Codex uygulamasından çıkın ve çakışmalar için CC Switch günlüklerini kontrol edin. Eski sağlayıcı tanımını geri yükleyip o bağlantıyla devam edebilirsiniz. Sorun çözülünce Ayarlar → Uygulama Yapılandırması → Codex üzerinden elle yeniden deneyin. İstemci otomatik yeniden başlatılmaz ve geçmiş zorla üzerine yazılmaz.",
     "codexStackClassicSubagents": "Birleştirmedaki klasik alt ajan araçları",
     "codexStackClassicSubagentsDescription": "Ana ajan ile alt ajan farklı sağlayıcılar kullandığında açık olmalıdır; aksi halde alt ajan görevini alamaz.",
     "codexStackClassicSubagentsForcedV2": "Codex config.toml, bu ayara göre öncelikli olan [features] multi_agent_v2'yi açar, dolayısıyla hiçbir etkisi olmaz.",

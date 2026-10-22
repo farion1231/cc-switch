@@ -1,14 +1,18 @@
 # Unified Codex Session History: Feature Overview and Usage Guide (CC Switch)
 
-> Applies to CC Switch v3.16.x and later. This guide is based on the current code; every command and path can be verified by hand. Examples use de-identified data and contain no real session content or API keys.
+The current setting is **Settings → App Configuration → Codex → Unified Codex session history**. It also affects the connection ID saved by Codex desktop. Showing every chat does not make an old chat adopt the current connection. Enable the shared ID to continue chats across official subscriptions and APIs, and reopen loaded chats when necessary. Later switches update the connection configuration rather than rewriting history each time.
+
+Legacy migration keeps originals and changes only managed provider metadata while preserving paginated byte offsets. Newly imported legacy chats can be migrated too. Unsafe patches, concurrent changes, and index entries without a matching rollout are skipped and counted while other items continue; do not delete history or overwrite the live index database. `custom` is a connection entry point, not the actual provider identity for accounting.
+
+> The unified-history toggle was introduced in CC Switch v3.16.x; the manual migration action and safe patches below describe the current implementation. This guide is based on the current code; every command and path can be verified by hand. Examples use de-identified data and contain no real session content or API keys.
 
 ## What this feature is
 
-"Unified Codex session history" is a switch that CC Switch v3.16.x adds for Codex. You'll find it under **Settings -> General -> the "Codex App Enhancements" group** ("Codex App Enhancements" is the group title; the switch itself is called "Unified Codex session history"). Once enabled, **sessions from your official subscription (ChatGPT login / OpenAI API key) appear in the same history / resume list as sessions from every third-party provider CC Switch manages**—they are no longer split into two lists that can't see each other.
+"Unified Codex session history" is a switch that CC Switch v3.16.x adds for Codex. You'll find it under **Settings -> App Configuration -> Codex** ("Codex App Enhancements" is the group title; the switch itself is called "Unified Codex session history"). Once enabled, **sessions from your official subscription (ChatGPT login / OpenAI API key) appear in the same history / resume list as sessions from every third-party provider CC Switch manages**—they are no longer split into two lists that can't see each other.
 
 ## What problem it solves
 
-Codex classifies sessions by a "provider tag" (a field called `model_provider`), and **the resume / history list only shows sessions whose tag matches your currently active provider**. As a result, sessions are naturally sorted into two separate "drawers":
+Codex stores a connection ID in `model_provider`. CLI history may filter by this ID; desktop can display other connections too, while resuming still requires the saved connection to resolve. As a result, sessions are naturally sorted into two separate "drawers":
 
 - Sessions from your official subscription go under Codex's built-in **`openai`** tag;
 - Every third-party provider CC Switch manages goes under the **`custom`** tag.
@@ -32,9 +36,17 @@ For the full mechanism (what gets injected, why it's reversible, how migration /
 
 ## How to use it (at a glance)
 
-1. **Enable**: Settings -> General -> Codex App Enhancements -> turn on "Unified Codex session history" -> in the dialog decide whether to check "Also migrate existing official session history" (check it if you want your **earlier** official sessions merged into the unified list too; leave it unchecked if you only want unification from now on) -> confirm. See [What happens when you enable it](#what-happens-when-you-enable-it-step-by-step).
+1. **Enable**: Settings -> App Configuration -> Codex -> turn on "Unified Codex session history" -> in the dialog decide whether to check "Also migrate existing official session history" (check it if you want your **earlier** official sessions merged into the unified list too; leave it unchecked if you only want unification from now on) -> confirm. See [What happens when you enable it](#what-happens-when-you-enable-it-step-by-step).
 2. **Disable**: turn the same switch off -> in the dialog keep "restore exactly from backup" checked (it's checked by default) -> confirm, and the official sessions you migrated in will be precisely flipped back to the official list. See [What happens when you disable it](#what-happens-when-you-disable-it-step-by-step).
 3. **Feel like a session is gone?** Don't panic—jump to the [symptom reference table](#i-feel-like-my-sessions-are-gone-symptom-reference-table) to locate it by symptom, and use the commands in the [verify by hand](#verify-by-hand-your-session-files-are-still-on-disk-the-most-important-section) section to see for yourself that the files are all there.
+
+## Legacy third-party connections and manual recovery
+
+With unified history enabled, choose **Migrate legacy third-party chats → Migrate old chats** on the same settings page. Quit Codex first, then confirm that managed old chats will use the currently selected shared connection. Only IDs proven by card configuration or earlier migration records are included. Unknown IDs shown in history are not adopted automatically. Startup and provider switches do not invoke this broader migration.
+
+Originals are saved under `~/.cc-switch/backups/codex-history-provider-migration-v1/<timestamp>/`. This is separate from the official-history restore ledger; the restore checkbox when disabling unification does not undo third-party migration.
+
+The result reports migrated and skipped file/index counts separately. Skipped items keep their original index rows without blocking other chats. Reopen migrated chats after success; restart Codex yourself if it still reads old settings. On skips or a fatal failure, inspect the file or index error in CC Switch logs, resolve the conflict, and retry the action. For unknown connections or IDs that cannot be patched at equal length, restore their original provider definition and open them through that connection. Do not delete history, rewrite encrypted content, or replace a live index with a whole backup database.
 
 ---
 
@@ -44,7 +56,7 @@ To understand this feature, you only need to remember two things: **drawers** an
 
 ### Drawers: how Codex classifies sessions
 
-Every time you start a Codex session, Codex records a tag `model_provider` in the session file header, marking "which provider this session was chatted with." Codex's **resume / history list is filtered precisely by the currently active tag**—it only shows sessions whose tag matches "the provider you're on right now."
+Every time you start a Codex session, Codex records a tag `model_provider` in the session file header, marking "which provider this session was chatted with." CLI history can filter by this tag; desktop list visibility and the connection used to resume must be considered separately.
 
 - Sessions from your official subscription (ChatGPT login / OpenAI API key) carry the built-in tag **`openai`**.
 - Every third-party provider CC Switch manages uses the tag **`custom`**.
@@ -94,30 +106,29 @@ Remember these two words—**drawer** (a session just gets reclassified) and **b
 ### Step 1: Find the switch
 
 ```text
-Settings -> General -> Codex App Enhancements
+Settings -> App Configuration -> Codex
 ```
 
-In the "Codex App Enhancements" block there are two rows of switches; the **second row** (the blue history icon) is the subject of this guide:
+Find the following switch in the Codex configuration section:
 
 > **Unified Codex session history**
 
-Below it is a line of description text (verbatim):
+The help text explains:
 
-> When enabled, the official subscription runs under the shared "custom" provider id so official and third-party sessions appear in one history list, optionally migrating existing official sessions in (backed up first). When turning it off, the migrated sessions can be restored from backup. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.
+> Official subscriptions and third-party APIs share the custom connection ID, so saved chats can follow connection changes. This applies to Codex desktop too: showing all chats does not update their saved connection. Reopen loaded chats to adopt new settings. Existing official history can be migrated with a backup and restored when this is turned off. Cross-provider continuation also depends on support for the original encrypted reasoning content.
 
 > **Note**: this single line of description already previews three things—sessions will appear in one list, you can optionally migrate them in with an automatic backup, and resuming across providers "may fail." Here, "fail" means **you can't resume / can't generate a new turn**, not "the record is lost." This is exactly the core misunderstanding we'll dig into below.
 
 ### Step 2: Flip the switch from off to on -> a confirmation dialog pops up
 
-The moment you flip the switch on, CC Switch **does not save immediately**; instead it first pops up a confirmation dialog. The dialog text reads as follows (verbatim):
+The moment you flip the switch on, CC Switch **does not save immediately**; instead it first pops up a confirmation dialog. The dialog text reads as follows (summary):
 
 - **Title**: Unified Codex session history
 - **Body**:
 
-  > When enabled, the official subscription and third-party providers share one session history list. Note: resuming an old session across providers may fail because its encrypted_content reasoning cannot be decrypted by another backend.
+  > Official subscriptions and third-party APIs will share the custom connection ID in both Codex CLI and desktop. Reopen loaded chats after switching connections. The destination backend may not support the original encrypted reasoning content.
   >
-  > You can also migrate your existing official session history into the shared list (originals are backed up to ~/.cc-switch/backups first and can be restored when you turn this off).
-
+  > You can also migrate existing official history, with a backup saved first and an option to restore it when turning this off.
 - **Checkbox**: Also migrate existing official session history
 - **Confirm button**: I understand, enable
 - **Cancel button**: Cancel
@@ -141,15 +152,14 @@ If you check "Also migrate existing official session history," CC Switch runs th
 ```text
 For each official (openai tag) session file:
    ① First copy the original file untouched into the backup directory   <- data now has its first safety net
-   ② Using "write a temp file -> replace the whole thing" atomic style,
-      change only the model_provider in the session_meta line at the header
-      from "openai" to "custom"                                          <- not a single byte of the conversation body is touched
-   ③ Update the index database state_5.sqlite to switch the tag in the same transaction
+   ② Patch all matching session_meta records without changing decoded line lengths;
+      write plain files in place and keep compressed files compressed
+   ③ After successful file patches, update verified index rows in a transaction
 ```
 
 - **Backup location**: `~/.cc-switch/backups/codex-official-history-unify-v1/<timestamp>/`. Each migration produces one timestamped "generation directory," containing `jsonl/` (session copies), `state/` (index DB copy), and `meta.json` (recording which Codex directory this migration belongs to).
 - **What's changed**: only the value of the single field `model_provider`. Your conversation content, reasoning content, and all body text are **kept exactly as is**.
-- **What's deleted**: **nothing**. The backup is a "copy," the rewrite is an "atomic replacement of the same file," and at no point is any session or index deleted. The file is complete at every moment (either the old content or the new content, never empty or half-written).
+- **Data protection**: no session is deleted and the live index is never replaced wholesale. Plain patches preserve inode, byte offsets, and appended tails; compressed files retain their representation and mtime. Quit Codex first. There is no single transaction across files; file-level conflicts are skipped and counted with originals and a manual retry path retained.
 
 After a successful migration, these existing official sessions show up in the unified list. **At this moment your data is**: ① the original copy in the backup directory; ② in the active file, only the classification tag changed, the content intact.
 
@@ -161,7 +171,7 @@ After a successful migration, these existing official sessions show up in the un
 
 ### Step 1: Flip the switch from on to off -> probe for backups -> a confirmation dialog pops up
 
-When disabling, CC Switch **first spends a moment probing whether there's a migration backup**, then pops up a confirmation dialog (so the disable dialog has a slight delay, which is normal). The text reads as follows (verbatim):
+When disabling, CC Switch **first spends a moment probing whether there's a migration backup**, then pops up a confirmation dialog (so the disable dialog has a slight delay, which is normal). The text reads as follows (summary):
 
 - **Title**: Turn off unified session history
 - **Body**:
@@ -196,7 +206,7 @@ Note the **dual condition** in step ③—it must be in the ledger (proving it r
 
 ### Step 3: Read the toast, confirm the result
 
-Only the "disable + check restore" path pops a result toast. The toasts you may see (verbatim):
+Manual migration, migration failures, and "disable + restore" show results or recovery instructions. The toasts you may see (summary):
 
 | Toast you see | Meaning |
 |---|---|
@@ -447,7 +457,7 @@ Four layers of design jointly guarantee that under **all paths, normal and abnor
 
 - **Only change the field, never the body**: migration / restore only switch the `model_provider` value in session metadata between `openai` and `custom`; conversation content, `response_item`, and `encrypted_content` are all kept exactly as is.
 - **Always copy a backup before a rewrite**: jsonl uses file copy, the state DB uses a full SQLite copy, both stored in a timestamped generation directory. Migration backups live in `codex-official-history-unify-v1/`, restore backups in the separate `codex-official-history-unify-restore-v1/`—the two are kept apart to keep the ledger clean.
-- **Only move, never delete + atomic writes**: all jsonl rewrites go through "temp file + whole-file replacement," and the state DB goes through a transactional `UPDATE`, with no deletion of any session or index at any point. The file is complete at every moment.
+- **Equal-length patches**: plain JSONL metadata is patched in place, compressed files keep their representation, and index rows use transactional updates. Files with IDs that cannot fit without changing byte offsets are skipped and counted rather than reserialized.
 - **Pessimistic skip + idempotent and retryable**: when buckets are inconsistent (`live_not_unified`), it would rather not migrate; a single process lock serializes migration and restore to avoid "startup retry / post-save background task / disable-time restore" concurrently rewriting the same batch of files in both directions; the completion marker is bound to the Codex directory and written conditionally to prevent missed migrations; restore uses the "in the ledger + currently still custom" dual condition to prevent wrong changes. Restore scans the union of all backup generations, so even after many switch cycles it can still restore early-migrated sessions; a repeated restore returns `nothing_to_restore`, which is idempotent protection rather than failure.
 
 ### 6. Cross-backend encrypted_content (corresponding to scenario B)
