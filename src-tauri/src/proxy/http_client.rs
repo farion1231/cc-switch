@@ -16,6 +16,9 @@ static GLOBAL_CLIENT: OnceCell<RwLock<Client>> = OnceCell::new();
 /// 不走任何代理的客户端：上游是本机地址（Ollama、LM Studio 等）时使用
 static DIRECT_CLIENT: OnceCell<Client> = OnceCell::new();
 
+/// 本机可达性探测使用的直连客户端：只接收第一个响应，不跟随重定向
+static DIRECT_CLIENT_WITHOUT_REDIRECTS: OnceCell<Client> = OnceCell::new();
+
 /// 当前代理 URL（用于日志和状态查询）
 static CURRENT_PROXY_URL: OnceCell<RwLock<Option<String>>> = OnceCell::new();
 
@@ -212,6 +215,30 @@ pub fn get_for_url(url: &str) -> Client {
     }
 }
 
+/// 可达性探测只需要第一个 HTTP 响应，同时保持本机直连、远端沿用代理的路由。
+pub fn get_for_url_without_redirects(url: &str) -> Result<Client, String> {
+    build_client_for_url_without_redirects(url, get_current_proxy_url().as_deref())
+}
+
+fn build_client_for_url_without_redirects(
+    url: &str,
+    proxy_url: Option<&str>,
+) -> Result<Client, String> {
+    if is_loopback_url(url) {
+        DIRECT_CLIENT_WITHOUT_REDIRECTS
+            .get_or_try_init(|| {
+                base_builder()
+                    .no_proxy()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                    .map_err(|e| format!("Failed to build direct HTTP client: {e}"))
+            })
+            .cloned()
+    } else {
+        build_client_with_redirect_policy(proxy_url, reqwest::redirect::Policy::none())
+    }
+}
+
 /// 发往 `url` 时应使用的上游代理：本机地址返回 None（直连），其余返回当前全局代理
 pub fn proxy_url_for(url: &str) -> Option<String> {
     upstream_proxy_for(url, get_current_proxy_url())
@@ -296,7 +323,14 @@ fn base_builder() -> reqwest::ClientBuilder {
 
 /// 构建 HTTP 客户端
 fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
-    let mut builder = base_builder();
+    build_client_with_redirect_policy(proxy_url, reqwest::redirect::Policy::default())
+}
+
+fn build_client_with_redirect_policy(
+    proxy_url: Option<&str>,
+    redirect_policy: reqwest::redirect::Policy,
+) -> Result<Client, String> {
+    let mut builder = base_builder().redirect(redirect_policy);
 
     // 有代理地址则使用代理，否则跟随系统代理
     if let Some(url) = proxy_url {
@@ -532,6 +566,79 @@ mod tests {
             .await
             .expect("direct client should reach the local server");
         assert_eq!(resp.status().as_u16(), 200);
+    }
+
+    #[tokio::test]
+    async fn test_no_redirect_client_preserves_url_routing() {
+        use axum::{http::StatusCode, response::Redirect, routing::get, Router};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let requests = Arc::new(AtomicUsize::new(0));
+        let seen = requests.clone();
+        let app = Router::new().fallback(get(move |uri: axum::http::Uri| {
+            let seen = seen.clone();
+            async move {
+                seen.fetch_add(1, Ordering::SeqCst);
+                if uri.path() == "/final" {
+                    Redirect::temporary("/final")
+                } else {
+                    Redirect::permanent("/final")
+                }
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let proxy_url = format!("http://{address}");
+
+        // A configured proxy must not receive local inference-server probes.
+        let local_url = spawn_ok_server();
+        let local = build_client_for_url_without_redirects(&local_url, Some(&proxy_url))
+            .unwrap()
+            .get(&local_url)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(local.status(), StatusCode::OK);
+        assert_eq!(requests.load(Ordering::SeqCst), 0);
+
+        // The .invalid host cannot be resolved directly; reaching this response
+        // proves the remote target used the explicit proxy without following it.
+        let remote_url = "http://reachability.invalid/v1";
+        let remote = build_client_for_url_without_redirects(remote_url, Some(&proxy_url))
+            .unwrap()
+            .get(remote_url)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(remote.status(), StatusCode::PERMANENT_REDIRECT);
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+
+        // Normal requests keep following redirects through the same proxy.
+        let normal = build_client(Some(&proxy_url))
+            .unwrap()
+            .get(remote_url)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+            .unwrap_err();
+        assert!(normal.is_redirect());
+        assert!(requests.load(Ordering::SeqCst) > 1);
+
+        // A newly selected proxy must not reuse a client with the old settings.
+        let new_proxy = spawn_ok_server();
+        let updated = build_client_for_url_without_redirects(remote_url, Some(&new_proxy))
+            .unwrap()
+            .get(remote_url)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(updated.status(), StatusCode::OK);
+        server.abort();
     }
 
     #[test]
