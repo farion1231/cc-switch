@@ -47,7 +47,7 @@ pub(crate) fn write_and_commit<T>(
             };
             if let Err(rollback_error) = rollback {
                 return Err(AppError::Message(format!(
-                    "MiniMax Code update failed ({error}); restoring {} also failed: {rollback_error}",
+                    "Config update failed ({error}); restoring {} also failed: {rollback_error}",
                     path.display()
                 )));
             }
@@ -101,6 +101,15 @@ pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
             Ok(providers)
         }
     }
+}
+
+/// Any `custom_provider` node under this key, including MCode's own account providers.
+pub(crate) fn provider_key_exists(id: &str) -> Result<bool, AppError> {
+    let document = read(&config_path())?;
+    Ok(document
+        .get("custom_provider")
+        .and_then(serde_yaml::Value::as_mapping)
+        .is_some_and(|providers| providers.contains_key(serde_yaml::Value::from(id))))
 }
 
 pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError> {
@@ -162,6 +171,16 @@ impl Drop for ConfigLock {
 }
 
 fn update(path: &Path, id: &str, provider: Option<Value>) -> Result<(), AppError> {
+    write_entry(path, id, provider, false)
+}
+
+/// `create_only` rejects a key that already exists, checked while holding MCode's lock.
+fn write_entry(
+    path: &Path,
+    id: &str,
+    provider: Option<Value>,
+    create_only: bool,
+) -> Result<(), AppError> {
     fs::create_dir_all(path.parent().expect("MCode configuration directory"))
         .map_err(|e| AppError::Message(format!("Cannot create MCode directory: {e}")))?;
     let path = if path.exists() {
@@ -221,6 +240,11 @@ fn update(path: &Path, id: &str, provider: Option<Value>) -> Result<(), AppError
     let providers = entry
         .as_mapping_mut()
         .ok_or_else(|| AppError::Config("Invalid MCode custom_provider configuration".into()))?;
+    if create_only && providers.contains_key(serde_yaml::Value::from(id)) {
+        return Err(AppError::InvalidInput(format!(
+            "MCode provider key '{id}' already exists"
+        )));
+    }
     if providers
         .get(serde_yaml::Value::from(id))
         .and_then(|value| value.get("kind"))
@@ -248,6 +272,11 @@ fn update(path: &Path, id: &str, provider: Option<Value>) -> Result<(), AppError
 pub(crate) fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
     validate_provider(id, &config)?;
     update(&config_path(), id, Some(config))
+}
+/// Like `set_provider`, but never replaces an existing node.
+pub(crate) fn add_provider(id: &str, config: Value) -> Result<(), AppError> {
+    validate_provider(id, &config)?;
+    write_entry(&config_path(), id, Some(config), true)
 }
 pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
     if !config_path().exists() {
@@ -292,6 +321,22 @@ mod tests {
         assert_eq!(
             read(&path).unwrap()["custom_provider"]["test"]["name"],
             "Recovered"
+        );
+    }
+
+    #[test]
+    fn create_only_writes_never_replace_a_node_that_appeared_meanwhile() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let text = "custom_provider:\n  raced:\n    name: Theirs\n";
+        fs::write(&path, text).unwrap();
+        assert!(write_entry(&path, "raced", Some(json!({"name":"Ours"})), true).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
+        assert!(!path.with_extension("yaml.lock").exists());
+        write_entry(&path, "fresh", Some(json!({"name":"Ours"})), true).unwrap();
+        assert_eq!(
+            read(&path).unwrap()["custom_provider"]["fresh"]["name"],
+            "Ours"
         );
     }
 

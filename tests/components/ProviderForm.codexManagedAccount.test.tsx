@@ -75,12 +75,20 @@ vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
   ),
 }));
 
-vi.mock("@/components/providers/forms/CodexConfigEditor", () => ({
-  default: () => <div data-testid="codex-config-editor" />,
-}));
-
-vi.mock("@/components/providers/forms/ProviderAdvancedConfig", () => ({
-  ProviderAdvancedConfig: () => <div data-testid="advanced-config" />,
+vi.mock("@/components/JsonEditor", () => ({
+  default: ({
+    value,
+    onChange,
+  }: {
+    value: string;
+    onChange: (value: string) => void;
+  }) => (
+    <textarea
+      data-testid="json-editor"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  ),
 }));
 
 vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
@@ -112,46 +120,6 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
     useXaiOauth: () => ({
       isAuthenticated: false,
       accounts: [],
-    }),
-    useCommonConfigSnippet: () => ({
-      useCommonConfig: false,
-      commonConfigSnippet: "",
-      commonConfigError: null,
-      isLoading: false,
-      isExtracting: false,
-      handleCommonConfigToggle: vi.fn(),
-      handleCommonConfigSnippetChange: vi.fn(),
-      handleExtract: vi.fn(),
-    }),
-    useCodexCommonConfig: () => ({
-      useCommonConfig: false,
-      commonConfigSnippet: "",
-      commonConfigError: null,
-      handleCommonConfigToggle: vi.fn(),
-      handleCommonConfigSnippetChange: vi.fn(),
-      isExtracting: false,
-      handleExtract: vi.fn(),
-      clearCommonConfigError: vi.fn(),
-    }),
-    useGeminiCommonConfig: () => ({
-      useCommonConfig: false,
-      commonConfigSnippet: "",
-      commonConfigError: null,
-      handleCommonConfigToggle: vi.fn(),
-      handleCommonConfigSnippetChange: vi.fn(),
-      isExtracting: false,
-      handleExtract: vi.fn(),
-      clearCommonConfigError: vi.fn(),
-    }),
-  };
-});
-
-vi.mock("@/lib/query", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/query")>();
-  return {
-    ...actual,
-    useSettingsQuery: () => ({
-      data: { commonConfigConfirmed: true },
     }),
   };
 });

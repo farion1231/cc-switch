@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import MarkdownEditor from "@/components/MarkdownEditor";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
@@ -19,7 +19,9 @@ const WorkspaceFileEditor: React.FC<WorkspaceFileEditorProps> = ({
 }) => {
   const { t } = useTranslation();
   const [content, setContent] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loadedFile, setLoadedFile] = useState<string | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const [saving, setSaving] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
 
@@ -36,19 +38,26 @@ const WorkspaceFileEditor: React.FC<WorkspaceFileEditorProps> = ({
   }, []);
 
   useEffect(() => {
+    setLoadedFile(null);
     if (!isOpen || !filename) return;
 
-    setLoading(true);
+    let cancelled = false;
     workspaceApi
       .readFile(filename)
       .then((data) => {
+        if (cancelled) return;
         setContent(data ?? "");
+        setLoadedFile(filename);
       })
       .catch((err) => {
+        if (cancelled) return;
         console.error("Failed to read workspace file:", err);
         toast.error(t("workspace.loadFailed"));
-      })
-      .finally(() => setLoading(false));
+        onCloseRef.current();
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [isOpen, filename, t]);
 
   const handleSave = useCallback(async () => {
@@ -66,28 +75,23 @@ const WorkspaceFileEditor: React.FC<WorkspaceFileEditorProps> = ({
 
   return (
     <FullScreenPanel
-      isOpen={isOpen}
+      // Keep the file list visible until the editor content is ready.
+      isOpen={isOpen && loadedFile === filename}
       title={t("workspace.editing", { filename })}
       onClose={onClose}
       footer={
-        <Button onClick={handleSave} disabled={saving || loading}>
+        <Button onClick={handleSave} disabled={saving}>
           {saving ? t("common.saving") : t("common.save")}
         </Button>
       }
     >
-      {loading ? (
-        <div className="flex items-center justify-center h-64 text-muted-foreground">
-          {t("prompts.loading")}
-        </div>
-      ) : (
-        <MarkdownEditor
-          value={content}
-          onChange={setContent}
-          darkMode={isDarkMode}
-          placeholder={`# ${filename}\n\n...`}
-          minHeight="calc(100vh - 240px)"
-        />
-      )}
+      <MarkdownEditor
+        value={content}
+        onChange={setContent}
+        darkMode={isDarkMode}
+        placeholder={`# ${filename}\n\n...`}
+        minHeight="calc(100vh - 240px)"
+      />
     </FullScreenPanel>
   );
 };

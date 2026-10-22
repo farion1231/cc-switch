@@ -24,7 +24,10 @@ use std::time::Instant;
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::providers::{get_adapter, ClaudeAdapter, ProviderAdapter};
+use crate::proxy::providers::{get_adapter, ClaudeAdapter, GeminiAdapter, ProviderAdapter};
+
+/// Google Gemini 默认端点（agy 未配置自定义端点时使用）。
+const DEFAULT_GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com";
 
 /// 健康状态枚举
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -35,9 +38,8 @@ pub enum HealthStatus {
     Failed,
 }
 
-/// 连通性检查配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// 连通性检查参数（固定默认值，不对用户开放）
+#[derive(Debug, Clone)]
 pub struct StreamCheckConfig {
     /// 单次探测超时（秒）
     pub timeout_secs: u64,
@@ -69,13 +71,8 @@ pub struct StreamCheckResult {
     pub message: String,
     pub response_time_ms: Option<u64>,
     pub http_status: Option<u16>,
-    /// 保留字段以兼容 `stream_check_logs` 表结构；连通性检查恒为空串。
-    pub model_used: String,
     pub tested_at: i64,
     pub retry_count: u32,
-    /// 细粒度错误分类；连通性检查不再细分，恒为 None。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error_category: Option<String>,
 }
 
 /// 连通性检查服务
@@ -123,10 +120,8 @@ impl StreamCheckService {
             message: "Check failed".to_string(),
             response_time_ms: None,
             http_status: None,
-            model_used: String::new(),
             tested_at: chrono::Utc::now().timestamp(),
             retry_count: config.max_retries,
-            error_category: None,
         }))
     }
 
@@ -143,7 +138,7 @@ impl StreamCheckService {
             None => Self::resolve_base_url(app_type, provider)?,
         };
 
-        let client = crate::proxy::http_client::get();
+        let client = crate::proxy::http_client::get_for_url(&base_url);
         let timeout = std::time::Duration::from_secs(config.timeout_secs);
         let ua = Self::custom_user_agent(provider);
 
@@ -185,6 +180,20 @@ impl StreamCheckService {
             AppType::ClaudeDesktop => ClaudeAdapter::new()
                 .extract_base_url(provider)
                 .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}"))),
+            // agy 的 settings 与 Gemini 同形（env.GOOGLE_GEMINI_BASE_URL），借用 Gemini
+            // adapter 提取；未配置端点时 agy 自身走 Google 默认端点，这里保持一致。
+            AppType::Agy => {
+                if crate::services::provider::agy_direct::is_official(provider) {
+                    return Err(AppError::Message(
+                        "Official providers do not expose a reachability-check target".to_string(),
+                    ));
+                }
+                Ok(GeminiAdapter::new()
+                    .extract_base_url(provider)
+                    .ok()
+                    .filter(|url| !url.trim().is_empty())
+                    .unwrap_or_else(|| DEFAULT_GEMINI_BASE_URL.to_string()))
+            }
             _ => get_adapter(app_type)
                 .ok_or_else(|| {
                     AppError::InvalidInput(format!(
@@ -243,10 +252,8 @@ impl StreamCheckService {
                 message: "Reachable".to_string(),
                 response_time_ms: Some(response_time),
                 http_status: Some(status),
-                model_used: String::new(),
                 tested_at,
                 retry_count: 0,
-                error_category: None,
             },
             Err(e) => StreamCheckResult {
                 status: HealthStatus::Failed,
@@ -254,10 +261,8 @@ impl StreamCheckService {
                 message: e.to_string(),
                 response_time_ms: Some(response_time),
                 http_status: None,
-                model_used: String::new(),
                 tested_at,
                 retry_count: 0,
-                error_category: None,
             },
         }
     }
@@ -436,8 +441,6 @@ mod tests {
             assert!(r.success, "status {status} should be reachable");
             assert_eq!(r.status, HealthStatus::Operational);
             assert_eq!(r.http_status, Some(status));
-            assert!(r.model_used.is_empty());
-            assert!(r.error_category.is_none());
         }
     }
 
@@ -528,5 +531,57 @@ mod tests {
         official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
         official.category = Some("official".to_string());
         assert!(StreamCheckService::resolve_base_url(&AppType::Codex, &official).is_err());
+    }
+
+    #[test]
+    fn test_resolve_base_url_agy_uses_gemini_env_and_google_default() {
+        let custom = make_provider(
+            serde_json::json!({ "env": { "GEMINI_API_KEY": "k", "GOOGLE_GEMINI_BASE_URL": "https://relay.example/" } }),
+        );
+        assert_eq!(
+            StreamCheckService::resolve_base_url(&AppType::Agy, &custom).unwrap(),
+            "https://relay.example"
+        );
+
+        let unset = make_provider(serde_json::json!({ "env": { "GEMINI_API_KEY": "k" } }));
+        assert_eq!(
+            StreamCheckService::resolve_base_url(&AppType::Agy, &unset).unwrap(),
+            DEFAULT_GEMINI_BASE_URL
+        );
+
+        let mut official = make_provider(serde_json::json!({ "env": {} }));
+        official.category = Some("official".to_string());
+        assert!(StreamCheckService::resolve_base_url(&AppType::Agy, &official).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_agy_reachability_check_end_to_end() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let _ = socket
+                    .write_all(
+                        b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                    )
+                    .await;
+            }
+        });
+        let provider = make_provider(serde_json::json!({
+            "env": { "GEMINI_API_KEY": "k", "GOOGLE_GEMINI_BASE_URL": format!("http://{addr}") }
+        }));
+        let result = StreamCheckService::check_with_retry(
+            &AppType::Agy,
+            &provider,
+            &StreamCheckConfig::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(result.success, "{}", result.message);
+        assert_eq!(result.http_status, Some(404));
     }
 }

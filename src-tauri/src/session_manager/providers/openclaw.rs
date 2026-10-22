@@ -1,6 +1,4 @@
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use serde_json::Value;
@@ -11,6 +9,8 @@ use crate::{
     session_manager::{SessionMessage, SessionMeta},
 };
 
+use super::pi_blocks::PiTranscript;
+use super::utils::for_each_jsonl_value;
 use super::utils::{
     extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
     TITLE_MAX_CHARS,
@@ -74,52 +74,15 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     sessions
 }
 
+/// OpenClaw 与 Pi 同构，复用 Pi 的 block 映射；没有树形分支，按文件顺序全取。
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
-    let file = File::open(path).map_err(|e| format!("Failed to open session file: {e}"))?;
-    let reader = BufReader::new(file);
-    let mut messages = Vec::new();
-
-    for line in reader.lines() {
-        let line = match line {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        let value: Value = match serde_json::from_str(&line) {
-            Ok(parsed) => parsed,
-            Err(_) => continue,
-        };
-
-        if value.get("type").and_then(Value::as_str) != Some("message") {
-            continue;
-        }
-
-        let message = match value.get("message") {
-            Some(msg) => msg,
-            None => continue,
-        };
-
-        let raw_role = message
-            .get("role")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-
-        // Map OpenClaw roles to our standard roles
-        let role = match raw_role {
-            "toolResult" => "tool".to_string(),
-            other => other.to_string(),
-        };
-
-        let content = message.get("content").map(extract_text).unwrap_or_default();
-        if content.trim().is_empty() {
-            continue;
-        }
-
-        let ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
-
-        messages.push(SessionMessage { role, content, ts });
-    }
-
-    Ok(messages)
+    let mut transcript = PiTranscript::new();
+    for_each_jsonl_value(path, |span, value| {
+        let id = value.get("id").and_then(Value::as_str).map(str::to_string);
+        transcript.push_entry(&value, span, id);
+        Ok(())
+    })?;
+    Ok(transcript.finish())
 }
 
 pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
