@@ -29,6 +29,7 @@ export interface ToolVersion {
   version: string | null;
   latest_version: string | null;
   error: string | null;
+  installed: boolean | null;
   // 后端已定位到可执行文件但 --version 报错（装了却跑不起来）。直接读此字段，
   // 不要靠匹配 error 文案反推——避免前端与后端字符串硬耦合。
   installed_but_broken: boolean;
@@ -692,7 +693,7 @@ export function useToolManagement() {
             if (action === "uninstall") {
               const diagnosed = await diagnoseToolSilently(toolName);
               const warnings: string[] = [];
-              if (!tool || !diagnosed) {
+              if (!tool || tool.installed === null || !diagnosed) {
                 warnings.push(t("settings.toolUninstallCheckFailed"));
               }
               if (
@@ -701,7 +702,7 @@ export function useToolManagement() {
               ) {
                 warnings.push(t("settings.toolUninstallHermesWindowsHint"));
               }
-              if (tool?.version || tool?.installed_but_broken) {
+              if (tool?.installed === true) {
                 toast.info(t("settings.toolUninstallRemaining"), {
                   description: TOOL_DISPLAY_NAMES[toolName],
                   closeButton: true,
@@ -749,18 +750,23 @@ export function useToolManagement() {
                 }
               }
             } else {
-              // 命令退出码为 0、但刷新后仍探不到版本：多半是"装上了却跑不起来"
-              // （如 openclaw 要求更高的 Node 版本）。refreshToolVersions 的 merge 已把
-              // version 置空并写入后端 error，这里只需归类为软失败并展示原因。
+              const broken = tool?.installed_but_broken === true;
               const detail =
-                tool?.error?.trim() || t("settings.toolNotRunnable");
+                tool?.error?.trim() ||
+                t(
+                  broken
+                    ? "settings.toolNotRunnable"
+                    : tool?.installed === true
+                      ? "appsPage.versionUnknown"
+                      : "appsPage.probeFailed",
+                );
               failures.push({
                 toolName,
                 detail,
                 soft: true,
-                kind: "notRunnable",
+                kind: broken ? "notRunnable" : undefined,
               });
-              // 装了却跑不起来同样可能源于多处安装，自动诊断帮用户定位。
+              // 自动诊断安装分布，帮助用户定位探测失败或无法运行的原因。
               void diagnoseToolSilently(toolName);
             }
           } catch (error) {
@@ -823,6 +829,10 @@ export function useToolManagement() {
         failures.length > 0 &&
         failures.every((f) => f.soft && f.kind === "versionUnchanged");
 
+      const allSoftNotRunnable =
+        failures.length > 0 &&
+        failures.every((f) => f.soft && f.kind === "notRunnable");
+
       if (succeeded === 0 && hardFailures.length === 0) {
         // 命令均成功执行、但结果需要用户介入（版本没变 / 无法运行 / 卸载待核实）
         // → 降级为 warning 并解释原因。
@@ -831,7 +841,9 @@ export function useToolManagement() {
             ? t("settings.toolUninstallWarningTitle")
             : allSoftVersionUnchanged
               ? t("settings.toolActionVersionUnchangedTitle")
-              : t("settings.toolActionInstalledNotRunnable"),
+              : allSoftNotRunnable
+                ? t("settings.toolActionInstalledNotRunnable")
+                : t("settings.toolActionCheckFailed"),
           {
             description: failureDescription || undefined,
             closeButton: true,
