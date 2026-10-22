@@ -41,6 +41,8 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         // agy 只从各「定制根目录」读独立的 AGENTS.md；全局那一个是 ~/.gemini/config，Key 模式的
         // 私有 --gemini_dir 也经软链共享它。别用 ~/.gemini/GEMINI.md：那是 Gemini CLI 的。
         AppType::Agy => crate::agy_config::customizations_dir(),
+        // Cline injects every Markdown file under ~/.cline/rules; CC Switch owns one of them.
+        AppType::Cline => crate::cline_config::rules_dir(),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -50,7 +52,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Gemini => "GEMINI.md",
         AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw => "AGENTS.md",
         AppType::Hermes => "SOUL.md",
-        AppType::Pi | AppType::Mcode | AppType::Agy | AppType::Kimi => "AGENTS.md",
+        AppType::Pi | AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Cline => "AGENTS.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 

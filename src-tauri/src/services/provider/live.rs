@@ -33,6 +33,7 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Kimi => {
             crate::kimi_config::get_providers().map(|providers| providers.contains_key(provider_id))
         }
+        AppType::Cline => crate::cline_config::provider_key_exists(provider_id),
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         _ => Ok(false),
@@ -305,6 +306,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
+        | AppType::Cline
         | AppType::Agy
         | AppType::ClaudeDesktop => false,
     }
@@ -383,6 +385,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
+        | AppType::Cline
         | AppType::ClaudeDesktop
         | AppType::Agy => Ok(settings.clone()),
     }
@@ -702,6 +705,9 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Kimi => {
             crate::kimi_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
+        AppType::Cline => {
+            crate::cline_config::set_provider(&provider.id, provider.settings_config.clone())?
+        }
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
@@ -845,7 +851,10 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
     // Sync providers based on mode
     for app_type in AppType::all() {
-        if matches!(app_type, AppType::Pi | AppType::Mcode | AppType::Kimi) {
+        if matches!(
+            app_type,
+            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Cline
+        ) {
             continue;
         }
         let result = if app_type.is_additive_mode() {
@@ -1002,6 +1011,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         }
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
+        AppType::Cline => Ok(json!(crate::cline_config::get_providers()?)),
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
@@ -1125,7 +1135,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Hermes
         | AppType::Pi
         | AppType::Mcode
-        | AppType::Kimi => {
+        | AppType::Kimi
+        | AppType::Cline => {
             unreachable!("additive mode apps are handled by early return")
         }
     };

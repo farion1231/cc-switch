@@ -71,6 +71,7 @@ export function AddProviderDialog({
     appId !== "pi" &&
     appId !== "mcode" &&
     appId !== "kimi" &&
+    appId !== "cline" &&
     appId !== "grokbuild" &&
     appId !== "claude-desktop";
   // 两步：先选预设，再填写（每次打开都从第 1 步开始）
@@ -293,7 +294,8 @@ export function AddProviderDialog({
           appId === "hermes" ||
           appId === "pi" ||
           appId === "mcode" ||
-          appId === "kimi") &&
+          appId === "kimi" ||
+          appId === "cline") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;

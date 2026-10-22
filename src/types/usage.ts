@@ -230,6 +230,7 @@ export type AppType =
   | "pi"
   | "mcode"
   | "kimi"
+  | "cline"
   | "agy";
 
 export type AppTypeFilter = "all" | AppType;
@@ -243,6 +244,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "pi",
   "mcode",
   "kimi",
+  "cline",
   "agy",
 ];
 
@@ -271,6 +273,7 @@ const PARTIAL_CACHE_WRITE_APP_TYPES: ReadonlySet<string> = new Set([
   "pi",
   "mcode",
   "kimi",
+  "cline",
 ]);
 
 export type CacheWriteAvailability = "ok" | "partial" | "na";

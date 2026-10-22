@@ -4822,5 +4822,53 @@
       "tool_use": "Araç kullanımı",
       "dynamically_loaded_tools": "Araçları gerektiğinde yükle"
     }
+  },
+  "cline": {
+    "providerId": "Cline sağlayıcı kimliği",
+    "customIdHint": "Addan oluşturulur ve kaydedildikten sonra değişmez.",
+    "builtinIdHint": "Bu, Cline'ın kendi sağlayıcı yuvasıdır; Cline her yerleşik sağlayıcı için tek bir kayıt tutar.",
+    "builtinExists": "Cline'da zaten \"{{id}}\" sağlayıcısı var. Yenisini eklemek yerine o kartı düzenleyin.",
+    "protocol": "Protokol",
+    "baseUrl": "Temel URL",
+    "baseUrlHint": "Cline yalnızca /chat/completions veya /messages ekler, /v1 eklemez. Uç noktanız gerektiriyorsa /v1'i siz ekleyin.",
+    "baseUrlOverride": "Temel URL (isteğe bağlı)",
+    "baseUrlOverridePlaceholder": "Cline'ın varsayılan uç noktasını kullanmak için boş bırakın",
+    "model": "Model",
+    "builtinModelHint": "Bu sağlayıcı için Cline'ın varsayılan modelini kullanmak için boş bırakın.",
+    "models": "Modeller",
+    "addModel": "Model ekle",
+    "removeModel": "Modeli kaldır",
+    "modelId": "Model kimliği",
+    "modelName": "Görünen ad",
+    "contextWindow": "Bağlam penceresi",
+    "maxTokens": "En fazla çıktı token'ı",
+    "inputPrice": "Girdi fiyatı ($/M token)",
+    "outputPrice": "Çıktı fiyatı ($/M token)",
+    "selectedModel": "Bu modeli kullan",
+    "useModel": "{{model}} modelini kullan",
+    "restartHint": "Yeni veya değiştirilmiş özel sağlayıcıların yüklenmesi için Cline'ı yeniden başlatın (ya da `cline doctor fix` çalıştırın). Sağlayıcı değiştirme, Cline'ın bir sonraki çalıştırılmasında geçerli olur.",
+    "oauthReadOnly": "Bu sağlayıcı Cline üzerinden oturum açar. Kimlik bilgileri Cline'da yönetilir ve burada düzenlenmez; yine de bu sağlayıcıya geçebilirsiniz.",
+    "duplicateBuiltinUnsupported": "Yerleşik Cline sağlayıcıları kopyalanamaz. Bunun yerine özel bir sağlayıcı ekleyin.",
+    "preset": {
+      "customOpenAI": "Özel (OpenAI uyumlu)",
+      "customAnthropic": "Özel (Anthropic uyumlu)"
+    },
+    "validation": {
+      "name": "Bir sağlayıcı adı girin.",
+      "baseUrl": "Geçerli bir http(s) temel URL'si girin.",
+      "headers": "İstek başlığı değerleri metin olmalıdır.",
+      "protocol": "Desteklenen bir protokol seçin.",
+      "anthropicClient": "Anthropic protokollü sağlayıcılar \"anthropic\" istemcisi gerektirir.",
+      "models": "En az bir model ekleyin.",
+      "modelId": "Her modelin bir model kimliği olmalıdır.",
+      "duplicateModel": "Model kimlikleri benzersiz olmalıdır.",
+      "modelNumber": "Bağlam penceresi, token ve fiyat alanları sayı olmalıdır.",
+      "selectedModel": "Tanımlanan modellerden birini seçin."
+    },
+    "empty": {
+      "title": "Cline sağlayıcısı ekleyin",
+      "description": "Yerleşik bir Cline sağlayıcısı veya OpenAI ya da Anthropic uyumlu özel bir uç nokta ekleyin. Cline'da zaten yapılandırılmış sağlayıcılar otomatik olarak içe aktarılır."
+    },
+    "deleteSessionHint": "Bu oturumu Cline'da silin (cline history delete --session-id)."
   }
 }

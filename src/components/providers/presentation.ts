@@ -678,7 +678,7 @@ export function buildLaunchSections(input: LaunchInput): ProviderSection[] {
   ];
 }
 
-// ─── 共存式应用（OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Kimi）─────
+// ─── 共存式应用（OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Kimi / Cline）
 
 export interface AdditiveInput {
   app: AppId;
@@ -697,8 +697,8 @@ export interface AdditiveInput {
   isHermesManaged?: (provider: Provider) => boolean;
   /** Pi：读不到当前配置时一律不能改 */
   piStateUnavailable?: boolean;
-  /** Kimi：原生 default_model 别名所属的供应商。 */
-  kimiCurrentId?: string | null;
+  /** Kimi / Cline：原生配置当前选中的供应商（Kimi 的 default_model、Cline 的 lastUsedProvider）。 */
+  nativeCurrentId?: string | null;
   actions: {
     add: (provider: Provider) => void;
     remove: (provider: Provider) => void;
@@ -718,10 +718,13 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
 
   for (const p of providers) {
     const chips: CardChip[] = [];
-    if (app === "kimi") {
+    if (app === "kimi" || app === "cline") {
       const official = isOfficialAccount(app, p);
       const live = input.isInConfig(p);
-      const officialReason = official ? t("kimi.oauth.managedHint") : undefined;
+      // Kimi official accounts are managed in Auth Center; Cline's account card
+      // stays editable because its form keeps the OAuth credentials read-only.
+      const officialReason =
+        app === "kimi" && official ? t("kimi.oauth.managedHint") : undefined;
       const protectedReason = live ? officialReason : undefined;
       if (official) {
         chips.push({
@@ -730,7 +733,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           tone: "outline",
         });
       }
-      const current = live && p.id === input.kimiCurrentId;
+      const current = live && p.id === input.nativeCurrentId;
       (live ? added : available).push({
         provider: p,
         presentation: {

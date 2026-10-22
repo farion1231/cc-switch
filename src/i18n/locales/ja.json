@@ -4962,5 +4962,53 @@
       "tool_use": "ツール呼び出し",
       "dynamically_loaded_tools": "必要に応じてツールを読み込む"
     }
+  },
+  "cline": {
+    "providerId": "Cline プロバイダー ID",
+    "customIdHint": "名前から自動生成され、保存後は変更されません。",
+    "builtinIdHint": "Cline 組み込みのプロバイダー枠です。組み込みプロバイダーは Cline に 1 件ずつしか登録できません。",
+    "builtinExists": "Cline には既に「{{id}}」プロバイダーがあります。追加せずにそのカードを編集してください。",
+    "protocol": "プロトコル",
+    "baseUrl": "ベース URL",
+    "baseUrlHint": "Cline は末尾に /chat/completions または /messages を付けるだけで、/v1 は補いません。必要な場合は /v1 まで入力してください。",
+    "baseUrlOverride": "ベース URL（任意）",
+    "baseUrlOverridePlaceholder": "空欄の場合は Cline の既定エンドポイントを使用",
+    "model": "モデル",
+    "builtinModelHint": "空欄の場合は、このプロバイダーに対する Cline の既定モデルを使用します。",
+    "models": "モデル",
+    "addModel": "モデルを追加",
+    "removeModel": "モデルを削除",
+    "modelId": "モデル ID",
+    "modelName": "表示名",
+    "contextWindow": "コンテキストウィンドウ",
+    "maxTokens": "最大出力トークン",
+    "inputPrice": "入力価格（$/100 万トークン）",
+    "outputPrice": "出力価格（$/100 万トークン）",
+    "selectedModel": "このモデルを使用",
+    "useModel": "モデル {{model}} を使用",
+    "restartHint": "追加・変更したカスタムプロバイダーを読み込むには Cline を再起動してください（または `cline doctor fix` を実行）。プロバイダーの切り替えは次回 Cline 実行時に反映されます。",
+    "oauthReadOnly": "このプロバイダーは Cline でサインインしています。認証情報は Cline が管理し、ここでは編集しません。切り替えは可能です。",
+    "duplicateBuiltinUnsupported": "Cline の組み込みプロバイダーは複製できません。カスタムプロバイダーを追加してください。",
+    "preset": {
+      "customOpenAI": "カスタム（OpenAI 互換）",
+      "customAnthropic": "カスタム（Anthropic 互換）"
+    },
+    "validation": {
+      "name": "プロバイダー名を入力してください。",
+      "baseUrl": "有効な http(s) のベース URL を入力してください。",
+      "headers": "リクエストヘッダーの値はテキストである必要があります。",
+      "protocol": "対応しているプロトコルを選択してください。",
+      "anthropicClient": "Anthropic プロトコルのプロバイダーには client \"anthropic\" が必要です。",
+      "models": "モデルを 1 つ以上追加してください。",
+      "modelId": "すべてのモデルにモデル ID が必要です。",
+      "duplicateModel": "モデル ID は重複できません。",
+      "modelNumber": "コンテキストウィンドウ・トークン・価格の欄は数値である必要があります。",
+      "selectedModel": "宣言済みのモデルから 1 つ選択してください。"
+    },
+    "empty": {
+      "title": "Cline プロバイダーを追加",
+      "description": "Cline の組み込みプロバイダー、または OpenAI / Anthropic 互換のカスタムエンドポイントを追加できます。Cline で設定済みのプロバイダーは自動で取り込まれます。"
+    },
+    "deleteSessionHint": "このセッションは Cline で削除してください（cline history delete --session-id）。"
   }
 }

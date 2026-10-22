@@ -118,7 +118,8 @@ function HealthChip({
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
 function isOfficialProvider(provider: Provider, appId: AppId): boolean {
-  if (appId === "kimi") return isOfficialAccount(appId, provider);
+  if (appId === "kimi" || appId === "cline")
+    return isOfficialAccount(appId, provider);
   if (provider.category === "official") {
     return true;
   }
@@ -578,6 +579,7 @@ export function ProviderCard({
               onTest &&
               appId !== "mcode" &&
               appId !== "kimi" &&
+              appId !== "cline" &&
               provider.category !== "official"
                 ? () => onTest(provider)
                 : undefined

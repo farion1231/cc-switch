@@ -16,6 +16,7 @@ import type { OpenClawProviderPreset } from "@/config/openclawProviderPresets";
 import type { HermesProviderPreset } from "@/config/hermesProviderPresets";
 import type { McodeProviderPreset } from "@/config/mcodeProviderPresets";
 import type { KimiProviderPreset } from "@/config/kimiProviderPresets";
+import type { ClineProviderPreset } from "@/config/clineProviderPresets";
 import type { PiProviderPreset } from "@/config/piProviderPresets";
 import type { ProviderCategory } from "@/types";
 import type { AppId } from "@/lib/api";
@@ -73,7 +74,8 @@ export type AnyPreset =
   | HermesProviderPreset
   | PiProviderPreset
   | McodeProviderPreset
-  | KimiProviderPreset;
+  | KimiProviderPreset
+  | ClineProviderPreset;
 
 export type PresetEntry = {
   id: string;

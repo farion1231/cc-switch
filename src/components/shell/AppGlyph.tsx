@@ -16,6 +16,7 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   pi: "Pi",
   mcode: "MiniMax Code",
   kimi: "Kimi Code",
+  cline: "Cline",
   agy: "Antigravity",
 };
 
@@ -31,6 +32,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   pi: "pi",
   mcode: "minimax",
   kimi: "kimi",
+  cline: "cline",
   agy: "antigravity",
 };
 

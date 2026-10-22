@@ -399,72 +399,112 @@ describe("ProviderList Component", () => {
     },
   );
 
-  it("switches Kimi providers and marks only the native default-model owner as in use", () => {
-    const current = createProvider({
-      id: "current",
-      name: "Current",
+  it.each(["kimi", "cline"] as const)(
+    "switches %s providers and marks only the native current provider as in use",
+    (appId) => {
+      const current = createProvider({
+        id: "current",
+        name: "Current",
+        meta: { liveConfigManaged: true },
+      });
+      const other = createProvider({
+        id: "other",
+        name: "Other",
+        meta: { liveConfigManaged: true },
+      });
+      const saved = createProvider({
+        id: "saved",
+        name: "Saved",
+        meta: { liveConfigManaged: false },
+      });
+      const onSwitch = vi.fn();
+      const onRemoveFromConfig = vi.fn();
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [current, other, saved],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      const props = {
+        ...baseProps,
+        appId,
+        providers: { current, other, saved },
+        onSwitch,
+        onRemoveFromConfig,
+      };
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const { rerender } = render(
+        <QueryClientProvider client={client}>
+          <ProviderList {...props} currentProviderId="current" />
+        </QueryClientProvider>,
+      );
+      expect(screen.getByTestId("status-current")).toHaveTextContent(
+        "providerCard.status.inUse",
+      );
+      expect(lastProps("current")?.presentation.tone).toBe("direct");
+      expect(lastProps("current")?.isCurrent).toBe(true);
+      expect(screen.queryByTestId("switch-current")).not.toBeInTheDocument();
+      expect(
+        lastProps("current")?.presentation.deleteDisabledReason,
+      ).toBeTruthy();
+      expect(
+        lastProps("current")?.presentation.menuItems[0].disabledReason,
+      ).toBeTruthy();
+      fireEvent.click(screen.getByTestId("switch-other"));
+      expect(onSwitch).toHaveBeenLastCalledWith(other);
+      fireEvent.click(screen.getByTestId("switch-saved"));
+      expect(onSwitch).toHaveBeenLastCalledWith(saved);
+      lastProps("other")?.presentation.menuItems[0].onSelect();
+      expect(onRemoveFromConfig).toHaveBeenCalledWith(other);
+      rerender(
+        <QueryClientProvider client={client}>
+          <ProviderList {...props} currentProviderId="other" />
+        </QueryClientProvider>,
+      );
+      expect(screen.queryByTestId("status-current")).not.toBeInTheDocument();
+      expect(screen.getByTestId("status-other")).toHaveTextContent(
+        "providerCard.status.inUse",
+      );
+      expect(screen.getByTestId("switch-current")).toBeInTheDocument();
+    },
+  );
+
+  it("marks the Cline OAuth entry as official", () => {
+    const account = createProvider({
+      id: "cline",
+      name: "cline",
+      settingsConfig: { settings: {}, tokenSource: "oauth" },
       meta: { liveConfigManaged: true },
     });
-    const other = createProvider({
-      id: "other",
-      name: "Other",
+    const apiKey = createProvider({
+      id: "deepseek",
+      name: "deepseek",
+      settingsConfig: { settings: { apiKey: "k" }, tokenSource: "manual" },
       meta: { liveConfigManaged: true },
     });
-    const saved = createProvider({
-      id: "saved",
-      name: "Saved",
-      meta: { liveConfigManaged: false },
-    });
-    const onSwitch = vi.fn();
-    const onRemoveFromConfig = vi.fn();
     useDragSortMock.mockReturnValue({
-      sortedProviders: [current, other, saved],
+      sortedProviders: [account, apiKey],
       sensors: [],
       handleDragEnd: vi.fn(),
     });
-    const props = {
-      ...baseProps,
-      appId: "kimi" as const,
-      providers: { current, other, saved },
-      onSwitch,
-      onRemoveFromConfig,
-    };
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        appId="cline"
+        currentProviderId="deepseek"
+        providers={{ cline: account, deepseek: apiKey }}
+      />,
+    );
+    expect(lastProps("cline")?.presentation.chips).toContainEqual({
+      key: "official",
+      label: "providerCard.chip.official",
+      tone: "outline",
     });
-    const { rerender } = render(
-      <QueryClientProvider client={client}>
-        <ProviderList {...props} currentProviderId="current" />
-      </QueryClientProvider>,
-    );
-    expect(screen.getByTestId("status-current")).toHaveTextContent(
-      "providerCard.status.inUse",
-    );
-    expect(lastProps("current")?.presentation.tone).toBe("direct");
-    expect(lastProps("current")?.isCurrent).toBe(true);
-    expect(screen.queryByTestId("switch-current")).not.toBeInTheDocument();
+    expect(lastProps("deepseek")?.presentation.chips).toEqual([]);
     expect(
-      lastProps("current")?.presentation.deleteDisabledReason,
+      lastProps("deepseek")?.presentation.menuItems[0].disabledReason,
     ).toBeTruthy();
-    expect(
-      lastProps("current")?.presentation.menuItems[0].disabledReason,
-    ).toBeTruthy();
-    fireEvent.click(screen.getByTestId("switch-other"));
-    expect(onSwitch).toHaveBeenLastCalledWith(other);
-    fireEvent.click(screen.getByTestId("switch-saved"));
-    expect(onSwitch).toHaveBeenLastCalledWith(saved);
-    lastProps("other")?.presentation.menuItems[0].onSelect();
-    expect(onRemoveFromConfig).toHaveBeenCalledWith(other);
-    rerender(
-      <QueryClientProvider client={client}>
-        <ProviderList {...props} currentProviderId="other" />
-      </QueryClientProvider>,
-    );
-    expect(screen.queryByTestId("status-current")).not.toBeInTheDocument();
-    expect(screen.getByTestId("status-other")).toHaveTextContent(
-      "providerCard.status.inUse",
-    );
-    expect(screen.getByTestId("switch-current")).toBeInTheDocument();
   });
 
   it("does not mark any Kimi provider as current when the native selection is missing", () => {

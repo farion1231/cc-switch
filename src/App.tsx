@@ -133,6 +133,7 @@ import HermesMemoryPanel, {
   HermesMemorySaveButton,
 } from "@/components/hermes/HermesMemoryPanel";
 import { APP_IDS, DEFAULT_VISIBLE_APPS, isModeAppId } from "@/config/appConfig";
+import { isClineCustomConfig } from "@/config/clineProviderPresets";
 
 interface SyncStatusUpdatedPayload {
   source?: string;
@@ -593,6 +594,7 @@ function App() {
         if (
           activeApp === "mcode" ||
           activeApp === "kimi" ||
+          activeApp === "cline" ||
           activeApp === "agy"
         )
           return;
@@ -841,7 +843,11 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: hermesKeys.liveProviderIds,
         });
-      } else if (activeApp === "mcode" || activeApp === "kimi") {
+      } else if (
+        activeApp === "mcode" ||
+        activeApp === "kimi" ||
+        activeApp === "cline"
+      ) {
         await queryClient.invalidateQueries({
           queryKey: ["providers", activeApp],
         });
@@ -980,7 +986,11 @@ function App() {
         existingKeys,
       );
       duplicatedProvider.addToLive = false;
-    } else if (activeApp === "mcode" || activeApp === "kimi") {
+    } else if (
+      activeApp === "mcode" ||
+      activeApp === "kimi" ||
+      activeApp === "cline"
+    ) {
       // The MCode list already includes its live custom nodes; the backend
       // rejects a key that MCode itself owns.
       duplicatedProvider.providerKey = generateUniqueProviderCopyKey(
@@ -998,6 +1008,16 @@ function App() {
             },
           ]),
         );
+        duplicatedProvider.addToLive = false;
+      }
+      if (activeApp === "cline") {
+        const config = duplicatedProvider.settingsConfig;
+        // A built-in Cline provider owns its id; only custom ones can be copied.
+        if (!isClineCustomConfig(config)) {
+          toast.error(t("cline.duplicateBuiltinUnsupported"));
+          return;
+        }
+        config.provider = { ...config.provider, name: duplicatedProvider.name };
         duplicatedProvider.addToLive = false;
       }
     }
@@ -1185,6 +1205,7 @@ function App() {
           {currentView === "providers" &&
             activeApp !== "mcode" &&
             activeApp !== "kimi" &&
+            activeApp !== "cline" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
@@ -1348,7 +1369,8 @@ function App() {
               activeApp === "hermes" ||
               activeApp === "pi" ||
               activeApp === "mcode" ||
-              activeApp === "kimi"
+              activeApp === "kimi" ||
+              activeApp === "cline"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
             }

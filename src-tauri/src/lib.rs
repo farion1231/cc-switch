@@ -7,6 +7,10 @@ mod auto_launch;
 mod claude_desktop_config;
 mod claude_mcp;
 mod claude_plugin;
+mod cline_config;
+mod cline_session;
+#[cfg(all(test, unix))]
+mod cline_smoke_tests;
 mod codex_config;
 mod codex_history_migration;
 mod codex_rollout_file;

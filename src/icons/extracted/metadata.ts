@@ -343,6 +343,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     shape: "tile",
     keywords: ["claudecn", "claude", "enterprise"],
   },
+  cline: {
+    name: "cline",
+    displayName: "Cline",
+    category: "ai-provider",
+    keywords: ["cline", "agent", "cli"],
+    defaultColor: "currentColor",
+  },
   cloudflare: {
     name: "cloudflare",
     displayName: "Cloudflare",
