@@ -107,19 +107,19 @@ function MetricCell({
   onSelect: () => void;
 }) {
   return (
-    <div className="relative min-w-0 px-4 pb-3.5 pt-2.5">
+    <div className="group relative min-w-0 px-4 pb-3.5 pt-2.5">
       <button
         type="button"
         aria-pressed={selected}
         aria-label={`${label} ${value}`}
-        title={title}
         onClick={onSelect}
         className={cn(
           "absolute inset-0 transition-[background-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           // 选中：底边一道 2px 正文色线，下半像素压住分隔线，和它在同一水平线上；不再用底色
+          // 悬停用 group：鼠标在数字上（数字接指针事件、显示完整值）时整格也要变色
           selected
             ? "shadow-[inset_0_-1px_0_var(--text-1),0_1px_0_var(--text-1)]"
-            : "hover:bg-sidebar",
+            : "group-hover:bg-sidebar",
         )}
       />
       <div className="pointer-events-none relative flex min-w-0 flex-col gap-0.5">
@@ -141,15 +141,21 @@ function MetricCell({
             </span>
           )}
         </div>
-        <span
-          aria-hidden="true"
-          className={cn(
-            "truncate text-metric leading-7 tabular-nums",
-            selected ? "text-fg-1" : "text-fg-2",
-          )}
-        >
-          {value}
-        </span>
+        {/* 完整数字的提示挂在数字上、往右弹：挂在整格上会弹到格子底下、盖住展开的第二行。
+            数字接指针事件才能悬停，点它同样是选这一格 */}
+        <HoverTip content={title} side="right">
+          <span
+            aria-hidden="true"
+            onClick={onSelect}
+            className={cn(
+              "max-w-full self-start truncate text-metric leading-7 tabular-nums",
+              title && "pointer-events-auto",
+              selected ? "text-fg-1" : "text-fg-2",
+            )}
+          >
+            {value}
+          </span>
+        </HoverTip>
       </div>
     </div>
   );
@@ -174,19 +180,21 @@ function SubMetric({
   help?: { title: string; body: string };
 }) {
   return (
-    <div className="flex min-w-0 flex-col gap-0.5 px-4 py-2.5" title={title}>
+    <div className="flex min-w-0 flex-col gap-0.5 px-4 py-2.5">
       <span className="flex h-[18px] items-center gap-0.5 whitespace-nowrap text-caption text-fg-3">
         {label}
         {help && <HelpTip title={help.title}>{help.body}</HelpTip>}
       </span>
-      <span
-        className={cn(
-          "whitespace-nowrap text-section tabular-nums",
-          muted ? "font-medium text-fg-3" : "text-fg-2",
-        )}
-      >
-        {value}
-      </span>
+      <HoverTip content={title} side="right">
+        <span
+          className={cn(
+            "self-start whitespace-nowrap text-section tabular-nums",
+            muted ? "font-medium text-fg-3" : "text-fg-2",
+          )}
+        >
+          {value}
+        </span>
+      </HoverTip>
     </div>
   );
 }
@@ -245,6 +253,8 @@ export function UsageHero({
   // 命中率的分母（新增输入 + 缓存写入 + 缓存命中）为 0 时没有意义，同样写「—」
   const hitRateKnown = input + cacheWrite + cacheRead > 0;
   const tokens = (value: number) => formatTokensCompact(value, locale);
+  // 悬停看完整数字；加载中、没有数据时格子里是「…」「—」，不提示
+  const exact = (text: string | undefined) => (placeholder ? undefined : text);
   const columns = compact ? "grid-cols-2" : "grid-cols-4";
 
   const cacheWriteHelp =
@@ -263,7 +273,9 @@ export function UsageHero({
         <MetricCell
           label={t("usage.totalCost")}
           value={placeholder ?? (totalCost == null ? "—" : money(totalCost, 2))}
-          title={totalCost == null ? undefined : moneyTitle(totalCost, 6)}
+          title={
+            totalCost == null ? undefined : exact(moneyTitle(totalCost, 6))
+          }
           selected={metric === "cost"}
           onSelect={() => onMetricChange("cost")}
         />
@@ -280,7 +292,7 @@ export function UsageHero({
             body: t("usage.metrics.realTotalHelp"),
           }}
           value={placeholder ?? tokens(realTotal)}
-          title={fmtInt(realTotal, locale)}
+          title={exact(fmtInt(realTotal, locale))}
           selected={metric === "tokens"}
           onSelect={() => onMetricChange("tokens")}
         />
@@ -312,12 +324,12 @@ export function UsageHero({
             <SubMetric
               label={t("usage.freshInput")}
               value={placeholder ?? tokens(input)}
-              title={fmtInt(input, locale)}
+              title={exact(fmtInt(input, locale))}
             />
             <SubMetric
               label={t("usage.outputTokens")}
               value={placeholder ?? tokens(output)}
-              title={fmtInt(output, locale)}
+              title={exact(fmtInt(output, locale))}
             />
             <SubMetric
               label={t("usage.logColumns.cacheWrite")}
@@ -329,7 +341,7 @@ export function UsageHero({
               title={
                 cacheWriteState === "na"
                   ? undefined
-                  : fmtInt(cacheWrite, locale)
+                  : exact(fmtInt(cacheWrite, locale))
               }
               muted={cacheWriteState === "na"}
               help={
@@ -344,7 +356,7 @@ export function UsageHero({
             <SubMetric
               label={t("usage.cacheReadTokens")}
               value={placeholder ?? tokens(cacheRead)}
-              title={fmtInt(cacheRead, locale)}
+              title={exact(fmtInt(cacheRead, locale))}
             />
           </div>
         </div>
