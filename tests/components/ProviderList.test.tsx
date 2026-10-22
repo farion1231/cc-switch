@@ -1,4 +1,10 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  act,
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+} from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useState, type ReactElement } from "react";
@@ -9,6 +15,7 @@ import {
   type SwitchModeProps,
 } from "@/components/providers/ProviderList";
 import { hermesKeys } from "@/hooks/useHermes";
+import { openclawKeys } from "@/hooks/useOpenClaw";
 import { server } from "../msw/server";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
@@ -427,6 +434,74 @@ describe("ProviderList Component", () => {
     expect(onRemoveFromConfig).toHaveBeenCalledWith(live);
     fireEvent.click(screen.getByTestId("add-a"));
     expect(onSwitch).toHaveBeenCalledWith(providerA);
+  });
+
+  it("restores OpenClaw's default action after editing its model and clears it after selection", async () => {
+    const initial = createProvider({
+      id: "relay",
+      settingsConfig: { models: [{ id: "vendor/old-model" }] },
+    });
+    const edited = {
+      ...initial,
+      settingsConfig: { models: [{ id: "vendor/new-model" }] },
+    };
+    const onSetAsDefault = vi.fn();
+    const queryClient = createTestQueryClient();
+    queryClient.setDefaultOptions({
+      queries: { retry: false, staleTime: Infinity },
+    });
+    queryClient.setQueryData(openclawKeys.liveProviderIds, ["relay"]);
+    queryClient.setQueryData(openclawKeys.defaultModel, {
+      primary: "relay/vendor/old-model",
+    });
+    useDragSortMock.mockImplementation(
+      (providers: Record<string, Provider>) => ({
+        sortedProviders: Object.values(providers),
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      }),
+    );
+    const list = (provider: Provider) => (
+      <QueryClientProvider client={queryClient}>
+        <ProviderList
+          {...baseProps}
+          providers={{ relay: provider }}
+          appId="openclaw"
+          onSetAsDefault={onSetAsDefault}
+        />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(list(initial));
+
+    expect(screen.getByTestId("status-relay")).toHaveTextContent(
+      "providerCard.status.default",
+    );
+    expect(lastProps("relay")?.presentation.menuItems).toBeUndefined();
+
+    rerender(list(edited));
+    expect(screen.queryByTestId("status-relay")).not.toBeInTheDocument();
+    expect(screen.getByTestId("remove-relay")).toBeDisabled();
+    expect(onSetAsDefault).not.toHaveBeenCalled();
+    lastProps("relay")
+      ?.presentation.menuItems.find(
+        (action: { key: string }) => action.key === "setDefault",
+      )
+      .onSelect();
+    expect(onSetAsDefault).toHaveBeenCalledTimes(1);
+    expect(onSetAsDefault).toHaveBeenCalledWith(edited, "vendor/new-model");
+
+    act(() => {
+      queryClient.setQueryData(openclawKeys.defaultModel, {
+        primary: "relay/vendor/new-model",
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("status-relay")).toHaveTextContent(
+        "providerCard.status.default",
+      );
+      expect(lastProps("relay")?.presentation.menuItems).toBeUndefined();
+    });
+    expect(screen.getByTestId("remove-relay")).toBeDisabled();
   });
 
   it.each(["mcode"] as const)(

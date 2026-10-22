@@ -1025,7 +1025,17 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
 
     // OpenCode 的顶层 model 一直允许移走所指的那家，这里不改；OpenClaw 不能
     if (app === "openclaw" || app === "opencode") {
-      isDefault = input.defaultModel?.providerId === p.id;
+      const models = input.defaultModelOptions?.(p) ?? [];
+      const ownsDefault = input.defaultModel?.providerId === p.id;
+      // OpenCode declarations may only override part of a built-in catalog.
+      isDefault =
+        ownsDefault &&
+        (app === "opencode" ||
+          models.some((model) => model.id === input.defaultModel?.model));
+      // A stale model reference still prevents removing its OpenClaw provider.
+      if (app === "openclaw" && ownsDefault) {
+        removeReason = t("providerCard.reason.defaultCannotRemove");
+      }
       if (isDefault) {
         status = { label: t("providerCard.status.default"), dot: "direct" };
         chips.push({
@@ -1035,11 +1045,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           }),
           tone: "outline",
         });
-        if (app === "openclaw") {
-          removeReason = t("providerCard.reason.defaultCannotRemove");
-        }
       } else {
-        const models = input.defaultModelOptions?.(p) ?? [];
         // 「设为默认」放「更多」菜单，不占卡片上的主操作位；多个模型时展开子菜单选。
         // OpenCode 内置供应商可以不列模型（运行时才有），给不出选项就不显示
         if (app === "openclaw" || models.length > 0) {
