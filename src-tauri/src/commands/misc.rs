@@ -3936,12 +3936,13 @@ fn applescript_launcher_command(script_file: &std::path::Path) -> String {
 /// Build a launcher command that replaces the terminal-created shell session.
 #[cfg(target_os = "macos")]
 fn applescript_exec_launcher_command(script_file: &std::path::Path) -> String {
-    // 前置换行符：交互式 shell 启动时可能有 oh-my-zsh 更新提示等 `read -k 1`
+    // 前导空格：交互式 shell 启动时可能有 oh-my-zsh 更新提示等 `read -k 1`
     // 单行读取，会吞掉 `do script` 键入命令的首字符（exec → xec，#6926）。
-    // 换行符被提示消费后真正的命令完整到达 shell；无提示时换行只是执行
-    // 一条空命令，无害。
+    // 空格被提示消费后真正的命令完整到达 shell；oh-my-zsh 把空格归入 `*)`
+    // 分支（仅打印提醒），而换行符会被当作确认（y/Y/\n）触发 `git pull`。
+    // 无提示时 shell 忽略前导空白，无害。
     applescript_string_literal(&format!(
-        "\nexec sh {}",
+        " exec sh {}",
         shell_single_quote(&script_file.to_string_lossy())
     ))
 }
@@ -6902,7 +6903,7 @@ mod tests {
             "already-running branch should use bare do script:\n{script}"
         );
         assert!(
-            script.contains("set launcher_script to \"\nexec sh '/tmp/cc_switch_launcher.sh'\""),
+            script.contains("set launcher_script to \" exec sh '/tmp/cc_switch_launcher.sh'\""),
             "Terminal should replace the auto-created shell:\n{script}"
         );
     }
@@ -6918,8 +6919,10 @@ mod tests {
 
     /// oh-my-zsh's interactive update prompt uses `read -k 1`, which consumes
     /// the first character `do script` types — turning `exec` into `xec`.
-    /// The launcher command must lead with a newline so the prompt consumes
-    /// that instead of the command itself (#6926).
+    /// The launcher command must lead with a space so the prompt consumes
+    /// that instead of the command itself (#6926). A space lands in the
+    /// prompt's `*)` branch (reminder only), unlike a newline which oh-my-zsh
+    /// treats as confirmation and runs `git pull`.
     #[cfg(target_os = "macos")]
     #[test]
     fn terminal_launcher_command_survives_single_character_prompt() {
@@ -7023,8 +7026,7 @@ mod tests {
     fn applescript_builders_safely_quote_special_paths() {
         // First shell-quote the path, then wrap the whole command as an AppleScript string.
         let expected = r#""sh '/Users/me/it'\"'\"'s dir/x.sh'""#;
-        let exec_expected = r#""
-exec sh '/Users/me/it'\"'\"'s dir/x.sh'""#;
+        let exec_expected = r#"" exec sh '/Users/me/it'\"'\"'s dir/x.sh'""#;
         let p = Path::new("/Users/me/it's dir/x.sh");
         assert_eq!(applescript_launcher_command(p), expected);
         assert_eq!(applescript_exec_launcher_command(p), exec_expected);
