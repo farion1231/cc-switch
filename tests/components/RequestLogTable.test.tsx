@@ -476,6 +476,55 @@ describe("RequestLogTable optional columns", () => {
     expect(screen.getByText("500")).toBeInTheDocument();
   });
 
+  it("slides kept rows down and highlights rows that arrive on refresh", () => {
+    const animate = vi.fn();
+    const original = Element.prototype.animate;
+    Element.prototype.animate = animate;
+    const logsOf = (...ids: string[]) => ({
+      data: {
+        data: ids.map((requestId) => ({
+          ...base,
+          requestId,
+          appType: "claude",
+          inputTokens: 1,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+          latencyMs: 100,
+          statusCode: 200,
+        })),
+        total: ids.length,
+        page: 0,
+        pageSize: 20,
+      },
+      isLoading: false,
+    });
+    try {
+      useRequestLogsMock.mockReturnValue(logsOf("a", "b"));
+      const { rerender } = render(
+        <RequestLogTable range={{ preset: "today" }} refreshIntervalMs={0} />,
+      );
+      // 第一次显示不算新来的
+      expect(animate).not.toHaveBeenCalled();
+
+      useRequestLogsMock.mockReturnValue(logsOf("c", "a", "b"));
+      rerender(
+        <RequestLogTable range={{ preset: "today" }} refreshIntervalMs={0} />,
+      );
+      const rows = screen.getAllByRole("row").slice(1);
+      const targets = animate.mock.contexts as Element[];
+      // 新行：每格一段渐隐底色 + 整行淡入
+      expect(targets).toContain(rows[0]);
+      expect(targets).toContain(rows[0].querySelector("td"));
+      // 旧行各往下挪一行
+      const shiftOf = (row: Element) =>
+        animate.mock.calls[targets.indexOf(row)]?.[0]?.[0]?.transform;
+      expect(shiftOf(rows[1])).toBe("translateY(-100%)");
+      expect(shiftOf(rows[2])).toBe("translateY(-100%)");
+    } finally {
+      Element.prototype.animate = original;
+    }
+  });
+
   it("formats hit percentages without rounding up to 100", () => {
     expect(formatHitPercent(1)).toBe("100%");
     expect(formatHitPercent(0.99996)).toBe("99.9%");

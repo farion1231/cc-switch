@@ -16,7 +16,10 @@ interface TablePaginationProps {
 const NAV_BUTTON =
   "inline-flex h-7 w-7 items-center justify-center rounded-control text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1 disabled:pointer-events-none disabled:opacity-45";
 
-/** 用量页表格共用的翻页条：总数、上一页、可输入的页码、下一页。 */
+/**
+ * 用量页表格共用的翻页条：总数、上一页、可输入的页码、下一页。
+ * 只有一页时不画——翻不了页，总数在页签计数里已经有。
+ */
 export function TablePagination({
   page,
   totalPages,
@@ -44,8 +47,10 @@ export function TablePagination({
     onPageChange(parsed - 1);
   };
 
+  if (totalPages <= 1) return null;
+
   return (
-    <div className="flex h-10 items-center gap-2 text-caption text-fg-3">
+    <div className="flex h-11 items-center gap-2 border-t border-border bg-subtle px-4 text-caption text-fg-3">
       <span className="tabular-nums">{t("usage.totalRecords", { total })}</span>
       <div className="flex-1" />
       <HoverTip content={t("usage.prevPage")}>
@@ -59,12 +64,12 @@ export function TablePagination({
           <ChevronLeft className="h-4 w-4" />
         </button>
       </HoverTip>
-      <span className="flex items-center gap-1 tabular-nums text-fg-2">
+      <span className="flex items-center gap-1.5 tabular-nums text-fg-2">
         <input
           type="text"
           inputMode="numeric"
           aria-label={t("usage.pageInputPlaceholder")}
-          className="h-6 w-9 rounded-[4px] border border-transparent bg-transparent text-center text-caption text-fg-1 transition-[border-color,box-shadow] hover:border-border-strong focus:border-ring focus:bg-surface focus:outline-none focus:ring-[3px] focus:ring-ring/20"
+          className="h-6 w-10 rounded-[4px] border border-border-strong bg-surface text-center text-caption text-fg-1 transition-[border-color,box-shadow] focus:border-ring focus:outline-none focus:ring-[3px] focus:ring-ring/20"
           value={pageDraft ?? String(page + 1)}
           onChange={(event) => setPageDraft(event.target.value)}
           onFocus={(event) => event.target.select()}

@@ -74,6 +74,15 @@ describe("useClientPagination + TablePagination", () => {
     expect(screen.getByText("row-1")).toBeInTheDocument();
   });
 
+  it("draws no pagination bar when everything fits on one page", () => {
+    render(<Harness count={3} />);
+    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    expect(
+      screen.queryByRole("button", { name: "usage.nextPage" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("usage.totalRecords:3")).not.toBeInTheDocument();
+  });
+
   it("clamps to the last page when rows shrink", async () => {
     const user = userEvent.setup();
     const { rerender } = render(<Harness count={45} />);

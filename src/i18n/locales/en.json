@@ -2381,16 +2381,13 @@
     "cacheReadCostPerMillion": "Cache Read Cost (per million tokens, USD)",
     "cacheCreationCostPerMillion": "Cache Write Cost (per million tokens, USD)",
     "syncStatus": {
-      "auto": "Session logs · auto scan",
-      "justNow": "Session logs · synced just now",
-      "minutesAgo": "Session logs · synced {{count}} min ago",
-      "off": "Session logs · auto scan off",
-      "tipAuto": "Scanned every 10 minutes in the background, and at the interval on the right while this page is open",
-      "tipOff": "Session logs are scanned only when you sync manually"
+      "justNow": "Synced just now",
+      "minutesAgo": "Synced {{count}} min ago",
+      "syncing": "Syncing…",
+      "tip": "Click to sync now"
     },
     "refreshMenu": {
-      "label": "Scan every {{seconds}}s",
-      "seconds": "{{seconds}}s"
+      "label": "Scan every {{seconds}}s"
     },
     "dataSources": "Data sources",
     "display": {
@@ -2410,7 +2407,6 @@
       },
       "sidebarTodayLimit": "Pick up to {{count}}",
       "logColumns": "Request log columns",
-      "logColumnsSummary": "{{shown}} of {{total}} columns",
       "trendChartType": "Trend chart",
       "trendChartTypes": {
         "bar": "Bar",
@@ -2449,16 +2445,17 @@
       "requests": "Requests",
       "tokens": "Tokens",
       "cost": "Cost",
-      "requestsLegend": "Requests"
+      "requestsLegend": "Requests",
+      "titleMetric": "{{metric}} · {{granularity}}",
+      "hourly": "hourly",
+      "daily": "daily"
     },
     "tabs": {
       "label": "Details",
       "providers": "Providers",
       "models": "Models",
-      "pricing": "Pricing",
-      "settings": "Settings"
+      "pricing": "Pricing"
     },
-    "sortedByRequests": "Sorted by requests",
     "app": "App",
     "speed": "Speed",
     "speedValue": "{{value}} tok/s",
@@ -2495,7 +2492,6 @@
       "performance": "Performance",
       "source": "Source",
       "sourceProxy": "Routing service · status {{code}}",
-      "sourceSession": "Session log",
       "total": "Total",
       "firstToken": "First token",
       "firstTokenEstimated": "First token (estimated)",
@@ -2549,7 +2545,12 @@
       "cacheWrite": "Cache write"
     },
     "prevMonth": "Previous month",
-    "nextMonth": "Next month"
+    "nextMonth": "Next month",
+    "settings": {
+      "title": "Usage settings",
+      "pricingSummary": "Set per-model prices per million tokens, or sync them from models.dev",
+      "managePricing": "Manage pricing…"
+    }
   },
   "usageScript": {
     "title": "Configure Usage Query",

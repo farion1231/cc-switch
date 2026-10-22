@@ -2382,16 +2382,13 @@
     "cacheReadCostPerMillion": "快取讀取成本 (每百萬 tokens, USD)",
     "cacheCreationCostPerMillion": "快取寫入成本 (每百萬 tokens, USD)",
     "syncStatus": {
-      "auto": "工作階段日誌 · 自動掃描",
-      "justNow": "工作階段日誌 · 剛剛同步",
-      "minutesAgo": "工作階段日誌 · {{count}} 分鐘前同步",
-      "off": "工作階段日誌 · 自動掃描已關閉",
-      "tipAuto": "背景每 10 分鐘掃描一次；開啟用量頁時依右側間隔掃描",
-      "tipOff": "只在手動同步時掃描工作階段日誌"
+      "justNow": "剛剛同步",
+      "minutesAgo": "{{count}} 分鐘前同步",
+      "syncing": "同步中…",
+      "tip": "點擊立即同步"
     },
     "refreshMenu": {
-      "label": "每 {{seconds}} 秒掃描",
-      "seconds": "{{seconds}} 秒"
+      "label": "每 {{seconds}} 秒掃描"
     },
     "dataSources": "資料來源",
     "display": {
@@ -2411,7 +2408,6 @@
       },
       "sidebarTodayLimit": "最多選 {{count}} 項",
       "logColumns": "請求日誌的欄位",
-      "logColumnsSummary": "{{shown}} / {{total}} 欄",
       "trendChartType": "趨勢圖樣式",
       "trendChartTypes": {
         "bar": "長條圖",
@@ -2450,16 +2446,17 @@
       "requests": "請求",
       "tokens": "Tokens",
       "cost": "成本",
-      "requestsLegend": "請求數"
+      "requestsLegend": "請求數",
+      "titleMetric": "{{metric}} · {{granularity}}",
+      "hourly": "按小時",
+      "daily": "按天"
     },
     "tabs": {
       "label": "明細",
       "providers": "供應商",
       "models": "模型",
-      "pricing": "定價",
-      "settings": "設定"
+      "pricing": "定價"
     },
-    "sortedByRequests": "依請求數排序",
     "app": "應用程式",
     "speed": "速度",
     "speedValue": "{{value}} tok/s",
@@ -2496,7 +2493,6 @@
       "performance": "效能",
       "source": "來源",
       "sourceProxy": "路由服務 · 狀態碼 {{code}}",
-      "sourceSession": "工作階段日誌",
       "total": "合計",
       "firstToken": "首字",
       "firstTokenEstimated": "首字（估算）",
@@ -2550,7 +2546,12 @@
       "cacheWrite": "快取寫入"
     },
     "prevMonth": "上個月",
-    "nextMonth": "下個月"
+    "nextMonth": "下個月",
+    "settings": {
+      "title": "用量設定",
+      "pricingSummary": "依模型設定每百萬 Tokens 的價格，可從 models.dev 同步",
+      "managePricing": "管理定價…"
+    }
   },
   "usageScript": {
     "title": "設定用量查詢",

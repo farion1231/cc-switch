@@ -2,7 +2,6 @@ import { Fragment, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useUsageFirstDate, useUsageTrends } from "@/lib/query/usage";
 import { cn } from "@/lib/utils";
 import type { UsageRangeSelection } from "@/types/usage";
@@ -14,17 +13,16 @@ import {
 import type { UsageTrendStatLike } from "./UsageTrendChart";
 import { UsageTooltipCard } from "./UsageTooltipCard";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
-import { USAGE_CHOICE_KEYS, useRememberedChoice } from "./rememberedChoice";
+import type { UsageMetric } from "./rememberedChoice";
 
 const WEEKS = 53;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** 0 档用底色，1–4 档是 --heat-1…4（与趋势图同一色相，色阶在 index.css 按深浅色分别定） */
 const LEVELS = [0, 1, 2, 3, 4];
 
-const HEAT_METRICS = ["tokens", "requests", "cost"] as const;
-type HeatMetric = (typeof HEAT_METRICS)[number];
-
 interface UsageHeatmapProps {
+  /** 格子深浅按哪个指标分档：由上方指标条选 */
+  metric: UsageMetric;
   appType?: string;
   providerName?: string;
   model?: string;
@@ -109,9 +107,16 @@ function spanCountFor(
   return before > 0 ? 1 + Math.ceil(before / (WEEKS * 7)) : 1;
 }
 
-function metricValue(stat: UsageTrendStatLike, metric: HeatMetric): number {
+function metricValue(stat: UsageTrendStatLike, metric: UsageMetric): number {
   if (metric === "requests") return stat.requestCount ?? 0;
   if (metric === "cost") return parseFiniteNumber(stat.totalCost) ?? 0;
+  if (metric === "hitRate") {
+    const cacheable =
+      stat.totalInputTokens +
+      stat.totalCacheCreationTokens +
+      stat.totalCacheReadTokens;
+    return cacheable > 0 ? stat.totalCacheReadTokens / cacheable : 0;
+  }
   return (
     stat.totalInputTokens +
     stat.totalOutputTokens +
@@ -187,7 +192,7 @@ function useAllSpansDailyTrends(
 function buildSpan(
   index: number,
   byDay: Map<string, UsageTrendStatLike>,
-  metric: HeatMetric,
+  metric: UsageMetric,
   today: Date,
 ): SpanGrid {
   const start = spanStart(today, index);
@@ -227,6 +232,7 @@ function buildSpan(
 }
 
 export function UsageHeatmap({
+  metric,
   appType,
   providerName,
   model,
@@ -234,11 +240,6 @@ export function UsageHeatmap({
 }: UsageHeatmapProps) {
   const { t, i18n } = useTranslation();
   const { money } = useMoneyFormat();
-  const [metric, setMetric] = useRememberedChoice<HeatMetric>(
-    USAGE_CHOICE_KEYS.heatmapMetric,
-    HEAT_METRICS,
-    "tokens",
-  );
   const sectionRef = useRef<HTMLElement>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
   // 默认只画最近 53 周，点「显示更多」才把更早的段全部展开；不记住，每次进来都是收起
@@ -304,32 +305,18 @@ export function UsageHeatmap({
     <section
       ref={sectionRef}
       aria-labelledby="usage-heatmap-title"
-      className="relative shrink-0 rounded-panel border border-border bg-surface px-4 py-3"
+      className="relative px-4 pb-3 pt-5"
     >
-      <div className="flex flex-wrap items-start gap-x-3.5 gap-y-1">
-        <div>
-          <h2
-            id="usage-heatmap-title"
-            className="m-0 text-body font-semibold text-fg-1"
-          >
-            {t("usage.heatmap.title")}
-          </h2>
-          <p className="m-0 text-caption text-fg-3">
-            {t("usage.heatmap.subtitle")}
-          </p>
-        </div>
-        <div className="flex-1" />
-        <SegmentedControl<HeatMetric>
-          size="sm"
-          aria-label={t("usage.trend.metricLabel")}
-          value={metric}
-          onValueChange={setMetric}
-          items={[
-            { value: "tokens", label: t("usage.trend.tokens") },
-            { value: "requests", label: t("usage.trend.requests") },
-            { value: "cost", label: t("usage.trend.cost") },
-          ]}
-        />
+      <div>
+        <h2
+          id="usage-heatmap-title"
+          className="m-0 text-body font-semibold text-fg-1"
+        >
+          {t("usage.heatmap.title")}
+        </h2>
+        <p className="m-0 text-caption text-fg-3">
+          {t("usage.heatmap.subtitle")}
+        </p>
       </div>
 
       {isLoading ? (
