@@ -499,7 +499,7 @@ impl KimiOAuthManager {
         // before committing anything to disk.
         let outcome = Self::advance(&mut flow).await;
         let mut pending = self.pending.lock().await;
-        if !pending.as_ref().is_some_and(|p| p.id == flow_id) {
+        if pending.as_ref().is_none_or(|p| p.id != flow_id) {
             return Ok(KimiLoginPoll::ended("cancelled"));
         }
         flow.polling = false;
