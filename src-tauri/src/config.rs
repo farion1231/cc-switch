@@ -872,6 +872,13 @@ mod tests {
             "model = \"gpt-test\"\n"
         );
 
+        write_text_file_private(&file, "model = \"gpt-private-test\"\n")
+            .expect("write private config through directory junction");
+        assert_eq!(
+            fs::read_to_string(target.join("config.toml")).expect("read private target file"),
+            "model = \"gpt-private-test\"\n"
+        );
+
         fs::remove_dir(&junction).expect("remove directory junction");
     }
 
@@ -893,17 +900,21 @@ mod tests {
         fs::remove_dir(&target).expect("remove junction target");
 
         let file = junction.join("config.toml");
-        let error = write_text_file(&file, "model = \"gpt-test\"\n")
-            .expect_err("an unreachable junction target must fail");
-        match error {
-            AppError::Localized { key, zh, en } => {
-                assert_eq!(key, "config.directory_junction_unreachable");
-                assert!(zh.contains(&junction.display().to_string()));
-                assert!(zh.contains("不可达目标的目录联接"));
-                assert!(en.contains(&junction.display().to_string()));
-                assert!(en.contains("target is unreachable"));
+        for result in [
+            write_text_file(&file, "model = \"gpt-test\"\n"),
+            write_text_file_private(&file, "model = \"gpt-test\"\n"),
+        ] {
+            let error = result.expect_err("an unreachable junction target must fail");
+            match error {
+                AppError::Localized { key, zh, en } => {
+                    assert_eq!(key, "config.directory_junction_unreachable");
+                    assert!(zh.contains(&junction.display().to_string()));
+                    assert!(zh.contains("不可达目标的目录联接"));
+                    assert!(en.contains(&junction.display().to_string()));
+                    assert!(en.contains("target is unreachable"));
+                }
+                other => panic!("expected localized junction diagnostic, got {other:?}"),
             }
-            other => panic!("expected localized junction diagnostic, got {other:?}"),
         }
 
         fs::remove_dir(&junction).expect("remove directory junction");
