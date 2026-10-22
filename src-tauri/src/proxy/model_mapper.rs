@@ -181,8 +181,8 @@ pub fn strip_one_m_suffix_for_upstream_from_body(mut body: Value) -> Value {
     body
 }
 
-/// Whether Claude /v1/messages passthrough should rewrite response model fields
-/// back to the client-visible request model.
+/// Claude /v1/messages 透传是否应把响应中的 model 字段回写为客户端
+/// 可见的请求 model。
 pub fn should_force_response_model_for_app(app_type: &crate::app_config::AppType) -> bool {
     matches!(
         app_type,
@@ -190,13 +190,13 @@ pub fn should_force_response_model_for_app(app_type: &crate::app_config::AppType
     )
 }
 
-/// Rewrite Anthropic-compatible response JSON model fields to `client_model`.
+/// 把 Anthropic 形态响应 JSON 中的 model 字段改写为 `client_model`。
 ///
-/// Paths rewritten (when present):
-/// - top-level `model`
-/// - `message.model` (non-stream final body or message object)
+/// 改写的路径（存在时）：
+/// - 顶层 `model`
+/// - `message.model`（非流式最终响应体或 message 对象）
 ///
-/// Returns true if any field was changed.
+/// 任一字段被修改时返回 true。
 pub fn rewrite_anthropic_response_model(json: &mut Value, client_model: &str) -> bool {
     let client_model = client_model.trim();
     if client_model.is_empty() {
@@ -224,10 +224,10 @@ pub fn rewrite_anthropic_response_model(json: &mut Value, client_model: &str) ->
     changed
 }
 
-/// Rewrite model fields inside one SSE event block (without trailing blank line).
+/// 改写单个 SSE 事件块（不含尾部空行）内的 model 字段。
 ///
-/// Only rewrites JSON on `data:` lines that parse as objects. Non-JSON data
-/// lines and control fields are preserved.
+/// 只改写解析为 JSON 对象的 `data:` 行；非 JSON 的 data 行与
+/// 控制字段原样保留。
 pub fn rewrite_anthropic_sse_event_block(event_text: &str, client_model: &str) -> String {
     let client_model = client_model.trim();
     if client_model.is_empty() || !event_text.contains("model") {
@@ -244,7 +244,7 @@ pub fn rewrite_anthropic_sse_event_block(event_text: &str, client_model: &str) -
 
 fn rewrite_sse_data_line_model(line: &str, client_model: &str) -> Option<String> {
     let data = line.strip_prefix("data:")?;
-    // Preserve optional space after "data:"
+    // 保留 "data:" 后的可选空格
     let (prefix, payload) = if let Some(rest) = data.strip_prefix(' ') {
         ("data: ", rest)
     } else {
