@@ -426,7 +426,7 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 <details>
 <summary><strong>Which AI tools does CC Switch support?</strong></summary>
 
-CC Switch supports these tools: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**, **OpenCode**, **OpenClaw**, **Hermes**, **Pi**, **MiniMax Code**, **Kimi Code**, **Oh My Pi**, and **Qoder CLI** (international and China editions). Qoder providers, models and defaults are configured in CC Switch using its native settings format; see [Supported Features by Tool](#supported-features-by-tool) for what each one supports.
+CC Switch supports these tools: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**, **OpenCode**, **OpenClaw**, **Hermes**, **Pi**, **MiniMax Code**, **Kimi Code**, **Oh My Pi**, and **Qoder CLI** (international and China editions). Qoder providers, models and defaults are configured in CC Switch using its native settings format. Manage Qoder's official accounts in the Authorization Center, including adding accounts, signing in again and switching accounts separately for each edition; see [Supported Features by Tool](#supported-features-by-tool) for what each one supports.
 
 </details>
 

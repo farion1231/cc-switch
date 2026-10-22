@@ -2,7 +2,7 @@
 //! The native client owns the device flow, credential storage and token refresh.
 use crate::{
     app_config::AppType,
-    qoder_accounts::{self, AccountProfile, AccountStore, QoderAccount},
+    qoder_accounts::{self, AccountProfile, AccountStore, Credential, QoderAccount},
     qoder_config,
 };
 use serde::{Deserialize, Serialize};
@@ -48,6 +48,13 @@ struct LoginFlow {
     progress: watch::Receiver<QoderLoginProgress>,
     task: tokio::task::JoinHandle<()>,
     expires_at: Instant,
+}
+
+struct Reauthentication {
+    scope: String,
+    account_id: String,
+    expected: Credential,
+    was_current: bool,
 }
 
 #[derive(Default)]
@@ -334,6 +341,7 @@ async fn run_login(
     progress: &watch::Sender<QoderLoginProgress>,
     accounts: Arc<Mutex<()>>,
     cancelled_flag: Arc<AtomicBool>,
+    target: Option<Reauthentication>,
 ) -> Result<String, String> {
     let root = qoder_accounts::absolute_root(&app)?;
     let staging = qoder_accounts::prepare_login(&root)?;
@@ -366,13 +374,32 @@ async fn run_login(
         return Err("Qoder login cancelled".into());
     }
     let mut store = AccountStore::load()?;
-    let id = store.import(
-        &qoder_accounts::scope(&app, &root),
-        credential,
-        status.profile(),
-        None,
-    );
-    store.save()?;
+    let scope = qoder_accounts::scope(&app, &root);
+    let id = if let Some(target) = target {
+        if target.scope != scope {
+            return Err("Qoder account directory changed during sign-in. Retry".into());
+        }
+        store.reauthenticate(
+            &scope,
+            &target.account_id,
+            &target.expected,
+            credential.clone(),
+            status.profile(),
+        )?;
+        store.save_reauthentication(
+            &root,
+            &app,
+            &target.expected,
+            &credential,
+            target.was_current,
+        )?;
+        target.account_id
+    } else {
+        qoder_accounts::preserve_machine_identity(&root, &credential)?;
+        let id = store.import(&scope, credential, status.profile(), None);
+        store.save()?;
+        id
+    };
     Ok(id)
 }
 
@@ -428,6 +455,7 @@ async fn monitor_login(
 pub async fn start_qoder_login(
     state: State<'_, QoderAuthState>,
     app: String,
+    account_id: Option<String>,
 ) -> Result<String, String> {
     let app = edition(&app)?;
     let mut flows = state.flows.lock().await;
@@ -444,6 +472,23 @@ pub async fn start_qoder_login(
     {
         return Err("A Qoder login is already in progress for this edition".into());
     }
+    let target = if let Some(account_id) = account_id {
+        let _guard = state.accounts.lock().await;
+        // Import a native token refresh before taking the account snapshot.
+        account_status(&app).await?;
+        let root = qoder_accounts::absolute_root(&app)?;
+        let scope = qoder_accounts::scope(&app, &root);
+        let expected = AccountStore::load()?.credential(&scope, &account_id)?;
+        let was_current = qoder_accounts::capture(&root, &app)?.as_ref() == Some(&expected);
+        Some(Reauthentication {
+            scope,
+            account_id,
+            expected,
+            was_current,
+        })
+    } else {
+        None
+    };
     let id = uuid::Uuid::new_v4().to_string();
     let (cancel, cancelled) = oneshot::channel();
     let cancelled_flag = Arc::new(AtomicBool::new(false));
@@ -452,7 +497,15 @@ pub async fn start_qoder_login(
     let login_app = app.clone();
     let accounts = state.accounts.clone();
     let task = tokio::spawn(async move {
-        let result = run_login(login_app, cancelled, &progress, accounts, task_cancelled).await;
+        let result = run_login(
+            login_app,
+            cancelled,
+            &progress,
+            accounts,
+            task_cancelled,
+            target,
+        )
+        .await;
         progress.send_modify(|value| {
             value.complete = result.is_ok();
             match result {

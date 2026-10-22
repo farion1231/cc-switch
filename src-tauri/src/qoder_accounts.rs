@@ -140,6 +140,29 @@ pub(crate) fn capture(root: &Path, app: &AppType) -> Result<Option<Credential>, 
     read_unlocked(root, app)
 }
 
+fn ensure_machine_identity_unlocked(root: &Path, next: &Credential) -> Result<bool, String> {
+    let path = root.join(".auth/machine_id");
+    if let Some(existing) = optional_text(&path)? {
+        if existing.trim() != next.machine_id.trim() {
+            return Err(
+                "This account belongs to a different Qoder machine identity. Add the account again"
+                    .into(),
+            );
+        }
+        return Ok(false);
+    }
+    atomic_write_private(&path, next.machine_id.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// Keep the first staged login's machine identity for later logins, even when
+/// no account has been selected yet. Never activate the staged credentials.
+pub(crate) fn preserve_machine_identity(root: &Path, next: &Credential) -> Result<(), String> {
+    let _guard = NativeLock::acquire(root)?;
+    ensure_machine_identity_unlocked(root, next)?;
+    Ok(())
+}
+
 /// Only replace the exact credential observed by the caller. Machine identity
 /// stays stable so Qoder's other encrypted files and running sessions still work.
 pub(crate) fn replace(
@@ -155,22 +178,9 @@ pub(crate) fn replace(
     let path = credential_path(root, app);
     if let Some(next) = next {
         let machine_path = root.join(".auth/machine_id");
-        let previous_machine = optional_text(&machine_path)?;
-        if previous_machine
-            .as_ref()
-            .is_some_and(|v| v.trim() != next.machine_id.trim())
-        {
-            return Err(
-                "This account belongs to a different Qoder machine identity. Add the account again"
-                    .into(),
-            );
-        }
-        if previous_machine.is_none() {
-            atomic_write_private(&machine_path, next.machine_id.as_bytes())
-                .map_err(|e| e.to_string())?;
-        }
+        let created_machine = ensure_machine_identity_unlocked(root, next)?;
         if let Err(error) = atomic_write_private(&path, next.encrypted_user.as_bytes()) {
-            if previous_machine.is_none() {
+            if created_machine {
                 let _ = fs::remove_file(machine_path);
             }
             return Err(error.to_string());
@@ -223,6 +233,43 @@ impl AccountStore {
     fn save_to(&self, path: &Path) -> Result<(), String> {
         let bytes = serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?;
         atomic_write_private(path, &bytes).map_err(|e| e.to_string())
+    }
+    pub(crate) fn save_reauthentication(
+        &self,
+        root: &Path,
+        app: &AppType,
+        expected: &Credential,
+        next: &Credential,
+        was_current: bool,
+    ) -> Result<(), String> {
+        self.save_reauthentication_to(root, app, expected, next, was_current, &store_path())
+    }
+    fn save_reauthentication_to(
+        &self,
+        root: &Path,
+        app: &AppType,
+        expected: &Credential,
+        next: &Credential,
+        was_current: bool,
+        path: &Path,
+    ) -> Result<(), String> {
+        // Renew the native login only when it still uses this exact account.
+        // Leave the selected model and every other native setting untouched.
+        let current = capture(root, app)?;
+        let active = current.as_ref() == Some(expected);
+        if was_current && !active {
+            return Err("Qoder login changed outside CC Switch. Refresh and retry".into());
+        }
+        if active {
+            replace(root, app, current.as_ref(), Some(next))?;
+        }
+        if let Err(error) = self.save_to(path) {
+            if active {
+                replace(root, app, Some(next), current.as_ref())?;
+            }
+            return Err(error);
+        }
+        Ok(())
     }
     pub(crate) fn import(
         &mut self,
@@ -296,6 +343,53 @@ impl AccountStore {
             })
             .collect()
     }
+    pub(crate) fn reauthenticate(
+        &mut self,
+        scope: &str,
+        id: &str,
+        expected: &Credential,
+        credential: Credential,
+        profile: AccountProfile,
+    ) -> Result<(), String> {
+        if &self.credential(scope, id)? != expected {
+            return Err(
+                "This Qoder account changed during sign-in. Refresh the account list and retry"
+                    .into(),
+            );
+        }
+        let accounts = self.scopes.get_mut(scope).unwrap();
+        let has_identity = profile
+            .email
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+            || (profile
+                .username
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+                && profile
+                    .organization_id
+                    .as_deref()
+                    .is_some_and(|value| !value.trim().is_empty()));
+        if accounts.iter().any(|account| {
+            account.id != id
+                && (account.credential == credential
+                    || (has_identity
+                        && account.profile.username == profile.username
+                        && account.profile.email == profile.email
+                        && account.profile.organization_id == profile.organization_id))
+        }) {
+            return Err(
+                "This Qoder account is already saved. Use the existing account instead".into(),
+            );
+        }
+        let account = accounts
+            .iter_mut()
+            .find(|account| account.id == id)
+            .unwrap();
+        account.credential = credential;
+        account.profile = profile;
+        Ok(())
+    }
     pub(crate) fn credential(&self, scope: &str, id: &str) -> Result<Credential, String> {
         self.scopes
             .get(scope)
@@ -323,6 +417,206 @@ mod tests {
             machine_id: "fixture-machine".into(),
             encrypted_user: value.into(),
         }
+    }
+
+    #[test]
+    fn qoder_staged_accounts_share_machine_identity_before_any_account_is_selected() {
+        for app in [AppType::Qoder, AppType::QoderCn] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path();
+            let first = credential("first-account");
+            preserve_machine_identity(root, &first).unwrap();
+            assert!(capture(root, &app).unwrap().is_none());
+            let next_login = prepare_login(root).unwrap();
+            assert_eq!(
+                fs::read_to_string(next_login.path().join(".auth/machine_id")).unwrap(),
+                first.machine_id,
+            );
+            assert!(capture(next_login.path(), &app).unwrap().is_none());
+            let second = credential("second-account");
+            preserve_machine_identity(root, &second).unwrap();
+            replace(root, &app, None, Some(&first)).unwrap();
+            replace(root, &app, Some(&first), Some(&second)).unwrap();
+            assert!(capture(root, &app).unwrap() == Some(second));
+            let foreign = Credential {
+                machine_id: "another-machine".into(),
+                encrypted_user: "another-account".into(),
+            };
+            assert!(preserve_machine_identity(root, &foreign).is_err());
+            assert_eq!(
+                fs::read_to_string(root.join(".auth/machine_id")).unwrap(),
+                first.machine_id
+            );
+        }
+    }
+
+    #[test]
+    fn qoder_reauthentication_keeps_ids_and_rejects_changed_or_duplicate_accounts() {
+        let mut store = AccountStore::default();
+        let profile = AccountProfile {
+            username: Some("same display name".into()),
+            ..Default::default()
+        };
+        let first = store.import("global", credential("first"), profile.clone(), None);
+        let second = store.import("global", credential("second"), profile.clone(), None);
+        store.import("cn", credential("cn"), profile.clone(), None);
+        store
+            .reauthenticate(
+                "global",
+                &first,
+                &credential("first"),
+                credential("renewed"),
+                AccountProfile {
+                    plan: Some("Pro".into()),
+                    ..profile.clone()
+                },
+            )
+            .unwrap();
+        assert_eq!(store.accounts("global", None).len(), 2);
+        assert!(store.credential("global", &first).unwrap() == credential("renewed"));
+        assert!(store.credential("global", &second).unwrap() == credential("second"));
+        assert_eq!(
+            store.accounts("global", None)[0].profile.plan.as_deref(),
+            Some("Pro")
+        );
+        // A stale flow cannot overwrite credentials rotated or removed in the meantime.
+        for (scope, id, expected, next) in [
+            ("global", first.as_str(), "first", "stale"),
+            ("cn", first.as_str(), "renewed", "wrong-edition"),
+            ("global", "removed", "renewed", "deleted"),
+            ("global", first.as_str(), "renewed", "second"),
+        ] {
+            assert!(store
+                .reauthenticate(
+                    scope,
+                    id,
+                    &credential(expected),
+                    credential(next),
+                    profile.clone()
+                )
+                .is_err());
+        }
+        assert!(store.credential("global", &first).unwrap() == credential("renewed"));
+        assert_eq!(store.accounts("cn", None).len(), 1);
+        let identity = AccountProfile {
+            email: Some("qoder@example.test".into()),
+            ..Default::default()
+        };
+        store.import("global", credential("third"), identity.clone(), None);
+        assert!(store
+            .reauthenticate(
+                "global",
+                &first,
+                &credential("renewed"),
+                credential("third-renewed"),
+                identity
+            )
+            .is_err());
+        assert!(store.credential("global", &first).unwrap() == credential("renewed"));
+    }
+
+    #[test]
+    fn qoder_reauthentication_preserves_model_and_other_native_login() {
+        for app in [AppType::Qoder, AppType::QoderCn] {
+            for active in [true, false] {
+                let temp = tempfile::tempdir().unwrap();
+                let root = temp.path();
+                let settings = "{\"model\":{\"name\":\"custom/model\"},\"native\":true}";
+                fs::write(root.join("settings.json"), settings).unwrap();
+                let previous = credential(if active { "original" } else { "other" });
+                replace(root, &app, None, Some(&previous)).unwrap();
+                let mut store = AccountStore::default();
+                let id = store.import(
+                    "scope",
+                    credential("original"),
+                    AccountProfile::default(),
+                    None,
+                );
+                store
+                    .reauthenticate(
+                        "scope",
+                        &id,
+                        &credential("original"),
+                        credential("renewed"),
+                        AccountProfile::default(),
+                    )
+                    .unwrap();
+                let path = root.join("catalog.json");
+                store
+                    .save_reauthentication_to(
+                        root,
+                        &app,
+                        &credential("original"),
+                        &credential("renewed"),
+                        active,
+                        &path,
+                    )
+                    .unwrap();
+                let saved = AccountStore::load_from(&path).unwrap();
+                assert!(saved.credential("scope", &id).unwrap() == credential("renewed"));
+                let expected_native = if active {
+                    credential("renewed")
+                } else {
+                    previous
+                };
+                assert!(capture(root, &app).unwrap() == Some(expected_native));
+                assert_eq!(
+                    fs::read_to_string(root.join("settings.json")).unwrap(),
+                    settings
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn qoder_reauthentication_rolls_back_native_login_when_catalog_save_fails() {
+        for app in [AppType::Qoder, AppType::QoderCn] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path();
+            replace(root, &app, None, Some(&credential("original"))).unwrap();
+            let blocker = root.join("blocker");
+            fs::write(&blocker, "keep").unwrap();
+            let store = AccountStore::default();
+            assert!(store
+                .save_reauthentication_to(
+                    root,
+                    &app,
+                    &credential("original"),
+                    &credential("renewed"),
+                    true,
+                    &blocker.join("catalog.json")
+                )
+                .is_err());
+            assert!(capture(root, &app).unwrap() == Some(credential("original")));
+            assert_eq!(fs::read_to_string(&blocker).unwrap(), "keep");
+        }
+    }
+
+    #[test]
+    fn qoder_reauthentication_refuses_a_native_login_changed_during_authorization() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        replace(
+            root,
+            &AppType::Qoder,
+            None,
+            Some(&credential("refreshed-outside")),
+        )
+        .unwrap();
+        let path = root.join("catalog.json");
+        let store = AccountStore::default();
+        assert!(store
+            .save_reauthentication_to(
+                root,
+                &AppType::Qoder,
+                &credential("original"),
+                &credential("new-login"),
+                true,
+                &path,
+            )
+            .is_err());
+        assert!(capture(root, &AppType::Qoder).unwrap() == Some(credential("refreshed-outside")));
+        assert!(!path.exists());
     }
 
     #[test]

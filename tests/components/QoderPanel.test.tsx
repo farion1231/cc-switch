@@ -10,6 +10,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { QoderPanel } from "@/components/providers/QoderPanel";
+import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
 import type {
   QoderAppId,
   QoderModels,
@@ -22,6 +23,18 @@ import type { UsageScript } from "@/types";
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
+vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
+  CopilotAuthSection: () => null,
+}));
+vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
+  CodexOAuthSection: () => null,
+}));
+vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
+  XaiOAuthSection: () => null,
+}));
+vi.mock("@/components/providers/forms/AgyOAuthSection", () => ({
+  AgyOAuthSection: () => null,
+}));
 vi.mock("@/components/UsageScriptModal", () => ({
   default: ({
     onSave,
@@ -76,19 +89,26 @@ let state: Record<QoderAppId, QoderModels>;
 let authState: Record<QoderAppId, QoderAuthStatus>;
 let loginProgress: Record<QoderAppId, QoderLoginProgress>;
 
-function mount(app: QoderAppId = "qoder-cn") {
+function mount(app: QoderAppId = "qoder-cn", authCenter = false) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <QoderPanel key={app} app={app} />
+      {authCenter ? <AuthCenterPanel /> : <QoderPanel key={app} app={app} />}
     </QueryClientProvider>,
   );
 }
 
 beforeAll(() => {
   Element.prototype.scrollIntoView ??= vi.fn();
+  window.matchMedia ??= vi.fn().mockReturnValue({
+    matches: false,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  });
 });
 beforeEach(() => {
   authState = {
@@ -152,7 +172,8 @@ beforeEach(() => {
           return structuredClone(loginProgress[app]);
         if (command === "cancel_qoder_login" || command === "open_external")
           return;
-        if (command === "get_settings") return { usageConfirmed: true };
+        if (command === "get_settings")
+          return { usageConfirmed: true, qoderEdition: "global" };
         if (command === "queryProviderUsage")
           return {
             success: true,
@@ -207,6 +228,9 @@ describe("Qoder model management", () => {
             : "qoder.officialAccount",
       }),
     );
+    await user.click(
+      screen.getByRole("button", { name: "qoder.manageAccounts" }),
+    );
     return user;
   }
 
@@ -231,7 +255,10 @@ describe("Qoder model management", () => {
         screen.getByRole("button", { name: "qoder.loginWithBrowser" }),
       );
       await waitFor(() =>
-        expect(mocks.invoke).toHaveBeenCalledWith("start_qoder_login", { app }),
+        expect(mocks.invoke).toHaveBeenCalledWith("start_qoder_login", {
+          app,
+          accountId: null,
+        }),
       );
       await waitFor(() =>
         expect(mocks.invoke).toHaveBeenCalledWith("open_external", { url }),
@@ -262,11 +289,20 @@ describe("Qoder model management", () => {
           }),
         { timeout: 4000 },
       );
-      expect(
-        await screen.findByRole("heading", {
-          name: app === "qoder" ? "Qoder CLI" : "Qoder CLI CN",
-        }),
-      ).toBeInTheDocument();
+      await screen.findByText("qoder.currentAccount");
+      expect(screen.getByRole("heading", { name: "nav.auth" })).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "common.back" }));
+      await user.click(
+        screen.getByRole("button", { name: "providerPreset.backToPick" }),
+      );
+      await user.click(
+        screen.getByRole("button", { name: "provider.backToList" }),
+      );
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("heading", { name: "nav.auth" }),
+        ).not.toBeInTheDocument(),
+      );
       expect(screen.getByText("Fixture Account · Pro")).toBeInTheDocument();
       expect(state[app].providers).toEqual(providersBefore);
       expect(authState[otherEdition].loggedIn).toBe(false);
@@ -312,6 +348,124 @@ describe("Qoder model management", () => {
       .getAllByRole("listitem")
       .find((row) => within(row).queryByText(name))!;
 
+  it("manages both editions from the sidebar Authorization Center using the saved edition", async () => {
+    savedAccounts("qoder");
+    authState["qoder-cn"].accounts = [
+      { id: "cn-only", username: "China account", isCurrent: false },
+    ];
+    const user = userEvent.setup();
+    mount("qoder", true);
+    await screen.findByText("Existing account");
+    expect(
+      screen.getByRole("combobox", { name: "qoder.edition" }),
+    ).toHaveTextContent("qoder.globalEdition");
+    await user.click(screen.getByRole("combobox", { name: "qoder.edition" }));
+    await user.click(
+      screen.getByRole("option", { name: "qoder.chinaEdition" }),
+    );
+    await screen.findByText("China account");
+    expect(screen.queryByText("Existing account")).not.toBeInTheDocument();
+    await user.click(
+      within(accountRow("China account")).getByRole("button", {
+        name: "qoder.useAccount",
+      }),
+    );
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith("use_qoder_account", {
+        app: "qoder-cn",
+        accountId: "cn-only",
+      }),
+    );
+    expect(authState.qoder.currentAccountId).toBe("existing");
+    expect(state.qoder.currentModel).toBe("native/model-one");
+  });
+
+  it.each(["qoder", "qoder-cn"] as const)(
+    "reauthenticates the selected %s account without switching models or creating another row",
+    async (app) => {
+      savedAccounts(app);
+      const user = await openAccountLogin(app);
+      await user.click(
+        within(accountRow("Saved account")).getByRole("button", {
+          name: "qoder.signInAgain",
+        }),
+      );
+      await waitFor(() =>
+        expect(mocks.invoke).toHaveBeenCalledWith("start_qoder_login", {
+          app,
+          accountId: "saved",
+        }),
+      );
+      expect(
+        screen.getByRole("combobox", { name: "qoder.edition" }),
+      ).toBeDisabled();
+      authState[app].accounts![1].plan = "Pro";
+      loginProgress[app] = { complete: true, accountId: "saved" };
+      await waitFor(
+        () =>
+          expect(
+            within(accountRow("Saved account")).getByText("Pro"),
+          ).toBeInTheDocument(),
+        { timeout: 4000 },
+      );
+      expect(authState[app].accounts).toHaveLength(2);
+      expect(authState[app].currentAccountId).toBe("existing");
+      expect(state[app].currentModel).toBe("native/model-one");
+      expect(screen.getByRole("heading", { name: "nav.auth" })).toBeVisible();
+    },
+  );
+
+  it("refreshes the supplier's active status after switching accounts in the Authorization Center", async () => {
+    savedAccounts("qoder");
+    const user = await openAccountLogin("qoder");
+    await user.click(
+      within(accountRow("Saved account")).getByRole("button", {
+        name: "qoder.useAccount",
+      }),
+    );
+    await waitFor(() => expect(authState.qoder.currentAccountId).toBe("saved"));
+    await user.click(screen.getByRole("button", { name: "common.back" }));
+    await user.click(
+      screen.getByRole("button", { name: "providerPreset.backToPick" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "provider.backToList" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("heading", { name: "nav.auth" }),
+      ).not.toBeInTheDocument(),
+    );
+    const native = within(
+      screen
+        .getByRole("heading", { name: "Native provider" })
+        .closest(".group") as HTMLElement,
+    );
+    expect(
+      native.queryByText("providerCard.status.inUse"),
+    ).not.toBeInTheDocument();
+    expect(
+      native.getByRole("button", { name: "providerCard.action.switch" }),
+    ).toBeVisible();
+    expect(screen.getByText("Saved account · Free")).toBeInTheDocument();
+  });
+
+  it("returns to the account preset after Escape without closing the provider dialog", async () => {
+    const user = await openAccountLogin("qoder");
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("heading", { name: "nav.auth" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("heading", { name: "provider.addNewProvider" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "qoder.manageAccounts" }),
+    ).toBeVisible();
+  });
+
   it.each(["qoder", "qoder-cn"] as const)(
     "returns directly to the %s configuration page after editing official accounts",
     async (app) => {
@@ -331,12 +485,12 @@ describe("Qoder model management", () => {
       expect(
         await screen.findByRole("button", { name: "qoder.addAccount" }),
       ).toBeInTheDocument();
-      await user.click(
-        screen.getByRole("button", { name: "provider.backToList" }),
+      await user.click(screen.getByRole("button", { name: "common.back" }));
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("button", { name: "qoder.addAccount" }),
+        ).not.toBeInTheDocument(),
       );
-      expect(
-        screen.queryByRole("button", { name: "qoder.addAccount" }),
-      ).not.toBeInTheDocument();
       expect(
         screen.queryByRole("textbox", {
           name: "providerPreset.searchAriaLabel",
@@ -356,14 +510,15 @@ describe("Qoder model management", () => {
     async (app) => {
       savedAccounts(app);
       const user = await openAccountLogin(app);
-      expect(
-        screen.queryByRole("button", { name: "providerPreset.change" }),
-      ).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "nav.auth" })).toBeVisible();
       await user.click(
         screen.getByRole("button", { name: "qoder.addAccount" }),
       );
       await waitFor(() =>
-        expect(mocks.invoke).toHaveBeenCalledWith("start_qoder_login", { app }),
+        expect(mocks.invoke).toHaveBeenCalledWith("start_qoder_login", {
+          app,
+          accountId: null,
+        }),
       );
       authState[app].accounts!.push({
         id: "added",
@@ -480,7 +635,7 @@ describe("Qoder model management", () => {
     expect(authState["qoder-cn"].currentAccountId).toBe("existing");
   });
 
-  it("cancels the selected edition's pending login when returning to the preset picker", async () => {
+  it("cancels the selected edition's pending login when leaving the Authorization Center", async () => {
     const user = await openAccountLogin("qoder-cn");
     await user.click(
       screen.getByRole("button", { name: "qoder.loginWithBrowser" }),
@@ -491,9 +646,7 @@ describe("Qoder model management", () => {
         flowId: "qoder-cn-login",
       }),
     );
-    await user.click(
-      screen.getByRole("button", { name: "providerPreset.backToPick" }),
-    );
+    await user.click(screen.getByRole("button", { name: "common.back" }));
     await waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith("cancel_qoder_login", {
         app: "qoder-cn",
@@ -519,9 +672,7 @@ describe("Qoder model management", () => {
     await user.click(
       screen.getByRole("button", { name: "qoder.loginWithBrowser" }),
     );
-    await user.click(
-      screen.getByRole("button", { name: "providerPreset.backToPick" }),
-    );
+    await user.click(screen.getByRole("button", { name: "common.back" }));
     await act(async () => resolveStart("late-login"));
     await waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith("cancel_qoder_login", {

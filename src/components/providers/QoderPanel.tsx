@@ -29,6 +29,8 @@ import { settingsApi } from "@/lib/api";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import type { Provider } from "@/types";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
+import { AuthSettingsPanel } from "./AuthSettingsPanel";
+import type { AuthCenterTarget } from "@/lib/api";
 
 export function QoderPanel({
   app,
@@ -52,8 +54,8 @@ export function QoderPanel({
   const [editing, setEditing] = useState<{
     id?: string;
     provider?: QoderProvider;
-    account?: boolean;
   } | null>(null);
+  const [authTarget, setAuthTarget] = useState<AuthCenterTarget | null>(null);
   const [deleting, setDeleting] = useState<{
     id: string;
     provider: QoderProvider;
@@ -235,7 +237,11 @@ export function QoderPanel({
                         : undefined,
                       deleteDisabledReason: t("qoder.accountManagedByQoder"),
                     }}
-                    onEdit={() => setEditing({ account: true })}
+                    onEdit={() =>
+                      setAuthTarget(
+                        app === "qoder-cn" ? "qoder_cn_oauth" : "qoder_oauth",
+                      )
+                    }
                     onDelete={() => {}}
                     onOpenWebsite={(url) => void settingsApi.openExternal(url)}
                   />
@@ -360,10 +366,6 @@ export function QoderPanel({
           provider={editing.provider}
           providers={providers}
           currentModel={current}
-          accountLogin={editing.account}
-          onUseAccount={async () => {
-            await run(() => qoderApi.getModels(app));
-          }}
           onClose={() => setEditing(null)}
           onSave={async (id, provider, makeDefault) => {
             await run(() =>
@@ -378,6 +380,10 @@ export function QoderPanel({
           }}
         />
       )}
+      <AuthSettingsPanel
+        target={authTarget}
+        onClose={() => setAuthTarget(null)}
+      />
       <Dialog
         open={Boolean(deleting)}
         onOpenChange={(open) => {

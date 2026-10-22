@@ -70,7 +70,8 @@ export const qoderKeys = {
 export const qoderApi = {
   getAuthStatus: (app: QoderAppId) =>
     invoke<QoderAuthStatus>("get_qoder_auth_status", { app }),
-  startLogin: (app: QoderAppId) => invoke<string>("start_qoder_login", { app }),
+  startLogin: (app: QoderAppId, accountId?: string) =>
+    invoke<string>("start_qoder_login", { app, accountId: accountId ?? null }),
   pollLogin: (app: QoderAppId, flowId: string) =>
     invoke<QoderLoginProgress>("poll_qoder_login", { app, flowId }),
   cancelLogin: (app: QoderAppId, flowId: string) =>

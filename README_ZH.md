@@ -427,7 +427,7 @@ paru -S cc-switch-bin
 <details>
 <summary><strong>CC Switch 支持哪些 AI 工具？</strong></summary>
 
-CC Switch 支持以下工具：**Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code**、**Kimi Code**、**Oh My Pi**、**Qoder CLI**（国际版／国内版）。Qoder 的模型通过原生模型配置管理，各自支持哪些功能见[各工具支持的功能](#各工具支持的功能)。
+CC Switch 支持以下工具：**Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code**、**Kimi Code**、**Oh My Pi**、**Qoder CLI**（国际版／国内版）。Qoder 的模型通过原生模型配置管理，官方账号统一在「授权中心」新增、重新登录和切换，两个版本分别管理。各自支持哪些功能见[各工具支持的功能](#各工具支持的功能)。
 
 </details>
 
