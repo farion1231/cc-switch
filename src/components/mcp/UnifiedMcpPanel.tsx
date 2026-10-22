@@ -209,6 +209,23 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     return Object.entries(serversMap);
   }, [serversMap]);
 
+  // 遍历所有的 mcp 配置再合并所有的 tags 去重的操作十分 expensive，应该是由数据库进行维护，
+  // rust 提供对应的 API 供前端调用即可直接在 McpFormModal 内部获取而不是依赖于外部传入的 existingTags，
+  // 但目前为快速实现且 McpFormModal 仅能从 UnifiedMcpPanel 进入，所以采取此方案。
+  const allExistingTags = useMemo(() => {
+    if (!serversMap) return [];
+    const set = new Set<string>();
+    for (const server of Object.values(serversMap)) {
+      if (Array.isArray(server.tags)) {
+        for (const tag of server.tags) {
+          const trimmed = tag?.trim();
+          if (trimmed) set.add(trimmed);
+        }
+      }
+    }
+    return Array.from(set).sort();
+  }, [serversMap]);
+
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
   const filteredServerEntries = useMemo(() => {
     if (!normalizedSearchQuery) return serverEntries;
@@ -1031,6 +1048,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
             drawer.mode === "edit" ? serversMap?.[drawer.id] : undefined
           }
           existingServers={serversMap ?? {}}
+          existingTags={allExistingTags}
           visibleAppIds={appIds}
           onSave={() => setDrawer(null)}
           onClose={() => setDrawer(null)}

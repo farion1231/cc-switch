@@ -74,6 +74,13 @@ interface McpFormModalProps {
   initialData?: McpServer;
   /** 现有全部服务器（查重、批量覆盖用） */
   existingServers?: Record<string, McpServer>;
+  /**
+   * 现有全部已去重且排序的 MCP 标签（联想推荐用）。
+   * 遍历所有的 mcp 配置再合并所有的 tags 去重的操作十分 expensive，应该是由数据库进行维护，
+   * rust 提供对应的 API 供前端调用即可直接在 McpFormModal 内部获取而不是依赖于外部传入的 existingTags，
+   * 但目前为快速实现且 McpFormModal 仅能从 UnifiedMcpPanel 进入，所以采取此方案。
+   */
+  existingTags?: string[];
   /** 「写入到」里列出的应用（应用页里设为显示的） */
   visibleAppIds?: McpAppId[];
   onSave: () => void | Promise<void>;
@@ -119,6 +126,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   editingId,
   initialData,
   existingServers = {},
+  existingTags = [],
   visibleAppIds = MCP_APP_IDS,
   onSave,
   onClose,
@@ -130,25 +138,6 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     () => Object.keys(existingServers),
     [existingServers],
   );
-
-  const allExistingTags = useMemo(() => {
-    const set = new Set<string>();
-    for (const server of Object.values(existingServers)) {
-      if (Array.isArray(server.tags)) {
-        for (const tag of server.tags) {
-          if (tag && tag.trim()) set.add(tag.trim());
-        }
-      }
-    }
-    for (const preset of mcpPresets) {
-      if (Array.isArray(preset.tags)) {
-        for (const tag of preset.tags) {
-          if (tag && tag.trim()) set.add(tag.trim());
-        }
-      }
-    }
-    return Array.from(set).sort();
-  }, [existingServers]);
 
   const [name, setName] = useState(editingId ?? "");
   const [conn, setConn] = useState<McpDraftConnection>(() =>
@@ -1279,7 +1268,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     <TagInput
                       id="mcp-meta-tags"
                       value={meta.tags}
-                      suggestions={allExistingTags}
+                      suggestions={existingTags}
                       placeholder={t("mcpPage.drawer.tagsPlaceholder")}
                       onChange={(tags) =>
                         setMeta((prev) => ({
