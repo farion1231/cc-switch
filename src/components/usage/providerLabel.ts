@@ -16,6 +16,7 @@ const SESSION_PROVIDER_APPS: Record<string, AppId> = {
   "MiniMax Code (Session)": "mcode",
   "Kimi Code (Session)": "kimi",
   "Pi (Session)": "pi",
+  "Antigravity (Session)": "agy",
 };
 
 export interface UsageProviderLabel {

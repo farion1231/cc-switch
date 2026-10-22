@@ -1040,7 +1040,14 @@ async fn query_codex_usage(
                         .map(window_seconds_to_tier_name)
                         .unwrap_or_else(|| "unknown".to_string()),
                     utilization: used,
-                    resets_at: window.reset_at.and_then(unix_ts_to_iso),
+                    // 已用额度为 0 时，上游可能返回当前时间加窗口时长；
+                    // 隐藏该占位时间，避免产生虚假的倒计时。
+                    // 使用原始用量，保留非零用量取整后仍剩余 100% 的倒计时。
+                    resets_at: if used == 0.0 {
+                        None
+                    } else {
+                        window.reset_at.and_then(unix_ts_to_iso)
+                    },
                     used_value_usd: None,
                     max_value_usd: None,
                 });
@@ -1645,6 +1652,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
             }
         }
         "grokbuild" => crate::services::subscription_grok::get_grok_subscription_quota().await,
+        "agy" => crate::services::subscription_agy::get_agy_subscription_quota().await,
         _ => Ok(SubscriptionQuota::not_found(tool)),
     }
 }

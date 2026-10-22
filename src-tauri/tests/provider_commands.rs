@@ -62,22 +62,30 @@ fn agy_missing_native_config_is_not_imported_or_created_by_full_sync() {
 }
 
 #[test]
-fn agy_import_skips_empty_settings_but_keeps_key_and_model_configs() {
+fn agy_import_skips_empty_settings_but_keeps_model_configs() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    // Keys never live in agy's files; an `env` file from an earlier test build
+    // is not an import source.
     for (file, content, should_import, has_key) in [
         ("settings.json", "{}", false, false),
         ("settings.json", r#"{"model":"Gemini Test"}"#, true, false),
-        ("env", "GEMINI_API_KEY='fixture'\n", true, true),
+        ("env", "GEMINI_API_KEY='fixture'\n", false, false),
     ] {
         reset_test_fs();
         let root = ensure_test_home().join(".gemini/antigravity-cli");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join(file), content).unwrap();
         let state = create_test_state().unwrap();
-        assert_eq!(
-            import_default_config_test_hook(&state, AppType::Agy).unwrap(),
-            should_import
-        );
+        let imported = match import_default_config_test_hook(&state, AppType::Agy) {
+            Ok(imported) => imported,
+            // Without settings.json there is nothing to import.
+            Err(AppError::Localized {
+                key: "agy.config.missing",
+                ..
+            }) if file == "env" => false,
+            Err(error) => panic!("{error}"),
+        };
+        assert_eq!(imported, should_import);
         let provider = state.db.get_provider_by_id("default", "agy").unwrap();
         assert_eq!(provider.is_some(), should_import);
         if let Some(provider) = provider {
@@ -85,6 +93,7 @@ fn agy_import_skips_empty_settings_but_keeps_key_and_model_configs() {
                 provider.settings_config["env"]["GEMINI_API_KEY"].is_string(),
                 has_key
             );
+            assert_eq!(provider.category.as_deref(), Some("official"));
         } else {
             assert!(cc_switch_lib::mode::current::provider_for(
                 &state.db,

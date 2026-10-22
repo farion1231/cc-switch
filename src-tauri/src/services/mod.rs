@@ -1,3 +1,4 @@
+pub mod agy_account;
 pub mod backup_storage;
 pub mod balance;
 pub mod codex_oauth_models;
@@ -30,6 +31,7 @@ pub mod speedtest;
 pub mod sql_helpers;
 pub mod stream_check;
 pub mod subscription;
+pub mod subscription_agy;
 pub mod subscription_grok;
 pub mod sync_protocol;
 pub mod usage_cache;

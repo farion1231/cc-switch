@@ -31,7 +31,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   pi: "pi",
   mcode: "minimax",
   kimi: "kimi",
-  agy: "gemini",
+  agy: "antigravity",
 };
 
 // Claude Code 和 Claude Desktop 用同一个图标，靠右下角的小角标区分终端与桌面
