@@ -171,6 +171,8 @@ function App() {
   const [isAddOpen, setIsAddOpen] = useState(false);
   // 供应商搜索面板：页头按钮和 ⌘F 都能打开；换应用或离开供应商页就收起
   const [providerSearchOpen, setProviderSearchOpen] = useState(false);
+  const [connectionStatusSlot, setConnectionStatusSlot] =
+    useState<HTMLDivElement | null>(null);
   useEffect(() => {
     setProviderSearchOpen(false);
   }, [activeApp, currentView]);
@@ -588,7 +590,12 @@ function App() {
   useEffect(() => {
     const checkEnvOnSwitch = async () => {
       try {
-        if (activeApp === "mcode" || activeApp === "agy") return;
+        if (
+          activeApp === "mcode" ||
+          activeApp === "kimi" ||
+          activeApp === "agy"
+        )
+          return;
         const conflicts = await checkEnvConflicts(activeApp);
 
         if (conflicts.length > 0) {
@@ -834,9 +841,9 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: hermesKeys.liveProviderIds,
         });
-      } else if (activeApp === "mcode") {
+      } else if (activeApp === "mcode" || activeApp === "kimi") {
         await queryClient.invalidateQueries({
-          queryKey: ["providers", "mcode"],
+          queryKey: ["providers", activeApp],
         });
       }
       toast.success(
@@ -973,13 +980,26 @@ function App() {
         existingKeys,
       );
       duplicatedProvider.addToLive = false;
-    } else if (activeApp === "mcode") {
+    } else if (activeApp === "mcode" || activeApp === "kimi") {
       // The MCode list already includes its live custom nodes; the backend
       // rejects a key that MCode itself owns.
       duplicatedProvider.providerKey = generateUniqueProviderCopyKey(
         provider.id,
         Object.keys(providers),
       );
+      if (activeApp === "kimi") {
+        const models = duplicatedProvider.settingsConfig.models ?? {};
+        duplicatedProvider.settingsConfig.models = Object.fromEntries(
+          Object.entries(models).map(([key, value]) => [
+            `${duplicatedProvider.providerKey}/${key.startsWith(`${provider.id}/`) ? key.slice(provider.id.length + 1) : key}`,
+            {
+              ...(value as Record<string, unknown>),
+              provider: duplicatedProvider.providerKey,
+            },
+          ]),
+        );
+        duplicatedProvider.addToLive = false;
+      }
     }
 
     if (provider.sortIndex !== undefined) {
@@ -1137,15 +1157,26 @@ function App() {
         ? t("appPage.openclawConfig")
         : currentView === "hermesMemory"
           ? t("appPage.memory")
-          : t("appPage.providers");
+          : undefined;
 
   const renderAppPageHeader = () => (
     <AppPageHeader
       variant="app"
       icon={<AppGlyph app={activeApp} size={20} badgeClassName="bg-app" />}
       title={APP_DISPLAY_NAME[activeApp]}
+      truncateTitle={currentView === "providers" && Boolean(modeAppId)}
+      titleExtra={
+        currentView === "providers" && modeAppId ? (
+          <div
+            ref={setConnectionStatusSlot}
+            className="ms-2 flex min-w-0 max-w-[280px] items-center"
+          />
+        ) : undefined
+      }
       subtitle={
-        activeApp === "openclaw" || activeApp === "hermes"
+        activeApp === "openclaw" ||
+        activeApp === "hermes" ||
+        (currentView === "providers" && modeAppId)
           ? undefined
           : appPageName
       }
@@ -1153,6 +1184,7 @@ function App() {
         <>
           {currentView === "providers" &&
             activeApp !== "mcode" &&
+            activeApp !== "kimi" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
@@ -1269,6 +1301,7 @@ function App() {
         <SwitchModePanel
           key={modeAppId}
           app={modeAppId}
+          statusSlot={connectionStatusSlot}
           providers={providers}
           currentProviderId={currentProviderId}
           isLoading={isLoading}
@@ -1314,7 +1347,8 @@ function App() {
               activeApp === "openclaw" ||
               activeApp === "hermes" ||
               activeApp === "pi" ||
-              activeApp === "mcode"
+              activeApp === "mcode" ||
+              activeApp === "kimi"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
             }

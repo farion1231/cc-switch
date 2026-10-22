@@ -210,21 +210,6 @@ export const providerPresets: ProviderPreset[] = [
     icon: "packycode",
   },
   {
-    name: "ZetaAPI",
-    websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/u117",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://api.zetaapi.ai",
-        ANTHROPIC_AUTH_TOKEN: "",
-      },
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "zetaapi",
-    icon: "zetaapi",
-  },
-  {
     name: "APINebula",
     websiteUrl: "https://apinebula.ai",
     apiKeyUrl: "https://apinebula.ai/VjM74M",
@@ -274,6 +259,25 @@ export const providerPresets: ProviderPreset[] = [
     icon: "pateway",
   },
   {
+    name: "hao.ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    // 接入文档 hao.ai/docs/integrations/claude-code/model-provider 与
+    // hao.ai/vibe-coding（2026-10-21 核对）：Anthropic Messages 在 /anthropic，
+    // 只配地址和 Key、模型留空即用 Claude Code 默认模型。目录里的 ID 带 anthropic/
+    // 前缀，但官方给 Claude Code 的配置不覆盖模型
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.hao.ai/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
+  },
+  {
     name: "FennoAI",
     websiteUrl: "https://api.fenno.ai",
     apiKeyUrl:
@@ -321,6 +325,29 @@ export const providerPresets: ProviderPreset[] = [
     icon: "openmodel",
   },
   {
+    name: "EveryAPI",
+    websiteUrl: "https://everyapi.ai",
+    apiKeyUrl:
+      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
+    // 官网接入说明（everyapi.ai，2026-10-17 核对）：Anthropic 客户端 base 用
+    // 站点根（不带 /v1）、Key 填 AUTH_TOKEN。各 Claude 分组都有 haiku-5-5，
+    // 四档跟随 Claude Code 默认即可。api-cn 是官方的国内优先线路
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.everyapi.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: [
+      "https://api.everyapi.ai",
+      "https://api-cn.everyapi.ai",
+    ],
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "everyapi",
+    icon: "everyapi",
+  },
+  {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
     apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
@@ -336,6 +363,25 @@ export const providerPresets: ProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "grooroute",
     icon: "grooroute",
+  },
+  {
+    name: "DIT.ai",
+    websiteUrl: "https://dit.ai",
+    apiKeyUrl: "https://dit.ai/register",
+    // 协议文档 dit.ai/docs、模型目录 dit.ai/models（2026-10-21 核对）：Anthropic
+    // Messages 在站点根、Key 走 Bearer。Claude 系有 sonnet-5 / opus-5 / sonnet-5-5 /
+    // opus-5-5，Haiku 只有带日期的 claude-haiku-4-5-20251001，没有 haiku-5-5
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.dit.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5-20251001",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "dit",
+    icon: "dit",
   },
   {
     name: "TokenFactory",
@@ -1042,29 +1088,6 @@ export const providerPresets: ProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "modelflare",
     icon: "modelflare",
-  },
-  {
-    name: "EveryAPI",
-    websiteUrl: "https://everyapi.ai",
-    apiKeyUrl:
-      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
-    // 官网接入说明（everyapi.ai，2026-10-17 核对）：Anthropic 客户端 base 用
-    // 站点根（不带 /v1）、Key 填 AUTH_TOKEN。各 Claude 分组都有 haiku-5-5，
-    // 四档跟随 Claude Code 默认即可。api-cn 是官方的国内优先线路
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://api.everyapi.ai",
-        ANTHROPIC_AUTH_TOKEN: "",
-      },
-    },
-    endpointCandidates: [
-      "https://api.everyapi.ai",
-      "https://api-cn.everyapi.ai",
-    ],
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "everyapi",
-    icon: "everyapi",
   },
   {
     name: "AllTokens",

@@ -16,7 +16,9 @@ use std::time::{Duration, Instant};
 
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
-use providers::{agy, claude, codex, gemini, grokbuild, hermes, mcode, openclaw, opencode, pi};
+use providers::{
+    agy, claude, codex, gemini, grokbuild, hermes, kimi, mcode, openclaw, opencode, pi,
+};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -94,7 +96,7 @@ pub(crate) struct SessionScan {
 pub(crate) fn scan_sessions_with_status() -> SessionScan {
     use providers::utils::ScanStatus;
     type Scanner = fn(&mut ScanStatus) -> Vec<SessionMeta>;
-    let scanners: [(&str, Scanner); 10] = [
+    let scanners: [(&str, Scanner); 11] = [
         ("codex", codex::scan_sessions_with_status),
         ("claude", claude::scan_sessions_with_status),
         ("opencode", opencode::scan_sessions_with_status),
@@ -104,7 +106,8 @@ pub(crate) fn scan_sessions_with_status() -> SessionScan {
         ("grokbuild", grokbuild::scan_sessions_with_status),
         ("pi", pi::scan_sessions_with_status),
         ("mcode", mcode::scan_sessions_with_status),
-        // Antigravity 的扫描还不报告读取失败，按完整处理
+        // Kimi Code、Antigravity 的扫描还不报告读取失败，按完整处理
+        ("kimi", |_| kimi::scan_sessions()),
         ("agy", |_| agy::scan_sessions()),
     ];
     let mut scan = SessionScan {
@@ -166,6 +169,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "grokbuild" => grokbuild::load_messages(path),
         "hermes" => hermes::load_messages(path),
         "pi" => pi::load_messages(path),
+        "kimi" => kimi::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -214,6 +218,12 @@ fn delete_session_source(
     session_id: &str,
     source_path: &str,
 ) -> Result<bool, String> {
+    if provider_id == "kimi" {
+        return Err(
+            "Delete this session in Kimi Code to keep its session index and history consistent"
+                .into(),
+        );
+    }
     if provider_id == "agy" {
         return Err(
             "Delete this session in Antigravity to keep its binary store and summaries consistent"
@@ -280,6 +290,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "grokbuild" => grokbuild::session_roots(),
         "hermes" => vec![crate::hermes_config::get_hermes_dir().join("sessions")],
         "pi" => pi::session_roots(),
+        "kimi" => kimi::session_roots(),
         "agy" => agy::session_roots(),
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
