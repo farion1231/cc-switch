@@ -78,7 +78,8 @@ fn sync_root(
     for path in files {
         let metadata = fs::metadata(&path).map_err(|error| AppError::io(&path, error))?;
         let modified = metadata_modified_nanos(&metadata);
-        let key = format!("{}:v1:{}", app.as_str(), path.display());
+        // Revisit retained v1 details to normalize their cache-inclusive input.
+        let key = format!("{}:v2:{}", app.as_str(), path.display());
         if cursors.get(&key).is_some_and(|cursor| {
             cursor.last_modified == modified && cursor.last_line_offset == metadata.len() as i64
         }) {
@@ -233,6 +234,15 @@ fn sync_file(
         "qoder_session"
     };
     for (request, mut record) in pending {
+        // Persist the same fresh-input counters used for billing so dashboard
+        // totals and daily rollups count cache reads and writes exactly once.
+        if record.input_semantics == INPUT_TOKEN_SEMANTICS_TOTAL {
+            record.usage.input_tokens = record
+                .usage
+                .input_tokens
+                .saturating_sub(record.usage.cache_read_tokens)
+                .saturating_sub(record.usage.cache_creation_tokens);
+        }
         let mut multiplier = Decimal::ONE;
         let inserted = tx.execute("INSERT OR IGNORE INTO session_usage_dedup (data_source, request_id, semantic_id, has_entry_id) VALUES (?1, ?2, ?2, 1)", rusqlite::params![source, request])? > 0;
         if !inserted {
@@ -241,15 +251,20 @@ fn sync_file(
             match stored {
                 Ok((input, output, read, write, stored_multiplier, model, provider, semantics)) => {
                     multiplier = stored_multiplier.parse().unwrap_or(Decimal::ONE);
-                    if provider == record.provider {
-                        record.input_semantics = semantics;
-                    }
+                    // Older details may still store total input. Compare and
+                    // merge counters only after bringing both sides to fresh.
+                    let input = if semantics == INPUT_TOKEN_SEMANTICS_TOTAL {
+                        input.saturating_sub(read).saturating_sub(write)
+                    } else {
+                        input
+                    };
                     if input >= record.usage.input_tokens
                         && output >= record.usage.output_tokens
                         && read >= record.usage.cache_read_tokens
                         && write >= record.usage.cache_creation_tokens
                         && model == record.model
                         && provider == record.provider
+                        && semantics == INPUT_TOKEN_SEMANTICS_FRESH
                     {
                         result.skipped += 1;
                         continue;
@@ -267,21 +282,9 @@ fn sync_file(
                 Err(error) => return Err(error.into()),
             }
         }
-        let mut billing_usage = record.usage.clone();
-        if record.input_semantics == INPUT_TOKEN_SEMANTICS_TOTAL {
-            billing_usage.input_tokens = billing_usage
-                .input_tokens
-                .saturating_sub(billing_usage.cache_read_tokens)
-                .saturating_sub(billing_usage.cache_creation_tokens);
-        }
         let cost = if record.custom {
             find_model_pricing(&tx, &record.model).map(|pricing| {
-                CostCalculator::calculate_for_app(
-                    app.as_str(),
-                    &billing_usage,
-                    &pricing,
-                    multiplier,
-                )
+                CostCalculator::calculate_for_app(app.as_str(), &record.usage, &pricing, multiplier)
             })
         } else {
             None
@@ -304,7 +307,7 @@ fn sync_file(
             ON CONFLICT(request_id) DO UPDATE SET model=excluded.model,request_model=excluded.request_model,provider_id=excluded.provider_id,input_token_semantics=excluded.input_token_semantics,input_tokens=excluded.input_tokens,output_tokens=excluded.output_tokens,cache_read_tokens=excluded.cache_read_tokens,cache_creation_tokens=excluded.cache_creation_tokens,
             input_cost_usd=excluded.input_cost_usd,output_cost_usd=excluded.output_cost_usd,cache_read_cost_usd=excluded.cache_read_cost_usd,cache_creation_cost_usd=excluded.cache_creation_cost_usd,total_cost_usd=excluded.total_cost_usd",
             rusqlite::params![request,record.provider,app.as_str(),record.model,record.usage.input_tokens,record.usage.output_tokens,record.usage.cache_read_tokens,record.usage.cache_creation_tokens,
-                amounts[0],amounts[1],amounts[2],amounts[3],amounts[4],record.session,source,record.created,record.input_semantics])?;
+                amounts[0],amounts[1],amounts[2],amounts[3],amounts[4],record.session,source,record.created,INPUT_TOKEN_SEMANTICS_FRESH])?;
         result.imported += 1;
     }
     update_sync_state_on_conn(&tx, key, modified, bytes)?;
@@ -432,26 +435,177 @@ mod tests {
                 message("official", None, 5),
             ],
         );
-        assert_eq!(
-            sync_root(&db, &AppType::Qoder, dir.path(), &providers)
-                .unwrap()
-                .imported,
-            3
-        );
-        let conn = db.conn.lock().unwrap();
-        for (provider, semantics, cost) in [
-            ("openai", INPUT_TOKEN_SEMANTICS_TOTAL, "0.00007"),
-            ("anthropic", INPUT_TOKEN_SEMANTICS_FRESH, "0.0001"),
-            ("_qoder_session", INPUT_TOKEN_SEMANTICS_TOTAL, "0"),
-        ] {
-            let row:(String,String,i64)=conn.query_row("SELECT model,input_cost_usd,input_token_semantics FROM proxy_request_logs WHERE provider_id=?1",[provider],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
-            assert_eq!(row.0, "fixture-model");
+        for app in [AppType::Qoder, AppType::QoderCn] {
             assert_eq!(
-                row.1.parse::<Decimal>().unwrap(),
-                cost.parse::<Decimal>().unwrap()
+                sync_root(&db, &app, dir.path(), &providers)
+                    .unwrap()
+                    .imported,
+                3
             );
-            assert_eq!(row.2, semantics);
+            let official = if app == AppType::QoderCn {
+                "_qoder_cn_session"
+            } else {
+                "_qoder_session"
+            };
+            let conn = db.conn.lock().unwrap();
+            for (provider, input, total, cost) in [
+                ("openai", 70, 105, "0.00007"),
+                ("anthropic", 100, 135, "0.0001"),
+                (official, 70, 105, "0"),
+            ] {
+                let total_sql = crate::services::sql_helpers::real_total_tokens_sql("");
+                let row: (String, String, i64, u32, u32) = conn
+                    .query_row(
+                        &format!("SELECT model,input_cost_usd,input_token_semantics,input_tokens,{total_sql} FROM proxy_request_logs WHERE app_type=?1 AND provider_id=?2"),
+                        rusqlite::params![app.as_str(), provider],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                    )
+                    .unwrap();
+                assert_eq!(row.0, "fixture-model");
+                assert_eq!(
+                    row.1.parse::<Decimal>().unwrap(),
+                    cost.parse::<Decimal>().unwrap()
+                );
+                assert_eq!(row.2, INPUT_TOKEN_SEMANTICS_FRESH);
+                assert_eq!(row.3, input);
+                assert_eq!(row.4, total);
+            }
+            drop(conn);
+            let session = db
+                .get_session_usage_summary(app.as_str(), "session")
+                .unwrap();
+            assert_eq!(session.total_input_tokens, 240);
+            assert_eq!(session.real_total_tokens, 345);
         }
+        assert_eq!(db.rollup_and_prune(30).unwrap(), 6);
+        for app in [AppType::Qoder, AppType::QoderCn] {
+            let summary = db
+                .get_usage_summary(None, None, Some(app.as_str()), None, None)
+                .unwrap();
+            assert_eq!(summary.total_requests, 3);
+            assert_eq!(summary.total_input_tokens, 240);
+            assert_eq!(summary.real_total_tokens, 345);
+        }
+    }
+
+    #[test]
+    fn qoder_usage_normalizes_retained_details_before_deduplication_and_max_comparisons() {
+        for app in [AppType::Qoder, AppType::QoderCn] {
+            for semantics in [INPUT_TOKEN_SEMANTICS_TOTAL, INPUT_TOKEN_SEMANTICS_FRESH] {
+                let db = Database::memory().unwrap();
+                let dir = tempfile::tempdir().unwrap();
+                let path = dir.path().join("project/session.jsonl");
+                let providers = serde_json::Map::new();
+                let original = message("reply", None, 5);
+                write(&path, &[original.clone()]);
+                let old_key = format!("{}:v1:{}", app.as_str(), path.display());
+                sync_file(&db, &app, &path, &old_key, 0, &providers).unwrap();
+                let input = if semantics == INPUT_TOKEN_SEMANTICS_TOTAL {
+                    100
+                } else {
+                    70
+                };
+                db.conn
+                    .lock()
+                    .unwrap()
+                    .execute(
+                        "UPDATE proxy_request_logs SET input_tokens=?1,input_token_semantics=?2",
+                        rusqlite::params![input, semantics],
+                    )
+                    .unwrap();
+                let metadata = fs::metadata(&path).unwrap();
+                update_sync_state_on_conn(
+                    &db.conn.lock().unwrap(),
+                    &old_key,
+                    metadata_modified_nanos(&metadata),
+                    metadata.len() as i64,
+                )
+                .unwrap();
+
+                // An unchanged v1 file is revisited once; TOTAL rows must be
+                // rewritten even when all their normalized counters match.
+                let result = sync_root(&db, &app, dir.path(), &providers).unwrap();
+                assert_eq!(result.files_scanned, 1);
+                assert_eq!(
+                    result.imported,
+                    u32::from(semantics == INPUT_TOKEN_SEMANTICS_TOTAL)
+                );
+                let stored: (u32, i64) = db
+                    .conn
+                    .lock()
+                    .unwrap()
+                    .query_row(
+                        "SELECT input_tokens,input_token_semantics FROM proxy_request_logs",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .unwrap();
+                assert_eq!(stored, (70, INPUT_TOKEN_SEMANTICS_FRESH));
+                assert_eq!(
+                    sync_root(&db, &app, dir.path(), &providers)
+                        .unwrap()
+                        .files_scanned,
+                    0
+                );
+
+                // A later snapshot has 120 total input, 40 cached, and 80 fresh.
+                // Merge against fresh stored input, then leave a stale fork alone.
+                let mut next = message("reply", None, 8);
+                next["message"]["usage"]["input_tokens"] = json!(120);
+                next["message"]["usage"]["cache_read_input_tokens"] = json!(25);
+                next["message"]["usage"]["cache_creation_input_tokens"] = json!(15);
+                // Exercise old TOTAL details in the update branch as well.
+                db.conn
+                    .lock()
+                    .unwrap()
+                    .execute(
+                        "UPDATE proxy_request_logs SET input_tokens=?1,input_token_semantics=?2",
+                        rusqlite::params![input, semantics],
+                    )
+                    .unwrap();
+                let key = format!("{}:v2:{}", app.as_str(), path.display());
+                write(&path, &[next]);
+                assert_eq!(
+                    sync_file(&db, &app, &path, &key, 0, &providers)
+                        .unwrap()
+                        .imported,
+                    1
+                );
+                assert_eq!(
+                    sync_file(&db, &app, &path, &key, 0, &providers)
+                        .unwrap()
+                        .skipped,
+                    1
+                );
+                write(&path, &[original]);
+                assert_eq!(
+                    sync_file(&db, &app, &path, &key, 0, &providers)
+                        .unwrap()
+                        .skipped,
+                    1
+                );
+                let summary = db
+                    .get_session_usage_summary(app.as_str(), "session")
+                    .unwrap();
+                assert_eq!(summary.total_requests, 1);
+                assert_eq!(summary.total_input_tokens, 80);
+                assert_eq!(summary.real_total_tokens, 128);
+            }
+        }
+    }
+
+    #[test]
+    fn qoder_usage_saturates_fresh_input_when_cache_counters_exceed_total_input() {
+        let db = Database::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.jsonl");
+        let mut record = message("reply", None, 5);
+        record["message"]["usage"]["input_tokens"] = json!(10);
+        write(&path, &[record]);
+        sync_root(&db, &AppType::Qoder, dir.path(), &serde_json::Map::new()).unwrap();
+        let summary = db.get_session_usage_summary("qoder", "session").unwrap();
+        assert_eq!(summary.total_input_tokens, 0);
+        assert_eq!(summary.real_total_tokens, 35);
     }
 }
 
