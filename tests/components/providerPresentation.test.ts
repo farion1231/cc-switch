@@ -645,6 +645,37 @@ describe("buildAdditiveSections", () => {
     );
   });
 
+  it("protects every official Kimi OAuth provider, including inactive accounts", () => {
+    const accounts = ["managed:kimi-code", "kimi-code-ccs-second"].map((id) =>
+      provider(id, {
+        settingsConfig: {
+          provider: { type: "kimi", oauth: { key: `oauth/${id}` } },
+        },
+      }),
+    );
+    const sections = buildAdditiveSections({
+      app: "kimi",
+      t,
+      providers: [...accounts, relay],
+      isInConfig: () => true,
+      kimiCurrentId: accounts[0].id,
+      actions: additiveActions(),
+    });
+    for (const account of accounts) {
+      const presentation = item(sections, account.id);
+      expect(presentation.editDisabledReason).toBe("kimi.oauth.managedHint");
+      expect(presentation.deleteDisabledReason).toBe("kimi.oauth.managedHint");
+      expect(
+        presentation.menuItems?.find((action) => action.key === "remove")
+          ?.disabledReason,
+      ).toBe("kimi.oauth.managedHint");
+    }
+    expect(
+      button(sections, accounts[1].id, "switch").disabledReason,
+    ).toBeUndefined();
+    expect(item(sections, "relay").editDisabledReason).toBeUndefined();
+  });
+
   it("blocks every Pi change while Pi's current state is unavailable", () => {
     const sections = buildAdditiveSections({
       app: "pi",

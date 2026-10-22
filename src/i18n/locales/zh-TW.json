@@ -4916,7 +4916,7 @@
     "oauth": {
       "useAccount": "使用此帳號",
       "title": "Kimi Code 官方登入",
-      "description": "使用 Kimi 帳號登入程式開發方案，登入完成後自動新增官方模型。",
+      "description": "可新增多個 Kimi 程式開發方案帳號，各自儲存憑證與供應商。在此管理登入，再選擇帳號使用其官方模型。",
       "region": "登入區域",
       "mainland-cn": "中國大陸版",
       "global": "海外版",
@@ -4937,7 +4937,11 @@
       "denied": "授權已遭拒絕，請重新登入。",
       "cancelled": "登入已取消或被其他登入取代，請重新登入。",
       "success": "Kimi Code 登入成功，已新增官方模型。",
-      "signOutConfirm": "這會移除 Kimi Code 目前區域的本機登入憑證，Kimi Code 也將登出。供應商、模型及目前的模型選擇會保留。"
+      "signOutConfirm": "登出 {{name}}？僅移除此帳號的本機憑證，其他帳號、供應商、模型及目前的模型選擇會保留。",
+      "addAccount": "新增帳號",
+      "accountCount": "已儲存 {{count}} 個帳號",
+      "manageAccounts": "管理 Kimi 帳號",
+      "managedHint": "請在授權中心管理 Kimi 官方帳號。"
     },
     "modelSelectionHint": "點擊供應商卡片的切換按鈕選擇預設供應商；若要指定其他模型，請在 Kimi Code 中使用 /model。",
     "providerType": "供應商類型",

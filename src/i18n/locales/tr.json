@@ -4775,7 +4775,7 @@
     "oauth": {
       "useAccount": "Bu hesabı kullan",
       "title": "Kimi Code resmî girişi",
-      "description": "Resmî modelleri otomatik eklemek için Kimi kodlama planınıza giriş yapın.",
+      "description": "Ayrı kimlik bilgileri ve sağlayıcılarla birden fazla Kimi kodlama planı hesabı ekleyin. Girişi burada yönetin, ardından resmî modellerini kullanmak için bir hesap seçin.",
       "region": "Giriş bölgesi",
       "mainland-cn": "Çin ana karası",
       "global": "Küresel",
@@ -4796,7 +4796,11 @@
       "denied": "Yetkilendirme reddedildi. Yeniden giriş yapın.",
       "cancelled": "Bu giriş iptal edildi veya değiştirildi. Yeniden giriş yapın.",
       "success": "Kimi Code girişi yapıldı ve resmî modeller eklendi.",
-      "signOutConfirm": "Bu işlem, geçerli Kimi Code bölgesinin yerel kimlik bilgilerini kaldırır ve Kimi Code oturumunu kapatır. Sağlayıcılar, modeller ve geçerli model seçimi korunur."
+      "signOutConfirm": "{{name}} oturumu kapatılsın mı? Yalnızca bu hesabın yerel kimlik bilgileri kaldırılır. Diğer hesaplar, sağlayıcılar, modeller ve geçerli model seçimi korunur.",
+      "addAccount": "Hesap ekle",
+      "accountCount": "Kayıtlı hesaplar: {{count}}",
+      "manageAccounts": "Kimi hesaplarını yönet",
+      "managedHint": "Resmî Kimi hesaplarını Yetkilendirme Merkezi'nde yönetin."
     },
     "modelSelectionHint": "Sağlayıcıyı seçmek için karttaki geçiş düğmesini kullanın. Başka bir model seçmek için Kimi Code içinde /model komutunu kullanın.",
     "providerType": "Sağlayıcı türü",

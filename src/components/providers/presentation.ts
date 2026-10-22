@@ -719,7 +719,9 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   for (const p of providers) {
     const chips: CardChip[] = [];
     if (app === "kimi") {
-      if (isOfficialAccount(app, p)) {
+      const official = isOfficialAccount(app, p);
+      const officialReason = official ? t("kimi.oauth.managedHint") : undefined;
+      if (official) {
         chips.push({
           key: "official",
           label: t("providerCard.chip.official"),
@@ -750,16 +752,19 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
                 {
                   key: "remove",
                   label: t("providerCard.action.remove"),
-                  disabledReason: current
-                    ? t("providerCard.reason.currentCannotRemove")
-                    : undefined,
+                  disabledReason:
+                    officialReason ??
+                    (current
+                      ? t("providerCard.reason.currentCannotRemove")
+                      : undefined),
                   onSelect: () => actions.remove(p),
                 },
               ]
             : undefined,
-          deleteDisabledReason: current
-            ? t("providerCard.reason.inUseCannotDelete")
-            : undefined,
+          editDisabledReason: officialReason,
+          deleteDisabledReason:
+            officialReason ??
+            (current ? t("providerCard.reason.inUseCannotDelete") : undefined),
         },
       });
       continue;
