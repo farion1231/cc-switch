@@ -406,6 +406,41 @@ fn confirmed_conversion_of_an_imported_snapshot_preserves_the_selected_host_orig
 }
 
 #[test]
+fn shared_linked_route_can_disable_either_app_without_harming_other_app() {
+    let _guard = support::test_mutex()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    support::reset_test_fs();
+    let home = support::ensure_test_home();
+    let source = home.join("workspace/shared-linked-projection-probe");
+    write_original(&source);
+    // Both apps resolve to the same physical Skills directory.
+    update_settings(AppSettings {
+        claude_config_dir: Some(home.join(".codex").to_string_lossy().into_owned()),
+        ..Default::default()
+    })
+    .unwrap();
+    let state = support::create_test_state().unwrap();
+    let installed = SkillService::link_source(&state.db, &source, &AppType::Codex).unwrap();
+    let route = home.join(".codex/skills/shared-linked-projection-probe");
+    let original = source.canonicalize().unwrap();
+    assert_eq!(fs::read_link(&route).unwrap(), original);
+
+    SkillService::toggle_app(&state.db, &installed.id, &AppType::Claude, true).unwrap();
+    // Removing one projection must not delete the route needed by the other.
+    SkillService::toggle_app(&state.db, &installed.id, &AppType::Claude, false).unwrap();
+    assert_eq!(fs::read_link(&route).unwrap(), original);
+    SkillService::toggle_app(&state.db, &installed.id, &AppType::Claude, true).unwrap();
+    SkillService::toggle_app(&state.db, &installed.id, &AppType::Codex, false).unwrap();
+    assert_eq!(fs::read_link(&route).unwrap(), original);
+
+    // The final owner can remove the symlink, but never the workspace original.
+    SkillService::toggle_app(&state.db, &installed.id, &AppType::Claude, false).unwrap();
+    assert!(fs::symlink_metadata(&route).is_err());
+    assert!(source.join("SKILL.md").is_file());
+}
+
+#[test]
 fn conversion_deduplicates_shared_skills_directory_overrides() {
     let _guard = support::test_mutex()
         .lock()

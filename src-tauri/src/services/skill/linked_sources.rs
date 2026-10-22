@@ -286,6 +286,17 @@ impl SkillService {
         }
         if destination.exists() || Self::is_symlink(&destination) {
             if Self::paths_alias(&source, &destination) {
+                // Multiple apps may intentionally share one physical skills root.
+                // Register this app only when another projection already proves
+                // CC Switch created the exact symlink; never adopt a foreign link.
+                if fs::read_link(&destination).ok().as_ref() == Some(&source)
+                    && registration
+                        .projections
+                        .values()
+                        .any(|paths| paths.contains(&destination))
+                {
+                    set_linked_skill_projection(directory, app, &destination, true)?;
+                }
                 return Ok(());
             }
             return Err(anyhow!(
@@ -331,6 +342,16 @@ impl SkillService {
             return Err(anyhow!("This Skill directory is externally owned. Move the original to a workspace or remove its external link before disabling this application's route: {directory}"));
         }
         for destination in owned {
+            // One physical symlink can serve multiple app types. Dropping a
+            // logical projection must not break a still-enabled sibling app.
+            let shared_with_other_app = registration
+                .projections
+                .iter()
+                .any(|(other, paths)| other != app.as_str() && paths.contains(&destination));
+            if shared_with_other_app {
+                set_linked_skill_projection(directory, app, &destination, false)?;
+                continue;
+            }
             // Settings overrides may have moved since this route was created.
             // Remember exact paths rather than treating any link in a host as ours.
             if fs::read_link(&destination).ok().as_ref() == Some(&source) {
