@@ -46,6 +46,40 @@ fn provider(id: &str, model: &str) -> Provider {
 }
 
 #[test]
+fn kimi_official_import_repairs_existing_display_identity_without_rewriting_native_config() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let home = KimiHome::new();
+    let state = create_test_state().unwrap();
+    let native = "# native OAuth\ndefault_model = 'kimi-code/k3'\n[providers.'managed:kimi-code']\ntype = 'kimi'\nbase_url = 'https://api.kimi.com/coding/v1'\napi_key = ''\n[providers.'managed:kimi-code'.oauth]\nkey = 'oauth/kimi-code'\nstorage = 'file'\n[models.'kimi-code/k3']\nprovider = 'managed:kimi-code'\nmodel = 'k3'\nmax_context_size = 1048576\n";
+    fs::write(home.config(), native).unwrap();
+    let id = "managed:kimi-code";
+    let mut legacy = Provider::with_id(id.into(), id.into(), json!({}), None);
+    legacy.notes = Some("my note".into());
+    state.db.save_provider("kimi", &legacy).unwrap();
+    let providers = ProviderService::list(&state, AppType::Kimi).unwrap();
+    let official = &providers[id];
+    assert_eq!(official.name, "Kimi Official");
+    assert_eq!(official.icon.as_deref(), Some("kimi"));
+    assert_eq!(official.category.as_deref(), Some("official"));
+    assert_eq!(
+        official.website_url.as_deref(),
+        Some("https://www.kimi.com")
+    );
+    assert_eq!(official.notes.as_deref(), Some("my note"));
+    assert_eq!(
+        official.settings_config["models"]["kimi-code/k3"]["provider"],
+        id
+    );
+    assert_eq!(ProviderService::current(&state, AppType::Kimi).unwrap(), id);
+    assert_eq!(fs::read_to_string(home.config()).unwrap(), native);
+    let persisted = state.db.get_provider_by_id(id, "kimi").unwrap().unwrap();
+    assert_eq!(persisted.name, "Kimi Official");
+    assert_eq!(persisted.category.as_deref(), Some("official"));
+    assert_eq!(persisted.icon.as_deref(), Some("kimi"));
+}
+
+#[test]
 fn kimi_provider_lifecycle_imports_native_config_and_tracks_external_removal() {
     let _guard = test_mutex().lock().unwrap();
     reset_test_fs();
@@ -80,6 +114,12 @@ fn kimi_provider_lifecycle_imports_native_config_and_tracks_external_removal() {
     let text = fs::read_to_string(home.config()).unwrap();
     assert!(text.contains("updated.example.com"));
     assert!(text.contains("# user settings"));
+    assert_eq!(
+        ProviderService::current(&state, AppType::Kimi).unwrap(),
+        "custom"
+    );
+    // Select the original native provider before removing the now-current one.
+    ProviderService::switch(&state, AppType::Kimi, "official").unwrap();
     ProviderService::remove_from_live_config(&state, AppType::Kimi, "custom").unwrap();
     assert_eq!(
         ProviderService::list(&state, AppType::Kimi).unwrap()["custom"]
@@ -146,6 +186,63 @@ fn kimi_provider_add_rejects_collisions_and_protects_the_default_model() {
         .is_none());
     assert!(ProviderService::remove_from_live_config(&state, AppType::Kimi, "first").is_err());
     assert_eq!(fs::read(home.config()).unwrap(), bytes);
+}
+
+#[test]
+fn kimi_switch_selects_native_model_and_current_tracks_external_changes() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let home = KimiHome::new();
+    let state = create_test_state().unwrap();
+    ProviderService::add(
+        &state,
+        AppType::Kimi,
+        provider("first", "alias-without-provider-prefix"),
+        true,
+    )
+    .unwrap();
+    ProviderService::add(
+        &state,
+        AppType::Kimi,
+        provider("second", "another-alias"),
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        ProviderService::current(&state, AppType::Kimi).unwrap(),
+        "first"
+    );
+    ProviderService::switch(&state, AppType::Kimi, "second").unwrap();
+    assert_eq!(
+        ProviderService::current(&state, AppType::Kimi).unwrap(),
+        "second"
+    );
+    assert!(ProviderService::remove_from_live_config(&state, AppType::Kimi, "second").is_err());
+    let mut native: toml::Value =
+        toml::from_str(&fs::read_to_string(home.config()).unwrap()).unwrap();
+    native["default_model"] = toml::Value::String("alias-without-provider-prefix".into());
+    native["providers"]["first"]["base_url"] =
+        toml::Value::String("https://edited-in-kimi.example/v1".into());
+    fs::write(home.config(), toml::to_string(&native).unwrap()).unwrap();
+    assert_eq!(
+        ProviderService::current(&state, AppType::Kimi).unwrap(),
+        "first"
+    );
+    ProviderService::switch(&state, AppType::Kimi, "first").unwrap();
+    let saved = state
+        .db
+        .get_provider_by_id("first", "kimi")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        saved.settings_config["provider"]["base_url"],
+        "https://edited-in-kimi.example/v1"
+    );
+    native["default_model"] = toml::Value::String("missing-alias".into());
+    fs::write(home.config(), toml::to_string(&native).unwrap()).unwrap();
+    assert!(ProviderService::current(&state, AppType::Kimi)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]

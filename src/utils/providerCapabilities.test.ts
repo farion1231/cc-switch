@@ -5,11 +5,50 @@ import {
   providerNeedsRouting,
   resolveCodexOfficialIdentity,
   supportsOfficialProxyTakeover,
+  isOfficialAccount,
 } from "@/utils/providerCapabilities";
 
 function mkProvider(overrides: Partial<Provider> = {}): Provider {
   return { id: "p1", name: "Test", settingsConfig: {}, ...overrides };
 }
+
+describe("Kimi official account identity", () => {
+  it.each([
+    "oauth/kimi-code",
+    "kimi-code",
+    "oauth/kimi-code-env-0e4f99c69cc27850",
+  ])(
+    "recognizes a native OAuth reference %s without relying on a legacy category",
+    (key) => {
+      const provider = mkProvider({
+        id: "managed:kimi-code",
+        settingsConfig: { provider: { oauth: { key } } },
+      });
+      expect(isOfficialAccount("kimi", provider)).toBe(true);
+    },
+  );
+  it("does not mark an API-key or custom OAuth provider as the official login", () => {
+    expect(
+      isOfficialAccount(
+        "kimi",
+        mkProvider({
+          id: "managed:kimi-code",
+          category: "official",
+          settingsConfig: { provider: { api_key: "test-key" } },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isOfficialAccount(
+        "kimi",
+        mkProvider({
+          id: "my-provider",
+          settingsConfig: { provider: { oauth: { key: "oauth/kimi-code" } } },
+        }),
+      ),
+    ).toBe(false);
+  });
+});
 
 // wire_api 取自 config.toml；chat_completions 需转换（需路由），responses 直连。
 const codexConfig = (wireApi: "chat_completions" | "responses") =>
