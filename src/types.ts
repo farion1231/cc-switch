@@ -216,6 +216,9 @@ export interface ProviderMeta {
   promptCacheRouting?: PromptCacheRoutingMode;
   // Codex OAuth FAST mode: injects service_tier="priority" on ChatGPT Codex requests
   codexFastMode?: boolean;
+  // xAI Claude Desktop：打开后给出站 Responses 请求补 service_tier="priority"。
+  // 不是 grok-4.7-build-fast；那个是手动填写的模型 ID，不由这个字段注入。
+  xaiPriority?: boolean;
   // Codex Responses -> Chat Completions reasoning capability metadata
   codexChatReasoning?: CodexChatReasoning;
   // Codex → Anthropic path: emulate the Claude Code client (disabled by default; only an explicit true enables it)

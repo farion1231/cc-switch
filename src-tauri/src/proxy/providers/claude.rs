@@ -425,6 +425,12 @@ pub fn transform_claude_request_for_api_format(
             // OpenAI 自己的 `{"type":"web_search"}` 保持不动。
             if claude_responses_targets_xai(provider) {
                 super::transform_responses::rewrite_xai_hosted_web_search_tool_choice(&mut result);
+                // 快速变体是模型 ID（grok-4.7-build-fast），不在这里改 model。
+                // Priority 只补 service_tier，不动 stream 和其他字段。
+                // 不走 is_codex_oauth：那段会强制 stream=true 并删 max_output_tokens。
+                if provider.xai_priority_enabled() {
+                    result["service_tier"] = json!("priority");
+                }
             }
             if provider.is_xai_oauth() {
                 const REASONING_MARKER: &str = "reasoning.encrypted_content";
@@ -1664,6 +1670,164 @@ mod tests {
         .unwrap();
 
         assert_eq!(transformed["tool_choice"], json!({"type": "web_search"}));
+    }
+
+    fn xai_priority_request() -> serde_json::Value {
+        json!({
+            "model": "grok-4.7",
+            "max_tokens": 128,
+            "stream": false,
+            "temperature": 0.2,
+            "messages": [{"role": "user", "content": "hi"}]
+        })
+    }
+
+    #[test]
+    fn xai_priority_adds_service_tier_without_codex_rewrites() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.x.ai/v1"
+                }
+            }),
+            ProviderMeta {
+                provider_type: Some("xai_oauth".to_string()),
+                api_format: Some("openai_responses".to_string()),
+                xai_priority: Some(true),
+                ..Default::default()
+            },
+        );
+
+        let transformed = transform_claude_request_for_api_format(
+            xai_priority_request(),
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["service_tier"], json!("priority"));
+        assert_eq!(transformed["model"], json!("grok-4.7"));
+        assert_eq!(transformed["stream"], json!(false));
+        assert_eq!(transformed["max_output_tokens"], json!(128));
+        assert_eq!(transformed["temperature"], json!(0.2));
+        assert!(transformed.get("store").is_none());
+    }
+
+    #[test]
+    fn xai_priority_off_leaves_service_tier_unset() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.x.ai/v1"
+                }
+            }),
+            ProviderMeta {
+                provider_type: Some("xai_oauth".to_string()),
+                api_format: Some("openai_responses".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let transformed = transform_claude_request_for_api_format(
+            xai_priority_request(),
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(transformed.get("service_tier").is_none());
+        assert_eq!(transformed["stream"], json!(false));
+        assert_eq!(transformed["max_output_tokens"], json!(128));
+    }
+
+    #[test]
+    fn codex_fast_mode_does_not_inject_service_tier_for_xai() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.x.ai/v1"
+                }
+            }),
+            ProviderMeta {
+                provider_type: Some("xai_oauth".to_string()),
+                codex_fast_mode: Some(true),
+                ..Default::default()
+            },
+        );
+
+        let transformed = transform_claude_request_for_api_format(
+            xai_priority_request(),
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(transformed.get("service_tier").is_none());
+        assert_eq!(transformed["model"], json!("grok-4.7"));
+        assert_eq!(transformed["stream"], json!(false));
+        assert_eq!(transformed["max_output_tokens"], json!(128));
+    }
+
+    #[test]
+    fn xai_priority_flag_does_not_inject_for_other_upstreams() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.openai.com/v1"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                xai_priority: Some(true),
+                ..Default::default()
+            },
+        );
+
+        let transformed = transform_claude_request_for_api_format(
+            xai_priority_request(),
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(transformed.get("service_tier").is_none());
+    }
+
+    #[test]
+    fn api_xai_url_with_priority_flag_injects_service_tier() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.x.ai/v1"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                xai_priority: Some(true),
+                ..Default::default()
+            },
+        );
+
+        let transformed = transform_claude_request_for_api_format(
+            xai_priority_request(),
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["service_tier"], json!("priority"));
+        assert_eq!(transformed["stream"], json!(false));
+        assert_eq!(transformed["model"], json!("grok-4.7"));
     }
 
     #[test]
