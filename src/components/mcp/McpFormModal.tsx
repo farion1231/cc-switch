@@ -163,7 +163,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   const errors: McpDraftErrors = useMemo(
     () =>
       validateDraft(name, conn, {
-        checkName: !isEdit,
+        checkId: !isEdit,
         existingIds,
       }),
     [conn, existingIds, isEdit, name],
@@ -171,13 +171,13 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   // 重名即时提示（R6）；其他错误点了「添加 / 保存」才出现
   const visibleErrors: McpDraftErrors = attempted
     ? errors
-    : errors.name === "nameExists"
-      ? { name: errors.name }
+    : errors.id === "idExists"
+      ? { id: errors.id }
       : {};
 
   const fieldErrorText = (code?: string) => {
     if (!code) return "";
-    return t(`mcpPage.drawer.errors.${code}`, { name: name.trim() });
+    return t(`mcpPage.drawer.errors.${code}`, { id: name.trim() });
   };
 
   const formatLabel = (format: PasteFormat) =>
@@ -421,16 +421,16 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       setConn(current);
     }
     const errs = validateDraft(name, current, {
-      checkName: !isEdit,
+      checkId: !isEdit,
       existingIds,
     });
     setAttempted(true);
-    if (errs.name || errs.command || errs.url) {
-      if (tab === "json" && !errs.name) {
+    if (errs.id || errs.command || errs.url) {
+      if (tab === "json" && !errs.id) {
         setJsonError(null);
         setTab("form");
       }
-      focusSoon(errs.name ? "mcp-name" : errs.command ? "mcp-cmd" : "mcp-url");
+      focusSoon(errs.id ? "mcp-name" : errs.command ? "mcp-cmd" : "mcp-url");
       return;
     }
     const id = isEdit ? (editingId as string) : name.trim();
@@ -813,19 +813,19 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-0.5">
                   <label htmlFor="mcp-name" className={LABEL_CLASS}>
-                    {t("mcpPage.drawer.name")}
+                    {t("mcpPage.drawer.id")}
                     <RequiredMark srText={t("mcpPage.drawer.required")} />
                   </label>
                   <HelpTip
                     title={
                       isEdit
-                        ? t("mcpPage.drawer.nameHelpEditTitle")
-                        : t("mcpPage.drawer.nameHelpTitle")
+                        ? t("mcpPage.drawer.idHelpEditTitle")
+                        : t("mcpPage.drawer.idHelpTitle")
                     }
                   >
                     {isEdit
-                      ? t("mcpPage.drawer.nameHelpEdit")
-                      : t("mcpPage.drawer.nameHelp")}
+                      ? t("mcpPage.drawer.idHelpEdit")
+                      : t("mcpPage.drawer.idHelp")}
                   </HelpTip>
                 </div>
                 <input
@@ -834,19 +834,19 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                   className={MONO_FIELD_CLASS}
                   value={name}
                   readOnly={isEdit}
-                  placeholder={t("mcpPage.drawer.namePlaceholder")}
+                  placeholder={t("mcpPage.drawer.idPlaceholder")}
                   aria-required={!isEdit}
-                  aria-invalid={Boolean(visibleErrors.name)}
+                  aria-invalid={Boolean(visibleErrors.id)}
                   aria-describedby={
-                    visibleErrors.name ? "mcp-name-hint" : undefined
+                    visibleErrors.id ? "mcp-name-hint" : undefined
                   }
                   autoComplete="off"
                   spellCheck={false}
                   onChange={(event) => setName(event.target.value)}
                 />
-                {visibleErrors.name && (
+                {visibleErrors.id && (
                   <FieldError id="mcp-name-hint">
-                    {fieldErrorText(visibleErrors.name)}
+                    {fieldErrorText(visibleErrors.id)}
                   </FieldError>
                 )}
               </div>
@@ -1218,10 +1218,10 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                   <div className="flex flex-col gap-1.5">
                     <div className="flex items-center gap-0.5">
                       <label htmlFor="mcp-meta-name" className={LABEL_CLASS}>
-                        {t("mcpPage.drawer.displayName")}
+                        {t("mcpPage.drawer.name")}
                       </label>
-                      <HelpTip title={t("mcpPage.drawer.displayNameHelpTitle")}>
-                        {t("mcpPage.drawer.displayNameHelp")}
+                      <HelpTip title={t("mcpPage.drawer.nameHelpTitle")}>
+                        {t("mcpPage.drawer.nameHelp")}
                       </HelpTip>
                     </div>
                     <input
@@ -1229,6 +1229,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                       type="text"
                       className={FIELD_CLASS}
                       value={meta.name}
+                      placeholder={t("mcpPage.drawer.namePlaceholder")}
                       autoComplete="off"
                       onChange={(event) =>
                         setMeta((prev) => ({
