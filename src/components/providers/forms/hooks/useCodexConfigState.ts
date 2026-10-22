@@ -1,9 +1,11 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
+  extractCodexAgentsString,
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
   setCodexBaseUrl as setCodexBaseUrlInConfig,
+  setCodexAgentsString,
   setCodexModelName as setCodexModelNameInConfig,
   updateCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
@@ -107,6 +109,8 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
   const [codexCatalogModels, setCodexCatalogModels] = useState<
     CodexCatalogModel[]
   >([]);
+  // 自动审批（Auto Review）用的模型：`modelCatalog.autoReviewModel`，空串 = 用 Codex 的默认
+  const [codexAutoReviewModel, setCodexAutoReviewModel] = useState("");
   const [codexAuthError, setCodexAuthError] = useState("");
 
   const isUpdatingCodexBaseUrlRef = useRef(false);
@@ -137,6 +141,11 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
         rawCatalogModels
           .map(mapCodexCatalogModelForForm)
           .filter((item: CodexCatalogModel) => item.model.trim()),
+      );
+      setCodexAutoReviewModel(
+        typeof modelCatalog?.autoReviewModel === "string"
+          ? modelCatalog.autoReviewModel.trim()
+          : "",
       );
 
       // 提取 Base URL
@@ -276,6 +285,39 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     [setCodexConfig],
   );
 
+  // 子代理的默认模型和推理强度（`[agents]` 表）：直接从 TOML 读，改动实时写回，清空则删键
+  const codexSubagentModel = useMemo(
+    () => extractCodexAgentsString(codexConfig, "default_subagent_model") || "",
+    [codexConfig],
+  );
+  const codexSubagentReasoningEffort = useMemo(
+    () =>
+      extractCodexAgentsString(
+        codexConfig,
+        "default_subagent_reasoning_effort",
+      ) || "",
+    [codexConfig],
+  );
+
+  const handleCodexSubagentModelChange = useCallback(
+    (model: string) => {
+      const sanitized = model.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+      setCodexConfig((prev) =>
+        setCodexAgentsString(prev, "default_subagent_model", sanitized),
+      );
+    },
+    [setCodexConfig],
+  );
+
+  const handleCodexSubagentReasoningEffortChange = useCallback(
+    (effort: string) => {
+      setCodexConfig((prev) =>
+        setCodexAgentsString(prev, "default_subagent_reasoning_effort", effort),
+      );
+    },
+    [setCodexConfig],
+  );
+
   // 处理 config 变化（同步 Base URL）
   const handleCodexConfigChange = useCallback(
     (value: string) => {
@@ -304,6 +346,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       setCodexAuth(authString);
       setCodexConfig(config);
       setCodexCatalogModels(modelCatalogModels);
+      setCodexAutoReviewModel("");
 
       const baseUrl = extractCodexBaseUrl(config);
       setCodexBaseUrl(baseUrl || "");
@@ -319,14 +362,20 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     codexApiKey,
     codexBaseUrl,
     codexModel,
+    codexSubagentModel,
+    codexSubagentReasoningEffort,
     codexCatalogModels,
+    codexAutoReviewModel,
     codexAuthError,
     setCodexAuth,
     setCodexConfig,
     setCodexCatalogModels,
+    setCodexAutoReviewModel,
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelChange,
+    handleCodexSubagentModelChange,
+    handleCodexSubagentReasoningEffortChange,
     handleCodexConfigChange,
     resetCodexConfig,
     getCodexAuthApiKey,

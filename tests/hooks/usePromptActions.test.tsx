@@ -72,6 +72,8 @@ function renderPromptActions(initialAppId: AppId) {
 
 describe("usePromptActions reload concurrency", () => {
   beforeEach(() => {
+    // 提示词列表有本地缓存（先显示上次的结果），用例之间不能互相带过去
+    localStorage.clear();
     mocks.getPrompts.mockReset();
     mocks.getCurrentFileContent.mockReset();
     mocks.getCurrentFileContent.mockResolvedValue(null);

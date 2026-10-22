@@ -8,6 +8,8 @@ use serde_json::Value;
 
 use crate::session_manager::{SessionMessage, SessionMeta};
 
+use super::pi_blocks::PiTranscript;
+use super::utils::for_each_jsonl_value;
 use super::utils::{
     extract_text, parse_timestamp_to_ms, path_basename, truncate_summary, TITLE_MAX_CHARS,
 };
@@ -87,7 +89,8 @@ pub fn session_roots() -> Vec<PathBuf> {
 
 /// Return candidate JSONL files using Pi's active root and layout rules.
 /// Oversized files remain candidates so the usage importer can report them
-/// instead of silently treating an incomplete import as success.
+/// instead of silently treating an incomplete import as success. Nested
+/// subagent and fork sessions are included.
 pub(crate) fn session_files() -> Result<Vec<PathBuf>, String> {
     session_files_from_resolution(resolve_session_root())
 }
@@ -99,6 +102,11 @@ fn session_files_from_resolution(
         SessionRootResolution::Available { root, layout } => {
             let mut files = Vec::new();
             collect_jsonl_files(&root, layout, &mut files, false);
+            let mut children = Vec::new();
+            for session in &files {
+                collect_child_session_files(&session.with_extension(""), &mut children);
+            }
+            files.extend(children);
             files.sort();
             Ok(files)
         }
@@ -469,26 +477,16 @@ fn update_session_summary(summary: &mut SessionSummary, value: &Value) {
 
 fn read_active_messages(path: &Path, tree: &SessionTree) -> Result<Vec<SessionMessage>, String> {
     validate_file_size(path)?;
-    let reader = BufReader::new(
-        File::open(path).map_err(|error| format!("Failed to open Pi session: {error}"))?,
-    );
-    let mut messages = Vec::new();
+    let mut transcript = PiTranscript::new();
     let mut saw_header = false;
     let mut entry_index = 0usize;
     let mut legacy_previous_id = None;
-    for line in reader.lines() {
-        let line = line.map_err(|error| format!("Failed to read Pi session: {error}"))?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let Ok(value) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
+    for_each_jsonl_value(path, |span, value| {
         if !saw_header {
             if value.get("type").and_then(Value::as_str) == Some("session") {
                 saw_header = true;
             }
-            continue;
+            return Ok(());
         }
         entry_index += 1;
         if entry_index > MAX_TREE_ENTRIES {
@@ -502,63 +500,16 @@ fn read_active_messages(path: &Path, tree: &SessionTree) -> Result<Vec<SessionMe
             entry_index,
             legacy_previous_id.as_deref(),
         ) else {
-            continue;
+            return Ok(());
         };
         legacy_previous_id = Some(id.clone());
-        if !tree.active_entry_indexes.contains(&entry_index) {
-            continue;
+        if tree.active_entry_indexes.contains(&entry_index) {
+            transcript.push_entry(&value, span, Some(id));
         }
-        let entry_timestamp = value.get("timestamp").and_then(parse_timestamp_to_ms);
-        match value.get("type").and_then(Value::as_str) {
-            Some("session_info") => {}
-            Some("message") => {
-                let Some((role, content)) = value.get("message").and_then(parse_message) else {
-                    continue;
-                };
-                let timestamp = value
-                    .get("message")
-                    .and_then(|message| message.get("timestamp"))
-                    .and_then(parse_timestamp_to_ms)
-                    .or(entry_timestamp);
-                messages.push(SessionMessage {
-                    role,
-                    content,
-                    ts: timestamp,
-                });
-            }
-            Some("compaction") | Some("branch_summary") => {
-                push_system(
-                    &mut messages,
-                    value
-                        .get("summary")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default(),
-                    entry_timestamp,
-                );
-            }
-            Some("custom_message")
-                if value.get("display").and_then(Value::as_bool) != Some(false) =>
-            {
-                push_system(
-                    &mut messages,
-                    &value.get("content").map(extract_text).unwrap_or_default(),
-                    entry_timestamp,
-                );
-            }
-            _ => {}
-        }
-    }
-    Ok(messages)
-}
-
-fn push_system(messages: &mut Vec<SessionMessage>, content: &str, ts: Option<i64>) {
-    if !content.trim().is_empty() {
-        messages.push(SessionMessage {
-            role: "system".to_string(),
-            content: content.to_string(),
-            ts,
-        });
-    }
+        Ok(())
+    })
+    .map_err(|error| error.replace("session file", "Pi session"))?;
+    Ok(transcript.finish())
 }
 
 fn parse_header(value: &Value) -> Result<SessionHeader, String> {
@@ -765,6 +716,29 @@ fn push_jsonl_file(entry: &fs::DirEntry, output: &mut Vec<PathBuf>, enforce_size
                 .is_ok_and(|metadata| metadata.len() <= MAX_SESSION_BYTES))
     {
         output.push(path);
+    }
+}
+
+/// Subagent runs and forks nest under their parent session's extension-less
+/// path, and grandchildren under the child's own. `subagent-artifacts`
+/// directories hold transcripts and audit logs without a session header, so
+/// they are skipped. `DirEntry::file_type` does not follow symlinks, so the
+/// walk cannot loop.
+fn collect_child_session_files(dir: &Path, output: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            if entry.file_name() != "subagent-artifacts" {
+                collect_child_session_files(&entry.path(), output);
+            }
+        } else if file_type.is_file() {
+            push_jsonl_file(&entry, output, false);
+        }
     }
 }
 
@@ -1069,6 +1043,67 @@ mod tests {
     }
 
     #[test]
+    fn usage_discovery_includes_subagent_child_sessions() {
+        for layout in [SessionLayout::Flat, SessionLayout::ProjectDirectories] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let root = temp.path().join("sessions");
+            let base = match layout {
+                SessionLayout::Flat => root.clone(),
+                SessionLayout::ProjectDirectories => root.join("project"),
+            };
+            let parent = base.join("parent.jsonl");
+            let run = base.join("parent").join("run-a").join("run-0");
+            let child = run.join("session.jsonl");
+            let fork = base.join("parent").join("forks").join("fork.jsonl");
+            let grandchild = run
+                .join("session")
+                .join("run-b")
+                .join("run-0")
+                .join("session.jsonl");
+            for (path, id) in [
+                (&parent, "parent"),
+                (&child, "child"),
+                (&fork, "fork"),
+                (&grandchild, "grandchild"),
+            ] {
+                write_session_header(path, id);
+            }
+            let nested_artifacts = run.join("subagent-artifacts");
+            let fork_artifacts = base.join("parent").join("forks").join("subagent-artifacts");
+            for artifact in [
+                base.join("subagent-artifacts")
+                    .join("run-a_worker_0_transcript.jsonl"),
+                nested_artifacts.join("run-b_worker_0_transcript.jsonl"),
+                nested_artifacts.join("run-b.jsonl"),
+                nested_artifacts
+                    .join("permission-audit")
+                    .join("audit.jsonl"),
+                fork_artifacts.join("fork_worker_0_transcript.jsonl"),
+            ] {
+                fs::create_dir_all(artifact.parent().expect("artifact parent"))
+                    .expect("create artifact parent");
+                fs::write(&artifact, "{\"recordType\":\"message\"}\n").expect("write artifact");
+            }
+
+            let mut expected = vec![parent, child, fork, grandchild];
+            expected.sort();
+            let resolution = SessionRootResolution::Available {
+                root: root.clone(),
+                layout,
+            };
+            assert_eq!(
+                session_files_from_resolution(resolution).expect("usage files"),
+                expected,
+                "{layout:?}"
+            );
+
+            let sessions = scan_sessions_in_root(&root, layout);
+            assert_eq!(sessions.len(), 1, "{layout:?}");
+            assert_eq!(sessions[0].session_id, "parent");
+        }
+    }
+
+    #[test]
     fn deletion_rejects_files_outside_the_active_directory_layout() {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path().join("sessions");
@@ -1102,5 +1137,75 @@ mod tests {
             SessionLayout::ProjectDirectories
         )
         .expect("delete project session"));
+    }
+
+    #[test]
+    fn active_branch_maps_to_blocks_with_line_refs() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("sessions");
+        fs::create_dir_all(&root).expect("root");
+        let path = root.join("blocks.jsonl");
+        let lines = [
+            r#"{"type":"session","version":3,"id":"session-1","cwd":"/work"}"#,
+            r#"{"type":"model_change","id":"m1","parentId":null,"provider":"openai-codex","modelId":"gpt-5.4"}"#,
+            r#"{"type":"message","id":"u1","parentId":"m1","message":{"role":"user","content":[{"type":"text","text":"run pwd"}],"timestamp":1000}}"#,
+            r#"{"type":"message","id":"dead","parentId":"u1","message":{"role":"assistant","content":"abandoned"}}"#,
+            r#"{"type":"message","id":"a1","parentId":"u1","message":{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"pwd"}}],"stopReason":"toolUse"}}"#,
+            r#"{"type":"message","id":"r1","parentId":"a1","message":{"role":"toolResult","toolCallId":"c1","toolName":"bash","content":[{"type":"text","text":"l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\nl13\n"}],"isError":false}}"#,
+        ];
+        fs::write(&path, lines.join("\n") + "\n").expect("session");
+
+        let messages =
+            load_messages_with_layout(&root, &path, SessionLayout::Flat).expect("messages");
+        let summary: Vec<_> = messages
+            .iter()
+            .map(|m| {
+                (
+                    m.role.as_str(),
+                    m.id.as_deref().unwrap_or(""),
+                    m.turn_id.as_deref().unwrap_or(""),
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("system", "m1", "t0"),
+                ("user", "u1", "t1"),
+                ("assistant", "a1", "t1"),
+                ("tool", "r1", "t1"),
+            ]
+        );
+        assert_eq!(messages[0].content, "openai-codex/gpt-5.4");
+        assert_eq!(messages[2].content, "[Tool: bash] pwd");
+        assert!(messages[3].content.starts_with("l1\nl2"));
+
+        // 截断的结果带 Jsonl 引用，字节区间正好是 toolResult 那一行
+        let Some(crate::session_manager::model::SessionBlock::ToolResult {
+            full:
+                Some(crate::session_manager::model::ContentRef::Jsonl {
+                    offset,
+                    len,
+                    pointer,
+                }),
+            truncated: true,
+            ..
+        }) = messages[3].blocks.first()
+        else {
+            panic!(
+                "expected truncated result with jsonl ref: {:?}",
+                messages[3].blocks
+            );
+        };
+        assert_eq!(pointer, "/message/content/0/text");
+        let raw = fs::read(&path).expect("read back");
+        let start: usize = lines[..5].iter().map(|l| l.len() + 1).sum();
+        assert_eq!(
+            (*offset as usize, *len as usize),
+            (start, lines[5].len() + 1)
+        );
+        let slice = &raw[start..start + *len as usize];
+        let value: Value = serde_json::from_slice(slice).expect("line json");
+        assert_eq!(value["id"], "r1");
     }
 }

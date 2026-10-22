@@ -4,6 +4,12 @@ import {
   opencodeNpmPackages,
   OPENCODE_PRESET_MODEL_VARIANTS,
 } from "@/config/opencodeProviderPresets";
+import { openclawProviderPresets } from "@/config/openclawProviderPresets";
+import { codexProviderPresets } from "@/config/codexProviderPresets";
+import {
+  groupPresetRows,
+  presetVersionLayout,
+} from "@/components/providers/forms/presetGroups";
 
 describe("AWS Bedrock OpenCode Provider Presets", () => {
   it("should include @ai-sdk/amazon-bedrock in npm packages", () => {
@@ -127,5 +133,116 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
     for (const model of Object.values(forCoding!.settingsConfig.models)) {
       expect(model.modalities).toBeUndefined();
     }
+  });
+});
+
+describe("OpenCode preset reasoning flags", () => {
+  // OpenCode 只给 reasoning 为真的模型生成思考档位；CC Switch 写的供应商 key
+  // 对不上 models.dev，不写就一个档位都没有。
+  const models = opencodeProviderPresets.flatMap((preset) =>
+    Object.entries(preset.settingsConfig.models ?? {}).map(([id, model]) => ({
+      preset: preset.name,
+      id,
+      model,
+    })),
+  );
+
+  it("marks Claude, GPT and DeepSeek V4 models as reasoning", () => {
+    const expected = models.filter(({ id }) =>
+      /claude-|gpt-[56]|deepseek-v4/.test(id),
+    );
+    expect(expected.length).toBeGreaterThan(0);
+    for (const { preset, id, model } of expected) {
+      expect(model.reasoning, `${preset} / ${id}`).toBe(true);
+    }
+  });
+
+  it("never claims reasoning on a model whose thinking is turned off", () => {
+    for (const { preset, id, model } of models) {
+      const thinking = (model.options as { thinking?: { type?: string } })
+        ?.thinking;
+      if (thinking?.type === "disabled") {
+        expect(model.reasoning, `${preset} / ${id}`).not.toBe(true);
+      }
+    }
+  });
+});
+
+describe("OpenCode preset model limits", () => {
+  // 预设走 V1 格式（npm），OpenCode 要求 limit 同时带 context 和 output，
+  // 缺一个整份 opencode.json 报 Configuration is invalid，所有供应商一起不可用。
+  it("declares both context and output whenever a limit is set", () => {
+    for (const preset of opencodeProviderPresets) {
+      for (const [id, model] of Object.entries(
+        preset.settingsConfig.models ?? {},
+      )) {
+        if (model.limit === undefined) continue;
+        expect(model.limit.context, `${preset.name} / ${id}`).toBeTypeOf(
+          "number",
+        );
+        expect(model.limit.output, `${preset.name} / ${id}`).toBeTypeOf(
+          "number",
+        );
+      }
+    }
+  });
+});
+
+describe("SiliconFlow OpenCode provider presets", () => {
+  it.each(["SiliconFlow", "SiliconFlow en"])(
+    "%s includes the current Codex preset models at the matching endpoint",
+    (name) => {
+      const preset = opencodeProviderPresets.find(
+        (item) => item.name === name,
+      )!;
+      const openclaw = openclawProviderPresets.find(
+        (item) => item.name === name,
+      )!;
+      const codex = codexProviderPresets.find((item) => item.name === name)!;
+
+      expect(preset).toBeDefined();
+      expect(openclaw).toBeDefined();
+      expect(codex).toBeDefined();
+      expect(preset.settingsConfig.npm).toBe("@ai-sdk/openai-compatible");
+      expect(preset.settingsConfig.options.baseURL).toBe(
+        openclaw.settingsConfig.baseUrl,
+      );
+      expect(preset.settingsConfig.options.apiKey).toBe("");
+      const codexModels = codex.modelCatalog ?? [];
+      expect(codexModels.length).toBeGreaterThan(0);
+      expect(Object.keys(preset.settingsConfig.models)).toEqual(
+        expect.arrayContaining(codexModels.map((model) => model.model)),
+      );
+      for (const model of codexModels) {
+        expect(preset.settingsConfig.models[model.model].limit?.context).toBe(
+          model.contextWindow,
+        );
+        expect(preset.settingsConfig.models[model.model].reasoning).toBe(true);
+      }
+      expect(preset.category).toBe("aggregator");
+      expect(preset.partnerPromotionKey).toBe(openclaw.partnerPromotionKey);
+      expect(preset.icon).toBe(openclaw.icon);
+    },
+  );
+
+  it("groups both regions into one provider with a region selector", () => {
+    const entries = opencodeProviderPresets.map((preset, index) => ({
+      id: `opencode-${index}`,
+      preset,
+    }));
+    const rows = groupPresetRows(entries).filter((row) =>
+      row.versions.some(({ preset }) => preset.name.startsWith("SiliconFlow")),
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].family).toBe("siliconflow");
+    expect(rows[0].versions.map(({ preset }) => preset.regionKey)).toEqual([
+      "cn",
+      "intl",
+    ]);
+    expect(presetVersionLayout(rows[0].versions)).toEqual({
+      kind: "single",
+      dimension: "region",
+    });
   });
 });

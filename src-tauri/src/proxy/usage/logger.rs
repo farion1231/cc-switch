@@ -9,7 +9,6 @@ use crate::services::usage_stats::{find_model_pricing_row, is_placeholder_pricin
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use sha2::{Digest, Sha256};
-use std::str::FromStr;
 
 #[derive(Debug, PartialEq, Eq)]
 struct UsageSemantic {
@@ -346,99 +345,28 @@ impl<'a> UsageLogger<'a> {
         }
     }
 
-    /// 获取有效的倍率与计费模式来源（供应商优先，未配置则回退全局默认）
-    pub async fn resolve_pricing_config(
-        &self,
-        provider_id: &str,
-        app_type: &str,
-    ) -> (Decimal, String) {
-        // Claude Desktop 网关没有独立的全局计费配置（proxy_config 的 CHECK 仅
-        // 允许 claude/codex/gemini，前端也只暴露三项），全局默认继承 claude；
-        // 供应商级 meta 覆盖仍按 claude-desktop 查找（providers 表按该 app_type 存）。
+    /// 获取计费模式来源（按请求模型 / 按返回模型），只读应用级全局配置
+    pub async fn resolve_pricing_model_source(&self, app_type: &str) -> String {
+        // Claude Desktop 网关没有独立的全局计费配置（proxy_config 的 CHECK 不含
+        // claude-desktop），继承 claude 的设置。
         let default_app_type = if app_type == "claude-desktop" {
             "claude"
         } else {
             app_type
         };
-        let default_multiplier_raw =
-            match self.db.get_default_cost_multiplier(default_app_type).await {
-                Ok(value) => value,
-                Err(e) => {
-                    log::warn!("[USG-003] 获取默认倍率失败 (app_type={app_type}): {e}");
-                    "1".to_string()
-                }
-            };
-        let default_multiplier = match Decimal::from_str(&default_multiplier_raw) {
-            Ok(value) => value,
+        match self.db.get_pricing_model_source(default_app_type).await {
+            Ok(value) if value == PRICING_SOURCE_RESPONSE || value == PRICING_SOURCE_REQUEST => {
+                value
+            }
+            Ok(value) => {
+                log::warn!("[USG-003] 计费模式无效 (app_type={app_type}): {value}");
+                PRICING_SOURCE_RESPONSE.to_string()
+            }
             Err(e) => {
-                log::warn!(
-                    "[USG-003] 默认倍率解析失败 (app_type={app_type}): {default_multiplier_raw} - {e}"
-                );
-                Decimal::from(1)
+                log::warn!("[USG-003] 获取计费模式失败 (app_type={app_type}): {e}");
+                PRICING_SOURCE_RESPONSE.to_string()
             }
-        };
-
-        let default_pricing_source_raw =
-            match self.db.get_pricing_model_source(default_app_type).await {
-                Ok(value) => value,
-                Err(e) => {
-                    log::warn!("[USG-003] 获取默认计费模式失败 (app_type={app_type}): {e}");
-                    PRICING_SOURCE_RESPONSE.to_string()
-                }
-            };
-        let default_pricing_source = if default_pricing_source_raw == PRICING_SOURCE_RESPONSE
-            || default_pricing_source_raw == PRICING_SOURCE_REQUEST
-        {
-            default_pricing_source_raw
-        } else {
-            log::warn!(
-                "[USG-003] 默认计费模式无效 (app_type={app_type}): {default_pricing_source_raw}"
-            );
-            PRICING_SOURCE_RESPONSE.to_string()
-        };
-
-        let provider = self
-            .db
-            .get_provider_by_id(provider_id, app_type)
-            .ok()
-            .flatten();
-
-        let (provider_multiplier, provider_pricing_source) = provider
-            .as_ref()
-            .and_then(|p| p.meta.as_ref())
-            .map(|meta| {
-                (
-                    meta.cost_multiplier.as_deref(),
-                    meta.pricing_model_source.as_deref(),
-                )
-            })
-            .unwrap_or((None, None));
-
-        let cost_multiplier = match provider_multiplier {
-            Some(value) => match Decimal::from_str(value) {
-                Ok(parsed) => parsed,
-                Err(e) => {
-                    log::warn!(
-                        "[USG-003] 供应商倍率解析失败 (provider_id={provider_id}): {value} - {e}"
-                    );
-                    default_multiplier
-                }
-            },
-            None => default_multiplier,
-        };
-
-        let pricing_model_source = match provider_pricing_source {
-            Some(value) if value == PRICING_SOURCE_RESPONSE || value == PRICING_SOURCE_REQUEST => {
-                value.to_string()
-            }
-            Some(value) => {
-                log::warn!("[USG-003] 供应商计费模式无效 (provider_id={provider_id}): {value}");
-                default_pricing_source.clone()
-            }
-            None => default_pricing_source.clone(),
-        };
-
-        (cost_multiplier, pricing_model_source)
+        }
     }
 
     /// 计算并记录请求
@@ -452,7 +380,6 @@ impl<'a> UsageLogger<'a> {
         request_model: String,
         pricing_model: String,
         usage: TokenUsage,
-        cost_multiplier: Decimal,
         latency_ms: u64,
         first_token_ms: Option<u64>,
         status_code: u16,
@@ -475,7 +402,7 @@ impl<'a> UsageLogger<'a> {
             &app_type,
             &usage,
             pricing.as_ref(),
-            cost_multiplier,
+            Decimal::ONE,
         );
 
         let log = RequestLog {
@@ -494,7 +421,7 @@ impl<'a> UsageLogger<'a> {
             session_id,
             provider_type,
             is_streaming,
-            cost_multiplier: cost_multiplier.to_string(),
+            cost_multiplier: "1".to_string(),
         };
 
         self.log_request(&log)
@@ -518,6 +445,7 @@ mod tests {
                 output_tokens: 5,
                 cache_read_tokens: 2,
                 cache_creation_tokens: 0,
+                cache_creation_1h_tokens: 0,
                 model: None,
                 message_id: Some("resp-1".to_string()),
             },
@@ -555,6 +483,7 @@ mod tests {
             output_tokens: 500,
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
+            cache_creation_1h_tokens: 0,
             model: None,
             message_id: None,
         };
@@ -567,7 +496,6 @@ mod tests {
             "req-model".to_string(),
             "test-model".to_string(),
             usage,
-            Decimal::from(1),
             100,
             None,
             200,
@@ -708,6 +636,7 @@ mod tests {
             output_tokens: 5,
             cache_read_tokens: 2,
             cache_creation_tokens: 1,
+            cache_creation_1h_tokens: 0,
             model: Some("claude-sonnet-4-5".to_string()),
             message_id: Some("msg_desktop".to_string()),
         };

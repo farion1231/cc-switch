@@ -9,8 +9,8 @@ import { createTestQueryClient } from "../utils/testQueryClient";
 
 const codexQuotaFooterProps = vi.hoisted(() => vi.fn());
 
-vi.mock("@/components/providers/ProviderActions", () => ({
-  ProviderActions: (props: {
+vi.mock("@/components/providers/ProviderCardActions", () => ({
+  ProviderCardActions: (props: {
     onDuplicate?: () => void;
     onConfigureUsage?: () => void;
   }) => (
@@ -110,8 +110,7 @@ function renderCard(
         provider={provider}
         appId="codex"
         isCurrent={options.isCurrent ?? false}
-        isProxyRunning={false}
-        onSwitch={vi.fn()}
+        presentation={{ chips: [], buttons: [] }}
         onEdit={options.onEdit ?? vi.fn()}
         onDelete={vi.fn()}
         onConfigureUsage={options.onConfigureUsage ?? vi.fn()}
@@ -226,8 +225,7 @@ describe("ProviderCard Codex Official account identity", () => {
           provider={managedProvider(`OpenAI Official (${login})`)}
           appId="codex"
           isCurrent={false}
-          isProxyRunning={false}
-          onSwitch={vi.fn()}
+          presentation={{ chips: [], buttons: [] }}
           onEdit={vi.fn()}
           onDelete={vi.fn()}
           onConfigureUsage={vi.fn()}

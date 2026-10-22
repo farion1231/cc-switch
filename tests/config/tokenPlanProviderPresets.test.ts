@@ -400,6 +400,7 @@ describe("Tencent Token Plan provider presets", () => {
         "https://tokenhub.tencentmaas.cn/v1",
       ],
     });
+    expect(extractCodexModelName(preset?.config)).toBe("hy3");
   });
 
   it("keeps domestic and intl endpoints isolated from each other", () => {

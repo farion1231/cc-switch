@@ -7,10 +7,11 @@
 //! list's title lookup need the same resolution, so it lives here once.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use toml_edit::DocumentMut;
 
-use crate::config::get_home_dir;
+use crate::config::{get_home_dir, is_wsl_path};
 
 /// Filename of Codex's per-thread state database. Codex bumps the version
 /// number across releases; update this single source of truth when a new state
@@ -35,6 +36,27 @@ pub(crate) fn codex_state_db_paths(config_dir: &Path, config_text: &str) -> Vec<
         push_unique_path(&mut paths, sqlite_home.join(CODEX_STATE_DB_FILENAME));
     }
     paths
+}
+
+/// Whether CC Switch can open this state DB with SQLite locking intact.
+///
+/// Windows reaches a WSL distro's files through the `\\wsl$` /
+/// `\\wsl.localhost` 9P redirector, which has no byte-range locks: every open
+/// waits out the busy timeout and then fails with "database is locked". Such
+/// DBs are skipped (migration counts zero rows, titles fall back to the
+/// session index) instead of blocking each startup and session scan.
+pub(crate) fn codex_state_db_is_lockable(path: &Path) -> bool {
+    if !is_wsl_path(path) {
+        return true;
+    }
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if !WARNED.swap(true, Ordering::Relaxed) {
+        log::warn!(
+            "Skipping Codex state DB on a WSL path (Windows cannot lock it): {}",
+            path.display()
+        );
+    }
+    false
 }
 
 fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
@@ -96,5 +118,19 @@ mod tests {
                 sqlite_home.join(CODEX_STATE_DB_FILENAME),
             ]
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn state_db_on_wsl_share_is_not_lockable() {
+        assert!(!codex_state_db_is_lockable(Path::new(
+            r"\\wsl.localhost\Ubuntu\home\user\.codex\state_5.sqlite"
+        )));
+        assert!(!codex_state_db_is_lockable(Path::new(
+            r"\\wsl$\Ubuntu\home\user\.codex\state_5.sqlite"
+        )));
+        assert!(codex_state_db_is_lockable(Path::new(
+            r"C:\Users\user\.codex\state_5.sqlite"
+        )));
     }
 }
