@@ -4769,5 +4769,27 @@
       "refresh": "Kotayı yenile",
       "refreshAria": "{{login}} için kotayı yenileyin"
     }
+  },
+  "kimi": {
+    "modelSelectionHint": "Etkinleştirdikten sonra Kimi Code içinde /model ile varsayılan modeli seçin.",
+    "providerType": "Sağlayıcı türü",
+    "baseUrl": "İstek adresi",
+    "models": "Modeller",
+    "addModel": "Model ekle",
+    "removeModel": "Modeli kaldır",
+    "modelId": "Model kimliği",
+    "contextSize": "Bağlam uzunluğu",
+    "deleteSessionHint": "Dizin ve geçmişin birlikte güncellenmesi için oturumu Kimi Code içinden silin.",
+    "empty": {
+      "title": "Kimi Code sağlayıcısı ekleyin",
+      "description": "Adres, API anahtarı ve modelleri yapılandırın. Mevcut Kimi yapılandırması otomatik olarak içe aktarılır."
+    },
+    "capabilities": {
+      "image_in": "Görsel girişi",
+      "thinking": "Düşünme",
+      "always_thinking": "Her zaman düşünme",
+      "tool_use": "Araç kullanımı",
+      "dynamically_loaded_tools": "Araçları gerektiğinde yükle"
+    }
   }
 }

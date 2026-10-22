@@ -4909,5 +4909,27 @@
       "switched": "Switched. New agy sessions will use this account.",
       "switchedWhileRunning": "Switched. agy is running: open agy sessions keep using the previous account and may write it back. Quit agy and open it again."
     }
+  },
+  "kimi": {
+    "modelSelectionHint": "After enabling a provider, select the default model with /model in Kimi Code.",
+    "providerType": "Provider type",
+    "baseUrl": "Base URL",
+    "models": "Models",
+    "addModel": "Add model",
+    "removeModel": "Remove model",
+    "modelId": "Model ID",
+    "contextSize": "Context size",
+    "capabilities": {
+      "image_in": "Image input",
+      "thinking": "Thinking",
+      "always_thinking": "Always thinking",
+      "tool_use": "Tool use",
+      "dynamically_loaded_tools": "Load tools on demand"
+    },
+    "empty": {
+      "title": "Add a Kimi Code provider",
+      "description": "Configure an endpoint, API key and models. Existing Kimi configuration is imported automatically."
+    },
+    "deleteSessionHint": "Delete this session in Kimi Code to update its index and history together."
   }
 }

@@ -4909,5 +4909,27 @@
       "switched": "切り替えました。新しく起動する agy はこのアカウントを使います。",
       "switchedWhileRunning": "切り替えました。agy が実行中です。開いている agy は元のアカウントのままで、元のアカウントを書き戻す可能性があります。agy を終了してから開き直してください。"
     }
+  },
+  "kimi": {
+    "modelSelectionHint": "有効にした後、Kimi Code の /model で既定のモデルを選択します。",
+    "providerType": "プロバイダーの種類",
+    "baseUrl": "リクエスト URL",
+    "models": "モデル",
+    "addModel": "モデルを追加",
+    "removeModel": "モデルを削除",
+    "modelId": "モデル ID",
+    "contextSize": "コンテキスト長",
+    "deleteSessionHint": "インデックスと履歴を同期するため、Kimi Code 内でセッションを削除してください。",
+    "empty": {
+      "title": "Kimi Code プロバイダーを追加",
+      "description": "URL、API キー、モデルを設定します。既存の Kimi 設定は自動的にインポートされます。"
+    },
+    "capabilities": {
+      "image_in": "画像入力",
+      "thinking": "思考",
+      "always_thinking": "常に思考",
+      "tool_use": "ツール呼び出し",
+      "dynamically_loaded_tools": "必要に応じてツールを読み込む"
+    }
   }
 }

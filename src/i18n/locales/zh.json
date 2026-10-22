@@ -4909,5 +4909,27 @@
       "switched": "已切换，新开的 agy 会使用这个账号。",
       "switchedWhileRunning": "已切换。检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，请退出后重新打开。"
     }
+  },
+  "kimi": {
+    "modelSelectionHint": "启用后，在 Kimi Code 中使用 /model 选择默认模型。",
+    "providerType": "供应商类型",
+    "baseUrl": "请求地址",
+    "models": "模型",
+    "addModel": "添加模型",
+    "removeModel": "移除模型",
+    "modelId": "模型 ID",
+    "contextSize": "上下文长度",
+    "capabilities": {
+      "image_in": "图片输入",
+      "thinking": "思考",
+      "always_thinking": "始终思考",
+      "tool_use": "工具调用",
+      "dynamically_loaded_tools": "按需加载工具"
+    },
+    "empty": {
+      "title": "添加 Kimi Code 供应商",
+      "description": "配置请求地址、API Key 和模型；已有 Kimi 配置会自动导入。"
+    },
+    "deleteSessionHint": "请在 Kimi Code 中删除，以同时更新会话索引和历史记录。"
   }
 }
