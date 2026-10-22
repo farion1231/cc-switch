@@ -1,8 +1,13 @@
 import { useState } from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { TagInput } from "@/components/ui/tag-input";
+import {
+  discardUnsavedChanges,
+  hasUnsavedChanges,
+  useUnsavedChangesTracker,
+} from "@/lib/unsavedChanges";
 
 function TagInputHarness({
   initialTags = ["web", "docs"],
@@ -25,7 +30,23 @@ function TagInputHarness({
   );
 }
 
+function TrackedTagInputHarness({
+  initialTags = ["alpha", "beta"],
+}: {
+  initialTags?: string[];
+}) {
+  const [tags, setTags] = useState(initialTags);
+  return (
+    <div {...useUnsavedChangesTracker()}>
+      <TagInput value={tags} onChange={setTags} />
+    </div>
+  );
+}
+
 describe("TagInput", () => {
+  afterEach(() => {
+    discardUnsavedChanges();
+  });
   it("renders initial tags as chips", () => {
     render(<TagInputHarness initialTags={["search", "ai"]} />);
     expect(screen.getByText("search")).toBeInTheDocument();
@@ -164,5 +185,42 @@ describe("TagInput", () => {
     expect(
       screen.getByPlaceholderText(/tagInput\.placeholder|Add tag\.\.\./),
     ).toBeInTheDocument();
+  });
+
+  it("marks unsaved changes when clicking the remove button", async () => {
+    render(<TrackedTagInputHarness initialTags={["alpha", "beta"]} />);
+    expect(hasUnsavedChanges()).toBe(false);
+
+    const removeBtn = screen.getByLabelText("Remove tag alpha");
+    await userEvent.click(removeBtn);
+
+    expect(hasUnsavedChanges()).toBe(true);
+    expect(screen.queryByText("alpha")).not.toBeInTheDocument();
+  });
+
+  it("marks unsaved changes when deleting a tag via Backspace", () => {
+    render(<TrackedTagInputHarness initialTags={["alpha", "beta"]} />);
+    expect(hasUnsavedChanges()).toBe(false);
+
+    const input = screen.getByRole("textbox");
+    // First Backspace marks "beta" for deletion
+    fireEvent.keyDown(input, { key: "Backspace" });
+    expect(hasUnsavedChanges()).toBe(false);
+
+    // Second Backspace confirms deletion of "beta"
+    fireEvent.keyDown(input, { key: "Backspace" });
+    expect(hasUnsavedChanges()).toBe(true);
+    expect(screen.queryByText("beta")).not.toBeInTheDocument();
+  });
+
+  it("marks unsaved changes when adding a tag", async () => {
+    render(<TrackedTagInputHarness initialTags={["alpha"]} />);
+    expect(hasUnsavedChanges()).toBe(false);
+
+    const input = screen.getByRole("textbox");
+    await userEvent.type(input, "gamma{enter}");
+
+    expect(hasUnsavedChanges()).toBe(true);
+    expect(screen.getByText("gamma")).toBeInTheDocument();
   });
 });

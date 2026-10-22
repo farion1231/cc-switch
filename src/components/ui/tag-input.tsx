@@ -82,6 +82,7 @@ function SortableTagChip({
         <button
           type="button"
           tabIndex={-1}
+          data-unsaved-dirty="true"
           onClick={(event) => {
             event.stopPropagation();
             onRemove(tag);
@@ -134,6 +135,19 @@ export function TagInput({
 
   const trimmedInput = inputValue.trim();
 
+  // 派发原生冒泡事件，使上层 UnsavedChangesScope 能感知到点击 ×、拖拽、Backspace 等修改
+  const notifyChange = useCallback(
+    (newTags: string[]) => {
+      onChange?.(newTags);
+      const target = containerRef.current ?? inputRef.current;
+      if (target) {
+        target.dispatchEvent(new Event("input", { bubbles: true }));
+        target.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    },
+    [onChange],
+  );
+
   // 过滤建议列表：匹配当前输入（若输入为空且聚焦时展示全部候选项），且排除已选择项
   const matchingSuggestions = suggestions.filter((s) => {
     if (value.includes(s)) return false;
@@ -151,21 +165,21 @@ export function TagInput({
         setPendingDeleteIndex(-1);
         return;
       }
-      onChange?.([...value, clean]);
+      notifyChange([...value, clean]);
       setInputValue("");
       setIsOpen(false);
       setHighlightedIndex(-1);
       setPendingDeleteIndex(-1);
     },
-    [maxTags, onChange, value],
+    [maxTags, notifyChange, value],
   );
 
   const removeTag = useCallback(
     (tagToRemove: string) => {
       setPendingDeleteIndex(-1);
-      onChange?.(value.filter((t) => t !== tagToRemove));
+      notifyChange(value.filter((t) => t !== tagToRemove));
     },
-    [onChange, value],
+    [notifyChange, value],
   );
 
   const handleDragEnd = useCallback(
@@ -176,11 +190,11 @@ export function TagInput({
         const oldIndex = value.indexOf(String(active.id));
         const newIndex = value.indexOf(String(over.id));
         if (oldIndex !== -1 && newIndex !== -1) {
-          onChange?.(arrayMove(value, oldIndex, newIndex));
+          notifyChange(arrayMove(value, oldIndex, newIndex));
         }
       }
     },
-    [onChange, value],
+    [notifyChange, value],
   );
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {

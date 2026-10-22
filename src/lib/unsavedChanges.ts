@@ -27,6 +27,7 @@ const EDIT_CONTROL_SELECTOR = [
   '[role="menuitemcheckbox"]',
   '[role="menuitemradio"]',
   "[aria-pressed]",
+  "[data-unsaved-dirty]",
 ].join(",");
 
 /**
