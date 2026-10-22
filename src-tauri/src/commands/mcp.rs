@@ -140,9 +140,8 @@ pub async fn delete_mcp_server_in_config(
     McpService::delete_server(&state, &id).map_err(|e| e.to_string())
 }
 
-/// 设置启用状态并同步到客户端配置
+/// 设置启用状态并同步到客户端配置（兼容层命令，同 `toggle_mcp_app`）
 #[tauri::command]
-#[allow(deprecated)] // 兼容层命令，内部调用已废弃的 Service 方法
 pub async fn set_mcp_enabled(
     state: State<'_, AppState>,
     app: String,
@@ -150,7 +149,10 @@ pub async fn set_mcp_enabled(
     enabled: bool,
 ) -> Result<bool, String> {
     let app_ty = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    McpService::set_enabled(&state, app_ty, &id, enabled).map_err(|e| e.to_string())
+    McpService::toggle_app_locked(&state, &id, app_ty, enabled)
+        .await
+        .map(|_| true)
+        .map_err(|e| e.to_string())
 }
 
 // ============================================================================
@@ -191,11 +193,31 @@ pub async fn toggle_mcp_app(
     enabled: bool,
 ) -> Result<(), String> {
     let app_ty = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    McpService::toggle_app(&state, &server_id, app_ty, enabled).map_err(|e| e.to_string())
+    McpService::toggle_app_locked(&state, &server_id, app_ty, enabled)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 从所有应用导入 MCP 服务器（复用已有的导入逻辑）
 #[tauri::command]
 pub async fn import_mcp_from_apps(state: State<'_, AppState>) -> Result<usize, String> {
     McpService::import_from_all_apps(&state).map_err(|e| e.to_string())
+}
+
+/// 按数据库里的开关把 MCP 重新写进各应用的 live 配置，逐应用返回结果。
+///
+/// `apps` 缺省或为空时同步全部受管应用。每个应用先拿它的切换锁再写，
+/// 和切换供应商互斥；单个应用失败（如配置文件解析失败）不影响其余应用。
+#[tauri::command]
+pub async fn resync_mcp_to_apps(
+    state: State<'_, AppState>,
+    apps: Option<Vec<String>>,
+) -> Result<Vec<crate::services::mcp::McpAppSyncOutcome>, String> {
+    let targets = McpService::resync_targets(apps.as_deref()).map_err(|e| e.to_string())?;
+    let mut outcomes = Vec::with_capacity(targets.len());
+    for app in targets {
+        let _guard = state.proxy_service.lock_switch_for_app(app.as_str()).await;
+        outcomes.push(McpService::resync_app(&state, &app));
+    }
+    Ok(outcomes)
 }

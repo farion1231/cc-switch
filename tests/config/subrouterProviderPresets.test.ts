@@ -86,7 +86,7 @@ describe("SubRouter provider presets", () => {
     expect(model).toMatchObject({
       id: "gpt-5.6-sol",
       name: "GPT-5.6 Sol",
-      contextWindow: 400000,
+      contextWindow: 272000,
     });
     expect(model).not.toHaveProperty("cost");
     expect(preset?.suggestedDefaults?.model).toEqual({

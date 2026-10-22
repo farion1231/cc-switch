@@ -16,6 +16,47 @@ use support::{
 };
 
 #[test]
+fn deleting_other_app_mcp_preserves_matching_unmanaged_disabled_agy_entry() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let path = ensure_test_home().join(".gemini/config/mcp_config.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let original = r#"{"mcpServers":{"shared":{"command":"echo","args":["fixture"],"disabled":true,"timeout":12345,"description":"user-owned"}}}"#;
+    fs::write(&path, original).unwrap();
+    let server: McpServer = serde_json::from_value(json!({
+        "id":"shared", "name":"Shared", "server":{"command":"echo","args":["fixture"]},
+        "apps":{"claude":true}
+    }))
+    .unwrap();
+    state.db.save_mcp_server(&server).unwrap();
+    assert!(McpService::delete_server(&state, "shared").unwrap());
+    assert!(!state
+        .db
+        .get_all_mcp_servers()
+        .unwrap()
+        .contains_key("shared"));
+    assert_eq!(fs::read_to_string(&path).unwrap(), original);
+}
+
+#[test]
+fn deleting_enabled_agy_mcp_removes_its_native_entry() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let server: McpServer = serde_json::from_value(json!({
+        "id":"managed", "name":"Managed", "server":{"command":"echo"}, "apps":{"agy":true}
+    }))
+    .unwrap();
+    McpService::upsert_server(&state, server).unwrap();
+    assert!(McpService::delete_server(&state, "managed").unwrap());
+    let path = ensure_test_home().join(".gemini/config/mcp_config.json");
+    let native: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    assert!(native["mcpServers"].get("managed").is_none());
+}
+
+#[test]
 fn mcode_import_ignores_native_metadata_and_continues_after_conflicts() {
     let _guard = test_mutex().lock().unwrap();
     reset_test_fs();
@@ -151,8 +192,138 @@ fn mcode_automatic_sync_preserves_unmanaged_same_name_servers() {
 }
 
 #[test]
+fn pi_toggle_writes_its_mcp_json_and_keeps_pi_fields() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let path = ensure_test_home().join(".pi/agent/mcp.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        json!({"mcpServers":{"docs":{"command":"old","exposure":"direct","timeout":30}}})
+            .to_string(),
+    )
+    .unwrap();
+    let read = || -> serde_json::Value {
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap()
+    };
+    let server: McpServer = serde_json::from_value(json!({
+        "id":"docs", "name":"Docs", "server":{"type":"stdio","command":"node","args":["s.js"]}, "apps":{}
+    }))
+    .unwrap();
+    state.db.save_mcp_server(&server).unwrap();
+
+    McpService::toggle_app(&state, "docs", AppType::Pi, true).unwrap();
+    let docs = &read()["mcpServers"]["docs"];
+    assert_eq!(docs["command"], "node");
+    assert_eq!(docs["args"], json!(["s.js"]));
+    assert_eq!(docs["exposure"], "direct");
+    assert_eq!(docs["timeout"], 30);
+    assert!(state.db.get_all_mcp_servers().unwrap()["docs"].apps.pi);
+
+    // 取消勾选只在 Pi 里禁用，保留条目和 Pi 自己的设置
+    McpService::toggle_app(&state, "docs", AppType::Pi, false).unwrap();
+    let disabled = &read()["mcpServers"]["docs"];
+    assert_eq!(disabled["enabled"], false);
+    assert_eq!(disabled["exposure"], "direct");
+    assert!(!state.db.get_all_mcp_servers().unwrap()["docs"].apps.pi);
+
+    // 在 CC Switch 里删除服务器才删掉条目
+    McpService::delete_server(&state, "docs").unwrap();
+    assert!(read()["mcpServers"].get("docs").is_none());
+
+    // Pi 不支持 SSE：拒绝写入，数据库也不勾选
+    let sse: McpServer = serde_json::from_value(json!({
+        "id":"remote", "name":"Remote", "server":{"type":"sse","url":"https://example.com/sse"}, "apps":{}
+    }))
+    .unwrap();
+    state.db.save_mcp_server(&sse).unwrap();
+    assert!(McpService::toggle_app(&state, "remote", AppType::Pi, true).is_err());
+    assert!(!state.db.get_all_mcp_servers().unwrap()["remote"].apps.pi);
+    assert!(read()["mcpServers"].get("remote").is_none());
+}
+
+/// 审查 #7862：导入 → 取消勾选 → 重新勾选（含批量禁用后撤销：前端逐个 toggle）
+/// 不能丢掉 timeout、toolExposure、oauth 等 Pi 自己的设置
+#[test]
+fn pi_disable_then_enable_round_trip_keeps_pi_settings() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let path = ensure_test_home().join(".pi/agent/mcp.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let pi_settings = json!({
+        "timeout": 30000,
+        "exposure": "direct",
+        "toolExposure": {"delete_*": "hidden"},
+        "oauth": {"clientName": "custom-client"}
+    });
+    let mut servers = serde_json::Map::new();
+    for id in ["a", "b"] {
+        let mut entry = pi_settings.clone();
+        entry["command"] = json!("node");
+        entry["args"] = json!([format!("{id}.js")]);
+        servers.insert(id.into(), entry);
+    }
+    fs::write(&path, json!({"mcpServers": servers}).to_string()).unwrap();
+    McpService::import_from_all_apps(&state).unwrap();
+    let read = || -> serde_json::Value {
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap()
+    };
+
+    for id in ["a", "b"] {
+        McpService::toggle_app(&state, id, AppType::Pi, false).unwrap();
+    }
+    for id in ["a", "b"] {
+        McpService::toggle_app(&state, id, AppType::Pi, true).unwrap();
+    }
+    let written = read();
+    for id in ["a", "b"] {
+        let entry = &written["mcpServers"][id];
+        assert_eq!(entry["enabled"], true, "{id}");
+        assert_eq!(entry["args"], json!([format!("{id}.js")]), "{id}");
+        for field in ["timeout", "exposure", "toolExposure", "oauth"] {
+            assert_eq!(entry[field], pi_settings[field], "{id}.{field}");
+        }
+    }
+
+    // 条目在 Pi 里被删掉后再勾选：从导入时保存的 Pi 字段重建
+    fs::write(&path, json!({"mcpServers": {}}).to_string()).unwrap();
+    McpService::toggle_app(&state, "a", AppType::Pi, false).unwrap();
+    McpService::toggle_app(&state, "a", AppType::Pi, true).unwrap();
+    let rebuilt = &read()["mcpServers"]["a"];
+    for field in ["timeout", "exposure", "toolExposure", "oauth"] {
+        assert_eq!(rebuilt[field], pi_settings[field], "a.{field}");
+    }
+}
+
+#[test]
+fn pi_import_keeps_disabled_entries_unchecked() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let path = ensure_test_home().join(".pi/agent/mcp.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        json!({"mcpServers":{
+            "on":{"url":"https://example.com/mcp"},
+            "off":{"command":"node","enabled":false,"exposure":"deferred"}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    McpService::import_from_all_apps(&state).unwrap();
+    let servers = state.db.get_all_mcp_servers().unwrap();
+    assert!(servers["on"].apps.pi);
+    assert_eq!(servers["on"].server["type"], "http");
+    assert!(!servers["off"].apps.pi);
+    assert_eq!(servers["off"].server["exposure"], "deferred");
+}
+
+#[test]
 fn import_default_config_claude_persists_provider() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -205,7 +376,7 @@ fn import_default_config_claude_persists_provider() {
 
 #[test]
 fn import_default_config_grokbuild_seeds_official_alongside_default() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -262,7 +433,7 @@ context_window = 500000
 
 #[test]
 fn import_default_config_grokbuild_official_live_imports_official_as_current() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -309,7 +480,7 @@ fn import_default_config_grokbuild_official_live_imports_official_as_current() {
 
 #[test]
 fn startup_import_grokbuild_official_live_does_not_resurrect_official() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -342,7 +513,7 @@ fn startup_import_grokbuild_official_live_does_not_resurrect_official() {
 
 #[test]
 fn import_default_config_grokbuild_broken_custom_live_still_errors() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -386,7 +557,7 @@ fn import_default_config_grokbuild_broken_custom_live_still_errors() {
 fn import_default_config_without_live_file_returns_error() {
     use support::create_test_state;
 
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -420,7 +591,7 @@ fn import_default_config_without_live_file_returns_error() {
 
 #[test]
 fn import_mcp_from_claude_creates_config_and_enables_servers() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -467,7 +638,7 @@ fn import_mcp_from_claude_creates_config_and_enables_servers() {
 
 #[test]
 fn import_mcp_from_codex_does_not_rewrite_codex_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -499,8 +670,51 @@ command = "echo"
 }
 
 #[test]
+fn import_mcp_from_codex_infers_http_from_url_without_type() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    // Codex 的 [mcp_servers.*] 没有 `type`：HTTP server 只带 `url`。
+    fs::write(
+        codex_dir.join("config.toml"),
+        "[mcp_servers.remote]\nurl = \"https://mcp.example.com/mcp\"\n\n\
+         [mcp_servers.remote.http_headers]\nAuthorization = \"Bearer x\"\n",
+    )
+    .expect("seed codex config");
+
+    let state = create_test_state().expect("create test state");
+    let changed = McpService::import_from_codex(&state).expect("import from codex");
+    assert!(changed > 0, "should import the url-only server");
+
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
+    let entry = servers.get("remote").expect("url-only server imported");
+    assert_eq!(
+        entry.server.get("type").and_then(|v| v.as_str()),
+        Some("http"),
+        "url-only Codex server must import as http, not stdio"
+    );
+    assert_eq!(
+        entry.server.get("url").and_then(|v| v.as_str()),
+        Some("https://mcp.example.com/mcp"),
+        "url must be preserved"
+    );
+    assert_eq!(
+        entry
+            .server
+            .get("headers")
+            .and_then(|v| v.get("Authorization"))
+            .and_then(|v| v.as_str()),
+        Some("Bearer x"),
+        "http_headers must map to headers"
+    );
+}
+
+#[test]
 fn import_mcp_from_claude_does_not_sync_existing_codex_enabled_server() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -538,6 +752,7 @@ command = "echo"
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: true,
                 gemini: false,
@@ -545,6 +760,8 @@ command = "echo"
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -575,7 +792,7 @@ command = "echo"
 fn import_mcp_from_claude_invalid_json_preserves_state() {
     use support::create_test_state;
 
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -610,7 +827,7 @@ fn import_mcp_from_claude_invalid_json_preserves_state() {
 fn import_from_all_apps_reports_broken_app_but_imports_the_rest() {
     use support::create_test_state;
 
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -655,7 +872,7 @@ fn import_from_all_apps_reports_broken_app_but_imports_the_rest() {
 
 #[test]
 fn set_mcp_enabled_for_codex_writes_live_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -684,6 +901,7 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: false, // 初始未启用
                 gemini: false,
@@ -691,6 +909,8 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -728,7 +948,7 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
 fn enabling_codex_mcp_skips_when_codex_dir_missing() {
     use support::create_test_state;
 
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -751,6 +971,7 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: false,
                 gemini: false,
@@ -758,6 +979,8 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -779,7 +1002,7 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
 
 #[test]
 fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -798,6 +1021,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: true,
                 codex: false,
                 gemini: false,
@@ -805,6 +1029,8 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -834,6 +1060,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: false,
                 gemini: false,
@@ -841,6 +1068,8 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -859,8 +1088,55 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
 }
 
 #[test]
+fn projecting_an_app_continues_past_a_server_that_cannot_be_written() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+    fs::create_dir_all(home.join(".claude")).expect("create ~/.claude dir");
+    let mcp_path = get_claude_mcp_path();
+    fs::write(
+        &mcp_path,
+        json!({"mcpServers": {"c-off": {"type": "stdio", "command": "old"}}}).to_string(),
+    )
+    .expect("seed ~/.claude.json");
+
+    let state = support::create_test_state().expect("create test state");
+    // 直接入库，绕过面板校验：规范不是对象的行可能来自云同步或旧数据。
+    for (id, server, claude) in [
+        ("a-broken", json!("not an object"), true),
+        ("b-good", json!({"type": "stdio", "command": "echo"}), true),
+        ("c-off", json!({"type": "stdio", "command": "old"}), false),
+    ] {
+        let server: McpServer = serde_json::from_value(json!({
+            "id": id, "name": id, "server": server, "apps": {"claude": claude}
+        }))
+        .expect("build server");
+        state.db.save_mcp_server(&server).expect("save server");
+    }
+
+    let err = McpService::sync_enabled_for_app(&state, &AppType::Claude)
+        .expect_err("the broken server must still be reported");
+    assert!(
+        err.to_string().contains("a-broken"),
+        "error should name the failed server: {err}"
+    );
+
+    let text = fs::read_to_string(&mcp_path).expect("read ~/.claude.json");
+    let v: serde_json::Value = serde_json::from_str(&text).expect("parse ~/.claude.json");
+    assert!(
+        v.pointer("/mcpServers/b-good").is_some(),
+        "servers after the failed one must still be written"
+    );
+    assert!(
+        v.pointer("/mcpServers/c-off").is_none(),
+        "disabled servers after the failed one must still be removed"
+    );
+    assert!(v.pointer("/mcpServers/a-broken").is_none());
+}
+
+#[test]
 fn import_mcp_from_multiple_apps_merges_enabled_flags() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -905,7 +1181,7 @@ command = "echo"
 
 #[test]
 fn import_mcp_from_gemini_sse_url_only_is_valid() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -946,7 +1222,7 @@ fn import_mcp_from_gemini_sse_url_only_is_valid() {
 fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
     use support::create_test_state;
 
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -969,6 +1245,7 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
                 "url": "https://example.com/sse"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: false,
                 gemini: false,
@@ -976,6 +1253,8 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -999,7 +1278,7 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
 fn enabling_claude_mcp_skips_when_claude_config_absent() {
     use support::create_test_state;
 
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
 
@@ -1026,6 +1305,7 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: false,
                 gemini: false,
@@ -1033,6 +1313,8 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -1054,7 +1336,7 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
 
 #[test]
 fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
     let claude_dir = home.join(".claude");
@@ -1083,6 +1365,7 @@ fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: true,
                 codex: false,
                 gemini: false,
@@ -1090,6 +1373,8 @@ fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -1111,7 +1396,7 @@ fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
 
 #[test]
 fn custom_claude_dir_writes_mcp_inside_config_dir() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
     let custom_dir = home.join("profiles").join(".claude");
@@ -1141,6 +1426,7 @@ fn custom_claude_dir_writes_mcp_inside_config_dir() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: true,
                 codex: false,
                 gemini: false,
@@ -1148,6 +1434,8 @@ fn custom_claude_dir_writes_mcp_inside_config_dir() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -1169,7 +1457,7 @@ fn custom_claude_dir_writes_mcp_inside_config_dir() {
 
 #[test]
 fn custom_claude_dir_sync_does_not_copy_default_profile() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
     let home_mcp_path = home.join(".claude.json");
@@ -1222,6 +1510,7 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
                 "command": "custom-command"
             }),
             apps: McpApps {
+                agy: false,
                 claude: true,
                 codex: false,
                 gemini: false,
@@ -1229,6 +1518,8 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -1273,7 +1564,7 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
 
 #[test]
 fn custom_claude_dir_read_only_mcp_queries_do_not_create_profile() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
     let home_mcp_path = home.join(".claude.json");
@@ -1328,7 +1619,7 @@ fn custom_claude_dir_read_only_mcp_queries_do_not_create_profile() {
 
 #[test]
 fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() {
-    let _guard = test_mutex().lock().expect("acquire test mutex");
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
 
@@ -1363,6 +1654,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: false,
                 gemini: false,
@@ -1370,6 +1662,8 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -1387,6 +1681,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 "command": "managed"
             }),
             apps: McpApps {
+                agy: false,
                 claude: true,
                 codex: false,
                 gemini: false,
@@ -1394,6 +1689,8 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
+                pi: false,
             },
             description: None,
             homepage: None,
@@ -1423,4 +1720,122 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
         servers.contains_key("external-only"),
         "live entries unknown to DB should be preserved"
     );
+}
+
+#[test]
+fn resync_targets_default_to_managed_apps_and_reject_unsupported() {
+    let all = McpService::resync_targets(None).expect("default targets");
+    assert_eq!(
+        all.iter().map(|app| app.as_str()).collect::<Vec<_>>(),
+        vec![
+            "claude",
+            "codex",
+            "gemini",
+            "grokbuild",
+            "opencode",
+            "hermes",
+            "pi",
+            "mcode",
+            "kimi",
+            "agy"
+        ]
+    );
+    assert_eq!(McpService::resync_targets(Some(&[])).unwrap(), all);
+
+    let only_codex =
+        McpService::resync_targets(Some(&["codex".to_string(), "codex".to_string()])).unwrap();
+    assert_eq!(only_codex, vec![AppType::Codex]);
+
+    assert_eq!(
+        McpService::resync_targets(Some(&["pi".to_string()])).unwrap(),
+        vec![AppType::Pi]
+    );
+    assert!(McpService::resync_targets(Some(&["openclaw".to_string()])).is_err());
+    assert!(McpService::resync_targets(Some(&["not-an-app".to_string()])).is_err());
+}
+
+/// 「重新同步到各应用」逐应用报告：Codex 配置坏了只让 Codex 失败、文件不动，
+/// Claude 照常按数据库里的开关写入。
+#[test]
+fn resync_app_reports_each_app_and_leaves_broken_config_untouched() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    fs::write(get_claude_mcp_path(), "{}").expect("seed ~/.claude.json");
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    let broken = "not = = valid toml";
+    fs::write(codex_dir.join("config.toml"), broken).expect("seed broken codex config");
+
+    let state = create_test_state().expect("create test state");
+    let server: McpServer = serde_json::from_value(json!({
+        "id": "fetch", "name": "fetch",
+        "server": {"type": "stdio", "command": "uvx", "args": ["mcp-server-fetch"]},
+        "apps": {"claude": true, "codex": true}
+    }))
+    .unwrap();
+    state.db.save_mcp_server(&server).unwrap();
+
+    let claude = McpService::resync_app(&state, &AppType::Claude);
+    assert!(claude.ok, "claude should sync: {claude:?}");
+    assert_eq!(claude.app, "claude");
+    assert!(claude.error.is_none());
+    let claude_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(get_claude_mcp_path()).unwrap()).unwrap();
+    assert_eq!(claude_json["mcpServers"]["fetch"]["command"], "uvx");
+
+    let codex = McpService::resync_app(&state, &AppType::Codex);
+    assert!(!codex.ok);
+    assert_eq!(codex.app, "codex");
+    assert!(codex.error.as_deref().is_some_and(|e| !e.is_empty()));
+    assert_eq!(
+        fs::read_to_string(codex_dir.join("config.toml")).unwrap(),
+        broken,
+        "a config that failed to parse must not be rewritten"
+    );
+
+    let serialized = serde_json::to_value(&claude).unwrap();
+    assert_eq!(serialized, json!({"app": "claude", "ok": true}));
+}
+
+#[test]
+fn concurrent_toggles_keep_every_server_in_live_config() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    fs::create_dir_all(ensure_test_home().join(".claude")).unwrap();
+    let state = create_test_state().unwrap();
+
+    // 批量勾选会连发多个 toggle：每次都是读 ~/.claude.json → 改 → 写回，不串行就会互相覆盖
+    let ids: Vec<String> = (0..16).map(|i| format!("server-{i:02}")).collect();
+    for id in &ids {
+        let server: McpServer = serde_json::from_value(json!({
+            "id": id, "name": id, "server": {"type": "stdio", "command": "node"}, "apps": {}
+        }))
+        .unwrap();
+        state.db.save_mcp_server(&server).unwrap();
+    }
+
+    let barrier = std::sync::Barrier::new(ids.len());
+    std::thread::scope(|scope| {
+        for id in &ids {
+            let (state, barrier) = (&state, &barrier);
+            scope.spawn(move || {
+                barrier.wait();
+                futures::executor::block_on(McpService::toggle_app_locked(
+                    state,
+                    id,
+                    AppType::Claude,
+                    true,
+                ))
+                .unwrap();
+            });
+        }
+    });
+
+    let live: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(get_claude_mcp_path()).unwrap()).unwrap();
+    let written = live["mcpServers"].as_object().expect("mcpServers object");
+    let missing: Vec<&String> = ids.iter().filter(|id| !written.contains_key(*id)).collect();
+    assert!(missing.is_empty(), "lost concurrent toggles: {missing:?}");
 }

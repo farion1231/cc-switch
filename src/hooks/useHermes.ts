@@ -6,9 +6,10 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { hermesApi } from "@/lib/api/hermes";
 import { providersApi } from "@/lib/api/providers";
+import { settingsApi } from "@/lib/api/settings";
 import type { HermesMemoryKind } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
@@ -29,6 +30,7 @@ export const hermesKeys = {
   modelConfig: ["hermes", "modelConfig"] as const,
   memory: (kind: HermesMemoryKind) => ["hermes", "memory", kind] as const,
   memoryLimits: ["hermes", "memoryLimits"] as const,
+  configDir: ["hermes", "configDir"] as const,
 };
 
 /**
@@ -75,6 +77,19 @@ export function useHermesMemoryLimits(enabled: boolean) {
   return useQuery({
     queryKey: hermesKeys.memoryLimits,
     queryFn: () => hermesApi.getMemoryLimits(),
+    staleTime: 60_000,
+    enabled,
+  });
+}
+
+/**
+ * Hermes 的配置目录（设置里可改，也认 HERMES_HOME），记忆页用来显示
+ * memories/MEMORY.md 的真实路径。
+ */
+export function useHermesConfigDir(enabled: boolean) {
+  return useQuery({
+    queryKey: hermesKeys.configDir,
+    queryFn: () => settingsApi.getConfigDir("hermes"),
     staleTime: 60_000,
     enabled,
   });
