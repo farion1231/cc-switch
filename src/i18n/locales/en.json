@@ -4966,5 +4966,34 @@
       "description": "Configure an endpoint, API key and models. Existing Kimi configuration is imported automatically."
     },
     "deleteSessionHint": "Delete this session in Kimi Code to update its index and history together."
+  },
+  "qwen": {
+    "modelSelectionHint": "Use the switch button on a provider card to make it current. To use another model, run /model in Qwen Code.",
+    "authType": "Protocol",
+    "authTypes": {
+      "openai": "OpenAI Chat Completions",
+      "openai-responses": "OpenAI Responses",
+      "anthropic": "Anthropic",
+      "gemini": "Gemini",
+      "vertex-ai": "Vertex AI"
+    },
+    "baseUrl": "Base URL",
+    "baseUrlRequired": "The Anthropic protocol needs a base URL.",
+    "baseUrlInvalid": "The base URL must start with http:// or https://.",
+    "envKey": "Environment variable",
+    "envKeyHint": "This provider reads its key from this environment variable. It is managed in the native Qwen Code configuration and can't be changed here.",
+    "models": "Models",
+    "modelsRequired": "Add at least one model.",
+    "addModel": "Add model",
+    "removeModel": "Remove model",
+    "modelId": "Model ID",
+    "modelName": "Display name",
+    "contextWindowSize": "Context window",
+    "duplicateModelId": "This model ID is already used.",
+    "empty": {
+      "title": "Add a Qwen Code provider",
+      "description": "Configure an endpoint, API key and models. Providers already in settings.json appear here automatically."
+    },
+    "deleteSessionHint": "Delete this session in Qwen Code (qwen sessions) to update its index and archive together."
   }
 }

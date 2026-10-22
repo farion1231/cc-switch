@@ -40,6 +40,7 @@ mod prompt;
 mod prompt_files;
 mod provider;
 mod proxy;
+mod qwen_config;
 mod services;
 mod session_manager;
 mod settings;

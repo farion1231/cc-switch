@@ -4966,5 +4966,34 @@
       "description": "配置请求地址、API Key 和模型；已有 Kimi 配置会自动导入。"
     },
     "deleteSessionHint": "请在 Kimi Code 中删除，以同时更新会话索引和历史记录。"
+  },
+  "qwen": {
+    "modelSelectionHint": "点击供应商卡片的切换按钮选择当前供应商；需要使用其他模型时，在 Qwen Code 中使用 /model。",
+    "authType": "协议",
+    "authTypes": {
+      "openai": "OpenAI Chat Completions",
+      "openai-responses": "OpenAI Responses",
+      "anthropic": "Anthropic",
+      "gemini": "Gemini",
+      "vertex-ai": "Vertex AI"
+    },
+    "baseUrl": "请求地址",
+    "baseUrlRequired": "Anthropic 协议需要填写请求地址。",
+    "baseUrlInvalid": "请求地址需要以 http:// 或 https:// 开头。",
+    "envKey": "环境变量",
+    "envKeyHint": "此供应商的 Key 读取自这个环境变量，由 Qwen Code 原生配置管理，这里不可修改。",
+    "models": "模型",
+    "modelsRequired": "至少添加一个模型。",
+    "addModel": "添加模型",
+    "removeModel": "移除模型",
+    "modelId": "模型 ID",
+    "modelName": "显示名称",
+    "contextWindowSize": "上下文窗口",
+    "duplicateModelId": "模型 ID 重复。",
+    "empty": {
+      "title": "添加 Qwen Code 供应商",
+      "description": "配置请求地址、API Key 和模型；settings.json 中已有的供应商会自动显示在这里。"
+    },
+    "deleteSessionHint": "请在 Qwen Code 中删除（qwen sessions），以同时更新会话索引和归档。"
   }
 }

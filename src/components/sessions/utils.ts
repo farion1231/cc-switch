@@ -17,6 +17,7 @@ export const SESSION_APP_IDS = [
   "openclaw",
   "mcode",
   "kimi",
+  "qwen",
   "agy",
 ] as const satisfies readonly AppId[];
 
@@ -37,6 +38,7 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   pi: ["~/.pi/agent/sessions"],
   mcode: ["~/.minimax"],
   kimi: ["~/.kimi-code/sessions"],
+  qwen: ["~/.qwen/projects"],
   agy: [
     "~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs",
   ],
@@ -45,7 +47,7 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
 /** MiniMax Code 的会话只能在 MiniMax Code 里删（后端也会拒绝）。 */
 export const canDeleteSession = (session: SessionMeta) =>
   Boolean(session.sourcePath) &&
-  !["mcode", "agy", "kimi"].includes(session.providerId);
+  !["mcode", "agy", "kimi", "qwen"].includes(session.providerId);
 
 export interface SessionProjectGroup {
   key: string;

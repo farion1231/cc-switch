@@ -399,94 +399,100 @@ describe("ProviderList Component", () => {
     },
   );
 
-  it("switches Kimi providers and marks only the native default-model owner as in use", () => {
-    const current = createProvider({
-      id: "current",
-      name: "Current",
-      meta: { liveConfigManaged: true },
-    });
-    const other = createProvider({
-      id: "other",
-      name: "Other",
-      meta: { liveConfigManaged: true },
-    });
-    const saved = createProvider({
-      id: "saved",
-      name: "Saved",
-      meta: { liveConfigManaged: false },
-    });
-    const onSwitch = vi.fn();
-    const onRemoveFromConfig = vi.fn();
-    useDragSortMock.mockReturnValue({
-      sortedProviders: [current, other, saved],
-      sensors: [],
-      handleDragEnd: vi.fn(),
-    });
-    const props = {
-      ...baseProps,
-      appId: "kimi" as const,
-      providers: { current, other, saved },
-      onSwitch,
-      onRemoveFromConfig,
-    };
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    const { rerender } = render(
-      <QueryClientProvider client={client}>
-        <ProviderList {...props} currentProviderId="current" />
-      </QueryClientProvider>,
-    );
-    expect(screen.getByTestId("status-current")).toHaveTextContent(
-      "providerCard.status.inUse",
-    );
-    expect(lastProps("current")?.presentation.tone).toBe("direct");
-    expect(lastProps("current")?.isCurrent).toBe(true);
-    expect(screen.queryByTestId("switch-current")).not.toBeInTheDocument();
-    expect(
-      lastProps("current")?.presentation.deleteDisabledReason,
-    ).toBeTruthy();
-    expect(
-      lastProps("current")?.presentation.menuItems[0].disabledReason,
-    ).toBeTruthy();
-    fireEvent.click(screen.getByTestId("switch-other"));
-    expect(onSwitch).toHaveBeenLastCalledWith(other);
-    fireEvent.click(screen.getByTestId("switch-saved"));
-    expect(onSwitch).toHaveBeenLastCalledWith(saved);
-    lastProps("other")?.presentation.menuItems[0].onSelect();
-    expect(onRemoveFromConfig).toHaveBeenCalledWith(other);
-    rerender(
-      <QueryClientProvider client={client}>
-        <ProviderList {...props} currentProviderId="other" />
-      </QueryClientProvider>,
-    );
-    expect(screen.queryByTestId("status-current")).not.toBeInTheDocument();
-    expect(screen.getByTestId("status-other")).toHaveTextContent(
-      "providerCard.status.inUse",
-    );
-    expect(screen.getByTestId("switch-current")).toBeInTheDocument();
-  });
+  it.each(["kimi", "qwen"] as const)(
+    "switches %s providers and marks only the native current-model owner as in use",
+    (appId) => {
+      const current = createProvider({
+        id: "current",
+        name: "Current",
+        meta: { liveConfigManaged: true },
+      });
+      const other = createProvider({
+        id: "other",
+        name: "Other",
+        meta: { liveConfigManaged: true },
+      });
+      const saved = createProvider({
+        id: "saved",
+        name: "Saved",
+        meta: { liveConfigManaged: false },
+      });
+      const onSwitch = vi.fn();
+      const onRemoveFromConfig = vi.fn();
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [current, other, saved],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      const props = {
+        ...baseProps,
+        appId,
+        providers: { current, other, saved },
+        onSwitch,
+        onRemoveFromConfig,
+      };
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const { rerender } = render(
+        <QueryClientProvider client={client}>
+          <ProviderList {...props} currentProviderId="current" />
+        </QueryClientProvider>,
+      );
+      expect(screen.getByTestId("status-current")).toHaveTextContent(
+        "providerCard.status.inUse",
+      );
+      expect(lastProps("current")?.presentation.tone).toBe("direct");
+      expect(lastProps("current")?.isCurrent).toBe(true);
+      expect(screen.queryByTestId("switch-current")).not.toBeInTheDocument();
+      expect(
+        lastProps("current")?.presentation.deleteDisabledReason,
+      ).toBeTruthy();
+      expect(
+        lastProps("current")?.presentation.menuItems[0].disabledReason,
+      ).toBeTruthy();
+      fireEvent.click(screen.getByTestId("switch-other"));
+      expect(onSwitch).toHaveBeenLastCalledWith(other);
+      fireEvent.click(screen.getByTestId("switch-saved"));
+      expect(onSwitch).toHaveBeenLastCalledWith(saved);
+      lastProps("other")?.presentation.menuItems[0].onSelect();
+      expect(onRemoveFromConfig).toHaveBeenCalledWith(other);
+      rerender(
+        <QueryClientProvider client={client}>
+          <ProviderList {...props} currentProviderId="other" />
+        </QueryClientProvider>,
+      );
+      expect(screen.queryByTestId("status-current")).not.toBeInTheDocument();
+      expect(screen.getByTestId("status-other")).toHaveTextContent(
+        "providerCard.status.inUse",
+      );
+      expect(screen.getByTestId("switch-current")).toBeInTheDocument();
+    },
+  );
 
-  it("does not mark any Kimi provider as current when the native selection is missing", () => {
-    const provider = createProvider({
-      id: "live",
-      meta: { liveConfigManaged: true },
-    });
-    useDragSortMock.mockReturnValue({
-      sortedProviders: [provider],
-      sensors: [],
-      handleDragEnd: vi.fn(),
-    });
-    renderWithQueryClient(
-      <ProviderList
-        {...baseProps}
-        appId="kimi"
-        providers={{ live: provider }}
-      />,
-    );
-    expect(screen.queryByTestId("status-live")).not.toBeInTheDocument();
-    expect(screen.getByTestId("switch-live")).toBeInTheDocument();
-  });
+  it.each(["kimi", "qwen"] as const)(
+    "does not mark any %s provider as current when the native selection is missing",
+    (appId) => {
+      const provider = createProvider({
+        id: "live",
+        meta: { liveConfigManaged: true },
+      });
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [provider],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      renderWithQueryClient(
+        <ProviderList
+          {...baseProps}
+          appId={appId}
+          providers={{ live: provider }}
+        />,
+      );
+      expect(screen.queryByTestId("status-live")).not.toBeInTheDocument();
+      expect(screen.getByTestId("switch-live")).toBeInTheDocument();
+    },
+  );
 
   it("marks the native Kimi OAuth card as official without marking API-key presets", () => {
     const official = createProvider({

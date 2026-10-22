@@ -170,9 +170,9 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 11] = [
+const VALID_TOOLS: [&str; 12] = [
     "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
-    "agy",
+    "qwen", "agy",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -628,6 +628,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "pi" => "Pi",
         "mcode" => "MiniMax Code",
         "kimi" => "Kimi Code",
+        "qwen" => "Qwen Code",
         "agy" => "Antigravity CLI",
         _ => "Unknown",
     }
@@ -671,6 +672,14 @@ const KIMI_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://code.kimi.com/kimi-code/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 #[cfg(target_os = "windows")]
 const KIMI_INSTALL_WINDOWS_SCRIPT: &str = "irm https://code.kimi.com/kimi-code/install.ps1 | iex";
+
+// The standalone installer bundles Node and falls back to npm by itself; it puts
+// the `qwen` wrapper in `~/.local/bin` (`QWEN_INSTALL_BIN_DIR`).
+const QWEN_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+#[cfg(target_os = "windows")]
+const QWEN_INSTALL_WINDOWS_SCRIPT: &str =
+    "irm https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.ps1 | iex";
 
 /// Antigravity CLI 官方 installer：把原生二进制放进 `~/.local/bin`，再跑 `agy install`
 /// 把该目录加进 shell 配置。目标处已有 `agy` 时它只提示已安装、exit 0，所以只用于新装；
@@ -731,6 +740,14 @@ fn mcode_install_windows_command() -> String {
     format!(
         "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
         powershell_encoded_command(MCODE_INSTALL_WINDOWS_SCRIPT)
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn qwen_install_windows_command() -> String {
+    format!(
+        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(QWEN_INSTALL_WINDOWS_SCRIPT)
     )
 }
 
@@ -874,6 +891,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "openclaw" => Some("npm i -g openclaw@latest"),
         "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
         "kimi" => Some("npm i -g @moonshot-ai/kimi-code@latest"),
+        "qwen" => Some("npm i -g @qwen-code/qwen-code@latest"),
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
@@ -908,7 +926,7 @@ fn npm_install_extra_args(tool: &str) -> &'static str {
 // `cmd.output()` 正是非 TTY，放进来会让 `mcode update || <fallback>` 的兜底永不触发。
 fn official_update_args(tool: &str) -> Option<&'static str> {
     match tool {
-        "claude" | "codex" | "grok" | "hermes" | "agy" => Some("update"),
+        "claude" | "codex" | "grok" | "hermes" | "agy" | "qwen" => Some("update"),
         "openclaw" => Some("update --yes"),
         "opencode" => Some("upgrade"),
         "kimi" => Some("upgrade --yes"),
@@ -941,6 +959,21 @@ fn tool_action_shell_command_for_shell(
     action: ToolLifecycleAction,
     shell: LifecycleCommandShell,
 ) -> Option<String> {
+    if tool == "qwen" {
+        let install = match shell {
+            LifecycleCommandShell::Posix => QWEN_INSTALL_UNIX.to_string(),
+            #[cfg(target_os = "windows")]
+            LifecycleCommandShell::WindowsBatch => qwen_install_windows_command(),
+            #[cfg(not(target_os = "windows"))]
+            LifecycleCommandShell::WindowsBatch => return None,
+        };
+        return Some(match action {
+            ToolLifecycleAction::Install => install,
+            ToolLifecycleAction::Update => {
+                chain_update_commands("qwen update".into(), install, shell)
+            }
+        });
+    }
     if tool == "kimi" {
         let install = match shell {
             LifecycleCommandShell::Posix => KIMI_INSTALL_UNIX.to_string(),
@@ -1279,6 +1312,7 @@ async fn get_single_tool_version_impl(
         }
         "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
         "kimi" => fetch_npm_latest_for_tool(&client, "@moonshot-ai/kimi-code", tool, local).await,
+        "qwen" => fetch_npm_latest_for_tool(&client, "@qwen-code/qwen-code", tool, local).await,
         "agy" => fetch_agy_latest_version(&client).await,
         _ => None,
     };
@@ -2473,6 +2507,19 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
     // 常见的安装路径（原生安装优先）
     // Preserve search priority without scanning all previous paths for every insertion.
     let mut search_paths = IndexSet::new();
+    if tool == "qwen" {
+        let bin_dir = std::env::var_os("QWEN_INSTALL_BIN_DIR")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::var_os("QWEN_INSTALL_ROOT")
+                    .filter(|value| !value.is_empty())
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| home.join(".local"))
+                    .join("bin")
+            });
+        push_unique_path(&mut search_paths, bin_dir);
+    }
     if tool == "kimi" {
         let install_dir = std::env::var_os("KIMI_INSTALL_DIR")
             .filter(|value| !value.is_empty())
@@ -3282,6 +3329,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "pi" => Some("@earendil-works/pi-coding-agent"),
         "mcode" => Some("@minimax-ai/code"),
         "kimi" => Some("@moonshot-ai/kimi-code"),
+        "qwen" => Some("@qwen-code/qwen-code"),
         _ => None,
     }
 }
@@ -3656,7 +3704,7 @@ fn grok_native_update_command(update: String) -> String {
 fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
     match shell {
         LifecycleCommandShell::Posix => {
-            matches!(tool, "claude" | "opencode" | "openclaw" | "kimi")
+            matches!(tool, "claude" | "opencode" | "openclaw" | "kimi" | "qwen")
         }
         LifecycleCommandShell::WindowsBatch => {
             matches!(
@@ -3665,7 +3713,7 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
                 // 安装方式探测失败弹交互 prompt（spawn npm.cmd 没传 shell:true）；静默
                 // lifecycle 没有 stdin 会挂死，Windows 先锚到包管理器路径，等上游修了
                 // 再把 opencode 加回这里。
-                "claude" | "openclaw" | "kimi"
+                "claude" | "openclaw" | "kimi" | "qwen"
             )
         }
     }
@@ -4589,6 +4637,7 @@ fn posix_install_command_for(tool: &str) -> String {
         "mcode" => installer_with_npm_fallback(MCODE_INSTALL_UNIX, tool),
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
         "kimi" => KIMI_INSTALL_UNIX.to_string(),
+        "qwen" => QWEN_INSTALL_UNIX.to_string(),
         "agy" => AGY_INSTALL_UNIX.to_string(),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
     }
@@ -7022,6 +7071,30 @@ mod tests {
             .as_deref(),
             Some("npm i -g @xai-official/grok@latest")
         );
+    }
+
+    #[test]
+    fn qwen_install_uses_standalone_installer_and_official_update() {
+        let posix = tool_action_shell_command_for_shell(
+            "qwen",
+            ToolLifecycleAction::Install,
+            LifecycleCommandShell::Posix,
+        )
+        .unwrap();
+        assert_eq!(posix, QWEN_INSTALL_UNIX);
+        assert_eq!(posix_install_command_for("qwen"), posix);
+        let update = tool_action_shell_command_for_shell(
+            "qwen",
+            ToolLifecycleAction::Update,
+            LifecycleCommandShell::Posix,
+        )
+        .unwrap();
+        assert_eq!(update, format!("qwen update || {posix}"));
+        assert_eq!(npm_package_for("qwen"), Some("@qwen-code/qwen-code"));
+        assert_eq!(tool_display_name("qwen"), "Qwen Code");
+        assert!(build_tool_search_paths("qwen")
+            .iter()
+            .any(|path| path.ends_with(".local/bin")));
     }
 
     #[test]

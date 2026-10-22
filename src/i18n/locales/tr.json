@@ -4837,5 +4837,34 @@
       "tool_use": "Araç kullanımı",
       "dynamically_loaded_tools": "Araçları gerektiğinde yükle"
     }
+  },
+  "qwen": {
+    "modelSelectionHint": "Sağlayıcıyı geçerli yapmak için karttaki geçiş düğmesini kullanın. Başka bir model kullanmak için Qwen Code içinde /model komutunu çalıştırın.",
+    "authType": "Protokol",
+    "authTypes": {
+      "openai": "OpenAI Chat Completions",
+      "openai-responses": "OpenAI Responses",
+      "anthropic": "Anthropic",
+      "gemini": "Gemini",
+      "vertex-ai": "Vertex AI"
+    },
+    "baseUrl": "İstek adresi",
+    "baseUrlRequired": "Anthropic protokolü için istek adresi gereklidir.",
+    "baseUrlInvalid": "İstek adresi http:// veya https:// ile başlamalıdır.",
+    "envKey": "Ortam değişkeni",
+    "envKeyHint": "Bu sağlayıcı anahtarını bu ortam değişkeninden okur. Qwen Code'un yerel yapılandırmasında yönetilir ve burada değiştirilemez.",
+    "models": "Modeller",
+    "modelsRequired": "En az bir model ekleyin.",
+    "addModel": "Model ekle",
+    "removeModel": "Modeli kaldır",
+    "modelId": "Model kimliği",
+    "modelName": "Görünen ad",
+    "contextWindowSize": "Bağlam penceresi",
+    "duplicateModelId": "Bu model kimliği zaten kullanılıyor.",
+    "empty": {
+      "title": "Qwen Code sağlayıcısı ekleyin",
+      "description": "Adres, API anahtarı ve modelleri yapılandırın. settings.json içindeki mevcut sağlayıcılar burada otomatik olarak görünür."
+    },
+    "deleteSessionHint": "Dizin ve arşivin birlikte güncellenmesi için oturumu Qwen Code içinden (qwen sessions) silin."
   }
 }

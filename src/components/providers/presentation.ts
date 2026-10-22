@@ -697,7 +697,7 @@ export interface AdditiveInput {
   isHermesManaged?: (provider: Provider) => boolean;
   /** Pi：读不到当前配置时一律不能改 */
   piStateUnavailable?: boolean;
-  /** Kimi：原生 default_model 别名所属的供应商。 */
+  /** Kimi / Qwen：原生当前模型所属的供应商。 */
   kimiCurrentId?: string | null;
   actions: {
     add: (provider: Provider) => void;
@@ -718,8 +718,9 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
 
   for (const p of providers) {
     const chips: CardChip[] = [];
-    if (app === "kimi") {
-      const official = isOfficialAccount(app, p);
+    if (app === "kimi" || app === "qwen") {
+      // Qwen Code has no official account; only Kimi's managed login is protected.
+      const official = app === "kimi" && isOfficialAccount(app, p);
       const live = input.isInConfig(p);
       const officialReason = official ? t("kimi.oauth.managedHint") : undefined;
       const protectedReason = live ? officialReason : undefined;

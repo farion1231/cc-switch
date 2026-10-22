@@ -28,6 +28,7 @@ export const APP_IDS: AppId[] = [
   "pi",
   "mcode",
   "kimi",
+  "qwen",
   "agy",
 ];
 
@@ -43,6 +44,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   pi: true,
   mcode: true,
   kimi: true,
+  qwen: true,
   agy: true,
 };
 
@@ -57,6 +59,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "pi",
   "mcode",
   "kimi",
+  "qwen",
   "agy",
 ];
 
@@ -107,12 +110,13 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi"
+  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi" | "qwen"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "mcode",
   "kimi",
+  "qwen",
   "opencode",
   "openclaw",
   "hermes",
@@ -150,6 +154,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "pi",
   "mcode",
   "kimi",
+  "qwen",
   "agy",
 ];
 
@@ -246,6 +251,13 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-violet-500/10 ring-1 ring-violet-500/20 hover:bg-violet-500/20 text-violet-600 dark:text-violet-400",
     badgeClass:
       "bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 border-0 gap-1.5",
+  },
+  qwen: {
+    label: "Qwen Code",
+    icon: <ProviderIcon icon="qwen" name="Qwen Code" size={14} />,
+    activeClass: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
+    badgeClass:
+      "bg-purple-500/10 text-purple-700 dark:text-purple-300 border-0 gap-1.5",
   },
   kimi: {
     label: "Kimi Code",

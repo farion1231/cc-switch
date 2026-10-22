@@ -89,6 +89,7 @@ const IMPORT_SOURCE_FILES: Record<
   pi: { file: "~/.pi/agent/mcp.json" },
   agy: { file: "~/.gemini/config/mcp_config.json" },
   kimi: { file: "~/.kimi-code/mcp.json" },
+  qwen: { file: "~/.qwen/settings.json" },
   mcode: { file: "~/.minimax/mcp.json" },
 };
 
@@ -96,6 +97,7 @@ const IMPORT_SOURCE_FILES: Record<
 const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set([
   "mcode",
   "kimi",
+  "qwen",
   "pi",
   "agy",
 ]);

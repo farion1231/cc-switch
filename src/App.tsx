@@ -593,6 +593,7 @@ function App() {
         if (
           activeApp === "mcode" ||
           activeApp === "kimi" ||
+          activeApp === "qwen" ||
           activeApp === "agy"
         )
           return;
@@ -841,7 +842,11 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: hermesKeys.liveProviderIds,
         });
-      } else if (activeApp === "mcode" || activeApp === "kimi") {
+      } else if (
+        activeApp === "mcode" ||
+        activeApp === "kimi" ||
+        activeApp === "qwen"
+      ) {
         await queryClient.invalidateQueries({
           queryKey: ["providers", activeApp],
         });
@@ -980,7 +985,11 @@ function App() {
         existingKeys,
       );
       duplicatedProvider.addToLive = false;
-    } else if (activeApp === "mcode" || activeApp === "kimi") {
+    } else if (
+      activeApp === "mcode" ||
+      activeApp === "kimi" ||
+      activeApp === "qwen"
+    ) {
       // The MCode list already includes its live custom nodes; the backend
       // rejects a key that MCode itself owns.
       duplicatedProvider.providerKey = generateUniqueProviderCopyKey(
@@ -998,6 +1007,12 @@ function App() {
             },
           ]),
         );
+        duplicatedProvider.addToLive = false;
+      }
+      if (activeApp === "qwen") {
+        // A native env var identifies the provider it belongs to; the copy gets
+        // its own managed variable instead of claiming the original's models.
+        delete duplicatedProvider.settingsConfig.envKey;
         duplicatedProvider.addToLive = false;
       }
     }
@@ -1185,6 +1200,7 @@ function App() {
           {currentView === "providers" &&
             activeApp !== "mcode" &&
             activeApp !== "kimi" &&
+            activeApp !== "qwen" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
@@ -1348,7 +1364,8 @@ function App() {
               activeApp === "hermes" ||
               activeApp === "pi" ||
               activeApp === "mcode" ||
-              activeApp === "kimi"
+              activeApp === "kimi" ||
+              activeApp === "qwen"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
             }
