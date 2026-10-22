@@ -8,6 +8,7 @@ import {
   resetUsageSyncClockForTests,
 } from "@/components/usage/UsageDashboard";
 import type { UsageRangeSelection } from "@/types/usage";
+import { setSettings } from "../msw/state";
 
 const useProviderStatsMock = vi.hoisted(() => vi.fn());
 const useModelStatsMock = vi.hoisted(() => vi.fn());
@@ -322,6 +323,42 @@ describe("UsageDashboard", () => {
     expect(usageHeroMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ appType: "codex" }),
     );
+  });
+
+  it("lists only the apps shown on the Apps page, keeping the selected one", async () => {
+    setSettings({
+      visibleApps: {
+        claude: false,
+        "claude-desktop": true,
+        codex: true,
+        gemini: false,
+        grokbuild: false,
+        opencode: false,
+        openclaw: true,
+        hermes: true,
+        pi: false,
+        mcode: false,
+        agy: false,
+      },
+    });
+    renderDashboard({ initialAppType: "gemini" });
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Pi" }),
+      ).not.toBeInTheDocument(),
+    );
+    // Claude Desktop 显示时 Claude Code 的用量也列；选中的 Gemini 虽被隐藏也留着
+    expect(
+      screen.getByRole("button", { name: "Claude Code" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Codex/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Gemini/, pressed: true }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Grok/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("filters by provider and lists request counts", async () => {

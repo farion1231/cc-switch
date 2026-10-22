@@ -5,6 +5,7 @@ import type { AppMode } from "@/types/proxy";
 import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/opencodeFormUtils";
 import {
   buildAdditiveSections,
+  buildLaunchSections,
   buildSwitchSections,
   queueMoveSortUpdates,
   type ProviderSection,
@@ -722,5 +723,36 @@ describe("queueMoveSortUpdates", () => {
     expect(queueMoveSortUpdates(items, {}, "a", -1)).toBeNull();
     expect(queueMoveSortUpdates(items, {}, "b", 1)).toBeNull();
     expect(queueMoveSortUpdates(items, {}, "x", 1)).toBeNull();
+  });
+});
+
+describe("buildLaunchSections", () => {
+  it("gives every Antigravity card Open Terminal instead of enable or in use", () => {
+    const openTerminal = vi.fn();
+    const [section] = buildLaunchSections({
+      app: "agy",
+      t,
+      providers: [official, relay],
+      openTerminal,
+    });
+    expect(section.items.map((item) => item.provider.id)).toEqual([
+      "official",
+      "relay",
+    ]);
+    for (const { provider: p, presentation } of section.items) {
+      expect(presentation.status).toBeUndefined();
+      expect(presentation.tone).toBeUndefined();
+      // 没有「使用中」，哪张都能删
+      expect(presentation.deleteDisabledReason).toBeUndefined();
+      expect(presentation.buttons.map((button) => button.key)).toEqual([
+        "openTerminal",
+      ]);
+      presentation.buttons[0].onClick();
+      expect(openTerminal).toHaveBeenLastCalledWith(p);
+    }
+    expect(section.items[0].presentation.chips.map((chip) => chip.key)).toEqual(
+      ["official"],
+    );
+    expect(section.items[1].presentation.chips).toEqual([]);
   });
 });

@@ -220,6 +220,7 @@ fn brew_uninstall_command(tool: &str, real: &str) -> Result<Option<String>, Stri
                 "codex" => &[("/Caskroom/", "codex")],
                 "gemini" => &[("/Cellar/", "gemini-cli")],
                 "opencode" => &[("/Cellar/", "opencode")],
+                "agy" => &[("/Caskroom/", "antigravity-cli")],
                 _ => &[],
             };
             if !owners.contains(&(marker, token)) {
@@ -414,6 +415,11 @@ fn known_native_install(tool: &str, inst: &ToolInstallation) -> bool {
         "opencode" => {
             normalized.ends_with("/.opencode/bin/opencode")
                 || normalized.ends_with("/.opencode/bin/opencode.exe")
+        }
+        // Official install.sh / install.ps1 targets. A cask binary the self-updater
+        // replaced in place sits in Homebrew's bin and stays a manual uninstall.
+        "agy" => {
+            normalized.ends_with("/.local/bin/agy") || normalized.ends_with("/agy/bin/agy.exe")
         }
         _ => false,
     }
@@ -1411,6 +1417,7 @@ mod tests {
             ("codex", "Caskroom", "codex", "--cask"),
             ("gemini", "Cellar", "gemini-cli", "--formula"),
             ("opencode", "Cellar", "opencode", "--formula"),
+            ("agy", "Caskroom", "antigravity-cli", "--cask"),
         ] {
             let real = format!("{prefix}/{location}/{token}/1/bin/{tool}");
             let command = brew_uninstall_command(tool, &real).unwrap().unwrap();
@@ -1527,6 +1534,8 @@ mod tests {
                 ".codex/packages/standalone/releases/0.150.0-linux/codex",
             ),
             ("opencode", ".opencode/bin/opencode"),
+            ("agy", ".local/bin/agy"),
+            ("agy", "AppData/Local/agy/bin/agy.exe"),
         ] {
             let path = temp.path().join(binary);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();

@@ -46,11 +46,6 @@ Kimi K3 是 Moonshot AI 迄今能力最强的模型，也是全球首个开源 3
 </tr>
 
 <tr>
-<td width="180"><a href="https://zetaapi.ai/go/u117"><img src="assets/partners/logos/zetaapi-banner.png" alt="ZetaAPI" width="150"></a></td>
-<td>感谢 ZetaAPI 赞助本项目！ZetaAPI 主打模型不掺水、保真不降智、价格低至官方价 35 折，平台不混量、不暗中替换低质量模型、不做虚假路由，支持 Claude Code、Codex、Gemini、ChatGPT 等主流模型接入，帮助用户在保证模型质量的同时大幅降低 API 使用成本。同时，ZetaAPI 提供企业级 SLA 稳定性保障、标准接口兼容、一个 Key 接入多模型、快速集成、按量计费等能力，适用于 AI 产品、代码生成、企业内部工具、客服系统、内容生产和自动化流程等场景。若经验证发现模型质量与标称不符，ZetaAPI 承诺假一赔十，让用户用得更稳定、更透明、更放心。通过<a href="https://zetaapi.ai/go/u117">此链接</a>注册，并在首次充值时使用优惠码 CC-SWITCH，即可享受 CC Switch 用户专属的首次充值九折优惠！</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://apinebula.ai/VjM74M"><img src="assets/partners/logos/apinebula_banner.png" alt="APINebula" width="150"></a></td>
 <td>感谢 APINEBULA 赞助本项目！APINEBULA 是银河录像局旗下的企业级 AI 聚合平台，背靠大平台资源，面向开发者、团队与企业用户提供稳定、高性价比的大模型 API 接入服务。平台聚合 Claude、GPT、Gemini 等主流满血模型，一个接口，接入全球顶尖 AI 大模型，各大模型价格低至 1 折起，支持企业级高并发、正式合同、对公打款与开票服务，适合 AI 编程、Agent 开发、业务系统集成等多种场景！使用<a href="https://apinebula.ai/VjM74M">此链接</a>注册并在充值时填写 <strong>"ccswitch"</strong> 优惠码可享<strong>九折优惠</strong>！</td>
 </tr>
@@ -69,6 +64,11 @@ Claude Code / Codex / Gemini 官方渠道低至 3.8 / 0.2 / 0.9 折，充值更�
 </tr>
 
 <tr>
+<td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
+<td>感谢 hao.ai 赞助了本项目！hao.ai 是面向开发者与团队的高速、稳定大模型统一 API 网关。通过一个 API Key 和统一接口，即可接入 GPT、Claude、xAI Grok 等主流模型，兼容 OpenAI、Anthropic 等常用协议与 SDK。平台提供模型路由、故障回退、团队管理及完整调用日志，模型价格低至官方参考价的 1.5 折，帮助用户更简单、更稳定、更低成本地构建 AI 应用。hao.ai 为 CC Switch 用户提供了特别福利，通过<a href="https://hao.ai/invite/DTBZS3OR">此链接</a>注册的用户，首单可享受 5% 赠送额度！</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL"><img src="assets/partners/logos/fenno-banner.png" alt="Fenno.ai" width="150"></a></td>
 <td>感谢 Fenno.ai 赞助了本项目！Fenno.ai 是一家稳定、高效的 API 中转服务商，目前主要提供 Codex 中转服务，兼容 OpenAI 及 Anthropic 协议，可灵活接入 Codex、Claude Code、OpenCode 等主流编程工具，可稳定支撑千亿 Token/日的企业级调用需求，支持国内及海外主体公对公结算、开票。Fenno.ai 为 CC Switch 的用户提供了专属福利：通过<a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">此链接</a>即可订阅 1.99 刀/50 刀额度的 Trial 计划（有效期 7 天），邀请好友最高可享 20% 奖励，多邀多得！</td>
 </tr>
@@ -84,8 +84,18 @@ Claude Code / Codex / Gemini 官方渠道低至 3.8 / 0.2 / 0.9 折，充值更�
 </tr>
 
 <tr>
+<td width="180"><a href="https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite"><img src="assets/partners/logos/everyapi-banner.jpg" alt="EveryAPI" width="150"></a></td>
+<td>感谢 EveryAPI 赞助了本项目！EveryAPI 致力于为开发者提供稳定、高效、高性价比的 API 中转服务，支持 Claude、Codex、Gemini 等主流 AI 编程工具及多种先进模型。无需复杂配置，轻松接入，助力开发者高效编程、快速构建 AI 应用。无论是日常开发、项目调试还是 AI 辅助编程，EveryAPI 都能为你提供便捷、流畅的使用体验。EveryAPI，让 AI 开发更简单，让每一次调用都更有价值！EveryAPI 为 CC Switch 的用户提供了特别福利，通过<a href="https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite">此链接</a>注册即送 14 元，首充使用折扣码 <strong>ccswitch</strong> 享 20% 优惠，GPT 低至 1.5 折！</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://grooroute.pro/sign-up?aff=qqm9"><img src="assets/partners/logos/grooroute-banner.jpg" alt="GrooRoute Pro" width="150"></a></td>
 <td>感谢 GrooRoute Pro 赞助了本项目！GrooRoute Pro 是可靠流畅的 AI API 中转服务平台，接入 OpenAI、Claude、DeepSeek 等多款主流大模型。平台采用海外服务器部署，支持倍率档位自选，兼具按量计费与订阅套餐两种方案，多种使用方式灵活可选，线路稳定、响应迅速，让使用者可以更轻松便捷地调用各类 AI 能力。GrooRoute Pro 为 CC Switch 用户准备了专属福利，点击<a href="https://grooroute.pro/sign-up?aff=qqm9">此链接</a>注册即可获得免费 5 元体验额度！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://dit.ai/register"><img src="assets/partners/logos/dit-banner.png" alt="DIT.ai" width="150"></a></td>
+<td>感谢 DIT.ai 赞助了本项目！DIT.ai 是一个 AI Token 交易市场，通过多供应商路由降低调用成本。开发者只需一个 OpenAI 兼容 API，即可调用 GPT、Claude、Gemini、DeepSeek、Grok、Llama 等 50 多个主流 AI 模型，覆盖文本、图像、视频和音频。合格供应商在 160 多条线路上为每个请求竞价，DIT 实时选出性价比最优的线路，价格通常比官方定价低 30–70%。DIT.ai 面向开发者、初创公司以及规模化运行 Agent 或 AI 产品的团队：只需更换 Base URL 和 API Key，保留现有技术栈，即可享受自动路由与故障转移。CC Switch 用户通过<a href="https://dit.ai/register">此链接</a>注册并使用优惠码 <strong>ccswitch</strong>，即可领取 5 美元新人券！</td>
 </tr>
 
 <tr>
