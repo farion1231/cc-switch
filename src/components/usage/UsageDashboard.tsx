@@ -34,14 +34,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import {
   KNOWN_APP_TYPES,
   type AppTypeFilter,
@@ -951,7 +944,6 @@ export function UsageDashboard({
           type="button"
           variant="quiet"
           size="regular"
-          aria-haspopup="dialog"
           onClick={() => setPricingOpen(true)}
         >
           {t("usage.empty.configurePricing")}
@@ -1005,29 +997,15 @@ export function UsageDashboard({
         onUsageDisplayChange={onUsageDisplayChange}
         onOpenPricing={() => setPricingOpen(true)}
       />
-      <Dialog open={pricingOpen} onOpenChange={setPricingOpen}>
-        <DialogContent className="h-[84vh] max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>{t("usage.tabs.pricing")}</DialogTitle>
-            <DialogDescription className="sr-only">
-              {t("usage.tabs.pricing")}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="min-h-0 flex-1 overflow-y-auto px-6">
-            <PricingConfigPanel />
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="neutral"
-              size="regular"
-              onClick={() => setPricingOpen(false)}
-            >
-              {t("common.close")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* 定价是二级页不是模态框：新增 / 编辑定价的编辑页也是 FullScreenPanel，
+          放进模态框会被压在遮罩下、点不到 */}
+      <FullScreenPanel
+        isOpen={pricingOpen}
+        title={t("usage.tabs.pricing")}
+        onClose={() => setPricingOpen(false)}
+      >
+        <PricingConfigPanel />
+      </FullScreenPanel>
       <ConfirmDialog
         isOpen={showRebuildConfirm}
         title={t("usage.rebuildCodex.confirmTitle")}

@@ -633,7 +633,7 @@ describe("UsageDashboard", () => {
     ).toBeTruthy();
     expect(screen.getByRole("textbox")).toHaveValue("6.8");
 
-    // 定价表在单独的对话框里，打开时抽屉先关
+    // 定价表是单独的二级页，打开时抽屉先关
     expect(
       screen.queryByTestId("pricing-config-panel"),
     ).not.toBeInTheDocument();
@@ -643,6 +643,10 @@ describe("UsageDashboard", () => {
     expect(
       await screen.findByTestId("pricing-config-panel"),
     ).toBeInTheDocument();
+    // 不是模态框：新增 / 编辑定价的二级页叠在上面也要能点（模态框会把 body 设成不接指针事件）
+    await waitFor(() =>
+      expect(document.body.style.pointerEvents).not.toBe("none"),
+    );
   });
 
   it("wires the tabs to the tabpanel and supports arrow / Home / End keys", async () => {

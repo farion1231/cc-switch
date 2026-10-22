@@ -336,7 +336,6 @@ export function UsageSettingsSheet({
                 type="button"
                 variant="neutral"
                 size="compact"
-                aria-haspopup="dialog"
                 onClick={() => {
                   onOpenChange(false);
                   onOpenPricing();
