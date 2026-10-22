@@ -1,3 +1,4 @@
+pub mod agy;
 mod blocks;
 pub mod claude;
 pub mod codex;
@@ -12,4 +13,5 @@ pub mod pi;
 mod pi_blocks;
 mod utils;
 
+pub mod kimi;
 pub mod mcode;

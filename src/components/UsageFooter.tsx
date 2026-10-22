@@ -170,8 +170,9 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   const usageDataList = usage.data || [];
   if (usageDataList.length === 0) return null;
 
-  // Token Plan：按档写剩余（或已用）百分比
-  if (isTokenPlan) {
+  // Token Plan：按档写剩余（或已用）百分比。智谱按量账户没有套餐时后端回落成
+  // 账户余额（单位是币种不是 %），走下面的余额样式。
+  if (isTokenPlan && usageDataList.every((d) => d.unit === "%")) {
     const tiers = usageDataList.map((d) => toQuotaTier(d));
     const planLabel = tiers[0]?.planLabel;
     const rows = tiers.map((tier, index) => {

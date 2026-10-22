@@ -192,7 +192,12 @@ export function EditProviderDialog({
       // OpenCode uses additive mode, while Pi's shared models.json is owned by
       // the catalog coordinator. Neither has a per-provider generic live
       // snapshot that may replace the DB aggregate in this form.
-      if (appId === "opencode" || appId === "pi" || appId === "mcode") {
+      if (
+        appId === "opencode" ||
+        appId === "pi" ||
+        appId === "mcode" ||
+        appId === "kimi"
+      ) {
         if (!cancelled) {
           setLiveSettings(null);
           setHasLoadedLive(true);
@@ -361,7 +366,6 @@ export function EditProviderDialog({
       // Keep the list visible until the initial projection is ready.
       // Showing a loading page first causes a flash for fast local reads.
       isOpen={open && !waitingForEditorView}
-      motionPreset="none"
       trackUnsavedChanges
       title={t("provider.editProviderNamed", { name: provider.name })}
       subtitle={

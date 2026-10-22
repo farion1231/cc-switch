@@ -417,6 +417,7 @@ command = "echo"
                 "command": "prev"
             }),
             apps: cc_switch_lib::McpApps {
+                agy: false,
                 claude: false,
                 codex: false, // 初始未启用
                 gemini: false,
@@ -424,6 +425,7 @@ command = "echo"
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
                 pi: false,
             },
             description: None,
@@ -549,6 +551,7 @@ fn import_from_claude_merges_into_config() {
                 "command": "prev"
             }),
             apps: cc_switch_lib::McpApps {
+                agy: false,
                 claude: false, // 初始未启用
                 codex: false,
                 gemini: false,
@@ -556,6 +559,7 @@ fn import_from_claude_merges_into_config() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
                 pi: false,
             },
             description: None,
