@@ -4,7 +4,7 @@
 set -euo pipefail
 
 UPSTREAM_REPO="${UPSTREAM_REPO:-farion1231/cc-switch}"
-FORK_REPO="${FORK_REPO:-misswell/cc-switch}"
+FORK_REPO="${FORK_REPO:-misswell/cc-switch-light}"
 
 upstream="$(gh release list -R "$UPSTREAM_REPO" --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')"
 [ -n "$upstream" ] || { echo "ERROR: no stable upstream release found" >&2; exit 1; }

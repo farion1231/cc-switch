@@ -104,13 +104,13 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
 
       if (!displayVersion) {
         await settingsApi.openExternal(
-          "https://github.com/misswell/cc-switch/releases",
+          "https://github.com/misswell/cc-switch-light/releases",
         );
         return;
       }
 
       await settingsApi.openExternal(
-        `https://github.com/misswell/cc-switch/releases/tag/${displayVersion}`,
+        `https://github.com/misswell/cc-switch-light/releases/tag/${displayVersion}`,
       );
     } catch (error) {
       console.error("[AboutSection] Failed to open release notes", error);
@@ -119,7 +119,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   }, [t, updateInfo?.availableVersion, version]);
 
   const handleOpenGithub = useCallback(() => {
-    void settingsApi.openExternal("https://github.com/misswell/cc-switch");
+    void settingsApi.openExternal("https://github.com/misswell/cc-switch-light");
   }, []);
 
   const handleDismissStarPrompt = useCallback(() => {

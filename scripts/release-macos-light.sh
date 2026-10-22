@@ -134,7 +134,7 @@ python3 - "$VERSION" "$TAG" "$TARBALL.sig" "$OUT/latest.json" <<'PY'
 import datetime, json, sys
 version, tag, sig_path, out = sys.argv[1:5]
 sig = open(sig_path).read().strip()
-url = f"https://github.com/misswell/cc-switch/releases/download/{tag}/CC-Switch-Light-{tag}-macOS.tar.gz"
+url = f"https://github.com/misswell/cc-switch-light/releases/download/{tag}/CC-Switch-Light-{tag}-macOS.tar.gz"
 data = {
     "version": version,
     "notes": f"CC Switch Light {tag}",

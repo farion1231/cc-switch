@@ -64,7 +64,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlFOTU5RDk1QTY4QjY2MkEKUldRcVpvdW1sWjJWbmlFMWN5L1UrbGt1VEtiRUNWaG0wK2wzdVZJcVVkd1Z2VTVkaEJ6ZGhjcTgK",
       "endpoints": [
-        "https://github.com/misswell/cc-switch/releases/latest/download/latest.json"
+        "https://github.com/misswell/cc-switch-light/releases/latest/download/latest.json"
       ]
     }
   }

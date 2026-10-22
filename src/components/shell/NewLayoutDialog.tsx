@@ -18,7 +18,7 @@ import { useSettingsQuery } from "@/lib/query";
 import { markSeen } from "@/lib/whatsNew";
 import type { Settings } from "@/types";
 
-const RELEASES_URL = "https://github.com/misswell/cc-switch/releases";
+const RELEASES_URL = "https://github.com/misswell/cc-switch-light/releases";
 
 /** 任一应用的数据库里已经有供应商（找到一家就停） */
 async function hasAnyProvider(): Promise<boolean> {
