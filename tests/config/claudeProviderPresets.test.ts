@@ -214,3 +214,47 @@ describe("Microsoft Foundry Provider Preset", () => {
     expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
   });
 });
+
+describe("TokenRhythm Provider Preset", () => {
+  const tokenrhythm = providerPresets.find((p) => p.name === "TokenRhythm");
+
+  it("should include the TokenRhythm preset", () => {
+    expect(tokenrhythm).toBeDefined();
+    expect(tokenrhythm!.category).toBe("aggregator");
+    expect(tokenrhythm!.icon).toBe("tokenrhythm");
+  });
+
+  // /v1/messages 对 Claude Code 的 anthropic-beta 头不兼容（400），只能走
+  // openai_chat 路由；适配器自拼 /v1/chat/completions，base 必须是不带 /v1 的根地址
+  it("should use the root base URL with the openai_chat format", () => {
+    const env = (tokenrhythm!.settingsConfig as any).env;
+    expect(tokenrhythm!.apiFormat).toBe("openai_chat");
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://tokenrhythm.studio");
+    expect(env.ANTHROPIC_BASE_URL).not.toMatch(/\/v1\/?$/);
+  });
+
+  // 鉴权是 Authorization: Bearer，对应 AUTH_TOKEN 而不是 API_KEY
+  it("should authenticate with a bearer token", () => {
+    const env = (tokenrhythm!.settingsConfig as any).env;
+    expect(env).toHaveProperty("ANTHROPIC_AUTH_TOKEN", "");
+    expect(env).not.toHaveProperty("ANTHROPIC_API_KEY");
+    expect(tokenrhythm!.apiKeyField).toBeUndefined();
+  });
+
+  it("should route deepseek-v4.1-flash-1017 on every tier", () => {
+    const env = (tokenrhythm!.settingsConfig as any).env;
+    expect(env).toMatchObject({
+      ANTHROPIC_MODEL: "deepseek-v4.1-flash-1017",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4.1-flash-1017",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4.1-flash-1017",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4.1-flash-1017",
+    });
+  });
+
+  // 模型 id 非 claude-*，不钉窗口 Claude Code 会按 200K 处理
+  it("should pin the 1M context window", () => {
+    const env = (tokenrhythm!.settingsConfig as any).env;
+    expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("1000000");
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("1000000");
+  });
+});

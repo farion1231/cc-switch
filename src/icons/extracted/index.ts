@@ -46,6 +46,7 @@ import _subrouter from "./subrouter.svg?url";
 import _sudocode from "./sudocode.png";
 import _sudocodeUs from "./sudocode-us.png";
 import _teamorouter from "./TeamoRouter-icon-dark.png";
+import _tokenrhythm from "./tokenrhythm.png";
 import _tuzi from "./tuzi.png";
 import _unity2 from "./unity2.png";
 import _xycai from "./xycai-icon.png";
@@ -190,6 +191,7 @@ export const iconUrls: Record<string, string> = {
   runapi: _runapi,
   runtoken: _runtoken,
   tokenflux: _tokenflux,
+  tokenrhythm: _tokenrhythm,
   shengsuanyun: _shengsuanyun,
   soruxgpt: _soruxgpt,
   soshow: _soshow,
