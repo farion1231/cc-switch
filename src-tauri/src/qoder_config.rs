@@ -121,12 +121,12 @@ fn enable_skill_file_and_commit<T>(
     commit: impl FnOnce() -> Result<T, crate::error::AppError>,
 ) -> Result<T, crate::error::AppError> {
     crate::mcode_config::write_and_commit(
-        &path,
+        path,
         || {
-            let text = match std::fs::read_to_string(&path) {
+            let text = match std::fs::read_to_string(path) {
                 Ok(text) => text,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => "{}".into(),
-                Err(error) => return Err(AppError::io(&path, error)),
+                Err(error) => return Err(AppError::io(path, error)),
             };
             let mut document = JsoncDocument::parse(text.trim_start_matches('\u{feff}'))?;
             for key in ["skills", "skillOverrides"] {
