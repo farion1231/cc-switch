@@ -52,7 +52,11 @@ describe("UsageDisplaySection", () => {
     const onChange = vi.fn();
     render(
       <UsageDisplaySection
-        value={{ currency: "CNY", exchangeRates: { CNY: 7, EUR: 0.9 } }}
+        value={{
+          currency: "CNY",
+          exchangeRates: { CNY: 7, EUR: 0.9 },
+          rateSource: "manual",
+        }}
         onChange={onChange}
       />,
     );
@@ -69,6 +73,7 @@ describe("UsageDisplaySection", () => {
     await user.type(input, "7.25{Enter}");
     expect(onChange).toHaveBeenCalledWith({
       currency: "CNY",
+      rateSource: "manual",
       exchangeRates: { CNY: 7.25, EUR: 0.9 },
     });
   });
@@ -78,12 +83,36 @@ describe("UsageDisplaySection", () => {
     const onChange = vi.fn();
     render(
       <UsageDisplaySection
-        value={{ currency: "CNY", exchangeRates: { CNY: 7, EUR: 0.9 } }}
+        value={{
+          currency: "CNY",
+          exchangeRates: { CNY: 7, EUR: 0.9 },
+          rateSource: "manual",
+        }}
         onChange={onChange}
       />,
     );
     await pickCurrency(user, "EUR");
     expect(screen.getByRole("textbox")).toHaveValue("0.9");
+  });
+
+  it("shows the fetched rate read-only while the source is automatic", () => {
+    render(
+      <UsageDisplaySection
+        value={{
+          currency: "CNY",
+          rateSource: "auto",
+          autoExchangeRates: { CNY: 6.9 },
+          exchangeRates: { CNY: 7.1 },
+        }}
+        onChange={vi.fn()}
+      />,
+    );
+    const input = screen.getByRole("textbox");
+    expect(input).toHaveValue("6.9");
+    expect(input).toHaveAttribute("readonly");
+    expect(
+      screen.getByRole("combobox", { name: "usage.display.rateSource" }),
+    ).toHaveTextContent("usage.display.rateSources.auto");
   });
 
   it("does not write the preset rate when it was left unchanged", async () => {

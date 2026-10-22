@@ -14,6 +14,8 @@ import {
   formatTokensPerSecond,
   formatTokensShort,
   resolveMoneyDisplay,
+  resolveRateSource,
+  shouldRefreshRates,
   resolveSidebarToday,
   getAggregateTokensPerSecond,
   getEstimatedTokensPerSecond,
@@ -280,6 +282,59 @@ describe("display currency", () => {
     expect(
       resolveMoneyDisplay({ currency: "CNY", exchangeRates: { CNY: 7.25 } }),
     ).toEqual({ currency: "CNY", rate: 7.25 });
+  });
+
+  it("prefers the fetched rate in automatic mode and keeps manual values as fallback", () => {
+    const both = {
+      currency: "CNY",
+      rateSource: "auto",
+      autoExchangeRates: { CNY: 6.9 },
+      exchangeRates: { CNY: 7.1 },
+    };
+    expect(resolveMoneyDisplay(both)).toEqual({ currency: "CNY", rate: 6.9 });
+
+    // 还没取到自动汇率时先用手填值，再退预置值
+    expect(
+      resolveMoneyDisplay({ ...both, autoExchangeRates: undefined }),
+    ).toEqual({ currency: "CNY", rate: 7.1 });
+    expect(
+      resolveMoneyDisplay({ currency: "CNY", rateSource: "auto" }),
+    ).toEqual({ currency: "CNY", rate: 6.8 });
+
+    // 手动模式不看自动取到的值
+    expect(resolveMoneyDisplay({ ...both, rateSource: "manual" })).toEqual({
+      currency: "CNY",
+      rate: 7.1,
+    });
+    expect(resolveRateSource({ currency: "CNY" })).toBe("auto");
+    expect(resolveRateSource({ currency: "CNY", rateSource: "bogus" })).toBe(
+      "auto",
+    );
+    expect(resolveRateSource({ currency: "CNY", rateSource: "manual" })).toBe(
+      "manual",
+    );
+  });
+
+  it("refreshes automatic rates only when the cache is missing or stale", () => {
+    const now = 1_700_000_000_000;
+    const day = 24 * 60 * 60 * 1000;
+    expect(shouldRefreshRates({ rateSource: "auto" }, now)).toBe(true);
+    expect(
+      shouldRefreshRates(
+        { rateSource: "auto", rateFetchedAt: now - 60_000 },
+        now,
+      ),
+    ).toBe(false);
+    expect(
+      shouldRefreshRates({ rateSource: "auto", rateFetchedAt: now - day }, now),
+    ).toBe(true);
+    // 手动模式再旧也不联网
+    expect(
+      shouldRefreshRates(
+        { rateSource: "manual", rateFetchedAt: now - day },
+        now,
+      ),
+    ).toBe(false);
   });
 
   it("writes converted amounts with the plain currency symbol", () => {

@@ -36,13 +36,44 @@ export const DISPLAY_CURRENCIES = [
 export type DisplayCurrency = (typeof DISPLAY_CURRENCIES)[number];
 
 /**
- * 用户没填汇率时的起点，按 2026-07~09 的报价取整；界面上写明要手动填，不联网取。
- * 改这里只影响没填过的用户（填过的值存在设置文件里）。
+ * 用户没填汇率、也还没自动取到时用的起点，按 2026-07~09 的报价取整。
+ * 改这里只影响手填和自动都没值的用户。
  */
 export const DEFAULT_EXCHANGE_RATES: Record<
   Exclude<DisplayCurrency, "USD">,
   number
 > = { CNY: 6.8, EUR: 0.87, JPY: 158, TWD: 32, TRY: 48 };
+
+/** 汇率来源：自动获取（每日更新）或手动填写 */
+export const RATE_SOURCES = ["auto", "manual"] as const;
+
+export type RateSource = (typeof RATE_SOURCES)[number];
+
+/** 自动获取的汇率多久算旧：两个源都每天更新一次，半天刷一次足够跟上 */
+export const AUTO_RATE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+/** 没设置或认不出时按自动获取 */
+export function resolveRateSource(
+  settings: UsageDisplaySettings | undefined,
+): RateSource {
+  return (
+    RATE_SOURCES.find((source) => source === settings?.rateSource) ?? "auto"
+  );
+}
+
+/** 该不该去取新汇率：自动模式且没取过、或缓存已超过半天 */
+export function shouldRefreshRates(
+  settings: UsageDisplaySettings | undefined,
+  nowMs: number = Date.now(),
+): boolean {
+  if (resolveRateSource(settings) !== "auto") return false;
+  const fetchedAt = settings?.rateFetchedAt;
+  return (
+    typeof fetchedAt !== "number" ||
+    !Number.isFinite(fetchedAt) ||
+    nowMs - fetchedAt >= AUTO_RATE_MAX_AGE_MS
+  );
+}
 
 /** 侧栏「今日」可选的项，顺序即菜单和侧栏上的顺序 */
 export const SIDEBAR_TODAY_ITEMS = [
@@ -133,18 +164,23 @@ export function isValidExchangeRate(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
-/** 把设置文件里的值收成能用的显示方式：不认得的币种回落 USD，汇率不合法用预置值。 */
+/**
+ * 把设置文件里的值收成能用的显示方式：不认得的币种回落 USD，汇率不合法用下一个来源。
+ * 自动模式优先用自动取到的汇率，没取到才用手填值；手动模式只看手填值。
+ */
 export function resolveMoneyDisplay(
   settings: UsageDisplaySettings | undefined,
 ): MoneyDisplay {
   const currency =
     DISPLAY_CURRENCIES.find((c) => c === settings?.currency) ?? "USD";
   if (currency === "USD") return USD_DISPLAY;
-  const saved = settings?.exchangeRates?.[currency];
-  return {
-    currency,
-    rate: isValidExchangeRate(saved) ? saved : DEFAULT_EXCHANGE_RATES[currency],
-  };
+  const manual = settings?.exchangeRates?.[currency];
+  const auto = settings?.autoExchangeRates?.[currency];
+  const candidates =
+    resolveRateSource(settings) === "auto" ? [auto, manual] : [manual];
+  const rate =
+    candidates.find(isValidExchangeRate) ?? DEFAULT_EXCHANGE_RATES[currency];
+  return { currency, rate };
 }
 
 /** 固定小数位：`$1.23` / `¥8.36`。组件里用 `useMoneyFormat()`，别直接传 display。 */

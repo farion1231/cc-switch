@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { fieldClass, Input } from "@/components/ui/input";
 import {
   DropdownMenu,
@@ -17,15 +18,21 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { UsageDisplaySettings } from "@/types";
+import { usageApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   DISPLAY_CURRENCIES,
+  formatRelativeTime,
   getResolvedLang,
   isValidExchangeRate,
+  RATE_SOURCES,
   resolveMoneyDisplay,
+  resolveRateSource,
   resolveSidebarToday,
   resolveTrendChartType,
+  shouldRefreshRates,
   type DisplayCurrency,
+  type RateSource,
   SIDEBAR_TODAY_ITEMS,
   SIDEBAR_TODAY_MAX_ITEMS,
   type SidebarTodayItem,
@@ -154,8 +161,8 @@ function ChecklistMenu({
 }
 
 /**
- * 用量「设置」页签顶部的「显示」：币种与手填汇率（只改显示，库里照旧存美元）、
- * 侧栏「今日」显示什么、请求日志显示哪些列、趋势图用柱形图还是曲线面积图。
+ * 用量「设置」页签顶部的「显示」：币种与汇率来源（自动获取每日汇率，或手填；只改显示，
+ * 库里照旧存美元）、侧栏「今日」显示什么、请求日志显示哪些列、趋势图用柱形图还是曲线面积图。
  */
 export function UsageDisplaySection({
   value,
@@ -188,6 +195,44 @@ export function UsageDisplaySection({
 
   const save = (next: Partial<UsageDisplaySettings>) =>
     onChange({ ...value, ...next });
+
+  // 汇率来源：保存要等设置重新读回来才生效，先按用户刚选的显示
+  const savedRateSource = resolveRateSource(value);
+  const [rateSource, setRateSource] = useState<RateSource>(savedRateSource);
+  useEffect(() => setRateSource(savedRateSource), [savedRateSource]);
+
+  const [rateFetching, setRateFetching] = useState(false);
+  const [rateFetchFailed, setRateFetchFailed] = useState(false);
+
+  const refreshRates = async () => {
+    if (rateFetching) return;
+    setRateFetching(true);
+    setRateFetchFailed(false);
+    try {
+      const fetched = await usageApi.fetchExchangeRates();
+      const saved = await save({
+        autoExchangeRates: fetched.rates,
+        rateFetchedAt: fetched.fetchedAt,
+      });
+      setRateFetchFailed(saved === false);
+    } catch {
+      setRateFetchFailed(true);
+    } finally {
+      setRateFetching(false);
+    }
+  };
+
+  // 打开用量页时已由 useAutoExchangeRates 自动取过，这里只在切到自动、或点「立即更新」时取
+  const changeRateSource = async (next: RateSource) => {
+    setRateSource(next);
+    if ((await save({ rateSource: next })) === false) {
+      setRateSource(savedRateSource);
+      return;
+    }
+    if (next === "auto" && shouldRefreshRates({ ...value, rateSource: next })) {
+      void refreshRates();
+    }
+  };
 
   const toggleTodayItem = async (item: SidebarTodayItem) => {
     // 按菜单顺序存，侧栏上也按这个顺序排
@@ -236,6 +281,11 @@ export function UsageDisplaySection({
     // 保存失败（useSettings 已提示）就退回原来的币种
     if ((await save({ currency: next })) === false) {
       setCurrency(savedCurrency);
+      return;
+    }
+    // 刚切到非美元且自动汇率过期：顺手取一次，不等下次打开用量页
+    if (next !== "USD" && shouldRefreshRates(value)) {
+      void refreshRates();
     }
   };
 
@@ -329,10 +379,37 @@ export function UsageDisplaySection({
           </Select>
           {currency !== "USD" && (
             <>
+              <span className="text-body text-fg-2">
+                {t("usage.display.rateSource")}
+              </span>
+              <Select
+                value={rateSource}
+                onValueChange={(next) => {
+                  // Radix Select 偶尔回报空串，忽略
+                  const picked = RATE_SOURCES.find((source) => source === next);
+                  if (picked && picked !== rateSource) {
+                    void changeRateSource(picked);
+                  }
+                }}
+              >
+                <SelectTrigger
+                  className="h-7 w-full text-body"
+                  aria-label={t("usage.display.rateSource")}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {RATE_SOURCES.map((source) => (
+                    <SelectItem key={source} value={source}>
+                      {t(`usage.display.rateSources.${source}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <label htmlFor={rateId} className="text-body text-fg-2">
                 {t("usage.display.rate")}
               </label>
-              {/* 汇率紧跟币种单占一行，跨过后面所有列 */}
+              {/* 汇率紧跟来源单占一行，跨过后面所有列 */}
               <div className="col-span-1 flex items-center gap-2 text-body tabular-nums text-fg-2 md:col-span-3">
                 <span className="shrink-0">1 USD =</span>
                 <Input
@@ -341,6 +418,8 @@ export function UsageDisplaySection({
                   className="h-7 w-24 tabular-nums"
                   value={rateDraft}
                   aria-invalid={rateInvalid}
+                  // 自动模式下这一格只用来显示取到的汇率，改汇率要切到手动
+                  readOnly={rateSource === "auto"}
                   onChange={(event) => {
                     setRateDraft(event.target.value);
                     setRateInvalid(false);
@@ -351,6 +430,21 @@ export function UsageDisplaySection({
                   }}
                 />
                 <span className="shrink-0">{currency}</span>
+                {rateSource === "auto" && (
+                  <Button
+                    type="button"
+                    variant="quiet"
+                    size="compact"
+                    className="h-7 gap-1 px-2"
+                    onClick={() => void refreshRates()}
+                    disabled={rateFetching}
+                  >
+                    <RefreshCw
+                      className={cn("size-3.5", rateFetching && "animate-spin")}
+                    />
+                    {t("usage.display.rateRefresh")}
+                  </Button>
+                )}
               </div>
             </>
           )}
@@ -414,18 +508,29 @@ export function UsageDisplaySection({
         {currency !== "USD" && (
           <p
             className={
-              rateInvalid
+              rateInvalid || rateFetchFailed
                 ? "m-0 mt-1.5 text-caption text-danger-text"
                 : "m-0 mt-1.5 text-caption text-fg-3"
             }
           >
             {rateInvalid
               ? t("usage.display.rateInvalid")
-              : // 两句各自带句号：中日文直接相连，其他语言隔一个空格
-                [
-                  t("usage.display.rateHint"),
-                  t("usage.display.approxNote"),
-                ].join(/^(zh|ja)/i.test(lang) ? "" : " ")}
+              : rateSource === "auto"
+                ? [
+                    rateFetchFailed
+                      ? t("usage.display.rateAutoFailed")
+                      : typeof value?.rateFetchedAt === "number"
+                        ? t("usage.display.rateAutoUpdated", {
+                            time: formatRelativeTime(value.rateFetchedAt, t),
+                          })
+                        : t("usage.display.rateAutoNever"),
+                    t("usage.display.rateAutoHint"),
+                  ].join(/^(zh|ja)/i.test(lang) ? "" : " ")
+                : // 两句各自带句号：中日文直接相连，其他语言隔一个空格
+                  [
+                    t("usage.display.rateHint"),
+                    t("usage.display.approxNote"),
+                  ].join(/^(zh|ja)/i.test(lang) ? "" : " ")}
           </p>
         )}
       </div>

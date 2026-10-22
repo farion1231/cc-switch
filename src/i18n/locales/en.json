@@ -2397,6 +2397,16 @@
       "title": "Display",
       "currency": "Currency",
       "rate": "Exchange rate",
+      "rateSource": "Rate source",
+      "rateSources": {
+        "auto": "Automatic (daily)",
+        "manual": "Manual"
+      },
+      "rateAutoHint": "Fetched automatically once a day and used only for display; costs are still recorded in USD.",
+      "rateAutoUpdated": "Last updated: {{time}}",
+      "rateAutoNever": "No rate fetched yet",
+      "rateAutoFailed": "Could not fetch a new rate; keeping the previous one.",
+      "rateRefresh": "Update now",
       "rateHint": "Entered by hand and used only for display; costs are still recorded in USD.",
       "rateInvalid": "Enter a number greater than 0",
       "approxNote": "Hover a converted amount to see the USD value.",
