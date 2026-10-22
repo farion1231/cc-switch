@@ -173,10 +173,11 @@ pub async fn handle_streaming(
         format_headers(response.headers())
     );
     // 检查流式响应是否被压缩（SSE 通常不压缩，如果压缩则 SSE 解析会失败）
-    if let Some(encoding) = get_content_encoding(response.headers()) {
+    let stream_content_encoding = get_content_encoding(response.headers());
+    if let Some(encoding) = stream_content_encoding.as_deref() {
         log::warn!(
             "[{}] 流式响应含 content-encoding={encoding}，SSE 解析可能失败。\
-             上游在 accept-encoding 透传后压缩了 SSE 流。",
+             上游在 accept-encoding 透传后压缩了 SSE 流；model 回写对该流跳过。",
             ctx.tag
         );
     }
@@ -186,9 +187,12 @@ pub async fn handle_streaming(
 
     // Claude /v1/messages 透传：把响应 model 回写为客户端请求 model。rewrite 会改变
     // SSE 字节数，必须剥掉 Content-Length 等 entity 头，否则下游按旧长度截断/挂起。
+    // 压缩流的字节不是明文 SSE，按 UTF-8 事件边界重写会产出带 content-encoding 的
+    // 替换符文本、流不可恢复；此时退回原样透传，而不是重写。
     let force_response_model =
         if super::model_mapper::should_force_response_model_for_app(&ctx.app_type)
             && !ctx.request_model.trim().is_empty()
+            && stream_content_encoding.is_none()
         {
             Some(ctx.request_model.clone())
         } else {
