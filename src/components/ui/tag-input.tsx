@@ -33,10 +33,16 @@ export interface TagInputProps {
 interface SortableTagChipProps {
   tag: string;
   disabled?: boolean;
+  isPendingDelete?: boolean;
   onRemove: (tag: string) => void;
 }
 
-function SortableTagChip({ tag, disabled, onRemove }: SortableTagChipProps) {
+function SortableTagChip({
+  tag,
+  disabled,
+  isPendingDelete = false,
+  onRemove,
+}: SortableTagChipProps) {
   const {
     attributes,
     listeners,
@@ -64,6 +70,8 @@ function SortableTagChip({ tag, disabled, onRemove }: SortableTagChipProps) {
         "inline-flex items-center gap-1 rounded-[5px] border border-border bg-subtle px-2 py-0.5 text-caption font-medium text-fg-1 select-none transition-colors",
         !disabled && "cursor-grab active:cursor-grabbing hover:bg-selected",
         isDragging && "z-10 opacity-60 ring-2 ring-ring shadow-sm",
+        isPendingDelete &&
+          "border-danger/60 bg-danger-soft text-danger-text ring-1 ring-danger/50",
       )}
     >
       <TagIcon className="h-2.5 w-2.5 text-fg-3 shrink-0" aria-hidden="true" />
@@ -99,6 +107,9 @@ export function TagInput({
   const [inputValue, setInputValue] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const [pendingDeleteIndex, setPendingDeleteIndex] = useState(-1);
+  const isComposingRef = useRef(false);
+  const lastCompositionEndTimeRef = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownId = useId();
@@ -128,18 +139,21 @@ export function TagInput({
       if (maxTags !== undefined && value.length >= maxTags) return;
       if (value.some((t) => t.toLowerCase() === clean.toLowerCase())) {
         setInputValue("");
+        setPendingDeleteIndex(-1);
         return;
       }
       onChange?.([...value, clean]);
       setInputValue("");
       setIsOpen(false);
       setHighlightedIndex(-1);
+      setPendingDeleteIndex(-1);
     },
     [maxTags, onChange, value],
   );
 
   const removeTag = useCallback(
     (tagToRemove: string) => {
+      setPendingDeleteIndex(-1);
       onChange?.(value.filter((t) => t !== tagToRemove));
     },
     [onChange, value],
@@ -147,6 +161,7 @@ export function TagInput({
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
+      setPendingDeleteIndex(-1);
       const { active, over } = event;
       if (over && active.id !== over.id) {
         const oldIndex = value.indexOf(String(active.id));
@@ -160,7 +175,22 @@ export function TagInput({
   );
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    // 关键防抖：输入法在组字阶段或刚完成组字的 60ms 瞬态内，禁止任何标签创建或删除
+    const isComposing =
+      event.nativeEvent.isComposing ||
+      isComposingRef.current ||
+      event.keyCode === 229 ||
+      Date.now() - lastCompositionEndTimeRef.current < 60;
+
+    if (isComposing) {
+      if (pendingDeleteIndex !== -1) {
+        setPendingDeleteIndex(-1);
+      }
+      return;
+    }
+
     if (event.key === "Enter") {
+      setPendingDeleteIndex(-1);
       event.preventDefault();
       if (
         isOpen &&
@@ -175,6 +205,7 @@ export function TagInput({
     }
 
     if (event.key === "," || event.key === "，") {
+      setPendingDeleteIndex(-1);
       event.preventDefault();
       if (trimmedInput) {
         addTag(trimmedInput);
@@ -182,10 +213,26 @@ export function TagInput({
       return;
     }
 
-    if (event.key === "Backspace" && !inputValue && value.length > 0) {
-      event.preventDefault();
-      removeTag(value[value.length - 1]);
-      return;
+    if (event.key === "Backspace") {
+      // 只有在输入框完全为空且已有标签时触发
+      if (!inputValue && value.length > 0) {
+        event.preventDefault();
+        const lastIndex = value.length - 1;
+        if (pendingDeleteIndex === lastIndex) {
+          // 第二次连按 Backspace：确认删除最后一个标签
+          removeTag(value[lastIndex]);
+          setPendingDeleteIndex(-1);
+        } else {
+          // 第一次按 Backspace：仅选中标记为待删除，防止误按或输入法清空字根时直接误删
+          setPendingDeleteIndex(lastIndex);
+        }
+        return;
+      }
+    }
+
+    // 任何其他按键均撤销待删除选中状态
+    if (pendingDeleteIndex !== -1) {
+      setPendingDeleteIndex(-1);
     }
 
     if (event.key === "ArrowDown") {
@@ -226,7 +273,7 @@ export function TagInput({
     }
   };
 
-  // 点击外部关闭下拉建议
+  // 点击外部关闭下拉建议并清除选中删除状态
   useEffect(() => {
     const handleOutsideClick = (event: MouseEvent) => {
       if (
@@ -234,6 +281,7 @@ export function TagInput({
         !containerRef.current.contains(event.target as Node)
       ) {
         setIsOpen(false);
+        setPendingDeleteIndex(-1);
       }
     };
     document.addEventListener("mousedown", handleOutsideClick);
@@ -260,11 +308,12 @@ export function TagInput({
             items={value}
             strategy={horizontalListSortingStrategy}
           >
-            {value.map((tag) => (
+            {value.map((tag, index) => (
               <SortableTagChip
                 key={tag}
                 tag={tag}
                 disabled={disabled}
+                isPendingDelete={pendingDeleteIndex === index}
                 onRemove={removeTag}
               />
             ))}
@@ -288,7 +337,21 @@ export function TagInput({
           onFocus={() => {
             if (matchingSuggestions.length > 0) setIsOpen(true);
           }}
+          onBlur={() => {
+            setPendingDeleteIndex(-1);
+          }}
+          onCompositionStart={() => {
+            isComposingRef.current = true;
+            setPendingDeleteIndex(-1);
+          }}
+          onCompositionEnd={() => {
+            isComposingRef.current = false;
+            lastCompositionEndTimeRef.current = Date.now();
+          }}
           onChange={(event) => {
+            if (pendingDeleteIndex !== -1) {
+              setPendingDeleteIndex(-1);
+            }
             setInputValue(event.target.value);
             setIsOpen(true);
             setHighlightedIndex(-1);

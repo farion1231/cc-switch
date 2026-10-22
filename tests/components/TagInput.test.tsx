@@ -63,12 +63,51 @@ describe("TagInput", () => {
     expect(screen.getByText("keep")).toBeInTheDocument();
   });
 
-  it("removes the last tag on Backspace when input is empty", async () => {
+  it("requires double Backspace to remove the last tag when input is empty (two-step safety)", async () => {
     render(<TagInputHarness initialTags={["first", "second"]} />);
     const input = screen.getByPlaceholderText("");
+
+    // First Backspace: selects the last tag for deletion (pending delete), does not remove it yet
+    fireEvent.keyDown(input, { key: "Backspace" });
+    expect(screen.getByText("second")).toBeInTheDocument();
+
+    // Second Backspace: confirms deletion
     fireEvent.keyDown(input, { key: "Backspace" });
     expect(screen.getByText("first")).toBeInTheDocument();
     expect(screen.queryByText("second")).not.toBeInTheDocument();
+  });
+
+  it("resets pending delete state when typing a character", async () => {
+    render(<TagInputHarness initialTags={["first", "second"]} />);
+    const input = screen.getByPlaceholderText("");
+
+    // First Backspace marks "second"
+    fireEvent.keyDown(input, { key: "Backspace" });
+    expect(screen.getByText("second")).toBeInTheDocument();
+
+    // User types something
+    await userEvent.type(input, "a");
+
+    // Clear input
+    await userEvent.clear(input);
+
+    // Another single Backspace should mark it again, not immediately delete
+    fireEvent.keyDown(input, { key: "Backspace" });
+    expect(screen.getByText("second")).toBeInTheDocument();
+  });
+
+  it("does not delete or select tags on Backspace during IME composition", () => {
+    render(<TagInputHarness initialTags={["first", "second"]} />);
+    const input = screen.getByPlaceholderText("");
+
+    // Backspace during IME composition
+    fireEvent.compositionStart(input);
+    fireEvent.keyDown(input, { key: "Backspace", isComposing: true });
+    expect(screen.getByText("second")).toBeInTheDocument();
+
+    // A second Backspace still during composition does not delete either
+    fireEvent.keyDown(input, { key: "Backspace", isComposing: true });
+    expect(screen.getByText("second")).toBeInTheDocument();
   });
 
   it("shows suggestions and allows selecting via click", async () => {
