@@ -2333,7 +2333,7 @@
       "minutesAgo": "{{count}} dk önce eşitlendi",
       "syncing": "Eşitleniyor…",
       "tip": "Şimdi eşitlemek için tıklayın",
-      "tipOff": "Otomatik tarama kapalı: oturum günlükleri yalnızca manuel olarak eşitlediğinizde taranır. Şimdi eşitlemek için tıklayın"
+      "tipOff": "Otomatik tarama kapalı. Şimdi eşitlemek için tıklayın"
     },
     "refreshMenu": {
       "label": "Her {{seconds}} saniyede tara"
