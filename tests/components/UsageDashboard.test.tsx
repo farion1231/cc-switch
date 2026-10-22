@@ -610,6 +610,17 @@ describe("UsageDashboard", () => {
 
     logsTab.focus();
     await user.keyboard("{ArrowRight}");
+    const projectsTab = screen.getByRole("tab", {
+      name: "usage.tabs.projects",
+    });
+    expect(projectsTab).toHaveAttribute("aria-selected", "true");
+    expect(projectsTab).toHaveFocus();
+    expect(screen.getByRole("tabpanel")).toHaveAttribute(
+      "aria-labelledby",
+      "usage-tab-projects",
+    );
+
+    await user.keyboard("{ArrowRight}");
     const providersTab = screen.getByRole("tab", {
       name: "usage.tabs.providers",
     });

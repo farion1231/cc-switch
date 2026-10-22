@@ -162,7 +162,7 @@ fn import_records(db: &Database, session: &str, rows: &[Value]) -> Result<(u32, 
         if fresh == 0 {
             // A rewritten completed step may correct counters; update retained detail only.
             // If retention already removed it, its tombstone still forbids resurrection.
-            let changed = tx.execute("UPDATE proxy_request_logs SET model=?2,request_model=?7,input_tokens=?3,output_tokens=?4,cache_read_tokens=?5,cache_creation_tokens=?6,input_cost_usd=?8,output_cost_usd=?9,cache_read_cost_usd=?10,cache_creation_cost_usd=?11,total_cost_usd=?12 WHERE request_id=?1 AND (model!=?2 OR request_model!=?7 OR input_tokens!=?3 OR output_tokens!=?4 OR cache_read_tokens!=?5 OR cache_creation_tokens!=?6 OR total_cost_usd!=?12)", params![id,model,input,output,cache,write,display,input_cost,output_cost,cache_cost,write_cost,total_cost])?;
+            let changed = tx.execute("UPDATE proxy_request_logs SET model=?2,request_model=?7,input_tokens=?3,output_tokens=?4,cache_read_tokens=?5,cache_creation_tokens=?6,input_cost_usd=?8,output_cost_usd=?9,cache_read_cost_usd=?10,cache_creation_cost_usd=?11,total_cost_usd=?12,attribution_source='unknown',attribution_confidence='unknown',attribution_reason='agy_native_session' WHERE request_id=?1 AND (model!=?2 OR request_model!=?7 OR input_tokens!=?3 OR output_tokens!=?4 OR cache_read_tokens!=?5 OR cache_creation_tokens!=?6 OR total_cost_usd!=?12 OR attribution_source!='unknown' OR attribution_confidence!='unknown')", params![id,model,input,output,cache,write,display,input_cost,output_cost,cache_cost,write_cost,total_cost])?;
             imported += changed as u32;
             skipped += u32::from(changed == 0);
             continue;
@@ -174,8 +174,9 @@ fn import_records(db: &Database, session: &str, rows: &[Value]) -> Result<(u32, 
             request_id,provider_id,app_type,model,request_model,input_tokens,output_tokens,
             cache_read_tokens,cache_creation_tokens,input_cost_usd,output_cost_usd,
             cache_read_cost_usd,cache_creation_cost_usd,total_cost_usd,latency_ms,status_code,
-            session_id,provider_type,is_streaming,cost_multiplier,created_at,data_source,input_token_semantics
-        ) VALUES (?1,'_agy_session','agy',?2,?10,?3,?4,?5,?6,?11,?12,?13,?14,?15,0,200,?7,'agy_session',1,'1',?8,'agy_session',?9)",
+            session_id,provider_type,is_streaming,cost_multiplier,created_at,data_source,input_token_semantics,
+            attribution_source,attribution_confidence,attribution_reason
+        ) VALUES (?1,'_agy_session','agy',?2,?10,?3,?4,?5,?6,?11,?12,?13,?14,?15,0,200,?7,'agy_session',1,'1',?8,'agy_session',?9,'unknown','unknown','agy_native_session')",
         params![id, model, input, output, cache, write, session, agy::timestamp(row).unwrap_or(0)/1000, INPUT_TOKEN_SEMANTICS_FRESH, display, input_cost, output_cost, cache_cost, write_cost, total_cost])?;
         imported += 1;
     }

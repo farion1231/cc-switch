@@ -726,6 +726,7 @@ fn sync_single_file(
     let mut read_error: Option<String> = None;
     let mut messages: HashMap<String, ParsedAssistantUsage> = HashMap::new();
     let mut current_session_id: Option<String> = None;
+    let mut current_project: Option<crate::services::usage_attribution::SessionProject> = None;
 
     loop {
         buf.clear();
@@ -760,6 +761,20 @@ fn sync_single_file(
         if current_session_id.is_none() {
             if let Some(sid) = value.get("sessionId").and_then(|v| v.as_str()) {
                 current_session_id = Some(sid.to_string());
+            }
+        }
+        if current_project.is_none() {
+            if let (Some(sid), Some(cwd)) = (
+                current_session_id.as_deref(),
+                value.get("cwd").and_then(|v| v.as_str()),
+            ) {
+                let key = crate::services::usage_attribution::normalize_session_key("claude", sid);
+                current_project = crate::services::usage_attribution::project_from_cwd(
+                    "claude",
+                    &key,
+                    cwd,
+                    "session_meta",
+                );
             }
         }
 
@@ -854,6 +869,9 @@ fn sync_single_file(
     let tx = conn
         .unchecked_transaction()
         .map_err(|e| AppError::Database(format!("启动会话用量导入事务失败: {e}")))?;
+    if let Some(project) = current_project.as_ref() {
+        crate::database::Database::upsert_session_project_on_conn(&tx, project)?;
+    }
     // 只在这次持有连接锁的文件事务内复用定价（含未找到的模型）。
     // 下一文件/下一轮新建缓存，事务之间的定价更新或新增立即可见。
     let mut pricing_cache = SessionPricingCache::default();
@@ -902,7 +920,14 @@ fn sync_single_file(
                 })
             });
 
-        match upsert_session_log_entry_on_conn(&tx, &request_id, msg, timing, &mut pricing_cache) {
+        match upsert_session_log_entry_on_conn(
+            &tx,
+            &request_id,
+            msg,
+            timing,
+            current_project.as_ref(),
+            &mut pricing_cache,
+        ) {
             // 补全已有的行也算进 imported：数据变了，界面要跟着刷新
             Ok(SessionRowOutcome::Inserted | SessionRowOutcome::Updated) => imported += 1,
             Ok(SessionRowOutcome::Skipped) => skipped += 1,
@@ -1237,6 +1262,7 @@ fn upsert_session_log_entry_on_conn(
     request_id: &str,
     msg: &ParsedAssistantUsage,
     timing: Option<EstimatedTiming>,
+    project: Option<&crate::services::usage_attribution::SessionProject>,
     pricing_cache: &mut SessionPricingCache,
 ) -> Result<SessionRowOutcome, AppError> {
     let created_at = msg
@@ -1274,9 +1300,22 @@ fn upsert_session_log_entry_on_conn(
             pricing_cache,
         );
     }
-    if has_matching_proxy_usage_log(conn, &dedup_key)? {
+    if crate::services::usage_attribution::backfill_if_proxy_duplicate(conn, &dedup_key, project)? {
         return Ok(SessionRowOutcome::Skipped);
     }
+
+    // Claude 会话记录没有供应商卡片 ID，只能按请求时间点查激活时间线。
+    let start_s = created_at.saturating_sub(timing.map_or(0, |t| t.latency_ms) / 1000);
+    let attribution = crate::services::usage_attribution::resolve_provider_attribution(
+        conn, "claude", start_s, created_at, "_session",
+    )?;
+    let provider_name_snapshot =
+        crate::services::usage_attribution::provider_name_snapshot_on_conn(
+            conn,
+            &attribution.provider_id,
+            "claude",
+        )?
+        .unwrap_or_default();
 
     let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
         session_costs(conn, msg, pricing_cache);
@@ -1288,11 +1327,13 @@ fn upsert_session_log_entry_on_conn(
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
-            provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+            provider_type, is_streaming, cost_multiplier, created_at, data_source,
+            project_key, project_name, project_path, session_key,
+            attribution_source, attribution_confidence, attribution_reason, provider_name_snapshot
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32)",
             rusqlite::params![
                 request_id,
-                "_session",         // provider_id: 标记为会话来源
+                attribution.provider_id,
                 "claude",           // app_type
                 msg.model,
                 msg.model,          // request_model = model
@@ -1315,6 +1356,14 @@ fn upsert_session_log_entry_on_conn(
                 "1.0",              // cost_multiplier
                 created_at,
                 "session_log",      // data_source
+                project.map(|p| p.project_key.as_str()).unwrap_or(""),
+                project.map(|p| p.project_name.as_str()).unwrap_or(""),
+                project.map(|p| p.project_path.as_str()).unwrap_or(""),
+                project.map(|p| p.session_key.as_str()).unwrap_or(""),
+                attribution.source,
+                attribution.confidence,
+                attribution.reason,
+                provider_name_snapshot,
             ],
         )
         .map_err(|e| AppError::Database(format!("插入会话日志失败: {e}")))?;
@@ -1446,7 +1495,7 @@ mod tests {
                 }
                 let id = format!("session:pricing-{model_index}-{index}");
                 assert_eq!(
-                    upsert_session_log_entry_on_conn(&tx, &id, &msg, None, &mut cache)?,
+                    upsert_session_log_entry_on_conn(&tx, &id, &msg, None, None, &mut cache)?,
                     SessionRowOutcome::Inserted
                 );
                 let stored: [String; 5] = tx.query_row(
@@ -1478,6 +1527,7 @@ mod tests {
                 &tx,
                 "session:pricing-0-0",
                 &completed,
+                None,
                 None,
                 &mut cache,
             )?,
@@ -1688,6 +1738,7 @@ mod tests {
                 &conn,
                 "session:msg_1",
                 &msg,
+                None,
                 None,
                 &mut SessionPricingCache::default(),
             )?

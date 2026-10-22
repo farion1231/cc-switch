@@ -1458,3 +1458,157 @@ fn incremental_vacuum_reclaims_entire_freelist() {
     Database::incremental_vacuum_on_conn(&conn).expect("incremental vacuum");
     assert_eq!(freelist(&conn), 0, "all free pages should be reclaimed");
 }
+
+/// 用真实数据库副本验证 v20 → v21 迁移。
+///
+/// 需要显式提供 `CC_SWITCH_TEST_DB`（指向数据库副本），默认 ignore：
+/// `CC_SWITCH_TEST_DB=/path/to/copy.db cargo test --lib migrate_copied_database_to_v21 -- --ignored`
+#[test]
+#[ignore = "requires CC_SWITCH_TEST_DB pointing at a copied database"]
+fn migrate_copied_database_to_v21() -> Result<(), AppError> {
+    let path = std::env::var("CC_SWITCH_TEST_DB")
+        .expect("CC_SWITCH_TEST_DB must point at a copied database");
+    let conn = Connection::open(&path)?;
+    conn.execute("PRAGMA foreign_keys = ON;", [])?;
+
+    let before_version = Database::get_user_version(&conn)?;
+    let before_details: i64 =
+        conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
+            row.get(0)
+        })?;
+    let before_rollups: i64 =
+        conn.query_row("SELECT COUNT(*) FROM usage_daily_rollups", [], |row| {
+            row.get(0)
+        })?;
+
+    Database::apply_schema_migrations_on_conn(&conn)?;
+
+    assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+    assert_eq!(before_version, 20, "test copy should start at v20");
+    assert!(Database::table_exists(&conn, "provider_activations")?);
+    assert!(Database::table_exists(&conn, "session_projects")?);
+
+    for column in [
+        "project_key",
+        "project_name",
+        "project_path",
+        "session_key",
+        "attribution_source",
+        "attribution_confidence",
+        "attribution_reason",
+        "provider_name_snapshot",
+    ] {
+        assert!(
+            Database::has_column(&conn, "proxy_request_logs", column)?,
+            "missing proxy_request_logs.{column}"
+        );
+    }
+    assert!(Database::has_column(
+        &conn,
+        "usage_daily_rollups",
+        "project_key"
+    )?);
+
+    let after_details: i64 =
+        conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
+            row.get(0)
+        })?;
+    let after_rollups: i64 =
+        conn.query_row("SELECT COUNT(*) FROM usage_daily_rollups", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(
+        after_details, before_details,
+        "detail rows must be preserved"
+    );
+    assert_eq!(
+        after_rollups, before_rollups,
+        "rollup rows must be preserved"
+    );
+
+    let legacy_session_rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM proxy_request_logs
+         WHERE data_source IS NOT NULL AND data_source != 'proxy'
+           AND attribution_source = 'unknown'
+           AND attribution_confidence = 'unknown'
+           AND attribution_reason = 'pre_migration_no_evidence'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert!(
+        legacy_session_rows > 0,
+        "existing session rows should be marked unknown"
+    );
+
+    let integrity: String = conn.query_row("PRAGMA integrity_check;", [], |row| row.get(0))?;
+    assert_eq!(integrity, "ok");
+    let foreign_key_violations: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_foreign_key_check;",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(foreign_key_violations, 0);
+
+    println!(
+        "migrated copy: details={after_details}, rollups={after_rollups}, legacy_session_unknown={legacy_session_rows}"
+    );
+
+    // 迁移后真实查询烟测：项目/供应商/缓存查询必须能在存量数据上跑通。
+    let db = Database {
+        conn: std::sync::Mutex::new(conn),
+        log_count_cache: std::sync::Mutex::new(None),
+    };
+    let projects = db.get_project_stats(None, None, None, None, None, None, None)?;
+    assert!(
+        projects.iter().any(|p| p.project_key == ""),
+        "legacy rows should surface as the unidentified project"
+    );
+    let options = db.get_usage_projects(None, None, None)?;
+    assert!(options.iter().any(|p| p.project_key == ""));
+    let providers =
+        db.get_provider_stats(None, None, Some("codex"), None, None, None, None, Some(""))?;
+    assert!(!providers.is_empty(), "project-filtered provider stats");
+    assert!(
+        providers.iter().all(|p| p.cacheable_input_tokens
+            == p.fresh_input_tokens + p.cache_creation_tokens + p.cache_read_tokens),
+        "cache fields must add up"
+    );
+    let logs = db.get_request_logs(
+        &crate::services::usage_stats::LogFilters {
+            project_key: Some(String::new()),
+            ..Default::default()
+        },
+        0,
+        5,
+    )?;
+    assert!(logs.total > 0, "project-filtered logs");
+    let summary =
+        db.get_usage_summary(None, None, Some("codex"), None, None, None, None, Some(""))?;
+    assert!(summary.total_requests > 0, "project-filtered summary");
+    let quality = db.get_usage_data_quality(None, None, None)?;
+    assert!(quality.total_requests > 0);
+    assert_eq!(
+        quality.unknown_project_requests, quality.total_requests,
+        "all legacy rows have an empty project key"
+    );
+    assert!(quality.unknown_provider_requests > 0);
+    let models = db.get_model_stats(None, None, Some("codex"), None, None, None, None, Some(""))?;
+    assert!(!models.is_empty(), "project-filtered model stats");
+    assert!(
+        models.iter().all(|m| {
+            m.cacheable_input_tokens
+                == m.fresh_input_tokens + m.cache_creation_tokens + m.cache_read_tokens
+        }),
+        "model cache fields must add up"
+    );
+    println!(
+        "query smoke: projects={}, providers={}, logs={}, summary_requests={}, quality_total={}, quality_unknown_provider={}",
+        projects.len(),
+        providers.len(),
+        logs.total,
+        summary.total_requests,
+        quality.total_requests,
+        quality.unknown_provider_requests
+    );
+    Ok(())
+}

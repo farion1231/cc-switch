@@ -7,6 +7,7 @@ import {
   ChartColumn,
   ChevronDown,
   Database,
+  Info,
   Loader2,
   RefreshCw,
 } from "lucide-react";
@@ -37,6 +38,8 @@ import {
   usageKeys,
   useModelStats,
   useProviderStats,
+  useUsageProjects,
+  useUsageDataQuality,
   useSessionUsageLastSync,
 } from "@/lib/query/usage";
 import { useSettingsQuery } from "@/lib/query";
@@ -51,6 +54,7 @@ import { UsageTrendChart } from "./UsageTrendChart";
 import { RequestLogTable } from "./RequestLogTable";
 import { ProviderStatsTable } from "./ProviderStatsTable";
 import { ModelStatsTable } from "./ModelStatsTable";
+import { ProjectStatsTable } from "./ProjectStatsTable";
 import { PricingConfigPanel } from "./PricingConfigPanel";
 import { RequestDetailPanel } from "./RequestDetailPanel";
 import { UsageDataSourcesSheet } from "./UsageDataSourcesSheet";
@@ -84,8 +88,14 @@ const normalizeRefreshInterval = (value: number | undefined) =>
 const STATUS_CODE_OPTIONS = [200, 400, 401, 429, 500] as const;
 
 // 「设置」放显示币种和模型定价（原「定价」页签并进来）
-type UsageTab = "logs" | "providers" | "models" | "settings";
-const TABS: UsageTab[] = ["logs", "providers", "models", "settings"];
+type UsageTab = "logs" | "projects" | "providers" | "models" | "settings";
+const TABS: UsageTab[] = [
+  "logs",
+  "projects",
+  "providers",
+  "models",
+  "settings",
+];
 /** 记住的时间范围只认预设：自定义的起止日期过几天就不是用户想看的了，选自定义时不改记下的预设 */
 const REMEMBERED_RANGE_PRESETS: UsageRangePreset[] = [
   "today",
@@ -205,9 +215,12 @@ export function UsageDashboard({
     }
   };
   const [appType, setAppType] = useState<AppTypeFilter>(initialAppType);
-  const [providerName, setProviderName] = useState<string | undefined>(
-    undefined,
-  );
+  const [providerSelection, setProviderSelection] = useState<{
+    id: string;
+    appType: string;
+    name: string;
+  } | null>(null);
+  const [projectKey, setProjectKey] = useState<string | undefined>(undefined);
   const [model, setModel] = useState<string | undefined>(undefined);
   const [statusCode, setStatusCode] = useState<number | undefined>(undefined);
 
@@ -256,7 +269,8 @@ export function UsageDashboard({
 
   useEffect(() => {
     setAppType(initialAppType);
-    setProviderName(undefined);
+    setProviderSelection(null);
+    setProjectKey(undefined);
     setModel(undefined);
   }, [initialAppType]);
 
@@ -265,13 +279,16 @@ export function UsageDashboard({
   const changeAppType = (next: AppTypeFilter) => {
     setAppType(next);
     if (next !== appType) {
-      setProviderName(undefined);
+      setProviderSelection(null);
+      setProjectKey(undefined);
       setModel(undefined);
     }
   };
-  const changeProviderName = (next: string | undefined) => {
-    setProviderName(next);
-    if (next !== providerName) {
+  const changeProvider = (
+    next: { id: string; appType: string; name: string } | null,
+  ) => {
+    setProviderSelection(next);
+    if (next?.id !== providerSelection?.id) {
       setModel(undefined);
     }
   };
@@ -372,12 +389,27 @@ export function UsageDashboard({
   };
   const { data: providerOptionsData } = useProviderStats(
     range,
-    { appType },
+    { appType, projectKey },
     refetch,
   );
   const { data: modelOptionsData } = useModelStats(
     range,
-    { appType, providerName },
+    {
+      appType,
+      providerId: providerSelection?.id,
+      providerAppType: providerSelection?.appType,
+      projectKey,
+    },
+    refetch,
+  );
+  const { data: projectOptionsData } = useUsageProjects(
+    range,
+    appType === "all" ? undefined : appType,
+    refetch,
+  );
+  const { data: dataQuality } = useUsageDataQuality(
+    range,
+    appType === "all" ? undefined : appType,
     refetch,
   );
   // 有没有任何用量（不分时间范围）：一条都没有时显示空状态
@@ -389,19 +421,27 @@ export function UsageDashboard({
   const isEmpty = allTimeSummary != null && allTimeSummary.totalRequests === 0;
 
   const providerOptions = useMemo(() => {
-    const counts = new Map<string, number>();
+    const map = new Map<
+      string,
+      { id: string; appType: string; name: string; count: number }
+    >();
     for (const stat of providerOptionsData ?? []) {
-      counts.set(
-        stat.providerName,
-        (counts.get(stat.providerName) ?? 0) + stat.requestCount,
-      );
+      map.set(`${stat.appType}:${stat.providerId}`, {
+        id: stat.providerId,
+        appType: stat.appType,
+        name: stat.providerName,
+        count: stat.requestCount,
+      });
     }
     // 数据刷新后选中项可能掉出列表（如改了时间范围）；补回去保证用户看得见、能清除
-    if (providerName && !counts.has(providerName)) counts.set(providerName, 0);
-    return Array.from(counts, ([name, count]) => ({ name, count })).sort(
-      (a, b) => b.count - a.count,
-    );
-  }, [providerOptionsData, providerName]);
+    if (providerSelection) {
+      const key = `${providerSelection.appType}:${providerSelection.id}`;
+      if (!map.has(key)) {
+        map.set(key, { ...providerSelection, count: 0 });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.count - a.count);
+  }, [providerOptionsData, providerSelection]);
 
   const modelOptions = useMemo(() => {
     const counts = new Map<string, number>();
@@ -416,6 +456,29 @@ export function UsageDashboard({
 
   const providerTotal = providerOptions.reduce((sum, p) => sum + p.count, 0);
   const modelTotal = modelOptions.reduce((sum, m) => sum + m.count, 0);
+  const projectOptions = useMemo(() => {
+    const options = (projectOptionsData ?? []).map((project) => ({
+      key: project.projectKey,
+      name:
+        project.projectKey === "" &&
+        !project.projectName &&
+        !project.projectPath
+          ? t("usage.projectFilter.unknown")
+          : project.projectName || project.projectPath || project.projectKey,
+      path: project.projectPath,
+      count: project.requestCount,
+    }));
+    if (projectKey && !options.some((option) => option.key === projectKey)) {
+      options.push({
+        key: projectKey,
+        name: projectKey === "" ? t("usage.projectFilter.unknown") : projectKey,
+        path: "",
+        count: 0,
+      });
+    }
+    return options.sort((a, b) => b.count - a.count);
+  }, [projectOptionsData, projectKey, t]);
+  const projectTotal = projectOptions.reduce((sum, p) => sum + p.count, 0);
 
   // ── 页头 ─────────────────────────────────────────────────────────────
   const syncedLabel = useMemo(() => {
@@ -594,14 +657,16 @@ export function UsageDashboard({
             size="regular"
             className="min-w-[78px] max-w-[156px] shrink gap-1 pe-2 ps-3"
             title={
-              providerName
-                ? usageProviderTitle(getUsageProviderLabel(providerName, t))
+              providerSelection
+                ? usageProviderTitle(
+                    getUsageProviderLabel(providerSelection.name, t),
+                  )
                 : t("usage.providerFilter.title")
             }
           >
             <span className="min-w-0 truncate">
-              {providerName
-                ? getUsageProviderLabel(providerName, t).label
+              {providerSelection
+                ? getUsageProviderLabel(providerSelection.name, t).label
                 : t("usage.providerFilter.label")}
             </span>
             <ChevronDown className="h-3.5 w-3.5 shrink-0 text-fg-2" />
@@ -614,9 +679,9 @@ export function UsageDashboard({
         >
           <DropdownMenuItem
             className={menuItemClass}
-            onSelect={() => changeProviderName(undefined)}
+            onSelect={() => changeProvider(null)}
           >
-            <MenuCheck checked={providerName == null} />
+            <MenuCheck checked={providerSelection == null} />
             {t("usage.providerFilter.all")}
             <MenuMeta>{fmtInt(providerTotal, locale)}</MenuMeta>
           </DropdownMenuItem>
@@ -624,17 +689,79 @@ export function UsageDashboard({
             const label = getUsageProviderLabel(option.name, t);
             return (
               <DropdownMenuItem
-                key={option.name}
+                key={`${option.appType}:${option.id}`}
                 className={menuItemClass}
                 title={usageProviderTitle(label)}
-                onSelect={() => changeProviderName(option.name)}
+                onSelect={() =>
+                  changeProvider({
+                    id: option.id,
+                    appType: option.appType,
+                    name: option.name,
+                  })
+                }
               >
-                <MenuCheck checked={providerName === option.name} />
+                <MenuCheck
+                  checked={
+                    providerSelection?.id === option.id &&
+                    providerSelection?.appType === option.appType
+                  }
+                />
                 <span className="min-w-0 truncate">{label.label}</span>
                 <MenuMeta>{fmtInt(option.count, locale)}</MenuMeta>
               </DropdownMenuItem>
             );
           })}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="neutral"
+            size="regular"
+            className="min-w-[78px] max-w-[176px] shrink gap-1 pe-2 ps-3"
+            title={
+              projectKey === ""
+                ? t("usage.projectFilter.unknown")
+                : (projectKey ?? t("usage.projectFilter.title"))
+            }
+          >
+            <span className="min-w-0 truncate">
+              {projectKey == null
+                ? t("usage.projectFilter.label")
+                : projectKey === ""
+                  ? t("usage.projectFilter.unknown")
+                  : (projectOptions.find((option) => option.key === projectKey)
+                      ?.name ?? projectKey)}
+            </span>
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-fg-2" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          aria-label={t("usage.projectFilter.title")}
+          className={cn(menuContentClass, "max-h-[360px] overflow-y-auto")}
+        >
+          <DropdownMenuItem
+            className={menuItemClass}
+            onSelect={() => setProjectKey(undefined)}
+          >
+            <MenuCheck checked={projectKey == null} />
+            {t("usage.projectFilter.all")}
+            <MenuMeta>{fmtInt(projectTotal, locale)}</MenuMeta>
+          </DropdownMenuItem>
+          {projectOptions.map((option) => (
+            <DropdownMenuItem
+              key={option.key || "__unknown__"}
+              className={menuItemClass}
+              title={option.path || option.name}
+              onSelect={() => setProjectKey(option.key)}
+            >
+              <MenuCheck checked={projectKey === option.key} />
+              <span className="min-w-0 truncate">{option.name}</span>
+              <MenuMeta>{fmtInt(option.count, locale)}</MenuMeta>
+            </DropdownMenuItem>
+          ))}
         </DropdownMenuContent>
       </DropdownMenu>
       <DropdownMenu>
@@ -692,6 +819,7 @@ export function UsageDashboard({
   // ── 子页签 ───────────────────────────────────────────────────────────
   const tabLabel: Record<UsageTab, string> = {
     logs: t("usage.requestLogs"),
+    projects: t("usage.tabs.projects"),
     providers: t("usage.tabs.providers"),
     models: t("usage.tabs.models"),
     settings: t("usage.tabs.settings"),
@@ -767,7 +895,10 @@ export function UsageDashboard({
           <RequestLogTable
             range={range}
             appType={appType}
-            providerName={providerName}
+            providerId={providerSelection?.id}
+            providerAppType={providerSelection?.appType}
+            providerName={providerSelection?.name}
+            projectKey={projectKey}
             model={model}
             statusCode={statusCode}
             refreshIntervalMs={0}
@@ -775,11 +906,25 @@ export function UsageDashboard({
             columns={logColumns}
           />
         )}
+        {tab === "projects" && (
+          <ProjectStatsTable
+            range={range}
+            appType={appType}
+            providerId={providerSelection?.id}
+            providerAppType={providerSelection?.appType}
+            providerName={providerSelection?.name}
+            model={model}
+            refreshIntervalMs={0}
+          />
+        )}
         {tab === "providers" && (
           <ProviderStatsTable
             range={range}
             appType={appType}
-            providerName={providerName}
+            providerId={providerSelection?.id}
+            providerAppType={providerSelection?.appType}
+            providerName={providerSelection?.name}
+            projectKey={projectKey}
             model={model}
             refreshIntervalMs={0}
           />
@@ -788,7 +933,10 @@ export function UsageDashboard({
           <ModelStatsTable
             range={range}
             appType={appType}
-            providerName={providerName}
+            providerId={providerSelection?.id}
+            providerAppType={providerSelection?.appType}
+            providerName={providerSelection?.name}
+            projectKey={projectKey}
             model={model}
             refreshIntervalMs={0}
           />
@@ -871,7 +1019,10 @@ export function UsageDashboard({
         <UsageHero
           range={range}
           appType={scopedAppType}
-          providerName={providerName}
+          providerId={providerSelection?.id}
+          providerAppType={providerSelection?.appType}
+          providerName={providerSelection?.name}
+          projectKey={projectKey}
           model={model}
           refreshIntervalMs={0}
           compact={compact}
@@ -881,7 +1032,10 @@ export function UsageDashboard({
         {range.preset === "all" ? (
           <UsageHeatmap
             appType={appType}
-            providerName={providerName}
+            providerId={providerSelection?.id}
+            providerAppType={providerSelection?.appType}
+            providerName={providerSelection?.name}
+            projectKey={projectKey}
             model={model}
             refreshIntervalMs={0}
           />
@@ -890,11 +1044,28 @@ export function UsageDashboard({
             range={range}
             rangeLabel={rangeLabel}
             appType={appType}
-            providerName={providerName}
+            providerId={providerSelection?.id}
+            providerAppType={providerSelection?.appType}
+            providerName={providerSelection?.name}
+            projectKey={projectKey}
             model={model}
             refreshIntervalMs={0}
           />
         )}
+
+        {dataQuality &&
+        (dataQuality.unknownProviderRequests > 0 ||
+          dataQuality.unknownProjectRequests > 0) ? (
+          <div className="flex items-center gap-1.5 text-caption text-fg-2">
+            <Info className="h-3.5 w-3.5 shrink-0" />
+            <span>
+              {t("usage.quality.summary", {
+                provider: fmtInt(dataQuality.unknownProviderRequests, locale),
+                project: fmtInt(dataQuality.unknownProjectRequests, locale),
+              })}
+            </span>
+          </div>
+        ) : null}
 
         {tabsSection}
       </div>

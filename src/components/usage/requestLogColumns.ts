@@ -6,6 +6,7 @@ export const REQUEST_LOG_COLUMNS = [
   { id: "time", labelKey: "usage.time", defaultVisible: true, locked: true },
   { id: "app", labelKey: "usage.app", defaultVisible: true },
   { id: "provider", labelKey: "usage.provider", defaultVisible: true },
+  { id: "project", labelKey: "usage.project", defaultVisible: true },
   { id: "model", labelKey: "usage.model", defaultVisible: true },
   { id: "freshInput", labelKey: "usage.freshInput", defaultVisible: true },
   { id: "output", labelKey: "usage.outputTokens", defaultVisible: true },

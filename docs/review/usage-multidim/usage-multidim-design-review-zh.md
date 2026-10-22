@@ -1,0 +1,134 @@
+# CC Switch 用量多维度 详细设计评审记录
+
+## 最新复核（2026-10-22）
+
+模型缓存下钻及原有多维用量变更已与上游 `main` 的 `cb90a244` 合并。没有文本冲突；启动逻辑、语言文件及 4.0.18 版本信息均保留上游更新，项目和供应商下钻继续使用原始应用与供应商卡片 ID 过滤。
+
+- `pnpm test:unit --maxWorkers=2 --minWorkers=1`：251 个文件、3180 项通过。
+- `pnpm typecheck`、`pnpm format:check`、`pnpm build:renderer`：通过。
+- `cargo fmt --check`、`cargo clippy -- -D warnings`：通过。
+- `cargo test --lib usage_stats`：47 项通过；供应商回填回归用例：1 项通过。
+- Claude 会话解析的 `parse_session` 回归：9 项通过，覆盖上游新增的最后一次 `/cd` 归组行为。
+- 缓存视图使用本地样例检查桌面、390 像素视口及深浅主题；完整 Rust 测试集本轮未重跑。
+
+异常复验：首次默认并发的全量前端运行中，图标选择器等待异步图标按钮超时；该文件独立复测 10 项通过，限制并发后的完整测试集全部通过。未修改图标业务实现，尚不足以把该现象归因为产品缺陷。后续遇到同类超时，先在相同并发和异步加载条件下复核，再决定是否修改业务代码。
+
+## 1. 评审对象
+
+| 项目 | 内容 |
+| --- | --- |
+| 设计文档 | `docs/design/usage-multidim/usage-multidim-design-zh.md` |
+| 上游 | `docs/plan/usage-multidim/usage-multidim-requirements-zh.md`、`docs/review/usage-multidim/usage-multidim-review-zh.md` |
+| 评审方式 | 设计条目对照当前源码逐条核实（模式系统、切换入口、DAO/命令/前端文件、时间单位、rollup 路径） |
+| 结论 | 发现 3 项高、3 项中、2 项低问题，已全部修入设计文档；修正后可进入开发 |
+| 最后更新 | 2026-10-20 |
+
+## 2. 发现与处理
+
+### D-01 设计假设存在“聚合模式”，代码里不存在
+
+严重程度：高
+
+问题：设计 4.1 写“直连、路由、聚合模式发生切换时”。实际模式枚举只有 `Mode::Direct | Mode::Proxy`（`src-tauri/src/mode/state.rs:54`）；故障转移和多供应商栈路由都属于 `Mode::Proxy`。
+
+处理：设计 4.1 已改为模式取值 `direct | proxy`，并说明栈路由仍属 proxy。
+
+结论：已解决。
+
+### D-02 激活时间线写入钩子位置错误且不完整
+
+严重程度：高
+
+问题：设计写“写入点在 `switch_provider` 成功后的 `set_current_provider`”。两个问题：其一，`set_current_provider` 是 DAO，会被官方 seed、导入兜底、测试路径误触发；其二，`ProviderService::switch_inner` 同一入口既处理直连切换、也处理代理模式下只改 `proxy_route` 的路由切换，钩子必须区分当前模式；其三，进入/退出代理走 `mode/operation.rs` 是独立路径，设计没有覆盖。
+
+处理：设计 4.1 改为 service 层四个入口表（`ProviderService::switch` 的 Ok 分支、`import_default_config`、`mode/operation.rs::run`/`commit_target`、`recover_on_startup`），各自标注 source 与 mode/provider_id 语义。
+
+结论：已解决。
+
+### D-03 时间单位不一致未说明
+
+严重程度：高
+
+问题：`proxy_request_logs.created_at` 为秒级，`provider_activations.effective_at_ms` 为毫秒级。归属查询直接比较会差三个数量级，设计未写换算。
+
+处理：设计 4.1 末尾明确统一换算为毫秒（`start_s * 1000`），同秒歧义判定按秒对齐。
+
+结论：已解决。
+
+### D-04 provider_name_snapshot 写入时机缺失
+
+严重程度：中
+
+问题：需求 9.3 要求新写入行在请求发生时保存供应商名称快照，设计只写了迁移回填，没有写 insert 路径（各 `session_usage*.rs` 的 INSERT 和代理写日志处）。
+
+处理：设计新增 4.5，明确两条写入路径和读侧优先级。
+
+结论：已解决。
+
+### D-05 日汇总 rollup 改造只列了步骤没有 SQL 口径
+
+严重程度：中
+
+问题：`rollup_and_prune` 的 GROUP BY 要加 `project_key`，快照列要从明细行带出；设计第 7 节只有一句“日汇总项目维度与快照”。
+
+处理：设计新增 5.4，明确 GROUP BY 口径与快照带出规则。
+
+结论：已解决。
+
+### D-06 存量会话行无法通过重跑同步重新归属
+
+严重程度：中
+
+问题：会话同步有 `session_usage_dedup` 去重账本，已导入请求不会重导。功能上线后历史会话行永远保持未识别，设计没有写清这个边界，开发容易误以为重跑同步能回填。
+
+处理：设计新增 4.6，明确该边界与需求 R-10 一致。
+
+结论：已解决（边界声明）。
+
+### D-07 设计原则与本次目标冲突
+
+严重程度：低
+
+问题：设计原则 6 写“本次只落地数据模型与归属基础设施”，与“完成 P0 全量”的实际目标冲突。
+
+处理：原则 6 已改为“本次落地 P0 全量”。
+
+结论：已解决。
+
+### D-08 设计文档行号引用漂移
+
+严重程度：低
+
+问题：设计引用的 `schema.rs:280`、`schema.rs:1370` 已因 v21 迁移代码合入而漂移。
+
+处理：已校准为 `schema.rs:288`、`schema.rs:1637`。
+
+结论：已解决。
+
+## 3. 核对通过项
+
+- 新表/新列 DDL 与已合入的 `migrate_v20_to_v21` 一致；迁移对测试最小表做了防御，真实库列齐全时路径不变。
+- 归属算法与需求 FR-01/FR-02、评审 R-22 的 write-side skip 描述一致，去重两条路径的调用点行号经核实准确。
+- 前端文件 `UsageDashboard.tsx`、`ProviderStatsTable.tsx`、`RequestDetailPanel.tsx`、`src/lib/api/usage.ts`、`LogFilters`（`src/types/usage.ts:157`）均存在，设计的前端改动面可落地。
+- 代理 session_id 提取路径（`src-tauri/src/proxy/session.rs`）覆盖 Claude/Codex/Grok 的 header 与 metadata 来源，session_key 规范化有落点。
+- 客户端能力声明所需的 `AppType::is_additive_mode()`（`src-tauri/src/app_config.rs`）已存在，切换式/累加式判断有据。
+
+## 4. 评审结论
+
+设计文档按上述 8 项修正后，与当前代码事实一致，可以进入开发。开发门禁沿用需求评审的 8 项，另加本次两项：
+
+1. 激活时间线写入必须覆盖 4.1 的四个入口，且代理模式下的切换记录 `mode='proxy'`。
+2. 归属查询的时间比较必须统一为毫秒，单元测试覆盖同秒歧义。
+
+## 5. 实现后复核（2026-10-20）
+
+实现已完成，复核结果：
+
+- 激活时间线实际落在 `ProviderService::switch`、`mode::operation::commit_target` 与启动基线三处；代理模式切换记录 `mode='proxy'`（与 D-02 一致）。
+- 时间统一按毫秒比较，`resolve_provider_attribution` 覆盖无激活、代理模式、区间跨切换、同秒边界四类用例。
+- 去重改为 `skip_if_duplicate_with_project` / `backfill_if_proxy_duplicate`，命中代理行时先回写项目再跳过（与 R-22 一致）。
+- 代理写入补充 `session_key`、项目关联与供应商名称快照；会话适配器均显式写归属列，避免默认值误标。
+- 真实数据副本迁移（v20→v21）不丢行；项目、供应商、缓存与日志查询在副本上跑通。
+- 自动化验证：Rust 3833 通过（1 个与本改动无关的本机网络用例失败）、前端 3068 用例通过、`typecheck` 与 renderer build 通过。
+
+结论：实现与最终需求、设计一致，P0 范围完成。

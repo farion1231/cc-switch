@@ -212,7 +212,15 @@ impl Database {
             duration_ms INTEGER, status_code INTEGER NOT NULL, error_message TEXT, session_id TEXT,
             provider_type TEXT, is_streaming INTEGER NOT NULL DEFAULT 0,
             cost_multiplier TEXT NOT NULL DEFAULT '1.0', created_at INTEGER NOT NULL,
-            data_source TEXT NOT NULL DEFAULT 'proxy'
+            data_source TEXT NOT NULL DEFAULT 'proxy',
+            project_key TEXT NOT NULL DEFAULT '',
+            project_name TEXT NOT NULL DEFAULT '',
+            project_path TEXT NOT NULL DEFAULT '',
+            session_key TEXT NOT NULL DEFAULT '',
+            attribution_source TEXT NOT NULL DEFAULT 'proxy',
+            attribution_confidence TEXT NOT NULL DEFAULT 'exact',
+            attribution_reason TEXT NOT NULL DEFAULT '',
+            provider_name_snapshot TEXT NOT NULL DEFAULT ''
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON proxy_request_logs(provider_id, app_type)", [])
@@ -286,6 +294,11 @@ impl Database {
                 model TEXT NOT NULL,
                 request_model TEXT NOT NULL DEFAULT '',
                 pricing_model TEXT NOT NULL DEFAULT '',
+                data_source TEXT NOT NULL DEFAULT 'proxy',
+                project_key TEXT NOT NULL DEFAULT '',
+                project_name TEXT NOT NULL DEFAULT '',
+                project_path TEXT NOT NULL DEFAULT '',
+                provider_name_snapshot TEXT NOT NULL DEFAULT '',
                 request_count INTEGER NOT NULL DEFAULT 0,
                 success_count INTEGER NOT NULL DEFAULT 0,
                 input_tokens INTEGER NOT NULL DEFAULT 0,
@@ -295,7 +308,7 @@ impl Database {
                 input_token_semantics INTEGER NOT NULL DEFAULT 0,
                 total_cost_usd TEXT NOT NULL DEFAULT '0',
                 avg_latency_ms INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model)
+                PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model, data_source, project_key)
             )",
             [],
         )
@@ -434,6 +447,50 @@ impl Database {
              ON providers(app_type, in_failover_queue, sort_index)",
             [],
         );
+
+        // 20. 供应商激活时间线（切换式客户端直连归属证据；provider_id 为空表示非直连边界）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS provider_activations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                app_type TEXT NOT NULL,
+                provider_id TEXT,
+                mode TEXT NOT NULL,
+                effective_at_ms INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                config_fingerprint TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_provider_activations_lookup
+             ON provider_activations(app_type, effective_at_ms)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 21. 会话项目索引（规范化 session_key 到项目键/路径/名称的关联）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_projects (
+                app_type TEXT NOT NULL,
+                session_key TEXT NOT NULL,
+                project_key TEXT NOT NULL,
+                project_path TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                source TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (app_type, session_key)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_session_projects_project
+             ON session_projects(project_key)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
 
         Ok(())
     }
@@ -590,6 +647,10 @@ impl Database {
                                 )?;
                             }
                         }
+                        log::info!(
+                            "迁移数据库从 v20 到 v21（用量多维归属：供应商激活时间线、会话项目、项目维度与名称快照）"
+                        );
+                        Self::migrate_v20_to_v21(conn)?;
                         Self::set_user_version(conn, 21)?;
                     }
                     _ => {
@@ -615,6 +676,213 @@ impl Database {
                 Err(e)
             }
         }
+    }
+
+    /// v20 -> v21 迁移：用量多维归属基础设施。
+    ///
+    /// 新增供应商激活时间线与会话项目索引，给代理明细和日汇总增加项目维度、
+    /// 归属证据与供应商名称快照；存量会话行统一标记为未识别，避免被列默认的
+    /// `proxy/exact` 误标。日汇总重建主键以纳入 `project_key`。
+    fn migrate_v20_to_v21(conn: &Connection) -> Result<(), AppError> {
+        // 1. 供应商激活时间线（切换式客户端直连归属证据）
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS provider_activations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                app_type TEXT NOT NULL,
+                provider_id TEXT,
+                mode TEXT NOT NULL,
+                effective_at_ms INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                config_fingerprint TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_provider_activations_lookup
+                ON provider_activations(app_type, effective_at_ms);",
+        )
+        .map_err(|e| {
+            AppError::Database(format!("v20 -> v21 创建 provider_activations 失败: {e}"))
+        })?;
+
+        // 2. 会话项目索引（项目键与会话键的关联）
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS session_projects (
+                app_type TEXT NOT NULL,
+                session_key TEXT NOT NULL,
+                project_key TEXT NOT NULL,
+                project_path TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                source TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (app_type, session_key)
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_projects_project
+                ON session_projects(project_key);",
+        )
+        .map_err(|e| AppError::Database(format!("v20 -> v21 创建 session_projects 失败: {e}")))?;
+
+        // 3. 代理明细新增项目、归属证据与名称快照列
+        if Self::table_exists(conn, "proxy_request_logs")? {
+            for (column, definition) in [
+                ("project_key", "TEXT NOT NULL DEFAULT ''"),
+                ("project_name", "TEXT NOT NULL DEFAULT ''"),
+                ("project_path", "TEXT NOT NULL DEFAULT ''"),
+                ("session_key", "TEXT NOT NULL DEFAULT ''"),
+                ("attribution_source", "TEXT NOT NULL DEFAULT 'proxy'"),
+                ("attribution_confidence", "TEXT NOT NULL DEFAULT 'exact'"),
+                ("attribution_reason", "TEXT NOT NULL DEFAULT ''"),
+                ("provider_name_snapshot", "TEXT NOT NULL DEFAULT ''"),
+            ] {
+                Self::add_column_if_missing(conn, "proxy_request_logs", column, definition)?;
+            }
+
+            // 存量会话行不能用列默认的 proxy/exact 误标；数据源非 proxy 的行统一降级为未识别。
+            if Self::has_column(conn, "proxy_request_logs", "data_source")?
+                && Self::has_column(conn, "proxy_request_logs", "attribution_source")?
+            {
+                conn.execute(
+                    "UPDATE proxy_request_logs
+                     SET attribution_source = 'unknown',
+                         attribution_confidence = 'unknown',
+                         attribution_reason = 'pre_migration_no_evidence'
+                     WHERE data_source IS NOT NULL AND data_source != 'proxy'",
+                    [],
+                )
+                .map_err(|e| {
+                    AppError::Database(format!("v20 -> v21 回填存量会话行归属失败: {e}"))
+                })?;
+            }
+
+            // 索引只在真实 v20 明细表（含 created_at/provider_id/app_type）上创建，
+            // 测试里的最小表跳过，避免引用不存在的列。
+            if Self::has_column(conn, "proxy_request_logs", "created_at")?
+                && Self::has_column(conn, "proxy_request_logs", "provider_id")?
+                && Self::has_column(conn, "proxy_request_logs", "app_type")?
+            {
+                conn.execute_batch(
+                    "CREATE INDEX IF NOT EXISTS idx_request_logs_project_time
+                         ON proxy_request_logs(project_key, created_at);
+                     CREATE INDEX IF NOT EXISTS idx_request_logs_provider_project_time
+                         ON proxy_request_logs(provider_id, project_key, created_at);
+                     CREATE INDEX IF NOT EXISTS idx_request_logs_session_key
+                         ON proxy_request_logs(app_type, session_key);",
+                )
+                .map_err(|e| AppError::Database(format!("v20 -> v21 创建项目维度索引失败: {e}")))?;
+            }
+        }
+
+        // 4. 重建 usage_daily_rollups：纳入 project_key 主键与项目/名称快照列
+        if Self::table_exists(conn, "usage_daily_rollups")? {
+            let rebuildable = [
+                "app_type",
+                "provider_id",
+                "model",
+                "request_model",
+                "pricing_model",
+            ]
+            .iter()
+            .all(|column| Self::has_column(conn, "usage_daily_rollups", column).unwrap_or(false));
+            if rebuildable {
+                conn.execute_batch(
+                    "ALTER TABLE usage_daily_rollups RENAME TO usage_daily_rollups_v20;
+                     CREATE TABLE usage_daily_rollups (
+                         date TEXT NOT NULL,
+                         app_type TEXT NOT NULL,
+                         provider_id TEXT NOT NULL,
+                         model TEXT NOT NULL,
+                         request_model TEXT NOT NULL DEFAULT '',
+                         pricing_model TEXT NOT NULL DEFAULT '',
+                         data_source TEXT NOT NULL DEFAULT 'proxy',
+                         project_key TEXT NOT NULL DEFAULT '',
+                         project_name TEXT NOT NULL DEFAULT '',
+                         project_path TEXT NOT NULL DEFAULT '',
+                         provider_name_snapshot TEXT NOT NULL DEFAULT '',
+                         request_count INTEGER NOT NULL DEFAULT 0,
+                         success_count INTEGER NOT NULL DEFAULT 0,
+                         input_tokens INTEGER NOT NULL DEFAULT 0,
+                         output_tokens INTEGER NOT NULL DEFAULT 0,
+                         cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                         cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                         input_token_semantics INTEGER NOT NULL DEFAULT 0,
+                         total_cost_usd TEXT NOT NULL DEFAULT '0',
+                         avg_latency_ms INTEGER NOT NULL DEFAULT 0,
+                         PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model, data_source, project_key)
+                     );
+                     INSERT INTO usage_daily_rollups
+                         (date, app_type, provider_id, model, request_model, pricing_model, data_source, project_key,
+                          project_name, project_path, provider_name_snapshot,
+                          request_count, success_count, input_tokens, output_tokens,
+                          cache_read_tokens, cache_creation_tokens, input_token_semantics,
+                          total_cost_usd, avg_latency_ms)
+                     SELECT date, app_type, provider_id, model, request_model, pricing_model, 'proxy', '',
+                          '', '', '',
+                          request_count, success_count, input_tokens, output_tokens,
+                          cache_read_tokens, cache_creation_tokens, input_token_semantics,
+                          total_cost_usd, avg_latency_ms
+                     FROM usage_daily_rollups_v20;
+                     DROP TABLE usage_daily_rollups_v20;",
+                )
+                .map_err(|e| {
+                    AppError::Database(format!("v20 -> v21 重建 usage_daily_rollups 失败: {e}"))
+                })?;
+            } else {
+                for (column, definition) in [
+                    ("project_key", "TEXT NOT NULL DEFAULT ''"),
+                    ("project_name", "TEXT NOT NULL DEFAULT ''"),
+                    ("project_path", "TEXT NOT NULL DEFAULT ''"),
+                    ("provider_name_snapshot", "TEXT NOT NULL DEFAULT ''"),
+                ] {
+                    Self::add_column_if_missing(conn, "usage_daily_rollups", column, definition)?;
+                }
+            }
+        }
+
+        // 5. 尽力回填供应商名称快照（现存 providers 表；占位桶/已删除供应商保持空）
+        if Self::table_exists(conn, "providers")?
+            && Self::has_column(conn, "providers", "id")?
+            && Self::has_column(conn, "providers", "app_type")?
+            && Self::has_column(conn, "providers", "name")?
+        {
+            if Self::table_exists(conn, "proxy_request_logs")?
+                && Self::has_column(conn, "proxy_request_logs", "provider_name_snapshot")?
+                && Self::has_column(conn, "proxy_request_logs", "provider_id")?
+                && Self::has_column(conn, "proxy_request_logs", "app_type")?
+            {
+                conn.execute(
+                    "UPDATE proxy_request_logs
+                     SET provider_name_snapshot = COALESCE((
+                         SELECT p.name FROM providers p
+                         WHERE p.id = proxy_request_logs.provider_id
+                           AND p.app_type = proxy_request_logs.app_type
+                     ), '')
+                     WHERE provider_name_snapshot = ''",
+                    [],
+                )
+                .map_err(|e| {
+                    AppError::Database(format!("v20 -> v21 回填代理明细供应商名称快照失败: {e}"))
+                })?;
+            }
+            if Self::table_exists(conn, "usage_daily_rollups")?
+                && Self::has_column(conn, "usage_daily_rollups", "provider_name_snapshot")?
+                && Self::has_column(conn, "usage_daily_rollups", "provider_id")?
+                && Self::has_column(conn, "usage_daily_rollups", "app_type")?
+            {
+                conn.execute(
+                    "UPDATE usage_daily_rollups
+                     SET provider_name_snapshot = COALESCE((
+                         SELECT p.name FROM providers p
+                         WHERE p.id = usage_daily_rollups.provider_id
+                           AND p.app_type = usage_daily_rollups.app_type
+                     ), '')
+                     WHERE provider_name_snapshot = ''",
+                    [],
+                )
+                .map_err(|e| {
+                    AppError::Database(format!("v20 -> v21 回填日汇总供应商名称快照失败: {e}"))
+                })?;
+            }
+        }
+
+        Ok(())
     }
 
     /// v0 -> v1 迁移：补齐所有缺失列
@@ -4117,6 +4385,126 @@ mod tests {
         )?;
         assert_eq!(byte_offset, None, "存量行的字节游标必须为 NULL");
         assert_eq!(fingerprint, None, "存量行的尾部指纹必须为 NULL");
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v20_to_v21_adds_multidim_attribution_schema() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE providers (
+                id TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                name TEXT NOT NULL,
+                PRIMARY KEY (id, app_type)
+             );
+             INSERT INTO providers VALUES ('acme', 'codex', 'Acme');
+
+             CREATE TABLE proxy_request_logs (
+                request_id TEXT PRIMARY KEY,
+                provider_id TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                data_source TEXT,
+                created_at INTEGER NOT NULL
+             );
+             INSERT INTO proxy_request_logs VALUES
+                ('proxy-1', 'acme', 'codex', 'proxy', 100),
+                ('session-1', '_codex_session', 'codex', 'codex_session', 101);
+
+             CREATE TABLE usage_daily_rollups (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                model TEXT NOT NULL,
+                request_model TEXT NOT NULL DEFAULT '',
+                pricing_model TEXT NOT NULL DEFAULT '',
+                request_count INTEGER NOT NULL DEFAULT 0,
+                success_count INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                input_token_semantics INTEGER NOT NULL DEFAULT 0,
+                total_cost_usd TEXT NOT NULL DEFAULT '0',
+                avg_latency_ms INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model)
+             );
+             INSERT INTO usage_daily_rollups
+                (date, app_type, provider_id, model, request_count, input_tokens)
+                VALUES ('2026-10-20', 'codex', 'acme', 'gpt-x', 3, 300);",
+        )?;
+        Database::set_user_version(&conn, 20)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::table_exists(&conn, "provider_activations")?);
+        assert!(Database::table_exists(&conn, "session_projects")?);
+
+        for column in [
+            "project_key",
+            "project_name",
+            "project_path",
+            "session_key",
+            "attribution_source",
+            "attribution_confidence",
+            "attribution_reason",
+            "provider_name_snapshot",
+        ] {
+            assert!(
+                Database::has_column(&conn, "proxy_request_logs", column)?,
+                "缺少列 {column}"
+            );
+        }
+
+        let attribution: (String, String, String) = conn.query_row(
+            "SELECT attribution_source, attribution_confidence, attribution_reason
+             FROM proxy_request_logs WHERE request_id = 'session-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(
+            attribution,
+            (
+                "unknown".to_string(),
+                "unknown".to_string(),
+                "pre_migration_no_evidence".to_string()
+            ),
+            "存量会话行必须标记为未识别"
+        );
+
+        let proxy_attribution: (String, String) = conn.query_row(
+            "SELECT attribution_source, attribution_confidence
+             FROM proxy_request_logs WHERE request_id = 'proxy-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(
+            proxy_attribution,
+            ("proxy".to_string(), "exact".to_string()),
+            "代理行保持精确归属"
+        );
+
+        let proxy_name: String = conn.query_row(
+            "SELECT provider_name_snapshot FROM proxy_request_logs WHERE request_id = 'proxy-1'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(proxy_name, "Acme", "代理行应从 providers 回填名称快照");
+
+        assert!(Database::has_column(
+            &conn,
+            "usage_daily_rollups",
+            "project_key"
+        )?);
+        let (provider_id, project_key, input_tokens): (String, String, i64) = conn.query_row(
+            "SELECT provider_id, project_key, input_tokens FROM usage_daily_rollups",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(provider_id, "acme");
+        assert_eq!(project_key, "", "旧日汇总的项目键回填为空");
+        assert_eq!(input_tokens, 300, "日汇总存量数据必须保留");
         Ok(())
     }
 }

@@ -30,7 +30,10 @@ interface UsageTrendChartProps {
   range: UsageRangeSelection;
   rangeLabel: string;
   appType?: string;
+  providerAppType?: string;
+  providerId?: string;
   providerName?: string;
+  projectKey?: string;
   model?: string;
   refreshIntervalMs: number;
 }
@@ -225,7 +228,10 @@ export function UsageTrendChart({
   range,
   rangeLabel,
   appType,
+  providerAppType,
+  providerId,
   providerName,
+  projectKey,
   model,
   refreshIntervalMs,
 }: UsageTrendChartProps) {
@@ -242,7 +248,7 @@ export function UsageTrendChart({
   const { startDate, endDate } = resolveUsageRange(range);
   const { data: trends, isLoading } = useUsageTrends(
     range,
-    { appType, providerName, model },
+    { appType, providerAppType, providerId, providerName, projectKey, model },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },

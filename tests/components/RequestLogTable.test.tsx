@@ -361,9 +361,9 @@ describe("RequestLogTable optional columns", () => {
     const headers = screen
       .getAllByRole("columnheader")
       .map((th) => th.textContent);
-    expect(headers).toHaveLength(10);
+    expect(headers).toHaveLength(11);
     expect(headers).not.toContain("usage.logColumns.hitRate");
-    expect(screen.getByText("usage.noData")).toHaveAttribute("colspan", "10");
+    expect(screen.getByText("usage.noData")).toHaveAttribute("colspan", "11");
   });
 
   it("renders cache write, hit rate, total time and status code", () => {

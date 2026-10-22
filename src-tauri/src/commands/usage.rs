@@ -21,21 +21,28 @@ where
 
 /// 获取使用量汇总
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn get_usage_summary(
     state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<String>,
+    provider_app_type: Option<String>,
+    provider_id: Option<String>,
     provider_name: Option<String>,
     model: Option<String>,
+    project_key: Option<String>,
 ) -> Result<UsageSummary, AppError> {
     run_db_query(&state, move |db| {
         db.get_usage_summary(
             start_date,
             end_date,
             app_type.as_deref(),
+            provider_app_type.as_deref(),
+            provider_id.as_deref(),
             provider_name.as_deref(),
             model.as_deref(),
+            project_key.as_deref(),
         )
     })
     .await
@@ -56,19 +63,26 @@ pub async fn get_session_usage_summary(
 
 /// 获取按 app_type 拆分的使用量汇总
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn get_usage_summary_by_app(
     state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
+    provider_app_type: Option<String>,
+    provider_id: Option<String>,
     provider_name: Option<String>,
     model: Option<String>,
+    project_key: Option<String>,
 ) -> Result<Vec<UsageSummaryByApp>, AppError> {
     run_db_query(&state, move |db| {
         db.get_usage_summary_by_app(
             start_date,
             end_date,
+            provider_app_type.as_deref(),
+            provider_id.as_deref(),
             provider_name.as_deref(),
             model.as_deref(),
+            project_key.as_deref(),
         )
     })
     .await
@@ -76,21 +90,28 @@ pub async fn get_usage_summary_by_app(
 
 /// 获取每日趋势
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn get_usage_trends(
     state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<String>,
+    provider_app_type: Option<String>,
+    provider_id: Option<String>,
     provider_name: Option<String>,
     model: Option<String>,
+    project_key: Option<String>,
 ) -> Result<Vec<DailyStats>, AppError> {
     run_db_query(&state, move |db| {
         db.get_daily_trends(
             start_date,
             end_date,
             app_type.as_deref(),
+            provider_app_type.as_deref(),
+            provider_id.as_deref(),
             provider_name.as_deref(),
             model.as_deref(),
+            project_key.as_deref(),
         )
     })
     .await
@@ -101,14 +122,20 @@ pub async fn get_usage_trends(
 pub async fn get_usage_first_date(
     state: State<'_, AppState>,
     app_type: Option<String>,
+    provider_app_type: Option<String>,
+    provider_id: Option<String>,
     provider_name: Option<String>,
     model: Option<String>,
+    project_key: Option<String>,
 ) -> Result<Option<String>, AppError> {
     run_db_query(&state, move |db| {
         db.get_first_usage_date(
             app_type.as_deref(),
+            provider_app_type.as_deref(),
+            provider_id.as_deref(),
             provider_name.as_deref(),
             model.as_deref(),
+            project_key.as_deref(),
         )
     })
     .await
@@ -116,21 +143,28 @@ pub async fn get_usage_first_date(
 
 /// 获取 Provider 统计
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn get_provider_stats(
     state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<String>,
+    provider_app_type: Option<String>,
+    provider_id: Option<String>,
     provider_name: Option<String>,
     model: Option<String>,
+    project_key: Option<String>,
 ) -> Result<Vec<ProviderStats>, AppError> {
     run_db_query(&state, move |db| {
         db.get_provider_stats(
             start_date,
             end_date,
             app_type.as_deref(),
+            provider_app_type.as_deref(),
+            provider_id.as_deref(),
             provider_name.as_deref(),
             model.as_deref(),
+            project_key.as_deref(),
         )
     })
     .await
@@ -138,22 +172,99 @@ pub async fn get_provider_stats(
 
 /// 获取模型统计
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn get_model_stats(
     state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<String>,
+    provider_app_type: Option<String>,
+    provider_id: Option<String>,
     provider_name: Option<String>,
     model: Option<String>,
+    project_key: Option<String>,
 ) -> Result<Vec<ModelStats>, AppError> {
     run_db_query(&state, move |db| {
         db.get_model_stats(
             start_date,
             end_date,
             app_type.as_deref(),
+            provider_app_type.as_deref(),
+            provider_id.as_deref(),
+            provider_name.as_deref(),
+            model.as_deref(),
+            project_key.as_deref(),
+        )
+    })
+    .await
+}
+
+/// 获取项目维度统计
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn get_project_stats(
+    state: State<'_, AppState>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    app_type: Option<String>,
+    provider_app_type: Option<String>,
+    provider_id: Option<String>,
+    provider_name: Option<String>,
+    model: Option<String>,
+) -> Result<Vec<ProjectStats>, AppError> {
+    run_db_query(&state, move |db| {
+        db.get_project_stats(
+            start_date,
+            end_date,
+            app_type.as_deref(),
+            provider_app_type.as_deref(),
+            provider_id.as_deref(),
             provider_name.as_deref(),
             model.as_deref(),
         )
+    })
+    .await
+}
+
+/// 获取项目 × 供应商统计
+#[tauri::command]
+pub async fn get_project_provider_stats(
+    state: State<'_, AppState>,
+    project_key: String,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    app_type: Option<String>,
+) -> Result<Vec<ProviderStats>, AppError> {
+    run_db_query(&state, move |db| {
+        db.get_project_provider_stats(&project_key, start_date, end_date, app_type.as_deref())
+    })
+    .await
+}
+
+/// 获取项目筛选选项
+#[tauri::command]
+pub async fn get_usage_projects(
+    state: State<'_, AppState>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    app_type: Option<String>,
+) -> Result<Vec<ProjectOption>, AppError> {
+    run_db_query(&state, move |db| {
+        db.get_usage_projects(start_date, end_date, app_type.as_deref())
+    })
+    .await
+}
+
+/// 获取数据质量（未识别供应商/项目请求数）
+#[tauri::command]
+pub async fn get_usage_data_quality(
+    state: State<'_, AppState>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    app_type: Option<String>,
+) -> Result<DataQualityStats, AppError> {
+    run_db_query(&state, move |db| {
+        db.get_usage_data_quality(start_date, end_date, app_type.as_deref())
     })
     .await
 }

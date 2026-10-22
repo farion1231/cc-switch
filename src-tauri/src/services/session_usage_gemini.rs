@@ -22,7 +22,7 @@ use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
     metadata_modified_nanos, update_sync_state, SessionSyncResult,
 };
-use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
+use crate::services::usage_stats::{find_model_pricing, DedupKey};
 use crate::session_manager::providers::gemini::{is_session_file, parse_session_document};
 use rust_decimal::Decimal;
 use std::fs;
@@ -161,6 +161,26 @@ fn sync_single_gemini_file(
         .get("sessionId")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    let session_key = session_id
+        .as_deref()
+        .map(|id| crate::services::usage_attribution::normalize_session_key("gemini", id))
+        .unwrap_or_default();
+    let project = value
+        .get("cwd")
+        .or_else(|| value.get("projectRoot"))
+        .and_then(|v| v.as_str())
+        .and_then(|cwd| {
+            crate::services::usage_attribution::project_from_cwd(
+                "gemini",
+                &session_key,
+                cwd,
+                "session_meta",
+            )
+        });
+    if let Some(project) = project.as_ref() {
+        let conn = lock_conn!(db.conn);
+        crate::database::Database::upsert_session_project_on_conn(&conn, project)?;
+    }
 
     // 遍历 messages 数组
     let messages = match value.get("messages").and_then(|v| v.as_array()) {
@@ -210,6 +230,7 @@ fn sync_single_gemini_file(
             model,
             session_id.as_deref(),
             timestamp,
+            project.as_ref(),
         ) {
             Ok(true) => imported += 1,
             Ok(false) => skipped += 1,
@@ -244,6 +265,7 @@ fn insert_gemini_session_entry(
     model: &str,
     session_id: Option<&str>,
     timestamp: Option<&str>,
+    project: Option<&crate::services::usage_attribution::SessionProject>,
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
 
@@ -272,9 +294,25 @@ fn insert_gemini_session_entry(
         cache_creation_tokens: 0,
         created_at,
     };
-    if should_skip_session_insert(&conn, request_id, &dedup_key)? {
+    if crate::services::usage_attribution::skip_if_duplicate_with_project(
+        &conn, request_id, &dedup_key, project,
+    )? {
         return Ok(false);
     }
+    let attribution = crate::services::usage_attribution::resolve_provider_attribution(
+        &conn,
+        "gemini",
+        created_at,
+        created_at,
+        "_gemini_session",
+    )?;
+    let provider_name_snapshot =
+        crate::services::usage_attribution::provider_name_snapshot_on_conn(
+            &conn,
+            &attribution.provider_id,
+            "gemini",
+        )?
+        .unwrap_or_default();
 
     // 计算费用
     let usage = TokenUsage {
@@ -318,7 +356,9 @@ fn insert_gemini_session_entry(
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
+            , project_key, project_name, project_path, session_key,
+            attribution_source, attribution_confidence, attribution_reason, provider_name_snapshot
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32)
         ON CONFLICT(request_id) DO UPDATE SET
             model = excluded.model,
             input_tokens = excluded.input_tokens,
@@ -335,7 +375,7 @@ fn insert_gemini_session_entry(
            OR model != excluded.model",
         rusqlite::params![
             request_id,
-            "_gemini_session",   // provider_id
+            attribution.provider_id,
             "gemini",            // app_type
             model,
             model,               // request_model = model
@@ -358,6 +398,14 @@ fn insert_gemini_session_entry(
             "1.0",               // cost_multiplier
             created_at,
             "gemini_session",    // data_source
+            project.map(|p| p.project_key.as_str()).unwrap_or(""),
+            project.map(|p| p.project_name.as_str()).unwrap_or(""),
+            project.map(|p| p.project_path.as_str()).unwrap_or(""),
+            project.map(|p| p.session_key.as_str()).unwrap_or(""),
+            attribution.source,
+            attribution.confidence,
+            attribution.reason,
+            provider_name_snapshot,
         ],
     )
     .map_err(|e| AppError::Database(format!("插入 Gemini 会话日志失败: {e}")))?;
@@ -425,6 +473,7 @@ mod tests {
             "gemini-2.5-pro",
             Some("session-1"),
             Some("1970-01-01T00:16:45Z"),
+            None,
         )?;
         assert!(!inserted);
 
