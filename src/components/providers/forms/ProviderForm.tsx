@@ -292,6 +292,8 @@ export interface ProviderFormProps {
   onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
   onSubmittingChange?: (isSubmitting: boolean) => void;
   onSubmitReadyChange?: (isReady: boolean) => void;
+  /** Native account login supplies its own actions instead of the provider-save footer. */
+  onAccountLoginChange?: (accountLogin: boolean) => void;
   initialData?: {
     name?: string;
     websiteUrl?: string;

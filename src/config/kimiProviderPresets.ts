@@ -74,6 +74,20 @@ export interface KimiProviderPreset
   settingsConfig: KimiProviderConfig;
 }
 
+export const KIMI_ACCOUNT_PRESET_ID = "kimi-official-account";
+export const KIMI_OFFICIAL_PROVIDER_NAME = "Kimi Official";
+
+// An action in the account-login group, separate from the API-key catalog.
+export const kimiAccountPreset: KimiProviderPreset = {
+  name: KIMI_OFFICIAL_PROVIDER_NAME,
+  nameKey: "kimi.oauth.title",
+  providerKey: KIMI_ACCOUNT_PRESET_ID,
+  websiteUrl: "https://www.kimi.com",
+  icon: "kimi",
+  category: "official",
+  settingsConfig: emptyKimiConfig(),
+};
+
 type KimiProviderType = KimiProviderConfig["provider"]["type"];
 type KimiModel = KimiProviderConfig["models"][string];
 

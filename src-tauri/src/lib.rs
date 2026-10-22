@@ -1258,6 +1258,7 @@ pub fn run() {
             );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
+            app.manage(services::kimi_oauth::KimiOAuthManager::default());
 
             // 初始化 SkillService
             let skill_service = SkillService::new();
@@ -1863,6 +1864,12 @@ pub fn run() {
             commands::auth_logout,
             commands::agy_account_is_running,
             commands::agy_account_quota,
+            commands::kimi_oauth_status,
+            commands::kimi_oauth_start,
+            commands::kimi_oauth_poll,
+            commands::kimi_oauth_cancel,
+            commands::kimi_oauth_logout,
+            commands::kimi_oauth_use_account,
             // Copilot OAuth commands (multi-account support)
             commands::copilot_start_device_flow,
             commands::copilot_poll_for_auth,

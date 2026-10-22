@@ -30,7 +30,10 @@ import {
 } from "@/utils/providerConfigUtils";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { isMac } from "@/lib/platform";
-import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
+import {
+  isOfficialAccount,
+  resolveCodexOfficialIdentity,
+} from "@/utils/providerCapabilities";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
@@ -115,6 +118,7 @@ function HealthChip({
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
 function isOfficialProvider(provider: Provider, appId: AppId): boolean {
+  if (appId === "kimi") return isOfficialAccount(appId, provider);
   if (provider.category === "official") {
     return true;
   }

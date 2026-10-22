@@ -23,6 +23,8 @@ import {
   emptyKimiConfig,
   kimiConfigSchema,
   kimiProviderPresets,
+  kimiAccountPreset,
+  KIMI_ACCOUNT_PRESET_ID,
   KIMI_PROVIDER_TYPES,
   KIMI_CAPABILITIES,
   type KimiProviderConfig,
@@ -33,11 +35,16 @@ import { ApiKeySection } from "./shared";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import type { ProviderFormProps } from "./ProviderForm";
+import { usePresetStep } from "./presetStep";
+import { KimiAccountLogin } from "../KimiAccountLogin";
 
-const PRESETS = kimiProviderPresets.map((preset, index) => ({
-  id: String(index),
-  preset,
-}));
+const PRESETS = [
+  { id: KIMI_ACCOUNT_PRESET_ID, preset: kimiAccountPreset },
+  ...kimiProviderPresets.map((preset, index) => ({
+    id: String(index),
+    preset,
+  })),
+];
 
 export function KimiProviderForm({
   providerId,
@@ -48,6 +55,7 @@ export function KimiProviderForm({
   showButtons = true,
   onSubmittingChange,
   onSubmitReadyChange,
+  onAccountLoginChange,
 }: ProviderFormProps) {
   const { t } = useTranslation();
   const darkMode = useDarkMode();
@@ -65,6 +73,15 @@ export function KimiProviderForm({
   const [error, setError] = useState("");
   const { data: existing } = useProvidersQuery("kimi");
   const isEdit = Boolean(initialData);
+  const step = usePresetStep();
+  const isAccountLogin = !isEdit && presetId === KIMI_ACCOUNT_PRESET_ID;
+  const showAccountLogin = isAccountLogin && (!step || step.step === "form");
+  const [accountActionHost, setAccountActionHost] =
+    useState<HTMLDivElement | null>(null);
+  useEffect(() => {
+    onAccountLoginChange?.(showAccountLogin);
+    return () => onAccountLoginChange?.(false);
+  }, [showAccountLogin, onAccountLoginChange]);
   const duplicate =
     !isEdit &&
     Object.prototype.hasOwnProperty.call(
@@ -95,7 +112,8 @@ export function KimiProviderForm({
         model.max_context_size > 0,
     );
   const ready = Boolean(
-    jsonValid &&
+    !isAccountLogin &&
+      jsonValid &&
       name.trim() &&
       keyValid &&
       !duplicate &&
@@ -134,6 +152,64 @@ export function KimiProviderForm({
       ...config,
       models: { ...config.models, [key]: { ...config.models[key], ...patch } },
     });
+  const presetSelector = (
+    <ProviderPresetSelector
+      selectedPresetId={presetId}
+      presetEntries={PRESETS}
+      barAction={
+        isAccountLogin ? <div ref={setAccountActionHost} /> : undefined
+      }
+      presetCategoryLabels={{
+        custom: t("providerPreset.custom"),
+        cn_official: t("providerForm.categoryCnOfficial"),
+        third_party: t("providerPreset.group.thirdparty"),
+        aggregator: t("providerPreset.group.thirdparty"),
+        cloud_provider: t("providerPreset.group.cloud"),
+        local: t("providerPreset.group.local"),
+      }}
+      category={category}
+      onPresetChange={(id) => {
+        setPresetId(id);
+        if (id === KIMI_ACCOUNT_PRESET_ID) return;
+        const preset =
+          id === "custom" ? undefined : kimiProviderPresets[Number(id)];
+        setCategory(preset?.category ?? "custom");
+        update(
+          kimiConfigSchema.parse(
+            structuredClone(preset?.settingsConfig ?? emptyKimiConfig()),
+          ),
+        );
+        setProviderKey(preset?.providerKey ?? "");
+        form.reset({
+          name: preset?.nameKey ? t(preset.nameKey) : (preset?.name ?? ""),
+          notes: "",
+          websiteUrl: preset?.websiteUrl ?? "",
+          icon: preset?.icon ?? "",
+          iconColor: preset?.iconColor ?? "",
+          settingsConfig: "",
+        });
+      }}
+    />
+  );
+  if (isAccountLogin) {
+    return (
+      <Form {...form}>
+        <form
+          id="provider-form"
+          className="space-y-6"
+          onSubmit={(event) => event.preventDefault()}
+        >
+          {presetSelector}
+          {showAccountLogin && (
+            <KimiAccountLogin
+              actionSlot={step ? accountActionHost : undefined}
+              onUseAccount={onCancel}
+            />
+          )}
+        </form>
+      </Form>
+    );
+  }
   return (
     <Form {...form}>
       <form
@@ -181,43 +257,7 @@ export function KimiProviderForm({
           }
         })}
       >
-        {!isEdit && (
-          <ProviderPresetSelector
-            selectedPresetId={presetId}
-            presetEntries={PRESETS}
-            presetCategoryLabels={{
-              custom: t("providerPreset.custom"),
-              cn_official: t("providerForm.categoryCnOfficial"),
-              third_party: t("providerPreset.group.thirdparty"),
-              aggregator: t("providerPreset.group.thirdparty"),
-              cloud_provider: t("providerPreset.group.cloud"),
-              local: t("providerPreset.group.local"),
-            }}
-            category={category}
-            onPresetChange={(id) => {
-              setPresetId(id);
-              const preset =
-                id === "custom" ? undefined : kimiProviderPresets[Number(id)];
-              setCategory(preset?.category ?? "custom");
-              update(
-                kimiConfigSchema.parse(
-                  structuredClone(preset?.settingsConfig ?? emptyKimiConfig()),
-                ),
-              );
-              setProviderKey(preset?.providerKey ?? "");
-              form.reset({
-                name: preset?.nameKey
-                  ? t(preset.nameKey)
-                  : (preset?.name ?? ""),
-                notes: "",
-                websiteUrl: preset?.websiteUrl ?? "",
-                icon: preset?.icon ?? "",
-                iconColor: preset?.iconColor ?? "",
-                settingsConfig: "",
-              });
-            }}
-          />
-        )}
+        {!isEdit && presetSelector}
         {error && (
           <p role="alert" className="text-sm text-destructive">
             {error}
@@ -470,7 +510,7 @@ export function KimiProviderForm({
               {submitLabel}
             </Button>
           </div>
-        )}
+        )}{" "}
       </form>
     </Form>
   );
