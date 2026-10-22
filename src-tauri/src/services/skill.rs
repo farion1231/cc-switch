@@ -7803,7 +7803,7 @@ mod tests {
                 fs::File::create(config_dir.join("cc-switch.db")).unwrap();
                 let _home = TestHomeGuard::set(home.path());
                 assert_eq!(crate::config::get_app_config_dir(), config_dir);
-                let _storage = StorageLocationGuard::set(location);
+                let _storage = StorageLocationGuard::set(&_home, location);
                 let _pi = crate::pi_config::test_support::TestAgentDir::new();
                 let remote = tempdir().unwrap();
                 write_skill(remote.path(), "root-alias");
@@ -7900,7 +7900,7 @@ mod tests {
         fs::File::create(config_dir.join("cc-switch.db")).unwrap();
         let _home = TestHomeGuard::set(home.path());
         assert_eq!(crate::config::get_app_config_dir(), config_dir);
-        let _storage = StorageLocationGuard::set(SkillStorageLocation::CcSwitch);
+        let _storage = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
         let remote = tempdir().unwrap();
         // Mirror tencent/browserskill: the shallowest match is still ambiguous.
