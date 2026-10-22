@@ -59,27 +59,9 @@ pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
                 .filter(|(_, model)| model.get("provider").and_then(Value::as_str) == Some(id))
                 .map(|(key, model)| (key.clone(), model.clone()))
                 .collect();
-            let mut config = json!({"provider": provider, "models": models});
-            normalize_provider_capabilities(&mut config);
-            (id.clone(), config)
+            (id.clone(), json!({"provider": provider, "models": models}))
         })
         .collect())
-}
-
-/// Retain text, reasoning, tools and image input when importing older native nodes.
-pub(crate) fn normalize_provider_capabilities(config: &mut Value) {
-    let Some(models) = config.get_mut("models").and_then(Value::as_object_mut) else {
-        return;
-    };
-    for model in models.values_mut() {
-        for pointer in ["/capabilities", "/overrides/capabilities"] {
-            if let Some(capabilities) = model.pointer_mut(pointer).and_then(Value::as_array_mut) {
-                capabilities.retain(|capability| {
-                    !matches!(capability.as_str(), Some("audio_in" | "video_in"))
-                });
-            }
-        }
-    }
 }
 
 pub(crate) fn provider_key_exists(id: &str) -> Result<bool, AppError> {
@@ -183,25 +165,17 @@ pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError
         {
             return Err(AppError::InvalidInput("Kimi Code models need a key, model ID, positive context size and matching provider".into()));
         }
-        if model.get("capabilities").is_some_and(|caps| {
-            caps.as_array().is_none_or(|caps| {
-                caps.iter().any(|cap| {
-                    !matches!(
-                        cap.as_str(),
-                        Some(
-                            "image_in"
-                                | "thinking"
-                                | "always_thinking"
-                                | "tool_use"
-                                | "dynamically_loaded_tools"
-                        )
-                    )
-                })
-            })
-        }) {
-            return Err(AppError::InvalidInput(
-                "Invalid Kimi Code model capabilities".into(),
-            ));
+        // Validate the shape, not Kimi's evolving capability vocabulary. Capabilities
+        // outside the editor (such as audio/video) are passed through without changes.
+        for pointer in ["/capabilities", "/overrides/capabilities"] {
+            if model.pointer(pointer).is_some_and(|caps| {
+                caps.as_array()
+                    .is_none_or(|caps| caps.iter().any(|cap| !cap.is_string()))
+            }) {
+                return Err(AppError::InvalidInput(
+                    "Invalid Kimi Code model capabilities".into(),
+                ));
+            }
         }
     }
     Ok(())
@@ -249,9 +223,8 @@ fn write(path: &Path, before: &Value, after: &Value) -> Result<(), AppError> {
     atomic_write_private(path, text.as_bytes())
 }
 
-fn update(path: &Path, id: &str, mut config: Option<Value>, create: bool) -> Result<(), AppError> {
-    if let Some(config) = &mut config {
-        normalize_provider_capabilities(config);
+fn update(path: &Path, id: &str, config: Option<Value>, create: bool) -> Result<(), AppError> {
+    if let Some(config) = &config {
         validate_provider(id, config)?;
     }
     let before = read(path)?;
@@ -429,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn kimi_media_capabilities_are_removed_while_preserving_images_and_llm_fields() {
+    fn kimi_native_capabilities_survive_unrelated_provider_edits() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         let mut config = node();
@@ -438,25 +411,25 @@ mod tests {
             "audio_in",
             "thinking",
             "video_in",
+            "image_out",
+            "audio_out",
+            "future_capability",
             "tool_use",
             "dynamically_loaded_tools"
         ]);
-        config["models"]["test/model.v1"]["overrides"] = json!({"capabilities":["audio_in", "image_in", "video_in", "always_thinking"], "default_effort":"high"});
-        assert!(validate_provider("test", &config).is_err());
+        config["models"]["test/model.v1"]["overrides"] = json!({"capabilities":["audio_in", "image_in", "video_in", "future_override", "always_thinking"], "default_effort":"high"});
+        validate_provider("test", &config).unwrap();
         update(&path, "test", Some(config.clone()), true).unwrap();
+        config["provider"]["base_url"] = json!("https://updated.example.com/v1");
+        update(&path, "test", Some(config.clone()), false).unwrap();
         let saved = read(&path).unwrap();
         assert_eq!(
             saved["models"]["test/model.v1"]["capabilities"],
-            json!([
-                "image_in",
-                "thinking",
-                "tool_use",
-                "dynamically_loaded_tools"
-            ])
+            config["models"]["test/model.v1"]["capabilities"]
         );
         assert_eq!(
             saved["models"]["test/model.v1"]["overrides"],
-            json!({"capabilities":["image_in", "always_thinking"], "default_effort":"high"})
+            config["models"]["test/model.v1"]["overrides"]
         );
         assert_eq!(saved["providers"]["test"], config["provider"]);
     }

@@ -70,19 +70,22 @@ function setup(
 
 describe("KimiProviderForm", () => {
   it.each(["import", "json"] as const)(
-    "filters audio and video from %s while keeping images, tools and reasoning",
+    "preserves native capabilities from %s without exposing audio or video controls",
     async (source) => {
-      const legacyConfig = structuredClone(config);
-      const model = legacyConfig.models["kimi-code/k3"];
+      const nativeConfig = structuredClone(config);
+      const model = nativeConfig.models["kimi-code/k3"];
       model.capabilities = [
         "image_in",
         "video_in",
         "audio_in",
+        "image_out",
+        "audio_out",
+        "future_capability",
         "thinking",
         "tool_use",
       ];
-      const legacy = {
-        ...legacyConfig,
+      const native = {
+        ...nativeConfig,
         models: {
           "kimi-code/k3": {
             ...model,
@@ -92,6 +95,7 @@ describe("KimiProviderForm", () => {
                 "video_in",
                 "image_in",
                 "audio_in",
+                "future_override",
                 "always_thinking",
               ],
             },
@@ -101,11 +105,11 @@ describe("KimiProviderForm", () => {
       const submit = setup(
         vi.fn(),
         undefined,
-        source === "import" ? legacy : config,
+        source === "import" ? native : config,
       );
       if (source === "json") {
         fireEvent.change(screen.getByLabelText("provider.configJson"), {
-          target: { value: JSON.stringify(legacy) },
+          target: { value: JSON.stringify(native) },
         });
       }
       expect(
@@ -117,22 +121,30 @@ describe("KimiProviderForm", () => {
       expect(
         screen.queryByRole("checkbox", { name: "kimi.capabilities.video_in" }),
       ).not.toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText(/kimi\.baseUrl/), {
+        target: { value: "https://updated.example.com/v1" },
+      });
       fireEvent.click(screen.getByRole("button", { name: "Save" }));
       await waitFor(() => expect(submit).toHaveBeenCalledOnce());
       const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
       expect(saved.models["kimi-code/k3"]).toMatchObject({
-        capabilities: ["image_in", "thinking", "tool_use"],
-        overrides: {
-          capabilities: ["image_in", "always_thinking"],
-          default_effort: "max",
-        },
+        capabilities: native.models["kimi-code/k3"].capabilities,
+        overrides: native.models["kimi-code/k3"].overrides,
       });
-      expect(saved.provider).toEqual(config.provider);
+      expect(saved.provider).toEqual({
+        ...config.provider,
+        base_url: "https://updated.example.com/v1",
+      });
     },
   );
 
   it("keeps image input configurable on models", async () => {
-    const submit = setup();
+    const native = structuredClone(config);
+    native.models["kimi-code/k3"].capabilities.push(
+      "audio_in",
+      "future_capability",
+    );
+    const submit = setup(vi.fn(), undefined, native);
     fireEvent.click(
       screen.getByRole("checkbox", { name: "kimi.capabilities.image_in" }),
     );
@@ -141,7 +153,13 @@ describe("KimiProviderForm", () => {
     expect(
       JSON.parse(submit.mock.calls[0][0].settingsConfig).models["kimi-code/k3"]
         .capabilities,
-    ).toEqual(["thinking", "tool_use", "image_in"]);
+    ).toEqual([
+      "thinking",
+      "tool_use",
+      "audio_in",
+      "future_capability",
+      "image_in",
+    ]);
   });
 
   it.each([

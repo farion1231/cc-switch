@@ -149,20 +149,27 @@ fn kimi_provider_add_rejects_collisions_and_protects_the_default_model() {
 }
 
 #[test]
-fn kimi_import_and_mutations_remove_audio_and_video_but_keep_images() {
+fn kimi_import_and_mutations_preserve_native_capabilities() {
     let _guard = test_mutex().lock().unwrap();
     reset_test_fs();
     let home = KimiHome::new();
     let state = create_test_state().unwrap();
-    let legacy_provider = |id: &str| {
+    let native_provider = |id: &str| {
         let mut entry = provider(id, &format!("{id}/model"));
-        entry.settings_config["models"][format!("{id}/model")]["capabilities"] =
-            json!(["audio_in", "image_in", "video_in", "thinking", "tool_use"]);
-        entry.settings_config["models"][format!("{id}/model")]["overrides"] =
-            json!({"capabilities":["video_in", "audio_in", "image_in"], "default_effort":"max"});
+        entry.settings_config["models"][format!("{id}/model")]["capabilities"] = json!([
+            "audio_in",
+            "image_in",
+            "video_in",
+            "image_out",
+            "audio_out",
+            "future_capability",
+            "thinking",
+            "tool_use"
+        ]);
+        entry.settings_config["models"][format!("{id}/model")]["overrides"] = json!({"capabilities":["video_in", "audio_in", "image_in", "future_override"], "default_effort":"max"});
         entry
     };
-    let native = legacy_provider("native");
+    let native = native_provider("native");
     let mut model = native.settings_config["models"]["native/model"].clone();
     model["provider"] = json!("native");
     let document = json!({"default_model":"native/model", "providers":{"native":native.settings_config["provider"]},"models":{"native/model":model}});
@@ -170,16 +177,19 @@ fn kimi_import_and_mutations_remove_audio_and_video_but_keep_images() {
     let original = fs::read(home.config()).unwrap();
     state
         .db
-        .save_provider("kimi", &legacy_provider("saved"))
+        .save_provider("kimi", &native_provider("saved"))
         .unwrap();
     let entries = ProviderService::list(&state, AppType::Kimi).unwrap();
     for id in ["native", "saved"] {
         let model = &entries[id].settings_config["models"][format!("{id}/model")];
         assert_eq!(
             model["capabilities"],
-            json!(["image_in", "thinking", "tool_use"])
+            native_provider(id).settings_config["models"][format!("{id}/model")]["capabilities"]
         );
-        assert_eq!(model["overrides"]["capabilities"], json!(["image_in"]));
+        assert_eq!(
+            model["overrides"],
+            native_provider(id).settings_config["models"][format!("{id}/model")]["overrides"]
+        );
         assert_eq!(
             state
                 .db
@@ -192,18 +202,21 @@ fn kimi_import_and_mutations_remove_audio_and_video_but_keep_images() {
     }
     assert_eq!(fs::read(home.config()).unwrap(), original);
     ProviderService::switch(&state, AppType::Kimi, "saved").unwrap();
-    ProviderService::update(&state, AppType::Kimi, None, legacy_provider("native")).unwrap();
-    ProviderService::add(&state, AppType::Kimi, legacy_provider("new"), false).unwrap();
+    let mut edited = entries["native"].clone();
+    edited.settings_config["provider"]["base_url"] = json!("https://updated.example.com/v1");
+    ProviderService::update(&state, AppType::Kimi, None, edited).unwrap();
+    ProviderService::add(&state, AppType::Kimi, native_provider("new"), false).unwrap();
     let saved: serde_json::Value =
         toml::from_str(&fs::read_to_string(home.config()).unwrap()).unwrap();
     for id in ["native", "saved"] {
         assert_eq!(
             saved["models"][format!("{id}/model")]["capabilities"],
-            json!(["image_in", "thinking", "tool_use"])
+            native_provider(id).settings_config["models"][format!("{id}/model")]["capabilities"]
         );
         assert_eq!(
             saved["models"][format!("{id}/model")]["overrides"]["capabilities"],
-            json!(["image_in"])
+            native_provider(id).settings_config["models"][format!("{id}/model")]["overrides"]
+                ["capabilities"]
         );
     }
     assert_eq!(
@@ -213,7 +226,7 @@ fn kimi_import_and_mutations_remove_audio_and_video_but_keep_images() {
             .unwrap()
             .unwrap()
             .settings_config["models"]["new/model"]["capabilities"],
-        json!(["image_in", "thinking", "tool_use"])
+        native_provider("new").settings_config["models"]["new/model"]["capabilities"]
     );
 }
 

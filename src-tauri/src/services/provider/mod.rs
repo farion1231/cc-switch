@@ -5481,11 +5481,6 @@ impl ProviderService {
                     }
                     provider.settings_config = config.clone();
                 }
-                if app_type == AppType::Kimi {
-                    crate::kimi_config::normalize_provider_capabilities(
-                        &mut provider.settings_config,
-                    );
-                }
                 Self::set_provider_live_config_managed(provider, native.contains_key(id));
                 state.db.save_provider(app_type.as_str(), provider)?;
             }
@@ -5523,9 +5518,6 @@ impl ProviderService {
         create: bool,
     ) -> Result<bool, AppError> {
         if app_type == &AppType::Kimi {
-            let mut normalized = provider.clone();
-            crate::kimi_config::normalize_provider_capabilities(&mut normalized.settings_config);
-            let provider = &normalized;
             return if write_live {
                 crate::kimi_config::save_and_commit(
                     &provider.id,
@@ -5565,9 +5557,6 @@ impl ProviderService {
     fn prepare_new_provider(app_type: &AppType, provider: &mut Provider) -> Result<(), AppError> {
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(app_type, provider);
-        if app_type == &AppType::Kimi {
-            crate::kimi_config::normalize_provider_capabilities(&mut provider.settings_config);
-        }
         Self::validate_provider_settings(app_type, provider)?;
         Self::normalize_usage_script_credential_overrides(app_type, provider);
         if matches!(app_type, AppType::Claude | AppType::Codex | AppType::Gemini) {
@@ -6183,9 +6172,6 @@ impl ProviderService {
             .get_provider_by_id(&original_id, app_type.as_str())?;
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
-        if app_type == AppType::Kimi {
-            crate::kimi_config::normalize_provider_capabilities(&mut provider.settings_config);
-        }
         Self::validate_provider_settings(&app_type, &provider)?;
         if matches!(app_type, AppType::Codex) && provider.category.as_deref() == Some("official") {
             crate::codex_config::strip_codex_unified_session_bucket_from_settings(

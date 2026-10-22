@@ -22,17 +22,9 @@ export const KIMI_CAPABILITIES = [
   "dynamically_loaded_tools",
 ] as const;
 
-// Existing native configurations may still declare retired media capabilities.
-const kimiCapabilitiesSchema = z.preprocess(
-  (value) =>
-    Array.isArray(value)
-      ? value.filter(
-          (capability) =>
-            capability !== "audio_in" && capability !== "video_in",
-        )
-      : value,
-  z.array(z.enum(KIMI_CAPABILITIES)),
-);
+// The editor only manages KIMI_CAPABILITIES. Other native capabilities belong to
+// Kimi and must survive edits unchanged, including names added by future versions.
+const kimiCapabilitiesSchema = z.array(z.string());
 
 export const kimiConfigSchema = z
   .object({

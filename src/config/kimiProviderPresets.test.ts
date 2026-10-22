@@ -149,11 +149,9 @@ describe("kimiProviderPresets", () => {
         expect(config.capabilities?.includes("thinking")).toBe(
           original.reasoning,
         );
-        expect(
-          config.capabilities?.every((capability) =>
-            KIMI_CAPABILITIES.includes(capability),
-          ),
-        ).toBe(true);
+        for (const capability of config.capabilities ?? []) {
+          expect(KIMI_CAPABILITIES).toContain(capability);
+        }
         expect(config).not.toHaveProperty("compat");
         expect(config).not.toHaveProperty("thinkingLevelMap");
         expect(config).not.toHaveProperty("input");
