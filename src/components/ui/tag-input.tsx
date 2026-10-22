@@ -262,9 +262,13 @@ export function TagInput({
     }
 
     if (event.key === "Escape") {
-      setIsOpen(false);
-      setHighlightedIndex(-1);
-      return;
+      if (isOpen) {
+        event.preventDefault();
+        event.stopPropagation();
+        setIsOpen(false);
+        setHighlightedIndex(-1);
+        return;
+      }
     }
 
     if (event.key === "Tab" && isOpen && highlightedIndex >= 0) {

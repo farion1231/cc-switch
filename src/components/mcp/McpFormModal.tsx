@@ -621,6 +621,15 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
         title={title}
         closeLabel={t("common.back")}
         aria-describedby={undefined}
+        onEscapeKeyDown={(event) => {
+          const target = event.target as Element | null;
+          if (
+            target?.closest?.('[aria-expanded="true"]') ||
+            target?.closest?.('[role="listbox"]')
+          ) {
+            event.preventDefault();
+          }
+        }}
       >
         <SheetBody className="flex flex-col gap-5 px-6 pb-6 pt-5">
           {!isEdit && (

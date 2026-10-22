@@ -320,4 +320,32 @@ describe("McpFormModal (drawer)", () => {
     expect(onSave).not.toHaveBeenCalled();
     expect(addButton()).toBeEnabled();
   });
+
+  it("does not close the modal on Escape when tag input suggestions are open", async () => {
+    const { onClose } = renderForm({ existingTags: ["search", "utility"] });
+    // Expand the "说明与链接" disclosure to see the TagInput
+    const metaButton = screen.getByRole("button", {
+      name: /mcpPage\.drawer\.meta/,
+    });
+    fireEvent.click(metaButton);
+
+    const tagInput = document.getElementById(
+      "mcp-meta-tags",
+    ) as HTMLInputElement;
+    expect(tagInput).toBeInTheDocument();
+
+    // Type to open suggestions list
+    await userEvent.type(tagInput, "se");
+    expect(tagInput).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+
+    // Press Escape while suggestions are open: should only close suggestions list, NOT the modal
+    fireEvent.keyDown(tagInput, { key: "Escape" });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+
+    // Pressing Escape again when suggestions are closed closes the modal
+    fireEvent.keyDown(tagInput, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

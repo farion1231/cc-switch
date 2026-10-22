@@ -143,4 +143,19 @@ describe("TagInput", () => {
       screen.queryByLabelText("Remove tag locked"),
     ).not.toBeInTheDocument();
   });
+
+  it("closes suggestions and stops propagation when pressing Escape while open", async () => {
+    render(
+      <TagInputHarness initialTags={[]} suggestions={["database", "deploy"]} />,
+    );
+    const input = screen.getByPlaceholderText("Add tag");
+    await userEvent.type(input, "de");
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    expect(input).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.keyDown(input, { key: "Escape" });
+
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(input).toHaveAttribute("aria-expanded", "false");
+  });
 });
