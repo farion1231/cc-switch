@@ -568,7 +568,7 @@ pub(crate) fn save_oauth_login(
             "support_efforts",
             "default_effort",
             "protocol",
-            "use_beta",
+            "beta_api",
             "adaptive_thinking",
         ] {
             fields.remove(field);

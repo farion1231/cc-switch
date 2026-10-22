@@ -388,7 +388,7 @@ fn parse_models(payload: &Value) -> Result<Map<String, Value>, String> {
         if let Some(protocol) = protocol {
             alias["protocol"] = json!(protocol);
             if protocol == "anthropic" {
-                alias["use_beta"] = json!(true);
+                alias["beta_api"] = json!(true);
                 if matches!(thinking, Some("only" | "both")) {
                     alias["adaptive_thinking"] = json!(true);
                 }
@@ -715,6 +715,45 @@ mod tests {
 
     async fn due(manager: &KimiOAuthManager) {
         manager.pending.lock().await.as_mut().unwrap().next_poll = Instant::now();
+    }
+
+    #[test]
+    fn anthropic_models_write_beta_api_and_clear_it_after_protocol_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut payload = json!({"data": [{
+            "id": "k3", "limit": {"context": 1048576},
+            "protocol": "anthropic", "reasoning": {"type": "both"}
+        }]});
+        let save_models = |payload: &Value| {
+            kimi_config::save_oauth_login(
+                dir.path(),
+                &dir.path().join("credentials/kimi-code.json"),
+                b"test-credential",
+                "https://api.kimi.com/coding/v1",
+                json!({"storage": "file", "key": "oauth/kimi-code"}),
+                parse_models(payload).unwrap(),
+            )
+            .unwrap();
+        };
+
+        save_models(&payload);
+        let native = fs::read_to_string(&path).unwrap();
+        let config: Value = toml::from_str(&native).unwrap();
+        let model = &config["models"]["kimi-code/k3"];
+        assert_eq!(model["protocol"], "anthropic");
+        assert_eq!(model["beta_api"], true);
+        assert_eq!(model["adaptive_thinking"], true);
+        assert!(model.get("use_beta").is_none());
+        assert!(native.contains("beta_api = true"));
+
+        payload["data"][0]["protocol"] = json!("response");
+        save_models(&payload);
+        let config: Value = toml::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        let model = &config["models"]["kimi-code/k3"];
+        assert_eq!(model["protocol"], "openai_responses");
+        assert!(model.get("beta_api").is_none());
+        assert!(model.get("adaptive_thinking").is_none());
     }
 
     #[tokio::test]
