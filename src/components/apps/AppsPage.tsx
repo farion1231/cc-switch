@@ -33,7 +33,6 @@ import {
   AlertTriangle,
   ArrowUpCircle,
   ChevronDown,
-  Check,
   Copy,
   Download,
   GripVertical,
@@ -212,14 +211,6 @@ export function AppsPage() {
         value,
         label: t(value === "cn" ? "qoder.chinaEdition" : "qoder.globalEdition"),
         disabled: editionDisabled,
-        trailing: (
-          <Check
-            aria-hidden="true"
-            className={cn("h-3 w-3", edition !== value && "invisible")}
-          />
-        ),
-        className:
-          "[&[aria-pressed=true]]:bg-action [&[aria-pressed=true]]:text-action-fg [&[aria-pressed=true]]:hover:text-action-fg",
       }))}
     />
   );
