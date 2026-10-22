@@ -477,6 +477,15 @@ fn push_provider_model_filters(
 }
 
 pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
+    effective_usage_log_filter_scoped(log_alias, None)
+}
+
+fn effective_usage_log_filter_scoped(log_alias: &str, app_types: Option<&[String]>) -> String {
+    let scoped_proxy_apps = match app_types {
+        Some([]) => return "1 = 0".to_string(),
+        Some(types) => format!(" AND proxy_dedup.app_type IN ({})", sql_string_list(types)),
+        None => String::new(),
+    };
     let data_source = data_source_expr(log_alias);
     let proxy_data_source = data_source_expr("proxy_dedup");
     let app_type_match =
@@ -488,6 +497,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
                 WHERE {proxy_data_source} = 'proxy'
+                  {scoped_proxy_apps}
                   AND {app_type_match}
                   AND proxy_dedup.status_code >= 200
                   AND proxy_dedup.status_code < 300
@@ -539,6 +549,20 @@ pub(crate) fn effective_usage_log_filter_for_range(
     start_date: Option<i64>,
     end_date: Option<i64>,
 ) -> Result<String, AppError> {
+    effective_usage_log_filter_for_range_scoped(conn, log_alias, start_date, end_date, None)
+}
+
+fn effective_usage_log_filter_for_range_scoped(
+    conn: &Connection,
+    log_alias: &str,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    app_types: Option<&[String]>,
+) -> Result<String, AppError> {
+    if app_types.is_some() {
+        // 菜单栏按原始 app_type 过滤时可能有隐藏应用参与，不能走不带作用域的优化子查询。
+        return Ok(effective_usage_log_filter_scoped(log_alias, app_types));
+    }
     let lo = start_date
         .map(|v| v.saturating_sub(SESSION_PROXY_DEDUP_WINDOW_SECONDS))
         .unwrap_or(i64::MIN / 2);
@@ -608,6 +632,14 @@ pub(crate) fn effective_usage_log_filter_for_range(
               AND dedup_p.created_at BETWEEN {lo} AND {hi}
         )"
     ))
+}
+
+fn sql_string_list(values: &[String]) -> String {
+    values
+        .iter()
+        .map(|value| format!("'{}'", value.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// 请求日志总数缓存：每次刷新都 `COUNT(*)` 一遍明细，大范围下最耗时。
@@ -925,6 +957,25 @@ fn push_rollup_date_filters(
     }
 }
 
+fn push_app_types_filter(
+    conditions: &mut Vec<String>,
+    params: &mut Vec<Box<dyn rusqlite::ToSql>>,
+    column: &str,
+    app_types: &[String],
+) {
+    if app_types.is_empty() {
+        conditions.push("1 = 0".to_string());
+        return;
+    }
+    let placeholders = std::iter::repeat_n("?", app_types.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    conditions.push(format!("{column} IN ({placeholders})"));
+    for app_type in app_types {
+        params.push(Box::new(app_type.clone()));
+    }
+}
+
 fn local_day_start_rfc3339(day: NaiveDate) -> String {
     let local_midnight = day
         .and_hms_opt(0, 0, 0)
@@ -948,11 +999,47 @@ impl Database {
         provider_name: Option<&str>,
         model: Option<&str>,
     ) -> Result<UsageSummary, AppError> {
+        self.get_usage_summary_with_app_types(
+            start_date,
+            end_date,
+            app_type,
+            provider_name,
+            model,
+            None,
+        )
+    }
+
+    /// 获取指定 app_type 集合的使用量汇总。菜单栏当天数据用它只聚合当前可见应用。
+    pub fn get_usage_summary_for_app_types(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        app_types: &[String],
+    ) -> Result<UsageSummary, AppError> {
+        self.get_usage_summary_with_app_types(
+            start_date,
+            end_date,
+            None,
+            None,
+            None,
+            Some(app_types),
+        )
+    }
+
+    fn get_usage_summary_with_app_types(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        app_type: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        app_types: Option<&[String]>,
+    ) -> Result<UsageSummary, AppError> {
         let conn = lock_conn!(self.conn);
 
         // Build detail WHERE clause
-        let mut conditions = vec![effective_usage_log_filter_for_range(
-            &conn, "l", start_date, end_date,
+        let mut conditions = vec![effective_usage_log_filter_for_range_scoped(
+            &conn, "l", start_date, end_date, app_types,
         )?];
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
@@ -967,6 +1054,9 @@ impl Database {
         if let Some(at) = app_type {
             conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             params_vec.push(Box::new(at.to_string()));
+        }
+        if let Some(app_types) = app_types {
+            push_app_types_filter(&mut conditions, &mut params_vec, "l.app_type", app_types);
         }
         push_provider_model_filters(
             &mut conditions,
@@ -1002,6 +1092,14 @@ impl Database {
         if let Some(at) = app_type {
             rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
             rollup_params.push(Box::new(at.to_string()));
+        }
+        if let Some(app_types) = app_types {
+            push_app_types_filter(
+                &mut rollup_conditions,
+                &mut rollup_params,
+                "r.app_type",
+                app_types,
+            );
         }
         push_provider_model_filters(
             &mut rollup_conditions,
@@ -4057,6 +4155,116 @@ mod tests {
         assert_eq!(summary.total_requests, 2);
         assert_eq!(summary.success_rate, 100.0);
 
+        Ok(())
+    }
+
+    #[test]
+    fn usage_summary_for_app_types_keeps_claude_desktop_distinct() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "claude-code",
+                "claude",
+                "p1",
+                "claude",
+                "proxy",
+                1000,
+                10,
+                20,
+                0,
+                0,
+                200,
+                "0.01",
+            )?;
+            insert_usage_log(
+                &conn,
+                "claude-desktop",
+                "claude-desktop",
+                "p1",
+                "claude",
+                "proxy",
+                1001,
+                30,
+                40,
+                0,
+                0,
+                200,
+                "0.02",
+            )?;
+            insert_usage_log(
+                &conn, "codex", "codex", "p2", "gpt", "proxy", 1002, 50, 60, 0, 0, 200, "0.03",
+            )?;
+        }
+
+        let desktop_only = db.get_usage_summary_for_app_types(
+            Some(0),
+            Some(2000),
+            &["claude-desktop".to_string()],
+        )?;
+        assert_eq!(desktop_only.total_requests, 1);
+        assert_eq!(desktop_only.real_total_tokens, 70);
+
+        let without_desktop = db.get_usage_summary_for_app_types(
+            Some(0),
+            Some(2000),
+            &["claude".to_string(), "codex".to_string()],
+        )?;
+        assert_eq!(without_desktop.total_requests, 2);
+        assert_eq!(without_desktop.real_total_tokens, 140);
+
+        let none = db.get_usage_summary_for_app_types(Some(0), Some(2000), &[])?;
+        assert_eq!(none.total_requests, 0);
+        assert_eq!(none.real_total_tokens, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn app_scoped_summary_does_not_let_hidden_proxy_rows_hide_visible_sessions(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "hidden-claude-proxy",
+                "claude",
+                "p1",
+                "claude",
+                "proxy",
+                1000,
+                10,
+                20,
+                0,
+                0,
+                200,
+                "0.01",
+            )?;
+            insert_usage_log(
+                &conn,
+                "visible-desktop-session",
+                "claude-desktop",
+                "p1",
+                "claude",
+                "session_log",
+                1001,
+                10,
+                20,
+                0,
+                0,
+                200,
+                "0.01",
+            )?;
+        }
+
+        let desktop_only = db.get_usage_summary_for_app_types(
+            Some(0),
+            Some(2000),
+            &["claude-desktop".to_string()],
+        )?;
+        assert_eq!(desktop_only.total_requests, 1);
+        assert_eq!(desktop_only.real_total_tokens, 30);
         Ok(())
     }
 

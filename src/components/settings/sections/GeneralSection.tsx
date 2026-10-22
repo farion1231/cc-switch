@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { isLinux } from "@/lib/platform";
+import { isLinux, isMac } from "@/lib/platform";
 import { TerminalSelect } from "@/components/settings/TerminalSettings";
 import {
   SettingsBlock,
@@ -43,6 +43,13 @@ export function GeneralSection({
 }: GeneralSectionProps) {
   const { t } = useTranslation();
   const { theme, setTheme } = useTheme();
+  const menuBarData = settings.menuBarData ?? {
+    speed: true,
+    totalTokens: false,
+    requests: false,
+    cost: false,
+    cacheHitRate: false,
+  };
 
   return (
     <>
@@ -276,6 +283,66 @@ export function GeneralSection({
             }
           />
         </SettingsCard>
+        {isMac() && (
+          <>
+            <div className="pt-2">
+              <h3 className="m-0 text-body font-semibold text-fg-1">
+                {t("settings.general.menuBarData")}
+              </h3>
+            </div>
+            <SettingsCard>
+              <SettingsSwitchRow
+                label={t("settings.general.menuBarSpeed")}
+                help={{
+                  title: t("settings.general.menuBarSpeed"),
+                  body: t("settings.general.menuBarSpeedHelp"),
+                }}
+                checked={menuBarData.speed}
+                onCheckedChange={(value) =>
+                  void onAutoSave({
+                    menuBarData: { ...menuBarData, speed: value },
+                  })
+                }
+              />
+              <SettingsSwitchRow
+                label={t("settings.general.menuBarTotalTokens")}
+                checked={menuBarData.totalTokens}
+                onCheckedChange={(value) =>
+                  void onAutoSave({
+                    menuBarData: { ...menuBarData, totalTokens: value },
+                  })
+                }
+              />
+              <SettingsSwitchRow
+                label={t("settings.general.menuBarRequests")}
+                checked={menuBarData.requests}
+                onCheckedChange={(value) =>
+                  void onAutoSave({
+                    menuBarData: { ...menuBarData, requests: value },
+                  })
+                }
+              />
+              <SettingsSwitchRow
+                label={t("settings.general.menuBarCost")}
+                checked={menuBarData.cost}
+                onCheckedChange={(value) =>
+                  void onAutoSave({
+                    menuBarData: { ...menuBarData, cost: value },
+                  })
+                }
+              />
+              <SettingsSwitchRow
+                label={t("settings.general.menuBarCacheHitRate")}
+                checked={menuBarData.cacheHitRate}
+                onCheckedChange={(value) =>
+                  void onAutoSave({
+                    menuBarData: { ...menuBarData, cacheHitRate: value },
+                  })
+                }
+              />
+            </SettingsCard>
+          </>
+        )}
       </SettingsBlock>
     </>
   );

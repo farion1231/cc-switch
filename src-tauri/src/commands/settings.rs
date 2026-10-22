@@ -81,7 +81,10 @@ pub async fn save_settings(
             != existing.codex_stack_subagent_reasoning_effort
         || merged.codex_stack_auto_review_model != existing.codex_stack_auto_review_model;
     let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
-    crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
+    crate::settings::update_settings(merged.clone()).map_err(|e| e.to_string())?;
+
+    // 菜单栏显示项、币种、语言和可见应用都可能在一次保存中变化。
+    crate::menu_bar::settings_changed(&app, &merged);
 
     // 原生托盘菜单 / 托盘面板当场切换，不用重启。
     if tray_style_changed {

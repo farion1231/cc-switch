@@ -5,9 +5,27 @@ import type { Settings } from "@/types";
 
 type Language = "zh" | "zh-TW" | "en" | "ja" | "tr";
 
+export const DEFAULT_MENU_BAR_DATA = {
+  speed: true,
+  totalTokens: false,
+  requests: false,
+  cost: false,
+  cacheHitRate: false,
+} as const;
+
 export type SettingsFormState = Omit<Settings, "language"> & {
   language: Language;
 };
+
+const normalizeMenuBarData = (
+  value?: Settings["menuBarData"],
+): Settings["menuBarData"] => ({
+  speed: value?.speed ?? DEFAULT_MENU_BAR_DATA.speed,
+  totalTokens: value?.totalTokens ?? DEFAULT_MENU_BAR_DATA.totalTokens,
+  requests: value?.requests ?? DEFAULT_MENU_BAR_DATA.requests,
+  cost: value?.cost ?? DEFAULT_MENU_BAR_DATA.cost,
+  cacheHitRate: value?.cacheHitRate ?? DEFAULT_MENU_BAR_DATA.cacheHitRate,
+});
 
 const normalizeLanguage = (lang?: string | null): Language => {
   if (!lang) return "zh";
@@ -123,6 +141,7 @@ export function useSettingsForm(): UseSettingsFormResult {
         data.preserveCodexOfficialAuthOnSwitch ?? false,
       unifyCodexSessionHistory: data.unifyCodexSessionHistory ?? false,
       codexStackClassicTools: data.codexStackClassicTools ?? true,
+      menuBarData: normalizeMenuBarData(data.menuBarData),
       claudeConfigDir: sanitizeDir(data.claudeConfigDir),
       codexConfigDir: sanitizeDir(data.codexConfigDir),
       geminiConfigDir: sanitizeDir(data.geminiConfigDir),
@@ -152,6 +171,7 @@ export function useSettingsForm(): UseSettingsFormResult {
             preserveCodexOfficialAuthOnSwitch: false,
             unifyCodexSessionHistory: false,
             codexStackClassicTools: true,
+            menuBarData: { ...DEFAULT_MENU_BAR_DATA },
             language: readPersistedLanguage(),
           } as SettingsFormState);
 
@@ -193,6 +213,7 @@ export function useSettingsForm(): UseSettingsFormResult {
           serverData.preserveCodexOfficialAuthOnSwitch ?? false,
         unifyCodexSessionHistory: serverData.unifyCodexSessionHistory ?? false,
         codexStackClassicTools: serverData.codexStackClassicTools ?? true,
+        menuBarData: normalizeMenuBarData(serverData.menuBarData),
         claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
         codexConfigDir: sanitizeDir(serverData.codexConfigDir),
         geminiConfigDir: sanitizeDir(serverData.geminiConfigDir),

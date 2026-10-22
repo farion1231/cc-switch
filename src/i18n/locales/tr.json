@@ -386,6 +386,13 @@
       "checkToolUpdates": "Açılışta uygulama güncellemelerini kontrol et",
       "checkToolUpdatesHelp": "CC Switch açıkken, her başlatıldığında yüklü komut satırı uygulamalarınızı yeni sürümler için kontrol eder ve bulursa kenar çubuğunda Uygulamalar üzerinde bir nokta gösterir. Hiçbir şey otomatik olarak yükseltilmez.",
       "windowAndTerminal": "Pencere ve terminal",
+      "menuBarData": "Menü çubuğu verileri",
+      "menuBarSpeed": "Canlı hız",
+      "menuBarSpeedHelp": "Yalnızca CC Switch yerel yönlendirmesinden geçen akış istekleri sayılır. Doğrudan bağlantılarda canlı hız alınamaz ve 0 tok/s gösterilir.",
+      "menuBarTotalTokens": "Bugünkü toplam Token",
+      "menuBarRequests": "Bugünkü istekler",
+      "menuBarCost": "Bugünkü maliyet",
+      "menuBarCacheHitRate": "Bugünkü önbellek isabet oranı",
       "minimizeToTrayHelp": "Açık olduğunda, kapat düğmesi yalnızca pencereyi gizler ve CC Switch sistem tepsisinde çalışmaya devam eder (hafif mod tepsi menüsündedir). Kapatıldığında kapatma düğmesi kapanır.",
       "terminalHelp": "Sağlayıcı kartlarındaki “Açık terminal”in kullandığı terminal. Mevcut değilse sistemin varsayılan terminali kullanılır."
     },

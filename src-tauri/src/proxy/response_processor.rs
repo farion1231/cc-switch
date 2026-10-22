@@ -20,6 +20,7 @@ use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::Value;
 use std::{
+    borrow::Cow,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, OnceLock,
@@ -740,9 +741,12 @@ pub fn create_logged_passthrough_stream(
         let mut buffer = String::new();
         let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut collector = usage_collector;
+        let mut live_speed = collector
+            .as_ref()
+            .and_then(|_| crate::menu_bar::start_live_request());
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
         let inspect_sse_events =
-            collector.is_some() || log::log_enabled!(log::Level::Debug);
+            collector.is_some() || live_speed.is_some() || log::log_enabled!(log::Level::Debug);
         let mut is_first_chunk = true;
 
         // 超时配置
@@ -802,32 +806,45 @@ pub fn create_logged_passthrough_stream(
                                 let event_name = event_text
                                     .lines()
                                     .find_map(|line| strip_sse_field(line, "event"));
-                                // 提取 data 部分；只有 usage collector 存在时才解析 JSON。
-                                for line in event_text.lines() {
-                                    if let Some(data) = strip_sse_field(line, "data") {
-                                        if let Some(c) = &collector {
-                                            c.observe_data(event_name, data);
-                                        }
-                                        if data.trim() != "[DONE]" {
-                                            let collected = match &collector {
-                                                Some(c) if c.should_collect(data) => {
-                                                    match serde_json::from_str::<Value>(data) {
-                                                        Ok(json_value) => {
-                                                            c.push(json_value).await;
-                                                            true
-                                                        }
-                                                        Err(_) => false,
-                                                    }
-                                                }
-                                                _ => false,
+                                let Some(data) = joined_sse_data(&event_text) else {
+                                    continue;
+                                };
+                                if let Some(c) = &collector {
+                                    c.observe_data(event_name, &data);
+                                }
+                                if data.trim() != "[DONE]" {
+                                    let live_parsed = live_speed
+                                        .as_ref()
+                                        .filter(|live| live.is_enabled())
+                                        .and_then(|live| {
+                                            serde_json::from_str::<Value>(&data)
+                                                .ok()
+                                                .inspect(|value| live.observe_json(value))
+                                        });
+                                    let collected = match &collector {
+                                        Some(c) if c.should_collect(&data) => {
+                                            let parsed = match live_parsed {
+                                                Some(value) => Some(value),
+                                                None => serde_json::from_str::<Value>(&data).ok(),
                                             };
-                                            log::trace!(
-                                                "[{tag}] <<< SSE data: bytes={}, usage_collected={collected} (content omitted)",
-                                                data.len()
-                                            );
-                                        } else {
-                                            log::debug!("[{tag}] <<< SSE: [DONE]");
+                                            match parsed {
+                                                Some(json_value) => {
+                                                    c.push(json_value).await;
+                                                    true
+                                                }
+                                                None => false,
+                                            }
                                         }
+                                        _ => false,
+                                    };
+                                    log::trace!(
+                                        "[{tag}] <<< SSE data: bytes={}, usage_collected={collected} (content omitted)",
+                                        data.len()
+                                    );
+                                } else {
+                                    log::debug!("[{tag}] <<< SSE: [DONE]");
+                                    if let Some(live) = live_speed.take() {
+                                        live.finish();
                                     }
                                 }
                             }
@@ -854,6 +871,19 @@ pub fn create_logged_passthrough_stream(
         if let Some(guard) = &mut finish_guard {
             guard.disarm();
         }
+    }
+}
+
+/// 同一 SSE 事件的多条 `data:` 行按规范用换行拼接。
+fn joined_sse_data(event_text: &str) -> Option<Cow<'_, str>> {
+    let data_lines = event_text
+        .lines()
+        .filter_map(|line| strip_sse_field(line, "data"))
+        .collect::<Vec<_>>();
+    match data_lines.as_slice() {
+        [] => None,
+        [single] => Some(Cow::Borrowed(*single)),
+        lines => Some(Cow::Owned(lines.join("\n"))),
     }
 }
 
@@ -943,6 +973,19 @@ mod tests {
             None,
             r#"{"choices":[{"delta":{"content":"hi"}}]}"#
         ));
+    }
+
+    #[test]
+    fn joined_sse_data_combines_lines_and_handles_done() {
+        let event = "event: message\ndata: {\"type\":\"content_block_delta\",\ndata: \"delta\":{\"text\":\"hi\"}}\n\n";
+        assert_eq!(
+            joined_sse_data(event).as_deref(),
+            Some("{\"type\":\"content_block_delta\",\n\"delta\":{\"text\":\"hi\"}}")
+        );
+        assert_eq!(
+            joined_sse_data("data: [DONE]\n\n").as_deref(),
+            Some("[DONE]")
+        );
     }
 
     /// 回归：上游 response.created 不带 usage 时，首个被 usage 过滤器收下的是

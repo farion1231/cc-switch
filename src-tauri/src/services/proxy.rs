@@ -83,6 +83,17 @@ impl ProxyService {
     /// 启动代理服务器。成功、失败都让托盘比对一次（图标圆点、问题区、「退出」的后果跟着变）。
     pub async fn start(&self) -> Result<ProxyServerInfo, String> {
         let result = self.start_server().await;
+        if result.is_ok() {
+            let handle = self.app_handle.read().await.clone();
+            if let Some(handle) = handle {
+                let enabled = self
+                    .get_config()
+                    .await
+                    .map(|config| config.enable_logging)
+                    .unwrap_or(false);
+                crate::menu_bar::usage_logging_changed(&handle, enabled);
+            }
+        }
         self.notify_tray().await;
         result
     }
@@ -90,6 +101,9 @@ impl ProxyService {
     /// 停止代理服务器。同 [`Self::start`]，结束后让托盘比对一次。
     pub async fn stop(&self) -> Result<(), String> {
         let result = self.stop_server().await;
+        if let Some(handle) = self.app_handle.read().await.clone() {
+            crate::menu_bar::clear_live_speed(&handle);
+        }
         self.notify_tray().await;
         result
     }
@@ -492,8 +506,13 @@ impl ProxyService {
         // 判断是否需要重启（地址或端口变更）
         let require_restart = new_config.listen_address != previous.listen_address
             || new_config.listen_port != previous.listen_port;
-        self.apply_saved_config(require_restart, SavedProxyConfig::Legacy(previous))
-            .await
+        let restarted = self
+            .apply_saved_config(require_restart, SavedProxyConfig::Legacy(previous))
+            .await?;
+        if let Some(handle) = self.app_handle.read().await.clone() {
+            crate::menu_bar::usage_logging_changed(&handle, new_config.enable_logging);
+        }
+        Ok(restarted)
     }
 
     /// 设置页「保存并重启服务」：只写四个全局字段。各应用自己的重试次数和超时不碰——
@@ -513,8 +532,13 @@ impl ProxyService {
 
         let require_restart = config.listen_address != previous.listen_address
             || config.listen_port != previous.listen_port;
-        self.apply_saved_config(require_restart, SavedProxyConfig::Global(previous))
-            .await
+        let restarted = self
+            .apply_saved_config(require_restart, SavedProxyConfig::Global(previous))
+            .await?;
+        if let Some(handle) = self.app_handle.read().await.clone() {
+            crate::menu_bar::usage_logging_changed(&handle, config.enable_logging);
+        }
+        Ok(restarted)
     }
 
     /// 让运行中的服务用上刚写进库的配置：地址或端口变了就重启（返回 true），否则实时应用。

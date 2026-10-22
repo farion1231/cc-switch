@@ -394,6 +394,34 @@ pub struct UsageDisplaySettings {
     pub trend_chart_type: Option<String>,
 }
 
+/// macOS 菜单栏展示项。设备级设置；速度默认开启，当天指标默认关闭。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MenuBarDataSettings {
+    #[serde(default = "default_true")]
+    pub speed: bool,
+    #[serde(default)]
+    pub total_tokens: bool,
+    #[serde(default)]
+    pub requests: bool,
+    #[serde(default)]
+    pub cost: bool,
+    #[serde(default)]
+    pub cache_hit_rate: bool,
+}
+
+impl Default for MenuBarDataSettings {
+    fn default() -> Self {
+        Self {
+            speed: true,
+            total_tokens: false,
+            requests: false,
+            cost: false,
+            cache_hit_rate: false,
+        }
+    }
+}
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -461,6 +489,9 @@ pub struct AppSettings {
     /// 默认关：用托盘面板，想要原生菜单在设置里换回。
     #[serde(default)]
     pub native_tray_menu: bool,
+    /// macOS 菜单栏图标右侧显示的数据项。
+    #[serde(default = "default_menu_bar_data")]
+    pub menu_bar_data: MenuBarDataSettings,
     /// Keep Codex ChatGPT login material in auth.json when switching to third-party providers.
     /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
     #[serde(default)]
@@ -628,6 +659,10 @@ fn default_session_auto_sync_enabled() -> bool {
     true
 }
 
+fn default_menu_bar_data() -> MenuBarDataSettings {
+    MenuBarDataSettings::default()
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -650,6 +685,7 @@ impl Default for AppSettings {
             show_provider_search: true,
             check_tool_updates_on_startup: false,
             native_tray_menu: false,
+            menu_bar_data: MenuBarDataSettings::default(),
             preserve_codex_official_auth_on_switch: false,
             unify_codex_session_history: false,
             unify_codex_migrate_existing: None,
@@ -1638,6 +1674,25 @@ mod tests {
         assert!(!missing.native_tray_menu);
         let menu: AppSettings = serde_json::from_str(r#"{"nativeTrayMenu":true}"#).unwrap();
         assert!(menu.native_tray_menu);
+    }
+
+    #[test]
+    fn menu_bar_data_defaults_speed_on_and_other_items_off() {
+        let default = MenuBarDataSettings::default();
+        assert!(default.speed);
+        assert!(!default.total_tokens);
+        assert!(!default.requests);
+        assert!(!default.cost);
+        assert!(!default.cache_hit_rate);
+
+        let missing: AppSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(missing.menu_bar_data, default);
+
+        let partial: AppSettings =
+            serde_json::from_str(r#"{"menuBarData":{"totalTokens":true}}"#).unwrap();
+        assert!(partial.menu_bar_data.speed);
+        assert!(partial.menu_bar_data.total_tokens);
+        assert!(!partial.menu_bar_data.requests);
     }
 
     #[test]

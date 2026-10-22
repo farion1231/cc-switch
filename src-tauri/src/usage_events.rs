@@ -67,6 +67,7 @@ pub fn notify_log_recorded() {
         if let Err(e) = handle.emit(EVENT_USAGE_LOG_RECORDED, ()) {
             log::warn!("emit {EVENT_USAGE_LOG_RECORDED} 失败: {e}");
         }
+        crate::menu_bar::notify_usage_logged(&handle);
     });
 }
 

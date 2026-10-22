@@ -30,6 +30,7 @@ mod linux_fix;
 pub mod live;
 mod mcode_config;
 mod mcp;
+mod menu_bar;
 pub mod mode;
 mod model_capabilities;
 mod openclaw_config;
@@ -1261,6 +1262,7 @@ pub fn run() {
             );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
+            crate::menu_bar::init(app.handle().clone());
 
             // 初始化 SkillService
             let skill_service = SkillService::new();
