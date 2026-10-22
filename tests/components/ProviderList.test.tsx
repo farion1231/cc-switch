@@ -342,6 +342,42 @@ describe("ProviderList Component", () => {
     expect(onSwitch).toHaveBeenCalledWith(providerA);
   });
 
+  it.each(["mcode", "kimi"] as const)(
+    "uses native membership to add and remove %s providers",
+    async (appId) => {
+      const saved = createProvider({
+        id: "saved",
+        name: "Saved",
+        meta: { liveConfigManaged: false },
+      });
+      const live = createProvider({
+        id: "live",
+        name: "Live",
+        meta: { liveConfigManaged: true },
+      });
+      const onSwitch = vi.fn();
+      const onRemoveFromConfig = vi.fn();
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [saved, live],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      renderWithQueryClient(
+        <ProviderList
+          {...baseProps}
+          providers={{ saved, live }}
+          appId={appId}
+          onSwitch={onSwitch}
+          onRemoveFromConfig={onRemoveFromConfig}
+        />,
+      );
+      fireEvent.click(await screen.findByTestId("remove-live"));
+      expect(onRemoveFromConfig).toHaveBeenCalledWith(live);
+      fireEvent.click(screen.getByTestId("add-saved"));
+      expect(onSwitch).toHaveBeenCalledWith(saved);
+    },
+  );
+
   it.each([{ ctrlKey: true }, { metaKey: true }])(
     "keeps search in the list flow and restores cards on close (%o)",
     async (shortcut) => {

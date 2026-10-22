@@ -170,8 +170,9 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 10] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "agy",
+const VALID_TOOLS: [&str; 11] = [
+    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
+    "agy",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -394,7 +395,7 @@ fn run_tool_lifecycle_silently(command_line: &str, _label: &str) -> Result<(), S
     // GUI App 继承的是 launchd 的窄 PATH，而锚定探测用的是登录 shell —— 见
     // `login_shell_path` doc。命令自身用绝对路径不受影响，但工具**内部** spawn 的
     // npm/node 等子进程、以及 install 链里裸的 npm fallback 都需要真实 PATH。
-    if let Some(login_path) = login_shell_path() {
+    if let Some(login_path) = login_shell_path(None) {
         let inherited = std::env::var("PATH").unwrap_or_default();
         cmd.env("PATH", merge_path_segments(&login_path, &inherited));
     }
@@ -626,6 +627,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "hermes" => "Hermes",
         "pi" => "Pi",
         "mcode" => "MiniMax Code",
+        "kimi" => "Kimi Code",
         "agy" => "Antigravity CLI",
         _ => "Unknown",
     }
@@ -663,6 +665,12 @@ const HERMES_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 const HERMES_UPDATE_UNIX: &str =
     "hermes update || bash -c 'tmp=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+
+// The npm distribution needs Node >=22.19. The native installer bundles its runtime.
+const KIMI_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://code.kimi.com/kimi-code/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+#[cfg(target_os = "windows")]
+const KIMI_INSTALL_WINDOWS_SCRIPT: &str = "irm https://code.kimi.com/kimi-code/install.ps1 | iex";
 
 /// Antigravity CLI 官方 installer：把原生二进制放进 `~/.local/bin`，再跑 `agy install`
 /// 把该目录加进 shell 配置。目标处已有 `agy` 时它只提示已安装、exit 0，所以只用于新装；
@@ -723,6 +731,14 @@ fn mcode_install_windows_command() -> String {
     format!(
         "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
         powershell_encoded_command(MCODE_INSTALL_WINDOWS_SCRIPT)
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn kimi_install_windows_command() -> String {
+    format!(
+        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(KIMI_INSTALL_WINDOWS_SCRIPT)
     )
 }
 
@@ -857,6 +873,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "opencode" => Some("npm i -g opencode-ai@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
         "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
+        "kimi" => Some("npm i -g @moonshot-ai/kimi-code@latest"),
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
@@ -894,6 +911,7 @@ fn official_update_args(tool: &str) -> Option<&'static str> {
         "claude" | "codex" | "grok" | "hermes" | "agy" => Some("update"),
         "openclaw" => Some("update --yes"),
         "opencode" => Some("upgrade"),
+        "kimi" => Some("upgrade --yes"),
         _ => None,
     }
 }
@@ -923,6 +941,21 @@ fn tool_action_shell_command_for_shell(
     action: ToolLifecycleAction,
     shell: LifecycleCommandShell,
 ) -> Option<String> {
+    if tool == "kimi" {
+        let install = match shell {
+            LifecycleCommandShell::Posix => KIMI_INSTALL_UNIX.to_string(),
+            #[cfg(target_os = "windows")]
+            LifecycleCommandShell::WindowsBatch => kimi_install_windows_command(),
+            #[cfg(not(target_os = "windows"))]
+            LifecycleCommandShell::WindowsBatch => return None,
+        };
+        return Some(match action {
+            ToolLifecycleAction::Install => install,
+            ToolLifecycleAction::Update => {
+                chain_update_commands("kimi upgrade --yes".into(), install, shell)
+            }
+        });
+    }
     // xAI's and MiniMax's primary Windows distribution is the official PowerShell
     // installer. Keep npm as the network/policy fallback, matching the POSIX installer chain.
     #[cfg(target_os = "windows")]
@@ -1245,6 +1278,7 @@ async fn get_single_tool_version_impl(
             fetch_npm_latest_for_tool(&client, "@earendil-works/pi-coding-agent", tool, local).await
         }
         "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
+        "kimi" => fetch_npm_latest_for_tool(&client, "@moonshot-ai/kimi-code", tool, local).await,
         "agy" => fetch_agy_latest_version(&client).await,
         _ => None,
     };
@@ -2439,6 +2473,13 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
     // 常见的安装路径（原生安装优先）
     // Preserve search priority without scanning all previous paths for every insertion.
     let mut search_paths = IndexSet::new();
+    if tool == "kimi" {
+        let install_dir = std::env::var_os("KIMI_INSTALL_DIR")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".kimi-code"));
+        push_unique_path(&mut search_paths, install_dir.join("bin"));
+    }
     if tool == "grok" {
         let extra_paths = grok_extra_search_paths(&home, std::env::var_os("GROK_BIN_DIR"));
         for path in extra_paths {
@@ -2934,7 +2975,8 @@ fn merge_path_segments(primary: &str, extra: &str) -> String {
 }
 
 /// 用与 `resolve_path_default` 相同的登录 shell 解析用户的真实 PATH，
-/// 供 `run_tool_lifecycle_silently` 注入给安装/升级脚本。
+/// 供 `run_tool_lifecycle_silently` 注入给安装/升级脚本，也供
+/// `run_detected_tool_command_with_timeout` 注入给运行时调用的 CLI。
 ///
 /// **要解决的不对称**：探测阶段（`try_get_version` / `resolve_path_default`）跑的是
 /// `$SHELL -lic`，会读 `.zshrc`/`.zprofile`，看得到 nvm / homebrew / volta；而执行阶段
@@ -2954,20 +2996,27 @@ fn merge_path_segments(primary: &str, extra: &str) -> String {
 /// 任何 shell 下格式都正确。写绝对路径又绕过了 alias / function / PATH 三重不确定性
 /// （交互式 shell 会加载用户 alias）。
 ///
-/// 解析不到时返回 `None`，调用方保持原有行为（不注入），不引入新的失败模式。
+/// 解析不到（含超过 `deadline`）时返回 `None`，调用方保持原有行为（不注入），
+/// 不引入新的失败模式。
 #[cfg(not(target_os = "windows"))]
-fn login_shell_path() -> Option<String> {
-    use std::process::Command;
+fn login_shell_path(deadline: Option<CommandDeadline>) -> Option<String> {
+    use std::process::{Command, Stdio};
     let shell = std::env::var("SHELL")
         .ok()
         .filter(|s| is_valid_shell(s))
         .unwrap_or_else(|| "sh".to_string());
     let flag = default_flag_for_shell(&shell);
-    let out = Command::new(shell)
-        .arg(flag)
+    let mut cmd = Command::new(shell);
+    cmd.arg(flag)
         .arg("/usr/bin/env")
-        .output()
-        .ok()?;
+        // 与 `resolve_path_default` 相同：交互式 rc 不能读到继承来的 stdin，
+        // 也不能因持有控制终端被作业控制停住。
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    isolate_child_process_group(&mut cmd);
+    let child = cmd.spawn().ok()?;
+    let out = wait_child_output(child, deadline).ok()?;
     if !out.status.success() {
         return None;
     }
@@ -3232,6 +3281,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "openclaw" => Some("openclaw"),
         "pi" => Some("@earendil-works/pi-coding-agent"),
         "mcode" => Some("@minimax-ai/code"),
+        "kimi" => Some("@moonshot-ai/kimi-code"),
         _ => None,
     }
 }
@@ -3606,7 +3656,7 @@ fn grok_native_update_command(update: String) -> String {
 fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
     match shell {
         LifecycleCommandShell::Posix => {
-            matches!(tool, "claude" | "opencode" | "openclaw")
+            matches!(tool, "claude" | "opencode" | "openclaw" | "kimi")
         }
         LifecycleCommandShell::WindowsBatch => {
             matches!(
@@ -3615,7 +3665,7 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
                 // 安装方式探测失败弹交互 prompt（spawn npm.cmd 没传 shell:true）；静默
                 // lifecycle 没有 stdin 会挂死，Windows 先锚到包管理器路径，等上游修了
                 // 再把 opencode 加回这里。
-                "claude" | "openclaw"
+                "claude" | "openclaw" | "kimi"
             )
         }
     }
@@ -4162,10 +4212,20 @@ pub(crate) fn run_detected_tool_command_with_timeout(
         .ok_or_else(|| format!("Invalid {tool} executable path"))?;
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
+    // GUI 启动时继承的是 launchd 的窄 PATH（/usr/bin:/bin:/usr/sbin:/sbin）。npm 装的 CLI
+    // 是 `#!/usr/bin/env node` 脚本，node 常不在工具自己的目录里（如 codex 在
+    // /opt/homebrew/bin、node 在 /usr/local/bin），只补工具目录会 exit 127（#8653）。
+    // 与安装/升级同样补上登录 shell 的 PATH。
     #[cfg(not(target_os = "windows"))]
-    let current_path = std::env::var_os("PATH")
-        .map(|value| value.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let current_path = {
+        let inherited = std::env::var_os("PATH")
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        match login_shell_path(deadline) {
+            Some(login_path) => merge_path_segments(&login_path, &inherited),
+            None => inherited,
+        }
+    };
 
     #[cfg(target_os = "windows")]
     {
@@ -4528,6 +4588,7 @@ fn posix_install_command_for(tool: &str) -> String {
         "opencode" => installer_with_npm_fallback(OPENCODE_INSTALL_UNIX, tool),
         "mcode" => installer_with_npm_fallback(MCODE_INSTALL_UNIX, tool),
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
+        "kimi" => KIMI_INSTALL_UNIX.to_string(),
         "agy" => AGY_INSTALL_UNIX.to_string(),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
     }
@@ -4697,6 +4758,7 @@ fn wsl_distro_from_path(path: &Path) -> Option<String> {
 #[tauri::command]
 pub async fn open_provider_terminal(
     state: State<'_, crate::store::AppState>,
+    agy_accounts: State<'_, crate::commands::AgyAccountState>,
     app: String,
     #[allow(non_snake_case)] providerId: String,
     cwd: Option<String>,
@@ -4713,7 +4775,10 @@ pub async fn open_provider_terminal(
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
 
     let launch = match app_type {
-        AppType::Agy => agy_terminal_launch(provider)?,
+        AppType::Agy => {
+            switch_agy_to_bound_account(&agy_accounts.0, provider).await?;
+            agy_terminal_launch(provider)?
+        }
         _ => {
             let env_vars = extract_env_vars_from_config(&provider.settings_config, &app_type);
             claude_terminal_launch(&env_vars, &providerId)?
@@ -4856,6 +4921,52 @@ fn claude_terminal_launch(
         batch_vars: Vec::new(),
         cleanup: vec![config_file],
     })
+}
+
+/// 官方卡绑了授权中心的账号时，先把 agy 的全局登录切到它（已经是它就不写）。没绑的卡跟着
+/// agy 当前的登录走。不能切号的平台（目前除 macOS 外）忽略绑定，照常打开。
+async fn switch_agy_to_bound_account(
+    accounts: &crate::services::agy_account::AgyAccountManager,
+    provider: &crate::provider::Provider,
+) -> Result<(), String> {
+    if !crate::services::provider::agy_direct::is_official(provider) {
+        return Ok(());
+    }
+    let Some(account_id) = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for("agy_oauth"))
+        .filter(|id| !id.trim().is_empty())
+    else {
+        return Ok(());
+    };
+    if !crate::services::agy_account::keychain::supported() {
+        log::info!("[AgyAccount] 这个平台不能切号，忽略卡片绑定的账号");
+        return Ok(());
+    }
+    if !accounts
+        .list()
+        .await
+        .iter()
+        .any(|account| account.id == account_id)
+    {
+        return Err(crate::error::AppError::localized(
+            "agy.account.bound_missing",
+            format!(
+                "「{}」绑定的 Antigravity 账号不在这台电脑的授权中心里：请先在授权中心添加它，或编辑这张卡改选账号",
+                provider.name
+            ),
+            format!(
+                "The Antigravity account bound to \"{}\" is not in this computer's Auth Center. Add it there, or edit the card to choose another account.",
+                provider.name
+            ),
+        )
+        .to_string());
+    }
+    accounts
+        .switch_to(&account_id)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// Antigravity CLI：官方登录卡跑 `agy`，卡上设了模型就加 `--model`（只对这次会话生效）；
@@ -5770,23 +5881,30 @@ fn windows_start_command(
 }
 
 /// 同 `run_windows_start_command`，额外给启动的终端设置环境变量（`start` 会继承）。
+///
+/// stdio 指向 NUL、只等 `cmd` 的退出码，不能用 `output()` 捕获：`start` 打开的终端会
+/// 继承这里的 stdout/stderr 管道句柄，管道要等那个窗口和里面的进程全部退出才到 EOF，
+/// 调用就一直挂到用户关掉终端，界面也一直转圈（#6712）。启动失败仍能从退出码看出来。
 #[cfg(target_os = "windows")]
 fn run_windows_start_command_with_env(
     args: &[&str],
     terminal_name: &str,
     envs: &[(&str, &str)],
 ) -> Result<(), String> {
-    let output = windows_start_command(args, envs, &effective_path_string())
-        .output()
+    use std::process::Stdio;
+
+    let status = windows_start_command(args, envs, &effective_path_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
         .map_err(|e| format!("启动 {} 失败: {e}", terminal_name))?;
 
-    if !output.status.success() {
-        let stderr = decode_command_output(&output.stderr);
+    if !status.success() {
         return Err(format!(
-            "{} 启动失败 (exit code: {:?}): {}",
+            "{} 启动失败 (exit code: {:?})",
             terminal_name,
-            output.status.code(),
-            stderr
+            status.code()
         ));
     }
 
@@ -6903,6 +7021,57 @@ mod tests {
             )
             .as_deref(),
             Some("npm i -g @xai-official/grok@latest")
+        );
+    }
+
+    #[test]
+    fn kimi_install_uses_bundled_runtime_instead_of_system_node() {
+        let posix = tool_action_shell_command_for_shell(
+            "kimi",
+            ToolLifecycleAction::Install,
+            LifecycleCommandShell::Posix,
+        )
+        .unwrap();
+        assert_eq!(posix, KIMI_INSTALL_UNIX);
+        assert_eq!(posix_install_command_for("kimi"), posix);
+        assert!(!posix.contains("npm"));
+        let update = tool_action_shell_command_for_shell(
+            "kimi",
+            ToolLifecycleAction::Update,
+            LifecycleCommandShell::Posix,
+        )
+        .unwrap();
+        assert_eq!(update, format!("kimi upgrade --yes || {posix}"));
+        assert!(!update.contains("npm"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn kimi_windows_install_is_noninteractive_and_has_no_npm_fallback() {
+        use base64::Engine as _;
+        let command = tool_action_shell_command_for_shell(
+            "kimi",
+            ToolLifecycleAction::Install,
+            LifecycleCommandShell::WindowsBatch,
+        )
+        .unwrap();
+        assert!(command.starts_with("powershell -NoProfile -NonInteractive "));
+        let encoded = command.split("-EncodedCommand ").nth(1).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
+        let script = String::from_utf16(
+            &bytes
+                .chunks_exact(2)
+                .map(|unit| u16::from_le_bytes([unit[0], unit[1]]))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        assert_eq!(script, KIMI_INSTALL_WINDOWS_SCRIPT);
+        assert!(!command.contains("npm"));
+        assert_eq!(
+            wsl_tool_action_shell_command("kimi", ToolLifecycleAction::Install).as_deref(),
+            Some(KIMI_INSTALL_UNIX)
         );
     }
 
