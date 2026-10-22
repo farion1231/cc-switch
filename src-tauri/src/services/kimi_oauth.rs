@@ -44,30 +44,6 @@ struct Endpoints {
 }
 
 impl Endpoints {
-    fn with_env(mut self) -> Result<Self, String> {
-        if let Some(host) = std::env::var("KIMI_CODE_OAUTH_HOST")
-            .ok()
-            .or_else(|| std::env::var("KIMI_OAUTH_HOST").ok())
-        {
-            self.oauth_host = host.trim_end_matches('/').into();
-        }
-        if let Ok(base) = std::env::var("KIMI_CODE_BASE_URL") {
-            self.base_url = base.trim_end_matches('/').into();
-        }
-        self.validate()
-    }
-
-    fn validate(self) -> Result<Self, String> {
-        for endpoint in [&self.oauth_host, &self.base_url] {
-            let url =
-                url::Url::parse(endpoint).map_err(|_| "Invalid Kimi Code endpoint override")?;
-            if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-                return Err("Invalid Kimi Code endpoint override".into());
-            }
-        }
-        Ok(self)
-    }
-
     fn oauth_ref(&self) -> Value {
         // Match Kimi Code's native default slot for this environment.
         if self.oauth_host == "https://auth.kimi.com"
@@ -264,6 +240,38 @@ fn account_region(provider: &Value) -> KimiRegion {
     } else {
         KimiRegion::MainlandCn
     }
+}
+
+fn login_target(
+    home: &Path,
+    region: KimiRegion,
+    account_id: Option<&str>,
+) -> Result<(Endpoints, Option<Value>), String> {
+    let Some(id) = account_id else {
+        // The explicit region selection owns both endpoints. Process-wide Kimi
+        // overrides must not send one region's device flow to another host.
+        return Ok((region.endpoints(), None));
+    };
+    let config = read_config(home)?;
+    let provider = account_provider(&config, id)?;
+    credential_path(home, &provider["oauth"])?;
+    let region = account_region(provider);
+    let endpoints = region.endpoints();
+    let mut oauth = provider["oauth"].clone();
+    // Keep the account's credential slot and region while restoring its fixed
+    // official refresh host when an older config contains an endpoint override.
+    if oauth.get("oauth_host").is_some() || region == KimiRegion::Global {
+        oauth["oauth_host"] = json!(endpoints.oauth_host);
+    }
+    Ok((endpoints, Some(oauth)))
+}
+
+fn network_error(context: &str, endpoint: &str, error: reqwest::Error) -> String {
+    format!(
+        "{context} ({}): {}",
+        crate::proxy::http_client::mask_url(endpoint),
+        crate::proxy::error::describe_reqwest_error(error)
+    )
 }
 
 fn accounts_status(home: &Path) -> Result<KimiOAuthStatus, String> {
@@ -487,22 +495,7 @@ impl KimiOAuthManager {
         account_id: Option<String>,
     ) -> Result<KimiLoginStart, String> {
         let home = kimi_config::data_dir();
-        let (endpoints, oauth) = if let Some(id) = &account_id {
-            let config = read_config(&home)?;
-            let provider = account_provider(&config, id)?;
-            credential_path(&home, &provider["oauth"])?;
-            let endpoints = Endpoints {
-                base_url: required_string(provider, "base_url")?.into(),
-                oauth_host: provider["oauth"]["oauth_host"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| account_region(provider).endpoints().oauth_host),
-            }
-            .validate()?;
-            (endpoints, Some(provider["oauth"].clone()))
-        } else {
-            (region.endpoints().with_env()?, None)
-        };
+        let (endpoints, oauth) = login_target(&home, region, account_id.as_deref())?;
         self.start_login(home, endpoints, account_id, oauth).await
     }
 
@@ -530,7 +523,13 @@ impl KimiOAuthManager {
             .form(&[("client_id", CLIENT_ID)])
             .send()
             .await
-            .map_err(|e| format!("Kimi authorization request failed: {e}"))?;
+            .map_err(|e| {
+                network_error(
+                    "Kimi authorization request failed",
+                    &endpoints.oauth_host,
+                    e,
+                )
+            })?;
         let (status, payload) = response_json(response).await?;
         if status != 200 {
             return Err(format!("Kimi device authorization failed (HTTP {status})"));
@@ -658,7 +657,9 @@ impl KimiOAuthManager {
                 ])
                 .send()
                 .await
-                .map_err(|e| format!("Kimi token request failed: {e}"))?;
+                .map_err(|e| {
+                    network_error("Kimi token request failed", &flow.endpoints.oauth_host, e)
+                })?;
             let (status, payload) = response_json(response).await?;
             if status == 200 {
                 flow.credential = Some(parse_credential(&payload)?);
@@ -684,7 +685,7 @@ impl KimiOAuthManager {
         .bearer_auth(required_string(credential, "access_token")?)
         .send()
         .await
-        .map_err(|e| format!("Kimi model discovery failed: {e}"))?;
+        .map_err(|e| network_error("Kimi model discovery failed", &flow.endpoints.base_url, e))?;
         let (status, payload) = response_json(response).await?;
         if status != 200 {
             return Err(format!("Kimi model discovery failed (HTTP {status})"));
@@ -848,6 +849,112 @@ mod tests {
 
     async fn due(manager: &KimiOAuthManager) {
         manager.pending.lock().await.as_mut().unwrap().next_poll = Instant::now();
+    }
+
+    #[test]
+    fn selected_region_uses_fixed_endpoints_even_with_process_overrides() {
+        struct RestoreEnv(Vec<(&'static str, Option<std::ffi::OsString>)>);
+        impl Drop for RestoreEnv {
+            fn drop(&mut self) {
+                for (key, value) in &self.0 {
+                    match value {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+        }
+        let keys = [
+            "KIMI_CODE_OAUTH_HOST",
+            "KIMI_OAUTH_HOST",
+            "KIMI_CODE_BASE_URL",
+        ];
+        let _restore = RestoreEnv(
+            keys.iter()
+                .map(|key| (*key, std::env::var_os(key)))
+                .collect(),
+        );
+        for key in keys {
+            std::env::set_var(key, "https://override.example/wrong-region");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        for (region, oauth_host, base_url) in [
+            (
+                KimiRegion::MainlandCn,
+                "https://auth.kimi.com",
+                "https://api.kimi.com/coding/v1",
+            ),
+            (
+                KimiRegion::Global,
+                "https://auth.kimi.ai",
+                "https://api.kimi.ai/coding/v1",
+            ),
+        ] {
+            let (endpoints, oauth) = login_target(dir.path(), region, None).unwrap();
+            assert_eq!(endpoints.oauth_host, oauth_host);
+            assert_eq!(endpoints.base_url, base_url);
+            assert!(oauth.is_none());
+        }
+    }
+
+    #[test]
+    fn reauthentication_keeps_account_region_and_slot_with_fixed_official_hosts() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = json!({"providers":{
+            "cn":{"type":"kimi","base_url":"https://api.kimi.com/coding/v1","oauth":{"storage":"file","key":"oauth/account-cn","oauth_host":"https://old-cn.example"}},
+            "global":{"type":"kimi","base_url":"https://api.kimi.ai/coding/v1","oauth":{"storage":"file","key":"oauth/account-global","oauth_host":"https://old-global.example"}}
+        }});
+        let path = dir.path().join("config.toml");
+        fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
+        let before = fs::read(&path).unwrap();
+        for (id, selected, host, base, key) in [
+            (
+                "cn",
+                KimiRegion::Global,
+                "https://auth.kimi.com",
+                "https://api.kimi.com/coding/v1",
+                "oauth/account-cn",
+            ),
+            (
+                "global",
+                KimiRegion::MainlandCn,
+                "https://auth.kimi.ai",
+                "https://api.kimi.ai/coding/v1",
+                "oauth/account-global",
+            ),
+        ] {
+            let (endpoints, oauth) = login_target(dir.path(), selected, Some(id)).unwrap();
+            assert_eq!(endpoints.oauth_host, host);
+            assert_eq!(endpoints.base_url, base);
+            let oauth = oauth.unwrap();
+            assert_eq!(oauth["key"], key);
+            assert_eq!(oauth["oauth_host"], host);
+        }
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn network_failure_reports_its_cause_without_url_credentials() {
+        use std::error::Error;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let endpoint = format!("http://{address}/authorize?token=private-credential");
+        let error = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .unwrap()
+            .post(&endpoint)
+            .send()
+            .await
+            .unwrap_err();
+        let cause = error.source().unwrap().to_string();
+        let detail = network_error("Kimi authorization request failed", &endpoint, error);
+        assert!(detail.contains(&cause), "{detail}");
+        assert!(detail.contains(&address.to_string()), "{detail}");
+        assert!(!detail.contains("private-credential"));
+        assert!(!detail.contains("/authorize"));
     }
 
     #[test]

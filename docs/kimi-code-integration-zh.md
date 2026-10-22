@@ -38,9 +38,18 @@ Ollama、LM Studio 和 vLLM 预设使用各自的本地 OpenAI 兼容地址，�
 
 打开「授权中心」的 **Kimi Code** 分组，选择国内版或海外版后点击「登录 Kimi」或「添加账号」，在浏览器中输入授权码并确认。若浏览器没有自动打开，可使用页面上的授权链接和复制授权码按钮。「添加供应商 → 账号登录 → Kimi Code 官方登录」提供「管理 Kimi 账号」入口，进入同一个授权中心。此流程无需填写 API Key、模型或 JSON 配置，也不显示普通供应商表单的「添加」按钮。
 
+登录区域固定对应以下官方地址，设备码申请、令牌交换和模型发现使用同一组地址，不自动跨区回退：
+
+| 登录区域 | 授权主机 | 模型 API |
+| --- | --- | --- |
+| 国内版 | `https://auth.kimi.com` | `https://api.kimi.com/coding/v1` |
+| 海外版 | `https://auth.kimi.ai` | `https://api.kimi.ai/coding/v1` |
+
 授权成功后，CC Switch 从官方 `/models` 获取该账号的模型和能力。原生默认供应商不存在或其凭据文件缺失时，新登录沿用 `managed:kimi-code` 和官方默认 OAuth 引用，模型别名为 `kimi-code/<模型 ID>`；默认登录已存在时，新增账号使用独立供应商和 `<供应商 ID>/<模型 ID>` 模型别名。缺失的联网搜索和抓取服务也会添加。已有默认模型、用户别名、模型 overrides、自定义服务及其他账号配置会保留；没有默认模型时首次登录会选中该账号的模型。配置或凭据保存失败时恢复原配置，可点击「重试」继续完成当前授权。
 
-凭据按官方格式保存在 `~/.kimi-code/credentials/`，仅后端读写，不进入供应商档案或前端响应。原生国内默认登录使用 `kimi-code.json`，海外版及自定义环境按官方规则选择默认槽位；其余账号各自使用 `kimi-code-ccs-<UUID>.json`，通过供应商的 `oauth.key` 与 `oauth.oauth_host` 引用。`KIMI_CODE_HOME`、`KIMI_CODE_OAUTH_HOST`（兼容 `KIMI_OAUTH_HOST`）和 `KIMI_CODE_BASE_URL` 用于新账号的登录环境。重新登录已有账号时使用该账号原有的地址、OAuth 主机和凭据槽位。令牌刷新仍由 Kimi Code 管理，CC Switch 不与客户端并行轮换 refresh token。
+凭据按官方格式保存在 `~/.kimi-code/credentials/`，仅后端读写，不进入供应商档案或前端响应。原生国内默认登录使用 `kimi-code.json`，海外版按官方规则选择独立的默认槽位；其余账号各自使用 `kimi-code-ccs-<UUID>.json`，通过供应商的 `oauth.key` 与 `oauth.oauth_host` 引用。`KIMI_CODE_HOME` 仍用于选择数据目录；CC Switch 登录不使用 `KIMI_CODE_OAUTH_HOST`、`KIMI_OAUTH_HOST` 或 `KIMI_CODE_BASE_URL` 覆盖所选区域的地址。重新登录已有账号时保持该账号的区域与凭据槽位，使用该区域的固定官方地址。令牌刷新仍由 Kimi Code 管理，CC Switch 不与客户端并行轮换 refresh token。
+
+网络请求沿用 CC Switch 的全局出站代理设置。连接失败时显示授权主机及底层 DNS、TCP、TLS 或超时原因，便于核对系统代理和网络连接。
 
 授权中心列出每个账号的登录状态和区域，支持刷新、取消、逐账号重新登录、退出和「使用此账号」。点击「使用此账号」或供应商卡片上的「切换」只选择该账号的对话模型，不改写服务配置。Kimi Code 2.3.0 的联网搜索和抓取使用原生默认凭据槽位，不随对话账号切换。重新登录更新该账号的模型目录和凭据，不创建另一个供应商。退出登录只删除目标账号的本机凭据，保留供应商、模型和当前模型选择；其他账号仍保持登录。一个账号的凭据损坏或使用钥匙串时，仅在该账号行显示错误，不影响其他账号。
 
