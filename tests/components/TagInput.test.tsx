@@ -158,4 +158,11 @@ describe("TagInput", () => {
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
     expect(input).toHaveAttribute("aria-expanded", "false");
   });
+
+  it("uses default i18n placeholder when no placeholder is provided", () => {
+    render(<TagInput value={[]} />);
+    expect(
+      screen.getByPlaceholderText(/tagInput\.placeholder|Add tag\.\.\./),
+    ).toBeInTheDocument();
+  });
 });

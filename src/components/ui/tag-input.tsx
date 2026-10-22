@@ -1,4 +1,5 @@
 import React, { useState, useRef, useId, useCallback, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { X, Tag as TagIcon } from "lucide-react";
 import {
   DndContext,
@@ -43,6 +44,7 @@ function SortableTagChip({
   isPendingDelete = false,
   onRemove,
 }: SortableTagChipProps) {
+  const { t } = useTranslation();
   const {
     attributes,
     listeners,
@@ -85,7 +87,10 @@ function SortableTagChip({
             onRemove(tag);
           }}
           className="-me-1 ms-0.5 rounded-sm p-0.5 text-fg-3 transition-colors hover:bg-border/60 hover:text-fg-1 focus:outline-none"
-          aria-label={`Remove tag ${tag}`}
+          aria-label={t("tagInput.removeAria", {
+            tag,
+            defaultValue: `Remove tag ${tag}`,
+          })}
         >
           <X className="h-3 w-3" strokeWidth={2} />
         </button>
@@ -99,11 +104,15 @@ export function TagInput({
   value = [],
   onChange,
   suggestions = [],
-  placeholder = "Add a tag...",
+  placeholder,
   disabled = false,
   className,
   maxTags,
 }: TagInputProps) {
+  const { t } = useTranslation();
+  const effectivePlaceholder =
+    placeholder ?? t("tagInput.placeholder", { defaultValue: "Add tag..." });
+
   const [inputValue, setInputValue] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
@@ -332,7 +341,7 @@ export function TagInput({
           disabled={
             disabled || (maxTags !== undefined && value.length >= maxTags)
           }
-          placeholder={value.length === 0 ? placeholder : ""}
+          placeholder={value.length === 0 ? effectivePlaceholder : ""}
           autoComplete="off"
           spellCheck={false}
           aria-autocomplete="list"
@@ -389,7 +398,9 @@ export function TagInput({
                 )}
               >
                 <span>{suggestion}</span>
-                <span className="text-[11px] text-fg-3">#tag</span>
+                <span className="text-[11px] text-fg-3">
+                  {t("tagInput.tagHint", { defaultValue: "#tag" })}
+                </span>
               </li>
             );
           })}

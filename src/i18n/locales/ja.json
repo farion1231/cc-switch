@@ -67,6 +67,11 @@
     "mustBeObject": "設定はオブジェクト形式の JSON で入力してください（配列や他の型は不可）",
     "invalidJson": "JSON 形式が正しくありません"
   },
+  "tagInput": {
+    "placeholder": "タグを追加...",
+    "removeAria": "タグ {{tag}} を削除",
+    "tagHint": "#タグ"
+  },
   "claudeConfig": {
     "configLabel": "Claude Code settings.json (JSON) *",
     "fullSettingsHint": "Claude Code の settings.json 全文",
