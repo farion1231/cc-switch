@@ -1625,6 +1625,7 @@ mod tests {
                 idle_timeout: 0,
             },
             None,
+            None,
         );
         futures::pin_mut!(passthrough);
         while let Some(chunk) = passthrough.next().await {
