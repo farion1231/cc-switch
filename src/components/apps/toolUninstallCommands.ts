@@ -32,6 +32,8 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
     { tool: "pi", command: "npm uninstall -g @earendil-works/pi-coding-agent" },
     { tool: "mcode", command: "npm uninstall -g @minimax-ai/code" },
     { tool: "kimi", command: "npm uninstall -g @moonshot-ai/kimi-code" },
+    { tool: "qoder", command: "npm uninstall -g @qoder-ai/qodercli" },
+    { tool: "qodercn", command: "npm uninstall -g @qodercn-ai/qoderclicn" },
   ],
   pnpm: [
     { tool: "opencode", command: "pnpm remove -g opencode-ai" },
@@ -95,8 +97,11 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
 export function uninstallCommandsFor(
   method: UninstallMethod,
   environmentForTool: (tool: ToolName) => UninstallEnvironment | undefined,
+  qoderTool: "qoder" | "qodercn" = "qoder",
 ) {
   return COMMANDS[method].filter(({ tool, environments }) => {
+    if ((tool === "qoder" || tool === "qodercn") && tool !== qoderTool)
+      return false;
     const environment = environmentForTool(tool);
     return (
       !environments ||

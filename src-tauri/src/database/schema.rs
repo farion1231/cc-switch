@@ -70,6 +70,8 @@ impl Database {
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_qoder BOOLEAN NOT NULL DEFAULT 0,
+            enabled_qoder_cn BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
             enabled_omp BOOLEAN NOT NULL DEFAULT 0
@@ -104,6 +106,8 @@ impl Database {
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_qoder BOOLEAN NOT NULL DEFAULT 0,
+            enabled_qoder_cn BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -619,6 +623,21 @@ impl Database {
                             )?;
                         }
                         Self::set_user_version(conn, 23)?;
+                    }
+                    23 => {
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                for column in ["enabled_qoder", "enabled_qoder_cn"] {
+                                    Self::add_column_if_missing(
+                                        conn,
+                                        table,
+                                        column,
+                                        "BOOLEAN NOT NULL DEFAULT 0",
+                                    )?;
+                                }
+                            }
+                        }
+                        Self::set_user_version(conn, 24)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -3959,6 +3978,38 @@ mod tests {
         )?;
         assert_eq!(codex_values, (1, 9));
 
+        Ok(())
+    }
+
+    #[test]
+    fn qoder_migration_and_flags_keep_editions_independent() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 22)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        for table in ["mcp_servers", "skills"] {
+            let flags: (bool, bool, bool) = conn.query_row(
+                &format!("SELECT enabled_kimi, enabled_qoder, enabled_qoder_cn FROM {table}"),
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            assert_eq!(flags, (true, false, false));
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        let db = Database::memory()?;
+        let server = serde_json::from_value(serde_json::json!({"id":"m","name":"m","server":{"command":"node"},"apps":{"qoder":true,"qoder-cn":true,"kimi":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Qoder, false)?;
+        let stored = db.get_all_mcp_servers()?;
+        assert!(!stored["m"].apps.qoder && stored["m"].apps.qoder_cn && stored["m"].apps.kimi);
+        let skill = serde_json::from_value(serde_json::json!({"id":"s","name":"s","description":"","directory":"s","apps":{"qoder":true,"qoder-cn":true,"kimi":true},"installedAt":0})).unwrap();
+        db.save_skill(&skill)?;
+        let mut stored = db.get_installed_skill("s")?.unwrap();
+        assert!(stored.apps.qoder && stored.apps.qoder_cn && stored.apps.kimi);
+        stored.apps.qoder_cn = false;
+        db.update_skill_apps("s", &stored.apps)?;
+        let stored = db.get_all_installed_skills()?;
+        assert!(stored["s"].apps.qoder && !stored["s"].apps.qoder_cn && stored["s"].apps.kimi);
         Ok(())
     }
 

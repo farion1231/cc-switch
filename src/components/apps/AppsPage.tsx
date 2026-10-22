@@ -33,6 +33,7 @@ import {
   AlertTriangle,
   ArrowUpCircle,
   ChevronDown,
+  Check,
   Copy,
   Download,
   GripVertical,
@@ -47,11 +48,14 @@ import { providersApi } from "@/lib/api/providers";
 import type { ToolInstallationReport } from "@/lib/api/settings";
 import type { VisibleApps } from "@/types";
 import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
+import { qoderEdition, resolveVisibleApps } from "@/config/qoder";
 import { useSettings } from "@/hooks/useSettings";
 import { isUpdateAvailable } from "@/lib/version";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import type { QoderEdition } from "@/config/qoder";
 import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
 import {
@@ -83,7 +87,7 @@ import { ToolUninstallConfirmDialog } from "./ToolUninstallConfirmDialog";
 import { ManualUninstallDialog } from "./ManualUninstallDialog";
 import {
   ENV_BADGE_CONFIG,
-  ONE_CLICK_INSTALL_COMMANDS,
+  installCommandsFor,
   TOOL_APP_IDS,
   TOOL_NAMES,
   toolDisplayName,
@@ -174,8 +178,51 @@ function formatCheckedAt(timestamp: number, locale: string): string {
  */
 export function AppsPage() {
   const { t, i18n } = useTranslation();
-  const tools = useToolManagement();
   const { settings, updateSettings, autoSaveSettings } = useSettings();
+  const edition = qoderEdition(settings, i18n.language);
+  const qoderTool = edition === "cn" ? "qodercn" : "qoder";
+  const tools = useToolManagement(qoderTool);
+  const [savingEdition, setSavingEdition] = useState(false);
+  const changeQoderEdition = async (next: QoderEdition) => {
+    if (!settings || savingEdition || next === edition) return;
+    const previous = settings.qoderEdition;
+    setSavingEdition(true);
+    updateSettings({ qoderEdition: next });
+    try {
+      await autoSaveSettings({ qoderEdition: next });
+    } catch {
+      updateSettings({ qoderEdition: previous });
+    } finally {
+      setSavingEdition(false);
+    }
+  };
+  const editionDisabled =
+    !settings ||
+    savingEdition ||
+    tools.busyTools.has("qoder") ||
+    tools.busyTools.has("qodercn");
+  const editionControl = (
+    <SegmentedControl
+      size="sm"
+      aria-label={t("qoder.edition")}
+      className="w-[260px] max-w-full shrink-0 [&>button]:flex-1"
+      value={edition}
+      onValueChange={(next) => void changeQoderEdition(next)}
+      items={(["global", "cn"] as const).map((value) => ({
+        value,
+        label: t(value === "cn" ? "qoder.chinaEdition" : "qoder.globalEdition"),
+        disabled: editionDisabled,
+        trailing: (
+          <Check
+            aria-hidden="true"
+            className={cn("h-3 w-3", edition !== value && "invisible")}
+          />
+        ),
+        className:
+          "[&[aria-pressed=true]]:bg-action [&[aria-pressed=true]]:text-action-fg [&[aria-pressed=true]]:hover:text-action-fg",
+      }))}
+    />
+  );
   const tableRef = useRef<HTMLDivElement>(null);
   const { data: desktopStatus, isPending: isDesktopStatusPending } = useQuery({
     queryKey: ["claude-desktop-status"],
@@ -195,7 +242,9 @@ export function AppsPage() {
   };
   // 两组共用一份顺序（拖动后写进设置，侧栏也按它排），每组只是按装没装过滤
   const appOrder = orderAppIds(settings?.appOrder);
-  const orderedRows = appOrder.map((app) => ROW_BY_APP[app]);
+  const orderedRows = appOrder
+    .filter((app) => app !== (edition === "cn" ? "qoder" : "qoder-cn"))
+    .map((app) => ROW_BY_APP[app]);
   const rowStates = orderedRows.map((row) => ({
     row,
     installed: rowInstalled(row),
@@ -270,17 +319,18 @@ export function AppsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tools.toolDiagnostics]);
 
-  const visibleApps: VisibleApps = {
-    ...DEFAULT_VISIBLE_APPS,
-    ...settings?.visibleApps,
-  };
+  const visibleApps: VisibleApps = resolveVisibleApps(settings, i18n.language);
   const visibleCount = Object.values(visibleApps).filter(Boolean).length;
 
   const setVisible = (app: AppId, visible: boolean) => {
     if (!settings) return;
     // 至少留一个应用在侧栏
     if (!visible && visibleCount <= 1) return;
-    const next = { ...visibleApps, [app]: visible };
+    const next = {
+      ...DEFAULT_VISIBLE_APPS,
+      ...settings.visibleApps,
+      [app]: visible,
+    };
     const previous = settings.visibleApps;
     updateSettings({ visibleApps: next });
     void autoSaveSettings({ visibleApps: next }).catch(() =>
@@ -361,6 +411,7 @@ export function AppsPage() {
       <ToolRow
         key={row.tool}
         tool={row.tool}
+        editionControl={row.tool === qoderTool ? editionControl : undefined}
         tools={tools}
         onUninstall={() => setPendingUninstall(row.tool)}
         expanded={expanded[row.tool] ?? false}
@@ -564,7 +615,7 @@ export function AppsPage() {
               {t("settings.oneClickInstallHint")}
             </p>
             <pre className="max-h-[50vh] overflow-auto rounded-control border border-border bg-subtle px-3 py-2.5 font-mono text-caption">
-              {ONE_CLICK_INSTALL_COMMANDS}
+              {installCommandsFor(qoderTool)}
             </pre>
           </div>
           <DialogFooter>
@@ -591,6 +642,7 @@ export function AppsPage() {
         open={showUninstallCommands}
         onOpenChange={setShowUninstallCommands}
         toolVersionByName={tools.toolVersionByName}
+        qoderTool={qoderTool}
       />
 
       {pendingUninstall && (
@@ -631,6 +683,7 @@ function AppRow({
   visibility,
   menu,
   footer,
+  accessory,
 }: {
   app: AppId;
   name: React.ReactNode;
@@ -640,6 +693,7 @@ function AppRow({
   visibility: React.ReactNode;
   menu?: React.ReactNode;
   footer?: React.ReactNode;
+  accessory?: React.ReactNode;
 }) {
   const { t } = useTranslation();
   const dragHandle = useContext(DragHandleContext);
@@ -667,6 +721,7 @@ function AppRow({
             <div className="flex min-w-0 items-center gap-1.5 text-strong text-fg-1">
               {name}
             </div>
+            {accessory && <div className="mt-2">{accessory}</div>}
             {meta && (
               <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
                 {meta}
@@ -704,6 +759,7 @@ function ToolRow({
   expanded,
   onToggleExpanded,
   visibility,
+  editionControl,
 }: {
   tool: ToolName;
   tools: ReturnType<typeof useToolManagement>;
@@ -711,6 +767,7 @@ function ToolRow({
   expanded: boolean;
   onToggleExpanded: () => void;
   visibility: React.ReactNode;
+  editionControl?: React.ReactNode;
 }) {
   const { t } = useTranslation();
   const info = tools.toolVersionByName.get(tool);
@@ -921,12 +978,15 @@ function ToolRow({
       app={TOOL_APP_IDS[tool]}
       name={
         <>
-          <span className="truncate">{toolDisplayName(tool)}</span>
+          <span className="truncate">
+            {editionControl ? "Qoder CLI" : toolDisplayName(tool)}
+          </span>
           {sourceLabel && <Pill>{sourceLabel}</Pill>}
           {envBadge && <Pill>{envBadge}</Pill>}
         </>
       }
       meta={meta}
+      accessory={editionControl}
       version={version}
       action={actionButton}
       visibility={visibility}

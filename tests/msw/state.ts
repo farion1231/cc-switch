@@ -76,6 +76,8 @@ const createDefaultProviders = (): ProvidersByApp => ({
   pi: {},
   mcode: {},
   kimi: {},
+  qoder: {},
+  "qoder-cn": {},
   agy: {},
   omp: {},
 });
@@ -92,6 +94,8 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   pi: "",
   mcode: "",
   kimi: "",
+  qoder: "",
+  "qoder-cn": "",
   agy: "",
   omp: "",
 });
@@ -210,6 +214,8 @@ let mcpConfigs: McpConfigState = {
   pi: {},
   mcode: {},
   kimi: {},
+  qoder: {},
+  "qoder-cn": {},
   agy: {},
   omp: {},
 };
@@ -340,6 +346,8 @@ export const resetProviderState = () => {
     pi: {},
     mcode: {},
     kimi: {},
+    qoder: {},
+    "qoder-cn": {},
     agy: {},
     omp: {},
   };

@@ -56,6 +56,8 @@ fn app_display_name(app: &AppType) -> &'static str {
         AppType::Pi => "Pi",
         AppType::Mcode => "MiniMax Code",
         AppType::Kimi => "Kimi Code",
+        AppType::Qoder => "Qoder CLI",
+        AppType::QoderCn => "Qoder CLI CN",
         AppType::Agy => "Antigravity",
         AppType::Omp => "Oh My Pi",
     }

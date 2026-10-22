@@ -1,3 +1,4 @@
+import { resolveVisibleApps } from "@/config/qoder";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -49,7 +50,6 @@ import {
   useSessionUsageLastSync,
 } from "@/lib/query/usage";
 import { useSettingsQuery } from "@/lib/query";
-import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
 import { useUsageAutoRefresh } from "@/hooks/useUsageAutoRefresh";
 import { usageApi } from "@/lib/api/usage";
@@ -560,14 +560,14 @@ export function UsageDashboard({
   // 当前选中的即使被隐藏也留着，免得筛选状态无处可见
   const { data: settings } = useSettingsQuery();
   const filterApps = useMemo(() => {
-    const visible = { ...DEFAULT_VISIBLE_APPS, ...settings?.visibleApps };
+    const visible = resolveVisibleApps(settings, i18n.language);
     return KNOWN_APP_TYPES.filter(
       (app) =>
         visible[app] ||
         (app === "claude" && visible["claude-desktop"]) ||
         app === appType,
     );
-  }, [settings?.visibleApps, appType]);
+  }, [settings, appType, i18n.language]);
   const appFilterIndicator = useSlidingIndicator<HTMLDivElement>(
     '[aria-pressed="true"]',
     appType,

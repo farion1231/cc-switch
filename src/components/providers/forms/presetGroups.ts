@@ -474,6 +474,9 @@ export function loginAccountKey(
       return "xai";
     case "kimi":
       return "kimi";
+    case "qoder":
+    case "qoder-cn":
+      return "qoder";
     default:
       return "claude";
   }

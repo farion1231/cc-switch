@@ -392,6 +392,7 @@ fn known_native_install(tool: &str, inst: &ToolInstallation) -> bool {
         return false;
     }
     match tool {
+        "qoder" | "qodercn" => qoder_native_bin_dir(tool, &inst.real).is_some(),
         "claude" => {
             normalized
                 .split_once("/.local/share/claude/versions/")
@@ -527,6 +528,23 @@ fn native_removal_paths(tool: &str, inst: &ToolInstallation) -> Vec<PathBuf> {
         }
     }
     paths.push(inst.real.clone());
+    if let Some(directory) = qoder_native_bin_dir(tool, &inst.real) {
+        // The dispatcher in `entry/` is also used by the IDE. Keep it, as well as
+        // settings and sessions. Only remove executable versions owned by this CLI.
+        if let Ok(entries) = std::fs::read_dir(directory) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| qoder_binary_name(tool, name))
+                    && is_native_executable(&path)
+                {
+                    paths.push(path);
+                }
+            }
+        }
+    }
     if tool == "grok" {
         if let Some(root) = grok_native_root(&inst.real) {
             paths.extend(grok_installer_files(&root));
@@ -535,6 +553,39 @@ fn native_removal_paths(tool: &str, inst: &ToolInstallation) -> Vec<PathBuf> {
     let mut seen = std::collections::HashSet::new();
     paths.retain(|path| seen.insert(path.clone()));
     paths
+}
+
+fn qoder_binary_name(tool: &str, name: &str) -> bool {
+    let binary = match tool {
+        "qoder" => "qodercli",
+        "qodercn" => "qoderclicn",
+        _ => return false,
+    };
+    let name = name
+        .strip_suffix(".exe")
+        .or_else(|| name.strip_suffix(".bin"))
+        .unwrap_or(name);
+    name == binary
+        || name
+            .strip_prefix(binary)
+            .and_then(|tail| tail.strip_prefix('-'))
+            .is_some_and(|version| parse_semver(version).is_some())
+}
+
+fn qoder_native_bin_dir(tool: &str, real: &Path) -> Option<PathBuf> {
+    let (root, binary) = match tool {
+        "qoder" => (".qoder", "qodercli"),
+        "qodercn" => (".qoder-cn", "qoderclicn"),
+        _ => return None,
+    };
+    if !qoder_binary_name(tool, real.file_name()?.to_str()?) {
+        return None;
+    }
+    let directory = real.parent()?;
+    (directory.file_name()? == binary
+        && directory.parent()?.file_name()? == "bin"
+        && directory.parent()?.parent()?.file_name()? == root)
+        .then(|| directory.to_path_buf())
 }
 
 /// Remove only the listed files. No recursive deletion:
@@ -1480,6 +1531,49 @@ mod tests {
         assert!(entry.exists(), "preparing a plan must be read-only");
         std::fs::write(bin.join("python"), "unrelated Python").unwrap();
         assert_eq!(plan_for_install("hermes", &inst).unwrap(), plan);
+    }
+
+    #[test]
+    fn qoder_native_uninstall_removes_only_its_edition_binaries() {
+        let directory = tempfile::tempdir().unwrap();
+        for (tool, root, binary) in [
+            ("qoder", ".qoder", "qodercli"),
+            ("qodercn", ".qoder-cn", "qoderclicn"),
+        ] {
+            let root = directory.path().join(root);
+            let bin = root.join("bin").join(binary);
+            std::fs::create_dir_all(&bin).unwrap();
+            let current = bin.join(format!("{binary}-1.1.76.exe"));
+            let previous = bin.join(format!("{binary}-1.1.75.exe"));
+            let launcher = bin.join(format!("{binary}.exe"));
+            for path in [&current, &previous, &launcher] {
+                std::fs::write(path, b"MZfixture").unwrap();
+            }
+            let config = root.join("settings.json");
+            let session = root.join("projects/session.jsonl");
+            std::fs::create_dir_all(session.parent().unwrap()).unwrap();
+            std::fs::write(&config, "{}").unwrap();
+            std::fs::write(&session, "session").unwrap();
+            let notes = bin.join(format!("{binary}-notes.txt"));
+            std::fs::write(&notes, b"MZuser file").unwrap();
+            let inst = installation(&launcher);
+            assert!(known_native_install(tool, &inst));
+            assert!(!known_native_install(
+                if tool == "qoder" { "qodercn" } else { "qoder" },
+                &inst
+            ));
+            let (plan, removals) = plan_and_removals(tool, &inst).unwrap();
+            assert!(plan.native);
+            assert!(removals.contains(&std::fs::canonicalize(&current).unwrap()));
+            assert!(removals.contains(&std::fs::canonicalize(&previous).unwrap()));
+            remove_native_files(&inst, &removals).unwrap();
+            for kept in [&config, &session, &notes] {
+                assert!(kept.exists());
+            }
+            for removed in [&current, &previous, &launcher] {
+                assert!(!removed.exists());
+            }
+        }
     }
 
     #[test]

@@ -22,6 +22,8 @@ export const PROMPT_APP_IDS: AppId[] = [
   "pi",
   "mcode",
   "kimi",
+  "qoder",
+  "qoder-cn",
   "agy",
   "omp",
 ];

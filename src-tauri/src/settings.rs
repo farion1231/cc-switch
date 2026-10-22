@@ -24,6 +24,13 @@ fn default_true() -> bool {
     true
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum QoderEdition {
+    Global,
+    Cn,
+}
+
 /// 主页面显示的应用配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,6 +65,10 @@ pub struct VisibleApps {
     #[serde(default = "default_true")]
     pub kimi: bool,
     #[serde(default = "default_true")]
+    pub qoder: bool,
+    #[serde(default = "default_true", rename = "qoder-cn")]
+    pub qoder_cn: bool,
+    #[serde(default = "default_true")]
     pub agy: bool,
 }
 
@@ -75,6 +86,8 @@ impl Default for VisibleApps {
             pi: true,
             mcode: true,
             kimi: true,
+            qoder: true,
+            qoder_cn: true,
             agy: true,
             omp: true,
         }
@@ -96,6 +109,8 @@ impl VisibleApps {
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
+            AppType::Qoder => self.qoder,
+            AppType::QoderCn => self.qoder_cn,
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
         }
@@ -516,6 +531,8 @@ pub struct AppSettings {
     pub common_config_confirmed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qoder_edition: Option<QoderEdition>,
     /// 按档的额度百分比写「剩余」还是「已用」（`"left"` / `"used"`，缺省为剩余）。卡片、
     /// 授权中心和托盘一起变；余额、Credits、重置次数不受影响（#8024）
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -672,6 +689,7 @@ impl Default for AppSettings {
             whats_new_seen_version: None,
             common_config_confirmed: None,
             language: None,
+            qoder_edition: None,
             quota_display: None,
             visible_apps: None,
             app_order: None,
@@ -1366,7 +1384,12 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
         AppType::Agy => settings.current_provider_agy.clone(),
-        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Omp => None,
+        AppType::Pi
+        | AppType::Omp
+        | AppType::Mcode
+        | AppType::Kimi
+        | AppType::Qoder
+        | AppType::QoderCn => None,
     }
 }
 
@@ -1386,7 +1409,12 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
         AppType::Agy => settings.current_provider_agy = id_owned.clone(),
-        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Omp => {}
+        AppType::Pi
+        | AppType::Omp
+        | AppType::Mcode
+        | AppType::Kimi
+        | AppType::Qoder
+        | AppType::QoderCn => {}
     })
 }
 

@@ -365,6 +365,8 @@ describe("UsageDashboard", () => {
         pi: false,
         mcode: false,
         kimi: false,
+        qoder: false,
+        "qoder-cn": false,
         agy: false,
         omp: false,
       },
