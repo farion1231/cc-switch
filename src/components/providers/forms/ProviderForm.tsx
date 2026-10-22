@@ -432,9 +432,14 @@ function ProviderFormFull({
     }
     setEndpointAutoSelect(initialData?.meta?.endpointAutoSelect ?? true);
     setLocalGeminiApiFormat(
-      appId === "gemini"
+      appId === "gemini" || appId === "agy"
         ? (initialData?.meta?.apiFormat ?? "gemini_native")
         : "gemini_native",
+    );
+    setLocalGeminiOutboundModel(
+      appId === "gemini" || appId === "agy"
+        ? (initialData?.meta?.outboundModel ?? "")
+        : "",
     );
     setLocalIsFullUrl(
       supportsFullUrl ? (initialData?.meta?.isFullUrl ?? false) : false,
@@ -584,12 +589,20 @@ function ProviderFormFull({
     return initialData?.meta?.apiFormat ?? "anthropic";
   });
 
-  // Gemini 供应商的上游 API 格式（代理路由模式下非 Gemini 协议上游的协议转换）
+  // Gemini / Antigravity 供应商的上游 API 格式（代理路由模式下非 Gemini 协议上游的协议转换）
   const [localGeminiApiFormat, setLocalGeminiApiFormat] =
     useState<ClaudeApiFormat>(() => {
-      if (appId !== "gemini") return "gemini_native";
+      if (appId !== "gemini" && appId !== "agy") return "gemini_native";
       return initialData?.meta?.apiFormat ?? "gemini_native";
     });
+
+  // 协议转换时的出站模型名覆盖（发给上游的 model；不填用客户端请求的模型名）
+  const [localGeminiOutboundModel, setLocalGeminiOutboundModel] =
+    useState<string>(() =>
+      appId === "gemini" || appId === "agy"
+        ? (initialData?.meta?.outboundModel ?? "")
+        : "",
+    );
 
   const handleApiFormatChange = useCallback((format: ClaudeApiFormat) => {
     setLocalApiFormat(format);
@@ -1659,6 +1672,19 @@ function ProviderFormFull({
             }),
           );
         }
+        // 协议转换（OpenAI Chat / Anthropic 上游）必须由本地代理转发，卡里必须存上上游地址。
+        if (
+          appId === "agy" &&
+          localGeminiApiFormat !== "gemini_native" &&
+          !geminiBaseUrl.trim()
+        ) {
+          issues.push(
+            t("providerForm.translationEndpointRequired", {
+              defaultValue:
+                "协议转换（OpenAI Chat / Anthropic）需要填写上游 API 地址",
+            }),
+          );
+        }
         if (!geminiApiKey.trim()) {
           issues.push(
             t("providerForm.apiKeyRequired", {
@@ -1999,7 +2025,7 @@ function ProviderFormFull({
         ? overridesResult.overrides
         : undefined,
       apiFormat:
-        appId === "gemini" && category !== "official"
+        (appId === "gemini" || appId === "agy") && category !== "official"
           ? localGeminiApiFormat
           : appId === "claude" && category !== "official"
             ? isXaiOauthProvider
@@ -2010,6 +2036,12 @@ function ProviderFormFull({
                 ? "openai_responses"
                 : localCodexApiFormat
               : undefined,
+      outboundModel:
+        (appId === "gemini" || appId === "agy") &&
+        category !== "official" &&
+        localGeminiApiFormat !== "gemini_native"
+          ? localGeminiOutboundModel.trim() || undefined
+          : undefined,
       codexCopilotApiFormat:
         appId === "codex" &&
         isCopilotProvider &&
@@ -2829,6 +2861,8 @@ function ProviderFormFull({
               onApiFormatChange={(format) =>
                 setLocalGeminiApiFormat(format as ClaudeApiFormat)
               }
+              outboundModel={localGeminiOutboundModel}
+              onOutboundModelChange={setLocalGeminiOutboundModel}
               speedTestEndpoints={speedTestEndpoints}
             />
           )}

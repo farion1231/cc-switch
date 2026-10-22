@@ -419,6 +419,10 @@ impl ProxyServer {
             .route("/gemini/v1beta/*path", any(handlers::handle_gemini))
             // Gemini 的 GA 版本也叫 /v1，给原 SDK 留一条出口
             .route("/gemini/v1/*path", any(handlers::handle_gemini))
+            // Antigravity CLI 的 Key 卡命名空间：每张卡经「打开终端」把 base_url
+            // 指到 /agy/<provider_id>，代理按卡内保存的上游地址 / Key / apiFormat
+            // 转发或做协议转换（见 handlers::handle_agy）。
+            .route("/agy/*path", any(handlers::handle_agy))
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
             .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
             .with_state(self.state.clone())

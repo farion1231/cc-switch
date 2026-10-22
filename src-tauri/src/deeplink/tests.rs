@@ -2083,12 +2083,23 @@ fn agy_deeplink_provider_config_precedence_and_protocol() {
     assert_eq!(merged.model.as_deref(), Some("url-model"));
     assert_eq!(merged.api_key.as_deref(), Some("url-key"));
     assert_eq!(merged.endpoint.as_deref(), Some("https://explicit.example"));
-    for format in ["anthropic", "openai_chat", "openai_responses"] {
-        assert!(parse_deeplink_url(&format!(
+    // agy 的协议转换由本地代理完成：anthropic / openai_chat 合法且写进 meta.apiFormat，
+    // openai_responses 仍然不支持。
+    for format in ["anthropic", "openai_chat"] {
+        let request = parse_deeplink_url(&format!(
             "ccswitch://v1/import?resource=provider&app=agy&name=Test&apiFormat={format}"
         ))
-        .is_err());
+        .unwrap();
+        let provider = super::provider::build_provider_from_request(&AppType::Agy, &request).unwrap();
+        assert_eq!(
+            provider.meta.as_ref().and_then(|meta| meta.api_format.as_deref()),
+            Some(format)
+        );
     }
+    assert!(parse_deeplink_url(
+        "ccswitch://v1/import?resource=provider&app=agy&name=Test&apiFormat=openai_responses"
+    )
+    .is_err());
 }
 
 #[test]

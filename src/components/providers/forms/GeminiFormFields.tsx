@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import { Download, Info, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -50,6 +51,9 @@ interface GeminiFormFieldsProps {
   // 上游 API 格式（代理路由模式：gemini_native 透传 / openai_chat / anthropic）
   apiFormat?: string;
   onApiFormatChange?: (format: string) => void;
+  // 协议转换时的出站模型名覆盖（发给上游的 model；不填用客户端请求的模型名）
+  outboundModel?: string;
+  onOutboundModelChange?: (model: string) => void;
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
@@ -79,6 +83,8 @@ export function GeminiFormFields({
   onModelChange,
   apiFormat = "gemini_native",
   onApiFormatChange,
+  outboundModel = "",
+  onOutboundModelChange,
   speedTestEndpoints,
 }: GeminiFormFieldsProps) {
   const { t } = useTranslation();
@@ -180,7 +186,9 @@ export function GeminiFormFields({
       )}
 
       {/* 上游 API 格式（代理路由模式：非 Gemini 协议上游需选择实际协议） */}
-      {appId === "gemini" && onApiFormatChange && category !== "official" && (
+      {(appId === "gemini" || appId === "agy") &&
+        onApiFormatChange &&
+        category !== "official" && (
         <div className="space-y-2">
           <div className="flex items-center gap-0.5">
             <FormLabel htmlFor="gemini-api-format">
@@ -223,6 +231,43 @@ export function GeminiFormFields({
           </select>
         </div>
       )}
+
+      {/* 出站模型（协议转换时发给上游的模型名；不填则发送客户端请求的模型名） */}
+      {(appId === "gemini" || appId === "agy") &&
+        onOutboundModelChange &&
+        category !== "official" &&
+        apiFormat !== "gemini_native" && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-0.5">
+              <FormLabel htmlFor="gemini-outbound-model">
+                {t("provider.form.gemini.outboundModel", {
+                  defaultValue: "出站模型",
+                })}
+              </FormLabel>
+              <HelpTip
+                title={t("provider.form.gemini.outboundModel", {
+                  defaultValue: "出站模型",
+                })}
+              >
+                {t("provider.form.gemini.outboundModelHelp", {
+                  defaultValue:
+                    "协议转换后发给上游的模型名。客户端请求的模型名（如 agy 的显示名）上游可能不认识，此处填上游实际可用的模型 ID；留空则按客户端请求的模型名发送。",
+                })}
+              </HelpTip>
+            </div>
+            <Input
+              id="gemini-outbound-model"
+              value={outboundModel}
+              onChange={(event) =>
+                onOutboundModelChange(event.target.value.trim())
+              }
+              placeholder={t(
+                "provider.form.gemini.outboundModelPlaceholder",
+                { defaultValue: "上游模型 ID，如 deepseek-v4-pro" },
+              )}
+            />
+          </div>
+        )}
 
       {/* Model 输入框 */}
       {shouldShowModelField && (

@@ -169,7 +169,7 @@ pub async fn launch_session_terminal(
         crate::services::provider::agy_direct::key_resume_target(&state.db, &command)
             .map_err(|e| e.to_string())?
     {
-        crate::commands::misc::open_agy_resume_terminal(&provider, &conversation, cwd)?;
+        crate::commands::misc::open_agy_resume_terminal(state.inner(), &provider, &conversation, cwd).await?;
         return Ok(true);
     }
     let command = command.clone();
