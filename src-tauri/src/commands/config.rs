@@ -1,8 +1,7 @@
 #![allow(non_snake_case)]
 
-use crate::error::AppError;
 use cc_command_api::command_api;
-use tauri::AppHandle;
+use tauri::{AppHandle};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -13,39 +12,39 @@ use crate::settings;
 use crate::store::AppState;
 
 #[command_api]
-pub async fn get_claude_config_status() -> Result<ConfigStatus, AppError> {
+pub async fn get_claude_config_status() -> Result<ConfigStatus, String> {
     Ok(config::get_claude_config_status())
 }
 
 use std::str::FromStr;
 
-fn invalid_json_format_error(error: serde_json::Error) -> AppError {
+fn invalid_json_format_error(error: serde_json::Error) -> String {
     let lang = settings::get_settings()
         .language
         .unwrap_or_else(|| "zh".to_string());
 
     match lang.as_str() {
-        "en" => AppError::Config(format!("Invalid JSON format: {error}")),
-        "tr" => AppError::Config(format!("Geçersiz JSON biçimi: {error}")),
-        "ja" => AppError::Config(format!("JSON形式が無効です: {error}")),
-        _ => AppError::Config(format!("无效的 JSON 格式: {error}")),
+        "en" => format!("Invalid JSON format: {error}"),
+        "tr" => format!("Geçersiz JSON biçimi: {error}"),
+        "ja" => format!("JSON形式が無効です: {error}"),
+        _ => format!("无效的 JSON 格式: {error}"),
     }
 }
 
-fn invalid_toml_format_error(error: toml_edit::TomlError) -> AppError {
+fn invalid_toml_format_error(error: toml_edit::TomlError) -> String {
     let lang = settings::get_settings()
         .language
         .unwrap_or_else(|| "zh".to_string());
 
     match lang.as_str() {
-        "en" => AppError::Config(format!("Invalid TOML format: {error}")),
-        "tr" => AppError::Config(format!("Geçersiz TOML biçimi: {error}")),
-        "ja" => AppError::Config(format!("TOML形式が無効です: {error}")),
-        _ => AppError::Config(format!("无效的 TOML 格式: {error}")),
+        "en" => format!("Invalid TOML format: {error}"),
+        "tr" => format!("Geçersiz TOML biçimi: {error}"),
+        "ja" => format!("TOML形式が無効です: {error}"),
+        _ => format!("无效的 TOML 格式: {error}"),
     }
 }
 
-fn validate_common_config_snippet(app_type: &str, snippet: &str) -> Result<(), AppError> {
+fn validate_common_config_snippet(app_type: &str, snippet: &str) -> Result<(), String> {
     if snippet.trim().is_empty() {
         return Ok(());
     }
@@ -67,15 +66,18 @@ fn validate_common_config_snippet(app_type: &str, snippet: &str) -> Result<(), A
 }
 
 #[command_api]
-pub async fn get_config_status(state: &AppState, app: String) -> Result<ConfigStatus, AppError> {
-    match AppType::from_str(&app).map_err(|e| AppError::Config(e.to_string()))? {
+pub async fn get_config_status(
+    state: State<'_, AppState>,
+    app: String,
+) -> Result<ConfigStatus, String> {
+    match AppType::from_str(&app).map_err(|e| e.to_string())? {
         AppType::Claude => Ok(config::get_claude_config_status()),
         AppType::ClaudeDesktop => {
             let status = crate::claude_desktop_config::get_status(
                 state.db.as_ref(),
                 state.proxy_service.is_running().await,
             )
-            .map_err(|e| AppError::Config(e.to_string()))?;
+            .map_err(|e| e.to_string())?;
             Ok(ConfigStatus {
                 exists: status.configured,
                 path: status.config_library_path.unwrap_or_default(),
@@ -110,11 +112,9 @@ pub async fn get_config_status(state: &AppState, app: String) -> Result<ConfigSt
             Ok(ConfigStatus { exists, path })
         }
         AppType::OpenCode => {
-            let config_path = crate::opencode_config::get_opencode_config_path()
-                .map_err(|e| AppError::Config(e.to_string()))?;
-            let exists = config_path
-                .try_exists()
-                .map_err(|e| AppError::Config(e.to_string()))?;
+            let config_path =
+                crate::opencode_config::get_opencode_config_path().map_err(|e| e.to_string())?;
+            let exists = config_path.try_exists().map_err(|e| e.to_string())?;
             let path = crate::opencode_config::get_opencode_dir()
                 .to_string_lossy()
                 .to_string();
@@ -147,10 +147,9 @@ pub async fn get_config_status(state: &AppState, app: String) -> Result<ConfigSt
             })
         }
         AppType::Pi => {
-            let config_path = crate::pi_config::get_pi_models_path()
-                .map_err(|e| AppError::Config(e.to_string()))?;
+            let config_path = crate::pi_config::get_pi_models_path().map_err(|e| e.to_string())?;
             let path = crate::pi_config::get_pi_agent_dir()
-                .map_err(|e| AppError::Config(e.to_string()))?
+                .map_err(|e| e.to_string())?
                 .to_string_lossy()
                 .to_string();
             Ok(ConfigStatus {
@@ -162,22 +161,24 @@ pub async fn get_config_status(state: &AppState, app: String) -> Result<ConfigSt
 }
 
 #[command_api]
-pub async fn get_claude_code_config_path() -> Result<String, AppError> {
+pub async fn get_claude_code_config_path() -> Result<String, String> {
     Ok(get_claude_settings_path().to_string_lossy().to_string())
 }
 
 #[command_api]
-pub async fn get_config_dir(app: String) -> Result<String, AppError> {
-    let dir = match AppType::from_str(&app)? {
+pub async fn get_config_dir(app: String) -> Result<String, String> {
+    let dir = match AppType::from_str(&app).map_err(|e| e.to_string())? {
         AppType::Claude => config::get_claude_config_dir(),
-        AppType::ClaudeDesktop => crate::claude_desktop_config::get_config_library_path()?,
+        AppType::ClaudeDesktop => {
+            crate::claude_desktop_config::get_config_library_path().map_err(|e| e.to_string())?
+        }
         AppType::Codex => codex_config::get_codex_config_dir(),
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
         AppType::GrokBuild => crate::grok_config::get_grok_config_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
-        AppType::Pi => crate::pi_config::get_pi_agent_dir()?,
+        AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()
             .unwrap()
@@ -188,20 +189,19 @@ pub async fn get_config_dir(app: String) -> Result<String, AppError> {
 }
 
 #[tauri::command]
-pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, AppError> {
-    let config_dir = match AppType::from_str(&app).map_err(|e| AppError::Config(e.to_string()))? {
+pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, String> {
+    let config_dir = match AppType::from_str(&app).map_err(|e| e.to_string())? {
         AppType::Claude => config::get_claude_config_dir(),
-        AppType::ClaudeDesktop => crate::claude_desktop_config::get_config_library_path()
-            .map_err(|e| AppError::Config(e.to_string()))?,
+        AppType::ClaudeDesktop => {
+            crate::claude_desktop_config::get_config_library_path().map_err(|e| e.to_string())?
+        }
         AppType::Codex => codex_config::get_codex_config_dir(),
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
         AppType::GrokBuild => crate::grok_config::get_grok_config_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
-        AppType::Pi => {
-            crate::pi_config::get_pi_agent_dir().map_err(|e| AppError::Config(e.to_string()))?
-        }
+        AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()
             .unwrap()
@@ -224,7 +224,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
 pub async fn pick_directory(
     app: AppHandle,
     #[allow(non_snake_case)] defaultPath: Option<String>,
-) -> Result<Option<String>, AppError> {
+) -> Result<Option<String>, String> {
     let initial = defaultPath
         .map(|p| p.trim().to_string())
         .filter(|p| !p.is_empty());
@@ -252,13 +252,13 @@ pub async fn pick_directory(
 }
 
 #[command_api]
-pub async fn get_app_config_path() -> Result<String, AppError> {
+pub async fn get_app_config_path() -> Result<String, String> {
     let config_path = config::get_app_config_path();
     Ok(config_path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
-pub async fn open_app_config_folder(handle: AppHandle) -> Result<bool, AppError> {
+pub async fn open_app_config_folder(handle: AppHandle) -> Result<bool, String> {
     let config_dir = config::get_app_config_dir();
 
     if !config_dir.exists() {
@@ -275,7 +275,7 @@ pub async fn open_app_config_folder(handle: AppHandle) -> Result<bool, AppError>
 
 /// 在文件管理器中定位应用诊断日志 cc-switch.log；文件还没生成时打开日志目录
 #[command_api]
-pub async fn reveal_app_log_file() -> Result<bool, AppError> {
+pub async fn reveal_app_log_file() -> Result<bool, String> {
     let log_dir = crate::panic_hook::get_log_dir();
     let log_file = log_dir.join("cc-switch.log");
 
@@ -293,19 +293,19 @@ pub async fn reveal_app_log_file() -> Result<bool, AppError> {
 
 #[command_api]
 pub async fn get_claude_common_config_snippet(
-    state: &AppState,
-) -> Result<Option<String>, AppError> {
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<Option<String>, String> {
     state
         .db
         .get_config_snippet("claude")
-        .map_err(|e| AppError::Config(e.to_string()))
+        .map_err(|e| e.to_string())
 }
 
 #[command_api]
 pub async fn set_claude_common_config_snippet(
     snippet: String,
-    state: &AppState,
-) -> Result<(), AppError> {
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<(), String> {
     let is_cleared = snippet.trim().is_empty();
 
     if !snippet.trim().is_empty() {
@@ -317,31 +317,31 @@ pub async fn set_claude_common_config_snippet(
     state
         .db
         .set_config_snippet("claude", value)
-        .map_err(|e| AppError::Config(e.to_string()))?;
+        .map_err(|e| e.to_string())?;
     state
         .db
         .set_config_snippet_cleared("claude", is_cleared)
-        .map_err(|e| AppError::Config(e.to_string()))?;
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[command_api]
 pub async fn get_common_config_snippet(
     app_type: String,
-    state: &AppState,
-) -> Result<Option<String>, AppError> {
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<Option<String>, String> {
     state
         .db
         .get_config_snippet(&app_type)
-        .map_err(|e| AppError::Config(e.to_string()))
+        .map_err(|e| e.to_string())
 }
 
 #[command_api]
 pub async fn set_common_config_snippet(
     app_type: String,
     snippet: String,
-    state: &AppState,
-) -> Result<(), AppError> {
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<(), String> {
     let is_cleared = snippet.trim().is_empty();
 
     validate_common_config_snippet(&app_type, &snippet)?;
@@ -353,31 +353,37 @@ pub async fn set_common_config_snippet(
     state
         .db
         .set_config_snippet(&app_type, value)
-        .map_err(|e| AppError::Config(e.to_string()))?;
+        .map_err(|e| e.to_string())?;
     state
         .db
         .set_config_snippet_cleared(&app_type, is_cleared)
-        .map_err(|e| AppError::Config(e.to_string()))?;
+        .map_err(|e| e.to_string())?;
 
     if app_type == "omo"
         && state
             .db
             .get_current_omo_provider("opencode", "omo")
-            .map_err(|e| AppError::Config(e.to_string()))?
+            .map_err(|e| e.to_string())?
             .is_some()
     {
-        crate::services::OmoService::write_config_to_file(state, &crate::services::omo::STANDARD)
-            .map_err(|e| AppError::Config(e.to_string()))?;
+        crate::services::OmoService::write_config_to_file(
+            state.inner(),
+            &crate::services::omo::STANDARD,
+        )
+        .map_err(|e| e.to_string())?;
     }
     if app_type == "omo-slim"
         && state
             .db
             .get_current_omo_provider("opencode", "omo-slim")
-            .map_err(|e| AppError::Config(e.to_string()))?
+            .map_err(|e| e.to_string())?
             .is_some()
     {
-        crate::services::OmoService::write_config_to_file(state, &crate::services::omo::SLIM)
-            .map_err(|e| AppError::Config(e.to_string()))?;
+        crate::services::OmoService::write_config_to_file(
+            state.inner(),
+            &crate::services::omo::SLIM,
+        )
+        .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -396,7 +402,6 @@ mod tests {
     fn validate_common_config_snippet_rejects_invalid_codex_snippet() {
         let err = validate_common_config_snippet("codex", "[broken")
             .expect_err("invalid codex snippet should be rejected");
-        let err = err.to_string();
         assert!(
             err.contains("TOML") || err.contains("toml") || err.contains("格式"),
             "expected TOML validation error, got {err}"
@@ -408,9 +413,9 @@ mod tests {
 pub async fn extract_common_config_snippet(
     appType: String,
     settingsConfig: Option<String>,
-    state: &AppState,
-) -> Result<String, AppError> {
-    let app = AppType::from_str(&appType).map_err(|e| AppError::Config(e.to_string()))?;
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<String, String> {
+    let app = AppType::from_str(&appType).map_err(|e| e.to_string())?;
 
     if let Some(settings_config) = settingsConfig.filter(|s| !s.trim().is_empty()) {
         let settings: serde_json::Value =
@@ -420,9 +425,9 @@ pub async fn extract_common_config_snippet(
             app,
             &settings,
         )
-        .map_err(|e| AppError::Config(e.to_string()));
+        .map_err(|e| e.to_string());
     }
 
     crate::services::provider::ProviderService::extract_common_config_snippet(&state, app)
-        .map_err(|e| AppError::Config(e.to_string()))
+        .map_err(|e| e.to_string())
 }

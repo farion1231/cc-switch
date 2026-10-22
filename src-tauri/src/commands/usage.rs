@@ -1,14 +1,14 @@
 //! 使用统计相关命令
 
-use cc_command_api::command_api;
-
 use crate::error::AppError;
 use crate::services::model_pricing::{ModelPricingInfo, ModelsDevSyncConfig, ModelsDevSyncState};
 use crate::services::usage_stats::*;
 use crate::store::AppState;
+use cc_command_api::command_api;
+
 /// 统计查询放到阻塞线程池里跑：同步命令在 Tauri 2 里跑在主线程上，
 /// 大范围（如「全部」）的聚合扫描会让整个窗口卡住。
-async fn run_db_query<T, F>(state: &&AppState, query: F) -> Result<T, AppError>
+async fn run_db_query<T, F>(state: &AppState, query: F) -> Result<T, AppError>
 where
     T: Send + 'static,
     F: FnOnce(&crate::database::Database) -> Result<T, AppError> + Send + 'static,
@@ -22,7 +22,7 @@ where
 /// 获取使用量汇总
 #[command_api]
 pub async fn get_usage_summary(
-    state: &AppState,
+    state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<String>,
@@ -44,7 +44,7 @@ pub async fn get_usage_summary(
 /// 获取单个会话的使用量汇总（会话阅读页头部）
 #[command_api]
 pub async fn get_session_usage_summary(
-    state: &AppState,
+    state: State<'_, AppState>,
     app_type: String,
     session_id: String,
 ) -> Result<UsageSummary, AppError> {
@@ -57,7 +57,7 @@ pub async fn get_session_usage_summary(
 /// 获取按 app_type 拆分的使用量汇总
 #[command_api]
 pub async fn get_usage_summary_by_app(
-    state: &AppState,
+    state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
     provider_name: Option<String>,
@@ -77,7 +77,7 @@ pub async fn get_usage_summary_by_app(
 /// 获取每日趋势
 #[command_api]
 pub async fn get_usage_trends(
-    state: &AppState,
+    state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<String>,
@@ -99,7 +99,7 @@ pub async fn get_usage_trends(
 /// 获取最早有用量记录的日期（本地 `YYYY-MM-DD`），没有记录时为 null
 #[command_api]
 pub async fn get_usage_first_date(
-    state: &AppState,
+    state: State<'_, AppState>,
     app_type: Option<String>,
     provider_name: Option<String>,
     model: Option<String>,
@@ -117,7 +117,7 @@ pub async fn get_usage_first_date(
 /// 获取 Provider 统计
 #[command_api]
 pub async fn get_provider_stats(
-    state: &AppState,
+    state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<String>,
@@ -139,7 +139,7 @@ pub async fn get_provider_stats(
 /// 获取模型统计
 #[command_api]
 pub async fn get_model_stats(
-    state: &AppState,
+    state: State<'_, AppState>,
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<String>,
@@ -161,7 +161,7 @@ pub async fn get_model_stats(
 /// 获取请求日志列表
 #[command_api]
 pub async fn get_request_logs(
-    state: &AppState,
+    state: State<'_, AppState>,
     filters: LogFilters,
     page: u32,
     page_size: u32,
@@ -175,7 +175,7 @@ pub async fn get_request_logs(
 /// 获取单个请求详情
 #[command_api]
 pub async fn get_request_detail(
-    state: &AppState,
+    state: State<'_, AppState>,
     request_id: String,
 ) -> Result<Option<RequestLogDetail>, AppError> {
     run_db_query(&state, move |db| db.get_request_detail(&request_id)).await
@@ -183,7 +183,7 @@ pub async fn get_request_detail(
 
 /// 获取模型定价列表
 #[command_api]
-pub fn get_model_pricing(state: &AppState) -> Result<Vec<ModelPricingInfo>, AppError> {
+pub fn get_model_pricing(state: State<'_, AppState>) -> Result<Vec<ModelPricingInfo>, AppError> {
     log::info!("获取模型定价列表");
     state.db.ensure_model_pricing_seeded()?;
     crate::services::model_pricing::sync_local_model_pricing(&state.db)?;
@@ -235,7 +235,7 @@ pub fn get_model_pricing(state: &AppState) -> Result<Vec<ModelPricingInfo>, AppE
 /// 更新模型定价
 #[command_api]
 pub fn update_model_pricing(
-    state: &AppState,
+    state: State<'_, AppState>,
     model_id: String,
     display_name: String,
     input_cost: String,
@@ -260,20 +260,22 @@ pub fn update_model_pricing(
 /// 批量更新模型定价（models.dev 自动同步仅触发一次历史成本回填）
 #[command_api]
 pub fn update_model_pricing_batch(
-    state: &AppState,
+    state: State<'_, AppState>,
     entries: Vec<ModelPricingInfo>,
 ) -> Result<usize, AppError> {
     crate::services::model_pricing::update_model_pricing_batch(&state.db, entries)
 }
 
 #[command_api]
-pub fn get_models_dev_sync_config(state: &AppState) -> Result<ModelsDevSyncState, AppError> {
+pub fn get_models_dev_sync_config(
+    state: State<'_, AppState>,
+) -> Result<ModelsDevSyncState, AppError> {
     crate::services::model_pricing::get_models_dev_sync_state(&state.db)
 }
 
 #[command_api]
 pub fn save_models_dev_sync_config(
-    state: &AppState,
+    state: State<'_, AppState>,
     config: ModelsDevSyncConfig,
 ) -> Result<(), AppError> {
     crate::services::model_pricing::save_models_dev_sync_config(&state.db, config)
@@ -281,7 +283,7 @@ pub fn save_models_dev_sync_config(
 
 #[command_api]
 pub fn record_models_dev_sync_result(
-    state: &AppState,
+    state: State<'_, AppState>,
     synced_at: Option<i64>,
     error: Option<String>,
 ) -> Result<(), AppError> {
@@ -291,7 +293,7 @@ pub fn record_models_dev_sync_result(
 /// 检查 Provider 使用限额
 #[command_api]
 pub fn check_provider_limits(
-    state: &AppState,
+    state: State<'_, AppState>,
     provider_id: String,
     app_type: String,
 ) -> Result<crate::services::usage_stats::ProviderLimitStatus, AppError> {
@@ -300,7 +302,7 @@ pub fn check_provider_limits(
 
 /// 删除模型定价
 #[command_api]
-pub fn delete_model_pricing(state: &AppState, model_id: String) -> Result<(), AppError> {
+pub fn delete_model_pricing(state: State<'_, AppState>, model_id: String) -> Result<(), AppError> {
     crate::services::model_pricing::delete_model_pricing(&state.db, &model_id)?;
     log::info!("已删除模型定价: {model_id}");
     Ok(())
@@ -309,7 +311,7 @@ pub fn delete_model_pricing(state: &AppState, model_id: String) -> Result<(), Ap
 /// 手动触发会话日志同步
 #[command_api]
 pub async fn sync_session_usage(
-    state: &AppState,
+    state: State<'_, AppState>,
 ) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
     let db = state.db.clone();
     let _guard = crate::services::session_usage::session_sync_mutex()
@@ -342,7 +344,7 @@ fn finish_codex_rebuild(
 /// 整个序列，避免后台同步在清理和重导之间插入数据。
 #[command_api]
 pub async fn rebuild_codex_usage(
-    state: &AppState,
+    state: State<'_, AppState>,
 ) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
     let db = state.db.clone();
     let _guard = crate::services::session_usage::session_sync_mutex()
@@ -361,7 +363,7 @@ pub async fn rebuild_codex_usage(
 /// 获取数据来源分布
 #[command_api]
 pub fn get_usage_data_sources(
-    state: &AppState,
+    state: State<'_, AppState>,
 ) -> Result<Vec<crate::services::session_usage::DataSourceSummary>, AppError> {
     crate::services::session_usage::get_data_source_breakdown(&state.db)
 }

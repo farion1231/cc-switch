@@ -8,9 +8,9 @@ use axum::response::IntoResponse;
 use axum::routing::{get, put};
 use axum::Json;
 
-use crate::commands::settings::merge_settings_for_save;
 use crate::rest::error::RestError;
-use crate::settings::{get_settings, get_settings_for_frontend, update_settings, AppSettings};
+use crate::settings::{get_settings_for_frontend, AppSettings};
+use crate::store::AppState;
 
 pub fn routes() -> axum::Router<crate::rest::service::RestState> {
     axum::Router::new()
@@ -31,21 +31,15 @@ async fn get_settings_handler() -> Result<impl IntoResponse, RestError> {
 }
 
 /// `PUT /control/v1/settings` body=`{settings: AppSettings}` → 合并后持久化。
-/// body 包裹一层 `settings`，对齐 Tauri 命令参数形状（`save_settings(settings)`）。
+/// 复用 `save_settings_impl`：包含 merge + update + resync_codex_stack + 回滚。
 async fn save_settings_handler(
+    axum::extract::State(state): axum::extract::State<AppState>,
     Json(body): Json<SettingsBody>,
 ) -> Result<impl IntoResponse, RestError> {
-    let incoming = body.settings;
-    tokio::task::spawn_blocking(move || {
-        let existing = get_settings();
-        let merged = merge_settings_for_save(incoming, &existing);
-        update_settings(merged)
-    })
-    .await
-    .map_err(|e| RestError::App(format!("保存任务失败: {e}")))?
-    .map_err(|e| RestError::App(e.to_string()))?;
-    // AppSettings 已持久化
-    Ok(Json(serde_json::json!({ "ok": true })))
+    let result = crate::commands::settings::save_settings_impl(&state, body.settings)
+        .await
+        .map_err(|e| RestError::App(e.to_string()))?;
+    Ok(Json(serde_json::json!({ "ok": true, "changed": result })))
 }
 
 #[derive(serde::Deserialize)]

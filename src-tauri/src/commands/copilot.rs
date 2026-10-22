@@ -21,7 +21,7 @@ pub struct CopilotAuthState(pub Arc<RwLock<CopilotAuthManager>>);
 #[command_api]
 pub async fn copilot_start_device_flow(
     github_domain: Option<String>,
-    state: &CopilotAuthState,
+    state: State<'_, CopilotAuthState>,
 ) -> Result<GitHubDeviceCodeResponse, String> {
     let auth_manager = state.0.read().await;
     auth_manager
@@ -38,7 +38,7 @@ pub async fn copilot_start_device_flow(
 pub async fn copilot_poll_for_auth(
     device_code: String,
     github_domain: Option<String>,
-    state: &CopilotAuthState,
+    state: State<'_, CopilotAuthState>,
 ) -> Result<bool, String> {
     let auth_manager = state.0.write().await;
     match auth_manager
@@ -67,7 +67,7 @@ pub async fn copilot_poll_for_auth(
 pub async fn copilot_poll_for_account(
     device_code: String,
     github_domain: Option<String>,
-    state: &CopilotAuthState,
+    state: State<'_, CopilotAuthState>,
 ) -> Result<Option<GitHubAccount>, String> {
     let auth_manager = state.0.write().await;
     match auth_manager
@@ -89,7 +89,9 @@ pub async fn copilot_poll_for_account(
 
 /// 列出所有已认证的账号
 #[command_api]
-pub async fn copilot_list_accounts(state: &CopilotAuthState) -> Result<Vec<GitHubAccount>, String> {
+pub async fn copilot_list_accounts(
+    state: State<'_, CopilotAuthState>,
+) -> Result<Vec<GitHubAccount>, String> {
     let auth_manager = state.0.read().await;
     Ok(auth_manager.list_accounts().await)
 }
@@ -98,7 +100,7 @@ pub async fn copilot_list_accounts(state: &CopilotAuthState) -> Result<Vec<GitHu
 #[command_api]
 pub async fn copilot_remove_account(
     account_id: String,
-    state: &CopilotAuthState,
+    state: State<'_, CopilotAuthState>,
 ) -> Result<(), String> {
     let auth_manager = state.0.write().await;
     auth_manager
@@ -111,7 +113,7 @@ pub async fn copilot_remove_account(
 #[command_api]
 pub async fn copilot_set_default_account(
     account_id: String,
-    state: &CopilotAuthState,
+    state: State<'_, CopilotAuthState>,
 ) -> Result<(), String> {
     let auth_manager = state.0.write().await;
     auth_manager
@@ -125,7 +127,7 @@ pub async fn copilot_set_default_account(
 /// 获取认证状态（包含所有账号）
 #[command_api]
 pub async fn copilot_get_auth_status(
-    state: &CopilotAuthState,
+    state: State<'_, CopilotAuthState>,
 ) -> Result<CopilotAuthStatus, String> {
     let auth_manager = state.0.read().await;
     Ok(auth_manager.get_status().await)
@@ -133,14 +135,14 @@ pub async fn copilot_get_auth_status(
 
 /// 检查是否已认证（有任意账号）
 #[command_api]
-pub async fn copilot_is_authenticated(state: &CopilotAuthState) -> Result<bool, String> {
+pub async fn copilot_is_authenticated(state: State<'_, CopilotAuthState>) -> Result<bool, String> {
     let auth_manager = state.0.read().await;
     Ok(auth_manager.is_authenticated().await)
 }
 
 /// 注销所有 Copilot 认证
 #[command_api]
-pub async fn copilot_logout(state: &CopilotAuthState) -> Result<(), String> {
+pub async fn copilot_logout(state: State<'_, CopilotAuthState>) -> Result<(), String> {
     let auth_manager = state.0.write().await;
     auth_manager.clear_auth().await.map_err(|e| e.to_string())
 }
@@ -151,7 +153,7 @@ pub async fn copilot_logout(state: &CopilotAuthState) -> Result<(), String> {
 ///
 /// 内部使用，用于代理请求
 #[command_api]
-pub async fn copilot_get_token(state: &CopilotAuthState) -> Result<String, String> {
+pub async fn copilot_get_token(state: State<'_, CopilotAuthState>) -> Result<String, String> {
     let auth_manager = state.0.read().await;
     auth_manager
         .get_valid_token()
@@ -163,7 +165,7 @@ pub async fn copilot_get_token(state: &CopilotAuthState) -> Result<String, Strin
 #[command_api]
 pub async fn copilot_get_token_for_account(
     account_id: String,
-    state: &CopilotAuthState,
+    state: State<'_, CopilotAuthState>,
 ) -> Result<String, String> {
     let auth_manager = state.0.read().await;
     auth_manager
@@ -176,7 +178,9 @@ pub async fn copilot_get_token_for_account(
 
 /// 获取 Copilot 可用模型列表（向后兼容：使用第一个账号）
 #[command_api]
-pub async fn copilot_get_models(state: &CopilotAuthState) -> Result<Vec<CopilotModel>, String> {
+pub async fn copilot_get_models(
+    state: State<'_, CopilotAuthState>,
+) -> Result<Vec<CopilotModel>, String> {
     let auth_manager = state.0.read().await;
     auth_manager.fetch_models().await.map_err(|e| e.to_string())
 }
@@ -185,7 +189,7 @@ pub async fn copilot_get_models(state: &CopilotAuthState) -> Result<Vec<CopilotM
 #[command_api]
 pub async fn copilot_get_models_for_account(
     account_id: String,
-    state: &CopilotAuthState,
+    state: State<'_, CopilotAuthState>,
 ) -> Result<Vec<CopilotModel>, String> {
     let auth_manager = state.0.read().await;
     auth_manager
@@ -196,7 +200,9 @@ pub async fn copilot_get_models_for_account(
 
 /// 获取 Copilot 使用量信息（向后兼容：使用第一个账号）
 #[command_api]
-pub async fn copilot_get_usage(state: &CopilotAuthState) -> Result<CopilotUsageResponse, String> {
+pub async fn copilot_get_usage(
+    state: State<'_, CopilotAuthState>,
+) -> Result<CopilotUsageResponse, String> {
     let auth_manager = state.0.read().await;
     auth_manager.fetch_usage().await.map_err(|e| e.to_string())
 }
@@ -205,7 +211,7 @@ pub async fn copilot_get_usage(state: &CopilotAuthState) -> Result<CopilotUsageR
 #[command_api]
 pub async fn copilot_get_usage_for_account(
     account_id: String,
-    state: &CopilotAuthState,
+    state: State<'_, CopilotAuthState>,
 ) -> Result<CopilotUsageResponse, String> {
     let auth_manager = state.0.read().await;
     auth_manager

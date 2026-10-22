@@ -114,12 +114,6 @@ impl From<AppError> for String {
     }
 }
 
-impl From<String> for AppError {
-    fn from(err: String) -> Self {
-        AppError::Config(err)
-    }
-}
-
 impl serde::Serialize for AppError {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

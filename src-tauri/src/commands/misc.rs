@@ -1,10 +1,10 @@
 #![allow(non_snake_case)]
 
 use crate::app_config::AppType;
-use crate::error::AppError;
 use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
 use crate::services::ProviderService;
 use cc_command_api::command_api;
+use tauri::State;
 use indexmap::IndexSet;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -13,7 +13,6 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use tauri::AppHandle;
-use tauri::State;
 use tauri_plugin_opener::OpenerExt;
 
 #[path = "tool_node_requirement.rs"]
@@ -137,21 +136,21 @@ pub async fn is_portable_mode() -> Result<bool, String> {
 /// 获取应用启动阶段的初始化错误（若有）。
 /// 用于前端在早期主动拉取，避免事件订阅竞态导致的提示缺失。
 #[command_api(rest = "GET /control/v1/init-error")]
-pub async fn get_init_error() -> Result<Option<InitErrorPayload>, AppError> {
+pub async fn get_init_error() -> Result<Option<InitErrorPayload>, String> {
     Ok(crate::init_status::get_init_error())
 }
 
 /// 获取 JSON→SQLite 迁移结果（若有）。
 /// 只返回一次 true，之后返回 false，用于前端显示一次性 Toast 通知。
 #[command_api]
-pub async fn get_migration_result() -> Result<bool, AppError> {
+pub async fn get_migration_result() -> Result<bool, String> {
     Ok(crate::init_status::take_migration_success())
 }
 
 /// 获取 Skills 自动导入（SSOT）迁移结果（若有）。
 /// 只返回一次 Some({count})，之后返回 None，用于前端显示一次性 Toast 通知。
 #[command_api]
-pub async fn get_skills_migration_result() -> Result<Option<SkillsMigrationPayload>, AppError> {
+pub async fn get_skills_migration_result() -> Result<Option<SkillsMigrationPayload>, String> {
     Ok(crate::init_status::take_skills_migration_result())
 }
 
@@ -218,7 +217,7 @@ fn tool_env_type_and_wsl_distro(_tool: &str) -> (String, Option<String>) {
 pub async fn get_tool_versions(
     tools: Option<Vec<String>>,
     wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
-) -> Result<Vec<ToolVersion>, AppError> {
+) -> Result<Vec<ToolVersion>, String> {
     let requested: Vec<&str> = if let Some(tools) = tools.as_ref() {
         let set: std::collections::HashSet<&str> = tools.iter().map(|s| s.as_str()).collect();
         VALID_TOOLS
@@ -344,20 +343,16 @@ pub async fn run_tool_lifecycle_action(
     action: String,
     wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
     uninstall_plan: Option<ToolUninstallPlan>,
-) -> Result<(), AppError> {
+) -> Result<(), String> {
     let requested = normalize_requested_tools(&tools);
     if requested.is_empty() {
-        return Err(AppError::Config("No supported tools selected".to_string()));
+        return Err("No supported tools selected".to_string());
     }
 
     if action == "uninstall" {
-        let plan = uninstall_plan.ok_or(AppError::Config(
-            "Preview the uninstall plan before confirming.".to_string(),
-        ))?;
+        let plan = uninstall_plan.ok_or("Preview the uninstall plan before confirming.")?;
         if requested.len() != 1 || requested[0] != plan.tool {
-            return Err(AppError::Config(
-                "The uninstall plan does not match the selected tool.".to_string(),
-            ));
+            return Err("The uninstall plan does not match the selected tool.".into());
         }
         return TOOL_LIFECYCLE
             .run(requested, move |tools| {
@@ -369,15 +364,12 @@ pub async fn run_tool_lifecycle_action(
                 }
                 Ok(())
             })
-            .await
-            .map_err(AppError::Config);
+            .await;
     }
-    let action = ToolLifecycleAction::from_str(&action).map_err(AppError::Config)?;
+    let action = ToolLifecycleAction::from_str(&action)?;
     if matches!(action, ToolLifecycleAction::Update) {
         for tool in &requested {
-            tool_node_requirement::ensure_update_node(tool)
-                .await
-                .map_err(AppError::Config)?;
+            tool_node_requirement::ensure_update_node(tool).await?;
         }
     }
 
@@ -394,7 +386,6 @@ pub async fn run_tool_lifecycle_action(
             run_tool_lifecycle_silently(&command_line, label)
         })
         .await
-        .map_err(AppError::Config)
 }
 
 /// 静默执行工具安装/更新脚本：直接捕获子进程输出并阻塞到命令真正结束，
@@ -4682,10 +4673,10 @@ pub struct ToolInstallationReport {
 #[command_api(rest = "GET /control/v1/tool-installations/probe", query = "tools")]
 pub async fn probe_tool_installations(
     tools: Vec<String>,
-) -> Result<Vec<ToolInstallationReport>, AppError> {
+) -> Result<Vec<ToolInstallationReport>, String> {
     let requested = normalize_requested_tools(&tools);
     if requested.is_empty() {
-        return Err(AppError::Config("No supported tools selected".to_string()));
+        return Err("No supported tools selected".to_string());
     }
     tokio::task::spawn_blocking(move || {
         requested
@@ -4712,7 +4703,7 @@ pub async fn probe_tool_installations(
             .collect()
     })
     .await
-    .map_err(|e| AppError::Config(format!("probe task join error: {e}")))
+    .map_err(|e| format!("probe task join error: {e}"))
 }
 
 /// 「应用」页显示每个工具的路径、安装来源和多处安装。和升级前的预检是同一份枚举，
@@ -4720,8 +4711,8 @@ pub async fn probe_tool_installations(
 #[command_api(rest = "GET /control/v1/tool-installations", query = "tools")]
 pub async fn list_tool_installations(
     tools: Vec<String>,
-) -> Result<Vec<ToolInstallationReport>, AppError> {
-    probe_tool_installations_impl(tools).await
+) -> Result<Vec<ToolInstallationReport>, String> {
+    probe_tool_installations(tools).await
 }
 
 #[cfg(target_os = "windows")]

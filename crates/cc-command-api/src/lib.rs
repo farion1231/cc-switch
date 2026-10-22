@@ -11,8 +11,8 @@
 //! 其余参数按 `path`/`body`/`query` 属性路由;路径中 `{id}` 自动转 axum `:id`。
 
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
-use quote::{format_ident, quote};
+use proc_macro2::{Delimiter, Group, TokenStream as TokenStream2, TokenTree};
+use quote::{format_ident, quote, ToTokens};
 use syn::{
     parse::{Parse, ParseStream},
     parse_macro_input,
@@ -90,10 +90,24 @@ pub fn command_api(attr: TokenStream, item: TokenStream) -> TokenStream {
     let is_async = func.sig.asyncness.is_some();
 
     // state 参数名集合:显式 `state="service,app_state"` 或缺省退化为 ["state"]。
-    let state_idents: Vec<String> = match &attr.state {
+    let mut state_idents: Vec<String> = match &attr.state {
         Some(s) => s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect(),
         None => vec!["state".to_string()],
     };
+
+    // 自动检测 `State<'_, T>` 参数,将其名加入 state_idents(用户无需手写 state= 属性)
+    for arg in &func.sig.inputs {
+        if let FnArg::Typed(pt) = arg {
+            if let Pat::Ident(pi) = &*pt.pat {
+                if extract_state_inner(&pt.ty).is_some() {
+                    let name = pi.ident.to_string();
+                    if !state_idents.contains(&name) {
+                        state_idents.push(name);
+                    }
+                }
+            }
+        }
+    }
 
     // 分离 state 参数与其余参数(保留声明顺序)
     let mut state_params: Vec<(syn::Ident, Type)> = Vec::new();
@@ -103,7 +117,9 @@ pub fn command_api(attr: TokenStream, item: TokenStream) -> TokenStream {
             let ty = &pt.ty;
             if let Pat::Ident(pi) = &*pt.pat {
                 if state_idents.iter().any(|s| s == &pi.ident.to_string()) {
-                    state_params.push((pi.ident.clone(), strip_ref(ty)));
+                    // 提取 T: 优先从 State<'_, T> 提取,否则从 &T 剥引用
+                    let inner_ty = extract_state_inner(ty).unwrap_or_else(|| strip_ref(ty));
+                    state_params.push((pi.ident.clone(), inner_ty));
                 } else {
                     other_args.push((pi.ident.clone(), (**ty).clone()));
                 }
@@ -116,15 +132,28 @@ pub fn command_api(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let (is_result_ret, ret_ty, ok_ty) = analyze_return(&func.sig.output);
 
-    // —— 1. impl(改名,原函数体)——
+    // —— 1. impl(改名, 签名改写 State<'_,T>→&T, body 去掉 .inner())——
+    // 1a. 签名改写: State<'_, T> → &T
+    for arg in &mut func.sig.inputs {
+        if let FnArg::Typed(pt) = arg {
+            if let Some(inner_ty) = extract_state_inner(&pt.ty) {
+                pt.ty = Box::new(syn::parse_quote!(&#inner_ty));
+            }
+        }
+    }
+    // 1b. body 去掉 state 参数的 .inner() 调用
+    let state_param_names: Vec<String> =
+        state_params.iter().map(|(i, _)| i.to_string()).collect();
+    let block_ts: TokenStream2 = func.block.to_token_stream();
+    let stripped_block_ts = strip_inner_calls(block_ts, &state_param_names);
+
     func.sig.ident = impl_name.clone();
     let attrs = &func.attrs;
     let vis = &func.vis;
     let sig = &func.sig;
-    let block = &func.block;
     let impl_fn = quote! {
         #(#attrs)*
-        #vis #sig #block
+        #vis #sig #stripped_block_ts
     };
 
     // —— 2. Tauri command 适配(Tauri 端不需路由,所有参从 invoke args 取)——
@@ -172,6 +201,7 @@ pub fn command_api(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
     let tauri_cmd = quote! {
         #[tauri::command]
+        #(#attrs)*
         #vis #async_kw fn #name(
             #tauri_state_params
             #other_inputs
@@ -404,6 +434,80 @@ fn parse_rest_route(s: &str) -> (String, String) {
     // {id} → :id
     let axum_path = path.replace('{', ":").replace('}', "");
     (method, axum_path)
+}
+
+/// 检测 `State<'_, T>` 类型,返回 T。也匹配 `tauri::State<'_, T>`。
+fn extract_state_inner(ty: &Type) -> Option<Type> {
+    if let Type::Path(p) = ty {
+        if let Some(seg) = p.path.segments.last() {
+            if seg.ident == "State" {
+                if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+                    // 取最后一个 Type 泛型参数(跳过 lifetime)
+                    let mut last_type: Option<Type> = None;
+                    for arg in &args.args {
+                        match arg {
+                            syn::GenericArgument::Type(t) => last_type = Some(t.clone()),
+                            syn::GenericArgument::Lifetime(_) => continue,
+                            _ => {}
+                        }
+                    }
+                    if let Some(t) = last_type {
+                        return Some(t);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Token 级替换:`<state_name>.inner()` → `<state_name>`
+/// 只替换 state 参数名直接调用的 .inner(),不影响其他变量的 .inner()
+fn strip_inner_calls(tokens: TokenStream2, state_names: &[String]) -> TokenStream2 {
+    let trees: Vec<TokenTree> = tokens.into_iter().collect();
+    let mut result: Vec<TokenTree> = Vec::new();
+    let mut i = 0;
+
+    while i < trees.len() {
+        // 匹配模式: Ident(state_name) . inner ( )
+        if i + 3 < trees.len() {
+            if let TokenTree::Ident(ident) = &trees[i] {
+                if state_names.contains(&ident.to_string()) {
+                    if let TokenTree::Punct(p) = &trees[i + 1] {
+                        if p.as_char() == '.' {
+                            if let TokenTree::Ident(method) = &trees[i + 2] {
+                                if method == "inner" {
+                                    if let TokenTree::Group(g) = &trees[i + 3] {
+                                        if g.delimiter() == Delimiter::Parenthesis
+                                            && g.stream().is_empty()
+                                        {
+                                            result.push(trees[i].clone());
+                                            i += 4;
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 递归处理 Group(block / paren / bracket / brace)
+        match &trees[i] {
+            TokenTree::Group(g) => {
+                let inner = strip_inner_calls(g.stream(), state_names);
+                result.push(TokenTree::Group(Group::new(g.delimiter(), inner)));
+            }
+            _ => {
+                result.push(trees[i].clone());
+            }
+        }
+        i += 1;
+    }
+
+    result.into_iter().collect()
 }
 
 /// 剥掉 `&T` / `&mut T` 的引用层,返回 T。

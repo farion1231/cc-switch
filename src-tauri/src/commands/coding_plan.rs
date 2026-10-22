@@ -1,4 +1,5 @@
 use crate::services::subscription::SubscriptionQuota;
+use cc_command_api::command_api;
 
 #[tauri::command]
 pub async fn get_coding_plan_quota(

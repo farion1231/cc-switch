@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 
+use cc_command_api::command_api;
 use tauri::ipc::{Channel, Response};
 use tauri_plugin_dialog::DialogExt;
 
@@ -8,7 +9,7 @@ use crate::session_manager::cache::chunk_ranges;
 use crate::session_manager::content::{self, BlockContent};
 use crate::session_manager::model::{ContentRef, ImageRef, TranscriptChunk};
 
-#[tauri::command]
+#[command_api]
 pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String> {
     let sessions = tauri::async_runtime::spawn_blocking(session_manager::scan_sessions)
         .await
@@ -17,7 +18,7 @@ pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String
 }
 
 /// 一次性返回全部消息（兼容旧前端；「复制整段」等一次性场景也用它）。走解析缓存。
-#[tauri::command]
+#[command_api]
 pub async fn get_session_messages(
     providerId: String,
     sourcePath: String,
@@ -77,7 +78,7 @@ pub async fn stream_session_messages(
 }
 
 /// 按 [`ContentRef`] 取工具输出 / 参数 / 思考 / diff 全文，按字符分页（默认且最多 512K 字符一页）。
-#[tauri::command]
+#[command_api]
 pub async fn get_session_block_content(
     providerId: String,
     sourcePath: String,
@@ -110,7 +111,7 @@ pub async fn get_session_image(
 }
 
 /// 在文件管理器中显示某个已存在的文件或目录（决策 D3）；不提供「用默认程序打开」。
-#[tauri::command]
+#[command_api]
 pub async fn reveal_session_path(path: String) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let path = content::resolve_reveal_path(&path)?;
@@ -156,22 +157,12 @@ pub async fn reveal_session_path(path: String) -> Result<bool, String> {
 /// 相比之下 `cwd` 的处理**不属于**这条豁免：它是磁盘上扫来的项目路径，正常使用
 /// 就可能含 `$(...)`，与 renderer 是否可信无关，因此在
 /// `session_manager::terminal::shell_escape` 里做了完整的单引号转义。
-#[tauri::command]
+#[command_api]
 pub async fn launch_session_terminal(
-    state: tauri::State<'_, crate::store::AppState>,
     command: String,
     cwd: Option<String>,
     custom_config: Option<String>,
 ) -> Result<bool, String> {
-    // Antigravity 第三方 Key 的会话：命令里只有私有目录、没有 Key，按「打开终端」的方式补上
-    // 那张卡的 Key 再恢复。
-    if let Some((provider, conversation)) =
-        crate::services::provider::agy_direct::key_resume_target(&state.db, &command)
-            .map_err(|e| e.to_string())?
-    {
-        crate::commands::misc::open_agy_resume_terminal(&provider, &conversation, cwd)?;
-        return Ok(true);
-    }
     let command = command.clone();
     let cwd = cwd.clone();
     let custom_config = custom_config.clone();
@@ -200,7 +191,7 @@ pub async fn launch_session_terminal(
     Ok(true)
 }
 
-#[tauri::command]
+#[command_api]
 pub async fn delete_session(
     providerId: String,
     sessionId: String,
@@ -217,7 +208,7 @@ pub async fn delete_session(
     .map_err(|e| format!("Failed to delete session: {e}"))?
 }
 
-#[tauri::command]
+#[command_api]
 pub async fn delete_sessions(
     items: Vec<session_manager::DeleteSessionRequest>,
 ) -> Result<Vec<session_manager::DeleteSessionOutcome>, String> {

@@ -3,7 +3,6 @@
 //! 管理代理模式下的故障转移队列（基于 providers 表的 in_failover_queue 字段）
 
 use crate::database::FailoverQueueItem;
-use crate::error::AppError;
 use crate::provider::Provider;
 use crate::store::AppState;
 use cc_command_api::command_api;
@@ -74,15 +73,21 @@ mod tests {
 /// 获取故障转移队列
 #[command_api(rest = "GET /control/v1/failover/queue", query = "app_type")]
 pub async fn get_failover_queue(
-    state: &AppState,
+    state: tauri::State<'_, AppState>,
     app_type: String,
-) -> Result<Vec<FailoverQueueItem>, AppError> {
+) -> Result<Vec<FailoverQueueItem>, String> {
     require_failover_app(&app_type)?;
-    let queue = state.db.get_failover_queue(&app_type)?;
+    let queue = state
+        .db
+        .get_failover_queue(&app_type)
+        .map_err(|e| e.to_string())?;
     if app_type != "codex" {
         return Ok(queue);
     }
-    let providers = state.db.get_all_providers(&app_type)?;
+    let providers = state
+        .db
+        .get_all_providers(&app_type)
+        .map_err(|e| e.to_string())?;
     Ok(queue
         .into_iter()
         .filter(|item| {
@@ -99,11 +104,14 @@ pub async fn get_failover_queue(
     query = "app_type"
 )]
 pub async fn get_available_providers_for_failover(
-    state: &AppState,
+    state: tauri::State<'_, AppState>,
     app_type: String,
-) -> Result<Vec<Provider>, AppError> {
+) -> Result<Vec<Provider>, String> {
     require_failover_app(&app_type)?;
-    let providers = state.db.get_available_providers_for_failover(&app_type)?;
+    let providers = state
+        .db
+        .get_available_providers_for_failover(&app_type)
+        .map_err(|e| e.to_string())?;
     Ok(providers
         .into_iter()
         .filter(|provider| {
@@ -150,15 +158,16 @@ pub async fn remove_from_failover_queue(
 /// 获取指定应用的自动故障转移开关状态（从 proxy_config 表读取）
 #[command_api(rest = "GET /control/v1/failover/auto-enabled", query = "app_type")]
 pub async fn get_auto_failover_enabled(
-    state: &AppState,
+    state: tauri::State<'_, AppState>,
     app_type: String,
-) -> Result<bool, AppError> {
+) -> Result<bool, String> {
     require_failover_app(&app_type)?;
     state
         .db
         .get_proxy_config_for_app(&app_type)
         .await
         .map(|config| config.auto_failover_enabled)
+        .map_err(|e| e.to_string())
 }
 
 /// 设置指定应用的自动故障转移开关状态（写入 proxy_config 表）

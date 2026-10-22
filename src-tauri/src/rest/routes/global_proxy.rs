@@ -9,7 +9,6 @@ use axum::routing::{get, post};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use crate::proxy::http_client;
 use crate::proxy::types::GlobalProxyConfig;
 use crate::rest::error::RestError;
 use crate::store::AppState;
@@ -29,7 +28,8 @@ pub fn routes() -> axum::Router<crate::rest::service::RestState> {
 }
 
 async fn get_url(State(state): State<AppState>) -> Result<impl IntoResponse, RestError> {
-    let url = state.db.get_global_proxy_url()?;
+    let url = crate::commands::global_proxy::get_global_proxy_url_impl(&state)
+        .map_err(|e| RestError::App(e.to_string()))?;
     Ok(Json(ProxyUrl { url }))
 }
 
@@ -47,18 +47,9 @@ async fn set_url(
     State(state): State<AppState>,
     Json(body): Json<SetUrlBody>,
 ) -> Result<impl IntoResponse, RestError> {
-    // 复用命令路径：写 DB + apply_proxy 热生效
-    let url_opt = if body.url.trim().is_empty() {
-        None
-    } else {
-        Some(body.url.as_str())
-    };
-    // 验证（不应用）
-    if let Some(u) = url_opt {
-        http_client::validate_proxy(Some(u))?;
-    }
-    state.db.set_global_proxy_url(url_opt)?;
-    http_client::apply_proxy(url_opt)?;
+    // 复用 _impl：验证 + 写 DB + apply_proxy 热生效
+    crate::commands::global_proxy::set_global_proxy_url_impl(&state, body.url)
+        .map_err(|e| RestError::App(e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 

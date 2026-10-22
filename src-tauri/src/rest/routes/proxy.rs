@@ -179,22 +179,24 @@ struct CbStatsQuery {
 
 /// F-11: per-app 代理配置镜像（`get_proxy_config_for_app` / `update_proxy_config_for_app`）。
 /// 区别于 `/proxy/config`（整体 ProxyConfig）。
+/// 复用 `_impl`：包含 DB 写入 + circuit breaker 热更新。
 async fn get_app_proxy_config(
     State(state): State<AppState>,
     axum::extract::Path(app_type): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, RestError> {
-    let app = super::common::parse_app(&app_type)?;
-    let cfg = state.db.get_proxy_config_for_app(app.as_str()).await?;
+    let cfg = crate::commands::proxy::get_proxy_config_for_app_impl(&state, app_type)
+        .await
+        .map_err(|e| RestError::App(e.to_string()))?;
     Ok(Json(cfg))
 }
 
 async fn update_app_proxy_config(
     State(state): State<AppState>,
-    axum::extract::Path(app_type): axum::extract::Path<String>,
+    axum::extract::Path(_app_type): axum::extract::Path<String>,
     Json(config): Json<AppProxyConfig>,
 ) -> Result<impl IntoResponse, RestError> {
-    let app = super::common::parse_app(&app_type)?;
-    let _ = app;
-    state.db.update_proxy_config_for_app(config).await?;
+    crate::commands::proxy::update_proxy_config_for_app_impl(&state, config)
+        .await
+        .map_err(|e| RestError::App(e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
