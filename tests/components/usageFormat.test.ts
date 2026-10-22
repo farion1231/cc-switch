@@ -315,6 +315,24 @@ describe("display currency", () => {
     );
   });
 
+  it("treats a saved manual rate as manual when the source was never set", () => {
+    // v4.0.14 起就能手填汇率：这些设置里没有 rateSource，升级后不能被自动值顶掉
+    const upgraded = { currency: "CNY", exchangeRates: { CNY: 7.1 } };
+    expect(resolveRateSource(upgraded)).toBe("manual");
+    expect(
+      resolveMoneyDisplay({ ...upgraded, autoExchangeRates: { CNY: 6.9 } }),
+    ).toEqual({ currency: "CNY", rate: 7.1 });
+
+    // 没有手填值时仍按自动；币种对不上、汇率不合法也一样
+    expect(resolveRateSource({ currency: "CNY" })).toBe("auto");
+    expect(
+      resolveRateSource({ currency: "USD", exchangeRates: { CNY: 7.1 } }),
+    ).toBe("auto");
+    expect(
+      resolveRateSource({ currency: "CNY", exchangeRates: { CNY: 0 } }),
+    ).toBe("auto");
+  });
+
   it("refreshes automatic rates only when the cache is missing or stale", () => {
     const now = 1_700_000_000_000;
     const day = 24 * 60 * 60 * 1000;

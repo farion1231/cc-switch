@@ -24,6 +24,9 @@ export function useAutoExchangeRates(
   const tried = useRef(false);
   const saveRef = useRef(save);
   saveRef.current = save;
+  // 请求期间用户可能改了币种 / 来源：保存时合并进最新设置，别写回发起请求时的旧值
+  const displayRef = useRef(usageDisplay);
+  displayRef.current = usageDisplay;
 
   useEffect(() => {
     if (!enabled || tried.current || !isTauri()) return;
@@ -35,7 +38,7 @@ export function useAutoExchangeRates(
       try {
         const fetched = await usageApi.fetchExchangeRates();
         await saveRef.current({
-          ...usageDisplay,
+          ...displayRef.current,
           autoExchangeRates: fetched.rates,
           rateFetchedAt: fetched.fetchedAt,
         });

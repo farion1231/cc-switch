@@ -1,7 +1,15 @@
-import { render, screen } from "@testing-library/react";
+import { useState } from "react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { UsageDisplaySection } from "@/components/usage/UsageDisplaySection";
+import type { FetchedExchangeRates, UsageDisplaySettings } from "@/types";
+
+const fetchExchangeRatesMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/api", () => ({
+  usageApi: { fetchExchangeRates: fetchExchangeRatesMock },
+}));
 
 const pickCurrency = async (
   user: ReturnType<typeof userEvent.setup>,
@@ -19,6 +27,12 @@ describe("UsageDisplaySection", () => {
   // jsdom 没有 scrollIntoView，下拉打开时会调
   beforeAll(() => {
     Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  beforeEach(() => {
+    // 默认让取汇率的请求一直挂着：不相干的用例不需要异步保存
+    fetchExchangeRatesMock.mockReset();
+    fetchExchangeRatesMock.mockReturnValue(new Promise(() => {}));
   });
 
   it("offers every display currency and hides the rate while showing USD", async () => {
@@ -113,6 +127,49 @@ describe("UsageDisplaySection", () => {
     expect(
       screen.getByRole("combobox", { name: "usage.display.rateSource" }),
     ).toHaveTextContent("usage.display.rateSources.auto");
+  });
+
+  it("keeps the currency picked while a rate refresh is in flight", async () => {
+    const user = userEvent.setup();
+    let resolveFetch!: (value: FetchedExchangeRates) => void;
+    fetchExchangeRatesMock.mockReturnValueOnce(
+      new Promise<FetchedExchangeRates>((resolve) => {
+        resolveFetch = resolve;
+      }),
+    );
+
+    const saved: Array<UsageDisplaySettings | undefined> = [];
+    const Harness = () => {
+      const [value, setValue] = useState<UsageDisplaySettings | undefined>();
+      return (
+        <UsageDisplaySection
+          value={value}
+          onChange={async (next) => {
+            saved.push(next);
+            setValue(next);
+            return true;
+          }}
+        />
+      );
+    };
+    render(<Harness />);
+
+    await pickCurrency(user, "CNY");
+    await waitFor(() =>
+      expect(fetchExchangeRatesMock).toHaveBeenCalledTimes(1),
+    );
+    // 请求在切币种之后才回来：保存时不能把币种写回切换前的值
+    await act(async () => {
+      resolveFetch({
+        rates: { CNY: 6.9 },
+        fetchedAt: 1_700_000_000_000,
+        source: "open.er-api.com",
+      });
+    });
+
+    const last = saved.at(-1);
+    expect(last?.currency).toBe("CNY");
+    expect(last?.autoExchangeRates?.CNY).toBe(6.9);
   });
 
   it("does not write the preset rate when it was left unchanged", async () => {

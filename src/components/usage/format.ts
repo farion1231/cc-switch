@@ -52,13 +52,18 @@ export type RateSource = (typeof RATE_SOURCES)[number];
 /** 自动获取的汇率多久算旧：两个源都每天更新一次，半天刷一次足够跟上 */
 export const AUTO_RATE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
-/** 没设置或认不出时按自动获取 */
+/**
+ * 汇率来源：显式设置优先；没设置过的老用户，如果当前币种已有合法的手填汇率，
+ * 按手动处理（v4.0.14 起就能手填，升级后不能被自动获取的值顶掉）。
+ */
 export function resolveRateSource(
   settings: UsageDisplaySettings | undefined,
 ): RateSource {
-  return (
-    RATE_SOURCES.find((source) => source === settings?.rateSource) ?? "auto"
-  );
+  const picked = RATE_SOURCES.find((source) => source === settings?.rateSource);
+  if (picked) return picked;
+  const currency = settings?.currency;
+  const manual = currency ? settings?.exchangeRates?.[currency] : undefined;
+  return isValidExchangeRate(manual) ? "manual" : "auto";
 }
 
 /** 该不该去取新汇率：自动模式且没取过、或缓存已超过半天 */

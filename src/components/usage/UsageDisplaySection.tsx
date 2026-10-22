@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronDown, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -193,8 +193,13 @@ export function UsageDisplaySection({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => setTodayItems(savedTodayItems), [savedTodayKey]);
 
+  // 异步保存（取汇率）可能在用户又改了币种 / 来源之后才回来，
+  // 要用最新一版设置做底，别把发起时的整份 value 写回去
+  const valueRef = useRef(value);
+  valueRef.current = value;
+
   const save = (next: Partial<UsageDisplaySettings>) =>
-    onChange({ ...value, ...next });
+    onChange({ ...valueRef.current, ...next });
 
   // 汇率来源：保存要等设置重新读回来才生效，先按用户刚选的显示
   const savedRateSource = resolveRateSource(value);
