@@ -60,15 +60,25 @@ impl McpService {
             }
         };
         // MCode / Pi 的文件和数据库一起提交：任一步失败都恢复原样
+        let save_with_qoder = || {
+            mcp::qoder::sync_editions_and_commit(
+                &server.id,
+                (server.apps.qoder || prev_apps.qoder)
+                    .then_some(server.apps.qoder.then_some(&server.server)),
+                (server.apps.qoder_cn || prev_apps.qoder_cn)
+                    .then_some(server.apps.qoder_cn.then_some(&server.server)),
+                save_with_omp,
+            )
+        };
         let save_with_dsh = || {
             if server.apps.dsh || prev_apps.dsh {
                 mcp::dsh::sync_and_commit(
                     &server.id,
                     server.apps.dsh.then_some(&server.server),
-                    save_with_omp,
+                    save_with_qoder,
                 )
             } else {
-                save_with_omp()
+                save_with_qoder()
             }
         };
         let save_with_kimi = || {
@@ -145,11 +155,19 @@ impl McpService {
         let server = state.db.get_all_mcp_servers()?.shift_remove(id);
 
         if let Some(server) = server {
+            let delete_with_qoder = || {
+                mcp::qoder::sync_editions_and_commit(
+                    id,
+                    server.apps.qoder.then_some(None),
+                    server.apps.qoder_cn.then_some(None),
+                    || state.db.delete_mcp_server(id),
+                )
+            };
             let delete_with_dsh = || {
                 if server.apps.dsh {
-                    mcp::dsh::sync_and_commit(id, None, || state.db.delete_mcp_server(id))
+                    mcp::dsh::sync_and_commit(id, None, delete_with_qoder)
                 } else {
-                    state.db.delete_mcp_server(id)
+                    delete_with_qoder()
                 }
             };
             let delete_with_kimi = || {
@@ -238,6 +256,8 @@ impl McpService {
             AppType::Mcode
                 | AppType::Kimi
                 | AppType::Dsh
+                | AppType::Qoder
+                | AppType::QoderCn
                 | AppType::Omp
                 | AppType::Pi
                 | AppType::Agy
@@ -249,7 +269,9 @@ impl McpService {
                         .db
                         .update_mcp_server_app_enabled(server_id, &app, enabled)
                 };
-                if app == AppType::Agy {
+                if crate::qoder_config::is_qoder(&app) {
+                    mcp::qoder::sync_and_commit(&app, server_id, spec, commit)?;
+                } else if app == AppType::Agy {
                     mcp::agy::sync_and_commit(
                         server_id,
                         mcp::agy::AgyChange::from_enabled(spec),
@@ -300,6 +322,8 @@ impl McpService {
                 AppType::Mcode
                     | AppType::Kimi
                     | AppType::Dsh
+                    | AppType::Qoder
+                    | AppType::QoderCn
                     | AppType::Omp
                     | AppType::Pi
                     | AppType::Agy
@@ -365,6 +389,9 @@ impl McpService {
             AppType::Mcode => mcp::mcode::sync(&server.id, Some(&server.server))?,
             AppType::Kimi => mcp::kimi::sync(&server.id, Some(&server.server))?,
             AppType::Dsh => mcp::dsh::sync(&server.id, Some(&server.server))?,
+            AppType::Qoder | AppType::QoderCn => {
+                mcp::qoder::sync(app, &server.id, Some(&server.server))?
+            }
             AppType::Pi => mcp::pi::sync(&server.id, Some(&server.server))?,
             AppType::Agy => mcp::agy::sync(&server.id, Some(&server.server))?,
             AppType::Omp => mcp::sync_single_server_to_omp(&server.id, &server.server)?,
@@ -385,6 +412,8 @@ impl McpService {
                 AppType::Mcode
                     | AppType::Kimi
                     | AppType::Dsh
+                    | AppType::Qoder
+                    | AppType::QoderCn
                     | AppType::Omp
                     | AppType::Pi
                     | AppType::Agy
@@ -423,6 +452,7 @@ impl McpService {
             AppType::Mcode => mcp::mcode::sync(id, None)?,
             AppType::Kimi => mcp::kimi::sync(id, None)?,
             AppType::Dsh => mcp::dsh::sync(id, None)?,
+            AppType::Qoder | AppType::QoderCn => mcp::qoder::sync(app, id, None)?,
             AppType::Pi => mcp::pi::sync(id, None)?,
             AppType::Agy => mcp::agy::sync(id, None)?,
             AppType::Omp => mcp::remove_server_from_omp(id)?,
@@ -536,6 +566,8 @@ impl McpService {
                 AppType::Mcode
                     | AppType::Kimi
                     | AppType::Dsh
+                    | AppType::Qoder
+                    | AppType::QoderCn
                     | AppType::Omp
                     | AppType::Pi
                     | AppType::Agy
@@ -848,7 +880,7 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 12] = [
+        let results: [(&str, Result<usize, AppError>); 14] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
@@ -858,6 +890,8 @@ impl McpService {
             ("mcode", mcp::mcode::import(state)),
             ("kimi", mcp::kimi::import(state)),
             ("dsh", mcp::dsh::import(state)),
+            ("qoder", mcp::qoder::import(state, &AppType::Qoder)),
+            ("qoder-cn", mcp::qoder::import(state, &AppType::QoderCn)),
             ("agy", mcp::agy::import(state)),
             ("pi", mcp::pi::import(state)),
             ("omp", Self::import_from_omp(state)),

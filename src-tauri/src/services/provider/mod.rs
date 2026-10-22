@@ -66,7 +66,7 @@ use live::{
     remove_hermes_provider_from_live, remove_openclaw_provider_from_live,
     remove_opencode_provider_from_live,
 };
-use usage::validate_usage_script;
+pub(crate) use usage::validate_usage_script;
 
 /// Codex official providers are safe to select during takeover: Codex keeps
 /// ownership of the active ChatGPT login and the proxy only forwards the
@@ -5461,6 +5461,9 @@ impl ProviderService {
         state: &AppState,
         app_type: AppType,
     ) -> Result<IndexMap<String, Provider>, AppError> {
+        if crate::qoder_config::is_qoder(&app_type) {
+            return Ok(IndexMap::new());
+        }
         if app_type == AppType::Pi {
             return pi::list(state);
         }
@@ -7289,6 +7292,8 @@ impl ProviderService {
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
+            | AppType::Qoder
+            | AppType::QoderCn
             | AppType::Omp
             | AppType::Agy => Ok(String::new()),
         }
@@ -7312,6 +7317,8 @@ impl ProviderService {
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
+            | AppType::Qoder
+            | AppType::QoderCn
             | AppType::Omp
             | AppType::Agy => Ok(String::new()),
         }
@@ -8080,6 +8087,11 @@ impl ProviderService {
             AppType::Dsh => {
                 crate::dsh_config::validate_provider(&provider.id, &provider.settings_config)?;
             }
+            AppType::Qoder | AppType::QoderCn => {
+                return Err(AppError::InvalidInput(
+                    "Manage Qoder custom models on the Qoder model settings page".into(),
+                ));
+            }
             AppType::Kimi => {
                 crate::kimi_config::validate_provider(&provider.id, &provider.settings_config)?
             }
@@ -8317,6 +8329,9 @@ impl ProviderService {
                     .and_then(Value::as_str)
                     .unwrap_or_default()
                     .into(),
+            )),
+            AppType::Qoder | AppType::QoderCn => Err(AppError::InvalidInput(
+                "Qoder manages its own model credentials".into(),
             )),
             AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode | AppType::Omp => {
                 // These native formats use apiKey and baseUrl directly on the object.

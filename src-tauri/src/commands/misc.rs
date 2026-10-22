@@ -14,6 +14,8 @@ use tauri::AppHandle;
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
 
+mod powershell_output;
+
 #[path = "tool_node_requirement.rs"]
 mod tool_node_requirement;
 #[path = "tool_uninstall.rs"]
@@ -170,9 +172,9 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 13] = [
+const VALID_TOOLS: [&str; 15] = [
     "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
-    "dsh", "agy", "omp",
+    "dsh", "qoder", "qodercn", "agy", "omp",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -439,8 +441,8 @@ fn finish_lifecycle_output(output: &std::process::Output) -> Result<(), String> 
     if output.status.success() {
         return Ok(());
     }
-    let stderr = decode_command_output(&output.stderr);
-    let stdout = decode_command_output(&output.stdout);
+    let stderr = powershell_output::readable_output(&decode_command_output(&output.stderr));
+    let stdout = powershell_output::readable_output(&decode_command_output(&output.stdout));
     let raw = if stderr.trim().is_empty() {
         stdout.trim()
     } else {
@@ -630,6 +632,8 @@ fn tool_display_name(tool: &str) -> &'static str {
         "mcode" => "MiniMax Code",
         "kimi" => "Kimi Code",
         "dsh" => "DeepSeek Harness",
+        "qoder" => "Qoder CLI",
+        "qodercn" => "Qoder CLI CN",
         "agy" => "Antigravity CLI",
         _ => "Unknown",
     }
@@ -880,6 +884,37 @@ enum LifecycleCommandShell {
     WindowsBatch,
 }
 
+fn qoder_install_url(tool: &str, windows: bool) -> &'static str {
+    match (tool, windows) {
+        ("qodercn", true) => "https://static.qoder.com.cn/qoder-cli-cn/install.ps1",
+        ("qodercn", false) => "https://static.qoder.com.cn/qoder-cli-cn/install.sh",
+        (_, true) => "https://qoder.com/install.ps1",
+        (_, false) => "https://qoder.com/install",
+    }
+}
+
+fn qoder_install_unix(tool: &str) -> String {
+    format!(
+        r#"bash -c 'tmp=$(mktemp) && curl -fsSL {} -o "$tmp" && bash "$tmp" --force; status=$?; rm -f "$tmp"; exit $status'"#,
+        qoder_install_url(tool, false)
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn qoder_install_windows_command(tool: &str) -> String {
+    // A GUI launched from pwsh can inherit PowerShell 7's modules. Windows
+    // PowerShell 5.1 must find its own Utility (Get-FileHash) and Archive first.
+    // Change only the installer process; retain the user's other module paths.
+    let script = format!(
+        r#"$ErrorActionPreference = 'Stop'; $env:PSModulePath = "$PSHOME\Modules;$env:PSModulePath"; irm {} | iex"#,
+        qoder_install_url(tool, true)
+    );
+    format!(
+        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(&script)
+    )
+}
+
 fn npm_install_command_for(tool: &str) -> Option<&'static str> {
     match tool {
         "claude" => Some(
@@ -897,6 +932,8 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
         "kimi" => Some("npm i -g @moonshot-ai/kimi-code@latest"),
         "dsh" => Some("npm i -g @deepseek-ai/dsh@latest --engine-strict"),
+        "qoder" => Some("npm i -g @qoder-ai/qodercli@latest"),
+        "qodercn" => Some("npm i -g @qodercn-ai/qoderclicn@latest"),
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
@@ -941,7 +978,9 @@ fn npm_install_extra_args(tool: &str) -> &'static str {
 // `cmd.output()` 正是非 TTY，放进来会让 `mcode update || <fallback>` 的兜底永不触发。
 fn official_update_args(tool: &str) -> Option<&'static str> {
     match tool {
-        "claude" | "codex" | "grok" | "hermes" | "agy" | "omp" => Some("update"),
+        "claude" | "codex" | "grok" | "hermes" | "agy" | "omp" | "qoder" | "qodercn" => {
+            Some("update")
+        }
         "openclaw" => Some("update --yes"),
         "opencode" => Some("upgrade"),
         "kimi" => Some("upgrade --yes"),
@@ -974,6 +1013,21 @@ fn tool_action_shell_command_for_shell(
     action: ToolLifecycleAction,
     shell: LifecycleCommandShell,
 ) -> Option<String> {
+    if matches!(tool, "qoder" | "qodercn") {
+        let install = match shell {
+            LifecycleCommandShell::Posix => qoder_install_unix(tool),
+            #[cfg(target_os = "windows")]
+            LifecycleCommandShell::WindowsBatch => qoder_install_windows_command(tool),
+            #[cfg(not(target_os = "windows"))]
+            LifecycleCommandShell::WindowsBatch => return None,
+        };
+        return Some(match action {
+            ToolLifecycleAction::Install => install,
+            ToolLifecycleAction::Update => {
+                chain_update_commands(format!("{tool} update"), install, shell)
+            }
+        });
+    }
     if matches!(tool, "kimi" | "omp") {
         let install = match shell {
             LifecycleCommandShell::Posix if tool == "kimi" => KIMI_INSTALL_UNIX.to_string(),
@@ -1319,6 +1373,10 @@ async fn get_single_tool_version_impl(
         "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
         "kimi" => fetch_npm_latest_for_tool(&client, "@moonshot-ai/kimi-code", tool, local).await,
         "dsh" => fetch_npm_latest_for_tool(&client, "@deepseek-ai/dsh", tool, local).await,
+        "qoder" => fetch_npm_latest_for_tool(&client, "@qoder-ai/qodercli", tool, local).await,
+        "qodercn" => {
+            fetch_npm_latest_for_tool(&client, "@qodercn-ai/qoderclicn", tool, local).await
+        }
         "agy" => fetch_agy_latest_version(&client).await,
         "omp" => fetch_npm_latest_for_tool(&client, "@oh-my-pi/pi-coding-agent", tool, local).await,
         _ => None,
@@ -1744,6 +1802,7 @@ enum ShellProbe {
 /// 只执行已定位到的真实可执行文件。
 #[cfg(not(target_os = "windows"))]
 fn try_get_version(tool: &str) -> ShellProbe {
+    let tool = cli_executable_name(tool);
     use std::process::{Command, Stdio};
 
     let output = {
@@ -2295,7 +2354,18 @@ fn shadowed_by_pathext_sibling(path: &Path, pathext: Option<&str>) -> bool {
     path.with_extension(shadowing_ext).is_file()
 }
 
+fn cli_executable_name(tool: &str) -> &str {
+    match tool {
+        "qoder" => "qodercli",
+        "qodercn" => "qoderclicn",
+        _ => tool,
+    }
+}
+
 fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
+    // Qoder's public dispatcher is shared with its IDE. Probe the CLI executable
+    // (also exported by the legacy npm package) so an IDE cannot look like a CLI.
+    let tool = cli_executable_name(tool);
     #[cfg(target_os = "windows")]
     {
         let extensionless = dir.join(tool);
@@ -2564,6 +2634,21 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
     // 常见的安装路径（原生安装优先）
     // Preserve search priority without scanning all previous paths for every insertion.
     let mut search_paths = IndexSet::new();
+    if matches!(tool, "qoder" | "qodercn") {
+        let directory = if tool == "qodercn" {
+            ".qoder-cn"
+        } else {
+            ".qoder"
+        };
+        push_unique_path(
+            &mut search_paths,
+            home.join(directory).join("bin").join(if tool == "qodercn" {
+                "qoderclicn"
+            } else {
+                "qodercli"
+            }),
+        );
+    }
     if tool == "kimi" {
         let install_dir = std::env::var_os("KIMI_INSTALL_DIR")
             .filter(|value| !value.is_empty())
@@ -3131,6 +3216,7 @@ fn resolve_path_default(
     tool: &str,
     deadline: Option<CommandDeadline>,
 ) -> Result<Option<std::path::PathBuf>, String> {
+    let tool = cli_executable_name(tool);
     use std::process::{Command, Stdio};
 
     let shell = std::env::var("SHELL")
@@ -3196,6 +3282,7 @@ fn resolve_path_default(
     tool: &str,
     deadline: Option<CommandDeadline>,
 ) -> Result<Option<std::path::PathBuf>, String> {
+    let tool = cli_executable_name(tool);
     // Restrict `where` to the merged effective PATH. A bare `where {tool}` also
     // searches the current directory first, which would let a project-local
     // `codex.cmd` be executed by a passive version check. The `$PATH:pattern`
@@ -3393,6 +3480,8 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "kimi" => Some("@moonshot-ai/kimi-code"),
         "omp" => Some("@oh-my-pi/pi-coding-agent"),
         "dsh" => Some("@deepseek-ai/dsh"),
+        "qoder" => Some("@qoder-ai/qodercli"),
+        "qodercn" => Some("@qodercn-ai/qoderclicn"),
         _ => None,
     }
 }
@@ -3931,6 +4020,12 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
     let real_lower = real_target.to_ascii_lowercase();
 
     // Antigravity 原生二进制自升级（Homebrew cask 也标了 auto_updates，`brew upgrade` 默认跳过它）。
+    if matches!(tool, "qoder" | "qodercn")
+        && !real_target.replace('\\', "/").contains("/node_modules/")
+        && is_native_executable(Path::new(real_target))
+    {
+        return anchored_official_update_command(tool, bin_path);
+    }
     if tool == "hermes" || tool == "agy" {
         return anchored_official_update_command(tool, bin_path);
     }
@@ -4064,6 +4159,12 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
 #[cfg(target_os = "windows")]
 fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) -> Option<String> {
     // Antigravity 原生二进制自升级（Homebrew cask 也标了 auto_updates，`brew upgrade` 默认跳过它）。
+    if matches!(tool, "qoder" | "qodercn")
+        && !real_target.replace('\\', "/").contains("/node_modules/")
+        && is_native_executable(Path::new(real_target))
+    {
+        return anchored_official_update_command(tool, bin_path);
+    }
     if tool == "hermes" || tool == "agy" {
         return anchored_official_update_command(tool, bin_path);
     }
@@ -4318,6 +4419,36 @@ fn apply_extra_env(cmd: &mut std::process::Command, extra_env: &[(&str, String)]
     for (key, value) in extra_env {
         cmd.env(key, value);
     }
+}
+
+/// Build a native Qoder account command without a terminal or an IDE dispatcher.
+/// Account flows stream stdout and manage cancellation themselves.
+pub(crate) fn qoder_account_command(
+    tool: &str,
+    args: &[&str],
+) -> Result<std::process::Command, String> {
+    if !matches!(tool, "qoder" | "qodercn") {
+        return Err("Select a Qoder edition".into());
+    }
+    let deadline = CommandDeadline::from_timeout(Some(std::time::Duration::from_secs(15)));
+    let path = locate_default_tool(tool, deadline)?;
+    #[cfg(target_os = "windows")]
+    let command = build_windows_tool_command(&path, args, &effective_path_string());
+    #[cfg(not(target_os = "windows"))]
+    let command = {
+        let inherited = std::env::var("PATH").unwrap_or_default();
+        let runtime_path = login_shell_path(deadline)
+            .map(|login| merge_path_segments(&login, &inherited))
+            .unwrap_or(inherited);
+        let mut command = std::process::Command::new(&path);
+        command.args(args).env(
+            "PATH",
+            format!("{}:{runtime_path}", path.parent().unwrap().display()),
+        );
+        isolate_child_process_group(&mut command);
+        command
+    };
+    Ok(command)
 }
 
 pub(crate) fn run_detected_tool_command_with_timeout(
@@ -4780,6 +4911,7 @@ fn posix_install_command_for(tool: &str) -> String {
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
         "kimi" => KIMI_INSTALL_UNIX.to_string(),
         "omp" => OMP_INSTALL_UNIX.to_string(),
+        "qoder" | "qodercn" => qoder_install_unix(tool),
         "agy" => AGY_INSTALL_UNIX.to_string(),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
     }
@@ -7338,6 +7470,185 @@ mod tests {
         }
         assert_eq!(official_update_args("dsh"), None);
         assert_eq!(npm_install_extra_args("dsh"), " --engine-strict");
+    }
+
+    #[test]
+    fn qoder_detection_uses_cli_binaries_instead_of_shared_ide_dispatchers() {
+        let directory = tempfile::tempdir().unwrap();
+        for (tool, binary) in [("qoder", "qodercli"), ("qodercn", "qoderclicn")] {
+            assert_eq!(cli_executable_name(tool), binary);
+            let candidates = tool_executable_candidates(tool, directory.path());
+            assert!(!candidates.is_empty());
+            for path in candidates {
+                assert_eq!(path.file_stem().unwrap(), binary);
+                assert_ne!(path.file_stem().unwrap(), tool);
+            }
+        }
+    }
+
+    #[test]
+    fn qoder_commands_keep_editions_separate_in_native_and_npm_lifecycles() {
+        for (tool, domain, package) in [
+            ("qoder", "https://qoder.com/install", "@qoder-ai/qodercli"),
+            (
+                "qodercn",
+                "https://static.qoder.com.cn/qoder-cli-cn/install.sh",
+                "@qodercn-ai/qoderclicn",
+            ),
+        ] {
+            let install = tool_action_shell_command_for_shell(
+                tool,
+                ToolLifecycleAction::Install,
+                LifecycleCommandShell::Posix,
+            )
+            .unwrap();
+            assert!(install.contains(domain));
+            assert!(install.contains("--force"));
+            assert!(!install.contains("npm"));
+            assert_eq!(npm_package_for(tool), Some(package));
+            assert_eq!(posix_install_command_for(tool), install);
+            let update = tool_action_shell_command_for_shell(
+                tool,
+                ToolLifecycleAction::Update,
+                LifecycleCommandShell::Posix,
+            )
+            .unwrap();
+            assert!(update.starts_with(&format!("{tool} update || ")));
+            #[cfg(target_os = "windows")]
+            {
+                use base64::Engine as _;
+                let command = tool_action_shell_command_for_shell(
+                    tool,
+                    ToolLifecycleAction::Install,
+                    LifecycleCommandShell::WindowsBatch,
+                )
+                .unwrap();
+                let encoded = command.split("-EncodedCommand ").nth(1).unwrap();
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .unwrap();
+                let units: Vec<_> = bytes
+                    .chunks_exact(2)
+                    .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                    .collect();
+                let script = String::from_utf16(&units).unwrap();
+                assert!(script.contains(qoder_install_url(tool, true)));
+                assert!(command.contains("-NonInteractive"));
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn qoder_windows_installer_handles_inherited_modules_and_readable_failures() {
+        use base64::Engine as _;
+        use sha2::{Digest, Sha256};
+        use std::io::Write;
+
+        let root = tempfile::tempdir().unwrap();
+        let inherited_modules = root.path().join("foreign modules");
+        let utility = inherited_modules.join("Microsoft.PowerShell.Utility");
+        std::fs::create_dir_all(&utility).unwrap();
+        // Model a module inherited from a newer, incompatible PowerShell.
+        std::fs::write(
+            utility.join("Microsoft.PowerShell.Utility.psd1"),
+            "@{ ModuleVersion = '1.0'; PowerShellVersion = '99.0' }",
+        )
+        .unwrap();
+        let archive = root.path().join("fixture archive.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
+        zip.start_file("payload.txt", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"verified payload").unwrap();
+        zip.finish().unwrap();
+        let expected_hash = format!("{:x}", Sha256::digest(std::fs::read(&archive).unwrap()));
+        let installer = root.path().join("fixture installer.ps1");
+        let parent_modules = std::env::var_os("PSModulePath");
+
+        for tool in ["qoder", "qodercn"] {
+            for case in ["success", "checksum", "download"] {
+                let extraction = root.path().join(format!("{tool}-{case}"));
+                let fixture = if case == "download" {
+                    "throw 'Fixture download failed: <endpoint> & connection'"
+                } else {
+                    r#"Write-Host '==> Verifying checksum...'
+$hash = (Get-FileHash -LiteralPath $env:CC_SWITCH_QODER_ARCHIVE -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($hash -ne $env:CC_SWITCH_QODER_EXPECTED_HASH) { Write-Host 'Error: Checksum mismatch'; exit 23 }
+Expand-Archive -LiteralPath $env:CC_SWITCH_QODER_ARCHIVE -DestinationPath $env:CC_SWITCH_QODER_EXTRACT
+Write-Output 'fixture installed'"#
+                };
+                std::fs::write(&installer, fixture).unwrap();
+                let command = qoder_install_windows_command(tool);
+                let (prefix, encoded) = command.split_once("-EncodedCommand ").unwrap();
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .unwrap();
+                let units: Vec<_> = bytes
+                    .chunks_exact(2)
+                    .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                    .collect();
+                let script = String::from_utf16(&units).unwrap();
+                // Intercept only the download. Execute the real startup and
+                // irm|iex chain, checking the selected edition's URL as well.
+                let mock = r#"function Invoke-RestMethod { param([string]$Uri)
+if ($Uri -ne $env:CC_SWITCH_QODER_INSTALL_URL) { throw 'Wrong Qoder edition' }
+[IO.File]::ReadAllText($env:CC_SWITCH_QODER_INSTALLER)
+}; "#;
+                let command = format!(
+                    "{prefix}-EncodedCommand {}",
+                    powershell_encoded_command(&format!("{mock}{script}"))
+                );
+                let batch = root.path().join("install.bat");
+                std::fs::write(
+                    &batch,
+                    format!(
+                        "@echo off\r\nchcp 65001>nul\r\ncall {command}\r\nexit /b %errorlevel%\r\n"
+                    ),
+                )
+                .unwrap();
+                let output = windows_lifecycle_command(&batch, &effective_path_string())
+                    .env("PSModulePath", &inherited_modules)
+                    .env("CC_SWITCH_QODER_INSTALLER", &installer)
+                    .env("CC_SWITCH_QODER_INSTALL_URL", qoder_install_url(tool, true))
+                    .env("CC_SWITCH_QODER_ARCHIVE", &archive)
+                    .env("CC_SWITCH_QODER_EXTRACT", &extraction)
+                    .env(
+                        "CC_SWITCH_QODER_EXPECTED_HASH",
+                        if case == "checksum" {
+                            "incorrect"
+                        } else {
+                            &expected_hash
+                        },
+                    )
+                    .output()
+                    .unwrap();
+                let result = finish_lifecycle_output(&output);
+                if case == "success" {
+                    assert!(result.is_ok(), "{tool}: {result:?}");
+                    assert_eq!(
+                        std::fs::read_to_string(extraction.join("payload.txt")).unwrap(),
+                        "verified payload"
+                    );
+                } else {
+                    assert_eq!(
+                        output.status.code(),
+                        Some(if case == "checksum" { 23 } else { 1 })
+                    );
+                    assert!(!extraction.exists());
+                    let error = result.unwrap_err();
+                    let expected = if case == "checksum" {
+                        "Error: Checksum mismatch"
+                    } else {
+                        "Fixture download failed: <endpoint> & connection"
+                    };
+                    assert!(error.contains(expected), "{tool}: {error}");
+                    for metadata in ["CLIXML", "<Objs", "TimeGenerated", "_x000D_"] {
+                        assert!(!error.contains(metadata), "{tool}: {error}");
+                    }
+                }
+            }
+        }
+        assert_eq!(std::env::var_os("PSModulePath"), parent_modules);
     }
 
     #[test]

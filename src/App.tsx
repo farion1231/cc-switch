@@ -1,3 +1,5 @@
+import { QoderPanel } from "@/components/providers/QoderPanel";
+import { isQoderApp, resolveVisibleApps } from "@/config/qoder";
 import {
   useCallback,
   useEffect,
@@ -18,7 +20,7 @@ import {
   Search,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { Provider, VisibleApps } from "@/types";
+import type { Provider } from "@/types";
 import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
 import type { EnvConflict } from "@/types/env";
 import type { SubscriptionQuota } from "@/types/subscription";
@@ -160,7 +162,7 @@ const getInitialApp = (): AppId => {
 };
 
 function App() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const { hasUpdate } = useUpdate();
 
@@ -202,6 +204,9 @@ function App() {
     providerId: string;
     nonce: number;
   } | null>(null);
+  const [qoderActionSlot, setQoderActionSlot] = useState<HTMLDivElement | null>(
+    null,
+  );
   const [mcpManagementBusy, setMcpManagementBusy] = useState(false);
   const [skillsNavigationBusy, setSkillsNavigationBusy] = useState(false);
   const [promptNavigationBusy, setPromptNavigationBusy] = useState(false);
@@ -214,13 +219,7 @@ function App() {
   // Windows 一律去掉系统标题栏，用页头里的应用内窗口按钮；Linux 由设置决定
   const useAppWindowControls =
     isWindows() || (isLinux() && (settingsData?.useAppWindowControls ?? false));
-  const visibleApps = useMemo<VisibleApps>(
-    () => ({
-      ...DEFAULT_VISIBLE_APPS,
-      ...settingsData?.visibleApps,
-    }),
-    [settingsData?.visibleApps],
-  );
+  const visibleApps = resolveVisibleApps(settingsData, i18n.language);
 
   const getFirstVisibleApp = (): AppId => {
     return (
@@ -317,6 +316,7 @@ function App() {
   const currentModeView =
     providerModeView?.app === activeApp ? providerModeView.view : undefined;
   const openAddProvider = (modeView: AppMode | undefined) => {
+    if (isQoderApp(activeApp)) return;
     setFormModeView(modeView);
     setIsAddOpen(true);
   };
@@ -784,7 +784,8 @@ function App() {
           activeApp === "mcode" ||
           activeApp === "dsh" ||
           activeApp === "kimi" ||
-          activeApp === "agy"
+          activeApp === "agy" ||
+          isQoderApp(activeApp)
         )
           return;
         const conflicts = await checkEnvConflicts(activeApp);
@@ -1287,7 +1288,11 @@ function App() {
       const current = await settingsApi.get();
       await settingsApi.save({
         ...current,
-        visibleApps: { ...visibleApps, [activeApp]: false },
+        visibleApps: {
+          ...DEFAULT_VISIBLE_APPS,
+          ...current.visibleApps,
+          [activeApp]: false,
+        },
       });
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
     } catch (error) {
@@ -1339,7 +1344,13 @@ function App() {
             {t("appPage.viewUsage")}
           </DropdownMenuItem>
         )}
-        <DropdownMenuItem onSelect={() => openSettings("appConfig", activeApp)}>
+        <DropdownMenuItem
+          onSelect={() =>
+            isQoderApp(activeApp)
+              ? void settingsApi.openConfigFolder(activeApp)
+              : openSettings("appConfig", activeApp)
+          }
+        >
           {t("appPage.configDirectory")}
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => openPage("apps")}>
@@ -1392,6 +1403,7 @@ function App() {
             activeApp !== "mcode" &&
             activeApp !== "dsh" &&
             activeApp !== "kimi" &&
+            !isQoderApp(activeApp) &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
@@ -1406,6 +1418,7 @@ function App() {
             </Button>
           )}
           {currentView === "providers" &&
+            !isQoderApp(activeApp) &&
             (settingsData?.showProviderSearch ?? true) && (
               <HoverTip
                 content={t("provider.searchButtonTip", {
@@ -1424,7 +1437,7 @@ function App() {
                 </Button>
               </HoverTip>
             )}
-          {currentView === "providers" && (
+          {currentView === "providers" && !isQoderApp(activeApp) && (
             <Button
               variant="solid"
               size="regular"
@@ -1433,6 +1446,9 @@ function App() {
               <Plus className="h-4 w-4" />
               {t("provider.addProvider")}
             </Button>
+          )}
+          {currentView === "providers" && isQoderApp(activeApp) && (
+            <div ref={setQoderActionSlot} className="flex items-center gap-2" />
           )}
           {currentView === "hermesMemory" && <HermesMemorySaveButton />}
           {appMenu}
@@ -1500,6 +1516,14 @@ function App() {
   };
 
   const renderProviderList = () => {
+    if (isQoderApp(activeApp))
+      return (
+        <QoderPanel
+          key={activeApp}
+          app={activeApp}
+          actionSlot={qoderActionSlot}
+        />
+      );
     if (modeAppId) {
       const startupFailure = startupFailures.find(
         (failure) => failure.appType === modeAppId,

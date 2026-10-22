@@ -15,6 +15,7 @@ use std::time::Instant;
 pub use model::SessionMessage;
 use providers::{
     agy, claude, codex, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode, pi,
+    qoder,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -94,6 +95,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     sessions.extend(mcode::scan_sessions());
     sessions.extend(kimi::scan_sessions());
     sessions.extend(dsh::scan_sessions());
+    sessions.extend(qoder::scan_sessions());
     sessions.extend(agy::scan_sessions());
 
     sessions.sort_by(|a, b| {
@@ -131,6 +133,8 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "kimi" => kimi::load_messages(path),
         "omp" => omp::load_messages(path),
         "dsh" => dsh::load_messages(path),
+        "qoder" => qoder::load_messages(&crate::app_config::AppType::Qoder, path),
+        "qoder-cn" => qoder::load_messages(&crate::app_config::AppType::QoderCn, path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -181,6 +185,12 @@ fn delete_session_source(
     if provider_id == "dsh" {
         return Err(
             "Delete this session in DeepSeek Harness to keep its native history consistent".into(),
+        );
+    }
+    if matches!(provider_id, "qoder" | "qoder-cn") {
+        return Err(
+            "Delete this session in Qoder CLI to keep its session state and history consistent"
+                .into(),
         );
     }
     if provider_id == "kimi" {
@@ -258,6 +268,8 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "pi" => pi::session_roots(),
         "kimi" => kimi::session_roots(),
         "dsh" => dsh::session_roots(),
+        "qoder" => qoder::session_roots(&crate::app_config::AppType::Qoder),
+        "qoder-cn" => qoder::session_roots(&crate::app_config::AppType::QoderCn),
         "agy" => agy::session_roots(),
         "omp" => omp::session_roots(),
         _ => return Err(format!("Unsupported provider: {provider_id}")),

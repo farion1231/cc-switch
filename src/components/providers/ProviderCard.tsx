@@ -64,7 +64,7 @@ interface ProviderCardProps {
   isInConfig?: boolean;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
-  onConfigureUsage: (provider: Provider) => void;
+  onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onDuplicate?: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
@@ -658,7 +658,9 @@ export function ProviderCard({
               (isCodexOauth && !isBoundCodexOfficial) ||
               isXaiOauth
                 ? undefined
-                : () => onConfigureUsage(provider)
+                : onConfigureUsage
+                  ? () => onConfigureUsage(provider)
+                  : undefined
             }
             onOpenTerminal={
               onOpenTerminal ? () => onOpenTerminal(provider) : undefined

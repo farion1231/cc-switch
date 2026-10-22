@@ -15,6 +15,8 @@ const SESSION_PROVIDER_APPS: Record<string, AppId> = {
   "Grok Build (Session)": "grokbuild",
   "MiniMax Code (Session)": "mcode",
   "Kimi Code (Session)": "kimi",
+  "Qoder CLI (Session)": "qoder",
+  "Qoder CLI CN (Session)": "qoder-cn",
   "Pi (Session)": "pi",
   "Antigravity (Session)": "agy",
 };
