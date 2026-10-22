@@ -233,9 +233,8 @@ impl AccountStore {
     ) -> String {
         let accounts = self.scopes.entry(scope.into()).or_default();
         // Exact matches also handle importing a login already managed here.
-        // Only follow a native refresh when the previously observed credential
-        // was known and its account metadata still agrees; names alone never
-        // merge an unrelated newly added account.
+        // A refresh during status lookup can be linked to the known credential
+        // observed before the command, even when only a display name is known.
         let existing = accounts
             .iter_mut()
             .find(|account| account.credential == credential);
@@ -252,6 +251,30 @@ impl AccountStore {
             account.credential = credential;
             account.profile = profile;
             return account.id.clone();
+        }
+        // The CLI may already have rotated credentials before status lookup.
+        // Require a unique identity within this scope: email, or username plus
+        // organization. A display name or organization alone cannot identify a user.
+        let nonempty = |value: &Option<String>| {
+            value
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+        };
+        if nonempty(&profile.email)
+            || (nonempty(&profile.username) && nonempty(&profile.organization_id))
+        {
+            let mut matches = accounts.iter_mut().filter(|account| {
+                account.profile.username == profile.username
+                    && account.profile.email == profile.email
+                    && account.profile.organization_id == profile.organization_id
+            });
+            if let Some(account) = matches.next() {
+                if matches.next().is_none() {
+                    account.credential = credential;
+                    account.profile = profile;
+                    return account.id.clone();
+                }
+            }
         }
         let id = uuid::Uuid::new_v4().to_string();
         accounts.push(SavedAccount {
@@ -331,6 +354,127 @@ mod tests {
         assert!(loaded.credential("global", &b).unwrap() == credential("b"));
         let public = serde_json::to_string(&loaded.accounts("global", None)).unwrap();
         assert!(!public.contains("encryptedUser") && !public.contains("machineId"));
+    }
+
+    #[test]
+    fn qoder_accounts_reuse_unique_identities_after_external_token_rotation() {
+        for profile in [
+            AccountProfile {
+                username: Some("fixture".into()),
+                email: Some("fixture@example.test".into()),
+                ..Default::default()
+            },
+            AccountProfile {
+                username: Some("fixture".into()),
+                organization_id: Some("org".into()),
+                ..Default::default()
+            },
+            AccountProfile {
+                email: Some("fixture@example.test".into()),
+                ..Default::default()
+            },
+        ] {
+            let mut store = AccountStore::default();
+            let id = store.import("global", credential("old"), profile.clone(), None);
+            let cn = store.import("cn", credential("cn"), profile.clone(), None);
+            let updated = AccountProfile {
+                plan: Some("Pro".into()),
+                ..profile
+            };
+            let current = credential("refreshed-before-status");
+            assert_eq!(
+                store.import("global", current.clone(), updated.clone(), Some(&current)),
+                id
+            );
+            assert!(store.credential("global", &id).unwrap() == current);
+            let accounts = store.accounts("global", Some(&current));
+            assert_eq!(accounts.len(), 1);
+            assert!(accounts[0].is_current);
+            assert_eq!(accounts[0].profile.plan.as_deref(), Some("Pro"));
+            assert_eq!(
+                store.import("global", credential("refreshed-again"), updated, None),
+                id
+            );
+            assert!(store.credential("global", &id).unwrap() == credential("refreshed-again"));
+            assert_eq!(store.accounts("global", None).len(), 1);
+            assert!(store.credential("cn", &cn).unwrap() == credential("cn"));
+        }
+    }
+
+    #[test]
+    fn qoder_accounts_do_not_merge_missing_or_conflicting_identities() {
+        for profile in [
+            AccountProfile::default(),
+            AccountProfile {
+                username: Some("same name".into()),
+                ..Default::default()
+            },
+            AccountProfile {
+                username: Some("same name".into()),
+                email: Some(" ".into()),
+                organization_id: Some("".into()),
+                ..Default::default()
+            },
+            AccountProfile {
+                organization_id: Some("shared-org".into()),
+                ..Default::default()
+            },
+        ] {
+            let mut store = AccountStore::default();
+            let first = store.import("global", credential("a"), profile.clone(), None);
+            let next = credential("b");
+            assert_ne!(
+                store.import("global", next.clone(), profile, Some(&next)),
+                first
+            );
+            assert!(store.credential("global", &first).unwrap() == credential("a"));
+        }
+        let profile = AccountProfile {
+            username: Some("fixture".into()),
+            email: Some("fixture@example.test".into()),
+            organization_id: Some("org".into()),
+            ..Default::default()
+        };
+        for other in [
+            AccountProfile {
+                username: Some("other".into()),
+                ..profile.clone()
+            },
+            AccountProfile {
+                email: Some("other@example.test".into()),
+                ..profile.clone()
+            },
+            AccountProfile {
+                organization_id: Some("other-org".into()),
+                ..profile.clone()
+            },
+        ] {
+            let mut store = AccountStore::default();
+            let first = store.import("global", credential("a"), profile.clone(), None);
+            assert_ne!(store.import("global", credential("b"), other, None), first);
+        }
+    }
+
+    #[test]
+    fn qoder_accounts_do_not_choose_between_ambiguous_saved_identities() {
+        let mut store = AccountStore::default();
+        let profile = AccountProfile {
+            username: Some("fixture".into()),
+            email: Some("fixture@example.test".into()),
+            ..Default::default()
+        };
+        let first = store.import("global", credential("a"), profile.clone(), None);
+        // Older catalogs may already contain duplicates from native refreshes.
+        let accounts = store.scopes.get_mut("global").unwrap();
+        let mut duplicate = accounts[0].clone();
+        duplicate.id = "duplicate".into();
+        duplicate.credential = credential("b");
+        accounts.push(duplicate);
+        let next = store.import("global", credential("c"), profile, None);
+        assert_ne!(next, first);
+        assert_ne!(next, "duplicate");
+        assert!(store.credential("global", &first).unwrap() == credential("a"));
+        assert!(store.credential("global", "duplicate").unwrap() == credential("b"));
     }
 
     #[test]
