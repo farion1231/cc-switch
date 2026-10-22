@@ -133,6 +133,60 @@ pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool
     Ok(true)
 }
 
+/// 用量统计的扁平事件行：每条 `assistant/message` 的最终 usage 一行（与
+/// `assistant/chunk` 里的 usage 逐 step 一致，只取 message 才不会双计），
+/// 归因取文件顺序上最近一次 `request/header` 的 provider/model——模型切换
+/// 会产生新 header，切换前后的消息各自归到当时的模型。解析留在 provider
+/// 模块、入库在 session_usage 模块（与 agy 的 records 同款分层）。
+pub(crate) fn usage_records(path: &Path) -> Result<Vec<Value>, String> {
+    let events = read_events(path)?;
+    let mut provider: Option<String> = None;
+    let mut model: Option<String> = None;
+    let mut rows = Vec::new();
+    for value in &events {
+        match value.get("type").and_then(Value::as_str) {
+            Some("request/header") => {
+                let config = value.pointer("/data/header/config");
+                if let Some(found) = config
+                    .and_then(|c| c.get("provider"))
+                    .and_then(Value::as_str)
+                {
+                    provider = Some(found.to_string());
+                }
+                if let Some(found) = config.and_then(|c| c.get("model")).and_then(Value::as_str) {
+                    model = Some(found.to_string());
+                }
+            }
+            Some("assistant/message") => {
+                let data = &value["data"];
+                let Some(usage) = data.pointer("/message/usage").or_else(|| data.get("usage"))
+                else {
+                    continue;
+                };
+                let id = data
+                    .pointer("/message/id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| {
+                        let turn = data.get("turn").and_then(Value::as_i64).unwrap_or(0);
+                        let step = data.get("step").and_then(Value::as_i64).unwrap_or(0);
+                        let seq = value.get("seq").and_then(Value::as_i64).unwrap_or(0);
+                        format!("t{turn}s{step}q{seq}")
+                    });
+                rows.push(serde_json::json!({
+                    "id": id,
+                    "time": value.get("time").and_then(Value::as_i64).unwrap_or(0),
+                    "provider": provider,
+                    "model": model,
+                    "usage": usage,
+                }));
+            }
+            _ => {}
+        }
+    }
+    Ok(rows)
+}
+
 fn event_time(value: &Value) -> Option<i64> {
     value
         .get("time")
@@ -385,6 +439,48 @@ mod tests {
             // 删除后按本轮文件列表重建缓存，不再返回已删会话
             delete_session(&home.join("sessions"), &file, "session-abc").unwrap();
             assert!(scan_sessions().is_empty());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn usage_records_attributes_messages_to_the_latest_header() {
+        with_temp_home(|home| {
+            let events = vec![
+                serde_json::json!({"type":"request/header","seq":10,"time":1786945358957_i64,"data":{"header":{"config":{"provider":"deepseek-official","model":"k3"}}}}),
+                serde_json::json!({"type":"assistant/message","seq":12,"time":1786945364644_i64,"data":{"turn":1,"step":1,"message":{"id":"msg-1","role":"assistant","content":[],"usage":{"inputTokens":3792,"outputTokens":107,"cacheReadTokens":6912,"reasoningTokens":59}}}}),
+                // 同一文件里模型切换：新 header 之后的消息归到新 provider/model
+                serde_json::json!({"type":"request/header","seq":30,"time":1786945400000_i64,"data":{"header":{"config":{"provider":"yuzuvalley","model":"glm-5.3"}}}}),
+                serde_json::json!({"type":"assistant/message","seq":32,"time":1786945410000_i64,"data":{"turn":2,"step":1,"message":{"id":"msg-2","role":"assistant","content":[],"usage":{"inputTokens":20,"outputTokens":2,"cacheReadTokens":0}}}}),
+                // 没有 message.id 的行回退到 turn/step/seq 组合键；零 usage 不产出行
+                serde_json::json!({"type":"assistant/message","seq":40,"time":1786945420000_i64,"data":{"turn":3,"step":1,"message":{"role":"assistant","content":[]}}}),
+            ];
+            let file = write_session(home, "proj", "session-abc", &events);
+
+            let rows = usage_records(&file).unwrap();
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[0]["id"], "msg-1");
+            assert_eq!(rows[0]["provider"], "deepseek-official");
+            assert_eq!(rows[0]["model"], "k3");
+            assert_eq!(rows[0]["usage"]["inputTokens"], 3792);
+            assert_eq!(rows[1]["id"], "msg-2");
+            assert_eq!(rows[1]["provider"], "yuzuvalley");
+            assert_eq!(rows[1]["model"], "glm-5.3");
+
+            let orphan = write_session(
+                home,
+                "proj",
+                "session-orphan",
+                &[
+                    serde_json::json!({"type":"assistant/message","seq":2,"time":5_i64,"data":{"turn":1,"step":1,"message":{"usage":{"inputTokens":9,"outputTokens":1,"cacheReadTokens":0}}}}),
+                ],
+            );
+            let rows = usage_records(&orphan).unwrap();
+            assert_eq!(rows.len(), 1);
+            // 无 header 的旧会话：provider/model 为空，由用量模块回退到占位值
+            assert_eq!(rows[0]["provider"], serde_json::Value::Null);
+            // 无 message.id 时用 turn/step/seq 组合键
+            assert_eq!(rows[0]["id"], "t1s1q2");
         });
     }
 

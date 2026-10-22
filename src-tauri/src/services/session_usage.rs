@@ -172,6 +172,11 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
         "Antigravity",
         crate::services::session_usage_agy::sync_agy_usage(db),
     );
+    merge_sync_step(
+        &mut result,
+        "DeepSeek Harness",
+        crate::services::session_usage_deepseek_harness::sync_deepseek_harness_usage(db),
+    );
     notify_sync_result(&result);
     record_sync_completed(chrono::Utc::now().timestamp_millis());
     result

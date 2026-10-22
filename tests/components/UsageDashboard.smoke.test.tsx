@@ -252,8 +252,11 @@ describe("UsageDashboard (smoke)", () => {
     expect(screen.getByText("usage.cacheWrite")).toBeInTheDocument();
 
     // 供应商：汇总速度 92000 / 1000 s = 92 tok/s
+    // （DSH 过滤芯片的图标 <title> 也是 "DeepSeek"，限定 span 查询供应商名）
     await user.click(screen.getByRole("tab", { name: "usage.tabs.providers" }));
-    const providerRow = (await screen.findByText("DeepSeek")).closest("tr")!;
+    const providerRow = (
+      await screen.findByText("DeepSeek", { selector: "span" })
+    ).closest("tr")!;
     expect(within(providerRow).getByText("92")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "usage.tabs.models" }));
