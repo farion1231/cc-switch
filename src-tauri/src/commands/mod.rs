@@ -10,7 +10,7 @@ pub(crate) mod copilot;
 mod custom_icon;
 mod deeplink;
 mod env;
-mod failover;
+pub(crate) mod failover;
 pub(crate) mod global_proxy;
 mod hermes;
 pub(crate) mod import_export;

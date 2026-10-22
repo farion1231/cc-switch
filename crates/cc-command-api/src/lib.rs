@@ -294,11 +294,21 @@ pub fn command_api(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }).collect();
 
-        // 返回类型处理：Result → handler 返 Result<impl IntoResponse, StatusCode>，错误 500；
+        // 返回类型处理：Result → handler 返 Response（Ok→Json, Err→500+JSON error body）；
         // 裸返回 → handler 直接返 impl IntoResponse（Json(_impl)，无错误路径）
         let (rest_ret_ty, rest_body): (TokenStream2, TokenStream2) = if is_result_ret {
-            (quote! { std::result::Result<impl ::axum::response::IntoResponse, ::axum::http::StatusCode> },
-             quote! { #impl_name(#rest_call) #await_tok .map(::axum::Json).map_err(|_| ::axum::http::StatusCode::INTERNAL_SERVER_ERROR) })
+            (quote! { ::axum::response::Response },
+             quote! {
+                 match #impl_name(#rest_call) #await_tok {
+                     ::std::result::Result::Ok(v) => ::axum::response::IntoResponse::into_response(::axum::Json(v)),
+                     ::std::result::Result::Err(e) => {
+                         ::axum::response::IntoResponse::into_response((
+                             ::axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                             ::axum::Json(serde_json::json!({ "error": e.to_string() }))
+                         ))
+                     }
+                 }
+             })
         } else {
             (quote! { impl ::axum::response::IntoResponse },
              quote! { ::axum::Json(#impl_name(#rest_call) #await_tok) })

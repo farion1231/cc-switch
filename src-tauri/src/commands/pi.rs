@@ -1,9 +1,9 @@
-use tauri::State;
 use crate::provider::UsageScript;
 use crate::services::pi_state::{PiCurrentState, PiStateService};
 use crate::services::ProviderService;
 use crate::session_manager::providers::pi::PiSessionDiscovery;
 use crate::store::AppState;
+use tauri::State;
 
 #[tauri::command]
 pub(crate) fn get_pi_current_state(state: State<'_, AppState>) -> Result<PiCurrentState, String> {

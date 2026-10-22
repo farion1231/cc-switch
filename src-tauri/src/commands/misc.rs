@@ -4,7 +4,6 @@ use crate::app_config::AppType;
 use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
 use crate::services::ProviderService;
 use cc_command_api::command_api;
-use tauri::State;
 use indexmap::IndexSet;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -13,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use tauri::AppHandle;
+use tauri::State;
 use tauri_plugin_opener::OpenerExt;
 
 #[path = "tool_node_requirement.rs"]

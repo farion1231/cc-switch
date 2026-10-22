@@ -1,6 +1,6 @@
 use cc_command_api::command_api;
 use std::time::Duration;
-use tauri::{AppHandle};
+use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::hermes_config;

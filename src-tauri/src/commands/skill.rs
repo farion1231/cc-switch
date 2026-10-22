@@ -15,7 +15,7 @@ use crate::store::AppState;
 use cc_command_api::command_api;
 use std::str::FromStr;
 use std::sync::Arc;
-use tauri::{AppHandle};
+use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
 /// SkillService 状态包装
@@ -270,7 +270,7 @@ pub async fn get_skills(
 }
 
 /// 获取指定应用的技能列表（兼容旧 API）
-#[command_api(rest = "GET /control/v1/skills", state = "service,app_state")]
+#[command_api(state = "service,app_state")]
 pub async fn get_skills_for_app(
     app: String,
     service: State<'_, SkillServiceState>,
@@ -282,11 +282,7 @@ pub async fn get_skills_for_app(
 }
 
 /// 安装技能（兼容旧 API）
-#[command_api(
-    rest = "POST /control/v1/skills/legacy/install",
-    body = "directory",
-    state = "service,app_state"
-)]
+#[command_api(body = "directory", state = "service,app_state")]
 pub async fn install_skill(
     directory: String,
     service: State<'_, SkillServiceState>,
@@ -345,11 +341,7 @@ pub async fn install_skill_for_app(
 }
 
 /// 卸载技能（兼容旧 API）
-#[command_api(
-    rest = "POST /control/v1/skills/legacy/uninstall",
-    body = "directory",
-    state = "app_state"
-)]
+#[command_api(body = "directory", state = "app_state")]
 pub fn uninstall_skill(
     directory: String,
     app_state: State<'_, AppState>,
@@ -426,11 +418,7 @@ pub fn remove_skill_repo(
 }
 
 /// 从 ZIP 文件安装 Skills；目录名已被占用的如实列在 `skipped` 里（#3749）
-#[command_api(
-    rest = "POST /control/v1/skills/legacy/install",
-    body = "directory",
-    state = "service,app_state"
-)]
+#[command_api(body = "directory", state = "service,app_state")]
 pub fn install_skills_from_zip(
     file_path: String,
     current_app: String,

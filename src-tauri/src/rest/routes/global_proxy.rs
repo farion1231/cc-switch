@@ -168,15 +168,19 @@ fn scan_local_proxies() -> Vec<DetectedProxy> {
 /// F-10: 补全 `get_global_proxy_config` 镜像（返 `GlobalProxyConfig`，
 /// 区别于 `/status` 的 `UpstreamStatus` 运行时快照）。
 async fn get_config(State(state): State<AppState>) -> Result<impl IntoResponse, RestError> {
-    let cfg = state.db.get_global_proxy_config().await?;
+    let cfg = crate::commands::proxy::get_global_proxy_config_impl(&state)
+        .await
+        .map_err(|e| RestError::App(e.to_string()))?;
     Ok(Json(cfg))
 }
 
-/// F-10: 补全 `update_global_proxy_config` 镜像。
+/// F-10: `update_global_proxy_config` — 复用 `_impl`（restart listener + resync clients）。
 async fn update_config(
     State(state): State<AppState>,
     Json(config): Json<GlobalProxyConfig>,
 ) -> Result<impl IntoResponse, RestError> {
-    state.db.update_global_proxy_config(config).await?;
+    crate::commands::proxy::update_global_proxy_config_impl(&state, config)
+        .await
+        .map_err(|e| RestError::App(e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }

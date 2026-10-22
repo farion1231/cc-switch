@@ -71,3 +71,25 @@ pub fn route_table() -> Vec<RouteMeta> {
         })
         .collect()
 }
+
+#[cfg(all(test, feature = "rest_api"))]
+mod tests {
+    use super::*;
+
+    /// Catch duplicate (method, path) pairs at test time — axum panics at
+    /// runtime when the router is built with overlapping routes.
+    #[test]
+    fn no_duplicate_routes() {
+        let mut seen: std::collections::HashMap<(String, String), String> =
+            std::collections::HashMap::new();
+        for meta in inventory::iter::<RouteMeta> {
+            let key = (meta.method.to_string(), meta.path.to_string());
+            if let Some(prev) = seen.insert(key, meta.cmd.to_string()) {
+                panic!(
+                    "Duplicate route {} {}: '{}' and '{}'",
+                    meta.method, meta.path, prev, meta.cmd
+                );
+            }
+        }
+    }
+}

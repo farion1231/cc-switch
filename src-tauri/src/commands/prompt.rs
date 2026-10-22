@@ -2,7 +2,6 @@ use cc_command_api::command_api;
 use indexmap::IndexMap;
 use std::str::FromStr;
 
-
 use crate::app_config::AppType;
 use crate::prompt::Prompt;
 use crate::services::pi_prompt_files::{

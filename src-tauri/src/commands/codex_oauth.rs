@@ -9,8 +9,8 @@ use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::services::model_fetch::FetchedModel;
 use crate::services::subscription::{query_codex_quota, CredentialStatus, SubscriptionQuota};
 use cc_command_api::command_api;
-use tauri::State;
 use std::sync::Arc;
+use tauri::State;
 
 /// Codex OAuth 认证状态
 ///

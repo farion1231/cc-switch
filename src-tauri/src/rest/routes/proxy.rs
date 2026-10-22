@@ -71,21 +71,19 @@ async fn set_takeover_for_app(
     axum::extract::Path(app_type): axum::extract::Path<String>,
     axum::extract::Query(q): axum::extract::Query<ToggleQuery>,
 ) -> Result<impl IntoResponse, RestError> {
-    let app = super::common::parse_app(&app_type)?;
-    if !app.supports_local_proxy() {
-        return Err(RestError::Bad(format!("{} 不支持本地路由", app.as_str())));
-    }
-    if q.enabled {
-        crate::mode::controller::enter(&state, &app, false).await?;
-    } else {
-        crate::mode::controller::exit(&state, &app).await?;
-    }
+    crate::commands::proxy::set_proxy_takeover_for_app_impl(
+        &state, app_type, q.enabled, q.stack, q.route,
+    )
+    .await
+    .map_err(|e| RestError::App(e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 #[derive(serde::Deserialize)]
 struct ToggleQuery {
     enabled: bool,
+    stack: Option<bool>,
+    route: Option<String>,
 }
 
 async fn get_provider_health(

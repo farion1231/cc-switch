@@ -442,7 +442,7 @@ pub async fn switch_proxy_provider(
 /// 获取供应商健康状态
 #[command_api(
     rest = "GET /control/v1/proxy/:app_type/provider/:provider_id/health",
-    path = "app_type as app,provider_id"
+    path = "app_type,provider_id"
 )]
 pub async fn get_provider_health(
     state: tauri::State<'_, AppState>,
@@ -582,7 +582,7 @@ pub async fn update_circuit_breaker_config(
 /// 获取熔断器统计信息（仅当代理服务器运行时）
 #[command_api(
     rest = "GET /control/v1/proxy/:app_type/provider/:provider_id/circuit-breaker-stats",
-    path = "app_type as app,provider_id"
+    path = "app_type,provider_id"
 )]
 pub async fn get_circuit_breaker_stats(
     state: tauri::State<'_, AppState>,
