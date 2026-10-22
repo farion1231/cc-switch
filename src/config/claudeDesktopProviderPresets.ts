@@ -57,7 +57,11 @@ export interface ClaudeDesktopProviderPreset extends PresetFamilyFields {
   mode: "direct" | "proxy";
   apiFormat?: ClaudeDesktopApiFormat;
   modelRoutes?: ClaudeDesktopRoutePreset[];
-  providerType?: "github_copilot" | "codex_oauth" | "xai_oauth";
+  providerType?:
+    | "github_copilot"
+    | "codex_oauth"
+    | "xai_oauth"
+    | "codebuddy_oauth";
   requiresOAuth?: boolean;
   // 是否在 UI 中隐藏该预设（预设仍存在，仅不在列表中显示）
   hidden?: boolean;
@@ -1227,6 +1231,21 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     modelRoutes: brandedRoutes("grok-4.5", "grok-4.5", "grok-4.5"),
     icon: "xai",
     iconColor: "#000000",
+  },
+  {
+    name: "CodeBuddy",
+    websiteUrl: "https://copilot.tencent.com",
+    category: "third_party",
+    // The proxy enforces both this origin and the OpenAI Chat wire format
+    // (requests go to POST /v2/chat/completions, stream only).
+    baseUrl: "https://copilot.tencent.com",
+    mode: "proxy",
+    apiFormat: "openai_chat",
+    providerType: "codebuddy_oauth",
+    requiresOAuth: true,
+    modelRoutes: brandedRoutes("glm-5.3", "glm-5.3", "glm-5.3"),
+    icon: "codebuddy",
+    iconColor: "#6C4DFF",
   },
   {
     name: "DeepSeek",

@@ -40,7 +40,11 @@ export interface CodexProviderPreset extends PresetFamilyFields {
   // Codex API 格式
   apiFormat?: CodexApiFormat;
   // 仅用于区分托管认证来源；各 OAuth provider 的认证流程彼此独立。
-  providerType?: "codex_oauth" | "xai_oauth" | "github_copilot";
+  providerType?:
+    | "codex_oauth"
+    | "xai_oauth"
+    | "github_copilot"
+    | "codebuddy_oauth";
   // OAuth 预设：隐藏 API Key 输入，保存前要求已登录托管账号
   requiresOAuth?: boolean;
   // Codex Chat 本地路由模式下的模型目录
@@ -3626,6 +3630,47 @@ requires_openai_auth = true`,
     category: "third_party",
     icon: "xai",
     iconColor: "#000000",
+  },
+  {
+    name: "CodeBuddy",
+    websiteUrl: "https://copilot.tencent.com",
+    auth: generateThirdPartyAuth(""),
+    // 托管 OAuth：token 和 CodeBuddy CLI 请求头由本地代理按请求注入，CodexAdapter
+    // 固定 copilot.tencent.com 的 /v2/chat/completions；这里的 base_url / 空 auth
+    // 只是配置快照，转发时不生效。
+    config: generateThirdPartyConfig(
+      "codebuddy",
+      "https://copilot.tencent.com",
+      "glm-5.3",
+      { requiresOpenAiAuth: false },
+    ),
+    apiFormat: "openai_chat",
+    providerType: "codebuddy_oauth",
+    requiresOAuth: true,
+    // 窗口、输入模态、档位取 CodeBuddy GET /v3/config 的模型目录（maxInputTokens、
+    // supportsImages、reasoning.supportedEfforts）。
+    modelCatalog: modelCatalog([
+      {
+        model: "glm-5.3",
+        displayName: "GLM-5.3",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "high", "max"],
+      },
+    ]),
+    // 上游接受顶层 reasoning_effort，档位越高思考越长；目录外的档位（medium、xhigh 等）
+    // 上游也照收不报错。
+    codexChatReasoning: {
+      supportsThinking: false,
+      supportsEffort: true,
+      thinkingParam: "none",
+      effortParam: "reasoning_effort",
+      effortValueMode: "passthrough",
+      outputFormat: "reasoning_content",
+    },
+    category: "third_party",
+    icon: "codebuddy",
+    iconColor: "#6C4DFF",
   },
   {
     name: "Nvidia",

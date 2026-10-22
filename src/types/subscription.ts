@@ -28,6 +28,30 @@ export interface ResetCredits {
   expiresAt: (string | null)[];
 }
 
+/** CodeBuddy 额度里的一个资源包（get_codebuddy_oauth_quota） */
+export interface CodebuddyQuotaPackage {
+  name: string;
+  total: number;
+  remaining: number;
+  used: number;
+  /** 周期开始/结束；后端给的是接口原值（`YYYY-MM-DD HH:mm:ss` 或毫秒时间戳字符串） */
+  cycle_start: string | null;
+  cycle_end: string | null;
+}
+
+/** CodeBuddy 账号额度（get_codebuddy_oauth_quota(accountId)） */
+export interface CodebuddyQuota {
+  success: boolean;
+  error: string | null;
+  /** unix 毫秒（与 SubscriptionQuota.queriedAt 一致） */
+  queried_at: number | null;
+  total: number;
+  remaining: number;
+  /** 0-100，四舍五入 */
+  remaining_percent: number;
+  packages: CodebuddyQuotaPackage[];
+}
+
 export interface SubscriptionQuota {
   tool: string;
   credentialStatus: CredentialStatus;

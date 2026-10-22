@@ -8,12 +8,15 @@ import { createTestQueryClient } from "../utils/testQueryClient";
 
 const authState = vi.hoisted(() => ({
   codexReauthRequired: false,
+  codebuddyAuthenticated: true,
+  codebuddyRequiresReauth: false,
 }));
 const toastMocks = vi.hoisted(() => ({
   error: vi.fn(),
 }));
 const modelFetchMocks = vi.hoisted(() => ({
   fetchCodexOauthModels: vi.fn(),
+  fetchCodebuddyOauthModels: vi.fn(),
 }));
 
 vi.mock("@/lib/api/model-fetch", async (importOriginal) => {
@@ -21,6 +24,7 @@ vi.mock("@/lib/api/model-fetch", async (importOriginal) => {
   return {
     ...actual,
     fetchCodexOauthModels: modelFetchMocks.fetchCodexOauthModels,
+    fetchCodebuddyOauthModels: modelFetchMocks.fetchCodebuddyOauthModels,
   };
 });
 
@@ -58,6 +62,26 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
     }),
   };
 });
+
+vi.mock("@/components/providers/forms/hooks/useCodebuddyOauth", () => ({
+  useCodebuddyOauth: () => ({
+    isAuthenticated: authState.codebuddyAuthenticated,
+    accounts: authState.codebuddyAuthenticated
+      ? [
+          {
+            id: "acct-cb",
+            is_default: true,
+            reauth_required: false,
+            requires_reauth: authState.codebuddyRequiresReauth,
+          },
+        ]
+      : [],
+  }),
+}));
+
+vi.mock("@/components/providers/forms/CodebuddyOAuthSection", () => ({
+  CodebuddyOAuthSection: () => <div data-testid="codebuddy-oauth-section" />,
+}));
 
 vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
   CodexOAuthSection: () => <div data-testid="codex-oauth-section" />,
@@ -98,8 +122,11 @@ function renderForm(
 describe("ClaudeDesktopProviderForm", () => {
   beforeEach(() => {
     authState.codexReauthRequired = false;
+    authState.codebuddyAuthenticated = true;
+    authState.codebuddyRequiresReauth = false;
     toastMocks.error.mockReset();
     modelFetchMocks.fetchCodexOauthModels.mockReset();
+    modelFetchMocks.fetchCodebuddyOauthModels.mockReset();
   });
 
   it("托管 OAuth 供应商也能获取模型并在映射行里选择（#8426）", async () => {
@@ -159,7 +186,7 @@ describe("ClaudeDesktopProviderForm", () => {
     );
   });
 
-  it.each(["github_copilot", "codex_oauth", "xai_oauth"])(
+  it.each(["github_copilot", "codex_oauth", "xai_oauth", "codebuddy_oauth"])(
     "托管 OAuth %s 即使旧数据是 direct 也强制开启模型映射",
     (providerType) => {
       renderForm({
@@ -555,6 +582,104 @@ describe("ClaudeDesktopProviderForm", () => {
       },
       onSubmit,
     );
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() =>
+      expect(toastMocks.error).toHaveBeenCalledWith(
+        "已绑定账号不存在或需要重新登录，请重新选择账号",
+      ),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+  const codebuddyProvider = (accountId?: string) => ({
+    name: "CodeBuddy",
+    category: "third_party" as const,
+    settingsConfig: {
+      env: { ANTHROPIC_BASE_URL: "https://copilot.tencent.com" },
+    },
+    meta: {
+      providerType: "codebuddy_oauth",
+      apiFormat: "openai_chat" as const,
+      ...(accountId
+        ? {
+            authBinding: {
+              source: "managed_account" as const,
+              authProvider: "codebuddy_oauth",
+              accountId,
+            },
+          }
+        : {}),
+      claudeDesktopMode: "proxy" as const,
+      claudeDesktopModelRoutes: {
+        "claude-sonnet-5": { model: "glm-5.3" },
+      },
+    },
+  });
+
+  it("CodeBuddy 用绑定账号获取模型，并且不显示上游格式选择", async () => {
+    modelFetchMocks.fetchCodebuddyOauthModels.mockResolvedValue([
+      { id: "glm-5.3", ownedBy: "zhipu" },
+    ]);
+    renderForm(codebuddyProvider("acct-cb"));
+
+    expect(screen.getByTestId("codebuddy-oauth-section")).toBeInTheDocument();
+    expect(screen.queryByText("上游格式")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /获取模型/ }));
+
+    await waitFor(() =>
+      expect(modelFetchMocks.fetchCodebuddyOauthModels).toHaveBeenCalledWith(
+        "acct-cb",
+      ),
+    );
+  });
+
+  it("未登录的 CodeBuddy 获取模型和保存时都提示先登录", async () => {
+    authState.codebuddyAuthenticated = false;
+    const onSubmit = vi.fn();
+    renderForm(codebuddyProvider(), onSubmit);
+
+    fireEvent.click(screen.getByRole("button", { name: /获取模型/ }));
+    await waitFor(() =>
+      expect(toastMocks.error).toHaveBeenCalledWith("请先登录 CodeBuddy 账号"),
+    );
+    expect(modelFetchMocks.fetchCodebuddyOauthModels).not.toHaveBeenCalled();
+
+    toastMocks.error.mockReset();
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() =>
+      expect(toastMocks.error).toHaveBeenCalledWith("请先登录 CodeBuddy 账号"),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("保存 CodeBuddy 时写入账号绑定并固定 OpenAI Chat 格式", async () => {
+    const onSubmit = vi.fn();
+    const initialData = codebuddyProvider("acct-cb");
+    initialData.meta.apiFormat = "anthropic" as never;
+    renderForm(initialData, onSubmit);
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const submitted = onSubmit.mock.calls[0][0];
+    expect(submitted.meta).toMatchObject({
+      providerType: "codebuddy_oauth",
+      claudeDesktopMode: "proxy",
+      apiFormat: "openai_chat",
+      authBinding: {
+        source: "managed_account",
+        authProvider: "codebuddy_oauth",
+        accountId: "acct-cb",
+      },
+    });
+  });
+
+  it("不允许保存需要重新登录的 CodeBuddy 账号", async () => {
+    authState.codebuddyRequiresReauth = true;
+    const onSubmit = vi.fn();
+    renderForm(codebuddyProvider("acct-cb"), onSubmit);
 
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 

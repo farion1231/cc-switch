@@ -525,7 +525,7 @@ Codex では、CC Switch 内の「ChatGPT でログイン」から複数の Chat
 - **バックアップ**: `backups/`（デフォルトでは 24 時間ごとに自動バックアップし、最新 10 件を保持。「設定 → データ → バックアップと復元」で変更可能。その下の「その他のバックアップ」には、それ以外のバックアップの場所とサイズが一覧表示され、種類ごとに削除できます）
 - **Skills**: `skills/`（設定で `~/.agents/skills` に変更可能）。デフォルトではシンボリックリンクで各ツールに同期し、失敗した場合はコピーに切り替え
 - **Skill バックアップ**: `skill-backups/`（スキルのアンインストールまたは更新の前に自動作成、最新 20 件を保持）
-- **OAuth ログイン認証情報**: `copilot_auth.json`、`codex_oauth_auth.json`、`xai_oauth_auth.json`
+- **OAuth ログイン認証情報**: `copilot_auth.json`、`codex_oauth_auth.json`、`xai_oauth_auth.json`、`codebuddy_oauth_auth.json`
 - **ログ**: `logs/cc-switch.log` と `crash.log`（問題を報告する際は添付してください）
 - **この端末の状態**: `live-state.json`（各ツールが現在、直接接続・ルーティング・集約のどれか、前回何を書き込んだか）、`codex-login-stash.json`（サードパーティのプロバイダに切り替えたときに退避した Codex の公式ログイン。公式プロバイダに戻すと復元されます）
 - **設定ファイルの原本**: `backups/live-first-write/`（CC Switch が各ツールの設定ファイルを初めて書き換える前の元のファイル）

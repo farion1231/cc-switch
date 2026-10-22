@@ -156,7 +156,13 @@ impl ChatToResponsesState {
             }
         }
 
-        if let Some(finish_reason) = choice.get("finish_reason").and_then(|v| v.as_str()) {
+        // CodeBuddy 等上游会给每个中间 chunk 带空字符串 finish_reason：空串不算结束原因，
+        // 否则流提前断开时会被当成已正常结束。
+        if let Some(finish_reason) = choice
+            .get("finish_reason")
+            .and_then(|v| v.as_str())
+            .filter(|reason| !reason.trim().is_empty())
+        {
             self.finish_reason = Some(finish_reason.to_string());
         }
 
@@ -1478,6 +1484,39 @@ mod tests {
         assert!(output.contains("\"status\":\"incomplete\""));
         assert!(output.contains("\"incomplete_details\":{\"reason\":\"max_output_tokens\"}"));
         assert!(!output.contains("event: response.failed"));
+    }
+
+    #[tokio::test]
+    async fn empty_finish_reason_chunks_do_not_mark_a_truncated_stream_complete() {
+        // CodeBuddy sends "finish_reason":"" on every intermediate chunk.
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_cb\",\"model\":\"glm-5.3\",\"choices\":[{\"delta\":{\"content\":\"partial\"},\"finish_reason\":\"\"}]}\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("\"status\":\"incomplete\""));
+        assert!(output.contains("\"incomplete_details\":{\"reason\":\"max_output_tokens\"}"));
+
+        let empty = collect(vec![
+            "data: {\"id\":\"chatcmpl_cb\",\"model\":\"glm-5.3\",\"choices\":[{\"delta\":{},\"finish_reason\":\"\"}]}\n\n",
+        ])
+        .await;
+        assert!(empty.contains("stream_truncated"));
+        assert!(!empty.contains("event: response.completed"));
+    }
+
+    #[tokio::test]
+    async fn empty_finish_reason_chunks_keep_the_final_reason() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_cb\",\"model\":\"glm-5.3\",\"choices\":[{\"delta\":{\"content\":\"Hel\"},\"finish_reason\":\"\"}]}\n\n",
+            "data: {\"id\":\"chatcmpl_cb\",\"model\":\"glm-5.3\",\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.completed"));
+        assert!(output.contains("\"text\":\"Hello\""));
+        assert!(!output.contains("\"status\":\"incomplete\""));
     }
 
     #[tokio::test]

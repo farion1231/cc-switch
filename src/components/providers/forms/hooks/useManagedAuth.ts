@@ -5,6 +5,7 @@ import { toast } from "@/lib/toast";
 import { authApi, settingsApi } from "@/lib/api";
 import { CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR } from "@/lib/api/auth";
 import { copyText } from "@/lib/clipboard";
+import { codebuddyOauthQuotaKeys } from "@/lib/query/subscription";
 import type {
   ManagedAuthProvider,
   ManagedAuthStatus,
@@ -24,6 +25,21 @@ export function useManagedAuth(
   const queryClient = useQueryClient();
   const { t } = useTranslation();
   const queryKey = ["managed-auth-status", authProvider];
+
+  // 删号或登出时后端会解绑这些应用里绑定该账号的 CodeBuddy 供应商，卡片要跟着刷新。
+  const invalidateCodebuddyProviders = () =>
+    Promise.all(
+      ["claude", "claude-desktop", "codex"].map((app) =>
+        queryClient.invalidateQueries({ queryKey: ["providers", app] }),
+      ),
+    );
+  const invalidateCodebuddyQuotas = useCallback(
+    () =>
+      queryClient.invalidateQueries({
+        queryKey: codebuddyOauthQuotaKeys.all,
+      }),
+    [queryClient],
+  );
 
   const [pollingState, setPollingState] = useState<PollingState>("idle");
   const [deviceCode, setDeviceCode] =
@@ -50,9 +66,13 @@ export function useManagedAuth(
     queryFn: () => authApi.authGetStatus(authProvider),
     staleTime: 30000,
     // A rejected xAI refresh token is persisted as `requires_reauth` by the
-    // proxy hot path. Periodically refresh local status so an already-open Auth
+    // proxy hot path, and CodeBuddy does the same when a quota query forces a
+    // refresh. Periodically refresh local status so an already-open Auth
     // Center stops showing the account as logged in without requiring a reload.
-    refetchInterval: authProvider === "xai_oauth" ? 15_000 : false,
+    refetchInterval:
+      authProvider === "xai_oauth" || authProvider === "codebuddy_oauth"
+        ? 15_000
+        : false,
   });
 
   const stopPolling = useCallback(() => {
@@ -68,12 +88,15 @@ export function useManagedAuth(
 
   const cancelBackendFlow = useCallback(
     async (deviceCode: string | null): Promise<boolean> => {
-      // 只有 Codex（设备码）和 Antigravity（本机回调服务）在后端占着资源，要通知取消
+      // Codex、CodeBuddy 缓存登录状态，Antigravity 还占着本机回调服务，需要通知后端取消。
       if (
-        (authProvider !== "codex_oauth" && authProvider !== "agy_oauth") ||
+        (authProvider !== "codex_oauth" &&
+          authProvider !== "codebuddy_oauth" &&
+          authProvider !== "agy_oauth") ||
         !deviceCode
-      )
+      ) {
         return true;
+      }
       try {
         const cancelled = await authApi.authCancelLogin(
           authProvider,
@@ -83,6 +106,9 @@ export function useManagedAuth(
           await queryClient.invalidateQueries({
             queryKey: ["managed-auth-status", authProvider],
           });
+          if (authProvider === "codebuddy_oauth") {
+            await invalidateCodebuddyQuotas();
+          }
         }
         return cancelled;
       } catch (e) {
@@ -90,10 +116,13 @@ export function useManagedAuth(
         await queryClient.invalidateQueries({
           queryKey: ["managed-auth-status", authProvider],
         });
+        if (authProvider === "codebuddy_oauth") {
+          await invalidateCodebuddyQuotas();
+        }
         return false;
       }
     },
-    [authProvider, queryClient],
+    [authProvider, invalidateCodebuddyQuotas, queryClient],
   );
 
   const queueBackendCancellation = useCallback(
@@ -129,7 +158,7 @@ export function useManagedAuth(
       setPollingState("polling");
       setError(null);
 
-      // 浏览器登录（Antigravity）没有验证码，别把剪贴板清空
+      // 浏览器登录（CodeBuddy、Antigravity）没有验证码，别把剪贴板清空。
       const browserFlow = !response.user_code;
       if (!browserFlow) {
         try {
@@ -149,10 +178,11 @@ export function useManagedAuth(
 
       // Add a small buffer on top of GitHub's suggested interval to avoid
       // hitting slow_down responses too aggressively during device polling.
-      // The browser flow only checks a local result, so it can poll quickly.
-      const interval = browserFlow
-        ? 1500
-        : Math.max((response.interval || 5) + 3, 8) * 1000;
+      // Antigravity only checks a local callback result; CodeBuddy polls its server.
+      const interval =
+        browserFlow && authProvider === "agy_oauth"
+          ? 1500
+          : Math.max((response.interval || 5) + 3, 8) * 1000;
       const expiresAt = Date.now() + response.expires_in * 1000;
 
       const pollOnce = async () => {
@@ -182,6 +212,9 @@ export function useManagedAuth(
             setPollingState("success");
             await refetchStatus();
             await queryClient.invalidateQueries({ queryKey });
+            if (authProvider === "codebuddy_oauth") {
+              await invalidateCodebuddyQuotas();
+            }
             if (completionGeneration !== flowGenerationRef.current) return;
             setPollingState("idle");
             setDeviceCode(null);
@@ -253,6 +286,11 @@ export function useManagedAuth(
         await queryClient.invalidateQueries({
           queryKey: ["providers", "codex"],
         });
+      } else if (authProvider === "codebuddy_oauth") {
+        await Promise.all([
+          invalidateCodebuddyProviders(),
+          invalidateCodebuddyQuotas(),
+        ]);
       }
     },
   });
@@ -276,13 +314,19 @@ export function useManagedAuth(
       console.error("[ManagedAuth] Failed to remove account:", e);
       setError(e instanceof Error ? e.message : String(e));
       // Account removal can succeed before provider unbinding fails.
-      if (authProvider === "codex_oauth") await refetchStatus();
+      if (authProvider === "codex_oauth" || authProvider === "codebuddy_oauth")
+        await refetchStatus();
     },
     onSettled: async () => {
       if (authProvider === "codex_oauth") {
         await queryClient.invalidateQueries({
           queryKey: ["providers", "codex"],
         });
+      } else if (authProvider === "codebuddy_oauth") {
+        await Promise.all([
+          invalidateCodebuddyProviders(),
+          invalidateCodebuddyQuotas(),
+        ]);
       }
     },
   });
@@ -311,6 +355,9 @@ export function useManagedAuth(
       }
       await refetchStatus();
       await queryClient.invalidateQueries({ queryKey });
+      if (authProvider === "codebuddy_oauth") {
+        await invalidateCodebuddyQuotas();
+      }
     },
     onError: (e) => {
       console.error("[ManagedAuth] Failed to set default account:", e);

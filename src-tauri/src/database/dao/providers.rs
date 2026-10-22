@@ -103,6 +103,79 @@ impl Database {
         Ok(affected)
     }
 
+    /// Detach providers of **any** app type bound to the given managed accounts.
+    ///
+    /// Used when a managed account is deleted/logged out: providers bound to it
+    /// (e.g. CodeBuddy providers in Claude Code and Claude Desktop) must not keep
+    /// pointing at a missing account. Raw `meta` JSON is edited in place so
+    /// unrelated and future metadata survives.
+    pub(crate) fn unbind_managed_accounts(
+        &self,
+        auth_provider: &str,
+        account_ids: &[String],
+    ) -> Result<Vec<String>, AppError> {
+        let wanted: HashSet<&str> = account_ids
+            .iter()
+            .map(|id| id.trim())
+            .filter(|id| !id.is_empty())
+            .collect();
+        if wanted.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT app_type, id, meta FROM providers
+                     WHERE json_extract(meta, '$.authBinding.source') = 'managed_account'
+                       AND json_extract(meta, '$.authBinding.authProvider') = ?1
+                     ORDER BY app_type, id",
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            let rows = stmt
+                .query_map(params![auth_provider], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| AppError::Database(e.to_string()))?
+        };
+        let mut affected = Vec::new();
+        for (app_type, id, meta_text) in rows {
+            let mut meta: serde_json::Value = serde_json::from_str(&meta_text)
+                .map_err(|error| AppError::Database(format!("供应商 {id} 配置无效: {error}")))?;
+            let bound = meta
+                .get("authBinding")
+                .and_then(|binding| binding.get("accountId"))
+                .and_then(|account_id| account_id.as_str())
+                .map(str::trim);
+            let Some(bound) = bound else {
+                continue;
+            };
+            if !wanted.contains(bound) {
+                continue;
+            }
+            meta.as_object_mut()
+                .ok_or_else(|| AppError::Config(format!("供应商 {id} 的 meta 必须是对象")))?
+                .remove("authBinding");
+            tx.execute(
+                "UPDATE providers SET meta = ?1 WHERE app_type = ?2 AND id = ?3",
+                params![meta.to_string(), app_type, id],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+            affected.push(id);
+        }
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(affected)
+    }
+
     pub fn get_all_providers(
         &self,
         app_type: &str,
@@ -1009,5 +1082,103 @@ mod ensure_official_seed_tests {
         let result =
             db.ensure_official_seed_by_id(CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, AppType::Claude);
         assert!(result.is_err(), "(id, app_type) mismatch should be Err");
+    }
+}
+
+#[cfg(test)]
+mod managed_unbind_tests {
+    use super::*;
+    use crate::provider::{AuthBinding, AuthBindingSource, Provider, ProviderMeta};
+
+    fn bound_provider(id: &str, auth_provider: &str, account_id: Option<&str>) -> Provider {
+        let mut provider = Provider::with_id(
+            id.to_string(),
+            id.to_string(),
+            serde_json::json!({"env": {"ANTHROPIC_BASE_URL": "https://copilot.tencent.com"}}),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            auth_binding: Some(AuthBinding {
+                source: AuthBindingSource::ManagedAccount,
+                auth_provider: Some(auth_provider.to_string()),
+                account_id: account_id.map(str::to_string),
+            }),
+            ..Default::default()
+        });
+        provider
+    }
+
+    #[test]
+    fn unbind_managed_accounts_only_detaches_matching_bindings() {
+        let db = Database::memory().expect("memory db");
+        db.save_provider(
+            "claude",
+            &bound_provider("cb-old", "codebuddy_oauth", Some("acct-old")),
+        )
+        .expect("save cb-old");
+        db.save_provider(
+            "claude",
+            &bound_provider("cb-keep", "codebuddy_oauth", Some("acct-keep")),
+        )
+        .expect("save cb-keep");
+        db.save_provider(
+            "claude",
+            &bound_provider("xai-bound", "xai_oauth", Some("acct-old")),
+        )
+        .expect("save xai-bound");
+        let mut extra = bound_provider("cb-extra", "codebuddy_oauth", Some("acct-old"));
+        extra.meta.as_mut().unwrap().is_partner = Some(true);
+        db.save_provider("claude", &extra).expect("save cb-extra");
+
+        let affected = db
+            .unbind_managed_accounts("codebuddy_oauth", &["acct-old".to_string()])
+            .expect("unbind");
+        assert_eq!(
+            affected,
+            vec!["cb-extra".to_string(), "cb-old".to_string()],
+            "only CodeBuddy providers bound to acct-old are affected"
+        );
+
+        let detached = db
+            .get_provider_by_id("cb-old", "claude")
+            .expect("query")
+            .expect("exists");
+        assert!(detached
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.auth_binding.as_ref())
+            .is_none());
+        let kept = db
+            .get_provider_by_id("cb-keep", "claude")
+            .expect("query")
+            .expect("exists");
+        assert!(kept
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.auth_binding.as_ref())
+            .is_some());
+        let other_auth = db
+            .get_provider_by_id("xai-bound", "claude")
+            .expect("query")
+            .expect("exists");
+        assert!(other_auth
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.auth_binding.as_ref())
+            .is_some());
+        let preserved = db
+            .get_provider_by_id("cb-extra", "claude")
+            .expect("query")
+            .expect("exists");
+        assert_eq!(
+            preserved.meta.as_ref().unwrap().is_partner,
+            Some(true),
+            "unrelated meta must survive"
+        );
+
+        assert!(db
+            .unbind_managed_accounts("codebuddy_oauth", &[])
+            .expect("empty unbind")
+            .is_empty());
     }
 }

@@ -37,11 +37,12 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
     // an invariant, not a preset default: editable metadata must not be able to
     // send an Anthropic Messages body to a Responses-only upstream.
     if let Some(meta) = provider.meta.as_ref() {
-        if matches!(
-            meta.provider_type.as_deref(),
-            Some("codex_oauth" | "xai_oauth")
-        ) {
-            return "openai_responses";
+        match meta.provider_type.as_deref() {
+            Some("codex_oauth" | "xai_oauth") => return "openai_responses",
+            // CodeBuddy 上游只有 OpenAI Chat Completions（`/v2/chat/completions`），
+            // 且明确拒绝 Responses/Anthropic 原生协议。
+            Some("codebuddy_oauth") => return "openai_chat",
+            _ => {}
         }
     }
 
@@ -476,6 +477,7 @@ impl ClaudeAdapter {
     /// - GitHubCopilot: meta.provider_type 为 github_copilot 或 base_url 包含 githubcopilot.com
     /// - CodexOAuth: meta.provider_type 为 codex_oauth
     /// - XaiOAuth: meta.provider_type 为 xai_oauth
+    /// - CodebuddyOAuth: meta.provider_type 为 codebuddy_oauth
     /// - OpenRouter: base_url 包含 openrouter.ai
     /// - ClaudeAuth: auth_mode 为 bearer_only
     /// - Claude: 默认 Anthropic 官方
@@ -497,6 +499,10 @@ impl ClaudeAdapter {
 
         if self.is_xai_oauth(provider) {
             return ProviderType::XaiOAuth;
+        }
+
+        if self.is_codebuddy_oauth(provider) {
+            return ProviderType::CodebuddyOAuth;
         }
 
         // 检测 GitHub Copilot
@@ -529,6 +535,10 @@ impl ClaudeAdapter {
 
     fn is_xai_oauth(&self, provider: &Provider) -> bool {
         provider.is_xai_oauth()
+    }
+
+    fn is_codebuddy_oauth(&self, provider: &Provider) -> bool {
+        provider.is_codebuddy_oauth()
     }
 
     /// 检测是否为 GitHub Copilot 供应商
@@ -726,6 +736,12 @@ impl ProviderAdapter for ClaudeAdapter {
             return Ok(super::XAI_API_BASE_URL.to_string());
         }
 
+        // CodeBuddy OAuth: the managed account is only valid on the fixed
+        // Tencent CodeBuddy origin; the editable base_url is a UI snapshot.
+        if self.is_codebuddy_oauth(provider) {
+            return Ok(super::CODEBUDDY_API_BASE_URL.to_string());
+        }
+
         // 1. 从 env 中获取
         if let Some(env) = provider.settings_config.get("env") {
             if let Some(url) = env.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()) {
@@ -789,6 +805,15 @@ impl ProviderAdapter for ClaudeAdapter {
             return Some(AuthInfo::new(
                 "xai_oauth_placeholder".to_string(),
                 AuthStrategy::XaiOAuth,
+            ));
+        }
+
+        if provider_type == ProviderType::CodebuddyOAuth {
+            // Real access token + CLI headers are injected by the forwarder
+            // from CodebuddyOAuthManager right before the request is sent.
+            return Some(AuthInfo::new(
+                "codebuddy_oauth_placeholder".to_string(),
+                AuthStrategy::CodebuddyOAuth,
             ));
         }
 
@@ -866,6 +891,21 @@ impl ProviderAdapter for ClaudeAdapter {
             };
         }
 
+        // CodeBuddy 只接受 `/v2/chat/completions`；转换层给出的
+        // `/v1/chat/completions` 在这里被固定路径覆盖，保留原 query。
+        if base_url == super::CODEBUDDY_API_BASE_URL {
+            let query = endpoint.split_once('?').map(|(_, query)| query);
+            return match query {
+                Some(query) if !query.is_empty() => {
+                    format!(
+                        "{}/v2/chat/completions?{query}",
+                        super::CODEBUDDY_API_BASE_URL
+                    )
+                }
+                _ => format!("{}/v2/chat/completions", super::CODEBUDDY_API_BASE_URL),
+            };
+        }
+
         // NOTE:
         // 过去 OpenRouter 只有 OpenAI Chat Completions 兼容接口，需要把 Claude 的 `/v1/messages`
         // 映射到 `/v1/chat/completions`，并做 Anthropic ↔ OpenAI 的格式转换。
@@ -937,6 +977,11 @@ impl ProviderAdapter for ClaudeAdapter {
             AuthStrategy::XaiOAuth => {
                 vec![(HeaderName::from_static("authorization"), hv(&bearer)?)]
             }
+            AuthStrategy::CodebuddyOAuth => {
+                // 只发 Bearer；`X-User-Id` / `X-Domain` / `X-Product` 等 CLI 头
+                // 需要账号上下文，由 forwarder 在注入 token 的同时补充。
+                vec![(HeaderName::from_static("authorization"), hv(&bearer)?)]
+            }
             AuthStrategy::GitHubCopilot => {
                 super::copilot_auth::build_copilot_request_headers(&auth.api_key)?
             }
@@ -955,6 +1000,10 @@ impl ProviderAdapter for ClaudeAdapter {
         }
 
         if self.is_xai_oauth(provider) {
+            return true;
+        }
+
+        if self.is_codebuddy_oauth(provider) {
             return true;
         }
 
@@ -1567,6 +1616,74 @@ mod tests {
             json!(["reasoning.encrypted_content"])
         );
         assert!(transformed.get("store").is_none());
+    }
+
+    #[test]
+    fn codebuddy_oauth_invariants_force_chat_completions() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://attacker.example/anthropic",
+                    "ANTHROPIC_API_KEY": "user-edited"
+                }
+            }),
+            ProviderMeta {
+                provider_type: Some("codebuddy_oauth".to_string()),
+                api_format: Some("openai_responses".to_string()),
+                is_full_url: Some(true),
+                ..Default::default()
+            },
+        );
+
+        // CodeBuddy is openai_chat, not responses: editable format/base must not win.
+        assert_eq!(get_claude_api_format(&provider), "openai_chat");
+        assert_eq!(
+            adapter.provider_type(&provider),
+            ProviderType::CodebuddyOAuth
+        );
+        assert_eq!(
+            adapter.extract_base_url(&provider).unwrap(),
+            super::super::CODEBUDDY_API_BASE_URL
+        );
+        assert!(adapter.needs_transform(&provider));
+
+        let auth = adapter
+            .extract_auth(&provider)
+            .expect("managed auth placeholder");
+        assert_eq!(auth.strategy, AuthStrategy::CodebuddyOAuth);
+        assert_eq!(auth.api_key, "codebuddy_oauth_placeholder");
+        let headers = adapter.get_auth_headers(&auth).unwrap();
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0.as_str(), "authorization");
+        assert_eq!(
+            headers[0].1.to_str().unwrap(),
+            "Bearer codebuddy_oauth_placeholder"
+        );
+
+        // 转换层给的 `/v1/chat/completions` 必须被固定成 `/v2/chat/completions`。
+        assert_eq!(
+            adapter.build_url(
+                super::super::CODEBUDDY_API_BASE_URL,
+                "/v1/chat/completions?beta=1"
+            ),
+            "https://copilot.tencent.com/v2/chat/completions?beta=1"
+        );
+
+        let transformed = transform_claude_request_for_api_format(
+            json!({
+                "model": "glm-5.3",
+                "max_tokens": 2048,
+                "messages": [{ "role": "user", "content": "hello" }]
+            }),
+            &provider,
+            "openai_chat",
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(transformed["messages"].is_array());
+        assert_eq!(transformed["max_tokens"], json!(2048));
     }
 
     #[test]

@@ -428,11 +428,12 @@
     "tabAdvanced": "進階",
     "tabProxy": "路由",
     "authCenter": {
-      "description": "把 GitHub Copilot、ChatGPT、xAI 訂閱當作供應商用。憑證由路由服務注入，相關供應商要在路由模式下使用（Codex 官方登入綁定除外）。Antigravity 帳號用來切換 agy 的官方登入。",
+      "description": "把 GitHub Copilot、ChatGPT、xAI、CodeBuddy 帳號當作供應商用。憑證由路由服務注入，相關供應商要在路由模式下使用（Codex 官方登入綁定除外）。Antigravity 帳號用來切換 agy 的官方登入。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 帳號",
       "codexOauthDescription": "管理 ChatGPT 帳號",
-      "xaiOauthDescription": "管理 xAI / Grok 帳號"
+      "xaiOauthDescription": "管理 xAI / Grok 帳號",
+      "codebuddyOauthDescription": "管理 CodeBuddy 帳號"
     },
     "advanced": {
       "configDir": {
@@ -1887,6 +1888,26 @@
     "logoutAll": "刪除全部 xAI 帳號",
     "loginRequired": "請先登入 xAI 帳號"
   },
+  "codebuddyOauth": {
+    "authStatus": "CodeBuddy OAuth 驗證",
+    "selectAccount": "選擇帳號",
+    "selectAccountPlaceholder": "選擇 CodeBuddy 帳號",
+    "useDefaultAccount": "使用預設帳號",
+    "login": "使用 CodeBuddy 登入",
+    "addOrReauth": "新增帳號或重新登入",
+    "waitingForAuth": "正在等待 CodeBuddy 授權…",
+    "notAuthenticated": "尚未驗證",
+    "accountCount": "{{count}} 個可用帳號",
+    "reauthRequired": "需要重新登入",
+    "expired": "憑證已失效",
+    "defaultAccount": "預設",
+    "setAsDefault": "設為預設",
+    "removeAccount": "移除帳號",
+    "logoutAll": "刪除全部 CodeBuddy 帳號",
+    "accounts": "CodeBuddy 帳號",
+    "retry": "重試",
+    "loginRequired": "請先登入 CodeBuddy 帳號"
+  },
   "managedAuth": {
     "accountRemoved": "帳號已刪除",
     "selectedAccountNeedsReauth": "已綁定的帳號不存在或需要重新登入",
@@ -2130,6 +2151,7 @@
       "chatgpt": "用 ChatGPT 帳號登入",
       "github": "用 GitHub 帳號登入",
       "xai": "用 xAI 帳號登入",
+      "codebuddy": "用 CodeBuddy 帳號登入",
       "google": "用 Google 帳號登入"
     },
     "versionCount": "{{domain}} · {{n}} 個版本",
@@ -4107,7 +4129,8 @@
       "agyThirdPartyWeekly": "Claude 每週",
       "monthly": "每月",
       "credits": "額度",
-      "copilotPremium": "進階請求"
+      "copilotPremium": "進階請求",
+      "codebuddyCredits": "額度"
     },
     "fiveHour": "5 小時",
     "sevenDay": "每週",
@@ -4128,6 +4151,8 @@
     "monthly": "每月",
     "credits": "額度",
     "copilotPremium": "進階請求",
+    "codebuddyCredits": "CodeBuddy 額度",
+    "codebuddyCreditsText": "剩餘 {{remaining}} / {{total}} credits",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}} 後重設",
     "extraUsage": "超額用量",
@@ -4854,6 +4879,7 @@
       "copilotHelp": "用於 Claude Code、Claude Desktop 的 GitHub Copilot 預設。沒指定帳號的供應商用「預設」帳號。",
       "chatgptHelp": "用於 Claude Code、Claude Desktop 的 ChatGPT 預設，以及 Codex 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
       "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。",
+      "codebuddyHelp": "用於 Claude Code、Claude Desktop、Codex 的 CodeBuddy（騰訊 copilot.tencent.com）供應商。沒指定帳號的供應商使用「預設」帳號。",
       "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。"
     },
     "addAccount": "新增帳號",
@@ -4873,8 +4899,10 @@
     "enterpriseDomainRequired": "先填企業網域，例如 company.ghe.com",
     "codexReauthNote": "缺少登入憑證（id_token），無法用於 Codex 託管綁定",
     "xaiReauthNote": "登入憑證已失效，用到它的供應商無法使用",
+    "codebuddyReauthNote": "登入憑證已失效，請重新登入 CodeBuddy 帳號",
     "statusLoading": "正在載入帳號…",
     "xaiStatusLoadFailed": "無法載入 xAI 帳號狀態，請重試。",
+    "codebuddyStatusLoadFailed": "無法載入 CodeBuddy 帳號狀態，請重試。",
     "retry": "重試",
     "loginFailed": "登入沒有完成",
     "pending": {

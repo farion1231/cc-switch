@@ -394,11 +394,12 @@
     "tabAdvanced": "Gelişmiş",
     "tabProxy": "Yönlendirme",
     "authCenter": {
-      "description": "Sağlayıcı olarak GitHub Copilot, ChatGPT ve xAI aboneliklerini kullanın. Yönlendirme hizmeti kimlik bilgilerini enjekte eder, böylece bu sağlayıcılar Yönlendirme modunda çalışır (Codex'nin resmi oturum açma bağlaması hariç).",
+      "description": "Sağlayıcı olarak GitHub Copilot, ChatGPT, xAI ve CodeBuddy hesaplarını kullanın. Yönlendirme hizmeti kimlik bilgilerini enjekte eder, böylece bu sağlayıcılar Yönlendirme modunda çalışır (Codex'nin resmi oturum açma bağlaması hariç).",
       "beta": "beta",
       "copilotDescription": "GitHub Copilot hesaplarını yönetin",
       "codexOauthDescription": "ChatGPT hesaplarını yönetin",
-      "xaiOauthDescription": "xAI / Grok hesaplarını yönetin"
+      "xaiOauthDescription": "xAI / Grok hesaplarını yönetin",
+      "codebuddyOauthDescription": "CodeBuddy hesaplarını yönetin"
     },
     "advanced": {
       "configDir": {
@@ -1839,6 +1840,26 @@
     "logoutAll": "Tüm xAI hesaplarını silin",
     "loginRequired": "Önce bir xAI hesabında oturum açın"
   },
+  "codebuddyOauth": {
+    "authStatus": "CodeBuddy OAuth kimlik doğrulaması",
+    "selectAccount": "Hesap seçin",
+    "selectAccountPlaceholder": "Bir CodeBuddy hesabı seçin",
+    "useDefaultAccount": "Varsayılan hesabı kullan",
+    "login": "CodeBuddy ile oturum açın",
+    "addOrReauth": "Hesap ekleyin veya tekrar oturum açın",
+    "waitingForAuth": "CodeBuddy yetkilendirmesi bekleniyor…",
+    "notAuthenticated": "Kimliği doğrulanmadı",
+    "accountCount": "Kullanılabilir hesaplar: {{count}}",
+    "reauthRequired": "Oturum açmanız gerekiyor",
+    "expired": "Kimlik bilgilerinin süresi doldu",
+    "defaultAccount": "Varsayılan",
+    "setAsDefault": "Varsayılan olarak ayarla",
+    "removeAccount": "Hesabı kaldır",
+    "logoutAll": "Tüm CodeBuddy hesaplarını silin",
+    "accounts": "CodeBuddy hesapları",
+    "retry": "Yeniden dene",
+    "loginRequired": "Önce bir CodeBuddy hesabında oturum açın"
+  },
   "managedAuth": {
     "accountRemoved": "Hesap silindi",
     "selectedAccountNeedsReauth": "Bağlı hesap eksik veya tekrar oturum açmanız gerekiyor",
@@ -2075,6 +2096,7 @@
       "chatgpt": "ChatGPT hesabıyla oturum açın",
       "github": "GitHub hesabıyla oturum açın",
       "xai": "Bir xAI hesabıyla oturum açın",
+      "codebuddy": "CodeBuddy hesabıyla oturum açın",
       "google": "Google hesabıyla oturum açın"
     },
     "versionCount": "{{domain}} · {{n}} versiyonları",
@@ -4013,7 +4035,8 @@
       "geminiFlashLite": "Lite",
       "monthly": "Ay",
       "credits": "Kredi",
-      "copilotPremium": "Premium"
+      "copilotPremium": "Premium",
+      "codebuddyCredits": "Kredi"
     },
     "fiveHour": "5 saat",
     "sevenDay": "Haftalık",
@@ -4028,6 +4051,8 @@
     "monthly": "Aylık",
     "credits": "Kredi",
     "copilotPremium": "Premium",
+    "codebuddyCredits": "CodeBuddy kotası",
+    "codebuddyCreditsText": "{{remaining}} / {{total}} credits kaldı",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}} sonra sıfırlanır",
     "extraUsage": "Ekstra Kullanım",
@@ -4727,7 +4752,8 @@
       "helpTitle": "{{service}} hesapları nasıl kullanılır?",
       "copilotHelp": "Claude Code ve Claude Desktop'deki GitHub Copilot ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "chatgptHelp": "Claude Code ve Claude Desktop'deki ChatGPT ön ayarları ve Codex'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
-      "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır."
+      "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
+      "codebuddyHelp": "Claude Code, Claude Desktop ve Codex'teki CodeBuddy (Tencent copilot.tencent.com) sağlayıcısı için kullanılır. Belirli bir hesap seçmeyen sağlayıcılar varsayılan hesabı kullanır."
     },
     "addAccount": "Hesap ekle",
     "groupMenu": "{{service}} için daha fazla eylem",
@@ -4746,8 +4772,10 @@
     "enterpriseDomainRequired": "Önce kurumsal etki alanını girin, ör. şirket.ghe.com",
     "codexReauthNote": "Oturum açma kimlik bilgisi (id_token) eksik olduğundan Codex yönetilen bağlama için kullanılamaz",
     "xaiReauthNote": "Oturum açma kimlik bilgilerinin süresi doldu; bunu kullanan sağlayıcılar çalışmaz",
+    "codebuddyReauthNote": "Oturum açma kimlik bilgisi geçersiz; CodeBuddy hesabında tekrar oturum açın",
     "statusLoading": "Hesaplar yükleniyor…",
     "xaiStatusLoadFailed": "xAI hesapları yüklenemedi. Yeniden deneyin.",
+    "codebuddyStatusLoadFailed": "CodeBuddy hesapları yüklenemedi. Yeniden deneyin.",
     "retry": "Yeniden dene",
     "loginFailed": "Oturum açma işlemi tamamlanmadı",
     "pending": {

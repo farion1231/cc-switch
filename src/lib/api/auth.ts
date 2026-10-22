@@ -4,6 +4,7 @@ export type ManagedAuthProvider =
   | "github_copilot"
   | "codex_oauth"
   | "xai_oauth"
+  | "codebuddy_oauth"
   | "agy_oauth";
 
 export const CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR =
@@ -21,6 +22,12 @@ export interface ManagedAuthAccount {
   reauth_required?: boolean;
   /** xAI-only: the refresh credential is invalid and the account is unusable. */
   requires_reauth: boolean;
+  /** CodeBuddy-only: account email when the backend could resolve it. */
+  email?: string | null;
+  /** CodeBuddy-only: enterprise display name (enterprise accounts only). */
+  enterprise_name?: string | null;
+  /** CodeBuddy-only: account type reported by CodeBuddy (`personal` / `enterprise`). */
+  account_type?: string | null;
 }
 
 export interface ManagedAuthStatus {

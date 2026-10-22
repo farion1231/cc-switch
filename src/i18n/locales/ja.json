@@ -428,11 +428,12 @@
     "tabAdvanced": "詳細",
     "tabProxy": "ルーティング",
     "authCenter": {
-      "description": "GitHub Copilot、ChatGPT、xAI のサブスクリプションをプロバイダーとして使えます。認証情報はルーティングサービスが注入するため、これらのプロバイダーはルーティングモードで使います（Codex の公式ログインのバインドを除く）。Antigravity アカウントは agy の公式ログインの切り替えに使います。",
+      "description": "GitHub Copilot、ChatGPT、xAI、CodeBuddy のアカウントをプロバイダーとして使えます。認証情報はルーティングサービスが注入するため、これらのプロバイダーはルーティングモードで使います（Codex の公式ログインのバインドを除く）。Antigravity アカウントは agy の公式ログインの切り替えに使います。",
       "beta": "Beta",
       "copilotDescription": "GitHub Copilot アカウントを管理します",
       "codexOauthDescription": "ChatGPT アカウントを管理します",
-      "xaiOauthDescription": "xAI / Grok アカウントを管理します"
+      "xaiOauthDescription": "xAI / Grok アカウントを管理します",
+      "codebuddyOauthDescription": "CodeBuddy アカウントを管理します"
     },
     "advanced": {
       "configDir": {
@@ -1886,6 +1887,26 @@
     "logoutAll": "すべての xAI アカウントを削除",
     "loginRequired": "先に xAI アカウントへログインしてください"
   },
+  "codebuddyOauth": {
+    "authStatus": "CodeBuddy OAuth 認証",
+    "selectAccount": "アカウントを選択",
+    "selectAccountPlaceholder": "CodeBuddy アカウントを選択",
+    "useDefaultAccount": "デフォルトアカウントを使用",
+    "login": "CodeBuddy でログイン",
+    "addOrReauth": "アカウントを追加または再ログイン",
+    "waitingForAuth": "CodeBuddy の認証を待っています…",
+    "notAuthenticated": "未認証",
+    "accountCount": "利用可能なアカウント: {{count}} 件",
+    "reauthRequired": "再ログインが必要です",
+    "expired": "認証情報が失効しました",
+    "defaultAccount": "デフォルト",
+    "setAsDefault": "デフォルトに設定",
+    "removeAccount": "アカウントを削除",
+    "logoutAll": "すべての CodeBuddy アカウントを削除",
+    "accounts": "CodeBuddy アカウント",
+    "retry": "再試行",
+    "loginRequired": "先に CodeBuddy アカウントへログインしてください"
+  },
   "managedAuth": {
     "accountRemoved": "アカウントを削除しました",
     "selectedAccountNeedsReauth": "リンクされたアカウントが存在しないか、再ログインが必要です",
@@ -2129,6 +2150,7 @@
       "chatgpt": "ChatGPT アカウントでログイン",
       "github": "GitHub アカウントでログイン",
       "xai": "xAI アカウントでログイン",
+      "codebuddy": "CodeBuddy アカウントでログイン",
       "google": "Google アカウントでログイン"
     },
     "versionCount": "{{domain}} · {{n}} バージョン",
@@ -4106,7 +4128,8 @@
       "agyThirdPartyWeekly": "Claude 週",
       "monthly": "月",
       "credits": "クレジット",
-      "copilotPremium": "プレミアム"
+      "copilotPremium": "プレミアム",
+      "codebuddyCredits": "クレジット"
     },
     "fiveHour": "5時間",
     "sevenDay": "週間",
@@ -4127,6 +4150,8 @@
     "monthly": "月間",
     "credits": "クレジット",
     "copilotPremium": "プレミアム",
+    "codebuddyCredits": "CodeBuddy クォータ",
+    "codebuddyCreditsText": "残り {{remaining}} / {{total}} credits",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}}後にリセット",
     "extraUsage": "超過使用量",
@@ -4853,6 +4878,7 @@
       "copilotHelp": "Claude Code、Claude Desktop の GitHub Copilot プリセットで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
       "chatgptHelp": "Claude Code、Claude Desktop の ChatGPT プリセットと、Codex の公式ログインのバインドで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
       "xaiHelp": "Claude Code、Claude Desktop、Codex の xAI プリセットで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
+      "codebuddyHelp": "Claude Code、Claude Desktop、Codex の CodeBuddy（Tencent copilot.tencent.com）プロバイダーで使います。アカウントを指定しないプロバイダーは「デフォルト」アカウントを使います。",
       "agyHelp": "Antigravity CLI（agy）の公式ログインです。agy は同時に 1 つのアカウントにしかログインできません。「切り替え」で agy のログインを選んだアカウントに置き換え、以降に起動する agy はそのアカウントを使います。agy に元々ログインしていたアカウントは自動でここに追加されるため、切り替えても失われません。"
     },
     "addAccount": "アカウントを追加",
@@ -4872,8 +4898,10 @@
     "enterpriseDomainRequired": "先に企業ドメインを入力してください（例：company.ghe.com）",
     "codexReauthNote": "ログイン情報（id_token）が足りないため、Codex のマネージドバインドに使えません",
     "xaiReauthNote": "ログイン情報が無効になり、このアカウントを使うプロバイダーは使えません",
+    "codebuddyReauthNote": "ログイン情報が無効になりました。CodeBuddy アカウントに再ログインしてください",
     "statusLoading": "アカウントを読み込み中…",
     "xaiStatusLoadFailed": "xAI アカウントの状態を読み込めませんでした。再試行してください。",
+    "codebuddyStatusLoadFailed": "CodeBuddy アカウントの状態を読み込めませんでした。再試行してください。",
     "retry": "再試行",
     "loginFailed": "ログインが完了しませんでした",
     "pending": {

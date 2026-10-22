@@ -397,7 +397,7 @@ pub(crate) fn suggested_claude_desktop_routes(
             .meta
             .as_ref()
             .and_then(|meta| meta.provider_type.as_deref()),
-        Some("github_copilot") | Some("codex_oauth") | Some("xai_oauth")
+        Some("github_copilot") | Some("codex_oauth") | Some("xai_oauth") | Some("codebuddy_oauth")
     );
 
     fn add_route(
@@ -1139,6 +1139,20 @@ mod import_claude_desktop_tests {
         let r = routes.get("claude-sonnet-5").expect("sonnet route present");
         assert_eq!(r.model, "gpt-5-codex");
         assert_eq!(r.label_override.as_deref(), Some("gpt-5-codex"));
+        assert_eq!(r.supports_1m, Some(false));
+    }
+
+    #[test]
+    fn route_codebuddy_oauth_without_suffix_keeps_false() {
+        let p = make_provider(
+            json!({
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.3",
+            }),
+            Some("codebuddy_oauth"),
+        );
+        let routes = suggested_claude_desktop_routes(&p).expect("routes built");
+        let r = routes.get("claude-sonnet-5").expect("sonnet route present");
+        assert_eq!(r.model, "glm-5.3");
         assert_eq!(r.supports_1m, Some(false));
     }
 

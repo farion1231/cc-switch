@@ -127,6 +127,7 @@ import {
   useCodexOauth,
   useXaiOauth,
 } from "./hooks";
+import { useCodebuddyOauth } from "./hooks/useCodebuddyOauth";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   CLAUDE_DEFAULT_CONFIG,
@@ -156,11 +157,17 @@ type PresetEntry = {
 
 function getPresetProviderType(
   preset: PresetEntry["preset"] | null | undefined,
-): "github_copilot" | "codex_oauth" | "xai_oauth" | undefined {
+):
+  | "github_copilot"
+  | "codex_oauth"
+  | "xai_oauth"
+  | "codebuddy_oauth"
+  | undefined {
   if (!preset || !("providerType" in preset)) return undefined;
   return preset.providerType === "github_copilot" ||
     preset.providerType === "codex_oauth" ||
-    preset.providerType === "xai_oauth"
+    preset.providerType === "xai_oauth" ||
+    preset.providerType === "codebuddy_oauth"
     ? preset.providerType
     : undefined;
 }
@@ -629,6 +636,12 @@ function ProviderFormFull({
     accounts: xaiOauthAccounts,
   } = useXaiOauth();
 
+  // CodeBuddy OAuth 认证状态（腾讯 copilot.tencent.com）
+  const {
+    isAuthenticated: isCodebuddyOauthAuthenticated,
+    accounts: codebuddyOauthAccounts,
+  } = useCodebuddyOauth();
+
   // 选中的 GitHub 账号 ID（多账号支持）
   const [selectedGitHubAccountId, setSelectedGitHubAccountId] = useState<
     string | null
@@ -643,6 +656,9 @@ function ProviderFormFull({
   const [selectedXaiAccountId, setSelectedXaiAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "xai_oauth"));
+  const [selectedCodebuddyAccountId, setSelectedCodebuddyAccountId] = useState<
+    string | null
+  >(() => resolveManagedAccountId(initialData?.meta, "codebuddy_oauth"));
   // Antigravity 官方卡绑定的授权中心账号；null = 跟着 agy 当前的登录
   const [selectedAgyAccountId, setSelectedAgyAccountId] = useState<
     string | null
@@ -956,6 +972,11 @@ function ProviderFormFull({
   const isXaiOauthProvider =
     (appId === "claude" || appId === "codex") &&
     (presetProviderType === "xai_oauth" || initialProviderType === "xai_oauth");
+  // 这个表单里 Claude Code 和 Codex 提供 CodeBuddy；Claude Desktop 用 ClaudeDesktopProviderForm。
+  const isCodebuddyOauthProvider =
+    (appId === "claude" || appId === "codex") &&
+    (presetProviderType === "codebuddy_oauth" ||
+      initialProviderType === "codebuddy_oauth");
   const wasCodexOfficialManagedOauthBound =
     appId === "codex" &&
     Boolean(resolveManagedAccountId(initialData?.meta, "codex_oauth"));
@@ -1485,6 +1506,14 @@ function ProviderFormFull({
       );
       return;
     }
+    if (isCodebuddyOauthProvider && !isCodebuddyOauthAuthenticated) {
+      toast.error(
+        t("codebuddyOauth.loginRequired", {
+          defaultValue: "请先登录 CodeBuddy 账号",
+        }),
+      );
+      return;
+    }
 
     const selectedAccountExists = (
       accountId: string | null,
@@ -1509,6 +1538,11 @@ function ProviderFormFull({
     const selectedXaiAccountIsUsable = (accountId: string | null) =>
       accountId === null ||
       xaiOauthAccounts.some(
+        (account) => account.id === accountId && !account.requires_reauth,
+      );
+    const selectedCodebuddyAccountIsUsable = (accountId: string | null) =>
+      accountId === null ||
+      codebuddyOauthAccounts.some(
         (account) => account.id === accountId && !account.requires_reauth,
       );
     if (
@@ -1540,6 +1574,17 @@ function ProviderFormFull({
       toast.error(
         t("managedAuth.selectedAccountNeedsReauth", {
           defaultValue: "已绑定 xAI 账号不存在或需要重新登录",
+        }),
+      );
+      return;
+    }
+    if (
+      isCodebuddyOauthProvider &&
+      !selectedCodebuddyAccountIsUsable(selectedCodebuddyAccountId)
+    ) {
+      toast.error(
+        t("managedAuth.selectedAccountNeedsReauth", {
+          defaultValue: "已绑定账号不存在或需要重新登录",
         }),
       );
       return;
@@ -1583,6 +1628,7 @@ function ProviderFormFull({
         if (
           !isClaudeCodexOauthProvider &&
           !isXaiOauthProvider &&
+          !isCodebuddyOauthProvider &&
           !baseUrl.trim()
         ) {
           issues.push(
@@ -1595,6 +1641,7 @@ function ProviderFormFull({
           !isCopilotProvider &&
           !isClaudeCodexOauthProvider &&
           !isXaiOauthProvider &&
+          !isCodebuddyOauthProvider &&
           !apiKey.trim()
         ) {
           issues.push(
@@ -1604,16 +1651,26 @@ function ProviderFormFull({
           );
         }
       } else if (appId === "codex") {
-        // 托管 OAuth 预设（Copilot/xAI）：端点由 adapter 硬定向、token 由代理注入，
+        // 托管 OAuth 预设（Copilot/xAI/CodeBuddy）：端点由 adapter 硬定向、token 由代理注入，
         // 两项都不需要用户填写
-        if (!isCopilotProvider && !isXaiOauthProvider && !codexBaseUrl.trim()) {
+        if (
+          !isCopilotProvider &&
+          !isXaiOauthProvider &&
+          !isCodebuddyOauthProvider &&
+          !codexBaseUrl.trim()
+        ) {
           issues.push(
             t("providerForm.endpointRequired", {
               defaultValue: "非官方供应商请填写 API 端点",
             }),
           );
         }
-        if (!isCopilotProvider && !isXaiOauthProvider && !codexApiKey.trim()) {
+        if (
+          !isCopilotProvider &&
+          !isXaiOauthProvider &&
+          !isCodebuddyOauthProvider &&
+          !codexApiKey.trim()
+        ) {
           issues.push(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -1908,7 +1965,9 @@ function ProviderFormFull({
         ? "codex_oauth"
         : isXaiOauthProvider
           ? "xai_oauth"
-          : undefined;
+          : isCodebuddyOauthProvider
+            ? "codebuddy_oauth"
+            : undefined;
 
     // 动过列表才存；清空了存空列表（什么都不发布），和没配（跟着映射）区分开。
     const stackModels =
@@ -1953,15 +2012,21 @@ function ProviderFormFull({
                   authProvider: "xai_oauth",
                   accountId: selectedXaiAccountId ?? undefined,
                 }
-              : appId === "agy" &&
-                  category === "official" &&
-                  selectedAgyAccountId
+              : isCodebuddyOauthProvider
                 ? {
                     source: "managed_account",
-                    authProvider: "agy_oauth",
-                    accountId: selectedAgyAccountId,
+                    authProvider: "codebuddy_oauth",
+                    accountId: selectedCodebuddyAccountId ?? undefined,
                   }
-                : undefined,
+                : appId === "agy" &&
+                    category === "official" &&
+                    selectedAgyAccountId
+                  ? {
+                      source: "managed_account",
+                      authProvider: "agy_oauth",
+                      accountId: selectedAgyAccountId,
+                    }
+                  : undefined,
       // GitHub Copilot 多账号：保存关联的账号 ID
       githubAccountId:
         isCopilotProvider && selectedGitHubAccountId
@@ -1990,11 +2055,15 @@ function ProviderFormFull({
         appId === "claude" && category !== "official"
           ? isXaiOauthProvider
             ? "openai_responses"
-            : localApiFormat
+            : isCodebuddyOauthProvider
+              ? "openai_chat"
+              : localApiFormat
           : appId === "codex" && category !== "official" && !isCopilotProvider
             ? isXaiOauthProvider
               ? "openai_responses"
-              : localCodexApiFormat
+              : isCodebuddyOauthProvider
+                ? "openai_chat"
+                : localCodexApiFormat
             : undefined,
       codexCopilotApiFormat:
         appId === "codex" &&
@@ -2035,6 +2104,7 @@ function ProviderFormFull({
         category !== "official" &&
         !isCopilotProvider &&
         !isXaiOauthProvider &&
+        !isCodebuddyOauthProvider &&
         localIsFullUrl
           ? true
           : undefined,
@@ -2633,7 +2703,8 @@ function ProviderFormFull({
                 templatePreset?.requiresOAuth === true ||
                 isCopilotProvider ||
                 isClaudeCodexOauthProvider ||
-                isXaiOauthProvider
+                isXaiOauthProvider ||
+                isCodebuddyOauthProvider
               }
               isCopilotAuthenticated={isCopilotAuthenticated}
               selectedGitHubAccountId={selectedGitHubAccountId}
@@ -2647,6 +2718,10 @@ function ProviderFormFull({
               isXaiOauthAuthenticated={isXaiOauthAuthenticated}
               selectedXaiAccountId={selectedXaiAccountId}
               onXaiAccountSelect={setSelectedXaiAccountId}
+              isCodebuddyOauthPreset={isCodebuddyOauthProvider}
+              isCodebuddyOauthAuthenticated={isCodebuddyOauthAuthenticated}
+              selectedCodebuddyAccountId={selectedCodebuddyAccountId}
+              onCodebuddyAccountSelect={setSelectedCodebuddyAccountId}
               templateValueEntries={templateValueEntries}
               templateValues={templateValues}
               templatePresetName={templatePreset?.name || ""}
@@ -2708,6 +2783,10 @@ function ProviderFormFull({
               isXaiOauthAuthenticated={isXaiOauthAuthenticated}
               selectedXaiAccountId={selectedXaiAccountId}
               onXaiAccountSelect={setSelectedXaiAccountId}
+              isCodebuddyOauthPreset={isCodebuddyOauthProvider}
+              isCodebuddyOauthAuthenticated={isCodebuddyOauthAuthenticated}
+              selectedCodebuddyAccountId={selectedCodebuddyAccountId}
+              onCodebuddyAccountSelect={setSelectedCodebuddyAccountId}
               codexApiKey={codexApiKey}
               onApiKeyChange={handleCodexApiKeyChange}
               category={category}

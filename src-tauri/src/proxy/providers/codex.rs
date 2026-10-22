@@ -26,6 +26,11 @@ pub struct CodexAdapter;
 /// OpenAI Chat Completions, even if the local Codex client is talking to CC
 /// Switch through the Responses API.
 pub fn codex_provider_uses_chat_completions(provider: &Provider) -> bool {
+    // CodeBuddy's upstream only speaks Chat Completions; editable format fields
+    // must not route it anywhere else.
+    if provider.is_codebuddy_oauth() {
+        return true;
+    }
     if let Some(api_format) = provider
         .meta
         .as_ref()
@@ -170,6 +175,9 @@ pub fn inject_codex_chat_prompt_cache_key(
 /// Determined solely from explicit config (apiFormat / wire_api); no base_url
 /// guessing — Anthropic gateway addresses vary widely and guessing easily misfires.
 pub fn codex_provider_uses_anthropic(provider: &Provider) -> bool {
+    if provider.is_codebuddy_oauth() {
+        return false;
+    }
     if let Some(api_format) = provider
         .meta
         .as_ref()
@@ -407,6 +415,9 @@ pub fn resolve_codex_catalog_tool_profile(
     // api_format, mirroring the Claude-side managed-provider invariant.
     if provider.is_xai_oauth() {
         return CodexCatalogToolProfile::NativeResponses;
+    }
+    if provider.is_codebuddy_oauth() {
+        return CodexCatalogToolProfile::ProxyChat;
     }
     if provider.is_github_copilot() {
         return CodexCatalogToolProfile::Copilot;
@@ -1037,6 +1048,12 @@ impl ProviderAdapter for CodexAdapter {
             return Ok(super::XAI_API_BASE_URL.to_string());
         }
 
+        // CodeBuddy OAuth: the managed account is only valid on the fixed
+        // Tencent CodeBuddy origin; the editable base_url is a UI snapshot.
+        if provider.is_codebuddy_oauth() {
+            return Ok(super::CODEBUDDY_API_BASE_URL.to_string());
+        }
+
         // 1. 尝试直接获取 base_url 字段
         if let Some(url) = provider
             .settings_config
@@ -1103,6 +1120,15 @@ impl ProviderAdapter for CodexAdapter {
             ));
         }
 
+        // CodeBuddy OAuth: the token and the CLI account headers are resolved
+        // per request by the forwarder via CodebuddyOAuthManager.
+        if provider.is_codebuddy_oauth() {
+            return Some(AuthInfo::new(
+                "codebuddy_oauth_placeholder".to_string(),
+                AuthStrategy::CodebuddyOAuth,
+            ));
+        }
+
         // Anthropic upstream: the auth field is chosen by the user in the UI (meta.apiKeyField).
         //   ANTHROPIC_API_KEY    → x-api-key (AuthStrategy::Anthropic)
         //   ANTHROPIC_AUTH_TOKEN → Authorization: Bearer (default, AuthStrategy::Bearer)
@@ -1128,6 +1154,20 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn build_url(&self, base_url: &str, endpoint: &str) -> String {
+        // CodeBuddy 只接受 `/v2/chat/completions`；Responses→Chat 转换给出的
+        // `/chat/completions` 在这里换成固定路径，保留原 query。
+        if base_url == super::CODEBUDDY_API_BASE_URL {
+            let (path, query) = endpoint.split_once('?').unwrap_or((endpoint, ""));
+            if matches!(path, "/chat/completions" | "/v1/chat/completions") {
+                let url = format!("{}/v2/chat/completions", super::CODEBUDDY_API_BASE_URL);
+                return if query.is_empty() {
+                    url
+                } else {
+                    format!("{url}?{query}")
+                };
+            }
+        }
+
         let base_trimmed = base_url.trim_end_matches('/');
         let endpoint_trimmed = endpoint.trim_start_matches('/');
 
@@ -2455,6 +2495,67 @@ wire_api = "responses"
             resolve_codex_catalog_tool_profile(&provider),
             crate::codex_config::CodexCatalogToolProfile::NativeResponses
         ));
+    }
+
+    #[test]
+    fn codebuddy_oauth_invariants_force_chat_completions() {
+        let adapter = CodexAdapter::new();
+        let mut provider = create_provider(json!({
+            "auth": { "OPENAI_API_KEY": "user-edited" },
+            "config": r#"
+model = "glm-5.3"
+
+[model_providers.custom]
+name = "codebuddy"
+base_url = "https://attacker.example/v1"
+wire_api = "responses"
+"#
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("codebuddy_oauth".to_string()),
+            // 可编辑的格式字段不得把 CodeBuddy 改到 Responses / Anthropic
+            api_format: Some("anthropic".to_string()),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            adapter.extract_base_url(&provider).unwrap(),
+            super::super::CODEBUDDY_API_BASE_URL
+        );
+        let auth = adapter
+            .extract_auth(&provider)
+            .expect("managed auth placeholder");
+        assert_eq!(auth.api_key, "codebuddy_oauth_placeholder");
+        assert_eq!(auth.strategy, AuthStrategy::CodebuddyOAuth);
+        assert!(codex_provider_uses_chat_completions(&provider));
+        assert!(!codex_provider_uses_anthropic(&provider));
+        assert!(should_convert_codex_responses_to_chat(
+            &provider,
+            "/v1/responses"
+        ));
+        assert!(matches!(
+            resolve_codex_catalog_tool_profile(&provider),
+            crate::codex_config::CodexCatalogToolProfile::ProxyChat
+        ));
+    }
+
+    #[test]
+    fn codebuddy_chat_endpoint_is_pinned_to_v2() {
+        let adapter = CodexAdapter::new();
+        let base = super::super::CODEBUDDY_API_BASE_URL;
+        assert_eq!(
+            adapter.build_url(base, "/chat/completions"),
+            "https://copilot.tencent.com/v2/chat/completions"
+        );
+        assert_eq!(
+            adapter.build_url(base, "/chat/completions?x=1"),
+            "https://copilot.tencent.com/v2/chat/completions?x=1"
+        );
+        // 其它端点沿用通用拼接规则
+        assert_eq!(
+            adapter.build_url(base, "/models"),
+            "https://copilot.tencent.com/v1/models"
+        );
     }
 
     #[test]

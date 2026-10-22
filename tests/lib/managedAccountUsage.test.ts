@@ -84,6 +84,36 @@ describe("findManagedAccountUsers", () => {
     ]);
   });
 
+  it("recognizes CodeBuddy cards by binding or legacy base URL", () => {
+    const claude = byId(
+      provider("cb-bound", {
+        meta: {
+          providerType: "codebuddy_oauth",
+          authBinding: {
+            source: "managed_account",
+            authProvider: "codebuddy_oauth",
+            accountId: "u1",
+          },
+        },
+      }),
+      // 旧卡没写 providerType：按 copilot.tencent.com 认
+      provider(
+        "cb-url",
+        {},
+        { env: { ANTHROPIC_BASE_URL: "https://copilot.tencent.com" } },
+      ),
+      provider("plain", {}, { env: { ANTHROPIC_BASE_URL: "https://x.test" } }),
+    );
+
+    const users = findManagedAccountUsers("codebuddy_oauth", ["u1"], "u1", {
+      claude,
+    });
+    expect(users.map((u) => [u.providerId, u.viaDefault])).toEqual([
+      ["cb-bound", false],
+      ["cb-url", true],
+    ]);
+  });
+
   it("does not count an unbound Codex official card (it uses Codex's own login)", () => {
     const codex = byId(
       provider(

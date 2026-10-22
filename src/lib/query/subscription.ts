@@ -3,7 +3,7 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { subscriptionApi } from "@/lib/api/subscription";
 import type { AppId } from "@/lib/api/types";
 import type { ProviderMeta } from "@/types";
-import type { SubscriptionQuota } from "@/types/subscription";
+import type { CodebuddyQuota, SubscriptionQuota } from "@/types/subscription";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { PROVIDER_TYPES } from "@/config/constants";
 import { resolveDisplayUsage, type LastGoodSnapshot } from "./queries";
@@ -14,6 +14,12 @@ const REFETCH_INTERVAL = 5 * 60 * 1000; // 5 minutes
 export const subscriptionKeys = {
   all: ["subscription"] as const,
   quota: (appId: AppId) => [...subscriptionKeys.all, "quota", appId] as const,
+};
+
+export const codebuddyOauthQuotaKeys = {
+  all: ["codebuddy_oauth", "quota"] as const,
+  byAccount: (accountId: string | null) =>
+    ["codebuddy_oauth", "quota", accountId ?? "default"] as const,
 };
 
 /**
@@ -202,6 +208,42 @@ export function useXaiOauthQuotaByAccountId(
   });
 
   return useQuotaKeepLastGood(query, accountId ?? "default");
+}
+
+/**
+ * CodeBuddy OAuth 额度（供应商卡片用）：按 meta.authBinding 解析绑定账号，
+ * 未绑定账号时跟随默认账号（accountId=null）。
+ */
+export function useCodebuddyOauthQuota(
+  meta: ProviderMeta | undefined,
+  options: UseCodexOauthQuotaOptions = {},
+) {
+  const accountId = resolveManagedAccountId(
+    meta,
+    PROVIDER_TYPES.CODEBUDDY_OAUTH,
+  );
+  return useCodebuddyOauthQuotaByAccountId(accountId, options);
+}
+
+/**
+ * CodeBuddy OAuth 额度（按账号 ID）：授权中心逐个账号显示额度时用。
+ * 返回结构与 SubscriptionQuota 不同，因此不走 keep-last-good，直接返回查询结果。
+ */
+export function useCodebuddyOauthQuotaByAccountId(
+  accountId: string | null,
+  options: UseCodexOauthQuotaOptions = {},
+): UseQueryResult<CodebuddyQuota> {
+  const { enabled = true, autoQuery = false } = options;
+  return useQuery({
+    queryKey: codebuddyOauthQuotaKeys.byAccount(accountId),
+    queryFn: () => subscriptionApi.getCodebuddyOauthQuota(accountId),
+    enabled,
+    refetchInterval: autoQuery ? REFETCH_INTERVAL : false,
+    refetchIntervalInBackground: autoQuery,
+    refetchOnWindowFocus: autoQuery,
+    staleTime: REFETCH_INTERVAL,
+    retry: 1,
+  });
 }
 
 /**

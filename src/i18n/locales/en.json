@@ -428,11 +428,12 @@
     "tabAdvanced": "Advanced",
     "tabProxy": "Routing",
     "authCenter": {
-      "description": "Use GitHub Copilot, ChatGPT and xAI subscriptions as providers. The routing service injects their credentials, so these providers run in Routing mode (except Codex's official-login binding). Antigravity accounts switch agy's official sign-in.",
+      "description": "Use GitHub Copilot, ChatGPT, xAI and CodeBuddy accounts as providers. The routing service injects their credentials, so these providers run in Routing mode (except Codex's official-login binding). Antigravity accounts switch agy's official sign-in.",
       "beta": "Beta",
       "copilotDescription": "Manage GitHub Copilot accounts",
       "codexOauthDescription": "Manage ChatGPT accounts",
-      "xaiOauthDescription": "Manage xAI / Grok accounts"
+      "xaiOauthDescription": "Manage xAI / Grok accounts",
+      "codebuddyOauthDescription": "Manage CodeBuddy accounts"
     },
     "advanced": {
       "configDir": {
@@ -1886,6 +1887,26 @@
     "logoutAll": "Delete all xAI accounts",
     "loginRequired": "Sign in to an xAI account first"
   },
+  "codebuddyOauth": {
+    "authStatus": "CodeBuddy OAuth authentication",
+    "selectAccount": "Select account",
+    "selectAccountPlaceholder": "Select a CodeBuddy account",
+    "useDefaultAccount": "Use default account",
+    "login": "Sign in with CodeBuddy",
+    "addOrReauth": "Add account or sign in again",
+    "waitingForAuth": "Waiting for CodeBuddy authorization…",
+    "notAuthenticated": "Not authenticated",
+    "accountCount": "Usable accounts: {{count}}",
+    "reauthRequired": "Sign-in required",
+    "expired": "Credentials expired",
+    "defaultAccount": "Default",
+    "setAsDefault": "Set as default",
+    "removeAccount": "Remove account",
+    "logoutAll": "Delete all CodeBuddy accounts",
+    "accounts": "CodeBuddy accounts",
+    "retry": "Retry",
+    "loginRequired": "Sign in to a CodeBuddy account first"
+  },
   "managedAuth": {
     "accountRemoved": "Account deleted",
     "selectedAccountNeedsReauth": "The linked account is missing or needs you to sign in again",
@@ -2129,6 +2150,7 @@
       "chatgpt": "Sign in with a ChatGPT account",
       "github": "Sign in with a GitHub account",
       "xai": "Sign in with an xAI account",
+      "codebuddy": "Sign in with a CodeBuddy account",
       "google": "Sign in with a Google account"
     },
     "versionCount": "{{domain}} · {{n}} versions",
@@ -4106,7 +4128,8 @@
       "agyThirdPartyWeekly": "Claude Wk",
       "monthly": "Mo",
       "credits": "Credits",
-      "copilotPremium": "Premium"
+      "copilotPremium": "Premium",
+      "codebuddyCredits": "Credits"
     },
     "fiveHour": "5-hour",
     "sevenDay": "Weekly",
@@ -4127,6 +4150,8 @@
     "monthly": "Monthly",
     "credits": "Credits",
     "copilotPremium": "Premium",
+    "codebuddyCredits": "CodeBuddy quota",
+    "codebuddyCreditsText": "{{remaining}} / {{total}} credits left",
     "utilization": "{{value}}%",
     "resetsIn": "Resets in {{time}}",
     "extraUsage": "Extra Usage",
@@ -4853,6 +4878,7 @@
       "copilotHelp": "Used by GitHub Copilot presets in Claude Code and Claude Desktop. Providers without a chosen account use the Default one.",
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
       "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
+      "codebuddyHelp": "Used for the CodeBuddy (Tencent copilot.tencent.com) provider in Claude Code, Claude Desktop and Codex. Providers without a specific account use the default account.",
       "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it."
     },
     "addAccount": "Add account",
@@ -4872,8 +4898,10 @@
     "enterpriseDomainRequired": "Enter the enterprise domain first, e.g. company.ghe.com",
     "codexReauthNote": "Missing a sign-in credential (id_token), so it can't be used for Codex managed binding",
     "xaiReauthNote": "Sign-in credential expired; providers using it won't work",
+    "codebuddyReauthNote": "Sign-in credential expired; sign in to CodeBuddy again",
     "statusLoading": "Loading accounts…",
     "xaiStatusLoadFailed": "Couldn't load xAI accounts. Try again.",
+    "codebuddyStatusLoadFailed": "Couldn't load CodeBuddy accounts. Try again.",
     "retry": "Retry",
     "loginFailed": "Sign-in didn't finish",
     "pending": {

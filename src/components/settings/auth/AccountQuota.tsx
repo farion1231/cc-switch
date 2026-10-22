@@ -22,6 +22,7 @@ import {
   formatRelativeTime,
   lineHint,
   tierLine,
+  toneForLeft,
   type QuotaDisplay,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
@@ -29,9 +30,10 @@ import {
   quotaFailureReason,
   quotaRows,
 } from "@/components/SubscriptionQuotaFooter";
-import type { SubscriptionQuota } from "@/types/subscription";
+import type { CodebuddyQuota, SubscriptionQuota } from "@/types/subscription";
 import { useCopilotQuota } from "@/lib/query/copilot";
 import {
+  useCodebuddyOauthQuotaByAccountId,
   useAgyAccountQuota,
   useXaiOauthQuotaByAccountId,
 } from "@/lib/query/subscription";
@@ -334,6 +336,125 @@ export function XaiAccountQuota({
       login={login}
       state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
       queriedAt={quota?.queriedAt ?? null}
+      loading={loading}
+      onRefresh={() => void refetch()}
+    />
+  );
+}
+
+/** 额度数字按界面语言加千位分隔、最多两位小数（「1,000」「665.26」） */
+function formatCredits(value: number, locale: string): string {
+  if (!Number.isFinite(value)) return "-";
+  try {
+    return new Intl.NumberFormat(locale, {
+      maximumFractionDigits: 2,
+    }).format(value);
+  } catch {
+    return String(value);
+  }
+}
+
+/**
+ * CodeBuddy 的 cycle_end 可能是毫秒时间戳字符串，也可能是 `YYYY-MM-DD HH:mm:ss`
+ *（接口原值，没有时区）；统一转成 ISO，交给额度列算倒计时。
+ */
+function cycleEndIso(value: string | null | undefined): string | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+  if (/^\d+$/.test(raw)) {
+    const ms = Number(raw);
+    if (!Number.isFinite(ms)) return null;
+    const date = new Date(ms);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+  // 空格换成 T 后按本地时间解析，和接口给的本地时间一致
+  const ms = Date.parse(raw.replace(" ", "T"));
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
+/**
+ * CodeBuddy 额度 → 额度列状态：一行「剩余 / 总量 credits」。
+ * left 用后端算好的 remaining_percent；重置时间取第一个资源包的周期结束。
+ */
+export function codebuddyQuotaState(
+  t: TFunction,
+  quota: CodebuddyQuota | undefined,
+  loading: boolean,
+  locale: string,
+): AccountQuotaState {
+  if (!quota) return loading ? { kind: "loading" } : null;
+  if (!quota.success) {
+    return {
+      kind: "failed",
+      reason:
+        quota.error ||
+        t("subscription.queryFailed", { defaultValue: "查询失败" }),
+    };
+  }
+  const label = t("subscription.codebuddyCredits", {
+    defaultValue: "CodeBuddy 额度",
+  });
+  const remaining = formatCredits(quota.remaining, locale);
+  const total = formatCredits(quota.total, locale);
+  const text = t("subscription.codebuddyCreditsText", {
+    defaultValue: "剩余 {{remaining}} / {{total}} credits",
+    remaining,
+    total,
+  });
+  const left = Math.max(0, Math.min(100, Math.round(quota.remaining_percent)));
+  const line: QuotaLine = {
+    key: "codebuddy_credits",
+    left,
+    tone: toneForLeft(left),
+    emphasis: remaining,
+    text,
+    // 额度条旁边只放数字（列很窄），完整的「剩余 / 总量」写进悬停说明
+    value: remaining,
+    detail: text,
+    resetsAt: cycleEndIso(quota.packages[0]?.cycle_end),
+  };
+  return { kind: "rows", rows: [{ label, line }] };
+}
+
+/** CodeBuddy 账号的额度（get_codebuddy_oauth_quota(accountId)） */
+export function CodebuddyAccountQuota({
+  accountId,
+  login,
+}: {
+  accountId: string;
+  login: string;
+}) {
+  const { t, i18n } = useTranslation();
+  const {
+    data: quota,
+    isFetching: loading,
+    isError,
+    error,
+    refetch,
+  } = useCodebuddyOauthQuotaByAccountId(accountId, {
+    enabled: true,
+    autoQuery: false,
+  });
+
+  let state: AccountQuotaState;
+  if (quota) {
+    state = codebuddyQuotaState(t, quota, loading, i18n.language);
+  } else if (isError) {
+    state = {
+      kind: "failed",
+      reason:
+        extractErrorMessage(error) ||
+        t("subscription.queryFailed", { defaultValue: "查询失败" }),
+    };
+  } else {
+    state = loading ? { kind: "loading" } : null;
+  }
+
+  return (
+    <AccountQuotaColumn
+      login={login}
+      state={state}
+      queriedAt={quota?.queried_at ?? null}
       loading={loading}
       onRefresh={() => void refetch()}
     />

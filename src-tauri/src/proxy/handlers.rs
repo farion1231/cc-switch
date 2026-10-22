@@ -552,6 +552,7 @@ async fn handle_claude_transform(
         .as_ref()
         .and_then(|meta| meta.provider_type.as_deref())
         == Some("codex_oauth");
+    let is_codebuddy_oauth = ctx.provider.is_codebuddy_oauth();
     // Codex OAuth 会把 openai_responses 响应强制升级为 SSE，即使客户端发的是 stream:false。
     // should_use_claude_transform_streaming 默认会把这个组合路由到流式转换器——虽然能避免
     // JSON parse 报 422，但会让非流客户端收到 text/event-stream，违反 Anthropic 非流语义。
@@ -559,7 +560,11 @@ async fn handle_claude_transform(
     // 场景（任意上游 is_sse、非 Codex OAuth 等）仍沿用原有流式兜底。
     let aggregate_codex_oauth_responses_sse =
         !is_stream && is_codex_oauth && api_format == "openai_responses";
-    let use_streaming = if aggregate_codex_oauth_responses_sse {
+    // CodeBuddy 上游只接受 stream:true（forwarder 已强制打开），客户端非流时
+    // 同样要把上游 SSE 聚合成 Anthropic JSON，不能把 text/event-stream 回给客户端。
+    let aggregate_codebuddy_chat_sse =
+        should_aggregate_codebuddy_chat_sse(is_stream, is_codebuddy_oauth, api_format);
+    let use_streaming = if aggregate_codex_oauth_responses_sse || aggregate_codebuddy_chat_sse {
         false
     } else {
         should_use_claude_transform_streaming(
@@ -725,6 +730,11 @@ async fn handle_claude_transform(
             let body_str = String::from_utf8_lossy(&body_bytes);
             let upstream_response = if aggregate_codex_oauth_responses_sse {
                 responses_sse_to_response_value(&body_str)?
+            } else if aggregate_codebuddy_chat_sse && body_looks_like_sse(&body_str) {
+                // CodeBuddy 强制流式后，非流客户端拿到的是 SSE 体；先聚合成
+                // Chat Completions 响应，再走下面的 openai_to_anthropic 转换。
+                // 若上游仍然回了普通 JSON（忽略 stream:true），走下面的常规解析。
+                chat_sse_to_response_value(&body_str)?
             } else {
                 match serde_json::from_slice(&body_bytes) {
                     Ok(value) => value,
@@ -2588,6 +2598,16 @@ fn should_use_claude_transform_streaming(
     requested_streaming || upstream_is_sse || (is_codex_oauth && api_format == "openai_responses")
 }
 
+/// CodeBuddy 的上游 SSE 只有在「客户端要非流 + 托管 CodeBuddy + openai_chat」
+/// 时才需要本地聚合；客户端本来就要流式时继续走流式转换器。
+fn should_aggregate_codebuddy_chat_sse(
+    requested_streaming: bool,
+    is_codebuddy_oauth: bool,
+    api_format: &str,
+) -> bool {
+    !requested_streaming && is_codebuddy_oauth && api_format == "openai_chat"
+}
+
 async fn responses_sse_stream_to_anthropic_message(
     stream: impl futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
     hosted_web_search_name: Option<String>,
@@ -2880,6 +2900,12 @@ fn chat_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
     // 进程（C1）。BTreeMap 既免去无界分配，又天然保持 index 有序输出。
     let mut tool_calls: std::collections::BTreeMap<usize, Value> =
         std::collections::BTreeMap::new();
+    // 部分 OpenAI 兼容上游（CodeBuddy 等）的 tool_call 分块不带 index：按 id 记忆
+    // 稳定索引，缺失 id 时沿用最近一个索引，避免并行工具的参数被并进同一个工具。
+    let mut tool_index_by_id: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    let mut used_tool_indexes: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut last_tool_index: Option<usize> = None;
     let mut finish_reason = Value::Null;
     let mut usage = Value::Null;
     let mut saw_choice = false;
@@ -2966,9 +2992,15 @@ fn chat_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
             saw_choice = true;
 
             // finish_reason 首个非 null 即锁定（对齐 streaming.rs 的 first-wins：
-            // 多 finish_reason 上游的尾块 "stop" 不能覆盖先到的 "tool_calls"）
+            // 多 finish_reason 上游的尾块 "stop" 不能覆盖先到的 "tool_calls"）。
+            // CodeBuddy 等上游会给每个中间 chunk 带空字符串 finish_reason：
+            // 空串不是结束信号，必须先过滤，否则会在工具参数到齐前提前收尾。
             if finish_reason.is_null() {
-                if let Some(fr) = choice.get("finish_reason").filter(|v| !v.is_null()) {
+                if let Some(fr) = choice
+                    .get("finish_reason")
+                    .filter(|v| !v.is_null())
+                    .filter(|v| v.as_str().is_none_or(|s| !s.trim().is_empty()))
+                {
                     finish_reason = fr.clone();
                 }
             }
@@ -3021,7 +3053,44 @@ fn chat_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
             }
             if let Some(deltas) = payload.get("tool_calls").and_then(|t| t.as_array()) {
                 for (pos, tc) in deltas.iter().enumerate() {
-                    merge_tool_call_delta(&mut tool_calls, tc, pos);
+                    let raw_index = tc
+                        .get("index")
+                        .and_then(|index| index.as_u64())
+                        .map(|index| index as usize);
+                    let id = tc
+                        .get("id")
+                        .and_then(|id| id.as_str())
+                        .map(str::trim)
+                        .filter(|id| !id.is_empty());
+                    let resolved_index = match raw_index {
+                        Some(index) => {
+                            used_tool_indexes.insert(index);
+                            if let Some(id) = id {
+                                tool_index_by_id.insert(id.to_string(), index);
+                            }
+                            last_tool_index = Some(index);
+                            index
+                        }
+                        None => match id {
+                            Some(id) => {
+                                if let Some(index) = tool_index_by_id.get(id).copied() {
+                                    last_tool_index = Some(index);
+                                    index
+                                } else {
+                                    let mut index = 0;
+                                    while used_tool_indexes.contains(&index) {
+                                        index += 1;
+                                    }
+                                    used_tool_indexes.insert(index);
+                                    tool_index_by_id.insert(id.to_string(), index);
+                                    last_tool_index = Some(index);
+                                    index
+                                }
+                            }
+                            None => last_tool_index.unwrap_or(pos),
+                        },
+                    };
+                    merge_tool_call_delta(&mut tool_calls, tc, resolved_index);
                 }
             } else if let Some(fc) = payload.get("function_call").filter(|v| !v.is_null()) {
                 // legacy function_call（2023 弃用但仍有中转回传）→ 当单个 tool_call。
@@ -3316,7 +3385,8 @@ mod tests {
         body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
         codex_proxy_error_json, responses_sse_stream_to_anthropic_message,
         responses_sse_to_response_value, rewritten_sse_response_builder,
-        should_use_claude_transform_streaming, transform, upstream_body_parse_error,
+        should_aggregate_codebuddy_chat_sse, should_use_claude_transform_streaming, transform,
+        upstream_body_parse_error,
     };
     use crate::proxy::ProxyError;
     use bytes::Bytes;
@@ -3878,6 +3948,78 @@ data: [DONE]\n\n";
     }
 
     #[test]
+    fn aggregated_chat_sse_routes_indexless_tool_calls_by_id() {
+        // CodeBuddy 等上游的 tool_call 分块可能不带 index：非流聚合必须按 id
+        // 归一索引，否则并行工具的第二个参数会被拼进第一个工具。
+        let sse = concat!(
+            "data: {\"id\":\"cb\",\"model\":\"glm-5.3\",\"choices\":[{\"delta\":{\"tool_calls\":[",
+            "{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"tool_a\",\"arguments\":\"{\\\"a\\\":1}\"}},",
+            "{\"id\":\"call_b\",\"type\":\"function\",\"function\":{\"name\":\"tool_b\"}}",
+            "]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_b\",\"function\":{\"arguments\":\"{\\\"b\\\":2}\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let aggregated = chat_sse_to_response_value(sse).unwrap();
+        let calls = aggregated["choices"][0]["message"]["tool_calls"]
+            .as_array()
+            .expect("tool calls");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0]["id"], "call_a");
+        assert_eq!(calls[0]["function"]["arguments"], "{\"a\":1}");
+        assert_eq!(calls[1]["id"], "call_b");
+        assert_eq!(calls[1]["function"]["arguments"], "{\"b\":2}");
+
+        let anthropic = transform::openai_to_anthropic(aggregated).unwrap();
+        let tool_uses: Vec<&serde_json::Value> = anthropic["content"]
+            .as_array()
+            .expect("content")
+            .iter()
+            .filter(|block| block["type"] == "tool_use")
+            .collect();
+        assert_eq!(tool_uses.len(), 2);
+        assert_eq!(tool_uses[0]["id"], "call_a");
+        assert_eq!(tool_uses[1]["id"], "call_b");
+        assert_eq!(tool_uses[0]["input"], serde_json::json!({"a": 1}));
+        assert_eq!(tool_uses[1]["input"], serde_json::json!({"b": 2}));
+    }
+
+    #[test]
+    fn aggregated_chat_sse_ignores_empty_finish_reason() {
+        // CodeBuddy 每个中间 chunk 都带 "finish_reason":""；非流聚合必须忽略空串，
+        // 否则会在工具参数到齐前锁定 end_turn。
+        let sse = concat!(
+            "data: {\"id\":\"cb\",\"model\":\"glm-5.3\",\"choices\":[{\"delta\":{\"tool_calls\":[",
+            "{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"\"}}",
+            "]},\"finish_reason\":\"\"}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"city\\\":\\\"Beijing\\\"}\"}}]},\"finish_reason\":\"\"}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let aggregated = chat_sse_to_response_value(sse).unwrap();
+        assert_eq!(
+            aggregated["choices"][0]["finish_reason"], "tool_calls",
+            "empty finish_reason must not win"
+        );
+        let anthropic = transform::openai_to_anthropic(aggregated).unwrap();
+        assert_eq!(anthropic["stop_reason"], "tool_use");
+        let tool_uses: Vec<&serde_json::Value> = anthropic["content"]
+            .as_array()
+            .expect("content")
+            .iter()
+            .filter(|block| block["type"] == "tool_use")
+            .collect();
+        assert_eq!(tool_uses.len(), 1);
+        assert_eq!(tool_uses[0]["name"], "get_weather");
+        assert_eq!(
+            tool_uses[0]["input"],
+            serde_json::json!({"city": "Beijing"})
+        );
+    }
+
+    #[test]
     fn codex_oauth_responses_force_streaming_even_if_client_sent_false() {
         assert!(should_use_claude_transform_streaming(
             false,
@@ -3885,6 +4027,50 @@ data: [DONE]\n\n";
             "openai_responses",
             true,
         ));
+    }
+
+    #[test]
+    fn codebuddy_oauth_non_streaming_chat_is_aggregated_locally() {
+        // 客户端要非流 + 托管 CodeBuddy + openai_chat → 本地聚合上游 SSE。
+        assert!(should_aggregate_codebuddy_chat_sse(
+            false,
+            true,
+            "openai_chat"
+        ));
+        // 客户端本来就要流式：保持 SSE 转换器。
+        assert!(!should_aggregate_codebuddy_chat_sse(
+            true,
+            true,
+            "openai_chat"
+        ));
+        // 非 CodeBuddy 供应商 / 非 chat 格式：不参与该聚合。
+        assert!(!should_aggregate_codebuddy_chat_sse(
+            false,
+            false,
+            "openai_chat"
+        ));
+        assert!(!should_aggregate_codebuddy_chat_sse(
+            false,
+            true,
+            "openai_responses"
+        ));
+    }
+
+    #[test]
+    fn codebuddy_chat_sse_aggregates_into_anthropic_json() {
+        let sse = concat!(
+            "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"glm-5.3\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hi\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"glm-5.3\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":1,\"total_tokens\":6}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let aggregated = chat_sse_to_response_value(sse).unwrap();
+        let anthropic = transform::openai_to_anthropic(aggregated).unwrap();
+
+        assert_eq!(anthropic["model"], "glm-5.3");
+        assert_eq!(anthropic["content"][0]["type"], "text");
+        assert_eq!(anthropic["content"][0]["text"], "Hi");
+        assert_eq!(anthropic["stop_reason"], "end_turn");
     }
 
     #[tokio::test]

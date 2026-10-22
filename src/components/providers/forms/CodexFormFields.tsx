@@ -61,12 +61,14 @@ import {
   type DirectModeFormatNotice,
 } from "./shared";
 import { XaiOAuthSection } from "./XaiOAuthSection";
+import { CodebuddyOAuthSection } from "./CodebuddyOAuthSection";
 import {
   copilotGetModels,
   copilotGetModelsForAccount,
   type CopilotModel,
 } from "@/lib/api/copilot";
 import {
+  fetchCodebuddyOauthModels,
   fetchModelsForConfig,
   fetchXaiOauthModels,
   modelFetchRequestHeaders,
@@ -144,6 +146,11 @@ interface CodexFormFieldsProps {
   isXaiOauthAuthenticated?: boolean;
   selectedXaiAccountId?: string | null;
   onXaiAccountSelect?: (accountId: string | null) => void;
+  // CodeBuddy OAuth 托管预设：同上，地址、格式和凭据都由本地代理固定
+  isCodebuddyOauthPreset?: boolean;
+  isCodebuddyOauthAuthenticated?: boolean;
+  selectedCodebuddyAccountId?: string | null;
+  onCodebuddyAccountSelect?: (accountId: string | null) => void;
   // API Key
   codexApiKey: string;
   onApiKeyChange: (key: string) => void;
@@ -543,6 +550,10 @@ export function CodexFormFields({
   isXaiOauthAuthenticated,
   selectedXaiAccountId,
   onXaiAccountSelect,
+  isCodebuddyOauthPreset,
+  isCodebuddyOauthAuthenticated,
+  selectedCodebuddyAccountId,
+  onCodebuddyAccountSelect,
   codexApiKey,
   onApiKeyChange,
   category,
@@ -671,20 +682,23 @@ export function CodexFormFields({
     promptCacheRouting !== "auto" ||
     !!maxOutputTokens ||
     isFullUrl;
+  // 托管 OAuth 预设（xAI、CodeBuddy）的高级值都是预设自带的，无需展示，保持折叠
+  const isPinnedManagedPreset = Boolean(
+    isXaiOauthPreset || isCodebuddyOauthPreset,
+  );
   const [advancedExpanded, setAdvancedExpanded] = useState(
-    isXaiOauthPreset ? false : hasAnyAdvancedValue,
+    isPinnedManagedPreset ? false : hasAnyAdvancedValue,
   );
 
-  // 预设/编辑加载填充高级值后自动展开（仅从折叠→展开，不会自动折叠）；
-  // xAI OAuth 托管预设的高级值都是预设自带的，无需展示，保持折叠
+  // 预设/编辑加载填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
   useEffect(() => {
-    if (isXaiOauthPreset) {
+    if (isPinnedManagedPreset) {
       return;
     }
     if (hasAnyAdvancedValue) {
       setAdvancedExpanded(true);
     }
-  }, [hasAnyAdvancedValue, isXaiOauthPreset]);
+  }, [hasAnyAdvancedValue, isPinnedManagedPreset]);
 
   // Stack 布局的高级区（思考能力、Anthropic 专有项、User-Agent、请求覆盖）：填了 UA 或请求
   // 覆盖才展开，其余多是预设自带的。
@@ -894,6 +908,23 @@ export function CodexFormFields({
       return;
     }
 
+    if (isCodebuddyOauthPreset) {
+      if (!isCodebuddyOauthAuthenticated) {
+        toast.error(
+          t("codebuddyOauth.loginRequired", {
+            defaultValue: "请先登录 CodeBuddy 账号",
+          }),
+        );
+        return;
+      }
+      runModelFetch(
+        () => fetchCodebuddyOauthModels(selectedCodebuddyAccountId ?? null),
+        receiveFetchedModels,
+        "[CodebuddyOAuth] Failed to fetch models:",
+      );
+      return;
+    }
+
     if (!codexBaseUrl || !codexApiKey) {
       showFetchModelsError(null, t, {
         hasApiKey: !!codexApiKey,
@@ -935,6 +966,9 @@ export function CodexFormFields({
     isXaiOauthPreset,
     isXaiOauthAuthenticated,
     selectedXaiAccountId,
+    isCodebuddyOauthPreset,
+    isCodebuddyOauthAuthenticated,
+    selectedCodebuddyAccountId,
     t,
   ]);
 
@@ -1735,13 +1769,21 @@ export function CodexFormFields({
           onAccountSelect={onXaiAccountSelect}
         />
       )}
+
+      {isCodebuddyOauthPreset && (
+        <CodebuddyOAuthSection
+          mode="select"
+          selectedAccountId={selectedCodebuddyAccountId}
+          onAccountSelect={onCodebuddyAccountSelect}
+        />
+      )}
     </>
   );
 
   const apiKeySection = (
     <>
       {/* Codex API Key 输入框（托管 OAuth 预设无需 Key） */}
-      {!isCopilotPreset && !isCodexOauthPreset && !isXaiOauthPreset && (
+      {!isCopilotPreset && !isCodexOauthPreset && !isPinnedManagedPreset && (
         <ApiKeySection
           id="codexApiKey"
           label="API Key"
@@ -1769,7 +1811,7 @@ export function CodexFormFields({
   const endpointSection = (
     <>
       {/* Codex Base URL 输入框（托管 OAuth 端点由 adapter 硬定向，不展示） */}
-      {shouldShowSpeedTest && !isCopilotPreset && !isXaiOauthPreset && (
+      {shouldShowSpeedTest && !isCopilotPreset && !isPinnedManagedPreset && (
         <EndpointField
           id="codexBaseUrl"
           label={t("codexConfig.apiUrlLabel")}
@@ -1785,7 +1827,7 @@ export function CodexFormFields({
 
   // 完整 URL 跟着地址框（托管 OAuth 端点由 adapter 硬定向，没有这个开关）。
   const showFullUrlToggle =
-    shouldShowSpeedTest && !isCopilotPreset && !isXaiOauthPreset;
+    shouldShowSpeedTest && !isCopilotPreset && !isPinnedManagedPreset;
   const fullUrlToggle = (
     <FullUrlToggle
       checked={isFullUrl}
@@ -1933,7 +1975,7 @@ export function CodexFormFields({
     );
 
   if (variant === "stack") {
-    const showFormatFields = shouldShowSpeedTest && !isXaiOauthPreset;
+    const showFormatFields = shouldShowSpeedTest && !isPinnedManagedPreset;
     const showReasoning = isChatFormat && canEditReasoning;
     // Copilot 不显示 UA 和请求覆盖，Responses 格式下高级区就空了。
     const hasStackAdvancedContent =
@@ -2270,15 +2312,16 @@ export function CodexFormFields({
           <CollapsibleContent className="space-y-3 pt-3">
             {/* Copilot supports automatic capability routing or an explicit protocol;
                 other providers retain their existing format controls. */}
-            {(shouldShowSpeedTest || isCopilotPreset) && !isXaiOauthPreset && (
-              <div className="space-y-3">
-                {upstreamFormatSelect}
-                {isAnthropicFormat && anthropicAuthFieldSelect}
-                {isAnthropicFormat && impersonateClaudeCodeToggle}
-                {isAnthropicFormat && maxOutputTokensField}
-                {showFullUrlToggle && fullUrlToggle}
-              </div>
-            )}
+            {(shouldShowSpeedTest || isCopilotPreset) &&
+              !isPinnedManagedPreset && (
+                <div className="space-y-3">
+                  {upstreamFormatSelect}
+                  {isAnthropicFormat && anthropicAuthFieldSelect}
+                  {isAnthropicFormat && impersonateClaudeCodeToggle}
+                  {isAnthropicFormat && maxOutputTokensField}
+                  {showFullUrlToggle && fullUrlToggle}
+                </div>
+              )}
 
             {isChatFormat && canEditReasoning && (
               <div
