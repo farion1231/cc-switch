@@ -53,6 +53,10 @@ pub struct VisibleApps {
     pub pi: bool,
     #[serde(default = "default_true")]
     pub mcode: bool,
+    #[serde(default = "default_true")]
+    pub kimi: bool,
+    #[serde(default = "default_true")]
+    pub agy: bool,
 }
 
 impl Default for VisibleApps {
@@ -68,6 +72,8 @@ impl Default for VisibleApps {
             hermes: false, // 默认不显示，需用户手动启用
             pi: true,
             mcode: true,
+            kimi: true,
+            agy: true,
         }
     }
 }
@@ -86,6 +92,8 @@ impl VisibleApps {
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
+            AppType::Kimi => self.kimi,
+            AppType::Agy => self.agy,
         }
     }
 }
@@ -381,6 +389,9 @@ pub struct UsageDisplaySettings {
     /// 以后新加的列也按它自己的默认值出现
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub request_log_columns: BTreeMap<String, bool>,
+    /// 用量趋势图的样式（"bar" / "area"），缺省为柱形图
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trend_chart_type: Option<String>,
 }
 
 /// 应用设置结构
@@ -446,6 +457,10 @@ pub struct AppSettings {
     /// many users do not want to chase every release).
     #[serde(default)]
     pub check_tool_updates_on_startup: bool,
+    /// 点托盘图标出原生菜单，不出托盘面板（macOS / Windows；Linux 只能出原生菜单，不看这一项）。
+    /// 默认关：用托盘面板，想要原生菜单在设置里换回。
+    #[serde(default)]
+    pub native_tray_menu: bool,
     /// Keep Codex ChatGPT login material in auth.json when switching to third-party providers.
     /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
     #[serde(default)]
@@ -549,6 +564,9 @@ pub struct AppSettings {
     /// 当前 Hermes 供应商 ID（本地存储，保持结构一致）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_hermes: Option<String>,
+    /// 当前 Antigravity CLI 供应商 ID
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_agy: Option<String>,
 
     // ===== 本地路由（设备级）=====
     /// 写给客户端的代理主机（IP 或主机名），空/未设时按监听地址推（`0.0.0.0` → `127.0.0.1`）。
@@ -631,6 +649,7 @@ impl Default for AppSettings {
             show_profile_switcher: false,
             show_provider_search: true,
             check_tool_updates_on_startup: false,
+            native_tray_menu: false,
             preserve_codex_official_auth_on_switch: false,
             unify_codex_session_history: false,
             unify_codex_migrate_existing: None,
@@ -662,6 +681,7 @@ impl Default for AppSettings {
             current_provider_opencode: None,
             current_provider_openclaw: None,
             current_provider_hermes: None,
+            current_provider_agy: None,
             proxy_client_host: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
@@ -1320,7 +1340,8 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenCode => settings.current_provider_opencode.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
-        AppType::Pi | AppType::Mcode => None,
+        AppType::Agy => settings.current_provider_agy.clone(),
+        AppType::Pi | AppType::Mcode | AppType::Kimi => None,
     }
 }
 
@@ -1339,7 +1360,8 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
-        AppType::Pi | AppType::Mcode => {}
+        AppType::Agy => settings.current_provider_agy = id_owned.clone(),
+        AppType::Pi | AppType::Mcode | AppType::Kimi => {}
     })
 }
 
@@ -1534,7 +1556,8 @@ mod tests {
                 "currency": "CNY",
                 "exchangeRates": { "CNY": 6.8 },
                 "sidebarTodayItems": ["cost", "requests"],
-                "requestLogColumns": { "statusCode": true, "app": false }
+                "requestLogColumns": { "statusCode": true, "app": false },
+                "trendChartType": "area"
             }
         }))
         .expect("usage display");
@@ -1546,13 +1569,15 @@ mod tests {
             Some(&["cost".to_string(), "requests".to_string()][..])
         );
         assert_eq!(display.request_log_columns.get("app"), Some(&false));
+        assert_eq!(display.trend_chart_type.as_deref(), Some("area"));
         assert_eq!(
             serde_json::to_value(&saved).expect("serialize")["usageDisplay"],
             serde_json::json!({
                 "currency": "CNY",
                 "exchangeRates": { "CNY": 6.8 },
                 "sidebarTodayItems": ["cost", "requests"],
-                "requestLogColumns": { "app": false, "statusCode": true }
+                "requestLogColumns": { "app": false, "statusCode": true },
+                "trendChartType": "area"
             })
         );
 
@@ -1604,6 +1629,15 @@ mod tests {
             resolve_override_path(r"~\pi\agent"),
             home.join("pi").join("agent")
         );
+    }
+
+    #[test]
+    fn native_tray_menu_defaults_off_and_keeps_a_saved_menu_choice() {
+        assert!(!AppSettings::default().native_tray_menu);
+        let missing: AppSettings = serde_json::from_str("{}").unwrap();
+        assert!(!missing.native_tray_menu);
+        let menu: AppSettings = serde_json::from_str(r#"{"nativeTrayMenu":true}"#).unwrap();
+        assert!(menu.native_tray_menu);
     }
 
     #[test]

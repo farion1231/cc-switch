@@ -140,9 +140,8 @@ pub async fn delete_mcp_server_in_config(
     McpService::delete_server(&state, &id).map_err(|e| e.to_string())
 }
 
-/// 设置启用状态并同步到客户端配置
+/// 设置启用状态并同步到客户端配置（兼容层命令，同 `toggle_mcp_app`）
 #[tauri::command]
-#[allow(deprecated)] // 兼容层命令，内部调用已废弃的 Service 方法
 pub async fn set_mcp_enabled(
     state: State<'_, AppState>,
     app: String,
@@ -150,7 +149,10 @@ pub async fn set_mcp_enabled(
     enabled: bool,
 ) -> Result<bool, String> {
     let app_ty = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    McpService::set_enabled(&state, app_ty, &id, enabled).map_err(|e| e.to_string())
+    McpService::toggle_app_locked(&state, &id, app_ty, enabled)
+        .await
+        .map(|_| true)
+        .map_err(|e| e.to_string())
 }
 
 // ============================================================================
@@ -191,7 +193,9 @@ pub async fn toggle_mcp_app(
     enabled: bool,
 ) -> Result<(), String> {
     let app_ty = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    McpService::toggle_app(&state, &server_id, app_ty, enabled).map_err(|e| e.to_string())
+    McpService::toggle_app_locked(&state, &server_id, app_ty, enabled)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 从所有应用导入 MCP 服务器（复用已有的导入逻辑）

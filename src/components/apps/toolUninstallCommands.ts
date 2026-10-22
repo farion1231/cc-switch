@@ -31,6 +31,7 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
     { tool: "openclaw", command: "npm uninstall -g openclaw" },
     { tool: "pi", command: "npm uninstall -g @earendil-works/pi-coding-agent" },
     { tool: "mcode", command: "npm uninstall -g @minimax-ai/code" },
+    { tool: "kimi", command: "npm uninstall -g @moonshot-ai/kimi-code" },
   ],
   pnpm: [
     { tool: "opencode", command: "pnpm remove -g opencode-ai" },
@@ -79,6 +80,11 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
     {
       tool: "codex",
       command: "brew uninstall --cask codex",
+      environments: ["macos"],
+    },
+    {
+      tool: "agy",
+      command: "brew uninstall --cask antigravity-cli",
       environments: ["macos"],
     },
   ],

@@ -16,7 +16,7 @@ import {
 import { toast } from "@/lib/toast";
 import { Download, Plus, Trash2, ChevronRight, Loader2 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ApiKeySection, ModelDropdown } from "./shared";
+import { ApiKeySection, GptContextWindowHint, ModelDropdown } from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -269,11 +269,6 @@ export function OpenClawFormFields({
           onValueChange={onBaseUrlChange}
           placeholder="https://api.example.com/v1"
         />
-        <p className="text-xs text-fg-2">
-          {t("openclaw.baseUrlHint", {
-            defaultValue: "供应商的 API 端点地址。",
-          })}
-        </p>
       </div>
 
       {/* API Key */}
@@ -508,6 +503,10 @@ export function OpenClawFormFields({
                             )
                           }
                           placeholder="200000"
+                        />
+                        <GptContextWindowHint
+                          modelId={model.id}
+                          contextWindow={model.contextWindow}
                         />
                       </div>
                       <div className="space-y-1">
