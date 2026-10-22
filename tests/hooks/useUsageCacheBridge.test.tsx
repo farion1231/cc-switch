@@ -134,4 +134,30 @@ describe("useUsageCacheBridge", () => {
     );
     expect(client.getQueryData(key)).toEqual(failure);
   });
+
+  it("refreshes the default-account alias when a concrete account publishes", () => {
+    const client = new QueryClient();
+    const alias = ["codex_oauth", "quota", "default"];
+    client.setQueryData(alias, quota);
+    renderHook(() => useUsageCacheBridge(), {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      ),
+    });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    act(() =>
+      events.callback?.({
+        kind: "codex_oauth",
+        accountId: "alice",
+        data: { ...quota, queriedAt: 2 },
+      }),
+    );
+    // Default-bound provider cards read the alias, so a batch event for a concrete
+    // account must refresh it too.
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: alias,
+      exact: true,
+      refetchType: "active",
+    });
+  });
 });

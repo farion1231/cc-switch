@@ -1589,6 +1589,7 @@ mod tests {
             serde_json::to_value(&hidden).expect("serialize"),
             serde_json::json!({ "sidebarTodayItems": [] })
         );
+    }
 
     #[test]
     fn codex_quota_refresh_is_opt_in_and_round_trips() {

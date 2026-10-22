@@ -65,6 +65,16 @@ export function useUsageCacheBridge() {
         }
       }
       queryClient.setQueryData<SubscriptionQuota>(key, payload.data);
+      // Batch events carry the resolved account id, but a provider that follows the
+      // managed default account reads the "default" alias instead. Refresh that alias
+      // too, otherwise those cards keep a stale quota after every background refresh.
+      if (payload.accountId !== "default") {
+        void queryClient.invalidateQueries({
+          queryKey: ["codex_oauth", "quota", "default"],
+          exact: true,
+          refetchType: "active",
+        });
+      }
     } else if (payload.kind === "script") {
       queryClient.setQueryData<UsageResult>(
         usageKeys.script(payload.providerId, payload.appType),

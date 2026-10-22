@@ -45,13 +45,18 @@ pub async fn get_codex_oauth_quota(
         return Ok(SubscriptionQuota::not_found("codex_oauth"));
     };
 
+    let ticket = crate::services::codex_quota_refresh::begin_query();
     let result = query_codex_oauth_quota_for(manager, &id).await;
     // Cache by the resolved account, even if the default/binding changes while
     // the request is in flight. Transport errors retain the last good snapshot;
     // authentication/HTTP failures replace it so the tray hides invalid quotas.
+    // A batch that started earlier but finished later must not overwrite this
+    // newer snapshot, so publishing is ordered by the ticket taken up front.
     if let Ok(quota) = &result {
-        app_state.usage_cache.put_codex_oauth(id, quota.clone());
-        crate::tray::schedule_tray_refresh(&app);
+        if crate::services::codex_quota_refresh::claim_publish(&id, ticket) {
+            app_state.usage_cache.put_codex_oauth(id, quota.clone());
+            crate::tray::schedule_tray_refresh(&app);
+        }
     }
     result
 }

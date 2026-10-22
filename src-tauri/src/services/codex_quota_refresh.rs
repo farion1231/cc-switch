@@ -1,6 +1,9 @@
 //! Optional, UI-independent refresh of managed Codex account quotas.
 
+use std::collections::HashMap;
 use std::future::Future;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use futures::{stream, StreamExt};
@@ -17,6 +20,39 @@ use crate::store::AppState;
 static BATCH_LOCK: Mutex<()> = Mutex::const_new(());
 const MAX_CONCURRENT: usize = 3;
 const TRANSPORT_ERROR: &str = "Network error while querying Codex quota";
+
+/// Publish ordering across the batch refresh and per-account requests.
+///
+/// A slow batch can finish after a single-account query that started later: the
+/// batch result is older and must not overwrite the newer cache snapshot or
+/// event. Every query takes a ticket before it starts; a publish records the
+/// ticket and is dropped when a newer ticket already published for the account.
+static QUERY_TICKET: AtomicU64 = AtomicU64::new(0);
+
+fn published_tickets() -> &'static StdMutex<HashMap<String, u64>> {
+    static MAP: OnceLock<StdMutex<HashMap<String, u64>>> = OnceLock::new();
+    MAP.get_or_init(|| StdMutex::new(HashMap::new()))
+}
+
+/// Take a ticket before querying an account quota.
+pub(crate) fn begin_query() -> u64 {
+    QUERY_TICKET.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+/// Whether this query may publish: no later-started query has published first.
+pub(crate) fn claim_publish(account_id: &str, ticket: u64) -> bool {
+    let mut tickets = published_tickets()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if tickets
+        .get(account_id)
+        .is_some_and(|published| *published > ticket)
+    {
+        return false;
+    }
+    tickets.insert(account_id.to_string(), ticket);
+    true
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,6 +79,9 @@ pub async fn refresh_all(
         |id| {
             let manager = manager.clone();
             async move {
+                // Taken before the network call: a later request wins even if this
+                // batch result arrives later.
+                let ticket = begin_query();
                 let initial = manager.quota_credential_snapshot(&id, None).await
                     .ok_or_else(|| "Codex account was removed during refresh".to_string())?;
                 let (result, snapshot) = match manager.get_valid_token_for_account(&id).await {
@@ -59,10 +98,17 @@ pub async fn refresh_all(
                         "Codex OAuth token unavailable. Please re-login via cc-switch.".to_string())), initial),
                 };
                 manager.with_current_quota_credentials(&id, &snapshot, || {
-                    let payload = quota_update_payload(&app.state::<AppState>().usage_cache, &id, &result);
-                    let _ = app.emit("usage-cache-updated", payload);
-                    if result.is_ok() {
-                        crate::tray::schedule_tray_refresh(app);
+                    let payload = quota_update_payload(
+                        &app.state::<AppState>().usage_cache,
+                        &id,
+                        ticket,
+                        &result,
+                    );
+                    if let Some(payload) = payload {
+                        let _ = app.emit("usage-cache-updated", payload);
+                        if result.is_ok() {
+                            crate::tray::schedule_tray_refresh(app);
+                        }
                     }
                 }).await.ok_or_else(|| "Codex account credentials changed during refresh".to_string())?;
                 // Do not expose transport diagnostics (which can include URLs) in events.
@@ -79,8 +125,14 @@ pub async fn refresh_all(
 fn quota_update_payload(
     cache: &UsageCache,
     id: &str,
+    ticket: u64,
     result: &Result<SubscriptionQuota, String>,
-) -> serde_json::Value {
+) -> Option<serde_json::Value> {
+    // A newer query already published for this account: dropping the payload also
+    // skips the cache write and the event, so both sides stay on the newer quota.
+    if !claim_publish(id, ticket) {
+        return None;
+    }
     let quota = match result {
         Ok(quota) => {
             cache.put_codex_oauth(id.to_string(), quota.clone());
@@ -92,7 +144,7 @@ fn quota_update_payload(
             TRANSPORT_ERROR.to_string(),
         ),
     };
-    serde_json::json!({ "kind": "codex_oauth", "accountId": id, "data": quota })
+    Some(serde_json::json!({ "kind": "codex_oauth", "accountId": id, "data": quota }))
 }
 
 async fn refresh_accounts<F, Fut>(
@@ -327,8 +379,10 @@ mod tests {
         let payload = quota_update_payload(
             &cache,
             "account",
+            begin_query(),
             &Err("private transport diagnostic".to_string()),
-        );
+        )
+        .expect("first publish is accepted");
         assert_eq!(payload["kind"], "codex_oauth");
         assert_eq!(payload["accountId"], "account");
         assert_eq!(payload["data"]["success"], false);
@@ -353,7 +407,8 @@ mod tests {
             CredentialStatus::Expired,
             "expired".to_string(),
         );
-        let payload = quota_update_payload(&cache, "account", &Ok(failure));
+        let payload = quota_update_payload(&cache, "account", begin_query(), &Ok(failure))
+            .expect("first publish is accepted");
         assert_eq!(payload["accountId"], "account");
         assert_eq!(payload["data"]["credentialStatus"], "expired");
         assert_eq!(
@@ -363,6 +418,50 @@ mod tests {
         assert_eq!(
             cache.with_codex_oauth("other", |quota| quota.success),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn older_batch_publish_is_dropped_after_a_newer_query_publishes() {
+        let cache = UsageCache::new();
+        let batch_ticket = begin_query();
+        let single_ticket = begin_query();
+
+        let mut newer = SubscriptionQuota::not_found("codex_oauth");
+        newer.success = true;
+        newer.queried_at = Some(200);
+        assert!(quota_update_payload(&cache, "ordered", single_ticket, &Ok(newer)).is_some());
+
+        // The batch started before the single query and finishes last: its stale
+        // snapshot must not replace the newer cache entry or emit an event.
+        let mut stale = SubscriptionQuota::not_found("codex_oauth");
+        stale.success = true;
+        stale.queried_at = Some(100);
+        assert_eq!(
+            quota_update_payload(&cache, "ordered", batch_ticket, &Ok(stale)),
+            None
+        );
+        assert_eq!(
+            cache.with_codex_oauth("ordered", |quota| quota.queried_at),
+            Some(Some(200))
+        );
+    }
+
+    #[test]
+    fn newer_publish_replaces_older_snapshot() {
+        let cache = UsageCache::new();
+        let older = begin_query();
+        let newer = begin_query();
+        let mut first = SubscriptionQuota::not_found("codex_oauth");
+        first.success = true;
+        first.queried_at = Some(1);
+        let mut second = first.clone();
+        second.queried_at = Some(2);
+        assert!(quota_update_payload(&cache, "replaced", older, &Ok(first)).is_some());
+        assert!(quota_update_payload(&cache, "replaced", newer, &Ok(second)).is_some());
+        assert_eq!(
+            cache.with_codex_oauth("replaced", |quota| quota.queried_at),
+            Some(Some(2))
         );
     }
 }
