@@ -3051,11 +3051,14 @@ export const providerPresets: ProviderPreset[] = [
     // 基元律动（tokenrhythm.studio）。官方 API 接入页
     //（tokenrhythm.studio/docs/api-integration，2026-10-22 核对）说明外部调用
     // 统一走 https://tokenrhythm.studio/v1，鉴权为 Authorization: Bearer sk_...
-    // 虽然同时提供 /v1/messages，但它对 Claude Code 新版发送的 anthropic-beta 头
-    // 不兼容（opensquilla#1102 实测 400），且两个协议的 reasoning 字段行为不一致，
-    // 故只走 openai_chat 路由：base 取根地址、不带 /v1，适配器自拼
-    // /v1/chat/completions（同 Nebius）。/v1/models 需要鉴权（无 Key 401），
-    // 默认探测即可，不写 modelsUrl。
+    // 走原生 Anthropic 透传：base 取根地址、不带 /v1，客户端自拼 /v1/messages。
+    // 2026-10-22 用真 Key 实测：/v1/messages 接受 Claude Code 发的
+    // anthropic-beta 头（opensquilla#1102 的 400 未复现），tool_use、SSE 流式、
+    // prompt caching（cache_read_input_tokens 生效）、thinking: {type:"disabled"}
+    // 均正常，claude -p 直连返回「接入成功」。唯一缺口是
+    // /v1/messages/count_tokens 返回 404（接口不存在），Claude Code 会退回本地
+    // 估算。output_config.effort 不支持（400），不要把 effort 档位暴露给该预设。
+    // /v1/models 需要鉴权（无 Key 401），默认探测即可，不写 modelsUrl。
     // 模型取公开目录 tokenrhythm.studio/api/models（同日，19 个 online chat 模型），
     // 默认档贴 DeepSeek V4.1 Flash 1017：1M 窗口、支持 tools/stream/reasoning/
     // vision，输入 1 元 / 输出 4 元每百万 token。目录未给该模型 maxOutputTokens，
@@ -3074,7 +3077,6 @@ export const providerPresets: ProviderPreset[] = [
       },
     },
     category: "aggregator",
-    apiFormat: "openai_chat",
     endpointCandidates: ["https://tokenrhythm.studio"],
     icon: "tokenrhythm",
   },

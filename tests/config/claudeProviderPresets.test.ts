@@ -224,11 +224,11 @@ describe("TokenRhythm Provider Preset", () => {
     expect(tokenrhythm!.icon).toBe("tokenrhythm");
   });
 
-  // /v1/messages 对 Claude Code 的 anthropic-beta 头不兼容（400），只能走
-  // openai_chat 路由；适配器自拼 /v1/chat/completions，base 必须是不带 /v1 的根地址
-  it("should use the root base URL with the openai_chat format", () => {
+  // 原生 Anthropic 透传（真 Key 实测 /v1/messages 可用），base 必须是不带 /v1
+  // 的根地址，否则客户端会拼成 /v1/v1/messages
+  it("should use the root base URL with native Anthropic passthrough", () => {
     const env = (tokenrhythm!.settingsConfig as any).env;
-    expect(tokenrhythm!.apiFormat).toBe("openai_chat");
+    expect(tokenrhythm!.apiFormat).toBeUndefined();
     expect(env.ANTHROPIC_BASE_URL).toBe("https://tokenrhythm.studio");
     expect(env.ANTHROPIC_BASE_URL).not.toMatch(/\/v1\/?$/);
   });
