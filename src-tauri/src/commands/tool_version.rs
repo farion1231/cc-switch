@@ -84,12 +84,7 @@ pub(super) async fn get_single_tool_version_impl(
     let latest_version = match (tool, tool_spec(tool).npm_package) {
         ("hermes", _) => fetch_hermes_latest_version(&client, local).await,
         ("agy", _) => fetch_agy_latest_version(&client).await,
-        ("opencode", Some(package)) => {
-            match fetch_npm_latest_for_tool(&client, package, tool, local).await {
-                Some(version) => Some(version),
-                None => fetch_github_latest_version(&client, "anomalyco/opencode").await,
-            }
-        }
+        ("opencode", _) => fetch_opencode_latest_version(&client, local).await,
         (_, Some(package)) => fetch_npm_latest_for_tool(&client, package, tool, local).await,
         (_, None) => None,
     };
@@ -274,6 +269,20 @@ async fn fetch_npm_latest_for_tool(
         tool_spec(tool).npm_prerelease_tags,
         local_version,
     )
+}
+
+async fn fetch_opencode_latest_version(
+    client: &reqwest::Client,
+    local_version: Option<&str>,
+) -> Option<String> {
+    let package = npm_package_for_version("opencode", local_version)?;
+    let version = match fetch_npm_latest_for_tool(client, package, "opencode", local_version).await
+    {
+        Some(version) => version,
+        None => fetch_github_latest_version(client, "anomalyco/opencode").await?,
+    };
+    // The shared GitHub release feed can point at a different major version.
+    (npm_package_for_version("opencode", Some(&version)) == Some(package)).then_some(version)
 }
 
 /// 版本探测请求的请求级超时。全局客户端是给代理转发用的（总超时 600s / 连接 30s），

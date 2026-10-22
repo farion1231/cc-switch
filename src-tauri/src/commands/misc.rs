@@ -307,6 +307,21 @@ fn tool_spec(id: &str) -> &'static ToolSpec {
     known_tool(id).unwrap_or(&UNKNOWN_TOOL)
 }
 
+/// Updates must stay on the installed OpenCode major; new installs retain V1.
+fn npm_package_for_version(tool: &str, version: Option<&str>) -> Option<&'static str> {
+    if tool != "opencode" {
+        return tool_spec(tool).npm_package;
+    }
+    match version {
+        None => tool_spec(tool).npm_package,
+        Some(version) => match parse_semver(version.trim().trim_start_matches('v'))?.0[0] {
+            1 => Some("opencode-ai"),
+            2 => Some("@opencode/cli"),
+            _ => None,
+        },
+    }
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WslShellPreferenceInput {
