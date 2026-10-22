@@ -30,6 +30,7 @@ import { CopilotAuthSection } from "./CopilotAuthSection";
 import { XaiOAuthSection } from "./XaiOAuthSection";
 import { ApiKeySection } from "./shared/ApiKeySection";
 import { EndpointField } from "./shared/EndpointField";
+import { FullUrlToggle } from "./shared/FullUrlToggle";
 import { ModelDropdown } from "./shared/ModelDropdown";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { useApiKeyLink } from "./hooks/useApiKeyLink";
@@ -263,6 +264,9 @@ export function ClaudeDesktopProviderForm({
   const [apiFormat, setApiFormat] = useState<ClaudeApiFormat>(
     initialData?.meta?.apiFormat ?? "anthropic",
   );
+  const [isFullUrl, setIsFullUrl] = useState(
+    initialData?.meta?.isFullUrl ?? false,
+  );
   const [baseUrl, setBaseUrl] = useState(
     envString(initialData?.settingsConfig, "ANTHROPIC_BASE_URL"),
   );
@@ -434,6 +438,8 @@ export function ClaudeDesktopProviderForm({
     setApiKey("");
     setApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
     setApiFormat(preset.apiFormat ?? "anthropic");
+    // 预设不携带完整 URL 标记：切预设时复位，避免上一个供应商的开关状态残留。
+    setIsFullUrl(false);
 
     const presetMode =
       preset.requiresOAuth === true || isOAuthProviderType(preset.providerType)
@@ -482,6 +488,7 @@ export function ClaudeDesktopProviderForm({
       setApiKey("");
       setApiKeyField("ANTHROPIC_AUTH_TOKEN");
       setApiFormat("anthropic");
+      setIsFullUrl(false);
       didSeedDefaultProxyRoutes.current = false;
       setMode("direct");
       setDirectRoutes([]);
@@ -512,6 +519,11 @@ export function ClaudeDesktopProviderForm({
   const handleModelMappingChange = (checked: boolean) => {
     if (usesManagedOAuth) return;
     setMode(checked ? "proxy" : "direct");
+    // 完整 URL 只在本地路由下生效；切回直连时清掉标记，避免保存时撞上后端
+    // validate_direct_provider 对 full URL 的拒绝（直连模式无法表达完整 URL）。
+    if (!checked) {
+      setIsFullUrl(false);
+    }
     if (checked) {
       // 切到 proxy：只恢复/初始化映射模式自己的固定四档，不复用直连模型列表。
       setProxyRoutes((current) => {
@@ -884,6 +896,8 @@ export function ClaudeDesktopProviderForm({
           : effectiveMode === "proxy"
             ? apiFormat
             : "anthropic",
+      // 仅在开启时写入；托管 OAuth 与直连模式下不留标记（与 ProviderForm 同款惯例）。
+      isFullUrl: isFullUrl || undefined,
     };
 
     meta.claudeDesktopModelRoutes = routeMap;
@@ -912,7 +926,6 @@ export function ClaudeDesktopProviderForm({
       activeProviderType === "codex_oauth" ? codexFastMode : undefined;
 
     delete meta.endpointAutoSelect;
-    delete meta.isFullUrl;
 
     await onSubmit({
       ...values,
@@ -1051,6 +1064,16 @@ export function ClaudeDesktopProviderForm({
               }
               showManageButton={false}
             />
+
+            {/* 完整 URL 跟着地址框：只对路由模式下的自定义供应商开放
+                （托管账号地址由后端固定；直连模式无法表达完整 URL）。 */}
+            {!usesManagedOAuth && needsModelMapping && (
+              <FullUrlToggle
+                checked={isFullUrl}
+                onCheckedChange={setIsFullUrl}
+                geminiNative={apiFormat === "gemini_native"}
+              />
+            )}
 
             <div className="space-y-4 border-l border-border pl-3">
               <div className="flex items-stretch justify-between gap-4">
