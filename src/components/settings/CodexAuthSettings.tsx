@@ -2,7 +2,11 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import type { SettingsFormState } from "@/hooks/useSettings";
-import { SettingsSwitchRow } from "@/components/settings/SettingsLayout";
+import {
+  SettingsRow,
+  SettingsSwitchRow,
+} from "@/components/settings/SettingsLayout";
+import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi } from "@/lib/api";
 import { formatBytes } from "@/components/settings/BackupStorageSection";
@@ -25,6 +29,8 @@ export function CodexAuthSettings({
   const { t } = useTranslation();
   const [showEnableConfirm, setShowEnableConfirm] = useState(false);
   const [showDisableConfirm, setShowDisableConfirm] = useState(false);
+  const [showManagedConfirm, setShowManagedConfirm] = useState(false);
+  const [migratingManaged, setMigratingManaged] = useState(false);
   const [hasUnifyBackup, setHasUnifyBackup] = useState(false);
   // 会话压缩开关以 config.toml 为准，不走设置表单的自动保存
   const [sessionCompression, setSessionCompression] = useState(false);
@@ -88,6 +94,44 @@ export function CodexAuthSettings({
       unifyCodexSessionHistory: true,
       unifyCodexMigrateExisting: migrateExisting,
     });
+  };
+
+  const handleManagedMigration = async () => {
+    setMigratingManaged(true);
+    try {
+      const result = await settingsApi.migrateManagedCodexHistory();
+      setShowManagedConfirm(false);
+      const skippedFiles = result.skippedJsonlFiles ?? 0;
+      const skippedRows = result.skippedStateRows ?? 0;
+      if (skippedFiles > 0 || skippedRows > 0) {
+        toast.warning(
+          t("settings.codexManagedHistoryPartial", {
+            files: result.migratedJsonlFiles,
+            rows: result.migratedStateRows,
+            skippedFiles,
+            skippedRows,
+          }),
+          { closeButton: true },
+        );
+      } else {
+        toast.success(
+          t("settings.codexManagedHistoryCompleted", {
+            files: result.migratedJsonlFiles,
+            rows: result.migratedStateRows,
+          }),
+        );
+      }
+    } catch (error) {
+      setShowManagedConfirm(false);
+      toast.error(t("settings.codexHistoryMigrationFailed"), {
+        description: t("settings.codexHistoryMigrationRecovery"),
+        closeButton: true,
+        duration: Infinity,
+      });
+      console.error("Failed to migrate managed Codex history:", error);
+    } finally {
+      setMigratingManaged(false);
+    }
   };
 
   // 备份探测可能落后于正在后台进行的迁移（刚勾选迁入就立刻关闭时，
@@ -156,6 +200,26 @@ export function CodexAuthSettings({
         onCheckedChange={handleUnifyHistoryChange}
       />
 
+      {settings.unifyCodexSessionHistory && (
+        <SettingsRow
+          label={t("settings.codexManagedHistory")}
+          help={{
+            title: t("settings.codexManagedHistory"),
+            body: t("confirm.codexManagedHistory.message"),
+          }}
+          control={
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={migratingManaged}
+              onClick={() => setShowManagedConfirm(true)}
+            >
+              {t("settings.codexManagedHistoryAction")}
+            </Button>
+          }
+        />
+      )}
+
       <SettingsSwitchRow
         label={t("settings.codexSessionCompression")}
         help={{
@@ -183,6 +247,17 @@ export function CodexAuthSettings({
         variant="info"
         onConfirm={handleEnableConfirm}
         onCancel={() => setShowEnableConfirm(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={showManagedConfirm}
+        title={t("settings.codexManagedHistory")}
+        message={t("confirm.codexManagedHistory.message")}
+        confirmText={t("settings.codexManagedHistoryAction")}
+        variant="info"
+        pending={migratingManaged}
+        onConfirm={() => void handleManagedMigration()}
+        onCancel={() => setShowManagedConfirm(false)}
       />
 
       <ConfirmDialog

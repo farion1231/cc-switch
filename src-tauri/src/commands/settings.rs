@@ -133,7 +133,7 @@ pub async fn save_settings(
             // 后台执行存量迁移（openai 桶 → custom 桶；仅当用户勾选了迁入既有
             // 会话，函数内部自门控）。大会话目录可能要读数秒，不能阻塞设置保存；
             // 失败时不写完成标记，下次启动自动重试。
-            tauri::async_runtime::spawn_blocking(|| {
+            tauri::async_runtime::spawn_blocking(move || {
                 match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
                     Ok(outcome) => {
                         if let Some(reason) = outcome.skipped_reason {
@@ -148,6 +148,7 @@ pub async fn save_settings(
                     }
                     Err(e) => {
                         log::warn!("✗ Codex official history unify migration failed: {e}");
+                        crate::init_status::report_codex_history_migration_error(&app);
                     }
                 }
             });
@@ -179,6 +180,27 @@ pub struct CodexUnifyHistoryRestoreResult {
 #[tauri::command]
 pub async fn has_codex_unify_history_backup() -> Result<bool, String> {
     Ok(crate::codex_history_migration::has_codex_official_history_unify_backup())
+}
+
+/// Explicit settings action; provider switches and startup never invoke this
+/// broader migration of user-defined routing ids.
+#[tauri::command]
+pub async fn migrate_managed_codex_history(
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<crate::codex_history_migration::CodexHistoryProviderBucketMigrationOutcome, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::codex_history_migration::migrate_managed_codex_history_to_unified_bucket(&db)
+    })
+    .await
+    .map_err(|error| {
+        log::warn!("Codex managed history migration task failed: {error}");
+        error.to_string()
+    })?
+    .map_err(|error| {
+        log::warn!("Codex managed history migration failed: {error}");
+        error.to_string()
+    })
 }
 
 /// Codex 的 `config.toml` 是不是用 `[features] multi_agent_v2` 强制了新版子 agent 工具
