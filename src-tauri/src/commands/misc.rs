@@ -2657,7 +2657,8 @@ fn probe_path_default_version(tool: &str) -> Result<ShellProbe, String> {
     let Some(path_default) = resolve_path_default(tool, None)? else {
         return Ok(ShellProbe::NotFound(NOT_INSTALLED.to_string()));
     };
-    let out = run_windows_tool_version_command(&path_default, &effective_path_string())?;
+    let out = run_windows_tool_version_command(&path_default, &effective_path_string())
+        .map_err(|e| format!("Failed to probe {}: {e}", path_default.display()))?;
     let stdout = decode_command_output(&out.stdout);
     let stderr = decode_command_output(&out.stderr);
     Ok(if out.status.success() {
@@ -2698,7 +2699,8 @@ fn scan_cli_version(tool: &str) -> Result<ShellProbe, String> {
             }
 
             #[cfg(target_os = "windows")]
-            let output = run_windows_tool_version_command(&tool_path, &new_path);
+            let output = run_windows_tool_version_command(&tool_path, &new_path)
+                .map_err(|e| format!("Failed to probe {}: {e}", tool_path.display()));
 
             #[cfg(not(target_os = "windows"))]
             let output = {
@@ -2909,7 +2911,8 @@ fn resolve_path_default(
     let raw = decode_command_output(&out.stdout);
     // rc 的退出 trap 可以改写 shell 状态；已有路径输出时仍以载荷为准。
     let Some(first) = first_abs_path_line(&raw) else {
-        if out.status.success() || out.status.code() == Some(1) {
+        // dash/fish 的 command -v 用 127 表示命令不存在。
+        if out.status.success() || matches!(out.status.code(), Some(1) | Some(127)) {
             return Ok(None);
         }
         return Err(format!(
@@ -6639,6 +6642,30 @@ mod tests {
                 let _env = EnvGuard::set("/bin/zsh", dir.path());
                 assert_found_fixture_version(try_get_version("claude"), case);
             }
+        }
+
+        #[test]
+        #[serial_test::serial]
+        fn dash_missing_command_does_not_fail_installation_enumeration() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let _env = EnvGuard::set("/bin/dash", dir.path());
+            std::env::set_var("PATH", "/usr/bin:/bin");
+            let tool = "__cc_switch_missing_tool_5817__";
+            assert_eq!(
+                super::super::resolve_path_default(tool, None).unwrap(),
+                None
+            );
+            assert!(super::super::enumerate_tool_installations(tool)
+                .unwrap()
+                .is_empty());
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            let reports = runtime
+                .block_on(super::super::probe_tool_installations(vec![
+                    "claude".into(),
+                    "codex".into(),
+                ]))
+                .expect("a missing tool must not fail the whole batch");
+            assert_eq!(reports.len(), 2);
         }
 
         /// 对照：工具确实不存在时必须仍报 NotFound。
