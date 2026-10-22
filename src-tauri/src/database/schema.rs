@@ -69,6 +69,7 @@ impl Database {
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
+            enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0
         )",
@@ -101,6 +102,7 @@ impl Database {
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
+            enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -647,11 +649,25 @@ impl Database {
                                 )?;
                             }
                         }
-                        log::info!(
-                            "迁移数据库从 v20 到 v21（用量多维归属：供应商激活时间线、会话项目、项目维度与名称快照）"
-                        );
-                        Self::migrate_v20_to_v21(conn)?;
                         Self::set_user_version(conn, 21)?;
+                    }
+                    21 => {
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_kimi",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        Self::set_user_version(conn, 22)?;
+                    }
+                    22 => {
+                        log::info!("迁移数据库从 v22 到 v23（用量多维归属）");
+                        Self::migrate_v22_to_v23(conn)?;
+                        Self::set_user_version(conn, 23)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -678,12 +694,13 @@ impl Database {
         }
     }
 
-    /// v20 -> v21 迁移：用量多维归属基础设施。
+    /// v22 -> v23 迁移：用量多维归属基础设施。
     ///
     /// 新增供应商激活时间线与会话项目索引，给代理明细和日汇总增加项目维度、
     /// 归属证据与供应商名称快照；存量会话行统一标记为未识别，避免被列默认的
     /// `proxy/exact` 误标。日汇总重建主键以纳入 `project_key`。
-    fn migrate_v20_to_v21(conn: &Connection) -> Result<(), AppError> {
+    /// 早期 PR 构建曾使用 v21，已有归属证据和汇总分组必须原样保留。
+    fn migrate_v22_to_v23(conn: &Connection) -> Result<(), AppError> {
         // 1. 供应商激活时间线（切换式客户端直连归属证据）
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS provider_activations (
@@ -700,7 +717,7 @@ impl Database {
                 ON provider_activations(app_type, effective_at_ms);",
         )
         .map_err(|e| {
-            AppError::Database(format!("v20 -> v21 创建 provider_activations 失败: {e}"))
+            AppError::Database(format!("v22 -> v23 创建 provider_activations 失败: {e}"))
         })?;
 
         // 2. 会话项目索引（项目键与会话键的关联）
@@ -718,10 +735,13 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_session_projects_project
                 ON session_projects(project_key);",
         )
-        .map_err(|e| AppError::Database(format!("v20 -> v21 创建 session_projects 失败: {e}")))?;
+        .map_err(|e| AppError::Database(format!("v22 -> v23 创建 session_projects 失败: {e}")))?;
 
         // 3. 代理明细新增项目、归属证据与名称快照列
         if Self::table_exists(conn, "proxy_request_logs")? {
+            let had_attribution =
+                Self::has_column(conn, "proxy_request_logs", "attribution_source")?
+                    && Self::has_column(conn, "proxy_request_logs", "attribution_confidence")?;
             for (column, definition) in [
                 ("project_key", "TEXT NOT NULL DEFAULT ''"),
                 ("project_name", "TEXT NOT NULL DEFAULT ''"),
@@ -736,7 +756,8 @@ impl Database {
             }
 
             // 存量会话行不能用列默认的 proxy/exact 误标；数据源非 proxy 的行统一降级为未识别。
-            if Self::has_column(conn, "proxy_request_logs", "data_source")?
+            if !had_attribution
+                && Self::has_column(conn, "proxy_request_logs", "data_source")?
                 && Self::has_column(conn, "proxy_request_logs", "attribution_source")?
             {
                 conn.execute(
@@ -748,7 +769,7 @@ impl Database {
                     [],
                 )
                 .map_err(|e| {
-                    AppError::Database(format!("v20 -> v21 回填存量会话行归属失败: {e}"))
+                    AppError::Database(format!("v22 -> v23 回填存量会话行归属失败: {e}"))
                 })?;
             }
 
@@ -766,7 +787,7 @@ impl Database {
                      CREATE INDEX IF NOT EXISTS idx_request_logs_session_key
                          ON proxy_request_logs(app_type, session_key);",
                 )
-                .map_err(|e| AppError::Database(format!("v20 -> v21 创建项目维度索引失败: {e}")))?;
+                .map_err(|e| AppError::Database(format!("v22 -> v23 创建项目维度索引失败: {e}")))?;
             }
         }
 
@@ -781,9 +802,25 @@ impl Database {
             ]
             .iter()
             .all(|column| Self::has_column(conn, "usage_daily_rollups", column).unwrap_or(false));
-            if rebuildable {
-                conn.execute_batch(
-                    "ALTER TABLE usage_daily_rollups RENAME TO usage_daily_rollups_v20;
+            let needs_dimensions = !Self::has_column(conn, "usage_daily_rollups", "project_key")?
+                || !Self::has_column(conn, "usage_daily_rollups", "data_source")?;
+            if rebuildable && needs_dimensions {
+                // 保留早期 PR 或部分扩展已写入的维度，只有缺失列才补默认值。
+                let existing_or_default =
+                    |column: &str, default: &str| -> Result<String, AppError> {
+                        Ok(if Self::has_column(conn, "usage_daily_rollups", column)? {
+                            column.to_string()
+                        } else {
+                            default.to_string()
+                        })
+                    };
+                let data_source = existing_or_default("data_source", "'proxy'")?;
+                let project_key = existing_or_default("project_key", "''")?;
+                let project_name = existing_or_default("project_name", "''")?;
+                let project_path = existing_or_default("project_path", "''")?;
+                let provider_name = existing_or_default("provider_name_snapshot", "''")?;
+                conn.execute_batch(&format!(
+                    "ALTER TABLE usage_daily_rollups RENAME TO usage_daily_rollups_v22;
                      CREATE TABLE usage_daily_rollups (
                          date TEXT NOT NULL,
                          app_type TEXT NOT NULL,
@@ -813,19 +850,20 @@ impl Database {
                           request_count, success_count, input_tokens, output_tokens,
                           cache_read_tokens, cache_creation_tokens, input_token_semantics,
                           total_cost_usd, avg_latency_ms)
-                     SELECT date, app_type, provider_id, model, request_model, pricing_model, 'proxy', '',
-                          '', '', '',
+                     SELECT date, app_type, provider_id, model, request_model, pricing_model, {data_source}, {project_key},
+                          {project_name}, {project_path}, {provider_name},
                           request_count, success_count, input_tokens, output_tokens,
                           cache_read_tokens, cache_creation_tokens, input_token_semantics,
                           total_cost_usd, avg_latency_ms
-                     FROM usage_daily_rollups_v20;
-                     DROP TABLE usage_daily_rollups_v20;",
-                )
+                     FROM usage_daily_rollups_v22;
+                     DROP TABLE usage_daily_rollups_v22;",
+                ))
                 .map_err(|e| {
-                    AppError::Database(format!("v20 -> v21 重建 usage_daily_rollups 失败: {e}"))
+                    AppError::Database(format!("v22 -> v23 重建 usage_daily_rollups 失败: {e}"))
                 })?;
             } else {
                 for (column, definition) in [
+                    ("data_source", "TEXT NOT NULL DEFAULT 'proxy'"),
                     ("project_key", "TEXT NOT NULL DEFAULT ''"),
                     ("project_name", "TEXT NOT NULL DEFAULT ''"),
                     ("project_path", "TEXT NOT NULL DEFAULT ''"),
@@ -858,7 +896,7 @@ impl Database {
                     [],
                 )
                 .map_err(|e| {
-                    AppError::Database(format!("v20 -> v21 回填代理明细供应商名称快照失败: {e}"))
+                    AppError::Database(format!("v22 -> v23 回填代理明细供应商名称快照失败: {e}"))
                 })?;
             }
             if Self::table_exists(conn, "usage_daily_rollups")?
@@ -877,7 +915,7 @@ impl Database {
                     [],
                 )
                 .map_err(|e| {
-                    AppError::Database(format!("v20 -> v21 回填日汇总供应商名称快照失败: {e}"))
+                    AppError::Database(format!("v22 -> v23 回填日汇总供应商名称快照失败: {e}"))
                 })?;
             }
         }
@@ -4175,12 +4213,51 @@ mod tests {
     }
 
     #[test]
+    fn kimi_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_codex BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_claude BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 21)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for (table, flag) in [
+            ("mcp_servers", "enabled_codex"),
+            ("skills", "enabled_claude"),
+        ] {
+            let flags = conn.query_row(
+                &format!("SELECT {flag}, enabled_kimi FROM {table}"),
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(flags, (1, 0));
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    #[test]
+    fn kimi_clean_database_persists_mcp_and_skill_flags_independently() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let server = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"echo"}, "apps":{"kimi":true,"codex":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Kimi, false)?;
+        let saved = db.get_all_mcp_servers()?;
+        assert!(!saved["m"].apps.kimi);
+        assert!(saved["m"].apps.codex);
+        let skill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "description":"", "directory":"s", "apps":{"kimi":true,"claude":true}, "installedAt":0})).unwrap();
+        db.save_skill(&skill)?;
+        let saved = db.get_installed_skill("s")?.unwrap();
+        assert!(saved.apps.kimi && saved.apps.claude);
+        assert!(db.get_all_installed_skills()?["s"].apps.kimi);
+        Ok(())
+    }
+
+    #[test]
     fn agy_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_gemini BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_codex BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
         Database::set_user_version(&conn, 20)?;
         Database::apply_schema_migrations_on_conn(&conn)?;
-        assert_eq!(Database::get_user_version(&conn)?, 21);
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         for (table, flag) in [
             ("mcp_servers", "enabled_gemini"),
             ("skills", "enabled_codex"),
@@ -4389,7 +4466,29 @@ mod tests {
     }
 
     #[test]
-    fn migrate_v20_to_v21_adds_multidim_attribution_schema() -> Result<(), AppError> {
+    fn multidim_migration_upgrades_v20() -> Result<(), AppError> {
+        assert_multidim_migration(20, false)
+    }
+
+    #[test]
+    fn multidim_migration_upgrades_main_v21() -> Result<(), AppError> {
+        assert_multidim_migration(21, false)
+    }
+
+    #[test]
+    fn multidim_migration_upgrades_main_v22() -> Result<(), AppError> {
+        assert_multidim_migration(22, false)
+    }
+
+    #[test]
+    fn multidim_migration_preserves_legacy_rollup_source() -> Result<(), AppError> {
+        assert_multidim_migration(22, true)
+    }
+
+    fn assert_multidim_migration(
+        from_version: i32,
+        has_rollup_source: bool,
+    ) -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(
             "CREATE TABLE providers (
@@ -4433,7 +4532,10 @@ mod tests {
                 (date, app_type, provider_id, model, request_count, input_tokens)
                 VALUES ('2026-10-20', 'codex', 'acme', 'gpt-x', 3, 300);",
         )?;
-        Database::set_user_version(&conn, 20)?;
+        if has_rollup_source {
+            conn.execute("ALTER TABLE usage_daily_rollups ADD COLUMN data_source TEXT NOT NULL DEFAULT 'codex_session'", [])?;
+        }
+        Database::set_user_version(&conn, from_version)?;
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
@@ -4505,6 +4607,54 @@ mod tests {
         assert_eq!(provider_id, "acme");
         assert_eq!(project_key, "", "旧日汇总的项目键回填为空");
         assert_eq!(input_tokens, 300, "日汇总存量数据必须保留");
+        let data_source: String =
+            conn.query_row("SELECT data_source FROM usage_daily_rollups", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(
+            data_source,
+            if has_rollup_source {
+                "codex_session"
+            } else {
+                "proxy"
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn multidim_migration_preserves_existing_pr_attribution_and_rollups() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        conn.execute_batch(
+            "INSERT INTO proxy_request_logs(request_id,provider_id,app_type,model,latency_ms,status_code,created_at,data_source,project_key,attribution_source,attribution_confidence)
+             VALUES ('retained','provider-a','codex','model-a',10,200,100,'codex_session','project-a','session_meta','exact');
+             INSERT INTO usage_daily_rollups(date,app_type,provider_id,model,data_source,project_key,input_tokens)
+             VALUES ('2026-10-20','codex','provider-a','model-a','codex_session','project-a',11),
+                    ('2026-10-20','codex','provider-a','model-a','proxy','project-b',22);",
+        )?;
+        Database::set_user_version(&conn, 21)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        let attribution: (String, String, String) = conn.query_row(
+            "SELECT project_key,attribution_source,attribution_confidence FROM proxy_request_logs WHERE request_id='retained'",
+            [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+        )?;
+        assert_eq!(
+            attribution,
+            ("project-a".into(), "session_meta".into(), "exact".into())
+        );
+        let rows: Vec<(String,String,i64)> = conn.prepare(
+            "SELECT project_key,data_source,input_tokens FROM usage_daily_rollups ORDER BY project_key",
+        )?.query_map([], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)))?.collect::<Result<_,_>>()?;
+        assert_eq!(
+            rows,
+            vec![
+                ("project-a".into(), "codex_session".into(), 11),
+                ("project-b".into(), "proxy".into(), 22)
+            ]
+        );
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         Ok(())
     }
 }

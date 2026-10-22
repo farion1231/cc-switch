@@ -172,6 +172,11 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
         "Antigravity",
         crate::services::session_usage_agy::sync_agy_usage(db),
     );
+    merge_sync_step(
+        &mut result,
+        "Kimi Code",
+        crate::services::session_usage_kimi::sync_kimi_usage(db),
+    );
     notify_sync_result(&result);
     record_sync_completed(chrono::Utc::now().timestamp_millis());
     result

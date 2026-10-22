@@ -590,7 +590,12 @@ function App() {
   useEffect(() => {
     const checkEnvOnSwitch = async () => {
       try {
-        if (activeApp === "mcode" || activeApp === "agy") return;
+        if (
+          activeApp === "mcode" ||
+          activeApp === "kimi" ||
+          activeApp === "agy"
+        )
+          return;
         const conflicts = await checkEnvConflicts(activeApp);
 
         if (conflicts.length > 0) {
@@ -836,9 +841,9 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: hermesKeys.liveProviderIds,
         });
-      } else if (activeApp === "mcode") {
+      } else if (activeApp === "mcode" || activeApp === "kimi") {
         await queryClient.invalidateQueries({
-          queryKey: ["providers", "mcode"],
+          queryKey: ["providers", activeApp],
         });
       }
       toast.success(
@@ -975,13 +980,26 @@ function App() {
         existingKeys,
       );
       duplicatedProvider.addToLive = false;
-    } else if (activeApp === "mcode") {
+    } else if (activeApp === "mcode" || activeApp === "kimi") {
       // The MCode list already includes its live custom nodes; the backend
       // rejects a key that MCode itself owns.
       duplicatedProvider.providerKey = generateUniqueProviderCopyKey(
         provider.id,
         Object.keys(providers),
       );
+      if (activeApp === "kimi") {
+        const models = duplicatedProvider.settingsConfig.models ?? {};
+        duplicatedProvider.settingsConfig.models = Object.fromEntries(
+          Object.entries(models).map(([key, value]) => [
+            `${duplicatedProvider.providerKey}/${key.startsWith(`${provider.id}/`) ? key.slice(provider.id.length + 1) : key}`,
+            {
+              ...(value as Record<string, unknown>),
+              provider: duplicatedProvider.providerKey,
+            },
+          ]),
+        );
+        duplicatedProvider.addToLive = false;
+      }
     }
 
     if (provider.sortIndex !== undefined) {
@@ -1166,6 +1184,7 @@ function App() {
         <>
           {currentView === "providers" &&
             activeApp !== "mcode" &&
+            activeApp !== "kimi" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
@@ -1328,7 +1347,8 @@ function App() {
               activeApp === "openclaw" ||
               activeApp === "hermes" ||
               activeApp === "pi" ||
-              activeApp === "mcode"
+              activeApp === "mcode" ||
+              activeApp === "kimi"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
             }

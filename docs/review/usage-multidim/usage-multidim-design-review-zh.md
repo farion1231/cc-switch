@@ -1,6 +1,24 @@
 # CC Switch 用量多维度 详细设计评审记录
 
-## 最新复核（2026-10-22）
+## 最新复核：Kimi 与迁移兼容（2026-10-22）
+
+合并上游 `main` `e4873bc8`。文本自动合并成功，但组合后的代码存在三个实际问题，均已增加回归并修复：
+
+1. Kimi 新增的两处统计测试仍使用旧参数数量，`cargo test --lib session_usage_kimi` 编译报 `E0061`。补齐项目、供应商应用和归属过滤参数后，6 项 Kimi 测试通过。
+2. Kimi 原生会话 INSERT 未指定归属列，会继承 `proxy/exact` 默认值；新回归在修复前实际读到该错误值。新写入和已有记录刷新均明确标记 `unknown/unknown/kimi_native_session`，重复同步保持明细数量不变。
+3. 上游已占用 schema v21/v22，原先放在 v20→v21 的多维迁移会被这些用户跳过；升级回归在修复前因缺少 `provider_activations` 失败。现在保留上游迁移，并使用独立 v22→v23；已有多维归属不降级，汇总保留项目和数据源分组，只有缺少维度时才重建。5 项专用回归覆盖上游 v20/v21/v22、部分汇总维度及早期 PR v21 数据。
+
+当前分支验证：
+
+- `pnpm test:unit --maxWorkers=2 --minWorkers=1`：253 个文件、3210 项通过。
+- `pnpm typecheck`、`pnpm format:check`、`pnpm build:renderer`：通过。
+- `cargo fmt --check`、`cargo clippy -- -D warnings`：通过。
+- `cargo test --lib database::schema`：16 项通过；`cargo test --lib session_usage_kimi`：6 项通过；`cargo test --lib usage_stats`：47 项通过。
+- 隔离测试目录后运行 `NO_PROXY=127.0.0.1,localhost cargo test --manifest-path src-tauri/Cargo.toml`：4169 项通过、12 项忽略、0 失败，含 3970 项库测试和 199 项集成测试。
+
+完整 Rust 首轮：3969 通过、1 失败、12 忽略；失败是上游原有的 `describe_reqwest_error_keeps_cause_and_drops_url`，预期本机空闲端口拒绝连接，实际收到 502。该文件与当前 main 无差异。仅对测试进程设置 `NO_PROXY=127.0.0.1,localhost` 后，单项复测通过；本机此类网络用例需明确回环地址不走代理，再运行测试。未修改应用网络设置或该用例。
+
+## 上一轮复核：模型缓存下钻（2026-10-22）
 
 模型缓存下钻及原有多维用量变更已与上游 `main` 的 `cb90a244` 合并。没有文本冲突；启动逻辑、语言文件及 4.0.18 版本信息均保留上游更新，项目和供应商下钻继续使用原始应用与供应商卡片 ID 过滤。
 

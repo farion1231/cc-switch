@@ -287,6 +287,7 @@ export type AppType =
   | "opencode"
   | "pi"
   | "mcode"
+  | "kimi"
   | "agy";
 
 export type AppTypeFilter = "all" | AppType;
@@ -299,6 +300,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "opencode",
   "pi",
   "mcode",
+  "kimi",
   "agy",
 ];
 
@@ -326,6 +328,7 @@ export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
 const PARTIAL_CACHE_WRITE_APP_TYPES: ReadonlySet<string> = new Set([
   "pi",
   "mcode",
+  "kimi",
 ]);
 
 export type CacheWriteAvailability = "ok" | "partial" | "na";

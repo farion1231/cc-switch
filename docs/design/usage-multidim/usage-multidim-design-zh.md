@@ -8,11 +8,11 @@
 | 上游需求 | `docs/plan/usage-multidim/usage-multidim-requirements-zh.md` |
 | 上游评审 | `docs/review/usage-multidim/usage-multidim-review-zh.md` |
 | 设计评审 | `docs/review/usage-multidim/usage-multidim-design-review-zh.md` |
-| 当前数据库版本 | `SCHEMA_VERSION = 20` |
-| 目标数据库版本 | `21` |
-| 最后更新 | 2026-10-20 |
+| 上游数据库版本 | `SCHEMA_VERSION = 22`（main `e4873bc8`） |
+| 目标数据库版本 | `23` |
+| 最后更新 | 2026-10-22 |
 
-本文把需求落到具体代码：数据模型与迁移、归属算法、后端命令、前端组件、实施顺序与测试门禁。文中所有文件路径与行号以当前 `main` 分支源码为准。
+本文把需求落到具体代码：数据模型与迁移、归属算法、后端命令、前端组件、实施顺序与测试门禁。实现位置以文件和符号定位，历史行号仅供参考；最新上游兼容调整见第 12 节。
 
 ## 2. 设计原则
 
@@ -27,11 +27,11 @@
 
 ### 3.1 迁移骨架
 
-`SCHEMA_VERSION` 在 `src-tauri/src/database/mod.rs:54`。迁移循环在 `src-tauri/src/database/schema.rs:440`，采用 `match version { N => migrate_vN_to_vN+1 }` 逐步升级。新增 v20→v21：
+`SCHEMA_VERSION` 在 `src-tauri/src/database/mod.rs`。迁移循环 `Database::apply_schema_migrations_on_conn` 逐级升级。最新上游已使用 v21 和 v22，新增独立的 v22→v23：
 
-- 把 `SCHEMA_VERSION` 改为 `21`。
-- 在 `19 =>` 分支后新增 `20 =>`，调用 `migrate_v20_to_v21(conn)`。
-- 实现 `migrate_v20_to_v21`，按 3.2~3.5 执行。
+- 把 `SCHEMA_VERSION` 改为 `23`。
+- 保留上游 `20 =>` 的 Antigravity 能力列和 `21 =>` 的 Kimi 能力列迁移，在 `22 =>` 调用 `migrate_v22_to_v23(conn)`。
+- `migrate_v22_to_v23` 按 3.2~3.5 执行；对于已含多维字段的早期 PR v21 数据库，保留现有归属和汇总维度。
 
 迁移失败必须回滚，现有外层 `SAVEPOINT schema_migration` 已覆盖，无需额外处理。
 
@@ -83,7 +83,7 @@ ALTER TABLE proxy_request_logs ADD COLUMN provider_name_snapshot TEXT NOT NULL D
 
 新增列统一走 `add_column_if_missing`。`session_key` 是项目关联的规范化键，`session_id` 保留原始值，避免影响现有代理缓存身份。
 
-迁移后必须把存量会话行标记为未识别，不能用列默认的 `proxy/exact` 误标：
+首次引入归属列时，必须把存量会话行标记为未识别，不能用列默认的 `proxy/exact` 误标；已有归属列和证据的早期 PR 数据库不执行这一步：
 
 ```sql
 UPDATE proxy_request_logs
@@ -104,10 +104,10 @@ CREATE INDEX idx_request_logs_session_key ON proxy_request_logs(app_type, sessio
 
 ### 3.4 usage_daily_rollups 重建
 
-当前表含 `input_token_semantics`（`src-tauri/src/database/schema.rs:288`）。重建参照 `migrate_v10_to_v11`（`schema.rs:1637`）的 rename + 重建模式，新增四列并把 `project_key` 纳入主键：
+上游表含 `input_token_semantics`。缺少 `project_key` 或 `data_source` 时，采用 rename + 重建模式，把两者纳入主键。下列 SQL 展示上游原始表的默认回填路径；已有部分维度时动态复制原值，已含完整维度时跳过重建，仅补缺失列：
 
 ```sql
-ALTER TABLE usage_daily_rollups RENAME TO usage_daily_rollups_v20;
+ALTER TABLE usage_daily_rollups RENAME TO usage_daily_rollups_v22;
 CREATE TABLE usage_daily_rollups (
     date TEXT NOT NULL,
     app_type TEXT NOT NULL,
@@ -115,6 +115,7 @@ CREATE TABLE usage_daily_rollups (
     model TEXT NOT NULL,
     request_model TEXT NOT NULL DEFAULT '',
     pricing_model TEXT NOT NULL DEFAULT '',
+    data_source TEXT NOT NULL DEFAULT 'proxy',
     project_key TEXT NOT NULL DEFAULT '',
     project_name TEXT NOT NULL DEFAULT '',
     project_path TEXT NOT NULL DEFAULT '',
@@ -128,21 +129,21 @@ CREATE TABLE usage_daily_rollups (
     input_token_semantics INTEGER NOT NULL DEFAULT 0,
     total_cost_usd TEXT NOT NULL DEFAULT '0',
     avg_latency_ms INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model, project_key)
+    PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model, data_source, project_key)
 );
 INSERT INTO usage_daily_rollups
-    (date, app_type, provider_id, model, request_model, pricing_model, project_key,
+    (date, app_type, provider_id, model, request_model, pricing_model, data_source, project_key,
      project_name, project_path, provider_name_snapshot,
      request_count, success_count, input_tokens, output_tokens,
      cache_read_tokens, cache_creation_tokens, input_token_semantics,
      total_cost_usd, avg_latency_ms)
-SELECT date, app_type, provider_id, model, request_model, pricing_model, '',
+SELECT date, app_type, provider_id, model, request_model, pricing_model, 'proxy', '',
      '', '', '',
      request_count, success_count, input_tokens, output_tokens,
      cache_read_tokens, cache_creation_tokens, input_token_semantics,
      total_cost_usd, avg_latency_ms
-FROM usage_daily_rollups_v20;
-DROP TABLE usage_daily_rollups_v20;
+FROM usage_daily_rollups_v22;
+DROP TABLE usage_daily_rollups_v22;
 ```
 
 ### 3.5 迁移基线
@@ -292,7 +293,7 @@ cacheHitRate = cacheRead / cacheable
 
 ## 7. 实施顺序
 
-1. 数据库迁移 v20→v21（本设计第 3 节）+ 迁移测试。
+1. 数据库迁移 v22→v23（本设计第 3 节）+ 多个来源版本的迁移测试。
 2. `provider_activations`、`session_projects` 的 DAO 写入接口与类型。
 3. 切换式客户端激活时间线写入（`switch_provider` 后钩子）。
 4. 各会话适配器项目字段解析与 `session_projects` 写入。
@@ -305,7 +306,7 @@ cacheHitRate = cacheRead / cacheable
 
 ## 8. 测试计划
 
-- 迁移：v20→v21 不丢行、新主键生效、存量会话行标记 `unknown`、旧版本拒绝打开 v21（已有 `apply_schema_migrations_on_conn` 的超版本报错路径）。
+- 迁移：上游 v20/v21/v22→v23 不丢行、新主键生效、首次增加归属列时存量会话行标记 `unknown`；早期 PR v21 的归属和汇总分组原样保留，重复迁移幂等。旧版本拒绝打开 v23（已有 `apply_schema_migrations_on_conn` 的超版本报错路径）。
 - 归属：请求早于/落在/跨激活记录、同秒歧义、路由不用时间线、配置指纹不匹配。
 - 项目：尾斜杠、符号链接、非 Git、路径不存在、子 agent 继承。
 - 缓存：全新增 / 全命中 / 仅写入 / 可缓存为 0 / 多供应商 Token 加权。
@@ -322,7 +323,7 @@ cacheHitRate = cacheRead / cacheable
 
 | 能力 | 实现位置 |
 | --- | --- |
-| v20→v21 迁移 | `src-tauri/src/database/schema.rs::migrate_v20_to_v21` |
+| v22→v23 迁移 | `src-tauri/src/database/schema.rs::migrate_v22_to_v23` |
 | 激活时间线 / 项目索引 / 归属算法 | `src-tauri/src/services/usage_attribution.rs` |
 | 切换式客户端钩子 | `ProviderService::switch`、`mode::operation::commit_target`、`usage_attribution::ensure_startup_baselines`（启动调用） |
 | Codex / Claude / Gemini / Grok 归属 | 各 `session_usage_*.rs`；Codex 读 `session_meta.cwd/model_provider` |
@@ -361,3 +362,11 @@ cacheHitRate = cacheRead / cacheable
 - 不改变计价、日志归属、数据库结构、后端接口或模型分组规则；不增加查询次数。模型分组继续使用有效计价模型。
 
 相关回归包含 `ModelCacheBreakdown.test.tsx`、`cacheStats.test.ts` 及两个下钻入口的组件测试。跨供应商旧数据误显示的原因是查询使用 `keepPreviousData`，消费端未区分占位结果；回归用例明确断言切换期间隐藏旧模型，避免同类问题复发。
+
+## 12. 最新上游与 Kimi 兼容
+
+2026-10-22 合并上游 `main` `e4873bc8`，保留新增的 Kimi Code 能力和原有迁移顺序。多维用量迁移单独占用 v23，覆盖上游 v21/v22 已安装用户，并保留早期 PR 构建生成的归属证据及按项目、数据源拆分的汇总。
+
+Kimi 原生会话仍使用 `_kimi_session` 桶；新导入与已有记录刷新均写明 `unknown/unknown/kimi_native_session`，避免数据库默认值把原生记录误标为代理精确归属。刷新仅修正明细，不新增汇总用量。会话管理器已有目录信息，但用量导入尚未关联项目，当前明确保留为未识别项目，不以当前目录或当前供应商补齐。
+
+Kimi 的统计测试调用同步新的项目、供应商应用与归属过滤参数。兼容回归覆盖 v20/v21/v22 升级、既有多维数据保留、部分汇总数据源保留，以及 Kimi 新导入和重复同步的归属修复。
