@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { TagInput } from "@/components/ui/tag-input";
 import {
   discardUnsavedChanges,
@@ -13,10 +13,12 @@ function TagInputHarness({
   initialTags = ["web", "docs"],
   suggestions = ["web", "docs", "tools", "database"],
   disabled = false,
+  placeholder = "Add tag",
 }: {
   initialTags?: string[];
   suggestions?: string[];
   disabled?: boolean;
+  placeholder?: string;
 }) {
   const [tags, setTags] = useState(initialTags);
   return (
@@ -25,7 +27,7 @@ function TagInputHarness({
       onChange={setTags}
       suggestions={suggestions}
       disabled={disabled}
-      placeholder="Add tag"
+      placeholder={placeholder}
     />
   );
 }
@@ -180,11 +182,18 @@ describe("TagInput", () => {
     expect(input).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("uses default i18n placeholder when no placeholder is provided", () => {
-    render(<TagInput value={[]} />);
-    expect(
-      screen.getByPlaceholderText(/tagInput\.placeholder|Add tag\.\.\./),
-    ).toBeInTheDocument();
+  it("deduplicates initial duplicate tags from legacy data without error", async () => {
+    const onChange = vi.fn();
+    render(<TagInput value={["dup", "dup", "other"]} onChange={onChange} />);
+
+    // Should only render 1 chip for "dup" and 1 for "other"
+    expect(screen.getAllByText("dup")).toHaveLength(1);
+    expect(screen.getAllByText("other")).toHaveLength(1);
+
+    // Clicking remove on "dup" should cleanly call onChange with ["other"]
+    const removeDupBtn = screen.getByLabelText("Remove tag dup");
+    await userEvent.click(removeDupBtn);
+    expect(onChange).toHaveBeenCalledWith(["other"]);
   });
 
   it("marks unsaved changes when clicking the remove button", async () => {
@@ -222,5 +231,12 @@ describe("TagInput", () => {
 
     expect(hasUnsavedChanges()).toBe(true);
     expect(screen.getByText("gamma")).toBeInTheDocument();
+  });
+
+  it("uses default i18n placeholder when no placeholder is provided", () => {
+    render(<TagInput value={[]} />);
+    expect(
+      screen.getByPlaceholderText(/tagInput\.placeholder|Add tag\.\.\./),
+    ).toBeInTheDocument();
   });
 });

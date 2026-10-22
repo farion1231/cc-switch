@@ -1,4 +1,11 @@
-import React, { useState, useRef, useId, useCallback, useEffect } from "react";
+import React, {
+  useState,
+  useRef,
+  useId,
+  useCallback,
+  useEffect,
+  useMemo,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { X, Tag as TagIcon } from "lucide-react";
 import {
@@ -124,6 +131,19 @@ export function TagInput({
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownId = useId();
 
+  // 兜底去重与过滤空白，防止脏数据中包含重复标签导致 React key 冲突与 dnd-kit id 重复
+  const uniqueValue = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (value ?? [])
+            .map((t) => (typeof t === "string" ? t.trim() : ""))
+            .filter(Boolean),
+        ),
+      ),
+    [value],
+  );
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 5 },
@@ -150,7 +170,7 @@ export function TagInput({
 
   // 过滤建议列表：匹配当前输入（若输入为空且聚焦时展示全部候选项），且排除已选择项
   const matchingSuggestions = suggestions.filter((s) => {
-    if (value.includes(s)) return false;
+    if (uniqueValue.includes(s)) return false;
     if (!trimmedInput) return true;
     return s.toLowerCase().includes(trimmedInput.toLowerCase());
   });
@@ -159,27 +179,27 @@ export function TagInput({
     (tagToAdd: string) => {
       const clean = tagToAdd.trim();
       if (!clean) return;
-      if (maxTags !== undefined && value.length >= maxTags) return;
-      if (value.some((t) => t.toLowerCase() === clean.toLowerCase())) {
+      if (maxTags !== undefined && uniqueValue.length >= maxTags) return;
+      if (uniqueValue.some((t) => t.toLowerCase() === clean.toLowerCase())) {
         setInputValue("");
         setPendingDeleteIndex(-1);
         return;
       }
-      notifyChange([...value, clean]);
+      notifyChange([...uniqueValue, clean]);
       setInputValue("");
       setIsOpen(false);
       setHighlightedIndex(-1);
       setPendingDeleteIndex(-1);
     },
-    [maxTags, notifyChange, value],
+    [maxTags, notifyChange, uniqueValue],
   );
 
   const removeTag = useCallback(
     (tagToRemove: string) => {
       setPendingDeleteIndex(-1);
-      notifyChange(value.filter((t) => t !== tagToRemove));
+      notifyChange(uniqueValue.filter((t) => t !== tagToRemove));
     },
-    [notifyChange, value],
+    [notifyChange, uniqueValue],
   );
 
   const handleDragEnd = useCallback(
@@ -187,14 +207,14 @@ export function TagInput({
       setPendingDeleteIndex(-1);
       const { active, over } = event;
       if (over && active.id !== over.id) {
-        const oldIndex = value.indexOf(String(active.id));
-        const newIndex = value.indexOf(String(over.id));
+        const oldIndex = uniqueValue.indexOf(String(active.id));
+        const newIndex = uniqueValue.indexOf(String(over.id));
         if (oldIndex !== -1 && newIndex !== -1) {
-          notifyChange(arrayMove(value, oldIndex, newIndex));
+          notifyChange(arrayMove(uniqueValue, oldIndex, newIndex));
         }
       }
     },
-    [notifyChange, value],
+    [notifyChange, uniqueValue],
   );
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -238,12 +258,12 @@ export function TagInput({
 
     if (event.key === "Backspace") {
       // 只有在输入框完全为空且已有标签时触发
-      if (!inputValue && value.length > 0) {
+      if (!inputValue && uniqueValue.length > 0) {
         event.preventDefault();
-        const lastIndex = value.length - 1;
+        const lastIndex = uniqueValue.length - 1;
         if (pendingDeleteIndex === lastIndex) {
           // 第二次连按 Backspace：确认删除最后一个标签
-          removeTag(value[lastIndex]);
+          removeTag(uniqueValue[lastIndex]);
           setPendingDeleteIndex(-1);
         } else {
           // 第一次按 Backspace：仅选中标记为待删除，防止误按或输入法清空字根时直接误删
@@ -332,10 +352,10 @@ export function TagInput({
           onDragEnd={handleDragEnd}
         >
           <SortableContext
-            items={value}
+            items={uniqueValue}
             strategy={horizontalListSortingStrategy}
           >
-            {value.map((tag, index) => (
+            {uniqueValue.map((tag, index) => (
               <SortableTagChip
                 key={tag}
                 tag={tag}
@@ -353,9 +373,9 @@ export function TagInput({
           type="text"
           value={inputValue}
           disabled={
-            disabled || (maxTags !== undefined && value.length >= maxTags)
+            disabled || (maxTags !== undefined && uniqueValue.length >= maxTags)
           }
-          placeholder={value.length === 0 ? effectivePlaceholder : ""}
+          placeholder={uniqueValue.length === 0 ? effectivePlaceholder : ""}
           autoComplete="off"
           spellCheck={false}
           aria-autocomplete="list"

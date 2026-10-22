@@ -348,4 +348,23 @@ describe("McpFormModal (drawer)", () => {
     fireEvent.keyDown(tagInput, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("deduplicates legacy duplicate tags in initialData when opening the modal", () => {
+    const server: McpServer = {
+      id: "legacy",
+      name: "legacy",
+      server: { type: "stdio", command: "test" },
+      apps: { claude: true } as McpServer["apps"],
+      tags: ["dup", "dup", "  dup  ", "unique"],
+    };
+    renderForm({ editingId: "legacy", initialData: server });
+
+    const metaButton = screen.getByRole("button", {
+      name: /mcpPage\.drawer\.meta/,
+    });
+    fireEvent.click(metaButton);
+
+    expect(screen.getAllByText("dup")).toHaveLength(1);
+    expect(screen.getAllByText("unique")).toHaveLength(1);
+  });
 });

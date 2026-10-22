@@ -101,7 +101,15 @@ function metaOf(server?: McpServer): MetaDraft {
     // 显示名和键名一样时不必重复填
     name: server.name && server.name !== server.id ? server.name : "",
     description: server.description ?? "",
-    tags: Array.isArray(server.tags) ? [...server.tags] : [],
+    tags: Array.isArray(server.tags)
+      ? Array.from(
+          new Set(
+            server.tags
+              .map((t) => (typeof t === "string" ? t.trim() : ""))
+              .filter(Boolean),
+          ),
+        )
+      : [],
     homepage: server.homepage ?? "",
     docs: server.docs ?? "",
   };
@@ -203,7 +211,15 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     setMeta({
       name: withDesc.name && withDesc.name !== preset.id ? withDesc.name : "",
       description: withDesc.description ?? "",
-      tags: Array.isArray(withDesc.tags) ? [...withDesc.tags] : [],
+      tags: Array.isArray(withDesc.tags)
+        ? Array.from(
+            new Set(
+              withDesc.tags
+                .map((t) => (typeof t === "string" ? t.trim() : ""))
+                .filter(Boolean),
+            ),
+          )
+        : [],
       homepage: withDesc.homepage ?? "",
       docs: withDesc.docs ?? "",
     });
@@ -356,7 +372,9 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     assign("description");
     assign("homepage");
     assign("docs");
-    const tags = metaDraft.tags.map((tag) => tag.trim()).filter(Boolean);
+    const tags = Array.from(
+      new Set(metaDraft.tags.map((tag) => tag.trim()).filter(Boolean)),
+    );
     if (tags.length) entry.tags = tags;
     else delete entry.tags;
     return entry;
