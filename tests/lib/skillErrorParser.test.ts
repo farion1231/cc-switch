@@ -5,6 +5,7 @@ import en from "@/i18n/locales/en.json";
 import zh from "@/i18n/locales/zh.json";
 import zhTW from "@/i18n/locales/zh-TW.json";
 import ja from "@/i18n/locales/ja.json";
+import tr from "@/i18n/locales/tr.json";
 
 describe("formatSkillError", () => {
   it.each([
@@ -12,6 +13,7 @@ describe("formatSkillError", () => {
     ["zh", zh],
     ["zh-TW", zhTW],
     ["ja", ja],
+    ["tr", tr],
   ] as const)(
     "localizes ambiguous skill names in %s",
     async (language, locale) => {
