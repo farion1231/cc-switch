@@ -28,6 +28,7 @@ import {
   extractCodexExperimentalBearerToken,
   extractProviderBaseUrl,
 } from "@/utils/providerConfigUtils";
+import { isCopilotByok } from "@/config/copilotProviderPresets";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { isMac } from "@/lib/platform";
 import {
@@ -122,6 +123,7 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
   if (provider.category === "official") {
     return true;
   }
+  if (appId === "copilot") return !isCopilotByok(provider.settingsConfig);
 
   const config = provider.settingsConfig as Record<string, any>;
   if (appId === "claude") {
@@ -150,6 +152,19 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
     );
   }
   return false;
+}
+
+/** Copilot CLI 卡片显示模型（`COPILOT_MODEL`），自带模型卡再带上地址。 */
+function extractCopilotSummary(provider: Provider): string | null {
+  const env = (provider.settingsConfig as Record<string, any>)?.env ?? {};
+  const model =
+    typeof env.COPILOT_MODEL === "string" ? env.COPILOT_MODEL.trim() : "";
+  const baseUrl =
+    typeof env.COPILOT_PROVIDER_BASE_URL === "string"
+      ? env.COPILOT_PROVIDER_BASE_URL.trim()
+      : "";
+  if (model && baseUrl) return `${model} · ${baseUrl}`;
+  return model || baseUrl || null;
 }
 
 /** Antigravity 卡片直接显示当前模型，省得进编辑才知道。 */
@@ -235,7 +250,12 @@ export function ProviderCard({
   }, [provider, fallbackUrlText]);
 
   const agyModel = useMemo(
-    () => (appId === "agy" ? extractAgyModel(provider) : null),
+    () =>
+      appId === "agy"
+        ? extractAgyModel(provider)
+        : appId === "copilot"
+          ? extractCopilotSummary(provider)
+          : null,
     [appId, provider],
   );
 
@@ -262,7 +282,13 @@ export function ProviderCard({
   const officialSubscriptionEnabled =
     supportsOfficialSubscription && usageEnabled && isOfficialSubscriptionUsage;
 
+  // Copilot CLI 官方卡绑了授权中心的 GitHub 账号：额度查那个账号
+  const isCopilotCliBound =
+    appId === "copilot" &&
+    isOfficial &&
+    Boolean(resolveManagedAccountId(provider.meta, "github_copilot"));
   const isCopilot =
+    isCopilotCliBound ||
     provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
     provider.meta?.usage_script?.templateType === "github_copilot";
   const isCodexOauth =

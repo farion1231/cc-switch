@@ -194,6 +194,23 @@ impl StreamCheckService {
                     .filter(|url| !url.trim().is_empty())
                     .unwrap_or_else(|| DEFAULT_GEMINI_BASE_URL.to_string()))
             }
+            AppType::Copilot => {
+                if crate::services::provider::copilot_direct::is_official(provider) {
+                    return Err(AppError::Message(
+                        "Official providers do not expose a reachability-check target".to_string(),
+                    ));
+                }
+                provider
+                    .settings_config
+                    .pointer("/env/COPILOT_PROVIDER_BASE_URL")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|url| !url.is_empty())
+                    .map(str::to_string)
+                    .ok_or_else(|| {
+                        AppError::Message("COPILOT_PROVIDER_BASE_URL is empty".to_string())
+                    })
+            }
             _ => get_adapter(app_type)
                 .ok_or_else(|| {
                     AppError::InvalidInput(format!(
@@ -552,6 +569,20 @@ mod tests {
         let mut official = make_provider(serde_json::json!({ "env": {} }));
         official.category = Some("official".to_string());
         assert!(StreamCheckService::resolve_base_url(&AppType::Agy, &official).is_err());
+    }
+
+    #[test]
+    fn test_resolve_base_url_copilot_uses_byok_endpoint_only() {
+        let custom = make_provider(serde_json::json!({ "env": {
+            "COPILOT_PROVIDER_BASE_URL": "https://relay.example/v1",
+            "COPILOT_MODEL": "gpt-5.4"
+        } }));
+        assert_eq!(
+            StreamCheckService::resolve_base_url(&AppType::Copilot, &custom).unwrap(),
+            "https://relay.example/v1"
+        );
+        let login = make_provider(serde_json::json!({ "env": { "COPILOT_MODEL": "auto" } }));
+        assert!(StreamCheckService::resolve_base_url(&AppType::Copilot, &login).is_err());
     }
 
     #[tokio::test]

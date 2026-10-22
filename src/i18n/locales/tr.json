@@ -216,7 +216,10 @@
     "formSubtitleStack": "{{app}} (Birleştirme modu)",
     "editCurrentNoticeFile": "Bu, kullanımda olan sağlayıcıdır. Kaydetme şunu yazar:",
     "editCurrentNoticeFileEnd": "hemen; sonraki istek bunu kullanır.",
-    "editCurrentNotice": "Bu, kullanımda olan sağlayıcıdır. Kaydetme hemen etkili olur; sonraki istek yeni ayarları kullanır."
+    "editCurrentNotice": "Bu, kullanımda olan sağlayıcıdır. Kaydetme hemen etkili olur; sonraki istek yeni ayarları kullanır.",
+    "openTerminalDialog": {
+      "isolationBodyCopilot": "\"{{name}}\" kartının uç noktası, anahtarı ve modeli yalnızca bu terminaldeki copilot'a iletilir ve hiçbir dosyaya yazılmaz; başka bir terminalde doğrudan copilot çalıştırmak yine GitHub oturumunuzu kullanır."
+    }
   },
   "claudeCode": {
     "needsRouting": "Yönlendirme Gerekiyor",
@@ -1062,7 +1065,8 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "copilot": "Copilot CLI"
   },
   "mcode": {
     "empty": {
@@ -1509,7 +1513,8 @@
       "rawMatch": "Kaynaktaki eşleşmeler",
       "expandContent": "İçeriğin tamamını göster",
       "collapseContent": "Daralt"
-    }
+    },
+    "copilotDeleteHint": "Oturum deposunun tutarlı kalması için bu oturumu GitHub Copilot CLI içinde silin"
   },
   "console": {
     "providerSwitchReceived": "Alınan sağlayıcı değiştirme etkinliği:",
@@ -1776,7 +1781,22 @@
     "deploymentType": "GitHub Dağıtım Türü",
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Kurumsal Sunucu",
-    "enterpriseDomainPlaceholder": "örneğin şirket.ghe.com"
+    "enterpriseDomainPlaceholder": "örneğin şirket.ghe.com",
+    "form": {
+      "officialHint": "GitHub Copilot CLI'nin kendi GitHub oturumunu kullanır. \"Terminal aç\", copilot'u bu kartın modeliyle başlatır; Yetki Merkezi'nden bir hesap bağlarsanız o hesapla başlatır.",
+      "byokHint": "Kendi modelinizi getirin (BYOK). Copilot CLI bu ayarları yalnızca ortam değişkenlerinden okur; bu yüzden kart yalnızca buradan açılan terminallerde çalışır ve Copilot'un kendi dosyalarına yazılmaz.",
+      "providerType": "Protokol",
+      "wireApi": "API biçimi",
+      "baseUrl": "API uç noktası",
+      "baseUrlHint": "OpenAI uyumlu uç noktalar genellikle /v1 ile biter (ör. Ollama http://localhost:11434/v1); Anthropic için yalnızca sunucu adresi (https://api.anthropic.com).",
+      "model": "Model",
+      "officialModelHint": "Boş bırakırsanız Copilot'un geçerli modeli kullanılır. Yalnızca bu oturum için --model olarak iletilir; copilot içindeki /model çalışmaya devam eder.",
+      "byokModelHint": "Uç noktanızın beklediği model kimliği (COPILOT_MODEL). GPT-5 serisi modeller için responses seçin.",
+      "maxPromptTokens": "En fazla istem token'ı",
+      "maxOutputTokens": "En fazla çıktı token'ı",
+      "envJson": "Ortam değişkenleri",
+      "envJsonHint": "Gelişmiş: her COPILOT_PROVIDER_* değişkeni (ör. COPILOT_PROVIDER_MODEL_ID veya COPILOT_PROVIDER_BEARER_TOKEN) copilot'a olduğu gibi iletilir."
+    }
   },
   "codexOauth": {
     "authStatus": "Kimlik doğrulama durumu",
@@ -4109,7 +4129,8 @@
       "openclaw": "Npm ile yüklenir",
       "hermes": "Resmi komut dosyasıyla yüklenir",
       "pi": "Npm ile yüklenir",
-      "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner"
+      "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner",
+      "copilot": "npm ile kurulur"
     }
   },
   "appPage": {

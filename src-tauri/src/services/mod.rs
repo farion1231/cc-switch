@@ -57,6 +57,7 @@ pub use usage_stats::{
     RequestLogDetail, UsageSummary, UsageSummaryByApp,
 };
 
+pub mod session_usage_copilot;
 pub mod session_usage_kimi;
 pub mod session_usage_mcode;
 
