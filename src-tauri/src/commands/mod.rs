@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 
+mod agy_account;
 mod auth;
 mod balance;
 mod codex_oauth;
@@ -39,6 +40,7 @@ mod usage;
 mod webdav_sync;
 mod workspace;
 
+pub use agy_account::*;
 pub use auth::*;
 pub use balance::*;
 pub use codex_oauth::*;

@@ -173,6 +173,8 @@ function App() {
   const [isAddOpen, setIsAddOpen] = useState(false);
   // 供应商搜索面板：页头按钮和 ⌘F 都能打开；换应用或离开供应商页就收起
   const [providerSearchOpen, setProviderSearchOpen] = useState(false);
+  const [connectionStatusSlot, setConnectionStatusSlot] =
+    useState<HTMLDivElement | null>(null);
   useEffect(() => {
     setProviderSearchOpen(false);
   }, [activeApp, currentView]);
@@ -1203,15 +1205,26 @@ function App() {
         ? t("appPage.openclawConfig")
         : currentView === "hermesMemory"
           ? t("appPage.memory")
-          : t("appPage.providers");
+          : undefined;
 
   const renderAppPageHeader = () => (
     <AppPageHeader
       variant="app"
       icon={<AppGlyph app={activeApp} size={20} badgeClassName="bg-app" />}
       title={APP_DISPLAY_NAME[activeApp]}
+      truncateTitle={currentView === "providers" && Boolean(modeAppId)}
+      titleExtra={
+        currentView === "providers" && modeAppId ? (
+          <div
+            ref={setConnectionStatusSlot}
+            className="ms-2 flex min-w-0 max-w-[280px] items-center"
+          />
+        ) : undefined
+      }
       subtitle={
-        activeApp === "openclaw" || activeApp === "hermes"
+        activeApp === "openclaw" ||
+        activeApp === "hermes" ||
+        (currentView === "providers" && modeAppId)
           ? undefined
           : appPageName
       }
@@ -1335,6 +1348,7 @@ function App() {
         <SwitchModePanel
           key={modeAppId}
           app={modeAppId}
+          statusSlot={connectionStatusSlot}
           providers={providers}
           currentProviderId={currentProviderId}
           isLoading={isLoading}
