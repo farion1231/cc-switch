@@ -854,6 +854,8 @@ pub fn run() {
                         Ok(outcome) => {
                             if let Some(reason) = outcome.skipped_reason {
                                 log::debug!("○ Codex history provider bucket migration skipped: {reason}");
+                            } else if outcome.retry_pending {
+                                log::debug!("○ Codex history provider bucket migration has temporary skips; retry pending");
                             } else {
                                 log::info!(
                                     "✓ Codex history provider bucket migration completed: sources={}, jsonl_files={}, state_rows={}",
@@ -894,6 +896,8 @@ pub fn run() {
                         Ok(outcome) => {
                             if let Some(reason) = outcome.skipped_reason {
                                 log::debug!("○ Codex legacy official history bucket migration skipped: {reason}");
+                            } else if outcome.retry_pending {
+                                log::debug!("○ Codex legacy official history bucket migration has temporary skips; retry pending");
                             } else {
                                 log::info!(
                                     "✓ Codex legacy official history bucket migration completed: jsonl_files={}, state_rows={}",
@@ -914,6 +918,8 @@ pub fn run() {
                         Ok(outcome) => {
                             if let Some(reason) = outcome.skipped_reason {
                                 log::debug!("○ Codex official history unify migration skipped: {reason}");
+                            } else if outcome.retry_pending {
+                                log::debug!("○ Codex official history unify migration has temporary skips; retry pending");
                             } else {
                                 log::info!(
                                     "✓ Codex official history unify migration completed: jsonl_files={}, state_rows={}",

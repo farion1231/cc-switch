@@ -386,6 +386,16 @@ export interface UsageDisplaySettings {
 
 // 应用设置类型（用于设置对话框与 Tauri API）
 // 存储在本地 ~/.cc-switch/settings.json，不随数据库同步
+export interface CodexThirdPartyHistoryMigrationRecord {
+  codexConfigDir?: string;
+  completedAt: string;
+  targetProviderId: string;
+  sourceProviderIds?: string[];
+  migratedJsonlFiles?: number;
+  migratedStateRows?: number;
+  scannedHistoryFiles?: boolean;
+}
+
 export interface Settings {
   // ===== 设备级 UI 设置 =====
   // 是否在系统托盘（macOS 菜单栏）显示图标
@@ -517,13 +527,11 @@ export interface Settings {
 
   // ===== 本机自动迁移状态 =====
   localMigrations?: {
-    codexThirdPartyHistoryProviderBucketV1?: {
-      completedAt: string;
-      targetProviderId: string;
-      sourceProviderIds?: string[];
-      migratedJsonlFiles?: number;
-      migratedStateRows?: number;
-    };
+    codexThirdPartyHistoryProviderBucketV1?: CodexThirdPartyHistoryMigrationRecord;
+    codexThirdPartyHistoryProviderBucketsV2?: Record<
+      string,
+      CodexThirdPartyHistoryMigrationRecord
+    >;
   };
 }
 

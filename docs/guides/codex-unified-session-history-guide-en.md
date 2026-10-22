@@ -4,6 +4,10 @@ The current setting is **Settings → App Configuration → Codex → Unified Co
 
 Legacy migration keeps originals and changes only managed provider metadata while preserving paginated byte offsets. Newly imported legacy chats can be migrated too. Unsafe patches, concurrent changes, and index entries without a matching rollout are skipped and counted while other items continue; do not delete history or overwrite the live index database. `custom` is a connection entry point, not the actual provider identity for accounting.
 
+Preserved legacy third-party connections use their own token, environment key, or headers and cannot fall back to your current official login. Configure their credentials or explicitly migrate their chats to the shared connection. For temporarily unavailable files, quit Codex and retry; custom legacy sources still require the manual action. If this platform cannot safely lock the index, the action leaves history unchanged and asks you to run it in the Codex client's environment. Restore also skips bad files and unverified index rows, reporting restored and skipped counts separately.
+
+If a profile references a managed legacy connection that still depends on the official login without its own credentials, switching asks you to fix it without rewriting the profile. When unified history is off and migration backups exist, settings offers “Restore official chats from backups.” Quit Codex, click it and confirm to restore or retry remaining items without enabling unified history again. Opening settings or changing directories never starts a restore. Migration completion and source ledgers are stored separately for each Codex directory.
+
 > The unified-history toggle was introduced in CC Switch v3.16.x; the manual migration action and safe patches below describe the current implementation. This guide is based on the current code; every command and path can be verified by hand. Examples use de-identified data and contain no real session content or API keys.
 
 ## What this feature is

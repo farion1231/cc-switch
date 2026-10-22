@@ -26,6 +26,8 @@ const getCompressionMock = vi.fn();
 const setCompressionMock = vi.fn();
 const diskUsageMock = vi.fn();
 const migrateManagedMock = vi.fn();
+const restoreHistoryMock = vi.fn();
+const hasBackupMock = vi.fn().mockResolvedValue(false);
 const historyToastError = vi.fn();
 const historyToastWarning = vi.fn();
 const historyToastSuccess = vi.fn();
@@ -40,8 +42,8 @@ vi.mock("@/lib/toast", () => ({
 vi.mock("@/lib/api", () => ({
   settingsApi: {
     codexForcesMultiAgentV2: () => forcesMultiAgentV2Mock(),
-    hasCodexUnifyHistoryBackup: vi.fn().mockResolvedValue(false),
-    restoreCodexUnifiedHistory: vi.fn(),
+    hasCodexUnifyHistoryBackup: () => hasBackupMock(),
+    restoreCodexUnifiedHistory: () => restoreHistoryMock(),
     migrateManagedCodexHistory: () => migrateManagedMock(),
     getCodexSessionCompression: () => getCompressionMock(),
     setCodexSessionCompression: (enabled: boolean) =>
@@ -153,6 +155,7 @@ describe("CodexAuthSettings session compression toggle", () => {
 
 describe("Codex managed history migration consent", () => {
   beforeEach(() => {
+    hasBackupMock.mockReset().mockResolvedValue(false);
     migrateManagedMock.mockReset();
     historyToastError.mockReset();
     historyToastWarning.mockReset();
@@ -269,5 +272,121 @@ describe("Codex managed history migration consent", () => {
       }),
     ).not.toBeInTheDocument();
     expect(migrateManagedMock).not.toHaveBeenCalled();
+  });
+
+  it("explains an unavailable state DB without reporting success or failure", async () => {
+    migrateManagedMock.mockResolvedValue({
+      migratedJsonlFiles: 0,
+      migratedStateRows: 0,
+      skippedJsonlFiles: 0,
+      skippedStateRows: 0,
+      skippedReason: "state_db_unlockable",
+      retryPending: true,
+    });
+    await renderUnified();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.codexManagedHistoryAction",
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "settings.codexManagedHistoryAction",
+      }),
+    );
+    await waitFor(() =>
+      expect(historyToastWarning).toHaveBeenCalledWith(
+        "settings.codexHistoryStateUnavailable",
+        expect.anything(),
+      ),
+    );
+    expect(historyToastSuccess).not.toHaveBeenCalled();
+    expect(historyToastError).not.toHaveBeenCalled();
+  });
+
+  it("reports partial restore counts after explicit confirmation", async () => {
+    restoreHistoryMock.mockReset().mockResolvedValue({
+      restoredJsonlFiles: 1,
+      restoredStateRows: 3,
+      skippedJsonlFiles: 2,
+      skippedStateRows: 4,
+    });
+    await act(async () => {
+      render(
+        <CodexAuthSettings
+          settings={
+            {
+              unifyCodexSessionHistory: true,
+              unifyCodexMigrateExisting: true,
+            } as SettingsFormState
+          }
+          onChange={vi.fn()}
+        />,
+      );
+    });
+    expect(restoreHistoryMock).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("switch", { name: "settings.unifyCodexSessionHistory" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "confirm.unifyCodexHistoryOff.confirm",
+      }),
+    );
+    await waitFor(() =>
+      expect(historyToastWarning).toHaveBeenCalledWith(
+        "settings.unifyCodexHistoryRestorePartial:1/3/2/4",
+        expect.anything(),
+      ),
+    );
+    expect(historyToastSuccess).not.toHaveBeenCalled();
+    expect(restoreHistoryMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers a confirmed restore retry while unified history stays off", async () => {
+    hasBackupMock.mockResolvedValue(true);
+    restoreHistoryMock
+      .mockReset()
+      .mockResolvedValueOnce({
+        restoredJsonlFiles: 1,
+        restoredStateRows: 1,
+        skippedJsonlFiles: 1,
+        skippedStateRows: 1,
+      })
+      .mockResolvedValueOnce({
+        restoredJsonlFiles: 1,
+        restoredStateRows: 1,
+        skippedJsonlFiles: 0,
+        skippedStateRows: 0,
+      });
+    const onChange = await renderWith(false);
+    const retry = await screen.findByRole("button", {
+      name: "settings.unifyCodexHistoryRestoreAction",
+    });
+    expect(restoreHistoryMock).not.toHaveBeenCalled();
+    fireEvent.click(retry);
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "common.cancel",
+      }),
+    );
+    expect(restoreHistoryMock).not.toHaveBeenCalled();
+    for (const callCount of [1, 2]) {
+      fireEvent.click(retry);
+      fireEvent.click(
+        within(screen.getByRole("dialog")).getByRole("button", {
+          name: "settings.unifyCodexHistoryRestoreAction",
+        }),
+      );
+      await waitFor(() =>
+        expect(restoreHistoryMock).toHaveBeenCalledTimes(callCount),
+      );
+      await waitFor(() => expect(retry).not.toBeDisabled());
+    }
+    expect(onChange).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("switch", { name: "settings.unifyCodexSessionHistory" }),
+    ).toHaveAttribute("aria-checked", "false");
   });
 });

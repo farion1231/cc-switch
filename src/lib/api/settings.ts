@@ -22,6 +22,8 @@ export interface WebDavTestResult {
 export interface CodexUnifyHistoryRestoreResult {
   restoredJsonlFiles: number;
   restoredStateRows: number;
+  skippedJsonlFiles: number;
+  skippedStateRows: number;
   /** 还原被跳过的原因（如当前目录没有账本）；存在时不应报成功 */
   skippedReason?: string;
 }
@@ -31,6 +33,7 @@ export interface CodexHistoryMigrationResult {
   migratedStateRows: number;
   skippedJsonlFiles: number;
   skippedStateRows: number;
+  retryPending: boolean;
   skippedReason?: string;
 }
 

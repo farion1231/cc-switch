@@ -303,6 +303,10 @@ pub struct LocalMigrations {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_third_party_history_provider_bucket_v1:
         Option<CodexThirdPartyHistoryProviderBucketMigration>,
+    /// Per-directory records replace the legacy single completion marker.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub codex_third_party_history_provider_buckets_v2:
+        BTreeMap<String, CodexThirdPartyHistoryProviderBucketMigration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_provider_template_v1: Option<CodexProviderTemplateMigration>,
     /// 统一会话开关的官方历史迁移标记。开关关闭时会被清除，
@@ -317,6 +321,8 @@ pub struct LocalMigrations {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodexThirdPartyHistoryProviderBucketMigration {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_config_dir: Option<String>,
     pub completed_at: String,
     pub target_provider_id: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1053,26 +1059,48 @@ where
     Ok(())
 }
 
-pub fn is_codex_third_party_history_provider_bucket_migrated() -> bool {
-    get_settings()
-        .local_migrations
-        .as_ref()
-        .and_then(|migrations| {
-            migrations
-                .codex_third_party_history_provider_bucket_v1
-                .as_ref()
-        })
-        .is_some_and(|m| m.scanned_history_files)
+pub fn is_codex_third_party_history_provider_bucket_migrated_for_dir(codex_dir: &str) -> bool {
+    codex_third_party_history_migration_for_dir(codex_dir).is_some_and(|m| m.scanned_history_files)
+}
+
+pub fn codex_third_party_history_migration_for_dir(
+    codex_dir: &str,
+) -> Option<CodexThirdPartyHistoryProviderBucketMigration> {
+    let migrations = get_settings().local_migrations?;
+    migrations
+        .codex_third_party_history_provider_buckets_v2
+        .get(codex_dir)
+        .or(migrations
+            .codex_third_party_history_provider_bucket_v1
+            .as_ref())
+        .filter(|m| m.codex_config_dir.as_deref() == Some(codex_dir))
+        .cloned()
 }
 
 pub fn mark_codex_third_party_history_provider_bucket_migrated(
     migration: CodexThirdPartyHistoryProviderBucketMigration,
 ) -> Result<(), AppError> {
+    let codex_dir = migration.codex_config_dir.clone().ok_or_else(|| {
+        AppError::InvalidInput("Codex history migration requires a directory identity".into())
+    })?;
     mutate_settings(|settings| {
         let migrations = settings
             .local_migrations
             .get_or_insert_with(Default::default);
-        migrations.codex_third_party_history_provider_bucket_v1 = Some(migration);
+        if let Some(previous) = migrations
+            .codex_third_party_history_provider_bucket_v1
+            .take()
+        {
+            if let Some(dir) = previous.codex_config_dir.clone() {
+                migrations
+                    .codex_third_party_history_provider_buckets_v2
+                    .entry(dir)
+                    .or_insert(previous);
+            }
+        }
+        migrations
+            .codex_third_party_history_provider_buckets_v2
+            .insert(codex_dir, migration);
     })
 }
 
