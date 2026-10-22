@@ -32,6 +32,8 @@ export function CodexAuthSettings({
   const [showManagedConfirm, setShowManagedConfirm] = useState(false);
   const [migratingManaged, setMigratingManaged] = useState(false);
   const [hasUnifyBackup, setHasUnifyBackup] = useState(false);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  const [restoringHistory, setRestoringHistory] = useState(false);
   // 会话压缩开关以 config.toml 为准，不走设置表单的自动保存
   const [sessionCompression, setSessionCompression] = useState(false);
   const [sessionCompressionSaving, setSessionCompressionSaving] =
@@ -58,6 +60,20 @@ export function CodexAuthSettings({
       cancelled = true;
     };
   }, [codexConfigDir]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setHasUnifyBackup(false);
+    void settingsApi
+      .hasCodexUnifyHistoryBackup()
+      .catch(() => false)
+      .then((hasBackup) => {
+        if (!cancelled) setHasUnifyBackup(hasBackup);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [codexConfigDir, settings.unifyCodexSessionHistory]);
 
   const handleSessionCompressionChange = async (checked: boolean) => {
     setSessionCompressionSaving(true);
@@ -103,14 +119,21 @@ export function CodexAuthSettings({
       setShowManagedConfirm(false);
       const skippedFiles = result.skippedJsonlFiles ?? 0;
       const skippedRows = result.skippedStateRows ?? 0;
-      if (skippedFiles > 0 || skippedRows > 0) {
+      if (result.skippedReason === "state_db_unlockable") {
+        toast.warning(t("settings.codexHistoryStateUnavailable"), {
+          closeButton: true,
+        });
+      } else if (skippedFiles > 0 || skippedRows > 0 || result.retryPending) {
         toast.warning(
           t("settings.codexManagedHistoryPartial", {
             files: result.migratedJsonlFiles,
             rows: result.migratedStateRows,
             skippedFiles,
             skippedRows,
-          }),
+          }) +
+            (result.retryPending
+              ? " " + t("settings.codexHistoryRetryPending")
+              : ""),
           { closeButton: true },
         );
       } else {
@@ -140,26 +163,37 @@ export function CodexAuthSettings({
   const showRestoreOption =
     hasUnifyBackup || (settings.unifyCodexMigrateExisting ?? false);
 
-  const handleDisableConfirm = async (restoreBackup: boolean) => {
-    setShowDisableConfirm(false);
-    const saved = await onChange({
-      unifyCodexSessionHistory: false,
-      unifyCodexMigrateExisting: false,
-    });
-    // 关闭保存失败时绝不还原：否则开关仍开着（live 仍统一路由），
-    // 已迁移会话却被翻回 openai 桶，历史被拆成两半。
-    if (saved === false) return;
-    // 不再以探测结果短路：还原命令会在迁移锁上排队，等到迁移落盘后
-    // 拿到完整账本；确实无账本时由 skippedReason 提示。
-    if (!restoreBackup) return;
+  const handleRestoreHistory = async () => {
+    setShowRestoreConfirm(false);
+    setRestoringHistory(true);
     try {
       const result = await settingsApi.restoreCodexUnifiedHistory();
+      if (result.skippedReason === "state_db_unlockable") {
+        toast.warning(t("settings.codexHistoryStateUnavailable"), {
+          closeButton: true,
+        });
+        return;
+      }
       if (result.skippedReason) {
         // unify_toggle_on：还原排队期间开关被重新开启，后端拒绝还原
         toast.info(
           result.skippedReason === "unify_toggle_on"
             ? t("settings.unifyCodexHistoryRestoreSkippedToggleOn")
             : t("settings.unifyCodexHistoryRestoreNothing"),
+        );
+        return;
+      }
+      const skippedFiles = result.skippedJsonlFiles ?? 0;
+      const skippedRows = result.skippedStateRows ?? 0;
+      if (skippedFiles > 0 || skippedRows > 0) {
+        toast.warning(
+          t("settings.unifyCodexHistoryRestorePartial", {
+            files: result.restoredJsonlFiles,
+            rows: result.restoredStateRows,
+            skippedFiles,
+            skippedRows,
+          }),
+          { closeButton: true },
         );
         return;
       }
@@ -172,7 +206,24 @@ export function CodexAuthSettings({
     } catch (error) {
       console.error("Failed to restore codex unified history:", error);
       toast.error(t("settings.unifyCodexHistoryRestoreFailed"));
+    } finally {
+      setRestoringHistory(false);
+      void settingsApi
+        .hasCodexUnifyHistoryBackup()
+        .catch(() => false)
+        .then(setHasUnifyBackup);
     }
+  };
+
+  const handleDisableConfirm = async (restoreBackup: boolean) => {
+    setShowDisableConfirm(false);
+    const saved = await onChange({
+      unifyCodexSessionHistory: false,
+      unifyCodexMigrateExisting: false,
+    });
+    // A failed save must never restore history while the live route stays unified.
+    if (saved === false || !restoreBackup) return;
+    await handleRestoreHistory();
   };
 
   // 设置 → 应用配置 → Codex 卡片里的三行（经典子 agent 开关在 Codex 聚合页签的「聚合设置」里）
@@ -197,8 +248,25 @@ export function CodexAuthSettings({
           body: t("settings.unifyCodexSessionHistoryDescription"),
         }}
         checked={settings.unifyCodexSessionHistory ?? false}
+        disabled={restoringHistory || migratingManaged}
         onCheckedChange={handleUnifyHistoryChange}
       />
+
+      {!settings.unifyCodexSessionHistory && hasUnifyBackup && (
+        <SettingsRow
+          label={t("settings.unifyCodexHistoryRestoreAction")}
+          control={
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={restoringHistory}
+              onClick={() => setShowRestoreConfirm(true)}
+            >
+              {t("settings.unifyCodexHistoryRestoreAction")}
+            </Button>
+          }
+        />
+      )}
 
       {settings.unifyCodexSessionHistory && (
         <SettingsRow
@@ -274,6 +342,17 @@ export function CodexAuthSettings({
         variant="info"
         onConfirm={(restoreBackup) => void handleDisableConfirm(restoreBackup)}
         onCancel={() => setShowDisableConfirm(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={showRestoreConfirm}
+        title={t("settings.unifyCodexHistoryRestoreAction")}
+        message={t("settings.unifyCodexHistoryRestoreConfirm")}
+        confirmText={t("settings.unifyCodexHistoryRestoreAction")}
+        variant="info"
+        pending={restoringHistory}
+        onConfirm={() => void handleRestoreHistory()}
+        onCancel={() => setShowRestoreConfirm(false)}
       />
     </>
   );

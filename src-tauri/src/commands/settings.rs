@@ -138,6 +138,8 @@ pub async fn save_settings(
                     Ok(outcome) => {
                         if let Some(reason) = outcome.skipped_reason {
                             log::debug!("○ Codex official history unify migration skipped: {reason}");
+                        } else if outcome.retry_pending {
+                            log::debug!("○ Codex official history unify migration has temporary skips; retry pending");
                         } else {
                             log::info!(
                                 "✓ Codex official history unify migration completed: jsonl_files={}, state_rows={}",
@@ -171,6 +173,8 @@ pub async fn save_settings(
 pub struct CodexUnifyHistoryRestoreResult {
     pub restored_jsonl_files: usize,
     pub restored_state_rows: usize,
+    pub skipped_jsonl_files: usize,
+    pub skipped_state_rows: usize,
     /// 还原被跳过的原因（如当前目录没有账本），前端据此提示而非报"成功 0 项"。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skipped_reason: Option<String>,
@@ -268,6 +272,8 @@ pub async fn restore_codex_unified_history() -> Result<CodexUnifyHistoryRestoreR
     Ok(CodexUnifyHistoryRestoreResult {
         restored_jsonl_files: outcome.restored_jsonl_files,
         restored_state_rows: outcome.restored_state_rows,
+        skipped_jsonl_files: outcome.skipped_jsonl_files,
+        skipped_state_rows: outcome.skipped_state_rows,
         skipped_reason: outcome.skipped_reason,
     })
 }
@@ -639,6 +645,7 @@ mod tests {
             local_migrations: Some(LocalMigrations {
                 codex_third_party_history_provider_bucket_v1: Some(
                     CodexThirdPartyHistoryProviderBucketMigration {
+                        codex_config_dir: None,
                         completed_at: "2026-05-20T00:00:00Z".to_string(),
                         target_provider_id: "custom".to_string(),
                         source_provider_ids: vec!["rightcode".to_string()],
