@@ -180,19 +180,24 @@
     "managedByHermes": "Hermes 管理",
     "managedByHermesHint": "Hermes の providers: dict で定義されています。Hermes Web UI で編集または削除してください。",
     "openTerminal": "ターミナルを開く",
+    "openTerminalWithProvider": "このプロバイダーでターミナルを開く",
     "terminalOpened": "ターミナルを開きました",
     "terminalOpenFailed": "ターミナルを開けませんでした",
     "openTerminalDialog": {
       "title": "どのフォルダでターミナルを開きますか？",
-      "description": "選んだフォルダでターミナルを開き、「{{name}}」の設定で Claude Code を起動します。通常はプロジェクトのフォルダを選びます。",
+      "description": "選んだフォルダでターミナルを開き、「{{name}}」の設定で {{app}} を起動します。通常はプロジェクトのフォルダを選びます。",
       "isolationTitle": "このターミナルは分離されています",
       "isolationBody": "常に「{{name}}」を使います。あとで CC Switch でプロバイダーを切り替えても影響を受けず、CC Switch で使用中のプロバイダーも変更しません。",
+      "isolationBodyAgy": "「{{name}}」のキーとエンドポイントはこのターミナルの agy にだけ渡され、ファイルには書き込まれません。別のターミナルで直接 agy を実行した場合は Google ログインのままです。",
       "noDir": "フォルダが未選択です",
       "choose": "フォルダを選択…",
       "change": "変更…",
       "recent": "最近使ったフォルダ",
       "forget": "最近使ったフォルダから削除",
-      "confirm": "ターミナルを開く"
+      "confirm": "ターミナルを開く",
+      "agySwitchTitle": "agy のログインを切り替えます",
+      "agySwitchBody": "開く前に agy のログインを {{account}} に切り替えます。以降に起動する agy はこのアカウントを使います。",
+      "agySwitchRunning": "agy が実行中です。開いている agy は元のアカウントのままで、元のアカウントを書き戻す可能性があります。できれば先に終了してください。"
     },
     "name": "名前",
     "namePlaceholder": "例: Claude Official",
@@ -209,12 +214,17 @@
     "geminiConfigHint": ".env 形式で Gemini を設定してください",
     "form": {
       "agy": {
-        "connectionHint": "API Key と接続先を空欄にすると agy の Google ログインを使用します。Key のみを指定すると Google の標準 API を使用します。外部接続先は Gemini API に対応している必要があります。切替後は新しいターミナルを開くか agy を再起動してください。実行中のセッションは切り替わりません。ログイン時のモデル取得には現在の agy 設定を使用します。 ログイン時はモデル一覧の表示名を使用してください。API モードでは API のモデル ID を使用します。",
-        "keyFieldsHint": "エンドポイント、キー、モデルはプロバイダーとともに切り替わります。Antigravity の他のネイティブ設定は保持されます。",
+        "endpointHelp": "空欄なら Google の標準 API を使います。外部接続先は Gemini API と agy 内蔵の Gemini モデルに対応している必要があります。",
+        "modelHelp": "モデル一覧の表示名を入力してください（「モデル一覧を取得」から選べます）。そのセッションにのみ適用されます。",
+        "keyFieldsHint": "モデル、キー、エンドポイントは「ターミナルを開く」でのみ使われ、Antigravity 自身の設定には書き込みません。",
         "envFile": "起動時の環境変数",
-        "envFileHint": "CC Switch は agy 起動時に API キー、エンドポイント、モデルを渡します。他の環境変数は適用されません。",
+        "envFileHint": "カードの「ターミナルを開く」から agy を起動すると、CC Switch は API キーとエンドポイントをその agy プロセスだけに渡し、ファイルには書き込みません。他の環境変数は適用されません。",
         "configJson": "モデル設定（CC Switch 形式）",
-        "configJsonHint": "ここではモデル設定のみ対応しています。他の Antigravity 設定は agy で変更し、MCP は MCP パネルで管理してください。"
+        "configJsonHint": "ここではモデル設定のみ対応しています。他の Antigravity 設定は agy で変更し、MCP は MCP パネルで管理してください。",
+        "account": "アカウント",
+        "accountFollow": "agy の現在のログインに従う",
+        "accountMissing": "このコンピューターにないアカウント",
+        "accountHelp": "アカウントを選ぶと、「ターミナルを開く」の前に agy のログインをそのアカウントに切り替えます（全体に適用され、以降に起動する agy はそのアカウントを使います）。アカウントは認証センターで追加します。"
       },
       "gemini": {
         "model": "モデル",
@@ -426,7 +436,7 @@
     "tabAdvanced": "詳細",
     "tabProxy": "ルーティング",
     "authCenter": {
-      "description": "GitHub Copilot、ChatGPT、xAI のサブスクリプションをプロバイダーとして使えます。認証情報はルーティングサービスが注入するため、これらのプロバイダーはルーティングモードで使います（Codex の公式ログインのバインドを除く）。",
+      "description": "GitHub Copilot、ChatGPT、xAI のサブスクリプションをプロバイダーとして使えます。認証情報はルーティングサービスが注入するため、これらのプロバイダーはルーティングモードで使います（Codex の公式ログインのバインドを除く）。Antigravity アカウントは agy の公式ログインの切り替えに使います。",
       "beta": "Beta",
       "copilotDescription": "GitHub Copilot アカウントを管理します",
       "codexOauthDescription": "ChatGPT アカウントを管理します",
@@ -477,7 +487,6 @@
         "title": "整流器",
         "description": "API リクエストの互換性問題を自動修正",
         "enabled": "整流器を有効化",
-        "enabledDescription": "マスタースイッチ、オフにするとすべての整流機能が無効になります",
         "requestGroup": "リクエスト整流",
         "responseGroup": "レスポンス整流",
         "thinkingSignature": "Thinking 署名整流",
@@ -514,7 +523,6 @@
           "debug": "デバッグ",
           "trace": "トレース"
         },
-        "levelHint": "ログレベルの説明：",
         "levelDesc": {
           "error": "重大なエラーのみ",
           "warn": "エラー + 警告",
@@ -655,7 +663,6 @@
     },
     "webdavSync": {
       "title": "WebDAV クラウド同期",
-      "description": "WebDAV を使ってデバイス間でデータベースとスキル設定を同期します。",
       "baseUrl": "WebDAV サーバー URL",
       "baseUrlPlaceholder": "https://example.com/remote.php/dav/files/user",
       "username": "ユーザー名",
@@ -696,8 +703,6 @@
         "synologyHint": "Synology の「パッケージセンター」で WebDAV Server パッケージをインストール・有効化してください。",
         "custom": "カスタム"
       },
-      "remoteRootDefault": "デフォルト: cc-switch-sync",
-      "profileDefault": "デフォルト: default",
       "saveAndTestSuccess": "設定を保存しました。接続正常です",
       "saveAndTestFailed": "設定を保存しましたが、接続テストに失敗しました：{{error}}",
       "noRemoteData": "クラウドに同期データが見つかりません",
@@ -770,9 +775,7 @@
       "endpointHint": "多くの S3 互換サービスでは必須です",
       "endpointPlaceholder": "例: https://s3-compatible.example.com",
       "remoteRoot": "リモートルートディレクトリ",
-      "remoteRootDefault": "デフォルト: cc-switch-sync",
       "profile": "同期プロファイル名",
-      "profileDefault": "デフォルト: default",
       "autoSync": "自動同期",
       "autoSyncHint": "有効にすると、データベース変更のたびに S3 へ自動アップロードします。",
       "enabled": "S3 同期を有効化",
@@ -1625,8 +1628,8 @@
       "ccsub": "CCSub は安定・低価格の AI API リレーサービスです。Claude Code の公式サブスクリプションの代替として、1つのキーで全モデルを公式比約1/3のコストで利用できます。",
       "subrouter": "SubRouter は、1つのキーで複数のモデルとプロバイダーにアクセスできる AI 中継アグリゲーターです。",
       "qiniu": "Qiniu Cloud（七牛云）はマルチプロトコル対応の AI 中継プラットフォームです。1つのキーでネイティブの Claude・GPT・Gemini モデルを利用でき、Anthropic／OpenAI／Gemini の各 API に対応します。",
+      "haoai": "hao.ai は開発者とチーム向けの高速で安定した LLM 統合 API ゲートウェイです。1 つのキーで GPT、Claude、Grok などの主要モデルを OpenAI・Anthropic 互換 API で利用でき、モデルルーティング、フェイルオーバー、完全な呼び出しログを備え、価格は公式参考価格の最大 85% オフです。CC Switch ユーザーがこのリンクから登録すると、初回注文で 5% のボーナスクレジットを受け取れます！",
       "fenno": "Fenno.ai は安定・高効率な API 中継サービスで、幅広い主要モデルを利用できます。CC Switch 利用者限定特典：このリンクから 1.99 ドルで 50 ドル相当の Trial プランを購入できます（有効期間 7 日間）！",
-      "zetaapi": "ZetaAPI はモデルを水増し・劣化させず、公式価格の 35% から利用できます。CC Switch 利用者限定特典：このリンクから登録し、初回チャージ時にプロモコード CC-SWITCH を使うと初回チャージ 10% オフ！",
       "teamorouter": "TeamoRouter はエンタープライズグレードの Agentic LLM ゲートウェイで、料金は最大 90% オフ。CC Switch ユーザーに特別特典を提供しています：このリンクから新規登録すると初回チャージが 10% オフ！",
       "ppio": "PPIO は中国有数の独立系 Agentic Cloud プロバイダーで、API キー 1 つで主要なオープンソースモデルをすべて利用できます。このリンクから登録し実名認証を完了すると、¥10 のクーポンがもらえます。",
       "xycai": "XycAi はエンタープライズグレードのトークンファクトリー：200+ のグローバルモデルにワンクリック接続、SLA 自動補償、異常キャッシュは 100% 返金！",
@@ -1635,11 +1638,12 @@
       "fluxa": "FluxA と Baidu AI Cloud が共同で提供する AgenticPlan は、AI エージェントがモデル・API・ツールを自ら購入し、管理し、利用できるようにします。百度千帆 TokenPlan を最大 40% オフで含み、DeepSeek V4・GLM 5.2・Kimi などの主力モデルを利用可能。さらに FluxA AgentMarket の API クレジットが付き、検索・データ取得・ソーシャルメディア・金融・暗号資産・画像生成・動画など 13,000 以上の有料 API を利用できます。",
       "88api": "88API は香港企業が運営するワンストップのマルチモデル API プラットフォームで、統一インターフェースからテキスト・画像・音声・動画モデルを利用できます。主要な国際決済方法に対応し、請求書の発行も可能で、エンタープライズ級の安定したサービスを提供します。専用リンクから登録すると特典クレジットがもらえます！",
       "modelflare": "Modelflare は安定・低コストの AI モデルゲートウェイで、1 つのキーで GPT、Claude、Gemini、Grok などの主要モデルを利用できます。CC Switch ユーザー限定特典：初回チャージ時にクーポンコード \"CCSWITCH\" を入力すると 10% オフ！",
-      "everyapi": "EveryAPI は専用のデスクトップクライアントを備え、Claude Code、Codex、Cursor など 20 以上のツールをワンクリックで自動設定できます。1 つのキーで Claude、GPT、DeepSeek、GLM、MiniMax、Kimi、Doubao を利用でき、モデルを切り替えても設定の変更は不要です。登録で 14 元分のクレジットを進呈、初回チャージはさらに 20% 増量。CC Switch ユーザー限定：支払い時に割引コード \"ccswitch\" を使うとさらに 20% オフ（期限なし）！",
+      "everyapi": "EveryAPI は専用のデスクトップクライアントを備え、Claude Code、Codex、Cursor など 20 以上のツールをワンクリックで自動設定できます。1 つのキーで Claude、GPT、DeepSeek、GLM、MiniMax、Kimi、Doubao を利用でき、モデルを切り替えても設定の変更は不要です。登録で 14 元分のクレジットを進呈、GPT は公式価格の 15% から。CC Switch ユーザー限定：初回チャージ時に割引コード \"ccswitch\" を使うと 20% オフ（期限なし）！",
       "alltokens": "AllTokens は「安定を基に、誠実を本に」を掲げ、すべての AI 呼び出しを安定的で正直、安心して任せられるものにすることを目指しています。信頼できるサービスと透明な課金で、GPT、Claude、Gemini、Grok、DeepSeek、GLM、Kimi などの主要モデルを 1 つのプラットフォームで利用でき、従量課金と利用上限の設定に対応しています。登録で 1 ドル分のお試しクレジットを進呈！",
       "alltokens_si": "AllTokens SI は「安定を基に、誠実を本に」を掲げる、企業向けの AI トークン中継・チーム協業プラットフォームです。メンバー、キー、使用量、残高を企業コンソールで一元管理し、明確な権限と利用上限の設定により、チームの利用を追跡可能で安心して管理できます。",
       "openmodel": "OpenModel は Codex と Claude Code 向けにクライアント専用割引を提供し、対応モデルを Codex 経由で最大 90% オフ、Claude Code 経由で最大 60% オフで利用できます。CC Switch ユーザーはこのリンクから登録し、プロモコード \"cc-switch\" を使うと初回チャージが 10% オフになります！",
-      "grooroute": "GrooRoute Pro は OpenAI、Claude、DeepSeek などの主要モデルに対応する信頼性の高い AI API 中継プラットフォームで、従量課金とサブスクリプションに対応しています。CC Switch ユーザーはこのリンクから登録すると 5 元分の無料お試しクレジットがもらえます！"
+      "grooroute": "GrooRoute Pro は OpenAI、Claude、DeepSeek などの主要モデルに対応する信頼性の高い AI API 中継プラットフォームで、従量課金とサブスクリプションに対応しています。CC Switch ユーザーはこのリンクから登録すると 5 元分の無料お試しクレジットがもらえます！",
+      "dit": "DIT.ai は、複数プロバイダーを低コストでルーティングする AI トークン取引マーケットです。OpenAI 互換の API 1 つで GPT、Claude、Gemini、DeepSeek、Grok、Llama など 50 以上の主要モデルを利用でき、160 以上のルートでプロバイダーがリアルタイムに競い合うため、通常は公式価格より 30〜70% 安くなります。CC Switch ユーザーはこのリンクから登録し、プロモコード \"ccswitch\" を使うと 5 ドル分のウェルカムクーポンを受け取れます！"
     },
     "presets": {
       "ucloud": "Compshare",
@@ -2036,16 +2040,13 @@
     "npmPackage": "API フォーマット",
     "nativeConfigHint": "OpenCode V2 ネイティブ設定は下の JSON で編集します。保存時にプロバイダーとモデルのフィールドを保持します。",
     "selectPackage": "API フォーマットを選択",
-    "npmPackageHint": "AI サービスの API フォーマットを選択",
     "builtinDefaults": "OpenCode 組み込みプロバイダーの既定値を使用",
     "customProviderRequired": "新しいプロバイダー ID には npm パッケージと少なくとも1つのモデルが必要です。設定に既に存在する同じ ID のプロバイダーのみ既定の定義を継承できます。",
     "duplicateRequiresDefinition": "npm パッケージまたはモデル定義が不足しているため、そのまま複製できません。npm パッケージと少なくとも1つのモデルを指定してから、カスタムプロバイダーとして複製してください。",
     "duplicateRequiresNativeDefinition": "この V2 ネイティブプロバイダーには package またはモデル定義が不足しているため、そのまま複製できません。package と少なくとも1つのモデルを指定してから、新しい ID で複製してください。",
     "nativeCustomProviderRequired": "新しいプロバイダー ID には package と少なくとも1つのモデルが必要です。設定に既に存在する同じ ID のプロバイダーのみ既定の定義を継承できます。",
     "baseUrl": "Base URL",
-    "baseUrlHint": "カスタム API エンドポイント URL",
     "models": "モデル設定",
-    "modelsHint": "利用可能なモデルとその表示名を設定",
     "addModel": "手動で追加",
     "modelId": "モデル ID",
     "modelName": "表示名",
@@ -2556,8 +2557,7 @@
       "cacheWrite": "キャッシュ書き込み"
     },
     "prevMonth": "前月",
-    "nextMonth": "翌月",
-    "agyUsageHint": "Antigravity はログの Token 数を表示し、過去のモデルが不明な場合は unknown と表示します。ログに信頼できる料金情報がないため、料金 0 は無料を意味しません。"
+    "nextMonth": "翌月"
   },
   "usageScript": {
     "title": "利用状況を設定",
@@ -2578,6 +2578,7 @@
     "tokenPlanHint": "プロバイダーのAPI KeyとBase URLを使用してToken Planクォータを自動クエリ",
     "balanceHint": "プロバイダーのAPI Keyを使用してアカウント残高を自動クエリ",
     "officialSubscriptionHint": "ローカル CLI の OAuth 認証情報を読み取り、公式 API でサブスクリプション枠を照会します。既定では無効で、有効化した後のみリクエストします。",
+    "officialSubscriptionHintAgy": "agy 組み込みの /usage コマンドを実行して、ログイン中のアカウントの枠を照会します。ログイン認証情報は読み取りません。1 回の照会に約 10 秒かかります。既定では無効で、有効化した後のみ実行します。",
     "resetDate": "リセット日",
     "premiumRequests": "Premium リクエスト",
     "credentialsConfig": "認証情報",
@@ -3022,7 +3023,6 @@
       "title": "デイリーメモリー",
       "sectionTitle": "デイリーメモリー",
       "cardTitle": "デイリーメモリーファイル",
-      "cardDescription": "デイリーメモリーの閲覧・管理",
       "createToday": "メモリーを追加",
       "empty": "デイリーメモリーファイルはまだありません",
       "loadFailed": "デイリーメモリーファイルの読み込みに失敗しました",
@@ -3053,7 +3053,6 @@
     "selectProtocol": "API プロトコルを選択",
     "apiProtocolHint": "プロバイダーの API と互換性のあるプロトコルタイプを選択してください。ほとんどのプロバイダーは OpenAI Completions 形式を使用します。",
     "baseUrl": "API エンドポイント",
-    "baseUrlHint": "プロバイダーの API エンドポイントアドレス。",
     "models": "モデル設定",
     "addModel": "モデルを追加",
     "selectDefaultModel": "デフォルトモデルを選択",
@@ -3077,7 +3076,6 @@
     "userAgentHint": "一部のプロバイダーはブラウザの User-Agent ヘッダーが必要です。",
     "env": {
       "title": "環境変数",
-      "description": "openclaw.json の環境変数設定を管理（APIキー、カスタム変数など）",
       "editorHint": "env セクション全体を JSON として編集します。env.vars や env.shellEnv などのネストしたオブジェクトにも対応しています。",
       "objectRequired": "OpenClaw の env は JSON オブジェクトである必要があります。",
       "invalidJson": "OpenClaw の env は有効な JSON である必要があります。",
@@ -3092,7 +3090,6 @@
     },
     "tools": {
       "title": "ツール権限",
-      "description": "openclaw.json のツール権限設定を管理（許可/拒否リスト）",
       "profile": "権限プロファイル",
       "profileMinimal": "最小",
       "profileCoding": "コーディング",
@@ -3146,7 +3143,6 @@
   "hermes": {
     "form": {
       "baseUrl": "API エンドポイント",
-      "baseUrlHint": "プロバイダーの API エンドポイント URL。",
       "providerKey": "プロバイダーキー",
       "providerKeyPlaceholder": "my-provider",
       "providerKeyHint": "小文字、数字、ハイフンのみ。config.yaml のプロバイダー名として使用されます。",
@@ -3157,7 +3153,6 @@
       "providerKeyBuiltin": "「{{key}}」は Hermes 組み込みプロバイダーの ID です。Hermes は組み込みプロバイダー（専用の環境変数の API キーが必要）を使い、このカードのエンドポイントとキーは使われません。cc-switch-{{key}} など別のキーにしてください。",
       "providerKeyBuiltinLocked": "「{{key}}」は Hermes 組み込みプロバイダーの ID です。Hermes は組み込みプロバイダーを使い、このカードのエンドポイントとキーは使われません。キーはロックされているため、別のキー（例: cc-switch-{{key}}）でこのプロバイダーを追加し直してから、このカードを削除してください。",
       "apiMode": "API モード",
-      "apiModeHint": "プロバイダーの API プロトコル。エンドポイントに合わせて正しい形式を選択してください。",
       "apiModeChatCompletions": "OpenAI Chat Completions",
       "apiModeAnthropicMessages": "Anthropic Messages",
       "apiModeCodexResponses": "OpenAI Responses",
@@ -4112,6 +4107,10 @@
       "geminiPro": "Pro",
       "geminiFlash": "Flash",
       "geminiFlashLite": "Lite",
+      "agyGeminiFiveHour": "Gemini 5h",
+      "agyGeminiWeekly": "Gemini 週",
+      "agyThirdPartyFiveHour": "Claude 5h",
+      "agyThirdPartyWeekly": "Claude 週",
       "monthly": "月",
       "credits": "クレジット",
       "copilotPremium": "プレミアム"
@@ -4125,6 +4124,12 @@
     "geminiPro": "Pro",
     "geminiFlash": "Flash",
     "geminiFlashLite": "Flash Lite",
+    "agyGemini": "Gemini",
+    "agyThirdParty": "Claude/GPT",
+    "agyGeminiFiveHour": "Gemini 5時間",
+    "agyGeminiWeekly": "Gemini 週間",
+    "agyThirdPartyFiveHour": "Claude/GPT 5時間",
+    "agyThirdPartyWeekly": "Claude/GPT 週間",
     "weeklyLimit": "週間",
     "monthly": "月間",
     "credits": "クレジット",
@@ -4196,7 +4201,8 @@
       "openclaw": "npm でインストール",
       "hermes": "公式インストールスクリプトでインストール",
       "pi": "npm でインストール",
-      "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います"
+      "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います",
+      "agy": "公式インストールスクリプトでインストール"
     }
   },
   "appPage": {
@@ -4221,7 +4227,7 @@
     },
     "active": "有効",
     "activeTitle": "{{mode}}が有効",
-    "noProvider": "（未選択）",
+    "noProvider": "未選択",
     "failover": "フェイルオーバー",
     "routeSettings": "ルーティング設定",
     "routeSettingsTitle": "ルーティング設定",
@@ -4464,6 +4470,10 @@
       "text": "Credits 約 {{usd}}",
       "usd": "約 {{usd}}",
       "detail": "Credits 残高 {{balance}} · API 価格換算で約 {{usd}} · 上限に達した後にのみ消費"
+    },
+    "windows": {
+      "title": "各枠の残量",
+      "showAll": "各枠の残量を表示"
     }
   },
   "appMatrix": {
@@ -4849,7 +4859,8 @@
       "helpTitle": "{{service}} アカウントの使い方",
       "copilotHelp": "Claude Code、Claude Desktop の GitHub Copilot プリセットで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
       "chatgptHelp": "Claude Code、Claude Desktop の ChatGPT プリセットと、Codex の公式ログインのバインドで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
-      "xaiHelp": "Claude Code、Claude Desktop、Codex の xAI プリセットで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。"
+      "xaiHelp": "Claude Code、Claude Desktop、Codex の xAI プリセットで使います。アカウントを指定していないプロバイダーは「デフォルト」のアカウントを使います。",
+      "agyHelp": "Antigravity CLI（agy）の公式ログインです。agy は同時に 1 つのアカウントにしかログインできません。「切り替え」で agy のログインを選んだアカウントに置き換え、以降に起動する agy はそのアカウントを使います。agy に元々ログインしていたアカウントは自動でここに追加されるため、切り替えても失われません。"
     },
     "addAccount": "アカウントを追加",
     "groupMenu": "{{service}} のその他の操作",
@@ -4880,7 +4891,9 @@
       "copy": "コードをコピー",
       "copied": "コードをコピーしました。",
       "open": "認可ページを開く",
-      "note": "ブラウザで認可ページを開きました。完了するとここが自動で更新されます。{{service}} の利用規約にご注意ください。"
+      "note": "ブラウザで認可ページを開きました。完了するとここが自動で更新されます。{{service}} の利用規約にご注意ください。",
+      "browserNote": "ブラウザで {{service}} のログインページを開きました。ログインしてアクセスを許可すると、ここが自動で更新されます。",
+      "reopen": "ログインページを再度開く"
     },
     "toast": {
       "added": "{{service}} アカウントを追加しました。",
@@ -4891,6 +4904,18 @@
       "loading": "残量を確認中…",
       "refresh": "残量を更新",
       "refreshAria": "{{login}} の残量を更新"
+    },
+    "agy": {
+      "reauthNote": "ログイン情報が失効しているため切り替えできません",
+      "addedOn": "{{date}}に追加",
+      "statusLoadFailed": "Antigravity アカウントを読み込めませんでした。再試行してください。",
+      "empty": "Antigravity アカウントはまだありません。agy でログイン中のアカウントは自動でここに表示されます。",
+      "login": "Google でログイン",
+      "current": "agy で使用中",
+      "switchTo": "agy をこのアカウントに切り替え",
+      "removeNote": "agy からはログアウトしません。agy が現在このアカウントを使っている場合、削除後もそのまま使えます。",
+      "switched": "切り替えました。新しく起動する agy はこのアカウントを使います。",
+      "switchedWhileRunning": "切り替えました。agy が実行中です。開いている agy は元のアカウントのままで、元のアカウントを書き戻す可能性があります。agy を終了してから開き直してください。"
     }
   }
 }

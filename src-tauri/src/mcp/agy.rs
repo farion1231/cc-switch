@@ -14,6 +14,10 @@ fn read(path: &Path) -> Result<Value, AppError> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(json!({"mcpServers": {}})),
         Err(e) => return Err(AppError::io(path, e)),
     };
+    // agy 首次启动会建一个 0 字节的 mcp_config.json，当成没有配置
+    if text.trim().is_empty() {
+        return Ok(json!({"mcpServers": {}}));
+    }
     let value: Value = serde_json::from_str(&text)
         .map_err(|_| AppError::Config("Invalid Antigravity MCP JSON".into()))?;
     if !value.is_object() || value.get("mcpServers").is_some_and(|v| !v.is_object()) {
@@ -230,6 +234,14 @@ mod tests {
         )
         .is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), "{}");
+    }
+    #[test]
+    fn agy_treats_the_empty_file_agy_creates_as_no_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp_config.json");
+        fs::write(&path, "").unwrap();
+        sync_file(&path, "m", AgyChange::Upsert(&json!({"command":"new"}))).unwrap();
+        assert_eq!(read(&path).unwrap()["mcpServers"]["m"]["command"], "new");
     }
     #[test]
     fn agy_mcp_restores_native_file_when_database_commit_fails() {

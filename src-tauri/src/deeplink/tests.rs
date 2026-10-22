@@ -2156,22 +2156,41 @@ fn agy_deeplink_prompt_import_respects_activation() {
 #[test]
 #[cfg(unix)]
 #[serial_test::serial]
-fn agy_deeplink_enabled_provider_applies_native_model() {
+fn agy_deeplink_enabled_key_provider_stays_out_of_live_files() {
     let _home = TestHomeGuard::new();
     let state = AppState::new(Arc::new(Database::memory().unwrap()));
     let request = parse_deeplink_url("ccswitch://v1/import?resource=provider&app=agy&name=Agy&endpoint=https://relay.example&apiKey=fixture&model=link-model&enabled=true").unwrap();
     let id = super::provider::import_provider_from_deeplink(&state, request).unwrap();
+    // Antigravity cards have no "enable": enabled=true only imports the card.
     let current = crate::mode::current::provider_for(
         &state.db,
         &AppType::Agy,
         crate::mode::current::Purpose::Direct,
     )
     .unwrap();
-    assert_eq!(current.as_deref(), Some(id.as_str()));
-    let live = crate::agy_config::read_live_settings().unwrap();
-    assert_eq!(live["config"]["model"]["name"], "link-model");
-    assert_eq!(live["env"]["GEMINI_API_KEY"], "fixture");
+    assert_eq!(current, None);
+    // A key card never creates or changes the native settings: it only applies
+    // to agy started from "Open Terminal" with its private profile.
+    assert!(!crate::agy_config::settings_path().exists());
     assert!(!crate::config::get_home_dir().join(".gemini/.env").exists());
+    let row = state.db.get_provider_by_id(&id, "agy").unwrap().unwrap();
+    let launch = crate::services::provider::agy_direct::terminal_launch(&row).unwrap();
+    assert_eq!(
+        launch.env[0],
+        ("GEMINI_API_KEY", Some("fixture".to_string()))
+    );
+    let private: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(
+            launch
+                .gemini_dir
+                .unwrap()
+                .join("antigravity-cli/settings.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(private["model"], "link-model");
+    assert_eq!(private["modelProvider"], "gemini");
 }
 
 #[test]

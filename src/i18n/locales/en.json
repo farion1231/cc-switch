@@ -180,19 +180,24 @@
     "managedByHermes": "Hermes Managed",
     "managedByHermesHint": "Defined in Hermes' providers: dict. Edit or remove it via Hermes Web UI.",
     "openTerminal": "Open Terminal",
+    "openTerminalWithProvider": "Open Terminal with This Provider",
     "terminalOpened": "Terminal opened",
     "terminalOpenFailed": "Failed to open terminal",
     "openTerminalDialog": {
       "title": "Open a terminal in which folder?",
-      "description": "A terminal opens in the folder you pick and starts Claude Code with \"{{name}}\"'s settings. Usually you'd pick your project folder.",
+      "description": "A terminal opens in the folder you pick and starts {{app}} with \"{{name}}\"'s settings. Usually you'd pick your project folder.",
       "isolationTitle": "This terminal is isolated",
       "isolationBody": "It stays on \"{{name}}\": switching providers in CC Switch later won't affect it, and it won't change the provider CC Switch is currently using.",
+      "isolationBodyAgy": "The key and endpoint of \"{{name}}\" go only to agy in this terminal and are never written to a file; running agy directly in another terminal still uses your Google sign-in.",
       "noDir": "No folder selected",
       "choose": "Choose Folder…",
       "change": "Change…",
       "recent": "Recent",
       "forget": "Remove from recent",
-      "confirm": "Open Terminal"
+      "confirm": "Open Terminal",
+      "agySwitchTitle": "This switches agy's sign-in",
+      "agySwitchBody": "Before opening, agy's sign-in switches to {{account}}, and agy sessions started afterwards use this account.",
+      "agySwitchRunning": "agy is running: open agy sessions keep the previous account and may write it back. Quit them first if you can."
     },
     "name": "Name",
     "namePlaceholder": "e.g., Claude Official",
@@ -209,12 +214,17 @@
     "geminiConfigHint": "Use .env format to configure Gemini",
     "form": {
       "agy": {
-        "connectionHint": "Leave the API key and endpoint empty to use agy's Google sign-in. A key without an endpoint uses Google's default API; third-party endpoints must support the Gemini API. Open a new terminal or restart agy after switching. Running sessions keep their configuration. Login-mode model discovery uses the current agy configuration. In login mode, use the display name from the model list; API mode uses API model IDs.",
-        "keyFieldsHint": "The endpoint, key and model follow the provider; other native Antigravity settings are preserved.",
+        "endpointHelp": "Leave empty for Google's default API. Third-party endpoints must support the Gemini API and agy's built-in Gemini models.",
+        "modelHelp": "Use the display name from the model list (Fetch Models). Applies to that session only.",
+        "keyFieldsHint": "The model, key and endpoint are only used by \"Open Terminal\" and are never written to Antigravity's own settings.",
         "envFile": "Launcher environment variables",
-        "envFileHint": "CC Switch passes the API key, endpoint and model when starting agy. Other environment variables are not applied.",
+        "envFileHint": "When agy is started from the card's \"Open Terminal\", CC Switch passes the API key and endpoint to that one agy process only and never writes them to a file. Other environment variables are not applied.",
         "configJson": "Model configuration (CC Switch format)",
-        "configJsonHint": "Only model settings are supported here. Change other Antigravity options in agy; manage MCP in the MCP panel."
+        "configJsonHint": "Only model settings are supported here. Change other Antigravity options in agy; manage MCP in the MCP panel.",
+        "account": "Account",
+        "accountFollow": "Follow agy's current sign-in",
+        "accountMissing": "An account not on this computer",
+        "accountHelp": "With an account selected, Open Terminal first switches agy's sign-in to it (this applies globally: agy sessions started afterwards use it). Add accounts in the Auth Center."
       },
       "gemini": {
         "model": "Model",
@@ -426,7 +436,7 @@
     "tabAdvanced": "Advanced",
     "tabProxy": "Routing",
     "authCenter": {
-      "description": "Use GitHub Copilot, ChatGPT and xAI subscriptions as providers. The routing service injects their credentials, so these providers run in Routing mode (except Codex's official-login binding).",
+      "description": "Use GitHub Copilot, ChatGPT and xAI subscriptions as providers. The routing service injects their credentials, so these providers run in Routing mode (except Codex's official-login binding). Antigravity accounts switch agy's official sign-in.",
       "beta": "Beta",
       "copilotDescription": "Manage GitHub Copilot accounts",
       "codexOauthDescription": "Manage ChatGPT accounts",
@@ -477,7 +487,6 @@
         "title": "Rectifier",
         "description": "Automatically fix API request compatibility issues",
         "enabled": "Enable Rectifier",
-        "enabledDescription": "Master switch, all rectification features will be disabled when turned off",
         "requestGroup": "Request Rectification",
         "responseGroup": "Response Rectification",
         "thinkingSignature": "Thinking Signature Rectification",
@@ -514,7 +523,6 @@
           "debug": "Debug",
           "trace": "Trace"
         },
-        "levelHint": "Log level descriptions:",
         "levelDesc": {
           "error": "Critical errors only",
           "warn": "Errors + warnings",
@@ -655,7 +663,6 @@
     },
     "webdavSync": {
       "title": "WebDAV Cloud Sync",
-      "description": "Sync database and skill configurations across devices via WebDAV.",
       "baseUrl": "WebDAV Server URL",
       "baseUrlPlaceholder": "https://dav.example.com/dav/",
       "username": "WebDAV Account",
@@ -696,8 +703,6 @@
         "synologyHint": "Install and enable the WebDAV Server package in Synology Package Center first.",
         "custom": "Custom"
       },
-      "remoteRootDefault": "Default: cc-switch-sync",
-      "profileDefault": "Default: default",
       "saveAndTestSuccess": "Config saved, connection OK",
       "saveAndTestFailed": "Config saved, but connection test failed: {{error}}",
       "noRemoteData": "No sync data found on the remote server",
@@ -770,9 +775,7 @@
       "endpointHint": "Required for most S3-compatible services",
       "endpointPlaceholder": "e.g. https://s3-compatible.example.com",
       "remoteRoot": "Remote Root Directory",
-      "remoteRootDefault": "Default: cc-switch-sync",
       "profile": "Sync Profile Name",
-      "profileDefault": "Default: default",
       "autoSync": "Auto Sync",
       "autoSyncHint": "When enabled, each database change triggers an automatic S3 upload.",
       "enabled": "Enable S3 Sync",
@@ -1625,8 +1628,8 @@
       "ccsub": "CCSub is a stable, affordable AI API relay — a drop-in replacement for Claude.ai & OpenAI subscriptions, with one key for all models at ~30% of direct API cost.",
       "subrouter": "SubRouter is an AI relay aggregator that lets one key access multiple models and providers.",
       "qiniu": "Qiniu Cloud is a multi-protocol AI relay: one key for native Claude, GPT, and Gemini models, with the Anthropic, OpenAI, and Gemini APIs all supported.",
+      "haoai": "hao.ai is a fast, stable unified LLM API gateway for developers and teams: one key reaches GPT, Claude, Grok, and other leading models over OpenAI- and Anthropic-compatible APIs, with model routing, failover, and full request logs, at prices as low as 15% of official reference rates. CC Switch users who register via this link get 5% bonus credit on their first order!",
       "fenno": "Fenno.ai is a stable, efficient API relay giving you access to a wide range of mainstream models. Exclusive CC Switch offer: subscribe via this link to the $1.99 Trial Plan worth $50 in credits, valid for 7 days!",
-      "zetaapi": "ZetaAPI delivers real, undegraded models at as low as 35% of official pricing. Exclusive CC Switch offer: register via this link and use promo code CC-SWITCH for 10% off your first top-up!",
       "teamorouter": "TeamoRouter is an enterprise-grade Agentic LLM gateway with pricing up to 90% off. It offers exclusive benefits for CC Switch users: register via this link as a new user for 10% off your first top-up!",
       "ppio": "PPIO is a leading independent Agentic Cloud provider in China, serving every flagship open-source model through a single API key. Register via this link and complete identity verification to receive a ¥10 credit voucher.",
       "xycai": "XycAi is an enterprise-grade token factory: one-click access to 200+ global models, automatic SLA compensation, and 100% refunds for abnormal cache charges!",
@@ -1635,11 +1638,12 @@
       "fluxa": "FluxA and Baidu AI Cloud jointly launched AgenticPlan, letting AI agents buy, manage and use models, APIs and tools on their own. It includes Baidu Qianfan TokenPlan at up to 40% off with flagship models such as DeepSeek V4, GLM 5.2 and Kimi, plus bonus FluxA AgentMarket API credits that unlock 13,000+ paid APIs for search, data scraping, social media, finance, crypto, image generation and video.",
       "88api": "88API is a one-stop multi-model API platform run by a Hong Kong company, giving unified access to text, image, speech and video models. It accepts major international payment methods, can issue invoices and provides enterprise-grade stable service. Sign up through the exclusive link to receive bonus credits!",
       "modelflare": "Modelflare is a stable, lower-cost AI model gateway: one key reaches GPT, Claude, Gemini, Grok, and other leading models. Exclusive for CC Switch users: use the code \"CCSWITCH\" on your first top-up for 10% off!",
-      "everyapi": "EveryAPI ships its own desktop client that auto-configures Claude Code, Codex, Cursor, and 20+ other tools in one click; one key reaches Claude, GPT, DeepSeek, GLM, MiniMax, Kimi, and Doubao, so switching models needs no config changes. Get ¥14 in free credit on sign-up and an extra 20% on your first top-up. Exclusive for CC Switch users: use the code \"ccswitch\" at checkout for a further 20% off, with no expiry!",
+      "everyapi": "EveryAPI ships its own desktop client that auto-configures Claude Code, Codex, Cursor, and 20+ other tools in one click; one key reaches Claude, GPT, DeepSeek, GLM, MiniMax, Kimi, and Doubao, so switching models needs no config changes. Get ¥14 in free credit on sign-up, with GPT models from just 15% of the official price. Exclusive for CC Switch users: use the code \"ccswitch\" on your first top-up for 20% off, with no expiry!",
       "alltokens": "AllTokens is built on stability and honesty, aiming to make every AI call stable, genuine, and trustworthy: reliable service, transparent billing, and one platform for GPT, Claude, Gemini, Grok, DeepSeek, GLM, Kimi, and other leading models, with pay-as-you-go pricing and spending caps. Get $1 in free trial credit when you sign up!",
       "alltokens_si": "AllTokens SI is built on stability and honesty: an enterprise AI token relay and team collaboration platform. Members, keys, usage, and balance all live in one company console, and clear permissions and spending limits keep team usage traceable and under control.",
       "openmodel": "OpenModel offers client-specific discounts of up to 90% for Codex and 60% for Claude Code across supported models. CC Switch users who register via this link and use promo code \"cc-switch\" get 10% off their first top-up!",
-      "grooroute": "GrooRoute Pro is a reliable AI API relay with access to OpenAI, Claude, DeepSeek, and other mainstream models, offering pay-as-you-go and subscription plans. CC Switch users get ¥5 in free trial credit by registering via this link!"
+      "grooroute": "GrooRoute Pro is a reliable AI API relay with access to OpenAI, Claude, DeepSeek, and other mainstream models, offering pay-as-you-go and subscription plans. CC Switch users get ¥5 in free trial credit by registering via this link!",
+      "dit": "DIT.ai is an AI token exchange for lower-cost multi-provider routing: one OpenAI-compatible API reaches 50+ leading models including GPT, Claude, Gemini, DeepSeek, Grok, and Llama, with providers competing across 160+ routes, typically 30–70% below official pricing. CC Switch users can register via this link and use promo code \"ccswitch\" to claim a $5 welcome coupon!"
     },
     "presets": {
       "ucloud": "Compshare",
@@ -2036,16 +2040,13 @@
     "npmPackage": "API Format",
     "nativeConfigHint": "Edit native OpenCode V2 configuration as JSON below. Provider and model fields are preserved when saving.",
     "selectPackage": "Select API format",
-    "npmPackageHint": "Select the API format for the AI service",
     "builtinDefaults": "Use OpenCode built-in provider defaults",
     "customProviderRequired": "A new provider ID requires an npm package and at least one model. Only an existing ID in the live config may inherit defaults.",
     "duplicateRequiresDefinition": "This provider is missing an npm package or model definitions and cannot be duplicated directly. Specify an npm package and at least one model before copying it as a custom provider.",
     "duplicateRequiresNativeDefinition": "This native V2 provider is missing a package or model definitions and cannot be duplicated directly. Add a package and at least one model before copying it under a new ID.",
     "nativeCustomProviderRequired": "A new provider ID requires a package and at least one model. Only an existing ID in the live config may inherit defaults.",
     "baseUrl": "Base URL",
-    "baseUrlHint": "Custom API endpoint URL",
     "models": "Models",
-    "modelsHint": "Configure available models and their display names",
     "addModel": "Add manually",
     "modelId": "Model ID",
     "modelName": "Display Name",
@@ -2556,8 +2557,7 @@
       "cacheWrite": "Cache write"
     },
     "prevMonth": "Previous month",
-    "nextMonth": "Next month",
-    "agyUsageHint": "Antigravity shows native session token counters; missing historical models are unknown. The log does not provide reliable billing data; a displayed cost of 0 does not mean free usage."
+    "nextMonth": "Next month"
   },
   "usageScript": {
     "title": "Configure Usage Query",
@@ -2578,6 +2578,7 @@
     "tokenPlanHint": "Automatically uses the provider's API Key and Base URL to query Token Plan quota",
     "balanceHint": "Automatically uses the provider's API Key to query account balance",
     "officialSubscriptionHint": "Reads the local CLI OAuth credentials and calls the official API to query subscription quota. Disabled by default and only requests after you enable it.",
+    "officialSubscriptionHintAgy": "Runs agy's built-in /usage command to check the signed-in account's quota. Sign-in credentials are not read; each check takes about 10 seconds. Disabled by default and only runs after you enable it.",
     "resetDate": "Reset date",
     "premiumRequests": "Premium Requests",
     "credentialsConfig": "Credentials",
@@ -3022,7 +3023,6 @@
       "title": "Daily Memory",
       "sectionTitle": "Daily Memory",
       "cardTitle": "Daily Memory Files",
-      "cardDescription": "Browse & manage daily memories",
       "createToday": "Add Memory",
       "empty": "No daily memory files yet",
       "loadFailed": "Failed to load daily memory files",
@@ -3053,7 +3053,6 @@
     "selectProtocol": "Select API Protocol",
     "apiProtocolHint": "Select the protocol type compatible with the provider's API. Most providers use OpenAI Completions format.",
     "baseUrl": "API Endpoint",
-    "baseUrlHint": "The provider's API endpoint address.",
     "models": "Model Configuration",
     "addModel": "Add Model",
     "selectDefaultModel": "Select Default Model",
@@ -3077,7 +3076,6 @@
     "userAgentHint": "Some providers require a browser User-Agent header to work properly.",
     "env": {
       "title": "Environment Variables",
-      "description": "Manage environment variables in openclaw.json (API keys, custom variables, etc.)",
       "editorHint": "Edit the full env section as JSON. Nested objects such as env.vars and env.shellEnv are supported.",
       "objectRequired": "OpenClaw env must be a JSON object.",
       "invalidJson": "OpenClaw env must be valid JSON.",
@@ -3092,7 +3090,6 @@
     },
     "tools": {
       "title": "Tool Permissions",
-      "description": "Manage tool permissions in openclaw.json (allow/deny lists)",
       "profile": "Permission Profile",
       "profileMinimal": "Minimal",
       "profileCoding": "Coding",
@@ -3146,7 +3143,6 @@
   "hermes": {
     "form": {
       "baseUrl": "API Endpoint",
-      "baseUrlHint": "The API endpoint URL for this provider.",
       "providerKey": "Provider Key",
       "providerKeyPlaceholder": "my-provider",
       "providerKeyHint": "Lowercase letters, numbers, and hyphens only. Used as the provider name in config.yaml.",
@@ -3157,7 +3153,6 @@
       "providerKeyBuiltin": "\"{{key}}\" is the ID of a Hermes built-in provider. Hermes will use the built-in provider (which needs its own API key environment variable) and ignore this card's endpoint and key. Use a different key, e.g. cc-switch-{{key}}.",
       "providerKeyBuiltinLocked": "\"{{key}}\" is the ID of a Hermes built-in provider. Hermes will use the built-in provider and ignore this card's endpoint and key. The key is locked: add this provider again under another key (e.g. cc-switch-{{key}}), then delete this card.",
       "apiMode": "API Mode",
-      "apiModeHint": "Provider API protocol. Choose the format that matches your endpoint.",
       "apiModeChatCompletions": "OpenAI Chat Completions",
       "apiModeAnthropicMessages": "Anthropic Messages",
       "apiModeCodexResponses": "OpenAI Responses",
@@ -4112,6 +4107,10 @@
       "geminiPro": "Pro",
       "geminiFlash": "Flash",
       "geminiFlashLite": "Lite",
+      "agyGeminiFiveHour": "Gemini 5h",
+      "agyGeminiWeekly": "Gemini Wk",
+      "agyThirdPartyFiveHour": "Claude 5h",
+      "agyThirdPartyWeekly": "Claude Wk",
       "monthly": "Mo",
       "credits": "Credits",
       "copilotPremium": "Premium"
@@ -4125,6 +4124,12 @@
     "geminiPro": "Pro",
     "geminiFlash": "Flash",
     "geminiFlashLite": "Flash Lite",
+    "agyGemini": "Gemini",
+    "agyThirdParty": "Claude/GPT",
+    "agyGeminiFiveHour": "Gemini 5-hour",
+    "agyGeminiWeekly": "Gemini weekly",
+    "agyThirdPartyFiveHour": "Claude/GPT 5-hour",
+    "agyThirdPartyWeekly": "Claude/GPT weekly",
     "weeklyLimit": "Weekly",
     "monthly": "Monthly",
     "credits": "Credits",
@@ -4196,7 +4201,8 @@
       "openclaw": "Installs with npm",
       "hermes": "Installs with the official script",
       "pi": "Installs with npm",
-      "mcode": "Installs with the official script, falls back to npm"
+      "mcode": "Installs with the official script, falls back to npm",
+      "agy": "Installs with the official script"
     }
   },
   "appPage": {
@@ -4221,7 +4227,7 @@
     },
     "active": "active",
     "activeTitle": "{{mode}} is active",
-    "noProvider": "(none)",
+    "noProvider": "none",
     "failover": "Failover",
     "routeSettings": "Routing settings",
     "routeSettingsTitle": "Routing settings",
@@ -4464,6 +4470,10 @@
       "text": "Credits ≈ {{usd}}",
       "usd": "≈ {{usd}}",
       "detail": "Credits balance {{balance}} · ≈ {{usd}} at API prices · used only after your limits run out"
+    },
+    "windows": {
+      "title": "All limits",
+      "showAll": "Show all limits"
     }
   },
   "appMatrix": {
@@ -4849,7 +4859,8 @@
       "helpTitle": "How {{service}} accounts are used",
       "copilotHelp": "Used by GitHub Copilot presets in Claude Code and Claude Desktop. Providers without a chosen account use the Default one.",
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
-      "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one."
+      "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
+      "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it."
     },
     "addAccount": "Add account",
     "groupMenu": "More actions for {{service}}",
@@ -4880,7 +4891,9 @@
       "copy": "Copy code",
       "copied": "Code copied.",
       "open": "Open the authorization page",
-      "note": "The authorization page is open in your browser; this updates on its own when you finish. Mind {{service}}'s terms of use."
+      "note": "The authorization page is open in your browser; this updates on its own when you finish. Mind {{service}}'s terms of use.",
+      "browserNote": "The {{service}} sign-in page is open in your browser. Sign in and grant access, and this updates automatically.",
+      "reopen": "Reopen sign-in page"
     },
     "toast": {
       "added": "{{service}} account added.",
@@ -4891,6 +4904,18 @@
       "loading": "Checking quota…",
       "refresh": "Refresh quota",
       "refreshAria": "Refresh quota for {{login}}"
+    },
+    "agy": {
+      "reauthNote": "Sign-in expired, can't switch to it",
+      "addedOn": "Added {{date}}",
+      "statusLoadFailed": "Couldn't read Antigravity accounts. Try again.",
+      "empty": "No Antigravity accounts yet. The account agy is signed in with appears here automatically.",
+      "login": "Sign in with Google",
+      "current": "In use by agy",
+      "switchTo": "Switch agy to this account",
+      "removeNote": "agy stays signed in: if agy is using this account, it keeps working after removal.",
+      "switched": "Switched. New agy sessions will use this account.",
+      "switchedWhileRunning": "Switched. agy is running: open agy sessions keep using the previous account and may write it back. Quit agy and open it again."
     }
   }
 }

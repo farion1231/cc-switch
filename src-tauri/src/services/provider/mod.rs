@@ -5649,10 +5649,8 @@ impl ProviderService {
                     gemini_direct::switch_to(state.db.as_ref(), &provider)?;
                     return Ok(true);
                 }
-                AppType::Agy => {
-                    agy_direct::switch_to(state.db.as_ref(), &provider)?;
-                    return Ok(true);
-                }
+                // Antigravity 的卡只用来打开终端，添加不写任何文件。
+                AppType::Agy => return Ok(true),
                 AppType::GrokBuild => {
                     grok_direct::switch_to(state.db.as_ref(), None, &provider)?;
                     return Ok(true);
@@ -6469,8 +6467,11 @@ impl ProviderService {
             return Ok(());
         }
 
-        // For other apps: 本地记录、DB、代理路由任何一处指着它都不能删
-        if crate::mode::current::is_referenced(&state.db, &app_type, id)? {
+        // For other apps: 本地记录、DB、代理路由任何一处指着它都不能删。Antigravity 没有
+        // 「启用」，旧版留下的直连指针不拦删除。
+        if app_type != AppType::Agy
+            && crate::mode::current::is_referenced(&state.db, &app_type, id)?
+        {
             return Err(AppError::Message(
                 "无法删除当前正在使用的供应商".to_string(),
             ));
@@ -6486,11 +6487,6 @@ impl ProviderService {
         }
 
         state.db.delete_provider(app_type.as_str(), id)?;
-        if matches!(app_type, AppType::Agy) {
-            if let Err(error) = agy_direct::release_launcher_if_unmanaged(state.db.as_ref()) {
-                log::warn!("清理 agy 启动器失败: {error}");
-            }
-        }
         Ok(())
     }
 
@@ -6580,7 +6576,8 @@ impl ProviderService {
             }
             // 规则拒绝：什么都没改。
             Err(error @ AppError::Localized { key, .. })
-                if *key == "switch.official_blocked_by_proxy" =>
+                if *key == "switch.official_blocked_by_proxy"
+                    || *key == "agy.switch.unsupported" =>
             {
                 log::info!("[SWITCH] {app} 拒绝切到 {id}: {error}");
             }
@@ -6599,6 +6596,14 @@ impl ProviderService {
     ) -> Result<SwitchResult, AppError> {
         if app_type == AppType::Pi {
             return pi::enable(state, id);
+        }
+        // Antigravity 的卡只作用于它打开的终端，没有「启用」（见 agy_config 模块说明）。
+        if app_type == AppType::Agy {
+            return Err(AppError::localized(
+                "agy.switch.unsupported",
+                "Antigravity 的卡片不需要启用，用「打开终端」启动即可",
+                "Antigravity cards are not enabled; use Open terminal to start one",
+            ));
         }
 
         // Check if provider exists
@@ -6696,10 +6701,6 @@ impl ProviderService {
         }
         if matches!(app_type, AppType::Gemini) {
             gemini_direct::switch_to(state.db.as_ref(), provider)?;
-            return Ok(SwitchResult::default());
-        }
-        if matches!(app_type, AppType::Agy) {
-            agy_direct::switch_to(state.db.as_ref(), provider)?;
             return Ok(SwitchResult::default());
         }
         if matches!(app_type, AppType::GrokBuild) {

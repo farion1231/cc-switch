@@ -180,19 +180,24 @@
     "managedByHermes": "Hermes 託管",
     "managedByHermesHint": "該專案定義於 Hermes 的 providers: dict，請在 Hermes Web UI 中編輯或刪除。",
     "openTerminal": "開啟終端機",
+    "openTerminalWithProvider": "使用此供應商開啟終端機",
     "terminalOpened": "終端機已開啟",
     "terminalOpenFailed": "開啟終端機失敗",
     "openTerminalDialog": {
       "title": "要在哪個目錄開啟終端機？",
-      "description": "會在你選的目錄裡開啟一個終端機，並用「{{name}}」的設定啟動 Claude Code。一般選你的專案資料夾。",
+      "description": "會在你選的目錄裡開啟一個終端機，並用「{{name}}」的設定啟動 {{app}}。一般選你的專案資料夾。",
       "isolationTitle": "這個終端機是隔離的",
       "isolationBody": "它固定使用「{{name}}」，之後在 CC Switch 裡切換供應商不會影響它；它也不會改動 CC Switch 裡正在使用的供應商。",
+      "isolationBodyAgy": "「{{name}}」的 Key 和位址只傳給這個終端機裡的 agy，不寫進任何檔案；在別的終端機裡直接執行 agy 仍是 Google 登入。",
       "noDir": "還沒選目錄",
       "choose": "選擇資料夾…",
       "change": "更換…",
       "recent": "最近用過",
       "forget": "從最近用過中移除",
-      "confirm": "開啟終端機"
+      "confirm": "開啟終端機",
+      "agySwitchTitle": "會切換 agy 的登入",
+      "agySwitchBody": "開啟前把 agy 的登入切換到 {{account}}，之後新開的 agy 都用這個帳號。",
+      "agySwitchRunning": "偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，最好先結束它們。"
     },
     "name": "名稱",
     "namePlaceholder": "例如：Claude 官方",
@@ -209,12 +214,17 @@
     "geminiConfigHint": "使用 .env 格式設定 Gemini",
     "form": {
       "agy": {
-        "connectionHint": "不填 API Key 和請求位址時使用 agy 本身的 Google 登入。填寫 Key 但不填位址時使用 Google 預設 API；第三方位址須相容 Gemini API。切換後請開啟新終端或重新啟動 agy，執行中的工作階段不會自動切換。登入模式的模型清單讀取目前的 agy 設定。 登入模式請使用模型清單中的顯示名稱；API 模式使用介面模型 ID。",
-        "keyFieldsHint": "位址、Key 和模型隨供應商切換；Antigravity 的其他原生設定保持不變。",
+        "endpointHelp": "留空用 Google 預設 API。第三方位址須相容 Gemini API，並支援 agy 內建的 Gemini 模型。",
+        "modelHelp": "填模型清單裡的顯示名稱，可點「取得模型清單」選擇。只對那次工作階段生效。",
+        "keyFieldsHint": "模型、Key 和位址都只在「開啟終端機」時使用，不寫進 Antigravity 自己的設定。",
         "envFile": "啟動環境變數",
-        "envFileHint": "CC Switch 會在啟動 agy 時傳入 API Key、請求位址和模型。其他環境變數不會套用。",
+        "envFileHint": "從卡片「開啟終端機」啟動 agy 時，CC Switch 只把 API Key 和請求位址傳給那一個 agy 行程，不寫進任何檔案。其他環境變數不會套用。",
         "configJson": "模型設定（CC Switch 格式）",
-        "configJsonHint": "這裡僅支援模型設定，其他 Antigravity 選項請在 agy 中調整；MCP 在 MCP 面板中管理。"
+        "configJsonHint": "這裡僅支援模型設定，其他 Antigravity 選項請在 agy 中調整；MCP 在 MCP 面板中管理。",
+        "account": "帳號",
+        "accountFollow": "跟隨 agy 目前登入",
+        "accountMissing": "不在這台電腦上的帳號",
+        "accountHelp": "選了帳號的話，「開啟終端機」前會先把 agy 的登入切換到它（全域生效，之後新開的 agy 都用它）。帳號在授權中心新增。"
       },
       "gemini": {
         "model": "模型",
@@ -426,7 +436,7 @@
     "tabAdvanced": "進階",
     "tabProxy": "路由",
     "authCenter": {
-      "description": "把 GitHub Copilot、ChatGPT、xAI 訂閱當作供應商用。憑證由路由服務注入，相關供應商要在路由模式下使用（Codex 官方登入綁定除外）。",
+      "description": "把 GitHub Copilot、ChatGPT、xAI 訂閱當作供應商用。憑證由路由服務注入，相關供應商要在路由模式下使用（Codex 官方登入綁定除外）。Antigravity 帳號用來切換 agy 的官方登入。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 帳號",
       "codexOauthDescription": "管理 ChatGPT 帳號",
@@ -477,7 +487,6 @@
         "title": "整流器",
         "description": "自動修復 API 請求中的相容性問題",
         "enabled": "啟用整流器",
-        "enabledDescription": "總開關，關閉後所有整流功能將被停用",
         "requestGroup": "請求整流",
         "responseGroup": "回應整流",
         "thinkingSignature": "Thinking 簽章整流",
@@ -514,7 +523,6 @@
           "debug": "偵錯",
           "trace": "追蹤"
         },
-        "levelHint": "日誌層級說明：",
         "levelDesc": {
           "error": "僅嚴重錯誤",
           "warn": "錯誤 + 警告資訊",
@@ -655,7 +663,6 @@
     },
     "webdavSync": {
       "title": "WebDAV 雲端同步",
-      "description": "透過 WebDAV 在多裝置間同步資料庫和技能設定。",
       "baseUrl": "WebDAV 伺服器位址",
       "baseUrlPlaceholder": "https://dav.jianguoyun.com/dav/",
       "username": "WebDAV 帳號",
@@ -696,8 +703,6 @@
         "synologyHint": "請先在 Synology「套件中心」安裝並啟用 WebDAV Server 套件。",
         "custom": "自訂"
       },
-      "remoteRootDefault": "預設: cc-switch-sync",
-      "profileDefault": "預設: default",
       "saveAndTestSuccess": "設定已儲存，連線正常",
       "saveAndTestFailed": "設定已儲存，但連線測試失敗：{{error}}",
       "noRemoteData": "雲端沒有找到同步資料",
@@ -770,9 +775,7 @@
       "endpointHint": "多數 S3 相容服務需要填寫",
       "endpointPlaceholder": "例如 https://s3-compatible.example.com",
       "remoteRoot": "遠端根目錄",
-      "remoteRootDefault": "預設: cc-switch-sync",
       "profile": "同步設定檔名稱",
-      "profileDefault": "預設: default",
       "autoSync": "自動同步",
       "autoSyncHint": "開啟後每次資料庫變更都會自動上傳到 S3。",
       "enabled": "啟用 S3 同步",
@@ -1626,8 +1629,8 @@
       "ccsub": "CCSub 是穩定、實惠的 AI API 中轉平台，Claude Code 官方訂閱的超強平替，一個 Key 覆蓋全部模型，價格約為官方 1/3。",
       "subrouter": "SubRouter 是中轉站聚合平台，一個 Key 可接入多個模型與供應商。",
       "qiniu": "七牛雲是多協定 AI 中轉平台，一個 Key 即可呼叫原生 Claude、GPT、Gemini 模型，相容 Anthropic、OpenAI、Gemini 多種介面。",
+      "haoai": "hao.ai 是面向開發者與團隊的高速、穩定大模型統一 API 閘道：一個 Key 即可接入 GPT、Claude、Grok 等主流模型，相容 OpenAI、Anthropic 協定，提供模型路由、故障回退與完整呼叫日誌，價格低至官方參考價的 1.5 折。CC Switch 使用者透過此連結註冊，首單可享 5% 贈送額度！",
       "fenno": "Fenno.ai 是穩定高效的 API 中轉服務商，可接入多種主流模型。CC Switch 使用者專屬福利：透過此連結訂閱 1.99 刀 /50 刀額度的 Trial 方案，有效期 7 天！",
-      "zetaapi": "ZetaAPI 主打模型不摻水、不降智，價格低至官方價 35 折。CC Switch 使用者專屬福利：透過此連結註冊，首次充值使用優惠碼 CC-SWITCH 即可享受九折優惠！",
       "teamorouter": "TeamoRouter 是企業級 Agentic LLM 閘道，價格最高可達 90% 折扣。為 CC Switch 的使用者提供了特別福利：新使用者透過此連結註冊，首次充值享 10% 折扣！",
       "ppio": "PPIO 是中國領先的獨立 Agentic Cloud 服務商，一個 API Key 調用全部旗艦開源模型。透過此連結註冊並完成實名認證，即可獲得 ¥10 代金券。",
       "xycai": "XycAi 企業級 Token 工廠：200+ 全球模型一鍵接入，SLA 自動賠付，異常快取 100% 退還！",
@@ -1636,11 +1639,12 @@
       "fluxa": "FluxA 與百度智能雲聯合推出 AgenticPlan，讓 AI Agent 能自主購買、管理和使用模型、API 與工具。內含百度千帆 TokenPlan，低至 6 折，可使用 DeepSeek V4、GLM 5.2、Kimi 等旗艦模型，並獲贈 FluxA AgentMarket API 呼叫額度，解鎖搜尋、資料抓取、社群媒體、金融、加密、生圖、影片等 13000+ 付費 API。",
       "88api": "88API 是由香港企業營運的一站式多模型 API 平台，透過統一介面接入文字、圖片、語音和影片模型，支援國際主流付款方式，可開立發票，提供企業級穩定服務。透過專屬連結註冊可獲得專屬贈送額度！",
       "modelflare": "Modelflare 是穩定、低成本的 AI 模型閘道，一個 Key 即可呼叫 GPT、Claude、Gemini、Grok 等主流模型。CC Switch 使用者專享福利：首次儲值使用優惠碼「CCSWITCH」可享 9 折優惠！",
-      "everyapi": "EveryAPI 自帶桌面客戶端，Claude Code、Codex、Cursor 等 20 多個工具一鍵自動設定；一把金鑰直接呼叫 Claude、GPT、DeepSeek、GLM、MiniMax、Kimi、豆包，換模型不用改設定。註冊即送 14 元額度，首儲額外加送 20%；CC Switch 使用者專享：付款時使用折扣碼「ccswitch」再打 8 折，不限時！",
+      "everyapi": "EveryAPI 自帶桌面客戶端，Claude Code、Codex、Cursor 等 20 多個工具一鍵自動設定；一把金鑰直接呼叫 Claude、GPT、DeepSeek、GLM、MiniMax、Kimi、豆包，換模型不用改設定。註冊即送 14 元額度，GPT 低至 1.5 折；CC Switch 使用者專享：首儲時使用折扣碼「ccswitch」享 20% 優惠，不限時！",
       "alltokens": "AllTokens 秉持「穩定為基，真實為本」，致力於讓每一次 AI 呼叫都穩定、真實、值得託付：服務可靠、計費透明，一個平台接入 GPT、Claude、Gemini、Grok、DeepSeek、GLM、Kimi 等主流模型，按量計費、支援額度上限。註冊即送 1 美元體驗金！",
       "alltokens_si": "AllTokens SI 秉持「穩定為基，真實為本」，是專為企業打造的 AI Token 中轉與團隊協作平台：成員、金鑰、用量與餘額統一納入企業控制台，以清晰的權限與額度設定，讓團隊協作有據可查、安心可控。",
       "openmodel": "OpenModel 為 Codex 和 Claude Code 提供客戶端專屬折扣，所支援的模型透過 Codex 呼叫最高優惠 90%、透過 Claude Code 呼叫最高優惠 60%。CC Switch 使用者透過此連結註冊並使用優惠碼「cc-switch」，即可享受首次儲值九折優惠！",
-      "grooroute": "GrooRoute Pro 是可靠流暢的 AI API 中轉服務平台，接入 OpenAI、Claude、DeepSeek 等主流大模型，支援按量計費與訂閱方案。CC Switch 使用者透過此連結註冊即可獲得免費 5 元體驗額度！"
+      "grooroute": "GrooRoute Pro 是可靠流暢的 AI API 中轉服務平台，接入 OpenAI、Claude、DeepSeek 等主流大模型，支援按量計費與訂閱方案。CC Switch 使用者透過此連結註冊即可獲得免費 5 元體驗額度！",
+      "dit": "DIT.ai 是面向多供應商低價路由的 AI Token 交易市場：一個 OpenAI 相容 API 即可呼叫 GPT、Claude、Gemini、DeepSeek、Grok、Llama 等 50 多個主流模型，160 多條線路即時競價，價格通常比官方低 30–70%。CC Switch 使用者透過此連結註冊並使用優惠碼「ccswitch」，可領取 5 美元新人券！"
     },
     "presets": {
       "ucloud": "優雲智算",
@@ -2037,16 +2041,13 @@
     "npmPackage": "API 格式",
     "nativeConfigHint": "請在下方以 JSON 編輯 OpenCode V2 原生設定。儲存時保留供應商和模型欄位。",
     "selectPackage": "選擇 API 格式",
-    "npmPackageHint": "選擇 AI 服務的 API 格式",
     "builtinDefaults": "使用 OpenCode 內建供應商預設值",
     "customProviderRequired": "新的供應商識別碼需要填寫 npm 套件和至少一個模型；只有設定中已有的同名供應商可以沿用預設定義",
     "duplicateRequiresDefinition": "此供應商缺少 npm 套件或模型定義，無法直接複製。請先補齊 npm 套件和至少一個模型，再複製為自訂供應商。",
     "duplicateRequiresNativeDefinition": "此 V2 原生供應商缺少 package 或模型定義，無法直接複製。請先補齊 package 和至少一個模型，再以新的識別碼複製。",
     "nativeCustomProviderRequired": "新的供應商識別碼需要填寫 package 和至少一個模型；只有設定中已有的同名供應商可以沿用預設定義",
     "baseUrl": "Base URL",
-    "baseUrlHint": "自訂 API 端點位址",
     "models": "模型設定",
-    "modelsHint": "設定可用的模型及其顯示名稱",
     "addModel": "手動新增",
     "modelId": "模型 ID",
     "modelName": "顯示名稱",
@@ -2557,8 +2558,7 @@
       "cacheWrite": "快取寫入"
     },
     "prevMonth": "上個月",
-    "nextMonth": "下個月",
-    "agyUsageHint": "Antigravity 顯示工作階段日誌的原始 Token；缺失的歷史模型記為 unknown。日誌未提供可靠計費資訊，顯示的 0 費用不代表免費。"
+    "nextMonth": "下個月"
   },
   "usageScript": {
     "title": "設定用量查詢",
@@ -2579,6 +2579,7 @@
     "tokenPlanHint": "自動使用供應商的 API Key 和 Base URL 查詢 Token Plan 額度",
     "balanceHint": "自動使用供應商的 API Key 查詢帳號餘額",
     "officialSubscriptionHint": "讀取本機 CLI 的 OAuth 憑證，並呼叫官方介面查詢訂閱額度。預設關閉，只有啟用後才會請求。",
+    "officialSubscriptionHintAgy": "執行 agy 內建的 /usage 指令查詢登入帳號的額度，不讀取登入憑證，每次查詢約需 10 秒。預設關閉，只有啟用後才會請求。",
     "resetDate": "重設日期",
     "premiumRequests": "Premium 請求",
     "credentialsConfig": "憑證設定",
@@ -3023,7 +3024,6 @@
       "title": "每日記憶",
       "sectionTitle": "每日記憶",
       "cardTitle": "每日記憶檔案",
-      "cardDescription": "瀏覽管理每日記憶",
       "createToday": "新增記憶",
       "empty": "暫無每日記憶檔案",
       "loadFailed": "載入每日記憶檔案失敗",
@@ -3054,7 +3054,6 @@
     "selectProtocol": "選擇 API 協定",
     "apiProtocolHint": "選擇與供應商 API 相容的協定類型。大多數供應商使用 OpenAI Completions 格式。",
     "baseUrl": "API 端點",
-    "baseUrlHint": "供應商的 API 端點位址。",
     "models": "模型設定",
     "addModel": "新增模型",
     "selectDefaultModel": "選擇預設模型",
@@ -3078,7 +3077,6 @@
     "userAgentHint": "部分供應商需要瀏覽器 User-Agent 才能正常存取。",
     "env": {
       "title": "環境變數",
-      "description": "管理 openclaw.json 中的環境變數設定（API Key、自訂變數等）",
       "editorHint": "以 JSON 形式編輯整個 env 節點。支援 env.vars、env.shellEnv 等巢狀物件。",
       "objectRequired": "OpenClaw 的 env 必須是 JSON 物件。",
       "invalidJson": "OpenClaw 的 env 必須是合法 JSON。",
@@ -3093,7 +3091,6 @@
     },
     "tools": {
       "title": "工具權限",
-      "description": "管理 openclaw.json 中的工具權限設定（允許/拒絕清單）",
       "profile": "權限模式",
       "profileMinimal": "最小權限",
       "profileCoding": "編碼",
@@ -3147,7 +3144,6 @@
   "hermes": {
     "form": {
       "baseUrl": "API 端點",
-      "baseUrlHint": "供應商的 API 端點位址。",
       "providerKey": "供應商標識",
       "providerKeyPlaceholder": "my-provider",
       "providerKeyHint": "只能使用小寫字母、數字和連字號。用作 config.yaml 中的供應商名稱。",
@@ -3158,7 +3154,6 @@
       "providerKeyBuiltin": "「{{key}}」是 Hermes 內建供應商的標識。Hermes 會改用內建供應商（需要它自己的環境變數 Key），這張卡的位址和 Key 不會生效。請換一個標識，例如 cc-switch-{{key}}。",
       "providerKeyBuiltinLocked": "「{{key}}」是 Hermes 內建供應商的標識。Hermes 會改用內建供應商，這張卡的位址和 Key 不會生效。標識已鎖定無法修改，請用其他標識（例如 cc-switch-{{key}}）重新新增這個供應商，再刪除這張卡。",
       "apiMode": "API 模式",
-      "apiModeHint": "供應商 API 協定。請根據端點選擇正確的協定。",
       "apiModeChatCompletions": "OpenAI Chat Completions",
       "apiModeAnthropicMessages": "Anthropic Messages",
       "apiModeCodexResponses": "OpenAI Responses",
@@ -4113,6 +4108,10 @@
       "geminiPro": "Pro",
       "geminiFlash": "Flash",
       "geminiFlashLite": "Lite",
+      "agyGeminiFiveHour": "Gemini 5 小時",
+      "agyGeminiWeekly": "Gemini 每週",
+      "agyThirdPartyFiveHour": "Claude 5 小時",
+      "agyThirdPartyWeekly": "Claude 每週",
       "monthly": "每月",
       "credits": "額度",
       "copilotPremium": "進階請求"
@@ -4126,6 +4125,12 @@
     "geminiPro": "Pro",
     "geminiFlash": "Flash",
     "geminiFlashLite": "Flash Lite",
+    "agyGemini": "Gemini",
+    "agyThirdParty": "Claude/GPT",
+    "agyGeminiFiveHour": "Gemini 5 小時",
+    "agyGeminiWeekly": "Gemini 每週",
+    "agyThirdPartyFiveHour": "Claude/GPT 5 小時",
+    "agyThirdPartyWeekly": "Claude/GPT 每週",
     "weeklyLimit": "每週",
     "monthly": "每月",
     "credits": "額度",
@@ -4197,7 +4202,8 @@
       "openclaw": "透過 npm 安裝",
       "hermes": "安裝時執行官方安裝腳本",
       "pi": "透過 npm 安裝",
-      "mcode": "安裝時執行官方安裝腳本，失敗時改用 npm"
+      "mcode": "安裝時執行官方安裝腳本，失敗時改用 npm",
+      "agy": "安裝時執行官方安裝腳本"
     }
   },
   "appPage": {
@@ -4222,7 +4228,7 @@
     },
     "active": "生效中",
     "activeTitle": "{{mode}}生效中",
-    "noProvider": "（未選擇）",
+    "noProvider": "未選擇",
     "failover": "故障轉移",
     "routeSettings": "路由設定",
     "routeSettingsTitle": "路由設定",
@@ -4465,6 +4471,10 @@
       "text": "Credits 約 {{usd}}",
       "usd": "約 {{usd}}",
       "detail": "Credits 餘額 {{balance}} · 按 API 價折算約 {{usd}} · 額度用完後才扣"
+    },
+    "windows": {
+      "title": "各檔額度",
+      "showAll": "查看各檔額度"
     }
   },
   "appMatrix": {
@@ -4850,7 +4860,8 @@
       "helpTitle": "{{service}} 帳號怎麼用",
       "copilotHelp": "用於 Claude Code、Claude Desktop 的 GitHub Copilot 預設。沒指定帳號的供應商用「預設」帳號。",
       "chatgptHelp": "用於 Claude Code、Claude Desktop 的 ChatGPT 預設，以及 Codex 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
-      "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。"
+      "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。",
+      "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。"
     },
     "addAccount": "新增帳號",
     "groupMenu": "{{service}} 的更多操作",
@@ -4881,7 +4892,9 @@
       "copy": "複製驗證碼",
       "copied": "驗證碼已複製。",
       "open": "開啟授權頁面",
-      "note": "已在瀏覽器開啟授權頁面，完成後這裡會自動更新。注意 {{service}} 的使用條款。"
+      "note": "已在瀏覽器開啟授權頁面，完成後這裡會自動更新。注意 {{service}} 的使用條款。",
+      "browserNote": "已在瀏覽器開啟 {{service}} 的登入頁，登入並同意授權後這裡會自動更新。",
+      "reopen": "重新開啟登入頁"
     },
     "toast": {
       "added": "已新增 {{service}} 帳號。",
@@ -4892,6 +4905,18 @@
       "loading": "正在查詢額度…",
       "refresh": "重新整理額度",
       "refreshAria": "重新整理 {{login}} 的額度"
+    },
+    "agy": {
+      "reauthNote": "登入憑證已失效，無法切換過去",
+      "addedOn": "{{date}}新增",
+      "statusLoadFailed": "無法讀取 Antigravity 帳號，請重試。",
+      "empty": "還沒有 Antigravity 帳號。agy 裡已登入的帳號會自動出現在這裡。",
+      "login": "使用 Google 登入",
+      "current": "agy 使用中",
+      "switchTo": "將 agy 切換到這個帳號",
+      "removeNote": "不會讓 agy 登出：agy 目前登入的帳號刪除後仍然可用。",
+      "switched": "已切換，新開的 agy 會使用這個帳號。",
+      "switchedWhileRunning": "已切換。偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，請結束後重新開啟。"
     }
   }
 }

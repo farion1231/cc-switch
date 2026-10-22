@@ -2393,6 +2393,17 @@ impl Database {
                 "0.006",
                 "0",
             ),
+            // 第三方上游（OpenCode Go、OpenRouter 的 deepseek/ 命名空间、Hermes 预设等）用带版本号的
+            // deepseek-v4.1-flash。点号版本既剥不成 deepseek-flash，前缀兜底也只命中更长的行，
+            // 不单列会显示「未定价」并按 0 计费
+            (
+                "deepseek-v4.1-flash",
+                "DeepSeek V4.1 Flash",
+                "0.3",
+                "1.2",
+                "0.006",
+                "0",
+            ),
             (
                 "deepseek-v4-flash",
                 "DeepSeek V4 Flash",

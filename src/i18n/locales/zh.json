@@ -180,19 +180,24 @@
     "managedByHermes": "Hermes 托管",
     "managedByHermesHint": "该条目定义在 Hermes 的 providers: dict，请在 Hermes Web UI 中编辑或删除。",
     "openTerminal": "打开终端",
+    "openTerminalWithProvider": "使用此供应商打开终端",
     "terminalOpened": "终端已打开",
     "terminalOpenFailed": "打开终端失败",
     "openTerminalDialog": {
       "title": "在哪个目录打开终端？",
-      "description": "会在你选的目录里打开一个终端，并用「{{name}}」的配置启动 Claude Code。一般选你的项目文件夹。",
+      "description": "会在你选的目录里打开一个终端，并用「{{name}}」的配置启动 {{app}}。一般选你的项目文件夹。",
       "isolationTitle": "这个终端是隔离的",
       "isolationBody": "它固定使用「{{name}}」，之后在 CC Switch 里切换供应商不会影响它；它也不会改动 CC Switch 里正在使用的供应商。",
+      "isolationBodyAgy": "「{{name}}」的 Key 和地址只传给这个终端里的 agy，不写进任何文件；在别的终端里直接运行 agy 仍是 Google 登录。",
       "noDir": "还没选目录",
       "choose": "选择文件夹…",
       "change": "更换…",
       "recent": "最近用过",
       "forget": "从最近用过里移除",
-      "confirm": "打开终端"
+      "confirm": "打开终端",
+      "agySwitchTitle": "会切换 agy 的登录",
+      "agySwitchBody": "打开前把 agy 的登录切换到 {{account}}，之后新开的 agy 都用这个号。",
+      "agySwitchRunning": "检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，最好先退出它们。"
     },
     "name": "名称",
     "namePlaceholder": "例如：Claude 官方",
@@ -209,12 +214,17 @@
     "geminiConfigHint": "使用 .env 格式配置 Gemini",
     "form": {
       "agy": {
-        "connectionHint": "不填 API Key 和请求地址时使用 agy 自身的 Google 登录。填写 Key 但不填地址时使用 Google 默认 API；第三方地址须兼容 Gemini API。切换后请新开终端或重启 agy，已运行的会话不会自动切换。登录模式的模型列表读取当前 agy 配置。 登录模式请使用模型列表中的显示名称；API 模式使用接口模型 ID。",
-        "keyFieldsHint": "地址、Key 和模型随供应商切换；Antigravity 的其他原生设置保持不变。",
+        "endpointHelp": "留空用 Google 默认 API。第三方地址须兼容 Gemini API，并支持 agy 内置的 Gemini 模型。",
+        "modelHelp": "填模型列表里的显示名称，可点「获取模型列表」选择。只对那次会话生效。",
+        "keyFieldsHint": "模型、Key 和地址都只在「打开终端」时使用，不写进 Antigravity 自己的设置。",
         "envFile": "启动环境变量",
-        "envFileHint": "CC Switch 会在启动 agy 时传入 API Key、请求地址和模型。其他环境变量不会应用。",
+        "envFileHint": "从卡片「打开终端」启动 agy 时，CC Switch 只把 API Key 和请求地址传给那一个 agy 进程，不写进任何文件。其他环境变量不会应用。",
         "configJson": "模型配置（CC Switch 格式）",
-        "configJsonHint": "这里仅支持模型设置，其他 Antigravity 选项请在 agy 中调整；MCP 在 MCP 面板中管理。"
+        "configJsonHint": "这里仅支持模型设置，其他 Antigravity 选项请在 agy 中调整；MCP 在 MCP 面板中管理。",
+        "account": "账号",
+        "accountFollow": "跟随 agy 当前登录",
+        "accountMissing": "不在这台电脑上的账号",
+        "accountHelp": "选了账号的话，「打开终端」前会先把 agy 的登录切到它（全局生效，之后新开的 agy 都用它）。账号在授权中心添加。"
       },
       "gemini": {
         "model": "模型",
@@ -426,7 +436,7 @@
     "tabAdvanced": "高级",
     "tabProxy": "路由",
     "authCenter": {
-      "description": "把 GitHub Copilot、ChatGPT、xAI 订阅当作供应商用。凭据由路由服务注入，相关供应商要在路由模式下使用（Codex 官方登录绑定除外）。",
+      "description": "把 GitHub Copilot、ChatGPT、xAI 订阅当作供应商用。凭据由路由服务注入，相关供应商要在路由模式下使用（Codex 官方登录绑定除外）。Antigravity 账号用来切换 agy 的官方登录。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 账号",
       "codexOauthDescription": "管理 ChatGPT 账号",
@@ -477,7 +487,6 @@
         "title": "整流器",
         "description": "自动修复 API 请求中的兼容性问题",
         "enabled": "启用整流器",
-        "enabledDescription": "总开关，关闭后所有整流功能将被禁用",
         "requestGroup": "请求整流",
         "responseGroup": "响应整流",
         "thinkingSignature": "Thinking 签名整流",
@@ -514,7 +523,6 @@
           "debug": "调试",
           "trace": "跟踪"
         },
-        "levelHint": "日志级别说明：",
         "levelDesc": {
           "error": "仅严重错误",
           "warn": "错误 + 警告信息",
@@ -655,7 +663,6 @@
     },
     "webdavSync": {
       "title": "WebDAV 云同步",
-      "description": "通过 WebDAV 在多设备间同步数据库和技能配置。",
       "baseUrl": "WebDAV 服务器地址",
       "baseUrlPlaceholder": "https://dav.jianguoyun.com/dav/",
       "username": "WebDAV 账户",
@@ -696,8 +703,6 @@
         "synologyHint": "请先在群晖「套件中心」安装并启用 WebDAV Server 套件。",
         "custom": "自定义"
       },
-      "remoteRootDefault": "默认: cc-switch-sync",
-      "profileDefault": "默认: default",
       "saveAndTestSuccess": "配置已保存，连接正常",
       "saveAndTestFailed": "配置已保存，但连接测试失败：{{error}}",
       "noRemoteData": "云端没有找到同步数据",
@@ -770,9 +775,7 @@
       "endpointHint": "多数 S3 兼容服务需要填写",
       "endpointPlaceholder": "例如 https://s3-compatible.example.com",
       "remoteRoot": "远程根目录",
-      "remoteRootDefault": "默认: cc-switch-sync",
       "profile": "同步配置名",
-      "profileDefault": "默认: default",
       "autoSync": "自动同步",
       "autoSyncHint": "开启后每次数据库变更都会自动上传到 S3。",
       "enabled": "启用 S3 同步",
@@ -1625,8 +1628,8 @@
       "ccsub": "CCSub 是稳定、实惠的 AI API 中转平台，Claude Code 官方订阅的超强平替，一个 Key 覆盖全部模型，价格约为官方 1/3。",
       "subrouter": "SubRouter 是中转站聚合平台，一个 Key 可接入多个模型与供应商。",
       "qiniu": "七牛云是多协议 AI 中转平台，一个 Key 即可调用原生 Claude、GPT、Gemini 模型，兼容 Anthropic、OpenAI、Gemini 多种接口。",
+      "haoai": "hao.ai 是面向开发者与团队的高速、稳定大模型统一 API 网关：一个 Key 即可接入 GPT、Claude、Grok 等主流模型，兼容 OpenAI、Anthropic 协议，提供模型路由、故障回退与完整调用日志，价格低至官方参考价的 1.5 折。CC Switch 用户通过此链接注册，首单可享 5% 赠送额度！",
       "fenno": "Fenno.ai 是稳定高效的 API 中转服务商，可接入多种主流模型。CC Switch 用户专属福利：通过此链接订阅 1.99 刀 /50 刀额度的 Trial 计划，有效期 7 天！",
-      "zetaapi": "ZetaAPI 主打模型不掺水、不降智，价格低至官方价 35 折。CC Switch 用户专属福利：通过此链接注册，首次充值使用优惠码 CC-SWITCH 即可享受九折优惠！",
       "teamorouter": "TeamoRouter 是企业级 Agentic LLM 网关，价格最高可达 90% 折扣。为 CC Switch 的用户提供了特别福利：新用户通过此链接注册，首次充值享 10% 折扣！",
       "ppio": "PPIO 是国内领先的独立 Agentic Cloud 服务商，一个 API Key 调用全部旗舰开源模型。通过此链接注册并完成实名认证，即可获得 ¥10 代金券。",
       "xycai": "XycAi 企业级 Token 工厂：200+ 全球模型一键接入，SLA 自动赔付，异常缓存 100% 退还！",
@@ -1635,11 +1638,12 @@
       "fluxa": "FluxA 与百度智能云联合推出 AgenticPlan，让 AI Agent 能自主购买、管理和使用模型、API 与工具。内含百度千帆 TokenPlan，低至 6 折，可使用 DeepSeek V4、GLM 5.2、Kimi 等旗舰模型，并获赠 FluxA AgentMarket API 调用额度，解锁搜索、数据抓取、社交媒体、金融、加密、生图、视频等 13000+ 付费 API。",
       "88api": "88API 是由香港企业运营的一站式多模型 API 平台，通过统一接口接入文本、图片、语音和视频模型，支持国际主流付款方式，可提供发票，提供企业级稳定服务。通过专属链接注册可获取专属赠送额度！",
       "modelflare": "Modelflare 是稳定、低成本的 AI 模型网关，一个 Key 即可调用 GPT、Claude、Gemini、Grok 等主流模型。CC Switch 用户专享福利：首次充值使用优惠码 \"CCSWITCH\" 可享 9 折优惠！",
-      "everyapi": "EveryAPI 自带桌面客户端，Claude Code、Codex、Cursor 等 20 多个工具一键自动配置；一把密钥直接调用 Claude、GPT、DeepSeek、GLM、MiniMax、Kimi、豆包，换模型不用改配置。注册即送 14 元额度，首充额外加送 20%；CC Switch 用户专享：付款时使用折扣码 \"ccswitch\" 再打 8 折，不限时！",
+      "everyapi": "EveryAPI 自带桌面客户端，Claude Code、Codex、Cursor 等 20 多个工具一键自动配置；一把密钥直接调用 Claude、GPT、DeepSeek、GLM、MiniMax、Kimi、豆包，换模型不用改配置。注册即送 14 元额度，GPT 低至 1.5 折；CC Switch 用户专享：首充时使用折扣码 \"ccswitch\" 享 20% 优惠，不限时！",
       "alltokens": "AllTokens 秉持「稳定为基，真实为本」，致力于让每一次 AI 调用都稳定、真实、值得托付：服务可靠、计费透明，一个平台接入 GPT、Claude、Gemini、Grok、DeepSeek、GLM、Kimi 等主流模型，按量计费、支持配额上限。注册即送 1 美元体验金！",
       "alltokens_si": "AllTokens SI 秉持「稳定为基，真实为本」，是专为企业打造的 AI Token 中转与团队协作平台：成员、密钥、用量与余额统一纳入企业控制台，以清晰的权限与额度配置，让团队协作有据可查、安心可控。",
       "openmodel": "OpenModel 为 Codex 和 Claude Code 提供客户端专属折扣，所支持的模型通过 Codex 调用最高优惠 90%、通过 Claude Code 调用最高优惠 60%。CC Switch 用户通过此链接注册并使用优惠码 \"cc-switch\"，即可享受首次充值九折优惠！",
-      "grooroute": "GrooRoute Pro 是可靠流畅的 AI API 中转服务平台，接入 OpenAI、Claude、DeepSeek 等主流大模型，支持按量计费与订阅套餐。CC Switch 用户通过此链接注册即可获得免费 5 元体验额度！"
+      "grooroute": "GrooRoute Pro 是可靠流畅的 AI API 中转服务平台，接入 OpenAI、Claude、DeepSeek 等主流大模型，支持按量计费与订阅套餐。CC Switch 用户通过此链接注册即可获得免费 5 元体验额度！",
+      "dit": "DIT.ai 是面向多供应商低价路由的 AI Token 交易市场：一个 OpenAI 兼容 API 即可调用 GPT、Claude、Gemini、DeepSeek、Grok、Llama 等 50 多个主流模型，160 多条线路实时竞价，价格通常比官方低 30–70%。CC Switch 用户通过此链接注册并使用优惠码 \"ccswitch\"，可领取 5 美元新人券！"
     },
     "presets": {
       "ucloud": "优云智算",
@@ -2036,16 +2040,13 @@
     "npmPackage": "接口格式",
     "nativeConfigHint": "请在下方以 JSON 编辑 OpenCode V2 原生配置。保存时保留供应商和模型字段。",
     "selectPackage": "选择接口格式",
-    "npmPackageHint": "选择 AI 服务的 API 接口格式",
     "builtinDefaults": "使用 OpenCode 内置供应商默认值",
     "customProviderRequired": "新的供应商标识需要填写 npm 包和至少一个模型；只有配置中已有的同名供应商可以沿用默认定义",
     "duplicateRequiresDefinition": "此供应商缺少 npm 包或模型定义，无法直接复制。请先补全 npm 包和至少一个模型，再复制为自定义供应商。",
     "duplicateRequiresNativeDefinition": "此 V2 原生供应商缺少 package 或模型定义，无法直接复制。请先补全 package 和至少一个模型，再以新的标识复制。",
     "nativeCustomProviderRequired": "新的供应商标识需要填写 package 和至少一个模型；只有配置中已有的同名供应商可以沿用默认定义",
     "baseUrl": "Base URL",
-    "baseUrlHint": "自定义 API 端点地址",
     "models": "模型配置",
-    "modelsHint": "配置可用的模型及其显示名称",
     "addModel": "手动添加",
     "modelId": "模型 ID",
     "modelName": "显示名称",
@@ -2556,8 +2557,7 @@
       "cacheWrite": "缓存写入"
     },
     "prevMonth": "上个月",
-    "nextMonth": "下个月",
-    "agyUsageHint": "Antigravity 显示会话日志的原始 Token；缺失的历史模型记为 unknown。日志未提供可靠计费信息，显示的 0 费用不代表免费。"
+    "nextMonth": "下个月"
   },
   "usageScript": {
     "title": "配置用量查询",
@@ -2578,6 +2578,7 @@
     "tokenPlanHint": "自动使用供应商的 API Key 和 Base URL 查询 Token Plan 额度",
     "balanceHint": "自动使用供应商的 API Key 查询账户余额",
     "officialSubscriptionHint": "读取本机 CLI 的 OAuth 凭据，并调用官方接口查询订阅额度。默认关闭，只有启用后才会请求。",
+    "officialSubscriptionHintAgy": "运行 agy 自带的 /usage 命令查询登录账号的额度，不读取登录凭据，每次查询约需 10 秒。默认关闭，只有启用后才会请求。",
     "resetDate": "重置日期",
     "premiumRequests": "Premium 请求",
     "credentialsConfig": "凭证配置",
@@ -3022,7 +3023,6 @@
       "title": "每日记忆",
       "sectionTitle": "每日记忆",
       "cardTitle": "每日记忆文件",
-      "cardDescription": "浏览管理每日记忆",
       "createToday": "添加记忆",
       "empty": "暂无每日记忆文件",
       "loadFailed": "加载每日记忆文件失败",
@@ -3053,7 +3053,6 @@
     "selectProtocol": "选择 API 协议",
     "apiProtocolHint": "选择与供应商 API 兼容的协议类型。大多数供应商使用 OpenAI Completions 格式。",
     "baseUrl": "API 端点",
-    "baseUrlHint": "供应商的 API 端点地址。",
     "models": "模型配置",
     "addModel": "添加模型",
     "selectDefaultModel": "选择默认模型",
@@ -3077,7 +3076,6 @@
     "userAgentHint": "部分供应商需要浏览器 User-Agent 才能正常访问。",
     "env": {
       "title": "环境变量",
-      "description": "管理 openclaw.json 中的环境变量配置（API Key、自定义变量等）",
       "editorHint": "以 JSON 形式编辑整个 env 节点。支持 env.vars、env.shellEnv 等嵌套对象。",
       "objectRequired": "OpenClaw 的 env 必须是 JSON 对象。",
       "invalidJson": "OpenClaw 的 env 必须是合法 JSON。",
@@ -3092,7 +3090,6 @@
     },
     "tools": {
       "title": "工具权限",
-      "description": "管理 openclaw.json 中的工具权限配置（允许/拒绝列表）",
       "profile": "权限模式",
       "profileMinimal": "最小权限",
       "profileCoding": "编码",
@@ -3146,7 +3143,6 @@
   "hermes": {
     "form": {
       "baseUrl": "API 端点",
-      "baseUrlHint": "供应商的 API 端点地址。",
       "providerKey": "供应商标识",
       "providerKeyPlaceholder": "my-provider",
       "providerKeyHint": "只能使用小写字母、数字和连字符。用作 config.yaml 中的供应商名称。",
@@ -3157,7 +3153,6 @@
       "providerKeyBuiltin": "「{{key}}」是 Hermes 内置供应商的标识。Hermes 会改用内置供应商（要它自己的环境变量 Key），这张卡的地址和 Key 不会生效。请换一个标识，例如 cc-switch-{{key}}。",
       "providerKeyBuiltinLocked": "「{{key}}」是 Hermes 内置供应商的标识。Hermes 会改用内置供应商，这张卡的地址和 Key 不会生效。标识已锁定无法修改，请用其他标识（例如 cc-switch-{{key}}）重新添加这个供应商，再删除这张卡。",
       "apiMode": "API 模式",
-      "apiModeHint": "供应商 API 协议。请根据端点选择正确的协议。",
       "apiModeChatCompletions": "OpenAI Chat Completions",
       "apiModeAnthropicMessages": "Anthropic Messages",
       "apiModeCodexResponses": "OpenAI Responses",
@@ -4112,6 +4107,10 @@
       "geminiPro": "Pro",
       "geminiFlash": "Flash",
       "geminiFlashLite": "Lite",
+      "agyGeminiFiveHour": "Gemini 5 小时",
+      "agyGeminiWeekly": "Gemini 每周",
+      "agyThirdPartyFiveHour": "Claude 5 小时",
+      "agyThirdPartyWeekly": "Claude 每周",
       "monthly": "每月",
       "credits": "额度",
       "copilotPremium": "高级请求"
@@ -4125,6 +4124,12 @@
     "geminiPro": "Pro",
     "geminiFlash": "Flash",
     "geminiFlashLite": "Flash Lite",
+    "agyGemini": "Gemini",
+    "agyThirdParty": "Claude/GPT",
+    "agyGeminiFiveHour": "Gemini 5 小时",
+    "agyGeminiWeekly": "Gemini 每周",
+    "agyThirdPartyFiveHour": "Claude/GPT 5 小时",
+    "agyThirdPartyWeekly": "Claude/GPT 每周",
     "weeklyLimit": "每周",
     "monthly": "每月",
     "credits": "额度",
@@ -4196,7 +4201,8 @@
       "openclaw": "通过 npm 安装",
       "hermes": "安装时运行官方安装脚本",
       "pi": "通过 npm 安装",
-      "mcode": "安装时运行官方安装脚本，失败时改用 npm"
+      "mcode": "安装时运行官方安装脚本，失败时改用 npm",
+      "agy": "安装时运行官方安装脚本"
     }
   },
   "appPage": {
@@ -4221,7 +4227,7 @@
     },
     "active": "生效中",
     "activeTitle": "{{mode}}生效中",
-    "noProvider": "（未选择）",
+    "noProvider": "未选择",
     "failover": "故障转移",
     "routeSettings": "路由设置",
     "routeSettingsTitle": "路由设置",
@@ -4464,6 +4470,10 @@
       "text": "Credits 约 {{usd}}",
       "usd": "约 {{usd}}",
       "detail": "Credits 余额 {{balance}} · 按 API 价折算约 {{usd}} · 额度用完后才扣"
+    },
+    "windows": {
+      "title": "各档额度",
+      "showAll": "查看各档额度"
     }
   },
   "appMatrix": {
@@ -4849,7 +4859,8 @@
       "helpTitle": "{{service}} 账号怎么用",
       "copilotHelp": "用于 Claude Code、Claude Desktop 的 GitHub Copilot 预设。没指定账号的供应商用「默认」账号。",
       "chatgptHelp": "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
-      "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。"
+      "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。",
+      "agyHelp": "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。"
     },
     "addAccount": "添加账号",
     "groupMenu": "{{service}} 的更多操作",
@@ -4880,7 +4891,9 @@
       "copy": "复制验证码",
       "copied": "验证码已复制。",
       "open": "打开授权页面",
-      "note": "已在浏览器打开授权页面，完成后这里会自动更新。注意 {{service}} 的使用条款。"
+      "note": "已在浏览器打开授权页面，完成后这里会自动更新。注意 {{service}} 的使用条款。",
+      "browserNote": "已在浏览器打开 {{service}} 的登录页，登录并同意授权后这里会自动更新。",
+      "reopen": "重新打开登录页"
     },
     "toast": {
       "added": "已添加 {{service}} 账号。",
@@ -4891,6 +4904,18 @@
       "loading": "正在查询额度…",
       "refresh": "刷新额度",
       "refreshAria": "刷新 {{login}} 的额度"
+    },
+    "agy": {
+      "reauthNote": "登录凭据已失效，切不过去",
+      "addedOn": "{{date}}添加",
+      "statusLoadFailed": "无法读取 Antigravity 账号，请重试。",
+      "empty": "还没有 Antigravity 账号。agy 里已登录的号会自动出现在这里。",
+      "login": "用 Google 登录",
+      "current": "agy 在用",
+      "switchTo": "切换 agy 到这个账号",
+      "removeNote": "不会让 agy 退出登录：agy 现在登着的号删掉后仍然可用。",
+      "switched": "已切换，新开的 agy 会使用这个账号。",
+      "switchedWhileRunning": "已切换。检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，请退出后重新打开。"
     }
   }
 }

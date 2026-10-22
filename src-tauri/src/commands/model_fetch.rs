@@ -14,34 +14,59 @@ pub struct OpenCodeModelRef {
 }
 
 /// Read the current runtime's model list. No shell and no credential values in errors.
+///
+/// Without a key this asks the signed-in agy. With a key it runs agy in API-key mode from a
+/// throwaway `--gemini_dir`: that mode only accepts agy's built-in Gemini models (by display
+/// name), which the Gemini API's own model list does not match.
 #[tauri::command]
-pub async fn get_agy_models() -> Result<Vec<FetchedModel>, String> {
-    let settings = crate::agy_config::read_live_settings().map_err(|e| e.to_string())?;
-    let path = tokio::task::spawn_blocking(|| {
-        crate::agy_config::real_agy_bin(&crate::agy_config::agy_dir().join("bin/agy"))
-    })
-    .await
-    .map_err(|e| e.to_string())?
-    .ok_or_else(|| "Antigravity CLI not found; install agy first".to_string())?;
+#[allow(non_snake_case)]
+pub async fn get_agy_models(
+    apiKey: Option<String>,
+    baseUrl: Option<String>,
+) -> Result<Vec<FetchedModel>, String> {
+    let api_key = apiKey.filter(|key| !key.trim().is_empty());
+    let base_url = baseUrl.filter(|url| !url.trim().is_empty());
+    // 登录态不在 settings.json 里：首次使用、只用官方登录时它可能还不存在，列模型只依赖
+    // CLI 自己。文件在但坏了照样报错，免得静默略过。
+    if api_key.is_none() && crate::agy_config::settings_path().exists() {
+        crate::agy_config::read_live_settings().map_err(|e| e.to_string())?;
+    }
+    let path = tokio::task::spawn_blocking(crate::agy_config::real_agy_bin)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Antigravity CLI not found; install agy first".to_string())?;
     let mut command = tokio::process::Command::new(path);
     command
-        .arg("models")
         .kill_on_drop(true)
         .env_remove("GEMINI_API_KEY")
         .env_remove("GOOGLE_GEMINI_BASE_URL");
-    if let Some(env) = settings["env"].as_object() {
-        for name in ["GEMINI_API_KEY", "GOOGLE_GEMINI_BASE_URL"] {
-            if let Some(value) = env.get(name).and_then(serde_json::Value::as_str) {
-                command.env(name, value);
+    // Dropped (and removed) after the command finishes.
+    let _scratch = match &api_key {
+        Some(key) => {
+            let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+            let settings = dir.path().join("antigravity-cli").join("settings.json");
+            std::fs::create_dir_all(dir.path().join("antigravity-cli"))
+                .map_err(|e| e.to_string())?;
+            std::fs::write(&settings, br#"{"modelProvider":"gemini"}"#)
+                .map_err(|e| e.to_string())?;
+            command
+                .arg(format!("--gemini_dir={}", dir.path().display()))
+                .current_dir(dir.path())
+                .env("GEMINI_API_KEY", key);
+            if let Some(url) = &base_url {
+                command.env("GOOGLE_GEMINI_BASE_URL", url);
             }
+            Some(dir)
         }
-    }
+        None => None,
+    };
+    command.arg("models");
     let output = tokio::time::timeout(std::time::Duration::from_secs(20), command.output())
         .await
         .map_err(|_| "Antigravity model discovery timed out".to_string())?
         .map_err(|_| "Antigravity CLI not found; install agy first".to_string())?;
     if !output.status.success() {
-        return Err("Antigravity could not list models. Check the active provider and sign in with agy for official models.".into());
+        return Err("Antigravity could not list models. Check the API key and endpoint, or sign in with agy for official models.".into());
     }
     Ok(parse_agy_models(&String::from_utf8_lossy(&output.stdout)))
 }
