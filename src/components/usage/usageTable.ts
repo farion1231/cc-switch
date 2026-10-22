@@ -16,7 +16,8 @@ export const usageTable = {
   headRow:
     "h-9 bg-subtle text-caption text-fg-2 [&>th]:border-b [&>th]:border-border",
   th: "whitespace-nowrap px-3 text-start font-medium first:ps-4 last:pe-4",
-  row: "group h-10 [&:not(:last-child)>td]:border-b [&>td]:border-border",
+  // 不可点的行不加 group：固定列的悬停变色（group-hover）只跟着可点的行走
+  row: "h-10 [&:not(:last-child)>td]:border-b [&>td]:border-border",
   rowInteractive:
     "group h-10 cursor-pointer transition-colors hover:bg-subtle [&:not(:last-child)>td]:border-b [&>td]:border-border",
   td: "whitespace-nowrap px-3 first:ps-4 last:pe-4",

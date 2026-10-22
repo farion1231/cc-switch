@@ -267,12 +267,15 @@ export function RequestLogTable({
       const from = before.get(id);
       if (!row) return;
       if (from === undefined) {
-        // 底色画在每个单元格上（盖得住固定列自己的底色）
+        // 底色画在每个单元格上（盖得住固定列自己的底色）；
+        // 叠在格子原有的阴影上（贴左列滚动后的分隔线），动画期间不把它冲掉
         for (const cell of Array.from(row.cells)) {
+          const own = getComputedStyle(cell).boxShadow;
+          const keep = own && own !== "none" ? `, ${own}` : "";
           cell.animate(
             [
-              { boxShadow: `inset 0 0 0 100vmax ${highlight}` },
-              { boxShadow: "inset 0 0 0 100vmax transparent" },
+              { boxShadow: `inset 0 0 0 100vmax ${highlight}${keep}` },
+              { boxShadow: `inset 0 0 0 100vmax transparent${keep}` },
             ],
             {
               duration: 1200,
