@@ -4,6 +4,7 @@ use tauri::{Emitter, Manager, State};
 use crate::app_config::AppType;
 use crate::services::subscription::SubscriptionQuota;
 use crate::store::AppState;
+use cc_command_api::command_api;
 
 /// 查询官方订阅额度
 ///

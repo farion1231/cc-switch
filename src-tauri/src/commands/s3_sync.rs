@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 
+use cc_command_api::command_api;
 use serde_json::{json, Value};
 use tauri::State;
 

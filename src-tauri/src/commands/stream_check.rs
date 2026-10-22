@@ -8,13 +8,13 @@ use crate::commands::copilot::CopilotAuthState;
 use crate::error::AppError;
 use crate::services::stream_check::{StreamCheckConfig, StreamCheckResult, StreamCheckService};
 use crate::store::AppState;
-use tauri::State;
+use cc_command_api::command_api;
 
 /// 连通性检查（单个供应商）
-#[tauri::command]
+#[command_api(state = "state, copilot_state")]
 pub async fn stream_check_provider(
-    state: State<'_, AppState>,
-    copilot_state: State<'_, CopilotAuthState>,
+    state: &AppState,
+    copilot_state: &CopilotAuthState,
     app_type: AppType,
     provider_id: String,
 ) -> Result<StreamCheckResult, AppError> {
@@ -25,7 +25,7 @@ pub async fn stream_check_provider(
 
     // Copilot 端点是动态的（随 OAuth token 解析），需预先取出 host 再探测；
     // 其余供应商传 None，由服务层从 settings_config 提取 base_url。无需鉴权。
-    let base_url_override = resolve_copilot_base_url_override(provider, &copilot_state).await?;
+    let base_url_override = resolve_copilot_base_url_override(provider, copilot_state).await?;
     StreamCheckService::check_with_retry(
         &app_type,
         provider,
@@ -39,7 +39,7 @@ pub async fn stream_check_provider(
 /// `is_full_url` 的供应商已是完整地址，无需解析。
 async fn resolve_copilot_base_url_override(
     provider: &crate::provider::Provider,
-    copilot_state: &State<'_, CopilotAuthState>,
+    copilot_state: &CopilotAuthState,
 ) -> Result<Option<String>, AppError> {
     let is_copilot = is_copilot_provider(provider);
     let is_full_url = provider
