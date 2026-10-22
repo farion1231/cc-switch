@@ -676,6 +676,26 @@ describe("buildAdditiveSections", () => {
     expect(item(sections, "relay").editDisabledReason).toBeUndefined();
   });
 
+  it("allows deleting a saved official Kimi account after its native node is removed", () => {
+    const account = provider("managed:kimi-code", {
+      settingsConfig: {
+        provider: { type: "kimi", oauth: { key: "oauth/kimi-code" } },
+      },
+    });
+    const sections = buildAdditiveSections({
+      app: "kimi",
+      t,
+      providers: [account],
+      isInConfig: () => false,
+      kimiCurrentId: account.id,
+      actions: additiveActions(),
+    });
+    const presentation = item(sections, account.id);
+    expect(presentation.deleteDisabledReason).toBeUndefined();
+    expect(presentation.menuItems).toBeUndefined();
+    expect(presentation.status).toBeUndefined();
+  });
+
   it("blocks every Pi change while Pi's current state is unavailable", () => {
     const sections = buildAdditiveSections({
       app: "pi",

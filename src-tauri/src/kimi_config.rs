@@ -474,32 +474,7 @@ fn select_provider_model(document: &mut Value, id: &str) -> Result<(), AppError>
         .ok_or_else(|| AppError::InvalidInput("The Kimi Code provider has no models".into()))?
         .to_string();
     document["default_model"] = json!(selected);
-    select_oauth_services(document, id);
     Ok(())
-}
-
-fn select_oauth_services(document: &mut Value, id: &str) {
-    let provider = document["providers"][id].clone();
-    if !is_official_provider(&json!({"provider": provider})) {
-        return;
-    }
-    let Some(base_url) = provider["base_url"].as_str() else {
-        return;
-    };
-    for (name, suffix) in [("moonshot_search", "search"), ("moonshot_fetch", "fetch")] {
-        let managed = document["providers"].as_object().is_some_and(|providers| {
-            providers.values().any(|entry| {
-                is_official_provider(&json!({"provider": entry}))
-                    && document["services"][name]["oauth"] == entry["oauth"]
-                    && entry["base_url"].as_str().is_some_and(|base| {
-                        document["services"][name]["base_url"] == format!("{base}/{suffix}")
-                    })
-            })
-        });
-        if managed {
-            document["services"][name] = json!({"base_url": format!("{base_url}/{suffix}"), "api_key": "", "oauth": provider["oauth"]});
-        }
-    }
 }
 
 pub(crate) fn switch_and_commit<T>(

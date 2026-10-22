@@ -46,7 +46,7 @@ fn provider(id: &str, model: &str) -> Provider {
 }
 
 #[test]
-fn kimi_official_accounts_reject_provider_mutations_even_after_external_removal() {
+fn kimi_official_accounts_are_protected_only_while_present_in_native_config() {
     let _guard = test_mutex().lock().unwrap();
     reset_test_fs();
     let home = KimiHome::new();
@@ -71,12 +71,17 @@ fn kimi_official_accounts_reject_provider_mutations_even_after_external_removal(
         assert_eq!(fs::read(home.config()).unwrap(), original);
     }
     fs::write(home.config(), "").unwrap();
-    assert!(ProviderService::delete(&state, AppType::Kimi, "kimi-code-ccs-second").is_err());
-    assert!(state
-        .db
-        .get_provider_by_id("kimi-code-ccs-second", "kimi")
-        .unwrap()
-        .is_some());
+    let entries = ProviderService::list(&state, AppType::Kimi).unwrap();
+    for id in ["managed:kimi-code", "kimi-code-ccs-second"] {
+        assert_eq!(
+            entries[id].meta.as_ref().unwrap().live_config_managed,
+            Some(false)
+        );
+        ProviderService::remove_from_live_config(&state, AppType::Kimi, id).unwrap();
+        ProviderService::delete(&state, AppType::Kimi, id).unwrap();
+        assert!(state.db.get_provider_by_id(id, "kimi").unwrap().is_none());
+    }
+    assert_eq!(fs::read_to_string(home.config()).unwrap(), "");
 }
 
 #[test]

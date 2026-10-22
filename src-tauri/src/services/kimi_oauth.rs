@@ -8,6 +8,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 
 use crate::{config::atomic_write_private, kimi_config};
@@ -65,6 +66,19 @@ impl Endpoints {
             }
         }
         Ok(self)
+    }
+
+    fn oauth_ref(&self) -> Value {
+        // Match Kimi Code's native default slot for this environment.
+        if self.oauth_host == "https://auth.kimi.com"
+            && self.base_url == "https://api.kimi.com/coding/v1"
+        {
+            json!({"storage": "file", "key": "oauth/kimi-code"})
+        } else {
+            let environment = json!({"oauthHost": self.oauth_host, "baseUrl": self.base_url});
+            let digest = format!("{:x}", Sha256::digest(environment.to_string().as_bytes()));
+            json!({"storage": "file", "key": format!("oauth/kimi-code-env-{}", &digest[..16]), "oauth_host": self.oauth_host})
+        }
     }
 }
 
@@ -209,6 +223,27 @@ fn account_status(
 
 fn read_config(home: &Path) -> Result<Value, String> {
     kimi_config::read(&home.join("config.toml")).map_err(|error| error.to_string())
+}
+
+fn new_account(home: &Path, endpoints: &Endpoints, id: &str) -> Result<(String, Value), String> {
+    let config = read_config(home)?;
+    let provider = &config["providers"][PROVIDER_ID];
+    let native_oauth = endpoints.oauth_ref();
+    let existing_oauth = provider.get("oauth").unwrap_or(&native_oauth);
+    // Kimi's native tools resolve their own default credential slot. Keep the
+    // first login compatible without replacing an existing default account.
+    let occupied = !provider.is_null()
+        && (existing_oauth["storage"].as_str() == Some("keyring")
+            || credential_path(home, existing_oauth)?
+                .try_exists()
+                .map_err(|e| format!("Cannot check Kimi Code credentials: {e}"))?);
+    if occupied {
+        let id = format!("kimi-code-ccs-{id}");
+        let oauth = json!({"storage": "file", "key": format!("oauth/{id}"), "oauth_host": endpoints.oauth_host});
+        Ok((id, oauth))
+    } else {
+        Ok((PROVIDER_ID.into(), native_oauth))
+    }
 }
 
 fn account_provider<'a>(config: &'a Value, id: &str) -> Result<&'a Value, String> {
@@ -514,8 +549,11 @@ impl KimiOAuthManager {
         let expires_in = seconds(&payload, "expires_in", Some(600))?;
         let interval = seconds(&payload, "interval", Some(5))?;
         let id = uuid::Uuid::new_v4().to_string();
-        let account_id = account_id.unwrap_or_else(|| format!("kimi-code-ccs-{id}"));
-        let oauth = oauth.unwrap_or_else(|| json!({"storage": "file", "key": format!("oauth/{account_id}"), "oauth_host": endpoints.oauth_host}));
+        let (account_id, oauth) = match (account_id, oauth) {
+            (Some(account_id), Some(oauth)) => (account_id, oauth),
+            (None, None) => new_account(&home, &endpoints, &id)?,
+            _ => return Err("Missing Kimi account OAuth reference".into()),
+        };
         *pending = Some(PendingLogin {
             polling: false,
             id: id.clone(),
@@ -812,6 +850,61 @@ mod tests {
         manager.pending.lock().await.as_mut().unwrap().next_poll = Instant::now();
     }
 
+    #[test]
+    fn first_login_uses_native_slot_and_later_accounts_preserve_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let endpoints = KimiRegion::MainlandCn.endpoints();
+        let native_oauth = json!({"storage":"file","key":"oauth/kimi-code"});
+        assert_eq!(endpoints.oauth_ref(), native_oauth);
+        assert_eq!(
+            new_account(dir.path(), &endpoints, "first").unwrap(),
+            (PROVIDER_ID.into(), native_oauth.clone())
+        );
+
+        let path = credential_path(dir.path(), &native_oauth).unwrap();
+        atomic_write_private(&path, b"existing-native-credential").unwrap();
+        // An orphaned credential does not prevent restoring the native provider.
+        assert_eq!(
+            new_account(dir.path(), &endpoints, "restore").unwrap().0,
+            PROVIDER_ID
+        );
+        let config = json!({"providers":{PROVIDER_ID:{"type":"kimi","base_url":endpoints.base_url,"oauth":native_oauth}}});
+        fs::write(
+            dir.path().join("config.toml"),
+            toml::to_string(&config).unwrap(),
+        )
+        .unwrap();
+        let original = fs::read(dir.path().join("config.toml")).unwrap();
+        let (id, oauth) = new_account(dir.path(), &endpoints, "second").unwrap();
+        assert_eq!(id, "kimi-code-ccs-second");
+        assert_eq!(oauth["key"], "oauth/kimi-code-ccs-second");
+        assert_eq!(fs::read(&path).unwrap(), b"existing-native-credential");
+        // Choosing another region must not replace the occupied native account.
+        assert_eq!(
+            new_account(dir.path(), &KimiRegion::Global.endpoints(), "global")
+                .unwrap()
+                .0,
+            "kimi-code-ccs-global"
+        );
+
+        fs::remove_file(&path).unwrap();
+        assert_eq!(
+            new_account(dir.path(), &endpoints, "missing-token").unwrap(),
+            (PROVIDER_ID.into(), native_oauth)
+        );
+        assert_eq!(fs::read(dir.path().join("config.toml")).unwrap(), original);
+    }
+
+    #[test]
+    fn global_native_slot_matches_kimi_environment_key() {
+        assert_eq!(
+            KimiRegion::Global.endpoints().oauth_ref(),
+            json!({
+                "storage":"file", "key":"oauth/kimi-code-env-0e4f99c69cc27850", "oauth_host":"https://auth.kimi.ai"
+            })
+        );
+    }
+
     #[tokio::test]
     async fn multiple_logins_isolate_credentials_models_reauthentication_and_logout() {
         let server = server(0).await;
@@ -834,11 +927,16 @@ mod tests {
             .find(|account| &account.id != first)
             .unwrap()
             .id;
+        assert_eq!(first, PROVIDER_ID);
+        assert!(second.starts_with("kimi-code-ccs-"));
         assert_ne!(first, second);
         assert_eq!(status.current_account_id.as_ref(), Some(first));
         let config = read_config(dir.path()).unwrap();
-        for id in [first, second] {
-            assert!(config["models"][format!("{id}/k3")]["provider"] == id.as_str());
+        for (id, model) in [
+            (first, "kimi-code/k3".to_string()),
+            (second, format!("{second}/k3")),
+        ] {
+            assert!(config["models"][model]["provider"] == id.as_str());
         }
         let first_path = credential_path(dir.path(), &config["providers"][first]["oauth"]).unwrap();
         let second_path =
@@ -848,10 +946,7 @@ mod tests {
         kimi_config::use_oauth_account(dir.path(), second).unwrap();
         let selected = read_config(dir.path()).unwrap();
         assert_eq!(selected["default_model"], format!("{second}/k3"));
-        assert_eq!(
-            selected["services"]["moonshot_search"]["oauth"],
-            config["providers"][second]["oauth"]
-        );
+        assert_eq!(selected["services"], config["services"]);
         let flow = manager
             .start_login(
                 dir.path().into(),
@@ -878,10 +973,7 @@ mod tests {
             selected["services"]["moonshot_fetch"],
             custom["services"]["moonshot_fetch"]
         );
-        assert_eq!(
-            selected["services"]["moonshot_search"]["oauth"],
-            config["providers"][first]["oauth"]
-        );
+        assert_eq!(selected["services"], custom["services"]);
         let before = fs::read(dir.path().join("config.toml")).unwrap();
         logout_at(dir.path(), second).unwrap();
         assert_eq!(fs::read(&first_path).unwrap(), first_bytes);
@@ -1014,24 +1106,21 @@ mod tests {
         assert!(account.authenticated);
         assert!(!serde_json::to_string(&status).unwrap().contains("private-"));
         let credential: Value = serde_json::from_slice(
-            &fs::read(
-                credential_path(dir.path(), &json!({"key": format!("oauth/{}", account.id)}))
-                    .unwrap(),
-            )
-            .unwrap(),
+            &fs::read(credential_path(dir.path(), &server.endpoints.oauth_ref()).unwrap()).unwrap(),
         )
         .unwrap();
         assert_eq!(credential["refresh_token"], "private-refresh");
         let config: Value =
             toml::from_str(&fs::read_to_string(dir.path().join("config.toml")).unwrap()).unwrap();
         assert_eq!(
-            config["models"][format!("{}/k3", account.id)]["protocol"],
+            config["models"]["kimi-code/k3"]["protocol"],
             "openai_responses"
         );
-        assert_eq!(config["default_model"], format!("{}/k3", account.id));
+        assert_eq!(account.id, PROVIDER_ID);
+        assert_eq!(config["default_model"], "kimi-code/k3");
         assert_eq!(
             config["services"]["moonshot_search"]["oauth"],
-            json!({"storage": "file", "key": format!("oauth/{}", account.id), "oauth_host": server.endpoints.oauth_host})
+            server.endpoints.oauth_ref()
         );
     }
 

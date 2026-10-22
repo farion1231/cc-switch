@@ -6170,7 +6170,7 @@ impl ProviderService {
         provider: Provider,
     ) -> Result<bool, AppError> {
         if app_type == AppType::Kimi {
-            Self::ensure_kimi_provider_editable(state, original_id.unwrap_or(&provider.id))?;
+            Self::ensure_kimi_provider_editable(original_id.unwrap_or(&provider.id))?;
             if crate::kimi_config::is_official_provider(&provider.settings_config) {
                 return Err(AppError::InvalidInput(
                     "Manage Kimi official accounts in the Authorization Center".into(),
@@ -6467,7 +6467,7 @@ impl ProviderService {
             return pi::delete(state, id);
         }
         if app_type == AppType::Kimi {
-            Self::ensure_kimi_provider_editable(state, id)?;
+            Self::ensure_kimi_provider_editable(id)?;
             return crate::kimi_config::save_and_commit(id, None, false, || {
                 state.db.delete_provider("kimi", id)
             });
@@ -6560,7 +6560,7 @@ impl ProviderService {
             return pi::remove(state, id);
         }
         if app_type == AppType::Kimi {
-            Self::ensure_kimi_provider_editable(state, id)?;
+            Self::ensure_kimi_provider_editable(id)?;
             return crate::kimi_config::save_and_commit(id, None, false, || {
                 if let Some(mut provider) = state.db.get_provider_by_id(id, "kimi")? {
                     Self::set_provider_live_config_managed(&mut provider, false);
@@ -6623,15 +6623,11 @@ impl ProviderService {
         Ok(())
     }
 
-    fn ensure_kimi_provider_editable(state: &AppState, id: &str) -> Result<(), AppError> {
-        let saved = state.db.get_provider_by_id(id, "kimi")?;
+    fn ensure_kimi_provider_editable(id: &str) -> Result<(), AppError> {
         let native = crate::kimi_config::get_providers()?;
-        if saved
-            .as_ref()
-            .is_some_and(|p| crate::kimi_config::is_official_provider(&p.settings_config))
-            || native
-                .get(id)
-                .is_some_and(crate::kimi_config::is_official_provider)
+        if native
+            .get(id)
+            .is_some_and(crate::kimi_config::is_official_provider)
         {
             return Err(AppError::InvalidInput(
                 "Manage Kimi official accounts in the Authorization Center".into(),
