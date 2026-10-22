@@ -13,8 +13,9 @@ use super::utils::{
 };
 
 const PROVIDER_ID: &str = "deepseek-harness";
-/// DSH Desktop v2.0.17 起新会话写 `session.v4.jsonl.zstd`（事件结构与旧版兼容，
-/// usage 从 `data.message.usage` 移到 `data.usage`，解析层已兼容两者）；
+/// 新版 DeepSeek Harness Desktop（官方 Version 0.2.1-rc.2；窗口标题里的 2.0.17
+/// 是 Electron 壳构建号）把新会话写为 `session.v4.jsonl.zstd`：事件结构与旧版
+/// 兼容，usage 从 `data.message.usage` 移到 `data.usage`，解析层已兼容两者；
 /// 旧版本写 `session.jsonl.zstd`。同一会话目录两者不会并存，扫描时两个都收。
 const SESSION_FILE_NAME_V4: &str = "session.v4.jsonl.zstd";
 const SESSION_FILE_NAME_LEGACY: &str = "session.jsonl.zstd";
@@ -472,7 +473,7 @@ mod tests {
     #[serial]
     fn v4_sessions_are_scanned_and_usage_read_from_data_root() {
         with_temp_home(|home| {
-            // v2.0.17 的 v4 文件：文件名带 .v4，usage 挂在 data.usage（不在 message 里）
+            // DeepSeek Harness 0.2.1-rc.2 的 v4 文件：文件名带 .v4，usage 挂在 data.usage（不在 message 里）
             let events = vec![
                 serde_json::json!({"type":"session","version":4,"id":"session-v4","createdAt":1792483262099_i64,"cwd":"/Users/andy/Documents"}),
                 serde_json::json!({"type":"request/header","seq":12,"time":1792640339967_i64,"data":{"header":{"config":{"provider":"yuzuvalley","model":"deepseek-flash"}}}}),
