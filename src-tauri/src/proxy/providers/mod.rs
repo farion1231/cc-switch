@@ -71,6 +71,7 @@ pub use codex::{
     strip_codex_hosted_web_search,
 };
 pub use gemini::GeminiAdapter;
+pub(crate) use gemini::{get_upstream_api_format, rewrite_gemini_transform_endpoint};
 
 /// 供应商类型枚举
 ///

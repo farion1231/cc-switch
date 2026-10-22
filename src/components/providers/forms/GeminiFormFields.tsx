@@ -47,6 +47,10 @@ interface GeminiFormFieldsProps {
   model: string;
   onModelChange: (value: string) => void;
 
+  // 上游 API 格式（代理路由模式：gemini_native 透传 / openai_chat / anthropic）
+  apiFormat?: string;
+  onApiFormatChange?: (format: string) => void;
+
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
 }
@@ -73,6 +77,8 @@ export function GeminiFormFields({
   shouldShowModelField,
   model,
   onModelChange,
+  apiFormat = "gemini_native",
+  onApiFormatChange,
   speedTestEndpoints,
 }: GeminiFormFieldsProps) {
   const { t } = useTranslation();
@@ -171,6 +177,51 @@ export function GeminiFormFields({
           }
           onManageClick={() => onEndpointModalToggle(true)}
         />
+      )}
+
+      {/* 上游 API 格式（代理路由模式：非 Gemini 协议上游需选择实际协议） */}
+      {appId === "gemini" && onApiFormatChange && category !== "official" && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-0.5">
+            <FormLabel htmlFor="gemini-api-format">
+              {t("provider.form.gemini.apiFormat", {
+                defaultValue: "上游 API 格式",
+              })}
+            </FormLabel>
+            <HelpTip
+              title={t("provider.form.gemini.apiFormat", {
+                defaultValue: "上游 API 格式",
+              })}
+            >
+              {t("provider.form.gemini.apiFormatHelp", {
+                defaultValue:
+                  "Gemini 协议（透传）：上游原生支持 Gemini API；OpenAI Chat：上游为 OpenAI 兼容接口（如 DeepSeek），代理自动做协议转换；Anthropic：上游为 Anthropic Messages 接口。仅代理路由模式生效。",
+              })}
+            </HelpTip>
+          </div>
+          <select
+            id="gemini-api-format"
+            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            value={apiFormat}
+            onChange={(event) => onApiFormatChange(event.target.value)}
+          >
+            <option value="gemini_native">
+              {t("provider.form.gemini.apiFormatGeminiNative", {
+                defaultValue: "Gemini 协议（透传）",
+              })}
+            </option>
+            <option value="openai_chat">
+              {t("provider.form.gemini.apiFormatOpenaiChat", {
+                defaultValue: "OpenAI Chat（自动转换）",
+              })}
+            </option>
+            <option value="anthropic">
+              {t("provider.form.gemini.apiFormatAnthropic", {
+                defaultValue: "Anthropic Messages（自动转换）",
+              })}
+            </option>
+          </select>
+        </div>
       )}
 
       {/* Model 输入框 */}

@@ -573,6 +573,251 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
     }
 }
 
+/// 将 Anthropic SSE 流转换为 Gemini `streamGenerateContent?alt=sse` chunk 流。
+///
+/// 用于 Gemini 客户端经代理连接 OpenAI / Anthropic 协议上游的场景：
+/// 上游 SSE 先被归一为 Anthropic 事件序列（openai_chat 上游经
+/// `create_anthropic_sse_stream`，anthropic 上游原样），再由本函数转成 Gemini chunk。
+///
+/// 输出约定：
+/// - `text_delta` / `thinking_delta` → 逐 chunk 输出 `candidates[].content.parts`
+/// - `tool_use` 块的 `input_json_delta` 按块缓冲，块结束时输出完整 `functionCall`
+/// - `message_delta` 记录 stop_reason / output_tokens，`message_stop`（或流结束兜底）
+///   时输出带 `finishReason` + `usageMetadata` 的终止 chunk
+pub fn create_gemini_sse_stream_from_anthropic<E: std::error::Error + Send + 'static>(
+    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+    model: String,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    async_stream::stream! {
+        let mut buffer = String::new();
+        let mut utf8_remainder = Vec::new();
+        // 每个 content block index 的块类型与 tool_use 缓冲
+        let mut block_types: std::collections::HashMap<u32, String> =
+            std::collections::HashMap::new();
+        let mut tool_json_buffers: std::collections::HashMap<u32, String> =
+            std::collections::HashMap::new();
+        let mut tool_meta: std::collections::HashMap<u32, (Option<Value>, Option<Value>)> =
+            std::collections::HashMap::new();
+        // message_start 里的输入 usage（含 input_tokens），message_delta 里的是输出
+        let mut input_tokens: Option<u64> = None;
+        let mut output_tokens: Option<u64> = None;
+        let mut stop_reason: Option<String> = None;
+        let mut emitted_finish = false;
+        tokio::pin!(stream);
+
+        macro_rules! gemini_chunk {
+            ($parts:expr) => {{
+                let chunk = json!({
+                    "candidates": [{
+                        "index": 0,
+                        "content": { "role": "model", "parts": $parts }
+                    }]
+                });
+                let payload = format!(
+                    "data: {}\n\n",
+                    serde_json::to_string(&chunk).unwrap_or_default()
+                );
+                yield Ok(Bytes::from(payload));
+            }};
+        }
+
+        macro_rules! finish_chunk {
+            () => {{
+                if !emitted_finish {
+                    emitted_finish = true;
+                    let finish = match stop_reason.as_deref() {
+                        Some("max_tokens") => "MAX_TOKENS",
+                        _ => "STOP",
+                    };
+                    let out = output_tokens.unwrap_or(0);
+                    let prompt = input_tokens.unwrap_or(0);
+                    let chunk = json!({
+                        "candidates": [{
+                            "index": 0,
+                            "content": { "role": "model", "parts": [] },
+                            "finishReason": finish
+                        }],
+                        "usageMetadata": {
+                            "promptTokenCount": prompt,
+                            "candidatesTokenCount": out,
+                            "totalTokenCount": prompt + out
+                        }
+                    });
+                    let payload = format!(
+                        "data: {}\n\n",
+                        serde_json::to_string(&chunk).unwrap_or_default()
+                    );
+                    yield Ok(Bytes::from(payload));
+                }
+            }};
+        }
+
+        while let Some(chunk) = stream.next().await {
+            let bytes = match chunk {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    yield Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        error.to_string(),
+                    ));
+                    break;
+                }
+            };
+            append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+
+            while let Some(block) = take_sse_block(&mut buffer) {
+                if block.trim().is_empty() {
+                    continue;
+                }
+                let mut data_lines: Vec<String> = Vec::new();
+                for line in block.lines() {
+                    if let Some(data) = strip_sse_field(line, "data") {
+                        data_lines.push(data.to_string());
+                    }
+                }
+                if data_lines.is_empty() {
+                    continue;
+                }
+                let data = data_lines.join("\n");
+                if data.trim() == "[DONE]" {
+                    continue;
+                }
+                let event: Value = match serde_json::from_str(&data) {
+                    Ok(value) => value,
+                    Err(_) => continue,
+                };
+                let event_type = event
+                    .get("type")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+
+                match event_type {
+                    "message_start" => {
+                        if let Some(usage) = event.pointer("/message/usage") {
+                            if let Some(input) =
+                                usage.get("input_tokens").and_then(|value| value.as_u64())
+                            {
+                                input_tokens = Some(input);
+                            }
+                            if let Some(output) =
+                                usage.get("output_tokens").and_then(|value| value.as_u64())
+                            {
+                                output_tokens = Some(output);
+                            }
+                        }
+                    }
+                    "content_block_start" => {
+                        let index = event
+                            .get("index")
+                            .and_then(|value| value.as_u64())
+                            .map(|value| value as u32)
+                            .unwrap_or(0);
+                        let block_type = event
+                            .pointer("/content_block/type")
+                            .and_then(|value| value.as_str())
+                            .map(ToString::to_string);
+                        if let Some(block_type) = block_type {
+                            if block_type == "tool_use" {
+                                let id = event.pointer("/content_block/id").cloned();
+                                let name = event.pointer("/content_block/name").cloned();
+                                tool_meta.insert(index, (id, name));
+                                tool_json_buffers.insert(index, String::new());
+                            }
+                            block_types.insert(index, block_type);
+                        }
+                    }
+                    "content_block_delta" => {
+                        let index = event
+                            .get("index")
+                            .and_then(|value| value.as_u64())
+                            .map(|value| value as u32)
+                            .unwrap_or(0);
+                        let delta_type = event
+                            .pointer("/delta/type")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("");
+                        match delta_type {
+                            "text_delta" => {
+                                if let Some(text) =
+                                    event.pointer("/delta/text").and_then(|value| value.as_str())
+                                {
+                                    gemini_chunk!(json!([{ "text": text }]));
+                                }
+                            }
+                            "thinking_delta" => {
+                                if let Some(thinking) = event
+                                    .pointer("/delta/thinking")
+                                    .and_then(|value| value.as_str())
+                                {
+                                    gemini_chunk!(json!([{ "text": thinking, "thought": true }]));
+                                }
+                            }
+                            "input_json_delta" => {
+                                if let Some(partial) = event
+                                    .pointer("/delta/partial_json")
+                                    .and_then(|value| value.as_str())
+                                {
+                                    tool_json_buffers
+                                        .entry(index)
+                                        .or_default()
+                                        .push_str(partial);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    "content_block_stop" => {
+                        let index = event
+                            .get("index")
+                            .and_then(|value| value.as_u64())
+                            .map(|value| value as u32)
+                            .unwrap_or(0);
+                        if block_types.get(&index).map(String::as_str) == Some("tool_use") {
+                            let raw = tool_json_buffers.remove(&index).unwrap_or_default();
+                            let args: Value =
+                                serde_json::from_str(&raw).unwrap_or_else(|_| json!({}));
+                            let (id, name) = tool_meta.remove(&index).unwrap_or((None, None));
+                            let mut function_call = json!({ "args": args });
+                            if let Some(id) = id {
+                                function_call["id"] = id;
+                            }
+                            if let Some(name) = name {
+                                function_call["name"] = name;
+                            }
+                            gemini_chunk!(json!([{ "functionCall": function_call }]));
+                        }
+                        block_types.remove(&index);
+                    }
+                    "message_delta" => {
+                        if let Some(reason) = event
+                            .pointer("/delta/stop_reason")
+                            .and_then(|value| value.as_str())
+                        {
+                            stop_reason = Some(reason.to_string());
+                        }
+                        if let Some(usage) = event.get("usage") {
+                            if let Some(output) =
+                                usage.get("output_tokens").and_then(|value| value.as_u64())
+                            {
+                                output_tokens = Some(output);
+                            }
+                        }
+                    }
+                    "message_stop" => {
+                        finish_chunk!();
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // 上游断流但未发 message_stop：兜底输出终止 chunk，避免客户端挂起
+        finish_chunk!();
+        let _ = model;
+        let _ = emitted_finish;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1050,5 +1295,85 @@ mod tests {
             shadow["parts"][0]["thoughtSignature"], "sig-keep",
             "prior thoughtSignature must survive a later chunk that omits it: {shadow}"
         );
+    }
+
+    #[tokio::test]
+    async fn gemini_sse_from_anthropic_emits_text_and_finish_chunks() {
+        let anthropic_sse = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"usage\":{\"input_tokens\":12,\"output_tokens\":1}}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hel\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"lo\"}}\n\n",
+            "event: content_block_stop\n",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":8}}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n",
+        );
+        let input_stream =
+            futures::stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(anthropic_sse))]);
+
+        let gemini_stream =
+            create_gemini_sse_stream_from_anthropic(input_stream, "deepseek-flash".to_string());
+        let chunks: Vec<Result<Bytes, std::io::Error>> = gemini_stream.collect().await;
+        let payload = chunks
+            .into_iter()
+            .map(|chunk| String::from_utf8(chunk.unwrap().to_vec()).unwrap())
+            .collect::<String>();
+
+        // 两个文本 chunk + 一个终止 chunk
+        let text_count = payload.matches("\"parts\":[{\"text\":").count();
+        assert_eq!(text_count, 2, "payload: {payload}");
+        assert!(payload.contains("\"Hel\""), "payload: {payload}");
+        assert!(payload.contains("\"lo\""), "payload: {payload}");
+        assert!(
+            payload.contains("\"finishReason\":\"STOP\""),
+            "payload: {payload}"
+        );
+        assert!(
+            payload.contains("\"promptTokenCount\":12"),
+            "payload: {payload}"
+        );
+        assert!(
+            payload.contains("\"candidatesTokenCount\":8"),
+            "payload: {payload}"
+        );
+    }
+
+    #[tokio::test]
+    async fn gemini_sse_from_anthropic_emits_function_call_from_json_deltas() {
+        let anthropic_sse = concat!(
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"call_1\",\"name\":\"get_weather\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"city\\\":\\\"Tok\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"yo\\\"}\"}}\n\n",
+            "event: content_block_stop\n",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":10}}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n",
+        );
+        let input_stream =
+            futures::stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(anthropic_sse))]);
+
+        let gemini_stream = create_gemini_sse_stream_from_anthropic(input_stream, "m".to_string());
+        let chunks: Vec<Result<Bytes, std::io::Error>> = gemini_stream.collect().await;
+        let payload = chunks
+            .into_iter()
+            .map(|chunk| String::from_utf8(chunk.unwrap().to_vec()).unwrap())
+            .collect::<String>();
+
+        assert!(payload.contains("\"functionCall\""), "payload: {payload}");
+        assert!(payload.contains("\"get_weather\""), "payload: {payload}");
+        // 缓冲的 partial_json 合并后应解析出完整 args
+        assert!(payload.contains("\"Tokyo\""), "payload: {payload}");
     }
 }

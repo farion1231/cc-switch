@@ -2540,6 +2540,21 @@ pub async fn handle_gemini(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    // 上游为非 Gemini 协议（openai_chat / anthropic）时，需要把 URI 中的模型名
+    // 注入请求体（转换器从 body.model 读取），流式请求补 body.stream 字段
+    // （OpenAI 上游的流式语义在请求体里，而不是 :streamGenerateContent?alt=sse）。
+    let upstream_api_format = super::providers::get_upstream_api_format(&ctx.provider);
+    let mut body = body;
+    if upstream_api_format != "gemini_native" && body.is_object() {
+        let request_model = ctx.request_model.clone();
+        if !request_model.is_empty() && request_model != "unknown" {
+            body["model"] = Value::from(request_model);
+        }
+        if endpoint.contains(":streamGenerateContent") {
+            body["stream"] = Value::from(true);
+        }
+    }
+
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
         .forward_with_retry(
@@ -2568,11 +2583,28 @@ pub async fn handle_gemini(
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(
+    // 上游为 Gemini 协议：原样透传（原有行为）
+    if super::providers::get_upstream_api_format(&ctx.provider) == "gemini_native" {
+        return process_response(
+            response,
+            &ctx,
+            &state,
+            &GEMINI_PARSER_CONFIG,
+            is_stream,
+            connection_guard,
+        )
+        .await;
+    }
+
+    // 上游为 OpenAI/Anthropic 协议：响应转换回 Gemini 格式
+    // 流式判定：URI 用了 :streamGenerateContent（或上游返回 SSE）即为流式
+    let upstream_api_format = super::providers::get_upstream_api_format(&ctx.provider);
+    let is_stream = is_stream || endpoint.contains(":streamGenerateContent");
+    super::response_processor::handle_gemini_transform(
         response,
         &ctx,
         &state,
-        &GEMINI_PARSER_CONFIG,
+        upstream_api_format,
         is_stream,
         connection_guard,
     )

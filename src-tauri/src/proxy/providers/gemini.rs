@@ -5,13 +5,55 @@
 //! ## 认证模式
 //! - **Gemini**: API Key 认证 (x-goog-api-key)
 //! - **GeminiCli**: OAuth Bearer 认证 (用于 Gemini CLI)
+//!
+//! ## 上游 API 格式（`meta.apiFormat`）
+//! - **gemini_native**（默认）: 上游原生支持 Gemini 协议，请求/响应原样透传
+//! - **openai_chat**: 上游仅支持 OpenAI Chat Completions（如 DeepSeek、Moonshot），
+//!   代理将 Gemini 请求转换为 Anthropic 中间格式再转换为 OpenAI Chat，响应反向转换
+//! - **anthropic**: 上游支持 Anthropic Messages API，请求 Gemini→Anthropic 转换，响应反向
 
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
+use serde_json::Value;
 
 /// Gemini 适配器
 pub struct GeminiAdapter;
+
+/// 读取供应商配置的上游 API 格式（`meta.apiFormat`），默认 `gemini_native`（透传）。
+pub fn get_upstream_api_format(provider: &Provider) -> &'static str {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.api_format.as_deref())
+        .map(|format| match format {
+            "openai_chat" => "openai_chat",
+            "anthropic" => "anthropic",
+            _ => "gemini_native",
+        })
+        .unwrap_or("gemini_native")
+}
+
+/// 将 Gemini 入口 endpoint 重写为转换后上游的 endpoint。
+///
+/// `/v1beta/models/{model}:generateContent` →
+/// - `openai_chat`: `/v1/chat/completions`
+/// - `anthropic`: `/v1/messages`
+///
+/// Gemini 的 `?key=` / `?alt=sse` 查询参数不透传给上游（认证改由适配器注入，
+/// 流式语义由请求体 `stream` 字段表达）。
+pub fn rewrite_gemini_transform_endpoint(endpoint: &str, api_format: &str) -> String {
+    let upstream_path = match api_format {
+        "openai_chat" => "/v1/chat/completions",
+        "anthropic" => "/v1/messages",
+        _ => return endpoint.to_string(),
+    };
+    if endpoint.contains(":generateContent") || endpoint.contains(":streamGenerateContent") {
+        upstream_path.to_string()
+    } else {
+        endpoint.to_string()
+    }
+}
 
 /// OAuth 凭证结构
 #[derive(Debug, Clone)]
@@ -194,6 +236,13 @@ impl ProviderAdapter for GeminiAdapter {
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
         let key = self.extract_key_raw(provider)?;
+        // 上游格式非 gemini_native 时，上游是 OpenAI/Anthropic 协议网关，
+        // 改用 Bearer / x-api-key 认证而不是 x-goog-api-key。
+        match get_upstream_api_format(provider) {
+            "openai_chat" => return Some(AuthInfo::new(key, AuthStrategy::Bearer)),
+            "anthropic" => return Some(AuthInfo::new(key, AuthStrategy::Anthropic)),
+            _ => {}
+        }
         let strategy = self.detect_auth_type(provider);
 
         match strategy {
@@ -248,11 +297,40 @@ impl ProviderAdapter for GeminiAdapter {
                     ),
                 ]
             }
+            // OpenAI Chat 兼容上游（DeepSeek 等）：Bearer 认证
+            AuthStrategy::Bearer | AuthStrategy::ClaudeAuth => {
+                vec![(
+                    HeaderName::from_static("authorization"),
+                    hv(&format!("Bearer {}", auth.api_key))?,
+                )]
+            }
+            // Anthropic 上游：x-api-key 认证（anthropic-version 由 forwarder 统一处理）
+            AuthStrategy::Anthropic => {
+                vec![(HeaderName::from_static("x-api-key"), hv(&auth.api_key)?)]
+            }
             _ => vec![(
                 HeaderName::from_static("x-goog-api-key"),
                 hv(&auth.api_key)?,
             )],
         })
+    }
+
+    fn needs_transform(&self, provider: &Provider) -> bool {
+        get_upstream_api_format(provider) != "gemini_native"
+    }
+
+    fn transform_request(&self, body: Value, provider: &Provider) -> Result<Value, ProxyError> {
+        // Gemini 请求 → Anthropic 中间格式（模型名已由 handle_gemini 注入 body.model）
+        let anthropic = super::transform_gemini::gemini_request_to_anthropic(body)?;
+        match get_upstream_api_format(provider) {
+            "openai_chat" => {
+                let mut chat =
+                    super::transform::anthropic_to_openai_with_reasoning_content(anthropic, false)?;
+                super::transform::inject_openai_stream_include_usage(&mut chat);
+                Ok(chat)
+            }
+            _ => Ok(anthropic),
+        }
     }
 }
 
@@ -442,5 +520,133 @@ mod tests {
         let adapter = GeminiAdapter::new();
         assert!(adapter.parse_oauth_credentials("AIza-api-key").is_none());
         assert!(adapter.parse_oauth_credentials("invalid-json{").is_none());
+    }
+
+    fn create_provider_with_format(
+        config: serde_json::Value,
+        api_format: Option<&str>,
+    ) -> Provider {
+        let mut provider = create_provider(config);
+        if let Some(format) = api_format {
+            provider.meta = Some(crate::provider::ProviderMeta {
+                api_format: Some(format.to_string()),
+                ..Default::default()
+            });
+        }
+        provider
+    }
+
+    #[test]
+    fn test_get_upstream_api_format_defaults_to_native() {
+        let provider = create_provider(json!({
+            "env": { "GEMINI_API_KEY": "sk-test" }
+        }));
+        assert_eq!(get_upstream_api_format(&provider), "gemini_native");
+
+        let unknown = create_provider_with_format(
+            json!({ "env": { "GEMINI_API_KEY": "sk-test" } }),
+            Some("something_else"),
+        );
+        assert_eq!(get_upstream_api_format(&unknown), "gemini_native");
+    }
+
+    #[test]
+    fn test_needs_transform_only_for_non_native_upstream() {
+        let adapter = GeminiAdapter::new();
+        let native = create_provider_with_format(
+            json!({ "env": { "GEMINI_API_KEY": "sk-test" } }),
+            Some("gemini_native"),
+        );
+        assert!(!adapter.needs_transform(&native));
+
+        let openai = create_provider_with_format(
+            json!({ "env": { "GEMINI_API_KEY": "sk-test" } }),
+            Some("openai_chat"),
+        );
+        assert!(adapter.needs_transform(&openai));
+    }
+
+    #[test]
+    fn test_extract_auth_openai_upstream_uses_bearer() {
+        let adapter = GeminiAdapter::new();
+        let provider = create_provider_with_format(
+            json!({ "env": { "GEMINI_API_KEY": "sk-deepseek-key" } }),
+            Some("openai_chat"),
+        );
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.strategy, AuthStrategy::Bearer);
+
+        let headers = adapter.get_auth_headers(&auth).unwrap();
+        assert!(headers.iter().any(|(name, value)| name == "authorization"
+            && value.to_str().unwrap() == "Bearer sk-deepseek-key"));
+    }
+
+    #[test]
+    fn test_extract_auth_native_upstream_keeps_google_strategy() {
+        let adapter = GeminiAdapter::new();
+        let provider = create_provider(json!({
+            "env": { "GEMINI_API_KEY": "AIza-test-key" }
+        }));
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.strategy, AuthStrategy::Google);
+    }
+
+    #[test]
+    fn test_transform_request_openai_chat_converts_gemini_body() {
+        let adapter = GeminiAdapter::new();
+        let provider = create_provider_with_format(
+            json!({ "env": { "GEMINI_API_KEY": "sk-test" } }),
+            Some("openai_chat"),
+        );
+        let gemini_request = json!({
+            "model": "deepseek-flash",
+            "contents": [{ "role": "user", "parts": [{ "text": "say ok" }] }]
+        });
+        let chat = adapter
+            .transform_request(gemini_request, &provider)
+            .unwrap();
+        // OpenAI Chat 形状：model + messages
+        assert_eq!(chat["model"], "deepseek-flash");
+        let messages = chat["messages"].as_array().unwrap();
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"], "say ok");
+    }
+
+    #[test]
+    fn test_rewrite_gemini_transform_endpoint() {
+        assert_eq!(
+            rewrite_gemini_transform_endpoint(
+                "/v1beta/models/deepseek-flash:generateContent",
+                "openai_chat"
+            ),
+            "/v1/chat/completions"
+        );
+        assert_eq!(
+            rewrite_gemini_transform_endpoint(
+                "/v1beta/models/m:streamGenerateContent?alt=sse",
+                "openai_chat"
+            ),
+            "/v1/chat/completions"
+        );
+        assert_eq!(
+            rewrite_gemini_transform_endpoint(
+                "/v1beta/models/gemini-pro:generateContent?key=PROXY_MANAGED",
+                "anthropic"
+            ),
+            "/v1/messages"
+        );
+        // gemini_native 不重写
+        assert_eq!(
+            rewrite_gemini_transform_endpoint(
+                "/v1beta/models/gemini-pro:generateContent",
+                "gemini_native"
+            ),
+            "/v1beta/models/gemini-pro:generateContent"
+        );
+        // 非 generateContent 端点不重写
+        assert_eq!(
+            rewrite_gemini_transform_endpoint("/v1beta/models", "openai_chat"),
+            "/v1beta/models"
+        );
     }
 }

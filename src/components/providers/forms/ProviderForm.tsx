@@ -431,6 +431,11 @@ function ProviderFormFull({
       setDraftCustomEndpoints([]);
     }
     setEndpointAutoSelect(initialData?.meta?.endpointAutoSelect ?? true);
+    setLocalGeminiApiFormat(
+      appId === "gemini"
+        ? (initialData?.meta?.apiFormat ?? "gemini_native")
+        : "gemini_native",
+    );
     setLocalIsFullUrl(
       supportsFullUrl ? (initialData?.meta?.isFullUrl ?? false) : false,
     );
@@ -578,6 +583,13 @@ function ProviderFormFull({
     if (appId !== "claude") return "anthropic";
     return initialData?.meta?.apiFormat ?? "anthropic";
   });
+
+  // Gemini 供应商的上游 API 格式（代理路由模式下非 Gemini 协议上游的协议转换）
+  const [localGeminiApiFormat, setLocalGeminiApiFormat] =
+    useState<ClaudeApiFormat>(() => {
+      if (appId !== "gemini") return "gemini_native";
+      return initialData?.meta?.apiFormat ?? "gemini_native";
+    });
 
   const handleApiFormatChange = useCallback((format: ClaudeApiFormat) => {
     setLocalApiFormat(format);
@@ -1987,15 +1999,17 @@ function ProviderFormFull({
         ? overridesResult.overrides
         : undefined,
       apiFormat:
-        appId === "claude" && category !== "official"
-          ? isXaiOauthProvider
-            ? "openai_responses"
-            : localApiFormat
-          : appId === "codex" && category !== "official" && !isCopilotProvider
+        appId === "gemini" && category !== "official"
+          ? localGeminiApiFormat
+          : appId === "claude" && category !== "official"
             ? isXaiOauthProvider
               ? "openai_responses"
-              : localCodexApiFormat
-            : undefined,
+              : localApiFormat
+            : appId === "codex" && category !== "official" && !isCopilotProvider
+              ? isXaiOauthProvider
+                ? "openai_responses"
+                : localCodexApiFormat
+              : undefined,
       codexCopilotApiFormat:
         appId === "codex" &&
         isCopilotProvider &&
@@ -2811,6 +2825,10 @@ function ProviderFormFull({
               shouldShowModelField={true}
               model={geminiModel}
               onModelChange={handleGeminiModelChange}
+              apiFormat={localGeminiApiFormat}
+              onApiFormatChange={(format) =>
+                setLocalGeminiApiFormat(format as ClaudeApiFormat)
+              }
               speedTestEndpoints={speedTestEndpoints}
             />
           )}
