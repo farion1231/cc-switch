@@ -10,6 +10,8 @@ pub struct McpApps {
     #[serde(default)]
     pub mcode: bool,
     #[serde(default)]
+    pub kimi: bool,
+    #[serde(default)]
     pub agy: bool,
     #[serde(default)]
     pub claude: bool,
@@ -41,6 +43,7 @@ impl McpApps {
             AppType::OpenClaw => false, // OpenClaw doesn't support MCP
             AppType::Hermes => self.hermes,
             AppType::Mcode => self.mcode,
+            AppType::Kimi => self.kimi,
             AppType::Pi => self.pi,
             AppType::Rpi => self.rpi,
             AppType::ClaudeDesktop => false,
@@ -59,6 +62,7 @@ impl McpApps {
             AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
             AppType::Hermes => self.hermes = enabled,
             AppType::Mcode => self.mcode = enabled,
+            AppType::Kimi => self.kimi = enabled,
             AppType::Pi => self.pi = enabled,
             AppType::Rpi => self.rpi = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P provider config doesn't support MCP here
@@ -87,6 +91,9 @@ impl McpApps {
         if self.agy {
             apps.push(AppType::Agy);
         }
+        if self.kimi {
+            apps.push(AppType::Kimi);
+        }
         if self.mcode {
             apps.push(AppType::Mcode);
         }
@@ -111,6 +118,7 @@ impl McpApps {
             && !self.opencode
             && !self.hermes
             && !self.agy
+            && !self.kimi
             && !self.mcode
             && !self.pi
             && !self.rpi
@@ -122,6 +130,8 @@ impl McpApps {
 pub struct SkillApps {
     #[serde(default)]
     pub mcode: bool,
+    #[serde(default)]
+    pub kimi: bool,
     #[serde(default)]
     pub agy: bool,
     #[serde(default)]
@@ -155,6 +165,7 @@ impl SkillApps {
             AppType::Pi => self.pi,
             AppType::Rpi => self.rpi,
             AppType::Mcode => self.mcode,
+            AppType::Kimi => self.kimi,
             AppType::OpenClaw => false,
             AppType::Agy => self.agy,
             AppType::ClaudeDesktop => false,
@@ -173,6 +184,7 @@ impl SkillApps {
             AppType::Pi => self.pi = enabled,
             AppType::Rpi => self.rpi = enabled,
             AppType::Mcode => self.mcode = enabled,
+            AppType::Kimi => self.kimi = enabled,
             AppType::OpenClaw => {}
             AppType::Agy => self.agy = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
@@ -200,6 +212,9 @@ impl SkillApps {
         if self.agy {
             apps.push(AppType::Agy);
         }
+        if self.kimi {
+            apps.push(AppType::Kimi);
+        }
         if self.mcode {
             apps.push(AppType::Mcode);
         }
@@ -224,6 +239,7 @@ impl SkillApps {
             && !self.opencode
             && !self.hermes
             && !self.agy
+            && !self.kimi
             && !self.mcode
             && !self.pi
             && !self.rpi
@@ -448,6 +464,7 @@ pub enum AppType {
     Pi,
     Rpi,
     Mcode,
+    Kimi,
     Agy,
 }
 
@@ -465,6 +482,7 @@ impl AppType {
             AppType::Pi => "pi",
             AppType::Rpi => "rpi",
             AppType::Mcode => "mcode",
+            AppType::Kimi => "kimi",
             AppType::Agy => "agy",
         }
     }
@@ -483,6 +501,7 @@ impl AppType {
                 | AppType::Pi
                 | AppType::Rpi
                 | AppType::Mcode
+                | AppType::Kimi
         )
     }
 
@@ -514,6 +533,7 @@ impl AppType {
             AppType::Pi,
             AppType::Rpi,
             AppType::Mcode,
+            AppType::Kimi,
             AppType::Agy,
         ]
         .into_iter()
@@ -537,11 +557,13 @@ impl FromStr for AppType {
             "pi" => Ok(AppType::Pi),
             "rpi" => Ok(AppType::Rpi),
             "mcode" => Ok(AppType::Mcode),
+            "kimi" | "kimi-code" | "kimi-cli" => Ok(AppType::Kimi),
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, rpi, mcode, agy。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, rpi, mcode, agy."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, rpi, mcode, kimi, agy。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, rpi, mcode, kimi, agy."),
+
             )),
         }
     }
@@ -581,7 +603,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode.as_ref(),
             AppType::OpenClaw => self.openclaw.as_ref(),
             AppType::Hermes => self.hermes.as_ref(),
-            AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Agy => None,
+            AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Kimi | AppType::Agy => None,
         }
     }
 
@@ -596,7 +618,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode = snippet,
             AppType::OpenClaw => self.openclaw = snippet,
             AppType::Hermes => self.hermes = snippet,
-            AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Agy => {}
+            AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Kimi | AppType::Agy => {}
         }
     }
 }
@@ -923,7 +945,9 @@ impl MultiAppConfig {
             AppType::Hermes => &mut config.prompts.hermes.prompts,
             // Pi was added after prompts moved to SQLite. Keeping it out of
             // this legacy config avoids a second, unused prompt state.
-            AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Agy => return Ok(false),
+            AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Kimi | AppType::Agy => {
+                return Ok(false)
+            }
         };
 
         prompts.insert(id, prompt);
@@ -967,7 +991,9 @@ impl MultiAppConfig {
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
                 AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
-                AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Agy => continue, // Pi didn't exist in v3.6.x, skip
+                AppType::Pi | AppType::Rpi | AppType::Mcode | AppType::Kimi | AppType::Agy => {
+                    continue
+                } // Pi didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {

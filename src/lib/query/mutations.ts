@@ -70,7 +70,8 @@ export const useAddProviderMutation = (appId: AppId) => {
         appId === "hermes" ||
         appId === "pi" ||
         appId === "rpi" ||
-        appId === "mcode"
+        appId === "mcode" ||
+        appId === "kimi"
       ) {
         if (
           providerInput.category === "omo" ||

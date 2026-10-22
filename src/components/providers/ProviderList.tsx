@@ -168,6 +168,7 @@ export function ProviderList({
   const isInConfig = useCallback(
     (provider: Provider): boolean => {
       switch (appId) {
+        case "kimi":
         case "mcode":
           return provider.meta?.liveConfigManaged === true;
         case "opencode":

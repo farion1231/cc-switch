@@ -89,12 +89,14 @@ const IMPORT_SOURCE_FILES: Record<
   pi: { file: "~/.pi/agent/mcp.json" },
   rpi: { file: "~/.rpi/agent/mcp.json" },
   agy: { file: "~/.gemini/config/mcp_config.json" },
+  kimi: { file: "~/.kimi-code/mcp.json" },
   mcode: { file: "~/.minimax/mcp.json" },
 };
 
 /** 先写配置文件、成功后才入库的应用：写失败时开关没变，重试要逐行重写 */
 const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set([
   "mcode",
+  "kimi",
   "pi",
   "rpi",
   "agy",

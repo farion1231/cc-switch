@@ -28,6 +28,7 @@ export const APP_IDS: AppId[] = [
   "pi",
   "rpi",
   "mcode",
+  "kimi",
   "agy",
 ];
 
@@ -43,6 +44,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   pi: true,
   rpi: true,
   mcode: true,
+  kimi: true,
   agy: true,
 };
 
@@ -57,6 +59,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "pi",
   "rpi",
   "mcode",
+  "kimi",
   "agy",
 ];
 
@@ -107,11 +110,12 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "rpi" | "mcode"
+  "opencode" | "openclaw" | "hermes" | "pi" | "rpi" | "mcode" | "kimi"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "mcode",
+  "kimi",
   "opencode",
   "openclaw",
   "hermes",
@@ -150,6 +154,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "pi",
   "rpi",
   "mcode",
+  "kimi",
   "agy",
 ];
 
@@ -254,6 +259,13 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
     badgeClass:
       "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
+  },
+  kimi: {
+    label: "Kimi Code",
+    icon: <ProviderIcon icon="kimi" name="Kimi Code" size={14} />,
+    activeClass: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    badgeClass:
+      "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-0 gap-1.5",
   },
   mcode: {
     label: "MiniMax Code",
