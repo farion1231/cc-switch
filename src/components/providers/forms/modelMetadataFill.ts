@@ -40,7 +40,9 @@ export function fillCodexCatalogModel<T extends CodexCatalogModel>(
     );
     if (levels.length > 0) next.reasoningLevels = levels;
   }
-  if (!row.inputModalities && metadata.inputModalities) {
+  // 只补「支持图片」：没写时后端按注册表判断、认不出就当支持；查到只收文字就写
+  // ["text"] 会关掉 Codex 的图片入口，而编辑界面又没有改回来的地方（#8682）。
+  if (!row.inputModalities && metadata.inputModalities?.includes("image")) {
     next.inputModalities = textImageModalities(metadata.inputModalities);
   }
   return next;

@@ -48,6 +48,19 @@ describe("fillCodexCatalogModel", () => {
     };
     expect(fillCodexCatalogModel(row, metadata, CODEX_LEVELS)).toEqual(row);
   });
+
+  it("never turns image input off for a text-only lookup", () => {
+    expect(
+      fillCodexCatalogModel(
+        { model: "deepseek-v4.1-flash-1017", contextWindow: "" },
+        { contextWindow: 1_000_000, inputModalities: ["text"] },
+        CODEX_LEVELS,
+      ),
+    ).toEqual({
+      model: "deepseek-v4.1-flash-1017",
+      contextWindow: "1000000",
+    });
+  });
 });
 
 describe("fillOpenClawModel", () => {
