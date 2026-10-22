@@ -5482,6 +5482,9 @@ impl ProviderService {
                     provider.settings_config = config.clone();
                 }
                 Self::set_provider_live_config_managed(provider, native.contains_key(id));
+                if app_type == AppType::Kimi {
+                    crate::kimi_config::normalize_provider_identity(provider);
+                }
                 state.db.save_provider(app_type.as_str(), provider)?;
             }
             return Ok(saved);
@@ -5497,6 +5500,9 @@ impl ProviderService {
     ///
     /// 对于累加模式应用（OpenCode, OpenClaw），不存在"当前供应商"概念，直接返回空字符串。
     pub fn current(state: &AppState, app_type: AppType) -> Result<String, AppError> {
+        if app_type == AppType::Kimi {
+            return crate::kimi_config::current_provider();
+        }
         // Additive mode apps have no "current" provider concept
         if app_type.is_additive_mode() {
             return Ok(String::new());
@@ -6659,7 +6665,14 @@ impl ProviderService {
         if app_type == AppType::Kimi {
             let mut provider = _provider.clone();
             Self::set_provider_live_config_managed(&mut provider, true);
-            Self::save_native_provider(state, &app_type, &provider, true, false)?;
+            crate::kimi_config::switch_and_commit(
+                id,
+                provider.settings_config.clone(),
+                |config| {
+                    provider.settings_config = config;
+                    state.db.save_provider("kimi", &provider)
+                },
+            )?;
             return Ok(SwitchResult::default());
         }
 

@@ -678,7 +678,7 @@ export function buildLaunchSections(input: LaunchInput): ProviderSection[] {
   ];
 }
 
-// ─── 共存式应用（OpenCode / OpenClaw / Hermes / Pi / MiniMax Code）───────────
+// ─── 共存式应用（OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Kimi）─────
 
 export interface AdditiveInput {
   app: AppId;
@@ -697,6 +697,8 @@ export interface AdditiveInput {
   isHermesManaged?: (provider: Provider) => boolean;
   /** Pi：读不到当前配置时一律不能改 */
   piStateUnavailable?: boolean;
+  /** Kimi：原生 default_model 别名所属的供应商。 */
+  kimiCurrentId?: string | null;
   actions: {
     add: (provider: Provider) => void;
     remove: (provider: Provider) => void;
@@ -716,6 +718,52 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
 
   for (const p of providers) {
     const chips: CardChip[] = [];
+    if (app === "kimi") {
+      if (isOfficialAccount(app, p)) {
+        chips.push({
+          key: "official",
+          label: t("providerCard.chip.official"),
+          tone: "outline",
+        });
+      }
+      const live = input.isInConfig(p);
+      const current = live && p.id === input.kimiCurrentId;
+      (live ? added : available).push({
+        provider: p,
+        presentation: {
+          tone: current ? "direct" : undefined,
+          status: current
+            ? { label: t("providerCard.status.inUse"), dot: "direct" }
+            : undefined,
+          chips,
+          buttons: current
+            ? []
+            : [
+                {
+                  key: "switch",
+                  label: t("providerCard.action.switch"),
+                  onClick: () => actions.add(p),
+                },
+              ],
+          menuItems: live
+            ? [
+                {
+                  key: "remove",
+                  label: t("providerCard.action.remove"),
+                  disabledReason: current
+                    ? t("providerCard.reason.currentCannotRemove")
+                    : undefined,
+                  onSelect: () => actions.remove(p),
+                },
+              ]
+            : undefined,
+          deleteDisabledReason: current
+            ? t("providerCard.reason.inUseCannotDelete")
+            : undefined,
+        },
+      });
+      continue;
+    }
     const isOmo = p.category === "omo";
     const isOmoSlim = p.category === "omo-slim";
     if (isOmo) chips.push({ key: "omo", label: "OMO", tone: "outline" });

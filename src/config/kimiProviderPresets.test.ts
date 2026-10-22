@@ -3,6 +3,8 @@ import {
   KIMI_CAPABILITIES,
   kimiConfigSchema,
   kimiProviderPresets,
+  kimiAccountPreset,
+  KIMI_ACCOUNT_PRESET_ID,
 } from "./kimiProviderPresets";
 import { piProviderPresets } from "./piProviderPresets";
 import { getVisiblePresetRows } from "@/components/providers/forms/ProviderPresetSelector";
@@ -21,6 +23,27 @@ const model = (name: string, id: string) => {
 };
 
 describe("kimiProviderPresets", () => {
+  it("keeps official account login separate from the API-key vendor family", () => {
+    const t = ((key: string) => key) as TFunction;
+    const rows = getVisiblePresetRows(
+      [
+        { id: KIMI_ACCOUNT_PRESET_ID, preset: kimiAccountPreset },
+        ...kimiProviderPresets.map((preset) => ({
+          id: preset.providerKey,
+          preset,
+        })),
+      ],
+      { query: "Kimi", t },
+    );
+    const login = rows.find(
+      ({ row }) => row.key === KIMI_ACCOUNT_PRESET_ID,
+    )!.row;
+    expect(presetRowGroup(login)).toBe("login");
+    expect(login.family).toBeUndefined();
+    expect(
+      rows.find(({ row }) => row.family === "kimi")!.row.versions,
+    ).toHaveLength(4);
+  });
   it("provides the compatible catalog across vendors, platforms, cloud and local groups", () => {
     const compatible = piProviderPresets.filter(
       (preset) => preset.settingsConfig.api !== "bedrock-converse-stream",
