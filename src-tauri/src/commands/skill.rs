@@ -30,6 +30,11 @@ fn parse_app_type(app: &str) -> Result<AppType, String> {
 /// 获取所有已安装的 Skills
 #[tauri::command]
 pub fn get_installed_skills(app_state: State<'_, AppState>) -> Result<Vec<InstalledSkill>, String> {
+    // 手动编辑 SSOT 目录下 SKILL.md 后刷新本地 Skill 的过期元数据；
+    // 刷新失败不阻断列表返回（issue #7848）
+    if let Err(e) = SkillService::refresh_local_skill_metadata(&app_state.db) {
+        log::warn!("刷新本地 Skill 元数据失败: {e}");
+    }
     SkillService::get_all_installed(&app_state.db).map_err(|e| e.to_string())
 }
 
