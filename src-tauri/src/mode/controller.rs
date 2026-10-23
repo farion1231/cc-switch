@@ -1366,9 +1366,24 @@ pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String>
         _ => (None, Vec::new()),
     };
     // 名单里每一家都列上（含路由那家）：切换到聚合的确认框里还能换默认那家，由前端按默认
-    // 那家去掉它的模型（默认那家不发布 `ccs-*` 模型，选了也写不进去）。
+    // 那家去掉它的 `ccs-*` 模型；官方默认供应商的原生模型保留。
     let subagent_models = match app {
-        AppType::Codex => codex_direct::stack_subagent_choices(&members),
+        AppType::Codex => {
+            let mut choices = codex_direct::stack_subagent_choices(&members);
+            if stack.enabled {
+                if let Some(route) = route {
+                    if let Some(provider) = state
+                        .db
+                        .get_provider_by_id(route, app.as_str())
+                        .map_err(err)?
+                    {
+                        choices
+                            .extend(codex_direct::published_official_subagent_choices(&provider));
+                    }
+                }
+            }
+            choices
+        }
         _ => Vec::new(),
     };
     Ok(StackView {
@@ -8253,6 +8268,61 @@ model_provider = "c"
             .unwrap()
             .notice
             .is_none());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_stack_subagents_can_use_the_official_default_provider() {
+        let _home = Home::new();
+        seed_codex("", Some(&chatgpt("ws", "alice")));
+        let mut response = official_list(&[]);
+        if let Fetch::Models { models, .. } = &mut response {
+            models[0]["supported_reasoning_levels"] = json!([{"effort": "high"}]);
+        }
+        let _fake = fake_models(vec![response], CodexKeychainLogin::Missing, None);
+        let official = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+        let state = state_with(AppType::Codex, &codex_official_stack_rows(), official).await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        set_codex_member(&state, "deepseek", true).await;
+        // 官方默认供应商的原生模型可以显式指定给子代理，保留其目录能力。
+        let choices = stack_views(&state, &AppType::Codex)
+            .unwrap()
+            .subagent_models;
+        let choice = choices.iter().find(|m| m.id == "gpt-6-sol").unwrap();
+        assert_eq!(choice.provider_id, official);
+        let effort = choice.efforts.last().unwrap().clone();
+        set_stack_subagent(Some(&choice.id), Some(&effort));
+        resync_codex_stack_catalog(&state)
+            .await
+            .expect("official subagent");
+        assert_eq!(
+            codex_doc()["agents"]["default_subagent_model"].as_str(),
+            Some("gpt-6-sol")
+        );
+        assert_eq!(
+            codex_doc()["agents"]["default_subagent_reasoning_effort"].as_str(),
+            Some(effort.as_str())
+        );
+        set_stack_subagent(Some("missing-official-model"), None);
+        resync_codex_stack_catalog(&state)
+            .await
+            .expect("missing official subagent");
+        assert!(codex_doc()
+            .get("agents")
+            .and_then(|a| a.get("default_subagent_model"))
+            .is_none());
+        set_stack_subagent(None, None);
+        resync_codex_stack_catalog(&state)
+            .await
+            .expect("follow main");
+        enter_with_route(&state, &AppType::Codex, true, Some("a"))
+            .await
+            .expect("third-party route");
+        assert!(stack_views(&state, &AppType::Codex)
+            .unwrap()
+            .subagent_models
+            .iter()
+            .all(|m| m.id.starts_with("ccs-")));
     }
 
     #[tokio::test]
