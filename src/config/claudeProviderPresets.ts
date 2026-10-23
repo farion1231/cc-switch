@@ -384,6 +384,25 @@ export const providerPresets: ProviderPreset[] = [
     icon: "dit",
   },
   {
+    name: "BuyToken",
+    websiteUrl: "https://buytoken.work",
+    apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
+    // 接入文档 buytoken.work/docs（2026-10-23 核对）：Anthropic Messages 在
+    // 站点根，Key 按分组发（Claude 分组的 Key 调不了 gpt-*）。Haiku 只有带日期的
+    // claude-haiku-4-5-20251001，不带日期会失败
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.buytoken.work",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5-20251001",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "buytoken",
+    icon: "buytoken",
+  },
+  {
     name: "TokenFactory",
     nameKey: "providerForm.presets.tokenfactory",
     websiteUrl: "https://tokenfactory.cn",

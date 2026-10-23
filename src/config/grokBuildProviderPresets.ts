@@ -219,6 +219,22 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "dit",
   },
   {
+    name: "BuyToken",
+    websiteUrl: "https://buytoken.work",
+    apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
+    auth: grokAuth(),
+    // 须用 grok 分组的 Key；分组里只有 grok-4.7（buytoken.work/pricing，2026-10-23）
+    config: grokPresetConfig(
+      "BuyToken",
+      "https://api.buytoken.work/v1",
+      "grok-4.7",
+    ),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "buytoken",
+    icon: "buytoken",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",

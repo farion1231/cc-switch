@@ -466,6 +466,26 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "dit",
   },
   {
+    name: "BuyToken",
+    providerKey: "cc-switch-buytoken",
+    websiteUrl: "https://buytoken.work",
+    apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
+    settingsConfig: {
+      name: "BuyToken",
+      baseUrl: "https://api.buytoken.work",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "buytoken",
+    icon: "buytoken",
+  },
+  {
     name: "TokenFactory",
     nameKey: "providerForm.presets.tokenfactory",
     providerKey: "cc-switch-tokenfactory",
