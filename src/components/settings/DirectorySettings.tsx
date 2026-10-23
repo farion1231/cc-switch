@@ -8,7 +8,10 @@ import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
 import type { ResolvedDirectories } from "@/hooks/useSettings";
 
-export type DirectoryAppId = Exclude<AppId, "claude-desktop" | "mcode" | "agy">;
+export type DirectoryAppId = Exclude<
+  AppId,
+  "claude-desktop" | "mcode" | "agy" | "kimi"
+>;
 
 interface DirectorySettingsProps {
   appConfigDir?: string;

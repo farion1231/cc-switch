@@ -1271,9 +1271,9 @@
   },
   "deepseekHarness": {
     "desktopProfileHint": "僅管理桌面版的 desktop 設定。執行中的 DSH 需啟用 HMR 或重新啟動後載入檔案修改；不會修改 CLI 的其他設定。",
-    "providerKey": "Provider Key",
-    "providerKeyRequired": "請填寫 Provider Key",
-    "providerKeyDuplicate": "此 Provider Key 已存在",
+    "providerKey": "供應商識別碼",
+    "providerKeyRequired": "請填寫供應商識別碼",
+    "providerKeyDuplicate": "此供應商識別碼已存在",
     "providerKeyPlaceholder": "my-provider",
     "providerKeyInvalid": "標識格式無效，只能使用小寫字母、數字和連字號",
     "providerKeyOfficialHint": "官方 DeepSeek 路由使用固定的 deepseek-official 標識。",
@@ -2172,6 +2172,7 @@
     "universalDetail": "同步到 Claude Code、Codex、Gemini CLI",
     "manageUniversal": "管理現有的統一供應商 ›",
     "loginWith": {
+      "kimi": "使用 Kimi 帳號登入",
       "claude": "用 Claude 帳號登入",
       "chatgpt": "用 ChatGPT 帳號登入",
       "github": "用 GitHub 帳號登入",
@@ -2295,6 +2296,8 @@
       "actionEllipsis": "重建 Codex 用量"
     },
     "totalRecords": "共 {{total}} 筆紀錄",
+    "pageSize": "每頁 {{count}} 筆",
+    "pageSizeLabel": "每頁筆數",
     "goToPage": "跳轉",
     "pageInputPlaceholder": "頁碼",
     "modelPricing": "模型定價",
@@ -2429,16 +2432,14 @@
     "cacheReadCostPerMillion": "快取讀取成本 (每百萬 tokens, USD)",
     "cacheCreationCostPerMillion": "快取寫入成本 (每百萬 tokens, USD)",
     "syncStatus": {
-      "auto": "工作階段日誌 · 自動掃描",
-      "justNow": "工作階段日誌 · 剛剛同步",
-      "minutesAgo": "工作階段日誌 · {{count}} 分鐘前同步",
-      "off": "工作階段日誌 · 自動掃描已關閉",
-      "tipAuto": "背景每 10 分鐘掃描一次；開啟用量頁時依右側間隔掃描",
-      "tipOff": "只在手動同步時掃描工作階段日誌"
+      "justNow": "剛剛同步",
+      "minutesAgo": "{{count}} 分鐘前同步",
+      "syncing": "同步中…",
+      "tip": "點擊立即同步",
+      "tipOff": "自動掃描已關閉，點擊立即同步"
     },
     "refreshMenu": {
-      "label": "每 {{seconds}} 秒掃描",
-      "seconds": "{{seconds}} 秒"
+      "label": "每 {{seconds}} 秒掃描"
     },
     "dataSources": "資料來源",
     "display": {
@@ -2458,7 +2459,6 @@
       },
       "sidebarTodayLimit": "最多選 {{count}} 項",
       "logColumns": "請求日誌的欄位",
-      "logColumnsSummary": "{{shown}} / {{total}} 欄",
       "trendChartType": "趨勢圖樣式",
       "trendChartTypes": {
         "bar": "長條圖",
@@ -2497,16 +2497,17 @@
       "requests": "請求",
       "tokens": "Tokens",
       "cost": "成本",
-      "requestsLegend": "請求數"
+      "requestsLegend": "請求數",
+      "titleMetric": "{{metric}} · {{granularity}}",
+      "hourly": "按小時",
+      "daily": "按天"
     },
     "tabs": {
       "label": "明細",
       "providers": "供應商",
       "models": "模型",
-      "pricing": "定價",
-      "settings": "設定"
+      "pricing": "定價"
     },
-    "sortedByRequests": "依請求數排序",
     "app": "應用程式",
     "speed": "速度",
     "speedValue": "{{value}} tok/s",
@@ -2543,7 +2544,6 @@
       "performance": "效能",
       "source": "來源",
       "sourceProxy": "路由服務 · 狀態碼 {{code}}",
-      "sourceSession": "工作階段日誌",
       "total": "合計",
       "firstToken": "首字",
       "firstTokenEstimated": "首字（估算）",
@@ -2597,7 +2597,12 @@
       "cacheWrite": "快取寫入"
     },
     "prevMonth": "上個月",
-    "nextMonth": "下個月"
+    "nextMonth": "下個月",
+    "settings": {
+      "title": "用量設定",
+      "pricingSummary": "依模型設定每百萬 Tokens 的價格，可從 models.dev 同步",
+      "managePricing": "管理定價…"
+    }
   },
   "usageScript": {
     "title": "設定用量查詢",
@@ -4956,6 +4961,58 @@
       "removeNote": "不會讓 agy 登出：agy 目前登入的帳號刪除後仍然可用。",
       "switched": "已切換，新開的 agy 會使用這個帳號。",
       "switchedWhileRunning": "已切換。偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，請結束後重新開啟。"
+    }
+  },
+  "kimi": {
+    "oauth": {
+      "useAccount": "使用此帳號",
+      "title": "Kimi Code 官方登入",
+      "description": "可新增多個 Kimi 程式開發方案帳號，各自儲存憑證與供應商。在此管理登入，再選擇帳號使用其官方模型。",
+      "region": "登入區域",
+      "mainland-cn": "中國大陸版",
+      "global": "海外版",
+      "signIn": "登入 Kimi",
+      "signInAgain": "重新登入",
+      "signOut": "登出",
+      "signedIn": "已登入 · {{region}}",
+      "signedOut": "尚未登入",
+      "statusFailed": "無法讀取登入狀態",
+      "refresh": "重新整理 Kimi 登入狀態",
+      "waiting": "等待瀏覽器授權",
+      "copyCode": "複製授權碼",
+      "copied": "已複製授權碼",
+      "openPage": "開啟授權頁面",
+      "manualHint": "在瀏覽器完成授權後會自動更新。若瀏覽器未開啟，可手動前往下方連結並輸入授權碼。",
+      "error": "Kimi 登入未完成",
+      "expired": "授權碼已過期，請重新登入。",
+      "denied": "授權已遭拒絕，請重新登入。",
+      "cancelled": "登入已取消或被其他登入取代，請重新登入。",
+      "success": "Kimi Code 登入成功，已新增官方模型。",
+      "signOutConfirm": "登出 {{name}}？僅移除此帳號的本機憑證，其他帳號、供應商、模型及目前的模型選擇會保留。",
+      "addAccount": "新增帳號",
+      "accountCount": "已儲存 {{count}} 個帳號",
+      "manageAccounts": "管理 Kimi 帳號",
+      "managedHint": "請在授權中心管理 Kimi 官方帳號。"
+    },
+    "modelSelectionHint": "點擊供應商卡片的切換按鈕選擇預設供應商；若要指定其他模型，請在 Kimi Code 中使用 /model。",
+    "providerType": "供應商類型",
+    "baseUrl": "請求位址",
+    "models": "模型",
+    "addModel": "新增模型",
+    "removeModel": "移除模型",
+    "modelId": "模型 ID",
+    "contextSize": "上下文長度",
+    "deleteSessionHint": "請在 Kimi Code 中刪除，以同時更新工作階段索引和歷史紀錄。",
+    "empty": {
+      "title": "新增 Kimi Code 供應商",
+      "description": "設定請求位址、API Key 和模型；已有 Kimi 設定會自動匯入。"
+    },
+    "capabilities": {
+      "image_in": "圖片輸入",
+      "thinking": "思考",
+      "always_thinking": "始終思考",
+      "tool_use": "工具呼叫",
+      "dynamically_loaded_tools": "按需載入工具"
     }
   }
 }

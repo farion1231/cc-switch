@@ -213,6 +213,10 @@ impl Provider {
                 (base_url, api_key)
             }
             // Hermes (config.yaml) flattens credentials at the top level, snake_case.
+            AppType::Kimi => (
+                str_at(settings.pointer("/provider/base_url")),
+                str_at(settings.pointer("/provider/api_key")),
+            ),
             AppType::Hermes => (
                 str_at(settings.get("base_url")),
                 str_at(settings.get("api_key")),

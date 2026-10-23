@@ -655,7 +655,10 @@ describe("buildAdditiveSections", () => {
       t,
       providers: [relay, multi, backup],
       isInConfig: (p) => p.id !== backup.id,
-      dshCurrent: { currentProviderId: relay.id, currentModel: "current-model" },
+      dshCurrent: {
+        currentProviderId: relay.id,
+        currentModel: "current-model",
+      },
       actions,
     });
 
@@ -673,12 +676,64 @@ describe("buildAdditiveSections", () => {
     );
     const setDefault = button(sections, multi.id, "setDefault");
     expect(setDefault.menu?.options.map((option) => option.key)).toEqual([
-      "first", "second",
+      "first",
+      "second",
     ]);
     setDefault.menu?.options[1].onSelect();
     expect(actions.setDefault).toHaveBeenCalledWith(multi, "second");
     button(sections, backup.id, "add").onClick();
     expect(actions.add).toHaveBeenCalledWith(backup);
+  });
+
+  it("protects every official Kimi OAuth provider, including inactive accounts", () => {
+    const accounts = ["managed:kimi-code", "kimi-code-ccs-second"].map((id) =>
+      provider(id, {
+        settingsConfig: {
+          provider: { type: "kimi", oauth: { key: `oauth/${id}` } },
+        },
+      }),
+    );
+    const sections = buildAdditiveSections({
+      app: "kimi",
+      t,
+      providers: [...accounts, relay],
+      isInConfig: () => true,
+      kimiCurrentId: accounts[0].id,
+      actions: additiveActions(),
+    });
+    for (const account of accounts) {
+      const presentation = item(sections, account.id);
+      expect(presentation.editDisabledReason).toBe("kimi.oauth.managedHint");
+      expect(presentation.deleteDisabledReason).toBe("kimi.oauth.managedHint");
+      expect(
+        presentation.menuItems?.find((action) => action.key === "remove")
+          ?.disabledReason,
+      ).toBe("kimi.oauth.managedHint");
+    }
+    expect(
+      button(sections, accounts[1].id, "switch").disabledReason,
+    ).toBeUndefined();
+    expect(item(sections, "relay").editDisabledReason).toBeUndefined();
+  });
+
+  it("allows deleting a saved official Kimi account after its native node is removed", () => {
+    const account = provider("managed:kimi-code", {
+      settingsConfig: {
+        provider: { type: "kimi", oauth: { key: "oauth/kimi-code" } },
+      },
+    });
+    const sections = buildAdditiveSections({
+      app: "kimi",
+      t,
+      providers: [account],
+      isInConfig: () => false,
+      kimiCurrentId: account.id,
+      actions: additiveActions(),
+    });
+    const presentation = item(sections, account.id);
+    expect(presentation.deleteDisabledReason).toBeUndefined();
+    expect(presentation.menuItems).toBeUndefined();
+    expect(presentation.status).toBeUndefined();
   });
 
   it("blocks every Pi change while Pi's current state is unavailable", () => {

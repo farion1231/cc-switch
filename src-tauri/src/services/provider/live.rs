@@ -33,6 +33,9 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::DeepSeekHarness => {
             crate::deepseek_harness_config::provider_exists_in_live_config()
         }
+        AppType::Kimi => {
+            crate::kimi_config::get_providers().map(|providers| providers.contains_key(provider_id))
+        }
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         _ => Ok(false),
@@ -304,9 +307,10 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Hermes
         | AppType::Pi
         | AppType::Mcode
+        | AppType::Kimi
+        | AppType::Agy
         | AppType::ClaudeDesktop
-        | AppType::DeepSeekHarness
-        | AppType::Agy => false,
+        | AppType::DeepSeekHarness => false,
     }
 }
 
@@ -382,6 +386,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Hermes
         | AppType::Pi
         | AppType::Mcode
+        | AppType::Kimi
         | AppType::ClaudeDesktop
         | AppType::DeepSeekHarness
         | AppType::Agy => Ok(settings.clone()),
@@ -711,6 +716,9 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             })?;
             crate::deepseek_harness_config::set_provider(&provider.id, &config)?;
         }
+        AppType::Kimi => {
+            crate::kimi_config::set_provider(&provider.id, provider.settings_config.clone())?
+        }
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
@@ -859,7 +867,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     for app_type in AppType::all() {
         if matches!(
             app_type,
-            AppType::Pi | AppType::DeepSeekHarness | AppType::Mcode
+            AppType::Pi | AppType::DeepSeekHarness | AppType::Kimi | AppType::Mcode
         ) {
             continue;
         }
@@ -1016,6 +1024,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             Ok(config)
         }
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
+        AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
@@ -1137,17 +1146,15 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             }
             live
         }
-        // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above.
-        // DeepSeek Harness uses one exclusive route, but importing live settings needs its
-        // credentials file as well as settings.yaml, so it is not handled by this generic path.
-        // MCode providers are likewise managed by their own page.
+        // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
         AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
-        | AppType::DeepSeekHarness
-        | AppType::Mcode => {
-            unreachable!("unsupported apps are handled by early return")
+        | AppType::Mcode
+        | AppType::Kimi
+        | AppType::DeepSeekHarness => {
+            unreachable!("additive mode apps are handled by early return")
         }
     };
 

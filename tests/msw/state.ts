@@ -76,6 +76,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
   pi: {},
   "deepseek-harness": {},
   mcode: {},
+  kimi: {},
   agy: {},
 });
 
@@ -91,6 +92,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   pi: "",
   "deepseek-harness": "",
   mcode: "",
+  kimi: "",
   agy: "",
 });
 
@@ -209,6 +211,7 @@ let mcpConfigs: McpConfigState = {
   pi: {},
   "deepseek-harness": {},
   mcode: {},
+  kimi: {},
   agy: {},
 };
 
@@ -339,6 +342,7 @@ export const resetProviderState = () => {
     pi: {},
     "deepseek-harness": {},
     mcode: {},
+    kimi: {},
     agy: {},
   };
 };

@@ -2171,6 +2171,7 @@
     "universalDetail": "Claude Code・Codex・Gemini CLI に同期",
     "manageUniversal": "既存の統合プロバイダーを管理 ›",
     "loginWith": {
+      "kimi": "Kimi アカウントでログイン",
       "claude": "Claude アカウントでログイン",
       "chatgpt": "ChatGPT アカウントでログイン",
       "github": "GitHub アカウントでログイン",
@@ -2294,6 +2295,8 @@
       "actionEllipsis": "Codex 使用量を再構築"
     },
     "totalRecords": "全 {{total}} 件",
+    "pageSize": "{{count}} 件/ページ",
+    "pageSizeLabel": "1 ページの件数",
     "goToPage": "移動",
     "pageInputPlaceholder": "ページ",
     "modelPricing": "モデル料金",
@@ -2428,16 +2431,14 @@
     "cacheReadCostPerMillion": "キャッシュ読み取りコスト（100万トークンあたり、USD）",
     "cacheCreationCostPerMillion": "キャッシュ書き込みコスト（100万トークンあたり、USD）",
     "syncStatus": {
-      "auto": "セッションログ · 自動スキャン",
-      "justNow": "セッションログ · たった今同期",
-      "minutesAgo": "セッションログ · {{count}} 分前に同期",
-      "off": "セッションログ · 自動スキャンはオフ",
-      "tipAuto": "バックグラウンドでは 10 分ごとにスキャン。このページを開いている間は右側の間隔でスキャンします",
-      "tipOff": "手動で同期したときだけセッションログをスキャンします"
+      "justNow": "たった今同期",
+      "minutesAgo": "{{count}} 分前に同期",
+      "syncing": "同期中…",
+      "tip": "クリックして今すぐ同期",
+      "tipOff": "自動スキャンはオフです。クリックして今すぐ同期"
     },
     "refreshMenu": {
-      "label": "{{seconds}} 秒ごとにスキャン",
-      "seconds": "{{seconds}} 秒"
+      "label": "{{seconds}} 秒ごとにスキャン"
     },
     "dataSources": "データソース",
     "display": {
@@ -2457,7 +2458,6 @@
       },
       "sidebarTodayLimit": "最大 {{count}} 項目まで",
       "logColumns": "リクエストログの列",
-      "logColumnsSummary": "{{shown}} / {{total}} 列",
       "trendChartType": "トレンドグラフの種類",
       "trendChartTypes": {
         "bar": "棒グラフ",
@@ -2496,16 +2496,17 @@
       "requests": "リクエスト",
       "tokens": "Tokens",
       "cost": "コスト",
-      "requestsLegend": "リクエスト数"
+      "requestsLegend": "リクエスト数",
+      "titleMetric": "{{metric}} · {{granularity}}",
+      "hourly": "1 時間ごと",
+      "daily": "1 日ごと"
     },
     "tabs": {
       "label": "明細",
       "providers": "プロバイダー",
       "models": "モデル",
-      "pricing": "料金",
-      "settings": "設定"
+      "pricing": "料金"
     },
-    "sortedByRequests": "リクエスト数順",
     "app": "アプリ",
     "speed": "速度",
     "speedValue": "{{value}} tok/s",
@@ -2542,7 +2543,6 @@
       "performance": "パフォーマンス",
       "source": "ソース",
       "sourceProxy": "ルーティングサービス · ステータス {{code}}",
-      "sourceSession": "セッションログ",
       "total": "合計",
       "firstToken": "最初のトークン",
       "firstTokenEstimated": "最初のトークン（推定）",
@@ -2596,7 +2596,12 @@
       "cacheWrite": "キャッシュ書き込み"
     },
     "prevMonth": "前月",
-    "nextMonth": "翌月"
+    "nextMonth": "翌月",
+    "settings": {
+      "title": "使用量の設定",
+      "pricingSummary": "モデルごとに 100 万トークンあたりの料金を設定します。models.dev から同期することもできます",
+      "managePricing": "料金を管理…"
+    }
   },
   "usageScript": {
     "title": "利用状況を設定",
@@ -4955,6 +4960,58 @@
       "removeNote": "agy からはログアウトしません。agy が現在このアカウントを使っている場合、削除後もそのまま使えます。",
       "switched": "切り替えました。新しく起動する agy はこのアカウントを使います。",
       "switchedWhileRunning": "切り替えました。agy が実行中です。開いている agy は元のアカウントのままで、元のアカウントを書き戻す可能性があります。agy を終了してから開き直してください。"
+    }
+  },
+  "kimi": {
+    "oauth": {
+      "useAccount": "このアカウントを使用",
+      "title": "Kimi Code 公式ログイン",
+      "description": "複数の Kimi コーディングプランのアカウントを、独立した認証情報とプロバイダーとして追加できます。ここでログインを管理し、使用する公式アカウントを選択してください。",
+      "region": "ログイン地域",
+      "mainland-cn": "中国本土版",
+      "global": "グローバル版",
+      "signIn": "Kimi にログイン",
+      "signInAgain": "再ログイン",
+      "signOut": "ログアウト",
+      "signedIn": "ログイン済み · {{region}}",
+      "signedOut": "未ログイン",
+      "statusFailed": "ログイン状態を取得できません",
+      "refresh": "Kimi のログイン状態を更新",
+      "waiting": "ブラウザーでの認証を待っています",
+      "copyCode": "認証コードをコピー",
+      "copied": "認証コードをコピーしました",
+      "openPage": "認証ページを開く",
+      "manualHint": "認証が完了すると自動的に更新されます。ブラウザーが開かない場合は、下のリンクを開いてコードを入力してください。",
+      "error": "Kimi のログインが完了しませんでした",
+      "expired": "認証コードの有効期限が切れました。再ログインしてください。",
+      "denied": "認証が拒否されました。再ログインしてください。",
+      "cancelled": "ログインがキャンセルされたか、別のログインに置き換えられました。再ログインしてください。",
+      "success": "Kimi Code にログインし、公式モデルを追加しました。",
+      "signOutConfirm": "{{name}} からログアウトしますか？このアカウントのローカル認証情報のみ削除します。他のアカウント、プロバイダー、モデル、現在のモデル選択は保持されます。",
+      "addAccount": "アカウントを追加",
+      "accountCount": "保存済みアカウント: {{count}}",
+      "manageAccounts": "Kimi アカウントを管理",
+      "managedHint": "Kimi 公式アカウントは認証センターで管理してください。"
+    },
+    "modelSelectionHint": "プロバイダーカードの切り替えボタンで既定のプロバイダーを選択します。別のモデルを選ぶには、Kimi Code で /model を使用してください。",
+    "providerType": "プロバイダーの種類",
+    "baseUrl": "リクエスト URL",
+    "models": "モデル",
+    "addModel": "モデルを追加",
+    "removeModel": "モデルを削除",
+    "modelId": "モデル ID",
+    "contextSize": "コンテキスト長",
+    "deleteSessionHint": "インデックスと履歴を同期するため、Kimi Code 内でセッションを削除してください。",
+    "empty": {
+      "title": "Kimi Code プロバイダーを追加",
+      "description": "URL、API キー、モデルを設定します。既存の Kimi 設定は自動的にインポートされます。"
+    },
+    "capabilities": {
+      "image_in": "画像入力",
+      "thinking": "思考",
+      "always_thinking": "常に思考",
+      "tool_use": "ツール呼び出し",
+      "dynamically_loaded_tools": "必要に応じてツールを読み込む"
     }
   }
 }

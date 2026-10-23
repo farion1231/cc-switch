@@ -170,8 +170,9 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 10] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "agy",
+const VALID_TOOLS: [&str; 11] = [
+    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
+    "agy",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -626,6 +627,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "hermes" => "Hermes",
         "pi" => "Pi",
         "mcode" => "MiniMax Code",
+        "kimi" => "Kimi Code",
         "agy" => "Antigravity CLI",
         _ => "Unknown",
     }
@@ -663,6 +665,12 @@ const HERMES_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 const HERMES_UPDATE_UNIX: &str =
     "hermes update || bash -c 'tmp=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+
+// The npm distribution needs Node >=22.19. The native installer bundles its runtime.
+const KIMI_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://code.kimi.com/kimi-code/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+#[cfg(target_os = "windows")]
+const KIMI_INSTALL_WINDOWS_SCRIPT: &str = "irm https://code.kimi.com/kimi-code/install.ps1 | iex";
 
 /// Antigravity CLI 官方 installer：把原生二进制放进 `~/.local/bin`，再跑 `agy install`
 /// 把该目录加进 shell 配置。目标处已有 `agy` 时它只提示已安装、exit 0，所以只用于新装；
@@ -723,6 +731,14 @@ fn mcode_install_windows_command() -> String {
     format!(
         "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
         powershell_encoded_command(MCODE_INSTALL_WINDOWS_SCRIPT)
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn kimi_install_windows_command() -> String {
+    format!(
+        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(KIMI_INSTALL_WINDOWS_SCRIPT)
     )
 }
 
@@ -857,6 +873,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "opencode" => Some("npm i -g opencode-ai@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
         "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
+        "kimi" => Some("npm i -g @moonshot-ai/kimi-code@latest"),
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
@@ -894,6 +911,7 @@ fn official_update_args(tool: &str) -> Option<&'static str> {
         "claude" | "codex" | "grok" | "hermes" | "agy" => Some("update"),
         "openclaw" => Some("update --yes"),
         "opencode" => Some("upgrade"),
+        "kimi" => Some("upgrade --yes"),
         _ => None,
     }
 }
@@ -923,6 +941,21 @@ fn tool_action_shell_command_for_shell(
     action: ToolLifecycleAction,
     shell: LifecycleCommandShell,
 ) -> Option<String> {
+    if tool == "kimi" {
+        let install = match shell {
+            LifecycleCommandShell::Posix => KIMI_INSTALL_UNIX.to_string(),
+            #[cfg(target_os = "windows")]
+            LifecycleCommandShell::WindowsBatch => kimi_install_windows_command(),
+            #[cfg(not(target_os = "windows"))]
+            LifecycleCommandShell::WindowsBatch => return None,
+        };
+        return Some(match action {
+            ToolLifecycleAction::Install => install,
+            ToolLifecycleAction::Update => {
+                chain_update_commands("kimi upgrade --yes".into(), install, shell)
+            }
+        });
+    }
     // xAI's and MiniMax's primary Windows distribution is the official PowerShell
     // installer. Keep npm as the network/policy fallback, matching the POSIX installer chain.
     #[cfg(target_os = "windows")]
@@ -1245,6 +1278,7 @@ async fn get_single_tool_version_impl(
             fetch_npm_latest_for_tool(&client, "@earendil-works/pi-coding-agent", tool, local).await
         }
         "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
+        "kimi" => fetch_npm_latest_for_tool(&client, "@moonshot-ai/kimi-code", tool, local).await,
         "agy" => fetch_agy_latest_version(&client).await,
         _ => None,
     };
@@ -2439,6 +2473,13 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
     // 常见的安装路径（原生安装优先）
     // Preserve search priority without scanning all previous paths for every insertion.
     let mut search_paths = IndexSet::new();
+    if tool == "kimi" {
+        let install_dir = std::env::var_os("KIMI_INSTALL_DIR")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".kimi-code"));
+        push_unique_path(&mut search_paths, install_dir.join("bin"));
+    }
     if tool == "grok" {
         let extra_paths = grok_extra_search_paths(&home, std::env::var_os("GROK_BIN_DIR"));
         for path in extra_paths {
@@ -3240,6 +3281,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "openclaw" => Some("openclaw"),
         "pi" => Some("@earendil-works/pi-coding-agent"),
         "mcode" => Some("@minimax-ai/code"),
+        "kimi" => Some("@moonshot-ai/kimi-code"),
         _ => None,
     }
 }
@@ -3614,7 +3656,7 @@ fn grok_native_update_command(update: String) -> String {
 fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
     match shell {
         LifecycleCommandShell::Posix => {
-            matches!(tool, "claude" | "opencode" | "openclaw")
+            matches!(tool, "claude" | "opencode" | "openclaw" | "kimi")
         }
         LifecycleCommandShell::WindowsBatch => {
             matches!(
@@ -3623,7 +3665,7 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
                 // 安装方式探测失败弹交互 prompt（spawn npm.cmd 没传 shell:true）；静默
                 // lifecycle 没有 stdin 会挂死，Windows 先锚到包管理器路径，等上游修了
                 // 再把 opencode 加回这里。
-                "claude" | "openclaw"
+                "claude" | "openclaw" | "kimi"
             )
         }
     }
@@ -4546,6 +4588,7 @@ fn posix_install_command_for(tool: &str) -> String {
         "opencode" => installer_with_npm_fallback(OPENCODE_INSTALL_UNIX, tool),
         "mcode" => installer_with_npm_fallback(MCODE_INSTALL_UNIX, tool),
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
+        "kimi" => KIMI_INSTALL_UNIX.to_string(),
         "agy" => AGY_INSTALL_UNIX.to_string(),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
     }
@@ -6978,6 +7021,57 @@ mod tests {
             )
             .as_deref(),
             Some("npm i -g @xai-official/grok@latest")
+        );
+    }
+
+    #[test]
+    fn kimi_install_uses_bundled_runtime_instead_of_system_node() {
+        let posix = tool_action_shell_command_for_shell(
+            "kimi",
+            ToolLifecycleAction::Install,
+            LifecycleCommandShell::Posix,
+        )
+        .unwrap();
+        assert_eq!(posix, KIMI_INSTALL_UNIX);
+        assert_eq!(posix_install_command_for("kimi"), posix);
+        assert!(!posix.contains("npm"));
+        let update = tool_action_shell_command_for_shell(
+            "kimi",
+            ToolLifecycleAction::Update,
+            LifecycleCommandShell::Posix,
+        )
+        .unwrap();
+        assert_eq!(update, format!("kimi upgrade --yes || {posix}"));
+        assert!(!update.contains("npm"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn kimi_windows_install_is_noninteractive_and_has_no_npm_fallback() {
+        use base64::Engine as _;
+        let command = tool_action_shell_command_for_shell(
+            "kimi",
+            ToolLifecycleAction::Install,
+            LifecycleCommandShell::WindowsBatch,
+        )
+        .unwrap();
+        assert!(command.starts_with("powershell -NoProfile -NonInteractive "));
+        let encoded = command.split("-EncodedCommand ").nth(1).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
+        let script = String::from_utf16(
+            &bytes
+                .chunks_exact(2)
+                .map(|unit| u16::from_le_bytes([unit[0], unit[1]]))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        assert_eq!(script, KIMI_INSTALL_WINDOWS_SCRIPT);
+        assert!(!command.contains("npm"));
+        assert_eq!(
+            wsl_tool_action_shell_command("kimi", ToolLifecycleAction::Install).as_deref(),
+            Some(KIMI_INSTALL_UNIX)
         );
     }
 
