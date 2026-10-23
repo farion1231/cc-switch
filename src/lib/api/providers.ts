@@ -154,8 +154,12 @@ export const providersApi = {
     return await invoke("import_default_config", { app: appId });
   },
 
-  async importClaudeDesktopFromClaude(): Promise<number> {
-    return await invoke("import_claude_desktop_providers_from_claude");
+  async importClaudeDesktopFromClaude(
+    replaceExisting = false,
+  ): Promise<number> {
+    return await invoke("import_claude_desktop_providers_from_claude", {
+      replaceExisting,
+    });
   },
 
   async ensureClaudeDesktopOfficialProvider(): Promise<boolean> {

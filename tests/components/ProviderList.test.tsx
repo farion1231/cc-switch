@@ -823,6 +823,50 @@ describe("ProviderList Component", () => {
     expect(input).toHaveFocus();
   });
 
+  it("requires confirmation before refreshing existing Desktop providers", async () => {
+    const imported = vi.fn();
+    server.use(
+      http.post(
+        `${TAURI_ENDPOINT}/import_claude_desktop_providers_from_claude`,
+        async ({ request }) => {
+          imported(await request.json());
+          return HttpResponse.json(1);
+        },
+      ),
+    );
+    const desk = createProvider({ id: "desk", name: "Desk Relay" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [desk],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        providers={{ desk }}
+        appId="claude-desktop"
+        switchMode={switchMode()}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "provider.refreshFromClaude" }),
+    );
+    expect(imported).not.toHaveBeenCalled();
+    expect(screen.getByText("provider.refreshFromClaudeConfirm")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "common.cancel" }));
+    expect(imported).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "provider.refreshFromClaude" }),
+    );
+    const buttons = screen.getAllByRole("button", {
+      name: "provider.refreshFromClaude",
+    });
+    fireEvent.click(buttons[buttons.length - 1]);
+    await waitFor(() =>
+      expect(imported).toHaveBeenCalledWith({ replaceExisting: true }),
+    );
+  });
+
   it("adds the search row only while searching when the list has no section title", async () => {
     const desk = createProvider({ id: "desk", name: "Desk Relay" });
     useDragSortMock.mockReturnValue({
@@ -841,20 +885,20 @@ describe("ProviderList Component", () => {
     );
 
     const list = container.firstElementChild!;
-    expect(list.firstElementChild).toContainElement(
+    expect(list.children[1]).toContainElement(
       screen.getByTestId("provider-card-desk"),
     );
 
     fireEvent.keyDown(window, { key: "f", ctrlKey: true });
     const input = screen.getByRole("textbox", { name: "Search providers" });
-    expect(list.firstElementChild).toContainElement(input);
-    expect(list.firstElementChild?.nextElementSibling).toContainElement(
+    expect(list.children[1]).toContainElement(input);
+    expect(list.children[1]?.nextElementSibling).toContainElement(
       screen.getByTestId("provider-card-desk"),
     );
 
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() => expect(input).not.toBeInTheDocument());
-    expect(list.firstElementChild).toContainElement(
+    expect(list.children[1]).toContainElement(
       screen.getByTestId("provider-card-desk"),
     );
   });
