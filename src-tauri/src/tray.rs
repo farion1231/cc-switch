@@ -166,6 +166,8 @@ fn map_locale_to_tray_language(locale: &str) -> &'static str {
         "zh"
     } else if locale.starts_with("ja") {
         "ja"
+    } else if locale.starts_with("ko") {
+        "ko"
     } else if locale.starts_with("tr") {
         "tr"
     } else if locale.is_empty() {
@@ -245,6 +247,58 @@ impl TrayTexts {
             },
             // 土耳其语是社区翻译：从英文起步再覆盖已翻译的项，之后新增的托盘项
             // 在有人翻译前显示英文，而不是让所有改托盘的提交都必须补土耳其语。
+            "ko" => {
+                let mut texts = Self::from_language("en");
+                texts.show_main = "CC Switch 열기";
+                texts.open_website = "공식 웹사이트 열기";
+                texts.lightweight_mode = "경량 모드";
+                texts.quit = "CC Switch 종료";
+                texts.quit_stops_routing = "CC Switch 종료 (라우팅 서비스 중지)";
+                texts.projects_label = "프로젝트";
+                texts.no_project_label = "프로젝트 없음";
+                texts.header_direct = "직접 연결";
+                texts.header_route = "라우팅";
+                texts.header_failover = "라우팅 · 장애 조치 켜짐";
+                texts.header_stack = "통합 · 기본 공급자";
+                texts.header_stack_default = "통합 · 기본값: {name}";
+                texts.failover_note = "대기열에서 자동으로 선택됩니다. 앱 페이지에서 변경하세요";
+                texts.mode_route = "라우팅";
+                texts.mode_stack = "통합";
+                texts.needs_routing_suffix = " (라우팅 필요)…";
+                texts.official_blocked_suffix = " (공식 요금제는 라우팅을 사용하지 않음)";
+                texts.open_app_page = "{app} 페이지 열기";
+                texts.add_provider = "공급자 추가…";
+                texts.almost_out = "거의 소진됨";
+                texts.needs_attention = "확인 필요";
+                texts.problem_service_down = "라우팅 서비스가 실행 중이 아닙니다 (포트 {port})";
+                texts.problem_attach_failed = "{app}: 이전 {mode} 연결에 실패하여 직접 연결로 돌아갔습니다";
+                texts.problem_switch_failed = "{app} 전환 실패: {reason}";
+                texts.problem_more = "문제 {count}개 더 있음 — CC Switch에서 확인하세요";
+                texts.tooltip_problem = "CC Switch · 확인 필요: {problem}";
+                texts.feedback_switched = "{app}의 공급자가 {name}(으)로 전환되었습니다. 적용하려면 {app}을(를) 다시 시작하세요";
+                texts.feedback_stack_default = "{app}의 기본 공급자가 {name}(으)로 변경되었습니다. 적용하려면 {app}을(를) 다시 시작하세요";
+                texts.feedback_profile = "{app}에 {name} 프로젝트를 적용했습니다";
+                texts.tier_five_hour = "5시간";
+                texts.tier_weekly = "주간";
+                texts.tier_monthly = "월간";
+                texts.tier_thirty_day = "30일";
+                texts.tier_credits = "크레딧";
+                texts.tier_premium = "프리미엄 요청";
+                texts.tier_left = "{label} {value}% 남음";
+                texts.tier_used = "{label} {value}% 사용";
+                texts.tier_used_up = "{label} 소진됨";
+                texts.balance = "잔액 {value}";
+                texts.balance_used_up = "잔액 소진됨";
+                texts.plan_expired = "요금제 만료됨";
+                texts.used_amount = "{value} 사용";
+                texts.quota_failed = "할당량을 확인할 수 없음";
+                texts.quota_failed_login_expired = "할당량을 확인할 수 없음: 로그인 만료";
+                texts.quota_failed_token_refresh_pending = "할당량을 확인할 수 없음: 토큰 갱신 대기 중";
+                texts.reset_on_date = "{when}에 {label} 할당량 초기화";
+                texts.reset_at_time = "{when}에 {label} 할당량 초기화";
+                texts.date_format = "%-m월 %-d일";
+                texts
+            },
             "tr" => {
                 let mut texts = Self::from_language("en");
                 texts.show_main = "CC Switch'i aç";
@@ -3372,6 +3426,8 @@ mod tests {
 
     #[test]
     fn locale_maps_japanese_and_english() {
+        assert_eq!(map_locale_to_tray_language("ko-KR"), "ko");
+        assert_eq!(map_locale_to_tray_language("ko"), "ko");
         assert_eq!(map_locale_to_tray_language("tr-TR"), "tr");
         assert_eq!(map_locale_to_tray_language("tr"), "tr");
         assert_eq!(map_locale_to_tray_language("ja-JP"), "ja");
@@ -3383,7 +3439,7 @@ mod tests {
     #[test]
     fn locale_unknown_falls_back_to_en() {
         // 与前端 getInitialLanguage 保持一致：认不出的语言用英文，区域为空才用默认的 zh。
-        for locale in ["de-DE", "fr", "ko-KR"] {
+        for locale in ["de-DE", "fr", "es-ES"] {
             assert_eq!(
                 map_locale_to_tray_language(locale),
                 "en",
@@ -4518,7 +4574,7 @@ mod tests {
             quit_text(&en(), true),
             "Quit CC Switch (stops the routing service)"
         );
-        for language in ["zh", "zh-TW", "en", "ja", "tr"] {
+        for language in ["zh", "zh-TW", "en", "ja", "tr", "ko"] {
             let texts = TrayTexts::from_language(language);
             assert_ne!(texts.quit, texts.quit_stops_routing, "{language}");
             assert!(

@@ -24,6 +24,18 @@ import {
 } from "@/components/usage/format";
 
 describe("usage format helpers", () => {
+  it("formats Korean token counts with Korean units and separators", () => {
+    expect(formatTokensShort(9_999, "ko")).toBe("9,999");
+    expect(formatTokensShort(10_000, "ko")).toBe("1.0만");
+    expect(formatTokensShort(12_345, "ko-KR", 2)).toBe("1.23만");
+    expect(formatTokensShort(100_000_000, "ko")).toBe("1.00억");
+    expect(formatTokensShort(123_456_789, "ko_KR")).toBe("1.23억");
+  });
+
+  it("resolves Korean date locales", () => {
+    expect(getLocaleFromLanguage("ko")).toBe("ko-KR");
+    expect(getLocaleFromLanguage("ko-KR")).toBe("ko-KR");
+  });
   it("formats Traditional Chinese token units with Traditional characters", () => {
     expect(formatTokensShort(12_345, "zh-TW")).toBe("1.2 萬");
     expect(formatTokensShort(123_456_789, "zh-Hant", 2)).toBe("1.23 億");

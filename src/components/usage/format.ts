@@ -400,6 +400,7 @@ export function getLocaleFromLanguage(language: string): string {
   }
   if (normalized.startsWith("zh")) return "zh-CN";
   if (normalized.startsWith("ja")) return "ja-JP";
+  if (normalized.startsWith("ko")) return "ko-KR";
   if (normalized.startsWith("tr")) return "tr-TR";
   return "en-US";
 }
@@ -431,7 +432,7 @@ export function joinClauses(items: readonly string[], lang: string): string {
 /**
  * Token 数量的紧凑显示。
  *
- * Why: 中日文用户期待 "亿/万" 量纲；英文用户期待 K/M/B。共用同一份格式化
+ * Why: 中日文用户期待 "亿/万" 量纲，韩文使用 "억/만"；英文用户期待 K/M/B。共用同一份格式化
  * 逻辑避免 Hero 卡和分应用卡显示不一致。`compactDecimals=2` 用于 Hero
  * 大数副标（更精确），默认 1 位用于卡片副字段。
  */
@@ -452,6 +453,11 @@ export function formatTokensShort(
     if (value >= 1e8) return `${(value / 1e8).toFixed(2)} 亿`;
     if (value >= 1e4) return `${(value / 1e4).toFixed(decimals)} 万`;
     return value.toLocaleString();
+  }
+  if (normalizedLang.startsWith("ko")) {
+    if (value >= 1e8) return `${(value / 1e8).toFixed(2)}억`;
+    if (value >= 1e4) return `${(value / 1e4).toFixed(decimals)}만`;
+    return value.toLocaleString("ko-KR");
   }
   if (value >= 1e9) return `${(value / 1e9).toFixed(2)}B`;
   if (value >= 1e6) return `${(value / 1e6).toFixed(2)}M`;

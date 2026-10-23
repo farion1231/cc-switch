@@ -837,6 +837,7 @@
     "languageOptionEnglish": "English",
     "languageOptionJapanese": "日本語",
     "languageOptionTurkish": "Türkçe",
+    "languageOptionKorean": "한국어",
     "windowBehavior": "Window Behavior",
     "windowBehaviorHint": "Configure window minimize and Claude plugin integration policies.",
     "launchOnStartup": "Launch on Startup",
