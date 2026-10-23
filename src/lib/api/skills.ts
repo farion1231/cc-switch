@@ -14,6 +14,7 @@ export type AppType =
   | "pi"
   | "mcode"
   | "kimi"
+  | "dsh"
   | "agy"
   | "omp";
 
@@ -30,6 +31,7 @@ export interface SkillApps {
   pi: boolean;
   mcode?: boolean;
   kimi?: boolean;
+  dsh?: boolean;
   agy?: boolean;
   omp?: boolean;
 }

@@ -5028,5 +5028,8 @@
       "providerMissing": "This Oh My Pi provider is no longer saved.",
       "legacyModelsJson": "Oh My Pi still has a legacy models.json, which omp migrates to models.yml on its next start. Run omp once, then add the provider again."
     }
+  },
+  "dsh": {
+    "deleteSessionHint": "Delete this session in DeepSeek Harness to keep its history consistent."
   }
 }

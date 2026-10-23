@@ -5006,5 +5006,8 @@
       "renameProvider": "Oh My Pi sağlayıcı anahtarları yeniden adlandırılamaz.",
       "providerMissing": "Bu Oh My Pi sağlayıcısı artık kayıtlı değil."
     }
+  },
+  "dsh": {
+    "deleteSessionHint": "Geçmişin tutarlı kalması için bu oturumu DeepSeek Harness içinde silin."
   }
 }

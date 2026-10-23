@@ -15,6 +15,7 @@ mod commands;
 mod config;
 mod database;
 mod deeplink;
+mod dsh_config;
 mod error;
 mod gemini_config;
 mod gemini_mcp;

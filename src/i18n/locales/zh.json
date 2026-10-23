@@ -5028,5 +5028,8 @@
       "providerMissing": "此 Oh My Pi 供应商已不在保存的列表中。",
       "legacyModelsJson": "Oh My Pi 目录里还是旧的 models.json，omp 会在下次启动时把它迁移成 models.yml。请先运行一次 omp，再回来添加供应商。"
     }
+  },
+  "dsh": {
+    "deleteSessionHint": "请在 DeepSeek Harness 中删除此会话，以保持原生历史记录一致。"
   }
 }
