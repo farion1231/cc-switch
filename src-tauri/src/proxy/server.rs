@@ -394,6 +394,22 @@ impl ProxyServer {
                 "/hermes/v1/responses/compact",
                 post(handlers::handle_hermes_responses_compact),
             )
+            // Hermes 按 profile 独立路由：每个 agent 自己的命名空间、路由目标、
+            // 故障转移与负载均衡（伪应用键 hermes:<profile>）。静态 /hermes/v1 优先，
+            // 名字不合法的段在这里 404。
+            .route(
+                "/hermes/:profile/v1/responses",
+                post(handlers::handle_hermes_profile_responses)
+                    .get(handlers::handle_responses_websocket),
+            )
+            .route(
+                "/hermes/:profile/v1/chat/completions",
+                post(handlers::handle_hermes_profile_chat_completions),
+            )
+            .route(
+                "/hermes/:profile/v1/responses/compact",
+                post(handlers::handle_hermes_profile_responses_compact),
+            )
             // Codex standalone Alpha Search API. All local aliases normalize to
             // the selected provider's canonical sibling `/alpha/search` route.
             .route("/alpha/search", post(handlers::handle_alpha_search))

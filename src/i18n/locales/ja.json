@@ -3177,6 +3177,16 @@
     }
   },
   "hermes": {
+    "profilePanel": {
+      "hint": "各エージェントは個別にプロキシモードに入れます：独自の /hermes/<名前>/v1 ネームスペース、ルーティング先と負荷分散を持ち、独立すると上の統一ルーティングには従いません。",
+      "independent": "独立プロキシ",
+      "direct": "直接接続",
+      "routePlaceholder": "ルーティング先を選択",
+      "failover": "フェイルオーバー",
+      "sticky": "セッション粘性",
+      "enter": "独立開始",
+      "exit": "独立終了"
+    },
     "form": {
       "baseUrl": "API エンドポイント",
       "providerKey": "プロバイダーキー",

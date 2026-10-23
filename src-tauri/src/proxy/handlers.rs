@@ -456,7 +456,7 @@ struct ClaudeUsageLog {
     model: String,
     request_model: String,
     outbound_model: String,
-    app_type: &'static str,
+    app_type: String,
     provider_id: String,
     session_id: String,
     usage: TokenUsage,
@@ -489,7 +489,7 @@ fn prepare_claude_usage_log(
             .outbound_model
             .clone()
             .unwrap_or_else(|| ctx.request_model.clone()),
-        app_type: ctx.app_type_str,
+        app_type: ctx.app_type_str.to_string(),
         provider_id: ctx.provider.id.clone(),
         session_id: ctx.session_id.clone(),
         usage,
@@ -503,7 +503,7 @@ async fn write_claude_usage_log(state: &ProxyState, log: ClaudeUsageLog) {
     log_usage(
         state,
         &log.provider_id,
-        log.app_type,
+        &log.app_type,
         &log.model,
         &log.request_model,
         &log.outbound_model,
@@ -621,7 +621,7 @@ async fn handle_claude_transform(
             let session_id = ctx.session_id.clone();
             // 用 ctx 的 app_type：Claude Desktop 网关也走此转换路径，硬编码
             // "claude" 会把 claude-desktop 的行错记到 claude 名下
-            let app_type_str = ctx.app_type_str;
+            let app_type_str = ctx.app_type_str.to_string();
 
             Some(SseUsageCollector::new(
                 start_time,
@@ -639,12 +639,13 @@ async fn handle_claude_transform(
                         let session_id = session_id.clone();
                         let request_model = request_model.clone();
                         let outbound_model = fallback_model.clone();
+                        let app_type_str = app_type_str.clone();
 
                         tokio::spawn(async move {
                             log_usage(
                                 &state,
                                 &provider_id,
-                                app_type_str,
+                                &app_type_str,
                                 &model,
                                 &request_model,
                                 &outbound_model,
@@ -933,7 +934,7 @@ async fn handle_chat_completions_for_app(
     request: axum::extract::Request,
     app_type: AppType,
     tag: &'static str,
-    app_type_str: &'static str,
+    app_type_str: impl Into<std::borrow::Cow<'static, str>>,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
     let method = parts.method.clone();
@@ -1055,12 +1056,54 @@ pub async fn handle_hermes_responses(
     handle_responses_for_app(state, request, AppType::Hermes, "Hermes", "hermes").await
 }
 
+// ============================================================================
+// Hermes 按 profile 独立命名空间（/hermes/<profile>/v1）
+// ============================================================================
+
+/// `hermes:<profile>` 伪应用键；名字不合法直接 404（路由层静态 `/hermes/v1` 优先匹配，
+/// `v1` 也不会到这里）。
+fn hermes_profile_key(profile: &str) -> Result<String, ProxyError> {
+    crate::services::provider::hermes_profile::validate_profile_name(profile)
+        .map(|()| crate::services::provider::hermes_profile::app_key(profile))
+        .map_err(|message| ProxyError::InvalidRequest(format!("invalid Hermes agent: {message}")))
+}
+
+/// 处理 /hermes/<profile>/v1/responses：独立命名空间的 Responses 路由。
+pub async fn handle_hermes_profile_responses(
+    State(state): State<ProxyState>,
+    axum::extract::Path(profile): axum::extract::Path<String>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    let key = hermes_profile_key(&profile)?;
+    handle_responses_for_app(state, request, AppType::Hermes, "Hermes", key).await
+}
+
+/// 处理 /hermes/<profile>/v1/chat/completions：独立命名空间的 Chat Completions 兜底。
+pub async fn handle_hermes_profile_chat_completions(
+    State(state): State<ProxyState>,
+    axum::extract::Path(profile): axum::extract::Path<String>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    let key = hermes_profile_key(&profile)?;
+    handle_chat_completions_for_app(state, request, AppType::Hermes, "Hermes", key).await
+}
+
+/// 处理 /hermes/<profile>/v1/responses/compact：独立命名空间的远程压缩透传。
+pub async fn handle_hermes_profile_responses_compact(
+    State(state): State<ProxyState>,
+    axum::extract::Path(profile): axum::extract::Path<String>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    let key = hermes_profile_key(&profile)?;
+    handle_responses_compact_for_app(state, request, AppType::Hermes, "Hermes", key).await
+}
+
 async fn handle_responses_for_app(
     state: ProxyState,
     request: axum::extract::Request,
     app_type: AppType,
     tag: &'static str,
-    app_type_str: &'static str,
+    app_type_str: impl Into<std::borrow::Cow<'static, str>>,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
     let method = parts.method.clone();
@@ -1400,7 +1443,7 @@ async fn handle_responses_compact_for_app(
     request: axum::extract::Request,
     app_type: AppType,
     tag: &'static str,
-    app_type_str: &'static str,
+    app_type_str: impl Into<std::borrow::Cow<'static, str>>,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
     let method = parts.method.clone();
@@ -1665,7 +1708,7 @@ async fn handle_codex_xai_native_responses_rewrite(
                     .outbound_model
                     .clone()
                     .unwrap_or_else(|| ctx.request_model.clone());
-                let app_type_str = ctx.app_type_str;
+                let app_type_str = ctx.app_type_str.to_string();
                 tokio::spawn({
                     let state = state.clone();
                     let provider_id = ctx.provider.id.clone();
@@ -1675,7 +1718,7 @@ async fn handle_codex_xai_native_responses_rewrite(
                         log_usage(
                             &state,
                             &provider_id,
-                            app_type_str,
+                            &app_type_str,
                             &model,
                             &request_model,
                             &outbound_model,
@@ -1752,7 +1795,7 @@ async fn handle_codex_chat_to_responses_transform(
                 .outbound_model
                 .clone()
                 .unwrap_or_else(|| ctx.request_model.clone());
-            let app_type_str = ctx.app_type_str;
+            let app_type_str = ctx.app_type_str.to_string();
             let start_time = ctx.start_time;
             let session_id = ctx.session_id.clone();
 
@@ -1783,12 +1826,13 @@ async fn handle_codex_chat_to_responses_transform(
                     let request_model = request_model.clone();
                     let outbound_model = fallback_model.clone();
                     let session_id = session_id.clone();
+                    let app_type_str = app_type_str.clone();
 
                     tokio::spawn(async move {
                         log_usage(
                             &state,
                             &provider_id,
-                            app_type_str,
+                            &app_type_str,
                             &model,
                             &request_model,
                             &outbound_model,
@@ -1899,7 +1943,7 @@ async fn handle_codex_chat_to_responses_transform(
             .outbound_model
             .clone()
             .unwrap_or_else(|| ctx.request_model.clone());
-        let app_type_str = ctx.app_type_str;
+        let app_type_str = ctx.app_type_str.to_string();
         tokio::spawn({
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
@@ -1909,7 +1953,7 @@ async fn handle_codex_chat_to_responses_transform(
                 log_usage(
                     &state,
                     &provider_id,
-                    app_type_str,
+                    &app_type_str,
                     &model,
                     &request_model,
                     &outbound_model,
@@ -2064,7 +2108,7 @@ async fn handle_codex_anthropic_to_responses_transform(
             .outbound_model
             .clone()
             .unwrap_or_else(|| ctx.request_model.clone());
-        let app_type_str = ctx.app_type_str;
+        let app_type_str = ctx.app_type_str.to_string();
         tokio::spawn({
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
@@ -2074,7 +2118,7 @@ async fn handle_codex_anthropic_to_responses_transform(
                 log_usage(
                     &state,
                     &provider_id,
-                    app_type_str,
+                    &app_type_str,
                     &model,
                     &request_model,
                     &outbound_model,
@@ -2131,7 +2175,7 @@ fn build_codex_anthropic_sse_response(
             .outbound_model
             .clone()
             .unwrap_or_else(|| ctx.request_model.clone());
-        let app_type_str = ctx.app_type_str;
+        let app_type_str = ctx.app_type_str.to_string();
         let start_time = ctx.start_time;
         let session_id = ctx.session_id.clone();
 
@@ -2156,12 +2200,13 @@ fn build_codex_anthropic_sse_response(
                 let request_model = request_model.clone();
                 let outbound_model = fallback_model.clone();
                 let session_id = session_id.clone();
+                let app_type_str = app_type_str.clone();
 
                 tokio::spawn(async move {
                     log_usage(
                         &state,
                         &provider_id,
-                        app_type_str,
+                        &app_type_str,
                         &model,
                         &request_model,
                         &outbound_model,

@@ -3177,6 +3177,16 @@
     }
   },
   "hermes": {
+    "profilePanel": {
+      "hint": "Each agent can enter proxy mode on its own: its own /hermes/<name>/v1 namespace, routing target and load balancing; once independent it no longer follows the unified routing above.",
+      "independent": "Independent",
+      "direct": "Direct",
+      "routePlaceholder": "Pick a routing provider",
+      "failover": "Failover",
+      "sticky": "Sticky sessions",
+      "enter": "Go independent",
+      "exit": "Leave"
+    },
     "form": {
       "baseUrl": "API Endpoint",
       "providerKey": "Provider Key",

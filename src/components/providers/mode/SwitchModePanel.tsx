@@ -31,6 +31,7 @@ import {
 } from "@/lib/query/failover";
 import { useModeActions } from "@/hooks/useModeActions";
 import { getRoutingReason } from "@/utils/routingReason";
+import { HermesProfilePanel } from "@/components/providers/mode/HermesProfilePanel";
 import { CODEX_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import { routeSwitchNotification } from "@/utils/routeSwitchNotification";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -671,6 +672,8 @@ export function SwitchModePanel({
           onOpenSettings={onOpenRoutingSettings}
         />
       )}
+
+      {app === "hermes" && <HermesProfilePanel />}
 
       {app === "codex" && (
         <StackSettingsSheet

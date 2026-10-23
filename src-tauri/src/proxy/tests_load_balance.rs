@@ -773,3 +773,182 @@ async fn hermes_proxy_distributes_sessions_and_logs_usage() {
     let values: Vec<&str> = sticky.values().copied().collect();
     assert!(values.contains(&"a") && values.contains(&"b"), "{sticky:?}");
 }
+
+// ===== Hermes 按 profile 独立命名空间 =====
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial]
+async fn hermes_profile_namespace_routes_to_its_own_target() {
+    let _home = TempHome::new();
+    ensure_crypto_provider();
+    // 摘掉本机 HERMES_HOME（测试要用临时 HOME 下的 profiles/）
+    let saved_hermes_home = std::env::var_os("HERMES_HOME");
+    std::env::remove_var("HERMES_HOME");
+
+    let (addr_a, count_a) = spawn_mock_upstream(vec![]).await;
+    let (addr_b, count_b) = spawn_mock_upstream(vec![]).await;
+
+    // 临时 HOME 里种默认 home + 一个 profile home
+    let hermes_dir = std::env::temp_dir().join(format!(
+        "cc-switch-hermes-profile-e2e-{}",
+        std::process::id()
+    ));
+    struct RestoreHermesHome {
+        dir: std::path::PathBuf,
+        saved: Option<std::ffi::OsString>,
+    }
+    impl Drop for RestoreHermesHome {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+            match self.saved.take() {
+                Some(value) => std::env::set_var("HERMES_HOME", value),
+                None => std::env::remove_var("HERMES_HOME"),
+            }
+        }
+    }
+    let _guard = RestoreHermesHome {
+        dir: hermes_dir.clone(),
+        saved: saved_hermes_home,
+    };
+    std::fs::create_dir_all(hermes_dir.join("profiles").join("worker")).unwrap();
+    std::fs::write(
+        hermes_dir.join("config.yaml"),
+        "model:\n  default: mine\n  provider: mine\ncustom_providers:\n  - name: mine\n",
+    )
+    .unwrap();
+    std::fs::write(
+        hermes_dir
+            .join("profiles")
+            .join("worker")
+            .join("config.yaml"),
+        "model:\n  default: w-model\n  provider: custom:old\ncustom_providers:\n  - name: old\n",
+    )
+    .unwrap();
+    std::env::set_var("HERMES_HOME", &hermes_dir);
+
+    let db = Arc::new(Database::memory().unwrap());
+    db.save_provider("hermes", &hermes_provider("a", 1, &addr_a))
+        .unwrap();
+    db.save_provider("hermes", &hermes_provider("b", 2, &addr_b))
+        .unwrap();
+    db.set_current_provider("hermes", "a").unwrap();
+    // 临时端口：本机可能跑着真实代理（15721）
+    db.update_proxy_config(crate::proxy::types::ProxyConfig {
+        listen_port: 0,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let state = crate::store::AppState::new(db.clone());
+
+    // 独立进入：worker 路由到 b，不开故障转移（确定性单路由）。
+    crate::services::provider::hermes_profile::enter(&state, "worker", "b", false, "off")
+        .await
+        .expect("enter worker");
+
+    let worker_text = std::fs::read_to_string(
+        hermes_dir
+            .join("profiles")
+            .join("worker")
+            .join("config.yaml"),
+    )
+    .unwrap();
+    let worker_yaml: serde_yaml::Value = serde_yaml::from_str(&worker_text).unwrap();
+    let entry = worker_yaml["custom_providers"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .find(|e| e.get("name").and_then(|n| n.as_str()) == Some("cc-switch-route"))
+        .expect("route entry");
+    let base_url = entry["base_url"].as_str().unwrap().to_string();
+    assert!(
+        base_url.ends_with("/hermes/worker/v1"),
+        "独立命名空间: {base_url}"
+    );
+    assert_eq!(
+        worker_yaml["model"]["provider"].as_str(),
+        Some("cc-switch-route")
+    );
+
+    // 请求打到独立命名空间：两次都到 b（worker 的路由目标），a 不动。
+    let client = reqwest::Client::new();
+    for _ in 0..2 {
+        let resp = client
+            .post(format!("{base_url}/responses"))
+            .header("session_id", "worker-e2e-session-0000000001")
+            .json(&json!({
+                "model": "b-model",
+                "input": [
+                    { "type": "message", "role": "user",
+                      "content": [{ "type": "input_text", "text": "hi" }] }
+                ],
+                "stream": false,
+                "store": false
+            }))
+            .send()
+            .await
+            .expect("send");
+        assert_eq!(resp.status(), 200);
+    }
+    assert!(count_b.load(Ordering::SeqCst) >= 2, "路由目标 b 收到请求");
+    assert_eq!(count_a.load(Ordering::SeqCst), 0, "a 不参与 worker 的路由");
+
+    // 统一路由进入：worker 已独立，统一条目跳过它的 home。
+    crate::mode::controller::enter(&state, &AppType::Hermes, false)
+        .await
+        .expect("unified enter");
+    let worker_yaml: serde_yaml::Value = serde_yaml::from_str(
+        &std::fs::read_to_string(
+            hermes_dir
+                .join("profiles")
+                .join("worker")
+                .join("config.yaml"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let entry = worker_yaml["custom_providers"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .find(|e| e.get("name").and_then(|n| n.as_str()) == Some("cc-switch-route"))
+        .expect("独立条目仍在");
+    assert!(
+        entry["base_url"]
+            .as_str()
+            .unwrap()
+            .ends_with("/hermes/worker/v1"),
+        "统一路由不改独立 profile 的条目"
+    );
+
+    // 两个都退出：worker 恢复原值，统一路由恢复默认 home。
+    crate::mode::controller::exit(&state, &AppType::Hermes)
+        .await
+        .expect("unified exit");
+    crate::services::provider::hermes_profile::exit(&state, "worker")
+        .await
+        .expect("worker exit");
+    let worker_yaml: serde_yaml::Value = serde_yaml::from_str(
+        &std::fs::read_to_string(
+            hermes_dir
+                .join("profiles")
+                .join("worker")
+                .join("config.yaml"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        !worker_yaml["custom_providers"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .any(|e| e.get("name").and_then(|n| n.as_str()) == Some("cc-switch-route")),
+        "独立条目删除"
+    );
+    assert_eq!(
+        worker_yaml["model"]["provider"].as_str(),
+        Some("custom:old"),
+        "按进入时记录恢复"
+    );
+}

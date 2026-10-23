@@ -53,12 +53,15 @@ impl ProviderRouter {
     /// - 故障转移关闭时：仅返回当前供应商
     /// - 故障转移开启时：仅使用故障转移队列，按队列顺序依次尝试（P1 → P2 → ...）
     pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
-        // 代理模式下路由到代理路由那家，和直连指针无关。
-        let current_provider = AppType::from_str(app_type).ok().and_then(|app_enum| {
-            crate::mode::current::provider_in_use(&self.db, &app_enum)
-                .ok()
-                .flatten()
-        });
+        // 代理模式下路由到代理路由那家，和直连指针无关。Hermes 按 profile 独立路由的
+        // 伪键（hermes:<profile>）没有 AppType，路由目标从它自己的 live-state 读。
+        let current_provider = match current_provider_of(&self.db, app_type) {
+            Ok(provider) => provider,
+            Err(error) => {
+                log::warn!("[{app_type}] 读当前供应商失败（{error}），按未配置处理");
+                None
+            }
+        };
         self.select_providers_with_current(app_type, current_provider)
             .await
     }
@@ -122,15 +125,28 @@ impl ProviderRouter {
         &self,
         app_type: &str,
     ) -> Result<(Vec<Provider>, usize, usize), AppError> {
-        let all_providers = self.db.get_all_providers(app_type)?;
-
-        // 使用 DAO 返回的排序结果，确保和前端展示一致
-        let ordered_ids: Vec<String> = self
-            .db
-            .get_failover_queue(app_type)?
-            .into_iter()
-            .map(|item| item.provider_id)
-            .collect();
+        // Hermes 按 profile 独立路由的伪键：池是 Hermes 应用的全部供应商，顺序按
+        // sort_index（独立配置不单独维护队列）；其余应用用各自的故障转移队列。
+        let (pool_app, ordered_ids): (&str, Vec<String>) =
+            match crate::services::provider::hermes_profile::profile_of(app_type) {
+                Some(_) => (
+                    AppType::Hermes.as_str(),
+                    self.db
+                        .get_all_providers(AppType::Hermes.as_str())?
+                        .keys()
+                        .cloned()
+                        .collect(),
+                ),
+                None => (
+                    app_type,
+                    self.db
+                        .get_failover_queue(app_type)?
+                        .into_iter()
+                        .map(|item| item.provider_id)
+                        .collect(),
+                ),
+            };
+        let all_providers = self.db.get_all_providers(pool_app)?;
 
         let mut result = Vec::new();
         let mut total_providers = 0usize;
@@ -220,11 +236,13 @@ impl ProviderRouter {
         session_client_provided: bool,
         request_model: &str,
     ) -> Result<Vec<Provider>, AppError> {
-        let current_provider = AppType::from_str(app_type).ok().and_then(|app_enum| {
-            crate::mode::current::provider_in_use(&self.db, &app_enum)
-                .ok()
-                .flatten()
-        });
+        let current_provider = match current_provider_of(&self.db, app_type) {
+            Ok(provider) => provider,
+            Err(error) => {
+                log::warn!("[{app_type}] 读当前供应商失败（{error}），按未配置处理");
+                None
+            }
+        };
         self.select_providers_for_session_with_current(
             app_type,
             current_provider,
@@ -493,6 +511,22 @@ impl ProviderRouter {
         breakers.insert(key.to_string(), breaker.clone());
 
         breaker
+    }
+}
+
+/// 当前供应商：真应用经 mode::current::provider_in_use；Hermes 伪键（hermes:<profile>）
+/// 的路由目标从它自己的 live-state 读（不在代理模式时没有）。
+pub(crate) fn current_provider_of(
+    db: &Database,
+    app_type: &str,
+) -> Result<Option<Provider>, AppError> {
+    match crate::services::provider::hermes_profile::profile_of(app_type) {
+        Some(profile) => crate::services::provider::hermes_profile::route_provider(db, profile),
+        None => Ok(AppType::from_str(app_type).ok().and_then(|app_enum| {
+            crate::mode::current::provider_in_use(db, &app_enum)
+                .ok()
+                .flatten()
+        })),
     }
 }
 

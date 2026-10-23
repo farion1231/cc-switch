@@ -18,6 +18,7 @@ mod gemini_editor;
 pub(crate) mod grok_direct;
 mod grok_editor;
 pub(crate) mod hermes_direct;
+pub(crate) mod hermes_profile;
 pub(crate) mod icon;
 mod live;
 #[cfg(test)]

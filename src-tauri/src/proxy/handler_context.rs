@@ -57,7 +57,7 @@ pub struct RequestContext {
     /// 日志标签（如 "Claude"、"Codex"、"Gemini"）
     pub tag: &'static str,
     /// 应用类型字符串（如 "claude"、"codex"、"gemini"）
-    pub app_type_str: &'static str,
+    pub app_type_str: std::borrow::Cow<'static, str>,
     /// 应用类型（预留，目前通过 app_type_str 使用）
     #[allow(dead_code)]
     pub app_type: AppType,
@@ -95,15 +95,16 @@ impl RequestContext {
         headers: &HeaderMap,
         app_type: AppType,
         tag: &'static str,
-        app_type_str: &'static str,
+        app_type_str: impl Into<std::borrow::Cow<'static, str>>,
         stack: Option<StackTarget>,
     ) -> Result<Self, ProxyError> {
+        let app_type_str = app_type_str.into();
         let start_time = Instant::now();
 
         // 从数据库读取应用级代理配置（per-app）
         let mut app_config = state
             .db
-            .get_proxy_config_for_app(app_type_str)
+            .get_proxy_config_for_app(app_type_str.as_ref())
             .await
             .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
 
@@ -113,7 +114,14 @@ impl RequestContext {
         let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
 
         // 提取 Session ID
-        let session_result = extract_session_id(headers, body, app_type_str);
+        // 按 profile 独立路由的伪应用（hermes:<profile>）按 hermes 协议提取会话；
+        // 粘性表键是 (app_type_str, session_id)，伪应用键本身已隔离。
+        let session_format = if app_type_str.starts_with("hermes:") {
+            "hermes"
+        } else {
+            app_type_str.as_ref()
+        };
+        let session_result = extract_session_id(headers, body, session_format);
         let session_id = session_result.session_id.clone();
 
         log::debug!(
@@ -147,9 +155,14 @@ impl RequestContext {
                 )
             }
             None => {
-                let current_provider = crate::mode::current::provider_in_use(&state.db, &app_type)
-                    .ok()
-                    .flatten();
+                // Hermes 按 profile 独立路由的伪键（hermes:<profile>）没有 AppType，
+                // 当前供应商按它自己的键取；真应用经 mode::current。
+                let current_provider = crate::proxy::provider_router::current_provider_of(
+                    &state.db,
+                    app_type_str.as_ref(),
+                )
+                .ok()
+                .flatten();
                 let current_provider_id = current_provider
                     .as_ref()
                     .map(|provider| provider.id.clone())
@@ -164,7 +177,11 @@ impl RequestContext {
 
                 // Stack 模式不做故障转移：只发往默认那家，和故障转移关着时一样跳过熔断器选家；
                 // 队列留着，回到路由模式恢复。故障转移本来就关着时不用读模式。
+                // 独立 profile 不受统一聚合模式影响（聚合只在统一路由提供）。
                 let stack_mode = app_config.auto_failover_enabled
+                    && !crate::services::provider::hermes_profile::is_profile_key(
+                        app_type_str.as_ref(),
+                    )
                     && crate::mode::stack::stack_mode_now(&app_type);
                 let providers = if stack_mode {
                     app_config.auto_failover_enabled = false;
@@ -175,7 +192,7 @@ impl RequestContext {
                     state
                         .provider_router
                         .select_providers_for_session_with_current(
-                            app_type_str,
+                            app_type_str.as_ref(),
                             current_provider,
                             &session_id,
                             session_result.client_provided,

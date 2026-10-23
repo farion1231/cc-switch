@@ -520,7 +520,7 @@ pub(crate) fn create_usage_collector(
     // 用 ctx 的 app_type 而不是 parser_config 的：Claude Desktop 流式透传复用
     // CLAUDE_PARSER_CONFIG（app_type_str="claude"），按 parser_config 记账会把
     // claude-desktop 的行错记到 claude 名下，导致供应商计价覆盖解析不到。
-    let app_type_str = ctx.app_type_str;
+    let app_type_str = ctx.app_type_str.to_string();
     let tag = ctx.tag;
     let start_time = ctx.start_time;
     let stream_parser = parser_config.stream_parser;
@@ -540,12 +540,13 @@ pub(crate) fn create_usage_collector(
                 let session_id = session_id.clone();
                 let request_model = request_model.clone();
                 let outbound_model = fallback_model.clone();
+                let app_type_str = app_type_str.clone();
 
                 tokio::spawn(async move {
                     log_usage_internal(
                         &state,
                         &provider_id,
-                        app_type_str,
+                        &app_type_str,
                         &model,
                         &request_model,
                         &outbound_model,
@@ -566,12 +567,13 @@ pub(crate) fn create_usage_collector(
                 let session_id = session_id.clone();
                 let request_model = request_model.clone();
                 let outbound_model = fallback_model.clone();
+                let app_type_str = app_type_str.clone();
 
                 tokio::spawn(async move {
                     log_usage_internal(
                         &state,
                         &provider_id,
-                        app_type_str,
+                        &app_type_str,
                         &model,
                         &request_model,
                         &outbound_model,

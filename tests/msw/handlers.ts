@@ -564,6 +564,11 @@ export const handlers = [
       gatewayTokenConfigured: false,
     }),
   ),
+  // Hermes 按 profile 独立路由：默认空态（没有 agent 开独立）
+  http.post(`${TAURI_ENDPOINT}/list_hermes_profiles`, () => success([])),
+  http.post(`${TAURI_ENDPOINT}/enter_hermes_profile_proxy`, () => success(null)),
+  http.post(`${TAURI_ENDPOINT}/exit_hermes_profile_proxy`, () => success(null)),
+  http.post(`${TAURI_ENDPOINT}/switch_hermes_profile_route`, () => success(false)),
   http.post(`${TAURI_ENDPOINT}/get_hermes_memory`, async ({ request }) => {
     const { kind } = await withJson<{ kind: string }>(request);
     return success(kind === "user" ? "user profile" : "agent notes");

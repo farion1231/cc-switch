@@ -3048,6 +3048,16 @@
     }
   },
   "hermes": {
+    "profilePanel": {
+      "hint": "Her ajan kendi başına proxy moduna girebilir: kendi /hermes/<ad>/v1 ad alanı, yönlendirme hedefi ve yük dengelemesi vardır; bağımsız olduktan sonra yukarıdaki birleşik yönlendirmeyi izlemez.",
+      "independent": "Bağımsız",
+      "direct": "Doğrudan",
+      "routePlaceholder": "Yönlendirme sağlayıcısı seçin",
+      "failover": "Yedekleme",
+      "sticky": "Oturum yapışkanlığı",
+      "enter": "Bağımsız başlat",
+      "exit": "Ayrıl"
+    },
     "form": {
       "baseUrl": "API Uç Nokta",
       "providerKey": "Sağlayıcı Anahtarı",

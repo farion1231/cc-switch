@@ -490,10 +490,16 @@ async fn write_proxy(
             unchanged
         }
         AppType::Hermes => {
-            // 累加式应用：契约 = 指向本地代理的路由条目 + model: 段的指向 + 写入的
-            // home 名单（默认 home + 全部 profile，名单变了也要重写）。
+            // 累加式应用：契约 = 指向本地代理的路由条目 + 发布的模型 + model: 段的指向
+            // + 写入的 home 名单（默认 home + 全部 profile，名单变了也要重写）。
+            // 聚合模式发布全部成员的模型（带 ccs-h-<key>/ 前缀），路由模式只发路由那家。
+            let members = published_members(state, app, &stack, route)?;
             let base_url = format!("{}/hermes/v1", proxy_url.trim_end_matches('/'));
-            let projection = hermes_direct::proxy_contract(route, &base_url).map_err(err)?;
+            let projection = if members.is_empty() {
+                hermes_direct::proxy_contract(route, &base_url).map_err(err)?
+            } else {
+                hermes_direct::stack_proxy_contract(&members, &base_url).map_err(err)?
+            };
             let contract = contract::hermes(&projection, &hermes_direct::home_names());
             let unchanged = !force && live_now.has_contract(&contract.key);
             target.contract = Some(contract);
@@ -1041,6 +1047,8 @@ pub async fn detach_all(state: &AppState) {
             log::error!("退出时把 {} 指回直连失败: {error}", app.as_str());
         }
     }
+    // Hermes 按 profile 独立路由的分离（模式保留，下次启动再接上）。
+    crate::services::provider::hermes_profile::detach_all(state).await;
     if state.proxy_service.is_running().await {
         if let Err(error) = state.proxy_service.stop().await {
             log::warn!("退出时停止代理服务失败: {error}");
@@ -1700,6 +1708,8 @@ pub async fn startup(state: &AppState) {
             log::error!("启动时恢复 {} 的模式失败: {error}", app.as_str());
         }
     }
+    // Hermes 按 profile 独立路由的接上（自己的伪键状态）。
+    crate::services::provider::hermes_profile::attach_all(state).await;
     // 接上失败退回直连的应用可能已经把代理拉起来了。
     stop_server_if_unused(state).await;
     // 记一次新启动的 Codex 会读到的目录：兜住启动时补完的操作和 CC Switch 没开时的外部修改。
@@ -5435,6 +5445,55 @@ model_provider = "c"
         let yaml = hermes_yaml();
         assert!(hermes_entries(&yaml).iter().any(|(name, _)| name == "b"));
         assert_eq!(yaml["model"]["provider"].as_str(), Some("b"));
+
+        // 聚合模式：a、b 都进 Stack（此时直连指针在 b，默认那家是 b），进入后发布
+        // 带 ccs-h- 前缀的成员模型，默认模型指向默认那家（b）的首个发布模型；
+        // 请求按前缀路由到所属成员。
+        set_stack_member(&state, &AppType::Hermes, "a", true)
+            .await
+            .expect("add a to stack");
+        set_stack_member(&state, &AppType::Hermes, "b", true)
+            .await
+            .expect("add b to stack");
+        enter(&state, &AppType::Hermes, true)
+            .await
+            .expect("enter stack");
+        let yaml = hermes_yaml();
+        let entry = hermes_route_entry(&yaml);
+        let published: Vec<&str> = entry["models"]
+            .as_mapping()
+            .expect("models dict")
+            .keys()
+            .filter_map(|k| k.as_str())
+            .collect();
+        assert!(
+            published.contains(&"ccs-h-a/a-model"),
+            "成员 a 的模型发布: {published:?}"
+        );
+        assert!(
+            published.contains(&"ccs-h-b/b-model"),
+            "默认那家（b）照常发布: {published:?}"
+        );
+        assert_eq!(
+            yaml["model"]["default"].as_str(),
+            Some("ccs-h-b/b-model"),
+            "默认模型 = 默认那家首个发布模型"
+        );
+        use crate::mode::stack::{self, Resolved};
+        match stack::resolve(
+            &state.db,
+            &DeviceStore::for_device(),
+            &AppType::Hermes,
+            "ccs-h-b/b-model",
+        )
+        .expect("resolve")
+        {
+            Resolved::Hit(target) => {
+                assert_eq!(target.provider.id, "b", "按前缀路由到成员 b");
+            }
+            other => panic!("应命中 Stack 模型: {other:?}"),
+        }
+        exit(&state, &AppType::Hermes).await.expect("exit stack");
     }
 
     #[tokio::test]

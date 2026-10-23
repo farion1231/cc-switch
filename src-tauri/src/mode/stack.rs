@@ -42,6 +42,7 @@ const CODEX_SEPARATOR: char = '/';
 /// 里放不下 key 和模型名，只放数字；末尾 8 位数字会被当成日期剥掉，所以是 6 位。`fable` 前缀让
 /// Desktop 给出 effort 选择器，内嵌的 Claude Code 不会因此把它当成真的 Fable。
 const DESKTOP_PREFIX: &str = "claude-fable-ccs-";
+const HERMES_PREFIX: &str = "ccs-h-";
 const DESKTOP_CODE_DIGITS: usize = 6;
 
 /// key 的最大长度：只是为了模型 id 不至于太长。
@@ -54,7 +55,7 @@ pub const CLAUDE_DEFAULT_WINDOW: u64 = 200_000;
 pub fn supports_stack(app: &AppType) -> bool {
     matches!(
         app,
-        AppType::Claude | AppType::Codex | AppType::ClaudeDesktop
+        AppType::Claude | AppType::Codex | AppType::ClaudeDesktop | AppType::Hermes
     )
 }
 
@@ -118,6 +119,7 @@ fn slug(text: &str) -> String {
 pub fn encode(app: &AppType, key: &str, model: &str, one_m: bool) -> String {
     match app {
         AppType::Codex => format!("{CODEX_PREFIX}{key}{CODEX_SEPARATOR}{model}"),
+        AppType::Hermes => format!("{HERMES_PREFIX}{key}/{model}"),
         AppType::ClaudeDesktop => format!("{DESKTOP_PREFIX}{}", desktop_code(key, model)),
         _ => {
             let marker = if one_m { ONE_M_MARKER_FOR_CLIENT } else { "" };
@@ -174,6 +176,15 @@ pub fn decode<'a>(app: &AppType, id: &'a str) -> Decoded<'a> {
                 return Decoded::Plain;
             };
             if !rest.contains(CODEX_SEPARATOR) {
+                return Decoded::Plain;
+            }
+            (rest, "/", false)
+        }
+        AppType::Hermes => {
+            let Some(rest) = id.strip_prefix(HERMES_PREFIX) else {
+                return Decoded::Plain;
+            };
+            if !rest.contains('/') {
                 return Decoded::Plain;
             }
             (rest, "/", false)
@@ -378,6 +389,62 @@ pub fn codex_model_ids(key: &str, provider: &Provider) -> Vec<String> {
         .collect()
 }
 
+/// Hermes 行发布的模型：`models` 数组（UI 形态）逐条转成 Stack 模型；上游名就是行里的
+/// 模型 id 原值，发布 id 带 `ccs-h-<key>/` 前缀。窗口没配按 200K。
+pub fn hermes_models(key: &str, provider: &Provider) -> Vec<StackModel> {
+    let models = provider
+        .settings_config
+        .get("models")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    models
+        .iter()
+        .filter_map(|model| {
+            let upstream = model.get("id").and_then(Value::as_str)?.trim().to_string();
+            if upstream.is_empty() {
+                return None;
+            }
+            let name = model
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(&upstream)
+                .to_string();
+            let window = model
+                .get("context_length")
+                .and_then(Value::as_u64)
+                .unwrap_or(200_000);
+            Some(StackModel {
+                id: encode(&AppType::Hermes, key, &upstream, false),
+                upstream,
+                name: name.clone(),
+                display_name: format!("{name}（{}）", provider.name),
+                description: String::new(),
+                one_m: false,
+                window,
+            })
+        })
+        .collect()
+}
+
+/// Hermes 发布的全部 Stack 模型（按名单顺序）。路由那家照常发布（同 Claude）。
+pub fn hermes_published(members: &[Member]) -> Vec<StackModel> {
+    members
+        .iter()
+        .flat_map(|member| hermes_models(&member.key, &member.provider))
+        .collect()
+}
+
+/// 默认那家（路由）列表里的第一个发布模型：Stack 模式下顶层 `model.default` 的落点。
+pub fn hermes_route_default(members: &[Member]) -> Option<StackModel> {
+    let route = members.iter().find(|member| member.route)?;
+    hermes_models(&route.key, &route.provider)
+        .into_iter()
+        .next()
+}
+
 /// Claude Desktop Stack 供应商发布的一个模型。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopStackModel {
@@ -472,6 +539,10 @@ fn window_label(window: u64) -> Option<String> {
 fn model_ids_of(app: &AppType, key: &str, provider: &Provider, route: bool) -> Vec<String> {
     match app {
         AppType::Claude => claude_models(key, provider)
+            .into_iter()
+            .map(|model| model.id)
+            .collect(),
+        AppType::Hermes => hermes_models(key, provider)
             .into_iter()
             .map(|model| model.id)
             .collect(),
@@ -887,6 +958,62 @@ mod tests {
         assert_eq!(allocate_key(&mut stack, &chinese), "pc1b2c3");
         assert_eq!(allocate_key(&mut stack, &blank_icon), "deepseek");
         assert_eq!(allocate_key(&mut stack, &custom_icon), "acme");
+    }
+
+    #[test]
+    fn hermes_ids_round_trip_through_encode_and_decode() {
+        let id = encode(&AppType::Hermes, "kimi", "kimi-k2-0905", false);
+        assert_eq!(id, "ccs-h-kimi/kimi-k2-0905");
+        match decode(&AppType::Hermes, &id) {
+            Decoded::Stack { key, model, one_m } => {
+                assert_eq!((key, model, one_m), ("kimi", "kimi-k2-0905", false));
+            }
+            other => panic!("应解出 Stack: {other:?}"),
+        }
+        // 没有 Hermes 前缀的普通模型 id 不进 Stack 语义
+        assert!(matches!(
+            decode(&AppType::Hermes, "kimi-k2-0905"),
+            Decoded::Plain
+        ));
+        // 带前缀但没有分隔符：不是 Stack 形状，按普通模型（与 Codex 同语义）
+        assert!(matches!(
+            decode(&AppType::Hermes, "ccs-h-kimi"),
+            Decoded::Plain
+        ));
+        // Codex 前缀在 Hermes 应用里是普通模型
+        assert!(matches!(
+            decode(&AppType::Hermes, "ccs-kimi/kimi-k2"),
+            Decoded::Plain
+        ));
+    }
+
+    #[test]
+    fn hermes_models_publish_every_declared_model_with_window() {
+        let provider = Provider::with_id(
+            "a".to_string(),
+            "Kimi".to_string(),
+            json!({
+                "models": [
+                    { "id": "kimi-k2-0905", "context_length": 262144, "name": "K2" },
+                    { "id": "kimi-k2-thinking" },
+                    { "id": "" },
+                    { "context_length": 1 },
+                ]
+            }),
+            None,
+        );
+        let models = hermes_models("kimi", &provider);
+        assert_eq!(models.len(), 2, "空 id 与缺 id 的条目丢弃");
+        assert_eq!(models[0].id, "ccs-h-kimi/kimi-k2-0905");
+        assert_eq!(models[0].upstream, "kimi-k2-0905");
+        assert_eq!(models[0].name, "K2");
+        assert_eq!(models[0].window, 262144);
+        assert_eq!(models[1].window, 200000, "没配窗口按 200K");
+        assert!(
+            models[1].display_name.contains("Kimi"),
+            "{}",
+            models[1].display_name
+        );
     }
 
     #[test]

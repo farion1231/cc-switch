@@ -93,12 +93,13 @@ export function isModeAppId(appId: string): appId is ModeAppId {
 /** 支持 Stack 模式的应用（后端 `mode::stack::supports_stack` 的镜像）。 */
 export type StackAppId = Extract<
   ModeAppId,
-  "claude" | "codex" | "claude-desktop"
+  "claude" | "codex" | "hermes" | "claude-desktop"
 >;
 
 export const STACK_APP_IDS: StackAppId[] = [
   "claude",
   "codex",
+  "hermes",
   "claude-desktop",
 ];
 

@@ -1838,6 +1838,10 @@ pub fn run() {
             commands::set_openclaw_tools,
             // Hermes specific
             commands::import_hermes_providers_from_live,
+            commands::list_hermes_profiles,
+            commands::enter_hermes_profile_proxy,
+            commands::exit_hermes_profile_proxy,
+            commands::switch_hermes_profile_route,
             commands::get_hermes_live_provider_ids,
             commands::get_hermes_live_provider,
             commands::get_hermes_model_config,

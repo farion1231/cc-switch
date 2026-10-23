@@ -6,9 +6,9 @@
 //! pending，文件、模式和写入记录在同一个操作里提交，崩溃后可前滚或丢弃。
 //!
 //! Hermes 的「多个 agent」是命名 profile（`<home>/profiles/<name>/config.yaml`，自包含、
-//! 不从默认 home 继承）。统一路由模式把同一条路由条目写进默认 home 和全部 profile home：
-//! 每个 home 的 `model.default` 在路由那家提供的模型里就保留；退出时默认 home 按直连
-//! 指针恢复，profile home 按进入时记录的原值恢复（记录在 `written.extra["homes"]`）。
+//! 不从默认 home 继承）。统一路由把同一条路由条目写进默认 home 和全部 profile home；
+//! 按 profile 独立路由（`hermes_profile`）写单个 home、用自己的伪应用键记状态。
+//! 两条路径共用这里的原语（[`run_enter_homes`] / [`run_exit_homes`]）。
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -20,7 +20,9 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::live::engine::{DeviceStore, LiveFile};
 use crate::live::project::claude::PROXY_TOKEN_PLACEHOLDER;
-use crate::live::project::hermes::{HermesConfigPatch, HermesProjection, ModelTarget};
+use crate::live::project::hermes::{
+    HermesConfigPatch, HermesProjection, ModelTarget, ROUTE_ENTRY_NAME,
+};
 use crate::mode::operation::{AppWrite, FileChange, OperationReport};
 use crate::mode::state::{self, PendingTarget, Written};
 use crate::provider::Provider;
@@ -36,6 +38,8 @@ pub(crate) struct HermesHome {
     pub name: String,
     pub file: LiveFile,
 }
+
+type HomeList = Vec<(String, LiveFile)>;
 
 /// 默认 home（`~/.hermes/config.yaml`，供应商条目里带 Key，按 0600 写）。
 pub(crate) fn default_home() -> HermesHome {
@@ -66,12 +70,28 @@ pub(crate) fn home_names() -> Vec<String> {
     writable_homes().into_iter().map(|home| home.name).collect()
 }
 
+/// 统一路由要写的 home：全部可写 home 里去掉已独立路由的 profile（它们由
+/// `hermes_profile` 自己管）。
+fn unified_homes() -> Vec<HermesHome> {
+    writable_homes()
+        .into_iter()
+        .filter(|home| home.name.is_empty() || !super::hermes_profile::is_independent(&home.name))
+        .collect()
+}
+
+fn as_home_list(homes: &[HermesHome]) -> HomeList {
+    homes
+        .iter()
+        .map(|home| (home.name.clone(), home.file.clone()))
+        .collect()
+}
+
 /// 能安全改写的 home：文件存在且解析得动。解析失败的不碰（补丁对坏文件只会报错），
 /// 警告后跳过——一个损坏的 profile 不该挡住其它所有 agent 进代理。
 fn writable_homes() -> Vec<HermesHome> {
     homes()
         .into_iter()
-        .filter(|home| match read_model_state(&home.file.path) {
+        .filter(|home| match read_model_state(home.file.path.as_path()) {
             Ok(_) => true,
             Err(error) => {
                 log::warn!(
@@ -101,7 +121,7 @@ fn read_model_state(path: &Path) -> Result<(Option<String>, Option<String>), App
     Ok((text("provider"), text("default")))
 }
 
-/// 代理契约：`{proxy_base}/hermes/v1` 上的 Responses 路由条目 + `model:` 段指向它。
+/// 代理契约（路由模式）：发布路由那家自己的模型。
 pub(crate) fn proxy_contract(
     route: &Provider,
     proxy_base_url: &str,
@@ -113,19 +133,98 @@ pub(crate) fn proxy_contract(
     )
 }
 
-/// 默认 home 的直连投影（`direct` 为 `None` 时清掉 `model.provider`）。
-fn direct_projection(direct: Option<&Provider>) -> HermesProjection {
-    HermesProjection::direct(
-        direct.map(|provider| (provider.id.as_str(), &provider.settings_config)),
+/// 代理契约（聚合模式）：发布 Stack 成员的模型（带 `ccs-h-<key>/` 前缀，请求按前缀
+/// 路由到所属成员），默认模型取默认那家的首个发布模型。
+pub(crate) fn stack_proxy_contract(
+    members: &[crate::mode::stack::Member],
+    proxy_base_url: &str,
+) -> Result<HermesProjection, AppError> {
+    let models = crate::mode::stack::hermes_published(members)
+        .into_iter()
+        .map(|model| {
+            json!({
+                "id": model.id,
+                "name": model.name,
+                "context_length": model.window,
+            })
+        })
+        .collect::<Vec<_>>();
+    HermesProjection::proxy_contract_with_models(
+        Value::Array(models),
+        crate::mode::stack::hermes_route_default(members).map(|model| model.id),
+        proxy_base_url,
+        PROXY_TOKEN_PLACEHOLDER,
     )
 }
 
-/// 把 `projection` 写进全部 home，和目标状态在同一个操作里提交；`None` 时只落定状态、
-/// 不读也不写文件（契约没变 / 未接上）。
+/// 统一路由进入：写默认 home + 未独立的全部 profile；`None` 时只落定状态。
 pub(crate) fn run_enter(
     db: &Database,
     op: &str,
     projection: Option<&HermesProjection>,
+    target: PendingTarget,
+) -> Result<OperationReport, AppError> {
+    match projection {
+        Some(projection) => run_enter_homes(
+            db,
+            op,
+            &as_home_list(&unified_homes()),
+            projection,
+            app(),
+            target,
+        ),
+        None => run_settled(db, op, app(), target),
+    }
+}
+
+/// 统一路由退出：默认 home 按直连指针恢复，profile 按记录恢复；`attached` 为假时只
+/// 落定状态。
+pub(crate) fn run_exit(
+    db: &Database,
+    op: &str,
+    attached: bool,
+    direct: Option<&Provider>,
+    target: PendingTarget,
+) -> Result<OperationReport, AppError> {
+    if !attached {
+        return run_settled(db, op, app(), target);
+    }
+    run_exit_homes(
+        db,
+        op,
+        &as_home_list(&unified_homes()),
+        app(),
+        direct,
+        target,
+    )
+}
+
+/// 只落定状态，不碰客户端文件（契约没变 / 未接上）。
+fn run_settled(
+    db: &Database,
+    op: &str,
+    key: &str,
+    target: PendingTarget,
+) -> Result<OperationReport, AppError> {
+    let _hermes_guard = crate::hermes_config::hermes_write_lock()
+        .lock()
+        .map_err(|e| AppError::Lock(e.to_string()))?;
+    let app_write = AppWrite::begin(db, key)?;
+    app_write.run(op, &[], target)
+}
+
+/// 把 `projection` 写进给定 home 列表，状态按 `key`（统一键 `hermes` 或伪键
+/// `hermes:<profile>`）在同一个操作里提交。
+///
+/// 进入代理时逐 home 记下 `model:` 段原值（写入记录 `extra["homes"]`），退出时按它
+/// 恢复。换路由会再次走到这里：已记录的 home 保留第一次进入时的原值（此时 live 已
+/// 是代理契约，重采会把代理期的值当原值），只补记上次之后新增的 home。
+pub(crate) fn run_enter_homes(
+    db: &Database,
+    op: &str,
+    homes: &[(String, LiveFile)],
+    projection: &HermesProjection,
+    key: &str,
     mut target: PendingTarget,
 ) -> Result<OperationReport, AppError> {
     // 与 hermes_config 的其它写路径（set_provider 等）互斥，避免两条路径交错的半截写。
@@ -133,53 +232,43 @@ pub(crate) fn run_enter(
         .lock()
         .map_err(|e| AppError::Lock(e.to_string()))?;
 
-    let app_write = AppWrite::begin(db, app())?;
-    let Some(projection) = projection else {
-        return app_write.run(op, &[], target);
-    };
-
-    let homes = writable_homes();
-    // 进入代理时逐 home 记下 model: 段原值，退出时按它恢复。代理内换路由会再次
-    // 走到这里：已记录的 home 保留第一次进入时的原值（此时 live 已是代理契约，
-    // 重采会把代理期的值当原值），只补记上次之后新增的 home。
-    let recorded = recorded_home_states(&app_write.store)?;
+    let app_write = AppWrite::begin(db, key)?;
+    let recorded = recorded_home_states(&app_write.store, key)?;
     let mut restore = Map::new();
-    for home in &homes {
-        let state = match recorded.get(&home.name) {
+    let mut changes: Vec<FileChange<'_>> = Vec::with_capacity(homes.len());
+    let patch = HermesConfigPatch::new(projection);
+    for (name, file) in homes {
+        let state = match recorded.get(name) {
             Some(state) => state.clone(),
             None => {
-                let (provider, default) = read_model_state(&home.file.path)?;
+                let (provider, default) = read_model_state(file.path.as_path())?;
                 json!({ "provider": provider, "default": default })
             }
         };
-        restore.insert(home.name.clone(), state);
+        restore.insert(name.clone(), state);
+        changes.push(FileChange {
+            file: file.clone(),
+            patch: &patch,
+        });
     }
     target.written = Some(Written {
-        tables: vec![crate::live::project::hermes::ROUTE_ENTRY_NAME.to_string()],
+        tables: vec![ROUTE_ENTRY_NAME.to_string()],
         extra: {
             let mut extra = Map::new();
             extra.insert("homes".to_string(), Value::Object(restore));
             extra
         },
     });
-
-    let patch = HermesConfigPatch::new(projection);
-    let changes: Vec<FileChange<'_>> = homes
-        .iter()
-        .map(|home| FileChange {
-            file: home.file.clone(),
-            patch: &patch,
-        })
-        .collect();
     app_write.run(op, &changes, target)
 }
 
-/// 退出代理：默认 home 按直连指针恢复，profile home 按进入时记录的原值恢复（没有
-/// 记录的 home 只删条目、`model:` 段不动）；`attached` 为假时只落定状态、不写文件。
-pub(crate) fn run_exit(
+/// 退出代理：删路由条目。默认 home（`name` 为空且 `key` 是统一键）按直连指针恢复，
+/// 其余按进入时记录的原值恢复（没有记录的只删条目、`model:` 段不动）。
+pub(crate) fn run_exit_homes(
     db: &Database,
     op: &str,
-    attached: bool,
+    homes: &[(String, LiveFile)],
+    key: &str,
     direct: Option<&Provider>,
     mut target: PendingTarget,
 ) -> Result<OperationReport, AppError> {
@@ -187,20 +276,15 @@ pub(crate) fn run_exit(
         .lock()
         .map_err(|e| AppError::Lock(e.to_string()))?;
 
-    let app_write = AppWrite::begin(db, app())?;
-    if !attached {
-        return app_write.run(op, &[], target);
-    }
-
-    let homes = writable_homes();
-    let recorded = recorded_home_states(&app_write.store)?;
+    let app_write = AppWrite::begin(db, key)?;
+    let recorded = recorded_home_states(&app_write.store, key)?;
     let projections: Vec<HermesProjection> = homes
         .iter()
-        .map(|home| {
-            if home.name.is_empty() {
+        .map(|(name, _)| {
+            if name.is_empty() && key == app() {
                 return direct_projection(direct);
             }
-            match recorded.get(&home.name) {
+            match recorded.get(name) {
                 Some(state) => HermesProjection {
                     entry: None,
                     model: ModelTarget::Restore {
@@ -226,8 +310,8 @@ pub(crate) fn run_exit(
     let changes: Vec<FileChange<'_>> = homes
         .iter()
         .zip(&patches)
-        .map(|(home, patch)| FileChange {
-            file: home.file.clone(),
+        .map(|((_, file), patch)| FileChange {
+            file: file.clone(),
             patch,
         })
         .collect();
@@ -236,9 +320,19 @@ pub(crate) fn run_exit(
     app_write.run(op, &changes, target)
 }
 
+/// 默认 home 的直连投影（`direct` 为 `None` 时清掉 `model.provider`）。
+fn direct_projection(direct: Option<&Provider>) -> HermesProjection {
+    HermesProjection::direct(
+        direct.map(|provider| (provider.id.as_str(), &provider.settings_config)),
+    )
+}
+
 /// 进入代理时记录的各 home `model:` 段原值（`written.extra["homes"]`）。
-fn recorded_home_states(store: &DeviceStore) -> Result<BTreeMap<String, Value>, AppError> {
-    let recorded = state::written(store, app())?
+fn recorded_home_states(
+    store: &DeviceStore,
+    key: &str,
+) -> Result<BTreeMap<String, Value>, AppError> {
+    let recorded = state::written(store, key)?
         .and_then(|written| written.extra.get("homes").cloned())
         .unwrap_or_else(|| json!({}));
     Ok(serde_json::from_value(recorded).unwrap_or_default())

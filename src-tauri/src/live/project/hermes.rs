@@ -35,9 +35,10 @@ pub const PROXY_API_MODE: &str = "codex_responses";
 /// `model:` 段的目标状态。
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModelTarget {
-    /// 进入代理：`provider` 指向路由条目；`default` 在路由条目发布的模型列表里就
-    /// 保留，否则换成首个模型（没有模型就不动）。
-    Route,
+    /// 进入代理：`provider` 指向路由条目；`default` 为 `Some` 时显式落这个模型
+    /// （聚合模式取默认那家的首个发布模型），为 `None` 时按规则：现有默认在发布
+    /// 列表里就保留，否则换首个模型（没有模型就不动）。
+    Route { default: Option<String> },
     /// 退出代理：`provider` 恢复记录值（`None` = 原本没有这个键，删掉，Hermes 回落
     /// 内置供应商）；`default` 有记录值就恢复，`None` = 不动（原本没有默认的 home
     /// 保留路由期的可用默认，比删掉后无默认更稳）。
@@ -65,8 +66,7 @@ pub struct HermesProjection {
 }
 
 impl HermesProjection {
-    /// 代理契约：路由条目指向本地代理（`{proxy_base}/responses`，codex_responses），
-    /// 发布路由供应商声明的模型列表，`model:` 段指向路由条目。
+    /// 代理契约（路由模式）：发布路由供应商声明的模型列表。
     pub fn proxy_contract(
         route_settings: &Value,
         proxy_base_url: &str,
@@ -76,6 +76,17 @@ impl HermesProjection {
             .get("models")
             .cloned()
             .unwrap_or_else(|| json!([]));
+        Self::proxy_contract_with_models(models, None, proxy_base_url, placeholder)
+    }
+
+    /// 代理契约（聚合模式）：发布 Stack 成员的模型（`models` 是带 `ccs-h-<key>/` 前缀的
+    /// UI 数组形态，由 `mode::stack::hermes_published` 转换而来）。
+    pub fn proxy_contract_with_models(
+        models: Value,
+        default_model: Option<String>,
+        proxy_base_url: &str,
+        placeholder: &str,
+    ) -> Result<Self, AppError> {
         let entry = json!({
             "name": ROUTE_ENTRY_NAME,
             "base_url": proxy_base_url,
@@ -90,7 +101,9 @@ impl HermesProjection {
         });
         Ok(Self {
             entry: Some(entry),
-            model: ModelTarget::Route,
+            model: ModelTarget::Route {
+                default: default_model,
+            },
         })
     }
 
@@ -120,9 +133,9 @@ impl HermesProjection {
         json!({
             "entry": self.entry,
             "model": match &self.model {
-                ModelTarget::Route => "route",
-                ModelTarget::Restore { .. } => "restore",
-                ModelTarget::Untouched => "untouched",
+                ModelTarget::Route { default } => json!({ "route": default }),
+                ModelTarget::Restore { .. } => json!("restore"),
+                ModelTarget::Untouched => json!("untouched"),
             },
         })
     }
@@ -233,30 +246,33 @@ impl LivePatch for HermesConfigPatch<'_> {
                     .cloned()
                     .unwrap_or_default();
                 let (provider, default) = match model_target {
-                    ModelTarget::Route => {
-                        let published: Vec<String> = self
-                            .projection
-                            .entry
-                            .as_ref()
-                            .and_then(|entry| entry.get("models"))
-                            .and_then(|v| v.as_array())
-                            .map(|models| {
-                                models
-                                    .iter()
-                                    .filter_map(|m| m.get("id").and_then(Value::as_str))
-                                    .map(String::from)
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let keep = model
-                            .get(&Yaml::String("default".to_string()))
-                            .and_then(Yaml::as_str)
-                            .is_some_and(|current| published.iter().any(|m| m == current));
-                        let fallback = published.first().cloned();
-                        (
-                            Some(ROUTE_ENTRY_NAME.to_string()),
-                            if keep { None } else { fallback },
-                        )
+                    ModelTarget::Route { default: explicit } => {
+                        let provider = Some(ROUTE_ENTRY_NAME.to_string());
+                        match explicit {
+                            Some(value) => (provider, Some(value.clone())),
+                            None => {
+                                let published: Vec<String> = self
+                                    .projection
+                                    .entry
+                                    .as_ref()
+                                    .and_then(|entry| entry.get("models"))
+                                    .and_then(|v| v.as_array())
+                                    .map(|models| {
+                                        models
+                                            .iter()
+                                            .filter_map(|m| m.get("id").and_then(Value::as_str))
+                                            .map(String::from)
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                let keep = model
+                                    .get(&Yaml::String("default".to_string()))
+                                    .and_then(Yaml::as_str)
+                                    .is_some_and(|current| published.iter().any(|m| m == current));
+                                let fallback = published.first().cloned();
+                                (provider, if keep { None } else { fallback })
+                            }
+                        }
                     }
                     ModelTarget::Restore { provider, default } => {
                         (provider.clone(), default.clone())

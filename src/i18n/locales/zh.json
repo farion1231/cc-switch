@@ -3177,6 +3177,16 @@
     }
   },
   "hermes": {
+    "profilePanel": {
+      "hint": "每个 agent 可以单独进入代理模式：独立命名空间 /hermes/<名称>/v1、自己的路由目标与负载均衡；独立进入后不再跟随上方的统一路由。",
+      "independent": "独立代理",
+      "direct": "直连",
+      "routePlaceholder": "选择路由供应商",
+      "failover": "故障转移",
+      "sticky": "会话粘性",
+      "enter": "独立进入",
+      "exit": "退出独立"
+    },
     "form": {
       "baseUrl": "API 端点",
       "providerKey": "供应商标识",
