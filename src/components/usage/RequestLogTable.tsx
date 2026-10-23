@@ -224,6 +224,13 @@ export function RequestLogTable({
   const total = result?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
+  // 停在后面的页时总数变少了（「今天」跨日、重建 Codex 用量）：收回到最后一页。
+  // 只剩一页时翻页条不画，不收回就只剩一张空表、也翻不回去
+  const pageOutOfRange = !!result && !isPlaceholderData && page >= totalPages;
+  useEffect(() => {
+    if (pageOutOfRange) setPage(totalPages - 1);
+  }, [pageOutOfRange, totalPages]);
+
   // 刷新带来新请求时：旧行从原位置滑到新位置，新行淡入并留一段渐隐的底色，
   // 看着的那行往哪走了一眼就能跟上。只在第一页、筛选没变时做；减少动态效果时只留底色
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
