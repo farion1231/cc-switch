@@ -1082,7 +1082,6 @@
       "providerKeyLockedHint": "The key marks this provider's entries in models.json, so it can't be changed after creation.",
       "url": "API endpoint",
       "urlHint": "Full OpenAI-compatible Chat Completions URL, usually ending in /chat/completions.",
-      "urlResponsesHint": "Base URL; WorkBuddy sends requests to {url}/responses.",
       "apiKeyHint": "Stored in models.json on this machine. ${ENV_VAR} references are expanded by WorkBuddy.",
       "vendor": "Vendor label",
       "modelsHint": "Add at least one model. The model ID is sent to the API as-is.",

@@ -1118,7 +1118,6 @@
       "providerKeyLockedHint": "キーは models.json のエントリに記録されるため、作成後は変更できません。",
       "url": "リクエスト URL",
       "urlHint": "OpenAI 互換 Chat Completions の完全な URL（通常 /chat/completions で終わる）。",
-      "urlResponsesHint": "ベース URL を入力します。WorkBuddy は {url}/responses にリクエストします。",
       "apiKeyHint": "このマシンの models.json に保存されます。${ENV_VAR} 形式の参照は WorkBuddy が展開します。",
       "vendor": "ベンダー表示名",
       "modelsHint": "モデルを 1 つ以上追加してください。モデル ID はそのまま API に送られます。",

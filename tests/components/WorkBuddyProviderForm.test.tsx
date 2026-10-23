@@ -124,7 +124,33 @@ describe("WorkBuddyProviderForm", () => {
     });
   });
 
-  it("uses the shared API key, endpoint and format fields", () => {
+  it("uses the shared API key and Chat Completions endpoint fields", () => {
+    render(
+      <WorkBuddyProviderForm
+        appId="workbuddy"
+        providerId="deepseek"
+        initialData={{ name: "DeepSeek", settingsConfig: existing }}
+        submitLabel="Save"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    expect(document.querySelector("#workbuddy-api-format")).toBeNull();
+    expect(screen.getByLabelText("API Key")).toHaveValue("local-test-key");
+    expect(screen.getByText("workbuddy.form.apiKeyHint")).toBeInTheDocument();
+    expect(screen.getByLabelText("workbuddy.form.url")).toHaveAttribute(
+      "aria-required",
+      "true",
+    );
+    expect(screen.getByLabelText("workbuddy.form.url")).toHaveAttribute(
+      "placeholder",
+      "https://api.example.com/v1/chat/completions",
+    );
+    expect(screen.getByText("workbuddy.form.urlHint")).toBeInTheDocument();
+  });
+
+  it("keeps an existing api field untouched when saving", async () => {
+    const submit = vi.fn().mockResolvedValue(undefined);
     render(
       <WorkBuddyProviderForm
         appId="workbuddy"
@@ -138,26 +164,21 @@ describe("WorkBuddyProviderForm", () => {
           },
         }}
         submitLabel="Save"
-        onSubmit={vi.fn()}
+        onSubmit={submit}
         onCancel={() => {}}
       />,
     );
-    expect(document.querySelector("#workbuddy-api-format")).toHaveAttribute(
-      "role",
-      "combobox",
-    );
-    expect(document.querySelector("#workbuddy-api-format")).toHaveTextContent(
-      "OpenAI Responses",
-    );
-    expect(screen.getByLabelText("API Key")).toHaveValue("local-test-key");
-    expect(screen.getByText("workbuddy.form.apiKeyHint")).toBeInTheDocument();
-    expect(screen.getByLabelText("workbuddy.form.url")).toHaveAttribute(
-      "aria-required",
-      "true",
-    );
     expect(
-      screen.getByText("workbuddy.form.urlResponsesHint"),
-    ).toBeInTheDocument();
+      screen.queryByText("workbuddy.form.urlResponsesHint"),
+    ).not.toBeInTheDocument();
+    const save = screen.getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(JSON.parse(submit.mock.calls[0][0].settingsConfig)).toMatchObject({
+      url: "https://api.example.com/v1",
+      api: "openai-responses",
+    });
   });
 
   it("lays models out as rows with details behind the expand arrow", () => {

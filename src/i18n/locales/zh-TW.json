@@ -1119,7 +1119,6 @@
       "providerKeyLockedHint": "識別碼寫在 models.json 的項目上，建立後不能再修改。",
       "url": "請求位址",
       "urlHint": "完整的 OpenAI 相容 Chat Completions 位址，通常以 /chat/completions 結尾。",
-      "urlResponsesHint": "填基礎位址，WorkBuddy 會請求 {url}/responses。",
       "apiKeyHint": "儲存在本機的 models.json 裡；${ENV_VAR} 形式的參照由 WorkBuddy 展開。",
       "vendor": "廠商標籤",
       "modelsHint": "至少新增一個模型。模型 ID 會原樣傳送給介面。",

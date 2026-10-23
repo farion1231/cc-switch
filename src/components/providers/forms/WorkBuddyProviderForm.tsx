@@ -11,13 +11,6 @@ import { HoverTip } from "@/components/ui/hover-tip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import JsonEditor from "@/components/JsonEditor";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { useCommittableRef } from "@/hooks/useLatestRef";
@@ -55,20 +48,15 @@ const PRESET_ENTRIES = workbuddyProviderPresets.map((preset, index) => ({
   preset,
 }));
 
-// WorkBuddy 的自定义模型只支持 OpenAI 兼容协议：省略 `api` 走 Chat Completions，
-// `"openai-responses"` 走 Responses。
+// WorkBuddy 的自定义模型这里只配 OpenAI Chat Completions。旧条目里的 `api` 字段
+// 不在表单里展示，靠 passthrough 原样带回保存。
 const CHAT_COMPLETIONS = "openai-completions";
-const API_FORMATS = [
-  { value: CHAT_COMPLETIONS, label: "OpenAI Chat Completions" },
-  { value: "openai-responses", label: "OpenAI Responses" },
-] as const;
 
 const configSchema = z
   .object({
     vendor: z.string().optional(),
     url: z.string(),
     apiKey: z.string(),
-    api: z.literal("openai-responses").optional(),
     models: z.array(
       z
         .object({
@@ -103,9 +91,7 @@ const parseTokens = (value: string): number | undefined => {
 
 /** Chat Completions 填的是完整地址；拉模型列表和查预设参数都按基础地址来。 */
 const baseUrlOf = (config: WorkBuddySettingsConfig) =>
-  config.api === "openai-responses"
-    ? config.url.trim()
-    : config.url.trim().replace(/\/chat\/completions\/*$/, "");
+  config.url.trim().replace(/\/chat\/completions\/*$/, "");
 
 export function WorkBuddyProviderForm({
   providerId,
@@ -226,7 +212,7 @@ export function WorkBuddyProviderForm({
       // Ignore responses for a previous endpoint/key or an unmounted form.
       modelFetchGeneration.current += 1;
     };
-  }, [baseUrl, apiKey, config.api]);
+  }, [baseUrl, apiKey]);
 
   const handleFetchModels = useCallback(() => {
     if (!baseUrl || !apiKey) {
@@ -240,7 +226,7 @@ export function WorkBuddyProviderForm({
     setFetchedModels([]);
     setIsFetchingModels(true);
     fetchModelsForConfig(baseUrl, apiKey, undefined, undefined, undefined, {
-      apiFormat: config.api ?? CHAT_COMPLETIONS,
+      apiFormat: CHAT_COMPLETIONS,
     })
       .then((result) => {
         if (generation !== modelFetchGeneration.current) return;
@@ -263,7 +249,7 @@ export function WorkBuddyProviderForm({
           setIsFetchingModels(false);
         }
       });
-  }, [apiKey, baseUrl, config.api, t]);
+  }, [apiKey, baseUrl, t]);
 
   const fillModelMetadata = useModelMetadataFill({
     baseUrl,
@@ -420,32 +406,6 @@ export function WorkBuddyProviderForm({
             }
           />
 
-          <div className="space-y-2">
-            <FormLabel htmlFor="workbuddy-api-format">
-              {t("opencode.npmPackage")}
-            </FormLabel>
-            <Select
-              value={config.api ?? CHAT_COMPLETIONS}
-              onValueChange={(api) => {
-                const next = { ...config };
-                if (api === "openai-responses") next.api = "openai-responses";
-                else delete next.api;
-                update(next);
-              }}
-            >
-              <SelectTrigger id="workbuddy-api-format">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {API_FORMATS.map((format) => (
-                  <SelectItem key={format.value} value={format.value}>
-                    {format.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
           <ApiKeySection
             id="workbuddy-api-key"
             value={config.apiKey}
@@ -463,16 +423,8 @@ export function WorkBuddyProviderForm({
             label={t("workbuddy.form.url")}
             value={config.url}
             onChange={(url) => update({ ...config, url })}
-            placeholder={
-              config.api === "openai-responses"
-                ? "https://api.example.com/v1"
-                : "https://api.example.com/v1/chat/completions"
-            }
-            hint={
-              config.api === "openai-responses"
-                ? t("workbuddy.form.urlResponsesHint")
-                : t("workbuddy.form.urlHint")
-            }
+            placeholder="https://api.example.com/v1/chat/completions"
+            hint={t("workbuddy.form.urlHint")}
             showManageButton={false}
           />
 

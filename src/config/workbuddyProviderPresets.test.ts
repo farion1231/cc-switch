@@ -6,13 +6,12 @@ import {
 import { piProviderPresets } from "./piProviderPresets";
 
 describe("workbuddyProviderPresets", () => {
-  it("derives only OpenAI-compatible Pi presets", () => {
+  it("derives only Chat Completions Pi presets", () => {
     expect(workbuddyProviderPresets.length).toBeGreaterThan(0);
     for (const preset of workbuddyProviderPresets) {
       const pi = piProviderPresets.find((p) => p.name === preset.name)!;
-      expect(["openai-completions", "openai-responses"]).toContain(
-        pi.settingsConfig.api,
-      );
+      expect(pi.settingsConfig.api).toBe("openai-completions");
+      expect(preset.settingsConfig).not.toHaveProperty("api");
       expect(preset.settingsConfig.apiKey).toBe("");
       expect(preset.settingsConfig.models.map((model) => model.id)).toEqual(
         pi.settingsConfig.models.map((model) => model.id),
@@ -20,14 +19,11 @@ describe("workbuddyProviderPresets", () => {
     }
   });
 
-  it("writes the full Chat Completions URL unless the Responses API is used", () => {
+  it("writes the full Chat Completions URL", () => {
     for (const preset of workbuddyProviderPresets) {
-      const { url, api } = preset.settingsConfig;
-      if (api === "openai-responses") {
-        expect(url).not.toMatch(/\/responses$/);
-      } else {
-        expect(url).toMatch(/^https?:\/\/.+\/chat\/completions$/);
-      }
+      expect(preset.settingsConfig.url).toMatch(
+        /^https?:\/\/.+\/chat\/completions$/,
+      );
     }
   });
 

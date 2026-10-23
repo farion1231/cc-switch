@@ -1118,7 +1118,6 @@
       "providerKeyLockedHint": "标识写在 models.json 的条目上，创建后不能再改。",
       "url": "请求地址",
       "urlHint": "完整的 OpenAI 兼容 Chat Completions 地址，通常以 /chat/completions 结尾。",
-      "urlResponsesHint": "填基础地址，WorkBuddy 会请求 {url}/responses。",
       "apiKeyHint": "保存在本机的 models.json 里；${ENV_VAR} 形式的引用由 WorkBuddy 展开。",
       "vendor": "厂商标签",
       "modelsHint": "至少添加一个模型。模型 ID 会原样发给接口。",
