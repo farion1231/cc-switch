@@ -5,6 +5,7 @@
 pub(crate) mod agy_direct;
 pub(crate) mod claude_direct;
 mod claude_editor;
+pub(crate) mod claude_official;
 pub(crate) mod codex_client_catalog;
 pub(crate) mod codex_direct;
 mod codex_editor;

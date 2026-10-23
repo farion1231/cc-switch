@@ -414,7 +414,8 @@ async fn write_proxy(
                 &others,
             );
             let unchanged = !force && live_now.has_contract(&contract.key);
-            let patch = direct_patch(live_now.claude_exclusive_owner().as_ref(), &projection);
+            let mut patch = direct_patch(live_now.claude_exclusive_owner().as_ref(), &projection);
+            crate::services::provider::claude_official::strip_from_patch(&mut patch);
             target.contract = Some(contract);
             claude_direct::run(
                 &state.db,
@@ -530,10 +531,16 @@ fn write_direct(
             let empty = ClaudeProjection::default();
             let projection = usable_direct(app, direct.as_ref())
                 .map(|provider| ClaudeProjection::of(&provider.settings_config));
-            let patch = direct_patch(
+            let mut patch = direct_patch(
                 live_now.claude_exclusive_owner().as_ref(),
                 projection.as_ref().unwrap_or(&empty),
             );
+            match usable_direct(app, direct.as_ref()) {
+                Some(provider) => {
+                    crate::services::provider::claude_official::add_to_patch(&mut patch, provider)
+                }
+                None => crate::services::provider::claude_official::strip_from_patch(&mut patch),
+            }
             claude_direct::run(
                 &state.db,
                 op_name,
