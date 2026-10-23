@@ -17,6 +17,8 @@ DeepSeek Harness 的应用 ID 为 `dsh`，命令为 `dsh`，npm 包为 `@deepsee
 
 此检查也用于其他直接通过 npm 安装的应用，按目标发布包的 `engines.node` 动态判断。使用官方独立安装器的应用不会因为系统 Node 版本过低而被拦截；已有 npm 安装的升级则按对应安装位置检查 Node。Windows npm 启动脚本及 MiniMax Code 自带运行时的安装会分别识别，WSL 安装检查对应发行版内的 Node。安装行提示、升级提示和执行时的版本错误均提供简体中文、繁体中文、英文、日文和土耳其语翻译。
 
+全局应用安装、升级及版本探测使用独立工作目录，避免从 `pnpm dev` 启动时继承开发仓库目录，导致 nvm、mise 等按仓库的 `.node-version` 或 `.nvmrc` 选择开发用 Node。仓库的 `.node-version` 保留用于 CC Switch 的开发构建；工具管理使用其实际执行环境选择的运行时。
+
 安装后在终端运行 `dsh web` 打开官方 Web 界面。
 
 ## 供应商与模型
