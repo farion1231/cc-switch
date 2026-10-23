@@ -430,6 +430,41 @@ impl CodexCopilotApiFormat {
     }
 }
 
+/// Gemini Native 上游把 `models/*:generateContent` 挂在哪个 API 版本下。
+///
+/// Google 官方 API 用 `/v1beta`；代理 Gemini 的网关（例如 opencode 的 Go 套餐）把
+/// 同一套方法调用形状挂在 `/v1` 下。请求路径的其余部分是固定的，所以版本必须按供应商
+/// 声明，不能写死。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub enum GeminiApiVersion {
+    #[default]
+    #[serde(rename = "v1beta")]
+    V1Beta,
+    #[serde(rename = "v1")]
+    V1,
+}
+
+impl GeminiApiVersion {
+    /// Read the stored selection. The meta field stays a plain string so a value
+    /// written by a newer version survives sync round-trips here instead of
+    /// failing the whole `ProviderMeta` parse; unknown values fall back to the
+    /// canonical `v1beta`.
+    pub fn from_meta(meta: Option<&ProviderMeta>) -> Self {
+        match meta.and_then(|meta| meta.gemini_api_version.as_deref()) {
+            Some("v1") => Self::V1,
+            _ => Self::V1Beta,
+        }
+    }
+
+    /// The version as it appears in the upstream path segment.
+    pub fn segment(self) -> &'static str {
+        match self {
+            Self::V1Beta => "v1beta",
+            Self::V1 => "v1",
+        }
+    }
+}
+
 /// Codex Responses -> Chat Completions 的 reasoning 能力描述。
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct CodexChatReasoningConfig {
@@ -545,6 +580,16 @@ pub struct ProviderMeta {
     /// 是否将 base_url 视为完整 API 端点（不拼接 endpoint 路径）
     #[serde(rename = "isFullUrl", skip_serializing_if = "Option::is_none")]
     pub is_full_url: Option<bool>,
+    /// Gemini Native 供应商专用：上游把 Gemini 挂在哪个 API 版本下。
+    ///
+    /// Google 官方 API 是 `/v1beta/models/...`，但代理 Gemini 的网关（例如
+    /// opencode 的 Go 套餐）把同一套 `models/*:generateContent` 方法调用形状挂在
+    /// `/v1/models/...` 下。请求路径其余部分是固定的，所以版本必须按供应商声明。
+    ///
+    /// 存成普通字符串而不是枚举：新版本写入的值在旧版本这里会原样往返，
+    /// 不会让整个 `ProviderMeta` 解析失败；未知值回退到 `v1beta`。
+    #[serde(rename = "geminiApiVersion", skip_serializing_if = "Option::is_none")]
+    pub gemini_api_version: Option<String>,
     /// Prompt cache key for OpenAI Responses-compatible endpoints.
     /// When set, injected into converted Responses requests to improve cache hit rate.
     /// If not set, Claude -> Responses conversions use a client-provided session/thread
@@ -1095,9 +1140,9 @@ pub struct OpenCodeModelLimit {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeModelConfig, CodexCopilotApiFormat, CodexModelConfig, GeminiModelConfig,
-        LocalProxyRequestOverrides, OpenCodeProviderConfig, Provider, ProviderManager,
-        ProviderMeta, UniversalProvider,
+        ClaudeModelConfig, CodexCopilotApiFormat, CodexModelConfig, GeminiApiVersion,
+        GeminiModelConfig, LocalProxyRequestOverrides, OpenCodeProviderConfig, Provider,
+        ProviderManager, ProviderMeta, UniversalProvider,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -1192,6 +1237,39 @@ mod tests {
             assert_eq!(meta.api_format.as_deref(), Some("openai_chat"));
             assert_eq!(serde_json::to_value(meta).unwrap(), value);
         }
+    }
+
+    #[test]
+    fn gemini_api_version_roundtrips_supported_values() {
+        for (wire, expected) in [
+            ("v1beta", GeminiApiVersion::V1Beta),
+            ("v1", GeminiApiVersion::V1),
+        ] {
+            let value = json!({
+                "apiFormat": "gemini_native",
+                "geminiApiVersion": wire
+            });
+            let meta: ProviderMeta = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(GeminiApiVersion::from_meta(Some(&meta)), expected);
+            assert_eq!(serde_json::to_value(meta).unwrap(), value);
+        }
+    }
+
+    #[test]
+    fn gemini_api_version_defaults_to_v1beta_when_absent_or_unknown() {
+        for value in [
+            json!({ "apiFormat": "gemini_native" }),
+            // A value written by a newer version must not change behaviour here.
+            json!({ "apiFormat": "gemini_native", "geminiApiVersion": "v2" }),
+        ] {
+            let meta: ProviderMeta = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                GeminiApiVersion::from_meta(Some(&meta)),
+                GeminiApiVersion::V1Beta
+            );
+        }
+
+        assert_eq!(GeminiApiVersion::from_meta(None), GeminiApiVersion::V1Beta);
     }
 
     #[test]

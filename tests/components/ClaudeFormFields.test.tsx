@@ -100,6 +100,8 @@ const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
     onApiKeyFieldChange: vi.fn(),
     isFullUrl: false,
     onFullUrlChange: vi.fn(),
+    geminiApiVersion: "v1beta",
+    onGeminiApiVersionChange: vi.fn(),
     customUserAgent: "",
     onCustomUserAgentChange: vi.fn(),
     localProxyHeadersOverride: "",
