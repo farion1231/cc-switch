@@ -1788,6 +1788,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("minimax/minimax-m3.1-flash", {
           id: "MiniMax-M3.1-Flash",
           maxTokens: 131072,
+          thinkingProfile: "minimaxM31",
         }),
         piModel("minimax/minimax-m3", {
           id: "MiniMax-M3",
@@ -1819,6 +1820,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
         piModel("minimax/minimax-m3.1-flash", {
           id: "MiniMax-M3.1-Flash",
           maxTokens: 131072,
+          thinkingProfile: "minimaxM31",
         }),
         piModel("minimax/minimax-m3", {
           id: "MiniMax-M3",

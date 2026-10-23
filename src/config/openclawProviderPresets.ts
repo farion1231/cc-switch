@@ -4310,7 +4310,14 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           cost: { input: 0.15, output: 0.6, cacheRead: 0.015, cacheWrite: 0 },
           compat: {
             supportsReasoningEffort: true,
-            supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+            supportedReasoningEfforts: [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max",
+            ],
+            supportsTemperature: false,
           },
         },
         {
@@ -4321,6 +4328,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           contextWindow: 1000000,
           maxTokens: 131072,
           cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
+          compat: { supportsTemperature: false },
         },
       ],
     },
@@ -4366,7 +4374,14 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           cost: { input: 0.15, output: 0.6, cacheRead: 0.015, cacheWrite: 0 },
           compat: {
             supportsReasoningEffort: true,
-            supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+            supportedReasoningEfforts: [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max",
+            ],
+            supportsTemperature: false,
           },
         },
         {
@@ -4377,6 +4392,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           contextWindow: 1000000,
           maxTokens: 131072,
           cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
+          compat: { supportsTemperature: false },
         },
       ],
     },
