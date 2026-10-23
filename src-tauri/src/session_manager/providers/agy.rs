@@ -44,14 +44,35 @@ fn session_sources() -> Vec<(PathBuf, Option<PathBuf>)> {
 }
 
 pub(crate) fn records(path: &Path) -> Result<Vec<Value>, String> {
+    read_records(path, false)
+}
+
+/// Usage needs complete model evidence. A malformed or unfinished JSON line
+/// must stop this session and its descendants until a later sync can retry.
+/// Session lists and message reads keep their tolerant `records` behavior.
+pub(crate) fn usage_records(path: &Path) -> Result<Vec<Value>, String> {
+    read_records(path, true)
+}
+
+fn read_records(path: &Path, reject_invalid_json: bool) -> Result<Vec<Value>, String> {
     let file =
         fs::File::open(path).map_err(|e| format!("Cannot read Antigravity transcript: {e}"))?;
     // The export can rewrite steps as they finish. The latest record for a step wins.
     let mut steps = BTreeMap::new();
-    for line in BufReader::new(file).lines() {
+    for (index, line) in BufReader::new(file).lines().enumerate() {
         let line = line.map_err(|e| format!("Cannot read Antigravity transcript: {e}"))?;
-        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+        if line.trim().is_empty() {
             continue;
+        }
+        let value = match serde_json::from_str::<Value>(&line) {
+            Ok(value) => value,
+            Err(error) if reject_invalid_json => {
+                return Err(format!(
+                    "Cannot parse Antigravity transcript at line {}: {error}",
+                    index + 1
+                ));
+            }
+            Err(_) => continue,
         };
         if let Some(index) = value["step_index"].as_u64() {
             steps.insert(index, value);
@@ -78,7 +99,7 @@ fn scan_roots(sources: &[(PathBuf, Option<PathBuf>)]) -> Vec<SessionMeta> {
     sessions
 }
 
-fn valid_session_id(id: &str) -> bool {
+pub(crate) fn valid_session_id(id: &str) -> bool {
     !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
@@ -399,5 +420,17 @@ mod tests {
             messages[1].meta.as_ref().unwrap().cache_read_tokens,
             Some(20)
         );
+        assert!(usage_records(&file).unwrap_err().contains("line 4"));
+        let original = fs::read_to_string(&file).unwrap();
+        fs::write(
+            &file,
+            format!("{}\n \n", original.strip_suffix('{').unwrap()),
+        )
+        .unwrap();
+        let rows = usage_records(&file).unwrap();
+        assert_eq!(rows, records(&file).unwrap());
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1]["content"], "done");
+        assert_eq!(rows[1]["input_tokens"], 100);
     }
 }
