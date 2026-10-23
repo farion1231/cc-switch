@@ -110,8 +110,12 @@ pub fn get_hermes_config_path() -> PathBuf {
 /// `config.yaml` 的目录（`.deleted` 墓碑、纯资源目录不算）。按名字排序，保证
 /// 契约摘要和写入顺序稳定。
 pub fn list_profile_config_paths() -> Vec<(String, PathBuf)> {
-    let root = get_hermes_dir().join("profiles");
-    let Ok(entries) = fs::read_dir(&root) else {
+    list_profile_config_paths_in(&get_hermes_dir().join("profiles"))
+}
+
+/// 纯函数版（测试用）：列一个 profiles 根下的有效 home。
+fn list_profile_config_paths_in(root: &Path) -> Vec<(String, PathBuf)> {
+    let Ok(entries) = fs::read_dir(root) else {
         return Vec::new();
     };
     let mut homes: Vec<(String, PathBuf)> = entries
@@ -1280,33 +1284,10 @@ pub fn read_memory_limits() -> Result<HermesMemoryLimits, AppError> {
 
 #[cfg(test)]
 mod tests {
-    struct TempHermesHome {
-        saved: Option<std::ffi::OsString>,
-        dir: tempfile::TempDir,
-    }
-
-    impl TempHermesHome {
-        fn new() -> Self {
-            let dir = tempfile::tempdir().expect("temp dir");
-            let saved = std::env::var_os("HERMES_HOME");
-            std::env::set_var("HERMES_HOME", dir.path());
-            Self { saved, dir }
-        }
-    }
-
-    impl Drop for TempHermesHome {
-        fn drop(&mut self) {
-            match self.saved.take() {
-                Some(value) => std::env::set_var("HERMES_HOME", value),
-                None => std::env::remove_var("HERMES_HOME"),
-            }
-        }
-    }
-
     #[test]
     fn list_profile_config_paths_filters_and_sorts() {
-        let _home = TempHermesHome::new();
-        let root = get_hermes_dir().join("profiles");
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = dir.path().join("profiles");
         for name in ["b-agent", "a-agent"] {
             std::fs::create_dir_all(root.join(name)).unwrap();
             std::fs::write(root.join(name).join("config.yaml"), "model:\n").unwrap();
@@ -1316,8 +1297,10 @@ mod tests {
         std::fs::create_dir_all(root.join(".deleted")).unwrap();
         std::fs::write(root.join(".deleted").join("gone"), "").unwrap();
         std::fs::write(root.join("stray.yaml"), "").unwrap();
+        // profiles 根不存在时为空。
+        assert!(list_profile_config_paths_in(&dir.path().join("nope")).is_empty());
 
-        let homes = list_profile_config_paths();
+        let homes = list_profile_config_paths_in(&root);
         let names: Vec<&str> = homes.iter().map(|(name, _)| name.as_str()).collect();
         assert_eq!(
             names,
