@@ -414,6 +414,8 @@ export interface Settings {
   usageDashboardRefreshIntervalMs?: number;
   // 用量金额的显示币种与汇率（只影响显示，库里一律存美元）
   usageDisplay?: UsageDisplaySettings;
+  // Background quota refresh for all managed Codex accounts; omitted/0 means off.
+  codexAccountQuotaRefreshMinutes?: number;
   // 会话用量自动扫描开关（默认开启=自动模式；关闭后仅手动同步时扫描会话日志，代理记账不受影响）
   sessionAutoSyncEnabled?: boolean;
   // Whether to show the failover toggle independently on the main page

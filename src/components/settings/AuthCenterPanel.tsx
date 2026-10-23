@@ -8,6 +8,8 @@ import { KimiAccountLogin } from "@/components/providers/KimiAccountLogin";
 import { isMac } from "@/lib/platform";
 import type { AuthCenterTarget } from "@/lib/api";
 
+import { CodexQuotaRefreshControls } from "./auth/CodexQuotaRefreshControls";
+
 interface AuthCenterPanelProps {
   authScrollTarget?: AuthCenterTarget | null;
   /**
@@ -74,6 +76,7 @@ export function AuthCenterPanel({
       </div>
       <div ref={codexOauthSectionRef} className="scroll-mt-4">
         <CodexOAuthSection showAccountQuota />
+        <CodexQuotaRefreshControls />
       </div>
       <div ref={xaiOauthSectionRef} className="scroll-mt-4">
         <XaiOAuthSection mode="manage" helpSide="bottom" />

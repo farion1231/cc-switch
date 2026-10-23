@@ -1,7 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { SubscriptionQuota } from "@/types/subscription";
 
+export interface CodexOauthQuotaRefreshResult {
+  accountId: string;
+  quota: SubscriptionQuota | null;
+  error: string | null;
+}
+
 export const subscriptionApi = {
+  refreshCodexOauthQuotas: (): Promise<CodexOauthQuotaRefreshResult[]> =>
+    invoke("refresh_codex_oauth_quotas"),
   getQuota: (tool: string): Promise<SubscriptionQuota> =>
     invoke("get_subscription_quota", { tool }),
   getCodexOauthQuota: (accountId: string | null): Promise<SubscriptionQuota> =>
