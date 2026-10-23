@@ -195,6 +195,14 @@ pub fn get_providers() -> Result<Map<String, Value>, AppError> {
         .collect())
 }
 
+/// 获取单个供应商的 live 节点片段（即 DB settingsConfig 的原文）。
+/// 契约对齐 `openclaw_config::get_provider`：节点缺失（含 live 文件尚未写出）
+/// 返回 `Ok(None)`，配置损坏才返回 `Err`。经 `get_providers()` 的合并读取，
+/// V1 `provider` 与合法的 V2 `providers` 声明都能命中。
+pub fn get_provider(id: &str) -> Result<Option<Value>, AppError> {
+    Ok(get_providers()?.get(id).cloned())
+}
+
 /// Preserve the declaration's format alongside its JSON, including package-less
 /// built-in overrides. Do not recursively mix legacy and native entries.
 pub fn get_providers_with_format(
@@ -1118,6 +1126,74 @@ mod tests {
         assert!(
             read_opencode_config().is_ok(),
             "a normal object config must still load"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn get_provider_returns_stored_fragment_and_none_for_missing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        // 稀疏节点（built-in 覆盖形态，无 npm/models）也要原样返回
+        let fragment = json!({"options": {"apiKey": "{env:OPENCODE_API_KEY}"}});
+        set_provider("opencode-go", fragment.clone()).expect("set provider");
+
+        assert_eq!(get_provider("opencode-go").expect("get"), Some(fragment));
+        assert_eq!(
+            get_provider("not-written").expect("get missing"),
+            None,
+            "missing node must be Ok(None), not an error"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn get_provider_hits_valid_v2_native_declaration_and_prefers_it_over_v1() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        // 合法 V2 原生声明（name/package 为字符串，其余已知字段可省略）
+        // 也要经 get_provider 命中，并原样返回片段
+        let fragment = json!({"name": "Test", "package": "@test/pkg"});
+        write_config(
+            temp.path(),
+            r#"{"providers":{"oc-v2":{"name":"Test","package":"@test/pkg"}}}"#,
+        );
+        assert_eq!(get_provider("oc-v2").expect("get"), Some(fragment.clone()));
+
+        // 同 id 同时存在 V1 `provider` 与合法 V2 `providers` 时，
+        // 合并读取以 V2 优先
+        write_config(
+            temp.path(),
+            r#"{"provider":{"oc-v2":{"npm":"@ai-sdk/anthropic"}},"providers":{"oc-v2":{"name":"Test","package":"@test/pkg"}}}"#,
+        );
+        assert_eq!(
+            get_provider("oc-v2").expect("get merged"),
+            Some(fragment),
+            "valid V2 native declaration must take precedence over V1 legacy"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn get_provider_treats_missing_file_and_broken_section_as_absent() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        // live 文件尚未写出（如 DB 经网盘同步到新机）→ 空配置 → Ok(None)，
+        // 前端据此回退 DB 快照且允许保存
+        assert_eq!(get_provider("any").expect("no file yet"), None);
+
+        // provider 键损坏（非对象）沿用 get_providers 的宽容语义按"无节点"
+        // 处理——保存路径 set_provider 会自行归一化；只有根不是对象才 Err
+        write_config(temp.path(), "{\"provider\": []}");
+        assert_eq!(get_provider("any").expect("lenient"), None);
+
+        write_config(temp.path(), "[]");
+        assert!(
+            get_provider("any").is_err(),
+            "non-object root must error, mirroring read_opencode_config"
         );
     }
 

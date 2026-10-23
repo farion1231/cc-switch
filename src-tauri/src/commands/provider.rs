@@ -1035,6 +1035,15 @@ pub fn set_opencode_default_model(model: String) -> Result<(), String> {
     crate::opencode_config::set_default_model(&model).map_err(|e| e.to_string())
 }
 
+/// Get a single OpenCode provider fragment from live config.
+/// 契约与 `get_openclaw_live_provider`（commands/openclaw.rs）相同：节点缺失返回 Ok(None)。
+#[tauri::command]
+pub fn get_opencode_live_provider(
+    #[allow(non_snake_case)] providerId: String,
+) -> Result<Option<serde_json::Value>, String> {
+    crate::opencode_config::get_provider(&providerId).map_err(|e| e.to_string())
+}
+
 // ============================================================================
 // OpenClaw 专属命令 → 已迁移至 commands/openclaw.rs
 // ============================================================================
