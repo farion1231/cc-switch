@@ -4915,7 +4915,7 @@
     "oauth": {
       "useAccount": "Use this account",
       "title": "Kimi Code official sign-in",
-      "description": "Sign in to your Kimi coding plan to add the official models automatically.",
+      "description": "Add Kimi coding plan accounts with separate credentials and providers. Manage sign-in here, then select an account to use its official models.",
       "region": "Sign-in region",
       "mainland-cn": "Mainland China",
       "global": "Global",
@@ -4936,7 +4936,11 @@
       "denied": "Authorization was denied. Please sign in again.",
       "cancelled": "This sign-in was cancelled or replaced. Please sign in again.",
       "success": "Signed in to Kimi Code and added the official models.",
-      "signOutConfirm": "This removes the local credentials for the current Kimi Code region and signs Kimi Code out. Providers, models and the current model selection are kept."
+      "signOutConfirm": "Sign out {{name}}? Only this account's local credentials are removed. Other accounts, providers, models and the current model selection are kept.",
+      "addAccount": "Add account",
+      "accountCount": "Saved accounts: {{count}}",
+      "manageAccounts": "Manage Kimi accounts",
+      "managedHint": "Manage official Kimi accounts in the Authorization Center."
     },
     "modelSelectionHint": "Use the switch button on a provider card to select it. To choose another model, use /model in Kimi Code.",
     "providerType": "Provider type",

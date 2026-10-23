@@ -36,7 +36,6 @@ import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import type { ProviderFormProps } from "./ProviderForm";
 import { usePresetStep } from "./presetStep";
-import { KimiAccountLogin } from "../KimiAccountLogin";
 
 const PRESETS = [
   { id: KIMI_ACCOUNT_PRESET_ID, preset: kimiAccountPreset },
@@ -56,6 +55,7 @@ export function KimiProviderForm({
   onSubmittingChange,
   onSubmitReadyChange,
   onAccountLoginChange,
+  onManageAuthAccounts,
 }: ProviderFormProps) {
   const { t } = useTranslation();
   const darkMode = useDarkMode();
@@ -76,8 +76,6 @@ export function KimiProviderForm({
   const step = usePresetStep();
   const isAccountLogin = !isEdit && presetId === KIMI_ACCOUNT_PRESET_ID;
   const showAccountLogin = isAccountLogin && (!step || step.step === "form");
-  const [accountActionHost, setAccountActionHost] =
-    useState<HTMLDivElement | null>(null);
   useEffect(() => {
     onAccountLoginChange?.(showAccountLogin);
     return () => onAccountLoginChange?.(false);
@@ -156,9 +154,6 @@ export function KimiProviderForm({
     <ProviderPresetSelector
       selectedPresetId={presetId}
       presetEntries={PRESETS}
-      barAction={
-        isAccountLogin ? <div ref={setAccountActionHost} /> : undefined
-      }
       presetCategoryLabels={{
         custom: t("providerPreset.custom"),
         cn_official: t("providerForm.categoryCnOfficial"),
@@ -201,10 +196,18 @@ export function KimiProviderForm({
         >
           {presetSelector}
           {showAccountLogin && (
-            <KimiAccountLogin
-              actionSlot={step ? accountActionHost : undefined}
-              onUseAccount={onCancel}
-            />
+            <div className="space-y-3">
+              <p className="text-body text-fg-2">
+                {t("kimi.oauth.description")}
+              </p>
+              <Button
+                type="button"
+                variant="neutral"
+                onClick={() => onManageAuthAccounts?.("kimi_oauth")}
+              >
+                {t("kimi.oauth.manageAccounts")}
+              </Button>
+            </div>
           )}
         </form>
       </Form>
