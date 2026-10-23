@@ -103,7 +103,7 @@ async function openAuthCenter() {
   fireEvent.click(
     screen.getByRole("button", { name: "kimi.oauth.manageAccounts" }),
   );
-  return screen.findByRole("region", { name: "kimi.oauth.title" });
+  return screen.findByRole("region", { name: "Kimi Code" });
 }
 
 describe("Kimi account entry in the add-provider dialog", () => {
@@ -127,9 +127,7 @@ describe("Kimi account entry in the add-provider dialog", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "kimi.oauth.manageAccounts" }),
     );
-    const group = await screen.findByRole("region", {
-      name: "kimi.oauth.title",
-    });
+    const group = await screen.findByRole("region", { name: "Kimi Code" });
     expect(
       within(group).getByRole("button", { name: "kimi.oauth.signIn" }),
     ).toBeEnabled();
@@ -139,14 +137,16 @@ describe("Kimi account entry in the add-provider dialog", () => {
   it("starts and cancels the device login inside Auth Center", async () => {
     const { onSubmit } = setup();
     const group = await openAuthCenter();
+    // 先选登录区域，再在选择块里点登录
+    fireEvent.click(
+      within(group).getByRole("button", { name: "kimi.oauth.signIn" }),
+    );
     fireEvent.click(
       within(group).getByRole("button", { name: "kimi.oauth.signIn" }),
     );
     await screen.findByText(device.userCode);
     expect(kimiOAuthApi.start).toHaveBeenCalledWith("mainland-cn", undefined);
-    fireEvent.click(
-      within(group).getByRole("button", { name: "common.cancel" }),
-    );
+    fireEvent.click(within(group).getByRole("button", { name: "取消" }));
     await waitFor(() =>
       expect(kimiOAuthApi.cancel).toHaveBeenCalledWith(device.flowId),
     );

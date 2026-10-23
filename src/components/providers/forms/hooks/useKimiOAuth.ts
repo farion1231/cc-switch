@@ -180,13 +180,14 @@ export function useKimiOAuth() {
       });
       await invalidate();
     },
-    onError: (e) => setError(extractErrorMessage(e)),
+    // 登录流程的错误才进 error（授权中心按「登录没有完成」显示），账号操作的失败弹 toast
+    onError: (e) => toast.error(extractErrorMessage(e)),
   });
 
   const useAccount = useMutation({
     mutationFn: (accountId: string) => kimiOAuthApi.useAccount(accountId),
     onSuccess: invalidate,
-    onError: (e) => setError(extractErrorMessage(e)),
+    onError: (e) => toast.error(extractErrorMessage(e)),
   });
 
   return {

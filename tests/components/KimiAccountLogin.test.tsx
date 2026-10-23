@@ -26,14 +26,17 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 vi.mock("@/lib/clipboard", () => ({ copyText: mocks.copy }));
 
-// 账号操作收在每行的「…」菜单里；Radix 菜单在 jsdom 里用回车打开最稳
-async function openMenu(row: HTMLElement) {
+// 账号操作收在每行的「…」菜单里（按钮名带账号名）；Radix 菜单在 jsdom 里用回车打开最稳
+async function openMenu(login: string) {
   fireEvent.keyDown(
-    within(row).getByRole("button", { name: /accountMenu|更多操作/ }),
+    screen.getByRole("button", { name: `${login} 的更多操作` }),
     { key: "Enter" },
   );
   await flush();
 }
+
+const menuItem = (name: string | RegExp) =>
+  screen.getByRole("menuitem", { name });
 
 const account = {
   id: "kimi-code-ccs-first",
@@ -84,7 +87,9 @@ async function setup(status = signedOut) {
   return { ...view, client };
 }
 
+// 空状态的「登录 Kimi」先打开区域选择，再点选择块里的「登录 Kimi」
 async function start() {
+  fireEvent.click(screen.getByRole("button", { name: "kimi.oauth.signIn" }));
   fireEvent.click(screen.getByRole("button", { name: "kimi.oauth.signIn" }));
   await flush();
 }
@@ -123,27 +128,25 @@ describe("Kimi official account login", () => {
       name: "Kimi Official (second)",
       region: "global" as const,
     };
-    await setup({ accounts: [account, second], currentAccountId: account.id, primaryHidden: false });
-    const row = screen
-      .getByText(second.name)
-      .closest('[role="listitem"]')! as HTMLElement;
-    await openMenu(row);
-    fireEvent.click(
-      screen.getByRole("menuitem", { name: "kimi.oauth.useAccount" }),
-    );
+    await setup({
+      accounts: [account, second],
+      currentAccountId: account.id,
+      primaryHidden: false,
+    });
+    expect(screen.getByText("kimi.oauth.current")).toBeInTheDocument();
+    await openMenu(second.name);
+    fireEvent.click(menuItem("kimi.oauth.useAccount"));
     await flush();
     expect(kimiOAuthApi.useAccount).toHaveBeenCalledWith(second.id);
-    await openMenu(row);
-    fireEvent.click(
-      screen.getByRole("menuitem", { name: "kimi.oauth.signInAgain" }),
-    );
+    await openMenu(second.name);
+    fireEvent.click(menuItem("重新登录"));
     await flush();
+    // 重新登录沿用账号自己的区域，不弹区域选择
     expect(kimiOAuthApi.start).toHaveBeenCalledWith("global", second.id);
-    fireEvent.click(screen.getByRole("button", { name: "common.cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
     await flush();
-    fireEvent.click(
-      screen.getByRole("button", { name: "kimi.oauth.addAccount" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "添加账号" }));
+    fireEvent.click(screen.getByRole("button", { name: "kimi.oauth.signIn" }));
     await flush();
     expect(kimiOAuthApi.start).toHaveBeenLastCalledWith(
       "mainland-cn",
@@ -151,20 +154,25 @@ describe("Kimi official account login", () => {
     );
   });
 
-  it("keeps the authorization code and manual link available when opening the browser fails", async () => {
+  it("signs in to the region chosen before starting", async () => {
+    await setup();
+    fireEvent.click(screen.getByRole("button", { name: "kimi.oauth.signIn" }));
+    fireEvent.click(screen.getByRole("button", { name: "kimi.oauth.global" }));
+    fireEvent.click(screen.getByRole("button", { name: "kimi.oauth.signIn" }));
+    await flush();
+    expect(kimiOAuthApi.start).toHaveBeenCalledWith("global", undefined);
+  });
+
+  it("keeps the authorization code available when opening the browser fails", async () => {
     mocks.openExternal.mockRejectedValue(new Error("No browser"));
     await setup();
     await start();
     expect(kimiOAuthApi.start).toHaveBeenCalledWith("mainland-cn", undefined);
     expect(screen.getByText(device.userCode)).toBeInTheDocument();
-    expect(screen.getByRole("link")).toHaveAttribute(
-      "href",
-      device.verificationUri,
-    );
     expect(mocks.openExternal).toHaveBeenCalledWith(device.verificationUri);
-    fireEvent.click(
-      screen.getByRole("button", { name: "kimi.oauth.copyCode" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "打开授权页面" }));
+    expect(mocks.openExternal).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole("button", { name: "复制验证码" }));
     await flush();
     expect(mocks.copy).toHaveBeenCalledWith(device.userCode);
     expect(kimiOAuthApi.poll).not.toHaveBeenCalled();
@@ -185,9 +193,7 @@ describe("Kimi official account login", () => {
     });
     await flush();
     expect(screen.queryByText(device.userCode)).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "kimi.oauth.addAccount" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "添加账号" })).toBeEnabled();
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: ["providers", "kimi"],
     });
@@ -231,7 +237,7 @@ describe("Kimi official account login", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
-    fireEvent.click(screen.getByRole("button", { name: "common.cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
     await flush();
     expect(kimiOAuthApi.cancel).toHaveBeenCalledWith(device.flowId);
     await act(async () => {
@@ -270,10 +276,8 @@ describe("Kimi official account login", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Model discovery failed",
-    );
-    fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
+    expect(screen.getByText("Model discovery failed")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
     await flush();
     expect(kimiOAuthApi.start).toHaveBeenCalledTimes(1);
     expect(kimiOAuthApi.poll).toHaveBeenCalledTimes(2);
@@ -281,7 +285,7 @@ describe("Kimi official account login", () => {
   });
 
   it.each(["expired", "denied", "cancelled"] as const)(
-    "allows a fresh sign-in after authorization is %s",
+    "starts a fresh sign-in when retrying after authorization is %s",
     async (ended) => {
       await setup();
       await start();
@@ -289,13 +293,15 @@ describe("Kimi official account login", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1000);
       });
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        `kimi.oauth.${ended}`,
-      );
+      expect(screen.getByText(`kimi.oauth.${ended}`)).toBeInTheDocument();
       expect(screen.queryByText(device.userCode)).not.toBeInTheDocument();
-      expect(
-        screen.getByRole("button", { name: "kimi.oauth.signIn" }),
-      ).toBeEnabled();
+      fireEvent.click(screen.getByRole("button", { name: "重试" }));
+      await flush();
+      expect(kimiOAuthApi.start).toHaveBeenCalledTimes(2);
+      expect(kimiOAuthApi.start).toHaveBeenLastCalledWith(
+        "mainland-cn",
+        undefined,
+      );
     },
   );
 
@@ -305,31 +311,30 @@ describe("Kimi official account login", () => {
       id: "kimi-code-ccs-second",
       name: "Kimi Official · second",
     };
-    await setup({ accounts: [account, second], currentAccountId: account.id, primaryHidden: false });
-    const currentRow = screen
-      .getByText(account.name)
-      .closest('[role="listitem"]')! as HTMLElement;
-    await openMenu(currentRow);
+    await setup({
+      accounts: [account, second],
+      currentAccountId: account.id,
+      primaryHidden: false,
+    });
+    await openMenu(account.name);
     // 正在用的号菜单里没有「使用此账号」，删除项置灰并说明原因
     expect(
       screen.queryByRole("menuitem", { name: "kimi.oauth.useAccount" }),
     ).not.toBeInTheDocument();
+    expect(menuItem(/kimi\.oauth\.removeAccount/)).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
     expect(
-      screen.getByRole("menuitem", { name: /kimi\.oauth\.removeAccount/ }),
-    ).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getByText("kimi.oauth.removeCurrentHint")).toBeInTheDocument();
+      screen.getByText("kimi.oauth.removeCurrentHint"),
+    ).toBeInTheDocument();
     fireEvent.keyDown(document.activeElement ?? document.body, {
       key: "Escape",
     });
     await flush();
 
-    const row = screen
-      .getByText(second.name)
-      .closest('[role="listitem"]')! as HTMLElement;
-    await openMenu(row);
-    fireEvent.click(
-      screen.getByRole("menuitem", { name: "kimi.oauth.removeAccount" }),
-    );
+    await openMenu(second.name);
+    fireEvent.click(menuItem("kimi.oauth.removeAccount"));
     expect(kimiOAuthApi.remove).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog")).toHaveTextContent(
       "kimi.oauth.removeConfirm",
@@ -348,19 +353,21 @@ describe("Kimi official account login", () => {
       ...account,
       id: "kimi-code",
       name: "Kimi Official · main",
+      nickname: "main",
       primary: true,
     };
-    await setup({ accounts: [primary], currentAccountId: primary.id, primaryHidden: false });
-    expect(screen.getByText(/kimi\.oauth\.primaryHint/)).toBeInTheDocument();
-    await openMenu(
-      screen.getByText(primary.name).closest('[role="listitem"]')!,
-    );
+    await setup({
+      accounts: [primary],
+      currentAccountId: primary.id,
+      primaryHidden: false,
+    });
+    // 行名用昵称，第二行注明这是 Kimi Code 自己的登录
+    expect(screen.getByText(/kimi\.oauth\.primaryShort/)).toBeInTheDocument();
+    await openMenu("main");
     expect(
       screen.queryByRole("menuitem", { name: "kimi.oauth.removeAccount" }),
     ).not.toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("menuitem", { name: "kimi.oauth.dismissAccount" }),
-    );
+    fireEvent.click(menuItem("kimi.oauth.dismissAccount"));
     expect(screen.getByRole("dialog")).toHaveTextContent(
       "kimi.oauth.dismissConfirm",
     );
@@ -375,20 +382,23 @@ describe("Kimi official account login", () => {
 
   it("says Kimi's own login was only hidden when the list is empty", async () => {
     await setup({ accounts: [], currentAccountId: null, primaryHidden: true });
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "kimi.oauth.primaryHidden",
-    );
-    expect(screen.queryByText("kimi.oauth.signedOut")).not.toBeInTheDocument();
+    expect(screen.getByText("kimi.oauth.primaryHidden")).toBeInTheDocument();
+    expect(screen.queryByText("kimi.oauth.empty")).not.toBeInTheDocument();
   });
 
-  it("queries quota for each signed-in account", async () => {
+  it("marks a signed-out account for re-login and queries quota only for signed-in ones", async () => {
     const second = {
       ...account,
       id: "kimi-code-ccs-second",
       name: "Kimi Official · second",
       authenticated: false,
     };
-    await setup({ accounts: [account, second], currentAccountId: account.id, primaryHidden: false });
+    await setup({
+      accounts: [account, second],
+      currentAccountId: account.id,
+      primaryHidden: false,
+    });
+    expect(screen.getByText("需要重新登录")).toBeInTheDocument();
     expect(kimiOAuthApi.quota).toHaveBeenCalledWith(account.id);
     expect(kimiOAuthApi.quota).not.toHaveBeenCalledWith(second.id);
   });
