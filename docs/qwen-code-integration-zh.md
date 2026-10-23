@@ -7,8 +7,8 @@ Qwen Code 是独立应用，应用 ID 为 `qwen`（别名 `qwen-code`、`qwencod
 1. 在「应用」页安装 Qwen Code。CC Switch 使用官方独立安装脚本（自带运行时，脚本内部在没有独立包时回退到 npm），安装到 `~/.local/bin`；已有客户端升级使用 `qwen update`，失败时重跑官方安装脚本。手动安装可使用 `npm i -g @qwen-code/qwen-code@latest`（需要 Node 22+）或 `brew install qwen-code`。
 2. 在侧栏选择 **Qwen Code**。`settings.json` 中已有的 `modelProviders` 会按 `envKey` 分组自动出现在列表中。
 3. 「添加供应商」从「模型厂商」「第三方平台」「云服务商」「本地」分组中选择预设，或使用「自定义配置」。预设复用 Pi 的供应商目录，并转换为 Qwen 原生的认证类型和模型字段。
-4. 点击「添加」将供应商的模型写入 `modelProviders`。多个供应商可以同时启用，在 Qwen Code 内用 `/model` 切换。供应商卡片上的「切换」会把 `security.auth.selectedType`、`model.name`、`model.baseUrl` 指向该供应商：当前模型属于目标供应商时保留，否则选择它的第一个模型。
-5. 「移除」位于卡片的「更多」菜单，会从原生配置移除供应商的模型和 CC Switch 写入的 Key，并保留 CC Switch 中的档案。当前正在使用的供应商不能移除，需要先切换到其他供应商。
+4. 在「添加供应商」中保存后，供应商及其模型写入 `modelProviders`。「可添加」分组里的卡片点击「添加」只写入原生配置、不改当前模型，模型随即出现在 Qwen Code 的 `/model` 列表中；已在原生配置中的同名条目归 Qwen Code 所有，再次添加不会用 CC Switch 的存档覆盖。多个供应商可以同时启用。
+5. 已添加卡片的「更多」菜单中的「设为默认」会把 `security.auth.selectedType`、`model.name`、`model.baseUrl` 指向该供应商：当前模型属于该供应商时保留，否则选择它的第一个模型；当前模型所属的供应商以「默认」标识。卡片上的「移除」会从原生配置移除该供应商的模型和 CC Switch 写入的 Key，并保留 CC Switch 中的档案。默认供应商不能移除，需要先把其他供应商设为默认。
 
 Qwen OAuth 免费额度已于 2026-04-15 停止，不提供官方登录入口；阿里云百炼、编程套餐等使用 API Key 的预设。
 
