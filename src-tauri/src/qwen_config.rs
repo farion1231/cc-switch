@@ -431,7 +431,7 @@ pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError
             )));
         }
         if let Some(window) = model.pointer("/generationConfig/contextWindowSize") {
-            if !window.as_u64().is_some_and(|n| n > 0) {
+            if window.as_u64().is_none_or(|n| n == 0) {
                 return Err(AppError::InvalidInput(format!(
                     "Context window of Qwen Code model '{model_id}' must be a positive integer"
                 )));
