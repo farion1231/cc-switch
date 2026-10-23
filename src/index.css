@@ -613,3 +613,29 @@ input[type="password"]::-ms-clear {
     width: 368px;
   }
 }
+
+/*
+ * Desktop app convention: UI text is not selectable by default. Dragging on
+ * cards, labels or buttons should not paint a selection, and the WebView's
+ * system context menu (macOS: Look Up / Share / Services) should not appear
+ * on app chrome. Editable fields and content meant to be copied opt back in
+ * via the selector list below — keep it in sync with the guard in
+ * src/lib/contextMenu.ts.
+ */
+body {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+input,
+textarea,
+[contenteditable="true"],
+[contenteditable=""],
+pre,
+code,
+.selectable {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: auto;
+}
