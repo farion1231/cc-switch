@@ -1859,7 +1859,7 @@ mod tests {
 
         assert_eq!(input_schema["type"], "object");
         assert!(input_schema.get("oneOf").is_none());
-        let input_schema = &input_schema["properties"]["__cc_switch_args"];
+        let input_schema = &input_schema["properties"]["cc_switch_args"];
         assert_eq!(
             input_schema["oneOf"][0]["properties"]["mode"]["type"],
             "string"
@@ -1883,7 +1883,7 @@ mod tests {
                         "type":"function", "name":"update", "parameters":schema
                     }]},
                     {"type":"function", "name":"ordinary", "parameters":{
-                        "type":"object", "properties":{"__cc_switch_args":{"type":"string"}}
+                        "type":"object", "properties":{"cc_switch_args":{"type":"string"}}
                     }}
                 ]);
                 let mut request =
@@ -1903,8 +1903,8 @@ mod tests {
                     wrapped_schema.get(keyword).is_none(),
                     "{keyword}, search={from_search}"
                 );
-                assert_eq!(wrapped_schema["properties"]["__cc_switch_args"], schema);
-                assert_eq!(wrapped_schema["required"], json!(["__cc_switch_args"]));
+                assert_eq!(wrapped_schema["properties"]["cc_switch_args"], schema);
+                assert_eq!(wrapped_schema["required"], json!(["cc_switch_args"]));
                 assert_eq!(wrapped_schema["additionalProperties"], false);
                 assert_eq!(
                     upstream["tools"][1]["input_schema"],
@@ -1912,12 +1912,12 @@ mod tests {
                 );
 
                 let arguments =
-                    json!({"mode":"update", "id":"task_1", "__cc_switch_args":"user data"});
-                let plain_arguments = json!({"__cc_switch_args":"ordinary user data"});
+                    json!({"mode":"update", "id":"task_1", "cc_switch_args":"user data"});
+                let plain_arguments = json!({"cc_switch_args":"ordinary user data"});
                 let response = anthropic_response_to_responses_with_context(json!({
                     "id":"msg_1", "model":"claude", "stop_reason":"tool_use",
                     "content":[
-                        {"type":"tool_use", "id":"call_1", "name":name, "input":{"__cc_switch_args":arguments}},
+                        {"type":"tool_use", "id":"call_1", "name":name, "input":{"cc_switch_args":arguments}},
                         {"type":"tool_use", "id":"call_2", "name":"ordinary", "input":plain_arguments}
                     ]
                 }), &context).unwrap();
@@ -1953,7 +1953,7 @@ mod tests {
                     .unwrap();
                 assert_eq!(
                     assistant["content"][0]["input"],
-                    json!({"__cc_switch_args":arguments})
+                    json!({"cc_switch_args":arguments})
                 );
                 assert_eq!(assistant["content"][1]["input"], plain_arguments);
             }
@@ -1967,8 +1967,8 @@ mod tests {
         }]}));
         for input in [
             json!({}),
-            json!({"__cc_switch_args":null}),
-            json!({"__cc_switch_args":{},"extra":true}),
+            json!({"cc_switch_args":null}),
+            json!({"cc_switch_args":{},"extra":true}),
         ] {
             let error = anthropic_response_to_responses_with_context(json!({
                 "content":[{"type":"tool_use", "id":"call_1", "name":"automation_update", "input":input}]
@@ -1985,7 +1985,7 @@ mod tests {
         let events = [
             json!({"type":"message_start", "message":{"id":"msg_7459", "type":"message", "role":"assistant", "model":"claude", "content":[]}}),
             json!({"type":"content_block_start", "index":0, "content_block":{"type":"tool_use", "id":"call_7459", "name":"automation_update", "input":{}}}),
-            json!({"type":"content_block_delta", "index":0, "delta":{"type":"input_json_delta", "partial_json":"{\"__cc_switch_args\":{\"id\":\"task_1\"}}"}}),
+            json!({"type":"content_block_delta", "index":0, "delta":{"type":"input_json_delta", "partial_json":"{\"cc_switch_args\":{\"id\":\"task_1\"}}"}}),
             json!({"type":"content_block_stop", "index":0}),
             json!({"type":"message_delta", "delta":{"stop_reason":"tool_use"}}),
             json!({"type":"message_stop"}),
@@ -2010,7 +2010,7 @@ mod tests {
 
     fn issue_7459_aggregation_events(wrapped: bool, delta: Option<&str>) -> Vec<Value> {
         let input = if wrapped {
-            json!({"__cc_switch_args":{"query":"STALE"}})
+            json!({"cc_switch_args":{"query":"STALE"}})
         } else {
             json!({"query":"STALE"})
         };
@@ -2039,7 +2039,7 @@ mod tests {
     #[test]
     fn test_issue_7459_aggregation_review_stale_start_partial_wrapper_is_rejected() {
         let events =
-            issue_7459_aggregation_events(true, Some(r#"{"__cc_switch_args":{"query":"CURRENT"#));
+            issue_7459_aggregation_events(true, Some(r#"{"cc_switch_args":{"query":"CURRENT"#));
         let context = build_codex_tool_context_from_request(&json!({"tools":[{
             "type":"function", "name":"lookup", "parameters":{"oneOf":[{"type":"object"}]}
         }]}));
@@ -2055,12 +2055,12 @@ mod tests {
     fn test_issue_7459_aggregation_rejects_unclosed_tools_without_stale_fallback() {
         for wrapped in [false, true] {
             let partial = if wrapped {
-                r#"{"__cc_switch_args":{"query":"CURRENT"#
+                r#"{"cc_switch_args":{"query":"CURRENT"#
             } else {
                 r#"{"query":"CURRENT"#
             };
             let complete = if wrapped {
-                r#"{"__cc_switch_args":{"query":"CURRENT"}}"#
+                r#"{"cc_switch_args":{"query":"CURRENT"}}"#
             } else {
                 r#"{"query":"CURRENT"}"#
             };
@@ -2106,7 +2106,7 @@ mod tests {
     fn test_issue_7459_aggregation_closed_tools_use_current_delta_or_start_only_input() {
         for wrapped in [false, true] {
             let current = if wrapped {
-                r#"{"__cc_switch_args":{"query":"CURRENT"}}"#
+                r#"{"cc_switch_args":{"query":"CURRENT"}}"#
             } else {
                 r#"{"query":"CURRENT"}"#
             };

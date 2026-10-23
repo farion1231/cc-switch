@@ -999,7 +999,7 @@ mod tests {
     #[test]
     fn issue_7459_wrapped_stream_buffers_every_split_and_unwraps_all_events() {
         let original = json!({"query": "escaped \"quote\", backslash \\ and 工具", "nested": {"values": [1, 2]}});
-        let wrapped = json!({"__cc_switch_args": original}).to_string();
+        let wrapped = json!({"cc_switch_args": original}).to_string();
         for combinator in ["oneOf", "anyOf", "allOf"] {
             for split in (0..wrapped.len()).filter(|index| wrapped.is_char_boundary(*index)) {
                 let mut state =
@@ -1030,7 +1030,7 @@ mod tests {
                 &json!({
                     "type": "message", "id": "msg_7459", "model": "claude",
                     "content": [{"type": "tool_use", "id": "call_7459", "name": "lookup",
-                        "input": {"__cc_switch_args": original}}],
+                        "input": {"cc_switch_args": original}}],
                     "stop_reason": "tool_use"
                 }),
                 issue_7459_context(combinator),
@@ -1045,11 +1045,11 @@ mod tests {
         issue_7459_start(
             &mut state,
             "lookup",
-            json!({"__cc_switch_args": {"query": "stale"}}),
+            json!({"cc_switch_args": {"query": "stale"}}),
         );
         state.handle_content_block_delta(&json!({
             "index": 0, "delta": {"type": "input_json_delta",
-                "partial_json": "{\"__cc_switch_args\":{\"query\":\"current\"}}"}
+                "partial_json": "{\"cc_switch_args\":{\"query\":\"current\"}}"}
         }));
         let mut chunks = state.handle_content_block_stop(&json!({"index": 0}));
         chunks.extend(state.finalize());
@@ -1061,12 +1061,12 @@ mod tests {
         let context =
             super::super::transform_codex_chat::build_codex_tool_context_from_request(&json!({
                 "tools": [{"type": "function", "name": "lookup", "parameters": {
-                    "type": "object", "properties": {"__cc_switch_args": {"type": "string"}}
+                    "type": "object", "properties": {"cc_switch_args": {"type": "string"}}
                 }}]
             }));
         let mut state = AnthropicToResponsesState::with_tool_context(context);
         issue_7459_start(&mut state, "lookup", json!({}));
-        let arguments = "{\"__cc_switch_args\":\"user-defined property\"}";
+        let arguments = "{\"cc_switch_args\":\"user-defined property\"}";
         let mut chunks = state.handle_content_block_delta(&json!({
             "index": 0, "delta": {"type": "input_json_delta", "partial_json": arguments}
         }));
@@ -1082,9 +1082,9 @@ mod tests {
     #[test]
     fn issue_7459_malformed_wrapped_arguments_fail_without_executable_tool_output() {
         for arguments in [
-            "{\"__cc_switch_args\":",
+            "{\"cc_switch_args\":",
             "{\"query\":\"missing wrapper\"}",
-            "{\"__cc_switch_args\":{},\"extra\":true}",
+            "{\"cc_switch_args\":{},\"extra\":true}",
         ] {
             let mut state =
                 AnthropicToResponsesState::with_tool_context(issue_7459_context("oneOf"));
@@ -1128,8 +1128,8 @@ mod tests {
     #[tokio::test]
     async fn issue_7459_truncated_wrapped_stream_does_not_expose_arguments() {
         for arguments in [
-            "{\"__cc_switch_args\":{\"query\":",
-            "{\"__cc_switch_args\":{\"query\":\"complete JSON without a stop event\"}}",
+            "{\"cc_switch_args\":{\"query\":",
+            "{\"cc_switch_args\":{\"query\":\"complete JSON without a stop event\"}}",
         ] {
             let input = format!(
                 "data: {}\n\ndata: {}\n\n",
@@ -1140,7 +1140,7 @@ mod tests {
             );
             let merged = run_with_context(&input, issue_7459_context("oneOf")).await;
             assert!(merged.contains("event: response.failed"));
-            assert!(!merged.contains("__cc_switch_args"));
+            assert!(!merged.contains("cc_switch_args"));
             assert!(!merged.contains("event: response.function_call_arguments.done"));
             assert!(!merged.contains("event: response.output_item.done"));
             assert!(!merged.contains("event: response.completed"));
@@ -1151,13 +1151,13 @@ mod tests {
     fn issue_7459_f1_json_preflights_all_wrappers_before_any_tool_output() {
         for first in [
             json!({"type": "tool_use", "id": "call_valid", "name": "lookup",
-                "input": {"__cc_switch_args": {"query": "valid-before-error"}}}),
+                "input": {"cc_switch_args": {"query": "valid-before-error"}}}),
             json!({"type": "tool_use", "id": "call_ordinary", "name": "ordinary",
                 "input": {"query": "ordinary-before-error"}}),
         ] {
             for bad_input in [
                 json!({"query": "missing-wrapper"}),
-                json!({"__cc_switch_args": {}, "extra": true}),
+                json!({"cc_switch_args": {}, "extra": true}),
                 Value::Null,
             ] {
                 let body = json!({"type": "message", "id": "msg_preflight", "content": [
@@ -1191,7 +1191,7 @@ mod tests {
         issue_7459_start(
             &mut state,
             "lookup",
-            json!({"__cc_switch_args": {"query": "valid-before-error"}}),
+            json!({"cc_switch_args": {"query": "valid-before-error"}}),
         );
         assert!(state.output_items.is_empty());
         let committed = issue_7459_events(state.handle_content_block_stop(&json!({"index": 0})));
@@ -1242,7 +1242,7 @@ mod tests {
                 "data: {}\n\ndata: {}\n\n",
                 json!({"type": "content_block_start", "index": 0, "content_block": {
                     "type": "tool_use", "id": "call_unclosed", "name": "lookup",
-                    "input": {"__cc_switch_args": {"query": "complete-but-uncommitted"}}
+                    "input": {"cc_switch_args": {"query": "complete-but-uncommitted"}}
                 }}),
                 terminal
             );
@@ -1262,7 +1262,7 @@ mod tests {
             issue_7459_start(
                 &mut state,
                 "lookup",
-                json!({"__cc_switch_args": {"query": "STALE"}}),
+                json!({"cc_switch_args": {"query": "STALE"}}),
             );
             state.handle_content_block_delta(&json!({"index": 0,
                 "delta": {"type": "input_json_delta", "partial_json": partial}}));
@@ -1295,7 +1295,7 @@ mod tests {
             json!({"type": "content_block_start", "index": 0, "content_block": {
                 "type": "tool_use", "id": "call_7459", "name": "mcp_docs__lookup", "input": {}}}),
             json!({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta",
-                "partial_json": json!({"__cc_switch_args": original}).to_string()}}),
+                "partial_json": json!({"cc_switch_args": original}).to_string()}}),
             json!({"type": "content_block_stop", "index": 0}),
             json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}}),
             json!({"type": "message_stop"}),
