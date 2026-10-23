@@ -5,6 +5,7 @@ import {
   fillHermesModel,
   fillOpenClawModel,
   fillOpenCodeModel,
+  fillWorkBuddyModel,
   piPresetThinkingFor,
   piSendsReasoningEffort,
   piThinkingLevelMapFromEfforts,
@@ -101,9 +102,9 @@ describe("fillHermesModel", () => {
   });
 
   it("only fills supports_vision towards true and keeps an explicit false", () => {
-    expect(
-      fillHermesModel({ id: "m" }, { inputModalities: ["text"] }),
-    ).toEqual({ id: "m" });
+    expect(fillHermesModel({ id: "m" }, { inputModalities: ["text"] })).toEqual(
+      { id: "m" },
+    );
     expect(
       fillHermesModel({ id: "m", supports_vision: false }, metadata),
     ).toEqual({ id: "m", context_length: 262144, supports_vision: false });
@@ -286,5 +287,29 @@ describe("piPresetThinkingFor", () => {
         compat: { supportsReasoningEffort: false },
       }),
     ).toBeNull();
+  });
+});
+
+describe("fillWorkBuddyModel", () => {
+  it("fills blank limits and only turns capabilities on", () => {
+    expect(
+      fillWorkBuddyModel(
+        { id: "m", supportsToolCall: true, supportsImages: false },
+        metadata,
+      ),
+    ).toEqual({
+      id: "m",
+      supportsToolCall: true,
+      supportsImages: true,
+      supportsReasoning: true,
+      maxInputTokens: 262144,
+      maxOutputTokens: 32768,
+    });
+    expect(
+      fillWorkBuddyModel(
+        { id: "m", maxInputTokens: 1000, supportsReasoning: true },
+        { reasoning: false, contextWindow: 2000 },
+      ),
+    ).toEqual({ id: "m", maxInputTokens: 1000, supportsReasoning: true });
   });
 });

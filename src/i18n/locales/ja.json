@@ -1110,20 +1110,18 @@
   "workbuddy": {
     "empty": {
       "title": "WorkBuddy のプロバイダーはまだありません",
-      "description": "CC Switch はプロバイダーをカスタムモデルとして WorkBuddy の ~/.workbuddy/models.json に書き込み、WorkBuddy で追加したモデルは変更しません。そのためインポートするものはありません。右上の + からプリセットまたはカスタムプロバイダーを追加してください。"
+      "description": "CC Switch はプロバイダーをカスタムモデルとして ~/.workbuddy/models.json に書き込み、WorkBuddy で追加したモデルは変更しないため、インポートは不要です。右上の + から、プリセットまたはカスタムプロバイダーを追加できます。"
     },
     "form": {
       "providerKeyHint": "小文字・数字・ハイフンのみ。models.json のどのエントリがこのプロバイダーのものかを示します。",
       "providerKeyLockedHint": "キーは models.json のエントリに記録されるため、作成後は変更できません。",
-      "url": "API エンドポイント",
+      "url": "リクエスト URL",
       "urlHint": "OpenAI 互換 Chat Completions の完全な URL（通常 /chat/completions で終わる）。",
       "urlResponsesHint": "ベース URL を入力します。WorkBuddy は {url}/responses にリクエストします。",
-      "responsesApi": "OpenAI Responses API を使う",
-      "responsesApiHint": "オフ：Chat Completions（既定）。オン：各モデルに api: \"openai-responses\" を書き込みます。",
       "apiKeyHint": "このマシンの models.json に保存されます。${ENV_VAR} 形式の参照は WorkBuddy が展開します。",
       "vendor": "ベンダー表示名",
-      "models": "モデル",
       "addModel": "モデルを追加",
+      "newModel": "新しいモデル",
       "modelsEmpty": "モデルを 1 つ以上追加してください。モデル ID はそのまま API に送られます。",
       "modelId": "モデル ID",
       "modelName": "表示名",

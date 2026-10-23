@@ -4,6 +4,7 @@
 import type { KnownModelMetadata } from "@/lib/modelMetadata";
 import type { CodexCatalogModel, OpenClawModel, OpenCodeModel } from "@/types";
 import type { HermesModel } from "@/config/hermesProviderPresets";
+import type { WorkBuddyModel } from "@/config/workbuddyProviderPresets";
 import {
   PI_THINKING_LEVELS,
   type PiThinkingLevelMap,
@@ -75,6 +76,26 @@ export function fillOpenClawModel(
   if (!model.cost && metadata.cost) {
     next.cost = { ...metadata.cost };
   }
+  return next;
+}
+
+/**
+ * WorkBuddy models.json 条目：数字只补空的，推理和图片输入只往「支持」补
+ * （新建的行默认 `supportsImages: false`，模型支持图片就改成 true）。
+ */
+export function fillWorkBuddyModel(
+  model: WorkBuddyModel,
+  metadata: KnownModelMetadata,
+): WorkBuddyModel {
+  const next = { ...model };
+  if (isBlank(model.maxInputTokens) && metadata.contextWindow) {
+    next.maxInputTokens = metadata.contextWindow;
+  }
+  if (isBlank(model.maxOutputTokens) && metadata.maxOutputTokens) {
+    next.maxOutputTokens = metadata.maxOutputTokens;
+  }
+  if (metadata.reasoning === true) next.supportsReasoning = true;
+  if (metadata.inputModalities?.includes("image")) next.supportsImages = true;
   return next;
 }
 
