@@ -3,8 +3,11 @@ import type { AppId } from "@/lib/api";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { cn } from "@/lib/utils";
 
+/** 图标组件接受的应用：受管应用之外还有 zcode（仅用量统计，非受管）。 */
+export type GlyphApp = AppId | "zcode";
+
 /** 应用名：品牌名不翻译，四种语言都写原文。 */
-export const APP_DISPLAY_NAME: Record<AppId, string> = {
+export const APP_DISPLAY_NAME: Record<GlyphApp, string> = {
   claude: "Claude Code",
   "claude-desktop": "Claude Desktop",
   codex: "Codex",
@@ -18,9 +21,10 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   kimi: "Kimi Code",
   agy: "Antigravity",
   omp: "Oh My Pi",
+  zcode: "ZCode",
 };
 
-const APP_ICON_NAME: Record<AppId, string> = {
+const APP_ICON_NAME: Record<GlyphApp, string> = {
   claude: "claude",
   "claude-desktop": "claude",
   codex: "openai",
@@ -34,16 +38,17 @@ const APP_ICON_NAME: Record<AppId, string> = {
   kimi: "kimi",
   agy: "antigravity",
   omp: "omp",
+  zcode: "zcode",
 };
 
 // Claude Code 和 Claude Desktop 用同一个图标，靠右下角的小角标区分终端与桌面
-const APP_BADGE_ICON: Partial<Record<AppId, typeof Terminal>> = {
+const APP_BADGE_ICON: Partial<Record<GlyphApp, typeof Terminal>> = {
   claude: Terminal,
   "claude-desktop": Monitor,
 };
 
 interface AppGlyphProps {
-  app: AppId;
+  app: GlyphApp;
   /** 图标边长：侧栏 16，页头 20 */
   size?: number;
   /** 角标底色要和所在的行一致，否则看起来像缺了一块 */

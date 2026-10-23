@@ -59,6 +59,9 @@ pub struct VisibleApps {
     pub kimi: bool,
     #[serde(default = "default_true")]
     pub agy: bool,
+    // ZCode 不是受管应用，没有供应商切换；这个开关只控制用量页的应用筛选按钮
+    #[serde(default = "default_true")]
+    pub zcode: bool,
 }
 
 impl Default for VisibleApps {
@@ -77,6 +80,7 @@ impl Default for VisibleApps {
             kimi: true,
             agy: true,
             omp: true,
+            zcode: true,
         }
     }
 }
