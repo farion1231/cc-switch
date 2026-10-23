@@ -34,7 +34,7 @@ Ollama、LM Studio 和 vLLM 预设使用各自的本地 OpenAI 兼容地址，�
 
 ## 官方 OAuth 登录
 
-官方账号供应商使用 Kimi 图标并带有「官方」徽标。默认账号沿用原生 `managed:kimi-code` 供应商，显示为 **Kimi Official**；其余账号使用独立的 `kimi-code-ccs-<UUID>` 供应商 ID，显示为 **Kimi Official (账号标识)**。已有原生登录保持原 ID、模型别名和凭据引用，自动显示在授权中心；导入时补齐名称、图标和官方分类，自定义显示信息保留。
+官方账号供应商使用 Kimi 图标并带有「官方」徽标。默认账号沿用原生 `managed:kimi-code` 供应商，显示为 **Kimi Official**；其余账号的供应商 ID 取 `Kimi 订阅 <昵称>`（英文界面为 `Kimi Subscription <昵称>`，与 Kimi Code 给自己默认登录写死的「Kimi 订阅」并列；Kimi Code 把供应商 ID 当名称显示在模型选择器的分组上；只保留字母、数字、`-`、`_` 和空格，重名时补序号），卡片显示为 **Kimi Official · 昵称**；读不到昵称时退回 `kimi-code-ccs-<标识>`。供应商 ID 在创建后不随昵称改动；两台设备上昵称不同时会各得一个 ID。已有原生登录保持原 ID、模型别名和凭据引用，自动显示在授权中心；导入时补齐名称、图标和官方分类，自定义显示信息保留。
 
 打开「授权中心」的 **Kimi Code** 分组，选择国内版或海外版后点击「登录 Kimi」或「添加账号」，在浏览器中输入授权码并确认。若浏览器没有自动打开，可使用页面上的授权链接和复制授权码按钮。「添加供应商 → 账号登录 → Kimi Code 官方登录」提供「管理 Kimi 账号」入口，进入同一个授权中心。此流程无需填写 API Key、模型或 JSON 配置，也不显示普通供应商表单的「添加」按钮。
 
@@ -47,7 +47,7 @@ Ollama、LM Studio 和 vLLM 预设使用各自的本地 OpenAI 兼容地址，�
 
 授权成功后，CC Switch 从官方 `/models` 获取该账号的模型和能力。原生默认供应商不存在或其凭据文件缺失时，新登录沿用 `managed:kimi-code` 和官方默认 OAuth 引用，模型别名为 `kimi-code/<模型 ID>`；默认登录已存在时，新增账号使用独立供应商和 `<供应商 ID>/<模型 ID>` 模型别名。缺失的联网搜索和抓取服务也会添加。已有默认模型、用户别名、模型 overrides、自定义服务及其他账号配置会保留；没有默认模型时首次登录会选中该账号的模型。配置或凭据保存失败时恢复原配置，可点击「重试」继续完成当前授权。
 
-凭据按官方格式保存在 `~/.kimi-code/credentials/`，仅后端读写，不进入供应商档案或前端响应。原生国内默认登录使用 `kimi-code.json`，海外版按官方规则选择独立的默认槽位；其余账号各自使用 `kimi-code-ccs-<8 位标识>.json`（标识由区域和账号 ID 算出，同一账号在不同设备上相同；早期版本创建的 UUID 槽位照常识别），通过供应商的 `oauth.key` 与 `oauth.oauth_host` 引用。`KIMI_CODE_HOME` 仍用于选择数据目录；CC Switch 登录不使用 `KIMI_CODE_OAUTH_HOST`、`KIMI_OAUTH_HOST` 或 `KIMI_CODE_BASE_URL` 覆盖所选区域的地址。重新登录已有账号时保持该账号的区域与凭据槽位，使用该区域的固定官方地址。CC Switch 只在查询额度、令牌快过期时刷新，刷新前拿 Kimi 同款的凭据锁（`oauth/<槽位>.lock` 目录，5 秒未更新视为失效），锁内重读凭据，与 Kimi Code 不会同时轮换 refresh token；刷新被拒时按 Kimi 的规则先重读，别的进程已换新就沿用，否则写入作废标记、该账号需重新登录。Windows 上 Kimi Code 不加锁，CC Switch 也不刷新，令牌过期时额度提示先在 Kimi Code 里用一次该账号。登录、删除写凭据时同样持锁。
+凭据按官方格式保存在 `~/.kimi-code/credentials/`，仅后端读写，不进入供应商档案或前端响应。原生国内默认登录使用 `kimi-code.json`，海外版按官方规则选择独立的默认槽位；其余账号各自使用 `kimi-code-ccs-<8 位标识>.json`（标识由区域和账号 ID 算出，同一账号在不同设备上相同；早期版本创建的 UUID 槽位照常识别），模型别名也以这个槽位名为前缀（如 `kimi-code-ccs-<标识>/k3`），`default_model` 始终是 ASCII 键；认同一个账号时既看本机身份缓存，也看凭据槽位名，通过供应商的 `oauth.key` 与 `oauth.oauth_host` 引用。`KIMI_CODE_HOME` 仍用于选择数据目录；CC Switch 登录不使用 `KIMI_CODE_OAUTH_HOST`、`KIMI_OAUTH_HOST` 或 `KIMI_CODE_BASE_URL` 覆盖所选区域的地址。重新登录已有账号时保持该账号的区域与凭据槽位，使用该区域的固定官方地址。CC Switch 只在查询额度、令牌快过期时刷新，刷新前拿 Kimi 同款的凭据锁（`oauth/<槽位>.lock` 目录，5 秒未更新视为失效），锁内重读凭据，与 Kimi Code 不会同时轮换 refresh token；刷新被拒时按 Kimi 的规则先重读，别的进程已换新就沿用，否则写入作废标记、该账号需重新登录。Windows 上 Kimi Code 不加锁，CC Switch 也不刷新，令牌过期时额度提示先在 Kimi Code 里用一次该账号。登录、删除写凭据时同样持锁。
 
 网络请求沿用 CC Switch 的全局出站代理设置。连接失败时显示授权主机及底层 DNS、TCP、TLS 或超时原因，便于核对系统代理和网络连接。
 

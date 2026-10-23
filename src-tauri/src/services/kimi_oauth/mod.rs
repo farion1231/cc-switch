@@ -7,9 +7,11 @@ mod lock;
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::LazyLock,
     time::{Duration, Instant},
 };
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
@@ -231,7 +233,17 @@ fn read_config(home: &Path) -> Result<Value, String> {
     kimi_config::read(&home.join("config.toml")).map_err(|error| error.to_string())
 }
 
-fn new_account(home: &Path, endpoints: &Endpoints, id: &str) -> Result<(String, Value), String> {
+/// A new account goes into Kimi's default slot while that is free; otherwise it
+/// gets its own credential slot `kimi-code-ccs-<suffix>`. Kimi shows a
+/// provider's key as its name, so a separate account's key is
+/// `Kimi 订阅 <nickname>` when the nickname is known; the slot name stays the
+/// stable identity.
+fn new_account(
+    home: &Path,
+    endpoints: &Endpoints,
+    suffix: &str,
+    nickname: Option<&str>,
+) -> Result<(String, Value), String> {
     let config = read_config(home)?;
     let provider = &config["providers"][PROVIDER_ID];
     let native_oauth = endpoints.oauth_ref();
@@ -244,12 +256,48 @@ fn new_account(home: &Path, endpoints: &Endpoints, id: &str) -> Result<(String, 
                 .try_exists()
                 .map_err(|e| format!("Cannot check Kimi Code credentials: {e}"))?);
     if occupied {
-        let id = format!("kimi-code-ccs-{id}");
-        let oauth = json!({"storage": "file", "key": format!("oauth/{id}"), "oauth_host": endpoints.oauth_host});
-        Ok((id, oauth))
+        let slot = format!("kimi-code-ccs-{suffix}");
+        let oauth = json!({"storage": "file", "key": format!("oauth/{slot}"), "oauth_host": endpoints.oauth_host});
+        let id = readable_provider_id(&config, &subscription_label(), nickname);
+        Ok((id.unwrap_or(slot), oauth))
     } else {
         Ok((PROVIDER_ID.into(), native_oauth))
     }
+}
+
+/// Kimi's own label for its default login ("Kimi 订阅" / "Kimi Subscription"),
+/// in CC Switch's language, so separate accounts sit next to it in the model
+/// picker as `Kimi 订阅 <nickname>`. Kimi only ships Chinese and English.
+fn subscription_label() -> String {
+    if crate::tray::tray_language().starts_with("zh") {
+        "Kimi 订阅".into()
+    } else {
+        "Kimi Subscription".into()
+    }
+}
+
+/// `<label> <nickname>` limited to what Kimi accepts as a provider name
+/// (letters, digits, `-`, `_` and spaces), numbered when another provider
+/// has the name.
+fn readable_provider_id(config: &Value, label: &str, nickname: Option<&str>) -> Option<String> {
+    static DISALLOWED: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"[^\p{L}\p{N}\-_ ]+").unwrap());
+    let nickname = DISALLOWED.replace_all(nickname?, " ");
+    let nickname = nickname.split_whitespace().collect::<Vec<_>>().join(" ");
+    if nickname.is_empty() {
+        return None;
+    }
+    let base = format!("{label} {nickname}");
+    let taken = |id: &str| config["providers"].get(id).is_some();
+    (1..)
+        .map(|n| {
+            if n == 1 {
+                base.clone()
+            } else {
+                format!("{base} {n}")
+            }
+        })
+        .find(|id| !taken(id))
 }
 
 fn account_provider<'a>(config: &'a Value, id: &str) -> Result<&'a Value, String> {
@@ -310,7 +358,7 @@ fn resolve_target(
     let Some(identity) = identity else {
         return match explicit {
             Some(target) => Ok(target),
-            None => new_account(home, endpoints, &uuid::Uuid::new_v4().to_string()),
+            None => new_account(home, endpoints, &uuid::Uuid::new_v4().to_string(), None),
         };
     };
     let region = endpoints.region();
@@ -318,6 +366,7 @@ fn resolve_target(
     let known = account::Store::load(store).accounts;
     let suffix = account::account_suffix(region, &identity.user_id);
     let separate = format!("kimi-code-ccs-{suffix}");
+    let separate_key = format!("oauth/{separate}");
     let same_account = config["providers"]
         .as_object()
         .into_iter()
@@ -328,7 +377,8 @@ fn resolve_target(
                 && (known
                     .get(*id)
                     .is_some_and(|known| known.user_id == identity.user_id)
-                    || **id == separate)
+                    || **id == separate
+                    || provider["oauth"]["key"].as_str() == Some(separate_key.as_str()))
         })
         .map(|(id, _)| id.clone());
     if let Some(id) = same_account {
@@ -343,7 +393,7 @@ fn resolve_target(
             return Ok((id, oauth));
         }
     }
-    new_account(home, endpoints, &suffix)
+    new_account(home, endpoints, &suffix, identity.nickname.as_deref())
 }
 
 fn network_error(context: &str, endpoint: &str, error: reqwest::Error) -> String {
@@ -836,8 +886,9 @@ impl KimiOAuthManager {
             .identity
             .as_ref()
             .and_then(|identity| identity.nickname.as_deref());
-        let models = scope_models(models, &account_id, nickname);
-        let _lock = lock::acquire(&flow.home, &account::slot_name(&path)).await?;
+        let slot = account::slot_name(&path);
+        let models = scope_models(models, &account_id, &slot, nickname);
+        let _lock = lock::acquire(&flow.home, &slot).await?;
         kimi_config::save_oauth_login(
             &flow.home,
             &account_id,
@@ -996,9 +1047,13 @@ pub(crate) fn forget_removed_profile(id: &str, settings: &Value) -> Result<(), S
 
 /// Move discovered models under the account. Separate accounts also name
 /// themselves in `display_name`, so Kimi's model picker can tell them apart.
+/// Point the catalog at `account_id`. Separate accounts' aliases are prefixed
+/// with their credential slot, not the provider name: the slot never changes,
+/// so `default_model` stays a plain ASCII key.
 fn scope_models(
     models: Map<String, Value>,
     account_id: &str,
+    slot: &str,
     nickname: Option<&str>,
 ) -> Map<String, Value> {
     models
@@ -1013,7 +1068,7 @@ fn scope_models(
                 let name = model["display_name"].as_str().unwrap_or(&id).to_string();
                 model["display_name"] = json!(format!("{name} ({nickname})"));
             }
-            (format!("{account_id}/{id}"), model)
+            (format!("{slot}/{id}"), model)
         })
         .collect()
 }
@@ -1251,7 +1306,7 @@ mod tests {
         let native_oauth = json!({"storage":"file","key":"oauth/kimi-code"});
         assert_eq!(endpoints.oauth_ref(), native_oauth);
         assert_eq!(
-            new_account(dir.path(), &endpoints, "first").unwrap(),
+            new_account(dir.path(), &endpoints, "first", None).unwrap(),
             (PROVIDER_ID.into(), native_oauth.clone())
         );
 
@@ -1259,7 +1314,9 @@ mod tests {
         atomic_write_private(&path, b"existing-native-credential").unwrap();
         // An orphaned credential does not prevent restoring the native provider.
         assert_eq!(
-            new_account(dir.path(), &endpoints, "restore").unwrap().0,
+            new_account(dir.path(), &endpoints, "restore", None)
+                .unwrap()
+                .0,
             PROVIDER_ID
         );
         let config = json!({"providers":{PROVIDER_ID:{"type":"kimi","base_url":endpoints.base_url,"oauth":native_oauth}}});
@@ -1269,13 +1326,13 @@ mod tests {
         )
         .unwrap();
         let original = fs::read(dir.path().join("config.toml")).unwrap();
-        let (id, oauth) = new_account(dir.path(), &endpoints, "second").unwrap();
+        let (id, oauth) = new_account(dir.path(), &endpoints, "second", None).unwrap();
         assert_eq!(id, "kimi-code-ccs-second");
         assert_eq!(oauth["key"], "oauth/kimi-code-ccs-second");
         assert_eq!(fs::read(&path).unwrap(), b"existing-native-credential");
         // Choosing another region must not replace the occupied native account.
         assert_eq!(
-            new_account(dir.path(), &KimiRegion::Global.endpoints(), "global")
+            new_account(dir.path(), &KimiRegion::Global.endpoints(), "global", None)
                 .unwrap()
                 .0,
             "kimi-code-ccs-global"
@@ -1283,10 +1340,32 @@ mod tests {
 
         fs::remove_file(&path).unwrap();
         assert_eq!(
-            new_account(dir.path(), &endpoints, "missing-token").unwrap(),
+            new_account(dir.path(), &endpoints, "missing-token", None).unwrap(),
             (PROVIDER_ID.into(), native_oauth)
         );
         assert_eq!(fs::read(dir.path().join("config.toml")).unwrap(), original);
+    }
+
+    #[test]
+    fn readable_provider_id_follows_kimi_name_rules() {
+        let label = "Kimi 订阅";
+        let config =
+            json!({"providers": {"Kimi 订阅 登月者9287": {}, "Kimi 订阅 登月者9287 2": {}}});
+        // Kimi only accepts letters, digits, "-", "_" and spaces in a provider name.
+        assert_eq!(
+            readable_provider_id(&json!({}), label, Some("  麦田里的守望 ")).as_deref(),
+            Some("Kimi 订阅 麦田里的守望")
+        );
+        assert_eq!(
+            readable_provider_id(&json!({}), "Kimi Subscription", Some("john.doe@x")).as_deref(),
+            Some("Kimi Subscription john doe x")
+        );
+        assert_eq!(
+            readable_provider_id(&config, label, Some("登月者9287")).as_deref(),
+            Some("Kimi 订阅 登月者9287 3")
+        );
+        assert_eq!(readable_provider_id(&json!({}), label, Some("..")), None);
+        assert_eq!(readable_provider_id(&json!({}), label, None), None);
     }
 
     #[test]
@@ -1331,10 +1410,12 @@ mod tests {
             .find(|account| &account.id != first)
             .unwrap()
             .id;
-        // The separate slot is derived from the account, so every device that
-        // signs in to it agrees on the provider id.
+        // Kimi shows the provider key as its name, so a separate account is
+        // named after its nickname; the credential slot and model aliases stay
+        // derived from the account and never change.
         let suffix = account::account_suffix(KimiRegion::MainlandCn, "user-2");
-        assert_eq!(second, &format!("kimi-code-ccs-{suffix}"));
+        let slot = format!("kimi-code-ccs-{suffix}");
+        assert_eq!(second, &format!("{} Nick2", subscription_label()));
         let named = |id: &str| {
             status
                 .accounts
@@ -1350,7 +1431,11 @@ mod tests {
         assert!(!fs::read_to_string(&store).unwrap().contains("private-"));
         let config = read_config(dir.path()).unwrap();
         assert_eq!(config["models"]["kimi-code/k3"]["provider"], first.as_str());
-        let second_model = &config["models"][format!("{second}/k3")];
+        assert_eq!(
+            config["providers"][second]["oauth"]["key"],
+            format!("oauth/{slot}")
+        );
+        let second_model = &config["models"][format!("{slot}/k3")];
         assert_eq!(second_model["provider"], second.as_str());
         assert_eq!(second_model["display_name"], "k3 (Nick2)");
         let first_path = credential_path(dir.path(), &config["providers"][first]["oauth"]).unwrap();
@@ -1366,7 +1451,7 @@ mod tests {
 
         kimi_config::use_oauth_account(dir.path(), second).unwrap();
         let selected = read_config(dir.path()).unwrap();
-        assert_eq!(selected["default_model"], format!("{second}/k3"));
+        assert_eq!(selected["default_model"], format!("{slot}/k3"));
         assert_eq!(selected["services"], config["services"]);
 
         // Signing in to the same account again (without asking for a re-login)
@@ -1376,6 +1461,20 @@ mod tests {
             accounts_status(dir.path(), &store).unwrap().accounts.len(),
             2
         );
+        // The same account is found by its credential slot even without the
+        // local identity cache (e.g. cleared), so it is not added twice.
+        account::update_store(&store, |store| {
+            store.accounts.remove(second.as_str());
+        })
+        .unwrap();
+        login_as(&manager, &server, dir.path(), 2).await;
+        let ids: Vec<_> = accounts_status(dir.path(), &store)
+            .unwrap()
+            .accounts
+            .into_iter()
+            .map(|account| account.id)
+            .collect();
+        assert_eq!(ids.len(), 2, "{ids:?}");
         assert_eq!(fs::read(&first_path).unwrap(), first_bytes);
 
         // The account in use cannot be removed.
@@ -1409,7 +1508,7 @@ mod tests {
         assert!(!second_path.exists());
         let after = read_config(dir.path()).unwrap();
         assert!(after["providers"].get(second).is_none());
-        assert!(after["models"].get(format!("{second}/k3")).is_none());
+        assert!(after["models"].get(format!("{slot}/k3")).is_none());
         assert!(!store_of(dir.path()).accounts.contains_key(second));
         assert_eq!(fs::read(&first_path).unwrap(), first_bytes);
         assert_eq!(
@@ -1523,7 +1622,7 @@ mod tests {
             &serde_json::to_vec(&credential).unwrap(),
             &server.endpoints.base_url,
             oauth,
-            scope_models(models, "kimi-code-ccs-test", None),
+            scope_models(models, "kimi-code-ccs-test", "kimi-code-ccs-test", None),
         )
         .unwrap();
         read_config(dir).unwrap()["providers"]["kimi-code-ccs-test"].clone()
@@ -1658,7 +1757,7 @@ mod tests {
                 dir.path(), id, &dir.path().join(format!("credentials/{key}.json")),
                 br#"{"access_token":"private-access","refresh_token":"private-refresh","expires_at":1}"#,
                 "https://api.kimi.com/coding/v1", json!({"storage":"file","key":format!("oauth/{key}")}),
-                scope_models(models, id, None),
+                scope_models(models, id, id, None),
             ).unwrap();
         }
         fs::write(

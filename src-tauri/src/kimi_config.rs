@@ -28,6 +28,12 @@ pub(crate) fn official_provider_name(id: &str, nickname: Option<&str>) -> String
         format!("{OFFICIAL_PROVIDER_NAME} · {nickname}")
     } else if id == OFFICIAL_PROVIDER_ID {
         OFFICIAL_PROVIDER_NAME.into()
+    } else if let Some(name) = ["Kimi 订阅 ", "Kimi Subscription ", "Kimi "]
+        .iter()
+        .find_map(|prefix| id.strip_prefix(prefix))
+    {
+        // Separate accounts are keyed `Kimi 订阅 <nickname>` (see kimi_oauth::new_account).
+        format!("{OFFICIAL_PROVIDER_NAME} · {name}")
     } else {
         let account = id.strip_prefix("kimi-code-ccs-").unwrap_or(id);
         format!(
@@ -719,6 +725,33 @@ pub(crate) fn save_oauth_login(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn official_card_names_follow_nickname_then_provider_key() {
+        assert_eq!(
+            official_provider_name("Kimi 订阅 登月者9287", Some("新昵称")),
+            "Kimi Official · 新昵称"
+        );
+        // Without a cached nickname the readable key still names the card.
+        for id in [
+            "Kimi 订阅 登月者9287",
+            "Kimi Subscription 登月者9287",
+            "Kimi 登月者9287",
+        ] {
+            assert_eq!(
+                official_provider_name(id, None),
+                "Kimi Official · 登月者9287"
+            );
+        }
+        assert_eq!(
+            official_provider_name("kimi-code-ccs-fd019f9e", None),
+            "Kimi Official (fd019f9e)"
+        );
+        assert_eq!(
+            official_provider_name(OFFICIAL_PROVIDER_ID, None),
+            "Kimi Official"
+        );
+    }
 
     #[test]
     fn official_identity_repairs_imported_name_icon_and_category_without_renaming_native_keys() {
