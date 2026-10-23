@@ -2550,6 +2550,13 @@ impl RequestForwarder {
             );
         }
 
+        // The shared local Codex provider intentionally omits upstream headers.
+        // Resolve them from this request's selected row instead, so aggregate
+        // routing and failover never reuse another provider's header values.
+        if matches!(app_type, AppType::Codex) && !codex_official_auth_passthrough {
+            apply_codex_provider_header_overrides(&mut ordered_headers, provider, is_copilot);
+        }
+
         apply_local_proxy_header_overrides(
             &mut ordered_headers,
             provider
