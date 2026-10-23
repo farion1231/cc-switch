@@ -76,6 +76,20 @@ describe("quota lines", () => {
         "每周 Opus",
       ).text,
     ).toBe("每周 Opus 剩余 50%");
+    expect(
+      tierLine(
+        t,
+        { name: "agy_gemini_weekly", utilization: 50, resetsAt: null },
+        "Gemini 每周",
+      ).window,
+    ).toBe(2);
+    expect(
+      tierLine(
+        t,
+        { name: "agy_third_party_weekly", utilization: 50, resetsAt: null },
+        "Claude/GPT 每周",
+      ).window,
+    ).toBe(2);
     expect(toneForLeft(20)).toBe("normal");
     expect(toneForLeft(19)).toBe("warning");
   });

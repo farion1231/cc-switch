@@ -105,6 +105,8 @@ const TIER_WINDOW_ORDER: Record<string, number> = {
   seven_day_opus: 2,
   seven_day_sonnet: 2,
   weekly_limit: 2,
+  agy_gemini_weekly: 2,
+  agy_third_party_weekly: 2,
   "30_day": 3,
   monthly: 3,
   credits: 3,

@@ -1,9 +1,9 @@
 //! 直接向 Google 查某个 Antigravity 账号的剩余额度（授权中心逐个账号显示）。
 //!
 //! 和 agy 的 `/usage` 是同一个接口、同一组额度桶，区别是用 CC Switch 存的那份令牌查，
-//! 不用先把 agy 切到这个号。这个接口只回应自报是 Antigravity 的客户端（User-Agent
-//! 里不带 `antigravity` 一律 403「没有有效许可」），所以 UA 写成
-//! `cc-switch/<版本> (antigravity)`：照实报 CC Switch，只补上服务端要的那个词。
+//! 不用先把 agy 切到这个号。Google 服务端对该接口要求 User-Agent 必须符合 Antigravity
+//! 官方客户端格式（以 `antigravity/hub/` 开头），否则虽然不报 403，但服务端会过滤掉
+//! `Gemini Models` 额度桶，只下发第三方模型（Claude/GPT）额度。因此这里采用标准官方 Hub UA。
 //! 只查额度，不调模型、不做预热，也不据额度自动换号。
 //!
 //! 没有使用资格的号（如 Google 判定未满 18 岁）同样回 403「没有有效许可」，这时再问一次
@@ -59,6 +59,7 @@ struct SummaryGroup {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SummaryBucket {
+    #[serde(alias = "id")]
     bucket_id: Option<String>,
     remaining_fraction: Option<f64>,
     reset_time: Option<String>,
@@ -89,7 +90,16 @@ struct ErrorDetail {
 }
 
 fn user_agent() -> String {
-    format!("cc-switch/{} (antigravity)", env!("CARGO_PKG_VERSION"))
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        other => other,
+    };
+    let arch = match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "x86_64",
+        other => other,
+    };
+    format!("antigravity/hub/2.24.0 (aidev_client; os_type={os}; arch={arch})")
 }
 
 pub async fn fetch(access_token: &str) -> Result<Vec<QuotaTier>, QuotaError> {
@@ -256,9 +266,18 @@ mod tests {
     }
 
     #[test]
-    fn user_agent_names_cc_switch_and_the_client_it_queries_for() {
+    fn user_agent_uses_antigravity_hub_signature() {
         let ua = user_agent();
-        assert!(ua.starts_with("cc-switch/"));
-        assert!(ua.contains("antigravity"));
+        assert!(ua.starts_with("antigravity/hub/"));
+        assert!(ua.contains("aidev_client"));
+    }
+
+    #[test]
+    fn parses_bucket_with_id_alias() {
+        let sample_id = br#"{"groups":[{"buckets":[{"id":"gemini-5h","remainingFraction":0.8}]}]}"#;
+        let tiers = parse(sample_id).unwrap();
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].name, TIER_AGY_GEMINI_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization.round(), 20.0);
     }
 }
