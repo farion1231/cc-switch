@@ -157,6 +157,10 @@ export const handlers = [
     return success(true);
   }),
 
+  http.post(`${TAURI_ENDPOINT}/add_provider_to_live_config`, () =>
+    success(true),
+  ),
+
   http.post(`${TAURI_ENDPOINT}/remove_provider_from_live_config`, () =>
     success(true),
   ),

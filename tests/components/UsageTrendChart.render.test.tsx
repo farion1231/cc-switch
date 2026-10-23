@@ -5,7 +5,6 @@ import {
   createTestQueryClient,
   renderWithQueryClient as render,
 } from "../utils/testQueryClient";
-import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { UsageTrendChart } from "@/components/usage/UsageTrendChart";
 
@@ -45,61 +44,47 @@ vi.mock("@/lib/query/usage", () => ({
 }));
 
 describe("UsageTrendChart (single metric)", () => {
-  it("shows only the selected metric in the legend and follows the switch", async () => {
-    const user = userEvent.setup();
-    render(
+  it("titles the chart with the metric picked on the metric strip", () => {
+    const { rerender } = render(
       <UsageTrendChart
         range={{ preset: "7d" }}
-        rangeLabel="7d"
+        metric="tokens"
         refreshIntervalMs={0}
       />,
     );
+    // 图表自己不再有指标切换和单系列图例：指标由上方指标条选
+    expect(
+      screen.getByRole("heading", { name: "usage.trend.titleMetric" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("usage-trend-legend")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "usage.trend.cost" }),
+    ).not.toBeInTheDocument();
 
-    const legend = screen.getByTestId("usage-trend-legend");
-    // 默认「Tokens」（与热力图一致），且不再有第二条「成本（右轴）」图例
-    expect(legend).toHaveTextContent("usage.trend.tokens");
-    expect(screen.queryByText(/usage.trend.costLine/)).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "usage.trend.cost" }));
-    expect(screen.getByTestId("usage-trend-legend")).toHaveTextContent(
-      "usage.trend.cost",
+    rerender(
+      <UsageTrendChart
+        range={{ preset: "7d" }}
+        metric="hitRate"
+        refreshIntervalMs={0}
+      />,
     );
-
-    await user.click(
-      screen.getByRole("button", { name: "usage.trend.requests" }),
-    );
-    expect(screen.getByTestId("usage-trend-legend")).toHaveTextContent(
-      "usage.trend.requestsLegend",
-    );
-  });
-
-  it("reopens on the metric picked last time", async () => {
-    const user = userEvent.setup();
-    const props = {
-      range: { preset: "7d" as const },
-      rangeLabel: "7d",
-      refreshIntervalMs: 0,
-    };
-    const first = render(<UsageTrendChart {...props} />);
-    await user.click(screen.getByRole("button", { name: "usage.trend.cost" }));
-    first.unmount();
-
-    render(<UsageTrendChart {...props} />);
-    expect(screen.getByTestId("usage-trend-legend")).toHaveTextContent(
-      "usage.trend.cost",
-    );
+    expect(
+      screen.getByRole("heading", { name: "usage.trend.titleMetric" }),
+    ).toBeInTheDocument();
   });
 });
 
 describe("UsageTrendChart styles", () => {
-  const props = {
-    range: { preset: "7d" as const },
-    rangeLabel: "7d",
-    refreshIntervalMs: 0,
-  };
-
   // 样式在用量「设置」里选，存在 settings.usageDisplay.trendChartType
-  const renderWithChartType = (trendChartType?: string) => {
+  const renderWithChartType = (
+    trendChartType?: string,
+    metric: "cost" | "requests" | "tokens" | "hitRate" = "tokens",
+  ) => {
+    const props = {
+      range: { preset: "7d" as const },
+      metric,
+      refreshIntervalMs: 0,
+    };
     const client = createTestQueryClient();
     // 不让挂载时的重新拉取用 mock 后端的默认设置覆盖掉这里给的值
     client.setDefaultOptions({
@@ -124,21 +109,14 @@ describe("UsageTrendChart styles", () => {
     ).not.toBeInTheDocument();
   });
 
-  it.each(["tokens", "requests", "cost"] as const)(
+  it.each(["tokens", "requests", "cost", "hitRate"] as const)(
     "draws the saved area style for the %s metric",
-    async (metric) => {
-      const user = userEvent.setup();
-      const { container } = renderWithChartType("area");
-      await user.click(
-        screen.getByRole("button", { name: `usage.trend.${metric}` }),
-      );
+    (metric) => {
+      const { container } = renderWithChartType("area", metric);
       expect(container.querySelector(".recharts-area")).not.toBeNull();
       // A one-bucket range must still show a point in area mode.
       expect(container.querySelector(".recharts-area-dot")).not.toBeNull();
       expect(container.querySelector(".recharts-bar-rectangle")).toBeNull();
-      expect(screen.getByTestId("usage-trend-legend")).toHaveTextContent(
-        `usage.trend.${metric === "requests" ? "requestsLegend" : metric}`,
-      );
     },
   );
 
