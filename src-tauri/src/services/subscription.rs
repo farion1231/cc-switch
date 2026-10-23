@@ -132,7 +132,7 @@ struct ClaudeOAuthEntry {
 /// 读取 Claude OAuth 凭据
 ///
 /// 按优先级尝试以下来源：
-/// 1. macOS Keychain (service: "Claude Code-credentials")
+/// 1. macOS Keychain（先匹配当前用户账户，再兼容只按 service 查询）
 /// 2. 凭据文件 ~/.claude/.credentials.json
 ///
 /// JSON 格式（两种 key 都兼容）：
@@ -155,27 +155,39 @@ fn read_claude_credentials() -> (Option<String>, CredentialStatus, Option<String
 #[cfg(target_os = "macos")]
 fn read_claude_credentials_from_keychain(
 ) -> Option<(Option<String>, CredentialStatus, Option<String>)> {
-    let output = std::process::Command::new("security")
-        .args([
-            "find-generic-password",
-            "-s",
-            "Claude Code-credentials",
-            "-w",
-        ])
-        .output()
-        .ok()?;
+    let account = std::env::var("USER").ok().filter(|user| !user.is_empty());
+    read_claude_credentials_from_keychain_with(account.as_deref(), |command| command.output())
+}
 
-    if !output.status.success() {
-        return None; // Keychain 中无此条目，回退到文件
+#[cfg(target_os = "macos")]
+fn read_claude_credentials_from_keychain_with(
+    account: Option<&str>,
+    mut run: impl FnMut(&mut std::process::Command) -> std::io::Result<std::process::Output>,
+) -> Option<(Option<String>, CredentialStatus, Option<String>)> {
+    for account in account.into_iter().map(Some).chain(std::iter::once(None)) {
+        let mut command = std::process::Command::new("security");
+        command.args(["find-generic-password", "-s", "Claude Code-credentials"]);
+        if let Some(account) = account {
+            command.args(["-a", account]);
+        }
+        command.arg("-w");
+
+        let output = match run(&mut command) {
+            Ok(output) if output.status.success() => output,
+            Ok(output) if output.status.code() == Some(SECURITY_ITEM_NOT_FOUND) => continue,
+            _ => return None,
+        };
+        let Ok(json_str) = String::from_utf8(output.stdout) else {
+            continue;
+        };
+        let result = parse_claude_credentials_json(json_str.trim());
+        // 同名条目可能只存了 mcpOAuth；没有 Claude token 时继续找，最后回退到文件。
+        // 已过期的 Claude token 仍是该账户的凭据，保留其过期/待刷新状态。
+        if result.0.is_some() {
+            return Some(result);
+        }
     }
-
-    let json_str = String::from_utf8(output.stdout).ok()?;
-    let json_str = json_str.trim();
-    if json_str.is_empty() {
-        return None;
-    }
-
-    Some(parse_claude_credentials_json(json_str))
+    None
 }
 
 /// 从文件读取 Claude 凭据
@@ -1669,6 +1681,116 @@ fn now_millis() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    fn claude_keychain_output(code: i32, secret: &str) -> std::process::Output {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::Output {
+            status: std::process::ExitStatus::from_raw(code << 8),
+            stdout: secret.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn claude_keychain_prefers_the_current_account() {
+        let mut calls = 0;
+        let (token, status, _) =
+            read_claude_credentials_from_keychain_with(Some("alice"), |command| {
+                calls += 1;
+                assert_eq!(command.get_program(), "security");
+                assert_eq!(
+                    command.get_args().collect::<Vec<_>>(),
+                    [
+                        "find-generic-password",
+                        "-s",
+                        "Claude Code-credentials",
+                        "-a",
+                        "alice",
+                        "-w"
+                    ]
+                );
+                Ok(claude_keychain_output(
+                    0,
+                    r#"{"claudeAiOauth":{"accessToken":"current-user-token"}}"#,
+                ))
+            })
+            .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(token.as_deref(), Some("current-user-token"));
+        assert!(matches!(status, CredentialStatus::Valid));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn claude_keychain_tries_legacy_query_when_account_has_no_usable_oauth() {
+        for (code, secret) in [
+            (SECURITY_ITEM_NOT_FOUND, ""),
+            (0, r#"{"mcpOAuth":{}}"#),
+            (0, "invalid JSON"),
+            (0, r#"{"claudeAiOauth":{}}"#),
+        ] {
+            let mut calls = 0;
+            let (token, status, _) =
+                read_claude_credentials_from_keychain_with(Some("alice"), |command| {
+                    calls += 1;
+                    if calls == 1 {
+                        return Ok(claude_keychain_output(code, secret));
+                    }
+                    assert_eq!(
+                        command.get_args().collect::<Vec<_>>(),
+                        [
+                            "find-generic-password",
+                            "-s",
+                            "Claude Code-credentials",
+                            "-w"
+                        ]
+                    );
+                    Ok(claude_keychain_output(
+                        0,
+                        r#"{"claude.ai_oauth":{"accessToken":"legacy-token"}}"#,
+                    ))
+                })
+                .unwrap();
+            assert_eq!(calls, 2);
+            assert_eq!(token.as_deref(), Some("legacy-token"));
+            assert!(matches!(status, CredentialStatus::Valid));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn claude_keychain_without_oauth_allows_file_fallback() {
+        for (account, code, expected_calls) in
+            [(Some("alice"), 0, 2), (None, 0, 1), (Some("alice"), 1, 1)]
+        {
+            let mut calls = 0;
+            let result = read_claude_credentials_from_keychain_with(account, |_| {
+                calls += 1;
+                Ok(claude_keychain_output(code, r#"{"mcpOAuth":{}}"#))
+            });
+            assert!(result.is_none());
+            assert_eq!(calls, expected_calls);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn claude_keychain_preserves_expired_account_credentials() {
+        let mut calls = 0;
+        let (token, status, _) = read_claude_credentials_from_keychain_with(Some("alice"), |_| {
+            calls += 1;
+            Ok(claude_keychain_output(
+                0,
+                r#"{"claudeAiOauth":{"accessToken":"expired-token","expiresAt":1}}"#,
+            ))
+        })
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(token.as_deref(), Some("expired-token"));
+        assert!(matches!(status, CredentialStatus::Expired));
+    }
 
     #[test]
     fn codex_reset_credits_count_only_unexpired_available() {

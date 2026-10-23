@@ -133,6 +133,11 @@ export const providersApi = {
     return await invoke("delete_provider", { id, app: appId });
   },
 
+  /** Kimi「添加」：写进 config.toml 但不改默认模型（「切换」才改） */
+  async addToLiveConfig(id: string, appId: AppId): Promise<boolean> {
+    return await invoke("add_provider_to_live_config", { id, app: appId });
+  },
+
   /**
    * Remove provider from live config only (for additive mode apps like OpenCode)
    * Does NOT delete from database - provider remains in the list
