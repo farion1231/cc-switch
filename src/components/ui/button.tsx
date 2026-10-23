@@ -4,7 +4,9 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-control text-body font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
+  // 展开/折叠触发器不跟随按压缩放：全宽按钮缩放会把左边缘（通常是箭头）从指针下方移走，
+  // 导致 mousedown / mouseup 落在不同元素上，点击箭头时折叠面板无法展开。
+  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-control text-body font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&[aria-expanded]]:active:scale-100",
   {
     variants: {
       variant: {
