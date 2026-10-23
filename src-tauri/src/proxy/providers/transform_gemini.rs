@@ -684,14 +684,18 @@ fn convert_message_content_to_parts(
                 // Re-attach the thought_signature that Gemini originally
                 // associated with this functionCall.  The Anthropic format
                 // strips it from the tool_use block, but Gemini requires it
-                // on every functionCall in a multi-turn tool-use exchange.
-                // Without replaying the stored signature the upstream may
-                // reject with "missing a `thought_signature`".
-                if let Some(sig) = thought_signature_by_id.get(id) {
-                    function_call["thoughtSignature"] = json!(sig);
+                // on every functionCall part in a multi-turn tool-use
+                // exchange.  Per the Gemini wire protocol, `thoughtSignature`
+                // is a Part-level sibling of `functionCall` (it does NOT live
+                // inside the `functionCall` object); nesting it there causes
+                // the upstream to reject with `Unknown name "thoughtSignature"
+                // at 'contents[X].parts[Y].function_call'`.
+                let thought_signature = thought_signature_by_id.get(id).cloned();
+                let mut part = json!({ "functionCall": function_call });
+                if let Some(sig) = thought_signature {
+                    part["thoughtSignature"] = json!(sig);
                 }
-
-                parts.push(json!({ "functionCall": function_call }));
+                parts.push(part);
             }
             "tool_result" => {
                 let tool_use_id = block
@@ -1690,6 +1694,66 @@ mod tests {
             result["contents"][0]["parts"][0]["functionResponse"]["name"],
             "get_weather"
         );
+    }
+
+    #[test]
+    fn anthropic_to_gemini_reattaches_thought_signature_as_part_sibling() {
+        let store = GeminiShadowStore::with_limits(8, 4);
+        store.record_assistant_turn(
+            "provider-a",
+            "session-1",
+            json!({
+                "parts": [{
+                    "functionCall": {
+                        "id": "call_1",
+                        "name": "get_weather",
+                        "args": { "city": "Tokyo" }
+                    },
+                    "thoughtSignature": "sig-xyz"
+                }]
+            }),
+            vec![GeminiToolCallMeta::new(
+                Some("call_1"),
+                "get_weather",
+                json!({ "city": "Tokyo" }),
+                Some("sig-xyz"),
+            )],
+        );
+
+        let input = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_1", "name": "get_weather", "input": { "city": "Tokyo" } }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_1", "content": "Sunny" }
+                    ]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini_with_shadow(
+            input,
+            Some(&store),
+            Some("provider-a"),
+            Some("session-1"),
+        )
+        .unwrap();
+
+        let part = &result["contents"][0]["parts"][0];
+        // `thoughtSignature` must be a sibling of `functionCall` on the Part,
+        // NOT nested inside the functionCall object.
+        assert_eq!(part["thoughtSignature"], "sig-xyz");
+        assert!(
+            part["functionCall"].get("thoughtSignature").is_none(),
+            "thoughtSignature must not be nested inside functionCall"
+        );
+        assert_eq!(part["functionCall"]["name"], "get_weather");
     }
 
     #[test]
