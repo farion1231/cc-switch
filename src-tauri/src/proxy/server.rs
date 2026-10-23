@@ -358,6 +358,17 @@ impl ProxyServer {
                 "/grokbuild/v1/responses",
                 post(handlers::handle_grokbuild_responses),
             )
+            // Hermes 同样走 Responses / Chat Completions 协议，独立 provider 命名空间、
+            // 故障转移队列和负载均衡（会话粘性 / 轮询）。代理契约固定用
+            // codex_responses；chat/completions 路由给手改 api_mode 的用户兜底。
+            .route(
+                "/hermes/v1/responses",
+                post(handlers::handle_hermes_responses).get(handlers::handle_responses_websocket),
+            )
+            .route(
+                "/hermes/v1/chat/completions",
+                post(handlers::handle_hermes_chat_completions),
+            )
             // OpenAI Responses Compact API (Codex CLI 远程压缩，透传)
             .route(
                 "/responses/compact",
@@ -378,6 +389,10 @@ impl ProxyServer {
             .route(
                 "/grokbuild/v1/responses/compact",
                 post(handlers::handle_grokbuild_responses_compact),
+            )
+            .route(
+                "/hermes/v1/responses/compact",
+                post(handlers::handle_hermes_responses_compact),
             )
             // Codex standalone Alpha Search API. All local aliases normalize to
             // the selected provider's canonical sibling `/alpha/search` route.

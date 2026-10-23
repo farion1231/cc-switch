@@ -131,6 +131,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
     codex: useProvidersQuery("codex").data,
     gemini: useProvidersQuery("gemini").data,
     grokbuild: useProvidersQuery("grokbuild").data,
+    hermes: useProvidersQuery("hermes").data,
     "claude-desktop": useProvidersQuery("claude-desktop").data,
   };
 

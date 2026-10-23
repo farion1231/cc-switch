@@ -201,12 +201,13 @@ impl ProxyService {
     /// 各应用是否处于代理模式（读设备本地的模式状态，不读会随云同步的
     /// `proxy_config.enabled`）。
     pub async fn get_takeover_status(&self) -> Result<ProxyTakeoverStatus, String> {
-        let [claude, codex, gemini, grokbuild, claude_desktop] =
+        let [claude, codex, gemini, grokbuild, hermes, claude_desktop] =
             crate::mode::current::proxy_flags([
                 AppType::Claude,
                 AppType::Codex,
                 AppType::Gemini,
                 AppType::GrokBuild,
+                AppType::Hermes,
                 AppType::ClaudeDesktop,
             ]);
         Ok(ProxyTakeoverStatus {
@@ -214,6 +215,7 @@ impl ProxyService {
             codex,
             gemini,
             grokbuild,
+            hermes,
             claude_desktop,
             // OpenCode and OpenClaw don't support proxy features
             opencode: false,
@@ -321,6 +323,10 @@ impl ProxyService {
                 Ok(config) => Self::is_grok_live_taken_over(&config),
                 Err(_) => false,
             },
+            AppType::Hermes => match self.read_hermes_live() {
+                Ok(config) => Self::is_hermes_live_taken_over(&config),
+                Err(_) => false,
+            },
             _ => false,
         }
     }
@@ -333,6 +339,7 @@ impl ProxyService {
             AppType::Codex => Self::is_codex_live_taken_over(config),
             AppType::Gemini => Self::is_gemini_live_taken_over(config),
             AppType::GrokBuild => Self::is_grok_live_taken_over(config),
+            AppType::Hermes => Self::is_hermes_live_taken_over(config),
             _ => false,
         }
     }
@@ -411,6 +418,21 @@ impl ProxyService {
             })
     }
 
+    /// `custom_providers` 里有 CC Switch 的路由条目（名字专属，带着占位 Key）。
+    fn is_hermes_live_taken_over(config: &Value) -> bool {
+        config
+            .get("custom_providers")
+            .and_then(Value::as_array)
+            .is_some_and(|entries| {
+                entries.iter().any(|entry| {
+                    entry.get("name").and_then(Value::as_str)
+                        == Some(crate::live::project::hermes::ROUTE_ENTRY_NAME)
+                        && entry.get("api_key").and_then(Value::as_str)
+                            == Some(PROXY_TOKEN_PLACEHOLDER)
+                })
+            })
+    }
+
     // ==================== Live 配置读写辅助方法 ====================
 
     fn read_claude_live(&self) -> Result<Value, String> {
@@ -464,6 +486,12 @@ impl ProxyService {
     fn read_grok_live(&self) -> Result<Value, String> {
         crate::grok_config::read_grok_live_settings()
             .map_err(|e| format!("读取 Grok Build 配置失败: {e}"))
+    }
+
+    fn read_hermes_live(&self) -> Result<Value, String> {
+        let yaml = crate::hermes_config::read_hermes_config()
+            .map_err(|e| format!("读取 Hermes 配置失败: {e}"))?;
+        crate::hermes_config::yaml_to_json(&yaml).map_err(|e| format!("读取 Hermes 配置失败: {e}"))
     }
 
     // ==================== 原有方法 ====================

@@ -10,6 +10,7 @@ use serde_json::{json, Map, Value};
 use crate::live::project::claude::ClaudeProjection;
 use crate::live::project::gemini::GeminiProjection;
 use crate::live::project::grok::GrokProjection;
+use crate::live::project::hermes::HermesProjection;
 
 use super::state::Contract;
 
@@ -58,6 +59,20 @@ pub fn grok(projection: &GrokProjection) -> Contract {
         version: CONTRACT_VERSION,
         key: key_of(&json!({
             "app": "grokbuild",
+            "version": CONTRACT_VERSION,
+            "projection": projection.to_value(),
+        })),
+        exclusive: Map::new(),
+    }
+}
+
+/// Hermes：路由条目（指向本地代理、发布路由那家的模型列表）和 `model:` 段的指向。
+/// 换路由、换代理地址或路由那家改了模型列表，都要重写 `config.yaml`。
+pub fn hermes(projection: &HermesProjection) -> Contract {
+    Contract {
+        version: CONTRACT_VERSION,
+        key: key_of(&json!({
+            "app": "hermes",
             "version": CONTRACT_VERSION,
             "projection": projection.to_value(),
         })),

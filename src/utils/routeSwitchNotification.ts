@@ -44,6 +44,7 @@ export function routeSwitchNotification(
     (app === "codex" ||
       app === "gemini" ||
       app === "grokbuild" ||
+      app === "hermes" ||
       app === "claude-desktop")
   ) {
     message += t("mode.toast.clientConfigChanged", {

@@ -42,6 +42,14 @@ pub fn codex_provider_uses_chat_completions(provider: &Provider) -> bool {
                 .get("apiFormat")
                 .and_then(|v| v.as_str())
         })
+        .or_else(|| {
+            // Hermes 供应商行用 api_mode 声明上游协议（chat_completions /
+            // anthropic_messages / codex_responses）。
+            provider
+                .settings_config
+                .get("api_mode")
+                .and_then(|v| v.as_str())
+        })
     {
         return is_chat_wire_api(api_format);
     }
@@ -184,6 +192,13 @@ pub fn codex_provider_uses_anthropic(provider: &Provider) -> bool {
             provider
                 .settings_config
                 .get("apiFormat")
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| {
+            // Hermes 供应商行用 api_mode 声明上游协议。
+            provider
+                .settings_config
+                .get("api_mode")
                 .and_then(|v| v.as_str())
         })
     {
@@ -1615,6 +1630,38 @@ experimental_bearer_token = "sk-config-key"
     }
 
     // ==================== anthropic upstream detection ====================
+
+    #[test]
+    fn test_wire_api_from_hermes_api_mode() {
+        // Hermes 供应商行用 api_mode 声明上游协议（chat_completions / anthropic_messages /
+        // codex_responses），代理据此决定 Responses → Chat / Anthropic 转换或原生透传。
+        let chat = Provider::with_id(
+            "h1".to_string(),
+            "H1".to_string(),
+            json!({ "api_mode": "chat_completions", "base_url": "https://h1.example/v1" }),
+            None,
+        );
+        assert!(codex_provider_uses_chat_completions(&chat));
+        assert!(!codex_provider_uses_anthropic(&chat));
+
+        let anthropic = Provider::with_id(
+            "h2".to_string(),
+            "H2".to_string(),
+            json!({ "api_mode": "anthropic_messages", "base_url": "https://h2.example/v1" }),
+            None,
+        );
+        assert!(!codex_provider_uses_chat_completions(&anthropic));
+        assert!(codex_provider_uses_anthropic(&anthropic));
+
+        let native = Provider::with_id(
+            "h3".to_string(),
+            "H3".to_string(),
+            json!({ "api_mode": "codex_responses", "base_url": "https://h3.example/v1" }),
+            None,
+        );
+        assert!(!codex_provider_uses_chat_completions(&native));
+        assert!(!codex_provider_uses_anthropic(&native));
+    }
 
     #[test]
     fn test_uses_anthropic_from_settings_api_format() {

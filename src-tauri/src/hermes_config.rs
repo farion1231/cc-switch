@@ -102,7 +102,7 @@ pub fn get_hermes_config_path() -> PathBuf {
     get_hermes_dir().join("config.yaml")
 }
 
-fn hermes_write_lock() -> &'static Mutex<()> {
+pub(crate) fn hermes_write_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
@@ -322,7 +322,7 @@ fn remove_all_sections(raw: &str, section_key: &str) -> String {
 }
 
 /// Replace a YAML section in raw text, or append it if not found.
-fn replace_yaml_section(
+pub(crate) fn replace_yaml_section(
     raw: &str,
     section_key: &str,
     value: &serde_yaml::Value,
@@ -776,6 +776,47 @@ pub fn get_provider(name: &str) -> Result<Option<serde_json::Value>, AppError> {
     Ok(get_providers()?.get(name).cloned())
 }
 
+/// 规范化一份供应商 JSON 配置并构建写进 `custom_providers` 的 YAML 条目：历史
+/// camelCase 键转 snake_case、`models` 数组转字典、`name` 与单数 `model` 字段落位。
+/// `set_provider` 与代理模式的 live 补丁（`live::project::hermes`）共用，保证两条
+/// 路径写出同一形状。
+pub(crate) fn build_custom_provider_entry(
+    name: &str,
+    mut provider_config: serde_json::Value,
+) -> Result<serde_yaml::Value, AppError> {
+    // Rewrite any historical camelCase keys (e.g. from older DeepLink imports)
+    // before touching models / YAML — avoids writing non-Hermes fields back.
+    sanitize_hermes_provider_keys(&mut provider_config);
+
+    // Normalize `models` from UI array to Hermes YAML dict before serializing.
+    normalize_provider_models_for_write(&mut provider_config);
+
+    // Extract the first model id (now a key in the normalized dict) so we can
+    // propagate it to the singular `model:` field Hermes reads.
+    let first_model_id = provider_config
+        .get("models")
+        .and_then(|v| v.as_object())
+        .and_then(|obj| obj.keys().next())
+        .cloned();
+
+    let mut yaml_val: serde_yaml::Value = json_to_yaml(&provider_config)?;
+    if let serde_yaml::Value::Mapping(ref mut m) = yaml_val {
+        m.insert(
+            serde_yaml::Value::String("name".to_string()),
+            serde_yaml::Value::String(name.to_string()),
+        );
+        if let Some(model_id) = first_model_id {
+            m.insert(
+                serde_yaml::Value::String("model".to_string()),
+                serde_yaml::Value::String(model_id),
+            );
+        } else {
+            m.remove(serde_yaml::Value::String("model".to_string()));
+        }
+    }
+    Ok(yaml_val)
+}
+
 /// Set (upsert) a custom provider by name.
 ///
 /// Upserts into the `custom_providers:` YAML sequence (matched by `name`).
@@ -803,37 +844,7 @@ pub fn set_provider(
         .cloned()
         .unwrap_or_default();
 
-    // Rewrite any historical camelCase keys (e.g. from older DeepLink imports)
-    // before touching models / YAML — avoids writing non-Hermes fields back.
-    let mut normalized = provider_config;
-    sanitize_hermes_provider_keys(&mut normalized);
-
-    // Normalize `models` from UI array to Hermes YAML dict before serializing.
-    normalize_provider_models_for_write(&mut normalized);
-
-    // Extract the first model id (now a key in the normalized dict) so we can
-    // propagate it to the singular `model:` field Hermes reads.
-    let first_model_id = normalized
-        .get("models")
-        .and_then(|v| v.as_object())
-        .and_then(|obj| obj.keys().next())
-        .cloned();
-
-    let mut yaml_val: serde_yaml::Value = json_to_yaml(&normalized)?;
-    if let serde_yaml::Value::Mapping(ref mut m) = yaml_val {
-        m.insert(
-            serde_yaml::Value::String("name".to_string()),
-            serde_yaml::Value::String(name.to_string()),
-        );
-        if let Some(model_id) = first_model_id {
-            m.insert(
-                serde_yaml::Value::String("model".to_string()),
-                serde_yaml::Value::String(model_id),
-            );
-        } else {
-            m.remove(serde_yaml::Value::String("model".to_string()));
-        }
-    }
+    let mut yaml_val = build_custom_provider_entry(name, provider_config)?;
 
     if let Some(existing) = providers
         .iter_mut()

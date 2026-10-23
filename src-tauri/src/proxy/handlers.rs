@@ -917,6 +917,24 @@ pub async fn handle_chat_completions(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
+    handle_chat_completions_for_app(state, request, AppType::Codex, "Codex", "codex").await
+}
+
+/// 处理 /hermes/v1/chat/completions 请求：Hermes 独立命名空间的 Chat Completions 路由。
+pub async fn handle_hermes_chat_completions(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_chat_completions_for_app(state, request, AppType::Hermes, "Hermes", "hermes").await
+}
+
+async fn handle_chat_completions_for_app(
+    state: ProxyState,
+    request: axum::extract::Request,
+    app_type: AppType,
+    tag: &'static str,
+    app_type_str: &'static str,
+) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
     let method = parts.method.clone();
     let uri = parts.uri;
@@ -930,7 +948,7 @@ pub async fn handle_chat_completions(
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
     let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
-    let stack = match resolve_stack_target(&state, &AppType::Codex, &mut body) {
+    let stack = match resolve_stack_target(&state, &app_type, &mut body) {
         Ok(stack) => stack,
         Err(rejected) => return Ok(*rejected),
     };
@@ -939,9 +957,9 @@ pub async fn handle_chat_completions(
         &state,
         &body,
         &headers,
-        AppType::Codex,
-        "Codex",
-        "codex",
+        app_type.clone(),
+        tag,
+        app_type_str,
         stack,
     )
     .await?;
@@ -955,7 +973,7 @@ pub async fn handle_chat_completions(
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
         .forward_with_retry(
-            &AppType::Codex,
+            &app_type,
             method,
             &endpoint,
             body,
@@ -1027,6 +1045,14 @@ pub async fn handle_grokbuild_responses(
         "grokbuild",
     )
     .await
+}
+
+/// 处理 /hermes/v1/responses 请求：Hermes 独立命名空间的 Responses 路由。
+pub async fn handle_hermes_responses(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_responses_for_app(state, request, AppType::Hermes, "Hermes", "hermes").await
 }
 
 async fn handle_responses_for_app(
@@ -1359,6 +1385,14 @@ pub async fn handle_grokbuild_responses_compact(
         "grokbuild",
     )
     .await
+}
+
+/// 处理 /hermes/v1/responses/compact 请求：Hermes 独立命名空间的远程压缩透传。
+pub async fn handle_hermes_responses_compact(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_responses_compact_for_app(state, request, AppType::Hermes, "Hermes", "hermes").await
 }
 
 async fn handle_responses_compact_for_app(

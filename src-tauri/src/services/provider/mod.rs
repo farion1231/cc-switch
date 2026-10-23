@@ -16,6 +16,7 @@ pub(crate) mod gemini_direct;
 mod gemini_editor;
 pub(crate) mod grok_direct;
 mod grok_editor;
+pub(crate) mod hermes_direct;
 pub(crate) mod icon;
 mod live;
 #[cfg(test)]
@@ -6739,8 +6740,10 @@ impl ProviderService {
 
         let mut result = SwitchResult::default();
 
-        // Additive mode apps skip setting is_current (no such concept).
-        if !app_type.is_additive_mode() {
+        // Additive mode apps skip setting is_current (no such concept). Hermes
+        // 除外：它有真实的「当前」概念（live 的 `model:` 段指向谁）。路由模式的默认
+        // 路由、代理里会话粘性之外的当前供应商，都按这个指针取。
+        if !app_type.is_additive_mode() || matches!(app_type, AppType::Hermes) {
             crate::settings::set_current_provider(&app_type, Some(id))?;
             state.db.set_current_provider(app_type.as_str(), id)?;
         }

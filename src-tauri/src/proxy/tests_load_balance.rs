@@ -604,3 +604,172 @@ async fn e2e_proxy_server_distributes_sessions_and_logs_usage() {
         "第三个新会话应回到 s1 的账号（轮询回绕）"
     );
 }
+
+// ===== Hermes：/hermes/v1 独立命名空间的会话粘性负载均衡 =====
+
+fn hermes_provider(id: &str, sort: usize, base: &SocketAddr) -> Provider {
+    let mut p = Provider::with_id(
+        id.to_string(),
+        format!("Hermes-{id}"),
+        json!({
+            "name": id,
+            "base_url": format!("http://{base}"),
+            "api_key": format!("key-{id}"),
+            "api_mode": "codex_responses",
+            "models": [ { "id": format!("{id}-model"), "context_length": 200000 } ],
+        }),
+        None,
+    );
+    p.sort_index = Some(sort);
+    p
+}
+
+/// Responses 形状的 200 响应体（带唯一 id，避免同 provider 的日志行去重覆盖）。
+fn responses_ok_body(id: &str) -> String {
+    format!(
+        "{{\"id\":\"{id}\",\"object\":\"response\",\"status\":\"completed\",\"output\":[],\"usage\":{{\"input_tokens\":8,\"output_tokens\":2}}}}"
+    )
+}
+
+async fn seed_hermes_session_mode(db: &Arc<Database>, a: &SocketAddr, b: &SocketAddr) {
+    let provider_a = hermes_provider("a", 1, a);
+    let provider_b = hermes_provider("b", 2, b);
+    db.save_provider("hermes", &provider_a).unwrap();
+    db.save_provider("hermes", &provider_b).unwrap();
+    db.add_to_failover_queue("hermes", "a").unwrap();
+    db.add_to_failover_queue("hermes", "b").unwrap();
+    db.set_current_provider("hermes", "a").unwrap();
+    let mut config = db.get_proxy_config_for_app("hermes").await.unwrap();
+    config.auto_failover_enabled = true;
+    config.load_balance_mode = "session".to_string();
+    db.update_proxy_config_for_app(config).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial]
+async fn hermes_proxy_distributes_sessions_and_logs_usage() {
+    let _home = TempHome::new();
+    ensure_crypto_provider();
+    // a 收 s1/s3/s1 追加共 3 次；b 收 s2 一次（与 claude e2e 同分布）
+    let (addr_a, count_a) = spawn_mock_upstream(vec![
+        MockResponse {
+            status: 200,
+            retry_after: None,
+            body: responses_ok_body("resp_21"),
+        },
+        MockResponse {
+            status: 200,
+            retry_after: None,
+            body: responses_ok_body("resp_22"),
+        },
+        MockResponse {
+            status: 200,
+            retry_after: None,
+            body: responses_ok_body("resp_23"),
+        },
+    ])
+    .await;
+    let (addr_b, count_b) = spawn_mock_upstream(vec![MockResponse {
+        status: 200,
+        retry_after: None,
+        body: responses_ok_body("resp_24"),
+    }])
+    .await;
+
+    let db = Arc::new(Database::memory().unwrap());
+    seed_hermes_session_mode(&db, &addr_a, &addr_b).await;
+
+    let server = super::server::ProxyServer::new(
+        super::types::ProxyConfig {
+            listen_address: "127.0.0.1".to_string(),
+            listen_port: 0,
+            ..Default::default()
+        },
+        db.clone(),
+        None,
+    );
+    let info = server.start().await.expect("start proxy server");
+
+    // Hermes 的代理契约声明 session_affinity_header: session_id（见
+    // live/project/hermes.rs），客户端每轮请求带稳定的会话头。
+    let url = format!("http://127.0.0.1:{}/hermes/v1/responses", info.port);
+    let client = reqwest::Client::new();
+    let send = |session: &'static str| {
+        let client = client.clone();
+        let url = url.clone();
+        async move {
+            let resp = client
+                .post(&url)
+                .header("session_id", session)
+                .json(&json!({
+                    "model": "a-model",
+                    "input": [
+                        { "type": "message", "role": "user",
+                          "content": [{ "type": "input_text", "text": "hi" }] }
+                    ],
+                    "stream": false,
+                    "store": false
+                }))
+                .send()
+                .await
+                .expect("send request");
+            let status = resp.status();
+            let body = resp.text().await.expect("read body");
+            assert_eq!(status, 200, "proxy should return 200, body: {body}");
+        }
+    };
+
+    // 三个客户端会话 + s1 追加一轮（id 需超过 20 字符才被认作客户端会话）
+    for session in [
+        "hermes-e2e-session-000000000001",
+        "hermes-e2e-session-000000000002",
+        "hermes-e2e-session-000000000003",
+        "hermes-e2e-session-000000000001",
+    ] {
+        send(session).await;
+    }
+
+    server.stop().await.expect("stop proxy server");
+
+    assert!(count_a.load(Ordering::SeqCst) >= 1, "上游 a 应收到请求");
+    assert!(count_b.load(Ordering::SeqCst) >= 1, "上游 b 应收到请求");
+
+    // 用量分摊 + 粘性：断言落在 proxy_request_logs（app_type = hermes）
+    let mut logs = db.count_request_logs_by_provider("hermes");
+    for _ in 0..40 {
+        if logs.iter().map(|(_, n)| n).sum::<i64>() >= 4 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        logs = db.count_request_logs_by_provider("hermes");
+    }
+    let by_provider: std::collections::HashMap<String, i64> = logs.into_iter().collect();
+    assert_eq!(
+        by_provider.get("a"),
+        Some(&3),
+        "provider a 用量行数（s1×2 + s3）: {by_provider:?}"
+    );
+    assert_eq!(
+        by_provider.get("b"),
+        Some(&1),
+        "provider b 用量行数（s2）: {by_provider:?}"
+    );
+
+    // 粘性：同一会话的所有日志行 provider 唯一
+    let pairs = db.request_log_session_provider_pairs("hermes");
+    assert_eq!(pairs.len(), 4, "应有 4 行带 session 的日志: {pairs:?}");
+    let mut sticky: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for (session, provider) in &pairs {
+        match sticky.entry(session.as_str()) {
+            std::collections::hash_map::Entry::Occupied(e) => {
+                assert_eq!(*e.get(), provider.as_str(), "会话 {session} 漂移");
+            }
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(provider.as_str());
+            }
+        }
+    }
+    // 分摊：两个 provider 都分到会话，且相邻新会话轮询到不同账号
+    let values: Vec<&str> = sticky.values().copied().collect();
+    assert!(values.contains(&"a") && values.contains(&"b"), "{sticky:?}");
+}

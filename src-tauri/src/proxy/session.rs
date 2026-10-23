@@ -81,13 +81,13 @@ pub fn extract_session_id(
         }
     }
 
-    // Responses 请求特殊处理。Grok Build 使用与 Codex 相同的客户端协议，
+    // Responses 请求特殊处理。Grok Build / Hermes 使用与 Codex 相同的客户端协议，
     // 但保留独立前缀，避免统计和缓存键跨应用碰撞。
-    if matches!(client_format, "codex" | "openai" | "grokbuild") {
-        let prefix = if client_format == "grokbuild" {
-            "grokbuild"
-        } else {
-            "codex"
+    if matches!(client_format, "codex" | "openai" | "grokbuild" | "hermes") {
+        let prefix = match client_format {
+            "grokbuild" => "grokbuild",
+            "hermes" => "hermes",
+            _ => "codex",
         };
         if let Some(result) = extract_responses_session(headers, body, prefix) {
             return result;
@@ -453,6 +453,24 @@ mod tests {
             result.session_id,
             "grokbuild_conv-724f4275-584e-43af-ad46-b5e7509a3ca2"
         );
+        assert_eq!(result.source, SessionIdSource::Header);
+        assert!(result.client_provided);
+    }
+
+    #[test]
+    fn test_hermes_session_header_gets_hermes_prefix() {
+        // Hermes 的代理契约声明 session_affinity_header: session_id，客户端每轮请求带
+        // 稳定会话头；前缀独立，避免与 Codex 的统计和缓存键碰撞。
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "session_id",
+            "8f14e45fceea167a5a36dedd4bea2543".parse().unwrap(),
+        );
+        let body = json!({ "input": "Write a function" });
+
+        let result = extract_session_id(&headers, &body, "hermes");
+
+        assert_eq!(result.session_id, "hermes_8f14e45fceea167a5a36dedd4bea2543");
         assert_eq!(result.source, SessionIdSource::Header);
         assert!(result.client_provided);
     }

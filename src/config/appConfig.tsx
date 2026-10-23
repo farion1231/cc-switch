@@ -56,7 +56,7 @@ export const SKILLS_APP_IDS: AppId[] = [
 
 export type ProxyAppId = Extract<
   AppId,
-  "claude" | "codex" | "gemini" | "grokbuild"
+  "claude" | "codex" | "gemini" | "grokbuild" | "hermes"
 >;
 
 /** Apps with a complete local gateway + failover data plane. */
@@ -65,6 +65,7 @@ export const PROXY_APP_IDS: ProxyAppId[] = [
   "codex",
   "gemini",
   "grokbuild",
+  "hermes",
 ];
 
 export function isProxyAppId(appId: string): appId is ProxyAppId {
@@ -72,7 +73,7 @@ export function isProxyAppId(appId: string): appId is ProxyAppId {
 }
 
 /**
- * 有直连 / 路由模式的应用（后端 `AppType::has_route_mode`）：上面四个，加上 Claude Desktop。
+ * 有直连 / 路由模式的应用（后端 `AppType::has_route_mode`）：上面五个，加上 Claude Desktop。
  * Desktop 经同一个路由服务转发，但没有故障转移和路由设置（不在 `PROXY_APP_IDS` 里）。
  */
 export type ModeAppId = ProxyAppId | "claude-desktop";

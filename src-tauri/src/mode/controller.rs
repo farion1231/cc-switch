@@ -35,7 +35,7 @@ use crate::provider::Provider;
 use crate::services::provider::codex_client_catalog;
 use crate::services::provider::codex_direct::{self, Owner};
 use crate::services::provider::codex_official_models;
-use crate::services::provider::{claude_direct, gemini_direct, grok_direct};
+use crate::services::provider::{claude_direct, gemini_direct, grok_direct, hermes_direct};
 use crate::store::AppState;
 
 use super::contract;
@@ -46,11 +46,12 @@ use super::state::{op, Contract, Mode, ModeState, PendingTarget, StackState};
 
 /// 有路由模式的应用（[`AppType::has_route_mode`]）。Claude Desktop 也在内：它经同一个路由
 /// 服务转发，只是没有故障转移。
-pub const PROXY_APPS: [AppType; 5] = [
+pub const PROXY_APPS: [AppType; 6] = [
     AppType::Claude,
     AppType::Codex,
     AppType::Gemini,
     AppType::GrokBuild,
+    AppType::Hermes,
     AppType::ClaudeDesktop,
 ];
 
@@ -488,6 +489,22 @@ async fn write_proxy(
             .map_err(err)?;
             unchanged
         }
+        AppType::Hermes => {
+            // 累加式应用：契约 = 指向本地代理的路由条目 + model: 段的指向。
+            let base_url = format!("{}/hermes/v1", proxy_url.trim_end_matches('/'));
+            let projection = hermes_direct::proxy_contract(route, &base_url).map_err(err)?;
+            let contract = contract::hermes(&projection);
+            let unchanged = !force && live_now.has_contract(&contract.key);
+            target.contract = Some(contract);
+            hermes_direct::run(
+                &state.db,
+                op_name,
+                (!unchanged).then_some(&projection),
+                pending(target),
+            )
+            .map_err(err)?;
+            unchanged
+        }
         AppType::ClaudeDesktop => {
             let members = published_members(state, app, &stack, route)?;
             let profile = claude_desktop_config::route_profile(
@@ -597,6 +614,14 @@ fn write_direct(
                 pending_target,
             )
             .map_err(err)?;
+        }
+        AppType::Hermes => {
+            // 累加式应用：直连那家的条目本来就在 live 里，不重写；只删 CC Switch 的
+            // 路由条目、把 model: 段指回直连指针那家（行里带占位符的照删不误——
+            // 条目名专属 CC Switch，不按行内容判断）。
+            let projection = attached.then(|| hermes_direct::direct_projection(direct.as_ref()));
+            hermes_direct::run(&state.db, op_name, projection.as_ref(), pending_target)
+                .map_err(err)?;
         }
         AppType::ClaudeDesktop => {
             // 直连那家写不进去（模型映射卡、配置不全）也不能让 Desktop 一直指着路由：退回官方。
@@ -5172,6 +5197,166 @@ model_provider = "c"
         );
         official.category = Some("official".to_string());
         official
+    }
+
+    // ===== Hermes =====
+
+    /// `get_hermes_dir` 认 `HERMES_HOME` 环境变量：本机若设了它，测试会写到真实目录。
+    /// 进出测试前摘掉、退出时还原。
+    struct HermesHomeEnv(Option<OsString>);
+
+    impl HermesHomeEnv {
+        fn new() -> Self {
+            let old = std::env::var_os("HERMES_HOME");
+            std::env::remove_var("HERMES_HOME");
+            Self(old)
+        }
+    }
+
+    impl Drop for HermesHomeEnv {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => std::env::set_var("HERMES_HOME", value),
+                None => std::env::remove_var("HERMES_HOME"),
+            }
+        }
+    }
+
+    const HERMES_USER_LIVE: &str = "# mine\ntheme: dark\nmodel:\n  default: mine-model\n  provider: mine\ncustom_providers:\n  - name: mine\n    base_url: https://mine.example/v1\n    api_key: key-mine\n";
+
+    fn hermes_path() -> std::path::PathBuf {
+        crate::hermes_config::get_hermes_config_path()
+    }
+
+    fn seed_hermes(text: &str) {
+        fs::create_dir_all(hermes_path().parent().unwrap()).unwrap();
+        fs::write(hermes_path(), text).unwrap();
+    }
+
+    fn hermes_text() -> String {
+        fs::read_to_string(hermes_path()).unwrap()
+    }
+
+    fn hermes_yaml() -> serde_yaml::Value {
+        serde_yaml::from_str(&hermes_text()).unwrap()
+    }
+
+    /// live 里 `custom_providers` 的（名字, base_url）对。
+    fn hermes_entries(yaml: &serde_yaml::Value) -> Vec<(String, String)> {
+        yaml.get("custom_providers")
+            .and_then(|v| v.as_sequence())
+            .map(|entries| {
+                entries
+                    .iter()
+                    .map(|entry| {
+                        (
+                            entry
+                                .get("name")
+                                .and_then(|n| n.as_str())
+                                .unwrap_or_default()
+                                .to_string(),
+                            entry
+                                .get("base_url")
+                                .and_then(|n| n.as_str())
+                                .unwrap_or_default()
+                                .to_string(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn hermes_route_entry(yaml: &serde_yaml::Value) -> serde_yaml::Value {
+        yaml.get("custom_providers")
+            .and_then(|v| v.as_sequence())
+            .expect("custom_providers")
+            .iter()
+            .find(|p| {
+                p.get("name").and_then(|n| n.as_str())
+                    == Some(crate::live::project::hermes::ROUTE_ENTRY_NAME)
+            })
+            .cloned()
+            .expect("route entry")
+    }
+
+    fn hermes_row(id: &str) -> Provider {
+        Provider::with_id(
+            id.to_string(),
+            id.to_uppercase(),
+            json!({
+                "name": id,
+                "base_url": format!("https://{id}.example/v1"),
+                "api_key": format!("key-{id}"),
+                "api_mode": "codex_responses",
+                "models": [ { "id": format!("{id}-model"), "context_length": 200000 } ],
+            }),
+            None,
+        )
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn hermes_proxy_writes_route_entry_and_exit_restores_direct() {
+        let _hermes_env = HermesHomeEnv::new();
+        let _home = Home::new();
+        seed_hermes(HERMES_USER_LIVE);
+        let state = state_with(AppType::Hermes, &[hermes_row("a"), hermes_row("b")], "a").await;
+
+        // 直连切换：条目 + model 段指向 a。
+        ProviderService::switch(&state, AppType::Hermes, "a").expect("direct a");
+        let yaml = hermes_yaml();
+        assert_eq!(
+            yaml["model"]["provider"].as_str(),
+            Some("a"),
+            "{}",
+            hermes_text()
+        );
+        assert!(hermes_entries(&yaml).iter().any(|(name, _)| name == "a"));
+
+        // 进入代理：路由条目指向本地代理，model 段指向路由条目。
+        enter(&state, &AppType::Hermes, false).await.expect("enter");
+        let proxy_url = state.proxy_service.build_proxy_urls().await.unwrap().0;
+        let yaml = hermes_yaml();
+        let entry = hermes_route_entry(&yaml);
+        assert_eq!(
+            entry["base_url"].as_str(),
+            Some(format!("{proxy_url}/hermes/v1").as_str())
+        );
+        assert_eq!(entry["api_key"].as_str(), Some(PROXY_TOKEN_PLACEHOLDER));
+        assert_eq!(entry["api_mode"].as_str(), Some("codex_responses"));
+        assert_eq!(entry["model"].as_str(), Some("a-model"));
+        assert_eq!(yaml["model"]["provider"].as_str(), Some("cc-switch-route"));
+        assert_eq!(yaml["model"]["default"].as_str(), Some("a-model"));
+        // 用户自己的条目和无关段落原样保留
+        assert!(hermes_text().starts_with("# mine\ntheme: dark\n"));
+        assert!(hermes_entries(&yaml).iter().any(|(name, _)| name == "mine"));
+
+        // 代理内换路由：条目按新路由那家重写。
+        let result = ProviderService::switch(&state, AppType::Hermes, "b").expect("route to b");
+        assert!(result.route.is_some());
+        let yaml = hermes_yaml();
+        let entry = hermes_route_entry(&yaml);
+        assert_eq!(entry["model"].as_str(), Some("b-model"));
+        assert_eq!(yaml["model"]["default"].as_str(), Some("b-model"));
+
+        // 退出代理：路由条目删掉，model 段指回直连指针（a）。代理内换路由不写那家
+        // 自己的条目（客户端只对着代理说话），b 的条目仍只在库里。
+        exit(&state, &AppType::Hermes).await.expect("exit");
+        let yaml = hermes_yaml();
+        let names = hermes_entries(&yaml);
+        let names: Vec<&str> = names.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(!names.contains(&"cc-switch-route"), "{}", hermes_text());
+        assert!(names.contains(&"mine") && names.contains(&"a"));
+        assert!(!names.contains(&"b"), "{}", hermes_text());
+        assert_eq!(yaml["model"]["provider"].as_str(), Some("a"));
+        assert!(hermes_text().starts_with("# mine\ntheme: dark\n"));
+
+        // 直连再切到 b：条目按累加式语义落盘。
+        ProviderService::switch(&state, AppType::Hermes, "b").expect("direct b");
+        let yaml = hermes_yaml();
+        assert!(hermes_entries(&yaml).iter().any(|(name, _)| name == "b"));
+        assert_eq!(yaml["model"]["provider"].as_str(), Some("b"));
     }
 
     #[tokio::test]

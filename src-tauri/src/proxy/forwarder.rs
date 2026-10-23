@@ -455,7 +455,10 @@ impl RequestForwarder {
         error: &ProxyError,
     ) -> Option<OpaqueStateRejection> {
         if already_retried
-            || !matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            || !matches!(
+                app_type,
+                AppType::Codex | AppType::GrokBuild | AppType::Hermes
+            )
             || codex_upstream_format != Some(CodexUpstreamFormat::NativeResponses)
         {
             return None;
@@ -1507,13 +1510,16 @@ impl RequestForwarder {
         // Codex upstream conversion mode — computed early because the [1m]-suffix strip
         // below must be skipped on the Anthropic path (the marker has to survive to
         // catalog matching and to the transform's own strip+beta detection).
-        let mut codex_responses_to_chat = matches!(app_type, AppType::Codex | AppType::GrokBuild)
+        let mut codex_responses_to_chat = matches!(
+            app_type,
+            AppType::Codex | AppType::GrokBuild | AppType::Hermes
+        )
             && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
-        let mut codex_responses_to_anthropic =
-            matches!(app_type, AppType::Codex | AppType::GrokBuild)
-                && super::providers::should_convert_codex_responses_to_anthropic(
-                    provider, endpoint,
-                );
+        let mut codex_responses_to_anthropic = matches!(
+            app_type,
+            AppType::Codex | AppType::GrokBuild | AppType::Hermes
+        )
+            && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
         let mut copilot_endpoint_override: Option<String> = None;
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
             && super::providers::is_codex_official_provider(provider);
@@ -1764,8 +1770,10 @@ impl RequestForwarder {
             codex_responses_to_anthropic = false;
         }
 
-        let codex_upstream_format = if matches!(app_type, AppType::Codex | AppType::GrokBuild)
-            && super::providers::is_codex_responses_endpoint(endpoint)
+        let codex_upstream_format = if matches!(
+            app_type,
+            AppType::Codex | AppType::GrokBuild | AppType::Hermes
+        ) && super::providers::is_codex_responses_endpoint(endpoint)
         {
             Some(if codex_responses_to_anthropic {
                 CodexUpstreamFormat::Anthropic
@@ -2089,8 +2097,10 @@ impl RequestForwarder {
         // One gate so rebase conflicts stay here plus the isolate file, not
         // scattered across sanitizers. Flatten namespaces first; then apply
         // xAI request rewrites (schema, agent_message, unknown models).
-        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
-            && !codex_responses_to_chat
+        if matches!(
+            app_type,
+            AppType::Codex | AppType::GrokBuild | AppType::Hermes
+        ) && !codex_responses_to_chat
             && !codex_responses_to_anthropic
             && super::providers::provider_needs_responses_namespace_flatten(provider)
         {
@@ -2157,7 +2167,10 @@ impl RequestForwarder {
             }
         }
 
-        if matches!(app_type, AppType::Codex | AppType::GrokBuild) {
+        if matches!(
+            app_type,
+            AppType::Codex | AppType::GrokBuild | AppType::Hermes
+        ) {
             self.apply_media_prevention(&mut request_body, provider);
         }
 
@@ -2934,8 +2947,10 @@ impl RequestForwarder {
                     // A response.failed/error before output remains failover-safe.
                     response = self.validate_responses_stream_start(response).await?;
                 }
-            } else if matches!(app_type, AppType::Codex | AppType::GrokBuild)
-                && !codex_responses_to_chat
+            } else if matches!(
+                app_type,
+                AppType::Codex | AppType::GrokBuild | AppType::Hermes
+            ) && !codex_responses_to_chat
                 && !codex_responses_to_anthropic
                 && request_is_streaming
                 && !response.is_json()
