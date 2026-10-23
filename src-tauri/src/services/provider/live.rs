@@ -1491,6 +1491,10 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
             log::warn!("Skipping Hermes provider with empty name");
             continue;
         }
+        // CC Switch 自己写的路由条目不是供应商（此前被导入成自指垃圾行）
+        if name == crate::live::project::hermes::ROUTE_ENTRY_NAME {
+            continue;
+        }
 
         if existing_ids.contains(&name) {
             match state.db.get_provider_by_id(&name, "hermes") {

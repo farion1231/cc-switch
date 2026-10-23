@@ -111,6 +111,12 @@ impl ProviderRouter {
                 log::warn!("[{app_type}] [FO-004] 所有供应商均已熔断");
                 return Err(AppError::AllProvidersCircuitOpen);
             }
+            // 队列为空但当前供应商可用：开关开着、队列还没配，是常见过渡状态——
+            // 回落到单路由而不是 503（把用户的请求打死比少一层兜底更糟）。
+            if let Some(current) = current_provider {
+                log::warn!("[{app_type}] 故障转移队列是空的，按当前供应商单路由处理");
+                return Ok(vec![current]);
+            }
             log::warn!("[{app_type}] [FO-005] 未配置供应商");
             return Err(AppError::NoProvidersConfigured);
         }
@@ -228,6 +234,7 @@ impl ProviderRouter {
     ///
     /// 注意：Gemini 的模型名在选号时刻尚未从 URI 解析（`with_model_from_uri`
     /// 在 ctx 创建之后），模型级并发覆盖对 Gemini 不生效，账号默认上限仍生效。
+
     #[cfg_attr(not(test), allow(dead_code))] // 测试与后续状态 UI 使用；生产走 _with_current 变体
     pub async fn select_providers_for_session(
         &self,
@@ -296,6 +303,11 @@ impl ProviderRouter {
         if pool.is_empty() {
             if total_providers > 0 && circuit_open_count == total_providers {
                 return Err(AppError::AllProvidersCircuitOpen);
+            }
+            // 与 select_providers_with_current 同款回落：空队列 + 可用当前供应商
+            if let Some(current) = current_provider {
+                log::warn!("[{app_type}] 故障转移队列是空的，按当前供应商单路由处理");
+                return Ok(vec![current]);
             }
             return Err(AppError::NoProvidersConfigured);
         }
@@ -534,6 +546,40 @@ pub(crate) fn current_provider_of(
 mod tests {
     use super::*;
     use crate::database::Database;
+    #[tokio::test]
+    async fn failover_enabled_with_empty_queue_falls_back_to_current() {
+        // 开关开着、队列没配是常见过渡状态：不应 503，回落当前供应商单路由。
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let mut provider = crate::provider::Provider::with_id(
+            "only".to_string(),
+            "Only".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:1",
+                    "ANTHROPIC_AUTH_TOKEN": "sk-test"
+                }
+            }),
+            None,
+        );
+        provider.sort_index = Some(1);
+        db.save_provider("claude", &provider).unwrap();
+        db.set_current_provider("claude", "only").unwrap();
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true; // 队列仍为空
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+        let current = crate::mode::current::provider_in_use(&db, &AppType::Claude)
+            .expect("read current")
+            .expect("current exists");
+        let selected = router
+            .select_providers_with_current("claude", Some(current))
+            .await
+            .expect("falls back");
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].id, "only");
+    }
+
     use crate::provider::{AuthBinding, AuthBindingSource, ProviderMeta};
     use serde_json::json;
     use serial_test::serial;
