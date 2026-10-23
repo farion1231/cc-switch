@@ -94,8 +94,8 @@ Claude Code / Codex / Gemini 官方渠道低至 3.8 / 0.2 / 0.9 折，充值更�
 </tr>
 
 <tr>
-<td width="180"><a href="https://dit.ai/register"><img src="assets/partners/logos/dit-banner.png" alt="DIT.ai" width="150"></a></td>
-<td>感谢 DIT.ai 赞助了本项目！DIT.ai 是一个 AI Token 交易市场，通过多供应商路由降低调用成本。开发者只需一个 OpenAI 兼容 API，即可调用 GPT、Claude、Gemini、DeepSeek、Grok、Llama 等 50 多个主流 AI 模型，覆盖文本、图像、视频和音频。合格供应商在 160 多条线路上为每个请求竞价，DIT 实时选出性价比最优的线路，价格通常比官方定价低 30–70%。DIT.ai 面向开发者、初创公司以及规模化运行 Agent 或 AI 产品的团队：只需更换 Base URL 和 API Key，保留现有技术栈，即可享受自动路由与故障转移。CC Switch 用户通过<a href="https://dit.ai/register">此链接</a>注册并使用优惠码 <strong>ccswitch</strong>，即可领取 5 美元新人券！</td>
+<td width="180"><a href="https://dit.ai?utm_source=ccswitch"><img src="assets/partners/logos/dit-banner.png" alt="DIT.ai" width="150"></a></td>
+<td>感谢 DIT.ai 赞助了本项目！DIT.ai 是一个 AI Token 交易市场，通过多供应商路由降低调用成本。开发者只需一个 OpenAI 兼容 API，即可调用 GPT、Claude、Gemini、DeepSeek、Grok、Llama 等 50 多个主流 AI 模型，覆盖文本、图像、视频和音频。合格供应商在 160 多条线路上为每个请求竞价，DIT 实时选出性价比最优的线路，价格通常比官方定价低 30–70%。DIT.ai 面向开发者、初创公司以及规模化运行 Agent 或 AI 产品的团队：只需更换 Base URL 和 API Key，保留现有技术栈，即可享受自动路由与故障转移。CC Switch 用户通过<a href="https://dit.ai?utm_source=ccswitch">此链接</a>注册并使用优惠码 <strong>ccswitch</strong>，即可领取 5 美元新人券！</td>
 </tr>
 
 <tr>

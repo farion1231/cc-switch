@@ -94,8 +94,8 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://dit.ai/register"><img src="assets/partners/logos/dit-banner.png" alt="DIT.ai" width="150"></a></td>
-<td>本プロジェクトのスポンサーである DIT.ai に感謝いたします！DIT.ai は、複数プロバイダーのルーティングでコストを抑える AI トークン取引マーケットです。OpenAI 互換の API 1 つで、GPT、Claude、Gemini、DeepSeek、Grok、Llama など 50 以上の主要 AI モデルを、テキスト・画像・動画・音声にわたって利用できます。審査を通過したプロバイダーが 160 以上のルートでリクエストごとに競い合い、DIT がリアルタイムで最もコストパフォーマンスの高いルートを選ぶため、通常は公式価格より 30〜70% 安くなります。開発者、スタートアップ、エージェントや AI プロダクトを大規模に運用するチーム向けに設計されており、Base URL と API Key を変えるだけで既存の構成はそのまま、自動ルーティングとフェイルオーバー付きでモデルを呼び出せます。CC Switch ユーザーは<a href="https://dit.ai/register">こちらのリンク</a>から登録し、プロモコード <strong>ccswitch</strong> を使うと 5 ドル分のウェルカムクーポンを受け取れます！</td>
+<td width="180"><a href="https://dit.ai?utm_source=ccswitch"><img src="assets/partners/logos/dit-banner.png" alt="DIT.ai" width="150"></a></td>
+<td>本プロジェクトのスポンサーである DIT.ai に感謝いたします！DIT.ai は、複数プロバイダーのルーティングでコストを抑える AI トークン取引マーケットです。OpenAI 互換の API 1 つで、GPT、Claude、Gemini、DeepSeek、Grok、Llama など 50 以上の主要 AI モデルを、テキスト・画像・動画・音声にわたって利用できます。審査を通過したプロバイダーが 160 以上のルートでリクエストごとに競い合い、DIT がリアルタイムで最もコストパフォーマンスの高いルートを選ぶため、通常は公式価格より 30〜70% 安くなります。開発者、スタートアップ、エージェントや AI プロダクトを大規模に運用するチーム向けに設計されており、Base URL と API Key を変えるだけで既存の構成はそのまま、自動ルーティングとフェイルオーバー付きでモデルを呼び出せます。CC Switch ユーザーは<a href="https://dit.ai?utm_source=ccswitch">こちらのリンク</a>から登録し、プロモコード <strong>ccswitch</strong> を使うと 5 ドル分のウェルカムクーポンを受け取れます！</td>
 </tr>
 
 <tr>

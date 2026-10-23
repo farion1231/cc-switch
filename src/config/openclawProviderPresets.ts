@@ -793,7 +793,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   {
     name: "DIT.ai",
     websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai/register",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
     settingsConfig: {
       baseUrl: "https://api.dit.ai",
       apiKey: "",

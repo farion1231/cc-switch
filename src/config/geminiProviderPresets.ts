@@ -138,7 +138,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   {
     name: "DIT.ai",
     websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai/register",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
     // Gemini 原生 /v1beta 在站点根；网关也认 x-goog-api-key（2026-10-21 用假 Key
     // 探测为 invalid_api_key 而非 missing_api_key）
     settingsConfig: {
