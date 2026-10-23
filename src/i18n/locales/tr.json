@@ -1302,6 +1302,7 @@
     "deleteEllipsis": "Sil",
     "selectSessionLabel": "{{title}}'yi seçin",
     "mcodeDeleteHint": "MiniMax Code'de silin",
+    "codebuddyDeleteHint": "Bu oturumu CodeBuddy Code'da yönetin: arka plan işleri, ekip üyeleri ve dosya geçmişi bu kayda başvurur",
     "groupMeta": "{{count}} oturumları · {{time}}",
     "bucketToday": "Bugün",
     "bucketYesterday": "Dün",

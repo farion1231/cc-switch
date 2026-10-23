@@ -1339,6 +1339,7 @@
     "selectSessionLabel": "选择 {{title}}",
     "agyDeleteHint": "请在 Antigravity 中删除会话，以同步清理运行状态",
     "mcodeDeleteHint": "请在 MiniMax Code 中删除",
+    "codebuddyDeleteHint": "请在 CodeBuddy Code 中管理此会话：后台任务、团队成员和文件历史都引用它的记录",
     "groupMeta": "{{count}} 个会话 · {{time}}",
     "bucketToday": "今天",
     "bucketYesterday": "昨天",

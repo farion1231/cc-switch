@@ -177,6 +177,11 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
         "Kimi Code",
         crate::services::session_usage_kimi::sync_kimi_usage(db),
     );
+    merge_sync_step(
+        &mut result,
+        "CodeBuddy Code",
+        crate::services::session_usage_codebuddy::sync_codebuddy_usage(db),
+    );
     notify_sync_result(&result);
     record_sync_completed(chrono::Utc::now().timestamp_millis());
     result

@@ -1339,6 +1339,7 @@
     "selectSessionLabel": "Select {{title}}",
     "agyDeleteHint": "Delete this session in Antigravity to also remove its runtime state",
     "mcodeDeleteHint": "Delete it in MiniMax Code",
+    "codebuddyDeleteHint": "Manage this session in CodeBuddy Code: background jobs, teammates and file history refer to its transcript",
     "groupMeta": "{{count}} sessions · {{time}}",
     "bucketToday": "Today",
     "bucketYesterday": "Yesterday",

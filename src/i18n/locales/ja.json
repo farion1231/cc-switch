@@ -1339,6 +1339,7 @@
     "selectSessionLabel": "{{title}} を選択",
     "agyDeleteHint": "実行状態も削除するには Antigravity でセッションを削除してください",
     "mcodeDeleteHint": "MiniMax Code で削除してください",
+    "codebuddyDeleteHint": "このセッションは CodeBuddy Code で管理してください。バックグラウンドジョブ、チームメンバー、ファイル履歴がその記録を参照しています",
     "groupMeta": "{{count}} 件 · {{time}}",
     "bucketToday": "今日",
     "bucketYesterday": "昨日",

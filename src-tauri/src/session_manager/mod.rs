@@ -14,7 +14,7 @@ use std::time::Instant;
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
 use providers::{
-    agy, claude, codex, gemini, grokbuild, hermes, kimi, mcode, openclaw, opencode, pi,
+    agy, claude, codebuddy, codex, gemini, grokbuild, hermes, kimi, mcode, openclaw, opencode, pi,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -90,6 +90,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     sessions.extend(r8);
     sessions.extend(mcode::scan_sessions());
     sessions.extend(kimi::scan_sessions());
+    sessions.extend(codebuddy::scan_sessions());
     sessions.extend(agy::scan_sessions());
 
     sessions.sort_by(|a, b| {
@@ -125,6 +126,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "hermes" => hermes::load_messages(path),
         "pi" => pi::load_messages(path),
         "kimi" => kimi::load_messages(path),
+        "codebuddy" => codebuddy::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -172,6 +174,12 @@ fn delete_session_source(
     session_id: &str,
     source_path: &str,
 ) -> Result<bool, String> {
+    if provider_id == "codebuddy" {
+        return Err(
+            "Manage this session in CodeBuddy Code: background jobs, teammates and file history refer to its transcript"
+                .into(),
+        );
+    }
     if provider_id == "kimi" {
         return Err(
             "Delete this session in Kimi Code to keep its session index and history consistent"
@@ -245,6 +253,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "hermes" => vec![crate::hermes_config::get_hermes_dir().join("sessions")],
         "pi" => pi::session_roots(),
         "kimi" => kimi::session_roots(),
+        "codebuddy" => codebuddy::session_roots(),
         "agy" => agy::session_roots(),
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };

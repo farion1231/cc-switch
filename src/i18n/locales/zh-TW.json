@@ -1339,6 +1339,7 @@
     "deleteEllipsis": "刪除",
     "selectSessionLabel": "選擇 {{title}}",
     "mcodeDeleteHint": "請在 MiniMax Code 中刪除",
+    "codebuddyDeleteHint": "請在 CodeBuddy Code 中管理此會話：背景任務、團隊成員和檔案歷史都引用它的記錄",
     "agyDeleteHint": "請在 Antigravity 中刪除工作階段，以同步清理執行狀態",
     "groupMeta": "{{count}} 個工作階段 · {{time}}",
     "bucketToday": "今天",
