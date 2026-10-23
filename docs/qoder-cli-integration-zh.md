@@ -4,30 +4,30 @@
 
 两个版本分别管理安装状态和数据，切换版本不会迁移、合并或删除已有配置。安装、升级、卸载和手动命令均跟随所选版本；已经排队的任务保留提交时的目标。正在处理任一 Qoder 版本的任务时，版本选择按钮暂时不可用。
 
-| 项目 | 国际版 | 国内版 |
-| --- | --- | --- |
-| 应用 ID | `qoder` | `qoder-cn` |
-| CLI 启动命令 | `qoder` | `qodercn` |
-| 原生独立程序 | `qodercli` | `qoderclicn` |
-| npm 包（兼容已有安装） | `@qoder-ai/qodercli` | `@qodercn-ai/qoderclicn` |
-| 官方安装源 | `https://qoder.com/install`、`install.ps1` | `https://static.qoder.com.cn/qoder-cli-cn/install.sh`、`install.ps1` |
-| 默认数据目录 | `~/.qoder` | `~/.qoder-cn` |
-| 自定义数据目录环境变量 | `QODER_CONFIG_DIR` | `QODERCN_CONFIG_DIR` |
+| 项目                   | 国际版                                     | 国内版                                                               |
+| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
+| 应用 ID                | `qoder`                                    | `qoder-cn`                                                           |
+| CLI 启动命令           | `qoder`                                    | `qodercn`                                                            |
+| 原生独立程序           | `qodercli`                                 | `qoderclicn`                                                         |
+| npm 包（兼容已有安装） | `@qoder-ai/qodercli`                       | `@qodercn-ai/qoderclicn`                                             |
+| 官方安装源             | `https://qoder.com/install`、`install.ps1` | `https://static.qoder.com.cn/qoder-cli-cn/install.sh`、`install.ps1` |
+| 默认数据目录           | `~/.qoder`                                 | `~/.qoder-cn`                                                        |
+| 自定义数据目录环境变量 | `QODER_CONFIG_DIR`                         | `QODERCN_CONFIG_DIR`                                                 |
 
 新安装使用官方原生安装器，不依赖系统 Node.js。已有 npm 安装沿用检测到的包管理器升级和卸载；原生安装使用自身的 `update`。默认路径无法确定或无法确认安装归属时，沿用项目现有的预览和手动处理流程。
 
 原生卸载逐个删除预览列出的 CLI 程序和历史版本文件，保留设置、认证、会话、提示词、Skills 和其他用户文件。Qoder 安装器的 `entry/` 启动入口也用于 IDE，卸载 CLI 时保留该共享入口及 PATH 设置。
 
-| 能力 | 原生位置或行为 |
-| --- | --- |
-| 官方账号登录 | 在「授权中心」新增多个官方账号、逐账号重新登录、选择使用或确认删除；国际版与国内版独立管理 |
+| 能力         | 原生位置或行为                                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| 官方账号登录 | 在「授权中心」新增多个官方账号、逐账号重新登录、选择使用或确认删除；国际版与国内版独立管理                                |
 | 模型及供应商 | 在 CC Switch 的 Qoder 页面添加、编辑和删除原生自定义供应商；配置写入 `settings.json.providers`，默认模型写入 `model.name` |
-| MCP | 数据目录下 `settings.json` 的 `mcpServers`；支持 stdio、HTTP、SSE |
-| Skills | 数据目录下 `skills/`，通过统一 Skills 页面管理，两个版本各自启用 |
-| 全局提示词 | 数据目录下 `AGENTS.md` |
-| 会话 | 数据目录下 `projects/<project>/<session-id>.jsonl`；复用已有 user/assistant/tool 消息阅读组件 |
-| 恢复会话 | `qoder --resume <id>` 或 `qodercn --resume <id>`，保留工作目录和自定义数据目录 |
-| 删除会话 | 在 Qoder CLI 中完成，以保持会话状态和历史一致 |
+| MCP          | 数据目录下 `settings.json` 的 `mcpServers`；支持 stdio、HTTP、SSE                                                         |
+| Skills       | 数据目录下 `skills/`，通过统一 Skills 页面管理，两个版本各自启用                                                          |
+| 全局提示词   | 数据目录下 `AGENTS.md`                                                                                                    |
+| 会话         | 数据目录下 `projects/<project>/<session-id>.jsonl`；复用已有 user/assistant/tool 消息阅读组件                             |
+| 恢复会话     | `qoder --resume <id>` 或 `qodercn --resume <id>`，保留工作目录和自定义数据目录                                            |
+| 删除会话     | 在 Qoder CLI 中完成，以保持会话状态和历史一致                                                                             |
 
 MCP 写入只更新指定服务器，保留其他设置和服务器的原生扩展字段。无法解析的配置会报错并保留原文件；文件写入与数据库提交之间发生失败时恢复原文件。一次编辑涉及两个版本时，两边都成功后才保存数据库，失败时同时回滚。
 
@@ -47,7 +47,9 @@ MCP 配置支持 JSONC 注释和尾随逗号，写入时保留注释、`cwd`、�
 
 未使用的供应商卡片提供与其他应用一致的「切换」按钮，点击后使用该供应商配置的默认模型，未指定时使用第一个模型；当前供应商显示通用的「使用中」状态。模型也可通过卡片上的菜单选择；切回 Qoder 内置自动选择的入口放在当前供应商的更多菜单中。卡片的「配置用量查询」复用现有余额、Coding Plan 与自定义查询模板，并支持自动刷新。查询使用 Qoder 原生供应商中的地址与凭据，支持 `${ENV_NAME}` 引用；查询脚本等 CC Switch 元数据保存在本机数据库，独立于 Qoder 的配置文件和另一版本。
 
-用量页支持从两个版本各自的 `projects/` 会话日志导入请求数、输入／输出 Token、缓存 Token、供应商、模型与定价表估算费用，包含子代理请求。流式快照、重复内容块、会话分叉和已汇总的历史记录会去重；未写完的最后一行留到下一轮读取。OpenAI／Responses 的输入 Token 含缓存，Anthropic 的输入 Token 不含缓存，统计按原生协议区分口径。自定义模型的费用来自本机定价表；Qoder 官方订阅使用 Credits，不以 Token 定价换算成账单费用，官方 Plan／Credits 额度仍由 Qoder 账号提供。
+用量页支持从两个版本各自的 `projects/` 会话日志导入请求数、输入／输出 Token、缓存 Token、供应商、模型与定价表估算费用。子代理日志 `projects/<project>/<session-id>/subagents/agent-*.jsonl` 的请求按日志中的 `sessionId` 计入主会话用量，包含普通、后台及 Workflow 子代理；主会话未更新时也会读取子代理新增的用量。仅有缓存 Token 的请求也参与统计。
+
+流式快照、重复内容块、子代理继承的父会话消息、会话分叉和已汇总的历史记录会去重；未写完的最后一行留到下一轮读取。消息 ID 为空时继续使用有效的请求 ID 或 UUID，升级后会自动补扫旧日志，补入此前遗漏的请求。OpenAI／Responses 的输入 Token 含缓存，Anthropic 的输入 Token 不含缓存，统计按原生协议区分口径。自定义模型的费用来自本机定价表；Qoder 官方订阅使用 Credits，不以 Token 定价换算成账单费用，官方 Plan／Credits 额度仍由 Qoder 账号提供。Token 统计以原生日志提供的计数为准，无法推算官方模型隐藏的 Token 用量。
 
 原生格式已根据 Qoder CLI 1.1.76 分发包中的 `providers` 配置 schema 与模型加载器核对。保存保留 JSONC 注释、其他供应商、MCP、原生模型偏好及未编辑的扩展字段；编辑期间供应商被其他程序修改时拒绝覆盖并提示刷新。国际版和国内版的数据分别读写。新配置在 Qoder 重启后加载，自定义模型的运行权限仍取决于 Qoder 账号；CC Switch 不改写登录态或功能权限。Qoder 暂不接入本地路由。
 

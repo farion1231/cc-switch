@@ -1,5 +1,8 @@
 //! Native Qoder transcripts carry Anthropic-shaped usage, including custom
 //! provider identity. Import token usage without treating account Credits as USD.
+//! Subagent transcripts under <session-id>/subagents/ carry the parent's
+//! sessionId; import their usage alongside the main transcript and deduplicate
+//! inherited messages by the same request identity.
 use crate::{
     app_config::AppType,
     database::{lock_conn, Database},
@@ -78,8 +81,9 @@ fn sync_root(
     for path in files {
         let metadata = fs::metadata(&path).map_err(|error| AppError::io(&path, error))?;
         let modified = metadata_modified_nanos(&metadata);
-        // Revisit retained v1 details to normalize their cache-inclusive input.
-        let key = format!("{}:v2:{}", app.as_str(), path.display());
+        // Normalize retained v1 cache-inclusive input and recover requests
+        // skipped by v2 when an empty message/request ID masked a valid UUID.
+        let key = format!("{}:v3:{}", app.as_str(), path.display());
         if cursors.get(&key).is_some_and(|cursor| {
             cursor.last_modified == modified && cursor.last_line_offset == metadata.len() as i64
         }) {
@@ -139,12 +143,14 @@ fn sync_file(
         let Some(usage) = message.get("usage").filter(|usage| usage.is_object()) else {
             continue;
         };
-        let Some(identity) = message["id"]
-            .as_str()
-            .or_else(|| record["requestId"].as_str())
-            .or_else(|| record["uuid"].as_str())
-            .filter(|id| !id.is_empty())
-        else {
+        let Some(identity) = [
+            message["id"].as_str(),
+            record["requestId"].as_str(),
+            record["uuid"].as_str(),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|id| !id.is_empty()) else {
             continue;
         };
         let Some(created) = record["timestamp"]
@@ -563,7 +569,7 @@ mod tests {
                         rusqlite::params![input, semantics],
                     )
                     .unwrap();
-                let key = format!("{}:v2:{}", app.as_str(), path.display());
+                let key = format!("{}:v3:{}", app.as_str(), path.display());
                 write(&path, &[next]);
                 assert_eq!(
                     sync_file(&db, &app, &path, &key, 0, &providers)
@@ -606,6 +612,157 @@ mod tests {
         let summary = db.get_session_usage_summary("qoder", "session").unwrap();
         assert_eq!(summary.total_input_tokens, 0);
         assert_eq!(summary.real_total_tokens, 35);
+    }
+
+    #[test]
+    fn qoder_usage_counts_subagents_once_in_parent_session_and_rollups() {
+        for app in [AppType::Qoder, AppType::QoderCn] {
+            let db = Database::memory().unwrap();
+            db.conn.lock().unwrap().execute("INSERT OR REPLACE INTO model_pricing (model_id,display_name,input_cost_per_million,output_cost_per_million,cache_read_cost_per_million,cache_creation_cost_per_million) VALUES ('fixture-model','Fixture','1','2','0.1','0.5')",[]).unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let project = dir.path().join("project");
+            let agents = project.join("session/subagents");
+            let providers = json!({
+                "openai": {"protocol": "openai-responses"},
+                "anthropic": {"protocol": "anthropic"}
+            })
+            .as_object()
+            .unwrap()
+            .clone();
+            let parent = message("parent", Some("openai"), 5);
+            write(&project.join("session.jsonl"), &[parent.clone()]);
+            let sidechain = |mut record: Value, agent: &str| {
+                record["isSidechain"] = json!(true);
+                record["agentId"] = json!(agent);
+                record
+            };
+            let child = |output| sidechain(message("child", Some("openai"), output), "worker");
+            // Forks retain inherited parent messages. Content blocks and
+            // snapshots of the child's reply still represent one request.
+            let worker = agents.join("agent-worker.jsonl");
+            write(
+                &worker,
+                &[sidechain(parent.clone(), "worker"), child(5), child(10)],
+            );
+            let mut cached = sidechain(message("cached", Some("anthropic"), 0), "cached");
+            cached["message"]["usage"]["input_tokens"] = json!(0);
+            cached["message"]["usage"]["cache_read_input_tokens"] = json!(500);
+            cached["message"]["usage"]["cache_creation_input_tokens"] = json!(20);
+            write(&agents.join("agent-cached.jsonl"), &[cached]);
+
+            let first = sync_root(&db, &app, dir.path(), &providers).unwrap();
+            assert!(first.errors.is_empty(), "{:?}", first.errors);
+            assert_eq!(first.files_scanned, 3);
+            assert_eq!(first.imported, 3);
+            let summary = db
+                .get_session_usage_summary(app.as_str(), "session")
+                .unwrap();
+            assert_eq!(summary.total_requests, 3);
+            assert_eq!(summary.total_input_tokens, 140);
+            assert_eq!(summary.total_output_tokens, 15);
+            assert_eq!(summary.total_cache_read_tokens, 540);
+            assert_eq!(summary.total_cache_creation_tokens, 40);
+            assert_eq!(summary.real_total_tokens, 735);
+            assert_eq!(
+                summary.total_cost.parse::<Decimal>().unwrap(),
+                Decimal::new(244, 6)
+            );
+            assert_eq!(
+                sync_root(&db, &app, dir.path(), &providers)
+                    .unwrap()
+                    .files_scanned,
+                0
+            );
+
+            // A running agent may append a fuller snapshot while the parent
+            // transcript remains unchanged. Refresh its usage without adding
+            // another request or recounting the inherited context.
+            fs::OpenOptions::new()
+                .append(true)
+                .open(&worker)
+                .unwrap()
+                .write_all(format!("{}\n", child(15)).as_bytes())
+                .unwrap();
+            let update = sync_root(&db, &app, dir.path(), &providers).unwrap();
+            assert_eq!(update.files_scanned, 1);
+            assert_eq!(update.imported, 1);
+            let summary = db
+                .get_session_usage_summary(app.as_str(), "session")
+                .unwrap();
+            assert_eq!(summary.total_requests, 3);
+            assert_eq!(summary.real_total_tokens, 740);
+            assert_eq!(
+                summary.total_cost.parse::<Decimal>().unwrap(),
+                Decimal::new(254, 6)
+            );
+
+            assert_eq!(db.rollup_and_prune(30).unwrap(), 3);
+            write(&agents.join("agent-fork.jsonl"), &[child(20)]);
+            assert_eq!(
+                sync_root(&db, &app, dir.path(), &providers)
+                    .unwrap()
+                    .imported,
+                0
+            );
+            let summary = db
+                .get_usage_summary(None, None, Some(app.as_str()), None, None)
+                .unwrap();
+            assert_eq!(summary.total_requests, 3);
+            assert_eq!(summary.real_total_tokens, 740);
+            assert_eq!(
+                summary.total_cost.parse::<Decimal>().unwrap(),
+                Decimal::new(254, 6)
+            );
+        }
+    }
+
+    #[test]
+    fn qoder_usage_backfills_subagent_replies_with_empty_ids() {
+        for app in [AppType::Qoder, AppType::QoderCn] {
+            let db = Database::memory().unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir
+                .path()
+                .join("project/session/subagents/agent-worker.jsonl");
+            let mut request = message("", None, 5);
+            request["isSidechain"] = json!(true);
+            request["agentId"] = json!("worker");
+            request["requestId"] = json!("request");
+            let mut snapshot = request.clone();
+            snapshot["uuid"] = json!("request-snapshot");
+            snapshot["message"]["usage"]["output_tokens"] = json!(10);
+            let mut uuid = request.clone();
+            uuid["requestId"] = json!("");
+            uuid["uuid"] = json!("reply-uuid");
+            let mut unidentified = uuid.clone();
+            unidentified["uuid"] = json!("");
+            write(&path, &[request, snapshot, uuid, unidentified]);
+            // v2 marked these records as scanned despite dropping their usage.
+            let metadata = fs::metadata(&path).unwrap();
+            update_sync_state_on_conn(
+                &db.conn.lock().unwrap(),
+                &format!("{}:v2:{}", app.as_str(), path.display()),
+                metadata_modified_nanos(&metadata),
+                metadata.len() as i64,
+            )
+            .unwrap();
+
+            let result = sync_root(&db, &app, dir.path(), &serde_json::Map::new()).unwrap();
+            assert!(result.errors.is_empty(), "{:?}", result.errors);
+            assert_eq!(result.files_scanned, 1);
+            assert_eq!(result.imported, 2);
+            let summary = db
+                .get_session_usage_summary(app.as_str(), "session")
+                .unwrap();
+            assert_eq!(summary.total_requests, 2);
+            assert_eq!(summary.real_total_tokens, 215);
+            assert_eq!(
+                sync_root(&db, &app, dir.path(), &serde_json::Map::new())
+                    .unwrap()
+                    .files_scanned,
+                0
+            );
+        }
     }
 }
 
