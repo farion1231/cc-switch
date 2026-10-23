@@ -40,8 +40,7 @@ describe("adaptSvgToTheme", () => {
     const svg =
       '<svg><defs><clipPath id="a"><rect fill="white"/></clipPath></defs><path fill="#000000" d="M0 0"/></svg>';
     const out = adaptSvgToTheme(svg);
-    expect(out).toContain('<rect fill="white"/>');
-    expect(out).toContain('<path fill="currentColor"');
+    expect(out).toBe(svg.replace('fill="#000000"', 'fill="currentColor"'));
   });
 
   it("leaves icons that also paint near-white untouched", () => {
