@@ -1108,6 +1108,7 @@
     }
   },
   "workbuddy": {
+    "deleteSessionHint": "Delete this session in WorkBuddy to update its session list and history together.",
     "empty": {
       "title": "No WorkBuddy providers yet",
       "description": "CC Switch writes providers into ~/.workbuddy/models.json as custom models and leaves models you added in WorkBuddy untouched, so there is nothing to import. Use the + button in the top-right corner to add a preset or custom provider."

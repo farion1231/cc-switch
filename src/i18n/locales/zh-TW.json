@@ -1109,6 +1109,7 @@
     }
   },
   "workbuddy": {
+    "deleteSessionHint": "請在 WorkBuddy 中刪除，以同時更新它的工作階段清單和歷史紀錄。",
     "empty": {
       "title": "尚未新增 WorkBuddy 供應商",
       "description": "CC Switch 把供應商作為自訂模型寫進 ~/.workbuddy/models.json，不會改動你在 WorkBuddy 中新增的模型，因此無需匯入。點擊右上角的 +，從預設或自訂設定新增供應商。"

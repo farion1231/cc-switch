@@ -1108,6 +1108,7 @@
     }
   },
   "workbuddy": {
+    "deleteSessionHint": "セッション一覧と履歴を同期するため、WorkBuddy 内でセッションを削除してください。",
     "empty": {
       "title": "WorkBuddy のプロバイダーはまだありません",
       "description": "CC Switch はプロバイダーをカスタムモデルとして ~/.workbuddy/models.json に書き込み、WorkBuddy で追加したモデルは変更しないため、インポートは不要です。右上の + から、プリセットまたはカスタムプロバイダーを追加できます。"

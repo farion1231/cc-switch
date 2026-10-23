@@ -18,6 +18,7 @@ export const SESSION_APP_IDS = [
   "mcode",
   "kimi",
   "agy",
+  "workbuddy",
 ] as const satisfies readonly AppId[];
 
 export type SessionAppId = (typeof SESSION_APP_IDS)[number];
@@ -37,15 +38,27 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   pi: ["~/.pi/agent/sessions"],
   mcode: ["~/.minimax"],
   kimi: ["~/.kimi-code/sessions"],
+  workbuddy: ["~/.workbuddy/projects"],
   agy: [
     "~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs",
   ],
 };
 
-/** MiniMax Code 的会话只能在 MiniMax Code 里删（后端也会拒绝）。 */
+/** 这些应用的会话只能在原软件里删（后端也会拒绝）：只删文件会让它们自己的索引失效。 */
+const NATIVE_DELETE_HINT_KEYS: Record<string, string> = {
+  mcode: "sessionManager.mcodeDeleteHint",
+  agy: "sessionManager.agyDeleteHint",
+  kimi: "kimi.deleteSessionHint",
+  workbuddy: "workbuddy.deleteSessionHint",
+};
+
 export const canDeleteSession = (session: SessionMeta) =>
   Boolean(session.sourcePath) &&
-  !["mcode", "agy", "kimi"].includes(session.providerId);
+  !(session.providerId in NATIVE_DELETE_HINT_KEYS);
+
+/** 不能在 CC Switch 里删除时，提示去哪里删的文案 key。 */
+export const nativeDeleteHintKey = (providerId: string): string | undefined =>
+  NATIVE_DELETE_HINT_KEYS[providerId];
 
 export interface SessionProjectGroup {
   key: string;
