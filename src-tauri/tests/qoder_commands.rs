@@ -212,11 +212,25 @@ fn qoder_usage_metadata_is_separate_from_native_credentials_and_editions() {
         loop {
             match listener.accept() {
                 Ok((mut stream, _)) => {
+                    // Windows inherits the listener's nonblocking mode on accept.
+                    // Wait for the request bytes instead of racing the HTTP client.
+                    stream.set_nonblocking(false).unwrap();
                     stream
                         .set_read_timeout(Some(Duration::from_secs(5)))
                         .unwrap();
                     let mut buffer = [0u8; 8192];
-                    let count = stream.read(&mut buffer).unwrap();
+                    let mut count = 0;
+                    while !buffer[..count].windows(4).any(|part| part == b"\r\n\r\n") {
+                        assert!(count < buffer.len(), "Usage request headers are too large");
+                        let received = stream
+                            .read(&mut buffer[count..])
+                            .expect("Usage request headers should arrive before the read timeout");
+                        assert!(
+                            received > 0,
+                            "Usage connection closed before request headers"
+                        );
+                        count += received;
+                    }
                     let request = String::from_utf8_lossy(&buffer[..count]).to_ascii_lowercase();
                     assert!(request.starts_with("get /usage "), "{request}");
                     assert!(request.contains("authorization: bearer changed-key"));
