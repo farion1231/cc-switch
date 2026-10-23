@@ -375,6 +375,8 @@ pub struct RequestForwarder {
     /// Stack 模型的请求（`mode::stack`）：挂在结构体上，整流器重试再次调用 `forward()` 时照样
     /// 生效。见 [`Self::routing_state_enabled`]。
     stack_request: bool,
+    /// Snapshot once per request; retries use the same identity boundary.
+    unified_codex_history: bool,
 }
 
 impl RequestForwarder {
@@ -490,6 +492,7 @@ impl RequestForwarder {
             ),
             max_attempts,
             stack_request: false,
+            unified_codex_history: crate::settings::unify_codex_session_history(),
         }
     }
 
@@ -1478,7 +1481,7 @@ impl RequestForwarder {
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
         if matches!(app_type, AppType::Codex)
-            && crate::settings::unify_codex_session_history()
+            && self.unified_codex_history
             && super::providers::is_codex_responses_endpoint(endpoint)
             && !super::providers::is_codex_official_provider(provider)
         {
@@ -2525,8 +2528,7 @@ impl RequestForwarder {
                 codex_responses_to_anthropic,
                 codex_responses_to_chat,
                 codex_stack_request
-                    || (matches!(app_type, AppType::Codex)
-                        && crate::settings::unify_codex_session_history()),
+                    || (matches!(app_type, AppType::Codex) && self.unified_codex_history),
                 codex_official_auth_passthrough,
             ) {
                 continue;
@@ -4779,6 +4781,7 @@ mod tests {
             streaming_first_byte_timeout,
             max_attempts: 1,
             stack_request: false,
+            unified_codex_history: false,
         }
     }
 
@@ -7094,26 +7097,22 @@ mod tests {
         }
 
         #[tokio::test]
-        #[serial_test::serial]
         async fn oauth_unified_routes_replace_credentials_and_strip_account_headers() {
-            let previous = crate::settings::get_settings();
-            let mut settings = previous.clone();
-            settings.unify_codex_session_history = true;
-            crate::settings::update_settings(settings).unwrap();
+            let mut forwarder = forwarder(false);
+            forwarder.unified_codex_history = true;
             let upstream = upstream().await;
             let mut request = body("listed", json!([]));
             request["client_metadata"] = json!({"mcp_attribution": "official-account"});
             request["input"][0]["internal_chat_message_metadata_passthrough"] =
                 json!({"turn_id":"official-turn"});
             let seen = send(
-                &forwarder(false),
+                &forwarder,
                 &upstream,
                 provider(&upstream, "openai_responses"),
                 "/responses",
                 request,
             )
             .await;
-            crate::settings::update_settings(previous).unwrap();
             for name in [
                 "chatgpt-account-id",
                 "originator",

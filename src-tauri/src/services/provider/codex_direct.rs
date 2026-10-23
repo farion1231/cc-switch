@@ -554,6 +554,8 @@ pub(crate) struct Planned {
     config: CodexConfigPatch,
     /// 第三方路由表的凭据来源：写入时按盘上有没有登录定 `requires_openai_auth`。
     stamp: Option<RouteAuth>,
+    /// Native proxy identity is provisional until the locked auth plan confirms a login.
+    native_proxy_fallback: Option<Table>,
     catalog: Option<Vec<u8>>,
     auth: AuthGoal,
     /// 切走的是没绑托管账号的官方卡：它行里的 `auth`。
@@ -567,6 +569,17 @@ pub(crate) struct Planned {
 }
 
 impl Planned {
+    /// Resolve only after planning auth under the write lock; managed switch-away
+    /// and API-only installations must retain the proxy's placeholder table.
+    fn resolve_proxy_login(&mut self, native_login: bool) {
+        if let Some(table) = self.native_proxy_fallback.take() {
+            if !native_login {
+                self.config.route = RouteWrite::Custom(table);
+                self.stamp = Some(RouteAuth::Bearer);
+            }
+        }
+    }
+
     /// `config.toml` 的补丁（编辑器显示用：在内存里对 live 做一次切换投影）。
     pub(crate) fn config(&self) -> &CodexConfigPatch {
         &self.config
@@ -579,6 +592,22 @@ pub(crate) fn plan(
     owner: &Owner<'_>,
     target: &Target<'_>,
     prepared: &Prepared,
+) -> Result<Planned, AppError> {
+    plan_with_unified(
+        db,
+        owner,
+        target,
+        prepared,
+        crate::settings::unify_codex_session_history(),
+    )
+}
+
+fn plan_with_unified(
+    db: &Database,
+    owner: &Owner<'_>,
+    target: &Target<'_>,
+    prepared: &Prepared,
+    unified: bool,
 ) -> Result<Planned, AppError> {
     let facts = row_facts(db)?;
     let provider = target_provider(target);
@@ -595,6 +624,7 @@ pub(crate) fn plan(
 
     let official = provider.is_some_and(is_official);
     let managed_login = prepared.target_login.as_ref().map(|(_, auth)| auth.clone());
+    let mut native_proxy_fallback = None;
     let (route, stamp, auth) = match (target, &projection) {
         (Target::Direct(None), _) | (_, None) => (RouteWrite::Default, None, AuthGoal::KeepNative),
         (Target::Direct(Some(provider)), Some(projection)) => {
@@ -644,48 +674,17 @@ pub(crate) fn plan(
                     None,
                     auth,
                 )
-            } else if crate::settings::unify_codex_session_history() {
-                // Keep the native ChatGPT login and built-in provider identity.
-                // Only the loopback proxy receives that login; its upstream
-                // adapter replaces credentials for the selected API provider.
-                (
-                    RouteWrite::OfficialProxy {
-                        base_url: base_url.to_string(),
-                        unified: false,
-                    },
-                    None,
-                    AuthGoal::KeepNative,
-                )
             } else {
-                // The proxy owns its URL/auth, but the route still owns the remote
-                // compaction preference. Preserve the existing UI's OpenAI-name
-                // toggle and Codex's explicit override (including "unsupported").
-                let mut proxy_table = proxy_route_table(ROUTE_ID, base_url, false);
-                if let Route::Custom { table, .. } = &projection.route {
-                    if table.get("name").and_then(Item::as_str) == Some("OpenAI") {
-                        proxy_table.insert("name", toml_edit::value("OpenAI"));
-                    }
-                    if let Some(compaction) = table
-                        .get("capabilities")
-                        .and_then(|capabilities| capabilities.get("remote_compaction"))
-                    {
-                        let mut capabilities = Table::new();
-                        capabilities.insert("remote_compaction", compaction.clone());
-                        proxy_table.insert("capabilities", Item::Table(capabilities));
-                    }
-                    // 重试次数和流空闲超时是 Codex 客户端自己的行为（对本地路由同样生效），
-                    // 照搬行里的值；旧版接管只改地址，这几个键一直留着（#8265）。
-                    for key in PROXY_KEPT_CLIENT_KEYS {
-                        if let Some(value) = table.get(key) {
-                            proxy_table.insert(key, value.clone());
-                        }
-                    }
+                let (route, stamp) = third_party_proxy_route(projection, base_url, unified, true);
+                if matches!(route, RouteWrite::OfficialProxy { .. }) {
+                    let (RouteWrite::Custom(table), _) =
+                        third_party_proxy_route(projection, base_url, false, false)
+                    else {
+                        unreachable!("non-unified API proxy uses a custom table");
+                    };
+                    native_proxy_fallback = Some(table);
                 }
-                (
-                    RouteWrite::Custom(proxy_table),
-                    Some(RouteAuth::Bearer),
-                    AuthGoal::KeepNative,
-                )
+                (route, stamp, AuthGoal::KeepNative)
             }
         }
     };
@@ -766,6 +765,7 @@ pub(crate) fn plan(
     Ok(Planned {
         config,
         stamp,
+        native_proxy_fallback,
         catalog,
         auth,
         leaving_official,
@@ -804,6 +804,64 @@ pub(crate) fn settings_without_row_catalog(route: &Provider) -> Option<Value> {
         .as_object_mut()?
         .insert("config".to_string(), Value::String(text));
     Some(settings)
+}
+
+/// Built-in identity cannot carry a placeholder login or per-provider client settings.
+fn third_party_proxy_route(
+    projection: &CodexProjection,
+    base_url: &str,
+    unified: bool,
+    login_on_disk: bool,
+) -> (RouteWrite, Option<RouteAuth>) {
+    let native_client_defaults = match &projection.route {
+        Route::Custom { table, .. } => {
+            // The OpenAI-name toggle opts into native remote compaction. Its absence
+            // must not enable compaction on APIs that do not implement it.
+            table.get("name").and_then(Item::as_str) == Some("OpenAI")
+                && table
+                    .get("capabilities")
+                    .and_then(|capabilities| capabilities.get("remote_compaction"))
+                    .is_none()
+                && !PROXY_KEPT_CLIENT_KEYS
+                    .iter()
+                    .any(|key| table.contains_key(key))
+        }
+        _ => false,
+    };
+    if unified && login_on_disk && native_client_defaults {
+        return (
+            RouteWrite::OfficialProxy {
+                base_url: base_url.to_string(),
+                unified: false,
+            },
+            None,
+        );
+    }
+    // The proxy owns its URL/auth, but the route still owns the remote
+    // compaction preference. Preserve the existing UI's OpenAI-name
+    // toggle and Codex's explicit override (including "unsupported").
+    let mut proxy_table = proxy_route_table(ROUTE_ID, base_url, false);
+    if let Route::Custom { table, .. } = &projection.route {
+        if table.get("name").and_then(Item::as_str) == Some("OpenAI") {
+            proxy_table.insert("name", toml_edit::value("OpenAI"));
+        }
+        if let Some(compaction) = table
+            .get("capabilities")
+            .and_then(|capabilities| capabilities.get("remote_compaction"))
+        {
+            let mut capabilities = Table::new();
+            capabilities.insert("remote_compaction", compaction.clone());
+            proxy_table.insert("capabilities", Item::Table(capabilities));
+        }
+        // 重试次数和流空闲超时是 Codex 客户端自己的行为（对本地路由同样生效），
+        // 照搬行里的值；旧版接管只改地址，这几个键一直留着（#8265）。
+        for key in PROXY_KEPT_CLIENT_KEYS {
+            if let Some(value) = table.get(key) {
+                proxy_table.insert(key, value.clone());
+            }
+        }
+    }
+    (RouteWrite::Custom(proxy_table), Some(RouteAuth::Bearer))
 }
 
 /// 代理契约的路由表从行的路由表照搬的客户端键：Codex 自己的重试和流空闲超时。
@@ -1128,7 +1186,7 @@ pub(crate) fn run(
 pub(crate) fn run_with_edits(
     db: &Database,
     op: &str,
-    planned: Planned,
+    mut planned: Planned,
     prepared: &Prepared,
     pending: PendingTarget,
     edits: Option<&super::editor_toml::TomlEdits>,
@@ -1225,6 +1283,17 @@ pub(crate) fn run_with_edits(
             !matches!(planned.auth, AuthGoal::ThirdParty) || preserve
         }
     };
+    // Do not infer a usable built-in login from KeepNative: its auth plan may
+    // clear a managed account. Non-file stores are not inspected here, so retain
+    // the existing custom route rather than assuming a keychain login exists.
+    planned.resolve_proxy_login(
+        auth_readable
+            && auth_plan.login_on_disk
+            && matches!(
+                codex_config_auth_store_mode(&config_text),
+                CodexAuthStoreMode::File
+            ),
+    );
     let mut config = planned.config;
     if let (Some(kind), RouteWrite::Custom(table)) = (planned.stamp, &mut config.route) {
         if matches!(kind, RouteAuth::Bearer | RouteAuth::EnvKey) {
@@ -1344,45 +1413,160 @@ mod tests {
     use super::{is_proxy_base_url, stack_subagent_nested};
     use serde_json::json;
 
-    #[test]
-    #[serial_test::serial]
-    fn oauth_unified_proxy_keeps_builtin_identity_and_provider_key_out_of_live_config() {
+    fn api_projection(extra: &str) -> super::CodexProjection {
         use super::*;
-        let previous = crate::settings::get_settings();
-        let mut settings = previous.clone();
-        settings.unify_codex_session_history = true;
-        crate::settings::update_settings(settings).unwrap();
+        CodexProjection::of(&RowInput {
+            settings: &json!({
+                "auth": {"OPENAI_API_KEY": "sk-provider-only"},
+                "config": format!("model_provider = \"custom\"\n[model_providers.custom]\nname = \"OpenAI\"\nbase_url = \"https://api.example/v1\"\nwire_api = \"responses\"\n{extra}")
+            }),
+            official: false,
+            proxy_injected_oauth: false,
+        }).unwrap()
+    }
+
+    #[test]
+    fn unified_api_proxy_requires_a_surviving_native_login() {
+        use super::*;
+        let native = json!({"tokens": {"access_token": "native", "account_id": "account"}});
+        for (live, managed, expected_native) in [
+            (None, false, false),
+            (Some(&native), true, false),
+            (Some(&native), false, true),
+        ] {
+            let auth = codex_login::plan(AuthInput {
+                live,
+                live_is_managed: managed,
+                third_party_keys: &[],
+                leaving_official: None,
+                target: AuthTarget::ProxyThirdParty {
+                    restore_last: false,
+                },
+                stash: LoginStash::default(),
+                now: 0,
+            });
+            assert_eq!(auth.login_on_disk, expected_native);
+            let (route, _) = third_party_proxy_route(
+                &api_projection(""),
+                "http://127.0.0.1:15721/v1",
+                true,
+                auth.login_on_disk,
+            );
+            assert_eq!(
+                matches!(route, RouteWrite::OfficialProxy { .. }),
+                expected_native,
+                "managed={managed}, live={live:?}"
+            );
+            if !expected_native {
+                let RouteWrite::Custom(table) = route else {
+                    panic!("missing placeholder route")
+                };
+                assert_eq!(
+                    table["experimental_bearer_token"].as_str(),
+                    Some("PROXY_MANAGED")
+                );
+                assert_ne!(
+                    table.get("requires_openai_auth").and_then(Item::as_bool),
+                    Some(true)
+                );
+            }
+            assert!(!format!("{:?}", auth.auth).contains("sk-provider-only"));
+        }
+    }
+
+    #[test]
+    fn unified_api_proxy_resolves_after_the_locked_auth_plan() {
+        use super::*;
         let db = Database::memory().unwrap();
         let provider = Provider::with_id(
-            "api".to_string(),
-            "API".to_string(),
+            "api".into(),
+            "API".into(),
             json!({
-                "auth":{"OPENAI_API_KEY":"sk-provider-only"},
-                "config":"model = \"gpt-6.1-sol\"\nmodel_provider = \"custom\"\n[model_providers.custom]\nname = \"API\"\nbase_url = \"https://api.example/v1\"\nwire_api = \"responses\"\n"
+                "auth": {"OPENAI_API_KEY": "sk-provider-only"},
+                "config": "model_provider = \"custom\"\n[model_providers.custom]\nname = \"OpenAI\"\nbase_url = \"https://api.example/v1\"\nwire_api = \"responses\"\n"
             }),
             None,
         );
-        let target = Target::Proxy {
-            route: &provider,
-            base_url: "http://127.0.0.1:15721/v1",
-            stack: &[],
+        for unified in [false, true] {
+            for login in [false, true] {
+                let target = Target::Proxy {
+                    route: &provider,
+                    base_url: "http://127.0.0.1:15721/v1",
+                    stack: &[],
+                };
+                let mut planned =
+                    plan_with_unified(&db, &Owner::None, &target, &Prepared::default(), unified)
+                        .unwrap();
+                assert!(matches!(planned.auth, AuthGoal::KeepNative));
+                planned.resolve_proxy_login(login);
+                assert_eq!(
+                    matches!(planned.config.route, RouteWrite::OfficialProxy { .. }),
+                    unified && login
+                );
+                let mut doc = "model_provider = \"custom\"\n[model_providers.custom]\nexperimental_bearer_token = \"sk-old\"\n".parse::<toml_edit::DocumentMut>().unwrap();
+                planned
+                    .config
+                    .apply_to(std::path::Path::new("config.toml"), &mut doc)
+                    .unwrap();
+                assert!(!doc.to_string().contains("sk-provider-only"));
+                assert!(!doc.to_string().contains("sk-old"));
+                if unified && login {
+                    assert!(doc.get("model_provider").is_none());
+                    assert_eq!(
+                        doc["openai_base_url"].as_str(),
+                        Some("http://127.0.0.1:15721/v1")
+                    );
+                } else {
+                    assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unified_api_proxy_does_not_enable_remote_compaction_implicitly() {
+        use super::*;
+        let mut projection = api_projection("");
+        let Route::Custom { table, .. } = &mut projection.route else {
+            unreachable!()
         };
-        let planned = plan(&db, &Owner::None, &target, &Prepared::default());
-        crate::settings::update_settings(previous).unwrap();
-        let planned = planned.unwrap();
-        assert!(matches!(planned.auth, AuthGoal::KeepNative));
-        let mut doc = "model_provider = \"custom\"\n[model_providers.custom]\nexperimental_bearer_token = \"sk-old\"\n".parse::<toml_edit::DocumentMut>().unwrap();
-        planned
-            .config
-            .apply_to(std::path::Path::new("config.toml"), &mut doc)
-            .unwrap();
-        assert!(doc.get("model_provider").is_none(), "{doc}");
-        assert_eq!(
-            doc["openai_base_url"].as_str(),
-            Some("http://127.0.0.1:15721/v1")
-        );
-        assert!(!doc.to_string().contains("sk-provider-only"));
-        assert!(!doc.to_string().contains("sk-old"));
+        table.insert("name", toml_edit::value("API"));
+        let (route, _) =
+            third_party_proxy_route(&projection, "http://127.0.0.1:15721/v1", true, true);
+        assert!(matches!(route, RouteWrite::Custom(_)));
+    }
+
+    #[test]
+    fn unified_api_proxy_preserves_each_client_override() {
+        use super::*;
+        for extra in [
+            "request_max_retries = 7\n",
+            "stream_max_retries = 9\n",
+            "stream_idle_timeout_ms = 12345\n",
+            "capabilities.remote_compaction = \"unsupported\"\n",
+        ] {
+            let projection = api_projection(extra);
+            let (route, _) =
+                third_party_proxy_route(&projection, "http://127.0.0.1:15721/v1", true, true);
+            let RouteWrite::Custom(table) = route else {
+                panic!("lost client override: {extra}")
+            };
+            let Route::Custom {
+                table: original, ..
+            } = &projection.route
+            else {
+                unreachable!()
+            };
+            for key in PROXY_KEPT_CLIENT_KEYS
+                .iter()
+                .copied()
+                .chain(["capabilities"])
+            {
+                if let Some(value) = original.get(key) {
+                    assert_eq!(table.get(key).unwrap().to_string(), value.to_string());
+                }
+            }
+        }
     }
 
     /// 子代理设置按合并目录校验：不在目录里、或者父 agent 用新版工具时会拒收的

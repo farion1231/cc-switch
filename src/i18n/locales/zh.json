@@ -380,7 +380,7 @@
     },
     "unifyCodexHistory": {
       "title": "统一 Codex 会话历史",
-      "message": "官方账号保留内置 OpenAI 身份，桌面功能保持可用。新的官方会话与本地路由中的 API 会话使用同一身份。既有 custom 会话保留连接定义，不改写历史文件。第三方 API 请使用本地路由；严格直连 API 仍单独使用。历史可见不代表加密推理或原生搜索可跨后端续接。",
+      "message": "官方账号保留内置 OpenAI 身份，桌面功能保持可用。本地路由中的 API 会话仅在保有文件登录且客户端设置兼容时共用该身份，否则保留原有代理连接。既有 custom 会话保留连接定义，不改写历史文件。第三方 API 请使用本地路由；严格直连 API 仍单独使用。历史可见不代表加密推理或原生搜索可跨后端续接。",
       "migrateExisting": "同时迁入现有官方会话历史",
       "confirm": "我已了解，继续开启"
     },
@@ -856,7 +856,7 @@
     "preserveCodexOfficialAuthOnSwitch": "非接管切换时保留官方登录",
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未开启路由接管时切换第三方供应商是否保留 Codex 官方登录；路由接管期间始终保留",
     "unifyCodexSessionHistory": "统一 Codex 会话历史",
-    "unifyCodexSessionHistoryDescription": "官方账号保留内置 OpenAI 身份，桌面功能保持可用。新的官方会话与本地路由中的 API 会话使用同一身份。既有 custom 会话保留连接定义，不改写历史文件。第三方 API 请使用本地路由；严格直连 API 仍单独使用。历史可见不代表加密推理或原生搜索可跨后端续接。",
+    "unifyCodexSessionHistoryDescription": "官方账号保留内置 OpenAI 身份，桌面功能保持可用。本地路由中的 API 会话仅在保有文件登录且客户端设置兼容时共用该身份，否则保留原有代理连接。既有 custom 会话保留连接定义，不改写历史文件。第三方 API 请使用本地路由；严格直连 API 仍单独使用。历史可见不代表加密推理或原生搜索可跨后端续接。",
     "unifyCodexNativeIdentityNote": "切换账号时保留既有上下文，不搬动历史文件。旧 custom 会话保留官方连接别名，新会话使用内置 OpenAI 身份，无需因供应商标识变化反复重启。修复前已打开的旧窗口可能需要重开一次。",
     "codexStackClassicSubagents": "聚合模式下子 agent 用经典工具",
     "codexStackClassicSubagentsDescription": "主、子 agent 不在同一家供应商时必须打开，否则子 agent 收不到任务。",

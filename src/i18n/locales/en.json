@@ -380,7 +380,7 @@
     },
     "unifyCodexHistory": {
       "title": "Unified Codex session history",
-      "message": "Official accounts keep the built-in OpenAI identity, so desktop features remain available. New official and locally routed API sessions use that identity. Existing custom sessions keep their connection definition and are not rewritten. Use local routing for third-party API providers; strict direct API mode remains separate. History visibility does not guarantee encrypted reasoning or native search portability.",
+      "message": "Official accounts keep the built-in OpenAI identity, so desktop features remain available. Locally routed API sessions share that identity only with a retained file login and compatible client settings; otherwise their proxy connection is preserved. Existing custom sessions keep their connection definition and are not rewritten. Use local routing for third-party API providers; strict direct API mode remains separate. History visibility does not guarantee encrypted reasoning or native search portability.",
       "migrateExisting": "Also migrate existing official session history",
       "confirm": "I understand, enable"
     },
@@ -856,7 +856,7 @@
     "preserveCodexOfficialAuthOnSwitch": "Keep official login for direct switches",
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
     "unifyCodexSessionHistory": "Unified Codex session history",
-    "unifyCodexSessionHistoryDescription": "Official accounts keep the built-in OpenAI identity, so desktop features remain available. New official and locally routed API sessions use that identity. Existing custom sessions keep their connection definition and are not rewritten. Use local routing for third-party API providers; strict direct API mode remains separate. History visibility does not guarantee encrypted reasoning or native search portability.",
+    "unifyCodexSessionHistoryDescription": "Official accounts keep the built-in OpenAI identity, so desktop features remain available. Locally routed API sessions share that identity only with a retained file login and compatible client settings; otherwise their proxy connection is preserved. Existing custom sessions keep their connection definition and are not rewritten. Use local routing for third-party API providers; strict direct API mode remains separate. History visibility does not guarantee encrypted reasoning or native search portability.",
     "unifyCodexNativeIdentityNote": "Account switching keeps existing context without moving history files. Older custom sessions retain an official alias; new sessions use built-in OpenAI. Changing accounts does not require restarting the app for a provider-id change. Existing windows opened before this fix may need reopening once.",
     "codexStackClassicSubagents": "Classic sub-agent tools in aggregation",
     "codexStackClassicSubagentsDescription": "Must be on when the main agent and a sub-agent use different providers, or the sub-agent cannot receive its task.",

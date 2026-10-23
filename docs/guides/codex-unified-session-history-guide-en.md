@@ -8,7 +8,7 @@ This branch does not require disabling unified history to recover voice. **Leave
 
 - Switching official accounts changes the login without rewriting transcript bytes, provider labels, pagination offsets or indexes. This repair does not require restarting desktop on every account switch.
 - Enabling no longer offers implicit history migration. Legacy migration/restore code and backups remain available; this branch adds no bulk history rewrite. Desktop can list and resume the old aliases; CLI filtering of legacy buckets is not deletion.
-- Third-party APIs in unified **local routing** also use built-in identity for new sessions. The proxy replaces upstream credentials and strips official account headers/internal metadata. Strict API direct mode remains separate; official credentials must not be forwarded to a third party.
+- Third-party APIs in unified **local routing** use built-in identity only when the locked auth plan retains a file login and the card uses native client defaults (including opting into remote compaction). API-only users, managed-account switch-away, non-file credential stores, and cards with compaction/retry/timeout overrides retain the existing `custom` proxy table and placeholder authentication. The proxy replaces upstream credentials and strips official account headers/internal metadata. No third-party key is written to `auth.json`; strict API direct mode remains separate.
 - Only the exact generated official alias is retained. Unknown endpoints, extra credentials and auth headers do not become trusted because their display name says OpenAI.
 - Windows opened before the repair may need reopening once to refresh cached capabilities. Switching official accounts no longer changes the provider identity.
 - Visibility does not establish compatibility of encrypted reasoning or backend-scoped native search handles. Synthetic configuration tests cannot establish arbitrary real upstream compatibility.
@@ -137,10 +137,10 @@ The moment you flip the switch on, CC Switch **does not save immediately**; inst
 
 **This checkbox is unchecked by default.** This is an important fork in the road:
 
-| Your choice | Effect | Where your data is right now |
-|---|---|---|
-| **Unchecked** (default) | Only switches the tag. **Only official sessions created after enabling** land in the `custom` shared drawer | Your official sessions from **before** enabling keep the `openai` tag, stay exactly where they were, still in `~/.codex/sessions/` |
-| **Checked** | In addition to switching the tag, also migrates your **existing official sessions** from the `openai` drawer into the `custom` drawer | After being **copied to backup**, the old sessions' tag is rewritten to `custom`; the original data is covered by the backup |
+| Your choice             | Effect                                                                                                                                | Where your data is right now                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **Unchecked** (default) | Only switches the tag. **Only official sessions created after enabling** land in the `custom` shared drawer                           | Your official sessions from **before** enabling keep the `openai` tag, stay exactly where they were, still in `~/.codex/sessions/` |
+| **Checked**             | In addition to switching the tag, also migrates your **existing official sessions** from the `openai` drawer into the `custom` drawer | After being **copied to backup**, the old sessions' tag is rewritten to `custom`; the original data is covered by the backup       |
 
 > **If you want "my earlier official sessions to appear in the unified list too," you must opt in by checking this box.** Otherwise you'll run into "scenario A" in the reference table below—the old sessions look "gone," when in fact they're just sitting in the original drawer.
 
@@ -211,13 +211,13 @@ Note the **dual condition** in step ③—it must be in the ledger (proving it r
 
 Only the "disable + check restore" path pops a result toast. The toasts you may see (verbatim):
 
-| Toast you see | Meaning |
-|---|---|
-| **Official session history restored from backup ({{files}} session files, {{rows}} index rows)** | Restore succeeded. `{{files}}` / `{{rows}}` show the actual numbers |
-| **No restorable migration backup for the current Codex directory** | Nothing to restore (**does not mean data is lost**, see scenario E in the reference table) |
-| **Unified session history was re-enabled; restore skipped** | You turned the switch back on while restore was queued, so the system deliberately abandoned the restore (see scenario F) |
-| **Failed to restore official session history, please try again** | The restore process errored; just retry, the data is not corrupted |
-| **Save failed, please try again** | The disable save itself failed; in this case **restore is never triggered** and the switch flips back to its original position |
+| Toast you see                                                                                    | Meaning                                                                                                                        |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| **Official session history restored from backup ({{files}} session files, {{rows}} index rows)** | Restore succeeded. `{{files}}` / `{{rows}}` show the actual numbers                                                            |
+| **No restorable migration backup for the current Codex directory**                               | Nothing to restore (**does not mean data is lost**, see scenario E in the reference table)                                     |
+| **Unified session history was re-enabled; restore skipped**                                      | You turned the switch back on while restore was queued, so the system deliberately abandoned the restore (see scenario F)      |
+| **Failed to restore official session history, please try again**                                 | The restore process errored; just retry, the data is not corrupted                                                             |
+| **Save failed, please try again**                                                                | The disable save itself failed; in this case **restore is never triggered** and the switch flips back to its original position |
 
 > **A thoughtful safety design**: if the "disable the switch" save fails, CC Switch **never runs the restore**. Otherwise you'd end up in a torn state of "switch still on, but sessions flipped back to the openai bucket." When the save fails, the switch **automatically flips back to its original position**, so you won't be stuck in a fake state of "looks off but didn't actually save."
 
@@ -227,14 +227,14 @@ Only the "disable + check restore" path pops a result toast. The toasts you may 
 
 The six scenarios below are the situations where users most easily believe "sessions are gone." **The truth in every one is: the data is intact, it just moved drawers or is temporarily out of sight.** Use this table to locate your symptom first, then read the detailed explanation below.
 
-| Scenario | What you see | The data truth | One-line fix |
-|---|---|---|---|
-| **A** Didn't check migration | Old official sessions not in the unified list | All present, still carry the `openai` tag | Re-enable and check migration, or turn off the switch |
-| **B** Cross-provider resume fails | Can't resume / errors out | Files intact, the ciphertext just can't be decrypted across backends | Resume on the original provider; to only read content, read the jsonl directly |
-| **C** Routing takeover / injection refused | No migration and no restore | Migration was safely skipped, files untouched | Exit takeover -> restart and retry; or just turn off the switch |
-| **D** New sessions didn't return to official after restore | New sessions from the unified period aren't on the official side | They're in the `custom` drawer, untouched by design | Switch to a third-party provider to see them |
-| **E** Toast "no restorable backup" | Restore "failed" | Usually nothing was ever migrated, sessions are in the original drawer | Turn off the switch and the official sessions reappear automatically |
-| **F** Toast "switch was re-enabled, restore skipped" | Restore refused | Prevents a torn data state, nothing was changed | Fully turn off the switch first, then restore |
+| Scenario                                                   | What you see                                                     | The data truth                                                         | One-line fix                                                                   |
+| ---------------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| **A** Didn't check migration                               | Old official sessions not in the unified list                    | All present, still carry the `openai` tag                              | Re-enable and check migration, or turn off the switch                          |
+| **B** Cross-provider resume fails                          | Can't resume / errors out                                        | Files intact, the ciphertext just can't be decrypted across backends   | Resume on the original provider; to only read content, read the jsonl directly |
+| **C** Routing takeover / injection refused                 | No migration and no restore                                      | Migration was safely skipped, files untouched                          | Exit takeover -> restart and retry; or just turn off the switch                |
+| **D** New sessions didn't return to official after restore | New sessions from the unified period aren't on the official side | They're in the `custom` drawer, untouched by design                    | Switch to a third-party provider to see them                                   |
+| **E** Toast "no restorable backup"                         | Restore "failed"                                                 | Usually nothing was ever migrated, sessions are in the original drawer | Turn off the switch and the official sessions reappear automatically           |
+| **F** Toast "switch was re-enabled, restore skipped"       | Restore refused                                                  | Prevents a torn data state, nothing was changed                        | Fully turn off the switch first, then restore                                  |
 
 ### Scenario A: You enabled the switch but didn't check migration -> old official sessions "disappear"
 
@@ -243,6 +243,7 @@ The six scenarios below are the situations where users most easily believe "sess
 **The truth**: 100% of your data is present, not a single line moved. The switch only takes effect on official sessions "created after enabling"; your official sessions from **before** enabling still carry the `openai` tag and sit untouched in `~/.codex/sessions/`. You're now on the `custom` drawer, so naturally you can't see the old sessions left in the `openai` drawer—that's the entire reason for the "apparent disappearance."
 
 **What to do** (pick either):
+
 1. **Re-enable the switch and check "Also migrate existing official session history,"** which moves the old sessions to the `custom` drawer and they immediately appear in the unified list (automatic backup before the rewrite).
 2. **Or simply turn off the unified switch**, the official side runs on the `openai` drawer again, and the old sessions reappear right where they were.
 
@@ -255,6 +256,7 @@ The six scenarios below are the situations where users most easily believe "sess
 > This is the **only "looks like a real problem" genuine exception** in this whole guide—but note: it just means **you can't resume (can't generate a new turn)**, and **the original file is still fully present**, the conversation text readable at any time.
 
 **What to do**:
+
 - **Resume with "the provider that originally created this session,"** so it can decrypt normally and connect.
 - Just want to read the history without continuing? Read that session's `.jsonl` file directly (commands at the end).
 - Rule of thumb: **cross-provider is better suited to "starting a new session"; resume old sessions on their original provider whenever possible.**
@@ -271,6 +273,7 @@ The six scenarios below are the situations where users most easily believe "sess
 Skipping migration = touching no session files. **No migration means nothing moved, so there's nothing to lose.** This is "safe deferral," not "failure with data loss."
 
 **What to do**:
+
 - Exit routing takeover -> **restart CC Switch**: on startup it automatically retries migration (your migration intent is preserved the whole time).
 - Check `~/.codex/config.toml`: if there's a conflicting route you wrote by hand, clean up the conflict before enabling the switch.
 - If you'd rather not bother: just turn off the switch, the official sessions still display normally on the `openai` drawer, completely intact.
@@ -282,6 +285,7 @@ Skipping migration = touching no session files. **No migration means nothing mov
 **The truth**: this is **intentional** design; the new sessions are perfectly fine in the `custom` drawer, visible and resumable. Restore is based on "the backup ledger from migration time"—**only sessions that were originally migrated in from the `openai` drawer** are recorded in the backup and get precisely flipped back to `openai`. The sessions you **created during the unified period** are in no backup ledger; and after unification both official and third-party use the `custom` tag, so **CC Switch can't tell whether a new session was chatted with the official account or a third-party**. To avoid wrongly stuffing third-party sessions into the official history, the product decision is: these new sessions all stay in the `custom` (third-party) history and are never moved automatically. The disable dialog's text says this explicitly too—"Sessions created while it was on cannot be attributed to a provider, so they stay in the third-party history."
 
 **What to do**:
+
 - Switch to any third-party provider (the `custom` drawer) to see these sessions in the history list.
 - To read content, read the `.jsonl` directly; to resume, follow scenario B's rule (go back to the backend that originally generated it).
 - If you really want to manually return **one specific** session to official: there's currently no automatic button (deliberately omitted, to avoid misjudging the direction). Advanced users can, **after backing up** that file first, manually change `model_provider` in the `session_meta` of the first line of its `.jsonl` from `custom` back to `openai` (an advanced operation; always make a copy before editing).
@@ -325,13 +329,13 @@ No amount of text beats seeing it for yourself. Below are the **real paths** (ta
 
 ### Where exactly your session / history files live
 
-| Content | Real path | Notes |
-|---|---|---|
-| **Session body (the core)** | `~/.codex/sessions/` (includes date-based subdirectories, recursive) | One `.jsonl` text file per session—**this is your conversation content** |
-| **Archived sessions** | `~/.codex/archived_sessions/` | Also `.jsonl` |
-| **Session index database** | `~/.codex/state_5.sqlite` | The `model_provider` column of the `threads` table is the "drawer tag"—**this is the actual classification source the resume list reads** |
-| **Migration backup** (auto-created when migration is enabled) | `~/.cc-switch/backups/codex-official-history-unify-v1/<timestamp>/` | Contains `jsonl/`, `state/`, `meta.json` |
-| **Restore backup** (auto-created when you restore) | `~/.cc-switch/backups/codex-official-history-unify-restore-v1/<timestamp>/` | A safety copy taken before restore |
+| Content                                                       | Real path                                                                   | Notes                                                                                                                                     |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| **Session body (the core)**                                   | `~/.codex/sessions/` (includes date-based subdirectories, recursive)        | One `.jsonl` text file per session—**this is your conversation content**                                                                  |
+| **Archived sessions**                                         | `~/.codex/archived_sessions/`                                               | Also `.jsonl`                                                                                                                             |
+| **Session index database**                                    | `~/.codex/state_5.sqlite`                                                   | The `model_provider` column of the `threads` table is the "drawer tag"—**this is the actual classification source the resume list reads** |
+| **Migration backup** (auto-created when migration is enabled) | `~/.cc-switch/backups/codex-official-history-unify-v1/<timestamp>/`         | Contains `jsonl/`, `state/`, `meta.json`                                                                                                  |
+| **Restore backup** (auto-created when you restore)            | `~/.cc-switch/backups/codex-official-history-unify-restore-v1/<timestamp>/` | A safety copy taken before restore                                                                                                        |
 
 > **Note**: if you've changed the Codex directory in CC Switch, or set `sqlite_home` in `config.toml`, replace `~/.codex` above with your actual directory. Below, `~` = your user home directory.
 

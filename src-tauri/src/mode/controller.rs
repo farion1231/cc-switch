@@ -3468,7 +3468,7 @@ mod mode_tests {
                 "API".to_string(),
                 json!({
                     "auth":{"OPENAI_API_KEY":"sk-api-only"},
-                    "config":"model = \"gpt-5.4\"\nmodel_provider = \"custom\"\n[model_providers.custom]\nname = \"API\"\nbase_url = \"https://api.example/v1\"\nwire_api = \"responses\"\n"
+                    "config":"model = \"gpt-5.4\"\nmodel_provider = \"custom\"\n[model_providers.custom]\nname = \"OpenAI\"\nbase_url = \"https://api.example/v1\"\nwire_api = \"responses\"\n"
                 }),
                 None,
             );
@@ -6959,10 +6959,17 @@ model_provider = "c"
         crate::config::read_json_file(&crate::codex_config::get_codex_model_catalog_path()).unwrap()
     }
 
-    async fn check_codex_proxy_compaction_preference(name: &str, capability: Option<&str>) {
+    async fn check_codex_proxy_compaction_preference(
+        name: &str,
+        capability: Option<&str>,
+        unified: bool,
+    ) {
         for stack in [false, true] {
             let _home = Home::new();
-            seed_codex("[features]\ngoals = true\n", None);
+            let mut settings = crate::settings::get_settings();
+            settings.unify_codex_session_history = unified;
+            crate::settings::update_settings(settings).unwrap();
+            seed_codex("[features]\ngoals = true\n", Some(&chatgpt_login("acct")));
             let mut relay = codex_native(
                 "relay",
                 "https://relay.example/v1",
@@ -7082,15 +7089,19 @@ model_provider = "c"
     #[tokio::test]
     #[serial]
     async fn codex_proxy_preserves_legacy_remote_compaction_toggle() {
-        check_codex_proxy_compaction_preference("OpenAI", None).await;
-        check_codex_proxy_compaction_preference("Relay", None).await;
+        for unified in [false, true] {
+            check_codex_proxy_compaction_preference("OpenAI", None, unified).await;
+            check_codex_proxy_compaction_preference("Relay", None, unified).await;
+        }
     }
 
     #[tokio::test]
     #[serial]
     async fn codex_proxy_preserves_explicit_remote_compaction_capability() {
-        check_codex_proxy_compaction_preference("Relay", Some("v2")).await;
-        check_codex_proxy_compaction_preference("OpenAI", Some("unsupported")).await;
+        for unified in [false, true] {
+            check_codex_proxy_compaction_preference("Relay", Some("v2"), unified).await;
+            check_codex_proxy_compaction_preference("OpenAI", Some("unsupported"), unified).await;
+        }
     }
 
     #[tokio::test]
