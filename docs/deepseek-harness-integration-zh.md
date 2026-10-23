@@ -11,13 +11,7 @@ DeepSeek Harness 的应用 ID 为 `dsh`，命令为 `dsh`，npm 包为 `@deepsee
 - npm 手动卸载：`npm uninstall -g @deepseek-ai/dsh`。自动卸载核对包名和实际 npm prefix，只移除所选安装。
 - 配置、凭据、Skills 和会话数据保留。无法确认归属的安装沿用现有手动处理流程。
 
-核对时 npm `latest` 为 `0.2.1-rc.2`，CLI 发布包未声明 `engines.node`，但对应发布标签 `dsh-v0.2.1-rc.2`（以及 `rc.3`）的根 `package.json` 要求 `^22.19.0 || >=24.0.0`：Node 22.19 及后续 22.x，或 Node 24 及以上。CC Switch 在发布元数据缺失时使用这一已核实的要求；应用页提前检查 npm 实际使用的 Node，版本过低时禁用安装并提示先升级 Node、再刷新列表，执行安装前还会再次检查。升级保留原有的目标版本 engines 检查与此缺失值回退。安装和升级仍由 npm 的 `--engine-strict` 检查依赖要求。
-
-如果当前是 Node 22.12.0，会被 `undici` 等依赖拒绝；请切换到符合要求的 Node（建议 Node 24 LTS 最新版），确认 `node --version` 后重新启动 CC Switch、刷新应用列表并重试。日志里的 `_jsr-registry` 是 npm 不识别环境配置项的警告，实际阻断原因是 `EBADENGINE`。
-
-此检查也用于其他直接通过 npm 安装的应用，按目标发布包的 `engines.node` 动态判断。使用官方独立安装器的应用不会因为系统 Node 版本过低而被拦截；已有 npm 安装的升级则按对应安装位置检查 Node。Windows npm 启动脚本及 MiniMax Code 自带运行时的安装会分别识别，WSL 安装检查对应发行版内的 Node。安装行提示、升级提示和执行时的版本错误均提供简体中文、繁体中文、英文、日文和土耳其语翻译。
-
-全局应用安装、升级及版本探测使用独立工作目录，避免从 `pnpm dev` 启动时继承开发仓库目录，导致 nvm、mise 等按仓库的 `.node-version` 或 `.nvmrc` 选择开发用 Node。仓库的 `.node-version` 保留用于 CC Switch 的开发构建；工具管理使用其实际执行环境选择的运行时。
+安装和升级保留 npm 的 `--engine-strict`，由 npm 校验发布包及依赖的运行时要求并报告兼容性错误。
 
 安装后在终端运行 `dsh web` 打开官方 Web 界面。
 

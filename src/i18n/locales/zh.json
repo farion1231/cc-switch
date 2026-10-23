@@ -4214,11 +4214,8 @@
       "pi": "通过 npm 安装",
       "mcode": "安装时运行官方安装脚本，失败时改用 npm",
       "agy": "安装时运行官方安装脚本",
-      "omp": "安装时运行官方安装脚本",
-      "dsh": "通过 npm 安装，需要 Node.js 22.19+（22.x）或 24+"
-    },
-    "installNeedsNode": "安装要求 Node {{required}}，当前 npm 使用 Node {{current}}。请先升级 Node，再刷新应用列表。",
-    "nodeRequirementError": "{{name}} 要求 Node {{required}}，当前使用 Node {{current}}。请先升级 Node，再刷新应用列表并重试。"
+      "omp": "安装时运行官方安装脚本"
+    }
   },
   "appPage": {
     "moreActions": "{{name}} 的更多操作",

@@ -3,7 +3,6 @@ import en from "@/i18n/locales/en.json";
 import ja from "@/i18n/locales/ja.json";
 import zhTW from "@/i18n/locales/zh-TW.json";
 import zh from "@/i18n/locales/zh.json";
-import tr from "@/i18n/locales/tr.json";
 
 const requiredKeys = [
   "manualInstallCommands",
@@ -57,28 +56,6 @@ function interpolationVariables(value: string): string[] {
 }
 
 describe("About tool management locale coverage", () => {
-  it.each([
-    ["en", en.appsPage],
-    ["ja", ja.appsPage],
-    ["zh", zh.appsPage],
-    ["zh-TW", zhTW.appsPage],
-    ["tr", tr.appsPage],
-  ] as const)(
-    "defines translated Node installation and update notices in %s",
-    (_locale, app) => {
-      for (const key of [
-        "installNeedsNode",
-        "updateNeedsNode",
-        "nodeRequirementError",
-      ] as const) {
-        expect(typeof app[key]).toBe("string");
-        expect(app[key].trim().length).toBeGreaterThan(0);
-        expect(interpolationVariables(app[key])).toEqual(
-          interpolationVariables(en.appsPage[key]),
-        );
-      }
-    },
-  );
   it.each(locales)(
     "defines every tool management key in %s",
     (_locale, settings) => {

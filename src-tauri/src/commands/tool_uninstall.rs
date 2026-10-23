@@ -283,7 +283,7 @@ fn manager_next_to(entry: &str, manager: &str) -> Option<String> {
 
 /// Read package metadata instead of assuming every script or native binary is npm-owned.
 /// The explicit prefix also supports user npm prefixes without a sibling npm executable.
-pub(super) fn npm_prefix(tool: &str, inst: &ToolInstallation) -> Option<PathBuf> {
+fn npm_prefix(tool: &str, inst: &ToolInstallation) -> Option<PathBuf> {
     npm_prefix_for_layout(tool, inst, cfg!(target_os = "windows"))
 }
 
