@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { ExternalLink, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ExternalLink, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { settingsApi } from "@/lib/api";
@@ -197,11 +197,7 @@ export function QoderAccountLogin({
       disabled={working || removing || !auth.data?.installed}
       onClick={() => void start()}
     >
-      {working ? (
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-      ) : (
-        <Plus className="h-3.5 w-3.5" />
-      )}
+      {starting && <Loader2 className="h-4 w-4 animate-spin" />}
       {t(accounts.length ? "qoder.addAccount" : "qoder.loginWithBrowser")}
     </Button>
   );
@@ -249,6 +245,19 @@ export function QoderAccountLogin({
             <SelectItem value="qoder-cn">{t("qoder.chinaEdition")}</SelectItem>
           </SelectContent>
         </Select>
+        <span role="status" className="text-caption text-fg-2">
+          {auth.isPending
+            ? t("common.loading")
+            : auth.isError
+              ? t("qoder.statusFailed")
+              : accounts.length
+                ? t("qoder.accountCount", { count: accounts.length })
+                : !auth.data.installed
+                  ? t("common.notInstalled")
+                  : auth.data.loggedIn
+                    ? t("qoder.signedIn")
+                    : t("qoder.signedOut")}
+        </span>
         <Button
           type="button"
           variant="quiet"
@@ -262,7 +271,6 @@ export function QoderAccountLogin({
           />
         </Button>
       </div>
-      {auth.isLoading && <Loader2 className="h-4 w-4 animate-spin" />}
       {auth.isError && (
         <Notice
           tone="danger"
@@ -387,30 +395,34 @@ export function QoderAccountLogin({
           )}
         </Notice>
       )}
-      <div className="flex gap-2">
-        {accounts.length === 0 && auth.data?.loggedIn && (
-          <Button
-            type="button"
-            variant="solid"
-            size="regular"
-            disabled={working || removing || !auth.data?.installed}
-            onClick={() => void select()}
-          >
-            {working && <Loader2 className="h-4 w-4 animate-spin" />}
-            {t("qoder.useAccount")}
-          </Button>
-        )}
-        {(starting || flowId) && (
-          <Button
-            type="button"
-            variant="neutral"
-            size="regular"
-            onClick={() => void cancel()}
-          >
-            {t("common.cancel")}
-          </Button>
-        )}
-      </div>
+      {((accounts.length === 0 && auth.data?.loggedIn) ||
+        starting ||
+        flowId) && (
+        <div className="flex gap-2">
+          {accounts.length === 0 && auth.data?.loggedIn && (
+            <Button
+              type="button"
+              variant="solid"
+              size="regular"
+              disabled={working || removing || !auth.data?.installed}
+              onClick={() => void select()}
+            >
+              {working && <Loader2 className="h-4 w-4 animate-spin" />}
+              {t("qoder.useAccount")}
+            </Button>
+          )}
+          {(starting || flowId) && (
+            <Button
+              type="button"
+              variant="neutral"
+              size="regular"
+              onClick={() => void cancel()}
+            >
+              {t("common.cancel")}
+            </Button>
+          )}
+        </div>
+      )}
       <ConfirmDialog
         isOpen={Boolean(deleting)}
         title={t("qoder.deleteAccountTitle")}
