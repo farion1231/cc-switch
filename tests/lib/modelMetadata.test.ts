@@ -117,6 +117,55 @@ const modelsDev: ModelsDevResponse = {
     id: "elsewhere",
     models: { "kimi-k9": { id: "kimi-k9", limit: { context: 50000 } } },
   },
+  // 原厂名下没有 deepseek-v9-flash-1017，各家条目都指向它却落空。
+  deepseek: {
+    id: "deepseek",
+    models: { "deepseek-flash": { id: "deepseek-flash" } },
+  },
+  "ds-relay": {
+    id: "ds-relay",
+    models: {
+      "deepseek-v9-flash-1017": {
+        id: "deepseek-v9-flash-1017",
+        limit: { context: 1000000 },
+        modalities: { input: ["text", "image"], output: ["text"] },
+        canonical_model_id: "deepseek/deepseek-v9-flash-1017",
+      },
+      "tinker/inkling-9": {
+        id: "tinker/inkling-9",
+        canonical_model_id: "tinker/inkling-9",
+      },
+    },
+  },
+  // 原厂（有条目指向它），也托管别家的微调条目，这些条目指回别家原厂。
+  tinker: {
+    id: "tinker",
+    models: {
+      "inkling-9": { id: "inkling-9" },
+      "deepseek-ai/DeepSeek-V9-Flash-1017:peft:262144": {
+        id: "deepseek-ai/DeepSeek-V9-Flash-1017:peft:262144",
+        limit: { context: 262144 },
+        modalities: { input: ["text"], output: ["text"] },
+        canonical_model_id: "deepseek/deepseek-v9-flash-1017",
+      },
+      "poolside/Laguna-9": {
+        id: "poolside/Laguna-9",
+        limit: { context: 65536 },
+        canonical_model_id: "poolside/laguna-9",
+      },
+    },
+  },
+  // 原厂自己的条目指向自己，但 ID 写法和指向的不一致，指向也落空。
+  poolside: {
+    id: "poolside",
+    models: {
+      "poolside/laguna-9": {
+        id: "poolside/laguna-9",
+        limit: { context: 262144 },
+        canonical_model_id: "poolside/laguna-9",
+      },
+    },
+  },
 };
 
 const preset = (
@@ -202,6 +251,24 @@ describe("resolveModelMetadata", () => {
         modelsDev,
       })?.contextWindow,
     ).toBe(204800);
+  });
+
+  it("does not borrow an entry that points at another vendor", () => {
+    expect(
+      resolveModelMetadata("DeepSeek-v9-flash-1017", {
+        baseUrl: "https://relay.example.com/v1",
+        modelsDev,
+      }),
+    ).toBeNull();
+  });
+
+  it("still uses the vendor's own entry when its pointer is dangling", () => {
+    expect(
+      resolveModelMetadata("laguna-9", {
+        baseUrl: "https://relay.example.com/v1",
+        modelsDev,
+      })?.contextWindow,
+    ).toBe(262144);
   });
 
   it("gives up when the same name points at different vendors", () => {
