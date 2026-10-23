@@ -181,8 +181,9 @@ fn resolve_ref(
             let Some((name, is_custom)) = parse_provider_ref(provider) else {
                 return Action::Keep;
             };
-            // 悬空 custom 引用：文件里没有这个条目、映射里也没有 → 清理（仅列表型角色）
-            if is_custom && !custom_names.contains(&name) && !mapping.contains_key(&name) {
+            // 悬空 custom 引用：文件里没有这个条目——Hermes 只认自己的
+            // custom_providers，CC Switch 数据库里有同名行救不了解析。
+            if is_custom && !custom_names.contains(&name) {
                 if droppable {
                     return Action::Rewrite {
                         to_model: String::new(),
@@ -304,25 +305,8 @@ pub(crate) fn apply_role_target(
             }
             new_list.push(item);
         }
-        // 还原时补回被清掉的悬空项（to_model 为空的记录是删除，文件里已没有它们）
-        if matches!(target, RoleTarget::Restore) {
-            for rewrite in recorded
-                .iter()
-                .filter(|r| r.role == "fallback" && r.to_model.is_empty())
-            {
-                let mut item = serde_yaml::Mapping::new();
-                item.insert(
-                    Yaml::String("provider".into()),
-                    Yaml::String(rewrite.from_provider.clone()),
-                );
-                item.insert(
-                    Yaml::String("model".into()),
-                    Yaml::String(rewrite.from_model.clone()),
-                );
-                new_list.push(Yaml::Mapping(item));
-                changed = true;
-            }
-        }
+        // 悬空删除是永久治愈（原引用指向不存在的条目，还原回去等于把
+        // Hermes 再弄坏），退出不补回。
         if changed {
             out.fallback = Some(Yaml::Sequence(new_list));
         }
@@ -549,26 +533,7 @@ pub(crate) fn apply_role_target(
                         }
                         new_list.push(item);
                     }
-                    // 还原时补回被清掉的悬空成员
-                    if matches!(target, RoleTarget::Restore) {
-                        let role = format!("moa:{preset_name}:ref");
-                        for rewrite in recorded
-                            .iter()
-                            .filter(|r| r.role == role && r.to_model.is_empty())
-                        {
-                            let mut item = serde_yaml::Mapping::new();
-                            item.insert(
-                                Yaml::String("provider".into()),
-                                Yaml::String(rewrite.from_provider.clone()),
-                            );
-                            item.insert(
-                                Yaml::String("model".into()),
-                                Yaml::String(rewrite.from_model.clone()),
-                            );
-                            new_list.push(Yaml::Mapping(item));
-                            changed = true;
-                        }
-                    }
+                    // 悬空删除是永久治愈，退出不补回。
                     new_block.as_mapping_mut().expect("moa 块").insert(
                         Yaml::String("reference_models".into()),
                         Yaml::Sequence(new_list),
@@ -1371,8 +1336,8 @@ mod tests {
         );
         assert_eq!(
             yaml["fallback_providers"].as_sequence().unwrap().len(),
-            3,
-            "悬空删除项也按记录恢复"
+            2,
+            "悬空删除是永久治愈，退出不补回"
         );
         let vision = &yaml["auxiliary"]["vision"];
         assert_eq!(

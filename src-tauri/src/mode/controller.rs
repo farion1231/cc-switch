@@ -5464,11 +5464,10 @@ model_provider = "c"
             serde_yaml::from_str(&hermes_profile_text("p-two")).unwrap();
         assert_eq!(p_two_yaml["model"]["provider"].as_str(), Some("kimi"));
         assert_eq!(p_two_yaml["model"]["default"].as_str(), Some("a-model"));
-        // 角色引用按记录恢复：fallback 两项（含被清的悬空项）、aux 的 base_url、moa 引用
+        // 角色引用按记录恢复；悬空删除是永久治愈（退出不补回无效引用）
         let fallback = p_two_yaml["fallback_providers"].as_sequence().unwrap();
-        assert_eq!(fallback.len(), 2, "被清的悬空项按记录补回");
+        assert_eq!(fallback.len(), 1, "悬空项保持清除");
         assert_eq!(fallback[0]["provider"].as_str(), Some("custom:a"));
-        assert_eq!(fallback[1]["provider"].as_str(), Some("custom:cc-switch"));
         assert_eq!(
             p_two_yaml["auxiliary"]["vision"]["base_url"].as_str(),
             Some("https://direct.example/v1")
