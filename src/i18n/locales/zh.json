@@ -238,10 +238,10 @@
         "missing": "不在这台电脑上的账号",
         "add": "登录新账号",
         "pending": "已在浏览器打开 Claude 的登录页，登录并授权后会自动选上这个账号。",
-        "helpMac": "macOS 上请从卡片「打开终端」使用选中的账号：直接切换这张卡不会改变其他终端里 claude 用的号。",
+        "helpTerminal": "请从卡片「打开终端」使用选中的账号：直接切换这张卡不会改变其他终端里 claude 用的号。",
         "help": "切到这张卡后，新开的 claude 都用选中的账号；已经开着的会话不受影响。",
         "card": "账号：{{label}}",
-        "cardMac": "账号：{{label}} · 从卡片打开终端使用"
+        "cardTerminal": "账号：{{label}} · 从卡片打开终端使用"
       }
     },
     "duplicateLiveIdsLoadFailed": "读取配置中的供应商标识失败，请先修复配置后再试",
@@ -4887,7 +4887,7 @@
       "chatgptHelp": "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
       "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。",
       "agyHelp": "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。",
-      "claudeHelpMac": "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 的官方卡上选一个账号，再从卡片「打开终端」，终端里的 claude 就用这个号。~/.claude 里原来的登录是「默认登录」，不受影响。",
+      "claudeHelpTerminal": "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 的官方卡上选一个账号，再从卡片「打开终端」，终端里的 claude 就用这个号。~/.claude 里原来的登录是「默认登录」，不受影响。",
       "claudeHelp": "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 的官方卡上选一个账号，切到这张卡后新开的 claude 都用这个号。~/.claude 里原来的登录是「默认登录」，不受影响。"
     },
     "addAccount": "添加账号",

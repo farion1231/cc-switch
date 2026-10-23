@@ -392,6 +392,9 @@ pub(crate) fn write_live(
         }],
         PendingTarget::pointer(pointer),
     )?;
+    // 账号目录里的设置是默认 settings.json 的镜像：写完再同步，编辑器里改的 hooks、
+    // permissions 才到得了正在用的账号（切换路径上的同步在写入之前，读到的是旧内容）
+    crate::services::claude_account::sync_all_shared(&crate::config::get_app_config_dir());
     Ok(())
 }
 

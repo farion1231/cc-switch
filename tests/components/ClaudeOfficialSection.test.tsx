@@ -1,12 +1,22 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ClaudeOfficialSection } from "@/components/providers/forms/ClaudeOfficialSection";
+import {
+  ClaudeAccountSelect,
+  ClaudeOfficialSection,
+} from "@/components/providers/forms/ClaudeOfficialSection";
 
 const mocks = vi.hoisted(() => ({
   useManagedAuth: vi.fn(),
   openExternal: vi.fn(),
   submitPaste: vi.fn(),
+  settings: {} as { claudeConfigDir?: string },
+}));
+
+vi.mock("@/lib/platform", () => ({ isMac: () => false }));
+vi.mock("@/lib/query", () => ({
+  useSettingsQuery: () => ({ data: mocks.settings }),
 }));
 
 vi.mock("@/components/providers/forms/hooks/useManagedAuth", () => ({
@@ -53,11 +63,20 @@ const account = (id: string, login: string) => ({
   requires_reauth: false,
 });
 
+// 账号下拉还会读 React Query 里的别的数据，给一个空的 client
+const renderSelect = () =>
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ClaudeAccountSelect value={null} onChange={vi.fn()} />
+    </QueryClientProvider>,
+  );
+
 describe("ClaudeOfficialSection", () => {
   beforeEach(() => {
     mocks.useManagedAuth.mockReset();
     mocks.openExternal.mockReset();
     mocks.submitPaste.mockReset();
+    mocks.settings = {};
   });
 
   it("has no default account and no re-login while the login is valid", async () => {
@@ -129,6 +148,23 @@ describe("ClaudeOfficialSection", () => {
     expect(mocks.submitPaste).toHaveBeenCalledWith("flow-1", "abc#state");
     expect(
       await screen.findByText("已提交，正在完成登录…"),
+    ).toBeInTheDocument();
+  });
+
+  it("says switching changes the account when the pointer can be written", () => {
+    mocks.useManagedAuth.mockReturnValue(baseAuth());
+    renderSelect();
+    expect(
+      screen.getByText(/切到这张卡后，新开的 claude 都用选中的账号/),
+    ).toBeInTheDocument();
+  });
+
+  it("points to Open Terminal when a Claude config dir override is set", () => {
+    mocks.settings = { claudeConfigDir: "/work/claude" };
+    mocks.useManagedAuth.mockReturnValue(baseAuth());
+    renderSelect();
+    expect(
+      screen.getByText(/请从卡片「打开终端」使用选中的账号/),
     ).toBeInTheDocument();
   });
 });
