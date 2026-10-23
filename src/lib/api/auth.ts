@@ -4,7 +4,8 @@ export type ManagedAuthProvider =
   | "github_copilot"
   | "codex_oauth"
   | "xai_oauth"
-  | "agy_oauth";
+  | "agy_oauth"
+  | "workbuddy_account";
 
 export type AuthCenterTarget = ManagedAuthProvider | "kimi_oauth";
 
@@ -23,6 +24,8 @@ export interface ManagedAuthAccount {
   reauth_required?: boolean;
   /** xAI-only: the refresh credential is invalid and the account is unusable. */
   requires_reauth: boolean;
+  /** WorkBuddy-only: the plaintext account type from the desktop sign-in. */
+  account_kind?: string;
 }
 
 export interface ManagedAuthStatus {
@@ -125,6 +128,43 @@ export async function agyAccountIsRunning(): Promise<boolean> {
   return invoke<boolean>("agy_account_is_running");
 }
 
+/** WorkBuddy 桌面端这边的登录情况：在不在运行、有没有登录、认不认得出、收录过没有。 */
+export interface WorkBuddyLiveState {
+  running: boolean;
+  signedIn: boolean;
+  recognized: boolean;
+  imported: boolean;
+}
+
+export interface WorkBuddyImportResult {
+  account: ManagedAuthAccount;
+  /** 新收录的；false 表示这个号已在列表里，只更新了副本 */
+  created: boolean;
+}
+
+export async function workbuddyAccountLiveState(): Promise<WorkBuddyLiveState> {
+  return invoke<WorkBuddyLiveState>("workbuddy_account_live_state");
+}
+
+/** 收录 WorkBuddy 当前登录的账号（已收录的就更新副本）。 */
+export async function workbuddyAccountImportCurrent(): Promise<WorkBuddyImportResult> {
+  return invoke<WorkBuddyImportResult>("workbuddy_account_import_current");
+}
+
+/**
+ * 先收录当前账号，再在本机写登出标记，让 WorkBuddy 下次打开停在登录页
+ * （不调用服务端登出）。要求 WorkBuddy 已退出。
+ */
+export async function workbuddyAccountPrepareNewLogin(): Promise<ManagedAuthAccount | null> {
+  return invoke<ManagedAuthAccount | null>(
+    "workbuddy_account_prepare_new_login",
+  );
+}
+
+export async function workbuddyAccountOpenApp(): Promise<void> {
+  return invoke("workbuddy_account_open_app");
+}
+
 export const authApi = {
   authStartLogin,
   authPollForAccount,
@@ -135,4 +175,8 @@ export const authApi = {
   authSetDefaultAccount,
   authLogout,
   agyAccountIsRunning,
+  workbuddyAccountLiveState,
+  workbuddyAccountImportCurrent,
+  workbuddyAccountPrepareNewLogin,
+  workbuddyAccountOpenApp,
 };

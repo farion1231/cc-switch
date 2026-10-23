@@ -4761,7 +4761,8 @@
       "helpTitle": "{{service}} hesapları nasıl kullanılır?",
       "copilotHelp": "Claude Code ve Claude Desktop'deki GitHub Copilot ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "chatgptHelp": "Claude Code ve Claude Desktop'deki ChatGPT ön ayarları ve Codex'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
-      "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır."
+      "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
+      "workbuddyHelp": "WorkBuddy masaüstü uygulamasının resmi oturumu. CC Switch WorkBuddy'de sizin yerinize oturum açamaz; yalnızca WorkBuddy'nin şu an açık olan hesabını (oturum dosyalarının anlık görüntüsü) kaydedebilir. Geçiş, seçilen hesabın dosyalarını geri yükler; WorkBuddy bir sonraki açılışta bu hesabı kullanır. Geçişten önce WorkBuddy'den çıkın. Anlık görüntüler yalnızca bu bilgisayarda çalışır ve eşitlenmez."
     },
     "addAccount": "Hesap ekle",
     "groupMenu": "{{service}} için daha fazla eylem",
@@ -4803,6 +4804,31 @@
       "loading": "Kota kontrol ediliyor…",
       "refresh": "Kotayı yenile",
       "refreshAria": "{{login}} için kotayı yenileyin"
+    },
+    "workbuddy": {
+      "addedOn": "{{date}} eklendi",
+      "expiredNote": "Oturumun süresi doldu. WorkBuddy'de bu hesapla yeniden oturum açıp tekrar ekleyin",
+      "statusLoadFailed": "WorkBuddy hesapları yüklenemedi. Tekrar deneyin.",
+      "empty": "Henüz WorkBuddy hesabı yok. WorkBuddy'de oturum açın, ardından açık olan hesabı ekleyin.",
+      "importCurrent": "Geçerli oturumu ekle",
+      "importNow": "Ekle",
+      "current": "WorkBuddy kullanıyor",
+      "switchTo": "WorkBuddy'yi bu hesaba geçir",
+      "switched": "Geçiş yapıldı. WorkBuddy bir sonraki açılışta bu hesabı kullanacak.",
+      "removeNote": "Yalnızca CC Switch'teki anlık görüntüyü siler; WorkBuddy oturumu açık kalır.",
+      "localOnly": "Anlık görüntüler yalnızca bu bilgisayarda çalışır (oturum bu cihaza bağlıdır) ve eşitlenmez. Başka bir bilgisayarda hesapları yeniden ekleyin.",
+      "runningTitle": "WorkBuddy çalışıyor",
+      "runningBody": "Geçişten önce WorkBuddy'den tamamen çıkın (menü çubuğu / tepsi dahil); aksi halde geçerli oturumu geri yazar.",
+      "unrecognizedTitle": "WorkBuddy'nin geçerli hesabı tanınamadı",
+      "unrecognizedBody": "Oturum dosyasının biçimi değişmiş olabilir, bu yüzden şimdilik eklenemiyor. Başka bir hesaba geçmeden önce olduğu gibi saklanır.",
+      "notImportedTitle": "WorkBuddy'nin geçerli hesabı henüz eklenmedi",
+      "alreadyTitle": "Geçerli hesap zaten listede (anlık görüntü güncellendi)",
+      "alreadyBody": "Başka bir hesap eklemek için: WorkBuddy'den tamamen çıkın, Başka bir hesapla oturum aç'a tıklayın (CC Switch yalnızca bu bilgisayarda WorkBuddy'nin oturum açma sayfasında açılmasını sağlar; geçerli hesabın sunucudaki oturumu kapatılmaz), WorkBuddy'de diğer hesapla oturum açın, sonra buraya dönüp Hesap ekle'ye tıklayın.",
+      "signedOutTitle": "WorkBuddy'de oturum açık değil",
+      "signedOutBody": "WorkBuddy'de oturum açın, sonra buraya dönüp Hesap ekle'ye tıklayın.",
+      "prepareNewLogin": "Başka bir hesapla oturum aç",
+      "preparedNewLogin": "Geçerli hesap kaydedildi. WorkBuddy oturum açma sayfasında açılacak; başka bir hesapla oturum açıp buraya dönün ve Hesap ekle'ye tıklayın.",
+      "openApp": "WorkBuddy'yi aç"
     }
   },
   "kimi": {

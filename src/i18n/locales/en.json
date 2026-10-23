@@ -4878,7 +4878,8 @@
       "copilotHelp": "Used by GitHub Copilot presets in Claude Code and Claude Desktop. Providers without a chosen account use the Default one.",
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
       "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
-      "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it."
+      "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it.",
+      "workbuddyHelp": "The official sign-in of the WorkBuddy desktop app. CC Switch can't sign in to WorkBuddy for you; it can only save the account WorkBuddy is signed in with (a snapshot of its sign-in files). Switch restores the selected account's files, so WorkBuddy uses that account the next time it opens. Quit WorkBuddy before switching. Snapshots only work on this computer and are not synced."
     },
     "addAccount": "Add account",
     "groupMenu": "More actions for {{service}}",
@@ -4934,6 +4935,31 @@
       "removeNote": "agy stays signed in: if agy is using this account, it keeps working after removal.",
       "switched": "Switched. New agy sessions will use this account.",
       "switchedWhileRunning": "Switched. agy is running: open agy sessions keep using the previous account and may write it back. Quit agy and open it again."
+    },
+    "workbuddy": {
+      "addedOn": "Added {{date}}",
+      "expiredNote": "Sign-in expired. Sign in to this account again in WorkBuddy, then add it again",
+      "statusLoadFailed": "Couldn't load WorkBuddy accounts. Try again.",
+      "empty": "No WorkBuddy accounts yet. Sign in in WorkBuddy, then add the account it's signed in with.",
+      "importCurrent": "Add current sign-in",
+      "importNow": "Add",
+      "current": "In use by WorkBuddy",
+      "switchTo": "Switch WorkBuddy to this account",
+      "switched": "Switched. WorkBuddy will use this account the next time it opens.",
+      "removeNote": "Only deletes the snapshot in CC Switch; WorkBuddy stays signed in.",
+      "localOnly": "Snapshots only work on this computer (the sign-in is bound to this device) and are not synced. Add accounts again on another computer.",
+      "runningTitle": "WorkBuddy is running",
+      "runningBody": "Quit WorkBuddy completely (including the menu bar / tray) before switching, or it will write its current sign-in back.",
+      "unrecognizedTitle": "Can't recognize WorkBuddy's current account",
+      "unrecognizedBody": "The sign-in file format may have changed, so it can't be added yet. It's stashed as-is before switching to another account.",
+      "notImportedTitle": "WorkBuddy's current account hasn't been added",
+      "alreadyTitle": "The current account is already in the list (snapshot updated)",
+      "alreadyBody": "To add another account: quit WorkBuddy completely, click Sign in to another account (CC Switch only makes WorkBuddy open at its sign-in page on this computer; the current account is not signed out on the server), sign in to the other account in WorkBuddy, then come back and click Add account.",
+      "signedOutTitle": "WorkBuddy isn't signed in",
+      "signedOutBody": "Sign in in WorkBuddy, then come back and click Add account.",
+      "prepareNewLogin": "Sign in to another account",
+      "preparedNewLogin": "Current account saved. WorkBuddy will open at its sign-in page; sign in to another account, then come back and click Add account.",
+      "openApp": "Open WorkBuddy"
     }
   },
   "kimi": {

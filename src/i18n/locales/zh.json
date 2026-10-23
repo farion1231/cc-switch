@@ -4878,7 +4878,8 @@
       "copilotHelp": "用于 Claude Code、Claude Desktop 的 GitHub Copilot 预设。没指定账号的供应商用「默认」账号。",
       "chatgptHelp": "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
       "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。",
-      "agyHelp": "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。"
+      "agyHelp": "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。",
+      "workbuddyHelp": "WorkBuddy 桌面端的官方登录。CC Switch 不能替 WorkBuddy 登录，只能收录它当前登着的账号（整组登录文件的快照），「切换」时把选中账号的那组还原回去，下次打开 WorkBuddy 就是这个号。切换前需要退出 WorkBuddy。快照只在这台电脑上有效，不会随云同步。"
     },
     "addAccount": "添加账号",
     "groupMenu": "{{service}} 的更多操作",
@@ -4934,6 +4935,31 @@
       "removeNote": "不会让 agy 退出登录：agy 现在登着的号删掉后仍然可用。",
       "switched": "已切换，新开的 agy 会使用这个账号。",
       "switchedWhileRunning": "已切换。检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，请退出后重新打开。"
+    },
+    "workbuddy": {
+      "addedOn": "{{date}}收录",
+      "expiredNote": "登录已过期，在 WorkBuddy 里重新登录这个号后再添加",
+      "statusLoadFailed": "无法读取 WorkBuddy 账号，请重试。",
+      "empty": "还没有 WorkBuddy 账号。先在 WorkBuddy 里登录，再收录当前登录的账号。",
+      "importCurrent": "收录当前登录",
+      "importNow": "收录",
+      "current": "WorkBuddy 在用",
+      "switchTo": "切换 WorkBuddy 到这个账号",
+      "switched": "已切换，下次打开 WorkBuddy 会使用这个账号。",
+      "removeNote": "只删除 CC Switch 里的快照，不会让 WorkBuddy 退出登录。",
+      "localOnly": "快照只在这台电脑上有效（登录凭据绑定本机），不会随云同步，换电脑后需要重新收录。",
+      "runningTitle": "WorkBuddy 正在运行",
+      "runningBody": "切换账号前请先完全退出 WorkBuddy（含菜单栏/托盘），否则它会把当前登录写回去。",
+      "unrecognizedTitle": "认不出 WorkBuddy 当前登录的账号",
+      "unrecognizedBody": "登录文件的格式可能变了，暂时不能收录。切换到别的账号前会把它原样暂存。",
+      "notImportedTitle": "WorkBuddy 当前登录的账号还没收录",
+      "alreadyTitle": "当前登录的账号已在列表里（副本已更新）",
+      "alreadyBody": "要添加另一个账号：先完全退出 WorkBuddy，点「登录另一个账号」（CC Switch 只在本机让 WorkBuddy 停在登录页，不会在服务端登出当前账号），在 WorkBuddy 里登录另一个账号，再回来点「添加账号」。",
+      "signedOutTitle": "WorkBuddy 当前没有登录",
+      "signedOutBody": "在 WorkBuddy 里登录后，回到这里点「添加账号」收录。",
+      "prepareNewLogin": "登录另一个账号",
+      "preparedNewLogin": "已收录当前账号，WorkBuddy 打开后会停在登录页。登录另一个账号后回到这里点「添加账号」。",
+      "openApp": "打开 WorkBuddy"
     }
   },
   "kimi": {

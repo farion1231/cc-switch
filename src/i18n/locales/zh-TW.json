@@ -4879,7 +4879,8 @@
       "copilotHelp": "用於 Claude Code、Claude Desktop 的 GitHub Copilot 預設。沒指定帳號的供應商用「預設」帳號。",
       "chatgptHelp": "用於 Claude Code、Claude Desktop 的 ChatGPT 預設，以及 Codex 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
       "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。",
-      "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。"
+      "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。",
+      "workbuddyHelp": "WorkBuddy 桌面端的官方登入。CC Switch 無法替 WorkBuddy 登入，只能收錄它目前登入的帳號（整組登入檔案的快照），「切換」時把選中帳號的那組還原回去，下次開啟 WorkBuddy 就是這個帳號。切換前需要結束 WorkBuddy。快照只在這台電腦上有效，不會隨雲端同步。"
     },
     "addAccount": "新增帳號",
     "groupMenu": "{{service}} 的更多操作",
@@ -4935,6 +4936,31 @@
       "removeNote": "不會讓 agy 登出：agy 目前登入的帳號刪除後仍然可用。",
       "switched": "已切換，新開的 agy 會使用這個帳號。",
       "switchedWhileRunning": "已切換。偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，請結束後重新開啟。"
+    },
+    "workbuddy": {
+      "addedOn": "{{date}}收錄",
+      "expiredNote": "登入已過期，請在 WorkBuddy 裡重新登入這個帳號後再新增",
+      "statusLoadFailed": "無法讀取 WorkBuddy 帳號，請重試。",
+      "empty": "還沒有 WorkBuddy 帳號。先在 WorkBuddy 裡登入，再收錄目前登入的帳號。",
+      "importCurrent": "收錄目前登入",
+      "importNow": "收錄",
+      "current": "WorkBuddy 使用中",
+      "switchTo": "將 WorkBuddy 切換到這個帳號",
+      "switched": "已切換，下次開啟 WorkBuddy 會使用這個帳號。",
+      "removeNote": "只刪除 CC Switch 裡的快照，不會讓 WorkBuddy 登出。",
+      "localOnly": "快照只在這台電腦上有效（登入憑證綁定本機），不會隨雲端同步，換電腦後需要重新收錄。",
+      "runningTitle": "WorkBuddy 正在執行",
+      "runningBody": "切換帳號前請先完全結束 WorkBuddy（含選單列／系統匣），否則它會把目前的登入寫回去。",
+      "unrecognizedTitle": "無法辨識 WorkBuddy 目前登入的帳號",
+      "unrecognizedBody": "登入檔案的格式可能變了，暫時無法收錄。切換到其他帳號前會將它原樣暫存。",
+      "notImportedTitle": "WorkBuddy 目前登入的帳號尚未收錄",
+      "alreadyTitle": "目前登入的帳號已在清單中（副本已更新）",
+      "alreadyBody": "要新增另一個帳號：先完全結束 WorkBuddy，點「登入另一個帳號」（CC Switch 只在本機讓 WorkBuddy 停在登入頁，不會在伺服器端登出目前帳號），在 WorkBuddy 裡登入另一個帳號，再回來點「新增帳號」。",
+      "signedOutTitle": "WorkBuddy 目前沒有登入",
+      "signedOutBody": "在 WorkBuddy 裡登入後，回到這裡點「新增帳號」收錄。",
+      "prepareNewLogin": "登入另一個帳號",
+      "preparedNewLogin": "已收錄目前帳號，WorkBuddy 開啟後會停在登入頁。登入另一個帳號後回到這裡點「新增帳號」。",
+      "openApp": "開啟 WorkBuddy"
     }
   },
   "kimi": {
