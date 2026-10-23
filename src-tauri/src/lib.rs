@@ -1310,6 +1310,13 @@ pub fn run() {
                 app.manage(commands::AgyAccountState(Arc::new(manager)));
             }
 
+            // CodeBuddy Code 官方账号（授权中心收录、切 CodeBuddy 的全局登录）
+            {
+                use crate::services::codebuddy_account::CodebuddyAccountManager;
+                let manager = CodebuddyAccountManager::new(crate::config::get_app_config_dir());
+                app.manage(commands::CodebuddyAccountState(Arc::new(manager)));
+            }
+
             // 初始化全局出站代理 HTTP 客户端
             {
                 let db = &app.state::<AppState>().db;
@@ -1868,6 +1875,9 @@ pub fn run() {
             commands::auth_logout,
             commands::agy_account_is_running,
             commands::agy_account_quota,
+            commands::codebuddy_account_live,
+            commands::codebuddy_account_import_current,
+            commands::codebuddy_account_open_login_terminal,
             commands::kimi_oauth_status,
             commands::kimi_oauth_start,
             commands::kimi_oauth_poll,
