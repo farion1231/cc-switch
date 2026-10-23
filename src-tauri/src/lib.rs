@@ -1879,6 +1879,7 @@ pub fn run() {
             commands::codebuddy_account_import_current,
             commands::codebuddy_account_open_login_terminal,
             commands::codebuddy_account_quota,
+            commands::codebuddy_account_switch_provider,
             commands::kimi_oauth_status,
             commands::kimi_oauth_start,
             commands::kimi_oauth_poll,

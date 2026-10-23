@@ -1,11 +1,15 @@
-//! CodeBuddy Code 官方账号的状态与专用命令（列号、切号、删号走授权中心的通用 `auth_*` 命令）。
+//! CodeBuddy Code 官方账号的状态与专用命令（列号、删号走授权中心的通用 `auth_*` 命令；
+//! 切号从供应商列表里的官方登录卡发起，见 [`codebuddy_account_switch_provider`]）。
 
 use std::sync::Arc;
 
+use crate::app_config::AppType;
 use crate::commands::auth::{map_codebuddy_account, ManagedAuthAccount};
+use crate::error::AppError;
 use crate::services::codebuddy_account::{
     CodebuddyAccountManager, CodebuddyLiveSummary, CodebuddyQuota,
 };
+use crate::store::AppState;
 
 pub struct CodebuddyAccountState(pub Arc<CodebuddyAccountManager>);
 
@@ -92,6 +96,46 @@ pub async fn codebuddy_account_import_current(
 #[tauri::command]
 pub async fn codebuddy_account_open_login_terminal() -> Result<(), String> {
     open_codebuddy_login_terminal().await
+}
+
+/// 官方登录卡绑定的账号；不是官方卡、没绑账号时说清楚原因。
+fn official_card_account_id(provider: &crate::provider::Provider) -> Result<String, AppError> {
+    if !crate::codebuddy_config::is_official_provider(provider) {
+        return Err(AppError::localized(
+            "codebuddy.official.not_official",
+            "这张卡不是 CodeBuddy 官方登录卡",
+            "This card is not a CodeBuddy official sign-in card",
+        ));
+    }
+    crate::codebuddy_config::official_account_id(provider).ok_or_else(|| {
+        AppError::localized(
+            "codebuddy.official.unbound",
+            "这张卡还没有选择 CodeBuddy 账号，请编辑卡片选择一个",
+            "This card has no CodeBuddy account yet; edit it and choose one",
+        )
+    })
+}
+
+/// 供应商列表里官方登录卡的「切换」：把 CodeBuddy 的全局登录换成卡片绑定的账号
+/// （切号的锁、吸收、原子写、读回核对都在 `switch_to` 里）。返回切到的账号 ID。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn codebuddy_account_switch_provider(
+    provider_id: String,
+    app_state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, CodebuddyAccountState>,
+) -> Result<String, String> {
+    let provider = app_state
+        .db
+        .get_provider_by_id(&provider_id, AppType::Codebuddy.as_str())
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("供应商 {provider_id} 不存在"))?;
+    let account_id = official_card_account_id(&provider).map_err(|e| e.to_string())?;
+    state
+        .0
+        .switch_to(&account_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(account_id)
 }
 
 /// 授权中心账号行的套餐与积分：用这个账号副本里的令牌只读查询，不切号、不续期。

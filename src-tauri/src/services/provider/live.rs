@@ -709,6 +709,12 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
         AppType::Codebuddy => {
+            // 官方登录卡只绑定账号，不是 models.json 里的模型
+            if crate::codebuddy_config::is_official_provider(provider) {
+                return Err(AppError::InvalidInput(
+                    "CodeBuddy official sign-in cards are not written to models.json".into(),
+                ));
+            }
             crate::codebuddy_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
         AppType::Pi => {

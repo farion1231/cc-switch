@@ -151,6 +151,95 @@ fn codebuddy_provider_lifecycle_preserves_native_models() {
     assert_eq!(home.ids(), ["native", "direct"]);
 }
 
+fn official_card(id: &str, account_id: &str) -> Provider {
+    let mut card = Provider::with_id(id.into(), "Official".into(), json!({}), None);
+    card.category = Some("official".into());
+    card.meta = Some(
+        serde_json::from_value(json!({
+            "authBinding": {
+                "source": "managed_account",
+                "authProvider": "codebuddy_oauth",
+                "accountId": account_id
+            }
+        }))
+        .unwrap(),
+    );
+    card
+}
+
+#[test]
+fn codebuddy_official_cards_never_touch_models_json() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let home = CodebuddyHome::new();
+    let state = create_test_state().unwrap();
+    let original = r#"{"models":[{"id":"native","name":"Native","url":"https://native.example/v1/chat/completions"}],"availableModels":["native"]}"#;
+    fs::write(home.models(), original).unwrap();
+
+    // Added with the default "add to live": saved, but models.json is untouched and the
+    // card is not marked as present in live.
+    ProviderService::add(
+        &state,
+        AppType::Codebuddy,
+        official_card("codebuddy-official-a", "u1@codebuddy.ai"),
+        true,
+    )
+    .unwrap();
+    assert_eq!(fs::read_to_string(home.models()).unwrap(), original);
+    let saved = state
+        .db
+        .get_provider_by_id("codebuddy-official-a", "codebuddy")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        saved.meta.as_ref().unwrap().live_config_managed,
+        Some(false)
+    );
+
+    // Several official cards can coexist, each bound to its own account.
+    ProviderService::add(
+        &state,
+        AppType::Codebuddy,
+        official_card("codebuddy-official-b", "u2@codebuddy.cn"),
+        true,
+    )
+    .unwrap();
+
+    // Listing keeps them out of live; editing (rebinding) does not write either.
+    let listed = ProviderService::list(&state, AppType::Codebuddy).unwrap();
+    assert_eq!(
+        listed["codebuddy-official-a"]
+            .meta
+            .as_ref()
+            .unwrap()
+            .live_config_managed,
+        Some(false)
+    );
+    let mut rebound = official_card("codebuddy-official-a", "u3@codebuddy.ai");
+    rebound.name = "Renamed".into();
+    ProviderService::update(&state, AppType::Codebuddy, None, rebound).unwrap();
+    assert_eq!(fs::read_to_string(home.models()).unwrap(), original);
+
+    // "Add" / "remove" for models do not apply to official cards.
+    assert!(ProviderService::switch(&state, AppType::Codebuddy, "codebuddy-official-a").is_err());
+    assert!(ProviderService::remove_from_live_config(
+        &state,
+        AppType::Codebuddy,
+        "codebuddy-official-a"
+    )
+    .is_err());
+    assert_eq!(fs::read_to_string(home.models()).unwrap(), original);
+
+    // Deleting the card only removes the row.
+    ProviderService::delete(&state, AppType::Codebuddy, "codebuddy-official-a").unwrap();
+    assert!(state
+        .db
+        .get_provider_by_id("codebuddy-official-a", "codebuddy")
+        .unwrap()
+        .is_none());
+    assert_eq!(fs::read_to_string(home.models()).unwrap(), original);
+}
+
 #[test]
 fn codebuddy_add_creates_models_json_when_missing() {
     let _guard = test_mutex().lock().unwrap();

@@ -118,6 +118,25 @@ fn is_env_reference(value: &str) -> bool {
     value.contains("${")
 }
 
+/// Auth binding provider for CodeBuddy official sign-in cards (see `services::codebuddy_account`).
+pub(crate) const OFFICIAL_AUTH_PROVIDER: &str = "codebuddy_oauth";
+
+/// A CodeBuddy "official sign-in" card binds one managed CodeBuddy account; using it switches
+/// CodeBuddy's global sign-in. It is never a models.json entry, so live writes skip it.
+pub(crate) fn is_official_provider(provider: &crate::provider::Provider) -> bool {
+    provider.category.as_deref() == Some("official")
+}
+
+/// The managed account an official card is bound to, if any.
+pub(crate) fn official_account_id(provider: &crate::provider::Provider) -> Option<String> {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for(OFFICIAL_AUTH_PROVIDER))
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+}
+
 pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError> {
     if id.trim().is_empty() || id.trim() != id || id.chars().any(char::is_control) {
         return Err(AppError::InvalidInput(
@@ -287,6 +306,34 @@ mod tests {
             "maxOutputTokens": 8192,
             "supportsToolCall": true
         })
+    }
+
+    #[test]
+    fn official_cards_resolve_their_bound_account() {
+        use crate::provider::Provider;
+        let mut card = Provider::with_id("official".into(), "Official".into(), json!({}), None);
+        assert!(!is_official_provider(&card));
+        card.category = Some("official".into());
+        assert!(is_official_provider(&card));
+        assert_eq!(official_account_id(&card), None);
+
+        let bind = |provider: &str, account: &str| {
+            serde_json::from_value(json!({"authBinding": {
+                "source": "managed_account",
+                "authProvider": provider,
+                "accountId": account
+            }}))
+            .unwrap()
+        };
+        card.meta = Some(bind("codebuddy_oauth", " u1@codebuddy.ai "));
+        assert_eq!(
+            official_account_id(&card).as_deref(),
+            Some("u1@codebuddy.ai")
+        );
+        card.meta = Some(bind("codebuddy_oauth", "  "));
+        assert_eq!(official_account_id(&card), None);
+        card.meta = Some(bind("codex_oauth", "u1@codebuddy.ai"));
+        assert_eq!(official_account_id(&card), None);
     }
 
     #[test]

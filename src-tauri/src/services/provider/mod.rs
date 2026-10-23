@@ -5551,6 +5551,7 @@ impl ProviderService {
             };
         }
         let app = app_type.as_str();
+        let write_live = write_live && !Self::is_codebuddy_official(app_type, provider);
         let previous = state.db.get_provider_by_id(&provider.id, app)?;
         state.db.save_provider(app, provider)?;
         if write_live {
@@ -5625,6 +5626,8 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::add(state, provider, add_to_live);
         }
+        // CodeBuddy 官方登录卡只绑定账号，永远不写进 models.json
+        let add_to_live = add_to_live && !Self::is_codebuddy_official(&app_type, &provider);
 
         let mut provider = provider;
         Self::prepare_new_provider(&app_type, &mut provider)?;
@@ -6333,15 +6336,16 @@ impl ProviderService {
                 }
                 return Ok(true);
             }
-            let live_config_managed = Self::check_live_config_exists(
-                &app_type,
-                &provider.id,
-                Self::provider_live_config_managed(&provider).or_else(|| {
-                    existing_provider
-                        .as_ref()
-                        .and_then(Self::provider_live_config_managed)
-                }),
-            )?;
+            let live_config_managed = !Self::is_codebuddy_official(&app_type, &provider)
+                && Self::check_live_config_exists(
+                    &app_type,
+                    &provider.id,
+                    Self::provider_live_config_managed(&provider).or_else(|| {
+                        existing_provider
+                            .as_ref()
+                            .and_then(Self::provider_live_config_managed)
+                    }),
+                )?;
             Self::set_provider_live_config_managed(&mut provider, live_config_managed);
 
             if matches!(
@@ -6545,7 +6549,10 @@ impl ProviderService {
             let live_managed = existing
                 .as_ref()
                 .and_then(Self::provider_live_config_managed);
-            if Self::check_live_config_exists(&app_type, id, live_managed)? {
+            let codebuddy_official = existing
+                .as_ref()
+                .is_some_and(|provider| Self::is_codebuddy_official(&app_type, provider));
+            if !codebuddy_official && Self::check_live_config_exists(&app_type, id, live_managed)? {
                 match app_type {
                     AppType::OpenCode => remove_opencode_provider_from_live(id)?,
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
@@ -6619,6 +6626,14 @@ impl ProviderService {
     ) -> Result<(), AppError> {
         if app_type == AppType::Pi {
             return pi::remove(state, id);
+        }
+        if app_type == AppType::Codebuddy
+            && state
+                .db
+                .get_provider_by_id(id, app_type.as_str())?
+                .is_some_and(|provider| crate::codebuddy_config::is_official_provider(&provider))
+        {
+            return Err(Self::codebuddy_official_not_a_model());
         }
         if app_type == AppType::Kimi {
             Self::ensure_kimi_provider_editable(id)?;
@@ -6753,6 +6768,10 @@ impl ProviderService {
         let _provider = providers
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+
+        if Self::is_codebuddy_official(&app_type, _provider) {
+            return Err(Self::codebuddy_official_not_a_model());
+        }
 
         if app_type == AppType::Kimi {
             crate::services::kimi_oauth::ensure_profile_signed_in(&_provider.settings_config)?;
@@ -7852,6 +7871,19 @@ impl ProviderService {
         .await
     }
 
+    /// CodeBuddy 官方登录卡：绑定一个托管账号，切的是 CodeBuddy 的全局登录，不进 models.json。
+    fn is_codebuddy_official(app_type: &AppType, provider: &Provider) -> bool {
+        *app_type == AppType::Codebuddy && crate::codebuddy_config::is_official_provider(provider)
+    }
+
+    fn codebuddy_official_not_a_model() -> AppError {
+        AppError::localized(
+            "codebuddy.official.not_a_model",
+            "CodeBuddy 官方登录卡不会写进 models.json，请用卡片上的「切换」切换账号",
+            "CodeBuddy official sign-in cards are not written to models.json; use Switch on the card to change accounts",
+        )
+    }
+
     fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
         icon::validate_icon(provider.icon.as_deref())?;
         match app_type {
@@ -7991,6 +8023,8 @@ impl ProviderService {
             AppType::Mcode => {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?
             }
+            // 官方登录卡没有模型配置，只绑定账号
+            AppType::Codebuddy if crate::codebuddy_config::is_official_provider(provider) => {}
             AppType::Codebuddy => {
                 crate::codebuddy_config::validate_provider(&provider.id, &provider.settings_config)?
             }
