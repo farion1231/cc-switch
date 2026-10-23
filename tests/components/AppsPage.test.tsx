@@ -2030,6 +2030,58 @@ describe("AppsPage concurrent CLI upgrades", () => {
     );
   });
 
+  it.each(["codex", "gemini", "openclaw", "pi"])(
+    "blocks %s installation when npm needs a newer Node",
+    async (toolName) => {
+      missing.add(toolName);
+      const defaultVersions = mocks.getToolVersions.getMockImplementation()!;
+      mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+        (await defaultVersions(tools)).map((tool: { name: string }) => ({
+          ...tool,
+          update_blocked_by_node:
+            tool.name === toolName
+              ? { required: ">=24", current: "22.12.0" }
+              : null,
+        })),
+      );
+      await renderApps();
+      const names: Record<string, string> = {
+        codex: "Codex",
+        gemini: "Gemini CLI",
+        openclaw: "OpenClaw",
+        pi: "Pi",
+      };
+      const row = card(names[toolName]);
+      expect(row.getByText("appsPage.installNeedsNode")).toBeInTheDocument();
+      const install = row.getByRole("button", { name: "settings.toolInstall" });
+      expect(install).toBeDisabled();
+      fireEvent.click(install);
+      expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+    },
+  );
+
+  it("localizes a Node rejection returned by the backend instead of showing JSON", async () => {
+    missing.add("pi");
+    mocks.runToolLifecycleAction.mockRejectedValueOnce(
+      JSON.stringify({
+        code: "TOOL_NODE_REQUIREMENT",
+        tool: "pi",
+        required: ">=22.19.0",
+        current: "22.12.0",
+      }),
+    );
+    await renderApps();
+    fireEvent.click(
+      card("Pi").getByRole("button", { name: "settings.toolInstall" }),
+    );
+    await waitFor(() =>
+      expect(mocks.error).toHaveBeenCalledWith("settings.toolActionFailed", {
+        description: "appsPage.nodeRequirementError",
+        closeButton: true,
+      }),
+    );
+  });
+
   it("withholds the upgrade when the new version needs a newer Node and leaves it out of update all", async () => {
     const defaultVersions = mocks.getToolVersions.getMockImplementation()!;
     mocks.getToolVersions.mockImplementation(async (tools: string[]) =>

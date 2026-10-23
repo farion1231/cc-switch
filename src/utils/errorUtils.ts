@@ -37,6 +37,30 @@ export const extractErrorMessage = (error: unknown): string => {
   return "";
 };
 
+export const translateToolNodeRequirementError = (
+  message: string,
+  t: (key: string, options?: Record<string, unknown>) => string,
+  name: string,
+): string => {
+  try {
+    const issue = JSON.parse(message);
+    if (
+      issue?.code === "TOOL_NODE_REQUIREMENT" &&
+      typeof issue.required === "string" &&
+      typeof issue.current === "string"
+    ) {
+      return t("appsPage.nodeRequirementError", {
+        name,
+        required: issue.required,
+        current: issue.current,
+      });
+    }
+  } catch {
+    // Other lifecycle errors retain their original diagnostic text.
+  }
+  return message;
+};
+
 export const translatePiProviderMutationError = (
   message: string,
   t: (key: string, options?: Record<string, unknown>) => string,

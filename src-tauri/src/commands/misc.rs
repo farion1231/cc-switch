@@ -366,6 +366,18 @@ pub async fn run_tool_lifecycle_action(
         }
     }
 
+    let mut install_requirements = HashMap::new();
+    if matches!(action, ToolLifecycleAction::Install) {
+        let client = crate::proxy::http_client::get();
+        for tool in &requested {
+            if let Some(required) =
+                tool_node_requirement::install_node_requirement(&client, tool, "latest").await
+            {
+                install_requirements.insert(*tool, required);
+            }
+        }
+    }
+
     let label = match action {
         ToolLifecycleAction::Install => "tool_install",
         ToolLifecycleAction::Update => "tool_update",
@@ -376,7 +388,14 @@ pub async fn run_tool_lifecycle_action(
         .run(requested, move |tools| {
             if matches!(action, ToolLifecycleAction::Install) {
                 for tool in tools {
-                    tool_node_requirement::ensure_install_node(tool)?;
+                    let preference = wsl_shell_by_tool
+                        .as_ref()
+                        .and_then(|prefs| prefs.get(*tool));
+                    tool_node_requirement::ensure_install_node(
+                        tool,
+                        install_requirements.get(*tool).map(String::as_str),
+                        preference,
+                    )?;
                 }
             }
             let command_line =
@@ -1336,7 +1355,19 @@ async fn get_single_tool_version_impl(
         {
             tool_node_requirement::update_node_gap(&client, tool, latest).await
         }
-        (None, _) if tool == "dsh" => tool_node_requirement::install_node_gap(tool).await,
+        (None, target) => {
+            let preference = WslShellPreferenceInput {
+                wsl_shell: wsl_shell.map(str::to_owned),
+                wsl_shell_flag: wsl_shell_flag.map(str::to_owned),
+            };
+            tool_node_requirement::install_node_gap(
+                &client,
+                tool,
+                target.unwrap_or("latest"),
+                Some(&preference),
+            )
+            .await
+        }
         _ => None,
     };
 
