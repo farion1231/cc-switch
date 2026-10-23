@@ -361,9 +361,8 @@ export const iconMetadata: Record<string, IconMetadata> = {
     name: "codebuddy",
     displayName: "CodeBuddy",
     category: "ai-provider",
-    shape: "tile",
     keywords: ["codebuddy", "tencent", "cbc"],
-    defaultColor: "#6C4DFF",
+    defaultColor: "currentColor",
   },
   cohere: {
     name: "cohere",
