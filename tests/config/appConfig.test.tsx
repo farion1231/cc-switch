@@ -37,13 +37,13 @@ describe("Antigravity capabilities", () => {
   });
 });
 
-// WorkBuddy only gets provider and prompt management: its MCP / Skills would need
-// new enabled_* columns in the database.
+// WorkBuddy manages providers, prompts and MCP (~/.workbuddy/mcp.json) but has
+// no local proxy.
 describe("WorkBuddy capabilities", () => {
-  it("is additive without MCP, Skills or the local proxy", () => {
+  it("is additive with MCP but without Skills or the local proxy", () => {
     expect(isAdditiveAppId("workbuddy")).toBe(true);
     expect(SKILLS_APP_IDS).not.toContain("workbuddy");
-    expect((MCP_APP_IDS as string[]).includes("workbuddy")).toBe(false);
+    expect((MCP_APP_IDS as string[]).includes("workbuddy")).toBe(true);
     expect(isProxyAppId("workbuddy")).toBe(false);
   });
 });

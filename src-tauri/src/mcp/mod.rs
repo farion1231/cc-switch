@@ -43,3 +43,4 @@ pub use opencode::{
 pub(crate) mod kimi;
 pub(crate) mod mcode;
 pub(crate) mod pi;
+pub(crate) mod workbuddy;

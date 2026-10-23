@@ -1,4 +1,6 @@
-use cc_switch_lib::{AppType, Prompt, PromptService, Provider, ProviderService};
+use cc_switch_lib::{
+    AppType, McpServer, McpService, Prompt, PromptService, Provider, ProviderService,
+};
 use serde_json::{json, Value};
 use std::fs;
 
@@ -171,4 +173,75 @@ fn workbuddy_prompts_project_to_codebuddy_md() {
     PromptService::upsert_prompt(&state, AppType::WorkBuddy, "p", prompt).unwrap();
     let path = ensure_test_home().join(".workbuddy/CODEBUDDY.md");
     assert_eq!(fs::read_to_string(path).unwrap(), "be brief");
+}
+
+fn read_mcp() -> Value {
+    let path = ensure_test_home().join(".workbuddy/mcp.json");
+    serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+}
+
+#[test]
+fn workbuddy_mcp_projects_managed_servers_and_keeps_user_entries() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let dir = ensure_test_home().join(".workbuddy");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("mcp.json"),
+        json!({
+            "mcpServers": {
+                "mine": {"command": "node", "args": ["mine.js"], "timeout": 5000},
+                "paused": {"type": "sse", "url": "https://paused.example.com/sse", "disabled": true}
+            },
+            "disabledMcpServers": ["legacy"]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let server: McpServer = serde_json::from_value(json!({
+        "id": "fetch", "name": "Fetch",
+        "server": {"type": "http", "url": "https://mcp.example.com/mcp", "headers": {"X-Key": "k"}},
+        "apps": {"workbuddy": true}
+    }))
+    .unwrap();
+    McpService::upsert_server(&state, server).unwrap();
+    let doc = read_mcp();
+    assert_eq!(doc["mcpServers"]["fetch"]["type"], "http");
+    assert_eq!(
+        doc["mcpServers"]["fetch"]["url"],
+        "https://mcp.example.com/mcp"
+    );
+    assert_eq!(doc["mcpServers"]["mine"]["timeout"], 5000);
+    assert_eq!(doc["disabledMcpServers"], json!(["legacy"]));
+
+    // 全量重投影不碰用户自己加的服务器。
+    McpService::sync_enabled_for_app(&state, &AppType::WorkBuddy).unwrap();
+    assert_eq!(read_mcp()["mcpServers"]["mine"]["command"], "node");
+
+    McpService::toggle_app(&state, "fetch", AppType::WorkBuddy, false).unwrap();
+    assert!(read_mcp()["mcpServers"].get("fetch").is_none());
+    assert!(
+        !state.db.get_all_mcp_servers().unwrap()["fetch"]
+            .apps
+            .workbuddy
+    );
+    McpService::toggle_app(&state, "fetch", AppType::WorkBuddy, true).unwrap();
+    assert!(read_mcp()["mcpServers"].get("fetch").is_some());
+
+    // 导入：停用的条目进库但不勾选 WorkBuddy。
+    McpService::import_from_all_apps(&state).unwrap();
+    let servers = state.db.get_all_mcp_servers().unwrap();
+    assert!(servers["mine"].apps.workbuddy);
+    assert_eq!(servers["mine"].server["type"], "stdio");
+    assert!(servers["mine"].server.get("timeout").is_none());
+    assert!(!servers["paused"].apps.workbuddy);
+    assert_eq!(servers["paused"].server["type"], "sse");
+
+    assert!(McpService::delete_server(&state, "fetch").unwrap());
+    let doc = read_mcp();
+    assert!(doc["mcpServers"].get("fetch").is_none());
+    assert!(doc["mcpServers"].get("mine").is_some());
+    assert!(doc["mcpServers"].get("paused").is_some());
 }
