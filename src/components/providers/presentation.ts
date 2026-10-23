@@ -746,7 +746,16 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           onClick: () => actions.add(p),
         });
       } else {
-        if (!current) {
+        if (!current && app === "cline") {
+          // Cline runs with exactly one provider (lastUsedProvider), so picking
+          // it is a primary action, like Hermes' "Enable" rather than Kimi's
+          // default model.
+          buttons.push({
+            key: "setDefault",
+            label: t("providerCard.action.setDefault"),
+            onClick: () => actions.setDefault(p),
+          });
+        } else if (!current) {
           menuItems.push({
             key: "setDefault",
             label: t("providerCard.action.setDefault"),

@@ -455,13 +455,22 @@ describe("ProviderList Component", () => {
           (button: { key: string }) => button.key === "remove",
         )?.disabledReason,
       ).toBeTruthy();
-      // 已添加的卡在「更多」菜单里「设为默认」；未添加的卡「添加」只写进配置
+      // 已添加的卡「设为默认」：Kimi 收在「更多」菜单，Cline 是卡片上的按钮；
+      // 未添加的卡「添加」只写进配置
       expect(screen.queryByTestId("switch-other")).not.toBeInTheDocument();
-      lastProps("other")
-        ?.presentation.menuItems.find(
-          (action: { key: string }) => action.key === "setDefault",
-        )
-        .onSelect();
+      if (appId === "cline") {
+        fireEvent.click(screen.getByTestId("setDefault-other"));
+        expect(
+          screen.queryByTestId("setDefault-current"),
+        ).not.toBeInTheDocument();
+        expect(lastProps("other")?.presentation.menuItems).toBeUndefined();
+      } else {
+        lastProps("other")
+          ?.presentation.menuItems.find(
+            (action: { key: string }) => action.key === "setDefault",
+          )
+          .onSelect();
+      }
       expect(onSetAsDefault).toHaveBeenLastCalledWith(other, undefined);
       expect(screen.queryByTestId("switch-saved")).not.toBeInTheDocument();
       fireEvent.click(screen.getByTestId("add-saved"));
@@ -477,11 +486,15 @@ describe("ProviderList Component", () => {
       expect(screen.getByTestId("status-other")).toHaveTextContent(
         "providerCard.status.default",
       );
-      expect(
-        lastProps("current")?.presentation.menuItems.map(
-          (action: { key: string }) => action.key,
-        ),
-      ).toEqual(["setDefault"]);
+      if (appId === "cline") {
+        expect(screen.getByTestId("setDefault-current")).toBeInTheDocument();
+      } else {
+        expect(
+          lastProps("current")?.presentation.menuItems.map(
+            (action: { key: string }) => action.key,
+          ),
+        ).toEqual(["setDefault"]);
+      }
     },
   );
 
