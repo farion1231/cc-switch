@@ -40,7 +40,7 @@ use std::os::unix::fs::MetadataExt;
 use std::os::windows::io::AsRawHandle;
 
 /// 存量归属回填完成标记，避免每次启动重新扫描全部 Codex 会话文件。
-const CODEX_ATTRIBUTION_BACKFILL_FLAG: &str = "codex_usage_attribution_backfilled";
+const CODEX_ATTRIBUTION_BACKFILL_FLAG: &str = "codex_usage_attribution_backfilled_v2";
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::SystemTime;
@@ -1128,7 +1128,7 @@ fn backfill_codex_usage_attribution_from_dir(
     db: &Database,
     codex_dir: &Path,
 ) -> Result<CodexBackfillStats, AppError> {
-    // 快速短路：回填已完成或没有待回填占位行时直接返回，避免每次启动全量扫描。
+    // 快速短路：回填已完成或没有待回填行时直接返回，避免每次启动全量扫描。
     {
         let conn = lock_conn!(db.conn);
         let done: i64 = conn
@@ -1145,7 +1145,9 @@ fn backfill_codex_usage_attribution_from_dir(
             .query_row(
                 "SELECT COUNT(*) FROM proxy_request_logs
                  WHERE app_type = 'codex'
-                   AND provider_id IN ('_codex_session', '_codex_custom')",
+                   AND (provider_id IN ('_codex_session', '_codex_custom')
+                        OR (COALESCE(data_source, 'proxy') = 'proxy' AND project_key = ''
+                            AND COALESCE(session_id, '') <> ''))",
                 [],
                 |row| row.get(0),
             )
@@ -1199,15 +1201,25 @@ fn backfill_codex_usage_attribution_from_dir(
     let tx = conn
         .unchecked_transaction()
         .map_err(|e| AppError::Database(format!("开启 Codex 用量归属回填事务失败: {e}")))?;
+    // 旧版代理行尚无 session_key；保留原始 ID，只规范化关联键。
+    tx.execute(
+        "UPDATE proxy_request_logs SET session_key =
+            CASE WHEN substr(trim(session_id), 1, 6) = 'codex_'
+                 THEN substr(trim(session_id), 7) ELSE trim(session_id) END
+         WHERE app_type = 'codex' AND session_key = ''
+           AND COALESCE(session_id, '') <> ''",
+        [],
+    )?;
     for session in &sessions {
         if let Some(project) = &session.project {
-            crate::database::Database::upsert_session_project_on_conn(&tx, project)?;
+            stats.rows_updated +=
+                crate::database::Database::upsert_session_project_on_conn(&tx, project)? as u64;
         }
         let (start_s, end_s) = tx.query_row(
             "SELECT COALESCE(MIN(created_at), 0), COALESCE(MAX(created_at), 0)
              FROM proxy_request_logs
-             WHERE app_type = 'codex' AND session_id = ?1",
-            rusqlite::params![session.session_id],
+             WHERE app_type = 'codex' AND (session_id = ?1 OR session_key = ?2)",
+            rusqlite::params![session.session_id, session.session_key],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
         )?;
         let attribution = if session.model_provider.is_some() {
@@ -4197,6 +4209,41 @@ mod tests {
     }
 
     #[test]
+    fn backfill_restores_project_for_proxy_only_history_after_old_marker() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let archived = temp.path().join("archived_sessions");
+        fs::create_dir_all(&archived).unwrap();
+        let mut meta = session_meta(PARENT_ID);
+        meta["payload"]["cwd"] = serde_json::json!("/workspace/demo");
+        write_jsonl(&rollout_path(&archived, PARENT_ID), &[meta]);
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute("INSERT INTO settings (key, value) VALUES ('codex_usage_attribution_backfilled', '1')", [])?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs
+                 (request_id, provider_id, app_type, model, latency_ms, status_code,
+                  created_at, session_id)
+                 VALUES ('proxy-old', 'provider-a', 'codex', 'gpt-5.5', 1, 200, 100, 'codex_' || ?1)",
+                [PARENT_ID],
+            )?;
+        }
+        let stats = backfill_codex_usage_attribution_from_dir(&db, temp.path())?;
+        assert_eq!(stats.files_scanned, 1);
+        assert!(db.session_project("codex", PARENT_ID)?.is_some());
+        let row: (String, String) = lock_conn!(db.conn).query_row(
+            "SELECT project_key, provider_id FROM proxy_request_logs WHERE request_id = 'proxy-old'",
+            [], |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(row, ("/workspace/demo".into(), "provider-a".into()));
+        assert_eq!(
+            backfill_codex_usage_attribution_from_dir(&db, temp.path())?.files_scanned,
+            0
+        );
+        Ok(())
+    }
+
+    #[test]
     fn backfill_restores_codex_project_and_provider_from_session_meta() -> Result<(), AppError> {
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
@@ -4248,8 +4295,8 @@ mod tests {
             for id in [openai_id, custom_id, provider_a_id, local_id] {
                 conn.execute(
                     "INSERT INTO proxy_request_logs
-                        (request_id, provider_id, app_type, model, latency_ms, status_code, created_at, session_id)
-                     VALUES (?1, '_codex_session', 'codex', 'gpt-5.4', 100, 200, 1000, ?2)",
+                        (request_id, provider_id, app_type, model, latency_ms, status_code, created_at, session_id, data_source)
+                     VALUES (?1, '_codex_session', 'codex', 'gpt-5.4', 100, 200, 1000, ?2, 'codex_session')",
                     rusqlite::params![format!("r-{id}"), id],
                 )?;
             }

@@ -308,13 +308,15 @@ impl Database {
     /// 会话项目写入/更新（同一会话后出现的项目覆盖先前的值）。
     pub fn upsert_session_project(&self, project: &SessionProject) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
-        Self::upsert_session_project_on_conn(&conn, project)
+        Self::upsert_session_project_on_conn(&conn, project).map(|_| ())
     }
 
+    /// 更新索引，并给同会话尚未归属项目的代理明细补证据（含失败请求）。
+    /// 返回补齐的代理明细数；不改变已有项目或供应商归属。
     pub fn upsert_session_project_on_conn(
         conn: &Connection,
         project: &SessionProject,
-    ) -> Result<(), AppError> {
+    ) -> Result<usize, AppError> {
         conn.execute(
             "INSERT INTO session_projects
                 (app_type, session_key, project_key, project_path, project_name, source, updated_at)
@@ -336,7 +338,23 @@ impl Database {
             ],
         )
         .map_err(|e| AppError::Database(format!("写入会话项目索引失败: {e}")))?;
-        Ok(())
+        conn.execute(
+            "UPDATE proxy_request_logs SET
+                project_key = ?3,
+                project_path = CASE WHEN project_path = '' THEN ?4 ELSE project_path END,
+                project_name = CASE WHEN project_name = '' THEN ?5 ELSE project_name END
+             WHERE app_type = ?1 AND session_key = ?2
+               AND ?2 <> '' AND ?3 <> '' AND project_key = ''
+               AND COALESCE(data_source, 'proxy') = 'proxy'",
+            params![
+                project.app_type,
+                project.session_key,
+                project.project_key,
+                project.project_path,
+                project.project_name
+            ],
+        )
+        .map_err(|e| AppError::Database(format!("补齐会话代理明细项目失败: {e}")))
     }
 
     pub fn session_project(
@@ -610,6 +628,75 @@ mod tests {
             "def-123"
         );
         assert_eq!(normalize_session_key("gemini", "  s-1  "), "s-1");
+    }
+
+    #[test]
+    fn session_project_backfills_existing_proxy_rows_without_changing_evidence(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (id, app, session, project, status) in [
+                ("success", "codex", "s1", "", 200),
+                ("failure", "codex", "s1", "", 500),
+                ("known", "codex", "s1", "/workspace/original", 200),
+                ("other-app", "claude", "s1", "", 200),
+                ("other-session", "codex", "s2", "", 200),
+            ] {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs
+                     (request_id, provider_id, provider_name_snapshot, app_type, model,
+                      latency_ms, status_code, created_at, session_id, session_key, project_key,
+                      attribution_source, attribution_confidence, attribution_reason)
+                     VALUES (?1, 'proxy-provider', 'Original Provider', ?2, 'gpt-5.5',
+                             1, ?5, 100, ?3, ?3, ?4, 'proxy', 'exact', 'routed')",
+                    params![id, app, session, project, status],
+                )?;
+            }
+        }
+        let project = project_from_cwd("codex", "s1", "/workspace/demo", "session_meta").unwrap();
+        db.upsert_session_project(&project)?;
+        // Repeated evidence must not rewrite a previously recorded project.
+        db.upsert_session_project(&project)?;
+
+        let conn = lock_conn!(db.conn);
+        for (id, expected) in [
+            ("success", "/workspace/demo"),
+            ("failure", "/workspace/demo"),
+            ("known", "/workspace/original"),
+            ("other-app", ""),
+            ("other-session", ""),
+        ] {
+            let row: (String, String, String, String, String, String) = conn.query_row(
+                "SELECT project_key, provider_id, provider_name_snapshot,
+                        attribution_source, attribution_confidence, attribution_reason
+                 FROM proxy_request_logs WHERE request_id = ?1",
+                [id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )?;
+            assert_eq!(
+                row,
+                (
+                    expected.into(),
+                    "proxy-provider".into(),
+                    "Original Provider".into(),
+                    "proxy".into(),
+                    "exact".into(),
+                    "routed".into()
+                ),
+                "{id}"
+            );
+        }
+        Ok(())
     }
 
     #[test]

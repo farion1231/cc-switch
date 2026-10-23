@@ -112,7 +112,10 @@ function useDetailSections(request: RequestLog) {
     {
       key: "provider",
       label: t("usage.provider"),
-      value: getUsageProviderLabel(request.providerName, t).shortLabel,
+      value: getUsageProviderLabel(
+        request.providerNameSnapshot || request.providerName,
+        t,
+      ).shortLabel,
     },
     {
       key: "project",

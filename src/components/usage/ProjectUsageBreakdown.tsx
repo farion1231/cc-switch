@@ -6,7 +6,7 @@ import {
   type SegmentedItem,
 } from "@/components/ui/segmented-control";
 import { Button } from "@/components/ui/button";
-import { useModelStats, useProjectProviderStats } from "@/lib/query/usage";
+import { useModelStats, useProviderStats } from "@/lib/query/usage";
 import { getUsageProviderLabel } from "./providerLabel";
 import { UsageShareChart } from "./UsageShareChart";
 import { ModelCacheBreakdown } from "./ModelCacheBreakdown";
@@ -44,6 +44,10 @@ interface ProjectUsageBreakdownProps {
   projectKey: string;
   range: UsageRangeSelection;
   appType?: string;
+  providerId?: string;
+  providerAppType?: string;
+  providerName?: string;
+  model?: string;
   refreshIntervalMs: number;
   colSpan: number;
 }
@@ -53,6 +57,10 @@ export function ProjectUsageBreakdown({
   projectKey,
   range,
   appType,
+  providerId,
+  providerAppType,
+  providerName,
+  model,
   refreshIntervalMs,
   colSpan,
 }: ProjectUsageBreakdownProps) {
@@ -63,6 +71,10 @@ export function ProjectUsageBreakdown({
   const scopeKey = JSON.stringify([
     projectKey,
     appType,
+    providerId,
+    providerAppType,
+    providerName,
+    model,
     range.preset,
     range.customStartDate,
     range.customEndDate,
@@ -76,9 +88,11 @@ export function ProjectUsageBreakdown({
     label: string;
   } | null>(null);
 
-  const providerQuery = useProjectProviderStats(projectKey, range, appType, {
-    refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
-  });
+  const providerQuery = useProviderStats(
+    range,
+    { appType, projectKey, providerId, providerAppType, providerName, model },
+    { refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false },
+  );
   const selectedProvider =
     selection?.scopeKey === scopeKey &&
     (!providerQuery.data ||
@@ -98,8 +112,10 @@ export function ProjectUsageBreakdown({
     {
       appType,
       projectKey,
-      providerId: selectedProvider?.providerId,
-      providerAppType: selectedProvider?.providerAppType,
+      providerId: selectedProvider?.providerId ?? providerId,
+      providerAppType: selectedProvider?.providerAppType ?? providerAppType,
+      providerName,
+      model,
     },
     { refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false },
   );

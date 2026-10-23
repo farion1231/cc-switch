@@ -7,7 +7,7 @@ import type { ProviderStats, UsageRangeSelection } from "@/types/usage";
 import type { UsageShareDatum } from "@/components/usage/UsageShareChart";
 
 const useModelStatsMock = vi.hoisted(() => vi.fn());
-const useProjectProviderStatsMock = vi.hoisted(() => vi.fn());
+const useProviderStatsMock = vi.hoisted(() => vi.fn());
 const shareCharts = vi.hoisted(
   () =>
     [] as Array<{
@@ -30,8 +30,7 @@ vi.mock("react-i18next", () => ({
 
 vi.mock("@/lib/query/usage", () => ({
   useModelStats: (...args: unknown[]) => useModelStatsMock(...args),
-  useProjectProviderStats: (...args: unknown[]) =>
-    useProjectProviderStatsMock(...args),
+  useProviderStats: (...args: unknown[]) => useProviderStatsMock(...args),
 }));
 
 vi.mock("@/components/usage/UsageShareChart", () => ({
@@ -64,9 +63,7 @@ describe("ProjectUsageBreakdown", () => {
   beforeEach(() => {
     shareCharts.length = 0;
     useModelStatsMock.mockReset().mockReturnValue({ data: [] });
-    useProjectProviderStatsMock
-      .mockReset()
-      .mockReturnValue({ data: [providerStat] });
+    useProviderStatsMock.mockReset().mockReturnValue({ data: [providerStat] });
   });
 
   it("passes provider id and app type when a provider is selected", () => {
@@ -119,7 +116,7 @@ describe("ProjectUsageBreakdown", () => {
   });
 
   it("keeps provider identity across cache and token views and clears it on reset", async () => {
-    useProjectProviderStatsMock.mockReturnValue({
+    useProviderStatsMock.mockReturnValue({
       data: [providerStat, { ...providerStat, appType: "claude" }],
     });
     useModelStatsMock.mockReturnValue({
@@ -203,7 +200,7 @@ describe("ProjectUsageBreakdown", () => {
   });
 
   it("keeps every provider selectable in cache mode, including zero-input providers", async () => {
-    useProjectProviderStatsMock.mockReturnValue({
+    useProviderStatsMock.mockReturnValue({
       data: Array.from({ length: 8 }, (_, index) => ({
         ...providerStat,
         providerId: `p-${index}`,

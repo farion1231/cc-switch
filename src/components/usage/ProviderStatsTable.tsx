@@ -186,6 +186,7 @@ export function ProviderStatsTable({
                         providerAppType={stat.appType}
                         providerName={stat.providerName}
                         projectKey={projectKey}
+                        model={model}
                         range={range}
                         refreshIntervalMs={refreshIntervalMs}
                         colSpan={8}

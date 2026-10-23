@@ -50,6 +50,18 @@ const renderWith = (request: RequestLog) => {
 };
 
 describe("RequestDetailPanel", () => {
+  it("shows the saved provider name after the provider is renamed", () => {
+    renderWith(
+      log({
+        providerName: "Renamed Provider",
+        providerNameSnapshot: "Original Provider",
+      }),
+    );
+
+    expect(screen.getByText("Original Provider")).toBeInTheDocument();
+    expect(screen.queryByText("Renamed Provider")).not.toBeInTheDocument();
+  });
+
   it("shows speed, first token and duration for routed requests", () => {
     renderWith(log({}));
 

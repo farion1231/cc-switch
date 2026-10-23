@@ -176,6 +176,10 @@ export function ProjectStatsTable({
                         projectKey={stat.projectKey}
                         range={range}
                         appType={appType}
+                        providerId={providerId}
+                        providerAppType={providerAppType}
+                        providerName={providerName}
+                        model={model}
                         refreshIntervalMs={refreshIntervalMs}
                         colSpan={colSpan}
                       />
