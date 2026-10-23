@@ -135,6 +135,65 @@ describe("RequestLogTable", () => {
     });
   });
 
+  it("pulls the page back into range when the total shrinks", async () => {
+    let total = 120;
+    useRequestLogsMock.mockImplementation(
+      ({ page = 0, pageSize = 20 }: { page?: number; pageSize?: number }) => ({
+        data: { data: [], total, page, pageSize },
+        isLoading: false,
+        isPlaceholderData: false,
+      }),
+    );
+    const range: UsageRangeSelection = { preset: "today" };
+    const table = (
+      <RequestLogTable range={range} appType="all" refreshIntervalMs={0} />
+    );
+    const { rerender } = render(table);
+
+    fireEvent.click(screen.getByRole("button", { name: "usage.nextPage" }));
+    fireEvent.click(screen.getByRole("button", { name: "usage.nextPage" }));
+    await waitFor(() => {
+      expect(useRequestLogsMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ page: 2 }),
+      );
+    });
+
+    // 「今天」跨日后只剩 5 条：只有一页、翻页条不画，必须自己回到第一页
+    total = 5;
+    rerender(
+      <RequestLogTable range={range} appType="all" refreshIntervalMs={0} />,
+    );
+    await waitFor(() => {
+      expect(useRequestLogsMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ page: 0 }),
+      );
+    });
+    expect(
+      screen.queryByRole("button", { name: "usage.nextPage" }),
+    ).not.toBeInTheDocument();
+
+    // 还剩几页时收回到最后一页，而不是第一页
+    total = 120;
+    rerender(table);
+    fireEvent.click(screen.getByRole("button", { name: "usage.nextPage" }));
+    fireEvent.click(screen.getByRole("button", { name: "usage.nextPage" }));
+    fireEvent.click(screen.getByRole("button", { name: "usage.nextPage" }));
+    await waitFor(() => {
+      expect(useRequestLogsMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ page: 3 }),
+      );
+    });
+    total = 50;
+    rerender(
+      <RequestLogTable range={range} appType="all" refreshIntervalMs={0} />,
+    );
+    await waitFor(() => {
+      expect(useRequestLogsMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ page: 2 }),
+      );
+    });
+  });
+
   it("shows exact speed for routed requests and an estimate for timed session logs", () => {
     const base = {
       providerId: "p1",

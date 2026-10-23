@@ -94,13 +94,23 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://dit.ai/register"><img src="assets/partners/logos/dit-banner.png" alt="DIT.ai" width="150"></a></td>
-<td>本プロジェクトのスポンサーである DIT.ai に感謝いたします！DIT.ai は、複数プロバイダーのルーティングでコストを抑える AI トークン取引マーケットです。OpenAI 互換の API 1 つで、GPT、Claude、Gemini、DeepSeek、Grok、Llama など 50 以上の主要 AI モデルを、テキスト・画像・動画・音声にわたって利用できます。審査を通過したプロバイダーが 160 以上のルートでリクエストごとに競い合い、DIT がリアルタイムで最もコストパフォーマンスの高いルートを選ぶため、通常は公式価格より 30〜70% 安くなります。開発者、スタートアップ、エージェントや AI プロダクトを大規模に運用するチーム向けに設計されており、Base URL と API Key を変えるだけで既存の構成はそのまま、自動ルーティングとフェイルオーバー付きでモデルを呼び出せます。CC Switch ユーザーは<a href="https://dit.ai/register">こちらのリンク</a>から登録し、プロモコード <strong>ccswitch</strong> を使うと 5 ドル分のウェルカムクーポンを受け取れます！</td>
+<td width="180"><a href="https://dit.ai?utm_source=ccswitch"><img src="assets/partners/logos/dit-banner.png" alt="DIT.ai" width="150"></a></td>
+<td>本プロジェクトのスポンサーである DIT.ai に感謝いたします！DIT.ai は、複数プロバイダーのルーティングでコストを抑える AI トークン取引マーケットです。OpenAI 互換の API 1 つで、GPT、Claude、Gemini、DeepSeek、Grok、Llama など 50 以上の主要 AI モデルを、テキスト・画像・動画・音声にわたって利用できます。審査を通過したプロバイダーが 160 以上のルートでリクエストごとに競い合い、DIT がリアルタイムで最もコストパフォーマンスの高いルートを選ぶため、通常は公式価格より 30〜70% 安くなります。開発者、スタートアップ、エージェントや AI プロダクトを大規模に運用するチーム向けに設計されており、Base URL と API Key を変えるだけで既存の構成はそのまま、自動ルーティングとフェイルオーバー付きでモデルを呼び出せます。CC Switch ユーザーは<a href="https://dit.ai?utm_source=ccswitch">こちらのリンク</a>から登録し、プロモコード <strong>ccswitch</strong> を使うと 5 ドル分のウェルカムクーポンを受け取れます！</td>
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
-<td>胜算雲（Shengsuanyun）のご支援に感謝します！胜算雲は AI ネイティブチーム向けのスーパーファクトリーであり、産業グレードの AI タスク並列実行プラットフォームです。モデルマーケットプレイスでは Claude、ChatGPT、Gemini をはじめとする国内外の LLM およびマルチメディアモデルの計算リソースを集約・直接提供。リバースエンジニアリングや品質低下は一切なく、プラットフォーム全体のモデル SLA 可用性は 99.7% に達し、<a href="https://watch.shengsuanyun.com/status/shengsuanyun">監視ダッシュボード</a>は常時グリーン表示です。さらにエンタープライズ向けカスタムゲートウェイを提供し、チームのきめ細かなコスト・権限管理、スマートルーティング、セキュリティ保護、BYOK（自社キー持ち込み）ホスティングを実現します。従量課金およびトークンプラン（近日公開）対応で、請求書発行にも対応。<a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">このリンク</a>から新規登録すると 10 元分のクレジットと初回チャージ 10% ボーナスが付与されます。</td>
+<td width="180"><a href="https://buytoken.work/sign-up?aff=cc-switch"><img src="assets/partners/logos/buytoken-banner.png" alt="BuyToken" width="150"></a></td>
+<td>本プロジェクトのスポンサーである BuyToken に感謝いたします！BuyToken は Claude Code / Codex / DeepSeek などの各種中継サービスを提供し、エンタープライズ級の同時実行と迅速な請求書発行に対応、安定して長く続くサービスを目指しています。CC Switch ユーザー向けの特別特典もご用意しています：<a href="https://buytoken.work/sign-up?aff=cc-switch">このリンク</a>から登録すると 3 元分のお試しクレジットを受け取れ、さらに初回チャージが 10% オフになります！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://gpt.ge/signup?aff=URNP"><img src="assets/partners/logos/vapi-banner.jpg" alt="V-API" width="150"></a></td>
+<td>本プロジェクトのスポンサーである V-API に感謝いたします！V-API は 3 年の実績を持つブランドで、個人・開発者・企業向けに安定・高速・安全な高品質 LLM API サービスプラットフォームを提供しており、契約締結と正規の請求書発行（普通 / 専用）に対応しています。CC Switch ユーザー向けの特別特典として、<a href="https://gpt.ge/signup?aff=URNP">このリンク</a>から登録すると初回注文が 2 元引きのうえ 10% オフになります！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
+<td>FluxA &amp; Baidu AI Cloud による本プロジェクトへのご支援に感謝します！FluxA と百度智能雲（Baidu AI Cloud）は共同で AgenticPlan を提供しています。AI エージェントがモデル・API・ツールを自ら購入し、管理し、利用できるようにするプランです。百度千帆 TokenPlan を最大 40% オフで含み、DeepSeek V4、GLM 5.2、Kimi などの主力モデルを利用できます。さらに FluxA AgentMarket の API 利用クレジットが特典として付き、検索・データ取得・ソーシャルメディア・金融・暗号資産・画像生成・動画など 13,000 以上の有料 API を利用できます。<br>ユーザーの承認のもとで、AI エージェントは公式の Visa カードで支払い、自らリソースを調達し、API キーを管理し、使用量を監視して更新を計画することもできます。エージェントは「タスクを自律的に完了する」段階から、真に「自ら予算を計画してタスクを完了する」段階へと進化します。<a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">こちらのリンク</a>から購入してください！</td>
 </tr>
 
 <tr>
@@ -119,8 +129,8 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
-<td>FluxA &amp; Baidu AI Cloud による本プロジェクトへのご支援に感謝します！FluxA と百度智能雲（Baidu AI Cloud）は共同で AgenticPlan を提供しています。AI エージェントがモデル・API・ツールを自ら購入し、管理し、利用できるようにするプランです。百度千帆 TokenPlan を最大 40% オフで含み、DeepSeek V4、GLM 5.2、Kimi などの主力モデルを利用できます。さらに FluxA AgentMarket の API 利用クレジットが特典として付き、検索・データ取得・ソーシャルメディア・金融・暗号資産・画像生成・動画など 13,000 以上の有料 API を利用できます。<br>ユーザーの承認のもとで、AI エージェントは公式の Visa カードで支払い、自らリソースを調達し、API キーを管理し、使用量を監視して更新を計画することもできます。エージェントは「タスクを自律的に完了する」段階から、真に「自ら予算を計画してタスクを完了する」段階へと進化します。<a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">こちらのリンク</a>から購入してください！</td>
+<td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
+<td>胜算雲（Shengsuanyun）のご支援に感謝します！胜算雲は AI ネイティブチーム向けのスーパーファクトリーであり、産業グレードの AI タスク並列実行プラットフォームです。モデルマーケットプレイスでは Claude、ChatGPT、Gemini をはじめとする国内外の LLM およびマルチメディアモデルの計算リソースを集約・直接提供。リバースエンジニアリングや品質低下は一切なく、プラットフォーム全体のモデル SLA 可用性は 99.7% に達し、<a href="https://watch.shengsuanyun.com/status/shengsuanyun">監視ダッシュボード</a>は常時グリーン表示です。さらにエンタープライズ向けカスタムゲートウェイを提供し、チームのきめ細かなコスト・権限管理、スマートルーティング、セキュリティ保護、BYOK（自社キー持ち込み）ホスティングを実現します。従量課金およびトークンプラン（近日公開）対応で、請求書発行にも対応。<a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">このリンク</a>から新規登録すると 10 元分のクレジットと初回チャージ 10% ボーナスが付与されます。</td>
 </tr>
 
 <tr>

@@ -841,6 +841,10 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                             server.homepage ||
                             mcpPresets.find((item) => item.id === id)?.docs,
                         );
+                        const displayName = server.name?.trim() || id;
+                        const hasCustomName = Boolean(
+                          server.name?.trim() && server.name.trim() !== id,
+                        );
                         return (
                           <li
                             key={id}
@@ -853,11 +857,19 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                             <div className="flex min-w-0 flex-1 flex-col pe-3">
                               <div className="flex min-w-0 items-center gap-1.5">
                                 <span
-                                  title={id}
+                                  title={displayName}
                                   className="min-w-0 truncate text-body font-medium"
                                 >
-                                  {id}
+                                  {displayName}
                                 </span>
+                                {hasCustomName && (
+                                  <span
+                                    title={id}
+                                    className="min-w-0 shrink truncate font-mono text-caption text-fg-3"
+                                  >
+                                    {id}
+                                  </span>
+                                )}
                                 <NeutralBadge mono>
                                   {transportOf(server.server)}
                                 </NeutralBadge>
@@ -1041,7 +1053,9 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
 
       <V7ConfirmDialog
         open={deleteId !== null}
-        title={t("mcpPage.deleteTitle", { id: deleteId ?? "" })}
+        title={t("mcpPage.deleteTitle", {
+          id: deleteTarget?.name?.trim() || deleteId || "",
+        })}
         body={
           deleteApps.length
             ? t("mcpPage.deleteBodyApps", {
