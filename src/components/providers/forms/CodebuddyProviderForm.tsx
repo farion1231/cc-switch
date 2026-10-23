@@ -330,52 +330,51 @@ export function CodebuddyProviderForm({
               </div>
             }
           />
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label htmlFor="codebuddy-api">{t("codebuddy.api")}</Label>
-              <Select
-                value={config.api ? String(config.api) : CHAT_COMPLETIONS}
-                onValueChange={(value) =>
-                  setField(
-                    "api",
-                    value === CHAT_COMPLETIONS ? undefined : value,
-                  )
-                }
-              >
-                <SelectTrigger id="codebuddy-api">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {CODEBUDDY_API_FORMATS.map((format) => (
-                    <SelectItem
-                      key={format.value || CHAT_COMPLETIONS}
-                      value={format.value || CHAT_COMPLETIONS}
-                    >
-                      {t(format.labelKey)}
+          <div className="space-y-2">
+            <Label htmlFor="codebuddy-api">{t("codebuddy.api")}</Label>
+            <Select
+              value={config.api ? String(config.api) : CHAT_COMPLETIONS}
+              onValueChange={(value) =>
+                setField("api", value === CHAT_COMPLETIONS ? undefined : value)
+              }
+            >
+              <SelectTrigger id="codebuddy-api">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {CODEBUDDY_API_FORMATS.map((format) => (
+                  <SelectItem
+                    key={format.value || CHAT_COMPLETIONS}
+                    value={format.value || CHAT_COMPLETIONS}
+                  >
+                    {t(format.labelKey)}
+                  </SelectItem>
+                ))}
+                {config.api &&
+                  !CODEBUDDY_API_FORMATS.some(
+                    (format) => format.value === config.api,
+                  ) && (
+                    <SelectItem value={String(config.api)}>
+                      {String(config.api)}
                     </SelectItem>
-                  ))}
-                  {config.api &&
-                    !CODEBUDDY_API_FORMATS.some(
-                      (format) => format.value === config.api,
-                    ) && (
-                      <SelectItem value={String(config.api)}>
-                        {String(config.api)}
-                      </SelectItem>
-                    )}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="codebuddy-vendor">{t("codebuddy.vendor")}</Label>
-              <Input
-                id="codebuddy-vendor"
-                value={config.vendor ?? ""}
-                onChange={(event) => setField("vendor", event.target.value)}
-                placeholder="OpenAI"
-                autoComplete="off"
-              />
-            </div>
+                  )}
+              </SelectContent>
+            </Select>
           </div>
+          <ApiKeySection
+            id="codebuddy-api-key"
+            value={apiKey}
+            onChange={(value) => setField("apiKey", value)}
+            category={category}
+            shouldShowLink={Boolean(preset?.apiKeyUrl)}
+            websiteUrl={preset?.apiKeyUrl ?? ""}
+            isPartner={preset?.isPartner}
+            partnerPromotionKey={preset?.partnerPromotionKey}
+            placeholder={{
+              official: t("codebuddy.apiKeyPlaceholder"),
+              thirdParty: t("codebuddy.apiKeyPlaceholder"),
+            }}
+          />
           <div className="space-y-2">
             <EndpointField
               id="codebuddy-url"
@@ -401,20 +400,16 @@ export function CodebuddyProviderForm({
               </p>
             )}
           </div>
-          <ApiKeySection
-            id="codebuddy-api-key"
-            value={apiKey}
-            onChange={(value) => setField("apiKey", value)}
-            category={category}
-            shouldShowLink={Boolean(preset?.apiKeyUrl)}
-            websiteUrl={preset?.apiKeyUrl ?? ""}
-            isPartner={preset?.isPartner}
-            partnerPromotionKey={preset?.partnerPromotionKey}
-            placeholder={{
-              official: t("codebuddy.apiKeyPlaceholder"),
-              thirdParty: t("codebuddy.apiKeyPlaceholder"),
-            }}
-          />
+          <div className="space-y-2">
+            <Label htmlFor="codebuddy-vendor">{t("codebuddy.vendor")}</Label>
+            <Input
+              id="codebuddy-vendor"
+              value={config.vendor ?? ""}
+              onChange={(event) => setField("vendor", event.target.value)}
+              placeholder="OpenAI"
+              autoComplete="off"
+            />
+          </div>
           <div className="grid grid-cols-2 gap-3">
             {(["maxInputTokens", "maxOutputTokens"] as const).map((key) => (
               <div key={key} className="space-y-2">

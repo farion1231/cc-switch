@@ -4980,7 +4980,7 @@
     "api": "API フォーマット",
     "apiChatCompletions": "OpenAI Chat Completions",
     "apiResponses": "OpenAI Responses",
-    "vendor": "ベンダー",
+    "vendor": "ベンダー表示名",
     "urlHint": "完全なパスを入力します（通常は /chat/completions で終わります）。${VAR} の環境変数参照も使えます。",
     "urlHintResponses": "Base URL を入力します。リクエストは {url}/responses に送られます。${VAR} の環境変数参照も使えます。",
     "urlInvalid": "有効な http(s) URL を入力してください。",

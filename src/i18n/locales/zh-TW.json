@@ -4981,7 +4981,7 @@
     "api": "API 格式",
     "apiChatCompletions": "OpenAI Chat Completions",
     "apiResponses": "OpenAI Responses",
-    "vendor": "廠商",
+    "vendor": "廠商標籤",
     "urlHint": "填寫完整路徑，通常以 /chat/completions 結尾；支援 ${VAR} 環境變數參照。",
     "urlHintResponses": "填寫 Base URL，請求會送往 {url}/responses；支援 ${VAR} 環境變數參照。",
     "urlInvalid": "請輸入有效的 http(s) 位址。",

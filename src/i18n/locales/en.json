@@ -4980,7 +4980,7 @@
     "api": "API Format",
     "apiChatCompletions": "OpenAI Chat Completions",
     "apiResponses": "OpenAI Responses",
-    "vendor": "Vendor",
+    "vendor": "Vendor label",
     "urlHint": "Use the full path, usually ending in /chat/completions. ${VAR} environment references work.",
     "urlHintResponses": "Use the base URL; requests go to {url}/responses. ${VAR} environment references work.",
     "urlInvalid": "Enter a valid http(s) URL.",
