@@ -19,7 +19,7 @@ export type DiffLine =
       newNo?: number;
     };
 
-const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 const PATCH_FILE = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/;
 
 /** 解析 unified diff（git diff、Codex FileChange）与 Codex apply_patch 文本 */
@@ -27,8 +27,12 @@ export const parseDiff = (text: string): DiffLine[] => {
   const lines: DiffLine[] = [];
   let oldNo: number | undefined;
   let newNo: number | undefined;
+  let oldRemaining = 0;
+  let newRemaining = 0;
   let hunks = 0;
   const pushFile = (path: string) => {
+    oldRemaining = 0;
+    newRemaining = 0;
     const last = lines[lines.length - 1];
     if (last?.type === "file" && last.path === path) return;
     lines.push({ type: "file", path });
@@ -39,13 +43,21 @@ export const parseDiff = (text: string): DiffLine[] => {
     .replace(/\r\n/g, "\n")
     .split("\n")
     .forEach((raw, index, all) => {
-      // `--- a` / `+++ b` 只在成对出现时算文件头，否则是内容以 `--`、`++` 开头的改动行
+      // Paired `---` / `+++` lines inside a hunk are changed content,
+      // even when they look exactly like the next file's headers.
+      const outsideHunk = oldRemaining === 0 && newRemaining === 0;
       const fileHeaderOld =
-        raw.startsWith("--- ") && all[index + 1]?.startsWith("+++ ");
+        outsideHunk &&
+        raw.startsWith("--- ") &&
+        all[index + 1]?.startsWith("+++ ");
       const fileHeaderNew =
-        raw.startsWith("+++ ") && all[index - 1]?.startsWith("--- ");
+        outsideHunk &&
+        raw.startsWith("+++ ") &&
+        all[index - 1]?.startsWith("--- ");
       if (raw.startsWith("diff --git ")) {
         hunks = 0;
+        oldRemaining = 0;
+        newRemaining = 0;
         return;
       }
       if (
@@ -78,17 +90,22 @@ export const parseDiff = (text: string): DiffLine[] => {
         hunks += 1;
         const match = HUNK_HEADER.exec(raw);
         oldNo = match ? Number(match[1]) : undefined;
-        newNo = match ? Number(match[2]) : undefined;
+        newNo = match ? Number(match[3]) : undefined;
+        // Unnumbered Edit/apply_patch hunks continue until an explicit boundary.
+        oldRemaining = match ? Number(match[2] ?? 1) : Infinity;
+        newRemaining = match ? Number(match[4] ?? 1) : Infinity;
         return;
       }
       if (raw.startsWith("+")) {
         lines.push({ type: "add", text: raw.slice(1), newNo });
         if (newNo !== undefined) newNo += 1;
+        newRemaining = Math.max(0, newRemaining - 1);
         return;
       }
       if (raw.startsWith("-")) {
         lines.push({ type: "del", text: raw.slice(1), oldNo });
         if (oldNo !== undefined) oldNo += 1;
+        oldRemaining = Math.max(0, oldRemaining - 1);
         return;
       }
       if (raw === "" && lines.length === 0) return;
@@ -100,6 +117,8 @@ export const parseDiff = (text: string): DiffLine[] => {
       });
       if (oldNo !== undefined) oldNo += 1;
       if (newNo !== undefined) newNo += 1;
+      oldRemaining = Math.max(0, oldRemaining - 1);
+      newRemaining = Math.max(0, newRemaining - 1);
     });
 
   // 末尾的空上下文行（文本以换行结尾）不显示
