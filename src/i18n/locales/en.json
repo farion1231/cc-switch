@@ -4235,11 +4235,8 @@
       "pi": "Installs with npm",
       "mcode": "Installs with the official script, falls back to npm",
       "agy": "Installs with the official script",
-      "omp": "Installs with the official script",
-      "dsh": "Install with npm; requires Node.js 22.19+ (22.x) or 24+"
-    },
-    "installNeedsNode": "Installation requires Node {{required}}, but npm uses Node {{current}}. Upgrade Node, then refresh the application list.",
-    "nodeRequirementError": "{{name}} requires Node {{required}}, but the current runtime is Node {{current}}. Upgrade Node, refresh the application list, then retry."
+      "omp": "Installs with the official script"
+    }
   },
   "appPage": {
     "moreActions": "More actions for {{name}}",

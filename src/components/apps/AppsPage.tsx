@@ -727,8 +727,7 @@ function ToolRow({
     Boolean(tools.loadingTools[tool]) ||
     (tools.isLoadingTools && !tools.toolVersionByName.has(tool));
   const isOutdated = isUpdateAvailable(info?.version, info?.latest_version);
-  const nodeGap =
-    isOutdated || !info?.version ? info?.update_blocked_by_node : null;
+  const nodeGap = isOutdated ? info?.update_blocked_by_node : null;
   const broken = Boolean(info?.installed_but_broken);
   const isBusy = tools.busyTools.has(tool);
   const busyAction = tools.busyTools.get(tool);
@@ -783,7 +782,7 @@ function ToolRow({
       variant="neutral"
       size="compact"
       onClick={() => void tools.handleRunToolAction([tool], action)}
-      disabled={isVersionLoading || isBusy || Boolean(nodeGap)}
+      disabled={isVersionLoading || isBusy}
       aria-busy={isBusy}
     >
       {isBusy && busyAction !== "uninstall" ? (
@@ -883,16 +882,11 @@ function ToolRow({
     !isVersionLoading && nodeGap ? (
       <p className="flex items-start gap-1 text-caption text-warning-text">
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-        {t(
-          info?.version
-            ? "appsPage.updateNeedsNode"
-            : "appsPage.installNeedsNode",
-          {
-            version: info?.latest_version,
-            required: nodeGap.required,
-            current: nodeGap.current,
-          },
-        )}
+        {t("appsPage.updateNeedsNode", {
+          version: info?.latest_version,
+          required: nodeGap.required,
+          current: nodeGap.current,
+        })}
       </p>
     ) : null;
 

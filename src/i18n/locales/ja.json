@@ -4235,11 +4235,8 @@
       "pi": "npm でインストール",
       "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います",
       "agy": "公式インストールスクリプトでインストール",
-      "omp": "公式インストールスクリプトでインストール",
-      "dsh": "npm でインストール（Node.js 22.19 以降の 22.x、または 24 以降が必要）"
-    },
-    "installNeedsNode": "インストールには Node {{required}} が必要ですが、npm は Node {{current}} を使用しています。Node を更新し、アプリ一覧を再読み込みしてください。",
-    "nodeRequirementError": "{{name}} には Node {{required}} が必要ですが、現在のランタイムは Node {{current}} です。Node を更新し、アプリ一覧を再読み込みしてから再試行してください。"
+      "omp": "公式インストールスクリプトでインストール"
+    }
   },
   "appPage": {
     "moreActions": "{{name}} のその他の操作",

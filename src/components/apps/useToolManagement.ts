@@ -15,10 +15,7 @@ import type {
   ToolUninstallPlan,
 } from "@/lib/api/settings";
 import type { AppId } from "@/lib/api/types";
-import {
-  extractErrorMessage,
-  translateToolNodeRequirementError,
-} from "@/utils/errorUtils";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import { isWindows } from "@/lib/platform";
 import { isUpdateAvailable } from "@/lib/version";
 
@@ -37,7 +34,7 @@ export interface ToolVersion {
   installed_but_broken: boolean;
   env_type: "windows" | "wsl" | "macos" | "linux" | "unknown";
   wsl_distro: string | null;
-  // 安装或升级使用的 Node 不满足要求时，提示先升级 Node。保留现有后端字段名。
+  // 有新版本、但这处安装用的 Node 达不到新版本的要求：不给升级，提示先升级 Node。
   update_blocked_by_node: NodeRequirementGap | null;
 }
 
@@ -791,11 +788,7 @@ export function useToolManagement() {
               void diagnoseToolSilently(toolName);
             }
           } catch (error) {
-            const detail = translateToolNodeRequirementError(
-              extractErrorMessage(error) || String(error),
-              t,
-              TOOL_DISPLAY_NAMES[toolName],
-            );
+            const detail = extractErrorMessage(error) || String(error);
             if (detail === "TOOL_ACTION_IN_PROGRESS") {
               toast.info(t("settings.toolActionInProgress"), {
                 description: t("settings.toolActionInProgressDetail", {
