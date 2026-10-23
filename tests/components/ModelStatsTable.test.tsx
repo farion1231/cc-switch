@@ -401,7 +401,7 @@ describe("ModelStatsTable distribution", () => {
     );
   });
 
-  it("shows loading placeholders and never presents previous-scope data as the new filter result", () => {
+  it("preserves expanded charts across placeholder filter transitions without showing previous-scope data", async () => {
     setQuery({ data: undefined, isLoading: true });
     const { container, rerender } = render(
       <ModelStatsTable {...defaultProps} />,
@@ -411,6 +411,7 @@ describe("ModelStatsTable distribution", () => {
     setQuery();
     rerender(<ModelStatsTable {...defaultProps} />);
     fireEvent.click(disclosure());
+    expect(disclosure()).toHaveAttribute("aria-expanded", "true");
     expect(legend("alpha")).toBeInTheDocument();
 
     setQuery({ isPlaceholderData: true, isFetching: true });
@@ -423,6 +424,30 @@ describe("ModelStatsTable distribution", () => {
     rerender(<ModelStatsTable {...defaultProps} appType="claude" />);
     expect(tableRow("new-scope")).toBeInTheDocument();
     expect(within(screen.getByRole("table")).queryByText("alpha")).toBeNull();
+    expect(disclosure()).toHaveAttribute("aria-expanded", "true");
+    expect(legend("new-scope")).toBeVisible();
+    await waitFor(() => expect(sectors(container)).toHaveLength(2));
+  });
+
+  it("preserves collapsed charts across placeholder filter transitions", () => {
+    const { container, rerender } = render(
+      <ModelStatsTable {...defaultProps} />,
+    );
+    fireEvent.click(disclosure());
+    fireEvent.click(disclosure());
+    expect(disclosure()).toHaveAttribute("aria-expanded", "false");
+
+    setQuery({ isPlaceholderData: true, isFetching: true });
+    rerender(<ModelStatsTable {...defaultProps} appType="codex" />);
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(container.querySelector(".animate-pulse")).toBeInTheDocument();
+
+    setQuery({ data: [{ ...alpha, model: "new-scope" }] });
+    rerender(<ModelStatsTable {...defaultProps} appType="codex" />);
+    expect(tableRow("new-scope")).toBeInTheDocument();
+    expect(disclosure()).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: /^new-scope,/ })).toBeNull();
+    expect(sectors(container)).toHaveLength(0);
   });
 
   it("offers retry after the first request fails", () => {
