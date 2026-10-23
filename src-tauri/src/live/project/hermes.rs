@@ -93,6 +93,8 @@ pub struct RoleRewrite {
     pub from_base_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_api_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_api_mode: Option<String>,
     pub to_model: String,
 }
 
@@ -128,6 +130,9 @@ enum Action {
     Restore {
         rewrite: RoleRewrite,
     },
+    /// 悬空的 aux 块回落 provider: auto（继承主模型）——条目已不存在，不回落的话
+    /// Hermes 启动就报 Unknown provider，压缩/标题等后台任务全部失败。
+    AutoReset,
     Keep,
 }
 
@@ -184,7 +189,7 @@ fn resolve_ref(
                         clear_overrides: false,
                     };
                 }
-                return Action::Keep;
+                return Action::AutoReset;
             }
             let Some(models) = mapping.get(&name) else {
                 return Action::Keep; // 未接管：保持直连
@@ -251,6 +256,8 @@ pub(crate) fn apply_role_target(
                 true,
             );
             match action {
+                // AutoReset 只对非 droppable（aux）返回；这里（droppable）不会出现
+                Action::AutoReset | Action::Keep => {}
                 Action::Rewrite { to_model, .. } if to_model.is_empty() => {
                     changed = true; // 悬空：删除
                     out.rewrites.push(RoleRewrite {
@@ -259,6 +266,7 @@ pub(crate) fn apply_role_target(
                         from_model: model,
                         from_base_url: None,
                         from_api_key: None,
+                        from_api_mode: None,
                         to_model: String::new(),
                     });
                     continue;
@@ -276,6 +284,7 @@ pub(crate) fn apply_role_target(
                         from_model: model,
                         from_base_url: None,
                         from_api_key: None,
+                        from_api_mode: None,
                         to_model,
                     });
                     changed = true;
@@ -292,7 +301,6 @@ pub(crate) fn apply_role_target(
                     );
                     changed = true;
                 }
-                Action::Keep => {}
             }
             new_list.push(item);
         }
@@ -339,12 +347,22 @@ pub(crate) fn apply_role_target(
                 .unwrap_or("")
                 .trim()
                 .to_string();
+            let auto_record = recorded
+                .iter()
+                .find(|r| r.role == role && r.to_model.is_empty());
             if provider == "auto" || provider.is_empty() {
-                continue; // 继承主模型（已接管）
+                // 继承主模型（已接管）。我们回落出来的 auto（旧接管把 aux 指到
+                // custom:cc-switch，条目已清）不还原：悬空引用的原值已永久失效，
+                // 还原回去等于把 Hermes 再弄坏——AutoReset 是治愈，不是临时改写。
+                {
+                    let _ = auto_record;
+                }
+                continue;
             }
             let model = text(block, "model");
             let h_base = has(block, "base_url");
             let h_key = has(block, "api_key");
+            let h_mode = has(block, "api_mode");
             let action = resolve_ref(
                 &role,
                 &provider,
@@ -371,6 +389,9 @@ pub(crate) fn apply_role_target(
                     if clear_overrides {
                         mapping.remove(Yaml::String("base_url".into()));
                         mapping.remove(Yaml::String("api_key".into()));
+                        // api_mode 强制传输形态；路由条目只有 codex_responses 是完整
+                        // 实现，旧接管写的 anthropic_messages 会打错路径。
+                        mapping.remove(Yaml::String("api_mode".into()));
                     }
                     out.rewrites.push(RoleRewrite {
                         role: role.clone(),
@@ -378,7 +399,27 @@ pub(crate) fn apply_role_target(
                         from_model: model,
                         from_base_url: h_base.then(|| text(block, "base_url")),
                         from_api_key: h_key.then(|| text(block, "api_key")),
+                        from_api_mode: h_mode.then(|| text(block, "api_mode")),
                         to_model,
+                    });
+                    changed = true;
+                }
+                Action::AutoReset => {
+                    // 悬空：回落 auto（继承主模型），清掉指向死条目的全部 override。
+                    let mapping = new_block.as_mapping_mut().expect("aux 块是 mapping");
+                    mapping.insert(Yaml::String("provider".into()), Yaml::String("auto".into()));
+                    mapping.remove(Yaml::String("model".into()));
+                    mapping.remove(Yaml::String("base_url".into()));
+                    mapping.remove(Yaml::String("api_key".into()));
+                    mapping.remove(Yaml::String("api_mode".into()));
+                    out.rewrites.push(RoleRewrite {
+                        role: role.clone(),
+                        from_provider: provider,
+                        from_model: model,
+                        from_base_url: h_base.then(|| text(block, "base_url")),
+                        from_api_key: h_key.then(|| text(block, "api_key")),
+                        from_api_mode: h_mode.then(|| text(block, "api_mode")),
+                        to_model: String::new(),
                     });
                     changed = true;
                 }
@@ -401,6 +442,12 @@ pub(crate) fn apply_role_target(
                     if let Some(value) = rewrite.from_api_key.as_deref() {
                         mapping.insert(
                             Yaml::String("api_key".into()),
+                            Yaml::String(value.to_string()),
+                        );
+                    }
+                    if let Some(value) = rewrite.from_api_mode.as_deref() {
+                        mapping.insert(
+                            Yaml::String("api_mode".into()),
                             Yaml::String(value.to_string()),
                         );
                     }
@@ -452,6 +499,7 @@ pub(crate) fn apply_role_target(
                             true,
                         );
                         match action {
+                            Action::AutoReset | Action::Keep => {}
                             Action::Rewrite { to_model, .. } if to_model.is_empty() => {
                                 changed = true;
                                 out.rewrites.push(RoleRewrite {
@@ -460,6 +508,7 @@ pub(crate) fn apply_role_target(
                                     from_model: model,
                                     from_base_url: None,
                                     from_api_key: None,
+                                    from_api_mode: None,
                                     to_model: String::new(),
                                 });
                                 continue;
@@ -480,6 +529,7 @@ pub(crate) fn apply_role_target(
                                     from_model: model,
                                     from_base_url: None,
                                     from_api_key: None,
+                                    from_api_mode: None,
                                     to_model,
                                 });
                                 changed = true;
@@ -496,7 +546,6 @@ pub(crate) fn apply_role_target(
                                 );
                                 changed = true;
                             }
-                            Action::Keep => {}
                         }
                         new_list.push(item);
                     }
@@ -543,6 +592,8 @@ pub(crate) fn apply_role_target(
                         false,
                     );
                     match action {
+                        // 悬空的聚合器没有 auto 语义：保持原样（Hermes 自己会提示）
+                        Action::AutoReset | Action::Keep => {}
                         Action::Rewrite { to_model, .. } => {
                             let mapping = new_agg.as_mapping_mut().expect("agg 是 mapping");
                             mapping.insert(
@@ -559,6 +610,7 @@ pub(crate) fn apply_role_target(
                                 from_model: model,
                                 from_base_url: None,
                                 from_api_key: None,
+                                from_api_mode: None,
                                 to_model,
                             });
                             changed = true;
@@ -575,7 +627,6 @@ pub(crate) fn apply_role_target(
                             );
                             changed = true;
                         }
-                        Action::Keep => {}
                     }
                     new_block
                         .as_mapping_mut()
@@ -1337,6 +1388,57 @@ mod tests {
             yaml["moa"]["presets"]["heavy"]["aggregator"]["model"].as_str(),
             Some("kimi-k2")
         );
+    }
+
+    #[test]
+    fn dangling_aux_refs_fall_back_to_auto_and_restore() {
+        // 旧接管残留：aux 指向已不存在的 custom:cc-switch（还带着 base_url/api_mode）。
+        let raw = "custom_providers:\n  - name: kimi\nauxiliary:\n  vision:\n    provider: custom:cc-switch\n    model: aim\n    base_url: http://127.0.0.1:15721\n    api_mode: anthropic_messages\n  compression:\n    provider: custom:cc-switch\n    model: claude-opus-5\n";
+        let enter = role_patch(
+            RoleTarget::Route {
+                mapping: role_mapping(),
+            },
+            &[],
+        );
+        let out = enter
+            .apply(Path::new("/tmp/config.yaml"), Some(raw.as_bytes()))
+            .expect("applies");
+        let yaml: serde_yaml::Value = serde_yaml::from_slice(&out).expect("parses");
+        for task in ["vision", "compression"] {
+            let block = &yaml["auxiliary"][task];
+            assert_eq!(block["provider"].as_str(), Some("auto"), "{task} 回落 auto");
+            assert!(
+                block.get("model").is_none()
+                    && block.get("base_url").is_none()
+                    && block.get("api_mode").is_none(),
+                "{task} 的死 override 全部清掉"
+            );
+        }
+
+        // 记录 → 退出还原原值（含 base_url/api_mode/model）
+        let doc: serde_yaml::Value = serde_yaml::from_str(raw).expect("parses");
+        let names = ["kimi"].into_iter().map(String::from).collect();
+        let outcome = apply_role_target(
+            &doc,
+            &names,
+            &RoleTarget::Route {
+                mapping: role_mapping(),
+            },
+            &[],
+        );
+        // 退出不还原：悬空引用的原值已永久失效，还原回去等于把 Hermes 再弄坏
+        let restore = role_patch(RoleTarget::Restore, &outcome.rewrites);
+        let back = restore
+            .apply(Path::new("/tmp/config.yaml"), Some(&out))
+            .expect("restores");
+        let yaml: serde_yaml::Value = serde_yaml::from_slice(&back).expect("parses");
+        for task in ["vision", "compression"] {
+            assert_eq!(
+                yaml["auxiliary"][task]["provider"].as_str(),
+                Some("auto"),
+                "{task} 治愈后保持 auto"
+            );
+        }
     }
 
     #[test]
