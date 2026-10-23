@@ -1384,16 +1384,13 @@ pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String>
 
 /// [`stack_views`] 再加上 Codex 客户端是否可能缓存旧登录或模型列表（要读进程表，放到阻塞线程
 /// 池里）。账号与目录检测都不分模式：切换账号、直连↔路由切换也会让已启动的客户端拿着旧登录
-/// 或旧目录，同样要重启。路由那家自己管理目录时，重启也看不到 CC Switch 的目录，已经有
-/// `notice` 说明，不再查目录。没有目录时（直连、路由那家没配目录）照样查：之前在 CC Switch
+/// 或旧目录，同样要重启。没有目录时（直连、路由那家没配目录）照样查：之前在 CC Switch
 /// 的目录时启动的客户端还拿着它。
 pub async fn stack_view_with_clients(state: &AppState, app: &AppType) -> Result<StackView, String> {
     let mut view = stack_views(state, app)?;
     if matches!(app, AppType::Codex) {
-        let check_catalog = view.notice != Some("routeOwnsCatalog");
         (view.stale_clients, view.stale_revision) = codex_direct::off_runtime(move || {
-            let stale =
-                codex_client_catalog::stale_clients(&DeviceStore::for_device(), check_catalog);
+            let stale = codex_client_catalog::stale_clients(&DeviceStore::for_device(), true);
             let revision = stale.map(|_| codex_client_catalog::revision());
             (stale, revision)
         })
@@ -1403,8 +1400,8 @@ pub async fn stack_view_with_clients(state: &AppState, app: &AppType) -> Result<
     Ok(view)
 }
 
-/// Codex 在 Stack 模式下有要发布的 Stack 模型，客户端却看不到或看不全：路由那家自己管理模型
-/// 目录文件（Stack 模型不发布）；或者官方做默认、最近一次写目录时没拿到官方列表，或者拿到的
+/// Codex 在 Stack 模式下有要发布的 Stack 模型，客户端却看不到或看不全：
+/// 官方做默认、最近一次写目录时没拿到官方列表，或者拿到的
 /// 列表里没有能选的模型（本机 Codex 太旧）。
 fn codex_stack_notice(state: &AppState, stack: &StackState) -> Option<&'static str> {
     codex_stack_notice_with_reasons(state, stack).map(|(notice, _)| notice)
@@ -1422,10 +1419,7 @@ fn codex_stack_notice_with_reasons(
     if published.is_empty() {
         return None;
     }
-    if codex_direct::route_owns_catalog(&route) {
-        return Some(("routeOwnsCatalog", Vec::new()));
-    }
-    if !codex_direct::is_official(&route) {
+    if !codex_direct::needs_official_rows(&route, &published) {
         return None;
     }
     match codex_official_models::last_source()? {
@@ -7519,39 +7513,292 @@ model_provider = "c"
         exit(&state, &AppType::Codex).await.expect("exit");
     }
 
-    /// 路由那家自己管理模型目录文件：Stack 模型发布不了，名单照存，结果带提示而不是静默成功。
+    fn seed_custom_codex_catalog() -> std::path::PathBuf {
+        let path = crate::codex_config::get_codex_config_dir().join("team-models.json");
+        fs::write(&path, serde_json::to_vec(&json!({"models": [
+            {"slug": "shared-model", "display_name": "Custom Main", "description": "Keep description",
+             "context_window": 424242, "base_instructions": "Keep my instructions",
+             "supported_reasoning_levels": [{"effort": "high", "description": "High"}],
+             "default_reasoning_level": "high", "auto_review_model_override": "review-model",
+             "vendor_extra": {"untouched": true}},
+            {"slug": "review-model", "display_name": "Custom Review"}
+        ]})).unwrap()).unwrap();
+        path
+    }
+
+    /// 自管目录可以作为默认路由合并，退出聚合后恢复原路径且源文件不变。
     #[tokio::test]
     #[serial]
-    async fn codex_route_with_its_own_catalog_reports_stack_models_unpublished() {
+    async fn codex_custom_catalog_route_merges_and_restores_pointer() {
         let _home = Home::new();
         seed_codex("", None);
+        let path = seed_custom_codex_catalog();
+        let original = fs::read(&path).unwrap();
         let [_, deepseek, zhipu] = codex_stack_rows();
         let route = codex_native(
             "a",
             "https://a.example/v1",
-            "model_catalog_json = \"/opt/team/models.json\"\n",
+            "model_catalog_json = \"team-models.json\"\n",
             None,
         );
         let state = state_with(AppType::Codex, &[route, deepseek, zhipu], "a").await;
         enter(&state, &AppType::Codex, true).await.expect("enter");
-        let plain_text = codex_text();
 
         let notice = set_stack_member(&state, &AppType::Codex, "deepseek", true)
             .await
             .expect("stack");
-        assert_eq!(notice, Some("routeOwnsCatalog"));
+        assert_eq!(notice, None);
         assert!(stack_state_of(&AppType::Codex).is_member("deepseek"));
-        assert_eq!(codex_text(), plain_text, "nothing to publish");
         assert_eq!(
-            stack_views(&state, &AppType::Codex).unwrap().notice,
-            Some("routeOwnsCatalog")
+            codex_doc()["model_catalog_json"].as_str(),
+            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
         );
+        let catalog = codex_catalog();
+        assert_eq!(catalog["models"].as_array().unwrap().len(), 3);
+        assert_eq!(catalog["models"][0]["slug"], "shared-model");
+        assert_eq!(
+            catalog["models"][0]["vendor_extra"],
+            json!({"untouched": true})
+        );
+        assert_eq!(catalog["models"][0]["context_window"], 424242);
+        assert_eq!(
+            catalog["models"][0]["auto_review_model_override"],
+            "review-model"
+        );
+        let row = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        assert!(row.settings_config["config"]
+            .as_str()
+            .unwrap()
+            .contains("team-models.json"));
 
-        // 名单清空后不再提示。
+        // 移除最后一个其他成员后恢复自管目录。
         let notice = set_stack_member(&state, &AppType::Codex, "deepseek", false)
             .await
             .expect("detach");
         assert_eq!(notice, None);
+        assert_eq!(
+            codex_doc()["model_catalog_json"].as_str(),
+            Some("team-models.json")
+        );
+        set_codex_member(&state, "deepseek", true).await;
+        exit(&state, &AppType::Codex).await.expect("exit");
+        assert_eq!(
+            codex_doc()["model_catalog_json"].as_str(),
+            Some("team-models.json")
+        );
+        assert_eq!(fs::read(path).unwrap(), original);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_custom_catalog_member_preserves_fields_and_routes_prefixed_models() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let path = seed_custom_codex_catalog();
+        let original = fs::read(&path).unwrap();
+        let [mut route, _, _] = codex_stack_rows();
+        route.settings_config["modelCatalog"] = json!({"models": [{"model": "shared-model"}]});
+        let member = codex_native(
+            "custom",
+            "https://custom.example/v1",
+            &format!("model_catalog_json = {:?}\n", path.to_str().unwrap()),
+            Some(json!({"models": [{"model": "ignored-card-model"}]})),
+        );
+        let state = state_with(AppType::Codex, &[route, member], "a").await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        let members = set_codex_member(&state, "custom", true).await;
+        let published = members.iter().find(|m| m.provider_id == "custom").unwrap();
+        assert_eq!(published.model_ids.len(), 2);
+        let id = published
+            .model_ids
+            .iter()
+            .find(|id| id.ends_with("/shared-model"))
+            .unwrap();
+        let catalog = codex_catalog();
+        let entry = catalog["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["slug"] == *id)
+            .unwrap();
+        assert_eq!(entry["base_instructions"], "Keep my instructions");
+        assert_eq!(entry["description"], "Keep description");
+        assert!(entry["display_name"]
+            .as_str()
+            .unwrap()
+            .contains("Custom Main"));
+        assert_eq!(catalog["models"][0]["slug"], "shared-model");
+        assert_eq!(entry["context_window"], 424242);
+        assert_eq!(entry["vendor_extra"], json!({"untouched": true}));
+        assert_eq!(
+            entry["auto_review_model_override"],
+            id.replace("/shared-model", "/review-model")
+        );
+        let view = stack_views(&state, &AppType::Codex).unwrap();
+        let choice = view.subagent_models.iter().find(|m| m.id == *id).unwrap();
+        assert_eq!(choice.efforts, vec!["high"]);
+        assert_eq!(choice.default_effort.as_deref(), Some("high"));
+        let stack::Resolved::Hit(target) =
+            stack::resolve(&state.db, &DeviceStore::for_device(), &AppType::Codex, id).unwrap()
+        else {
+            panic!("custom catalog model must route to its provider");
+        };
+        assert_eq!(target.provider.id, "custom");
+        assert_eq!(target.upstream_model, "shared-model");
+        // 同一家改成默认后去掉前缀；切回原默认再恢复聚合 ID。
+        switch_route(&state, &AppType::Codex, "custom")
+            .await
+            .expect("custom default");
+        let default_catalog = codex_catalog();
+        assert_eq!(default_catalog["models"][0]["slug"], "shared-model");
+        assert_eq!(
+            default_catalog["models"][0]["auto_review_model_override"],
+            "review-model"
+        );
+        switch_route(&state, &AppType::Codex, "a")
+            .await
+            .expect("restore default");
+        assert!(codex_catalog()["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["slug"] == *id));
+        assert_eq!(fs::read(path).unwrap(), original);
+        exit(&state, &AppType::Codex).await.expect("exit");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_custom_catalog_unlisted_review_model_stays_with_its_provider() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let path = seed_custom_codex_catalog();
+        let [route, _, _] = codex_stack_rows();
+        let member = codex_native(
+            "custom",
+            "https://custom.example/v1",
+            "model_catalog_json = \"team-models.json\"\n",
+            None,
+        );
+        let state = state_with(AppType::Codex, &[route, member], "a").await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        for review in ["unlisted-review", "ccs-another/reviewer"] {
+            fs::write(
+                &path,
+                serde_json::to_vec(&json!({ "models": [{
+                    "slug": "shared-model", "auto_review_model_override": review,
+                    "upgrade": { "model": review, "migration_markdown": "Keep upgrade instructions" }
+            }] }))
+                .unwrap(),
+            )
+            .unwrap();
+            set_codex_member(&state, "custom", true).await;
+            resync_codex_stack_catalog(&state).await.unwrap();
+            let catalog = codex_catalog();
+            let row = catalog["models"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| {
+                    row["slug"]
+                        .as_str()
+                        .is_some_and(|s| s.ends_with("/shared-model"))
+                })
+                .unwrap();
+            let actual = row["auto_review_model_override"].as_str().unwrap();
+            assert_eq!(row["upgrade"]["model"], actual);
+            assert_eq!(
+                row["upgrade"]["migration_markdown"],
+                "Keep upgrade instructions"
+            );
+            if review.starts_with("ccs-") {
+                assert_eq!(
+                    actual, review,
+                    "explicit aggregation references stay unchanged"
+                );
+            } else {
+                assert!(actual.ends_with("/unlisted-review"));
+                let stack::Resolved::Hit(target) = stack::resolve(
+                    &state.db,
+                    &DeviceStore::for_device(),
+                    &AppType::Codex,
+                    actual,
+                )
+                .unwrap() else {
+                    panic!("review must use the member provider")
+                };
+                assert_eq!(target.provider.id, "custom");
+                assert_eq!(target.upstream_model, review);
+            }
+        }
+        exit(&state, &AppType::Codex).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_custom_catalog_errors_leave_published_files_unchanged() {
+        let _home = Home::new();
+        seed_codex("", None);
+        let path = seed_custom_codex_catalog();
+        let [_, deepseek, zhipu] = codex_stack_rows();
+        let route = codex_native(
+            "a",
+            "https://a.example/v1",
+            "model_catalog_json = \"team-models.json\"\n",
+            None,
+        );
+        let state = state_with(AppType::Codex, &[route, deepseek, zhipu], "a").await;
+        enter(&state, &AppType::Codex, true).await.expect("enter");
+        let before = codex_text();
+        let catalog_path = crate::codex_config::get_codex_model_catalog_path();
+        let before_catalog = fs::read(&catalog_path).ok();
+        for (contents, code) in [
+            ("not JSON", "invalidJson"),
+            (r#"{"models": {}}"#, "invalidModels"),
+            (r#"{"models": [null]}"#, "invalidSlug"),
+            (r#"{"models": [{"slug": " "}]}"#, "invalidSlug"),
+        ] {
+            fs::write(&path, contents).unwrap();
+            let error = set_stack_member(&state, &AppType::Codex, "deepseek", true)
+                .await
+                .unwrap_err();
+            assert!(!error.partial, "{error:?}");
+            let (_, payload) = error
+                .message
+                .split_once("CC_SWITCH_CODEX_CATALOG_ERROR:")
+                .unwrap();
+            let payload: Value = serde_json::from_str(payload).unwrap();
+            assert_eq!(payload["code"], code);
+            assert_eq!(payload["context"]["path"], path.to_string_lossy().as_ref());
+            if code == "invalidSlug" {
+                assert_eq!(payload["context"]["index"], 0);
+            }
+            assert_eq!(codex_text(), before);
+            assert_eq!(fs::read(&catalog_path).ok(), before_catalog);
+            assert!(!stack_state_of(&AppType::Codex).is_member("deepseek"));
+        }
+        fs::remove_file(&path).unwrap();
+        let error = set_stack_member(&state, &AppType::Codex, "deepseek", true)
+            .await
+            .unwrap_err();
+        assert!(!error.partial);
+        assert!(error.message.contains("\"code\":\"readFailed\""));
+        assert_eq!(codex_text(), before);
+        // 无效文件也不能作为新成员加入名单。
+        let member = codex_native(
+            "broken",
+            "https://broken.example/v1",
+            "model_catalog_json = \"team-models.json\"\n",
+            None,
+        );
+        state.db.save_provider("codex", &member).unwrap();
+        let error = set_stack_member(&state, &AppType::Codex, "broken", true)
+            .await
+            .unwrap_err();
+        assert!(!error.partial && error.message.contains("BROKEN"));
+        exit(&state, &AppType::Codex)
+            .await
+            .expect("exit even with missing custom file");
     }
 
     /// 假的进程表和时钟（见 `codex_client_catalog::Env`），结束时换回真的。
@@ -7813,16 +8060,17 @@ model_provider = "c"
 
     #[tokio::test]
     #[serial]
-    async fn codex_route_with_its_own_catalog_skips_the_client_check() {
+    async fn codex_custom_catalog_aggregation_checks_stale_clients() {
         let _home = Home::new();
         let clients = FakeClients::install();
         seed_codex("", None);
+        seed_custom_codex_catalog();
         clients.desktop_running_for("10:00");
         let [_, deepseek, zhipu] = codex_stack_rows();
         let route = codex_native(
             "a",
             "https://a.example/v1",
-            "model_catalog_json = \"/opt/team/models.json\"\n",
+            "model_catalog_json = \"team-models.json\"\n",
             None,
         );
         let state = state_with(AppType::Codex, &[route, deepseek, zhipu], "a").await;
@@ -7831,8 +8079,8 @@ model_provider = "c"
         let view = stack_view_with_clients(&state, &AppType::Codex)
             .await
             .unwrap();
-        assert_eq!(view.notice, Some("routeOwnsCatalog"));
-        assert_eq!(view.stale_clients, None);
+        assert_eq!(view.notice, None);
+        assert!(view.stale_clients.is_some());
     }
 
     /// 用户直接在 config.toml 里指定的模型目录：写入时照留，生成的目录不生效，同样要提示。
@@ -7867,11 +8115,12 @@ model_provider = "c"
     async fn codex_adopting_the_catalog_drops_the_route_rows_own_pointer() {
         let _home = Home::new();
         seed_codex("", None);
+        seed_custom_codex_catalog();
         let [_, deepseek, zhipu] = codex_stack_rows();
         let route = codex_native(
             "a",
             "https://a.example/v1",
-            "model_catalog_json = \"/opt/team/models.json\"\nmodel_verbosity = \"high\"\n",
+            "model_catalog_json = \"team-models.json\"\nmodel_verbosity = \"high\"\n",
             None,
         );
         let state = state_with(AppType::Codex, &[route, deepseek, zhipu], "a").await;
@@ -7879,7 +8128,7 @@ model_provider = "c"
         set_codex_member(&state, "deepseek", true).await;
         assert_eq!(
             codex_doc()["model_catalog_json"].as_str(),
-            Some("/opt/team/models.json")
+            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
         );
 
         let notice = adopt_codex_stack_catalog(&state).await.expect("adopt");

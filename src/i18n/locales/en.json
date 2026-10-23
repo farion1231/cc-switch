@@ -122,6 +122,13 @@
     "stackReselectHint": "Whenever CC Switch rewrites the client config, pick the aggregated model again in the model picker",
     "stackPartial": "Partly written; it will be finished on the next change or when CC Switch restarts",
     "stackFailed": "Failed to save aggregated models: {{error}}",
+    "customCatalogError": {
+      "invalidConfig": "Cannot read the custom model catalog setting: invalid Codex config.toml. {{detail}}",
+      "readFailed": "Cannot read the custom Codex model catalog: {{path}}. {{detail}}",
+      "invalidJson": "The custom Codex model catalog contains invalid JSON: {{path}}. {{detail}}",
+      "invalidModels": "The custom Codex model catalog must contain a models array: {{path}}",
+      "invalidSlug": "models[{{index}}] must be an object with a non-empty slug string: {{path}}"
+    },
     "stackDefaultCannotRemove": "The default provider cannot be removed; set another provider as the default first",
     "stackDefaultHint": "This is the default provider: the first model in its list handles Claude Code's startup and background tasks",
     "officialModelsBundled": "The official model list isn't available yet, so Codex's built-in list is used for now and account-specific models may be missing",

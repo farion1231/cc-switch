@@ -373,6 +373,11 @@ pub fn codex_model_ids(key: &str, provider: &Provider) -> Vec<String> {
         .and_then(Value::as_str)
         .unwrap_or("");
     crate::codex_config::codex_published_models(&provider.settings_config, config)
+        .unwrap_or_else(|error| {
+            // 写入目录时会返回错误；视图仍列出其余可用供应商。
+            log::warn!("读取供应商 {} 的聚合模型失败: {error}", provider.name);
+            Vec::new()
+        })
         .into_iter()
         .map(|model| encode(&AppType::Codex, key, &model, false))
         .collect()
@@ -812,8 +817,7 @@ pub struct StackView {
     /// 在 Stack 模式（代理模式且 Stack 模式开着）。
     pub active: bool,
     pub members: Vec<StackMemberView>,
-    /// Codex Stack 模型客户端看不到或看不全：`routeOwnsCatalog` 路由那家自己管理模型目录
-    /// 文件，Stack 模型不发布；官方做路由时官方模型列表暂未取到：`officialModelsBundled`
+    /// Codex Stack 模型客户端看不到或看不全：官方做路由时官方模型列表暂未取到：`officialModelsBundled`
     /// 暂用 Codex 自带的列表（可能缺账号专属的模型），`officialModelsUnavailable` Stack 模型
     /// 暂不可用；`officialModelsOutdated` 本机 Codex 太旧，拉到的官方列表里没有能选的模型。
     #[serde(skip_serializing_if = "Option::is_none")]

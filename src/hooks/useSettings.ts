@@ -17,6 +17,7 @@ import {
   type ResolvedDirectories,
 } from "./useDirectorySettings";
 import { useSettingsMetadata } from "./useSettingsMetadata";
+import { extractErrorMessage } from "@/utils/errorUtils";
 
 interface SaveResult {
   requiresRestart: boolean;
@@ -324,7 +325,7 @@ export function useSettings(): UseSettingsResult {
         toast.error(
           t("notifications.settingsSaveFailed", {
             defaultValue: "保存设置失败: {{error}}",
-            error: (error as Error)?.message ?? String(error),
+            error: extractErrorMessage(error) || String(error),
           }),
         );
         throw error;
@@ -507,7 +508,7 @@ export function useSettings(): UseSettingsResult {
         toast.error(
           t("notifications.settingsSaveFailed", {
             defaultValue: "保存设置失败: {{error}}",
-            error: (error as Error)?.message ?? String(error),
+            error: extractErrorMessage(error) || String(error),
           }),
         );
         throw error;

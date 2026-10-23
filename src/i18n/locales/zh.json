@@ -122,6 +122,13 @@
     "stackReselectHint": "CC Switch 每次改写客户端配置后，如果模型选择器里选的是聚合的模型，需要重新选一次",
     "stackPartial": "已部分写入，将在下次操作或重启 CC Switch 时补完",
     "stackFailed": "聚合的模型保存失败：{{error}}",
+    "customCatalogError": {
+      "invalidConfig": "无法读取自定义模型目录设置：Codex config.toml 格式无效。{{detail}}",
+      "readFailed": "无法读取 Codex 自定义模型目录：{{path}}。{{detail}}",
+      "invalidJson": "Codex 自定义模型目录不是有效的 JSON：{{path}}。{{detail}}",
+      "invalidModels": "Codex 自定义模型目录必须包含 models 数组：{{path}}",
+      "invalidSlug": "models[{{index}}] 必须是包含非空字符串 slug 的对象：{{path}}"
+    },
     "stackDefaultCannotRemove": "默认供应商不能移除，请先把别的供应商设为默认",
     "stackDefaultHint": "它是默认供应商：列表里的第一个模型负责 Claude Code 启动和后台任务",
     "officialModelsBundled": "官方模型列表暂未取到，暂用 Codex 内置列表，可能缺少账号专属模型",
