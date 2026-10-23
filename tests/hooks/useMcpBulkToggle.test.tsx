@@ -6,6 +6,7 @@ import {
   useBulkToggleMcpApp,
   useDeleteMcpServer,
   useImportMcpFromApps,
+  useMcpDiscovery,
   useToggleMcpApp,
   useUpsertMcpServer,
 } from "@/hooks/useMcp";
@@ -15,6 +16,7 @@ const toggleAppMock = vi.hoisted(() => vi.fn());
 const upsertServerMock = vi.hoisted(() => vi.fn());
 const deleteServerMock = vi.hoisted(() => vi.fn());
 const importFromAppsMock = vi.hoisted(() => vi.fn());
+const scanMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/api/mcp", () => ({
   mcpApi: {
@@ -22,6 +24,7 @@ vi.mock("@/lib/api/mcp", () => ({
     upsertUnifiedServer: upsertServerMock,
     deleteUnifiedServer: deleteServerMock,
     importFromApps: importFromAppsMock,
+    scanUnmanaged: scanMock,
   },
 }));
 
@@ -39,6 +42,9 @@ describe("MCP management mutation hooks", () => {
     upsertServerMock.mockReset();
     deleteServerMock.mockReset();
     importFromAppsMock.mockReset();
+    scanMock
+      .mockReset()
+      .mockResolvedValue({ unmanagedCount: 0, failedApps: [] });
   });
 
   it("runs bulk writes serially and invalidates the list once", async () => {
@@ -170,7 +176,11 @@ describe("MCP management mutation hooks", () => {
       mutation = result.current.mutateAsync({ id: "alpha" } as McpServer);
     });
 
-    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(2));
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["mcp", "all"] });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["mcp", "discovery"],
+    });
     expect(result.current.isPending).toBe(true);
 
     releaseInvalidation?.();
@@ -201,7 +211,11 @@ describe("MCP management mutation hooks", () => {
       mutation = result.current.mutateAsync("alpha");
     });
 
-    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(2));
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["mcp", "all"] });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["mcp", "discovery"],
+    });
     expect(result.current.isPending).toBe(true);
 
     releaseInvalidation?.();
@@ -232,7 +246,11 @@ describe("MCP management mutation hooks", () => {
       mutation = result.current.mutateAsync();
     });
 
-    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(2));
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["mcp", "all"] });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["mcp", "discovery"],
+    });
     expect(result.current.isPending).toBe(true);
 
     releaseInvalidation?.();
@@ -241,4 +259,26 @@ describe("MCP management mutation hooks", () => {
     });
     await waitFor(() => expect(result.current.isPending).toBe(false));
   });
+});
+
+it("only discovers when the MCP page enables it and reuses recent results", async () => {
+  scanMock.mockResolvedValue({ unmanagedCount: 2, failedApps: [] });
+  const client = new QueryClient();
+  const wrapper = createWrapper(client);
+  const first = renderHook(({ enabled }) => useMcpDiscovery(enabled), {
+    initialProps: { enabled: false },
+    wrapper,
+  });
+  expect(scanMock).not.toHaveBeenCalled();
+  first.rerender({ enabled: true });
+  await waitFor(() =>
+    expect(first.result.current.data?.unmanagedCount).toBe(2),
+  );
+  expect(scanMock).toHaveBeenCalledTimes(1);
+  first.unmount();
+  const second = renderHook(() => useMcpDiscovery(), { wrapper });
+  expect(second.result.current.data?.unmanagedCount).toBe(2);
+  expect(scanMock).toHaveBeenCalledTimes(1);
+  second.unmount();
+  client.clear();
 });

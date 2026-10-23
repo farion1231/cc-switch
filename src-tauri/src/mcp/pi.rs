@@ -193,6 +193,17 @@ fn sync_file(path: &Path, id: &str, change: PiChange<'_>) -> Result<(), AppError
     )
 }
 
+pub(crate) fn discover_ids() -> Result<Vec<String>, AppError> {
+    let document = read(&config_path()?)?;
+    Ok(document["mcpServers"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(_, spec)| super::validation::validate_server_spec(&unified_spec(spec)).is_ok())
+        .map(|(id, _)| id.clone())
+        .collect())
+}
+
 /// 从 Pi 的 `mcp.json` 导入。Pi 自己的字段（`timeout`、`exposure` 等）留在连接定义里原样保存；
 /// `enabled: false` 的条目导入后不勾选 Pi。和已有服务器连接方式不同的同名条目跳过并报告。
 pub fn import(state: &AppState) -> Result<usize, AppError> {

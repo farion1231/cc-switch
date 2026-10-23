@@ -4504,6 +4504,14 @@
     }
   },
   "mcpPage": {
+    "discovery": {
+      "available": "本機有 {{count}} 個 MCP 尚未納入 CC Switch 管理。",
+      "import": "匯入本機 MCP",
+      "readOnly": "探索過程只讀取應用程式的使用者層級設定，點擊匯入後才會加入管理。",
+      "partial": "無法讀取這些應用程式的 MCP 設定：{{apps}}。其他來源已檢查。",
+      "failed": "檢查本機 MCP 設定失敗。",
+      "retry": "重新檢查"
+    },
     "noun": "MCP",
     "listSeparator": "、",
     "helpTitle": "MCP 怎麼同步",

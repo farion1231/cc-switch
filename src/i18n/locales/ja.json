@@ -4503,6 +4503,14 @@
     }
   },
   "mcpPage": {
+    "discovery": {
+      "available": "この端末に CC Switch で管理されていない MCP が {{count}} 件あります。",
+      "import": "ローカル MCP をインポート",
+      "readOnly": "検出はアプリのユーザー設定を読み取るだけです。インポートを選ぶまで管理対象には追加しません。",
+      "partial": "次のアプリの MCP 設定を読み取れませんでした：{{apps}}。ほかの設定は確認済みです。",
+      "failed": "ローカル MCP 設定を確認できませんでした。",
+      "retry": "再確認"
+    },
     "noun": "MCP",
     "listSeparator": "、",
     "helpTitle": "MCP の同期のしくみ",
