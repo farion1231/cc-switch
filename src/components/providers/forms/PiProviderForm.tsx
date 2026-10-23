@@ -38,8 +38,10 @@ import {
 } from "@/components/ui/select";
 import type { ProviderFormProps, ProviderFormValues } from "./ProviderForm";
 import JsonEditor from "@/components/JsonEditor";
-import { BasicFormFields } from "./BasicFormFields";
+import { BasicFormFields, REQUIRED_LABEL } from "./BasicFormFields";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
+import { useProvidersQuery } from "@/lib/query/queries";
+import { cn } from "@/lib/utils";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
 import {
@@ -530,6 +532,14 @@ export function PiProviderForm({
     initialData?.category ?? "custom",
   );
   const [providerKey, setProviderKey] = useState(providerId ?? "");
+  const { data: existingProviders } = useProvidersQuery("pi");
+  // 预设自带标识；同一家加第二次时会撞上已有的卡，在字段下直接提示。
+  const isDuplicateProviderKey =
+    !isEdit &&
+    Object.prototype.hasOwnProperty.call(
+      existingProviders?.providers ?? {},
+      providerKey.trim(),
+    );
   const [baseUrl, setBaseUrl] = useState(optionalText(initialConfig.baseUrl));
   const [api, setApi] = useState(
     () => optionalText(initialConfig.api) || "openai-completions",
@@ -1211,6 +1221,12 @@ export function PiProviderForm({
           "#pi-provider-key",
         );
       }
+      if (isDuplicateProviderKey) {
+        throw new PiFormValidationError(
+          t("pi.form.providerKeyDuplicate"),
+          "#pi-provider-key",
+        );
+      }
       if (!isEdit && selectedPreset && apiKey.length === 0) {
         throw new PiFormValidationError(
           t("pi.form.credentialRequired"),
@@ -1474,29 +1490,30 @@ export function PiProviderForm({
             <BasicFormFields
               form={form}
               beforeNameSlot={
-                isEdit || selectedPresetId === "custom" ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="pi-provider-key">
-                      {t("pi.form.providerKey")}
-                      <span
-                        aria-hidden="true"
-                        className="text-destructive ml-1"
-                      >
-                        *
-                      </span>
-                    </Label>
-                    <Input
-                      id="pi-provider-key"
-                      value={providerKey}
-                      onChange={(event) =>
-                        handleProviderKeyChange(event.target.value)
-                      }
-                      disabled={isEdit}
-                      placeholder="my-provider"
-                      autoComplete="off"
-                    />
-                    <p className="text-xs text-fg-2">
-                      {isEdit
+                <div className="space-y-2">
+                  <Label htmlFor="pi-provider-key" className={REQUIRED_LABEL}>
+                    {t("pi.form.providerKey")}
+                  </Label>
+                  <Input
+                    id="pi-provider-key"
+                    value={providerKey}
+                    onChange={(event) =>
+                      handleProviderKeyChange(event.target.value)
+                    }
+                    disabled={isEdit}
+                    placeholder="my-provider"
+                    autoComplete="off"
+                  />
+                  <p
+                    className={
+                      isDuplicateProviderKey
+                        ? "text-xs text-destructive"
+                        : "text-xs text-fg-2"
+                    }
+                  >
+                    {isDuplicateProviderKey
+                      ? t("pi.form.providerKeyDuplicate")
+                      : isEdit
                         ? t("opencode.providerKeyLockedHint", {
                             defaultValue:
                               "该供应商已添加到应用配置中，供应商标识不可修改",
@@ -1505,9 +1522,8 @@ export function PiProviderForm({
                             defaultValue:
                               "配置文件中的唯一标识符，只能使用小写字母、数字和连字符",
                           })}
-                    </p>
-                  </div>
-                ) : undefined
+                  </p>
+                </div>
               }
             />
 
@@ -1625,23 +1641,11 @@ export function PiProviderForm({
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 px-1 text-xs text-fg-2">
                     <span className="w-9" />
-                    <span className="flex-1">
+                    <span className={cn("flex-1", REQUIRED_LABEL)}>
                       {t("pi.form.modelId")}
-                      <span
-                        aria-hidden="true"
-                        className="ml-1 text-destructive"
-                      >
-                        *
-                      </span>
                     </span>
-                    <span className="flex-1">
+                    <span className={cn("flex-1", REQUIRED_LABEL)}>
                       {t("pi.form.modelName")}
-                      <span
-                        aria-hidden="true"
-                        className="ml-1 text-destructive"
-                      >
-                        *
-                      </span>
                     </span>
                     <span className="w-9" />
                   </div>
@@ -1770,17 +1774,8 @@ export function PiProviderForm({
                               </div>
                             </div>
                             <Field
-                              label={
-                                <>
-                                  {t("pi.form.contextWindow")}
-                                  <span
-                                    aria-hidden="true"
-                                    className="ml-1 text-destructive"
-                                  >
-                                    *
-                                  </span>
-                                </>
-                              }
+                              label={t("pi.form.contextWindow")}
+                              required
                               htmlFor={`pi-model-context-window-${model.key}`}
                             >
                               <Input
@@ -1806,17 +1801,8 @@ export function PiProviderForm({
                               />
                             </Field>
                             <Field
-                              label={
-                                <>
-                                  {t("pi.form.maxTokens")}
-                                  <span
-                                    aria-hidden="true"
-                                    className="ml-1 text-destructive"
-                                  >
-                                    *
-                                  </span>
-                                </>
-                              }
+                              label={t("pi.form.maxTokens")}
+                              required
                               htmlFor={`pi-model-max-tokens-${model.key}`}
                             >
                               <Input
@@ -2139,15 +2125,22 @@ export function PiProviderForm({
 function Field({
   label,
   htmlFor,
+  required,
   children,
 }: {
   label: React.ReactNode;
   htmlFor: string;
+  required?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <div className="space-y-2">
-      <Label htmlFor={htmlFor}>{label}</Label>
+      <Label
+        htmlFor={htmlFor}
+        className={required ? REQUIRED_LABEL : undefined}
+      >
+        {label}
+      </Label>
       {children}
     </div>
   );

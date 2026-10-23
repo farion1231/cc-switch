@@ -662,6 +662,33 @@ fn switch_at<T>(
     write_and_commit(paths, &before, &after, || commit(config))
 }
 
+/// "Add" writes a saved provider into Cline without selecting it. An entry that
+/// is already live belongs to Cline and is kept as is (same rule as switching).
+pub(crate) fn add_and_commit<T>(
+    id: &str,
+    archived_config: Value,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let _guard = lock()?;
+    let (providers_path, models_path) = (providers_path(), models_path());
+    add_at((&providers_path, &models_path), id, archived_config, commit)
+}
+
+fn add_at<T>(
+    paths: (&Path, &Path),
+    id: &str,
+    archived_config: Value,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let before = read_documents(paths.0, paths.1)?;
+    let after = if entry_config(&before, id).is_some() {
+        before.clone()
+    } else {
+        apply_provider(&before, id, Some(archived_config), false)?
+    };
+    write_and_commit(paths, &before, &after, commit)
+}
+
 /// Base URL and API key for connectivity checks and model listing.
 pub(crate) fn endpoint_and_key(config: &Value) -> (String, String) {
     let base = config
@@ -847,6 +874,30 @@ mod tests {
         let config = switch_at((&p, &m), "ccs-b", custom("m2"), Ok).unwrap();
         assert_eq!(config["provider"]["name"], "Relay");
         assert_eq!(docs(&dir).providers["lastUsedProvider"], "ccs-b");
+    }
+
+    #[test]
+    fn add_keeps_the_current_provider_and_never_overwrites_a_live_entry() {
+        let dir = TempDir::new().unwrap();
+        let (p, m) = paths(&dir);
+        save(&dir, "ccs-a", Some(custom("m1")), true).unwrap();
+        let failed = add_at((&p, &m), "ccs-b", custom("m2"), || {
+            Err::<(), _>(AppError::Message("database failed".into()))
+        });
+        assert!(failed.is_err());
+        assert!(docs(&dir).providers["providers"].get("ccs-b").is_none());
+
+        add_at((&p, &m), "ccs-b", custom("m2"), || Ok(())).unwrap();
+        let d = docs(&dir);
+        assert_eq!(d.providers["lastUsedProvider"], "ccs-a");
+        assert_eq!(d.models["providers"]["ccs-b"]["models"]["m2"]["id"], "m2");
+
+        // An entry already in Cline belongs to Cline: adding again keeps it.
+        let before = (fs::read(&p).unwrap(), fs::read(&m).unwrap());
+        let mut stale = custom("m2");
+        stale["settings"]["apiKey"] = json!("stale");
+        add_at((&p, &m), "ccs-b", stale, || Ok(())).unwrap();
+        assert_eq!((fs::read(&p).unwrap(), fs::read(&m).unwrap()), before);
     }
 
     #[test]
