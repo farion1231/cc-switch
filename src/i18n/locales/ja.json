@@ -1620,8 +1620,8 @@
       "ccsub": "CCSub は安定・低価格の AI API リレーサービスです。Claude Code の公式サブスクリプションの代替として、1つのキーで全モデルを公式比約1/3のコストで利用できます。",
       "subrouter": "SubRouter は、1つのキーで複数のモデルとプロバイダーにアクセスできる AI 中継アグリゲーターです。",
       "qiniu": "Qiniu Cloud（七牛云）はマルチプロトコル対応の AI 中継プラットフォームです。1つのキーでネイティブの Claude・GPT・Gemini モデルを利用でき、Anthropic／OpenAI／Gemini の各 API に対応します。",
+      "haoai": "hao.ai は開発者とチーム向けの高速で安定した LLM 統合 API ゲートウェイです。1 つのキーで GPT、Claude、Grok などの主要モデルを OpenAI・Anthropic 互換 API で利用でき、モデルルーティング、フェイルオーバー、完全な呼び出しログを備え、価格は公式参考価格の最大 85% オフです。CC Switch ユーザーがこのリンクから登録すると、初回注文で 5% のボーナスクレジットを受け取れます！",
       "fenno": "Fenno.ai は安定・高効率な API 中継サービスで、幅広い主要モデルを利用できます。CC Switch 利用者限定特典：このリンクから 1.99 ドルで 50 ドル相当の Trial プランを購入できます（有効期間 7 日間）！",
-      "zetaapi": "ZetaAPI はモデルを水増し・劣化させず、公式価格の 35% から利用できます。CC Switch 利用者限定特典：このリンクから登録し、初回チャージ時にプロモコード CC-SWITCH を使うと初回チャージ 10% オフ！",
       "teamorouter": "TeamoRouter はエンタープライズグレードの Agentic LLM ゲートウェイで、料金は最大 90% オフ。CC Switch ユーザーに特別特典を提供しています：このリンクから新規登録すると初回チャージが 10% オフ！",
       "ppio": "PPIO は中国有数の独立系 Agentic Cloud プロバイダーで、API キー 1 つで主要なオープンソースモデルをすべて利用できます。このリンクから登録し実名認証を完了すると、¥10 のクーポンがもらえます。",
       "xycai": "XycAi はエンタープライズグレードのトークンファクトリー：200+ のグローバルモデルにワンクリック接続、SLA 自動補償、異常キャッシュは 100% 返金！",
@@ -1634,7 +1634,8 @@
       "alltokens": "AllTokens は「安定を基に、誠実を本に」を掲げ、すべての AI 呼び出しを安定的で正直、安心して任せられるものにすることを目指しています。信頼できるサービスと透明な課金で、GPT、Claude、Gemini、Grok、DeepSeek、GLM、Kimi などの主要モデルを 1 つのプラットフォームで利用でき、従量課金と利用上限の設定に対応しています。登録で 1 ドル分のお試しクレジットを進呈！",
       "alltokens_si": "AllTokens SI は「安定を基に、誠実を本に」を掲げる、企業向けの AI トークン中継・チーム協業プラットフォームです。メンバー、キー、使用量、残高を企業コンソールで一元管理し、明確な権限と利用上限の設定により、チームの利用を追跡可能で安心して管理できます。",
       "openmodel": "OpenModel は Codex と Claude Code 向けにクライアント専用割引を提供し、対応モデルを Codex 経由で最大 90% オフ、Claude Code 経由で最大 60% オフで利用できます。CC Switch ユーザーはこのリンクから登録し、プロモコード \"cc-switch\" を使うと初回チャージが 10% オフになります！",
-      "grooroute": "GrooRoute Pro は OpenAI、Claude、DeepSeek などの主要モデルに対応する信頼性の高い AI API 中継プラットフォームで、従量課金とサブスクリプションに対応しています。CC Switch ユーザーはこのリンクから登録すると 5 元分の無料お試しクレジットがもらえます！"
+      "grooroute": "GrooRoute Pro は OpenAI、Claude、DeepSeek などの主要モデルに対応する信頼性の高い AI API 中継プラットフォームで、従量課金とサブスクリプションに対応しています。CC Switch ユーザーはこのリンクから登録すると 5 元分の無料お試しクレジットがもらえます！",
+      "dit": "DIT.ai は、複数プロバイダーを低コストでルーティングする AI トークン取引マーケットです。OpenAI 互換の API 1 つで GPT、Claude、Gemini、DeepSeek、Grok、Llama など 50 以上の主要モデルを利用でき、160 以上のルートでプロバイダーがリアルタイムに競い合うため、通常は公式価格より 30〜70% 安くなります。CC Switch ユーザーはこのリンクから登録し、プロモコード \"ccswitch\" を使うと 5 ドル分のウェルカムクーポンを受け取れます！"
     },
     "presets": {
       "ucloud": "Compshare",
@@ -2128,6 +2129,7 @@
     "universalDetail": "Claude Code・Codex・Gemini CLI に同期",
     "manageUniversal": "既存の統合プロバイダーを管理 ›",
     "loginWith": {
+      "kimi": "Kimi アカウントでログイン",
       "claude": "Claude アカウントでログイン",
       "chatgpt": "ChatGPT アカウントでログイン",
       "github": "GitHub アカウントでログイン",
@@ -4912,6 +4914,58 @@
       "removeNote": "agy からはログアウトしません。agy が現在このアカウントを使っている場合、削除後もそのまま使えます。",
       "switched": "切り替えました。新しく起動する agy はこのアカウントを使います。",
       "switchedWhileRunning": "切り替えました。agy が実行中です。開いている agy は元のアカウントのままで、元のアカウントを書き戻す可能性があります。agy を終了してから開き直してください。"
+    }
+  },
+  "kimi": {
+    "oauth": {
+      "useAccount": "このアカウントを使用",
+      "title": "Kimi Code 公式ログイン",
+      "description": "複数の Kimi コーディングプランのアカウントを、独立した認証情報とプロバイダーとして追加できます。ここでログインを管理し、使用する公式アカウントを選択してください。",
+      "region": "ログイン地域",
+      "mainland-cn": "中国本土版",
+      "global": "グローバル版",
+      "signIn": "Kimi にログイン",
+      "signInAgain": "再ログイン",
+      "signOut": "ログアウト",
+      "signedIn": "ログイン済み · {{region}}",
+      "signedOut": "未ログイン",
+      "statusFailed": "ログイン状態を取得できません",
+      "refresh": "Kimi のログイン状態を更新",
+      "waiting": "ブラウザーでの認証を待っています",
+      "copyCode": "認証コードをコピー",
+      "copied": "認証コードをコピーしました",
+      "openPage": "認証ページを開く",
+      "manualHint": "認証が完了すると自動的に更新されます。ブラウザーが開かない場合は、下のリンクを開いてコードを入力してください。",
+      "error": "Kimi のログインが完了しませんでした",
+      "expired": "認証コードの有効期限が切れました。再ログインしてください。",
+      "denied": "認証が拒否されました。再ログインしてください。",
+      "cancelled": "ログインがキャンセルされたか、別のログインに置き換えられました。再ログインしてください。",
+      "success": "Kimi Code にログインし、公式モデルを追加しました。",
+      "signOutConfirm": "{{name}} からログアウトしますか？このアカウントのローカル認証情報のみ削除します。他のアカウント、プロバイダー、モデル、現在のモデル選択は保持されます。",
+      "addAccount": "アカウントを追加",
+      "accountCount": "保存済みアカウント: {{count}}",
+      "manageAccounts": "Kimi アカウントを管理",
+      "managedHint": "Kimi 公式アカウントは認証センターで管理してください。"
+    },
+    "modelSelectionHint": "プロバイダーカードの切り替えボタンで既定のプロバイダーを選択します。別のモデルを選ぶには、Kimi Code で /model を使用してください。",
+    "providerType": "プロバイダーの種類",
+    "baseUrl": "リクエスト URL",
+    "models": "モデル",
+    "addModel": "モデルを追加",
+    "removeModel": "モデルを削除",
+    "modelId": "モデル ID",
+    "contextSize": "コンテキスト長",
+    "deleteSessionHint": "インデックスと履歴を同期するため、Kimi Code 内でセッションを削除してください。",
+    "empty": {
+      "title": "Kimi Code プロバイダーを追加",
+      "description": "URL、API キー、モデルを設定します。既存の Kimi 設定は自動的にインポートされます。"
+    },
+    "capabilities": {
+      "image_in": "画像入力",
+      "thinking": "思考",
+      "always_thinking": "常に思考",
+      "tool_use": "ツール呼び出し",
+      "dynamically_loaded_tools": "必要に応じてツールを読み込む"
     }
   }
 }

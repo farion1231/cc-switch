@@ -257,27 +257,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "packycode",
   },
   {
-    name: "ZetaAPI",
-    providerKey: "cc-switch-zeta-api",
-    websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/u117",
-    settingsConfig: {
-      name: "ZetaAPI",
-      baseUrl: "https://api.zetaapi.ai/v1",
-      api: "openai-completions",
-      apiKey: "",
-      models: [
-        piModel("openai/gpt-5.6-sol", {
-          id: "gpt-5.6-sol",
-        }),
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "zetaapi",
-    icon: "zetaapi",
-  },
-  {
     name: "APINebula",
     providerKey: "cc-switch-apinebula",
     websiteUrl: "https://apinebula.ai",
@@ -323,6 +302,30 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     partnerPromotionKey: "aicodemirror",
     icon: "aicodemirror",
     iconColor: "#000000",
+  },
+  {
+    name: "hao.ai",
+    providerKey: "cc-switch-hao-ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    settingsConfig: {
+      name: "hao.ai",
+      baseUrl: "https://api.hao.ai/anthropic",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", {
+          id: "anthropic/claude-opus-5-5",
+        }),
+        piModel("anthropic/claude-sonnet-5.5", {
+          id: "anthropic/claude-sonnet-5-5",
+        }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
   },
   {
     name: "FennoAI",
@@ -441,6 +444,26 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "grooroute",
     icon: "grooroute",
+  },
+  {
+    name: "DIT.ai",
+    providerKey: "cc-switch-dit-ai",
+    websiteUrl: "https://dit.ai",
+    apiKeyUrl: "https://dit.ai/register",
+    settingsConfig: {
+      name: "DIT.ai",
+      baseUrl: "https://api.dit.ai",
+      api: "anthropic-messages",
+      apiKey: "",
+      models: [
+        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "dit",
+    icon: "dit",
   },
   {
     name: "TokenFactory",
