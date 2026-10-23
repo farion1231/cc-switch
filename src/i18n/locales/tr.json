@@ -4834,9 +4834,6 @@
     "apiKeyPlaceholder": "API anahtarını girin veya ${MY_API_KEY} ile bir ortam değişkenine başvurun",
     "maxInputTokens": "Maksimum giriş token",
     "maxOutputTokens": "Maksimum çıkış token",
-    "supportsToolCall": "Araç kullanımı",
-    "supportsImages": "Görsel girişi",
-    "supportsReasoning": "Akıl yürütme",
     "jsonHint": "models.json içindeki tek bir model girdisi (id yukarıdaki Model kimliğinden gelir). Kaydettikten sonra CodeBuddy Code dosyayı kendisi yeniden yükler."
   }
 }

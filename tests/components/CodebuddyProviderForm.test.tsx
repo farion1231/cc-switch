@@ -99,7 +99,7 @@ describe("CodebuddyProviderForm", () => {
     ).not.toBeInTheDocument();
     expandModel();
     expect(
-      screen.getByRole("switch", { name: "codebuddy.supportsToolCall" }),
+      screen.getByRole("switch", { name: "kimi.capabilities.tool_use" }),
     ).not.toBeChecked();
     // 显示名称就是卡片名称：两处改的是同一个值。
     fireEvent.change(screen.getByLabelText("opencode.modelName"), {
@@ -110,7 +110,7 @@ describe("CodebuddyProviderForm", () => {
       target: { value: "8192" },
     });
     fireEvent.click(
-      screen.getByRole("switch", { name: "codebuddy.supportsReasoning" }),
+      screen.getByRole("switch", { name: "kimi.capabilities.thinking" }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
@@ -269,10 +269,10 @@ describe("CodebuddyProviderForm", () => {
       8192,
     );
     expect(
-      screen.getByRole("switch", { name: "codebuddy.supportsImages" }),
+      screen.getByRole("switch", { name: "kimi.capabilities.image_in" }),
     ).toBeChecked();
     expect(
-      screen.getByRole("switch", { name: "codebuddy.supportsReasoning" }),
+      screen.getByRole("switch", { name: "kimi.capabilities.thinking" }),
     ).toBeChecked();
   });
 

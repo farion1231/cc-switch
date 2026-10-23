@@ -4983,9 +4983,6 @@
     "apiKeyPlaceholder": "Enter an API key, or reference an environment variable as ${MY_API_KEY}",
     "maxInputTokens": "Max input tokens",
     "maxOutputTokens": "Max output tokens",
-    "supportsToolCall": "Tool use",
-    "supportsImages": "Image input",
-    "supportsReasoning": "Reasoning",
     "jsonHint": "One model entry in models.json (its id comes from Model ID above). CodeBuddy Code reloads the file on its own after you save."
   }
 }

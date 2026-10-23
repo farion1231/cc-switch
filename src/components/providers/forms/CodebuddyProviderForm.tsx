@@ -86,9 +86,9 @@ const toPositiveInt = (value: string): number | undefined => {
 };
 
 const CAPABILITIES = [
-  "supportsToolCall",
-  "supportsImages",
-  "supportsReasoning",
+  ["supportsToolCall", "kimi.capabilities.tool_use"],
+  ["supportsImages", "kimi.capabilities.image_in"],
+  ["supportsReasoning", "kimi.capabilities.thinking"],
 ] as const;
 
 /**
@@ -511,13 +511,13 @@ export function CodebuddyProviderForm({
                 {expanded && (
                   <div className="ml-9 grid gap-3 border-l-2 border-muted pl-4 sm:grid-cols-2">
                     <div className="flex min-h-9 flex-wrap items-center gap-x-8 gap-y-2 sm:col-span-2">
-                      {CAPABILITIES.map((key) => (
+                      {CAPABILITIES.map(([key, label]) => (
                         <div key={key} className="flex items-center gap-2.5">
                           <Label
                             htmlFor={`codebuddy-${key}`}
                             className="cursor-pointer"
                           >
-                            {t(`codebuddy.${key}`)}
+                            {t(label)}
                           </Label>
                           <Switch
                             id={`codebuddy-${key}`}

@@ -4983,9 +4983,6 @@
     "apiKeyPlaceholder": "输入 API Key，或写成 ${MY_API_KEY} 引用环境变量",
     "maxInputTokens": "最大输入 Token",
     "maxOutputTokens": "最大输出 Token",
-    "supportsToolCall": "工具调用",
-    "supportsImages": "图片输入",
-    "supportsReasoning": "推理",
     "jsonHint": "对应 models.json 中的一条模型配置（id 由上方模型 ID 决定）。保存后 CodeBuddy Code 会自动重新加载。"
   }
 }
