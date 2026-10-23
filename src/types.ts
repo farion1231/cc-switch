@@ -190,7 +190,11 @@ export interface ProviderMeta {
   isPartner?: boolean;
   // 合作伙伴促销 key（用于后端识别 PackyCode 等）
   partnerPromotionKey?: string;
-  // API 格式（Claude / Codex 供应商使用）
+  // 并发上限（代理会话粘性负载均衡）：账号默认 + 按模型覆盖，0/缺省 = 不限
+  loadBalance?: {
+    maxConcurrentRequests?: number;
+    maxConcurrentByModel?: Record<string, number>;
+  }; // API 格式（Claude / Codex 供应商使用）
   // - "anthropic": 原生 Anthropic Messages API 格式，直接透传
   // - "openai_chat": OpenAI Chat Completions 格式，需要格式转换
   // - "openai_responses": OpenAI Responses API 格式，需要格式转换

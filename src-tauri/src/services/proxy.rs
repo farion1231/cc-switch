@@ -25,6 +25,25 @@ pub struct ProxyService {
     switch_locks: SwitchLockManager,
 }
 
+/// 冷却中的账号（代理页实时指示）
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadBalanceCooldownInfo {
+    pub provider_id: String,
+    pub provider_name: String,
+    pub remaining_secs: u64,
+}
+
+/// 负载均衡实时指示快照（代理页"池 N 账号 · 在途 X · 冷却中 Y"）
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadBalanceStatus {
+    pub load_balance_mode: String,
+    pub pool_size: usize,
+    pub in_flight: isize,
+    pub cooling: Vec<LoadBalanceCooldownInfo>,
+}
+
 /// 重启失败时写回库的那份配置：设置页只动四个全局字段，旧接口是整份七个字段。
 enum SavedProxyConfig {
     Global(GlobalProxyConfig),
@@ -460,6 +479,61 @@ impl ProxyService {
                 ..Default::default()
             })
         }
+    }
+
+    /// 获取指定应用的负载均衡实时指示（池大小 / 在途 / 冷却中账号）。
+    ///
+    /// 池大小与模式来自 proxy_config + 故障转移队列；在途与冷却来自运行中
+    /// 代理的 SessionLoadBalancer（代理未运行时为零值）。
+    pub async fn get_load_balance_status(
+        &self,
+        app_type: &str,
+    ) -> Result<LoadBalanceStatus, String> {
+        let config = self
+            .db
+            .get_proxy_config_for_app(app_type)
+            .await
+            .map_err(|e| e.to_string())?;
+        let pool: Vec<String> = if config.auto_failover_enabled {
+            self.db
+                .get_failover_queue(app_type)
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .map(|item| item.provider_id)
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let mut in_flight = 0isize;
+        let mut cooling: Vec<LoadBalanceCooldownInfo> = Vec::new();
+        if let Some(server) = self.server.read().await.as_ref() {
+            let lb = server.proxy_state().provider_router.load_balancer();
+            in_flight = lb.in_flight_total(&pool);
+            let all = self
+                .db
+                .get_all_providers(app_type)
+                .map_err(|e| e.to_string())?;
+            cooling = lb
+                .cooldown_snapshot(app_type, &pool)
+                .into_iter()
+                .map(|entry| LoadBalanceCooldownInfo {
+                    provider_id: entry.provider_id.clone(),
+                    provider_name: all
+                        .get(&entry.provider_id)
+                        .map(|p| p.name.clone())
+                        .unwrap_or_else(|| entry.provider_id.clone()),
+                    remaining_secs: entry.remaining_secs,
+                })
+                .collect();
+        }
+
+        Ok(LoadBalanceStatus {
+            load_balance_mode: config.load_balance_mode,
+            pool_size: pool.len(),
+            in_flight,
+            cooling,
+        })
     }
 
     /// 获取代理配置

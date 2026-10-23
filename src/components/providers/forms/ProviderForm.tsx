@@ -104,6 +104,10 @@ import { McodeProviderForm } from "./McodeProviderForm";
 import { PiProviderForm } from "./PiProviderForm";
 import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
+import {
+  ProviderAdvancedConfig,
+  type ProviderLoadBalanceFormConfig,
+} from "./ProviderAdvancedConfig";
 import type { AppMode } from "@/types/proxy";
 import {
   useProviderCategory,
@@ -411,6 +415,18 @@ function ProviderFormFull({
     return initialData?.meta?.isFullUrl ?? false;
   });
 
+  // 并发上限（会话粘性负载均衡）：meta.loadBalance 的表单态
+  const [loadBalanceConfig, setLoadBalanceConfig] =
+    useState<ProviderLoadBalanceFormConfig>(() => ({
+      enabled: initialData?.meta?.loadBalance !== undefined,
+      maxConcurrentRequests:
+        initialData?.meta?.loadBalance?.maxConcurrentRequests === undefined
+          ? ""
+          : String(initialData?.meta?.loadBalance.maxConcurrentRequests),
+      byModel: Object.entries(
+        initialData?.meta?.loadBalance?.maxConcurrentByModel ?? {},
+      ).map(([model, limit]) => ({ model, limit: String(limit) })),
+    }));
   const { category } = useProviderCategory({
     appId,
     selectedPresetId,
@@ -434,6 +450,16 @@ function ProviderFormFull({
     setLocalIsFullUrl(
       supportsFullUrl ? (initialData?.meta?.isFullUrl ?? false) : false,
     );
+    setLoadBalanceConfig({
+      enabled: initialData?.meta?.loadBalance !== undefined,
+      maxConcurrentRequests:
+        initialData?.meta?.loadBalance?.maxConcurrentRequests === undefined
+          ? ""
+          : String(initialData?.meta?.loadBalance.maxConcurrentRequests),
+      byModel: Object.entries(
+        initialData?.meta?.loadBalance?.maxConcurrentByModel ?? {},
+      ).map(([model, limit]) => ({ model, limit: String(limit) })),
+    });
     setSelectedGitHubAccountId(
       resolveManagedAccountId(initialData?.meta, "github_copilot"),
     );
@@ -1986,6 +2012,33 @@ function ProviderFormFull({
       localProxyRequestOverrides: shouldApplyLocalProxyRequestOverrides
         ? overridesResult.overrides
         : undefined,
+      loadBalance: (() => {
+        if (!loadBalanceConfig.enabled) return undefined;
+        const max = loadBalanceConfig.maxConcurrentRequests.trim();
+        const byModel = Object.fromEntries(
+          loadBalanceConfig.byModel
+            .map((row) => ({
+              model: row.model.trim(),
+              limit: Number.parseInt(row.limit, 10),
+            }))
+            .filter(
+              (row) =>
+                row.model !== "" &&
+                Number.isInteger(row.limit) &&
+                row.limit > 0,
+            )
+            .map((row) => [row.model, row.limit]),
+        );
+        const parsedMax = Number.parseInt(max, 10);
+        const hasMax = Number.isInteger(parsedMax) && parsedMax >= 0;
+        if (!hasMax && Object.keys(byModel).length === 0) return undefined;
+        return {
+          ...(hasMax ? { maxConcurrentRequests: parsedMax } : {}),
+          ...(Object.keys(byModel).length > 0
+            ? { maxConcurrentByModel: byModel }
+            : {}),
+        };
+      })(),
       apiFormat:
         appId === "claude" && category !== "official"
           ? isXaiOauthProvider
@@ -3049,6 +3102,15 @@ function ProviderFormFull({
             </>
           )}
 
+          {!isAnyOmoCategory &&
+            appId !== "opencode" &&
+            appId !== "openclaw" &&
+            appId !== "hermes" && (
+              <ProviderAdvancedConfig
+                loadBalanceConfig={loadBalanceConfig}
+                onLoadBalanceConfigChange={setLoadBalanceConfig}
+              />
+            )}
           {showButtons && (
             <div className="flex justify-end gap-2">
               <Button variant="outline" type="button" onClick={onCancel}>

@@ -66,7 +66,7 @@ pub fn map_proxy_error_to_status(error: &ProxyError) -> u16 {
 /// 将 ProxyError 转换为用户友好的错误消息
 pub fn get_error_message(error: &ProxyError) -> String {
     match error {
-        ProxyError::UpstreamError { status, body } => {
+        ProxyError::UpstreamError { status, body, .. } => {
             // 上游没给内容时要明说，否则用户会以为是 CC Switch 把错误内容吞了（#6895）
             let body = body
                 .as_deref()
@@ -97,6 +97,7 @@ mod tests {
         let error = ProxyError::UpstreamError {
             status: 401,
             body: Some("Unauthorized".to_string()),
+            retry_after_secs: None,
         };
         assert_eq!(map_proxy_error_to_status(&error), 401);
     }
@@ -148,6 +149,7 @@ mod tests {
         let error = ProxyError::UpstreamError {
             status: 500,
             body: Some("Internal Server Error".to_string()),
+            retry_after_secs: None,
         };
         let msg = get_error_message(&error);
         assert!(msg.contains("上游错误"));
@@ -160,6 +162,7 @@ mod tests {
         let error_empty = ProxyError::UpstreamError {
             status: 502,
             body: Some("   ".to_string()),
+            retry_after_secs: None,
         };
         assert_eq!(
             get_error_message(&error_empty),
@@ -169,6 +172,7 @@ mod tests {
         let error_none = ProxyError::UpstreamError {
             status: 502,
             body: None,
+            retry_after_secs: None,
         };
         assert_eq!(
             get_error_message(&error_none),

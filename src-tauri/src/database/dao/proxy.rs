@@ -149,7 +149,7 @@ impl Database {
                 "SELECT app_type, enabled, auto_failover_enabled,
                         max_retries, streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                         circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                        circuit_error_rate_threshold, circuit_min_requests
+                        circuit_error_rate_threshold, circuit_min_requests, load_balance_mode
                  FROM proxy_config WHERE app_type = ?1",
                 [app_type],
                 |row| {
@@ -166,6 +166,7 @@ impl Database {
                         circuit_timeout_seconds: row.get::<_, i32>(9)? as u32,
                         circuit_error_rate_threshold: row.get(10)?,
                         circuit_min_requests: row.get::<_, i32>(11)? as u32,
+                        load_balance_mode: row.get(12)?,
                     })
                 },
             )
@@ -190,6 +191,7 @@ impl Database {
                     circuit_timeout_seconds: 60,
                     circuit_error_rate_threshold: 0.6,
                     circuit_min_requests: 10,
+                    load_balance_mode: "off".to_string(),
                 })
             }
             Err(e) => Err(AppError::Database(e.to_string())),
@@ -216,6 +218,7 @@ impl Database {
                 circuit_timeout_seconds = ?10,
                 circuit_error_rate_threshold = ?11,
                 circuit_min_requests = ?12,
+                load_balance_mode = ?13,
                 updated_at = datetime('now')
              WHERE app_type = ?1",
             rusqlite::params![
@@ -231,11 +234,48 @@ impl Database {
                 config.circuit_timeout_seconds as i32,
                 config.circuit_error_rate_threshold,
                 config.circuit_min_requests as i32,
+                config.load_balance_mode,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
         Ok(())
+    }
+
+    /// 测试观察用：按 provider 统计 proxy_request_logs 行数（app 过滤）
+    #[cfg(test)]
+    pub(crate) fn count_request_logs_by_provider(&self, app_type: &str) -> Vec<(String, i64)> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = conn
+            .prepare(
+                "SELECT provider_id, COUNT(*) FROM proxy_request_logs
+                 WHERE app_type = ?1 GROUP BY provider_id",
+            )
+            .expect("prepare count stmt");
+        stmt.query_map([app_type], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query logs")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect rows")
+    }
+
+    /// 每条请求日志的 (session_id, provider_id)：负载均衡 e2e 用它断言粘性。
+    #[cfg(test)]
+    pub(crate) fn request_log_session_provider_pairs(
+        &self,
+        app_type: &str,
+    ) -> Vec<(String, String)> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = conn
+            .prepare(
+                "SELECT session_id, provider_id FROM proxy_request_logs
+                 WHERE app_type = ?1 AND session_id IS NOT NULL AND session_id != ''
+                 ORDER BY created_at, request_id",
+            )
+            .expect("prepare pairs stmt");
+        stmt.query_map([app_type], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query pairs")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect rows")
     }
 
     /// 确保指定 app_type 的 proxy_config 行存在（同步版本，用于 set_* 函数）
@@ -854,6 +894,21 @@ mod tests {
     use crate::database::Database;
     use crate::error::AppError;
 
+    #[tokio::test]
+    async fn load_balance_mode_roundtrip_and_default() {
+        let db = Database::memory().unwrap();
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        assert_eq!(config.load_balance_mode, "off", "新库默认应为 off");
+        config.load_balance_mode = "session".to_string();
+        db.update_proxy_config_for_app(config).await.unwrap();
+        assert_eq!(
+            db.get_proxy_config_for_app("claude")
+                .await
+                .unwrap()
+                .load_balance_mode,
+            "session"
+        );
+    }
     #[tokio::test]
     async fn test_pricing_model_source_round_trip_and_validation() -> Result<(), AppError> {
         let db = Database::memory()?;

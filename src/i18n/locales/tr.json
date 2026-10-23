@@ -3736,7 +3736,16 @@
       "stopFailed": "Yönlendirme hizmeti durdurulamadı: {{detail}}"
     },
     "stoppedWithRestore": "Yönlendirme hizmeti durduruldu; tüm uygulamalar doğrudan bağlantılara geri döndü",
-    "stopWithRestoreFailed": "Durdurma başarısız oldu: {{detail}}"
+    "stopWithRestoreFailed": "Durdurma başarısız oldu: {{detail}}",
+    "loadBalance": {
+      "modeLabel": "Yük dengeleme modu",
+      "off": "Kapalı (birincil/yedek)",
+      "session": "Oturum yapışkan döngüsel dağıtım",
+      "hint": "Aynı oturum tek bir hesapta kalır; yeni oturumlar yük devretme kuyruğuna yayılır. Kuyrukta birden fazla hesaplı otomatik yük devretme gerektirir.",
+      "live": "Havuz {{pool}} hesap · {{inflight}} devam eden · {{cooling}} soğuyor",
+      "liveLoading": "Yük durumu yükleniyor…",
+      "minuteUnit": "dk"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}}'ye ulaşılabilir ({{responseTimeMs}}ms)",
@@ -4770,6 +4779,49 @@
       "refresh": "Kotayı yenile",
       "refreshAria": "{{login}} için kotayı yenileyin"
     }
+  },
+  "codingPlanPresets": {
+    "placeholder": "Plan ön ayarı (hızlı doldurma)",
+    "kimiTier1": "Kimi Seviye 1",
+    "kimiTier2": "Kimi Seviye 2",
+    "kimiTier3": "Kimi Seviye 3",
+    "kimiTier4": "Kimi Seviye 4",
+    "kimiMax": "Kimi Max",
+    "glmMax": "GLM Coding Max",
+    "mimo": "MiMo",
+    "sources": {
+      "userSpecified": "Kullanıcı tarafından belirtildi (2026-10-07)",
+      "kimiMax": "Kullanıcı tarafından 8 belirtildi (2026-10-07); resmî fiyat sayfası Max=4 gösteriyor — kullanıcı değeri önceliklidir",
+      "glmConsole": "Konsoldan doğrulandı (2026-10-07): glm-5.3=30, glm-5.3-flash=50",
+      "mimoUnspecified": "Resmî rakam yok; sınırsız bırakıldı. Çalışma zamanı 429/403 soğumasıyla uyum sağlar"
+    }
+  },
+  "providerAdvanced": {
+    "loadBalance": {
+      "title": "Eşzamanlılık sınırı",
+      "enable": "Etkinleştir",
+      "hint": "Oturum yapışkan yük dengelemesinde yeni oturumlar sınırın altındaki hesapları tercih eder; 0 veya boş = sınırsız. Yapışkan oturumlar asla sınırlanmaz.",
+      "preset": "Plan ön ayarı",
+      "presetHint": "Seçin ve doldurun; her kademenin kaynak notuna bakın. Sonradan düzenlenebilir",
+      "maxConcurrent": "Hesap varsayılan eşzamanlılığı",
+      "maxConcurrentHint": "0 veya boş = sınırsız",
+      "byModel": "Model başına geçersiz kılmalar",
+      "byModelHint": "Belirli giden modeller için ayrı sınır ayarlayın (model eşlemesinden sonraki ad); hesap varsayılanına göre önceliklidir",
+      "model": "Model adı",
+      "limit": "Sınır",
+      "addOverride": "Model geçersiz kılma ekle"
+    },
+    "pricingConfig": "Fiyatlandırma Yapılandırması",
+    "useCustomPricing": "Ayrı yapılandırma kullan",
+    "pricingConfigDesc": "Bu sağlayıcı için ayrı fiyatlandırma parametreleri yapılandırın. Devre dışıyken genel varsayılanlar kullanılır.",
+    "costMultiplier": "Maliyet Çarpanı",
+    "costMultiplierPlaceholder": "Genel varsayılanı (1) kullanmak için boş bırakın",
+    "costMultiplierHint": "Gerçek maliyet = Temel maliyet × Çarpan; 1,5 gibi ondalıklar desteklenir",
+    "pricingModelSourceLabel": "Fiyatlandırma Modu",
+    "pricingModelSourceInherit": "Genel varsayılanı devral",
+    "pricingModelSourceRequest": "İstek modeli",
+    "pricingModelSourceResponse": "Yanıt modeli",
+    "pricingModelSourceHint": "Fiyatlandırmanın istek modeline mi yanıt modeline mi göre eşleşeceğini seçin"
   },
   "kimi": {
     "oauth": {

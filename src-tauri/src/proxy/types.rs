@@ -186,6 +186,18 @@ pub struct AppProxyConfig {
     pub circuit_error_rate_threshold: f64,
     /// 计算错误率的最小请求数
     pub circuit_min_requests: u32,
+    /// 负载均衡模式："off"（主备/顺序故障转移，默认）| "session"（会话粘性轮询）
+    #[serde(default = "default_load_balance_mode")]
+    pub load_balance_mode: String,
+}
+
+fn default_load_balance_mode() -> String {
+    "off".to_string()
+}
+
+/// load_balance_mode 合法值校验（commands 层入库前调用）
+pub fn is_valid_load_balance_mode(value: &str) -> bool {
+    matches!(value, "off" | "session")
 }
 
 /// 整流器配置
@@ -373,6 +385,33 @@ impl LogConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_load_balance_mode_is_off() {
+        assert_eq!(default_load_balance_mode(), "off");
+    }
+
+    #[test]
+    fn app_proxy_config_serde_roundtrip_camel_case() {
+        let legacy = r#"{"appType":"claude","enabled":false,"autoFailoverEnabled":false,"maxRetries":3,"streamingFirstByteTimeout":60,"streamingIdleTimeout":120,"nonStreamingTimeout":600,"circuitFailureThreshold":4,"circuitSuccessThreshold":2,"circuitTimeoutSeconds":60,"circuitErrorRateThreshold":0.6,"circuitMinRequests":10}"#;
+        let with_mode = format!(
+            "{},\"loadBalanceMode\":\"session\"}}",
+            &legacy[..legacy.len() - 1]
+        );
+        let cfg: AppProxyConfig = serde_json::from_str(&with_mode).unwrap();
+        assert_eq!(cfg.load_balance_mode, "session");
+        // 旧载荷（无该字段）解析回退为 off
+        let legacy: AppProxyConfig = serde_json::from_str(legacy).unwrap();
+        assert_eq!(legacy.load_balance_mode, "off");
+    }
+
+    #[test]
+    fn validates_load_balance_mode_values() {
+        assert!(is_valid_load_balance_mode("off"));
+        assert!(is_valid_load_balance_mode("session"));
+        assert!(!is_valid_load_balance_mode("round_robin"));
+        assert!(!is_valid_load_balance_mode(""));
+    }
 
     #[test]
     fn test_rectifier_config_default_enabled() {
