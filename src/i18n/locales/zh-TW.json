@@ -5067,6 +5067,10 @@
     }
   },
   "dsh": {
+    "empty": {
+      "title": "新增 DeepSeek Harness 供應商",
+      "description": "設定請求網址、API Key 和模型。現有的自訂供應商會自動顯示在這裡。"
+    },
     "deleteSessionHint": "請在 DeepSeek Harness 中刪除此工作階段，以保持原生歷史記錄一致。"
   }
 }
