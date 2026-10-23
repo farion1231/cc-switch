@@ -2595,6 +2595,8 @@
     "secretAccessKey": "SecretAccessKey",
     "volcengineAkSkHint": "火山用量查詢需帳號級 AccessKey ID / Secret（與推理 API Key 不同）。請在火山引擎主控台右上角帳號選單 →「API存取金鑰」中建立。",
     "volcengineKeyConsoleLink": "金鑰建立網址：",
+    "aliyunPlanAkSkHint": "阿里雲套餐（千問AI平台 Token Plan / 百鍊 Coding Plan）的用量在百鍊控制台閘道後面，需要另填阿里雲 AccessKey ID / Secret（sk-sp-... 套餐 Key 只能呼叫模型）。請在阿里雲主控台建立，建議用只授予百鍊權限的 RAM 子帳號。",
+    "aliyunPlanConsoleLink": "AccessKey 建立網址：",
     "zhipuTeamHint": "智譜團隊套餐用量查詢需團隊 API Key（沿用本供應商憑據）+ 組織 ID + 專案 ID（作為請求標頭 bigmodel-organization / bigmodel-project）。組織與專案 ID 可在團隊管理後台用量頁的 URL 中找到。",
     "zhipuTeamConsoleLink": "團隊用量頁：",
     "organizationId": "組織 ID",

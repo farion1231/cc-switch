@@ -1996,6 +1996,35 @@ fn test_deeplink_coding_plan_endpoint_enables_token_plan_by_default() {
 }
 
 #[test]
+fn test_deeplink_aliyun_plans_are_preselected_but_not_enabled() {
+    // 百炼 / 千问 Token Plan 除推理 Key 外还要账号 AK/SK：预选好套餐模板，
+    // 但默认不启用，避免新卡片先报一条"缺 AccessKey"的失败。
+    for endpoint in [
+        "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+        "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+    ] {
+        let request = coding_plan_request("claude", endpoint);
+        let script = imported_usage_script(AppType::Claude, &request)
+            .unwrap_or_else(|| panic!("{endpoint} 应预选套餐模板"));
+        assert!(!script.enabled, "{endpoint}");
+        assert_eq!(script.template_type.as_deref(), Some("token_plan"));
+        assert!(script.coding_plan_provider.is_some());
+    }
+
+    // 链接显式写 usageEnabled=true 仍照办
+    let mut request = coding_plan_request(
+        "claude",
+        "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+    );
+    request.usage_enabled = Some(true);
+    assert!(
+        imported_usage_script(AppType::Claude, &request)
+            .unwrap()
+            .enabled
+    );
+}
+
+#[test]
 fn test_deeplink_coding_plan_respects_explicit_opt_out() {
     let mut request = coding_plan_request("claude", "https://open.bigmodel.cn/api/anthropic");
     request.usage_enabled = Some(false);
