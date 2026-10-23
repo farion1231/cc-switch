@@ -312,6 +312,7 @@
   },
   "notifications": {
     "providerAdded": "供應商已新增",
+    "providerAddedCheckActive": "供應商已新增。使用前請確認目前啟用的供應商。",
     "providerSaved": "供應商設定已儲存",
     "providerDeleted": "供應商刪除成功",
     "switchSuccess": "切換成功！",

@@ -312,6 +312,7 @@
   },
   "notifications": {
     "providerAdded": "プロバイダーを追加しました",
+    "providerAddedCheckActive": "プロバイダーを追加しました。使用前に有効なプロバイダーを確認してください。",
     "providerSaved": "プロバイダー設定を保存しました",
     "providerDeleted": "プロバイダーを削除しました",
     "switchSuccess": "切り替え成功！",
