@@ -24,7 +24,7 @@
 //! - 只管 `workbuddy-desktop`：不要和 WorkBuddy AI（`workbuddy-desktop-ai.info`、
 //!   `~/.workbuddy-ai`）或 CodeBuddy（`Tencent-Cloud.coding-copilot.info`）混淆。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -145,6 +145,9 @@ struct StoreFile {
     version: u32,
     #[serde(default)]
     accounts: BTreeMap<String, AccountData>,
+    /// 用户手动删掉的账号 id：别再被自动收录悄悄加回来（切换时例外，见 `absorb_known`）。
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    dismissed: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -278,12 +281,18 @@ impl WorkBuddyAccountManager {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// 列出账号和 WorkBuddy 当前登着的是哪个。只读，不改任何文件。
+    /// 列出账号，并把 WorkBuddy 当前登着的那个号自动收录进来（没收录过就加，已收录就把
+    /// 快照更新成最新——WorkBuddy 会刷新 token）。用户删过的号不会被自动加回来。只写
+    /// CC Switch 自己的账号表，绝不碰 WorkBuddy 的凭据文件。
     pub fn status(&self) -> Result<WorkBuddyAccountStatus, AppError> {
-        let store = self.lock();
+        let mut store = self.lock();
         let current = match self.read_live() {
-            Ok(LiveLogin::Known { identity, .. }) if store.accounts.contains_key(&identity.id) => {
-                Some(identity.id)
+            Ok(LiveLogin::Known { bundle, identity }) => {
+                let (id, changed) = absorb_known(&mut store, bundle, identity, false);
+                if changed {
+                    self.persist(&store)?;
+                }
+                id
             }
             Ok(_) => None,
             Err(error) => {
@@ -334,6 +343,8 @@ impl WorkBuddyAccountManager {
             }
             LiveLogin::Known { bundle, identity } => {
                 let created = !store.accounts.contains_key(&identity.id);
+                // 手动收录是明确意愿，解除之前的「删除」标记
+                store.dismissed.remove(&identity.id);
                 let account = upsert(&mut store, bundle, identity);
                 self.persist(&store)?;
                 Ok(ImportOutcome { account, created })
@@ -369,7 +380,11 @@ impl WorkBuddyAccountManager {
         let current = match live {
             LiveLogin::Known { bundle, identity } => {
                 let id = identity.id.clone();
-                if store.accounts.get(&id).map(|data| &data.bundle) != Some(&bundle) {
+                // 当前登着的号即便之前被删过也要收回来，免得切走后这份登录彻底丢了
+                let was_dismissed = store.dismissed.remove(&id);
+                if was_dismissed
+                    || store.accounts.get(&id).map(|data| &data.bundle) != Some(&bundle)
+                {
                     upsert(&mut store, bundle, identity);
                     self.persist(&store)?;
                 }
@@ -418,6 +433,7 @@ impl WorkBuddyAccountManager {
         self.ensure_quiet()?;
         let captured = match self.read_live()? {
             LiveLogin::Known { bundle, identity } => {
+                store.dismissed.remove(&identity.id);
                 let account = upsert(&mut store, bundle, identity);
                 self.persist(&store)?;
                 Some(account)
@@ -435,12 +451,14 @@ impl WorkBuddyAccountManager {
         Ok(captured)
     }
 
-    /// 只删 CC Switch 里的副本，不碰 WorkBuddy 的文件。
+    /// 只删 CC Switch 里的副本，不碰 WorkBuddy 的文件。记进 `dismissed`，这样即便它正是
+    /// WorkBuddy 当前登着的号，也不会被自动收录马上加回来（想找回点「收录当前登录」即可）。
     pub fn remove(&self, account_id: &str) -> Result<(), AppError> {
         let mut store = self.lock();
         if store.accounts.remove(account_id).is_none() {
             return Err(account_not_found(account_id));
         }
+        store.dismissed.insert(account_id.to_string());
         self.persist(&store)
     }
 
@@ -448,6 +466,7 @@ impl WorkBuddyAccountManager {
         let mut store = self.lock();
         let removed: Vec<String> = store.accounts.keys().cloned().collect();
         store.accounts.clear();
+        store.dismissed.extend(removed.iter().cloned());
         self.persist(&store)?;
         Ok(removed)
     }
@@ -594,11 +613,42 @@ impl WorkBuddyAccountManager {
         let snapshot = StoreFile {
             version: 1,
             accounts: store.accounts.clone(),
+            dismissed: store.dismissed.clone(),
         };
         let content = serde_json::to_vec_pretty(&snapshot)
             .map_err(|source| AppError::JsonSerialize { source })?;
         crate::config::atomic_write_private(&self.data_dir.join(STORE_FILENAME), &content)
     }
+}
+
+/// 把识别出的当前登录并进账号表。返回它的 id 和账号表是否真的变了（变了才需要落盘）。
+/// `import_dismissed` 为 false 时，用户删过的号不会被自动加回来；切换/收录等明确意愿为 true。
+fn absorb_known(
+    store: &mut StoreFile,
+    bundle: Bundle,
+    identity: Identity,
+    import_dismissed: bool,
+) -> (Option<String>, bool) {
+    let id = identity.id.clone();
+    if let Some(existing) = store.accounts.get(&id) {
+        // 已收录：只有快照或明文字段真的变了才算「变化」，避免每次轮询都写盘
+        let unchanged = existing.bundle == bundle
+            && (identity.kind.is_none() || existing.kind == identity.kind)
+            && (identity.nickname.is_none() || existing.nickname == identity.nickname)
+            && existing.expires_at == identity.expires_at
+            && existing.refresh_expires_at == identity.refresh_expires_at;
+        if unchanged {
+            return (Some(id), false);
+        }
+        upsert(store, bundle, identity);
+        return (Some(id), true);
+    }
+    if store.dismissed.contains(&id) && !import_dismissed {
+        return (None, false);
+    }
+    store.dismissed.remove(&id);
+    upsert(store, bundle, identity);
+    (Some(id), true)
 }
 
 fn upsert(store: &mut StoreFile, bundle: Bundle, identity: Identity) -> WorkBuddyAccount {

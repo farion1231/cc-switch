@@ -209,6 +209,87 @@ fn imports_the_current_account_with_its_whole_bundle() {
 }
 
 #[test]
+fn status_auto_absorbs_the_current_login_and_keeps_it_fresh() {
+    let fixture = Fixture::new();
+    let manager = fixture.manager();
+    fixture.sign_in("u-1", 0);
+
+    // 没有手动收录，光读 status 就把当前登录收了进来
+    let status = manager.status().unwrap();
+    assert_eq!(status.accounts.len(), 1);
+    assert_eq!(status.current_account_id.as_deref(), Some("u-1"));
+
+    // WorkBuddy 刷新 token（换了 keyblob/.info 的字节）后，再读 status 把快照更新成最新
+    fixture.sign_in("u-1", 5);
+    manager.status().unwrap();
+    let reloaded = fixture.manager();
+    let data = reloaded.lock().accounts.get("u-1").cloned().unwrap();
+    assert_eq!(
+        decode(&data.bundle.info).unwrap(),
+        info_doc("u-1", 5).as_bytes()
+    );
+    assert_eq!(
+        decode(data.bundle.keyblob.as_deref().unwrap()).unwrap(),
+        b"keyblob-u-1-5"
+    );
+}
+
+#[test]
+fn removed_account_is_not_auto_absorbed_until_re_imported() {
+    let fixture = Fixture::new();
+    let manager = fixture.manager();
+    fixture.sign_in("u-1", 0);
+    manager.status().unwrap();
+
+    // 删掉后，即便 WorkBuddy 还登着它，自动收录也不把它加回来
+    manager.remove("u-1").unwrap();
+    let status = manager.status().unwrap();
+    assert!(status.accounts.is_empty());
+    assert_eq!(status.current_account_id, None);
+
+    // 「删除」标记要持久化：重开 manager 仍然不自动加回来
+    let reopened = fixture.manager();
+    assert!(reopened.status().unwrap().accounts.is_empty());
+
+    // 手动「收录当前登录」是明确意愿，解除标记后又能自动保持
+    reopened.import_current().unwrap();
+    assert_eq!(
+        reopened.status().unwrap().current_account_id.as_deref(),
+        Some("u-1")
+    );
+}
+
+#[test]
+fn switching_away_recaptures_even_a_removed_live_login() {
+    let fixture = Fixture::new();
+    let manager = fixture.manager();
+    fixture.sign_in("u-1", 0);
+    manager.import_current().unwrap();
+    fixture.sign_in("u-2", 0);
+    manager.status().unwrap();
+
+    // 用户删掉了当前登着的 u-2，但它仍是 WorkBuddy 的 live 登录
+    manager.remove("u-2").unwrap();
+    assert!(!manager
+        .status()
+        .unwrap()
+        .accounts
+        .iter()
+        .any(|account| account.id == "u-2"));
+
+    // 切到 u-1 时要把被删却仍在用的 u-2 收回来，免得这份登录丢掉
+    manager.switch_to("u-1").unwrap();
+    assert!(manager
+        .status()
+        .unwrap()
+        .accounts
+        .iter()
+        .any(|account| account.id == "u-2"));
+    manager.switch_to("u-2").unwrap();
+    assert_eq!(fixture.info(), info_doc("u-2", 0));
+}
+
+#[test]
 fn unrecognized_login_is_stashed_not_imported() {
     let fixture = Fixture::new();
     std::fs::write(

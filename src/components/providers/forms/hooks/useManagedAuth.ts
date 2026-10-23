@@ -52,7 +52,15 @@ export function useManagedAuth(
     // A rejected xAI refresh token is persisted as `requires_reauth` by the
     // proxy hot path. Periodically refresh local status so an already-open Auth
     // Center stops showing the account as logged in without requiring a reload.
-    refetchInterval: authProvider === "xai_oauth" ? 15_000 : false,
+    // WorkBuddy auto-absorbs the desktop app's current sign-in on every status
+    // read, so poll while the Auth Center is open to surface a freshly logged-in
+    // account (and refresh its snapshot) without a manual "import" click.
+    refetchInterval:
+      authProvider === "xai_oauth"
+        ? 15_000
+        : authProvider === "workbuddy_account"
+          ? 5_000
+          : false,
   });
 
   const stopPolling = useCallback(() => {
