@@ -1869,7 +1869,8 @@ pub fn run() {
             commands::kimi_oauth_start,
             commands::kimi_oauth_poll,
             commands::kimi_oauth_cancel,
-            commands::kimi_oauth_logout,
+            commands::kimi_oauth_remove,
+            commands::kimi_oauth_quota,
             commands::kimi_oauth_use_account,
             // Copilot OAuth commands (multi-account support)
             commands::copilot_start_device_flow,

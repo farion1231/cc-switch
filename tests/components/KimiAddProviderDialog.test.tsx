@@ -17,7 +17,8 @@ vi.mock("@/lib/api/kimiOAuth", () => ({
     start: vi.fn(),
     poll: vi.fn(),
     cancel: vi.fn(),
-    logout: vi.fn(),
+    remove: vi.fn(),
+    quota: vi.fn(),
     useAccount: vi.fn(),
   },
 }));
@@ -60,7 +61,11 @@ beforeAll(() => {
   });
 });
 
-const status: KimiOAuthStatus = { accounts: [], currentAccountId: null };
+const status: KimiOAuthStatus = {
+  accounts: [],
+  currentAccountId: null,
+  primaryHidden: false,
+};
 const device = {
   flowId: "kimi-flow",
   userCode: "TEST-CODE",
@@ -156,17 +161,26 @@ describe("Kimi account entry in the add-provider dialog", () => {
       region: "global" as const,
       expiresAt: null,
       error: null,
+      nickname: null,
+      avatarUrl: null,
+      primary: false,
     };
     vi.mocked(kimiOAuthApi.status).mockResolvedValue({
       accounts: [account],
       currentAccountId: null,
+      primaryHidden: false,
     });
     const { onSubmit, onOpenChange } = setup();
     const group = await openAuthCenter();
-    fireEvent.click(
+    // 「使用此账号」收在账号行的「…」菜单里
+    fireEvent.keyDown(
       await within(group).findByRole("button", {
-        name: "kimi.oauth.useAccount",
+        name: /accountMenu|更多操作/,
       }),
+      { key: "Enter" },
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "kimi.oauth.useAccount" }),
     );
     await waitFor(() =>
       expect(kimiOAuthApi.useAccount).toHaveBeenCalledWith(account.id),

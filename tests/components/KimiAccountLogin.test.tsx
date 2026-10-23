@@ -12,7 +12,8 @@ vi.mock("@/lib/api/kimiOAuth", () => ({
     start: vi.fn(),
     poll: vi.fn(),
     cancel: vi.fn(),
-    logout: vi.fn(),
+    remove: vi.fn(),
+    quota: vi.fn(),
     useAccount: vi.fn(),
   },
 }));
@@ -25,6 +26,15 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 vi.mock("@/lib/clipboard", () => ({ copyText: mocks.copy }));
 
+// 账号操作收在每行的「…」菜单里；Radix 菜单在 jsdom 里用回车打开最稳
+async function openMenu(row: HTMLElement) {
+  fireEvent.keyDown(
+    within(row).getByRole("button", { name: /accountMenu|更多操作/ }),
+    { key: "Enter" },
+  );
+  await flush();
+}
+
 const account = {
   id: "kimi-code-ccs-first",
   name: "Kimi Official (first)",
@@ -32,11 +42,19 @@ const account = {
   region: "mainland-cn" as const,
   expiresAt: null,
   error: null,
+  nickname: null,
+  avatarUrl: null,
+  primary: false,
 };
-const signedOut: KimiOAuthStatus = { accounts: [], currentAccountId: null };
+const signedOut: KimiOAuthStatus = {
+  accounts: [],
+  currentAccountId: null,
+  primaryHidden: false,
+};
 const signedIn: KimiOAuthStatus = {
   accounts: [account],
   currentAccountId: account.id,
+  primaryHidden: false,
 };
 const device = {
   flowId: "flow-1",
@@ -79,7 +97,17 @@ describe("Kimi official account login", () => {
     vi.mocked(kimiOAuthApi.poll).mockResolvedValue(pending);
     vi.mocked(kimiOAuthApi.cancel).mockResolvedValue(true);
     vi.mocked(kimiOAuthApi.useAccount).mockResolvedValue(undefined);
-    vi.mocked(kimiOAuthApi.logout).mockResolvedValue(undefined);
+    vi.mocked(kimiOAuthApi.remove).mockResolvedValue(undefined);
+    vi.mocked(kimiOAuthApi.quota).mockResolvedValue({
+      tool: "kimi_oauth",
+      credentialStatus: "valid",
+      credentialMessage: null,
+      success: true,
+      tiers: [],
+      extraUsage: null,
+      error: null,
+      queriedAt: 0,
+    });
     mocks.openExternal.mockResolvedValue(undefined);
     mocks.copy.mockResolvedValue(undefined);
   });
@@ -95,17 +123,19 @@ describe("Kimi official account login", () => {
       name: "Kimi Official (second)",
       region: "global" as const,
     };
-    await setup({ accounts: [account, second], currentAccountId: account.id });
+    await setup({ accounts: [account, second], currentAccountId: account.id, primaryHidden: false });
     const row = screen
       .getByText(second.name)
       .closest('[role="listitem"]')! as HTMLElement;
+    await openMenu(row);
     fireEvent.click(
-      within(row).getByRole("button", { name: "kimi.oauth.useAccount" }),
+      screen.getByRole("menuitem", { name: "kimi.oauth.useAccount" }),
     );
     await flush();
     expect(kimiOAuthApi.useAccount).toHaveBeenCalledWith(second.id);
+    await openMenu(row);
     fireEvent.click(
-      within(row).getByRole("button", { name: "kimi.oauth.signInAgain" }),
+      screen.getByRole("menuitem", { name: "kimi.oauth.signInAgain" }),
     );
     await flush();
     expect(kimiOAuthApi.start).toHaveBeenCalledWith("global", second.id);
@@ -269,17 +299,97 @@ describe("Kimi official account login", () => {
     },
   );
 
-  it("requires confirmation before removing the native login", async () => {
-    await setup(signedIn);
-    fireEvent.click(screen.getByRole("button", { name: "kimi.oauth.signOut" }));
-    expect(kimiOAuthApi.logout).not.toHaveBeenCalled();
+  it("deletes a separate account only after confirmation and never while it is in use", async () => {
+    const second = {
+      ...account,
+      id: "kimi-code-ccs-second",
+      name: "Kimi Official · second",
+    };
+    await setup({ accounts: [account, second], currentAccountId: account.id, primaryHidden: false });
+    const currentRow = screen
+      .getByText(account.name)
+      .closest('[role="listitem"]')! as HTMLElement;
+    await openMenu(currentRow);
+    // 正在用的号菜单里没有「使用此账号」，删除项置灰并说明原因
+    expect(
+      screen.queryByRole("menuitem", { name: "kimi.oauth.useAccount" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: /kimi\.oauth\.removeAccount/ }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText("kimi.oauth.removeCurrentHint")).toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+    });
+    await flush();
+
+    const row = screen
+      .getByText(second.name)
+      .closest('[role="listitem"]')! as HTMLElement;
+    await openMenu(row);
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "kimi.oauth.removeAccount" }),
+    );
+    expect(kimiOAuthApi.remove).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog")).toHaveTextContent(
-      "kimi.oauth.signOutConfirm",
+      "kimi.oauth.removeConfirm",
     );
     fireEvent.click(
-      screen.getAllByRole("button", { name: "kimi.oauth.signOut" }).at(-1)!,
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "kimi.oauth.removeAccount",
+      }),
     );
     await flush();
-    expect(kimiOAuthApi.logout).toHaveBeenCalledWith(account.id);
+    expect(kimiOAuthApi.remove).toHaveBeenCalledWith(second.id);
+  });
+
+  it("only hides Kimi's own login from the list, even while it is in use", async () => {
+    const primary = {
+      ...account,
+      id: "kimi-code",
+      name: "Kimi Official · main",
+      primary: true,
+    };
+    await setup({ accounts: [primary], currentAccountId: primary.id, primaryHidden: false });
+    expect(screen.getByText(/kimi\.oauth\.primaryHint/)).toBeInTheDocument();
+    await openMenu(
+      screen.getByText(primary.name).closest('[role="listitem"]')!,
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: "kimi.oauth.removeAccount" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "kimi.oauth.dismissAccount" }),
+    );
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "kimi.oauth.dismissConfirm",
+    );
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "kimi.oauth.dismissAccount",
+      }),
+    );
+    await flush();
+    expect(kimiOAuthApi.remove).toHaveBeenCalledWith(primary.id);
+  });
+
+  it("says Kimi's own login was only hidden when the list is empty", async () => {
+    await setup({ accounts: [], currentAccountId: null, primaryHidden: true });
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "kimi.oauth.primaryHidden",
+    );
+    expect(screen.queryByText("kimi.oauth.signedOut")).not.toBeInTheDocument();
+  });
+
+  it("queries quota for each signed-in account", async () => {
+    const second = {
+      ...account,
+      id: "kimi-code-ccs-second",
+      name: "Kimi Official · second",
+      authenticated: false,
+    };
+    await setup({ accounts: [account, second], currentAccountId: account.id, primaryHidden: false });
+    expect(kimiOAuthApi.quota).toHaveBeenCalledWith(account.id);
+    expect(kimiOAuthApi.quota).not.toHaveBeenCalledWith(second.id);
   });
 });

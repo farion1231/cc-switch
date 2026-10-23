@@ -5465,6 +5465,11 @@ impl ProviderService {
                 crate::mcode_config::get_providers()?
             };
             let mut saved = state.db.get_all_providers(app_type.as_str())?;
+            let nicknames = if app_type == AppType::Kimi {
+                crate::services::kimi_oauth::account_nicknames()
+            } else {
+                Default::default()
+            };
             for (id, config) in &native {
                 if !saved.contains_key(id) {
                     let name = config.get("name").and_then(Value::as_str).unwrap_or(id);
@@ -5483,7 +5488,10 @@ impl ProviderService {
                 }
                 Self::set_provider_live_config_managed(provider, native.contains_key(id));
                 if app_type == AppType::Kimi {
-                    crate::kimi_config::normalize_provider_identity(provider);
+                    crate::kimi_config::normalize_provider_identity(
+                        provider,
+                        nicknames.get(id).map(String::as_str),
+                    );
                 }
                 state.db.save_provider(app_type.as_str(), provider)?;
             }
@@ -6468,9 +6476,20 @@ impl ProviderService {
         }
         if app_type == AppType::Kimi {
             Self::ensure_kimi_provider_editable(id)?;
-            return crate::kimi_config::save_and_commit(id, None, false, || {
+            let saved = state.db.get_provider_by_id(id, "kimi")?;
+            crate::kimi_config::save_and_commit(id, None, false, || {
                 state.db.delete_provider("kimi", id)
-            });
+            })?;
+            // The official node is already gone from Kimi (otherwise editing is
+            // refused above); its CC Switch-owned credential goes with the card.
+            if let Some(saved) = saved {
+                if let Err(error) =
+                    crate::services::kimi_oauth::forget_removed_profile(id, &saved.settings_config)
+                {
+                    log::warn!("[Kimi] 删除卡片后清理凭据失败: {error}");
+                }
+            }
+            return Ok(());
         }
 
         // Additive mode apps - no current provider concept
@@ -6693,6 +6712,7 @@ impl ProviderService {
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
 
         if app_type == AppType::Kimi {
+            crate::services::kimi_oauth::ensure_profile_signed_in(&_provider.settings_config)?;
             let mut provider = _provider.clone();
             Self::set_provider_live_config_managed(&mut provider, true);
             crate::kimi_config::switch_and_commit(
