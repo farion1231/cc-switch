@@ -6097,6 +6097,75 @@ read -r _
     }
 }
 
+/// Launch Hermes from the environment selected by its config directory.
+/// WSL dashboards run in the preferred terminal so logs and Ctrl+C stay available.
+pub(crate) fn launch_hermes_dashboard_process() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let command = {
+        let config_dir = crate::hermes_config::get_hermes_dir();
+        if wsl_distro_from_path(&config_dir).is_some() {
+            hermes_dashboard_wsl_command(&config_dir)?
+        } else {
+            "hermes dashboard".to_string()
+        }
+    };
+    #[cfg(not(target_os = "windows"))]
+    let command = "hermes dashboard".to_string();
+
+    launch_terminal_running(&command, "hermes_dashboard")
+}
+
+#[cfg(target_os = "windows")]
+fn hermes_dashboard_wsl_script(config_dir: &Path) -> Result<(String, String), String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    let Some(distro) = wsl_distro_from_path(config_dir) else {
+        return Err("Hermes config directory is not a WSL path".to_string());
+    };
+    if !is_valid_wsl_distro_name(&distro) || distro.starts_with('-') {
+        return Err(format!("Invalid WSL distro name: {distro}"));
+    }
+    let linux_dir = wsl_unc_path_to_linux(config_dir)
+        .ok_or_else(|| "Invalid Hermes WSL config directory".to_string())?;
+    let payload = format!(
+        "export HERMES_HOME={}; exec hermes dashboard",
+        shell_single_quote(&linux_dir)
+    );
+    let probe = shell_single_quote("command -v hermes >/dev/null 2>&1");
+    let payload = shell_single_quote(&payload);
+    let script = format!(
+        r#"login_shell="${{SHELL:-}}"
+if [ -z "$login_shell" ]; then
+  login_shell="$(getent passwd "$(id -u)" | cut -d: -f7)"
+fi
+if [ -z "$login_shell" ]; then
+  echo "Could not determine the WSL user's login shell" >&2
+  exit 127
+fi
+if "$login_shell" -lic {probe}; then
+  exec "$login_shell" -lic {payload}
+elif "$login_shell" -lc {probe}; then
+  exec "$login_shell" -lc {payload}
+else
+  echo "Hermes was not found in the WSL user's login shell" >&2
+  exit 127
+fi
+"#
+    );
+    // Only a base64 bootstrap is passed through WSL's shell; the Linux path and
+    // command remain data inside the decoded script.
+    Ok((distro, STANDARD.encode(script)))
+}
+
+#[cfg(target_os = "windows")]
+fn hermes_dashboard_wsl_command(config_dir: &Path) -> Result<String, String> {
+    let (distro, encoded_script) = hermes_dashboard_wsl_script(config_dir)?;
+    let bootstrap = format!("echo {encoded_script} | base64 -d | sh");
+    Ok(format!(
+        "wsl.exe -d {distro} --cd / -- sh -c \"{bootstrap}\""
+    ))
+}
+
 /// 设置窗口主题（Windows/macOS 标题栏颜色）
 /// theme: "dark" | "light" | "system"
 #[tauri::command]
@@ -6114,6 +6183,57 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 
 #[cfg(test)]
 mod tests {
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn hermes_dashboard_runs_in_wsl_login_shell_in_the_preferred_terminal() {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+        let command = hermes_dashboard_wsl_command(Path::new(
+            r"\\wsl.localhost\Ubuntu-22.04\home\user\.hermes",
+        ))
+        .unwrap();
+        assert!(command.starts_with("wsl.exe -d Ubuntu-22.04 --cd / -- sh -c \"echo "));
+        assert!(command.ends_with(" | base64 -d | sh\""));
+        let encoded = command
+            .strip_prefix("wsl.exe -d Ubuntu-22.04 --cd / -- sh -c \"echo ")
+            .unwrap()
+            .strip_suffix(" | base64 -d | sh\"")
+            .unwrap();
+        let script = String::from_utf8(STANDARD.decode(encoded).unwrap()).unwrap();
+        assert!(script.contains("login_shell=\"${SHELL:-}\""));
+        assert!(script.contains("getent passwd \"$(id -u)\""));
+        assert!(script.contains("\"$login_shell\" -lic"));
+        assert!(script.contains("\"$login_shell\" -lc"));
+        assert!(script.contains("command -v hermes"));
+        assert!(script.contains("exec \"$login_shell\" -lic"));
+        assert!(!script.contains("nohup"));
+        assert!(script.contains("export HERMES_HOME='\"'\"'/home/user/.hermes'"));
+        assert!(script.contains("exec hermes dashboard"));
+
+        assert!(hermes_dashboard_wsl_command(Path::new(r"C:\Users\user\hermes")).is_err());
+        assert!(hermes_dashboard_wsl_script(Path::new(r"\\wsl$\-option\hermes")).is_err());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn hermes_dashboard_keeps_special_config_path_as_shell_data() {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+        let command = hermes_dashboard_wsl_command(Path::new(
+            r"\\wsl$\Ubuntu\home\用户\Hermes %PATH% ! & (work)'",
+        ))
+        .unwrap();
+        let encoded = command
+            .strip_prefix("wsl.exe -d Ubuntu --cd / -- sh -c \"echo ")
+            .unwrap()
+            .strip_suffix(" | base64 -d | sh\"")
+            .unwrap();
+        let script = String::from_utf8(STANDARD.decode(encoded).unwrap()).unwrap();
+        assert!(script.contains("/home/用户/Hermes %PATH% ! & (work)"));
+        assert!(!command.contains("%PATH%"));
+        assert!(!command.contains('!'));
+    }
 
     #[test]
     fn shell_command_missing_matches_shell_formats_only() {
