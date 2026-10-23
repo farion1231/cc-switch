@@ -4562,6 +4562,7 @@
       "failedTitle": "Some apps couldn't be read",
       "filesTitle": "Which files were read",
       "claudeNote": " (top-level mcpServers)",
+      "codebuddyNote": " (the first existing of .mcp.json, mcp.json, ~/.codebuddy.json)",
       "ok": "Got it"
     },
     "templateLabels": {

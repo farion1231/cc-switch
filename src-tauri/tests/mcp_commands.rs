@@ -1749,7 +1749,8 @@ fn resync_targets_default_to_managed_apps_and_reject_unsupported() {
             "pi",
             "mcode",
             "kimi",
-            "agy"
+            "agy",
+            "codebuddy"
         ]
     );
     assert_eq!(McpService::resync_targets(Some(&[])).unwrap(), all);

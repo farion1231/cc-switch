@@ -143,12 +143,8 @@ export function usesEditorView(appId: AppId): boolean {
 
 /**
  * Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`）。
- * CodeBuddy 的 MCP 同步需要数据库新增 enabled_codebuddy 列，暂未接入。
  */
-export type McpAppId = Exclude<
-  AppId,
-  "claude-desktop" | "openclaw" | "codebuddy"
->;
+export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw">;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
   "codex",
@@ -159,6 +155,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "pi",
   "mcode",
   "kimi",
+  "codebuddy",
   "agy",
 ];
 

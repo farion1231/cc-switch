@@ -4562,6 +4562,7 @@
       "failedTitle": "有应用没有读到",
       "filesTitle": "读取了哪些文件",
       "claudeNote": "（顶层 mcpServers）",
+      "codebuddyNote": "（按 .mcp.json → mcp.json → ~/.codebuddy.json 读取最先存在的一个）",
       "ok": "知道了"
     },
     "templateLabels": {

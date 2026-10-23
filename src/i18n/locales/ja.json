@@ -4562,6 +4562,7 @@
       "failedTitle": "読み込めなかったアプリがあります",
       "filesTitle": "読み込んだファイル",
       "claudeNote": "（トップレベルの mcpServers）",
+      "codebuddyNote": "（.mcp.json → mcp.json → ~/.codebuddy.json の順で最初に見つかったファイル）",
       "ok": "OK"
     },
     "templateLabels": {

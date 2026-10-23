@@ -4446,6 +4446,7 @@
       "failedTitle": "Bazı uygulamalar okunamadı",
       "filesTitle": "Hangi dosyalar okundu",
       "claudeNote": " (üst düzey mcpServers)",
+      "codebuddyNote": " (.mcp.json, mcp.json, ~/.codebuddy.json içinden ilk mevcut olan)",
       "ok": "Anladım"
     },
     "templateLabels": {

@@ -1,4 +1,6 @@
-use cc_switch_lib::{AppType, Prompt, PromptService, Provider, ProviderService};
+use cc_switch_lib::{
+    AppType, McpApps, McpServer, McpService, Prompt, PromptService, Provider, ProviderService,
+};
 use serde_json::{json, Value};
 use std::{ffi::OsString, fs};
 
@@ -187,4 +189,53 @@ fn codebuddy_prompts_write_global_codebuddy_md() {
         fs::read_to_string(&path).unwrap(),
         "Always answer in Chinese."
     );
+}
+
+#[test]
+fn codebuddy_mcp_writes_the_file_codebuddy_reads_and_round_trips() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let home = CodebuddyHome::new();
+    let state = create_test_state().unwrap();
+    // Only the deprecated file exists: CodeBuddy reads it, so CC Switch must write it
+    // instead of creating a .mcp.json that would shadow the user's servers.
+    let legacy = home.directory.path().join("mcp.json");
+    fs::write(
+        &legacy,
+        json!({"mcpServers": {"mine": {"type": "stdio", "command": "node"}}}).to_string(),
+    )
+    .unwrap();
+    let server = McpServer {
+        id: "test".into(),
+        name: "Test".into(),
+        server: json!({"type":"http","url":"https://example.com/mcp"}),
+        apps: McpApps {
+            codebuddy: true,
+            ..Default::default()
+        },
+        description: None,
+        homepage: None,
+        docs: None,
+        tags: vec![],
+    };
+    McpService::upsert_server(&state, server).unwrap();
+    assert!(!home.directory.path().join(".mcp.json").exists());
+    let value: Value = serde_json::from_slice(&fs::read(&legacy).unwrap()).unwrap();
+    assert_eq!(value["mcpServers"]["test"]["type"], "http");
+    assert_eq!(value["mcpServers"]["mine"]["command"], "node");
+
+    McpService::toggle_app(&state, "test", AppType::Codebuddy, false).unwrap();
+    let value: Value = serde_json::from_slice(&fs::read(&legacy).unwrap()).unwrap();
+    assert!(value["mcpServers"].get("test").is_none());
+    assert!(
+        !state.db.get_all_mcp_servers().unwrap()["test"]
+            .apps
+            .codebuddy
+    );
+
+    // Import picks up the user's own server.
+    McpService::import_from_all_apps(&state).unwrap();
+    let servers = state.db.get_all_mcp_servers().unwrap();
+    assert!(servers["mine"].apps.codebuddy);
+    assert_eq!(servers["mine"].server["type"], "stdio");
 }
