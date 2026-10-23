@@ -268,9 +268,10 @@ export function adaptSvgToTheme(svg: string): string {
     ? svg
     : svg
         .split(MASK_BLOCK)
-        // split 带捕获组：[正文, 整块, 标签名, 正文, ...]，只改正文
+        // split 带捕获组：[正文, 整块, 标签名, 正文, ...]，丢掉标签名后只改正文
+        .filter((_, i) => i % 3 !== 2)
         .map((part, i) =>
-          i % 3 === 0
+          i % 2 === 0
             ? part.replace(PAINT_ATTR, (whole, attr, color) =>
                 isDarkInk(color) ? `${attr}="currentColor"` : whole,
               )
