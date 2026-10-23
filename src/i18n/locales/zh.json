@@ -5030,6 +5030,10 @@
     }
   },
   "dsh": {
+    "empty": {
+      "title": "添加 DeepSeek Harness 供应商",
+      "description": "配置请求地址、API Key 和模型。已有的自定义供应商会自动显示在这里。"
+    },
     "deleteSessionHint": "请在 DeepSeek Harness 中删除此会话，以保持原生历史记录一致。"
   }
 }
