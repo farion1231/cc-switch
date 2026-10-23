@@ -4,6 +4,9 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { QwenProviderForm } from "@/components/providers/forms/QwenProviderForm";
 import { qwenProviderPresets } from "@/config/qwenProviderPresets";
+import { http, HttpResponse } from "msw";
+import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
+import { server } from "../msw/server";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
 beforeAll(() => {
@@ -131,6 +134,81 @@ describe("QwenProviderForm", () => {
     expect(save()).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "qwen.removeModel" }));
     expect(save()).toBeDisabled();
+  });
+
+  it("fetches models from the endpoint and fills picked ones", async () => {
+    const user = userEvent.setup();
+    let request: Record<string, unknown> | undefined;
+    server.use(
+      http.post(
+        "http://tauri.local/fetch_models_for_config",
+        async ({ request: req }) => {
+          request = (await req.json()) as Record<string, unknown>;
+          return HttpResponse.json([
+            { id: "qwen3.7-plus", ownedBy: null },
+            { id: "glm-5", ownedBy: null },
+          ]);
+        },
+      ),
+      http.get(MODELS_DEV_API_URL, () =>
+        HttpResponse.json({
+          relay: {
+            api: "https://relay.example.com/v1",
+            models: { "qwen3.7-plus": { limit: { context: 1000000 } } },
+          },
+        }),
+      ),
+    );
+    const submit = renderForm();
+    fireEvent.change(screen.getByLabelText(/provider\.name/), {
+      target: { value: "Relay" },
+    });
+    fireEvent.change(screen.getByLabelText("opencode.providerKey *"), {
+      target: { value: "relay" },
+    });
+    fireEvent.change(screen.getByLabelText(/qwen\.baseUrl/), {
+      target: { value: "https://relay.example.com/v1" },
+    });
+    fireEvent.change(screen.getByLabelText("API Key"), {
+      target: { value: "sk-relay" },
+    });
+    // A blank manual row is replaced by the picked models.
+    fireEvent.click(screen.getByRole("button", { name: /qwen\.addModel/ }));
+
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+    await user.click(
+      await screen.findByRole("checkbox", { name: "qwen3.7-plus" }),
+    );
+    await user.click(screen.getByRole("checkbox", { name: "glm-5" }));
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.modelPicker.apply" }),
+    );
+
+    expect(request).toMatchObject({
+      baseUrl: "https://relay.example.com/v1",
+      apiKey: "sk-relay",
+      apiFormat: "openai-completions",
+    });
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByLabelText("qwen.modelId *")
+          .map((input) => (input as HTMLInputElement).value),
+      ).toEqual(["qwen3.7-plus", "glm-5"]),
+    );
+    await waitFor(() =>
+      expect(screen.getAllByLabelText("qwen.contextWindowSize")[0]).toHaveValue(
+        1000000,
+      ),
+    );
+    await user.click(save());
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(JSON.parse(submit.mock.calls[0][0].settingsConfig).models).toEqual([
+      { id: "qwen3.7-plus", generationConfig: { contextWindowSize: 1000000 } },
+      { id: "glm-5" },
+    ]);
   });
 
   it("requires a base URL for the Anthropic protocol", () => {

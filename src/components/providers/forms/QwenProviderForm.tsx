@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { Plus, Trash2 } from "lucide-react";
@@ -15,6 +15,14 @@ import {
 } from "@/components/ui/select";
 import JsonEditor from "@/components/JsonEditor";
 import { useDarkMode } from "@/hooks/useDarkMode";
+import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
+import {
+  fetchModelsForConfig,
+  showFetchModelsError,
+  type FetchedModel,
+} from "@/lib/api/model-fetch";
+import { toast } from "@/lib/toast";
+import { piPresetModelSources } from "@/config/presetModelMetadata";
 import { useProvidersQuery } from "@/lib/query/queries";
 import type { ProviderFormData } from "@/lib/schemas/provider";
 import type { ProviderCategory } from "@/types";
@@ -29,6 +37,10 @@ import {
 } from "@/config/qwenProviderPresets";
 import { BasicFormFields } from "./BasicFormFields";
 import { ApiKeySection } from "./shared";
+import {
+  FetchedModelPicker,
+  type FetchedModelSelection,
+} from "./FetchedModelPicker";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import type { ProviderFormProps } from "./ProviderForm";
 
@@ -38,6 +50,14 @@ const PRESETS = qwenProviderPresets.map((preset, index) => ({
 }));
 
 const PROVIDER_KEY_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+// The shared model-list command speaks the Pi protocol names.
+const FETCH_API_FORMATS: Partial<Record<QwenAuthType, string>> = {
+  openai: "openai-completions",
+  "openai-responses": "openai-responses",
+  anthropic: "anthropic-messages",
+  gemini: "google-generative-ai",
+};
 
 /** Validation shared by the form fields and the JSON editor. */
 export function qwenConfigProblems(config: QwenProviderConfig) {
@@ -152,10 +172,105 @@ export function QwenProviderForm({
     onSubmitReadyChange?.(ready);
   }, [ready, onSubmitReadyChange]);
 
+  // Metadata may arrive after later edits; fills apply to the latest config.
+  const configRef = useRef(config);
+  configRef.current = config;
   const update = (next: QwenProviderConfig) => {
+    configRef.current = next;
     setConfig(next);
     setText(JSON.stringify(next, null, 2));
     setJsonValid(true);
+  };
+
+  const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const fetchGeneration = useRef(0);
+  const baseUrl = config.baseUrl?.trim() ?? "";
+  const apiKey = config.apiKey?.trim() ?? "";
+  const fillModelMetadata = useModelMetadataFill({
+    baseUrl,
+    presets: piPresetModelSources,
+    prefetch: fetchedModels.length > 0,
+  });
+  const handleFetchModels = useCallback(() => {
+    if (!baseUrl || !apiKey) {
+      showFetchModelsError(null, t, {
+        hasApiKey: Boolean(apiKey),
+        hasBaseUrl: Boolean(baseUrl),
+      });
+      return;
+    }
+    const generation = ++fetchGeneration.current;
+    setFetchedModels([]);
+    setIsFetchingModels(true);
+    fetchModelsForConfig(baseUrl, apiKey, undefined, undefined, undefined, {
+      apiFormat: FETCH_API_FORMATS[config.authType],
+    })
+      .then((result) => {
+        if (generation !== fetchGeneration.current) return;
+        const models = [
+          ...new Map(result.map((model) => [model.id, model])).values(),
+        ];
+        setFetchedModels(models);
+        // The picker opens with the results; only an empty list needs a note.
+        if (models.length === 0) toast.info(t("providerForm.fetchModelsEmpty"));
+      })
+      .catch((err) => {
+        if (generation !== fetchGeneration.current) return;
+        console.warn("[ModelFetch] Failed:", err);
+        showFetchModelsError(err, t);
+      })
+      .finally(() => {
+        if (generation === fetchGeneration.current) setIsFetchingModels(false);
+      });
+  }, [apiKey, baseUrl, config.authType, t]);
+  const handleApplyFetchedModels = ({ add, remove }: FetchedModelSelection) => {
+    const current = configRef.current;
+    const kept = current.models.filter(
+      (model) => !remove.includes(model.id.trim()),
+    );
+    const present = new Set(kept.map((model) => model.id.trim()));
+    // Replace a single blank row instead of keeping it next to the picks.
+    const base =
+      kept.length === 1 && !kept[0].id.trim() && add.length > 0 ? [] : kept;
+    const additions = add.filter((id) => !present.has(id));
+    update({
+      ...current,
+      models: [...base, ...additions.map((id) => ({ id }))],
+    });
+    for (const id of additions) {
+      fillModelMetadata(
+        id,
+        (metadata) => {
+          const latest = configRef.current;
+          const index = latest.models.findIndex((model) => model.id === id);
+          const window = metadata.contextWindow;
+          const model = latest.models[index];
+          if (
+            index < 0 ||
+            !window ||
+            model.generationConfig?.contextWindowSize !== undefined
+          )
+            return false;
+          update({
+            ...latest,
+            models: latest.models.map((entry, i) =>
+              i === index
+                ? {
+                    ...entry,
+                    generationConfig: {
+                      ...entry.generationConfig,
+                      contextWindowSize: window,
+                    },
+                  }
+                : entry,
+            ),
+          });
+          return true;
+        },
+        { silent: true },
+      );
+    }
   };
   const updateModel = (index: number, next: QwenModel) =>
     update({
@@ -346,19 +461,34 @@ export function QwenProviderForm({
             </div>
           )}
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <Label>{t("qwen.models")}</Label>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  update({ ...config, models: [...config.models, { id: "" }] })
-                }
-              >
-                <Plus className="mr-1 h-4 w-4" />
-                {t("qwen.addModel")}
-              </Button>
+              <div className="flex gap-1">
+                <FetchedModelPicker
+                  models={fetchedModels}
+                  configuredModelIds={config.models.map((model) =>
+                    model.id.trim(),
+                  )}
+                  onApply={handleApplyFetchedModels}
+                  onFetch={handleFetchModels}
+                  isFetching={isFetchingModels}
+                  metadataSource={{ baseUrl, presets: piPresetModelSources }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    update({
+                      ...config,
+                      models: [...config.models, { id: "" }],
+                    })
+                  }
+                >
+                  <Plus className="mr-1 h-4 w-4" />
+                  {t("qwen.addModel")}
+                </Button>
+              </div>
             </div>
             {problems.noModels && (
               <p className="text-xs text-destructive">
