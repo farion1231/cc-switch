@@ -538,6 +538,9 @@ export const handlers = [
       accounts: [],
     });
   }),
+  http.post(`${TAURI_ENDPOINT}/claude_account_submit_paste`, () =>
+    success(null),
+  ),
   // 应用页页头的「提示词：X ›」会读各应用的提示词列表
   http.post(`${TAURI_ENDPOINT}/get_prompts`, () => success({})),
   http.post(

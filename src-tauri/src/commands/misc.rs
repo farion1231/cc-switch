@@ -4319,6 +4319,54 @@ pub(crate) fn run_detected_tool_command_with_timeout(
     }
 }
 
+/// 构造运行本机工具默认入口的命令（定位规则和 PATH 补全同 [`run_detected_tool_command_with_timeout`]），
+/// 不设 stdio、不等待：给要自己管子进程的调用方用（比如长时间运行、要往 stdin 写东西的登录）。
+/// `timeout` 只约束定位工具这一步。工具配置在 WSL 里时报错。
+pub(crate) fn detected_tool_command(
+    tool: &str,
+    args: &[&str],
+    timeout: std::time::Duration,
+) -> Result<std::process::Command, String> {
+    if !VALID_TOOLS.contains(&tool) {
+        return Err(format!("Unsupported tool: {tool}"));
+    }
+    let deadline = CommandDeadline::from_timeout(Some(timeout));
+
+    #[cfg(target_os = "windows")]
+    if wsl_distro_for_tool(tool).is_some() {
+        return Err(format!(
+            "{tool} runs in WSL; this action needs it on Windows"
+        ));
+    }
+
+    let tool_path = locate_default_tool(tool, deadline)?;
+    let dir = tool_path
+        .parent()
+        .ok_or_else(|| format!("Invalid {tool} executable path"))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let new_path = format!("{};{}", dir.display(), effective_path_string());
+        Ok(build_windows_tool_command(&tool_path, args, &new_path))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let inherited = std::env::var_os("PATH")
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let current_path = match login_shell_path(deadline) {
+            Some(login_path) => merge_path_segments(&login_path, &inherited),
+            None => inherited,
+        };
+        let mut cmd = std::process::Command::new(&tool_path);
+        cmd.args(args)
+            .env("PATH", format!("{}:{current_path}", dir.display()));
+        isolate_child_process_group(&mut cmd);
+        Ok(cmd)
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn run_windows_tool_command_capture(
     tool_path: &Path,
@@ -4872,6 +4920,21 @@ pub async fn open_provider_terminal(
             switch_agy_to_bound_account(&agy_accounts.0, provider).await?;
             agy_terminal_launch(provider)?
         }
+        AppType::Claude => {
+            match crate::services::provider::claude_official::terminal_config_dir(provider)
+                .map_err(|e| e.to_string())?
+            {
+                Some(config_dir) => {
+                    crate::services::claude_account::sync_shared(&config_dir);
+                    claude_account_terminal_launch(config_dir)
+                }
+                None => {
+                    let env_vars =
+                        extract_env_vars_from_config(&provider.settings_config, &app_type);
+                    claude_terminal_launch(&env_vars, &providerId)?
+                }
+            }
+        }
         _ => {
             let env_vars = extract_env_vars_from_config(&provider.settings_config, &app_type);
             claude_terminal_launch(&env_vars, &providerId)?
@@ -5014,6 +5077,31 @@ fn claude_terminal_launch(
         batch_vars: Vec::new(),
         cleanup: vec![config_file],
     })
+}
+
+/// Claude 官方卡绑了账号：`CLAUDE_CONFIG_DIR` 放在启动环境里（不用 `--settings`）。
+/// 变量在进程启动前就设好，Claude Code 一开始预取钥匙串读的就是这个账号的条目
+/// （写在 settings 里的话 macOS 上前 30 秒会用默认登录的令牌）。会把它指向别处的变量一并清掉。
+fn claude_account_terminal_launch(config_dir: PathBuf) -> ProviderLaunch {
+    let mut env: Vec<(&'static str, Option<String>)> =
+        crate::services::claude_account::login::CLAUDE_ACCOUNT_UNSET
+            .iter()
+            .map(|name| (*name, None))
+            .collect();
+    env.push((
+        "CLAUDE_CONFIG_DIR",
+        Some(config_dir.to_string_lossy().into_owned()),
+    ));
+    ProviderLaunch {
+        title: "Using this Claude account's config directory:",
+        detail: Some(config_dir),
+        program: "claude",
+        args: Vec::new(),
+        batch_command: "claude".to_string(),
+        env,
+        batch_vars: Vec::new(),
+        cleanup: Vec::new(),
+    }
 }
 
 /// 官方卡绑了授权中心的账号时，先把 agy 的全局登录切到它（已经是它就不写）。没绑的卡跟着

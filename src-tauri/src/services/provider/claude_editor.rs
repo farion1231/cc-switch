@@ -365,10 +365,13 @@ pub(crate) fn write_live(
         let prev = write
             .prev
             .map(|provider| ClaudeProjection::of(&provider.settings_config));
-        direct_patch(
+        let mut patch = direct_patch(
             prev.as_ref(),
             &ClaudeProjection::of(&write.target.settings_config),
-        )
+        );
+        // 和切换一样：官方卡绑的账号目录按本机账号表注入
+        super::claude_official::add_to_patch(&mut patch, write.target);
+        patch
     });
     let patch = EditorPatch {
         changes: &plan.changes,

@@ -1318,6 +1318,18 @@ pub fn run() {
                 app.manage(commands::AgyAccountState(Arc::new(manager)));
             }
 
+            // Claude Code 官方订阅账号（授权中心加号；每个账号一个 CLAUDE_CONFIG_DIR）
+            {
+                use crate::services::claude_account::ClaudeAccountManager;
+                let data_dir = crate::config::get_app_config_dir();
+                let manager = ClaudeAccountManager::new(data_dir.clone());
+                app.manage(commands::ClaudeAccountState(Arc::new(manager)));
+                // 默认目录的设置、MCP 可能在 CC Switch 没运行时改过
+                std::thread::spawn(move || {
+                    crate::services::claude_account::sync_all_shared(&data_dir)
+                });
+            }
+
             // 初始化全局出站代理 HTTP 客户端
             {
                 let db = &app.state::<AppState>().db;
@@ -1885,6 +1897,7 @@ pub fn run() {
             commands::auth_logout,
             commands::agy_account_is_running,
             commands::agy_account_quota,
+            commands::claude_account_submit_paste,
             commands::kimi_oauth_status,
             commands::kimi_oauth_start,
             commands::kimi_oauth_poll,

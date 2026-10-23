@@ -231,6 +231,17 @@
         "oauthTitle": "OAuth Authentication Mode",
         "oauthHint": "Google official uses OAuth personal authentication, no need to fill in API Key. The browser will automatically open for login on first use.",
         "apiKeyPlaceholder": "Enter Gemini API Key"
+      },
+      "claudeAccount": {
+        "label": "Account",
+        "default": "Default sign-in (~/.claude)",
+        "missing": "Account not on this computer",
+        "add": "Sign in to a new account",
+        "pending": "Claude's sign-in page is open in your browser. After you sign in and authorize, the account is selected automatically.",
+        "helpMac": "On macOS, use \"Open Terminal\" on the card to use the selected account. Switching to this card does not change the account claude uses in other terminals.",
+        "help": "After switching to this card, newly started claude sessions use the selected account; sessions already running are unaffected.",
+        "card": "Account: {{label}}",
+        "cardMac": "Account: {{label}} · use via Open Terminal"
       }
     },
     "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again",
@@ -4875,7 +4886,9 @@
       "copilotHelp": "Used by GitHub Copilot presets in Claude Code and Claude Desktop. Providers without a chosen account use the Default one.",
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
       "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
-      "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it."
+      "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it.",
+      "claudeHelpMac": "Claude Code subscription accounts (Pro / Max / Team). Choose an account on a Claude official card, then use \"Open Terminal\" on that card: claude in that terminal uses this account. Your existing sign-in in ~/.claude is the \"default sign-in\" and is untouched.",
+      "claudeHelp": "Claude Code subscription accounts (Pro / Max / Team). Choose an account on a Claude official card; after switching to that card, newly started claude sessions use this account. Your existing sign-in in ~/.claude is the \"default sign-in\" and is untouched."
     },
     "addAccount": "Add account",
     "accountMenu": "More actions for {{login}}",
@@ -4927,6 +4940,19 @@
       "removeNote": "agy stays signed in: if agy is using this account, it keeps working after removal.",
       "switched": "Switched. New agy sessions will use this account.",
       "switchedWhileRunning": "Switched. agy is running: open agy sessions keep using the previous account and may write it back. Quit agy and open it again."
+    },
+    "claude": {
+      "pasteSubmitted": "Submitted. Finishing sign-in…",
+      "pasteToggle": "Didn't come back here after authorizing?",
+      "pasteHint": "Paste the address from the browser's address bar after authorizing, or the code shown on the page.",
+      "pasteLabel": "Authorization code or address",
+      "pasteSubmit": "Submit",
+      "reauthNote": "Sign-in expired. Sign in again.",
+      "addedOn": "Added {{date}}",
+      "statusLoadFailed": "Couldn't read Claude accounts. Try again.",
+      "empty": "No Claude accounts yet. Sign in here to switch between multiple subscription accounts.",
+      "login": "Sign in to Claude",
+      "removeNote": "Only removes the sign-in CC Switch saved for this account; it isn't signed out anywhere else, and the default sign-in (~/.claude) is untouched. Cards bound to it fall back to the default sign-in."
     }
   },
   "kimi": {

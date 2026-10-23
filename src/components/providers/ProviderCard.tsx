@@ -23,6 +23,7 @@ import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
 import AgyAccountQuotaFooter from "@/components/AgyAccountQuotaFooter";
+import { ClaudeBoundAccountFooter } from "@/components/providers/forms/ClaudeOfficialSection";
 import KimiAccountQuotaFooter from "@/components/KimiAccountQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import {
@@ -276,6 +277,12 @@ export function ProviderCard({
     appId === "agy" && isOfficial && isMac()
       ? resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || null
       : null;
+  // Claude 官方卡绑了 Claude 官方账号：底部写账号（额度只查得到默认登录的）
+  const claudeBoundAccountId =
+    appId === "claude" && isOfficial
+      ? resolveManagedAccountId(provider.meta, "claude_official")?.trim() ||
+        null
+      : null;
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery = isAdditiveAppId(appId) ? isInConfig : isCurrent;
@@ -509,6 +516,8 @@ export function ProviderCard({
                   inline={true}
                   isCurrent={isCurrent}
                 />
+              ) : claudeBoundAccountId ? (
+                <ClaudeBoundAccountFooter accountId={claudeBoundAccountId} />
               ) : isOfficial ? (
                 officialSubscriptionEnabled ? (
                   agyBoundAccountId ? (

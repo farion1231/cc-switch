@@ -4,7 +4,8 @@ export type ManagedAuthProvider =
   | "github_copilot"
   | "codex_oauth"
   | "xai_oauth"
-  | "agy_oauth";
+  | "agy_oauth"
+  | "claude_official";
 
 export type CodexLoginMethod = "browser" | "device_code";
 export type AuthCenterTarget = ManagedAuthProvider | "kimi_oauth";
@@ -41,6 +42,8 @@ export interface ManagedAuthDeviceCodeResponse {
   verification_uri: string;
   expires_in: number;
   interval: number;
+  /** 后端已经把登录页交给系统浏览器了（Claude 官方账号在 Windows 上由 Claude Code 自己打开），前端不要再开一次 */
+  browser_opened?: boolean;
 }
 
 export async function authStartLogin(
@@ -128,6 +131,14 @@ export async function agyAccountIsRunning(): Promise<boolean> {
   return invoke<boolean>("agy_account_is_running");
 }
 
+/** Claude 官方账号登录：浏览器回不到本机时，把落地页地址或页面上的代码交给正在等待的登录。 */
+export async function claudeAccountSubmitPaste(
+  flowId: string,
+  pasted: string,
+): Promise<void> {
+  return invoke("claude_account_submit_paste", { flowId, pasted });
+}
+
 export const authApi = {
   authStartLogin,
   authPollForAccount,
@@ -138,4 +149,5 @@ export const authApi = {
   authSetDefaultAccount,
   authLogout,
   agyAccountIsRunning,
+  claudeAccountSubmitPaste,
 };

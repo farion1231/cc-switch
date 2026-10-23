@@ -52,10 +52,12 @@ fn write(
     pointer: Option<&str>,
 ) -> Result<OperationReport, AppError> {
     let prev = prev.map(|provider| ClaudeProjection::of(&provider.settings_config));
-    let patch = direct_patch(
+    let mut patch = direct_patch(
         prev.as_ref(),
         &ClaudeProjection::of(&target.settings_config),
     );
+    // 官方卡绑的账号目录：本机路径，不在行里，按本机账号表注入（见 claude_official）
+    super::claude_official::add_to_patch(&mut patch, target);
     run(
         db,
         if pointer.is_some() {

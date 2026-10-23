@@ -59,6 +59,8 @@ export interface GroupLoginFlow {
   error: string | null;
   onCancel: () => void;
   onRetry: () => void;
+  /** 等待块里浏览器说明下面的附加内容（Claude 官方账号：浏览器回不到本机时粘贴代码） */
+  extra?: React.ReactNode;
 }
 
 interface ManagedAccountsGroupProps {
@@ -88,8 +90,11 @@ interface ManagedAccountsGroupProps {
   setDefaultLabel?: string;
   /** ⋯ 里有没有「重新登录」（Copilot 没有） */
   canReauth: boolean;
+  /** 只给「需要重新登录」的账号显示（Claude 官方账号：重新登录会替换掉原来的登录，凭据好好的时候不该点到） */
+  reauthOnlyWhenExpired?: boolean;
   onReauth: (accountId: string) => void;
-  onSetDefault: (accountId: string) => void;
+  /** 不传就没有「设为默认」（Claude 官方账号：用哪个号由卡片决定） */
+  onSetDefault?: (accountId: string) => void;
   settingDefault: boolean;
   onRemove: (accountId: string, login: string) => void;
   removing: boolean;
@@ -124,6 +129,7 @@ export function ManagedAccountsGroup({
   defaultLabel,
   setDefaultLabel,
   canReauth,
+  reauthOnlyWhenExpired = false,
   onReauth,
   onSetDefault,
   settingDefault,
@@ -286,7 +292,9 @@ export function ManagedAccountsGroup({
             account={account}
             defaultLabel={defaultLabel}
             setDefaultLabel={setDefaultLabel}
-            canReauth={canReauth}
+            canReauth={
+              canReauth && (!reauthOnlyWhenExpired || account.needsReauth)
+            }
             busy={busy}
             pendingId={pendingId}
             settingDefault={settingDefault}
@@ -351,6 +359,7 @@ export function ManagedAccountsGroup({
                 </Button>
               </div>
             )}
+            {login.deviceCode && !login.deviceCode.user_code && login.extra}
             {login.deviceCode?.user_code && (
               <>
                 <div className="flex flex-wrap items-center gap-2 text-caption text-fg-2">
@@ -486,7 +495,7 @@ interface AccountRowProps {
   settingDefault: boolean;
   removing: boolean;
   onReauth: (accountId: string) => void;
-  onSetDefault: (accountId: string) => void;
+  onSetDefault?: (accountId: string) => void;
   onRemove: (accountId: string, login: string) => void;
 }
 
@@ -505,7 +514,8 @@ function AccountRow({
 }: AccountRowProps) {
   const { t } = useTranslation();
   const subId = useId();
-  const canSetDefault = !account.isDefault && !account.needsReauth;
+  const canSetDefault =
+    onSetDefault !== undefined && !account.isDefault && !account.needsReauth;
   const separator = " · ";
 
   return (
@@ -588,7 +598,7 @@ function AccountRow({
           {canSetDefault && (
             <DropdownMenuItem
               disabled={settingDefault}
-              onSelect={() => onSetDefault(account.id)}
+              onSelect={() => onSetDefault?.(account.id)}
               className="h-[30px] rounded-control px-2.5 text-body"
             >
               {setDefaultLabel ??
