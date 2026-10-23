@@ -3,7 +3,6 @@
 //! 提供 Tauri 命令，供前端在供应商表单中获取可用模型列表。
 
 use crate::services::model_fetch::{self, FetchedModel};
-use cc_command_api::command_api;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 

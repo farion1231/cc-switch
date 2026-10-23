@@ -18,7 +18,7 @@ doctest = false
 [features]
 default = []
 test-hooks = []
-rest_api = ["dep:cc-command-api", "dep:serde_urlencoded", "dep:inventory", "dep:rust-embed"]
+rest_api = ["dep:serde_urlencoded", "dep:inventory", "dep:rust-embed"]
 
 [build-dependencies]
 tauri-build = { version = "2.4.0", features = [] }
@@ -87,7 +87,7 @@ json-five = "0.3.1"
 sys-locale = "0.3"
 
 # REST 控制面 (feature-gated)
-cc-command-api = { path = "../crates/cc-command-api", optional = true }
+cc-command-api = { path = "../crates/cc-command-api" }
 serde_urlencoded = { version = "0.7", optional = true }
 inventory = { version = "0.3", optional = true }
 rust-embed = { version = "8", optional = true }

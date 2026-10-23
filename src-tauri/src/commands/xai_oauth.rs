@@ -4,7 +4,6 @@ use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
 use crate::proxy::providers::XAI_API_BASE_URL;
 use crate::services::model_fetch::FetchedModel;
 use crate::services::subscription::{CredentialStatus, SubscriptionQuota};
-use cc_command_api::command_api;
 use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
