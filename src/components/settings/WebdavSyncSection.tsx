@@ -718,7 +718,7 @@ export function WebdavSyncSection({
       accessKeyId: s3AccessKeyId.trim(),
       secretAccessKey: s3SecretAccessKey,
       endpoint: s3Endpoint.trim() || undefined,
-      addressingStyle: s3AddressingStyle,
+      addressingStyle: s3AddressingStyleChoice ?? "",
       remoteRoot: s3RemoteRoot.trim() || "cc-switch-sync",
       profile: s3Profile.trim() || "default",
     };
@@ -730,7 +730,7 @@ export function WebdavSyncSection({
     s3AccessKeyId,
     s3SecretAccessKey,
     s3Endpoint,
-    s3AddressingStyle,
+    s3AddressingStyleChoice,
     s3RemoteRoot,
     s3Profile,
   ]);
