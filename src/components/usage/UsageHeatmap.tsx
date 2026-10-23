@@ -26,6 +26,8 @@ interface UsageHeatmapProps {
   appType?: string;
   providerName?: string;
   model?: string;
+  profileName?: string;
+  task?: string;
   refreshIntervalMs: number;
 }
 
@@ -120,7 +122,9 @@ function metricValue(
     stat.totalInputTokens +
     stat.totalOutputTokens +
     stat.totalCacheCreationTokens +
-    stat.totalCacheReadTokens
+    stat.totalCacheReadTokens +
+    (stat.totalCacheWriteTokens ?? 0) +
+    (stat.totalReasoningTokens ?? 0)
   );
 }
 
@@ -167,7 +171,13 @@ function cellStyle(level: number) {
  * 起点按周取整，同一周内查询键不变。
  */
 function useAllSpansDailyTrends(
-  filters: { appType?: string; providerName?: string; model?: string },
+  filters: {
+    appType?: string;
+    providerName?: string;
+    model?: string;
+    profileName?: string;
+    task?: string;
+  },
   refreshIntervalMs: number,
 ) {
   const refetchInterval = refreshIntervalMs > 0 ? refreshIntervalMs : false;
@@ -249,10 +259,19 @@ export function UsageHeatmap({
   appType,
   providerName,
   model,
+  profileName,
+  task,
   refreshIntervalMs,
 }: UsageHeatmapProps) {
   const { t, i18n } = useTranslation();
   const { money } = useMoneyFormat();
+  const requestLabel = t(
+    appType === "hermes"
+      ? "usage.countLabel.hermesApiCalls"
+      : !appType || appType === "all"
+        ? "usage.countLabel.mixedActivity"
+        : "usage.countLabel.requests",
+  );
   const sectionRef = useRef<HTMLElement>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
   // 默认只画最近 53 周，点「显示更多」才把更早的段全部展开；不记住，每次进来都是收起
@@ -273,7 +292,7 @@ export function UsageHeatmap({
   const locale = getLocaleFromLanguage(language);
 
   const { spanCount, trends, isLoading } = useAllSpansDailyTrends(
-    { appType, providerName, model },
+    { appType, providerName, model, profileName, task },
     refreshIntervalMs,
   );
 
@@ -433,6 +452,7 @@ export function UsageHeatmap({
             })}
             tokens={hover.cell.tokens}
             requests={hover.cell.requests}
+            requestLabel={requestLabel}
             cost={hover.cell.cost}
             hitRate={metric === "hitRate" ? hover.cell.hitRate : undefined}
           />

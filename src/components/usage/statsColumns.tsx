@@ -70,7 +70,7 @@ export function PerformanceHeaders() {
 export function PerformanceCells({
   stat,
 }: {
-  stat: SpeedTotals & { successRate: number };
+  stat: SpeedTotals & { successRate: number; statusAvailable?: boolean };
 }) {
   const exactSpeed = getStatsSpeed(stat);
   const estimatedSpeed =
@@ -85,7 +85,9 @@ export function PerformanceCells({
   return (
     <>
       <td className={cn(usageTable.td, usageTable.groupGap)}>
-        {stat.successRate.toFixed(stat.successRate >= 99.95 ? 0 : 1)}%
+        {stat.statusAvailable === false
+          ? "—"
+          : `${stat.successRate.toFixed(stat.successRate >= 99.95 ? 0 : 1)}%`}
       </td>
       <td className={cn(usageTable.td, speed == null && usageTable.muted)}>
         {speed == null ? (

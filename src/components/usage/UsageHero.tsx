@@ -27,6 +27,8 @@ interface UsageHeroProps {
   appType?: string;
   providerName?: string;
   model?: string;
+  profileName?: string;
+  task?: string;
   refreshIntervalMs: number;
   /** 窄容器下指标排成两列 */
   compact?: boolean;
@@ -51,6 +53,13 @@ export function aggregateSummaries(items: UsageSummary[]): UsageSummary {
   let output = 0;
   let cacheCreation = 0;
   let cacheRead = 0;
+  let cacheWrite = 0;
+  let reasoning = 0;
+  let realTotal = 0;
+  let hasCacheWrite = false;
+  let hasReasoning = false;
+  let hasStatusAvailability = false;
+  let statusAvailable = true;
 
   for (const s of items) {
     totalRequests += s.totalRequests;
@@ -60,10 +69,23 @@ export function aggregateSummaries(items: UsageSummary[]): UsageSummary {
     output += s.totalOutputTokens;
     cacheCreation += s.totalCacheCreationTokens;
     cacheRead += s.totalCacheReadTokens;
+    realTotal += s.realTotalTokens;
+    if (s.totalCacheWriteTokens != null) {
+      cacheWrite += s.totalCacheWriteTokens;
+      hasCacheWrite = true;
+    }
+    if (s.totalReasoningTokens != null) {
+      reasoning += s.totalReasoningTokens;
+      hasReasoning = true;
+    }
+    if (s.statusAvailable != null) {
+      hasStatusAvailability = true;
+      statusAvailable = statusAvailable && s.statusAvailable;
+    }
   }
 
-  const cacheableInput = input + cacheCreation + cacheRead;
-  return {
+  const cacheableInput = input + cacheCreation + cacheWrite + cacheRead;
+  const aggregate: UsageSummary = {
     totalRequests,
     totalCost: totalCostNum.toFixed(6),
     totalInputTokens: input,
@@ -71,9 +93,19 @@ export function aggregateSummaries(items: UsageSummary[]): UsageSummary {
     totalCacheCreationTokens: cacheCreation,
     totalCacheReadTokens: cacheRead,
     successRate: totalRequests > 0 ? (successCount / totalRequests) * 100 : 0,
-    realTotalTokens: input + output + cacheCreation + cacheRead,
+    realTotalTokens: realTotal,
     cacheHitRate: cacheableInput > 0 ? cacheRead / cacheableInput : 0,
   };
+  if (hasCacheWrite) aggregate.totalCacheWriteTokens = cacheWrite;
+  if (hasReasoning) aggregate.totalReasoningTokens = reasoning;
+  if (hasStatusAvailability) aggregate.statusAvailable = statusAvailable;
+  return aggregate;
+}
+
+function countLabelKey(appType?: string): string {
+  if (appType === "hermes") return "usage.countLabel.hermesApiCalls";
+  if (!appType || appType === "all") return "usage.countLabel.mixedActivity";
+  return "usage.countLabel.requests";
 }
 
 function pickSummary(
@@ -209,6 +241,8 @@ export function UsageHero({
   appType,
   providerName,
   model,
+  profileName,
+  task,
   refreshIntervalMs,
   compact = false,
   metric,
@@ -222,7 +256,7 @@ export function UsageHero({
 
   const { data, isLoading } = useUsageSummaryByApp(
     range,
-    { providerName, model },
+    { providerName, model, profileName, task },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
@@ -234,22 +268,67 @@ export function UsageHero({
   const allApps = data ?? [];
   const summary = pickSummary(allApps, appType);
 
-  const cacheWriteState = getCacheWriteAvailability(
+  const sourceCacheWriteState = getCacheWriteAvailability(
     appType ? [appType] : allApps.map((a) => a.appType),
   );
+  const selectedApps = allApps.filter(
+    (app) => !appType || app.appType === appType,
+  );
+  const missingHermesCacheWrite = selectedApps.some(
+    (app) =>
+      app.appType === "hermes" && app.summary.totalCacheWriteTokens == null,
+  );
+  const hasKnownCacheWrite = selectedApps.some((app) =>
+    app.appType === "hermes"
+      ? app.summary.totalCacheWriteTokens != null
+      : getCacheWriteAvailability([app.appType]) !== "na",
+  );
+  const cacheWriteState = missingHermesCacheWrite
+    ? hasKnownCacheWrite
+      ? "partial"
+      : "na"
+    : sourceCacheWriteState;
 
   const input = summary?.totalInputTokens ?? 0;
   const output = summary?.totalOutputTokens ?? 0;
-  const cacheWrite = summary?.totalCacheCreationTokens ?? 0;
+  const cacheWrite =
+    appType === "hermes"
+      ? (summary?.totalCacheWriteTokens ?? 0)
+      : allApps
+          .filter((app) => !appType || app.appType === appType)
+          .reduce(
+            (total, app) =>
+              total +
+              (app.appType === "hermes"
+                ? (app.summary.totalCacheWriteTokens ?? 0)
+                : app.summary.totalCacheCreationTokens),
+            0,
+          );
+  const reasoning = selectedApps.some(
+    (app) =>
+      app.appType === "hermes" && app.summary.totalReasoningTokens != null,
+  )
+    ? summary?.totalReasoningTokens
+    : undefined;
   const cacheRead = summary?.totalCacheReadTokens ?? 0;
   const realTotal = summary?.realTotalTokens ?? 0;
   const hitRate = summary?.cacheHitRate ?? 0;
   const totalCost = parseFiniteNumber(summary?.totalCost);
   const requests = summary?.totalRequests ?? 0;
 
-  // 加载中写「…」；这段时间一条请求都没有时，各项都写「—」（和表格的空值一致），
+  // 加载中写「…」；这段时间没有任何用量变化时，各项都写「—」（和表格的空值一致），
   // 不写 0 / 0.0%：那是「有数据、结果为零」的意思
-  const placeholder = isLoading ? "…" : requests === 0 ? "—" : undefined;
+  const hasUsage = [
+    requests,
+    input,
+    output,
+    cacheWrite,
+    cacheRead,
+    reasoning ?? 0,
+    realTotal,
+    totalCost ?? 0,
+  ].some((value) => value !== 0);
+  const placeholder = isLoading ? "…" : !hasUsage ? "—" : undefined;
   // 命中率的分母（新增输入 + 缓存写入 + 缓存命中）为 0 时没有意义，同样写「—」
   const hitRateKnown = input + cacheWrite + cacheRead > 0;
   const tokens = (value: number) => formatTokensCompact(value, locale);
@@ -280,7 +359,7 @@ export function UsageHero({
           onSelect={() => onMetricChange("cost")}
         />
         <MetricCell
-          label={t("usage.totalRequests")}
+          label={t(countLabelKey(appType))}
           value={placeholder ?? fmtInt(requests, locale)}
           selected={metric === "requests"}
           onSelect={() => onMetricChange("requests")}
@@ -343,7 +422,7 @@ export function UsageHero({
                   ? undefined
                   : exact(fmtInt(cacheWrite, locale))
               }
-              muted={cacheWriteState === "na"}
+              muted={cacheWriteState !== "ok"}
               help={
                 cacheWriteHelp
                   ? {
@@ -358,6 +437,13 @@ export function UsageHero({
               value={placeholder ?? tokens(cacheRead)}
               title={exact(fmtInt(cacheRead, locale))}
             />
+            {reasoning != null && (
+              <SubMetric
+                label={t("usage.hermes.reasoningTokens")}
+                value={placeholder ?? tokens(reasoning)}
+                title={exact(fmtInt(reasoning, locale))}
+              />
+            )}
           </div>
         </div>
       </div>

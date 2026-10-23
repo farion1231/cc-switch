@@ -21,7 +21,15 @@ interface ProviderStatsTableProps {
   appType?: string;
   providerName?: string;
   model?: string;
+  profileName?: string;
+  task?: string;
   refreshIntervalMs: number;
+}
+
+function countLabelKey(appType?: string): string {
+  if (appType === "hermes") return "usage.countLabel.hermesApiCalls";
+  if (!appType || appType === "all") return "usage.countLabel.mixedActivity";
+  return "usage.countLabel.requests";
 }
 
 export function ProviderStatsTable({
@@ -29,6 +37,8 @@ export function ProviderStatsTable({
   appType,
   providerName,
   model,
+  profileName,
+  task,
   refreshIntervalMs,
 }: ProviderStatsTableProps) {
   const { t, i18n } = useTranslation();
@@ -36,7 +46,7 @@ export function ProviderStatsTable({
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const { data: stats, isLoading } = useProviderStats(
     range,
-    { appType, providerName, model },
+    { appType, providerName, model, profileName, task },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
@@ -49,7 +59,7 @@ export function ProviderStatsTable({
   );
   const pagination = useClientPagination(
     rows,
-    JSON.stringify([range, appType, providerName, model]),
+    JSON.stringify([range, appType, providerName, model, profileName, task]),
   );
 
   if (isLoading) {
@@ -70,7 +80,7 @@ export function ProviderStatsTable({
               {/* 按请求数从多到少排：箭头就是排序说明，不另写文字 */}
               <th className={usageTable.th} aria-sort="descending">
                 <span className="inline-flex items-center gap-1">
-                  {t("usage.requests")}
+                  {t(countLabelKey(appType))}
                   <ArrowDown
                     aria-hidden="true"
                     className="h-3 w-3 text-fg-3"

@@ -33,6 +33,8 @@ interface UsageTrendChartProps {
   appType?: string;
   providerName?: string;
   model?: string;
+  profileName?: string;
+  task?: string;
   refreshIntervalMs: number;
 }
 
@@ -43,6 +45,8 @@ export interface UsageTrendStatLike {
   totalOutputTokens: number;
   totalCacheCreationTokens: number;
   totalCacheReadTokens: number;
+  totalCacheWriteTokens?: number;
+  totalReasoningTokens?: number;
   totalCost: string | number;
 }
 
@@ -59,7 +63,9 @@ export interface UsageTrendChartPoint {
   outputTokens: number;
   cacheCreationTokens: number;
   cacheReadTokens: number;
-  /** 请求数（「请求」指标） */
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+  /** 请求数（「请求」指标的柱） */
   requests: number;
   /** 真实消耗 Tokens = 新增输入 + 输出 + 缓存写入 + 缓存命中（和指标卡同口径） */
   tokens: number;
@@ -73,6 +79,7 @@ export function hitRateOf(stat: UsageTrendStatLike): number | null {
   const cacheable =
     stat.totalInputTokens +
     stat.totalCacheCreationTokens +
+    (stat.totalCacheWriteTokens ?? 0) +
     stat.totalCacheReadTokens;
   return cacheable > 0 ? stat.totalCacheReadTokens / cacheable : null;
 }
@@ -166,12 +173,20 @@ export function buildUsageTrendChartData(
         outputTokens: stat.totalOutputTokens,
         cacheCreationTokens: stat.totalCacheCreationTokens,
         cacheReadTokens: stat.totalCacheReadTokens,
+        ...(stat.totalCacheWriteTokens
+          ? { cacheWriteTokens: stat.totalCacheWriteTokens }
+          : {}),
+        ...(stat.totalReasoningTokens
+          ? { reasoningTokens: stat.totalReasoningTokens }
+          : {}),
         requests: stat.requestCount ?? 0,
         tokens:
           stat.totalInputTokens +
           stat.totalOutputTokens +
           stat.totalCacheCreationTokens +
-          stat.totalCacheReadTokens,
+          stat.totalCacheReadTokens +
+          (stat.totalCacheWriteTokens ?? 0) +
+          (stat.totalReasoningTokens ?? 0),
         cost: cost ?? null,
         hitRate: hitRateOf(stat),
       };
@@ -261,6 +276,8 @@ export function UsageTrendChart({
   appType,
   providerName,
   model,
+  profileName,
+  task,
   refreshIntervalMs,
 }: UsageTrendChartProps) {
   const { t, i18n } = useTranslation();
@@ -271,7 +288,7 @@ export function UsageTrendChart({
   const { startDate, endDate } = resolveUsageRange(range);
   const { data: trends, isLoading } = useUsageTrends(
     range,
-    { appType, providerName, model },
+    { appType, providerName, model, profileName, task },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
@@ -298,9 +315,15 @@ export function UsageTrendChart({
   );
 
   // 单指标：图只画指标条选中的那一个，单 Y 轴，标题和 tooltip 跟着走。
+  const countLabel =
+    appType === "hermes"
+      ? "usage.countLabel.hermesApiCalls"
+      : !appType || appType === "all"
+        ? "usage.countLabel.mixedActivity"
+        : "usage.countLabel.requests";
   const metricLabel = {
     cost: t("usage.trend.cost"),
-    requests: t("usage.trend.requestsLegend"),
+    requests: t(countLabel),
     tokens: t("usage.trend.tokens"),
     hitRate: t("usage.cacheHitRate"),
   }[metric];

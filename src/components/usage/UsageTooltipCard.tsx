@@ -6,6 +6,7 @@ interface UsageTooltipCardProps {
   heading: string;
   tokens: number;
   requests: number;
+  requestLabel?: string;
   /** 美元；null 表示没有可计价的数据 */
   cost: number | null;
   /** 传了才多显示一行缓存命中率（0–1）；null 表示没有输入、无从算起 */
@@ -17,6 +18,7 @@ export function UsageTooltipCard({
   heading,
   tokens,
   requests,
+  requestLabel,
   cost,
   hitRate,
 }: UsageTooltipCardProps) {
@@ -29,7 +31,7 @@ export function UsageTooltipCard({
       value: formatTokensShort(tokens, language),
     },
     {
-      label: t("usage.trend.requests"),
+      label: requestLabel ?? t("usage.trend.requests"),
       value: formatTokensShort(requests, language),
     },
     {
