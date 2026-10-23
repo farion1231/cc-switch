@@ -156,6 +156,12 @@ export function CodexAuthSettings({
         onCheckedChange={handleUnifyHistoryChange}
       />
 
+      {settings.unifyCodexSessionHistory && (
+        <div role="note" className="px-4 py-3 text-sm text-warning-text">
+          {t("settings.unifyCodexDesktopWarning")}
+        </div>
+      )}
+
       <SettingsSwitchRow
         label={t("settings.codexSessionCompression")}
         help={{
@@ -177,7 +183,7 @@ export function CodexAuthSettings({
       <ConfirmDialog
         isOpen={showEnableConfirm}
         title={t("confirm.unifyCodexHistory.title")}
-        message={t("confirm.unifyCodexHistory.message")}
+        message={`${t("settings.unifyCodexDesktopWarning")}\n\n${t("confirm.unifyCodexHistory.message")}`}
         checkboxLabel={t("confirm.unifyCodexHistory.migrateExisting")}
         confirmText={t("confirm.unifyCodexHistory.confirm")}
         variant="info"

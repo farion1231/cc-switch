@@ -380,7 +380,7 @@
     },
     "unifyCodexHistory": {
       "title": "Codex セッション履歴を統一",
-      "message": "オンにすると、Codex CLI の resume 一覧に公式サブスクリプションとサードパーティのセッションがまとめて表示されます（Codex デスクトップ版はアップデートで全セッションを表示できるようになったため影響しません）。注意：プロバイダーをまたいで古いセッションを再開すると、相手のバックエンドが encrypted_content の推論内容を復号できず失敗する場合があります。\n\n既存の公式セッション履歴を共有一覧へ移行することもできます（移行前に ~/.cc-switch/backups へ自動バックアップし、オフにする際に復元を選べます）。",
+      "message": "この設定は CLI とデスクトップ版で共有する Codex 設定を変更します。公式サブスクリプションを custom プロバイダー ID で実行し、CLI の resume 一覧に公式とサードパーティのセッションをまとめます。デスクトップ版は既に全セッションを表示できるため不要です。既存の公式セッションも移行できます（事前にバックアップ）。オフにする際に復元できます。他のプロバイダーでは encrypted_content を復号できず、再開に失敗する場合があります。",
       "migrateExisting": "既存の公式セッション履歴も移行する",
       "confirm": "理解しました、オンにする"
     },
@@ -856,7 +856,8 @@
     "preserveCodexOfficialAuthOnSwitch": "直接切替時に公式ログインを保持",
     "preserveCodexOfficialAuthOnSwitchDescription": "ローカルルーティングが無効な場合のサードパーティ切替を制御します。ルーティング接管中は常に Codex の公式ログインを保持します。",
     "unifyCodexSessionHistory": "Codex セッション履歴を統一",
-    "unifyCodexSessionHistoryDescription": "Codex CLI にのみ影響します：CLI の resume 一覧には現在のプロバイダーのセッションしか表示されません。オンにすると公式サブスクリプションも共有の custom プロバイダー ID で動作し、公式とサードパーティのセッションが同じ一覧に表示されます。Codex デスクトップ版はアップデートで全セッションを表示できるようになったため、デスクトップ版だけなら不要です。既存の公式セッションの移行も選択できます（移行前に自動バックアップ）。オフにする際はバックアップから復元できます。注意：プロバイダーをまたいで古いセッションを再開すると、encrypted_content の推論内容を相手のバックエンドが復号できず、再開に失敗する場合があります。",
+    "unifyCodexSessionHistoryDescription": "この設定は CLI とデスクトップ版で共有する Codex 設定を変更します。公式サブスクリプションを custom プロバイダー ID で実行し、CLI の resume 一覧に公式とサードパーティのセッションをまとめます。デスクトップ版は既に全セッションを表示できるため不要です。既存の公式セッションも移行できます（事前にバックアップ）。オフにする際に復元できます。他のプロバイダーでは encrypted_content を復号できず、再開に失敗する場合があります。",
+    "unifyCodexDesktopWarning": "履歴の統一は公式アカウントにカスタムプロバイダーを選択するため、ChatGPT デスクトップ版の音声会話、音声入力、内蔵 OpenAI プロバイダーを必要とする機能が無効になる場合があります。音声を使う場合はオフにしてください。ChatGPT アカウントの切り替えにこの設定は不要です。オフにした後は ChatGPT ウィンドウを開き直してください。",
     "codexStackClassicSubagents": "集約モードでサブエージェントにクラシックツールを使う",
     "codexStackClassicSubagentsDescription": "メインとサブのエージェントが別のプロバイダーを使う場合は必ずオンにしてください。オフだとサブエージェントにタスクが届きません。",
     "codexStackClassicSubagentsForcedV2": "Codex の config.toml で [features] multi_agent_v2 がオンになっています。こちらが優先されるため、この設定は効きません。",

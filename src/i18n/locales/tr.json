@@ -350,7 +350,7 @@
     },
     "unifyCodexHistory": {
       "title": "Birleşik Codex oturum geçmişi",
-      "message": "Etkinleştirildiğinde Codex CLI’nin devam edilebilir oturum listesinde resmî abonelik ve üçüncü taraf oturumları birlikte görünür (Codex masaüstü uygulaması yakın tarihli bir güncellemeden beri tüm oturumları gösterebilir ve bu ayardan etkilenmez). Not: Diğer arka uç encrypted_content içindeki akıl yürütme verilerinin şifresini çözemediği için eski bir oturuma farklı bir sağlayıcıyla devam etmek başarısız olabilir.\n\nMevcut resmî oturum geçmişinizi de paylaşılan listeye taşıyabilirsiniz (önce ~/.cc-switch/backups konumuna yedeklenir; bu ayarı kapatırken geri yükleyebilirsiniz).",
+      "message": "Bu seçenek CLI ve masaüstü uygulamasının ortak Codex yapılandırmasını değiştirir. Resmi abonelik custom sağlayıcı kimliğiyle çalışır ve CLI devam listesinde resmi ve üçüncü taraf oturumları birleştirir. Masaüstü zaten tüm oturumları gösterir. Mevcut resmi oturumları önce yedekleyerek taşıyabilir ve seçeneği kapatırken geri yükleyebilirsiniz. Başka bir sağlayıcı encrypted_content verisini çözemediğinde oturum devam etmeyebilir.",
       "migrateExisting": "Ayrıca mevcut resmi oturum geçmişini taşıyın",
       "confirm": "Anladım, etkinleştir"
     },
@@ -822,7 +822,8 @@
     "preserveCodexOfficialAuthOnSwitch": "Doğrudan geçişler için resmi giriş bilgilerini koruyun",
     "preserveCodexOfficialAuthOnSwitchDescription": "Yerel yönlendirme kapalıyken üçüncü taraf anahtarları kontrol eder. Devralma yönlendirmesi her zaman Codex resmi giriş bilgilerini korur.",
     "unifyCodexSessionHistory": "Birleşik Codex oturum geçmişi",
-    "unifyCodexSessionHistoryDescription": "Yalnızca Codex CLI'yi etkiler: devam edilebilir oturum listesi yalnızca mevcut sağlayıcının oturumlarını gösterir. Etkinleştirildiğinde resmi abonelik, paylaşılan \"özel\" sağlayıcı kimliği altında çalışır, böylece resmi ve üçüncü taraf oturumları tek bir listede görünür. Codex masaüstü uygulaması, yeni bir güncellemeden bu yana tüm oturumları gösterebilir, dolayısıyla yalnızca masaüstü kullanıcılarının buna ihtiyacı yoktur. İsteğe bağlı olarak mevcut resmi oturumları (öncelikle yedeklenen) taşıyabilir ve kapattığınızda bunları yedeklemeden geri yükleyebilirsiniz. Not: eski bir oturumun sağlayıcılar arasında sürdürülmesi başarısız olabilir, çünkü encrypted_content mantığının şifresi yalnızca onu oluşturan arka uç tarafından çözülebilir.",
+    "unifyCodexSessionHistoryDescription": "Bu seçenek CLI ve masaüstü uygulamasının ortak Codex yapılandırmasını değiştirir. Resmi abonelik custom sağlayıcı kimliğiyle çalışır ve CLI devam listesinde resmi ve üçüncü taraf oturumları birleştirir. Masaüstü zaten tüm oturumları gösterir. Mevcut resmi oturumları önce yedekleyerek taşıyabilir ve seçeneği kapatırken geri yükleyebilirsiniz. Başka bir sağlayıcı encrypted_content verisini çözemediğinde oturum devam etmeyebilir.",
+    "unifyCodexDesktopWarning": "Birleşik geçmiş, resmi hesaplar için özel sağlayıcı seçer; bu, ChatGPT masaüstünde sesli sohbeti, dikteyi ve yerleşik OpenAI sağlayıcısı gerektiren diğer özellikleri devre dışı bırakabilir. Masaüstünde ses kullanırken kapalı tutun; ChatGPT hesaplarını değiştirmek için bu seçenek gerekmez. Kapattıktan sonra özellikleri yenilemek için ChatGPT penceresini yeniden açın.",
     "codexStackClassicSubagents": "Birleştirmedaki klasik alt ajan araçları",
     "codexStackClassicSubagentsDescription": "Ana ajan ile alt ajan farklı sağlayıcılar kullandığında açık olmalıdır; aksi halde alt ajan görevini alamaz.",
     "codexStackClassicSubagentsForcedV2": "Codex config.toml, bu ayara göre öncelikli olan [features] multi_agent_v2'yi açar, dolayısıyla hiçbir etkisi olmaz.",

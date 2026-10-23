@@ -380,7 +380,7 @@
     },
     "unifyCodexHistory": {
       "title": "Unified Codex session history",
-      "message": "When enabled, the Codex CLI resume list shows official subscription and third-party sessions together (the Codex desktop app can show all sessions since a recent update and is unaffected). Note: resuming an old session across providers may fail because the other backend cannot decrypt its encrypted_content reasoning.\n\nYou can also migrate your existing official session history into the shared list (backed up to ~/.cc-switch/backups first; you can restore it when turning this off).",
+      "message": "This changes the shared Codex configuration, including the desktop app. The CLI resume list then shows official subscription and third-party sessions together under the custom provider id. Desktop already shows all sessions and does not need this option. You can optionally migrate existing official sessions (backed up first), then restore them when turning it off. Resuming across providers may fail if the other backend cannot decrypt encrypted_content reasoning.",
       "migrateExisting": "Also migrate existing official session history",
       "confirm": "I understand, enable"
     },
@@ -856,7 +856,8 @@
     "preserveCodexOfficialAuthOnSwitch": "Keep official login for direct switches",
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
     "unifyCodexSessionHistory": "Unified Codex session history",
-    "unifyCodexSessionHistoryDescription": "Affects the Codex CLI only: its resume list shows only the current provider's sessions. When enabled, the official subscription runs under the shared \"custom\" provider id so official and third-party sessions appear in one list. The Codex desktop app can show all sessions since a recent update, so desktop-only users don't need this. You can optionally migrate existing official sessions in (backed up first) and restore them from backup when turning it off. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
+    "unifyCodexSessionHistoryDescription": "This changes the shared Codex configuration, including the desktop app. The CLI resume list then shows official subscription and third-party sessions together under the custom provider id. Desktop already shows all sessions and does not need this option. You can optionally migrate existing official sessions (backed up first), then restore them when turning it off. Resuming across providers may fail if the other backend cannot decrypt encrypted_content reasoning.",
+    "unifyCodexDesktopWarning": "Unified history selects a custom provider for official accounts, which can disable ChatGPT desktop voice, dictation, and other features that require the built-in OpenAI provider. Keep this off when using desktop voice; switching ChatGPT accounts does not require it. After turning it off, reopen the ChatGPT window to refresh feature availability.",
     "codexStackClassicSubagents": "Classic sub-agent tools in aggregation",
     "codexStackClassicSubagentsDescription": "Must be on when the main agent and a sub-agent use different providers, or the sub-agent cannot receive its task.",
     "codexStackClassicSubagentsForcedV2": "Codex config.toml turns on [features] multi_agent_v2, which takes precedence over this setting, so it has no effect.",
