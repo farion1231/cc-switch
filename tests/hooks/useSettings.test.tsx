@@ -363,6 +363,53 @@ describe("useSettings hook", () => {
     expect(syncCurrentProvidersLiveMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { directory: "/custom/hermes", expected: "/custom/hermes", syncs: 1 },
+    { directory: undefined, expected: undefined, syncs: 1 },
+    {
+      directory: "  /server/hermes  ",
+      expected: "/server/hermes",
+      syncs: 0,
+    },
+  ])(
+    "saves Hermes directory $directory and synchronizes only when it changes",
+    async ({ directory, expected, syncs }) => {
+      settingsFormMock = createSettingsFormMock({
+        settings: { ...serverSettings, hermesConfigDir: directory },
+      });
+
+      const { result } = renderHook(() => useSettings());
+
+      await act(async () => {
+        await result.current.saveSettings();
+      });
+
+      const payload = mutateAsyncMock.mock.calls[0][0] as Settings;
+      expect(payload.hermesConfigDir).toBe(expected);
+      expect(syncCurrentProvidersLiveMock).toHaveBeenCalledTimes(syncs);
+      expect(metadataMock.setRequiresRestart).toHaveBeenCalledWith(false);
+    },
+  );
+
+  it("does not repeat Hermes directory sync after Claude plugin sync", async () => {
+    settingsFormMock = createSettingsFormMock({
+      settings: {
+        ...serverSettings,
+        hermesConfigDir: "/custom/hermes",
+        enableClaudePluginIntegration: true,
+      },
+    });
+
+    const { result } = renderHook(() => useSettings());
+
+    await act(async () => {
+      await result.current.saveSettings();
+    });
+
+    expect(applyClaudePluginConfigMock).toHaveBeenCalledTimes(1);
+    expect(syncCurrentProvidersLiveMock).toHaveBeenCalledTimes(1);
+  });
+
   it("sanitizes the Pi directory without projecting providers", async () => {
     settingsFormMock = createSettingsFormMock({
       settings: {
