@@ -50,39 +50,32 @@ describe("Antigravity model discovery", () => {
     api.getAgyModels.mockResolvedValue([{ id: "Gemini 3.8 Flash (Low)" }]);
   });
 
-  it("uses Google's default API when a key has no endpoint override", async () => {
+  // agy 的 API Key 模式只认它内置清单里的显示名，Gemini 接口的模型 ID 用不了
+  it("asks agy's API-key mode instead of the Gemini models API", async () => {
     render(<Harness />);
     fireEvent.click(
       screen.getByRole("button", { name: "providerForm.fetchModels" }),
     );
     await waitFor(() =>
-      expect(api.fetchModelsForConfig).toHaveBeenCalledWith(
-        "https://generativelanguage.googleapis.com",
-        "fixture-key",
-        false,
-        undefined,
-        undefined,
-        { apiFormat: "google-generative-ai" },
-      ),
+      expect(api.getAgyModels).toHaveBeenCalledWith({
+        apiKey: "fixture-key",
+        baseUrl: "",
+      }),
     );
-    expect(api.getAgyModels).not.toHaveBeenCalled();
+    expect(api.fetchModelsForConfig).not.toHaveBeenCalled();
     expect(api.showFetchModelsError).not.toHaveBeenCalled();
   });
 
-  it("keeps a custom Gemini endpoint", async () => {
+  it("passes a custom Gemini endpoint to agy", async () => {
     render(<Harness baseUrl="https://relay.example/gemini" />);
     fireEvent.click(
       screen.getByRole("button", { name: "providerForm.fetchModels" }),
     );
     await waitFor(() =>
-      expect(api.fetchModelsForConfig).toHaveBeenCalledWith(
-        "https://relay.example/gemini",
-        "fixture-key",
-        false,
-        undefined,
-        undefined,
-        { apiFormat: "google-generative-ai" },
-      ),
+      expect(api.getAgyModels).toHaveBeenCalledWith({
+        apiKey: "fixture-key",
+        baseUrl: "https://relay.example/gemini",
+      }),
     );
   });
 

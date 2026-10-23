@@ -157,8 +157,8 @@ pub fn import_provider_from_deeplink(
         }
     }
 
-    // If enabled=true, set as current provider
-    if !additive && activate {
+    // If enabled=true, set as current provider. Antigravity 没有「启用」，只导入。
+    if !additive && activate && app_type != AppType::Agy {
         ProviderService::switch(state, app_type.clone(), &provider_id)?;
         log::info!("Provider '{provider_id}' set as current for {app_type:?}");
     }
@@ -340,6 +340,11 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenClaw => build_additive_app_settings(request, api_format),
         AppType::Hermes => build_hermes_settings(request, api_format),
         AppType::Pi => build_pi_settings(request, api_format)?,
+        AppType::Kimi => {
+            return Err(AppError::InvalidInput(
+                "Add Kimi Code providers from the Kimi Code page".into(),
+            ))
+        }
         AppType::Mcode => {
             return Err(AppError::InvalidInput(
                 "Add MCode providers from the MCode page".into(),

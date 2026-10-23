@@ -31,7 +31,10 @@ import {
 } from "@/components/SubscriptionQuotaFooter";
 import type { SubscriptionQuota } from "@/types/subscription";
 import { useCopilotQuota } from "@/lib/query/copilot";
-import { useXaiOauthQuotaByAccountId } from "@/lib/query/subscription";
+import {
+  useAgyAccountQuota,
+  useXaiOauthQuotaByAccountId,
+} from "@/lib/query/subscription";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
 export interface AccountQuotaRow {
@@ -326,6 +329,32 @@ export function XaiAccountQuota({
     enabled: true,
     autoQuery: false,
   });
+  return (
+    <AccountQuotaColumn
+      login={login}
+      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
+      queriedAt={quota?.queriedAt ?? null}
+      loading={loading}
+      onRefresh={() => void refetch()}
+    />
+  );
+}
+
+/** Antigravity 账号的剩余额度（agy_account_quota(accountId)，不用先切号） */
+export function AgyAccountQuota({
+  accountId,
+  login,
+}: {
+  accountId: string;
+  login: string;
+}) {
+  const { t, i18n } = useTranslation();
+  const display = useQuotaDisplay();
+  const {
+    data: quota,
+    isFetching: loading,
+    refetch,
+  } = useAgyAccountQuota(accountId, { enabled: true, autoQuery: false });
   return (
     <AccountQuotaColumn
       login={login}
