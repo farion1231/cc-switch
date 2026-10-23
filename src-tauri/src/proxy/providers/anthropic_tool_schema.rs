@@ -6,8 +6,8 @@
 use crate::proxy::error::ProxyError;
 use serde_json::{json, Value};
 
-pub(crate) const ANTHROPIC_TOOL_ARGS_PROPERTY: &str = "__cc_switch_args";
-const WRAPPED_SCHEMA_POINTER: &str = "#/properties/__cc_switch_args";
+pub(crate) const ANTHROPIC_TOOL_ARGS_PROPERTY: &str = "cc_switch_args";
+const WRAPPED_SCHEMA_POINTER: &str = "#/properties/cc_switch_args";
 
 #[derive(Clone, Copy)]
 enum SchemaDialect {
@@ -365,9 +365,9 @@ mod tests {
             for forbidden in ["oneOf", "anyOf", "allOf"] {
                 assert!(converted.get(forbidden).is_none(), "root {forbidden}");
             }
-            assert_eq!(converted["required"], json!(["__cc_switch_args"]));
+            assert_eq!(converted["required"], json!(["cc_switch_args"]));
             assert_eq!(converted["additionalProperties"], false);
-            assert_eq!(converted["properties"]["__cc_switch_args"], original);
+            assert_eq!(converted["properties"]["cc_switch_args"], original);
         }
     }
 
@@ -385,7 +385,7 @@ mod tests {
         // In particular, {x: "x", y: "y"} must still fail oneOf: keeping both
         // full branches preserves exclusivity, whereas merging properties cannot.
         let converted = convert(original.clone()).unwrap();
-        assert_eq!(converted["properties"]["__cc_switch_args"], original);
+        assert_eq!(converted["properties"]["cc_switch_args"], original);
     }
 
     #[test]
@@ -394,7 +394,7 @@ mod tests {
             "type": "object",
             "properties": {
                 "value": { "oneOf": [{ "type": "string" }, { "type": "number" }] },
-                "__cc_switch_args": { "type": "string" }
+                "cc_switch_args": { "type": "string" }
             },
             "required": ["value"],
             "additionalProperties": false
@@ -417,26 +417,26 @@ mod tests {
             }
         });
         let converted = convert(original).unwrap();
-        let inner = &converted["properties"]["__cc_switch_args"];
+        let inner = &converted["properties"]["cc_switch_args"];
         assert_eq!(
             inner["properties"]["value"]["$ref"],
-            "#/properties/__cc_switch_args/$defs/value"
+            "#/properties/cc_switch_args/$defs/value"
         );
         assert_eq!(
             inner["properties"]["child"]["$ref"],
-            "#/properties/__cc_switch_args"
+            "#/properties/cc_switch_args"
         );
         assert_eq!(
             inner["properties"]["empty"]["$ref"],
-            "#/properties/__cc_switch_args"
+            "#/properties/cc_switch_args"
         );
         assert_eq!(
             inner["properties"]["branch"]["$ref"],
-            "#/properties/__cc_switch_args/oneOf/0"
+            "#/properties/cc_switch_args/oneOf/0"
         );
         assert_eq!(
             inner["properties"]["escaped"]["$ref"],
-            "#/properties/__cc_switch_args%2F$defs%2Fvalue"
+            "#/properties/cc_switch_args%2F$defs%2Fvalue"
         );
     }
 
@@ -457,7 +457,7 @@ mod tests {
             "properties": { "value": { "$ref": "#value" } }
         });
         let converted = convert(original).unwrap();
-        let inner = &converted["properties"]["__cc_switch_args"];
+        let inner = &converted["properties"]["cc_switch_args"];
         assert_eq!(inner["$defs"]["child"], child);
         assert_eq!(inner["properties"]["value"]["$ref"], "#value");
     }
@@ -475,7 +475,7 @@ mod tests {
             "allOf": [{ "properties": { "value": { "$ref": "#/$defs/value" } } }]
         });
         assert_eq!(
-            convert(original.clone()).unwrap()["properties"]["__cc_switch_args"],
+            convert(original.clone()).unwrap()["properties"]["cc_switch_args"],
             original
         );
     }
@@ -494,7 +494,7 @@ mod tests {
             "x-metadata": literal
         });
         assert_eq!(
-            convert(original.clone()).unwrap()["properties"]["__cc_switch_args"],
+            convert(original.clone()).unwrap()["properties"]["cc_switch_args"],
             original
         );
     }
@@ -502,7 +502,7 @@ mod tests {
     #[test]
     fn issue_7459_references_are_rebased_through_schema_valued_keywords() {
         let reference = json!({ "$ref": "#/$defs/value" });
-        let rewritten = json!({ "$ref": "#/properties/__cc_switch_args/$defs/value" });
+        let rewritten = json!({ "$ref": "#/properties/cc_switch_args/$defs/value" });
         for (keyword, child, expected) in [
             ("allOf", json!([reference]), json!([rewritten])),
             ("anyOf", json!([reference]), json!([rewritten])),
@@ -559,7 +559,7 @@ mod tests {
             original[keyword] = child;
             let converted = convert(original).unwrap();
             assert_eq!(
-                converted["properties"]["__cc_switch_args"][keyword], expected,
+                converted["properties"]["cc_switch_args"][keyword], expected,
                 "{keyword}"
             );
         }
@@ -590,7 +590,7 @@ mod tests {
         });
         let converted = convert(original.clone()).unwrap();
         assert_eq!(converted["$schema"], dialect);
-        assert!(converted["properties"]["__cc_switch_args"]
+        assert!(converted["properties"]["cc_switch_args"]
             .get("$schema")
             .is_none());
 
@@ -598,7 +598,7 @@ mod tests {
         identified["$id"] = json!("https://example.test/tool.json");
         let converted = convert(identified.clone()).unwrap();
         assert_eq!(converted["$schema"], dialect);
-        assert_eq!(converted["properties"]["__cc_switch_args"], identified);
+        assert_eq!(converted["properties"]["cc_switch_args"], identified);
     }
 
     #[test]
@@ -677,9 +677,9 @@ mod tests {
             let converted = convert(original).unwrap();
             assert_eq!(converted["$schema"], dialect);
             assert_eq!(
-                converted["properties"]["__cc_switch_args"]["oneOf"][0]["properties"]["value"]
+                converted["properties"]["cc_switch_args"]["oneOf"][0]["properties"]["value"]
                     ["$ref"],
-                "#/properties/__cc_switch_args/definitions/value"
+                "#/properties/cc_switch_args/definitions/value"
             );
         }
     }
@@ -745,7 +745,7 @@ mod tests {
             let wrapped =
                 super::wrap_root_composition_schema(original.clone(), "union_tool").unwrap();
             assert_eq!(wrapped["$schema"], dialect);
-            assert_eq!(wrapped["properties"]["__cc_switch_args"], original);
+            assert_eq!(wrapped["properties"]["cc_switch_args"], original);
 
             // Request conversion already normalizes tool parameters to object.
             // Assert that this existing normalization is the only difference.
@@ -753,7 +753,7 @@ mod tests {
             let mut normalized = original;
             normalized["type"] = json!("object");
             assert_eq!(converted["$schema"], dialect);
-            assert_eq!(converted["properties"]["__cc_switch_args"], normalized);
+            assert_eq!(converted["properties"]["cc_switch_args"], normalized);
         }
     }
 
@@ -780,7 +780,7 @@ mod tests {
                 }
                 let converted = convert(original).unwrap();
                 assert_eq!(
-                    converted["properties"]["__cc_switch_args"]["properties"]["value"],
+                    converted["properties"]["cc_switch_args"]["properties"]["value"],
                     child
                 );
             }
@@ -860,7 +860,7 @@ mod tests {
                 }
             });
             let converted = convert(original).unwrap();
-            let inner = &converted["properties"]["__cc_switch_args"];
+            let inner = &converted["properties"]["cc_switch_args"];
             assert_eq!(inner["id"], "annotation-only.json");
             assert_eq!(
                 inner["properties"]["value"]["id"],
@@ -868,7 +868,7 @@ mod tests {
             );
             assert_eq!(
                 inner["properties"]["value"]["$ref"],
-                "#/properties/__cc_switch_args/definitions/text"
+                "#/properties/cc_switch_args/definitions/text"
             );
         }
     }
