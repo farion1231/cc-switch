@@ -295,15 +295,6 @@ export function TraeProviderForm({
             </div>
           ) : (
             <>
-              <EndpointField
-                id="trae-base-url"
-                label={t("providerForm.apiEndpoint")}
-                value={baseUrl}
-                onChange={(value) => updateProvider({ base_url: value })}
-                placeholder="https://api.example.com/v1"
-                hint={t("trae.responsesOnlyHint")}
-                required
-              />
               <ApiKeySection
                 id="trae-api-key"
                 value={apiKey}
@@ -334,6 +325,29 @@ export function TraeProviderForm({
                   autoComplete="off"
                 />
               </div>
+              <EndpointField
+                id="trae-base-url"
+                label={t("opencode.baseUrl")}
+                value={baseUrl}
+                onChange={(value) => updateProvider({ base_url: value })}
+                placeholder="https://api.example.com/v1"
+                hint={t("trae.responsesOnlyHint")}
+                required
+              />
+              <RequestHeadersEditor
+                headers={
+                  (custom?.provider.http_headers as
+                    | Record<string, string>
+                    | undefined) ?? {}
+                }
+                onHeadersChange={(headers) =>
+                  updateProvider({
+                    http_headers: Object.keys(headers).length
+                      ? headers
+                      : undefined,
+                  })
+                }
+              />
               <div className="space-y-2">
                 <Label htmlFor="trae-model" className={REQUIRED_LABEL}>
                   {t("trae.model")}
@@ -350,20 +364,6 @@ export function TraeProviderForm({
                   onFetch={handleFetchModels}
                 />
               </div>
-              <RequestHeadersEditor
-                headers={
-                  (custom?.provider.http_headers as
-                    | Record<string, string>
-                    | undefined) ?? {}
-                }
-                onHeadersChange={(headers) =>
-                  updateProvider({
-                    http_headers: Object.keys(headers).length
-                      ? headers
-                      : undefined,
-                  })
-                }
-              />
             </>
           )}
         </fieldset>
