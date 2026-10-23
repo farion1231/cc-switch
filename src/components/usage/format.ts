@@ -23,7 +23,7 @@ export function fmtInt(
 }
 
 /** 用量金额的显示币种。库里一律存美元，只在显示时按 `rate`（1 美元折多少）换算。 */
-/** 界面语言各自的币种（en→USD、zh→CNY、ja→JPY、zh-TW→TWD、tr→TRY），外加欧元 */
+/** 可选显示币种，与界面语言独立。 */
 export const DISPLAY_CURRENCIES = [
   "USD",
   "CNY",
@@ -31,18 +31,21 @@ export const DISPLAY_CURRENCIES = [
   "JPY",
   "TWD",
   "TRY",
+  "KRW",
 ] as const;
 
 export type DisplayCurrency = (typeof DISPLAY_CURRENCIES)[number];
 
 /**
  * 用户没填汇率时的起点，按 2026-07~09 的报价取整；界面上写明要手动填，不联网取。
+ * KRW 按 2026-10-23 的参考报价取整（1 USD ≈ 1325 KRW）。
+ * https://wise.com/au/currency-converter/usd-to-krw-rate/history/23-10-2026
  * 改这里只影响没填过的用户（填过的值存在设置文件里）。
  */
 export const DEFAULT_EXCHANGE_RATES: Record<
   Exclude<DisplayCurrency, "USD">,
   number
-> = { CNY: 6.8, EUR: 0.87, JPY: 158, TWD: 32, TRY: 48 };
+> = { CNY: 6.8, EUR: 0.87, JPY: 158, TWD: 32, TRY: 48, KRW: 1325 };
 
 /** 侧栏「今日」可选的项，顺序即菜单和侧栏上的顺序 */
 export const SIDEBAR_TODAY_ITEMS = [
@@ -105,13 +108,17 @@ const CURRENCY_SYMBOL: Record<DisplayCurrency, string> = {
   JPY: "¥",
   TWD: "NT$",
   TRY: "₺",
+  KRW: "₩",
 };
 
-/** 日元面额大（1 美元约 158 日元），同一处少显示两位小数：$0.0012 → ¥0.19 */
-const FEWER_DIGITS: Partial<Record<DisplayCurrency, number>> = { JPY: 2 };
+/** 日元和韩元面额大，同一处少显示两位小数：$0.0012 → ¥0.19 */
+const FEWER_DIGITS: Partial<Record<DisplayCurrency, number>> = {
+  JPY: 2,
+  KRW: 2,
+};
 
 /**
- * 换算出来的金额是按手填汇率估的，再多位数也不更准：最多两位小数（日元再少两位）。
+ * 换算出来的金额是按手填汇率估的，再多位数也不更准：最多两位小数（日元、韩元再少两位）。
  * 美元按调用方给的位数。
  */
 function shownDigits(display: MoneyDisplay, digits: number): number {

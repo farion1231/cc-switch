@@ -279,6 +279,27 @@ describe("usage money formatting", () => {
 });
 
 describe("display currency", () => {
+  it("converts won with preset or saved rates and preserves small costs", () => {
+    expect(resolveMoneyDisplay({ currency: "KRW" })).toEqual({
+      currency: "KRW",
+      rate: 1325,
+    });
+    const krw = resolveMoneyDisplay({
+      currency: "KRW",
+      exchangeRates: { KRW: 1400 },
+    });
+    expect(krw).toEqual({ currency: "KRW", rate: 1400 });
+    expect(formatMoney(2, 2, krw)).toBe("₩2,800");
+    expect(formatMoney(0.0012, 4, krw)).toBe("₩1.68");
+    expect(formatMoney(0.000001, 4, krw)).toBe("₩0.0014");
+    expect(formatMoneyShort(0.5, krw)).toBe("₩700");
+    expect(formatMoneyCompact(0.001, krw)).toBe("₩1.40");
+    expect(formatMoneyTick(20000, krw)).toBe("₩20,000");
+    expect(
+      resolveMoneyDisplay({ currency: "KRW", exchangeRates: { KRW: 0 } }),
+    ).toEqual({ currency: "KRW", rate: 1325 });
+  });
+
   it("falls back to USD and the preset rate for unusable settings", () => {
     expect(resolveMoneyDisplay(undefined)).toEqual(USD_DISPLAY);
     expect(resolveMoneyDisplay({ currency: "GBP" })).toEqual(USD_DISPLAY);
