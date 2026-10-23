@@ -819,7 +819,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "DIT.ai",
     websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai/register",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "DIT.ai",
