@@ -1732,6 +1732,71 @@ mod tests {
         );
     }
 
+    /// #8387 复审锁定的串联顺序：Grok Build 的必填字段补齐排在迟到参数修补后面，
+    /// 否则上游（实测 MiniMax）先发的空参数结束事件会以空串落进 grok CLI。
+    #[tokio::test]
+    async fn grokbuild_chain_repairs_late_arguments_before_filling_fields() {
+        use super::super::responses_late_arguments::create_late_arguments_repair_stream;
+
+        let blocks: Vec<Result<Bytes, std::io::Error>> = vec![
+            Ok(Bytes::from(
+                "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"id\":\"fc_0\",\"name\":\"shell\",\"arguments\":\"\"}}\n\n",
+            )),
+            Ok(Bytes::from(
+                "event: response.function_call_arguments.done\ndata: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_0\",\"arguments\":\"\"}\n\n",
+            )),
+            Ok(Bytes::from(
+                "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"id\":\"fc_0\",\"name\":\"shell\",\"arguments\":\"\"}}\n\n",
+            )),
+            Ok(Bytes::from(
+                "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_0\",\"delta\":\"{\\\"cmd\\\":\\\"ls\\\"}\"}\n\n",
+            )),
+            Ok(Bytes::from(
+                "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"output\":[]}}\n\n",
+            )),
+        ];
+        let upstream = futures::stream::iter(blocks);
+        let chained = create_xai_native_responses_sse_stream(
+            create_late_arguments_repair_stream(upstream),
+            HashMap::new(),
+            true,
+        );
+        let events: Vec<Value> = chained
+            .map(|bytes| {
+                let text = String::from_utf8(bytes.unwrap().to_vec()).unwrap();
+                serde_json::from_str(
+                    text.lines()
+                        .find_map(|line| line.strip_prefix("data: "))
+                        .unwrap(),
+                )
+                .unwrap()
+            })
+            .collect()
+            .await;
+
+        let types: Vec<&str> = events
+            .iter()
+            .map(|event| event["type"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            types,
+            vec![
+                "response.output_item.added",
+                "response.function_call_arguments.delta",
+                "response.function_call_arguments.done",
+                "response.output_item.done",
+                "response.completed",
+            ]
+        );
+        let done = &events[2];
+        assert_eq!(done["arguments"], r#"{"cmd":"ls"}"#);
+        let numbers: Vec<u64> = events
+            .iter()
+            .map(|event| event["sequence_number"].as_u64().unwrap())
+            .collect();
+        assert_eq!(numbers, vec![0, 1, 2, 3, 4]);
+    }
+
     #[test]
     fn rewrites_agent_message_new_task_with_encrypted_content_part() {
         let mut body = json!({

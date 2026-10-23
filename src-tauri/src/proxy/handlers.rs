@@ -1579,12 +1579,30 @@ async fn handle_codex_xai_native_responses_rewrite(
     if response.is_sse() {
         let builder = rewritten_sse_response_builder(status, response.headers());
 
-        let restore_stream =
+        // Grok Build 借这条改写路径补必填字段，就得把原来排在后面的迟到参数修补
+        // 一起带上：有的上游先发参数为空的结束事件、后发完整参数的 delta（实测
+        // MiniMax），不修补的话结束事件的 arguments 已被空串占住，补字段不会再动
+        // 它（#8387 复审）。
+        let upstream = response.bytes_stream();
+        let repair_first = grokbuild
+            && super::providers::provider_needs_responses_late_arguments_repair(&ctx.provider);
+        let restore_stream = if repair_first {
             transform_codex_responses_xai_sanitize::create_xai_native_responses_sse_stream(
-                response.bytes_stream(),
+                super::providers::responses_late_arguments::create_late_arguments_repair_stream(
+                    upstream,
+                ),
                 restore_map,
                 grokbuild,
-            );
+            )
+            .boxed()
+        } else {
+            transform_codex_responses_xai_sanitize::create_xai_native_responses_sse_stream(
+                upstream,
+                restore_map,
+                grokbuild,
+            )
+            .boxed()
+        };
         let usage_collector =
             create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
         let logged_stream = create_logged_passthrough_stream(
