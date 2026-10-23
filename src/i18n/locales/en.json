@@ -5002,7 +5002,7 @@
   "codebuddy": {
     "empty": {
       "title": "No custom models yet",
-      "description": "CodeBuddy's official models are managed by CodeBuddy Code itself; official accounts can be added and switched in the Auth Center. Custom models already in ~/.codebuddy/models.json appear here automatically. Use the + button in the top-right corner to add a preset or custom model."
+      "description": "CodeBuddy's official models are managed by CodeBuddy Code itself. To switch official accounts, add a \"CodeBuddy Official Sign-in\" card and switch here. Custom models already in ~/.codebuddy/models.json appear here automatically. Use the + button in the top-right corner to add a preset or custom model."
     },
     "modelsHint": "The model ID is the id written to models.json and the name you pick in /model, usually the endpoint's model name. It can't be changed once added. The display name is the same value as Name above.",
     "modelIdDuplicate": "This model ID is already in use",
@@ -5013,6 +5013,24 @@
     "apiKeyPlaceholder": "Enter an API key, or reference an environment variable as ${MY_API_KEY}",
     "maxInputTokens": "Max input tokens",
     "maxOutputTokens": "Max output tokens",
-    "jsonHint": "One model entry in models.json (its id comes from Model ID above). CodeBuddy Code reloads the file on its own after you save."
+    "jsonHint": "One model entry in models.json (its id comes from Model ID above). CodeBuddy Code reloads the file on its own after you save.",
+    "official": {
+      "presetName": "CodeBuddy Official Sign-in",
+      "account": "Account",
+      "accountHint": "Choose the CodeBuddy account this card uses. Click Switch on the card in the provider list to sign CodeBuddy in to it; a running CodeBuddy picks it up automatically.",
+      "accountDeleted": "Account removed. Choose another one.",
+      "accountDeletedChip": "Account removed",
+      "unbound": "No account chosen yet. Edit the card to choose one.",
+      "statusLoading": "Loading accounts…",
+      "expired": "This account's sign-in has expired. Sign in again in the Auth Center before switching.",
+      "switching": "Switching…",
+      "inUse": "In use",
+      "switched": "Switched to {{name}}. A running CodeBuddy switches to this account automatically, and new sessions use it too.",
+      "switchFailed": "Switch failed: {{error}}",
+      "importCurrent": "Add current sign-in ({{login}})",
+      "section": "Official sign-in · {{count}}",
+      "sectionHelpTitle": "CodeBuddy official sign-in",
+      "sectionHelp": "Each official sign-in card is bound to one CodeBuddy account and is never written to models.json. CodeBuddy can only be signed in to one account at a time; Switch signs it in to the card's account, and a running CodeBuddy picks it up automatically."
+    }
   }
 }

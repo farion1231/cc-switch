@@ -41,8 +41,25 @@ export interface CodebuddyProviderPreset extends PresetFamilyFields {
   iconColor?: string;
 }
 
+/**
+ * "CodeBuddy official sign-in": not a models.json entry. The card binds one CodeBuddy
+ * account from the Auth Center (`meta.authBinding`, authProvider `codebuddy_oauth`);
+ * Switch on the card replaces CodeBuddy's global sign-in with that account.
+ */
+export const CODEBUDDY_OFFICIAL_AUTH_PROVIDER = "codebuddy_oauth";
+export const CODEBUDDY_OFFICIAL_ID_PREFIX = "codebuddy-official-";
+
 // Values follow each vendor's own CodeBuddy integration guide.
 export const codebuddyProviderPresets: CodebuddyProviderPreset[] = [
+  {
+    name: "CodeBuddy Official",
+    nameKey: "codebuddy.official.presetName",
+    providerKey: "",
+    websiteUrl: "https://www.codebuddy.ai",
+    category: "official",
+    icon: "codebuddy",
+    settingsConfig: {},
+  },
   {
     // https://api-docs.deepseek.com/quick_start/agent_integrations/workbuddy/
     name: "DeepSeek",

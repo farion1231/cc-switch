@@ -171,16 +171,18 @@ export const kimiPresetModelSources = lazy(() =>
 
 // CodeBuddy 的一张卡片就是一个模型，卡片 key 即模型 ID。
 export const codebuddyPresetModelSources = lazy(() =>
-  codebuddyProviderPresets.flatMap((preset) =>
-    buildSources(
-      [preset.settingsConfig.url],
-      [[preset.providerKey, preset.settingsConfig] as const],
-      (model) => ({
-        contextWindow: positiveInteger(model.maxInputTokens),
-        maxOutputTokens: positiveInteger(model.maxOutputTokens),
-        reasoning: model.supportsReasoning,
-        inputModalities: model.supportsImages ? ["text", "image"] : undefined,
-      }),
+  codebuddyProviderPresets
+    .filter((preset) => preset.category !== "official")
+    .flatMap((preset) =>
+      buildSources(
+        [preset.settingsConfig.url],
+        [[preset.providerKey, preset.settingsConfig] as const],
+        (model) => ({
+          contextWindow: positiveInteger(model.maxInputTokens),
+          maxOutputTokens: positiveInteger(model.maxOutputTokens),
+          reasoning: model.supportsReasoning,
+          inputModalities: model.supportsImages ? ["text", "image"] : undefined,
+        }),
+      ),
     ),
-  ),
 );

@@ -326,9 +326,144 @@ describe("CodebuddyProviderForm", () => {
     });
   });
 
+  describe("official sign-in card", () => {
+    const account = (uid: string, domain: string, login: string) => ({
+      id: `${uid}@${domain}`,
+      provider: "codebuddy_oauth",
+      login,
+      avatar_url: null,
+      authenticated_at: 0,
+      is_default: false,
+      github_domain: domain,
+      requires_reauth: false,
+    });
+    const useAccounts = (current: string | null) =>
+      server.use(
+        http.post("http://tauri.local/auth_get_status", () =>
+          HttpResponse.json({
+            provider: "codebuddy_oauth",
+            authenticated: true,
+            default_account_id: current,
+            accounts: [
+              account("1", "www.codebuddy.cn", "alice"),
+              account("2", "www.codebuddy.ai", "bob"),
+            ],
+          }),
+        ),
+        http.post("http://tauri.local/codebuddy_account_live", () =>
+          HttpResponse.json({
+            state: "collected",
+            account_id: current,
+            label: null,
+            domain: null,
+          }),
+        ),
+        http.post("http://tauri.local/codebuddy_account_quota", () =>
+          HttpResponse.json({
+            credentialStatus: "valid",
+            success: true,
+            planName: "体验版",
+            isPaid: false,
+            enterprise: false,
+            unlimited: false,
+            total: 200,
+            remaining: 150,
+            used: 50,
+            error: null,
+            queriedAt: Date.now(),
+          }),
+        ),
+      );
+
+    it("binds a new card to the current account and names it after the account", async () => {
+      useAccounts("1@www.codebuddy.cn");
+      const submit = vi.fn();
+      render(
+        <CodebuddyProviderForm
+          appId="codebuddy"
+          submitLabel="Add"
+          onSubmit={submit}
+          onCancel={() => {}}
+        />,
+      );
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: /codebuddy\.official\.presetName/,
+        }),
+      );
+      // 不填模型、地址、Key，只选账号
+      expect(
+        screen.queryByLabelText("providerForm.apiEndpoint"),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
+      const alice = await screen.findByRole("radio", { name: /alice/ });
+      await waitFor(() =>
+        expect(alice).toHaveAttribute("aria-checked", "true"),
+      );
+      expect(screen.getByLabelText("provider.name")).toHaveValue("alice");
+      expect(screen.getByText("CodeBuddy 在用")).toBeInTheDocument();
+
+      // 换成 bob，名字跟着换
+      fireEvent.click(screen.getByRole("radio", { name: /bob/ }));
+      expect(screen.getByLabelText("provider.name")).toHaveValue("bob");
+      const save = screen.getByRole("button", { name: "Add" });
+      await waitFor(() => expect(save).toBeEnabled());
+      fireEvent.click(save);
+      await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+      const values = submit.mock.calls[0][0];
+      expect(values.presetCategory).toBe("official");
+      expect(values.providerKey).toMatch(/^codebuddy-official-/);
+      expect(JSON.parse(values.settingsConfig)).toEqual({});
+      expect(values.meta.authBinding).toEqual({
+        source: "managed_account",
+        authProvider: "codebuddy_oauth",
+        accountId: "2@www.codebuddy.ai",
+      });
+    });
+
+    it("flags a card whose bound account was removed", async () => {
+      useAccounts(null);
+      const submit = vi.fn();
+      render(
+        <CodebuddyProviderForm
+          appId="codebuddy"
+          providerId="codebuddy-official-x"
+          initialData={{
+            name: "Old",
+            category: "official",
+            settingsConfig: {},
+            meta: {
+              authBinding: {
+                source: "managed_account",
+                authProvider: "codebuddy_oauth",
+                accountId: "9@www.codebuddy.ai",
+              },
+            },
+          }}
+          submitLabel="Save"
+          onSubmit={submit}
+          onCancel={() => {}}
+        />,
+      );
+      expect(
+        await screen.findByText("账号已删除，请重新选择"),
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("radio", { name: /alice/ }));
+      // 用户自己起的名字不被账号名覆盖
+      expect(screen.getByLabelText("provider.name")).toHaveValue("Old");
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+      const values = submit.mock.calls[0][0];
+      expect(values.providerKey).toBe("codebuddy-official-x");
+      expect(values.meta.authBinding.accountId).toBe("1@www.codebuddy.cn");
+    });
+  });
+
   it("ships presets that use the documented chat-completions endpoints", () => {
     expect(codebuddyProviderPresets.length).toBeGreaterThan(0);
     for (const preset of codebuddyProviderPresets) {
+      // 官方登录预设不是 models.json 里的模型，没有 url
+      if (preset.category === "official") continue;
       expect(preset.providerKey.trim()).toBe(preset.providerKey);
       expect(preset.settingsConfig.url).toMatch(
         /^https:\/\/.+\/chat\/completions$/,

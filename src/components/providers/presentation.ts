@@ -2,6 +2,7 @@ import type { TFunction } from "i18next";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import type { AppMode } from "@/types/proxy";
+import { resolveManagedAccountId } from "@/lib/authBinding";
 import {
   isOfficialAccount,
   providerNeedsRouting,
@@ -699,11 +700,111 @@ export interface AdditiveInput {
   piStateUnavailable?: boolean;
   /** Kimi：原生 default_model 别名所属的供应商。 */
   kimiCurrentId?: string | null;
+  /** CodeBuddy：官方登录卡绑定账号的状态（授权中心收录的账号 + CodeBuddy 现在登着的号） */
+  codebuddyAccounts?: CodebuddyAccountsState;
   actions: {
     add: (provider: Provider) => void;
     remove: (provider: Provider) => void;
     disableOmo: (provider: Provider) => void;
     setDefault: (provider: Provider, modelId?: string) => void;
+    /** CodeBuddy 官方登录卡的「切换」：把 CodeBuddy 的登录换成卡片绑定的账号 */
+    switchAccount?: (provider: Provider) => void;
+  };
+}
+
+export interface CodebuddyAccountsState {
+  status: "loading" | "error" | "ready";
+  /** CodeBuddy 现在登着的号 */
+  currentAccountId: string | null;
+  accounts: { id: string; requiresReauth: boolean }[];
+  /** 正在切换的卡 */
+  switchingId?: string | null;
+}
+
+/**
+ * CodeBuddy 官方登录卡：不进 models.json，没有「添加 / 移除」。同一时间只有一张在用
+ * （绑定的号就是 CodeBuddy 现在登着的号），其余的主操作是「切换」。
+ */
+function codebuddyOfficialItem(
+  t: TFunction,
+  p: Provider,
+  state: CodebuddyAccountsState | undefined,
+  switchAccount: ((provider: Provider) => void) | undefined,
+): ProviderSection["items"][number] {
+  const chips: CardChip[] = [
+    {
+      key: "official",
+      label: t("providerCard.chip.official"),
+      tone: "outline",
+    },
+  ];
+  const accountId = resolveManagedAccountId(p.meta, "codebuddy_oauth");
+  const account = state?.accounts.find((item) => item.id === accountId);
+  const inUse = Boolean(
+    account &&
+      state?.status === "ready" &&
+      state.currentAccountId === account.id,
+  );
+  if (inUse) {
+    return {
+      provider: p,
+      presentation: {
+        tone: "direct",
+        status: {
+          label: t("codebuddy.official.inUse", { defaultValue: "当前在用" }),
+          dot: "direct",
+        },
+        chips,
+        buttons: [],
+      },
+    };
+  }
+  let disabledReason: string | undefined;
+  if (!accountId) {
+    disabledReason = t("codebuddy.official.unbound", {
+      defaultValue: "还没有选择账号，请编辑卡片选择一个",
+    });
+  } else if (!state || state.status === "loading") {
+    disabledReason = t("codebuddy.official.statusLoading", {
+      defaultValue: "正在读取账号…",
+    });
+  } else if (state.status === "error") {
+    disabledReason = t("authCenter.codebuddy.statusLoadFailed", {
+      defaultValue: "无法读取 CodeBuddy 账号，请重试。",
+    });
+  } else if (!account) {
+    disabledReason = t("codebuddy.official.accountDeleted", {
+      defaultValue: "账号已删除，请重新选择",
+    });
+    chips.push({
+      key: "accountDeleted",
+      label: t("codebuddy.official.accountDeletedChip", {
+        defaultValue: "账号已删除",
+      }),
+      tone: "warning",
+    });
+  } else if (account.requiresReauth) {
+    disabledReason = t("codebuddy.official.expired", {
+      defaultValue: "这个账号的登录已过期，请在授权中心重新登录后再切换",
+    });
+  } else if (state.switchingId) {
+    disabledReason = t("codebuddy.official.switching", {
+      defaultValue: "正在切换…",
+    });
+  }
+  return {
+    provider: p,
+    presentation: {
+      chips,
+      buttons: [
+        {
+          key: "switch",
+          label: t("providerCard.action.switch"),
+          onClick: () => switchAccount?.(p),
+          disabledReason,
+        },
+      ],
+    },
   };
 }
 
@@ -711,6 +812,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   const { app, t, providers, actions } = input;
   const added: ProviderSection["items"] = [];
   const available: ProviderSection["items"] = [];
+  const official: ProviderSection["items"] = [];
   const piBlocked =
     app === "pi" && input.piStateUnavailable
       ? t("pi.current.stateUnavailableHint")
@@ -718,6 +820,17 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
 
   for (const p of providers) {
     const chips: CardChip[] = [];
+    if (app === "codebuddy" && p.category === "official") {
+      official.push(
+        codebuddyOfficialItem(
+          t,
+          p,
+          input.codebuddyAccounts,
+          actions.switchAccount,
+        ),
+      );
+      continue;
+    }
     if (app === "kimi") {
       const official = isOfficialAccount(app, p);
       const live = input.isInConfig(p);
@@ -946,7 +1059,30 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     });
   }
 
+  const officialSections: ProviderSection[] = official.length
+    ? [
+        {
+          key: "official",
+          title: t("codebuddy.official.section", {
+            defaultValue: "官方登录 · {{count}}",
+            count: official.length,
+          }),
+          help: {
+            title: t("codebuddy.official.sectionHelpTitle", {
+              defaultValue: "CodeBuddy 官方登录",
+            }),
+            body: t("codebuddy.official.sectionHelp", {
+              defaultValue:
+                "每张官方登录卡绑定一个 CodeBuddy 账号，不会写进 models.json。CodeBuddy 同时只能登录一个号，点「切换」把它的登录换成卡片上的账号，正在运行的 CodeBuddy 也会自动换过去。",
+            }),
+          },
+          items: official,
+        },
+      ]
+    : [];
+
   return [
+    ...officialSections,
     {
       key: "added",
       title: t("providerCard.section.added", { count: added.length }),

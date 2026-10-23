@@ -180,6 +180,13 @@ export async function codebuddyAccountQuota(
   });
 }
 
+/** 供应商列表里 CodeBuddy 官方登录卡的「切换」：把 CodeBuddy 的登录换成卡片绑定的账号，返回账号 ID。 */
+export async function codebuddyAccountSwitchProvider(
+  providerId: string,
+): Promise<string> {
+  return invoke<string>("codebuddy_account_switch_provider", { providerId });
+}
+
 export const authApi = {
   authStartLogin,
   authPollForAccount,
@@ -194,4 +201,5 @@ export const authApi = {
   codebuddyAccountImportCurrent,
   codebuddyAccountOpenLoginTerminal,
   codebuddyAccountQuota,
+  codebuddyAccountSwitchProvider,
 };

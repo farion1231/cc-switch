@@ -5002,7 +5002,7 @@
   "codebuddy": {
     "empty": {
       "title": "カスタムモデルがまだありません",
-      "description": "CodeBuddy の公式モデルは CodeBuddy Code 自身が管理し、公式アカウントは認証センターで追加・切り替えできます。~/.codebuddy/models.json に既にあるカスタムモデルはここに自動で表示されます。右上の + から、プリセットまたはカスタムモデルを追加できます。"
+      "description": "CodeBuddy の公式モデルは CodeBuddy Code 自身が管理します。公式アカウントを切り替えるには「CodeBuddy 公式ログイン」カードを追加し、ここで切り替えます。~/.codebuddy/models.json に既にあるカスタムモデルはここに自動で表示されます。右上の + から、プリセットまたはカスタムモデルを追加できます。"
     },
     "modelsHint": "モデル ID は models.json に書き込まれる id で、/model で選ぶ名前です。通常はエンドポイントのモデル名で、追加後は変更できません。表示名は上の「名前」と同じ値です。",
     "modelIdDuplicate": "このモデル ID は既に使用されています",
@@ -5013,6 +5013,24 @@
     "apiKeyPlaceholder": "API キーを入力するか、${MY_API_KEY} で環境変数を参照します",
     "maxInputTokens": "最大入力トークン",
     "maxOutputTokens": "最大出力トークン",
-    "jsonHint": "models.json のモデル 1 件分の設定です（id は上のモデル ID で決まります）。保存すると CodeBuddy Code が自動で再読み込みします。"
+    "jsonHint": "models.json のモデル 1 件分の設定です（id は上のモデル ID で決まります）。保存すると CodeBuddy Code が自動で再読み込みします。",
+    "official": {
+      "presetName": "CodeBuddy 公式ログイン",
+      "account": "ログインアカウント",
+      "accountHint": "このカードで使う CodeBuddy アカウントを選びます。プロバイダー一覧でカードの「切り替え」を押すと CodeBuddy のログインがこのアカウントに切り替わり、実行中の CodeBuddy も自動で切り替わります。",
+      "accountDeleted": "アカウントが削除されました。選び直してください",
+      "accountDeletedChip": "アカウント削除済み",
+      "unbound": "アカウントが未選択です。カードを編集して選んでください",
+      "statusLoading": "アカウントを読み込み中…",
+      "expired": "このアカウントのログインは期限切れです。認証センターで再ログインしてから切り替えてください",
+      "switching": "切り替え中…",
+      "inUse": "使用中",
+      "switched": "{{name}} に切り替えました。実行中の CodeBuddy も自動でこのアカウントに切り替わり、新しく開くものもこのアカウントを使います。",
+      "switchFailed": "切り替えに失敗しました：{{error}}",
+      "importCurrent": "現在のログインを追加（{{login}}）",
+      "section": "公式ログイン · {{count}}",
+      "sectionHelpTitle": "CodeBuddy 公式ログイン",
+      "sectionHelp": "公式ログインカードはそれぞれ 1 つの CodeBuddy アカウントに紐づき、models.json には書き込まれません。CodeBuddy は同時に 1 つのアカウントにしかログインできないため、「切り替え」でカードのアカウントにログインを切り替えます。実行中の CodeBuddy も自動で切り替わります。"
+    }
   }
 }

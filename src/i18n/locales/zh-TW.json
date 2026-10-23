@@ -5003,7 +5003,7 @@
   "codebuddy": {
     "empty": {
       "title": "尚未新增自訂模型",
-      "description": "CodeBuddy 官方模型由 CodeBuddy Code 自行管理，官方帳號可在授權中心收錄與切換；~/.codebuddy/models.json 中已有的自訂模型會自動顯示在這裡。點擊右上角的 +，從預設或自訂設定新增模型。"
+      "description": "CodeBuddy 官方模型由 CodeBuddy Code 自行管理；要切換官方帳號，新增「CodeBuddy 官方登入」卡後在這裡切換。~/.codebuddy/models.json 中已有的自訂模型會自動顯示在這裡。點擊右上角的 +，從預設或自訂設定新增模型。"
     },
     "modelsHint": "模型 ID 寫入 models.json 的 id，也是 /model 中選擇的名稱，通常就是介面的模型名稱，新增後不可修改。顯示名稱與上方的「名稱」是同一個值。",
     "modelIdDuplicate": "此模型 ID 已被使用，請更換",
@@ -5014,6 +5014,24 @@
     "apiKeyPlaceholder": "輸入 API Key，或寫成 ${MY_API_KEY} 參照環境變數",
     "maxInputTokens": "最大輸入 Token",
     "maxOutputTokens": "最大輸出 Token",
-    "jsonHint": "對應 models.json 中的一筆模型設定（id 由上方模型 ID 決定）。儲存後 CodeBuddy Code 會自動重新載入。"
+    "jsonHint": "對應 models.json 中的一筆模型設定（id 由上方模型 ID 決定）。儲存後 CodeBuddy Code 會自動重新載入。",
+    "official": {
+      "presetName": "CodeBuddy 官方登入",
+      "account": "登入帳號",
+      "accountHint": "選擇這張卡要用的 CodeBuddy 帳號。在供應商列表裡點卡片上的「切換」，CodeBuddy 的登入就會換成它，正在執行的 CodeBuddy 也會自動換過去。",
+      "accountDeleted": "帳號已刪除，請重新選擇",
+      "accountDeletedChip": "帳號已刪除",
+      "unbound": "還沒有選擇帳號，請編輯卡片選擇一個",
+      "statusLoading": "正在讀取帳號…",
+      "expired": "這個帳號的登入已過期，請在授權中心重新登入後再切換",
+      "switching": "正在切換…",
+      "inUse": "目前使用中",
+      "switched": "已切換到 {{name}}。正在執行的 CodeBuddy 會自動換到這個帳號，新開的也會使用它。",
+      "switchFailed": "切換失敗：{{error}}",
+      "importCurrent": "收錄目前登入（{{login}}）",
+      "section": "官方登入 · {{count}}",
+      "sectionHelpTitle": "CodeBuddy 官方登入",
+      "sectionHelp": "每張官方登入卡綁定一個 CodeBuddy 帳號，不會寫進 models.json。CodeBuddy 同時只能登入一個帳號，點「切換」把它的登入換成卡片上的帳號，正在執行的 CodeBuddy 也會自動換過去。"
+    }
   }
 }
