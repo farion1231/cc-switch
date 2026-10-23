@@ -113,3 +113,27 @@ describe("Common config modals", () => {
     });
   });
 });
+
+it("describes the Antigravity launcher instead of Gemini CLI global files", () => {
+  render(
+    <GeminiConfigEditor
+      isAgy
+      envValue=""
+      configValue="{}"
+      onEnvChange={vi.fn()}
+      onConfigChange={vi.fn()}
+      envError=""
+      configError=""
+    />,
+  );
+  for (const key of [
+    "keyFieldsHint",
+    "envFile",
+    "envFileHint",
+    "configJson",
+    "configJsonHint",
+  ]) {
+    expect(screen.getByText(`provider.form.agy.${key}`)).toBeInTheDocument();
+  }
+  expect(screen.queryByText(/Gemini CLI/)).not.toBeInTheDocument();
+});

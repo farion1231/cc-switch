@@ -9,4 +9,6 @@ export type AppId =
   | "openclaw"
   | "hermes"
   | "pi"
-  | "mcode";
+  | "kimi"
+  | "mcode"
+  | "agy";
