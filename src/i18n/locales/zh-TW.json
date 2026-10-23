@@ -4963,6 +4963,10 @@
       "always_thinking": "始終思考",
       "tool_use": "工具呼叫",
       "dynamically_loaded_tools": "按需載入工具"
+    },
+    "error": {
+      "defaultModelInUse": "Kimi Code 正在使用此供應商的模型，請先在 Kimi Code 中用 /model 切換到其他模型",
+      "secondaryModelInUse": "Kimi Code 的子代理模型正在使用此供應商的模型，請先在 Kimi Code 中用 /secondary-model 更換"
     }
   }
 }

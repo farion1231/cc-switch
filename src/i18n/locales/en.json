@@ -4962,6 +4962,10 @@
       "title": "Add a Kimi Code provider",
       "description": "Configure an endpoint, API key and models. Existing Kimi configuration is imported automatically."
     },
-    "deleteSessionHint": "Delete this session in Kimi Code to update its index and history together."
+    "deleteSessionHint": "Delete this session in Kimi Code to update its index and history together.",
+    "error": {
+      "defaultModelInUse": "Kimi Code is using a model from this provider. Switch to another model with /model in Kimi Code first.",
+      "secondaryModelInUse": "Kimi Code's subagent model uses a model from this provider. Change it with /secondary-model in Kimi Code first."
+    }
   }
 }

@@ -4962,6 +4962,10 @@
       "title": "添加 Kimi Code 供应商",
       "description": "配置请求地址、API Key 和模型；已有 Kimi 配置会自动导入。"
     },
-    "deleteSessionHint": "请在 Kimi Code 中删除，以同时更新会话索引和历史记录。"
+    "deleteSessionHint": "请在 Kimi Code 中删除，以同时更新会话索引和历史记录。",
+    "error": {
+      "defaultModelInUse": "Kimi Code 正在使用该供应商的模型，请先在 Kimi Code 中用 /model 切换到其他模型",
+      "secondaryModelInUse": "Kimi Code 的子代理模型正在使用该供应商的模型，请先在 Kimi Code 中用 /secondary-model 更换"
+    }
   }
 }

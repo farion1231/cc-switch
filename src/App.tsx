@@ -50,6 +50,7 @@ import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import {
   extractErrorMessage,
+  translateKimiProviderMutationError,
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
@@ -819,6 +820,35 @@ function App() {
     setEditingProvider(null);
   };
 
+  // 累加式应用的「已添加」和「默认」都现读客户端文件，移除前后重读一遍
+  const refreshAdditiveLiveState = async (app: AppId) => {
+    if (app === "pi") {
+      await invalidatePiProviderCaches(queryClient);
+    } else if (app === "opencode") {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["opencodeLiveProviderIds"],
+        }),
+        queryClient.invalidateQueries({ queryKey: ["opencodeDefaultModel"] }),
+      ]);
+    } else if (app === "openclaw") {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: openclawKeys.liveProviderIds,
+        }),
+        queryClient.invalidateQueries({ queryKey: openclawKeys.defaultModel }),
+        queryClient.invalidateQueries({ queryKey: openclawKeys.health }),
+      ]);
+    } else if (app === "hermes") {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: hermesKeys.liveProviderIds }),
+        queryClient.invalidateQueries({ queryKey: hermesKeys.modelConfig }),
+      ]);
+    } else if (app === "mcode" || app === "kimi") {
+      await queryClient.invalidateQueries({ queryKey: ["providers", app] });
+    }
+  };
+
   const handleConfirmAction = async () => {
     if (!confirmAction) return;
     const { provider, action } = confirmAction;
@@ -831,42 +861,20 @@ function App() {
       } catch (error) {
         const detail = extractErrorMessage(error);
         const description =
-          activeApp === "pi"
-            ? translatePiProviderMutationError(detail, t) || detail
-            : detail;
-        if (activeApp === "pi") {
-          void invalidatePiProviderCaches(queryClient).catch(() => undefined);
-        }
+          (activeApp === "pi"
+            ? translatePiProviderMutationError(detail, t)
+            : activeApp === "kimi"
+              ? translateKimiProviderMutationError(detail, t)
+              : "") || detail;
+        // 默认模型可能在客户端里改过、页面还是旧的：失败了也重读，让「默认」和移除按钮跟上
+        void refreshAdditiveLiveState(activeApp).catch(() => undefined);
         toast.error(t("notifications.removeFromConfigFailed"), {
           description: description || t("common.unknown"),
           closeButton: true,
         });
         return;
       }
-      if (activeApp === "pi") {
-        await invalidatePiProviderCaches(queryClient);
-      }
-      // Invalidate queries to refresh the isInConfig state
-      if (activeApp === "opencode") {
-        await queryClient.invalidateQueries({
-          queryKey: ["opencodeLiveProviderIds"],
-        });
-      } else if (activeApp === "openclaw") {
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.liveProviderIds,
-        });
-        await queryClient.invalidateQueries({
-          queryKey: openclawKeys.health,
-        });
-      } else if (activeApp === "hermes") {
-        await queryClient.invalidateQueries({
-          queryKey: hermesKeys.liveProviderIds,
-        });
-      } else if (activeApp === "mcode" || activeApp === "kimi") {
-        await queryClient.invalidateQueries({
-          queryKey: ["providers", activeApp],
-        });
-      }
+      await refreshAdditiveLiveState(activeApp);
       toast.success(
         activeApp === "pi"
           ? t("pi.provider.removed", {

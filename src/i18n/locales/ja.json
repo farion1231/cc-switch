@@ -4962,6 +4962,10 @@
       "always_thinking": "常に思考",
       "tool_use": "ツール呼び出し",
       "dynamically_loaded_tools": "必要に応じてツールを読み込む"
+    },
+    "error": {
+      "defaultModelInUse": "Kimi Code がこのプロバイダーのモデルを使用中です。先に Kimi Code の /model でほかのモデルに切り替えてください。",
+      "secondaryModelInUse": "Kimi Code のサブエージェントモデルがこのプロバイダーのモデルを使用中です。先に Kimi Code の /secondary-model で変更してください。"
     }
   }
 }
