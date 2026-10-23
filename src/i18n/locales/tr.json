@@ -4828,7 +4828,15 @@
       "signedOutBody": "WorkBuddy'de oturum açın, sonra buraya dönüp Hesap ekle'ye tıklayın.",
       "prepareNewLogin": "Başka bir hesapla oturum aç",
       "preparedNewLogin": "Geçerli hesap kaydedildi. WorkBuddy oturum açma sayfasında açılacak; başka bir hesapla oturum açıp buraya dönün ve Hesap ekle'ye tıklayın.",
-      "openApp": "WorkBuddy'yi aç"
+      "openApp": "WorkBuddy'yi aç",
+      "plan": {
+        "free": "Ücretsiz",
+        "pro": "Pro",
+        "team": "Ekip",
+        "enterprise": "Kurumsal",
+        "personal": "Kişisel",
+        "_raw": "{{plan}}"
+      }
     }
   },
   "kimi": {
