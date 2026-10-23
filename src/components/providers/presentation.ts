@@ -3,6 +3,11 @@ import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import type { AppMode } from "@/types/proxy";
 import {
+  boundWorkBuddyAccountId,
+  isWorkBuddyOfficial,
+  type WorkBuddyOfficialState,
+} from "@/components/providers/workbuddyOfficial";
+import {
   isOfficialAccount,
   providerNeedsRouting,
   supportsFailover,
@@ -699,11 +704,72 @@ export interface AdditiveInput {
   piStateUnavailable?: boolean;
   /** Kimi：原生 default_model 别名所属的供应商。 */
   kimiCurrentId?: string | null;
+  /** WorkBuddy 官方登录卡：已收录账号、当前登录、是否在运行 */
+  workbuddyOfficial?: WorkBuddyOfficialState;
   actions: {
     add: (provider: Provider) => void;
     remove: (provider: Provider) => void;
     disableOmo: (provider: Provider) => void;
     setDefault: (provider: Provider, modelId?: string) => void;
+    /** WorkBuddy 官方登录卡：把 WorkBuddy 的登录切到卡片绑定的账号 */
+    switchAccount?: (provider: Provider) => void;
+  };
+}
+
+/**
+ * WorkBuddy 官方登录卡：单选。绑定的账号就是 WorkBuddy 现在登着的号时显示「当前在用」，
+ * 否则给「切换」；账号被删了（或没绑）时提示重新选择。不进「已添加 / 可添加」（不写 models.json）。
+ */
+function workbuddyOfficialCard(
+  input: AdditiveInput,
+  p: Provider,
+): CardPresentation {
+  const { t } = input;
+  const state = input.workbuddyOfficial;
+  const bound = boundWorkBuddyAccountId(p);
+  const missing =
+    !bound || (state?.accountIds != null && !state.accountIds.has(bound));
+  const current = !missing && bound === state?.currentAccountId;
+  const chips: CardChip[] = [
+    {
+      key: "official",
+      label: t("providerCard.chip.official"),
+      tone: "outline",
+    },
+  ];
+  if (missing) {
+    chips.push({
+      key: "accountMissing",
+      label: bound
+        ? t("workbuddy.official.accountDeletedChip")
+        : t("workbuddy.official.accountUnsetChip"),
+      tone: "warning",
+    });
+  }
+  if (current) {
+    return {
+      tone: "direct",
+      status: { label: t("workbuddy.official.inUse"), dot: "direct" },
+      chips,
+      buttons: [],
+    };
+  }
+  return {
+    chips,
+    buttons: [
+      {
+        key: "switchAccount",
+        label: t("workbuddy.official.switch"),
+        onClick: () => input.actions.switchAccount?.(p),
+        disabledReason: missing
+          ? t("workbuddy.official.accountDeleted")
+          : state?.running
+            ? t("workbuddy.official.quitFirst")
+            : state?.switching
+              ? t("workbuddy.official.switching")
+              : undefined,
+      },
+    ],
   };
 }
 
@@ -711,6 +777,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   const { app, t, providers, actions } = input;
   const added: ProviderSection["items"] = [];
   const available: ProviderSection["items"] = [];
+  const workbuddyOfficial: ProviderSection["items"] = [];
   const piBlocked =
     app === "pi" && input.piStateUnavailable
       ? t("pi.current.stateUnavailableHint")
@@ -718,6 +785,13 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
 
   for (const p of providers) {
     const chips: CardChip[] = [];
+    if (app === "workbuddy" && isWorkBuddyOfficial(p)) {
+      workbuddyOfficial.push({
+        provider: p,
+        presentation: workbuddyOfficialCard(input, p),
+      });
+      continue;
+    }
     if (app === "kimi") {
       const official = isOfficialAccount(app, p);
       const live = input.isInConfig(p);
@@ -946,7 +1020,25 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     });
   }
 
+  const officialSections: ProviderSection[] =
+    workbuddyOfficial.length > 0
+      ? [
+          {
+            key: "official",
+            title: t("workbuddy.official.section", {
+              count: workbuddyOfficial.length,
+            }),
+            help: {
+              title: t("workbuddy.official.sectionHelpTitle"),
+              body: t("workbuddy.official.sectionHelp"),
+            },
+            items: workbuddyOfficial,
+          },
+        ]
+      : [];
+
   return [
+    ...officialSections,
     {
       key: "added",
       title: t("providerCard.section.added", { count: added.length }),

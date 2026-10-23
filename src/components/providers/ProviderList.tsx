@@ -49,6 +49,8 @@ import { isTextEditableTarget } from "@/utils/domUtils";
 import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
+import { isWorkBuddyOfficial } from "@/components/providers/workbuddyOfficial";
+import { useWorkBuddyOfficial } from "@/components/providers/useWorkBuddyOfficial";
 import {
   buildAdditiveSections,
   buildLaunchSections,
@@ -155,6 +157,12 @@ export function ProviderList({
     error: piCurrentStateError,
   } = usePiCurrentState(appId === "pi");
   const isPiStateReady = appId !== "pi" || isPiCurrentStateSuccess;
+  // WorkBuddy 官方登录卡：有这种卡时才去读账号和运行状态
+  const hasWorkBuddyOfficial =
+    appId === "workbuddy" &&
+    Object.values(providers).some((provider) => isWorkBuddyOfficial(provider));
+  const { state: workbuddyOfficial, switchTo: switchWorkBuddyAccount } =
+    useWorkBuddyOfficial(hasWorkBuddyOfficial);
   // 累加式应用要等 live 里有哪些供应商读回来（成功或失败）才知道卡片该进哪个分区；
   // 在那之前按加载中画骨架，不然卡片先全落进「可添加」，读回来再整体搬到「已添加」。
   // 一张卡都没有时不用等，直接出空状态
@@ -376,6 +384,7 @@ export function ProviderList({
         isHermesReadOnlyProvider(provider.settingsConfig),
       piStateUnavailable: appId === "pi" && !isPiStateReady,
       kimiCurrentId: currentProviderId,
+      workbuddyOfficial,
       actions: {
         add: onSwitch,
         remove: (provider) =>
@@ -387,6 +396,7 @@ export function ProviderList({
             ? onDisableOmoSlim?.()
             : onDisableOmo?.(),
         setDefault: (provider, modelId) => onSetAsDefault?.(provider, modelId),
+        switchAccount: (provider) => void switchWorkBuddyAccount(provider),
       },
     });
   }, [
@@ -410,6 +420,8 @@ export function ProviderList({
     onDisableOmo,
     onDisableOmoSlim,
     onSetAsDefault,
+    workbuddyOfficial,
+    switchWorkBuddyAccount,
   ]);
 
   const piStateError =

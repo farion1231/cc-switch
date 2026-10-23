@@ -39,6 +39,8 @@ import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
 import { isAdditiveAppId, isProxyAppId } from "@/config/appConfig";
+import { isWorkBuddyOfficial } from "@/components/providers/workbuddyOfficial";
+import { WorkBuddyOfficialAccountLine } from "@/components/providers/WorkBuddyOfficialAccountLine";
 import { ProviderCardActions } from "./ProviderCardActions";
 import type { CardChip, CardPresentation, CardTone } from "./presentation";
 
@@ -382,7 +384,9 @@ export function ProviderCard({
             )}
           </div>
 
-          {codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
+          {appId === "workbuddy" && isWorkBuddyOfficial(provider) ? (
+            <WorkBuddyOfficialAccountLine provider={provider} onEdit={onEdit} />
+          ) : codexOfficialIdentity && codexOfficialIdentity !== "api_key" ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
               {codexOfficialIdentity === "native_login" ? (
                 <span className="min-w-0 truncate" title={manualNote}>
