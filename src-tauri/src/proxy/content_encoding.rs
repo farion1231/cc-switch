@@ -167,6 +167,70 @@ pub(crate) fn decompress_body(
     decompress_body_with_limit(content_encoding, body, usize::MAX).map_err(Into::into)
 }
 
+/// 逐块解压 SSE，供提交响应之前的语义检查使用，避免等待整个模型回合结束。
+/// 调用方返回解压后的流时必须移除 Content-Encoding / Content-Length。
+pub(crate) fn decompress_stream(
+    content_encoding: &str,
+    stream: impl futures::Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + 'static,
+) -> Option<impl futures::Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + 'static> {
+    use async_compression::futures::bufread::{
+        BrotliDecoder, DeflateDecoder, GzipDecoder, ZlibDecoder, ZstdDecoder,
+    };
+    use futures::{
+        io::{AsyncRead, AsyncReadExt, BufReader, Cursor},
+        TryStreamExt,
+    };
+
+    if !is_supported_content_encoding(content_encoding) {
+        return None;
+    }
+    let codings: Vec<_> = split_codings(content_encoding)
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    Some(async_stream::try_stream! {
+        let mut reader: Box<dyn AsyncRead + Unpin + Send> = Box::new(Box::pin(stream).into_async_read());
+        for coding in codings.iter().rev() {
+            reader = match coding.as_str() {
+                "gzip" | "x-gzip" => {
+                    let mut decoder = GzipDecoder::new(BufReader::new(reader));
+                    decoder.multiple_members(true);
+                    Box::new(decoder)
+                }
+                "deflate" => {
+                    // 与整包解压一致，兼容 HTTP 的 zlib 封装和部分网关的 raw deflate。
+                    let mut prefix = vec![0; 2];
+                    let mut filled = 0;
+                    while filled < prefix.len() {
+                        let read = reader.read(&mut prefix[filled..]).await?;
+                        if read == 0 { break; }
+                        filled += read;
+                    }
+                    prefix.truncate(filled);
+                    let is_zlib = prefix.len() == 2 && prefix[0] & 0x0f == 8
+                        && prefix[0] >> 4 <= 7
+                        && u16::from_be_bytes([prefix[0], prefix[1]]) % 31 == 0;
+                    let reader = BufReader::new(Cursor::new(prefix).chain(reader));
+                    if is_zlib { Box::new(ZlibDecoder::new(reader)) } else { Box::new(DeflateDecoder::new(reader)) }
+                }
+                "br" => Box::new(BrotliDecoder::new(BufReader::new(reader))),
+                "zstd" | "zst" => {
+                    let mut decoder = ZstdDecoder::new(BufReader::new(reader));
+                    decoder.multiple_members(true);
+                    Box::new(decoder)
+                }
+                _ => unreachable!("supported content coding"),
+            };
+        }
+        let mut buffer = vec![0; 16 * 1024];
+        loop {
+            let read = reader.read(&mut buffer).await?;
+            if read == 0 { break; }
+            yield bytes::Bytes::copy_from_slice(&buffer[..read]);
+        }
+    })
+}
+
 /// 该 content-encoding（含堆叠，如 `gzip, zstd`）是否全部可被解压。
 ///
 /// 请求侧用它做闸门：无法解压的压缩体不能透传给 JSON 解析，需直接拒绝。
@@ -280,6 +344,51 @@ mod tests {
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         std::io::Write::write_all(&mut encoder, payload).unwrap();
         encoder.finish().unwrap()
+    }
+
+    #[tokio::test]
+    async fn stream_decoding_handles_fragmented_and_stacked_encodings() {
+        use futures::StreamExt;
+        use std::io::Write;
+
+        let payload = b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n";
+        let gzip = gzip_compress(payload);
+        let mut zlib = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        zlib.write_all(payload).unwrap();
+        let mut raw =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        raw.write_all(payload).unwrap();
+        let mut brotli = Vec::new();
+        {
+            let mut encoder = brotli::CompressorWriter::new(&mut brotli, 4096, 5, 22);
+            encoder.write_all(payload).unwrap();
+        }
+        let mut zstd_frames = zstd::stream::encode_all(&payload[..20], 0).unwrap();
+        zstd_frames.extend(zstd::stream::encode_all(&payload[20..], 0).unwrap());
+        for (encoding, compressed) in [
+            ("gzip", gzip.clone()),
+            ("deflate", zlib.finish().unwrap()),
+            ("deflate", raw.finish().unwrap()),
+            ("br", brotli),
+            ("zstd", zstd::stream::encode_all(&payload[..], 0).unwrap()),
+            ("zstd", zstd_frames),
+            (
+                "gzip, zstd",
+                zstd::stream::encode_all(&gzip[..], 0).unwrap(),
+            ),
+        ] {
+            let chunks: Vec<_> = compressed
+                .chunks(1)
+                .map(|chunk| Ok(bytes::Bytes::copy_from_slice(chunk)))
+                .collect();
+            let decoded = decompress_stream(encoding, futures::stream::iter(chunks)).unwrap();
+            futures::pin_mut!(decoded);
+            let mut actual = Vec::new();
+            while let Some(chunk) = decoded.next().await {
+                actual.extend_from_slice(&chunk.unwrap());
+            }
+            assert_eq!(actual, payload, "{encoding}");
+        }
     }
 
     #[test]
