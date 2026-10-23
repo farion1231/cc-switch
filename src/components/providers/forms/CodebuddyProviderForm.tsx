@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Form } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -15,6 +15,12 @@ import {
 } from "@/components/ui/select";
 import JsonEditor from "@/components/JsonEditor";
 import { useDarkMode } from "@/hooks/useDarkMode";
+import { toast } from "@/lib/toast";
+import {
+  fetchModelsForConfig,
+  showFetchModelsError,
+  type FetchedModel,
+} from "@/lib/api/model-fetch";
 import { useProvidersQuery } from "@/lib/query/queries";
 import type { ProviderFormData } from "@/lib/schemas/provider";
 import {
@@ -22,7 +28,8 @@ import {
   codebuddyProviderPresets,
   type CodebuddyModelConfig,
 } from "@/config/codebuddyProviderPresets";
-import { BasicFormFields } from "./BasicFormFields";
+import { BasicFormFields, REQUIRED_LABEL } from "./BasicFormFields";
+import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import type { ProviderFormProps } from "./ProviderForm";
 
@@ -66,6 +73,29 @@ const withoutId = (config: Record<string, unknown>): CodebuddyModelConfig => {
 const toPositiveInt = (value: string): number | undefined => {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+};
+
+const CAPABILITIES = [
+  "supportsToolCall",
+  "supportsImages",
+  "supportsReasoning",
+] as const;
+
+/**
+ * Where `GET /models` lives for a CodeBuddy `url`: Chat Completions takes the full
+ * `/chat/completions` path and Responses takes the base URL (`/responses` optional).
+ */
+export const codebuddyModelsBase = (
+  url: string,
+  api: unknown,
+): { baseUrl: string; isFullUrl: boolean } => {
+  const trimmed = url.trim().replace(/\/+$/, "");
+  const suffix =
+    api === "openai-responses" ? /\/responses$/ : /\/chat\/completions$/;
+  const stripped = trimmed.replace(suffix, "");
+  return api !== "openai-responses" && stripped === trimmed
+    ? { baseUrl: trimmed, isFullUrl: true }
+    : { baseUrl: stripped, isFullUrl: false };
 };
 
 export function CodebuddyProviderForm({
@@ -158,18 +188,45 @@ export function CodebuddyProviderForm({
     });
   };
 
-  const flag = (
-    key: "supportsToolCall" | "supportsImages" | "supportsReasoning",
-  ) => (
-    <div className="flex items-center justify-between gap-3">
-      <Label htmlFor={`codebuddy-${key}`}>{t(`codebuddy.${key}`)}</Label>
-      <Switch
-        id={`codebuddy-${key}`}
-        checked={config[key] === true}
-        onCheckedChange={(checked) => setField(key, checked ? true : undefined)}
-      />
-    </div>
-  );
+  const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const fetchGeneration = useRef(0);
+  const apiKey = config.apiKey ?? "";
+  const handleFetchModels = useCallback(() => {
+    const endpoint = url.trim();
+    const key = apiKey.trim();
+    if (!endpoint || !key) {
+      showFetchModelsError(null, t, {
+        hasApiKey: Boolean(key),
+        hasBaseUrl: Boolean(endpoint),
+      });
+      return;
+    }
+    const { baseUrl, isFullUrl } = codebuddyModelsBase(endpoint, config.api);
+    const generation = ++fetchGeneration.current;
+    setFetchedModels([]);
+    setIsFetchingModels(true);
+    fetchModelsForConfig(baseUrl, key, isFullUrl)
+      .then((models) => {
+        if (generation !== fetchGeneration.current) return;
+        setFetchedModels(models);
+        if (models.length === 0) {
+          toast.info(t("providerForm.fetchModelsEmpty"));
+        } else {
+          toast.success(
+            t("providerForm.fetchModelsSuccess", { count: models.length }),
+          );
+        }
+      })
+      .catch((err) => {
+        if (generation !== fetchGeneration.current) return;
+        console.warn("[ModelFetch] Failed:", err);
+        showFetchModelsError(err, t);
+      })
+      .finally(() => {
+        if (generation === fetchGeneration.current) setIsFetchingModels(false);
+      });
+  }, [url, apiKey, config.api, t]);
 
   return (
     <Form {...form}>
@@ -211,6 +268,12 @@ export function CodebuddyProviderForm({
           <ProviderPresetSelector
             selectedPresetId={presetId}
             presetEntries={PRESET_ENTRIES}
+            presetCategoryLabels={{
+              custom: t("providerPreset.custom"),
+              cn_official: t("providerForm.categoryCnOfficial"),
+              aggregator: t("providerForm.categoryAggregation"),
+              third_party: t("providerForm.categoryThirdParty"),
+            }}
             onPresetChange={choosePreset}
             category={category}
           />
@@ -228,21 +291,27 @@ export function CodebuddyProviderForm({
             form={form}
             beforeNameSlot={
               <div className="space-y-2">
-                <Label htmlFor="codebuddy-model-id">
+                <Label htmlFor="codebuddy-model-id" className={REQUIRED_LABEL}>
                   {t("codebuddy.modelId")}
-                  <span aria-hidden="true" className="text-destructive ml-1">
-                    *
-                  </span>
                 </Label>
-                <Input
-                  id="codebuddy-model-id"
-                  value={modelId}
-                  onChange={(event) => setModelId(event.target.value)}
-                  disabled={isEdit}
-                  placeholder="deepseek-chat"
-                  autoComplete="off"
-                  className={keyTaken || keyInvalid ? "border-destructive" : ""}
-                />
+                {isEdit ? (
+                  <Input
+                    id="codebuddy-model-id"
+                    value={modelId}
+                    disabled
+                    autoComplete="off"
+                  />
+                ) : (
+                  <ModelInputWithFetch
+                    id="codebuddy-model-id"
+                    value={modelId}
+                    onChange={setModelId}
+                    placeholder="deepseek-chat"
+                    fetchedModels={fetchedModels}
+                    isLoading={isFetchingModels}
+                    onFetch={handleFetchModels}
+                  />
+                )}
                 <p
                   className={
                     keyTaken || keyInvalid
@@ -261,7 +330,7 @@ export function CodebuddyProviderForm({
               </div>
             }
           />
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label htmlFor="codebuddy-api">{t("codebuddy.api")}</Label>
               <Select
@@ -308,64 +377,45 @@ export function CodebuddyProviderForm({
             </div>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="codebuddy-url">
-              {t("codebuddy.url")}
-              <span aria-hidden="true" className="text-destructive ml-1">
-                *
-              </span>
-            </Label>
-            <Input
+            <EndpointField
               id="codebuddy-url"
+              label={t("providerForm.apiEndpoint")}
               value={url}
-              onChange={(event) => setField("url", event.target.value)}
+              onChange={(value) => setField("url", value)}
               placeholder={
                 config.api === "openai-responses"
                   ? "https://api.example.com/v1"
                   : "https://api.example.com/v1/chat/completions"
               }
-              autoComplete="off"
-              className={urlInvalid ? "border-destructive" : ""}
-            />
-            <p
-              className={
-                urlInvalid ? "text-xs text-destructive" : "text-xs text-fg-2"
+              hint={
+                urlInvalid
+                  ? undefined
+                  : config.api === "openai-responses"
+                    ? t("codebuddy.urlHintResponses")
+                    : t("codebuddy.urlHint")
               }
-            >
-              {urlInvalid
-                ? t("codebuddy.urlInvalid")
-                : config.api === "openai-responses"
-                  ? t("codebuddy.urlHintResponses")
-                  : t("codebuddy.urlHint")}
-            </p>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="codebuddy-api-key">{t("codebuddy.apiKey")}</Label>
-            <Input
-              id="codebuddy-api-key"
-              type="password"
-              value={config.apiKey ?? ""}
-              onChange={(event) => setField("apiKey", event.target.value)}
-              placeholder="${MY_API_KEY}"
-              autoComplete="off"
             />
-            <p className="text-xs text-fg-2">
-              {t("codebuddy.apiKeyHint")}
-              {preset?.apiKeyUrl && (
-                <>
-                  {" "}
-                  <a
-                    href={preset.apiKeyUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="underline"
-                  >
-                    {t("codebuddy.getApiKey")}
-                  </a>
-                </>
-              )}
-            </p>
+            {urlInvalid && (
+              <p className="text-xs text-destructive">
+                {t("codebuddy.urlInvalid")}
+              </p>
+            )}
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <ApiKeySection
+            id="codebuddy-api-key"
+            value={apiKey}
+            onChange={(value) => setField("apiKey", value)}
+            category={category}
+            shouldShowLink={Boolean(preset?.apiKeyUrl)}
+            websiteUrl={preset?.apiKeyUrl ?? ""}
+            isPartner={preset?.isPartner}
+            partnerPromotionKey={preset?.partnerPromotionKey}
+            placeholder={{
+              official: t("codebuddy.apiKeyPlaceholder"),
+              thirdParty: t("codebuddy.apiKeyPlaceholder"),
+            }}
+          />
+          <div className="grid grid-cols-2 gap-3">
             {(["maxInputTokens", "maxOutputTokens"] as const).map((key) => (
               <div key={key} className="space-y-2">
                 <Label htmlFor={`codebuddy-${key}`}>
@@ -373,7 +423,9 @@ export function CodebuddyProviderForm({
                 </Label>
                 <Input
                   id={`codebuddy-${key}`}
-                  inputMode="numeric"
+                  type="number"
+                  min={1}
+                  step={1}
                   value={config[key] === undefined ? "" : String(config[key])}
                   onChange={(event) =>
                     setField(key, toPositiveInt(event.target.value))
@@ -383,10 +435,18 @@ export function CodebuddyProviderForm({
               </div>
             ))}
           </div>
-          <div className="space-y-3">
-            {flag("supportsToolCall")}
-            {flag("supportsImages")}
-            {flag("supportsReasoning")}
+          <div className="flex flex-wrap gap-4">
+            {CAPABILITIES.map((key) => (
+              <label key={key} className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={config[key] === true}
+                  onCheckedChange={(checked) =>
+                    setField(key, checked ? true : undefined)
+                  }
+                />
+                {t(`codebuddy.${key}`)}
+              </label>
+            ))}
           </div>
         </fieldset>
         <div className="space-y-2">

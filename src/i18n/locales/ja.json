@@ -4970,29 +4970,26 @@
   "codebuddy": {
     "empty": {
       "title": "カスタムモデルがまだありません",
-      "description": "CodeBuddy の公式モデルとログインは CodeBuddy Code 側で管理されます。~/.codebuddy/models.json にあるカスタムモデルは自動的にここに表示されます。右上の + から、プリセットまたはカスタム設定でモデルを追加してください。"
+      "description": "CodeBuddy の公式モデルとログインは CodeBuddy Code 自身が管理します。~/.codebuddy/models.json に既にあるカスタムモデルはここに自動で表示されます。右上の + から、プリセットまたはカスタムモデルを追加できます。"
     },
     "modelId": "モデル ID",
     "modelIdHint": "models.json に書き込まれる id で、/model で選ぶ名前です。通常はエンドポイントのモデル名です。",
-    "modelIdLockedHint": "モデル ID は作成後に変更できません。",
-    "modelIdDuplicate": "同じモデル ID がすでにあります。",
+    "modelIdLockedHint": "このモデルは既に models.json へ追加されているため、モデル ID は変更できません。",
+    "modelIdDuplicate": "このモデル ID は既に使用されています",
     "modelIdInvalid": "モデル ID の先頭と末尾に空白は使えません。",
-    "api": "API プロトコル",
+    "api": "API フォーマット",
     "apiChatCompletions": "OpenAI Chat Completions",
     "apiResponses": "OpenAI Responses",
     "vendor": "ベンダー",
-    "url": "エンドポイント URL",
     "urlHint": "完全なパスを入力します（通常は /chat/completions で終わります）。${VAR} の環境変数参照も使えます。",
     "urlHintResponses": "Base URL を入力します。リクエストは {url}/responses に送られます。${VAR} の環境変数参照も使えます。",
     "urlInvalid": "有効な http(s) URL を入力してください。",
-    "apiKey": "API キー",
-    "apiKeyHint": "キーを直接入力するか、${MY_API_KEY} のように環境変数を参照できます。models.json は 600 の権限で保存されます。",
-    "getApiKey": "API キーを取得",
+    "apiKeyPlaceholder": "API キーを入力するか、${MY_API_KEY} で環境変数を参照します",
     "maxInputTokens": "最大入力トークン",
     "maxOutputTokens": "最大出力トークン",
-    "supportsToolCall": "ツール呼び出しに対応",
-    "supportsImages": "画像入力に対応",
-    "supportsReasoning": "推論モードに対応",
+    "supportsToolCall": "ツール呼び出し",
+    "supportsImages": "画像入力",
+    "supportsReasoning": "推論",
     "jsonHint": "models.json のモデル 1 件分の設定です（id は上のモデル ID で決まります）。保存すると CodeBuddy Code が自動で再読み込みします。"
   }
 }
