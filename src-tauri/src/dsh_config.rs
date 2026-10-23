@@ -55,15 +55,28 @@ fn replace_entry(text: &str, id: &str, entry: Option<Yaml>) -> Result<String, Ap
             "Duplicate DeepSeek Harness plugin id '{id}'"
         )));
     }
+    replace_patch(text, &parsed, matching.first().copied(), entry)
+}
+
+/// Edit a top-level patch, including an insert list without its own plugin id.
+fn replace_patch(
+    text: &str,
+    parsed: &[Yaml],
+    index: Option<usize>,
+    entry: Option<Yaml>,
+) -> Result<String, AppError> {
+    // DSH requires a sequence even when the last patch is removed.
+    let empty = if parsed.is_empty() || (parsed.len() == 1 && index.is_some()) {
+        "[]\n"
+    } else {
+        ""
+    };
     let replacement = entry
         .map(|entry| serde_yaml::to_string(&vec![entry]))
         .transpose()
         .map_err(|error| AppError::Config(error.to_string()))?
-        .unwrap_or_default();
+        .unwrap_or_else(|| empty.to_owned());
     if parsed.is_empty() {
-        if replacement.is_empty() {
-            return Ok(text.to_owned());
-        }
         // Native profiles start with comments followed by `[]`. Appending a
         // block entry to that flow sequence would produce invalid YAML.
         let mut next: String = text
@@ -89,7 +102,7 @@ fn replace_entry(text: &str, id: &str, entry: Option<Yaml>) -> Result<String, Ap
             "Use block-style YAML for the DeepSeek Harness profile".into(),
         ));
     }
-    if let Some(&index) = matching.first() {
+    if let Some(index) = index {
         let end = starts.get(index + 1).copied().unwrap_or(text.len());
         Ok(format!(
             "{}{}{}",
@@ -220,7 +233,9 @@ fn credential_document(path: &Path) -> Result<Yaml, AppError> {
     }
     let document: Yaml = serde_yaml::from_str(&text)
         .map_err(|_| AppError::Config("Invalid DeepSeek Harness credentials YAML".into()))?;
-    if document["version"].as_u64() != Some(1) || !document["refs"].is_mapping() {
+    if document["version"].as_u64() != Some(1)
+        || (!document["refs"].is_null() && !document["refs"].is_mapping())
+    {
         return Err(AppError::Config("Unsupported DeepSeek Harness credential document; migrate it in DeepSeek Harness first".into()));
     }
     Ok(document)
@@ -494,6 +509,9 @@ fn save_paths_and_commit<T>(
                             || std::env::var(reference).ok().as_deref() == Some(key)
                     });
             if !unchanged_key {
+                if credentials["refs"].is_null() {
+                    credentials["refs"] = Yaml::Mapping(Default::default());
+                }
                 credentials["refs"][&reference] = Yaml::from(key);
                 let yaml = serde_yaml::to_string(&credentials)
                     .map_err(|error| AppError::Config(error.to_string()))?;
@@ -528,10 +546,27 @@ pub(crate) fn provider_key_exists(id: &str) -> Result<bool, AppError> {
 }
 
 pub(crate) fn mcp_entries() -> Result<Vec<Yaml>, AppError> {
-    Ok(entries(&read_text(&config_path())?)?
-        .into_iter()
-        .filter(|entry| entry["name"].as_str() == Some("@deepseek-ai/dsh-mcp-client"))
+    mcp_entries_from(&read_text(&config_path())?)
+}
+
+fn mcp_entries_from(text: &str) -> Result<Vec<Yaml>, AppError> {
+    Ok(plugin_entries(&entries(text)?)
+        .filter(|(_, _, entry)| entry["name"].as_str() == Some("@deepseek-ai/dsh-mcp-client"))
+        .map(|(_, _, entry)| entry.clone())
         .collect())
+}
+
+fn plugin_entries(patches: &[Yaml]) -> impl Iterator<Item = (usize, Option<usize>, &Yaml)> {
+    patches.iter().enumerate().flat_map(|(index, patch)| {
+        std::iter::once((index, None, patch)).chain(
+            patch["insert"]
+                .as_sequence()
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .map(move |(insert_index, entry)| (index, Some(insert_index), entry)),
+        )
+    })
 }
 
 pub(crate) fn sync_mcp_and_commit<T>(
@@ -571,20 +606,19 @@ fn sync_mcp_file_and_commit<T>(
         path,
         |text| {
             let all_entries = entries(text)?;
-            let matches: Vec<_> = all_entries
-                .iter()
-                .filter(|entry| {
+            let matches: Vec<_> = plugin_entries(&all_entries)
+                .filter(|(_, _, entry)| {
                     entry["name"].as_str() == Some("@deepseek-ai/dsh-mcp-client")
                         && entry["config"]["serverName"].as_str() == Some(id)
                 })
-                .cloned()
                 .collect();
             if matches.len() > 1 {
                 return Err(AppError::Config(format!(
                     "Duplicate DeepSeek Harness MCP server '{id}'"
                 )));
             }
-            let existing = matches.into_iter().next();
+            let location = matches.into_iter().next();
+            let existing = location.map(|(_, _, entry)| entry.clone());
             if existing.is_none() && spec.is_none() {
                 return Ok(text.to_owned());
             }
@@ -603,11 +637,10 @@ fn sync_mcp_file_and_commit<T>(
                     "Assign an id to this native MCP entry before editing it in CC Switch".into(),
                 ));
             }
-            if existing.is_none()
-                && all_entries
-                    .iter()
-                    .any(|entry| entry["id"].as_str() == Some(&plugin_id))
-            {
+            let id_matches = plugin_entries(&all_entries)
+                .filter(|(_, _, entry)| entry["id"].as_str() == Some(&plugin_id))
+                .count();
+            if id_matches > usize::from(existing.is_some()) {
                 return Err(AppError::Conflict(format!(
                     "DeepSeek Harness plugin id '{plugin_id}' is already in use"
                 )));
@@ -656,7 +689,34 @@ fn sync_mcp_file_and_commit<T>(
             } else {
                 None
             };
-            replace_entry(text, &plugin_id, next)
+            match location {
+                Some((index, Some(insert_index), _)) => {
+                    let mut patch = all_entries[index].clone();
+                    let inserted = patch["insert"].as_sequence_mut().unwrap();
+                    if let Some(next) = next {
+                        inserted[insert_index] = next;
+                    } else {
+                        inserted.remove(insert_index);
+                    }
+                    let next = if inserted.is_empty() {
+                        None
+                    } else {
+                        Some(patch)
+                    };
+                    replace_patch(text, &all_entries, Some(index), next)
+                }
+                Some((index, None, _)) => replace_patch(text, &all_entries, Some(index), next),
+                None => replace_patch(
+                    text,
+                    &all_entries,
+                    None,
+                    next.map(|entry| {
+                        let mut patch = serde_yaml::Mapping::new();
+                        patch.insert("insert".into(), Yaml::Sequence(vec![entry]));
+                        Yaml::Mapping(patch)
+                    }),
+                ),
+            }
         },
         commit,
     )
@@ -711,9 +771,84 @@ mod tests {
         assert!(text.starts_with(FACTORY_PROFILE.trim_end_matches("[]\n")));
         let entries = entries(&text).unwrap();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0]["config"]["serverName"], "test");
-        assert_eq!(entries[0]["config"]["transport"], "streamable-http");
+        // DSH only creates plugins from insert lists; id-only patches cannot
+        // create a plugin absent from the bundle's existing entry list.
+        let plugins = entries[0]["insert"].as_sequence().unwrap();
+        assert_eq!(plugins.len(), 1);
+        assert_eq!(plugins[0]["id"], "cc-switch-mcp-test");
+        assert_eq!(plugins[0]["name"], "@deepseek-ai/dsh-mcp-client");
+        assert_eq!(plugins[0]["config"]["serverName"], "test");
+        assert_eq!(plugins[0]["config"]["transport"], "streamable-http");
+        assert_eq!(mcp_entries_from(&text).unwrap(), *plugins);
         assert!(!text.lines().any(|line| line.trim() == "[]"));
+    }
+
+    #[test]
+    fn removing_last_mcp_restores_an_empty_yaml_sequence() {
+        for original in [FACTORY_PROFILE, ""] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("cordis.patch.yml");
+            fs::write(&path, original).unwrap();
+            sync_mcp_file_and_commit(&path, "test", Some(&json!({"command":"node"})), || Ok(()))
+                .unwrap();
+            sync_mcp_file_and_commit(&path, "test", None, || Ok(())).unwrap();
+            let text = read_text(&path).unwrap();
+            let document: Yaml = serde_yaml::from_str(&text).unwrap();
+            assert_eq!(document, Yaml::Sequence(vec![]));
+            assert_eq!(
+                text,
+                if original.is_empty() {
+                    "[]\n"
+                } else {
+                    original
+                }
+            );
+        }
+        assert_eq!(replace_entry("- id: last\n", "last", None).unwrap(), "[]\n");
+    }
+
+    #[test]
+    fn provider_credentials_allow_missing_or_null_refs_and_preserve_login_records() {
+        for refs in ["", "refs: null\n"] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("cordis.patch.yml");
+            let credentials = temp.path().join(".credentials.yaml");
+            let original =
+                format!("version: 1\n{refs}records: {{owner: {{account: {{value: keep}}}}}}\n");
+            fs::write(&credentials, &original).unwrap();
+            let original_document: Yaml = serde_yaml::from_str(&original).unwrap();
+            assert!(get_providers_from(&path, &credentials).unwrap().is_empty());
+            // Existing providers also remain readable without a stored ref.
+            fs::write(&path, "- id: llm-pi-ai\n  config:\n    providers:\n      native: {apiKeyEnv: CC_SWITCH_DSH_TEST_MISSING_REF, models: []}\n").unwrap();
+            assert_eq!(get_providers_from(&path, &credentials).unwrap().len(), 1);
+            assert_eq!(read_text(&credentials).unwrap(), original);
+            save_paths_and_commit(
+                &path,
+                &credentials,
+                "gateway",
+                Some(editor_config()),
+                true,
+                || Ok(()),
+            )
+            .unwrap();
+            let saved = credential_document(&credentials).unwrap();
+            assert_eq!(saved["records"], original_document["records"]);
+            assert_eq!(saved["refs"]["CC_SWITCH_DSH_GATEWAY"], "test-value");
+            assert_eq!(
+                get_providers_from(&path, &credentials).unwrap()["gateway"]["options"]["apiKey"],
+                "test-value"
+            );
+        }
+    }
+
+    #[test]
+    fn provider_credentials_still_reject_invalid_refs_sections() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(".credentials.yaml");
+        for refs in ["[]", "invalid", "123"] {
+            fs::write(&path, format!("version: 1\nrefs: {refs}\n")).unwrap();
+            assert!(credential_document(&path).is_err());
+        }
     }
 
     #[test]
@@ -822,6 +957,39 @@ mod tests {
         )
         .is_err());
         assert_eq!(read_text(&path).unwrap(), text);
+    }
+
+    #[test]
+    fn mcp_edits_and_removes_inserted_plugins_without_removing_siblings() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("cordis.patch.yml");
+        let untouched = "# keep\n- id: other\n  config: {dynamic: !!js process.env.VALUE}\n";
+        let group = "- insert:\n  - id: github\n    name: '@deepseek-ai/dsh-mcp-client'\n    disabled: true\n    config: {serverName: github, transport: stdio, command: node, toolCallTimeoutMs: 12345}\n  - id: sibling\n    name: custom-plugin\n    config: {dynamic: !!js process.env.OTHER}\n";
+        fs::write(&path, format!("{untouched}{group}")).unwrap();
+        let sibling = entries(group).unwrap()[0]["insert"][1].clone();
+        assert_eq!(mcp_entries_from(group).unwrap().len(), 1);
+        sync_mcp_file_and_commit(
+            &path,
+            "github",
+            Some(&json!({"type":"http","url":"https://example.com/mcp"})),
+            || Ok(()),
+        )
+        .unwrap();
+        let text = read_text(&path).unwrap();
+        assert!(text.starts_with(untouched));
+        let entry = mcp_entries_from(&text).unwrap().remove(0);
+        assert_eq!(entry["config"]["toolCallTimeoutMs"], 12345);
+        assert_eq!(entry["config"]["transport"], "streamable-http");
+        assert!(entry["config"].get("command").is_none());
+        assert!(entry.get("disabled").is_none());
+        sync_mcp_file_and_commit(&path, "github", None, || Ok(())).unwrap();
+        let text = read_text(&path).unwrap();
+        assert!(text.starts_with(untouched));
+        assert!(mcp_entries_from(&text).unwrap().is_empty());
+        assert_eq!(
+            entries(&text).unwrap()[1]["insert"],
+            Yaml::Sequence(vec![sibling])
+        );
     }
 
     #[test]

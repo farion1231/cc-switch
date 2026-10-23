@@ -113,6 +113,8 @@ fn dsh_mcp_failure_leaves_native_file_and_managed_flags_unchanged() {
     };
     McpService::upsert_server(&state, server.clone()).unwrap();
     let original = fs::read(home.config()).unwrap();
+    let patches: serde_yaml::Value = serde_yaml::from_slice(&original).unwrap();
+    assert_eq!(patches[0]["insert"][0]["config"]["serverName"], "test");
     let mut invalid = server.clone();
     invalid.server = json!({"type":"sse","url":"https://example.com/sse"});
     assert!(McpService::upsert_server(&state, invalid).is_err());
@@ -126,4 +128,7 @@ fn dsh_mcp_failure_leaves_native_file_and_managed_flags_unchanged() {
     assert!(!fs::read_to_string(home.config())
         .unwrap()
         .contains("server.js"));
+    let empty: serde_yaml::Value =
+        serde_yaml::from_slice(&fs::read(home.config()).unwrap()).unwrap();
+    assert_eq!(empty, serde_yaml::Value::Sequence(vec![]));
 }

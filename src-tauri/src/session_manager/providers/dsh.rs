@@ -140,7 +140,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 }
 
 fn parse_messages(data: &[u8]) -> Result<Vec<SessionMessage>, String> {
-    let mut active: Vec<(u64, SessionMessage)> = vec![];
+    let mut messages = vec![];
     let mut seen = HashSet::new();
     let mut offset = 0;
     for line in data.split_inclusive(|byte| *byte == b'\n') {
@@ -152,6 +152,11 @@ fn parse_messages(data: &[u8]) -> Result<Vec<SessionMessage>, String> {
         }
         let record: Value =
             serde_json::from_slice(line).map_err(|_| "Invalid DeepSeek Harness session JSONL")?;
+        // Replacement copies only alter the model-visible surface. The human
+        // transcript retains append-origin messages and full tool outputs.
+        if record["surfaceOp"]["op"] == "replace" {
+            continue;
+        }
         let kind = record["type"].as_str().unwrap_or_default();
         let (raw, pointer, role) = match kind {
             "user/message" => (&record["data"], "/data", "user"),
@@ -239,24 +244,8 @@ fn parse_messages(data: &[u8]) -> Result<Vec<SessionMessage>, String> {
                 ..Default::default()
             });
         }
-        let seq = record["seq"].as_u64().unwrap_or(start as u64);
-        if let Some(operation) = record.get("surfaceOp").filter(|op| op["op"] == "replace") {
-            if let (Some(start), Some(end)) =
-                (operation["startSeq"].as_u64(), operation["endSeq"].as_u64())
-            {
-                let first = active.iter().position(|(seq, _)| *seq == start);
-                let last = active.iter().position(|(seq, _)| *seq == end);
-                if let (Some(first), Some(last)) = (first, last) {
-                    if first <= last {
-                        active.splice(first..=last, [(seq, message)]);
-                        continue;
-                    }
-                }
-            }
-        }
-        active.push((seq, message));
+        messages.push(message);
     }
-    let mut messages: Vec<_> = active.into_iter().map(|(_, message)| message).collect();
     blocks::assign_turn_ids(&mut messages);
     Ok(messages)
 }
@@ -268,9 +257,9 @@ mod tests {
 
     fn fixture() -> Vec<u8> {
         [json!({"type":"session","version":4,"id":"test","cwd":"/project","createdAt":1000}),
-         json!({"type":"user/message","seq":1,"time":1001,"data":{"id":"u","role":"user","source":{"kind":"user"},"content":[{"type":"text","text":"Fix this"}]}}),
-         json!({"type":"assistant/message","seq":2,"time":2000,"data":{"message":{"id":"a","source":{"model":"route:model"},"content":[{"type":"text","text":"Fixed"},{"type":"tool-call","id":"call","name":"read","arguments":"{\"path\":\"test.rs\"}"}]},"usage":{"inputTokens":10,"outputTokens":20,"cacheReadTokens":30}}}),
-         json!({"type":"tool/result","seq":3,"time":2001,"data":{"message":{"id":"result","role":"tool","toolCallId":"call","isError":false,"content":[{"type":"text","text":"contents"}]}}})]
+         json!({"type":"user/message","seq":1,"surfaceOp":"append","time":1001,"data":{"id":"u","role":"user","source":{"kind":"user"},"content":[{"type":"text","text":"Fix this"}]}}),
+         json!({"type":"assistant/message","seq":2,"surfaceOp":"append","time":2000,"data":{"message":{"id":"a","source":{"model":"route:model"},"content":[{"type":"text","text":"Fixed"},{"type":"tool-call","id":"call","name":"read","arguments":"{\"path\":\"test.rs\"}"}]},"usage":{"inputTokens":10,"outputTokens":20,"cacheReadTokens":30}}}),
+         json!({"type":"tool/result","seq":3,"surfaceOp":"append","time":2001,"data":{"message":{"id":"result","role":"tool","toolCallId":"call","isError":false,"content":[{"type":"text","text":"contents"}]}}})]
             .iter().map(|line| format!("{line}\n")).collect::<String>().into_bytes()
     }
 
@@ -309,15 +298,25 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_messages_and_replaced_surface_ranges_are_not_shown_twice() {
+    fn duplicate_messages_and_model_only_summaries_are_not_shown() {
         let mut bytes = fixture();
+        let original = parse_messages(&bytes).unwrap();
         bytes.extend(format!("{}\n",json!({"type":"assistant/message","seq":4,"data":{"message":{"id":"a","content":[{"type":"text","text":"Duplicate"}]}}})).as_bytes());
         bytes.extend(format!("{}\n",json!({"type":"user/message","seq":5,"surfaceOp":{"op":"replace","startSeq":1,"endSeq":3},"data":{"id":"summary","content":[{"type":"text","text":"Summary"}]}})).as_bytes());
         let parsed = parse_messages(&bytes).unwrap();
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].content, "Summary");
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(
+            parsed
+                .iter()
+                .map(|message| &message.content)
+                .collect::<Vec<_>>(),
+            original
+                .iter()
+                .map(|message| &message.content)
+                .collect::<Vec<_>>()
+        );
         bytes.extend(b"{partial");
-        assert_eq!(parse_messages(&bytes).unwrap().len(), 1);
+        assert_eq!(parse_messages(&bytes).unwrap().len(), 3);
     }
 
     #[test]
@@ -365,11 +364,21 @@ mod tests {
     }
 
     #[test]
-    fn surface_replacements_keep_their_position_and_can_replace_earlier_summaries() {
+    fn surface_replacements_preserve_original_transcript_and_do_not_claim_message_ids() {
         let mut bytes = fixture();
+        let original = parse_messages(&bytes).unwrap();
+        let mut expected: Vec<_> = original
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect();
+        expected.extend(["Keep this", "After compaction"]);
         for record in [
-            json!({"type":"user/message","seq":4,"data":{"id":"later","content":[{"type":"text","text":"Keep this"}]}}),
+            json!({"type":"user/message","seq":4,"surfaceOp":"append","data":{"id":"later","content":[{"type":"text","text":"Keep this"}]}}),
             json!({"type":"user/message","seq":5,"surfaceOp":{"op":"replace","startSeq":1,"endSeq":2},"data":{"id":"summary","content":[{"type":"text","text":"Summary"}]}}),
+            json!({"type":"user/message","seq":6,"surfaceOp":{"op":"replace","startSeq":5,"endSeq":3},"data":{"id":"summary-2","content":[{"type":"text","text":"New summary"}]}}),
+            json!({"type":"tool/result","seq":7,"surfaceOp":{"op":"replace","startSeq":3,"endSeq":3},"data":{"message":{"id":"result","toolCallId":"call","content":[{"type":"text","text":"Trimmed output"}]}}}),
+            json!({"type":"assistant/message","seq":8,"surfaceOp":{"op":"replace","startSeq":2,"endSeq":2},"data":{"message":{"id":"after","content":[{"type":"text","text":"Model-only copy"}]}}}),
+            json!({"type":"assistant/message","seq":9,"surfaceOp":"append","data":{"message":{"id":"after","content":[{"type":"text","text":"After compaction"}]}}}),
         ] {
             bytes.extend(format!("{record}\n").as_bytes());
         }
@@ -379,17 +388,12 @@ mod tests {
                 .iter()
                 .map(|message| message.content.as_str())
                 .collect::<Vec<_>>(),
-            ["Summary", "contents", "Keep this"]
+            expected
         );
-        bytes.extend(format!("{}\n", json!({"type":"user/message","seq":6,"surfaceOp":{"op":"replace","startSeq":5,"endSeq":3},"data":{"id":"summary-2","content":[{"type":"text","text":"New summary"}]}})).as_bytes());
-        // Surface order, rather than numeric seq order, defines the range.
-        let messages = parse_messages(&bytes).unwrap();
-        assert_eq!(
-            messages
-                .iter()
-                .map(|message| message.content.as_str())
-                .collect::<Vec<_>>(),
-            ["New summary", "Keep this"]
-        );
+        assert!(matches!(
+            messages[2].blocks[0],
+            SessionBlock::ToolResult { ref call_id, ref preview, .. }
+                if call_id == "call" && preview == "contents"
+        ));
     }
 }
