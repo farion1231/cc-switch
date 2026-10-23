@@ -258,6 +258,26 @@ impl Database {
             .expect("collect rows")
     }
 
+    /// 每条请求日志的 (session_id, provider_id)：负载均衡 e2e 用它断言粘性。
+    #[cfg(test)]
+    pub(crate) fn request_log_session_provider_pairs(
+        &self,
+        app_type: &str,
+    ) -> Vec<(String, String)> {
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = conn
+            .prepare(
+                "SELECT session_id, provider_id FROM proxy_request_logs
+                 WHERE app_type = ?1 AND session_id IS NOT NULL AND session_id != ''
+                 ORDER BY created_at, request_id",
+            )
+            .expect("prepare pairs stmt");
+        stmt.query_map([app_type], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query pairs")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect rows")
+    }
+
     /// 确保指定 app_type 的 proxy_config 行存在（同步版本，用于 set_* 函数）
     ///
     /// 使用与 schema.rs seed 相同的 per-app 默认值

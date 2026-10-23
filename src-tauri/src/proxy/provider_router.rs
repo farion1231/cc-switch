@@ -263,6 +263,16 @@ impl ProviderRouter {
                 .await;
         }
 
+        // 与 select_providers_with_current 同款守卫：Codex Official 是显式的账号
+        // 选择，即使残留旧的故障转移设置也保持单路由——重试会把它的 inbound
+        // token 用到别的卡上；session 模式同样不该把流量摊给队列里的第三方。
+        if current_provider
+            .as_ref()
+            .is_some_and(|provider| !provider_supports_failover(app_type, provider))
+        {
+            return Ok(vec![current_provider.expect("checked above")]);
+        }
+
         let (pool, total_providers, circuit_open_count) =
             self.circuit_filtered_queue(app_type).await?;
         if pool.is_empty() {
