@@ -6565,6 +6565,30 @@ impl ProviderService {
         Ok(())
     }
 
+    /// Kimi「添加」：把卡片写进 config.toml，但不改 default_model（「切换」才改）。
+    /// 其他累加式应用的添加就是 `switch`，不走这里。
+    pub fn add_to_live_config(
+        state: &AppState,
+        app_type: AppType,
+        id: &str,
+    ) -> Result<(), AppError> {
+        if app_type != AppType::Kimi {
+            return Err(AppError::InvalidInput(format!(
+                "{} adds providers through switch",
+                app_type.as_str()
+            )));
+        }
+        let mut provider = state
+            .db
+            .get_provider_by_id(id, "kimi")?
+            .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+        crate::services::kimi_oauth::ensure_profile_signed_in(&provider.settings_config)?;
+        Self::set_provider_live_config_managed(&mut provider, true);
+        crate::kimi_config::add_and_commit(id, provider.settings_config.clone(), || {
+            state.db.save_provider("kimi", &provider)
+        })
+    }
+
     /// Remove provider from live config only (for additive mode apps like OpenCode, OpenClaw)
     ///
     /// Does NOT delete from database - provider remains in the list.

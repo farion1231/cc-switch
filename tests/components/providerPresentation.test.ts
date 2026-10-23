@@ -673,13 +673,14 @@ describe("buildAdditiveSections", () => {
       const presentation = item(sections, account.id);
       expect(presentation.editDisabledReason).toBe("kimi.oauth.managedHint");
       expect(presentation.deleteDisabledReason).toBe("kimi.oauth.managedHint");
-      expect(
-        presentation.menuItems?.find((action) => action.key === "remove")
-          ?.disabledReason,
-      ).toBe("kimi.oauth.managedHint");
+      expect(button(sections, account.id, "remove").disabledReason).toBe(
+        "kimi.oauth.managedHint",
+      );
     }
     expect(
-      button(sections, accounts[1].id, "switch").disabledReason,
+      item(sections, accounts[1].id).menuItems?.find(
+        (action) => action.key === "setDefault",
+      )?.disabledReason,
     ).toBeUndefined();
     expect(item(sections, "relay").editDisabledReason).toBeUndefined();
   });
@@ -702,6 +703,50 @@ describe("buildAdditiveSections", () => {
     expect(presentation.deleteDisabledReason).toBeUndefined();
     expect(presentation.menuItems).toBeUndefined();
     expect(presentation.status).toBeUndefined();
+    expect(presentation.buttons.map((b) => b.key)).toEqual(["add"]);
+  });
+
+  it("gives Kimi add and remove buttons and a set-default menu item", () => {
+    const current = provider("current");
+    const other = provider("other");
+    const saved = provider("saved");
+    const actions = additiveActions();
+    const sections = buildAdditiveSections({
+      app: "kimi",
+      t,
+      providers: [current, other, saved],
+      isInConfig: (p) => p.id !== "saved",
+      kimiCurrentId: "current",
+      actions,
+    });
+
+    // 未添加：只有「添加」，不顺带切换
+    expect(sections[1].items.map((entry) => entry.provider.id)).toEqual([
+      "saved",
+    ]);
+    button(sections, "saved", "add").onClick();
+    expect(actions.add).toHaveBeenCalledWith(saved);
+    expect(actions.setDefault).not.toHaveBeenCalled();
+
+    // 已添加、不在用：卡上只有「移除」，「设为默认」在「更多」菜单里
+    expect(item(sections, "other").buttons.map((b) => b.key)).toEqual([
+      "remove",
+    ]);
+    item(sections, "other")
+      .menuItems?.find((action) => action.key === "setDefault")
+      ?.onSelect();
+    expect(actions.setDefault).toHaveBeenCalledWith(other);
+    button(sections, "other", "remove").onClick();
+    expect(actions.remove).toHaveBeenCalledWith(other);
+
+    // 在用的那家：不能移除
+    expect(item(sections, "current").buttons.map((b) => b.key)).toEqual([
+      "remove",
+    ]);
+    expect(button(sections, "current", "remove").disabledReason).toBe(
+      "providerCard.reason.currentCannotRemove",
+    );
+    expect(item(sections, "current").menuItems).toBeUndefined();
   });
 
   it("blocks every Pi change while Pi's current state is unavailable", () => {

@@ -542,6 +542,50 @@ fn switch_at<T>(
     crate::mcode_config::write_and_commit(path, || write(path, &before, &after), || commit(config))
 }
 
+/// "Add" writes a saved provider into config.toml without selecting it, so its
+/// models show up in Kimi's /model list. A node already there belongs to Kimi
+/// and is kept as is (same rule as switching).
+pub(crate) fn add_and_commit<T>(
+    id: &str,
+    archived_config: Value,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let _guard = WRITE_LOCK
+        .lock()
+        .map_err(|e| AppError::Message(e.to_string()))?;
+    let path = config_path();
+    add_at(&path, id, archived_config, commit)
+}
+
+fn add_at<T>(
+    path: &Path,
+    id: &str,
+    archived_config: Value,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let before = read(path)?;
+    let after = if before
+        .get("providers")
+        .and_then(|providers| providers.get(id))
+        .is_some()
+    {
+        before.clone()
+    } else {
+        apply_provider(&before, id, Some(archived_config), false)?
+    };
+    crate::mcode_config::write_and_commit(
+        path,
+        || {
+            if before == after {
+                Ok(())
+            } else {
+                write(path, &before, &after)
+            }
+        },
+        commit,
+    )
+}
+
 /// Selecting the account is explicit: signing in alone preserves the current
 /// model, while "Use this account" selects one of its official model aliases.
 pub(crate) fn use_oauth_account(home: &Path, id: &str) -> Result<(), AppError> {
@@ -972,6 +1016,32 @@ mod tests {
         assert!(config["providers"].get("original").is_some());
         assert!(config["models"].get("old-alias").is_some());
         assert!(fs::read_to_string(path).unwrap().contains("# original"));
+    }
+
+    #[test]
+    fn kimi_add_keeps_the_selected_model_and_never_overwrites_a_live_node() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let native = "# original\ndefault_model = 'old-alias'\n[providers.original]\ntype = 'openai'\napi_key = 'test'\n[models.old-alias]\nprovider = 'original'\nmodel = 'old'\nmax_context_size = 1000\n";
+        fs::write(&path, native).unwrap();
+        let failed = add_at(&path, "new", node(), || {
+            Err::<(), _>(AppError::Message("database failed".into()))
+        });
+        assert!(failed.is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), native);
+
+        add_at(&path, "new", node(), || Ok(())).unwrap();
+        let config = read(&path).unwrap();
+        assert_eq!(config["default_model"], "old-alias");
+        assert_eq!(config["models"]["test/model.v1"]["provider"], "new");
+        assert!(fs::read_to_string(&path).unwrap().contains("# original"));
+
+        // 已经在 Kimi 里的节点归 Kimi：再点「添加」不拿存档覆盖
+        let before = fs::read_to_string(&path).unwrap();
+        let mut stale = node();
+        stale["provider"]["base_url"] = json!("https://stale.example/v1");
+        add_at(&path, "new", stale, || Ok(())).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
     }
 
     #[test]

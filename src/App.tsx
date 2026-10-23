@@ -364,6 +364,27 @@ function App() {
     }
   };
 
+  // Kimi「添加」只写进 config.toml、不改默认模型；「切换」走 switchProvider
+  const handleAddKimiProvider = async (provider: Provider) => {
+    try {
+      await providersApi.addToLiveConfig(provider.id, "kimi");
+    } catch (error) {
+      toast.error(
+        t("notifications.addFailed", {
+          error: extractErrorMessage(error) || t("common.unknown"),
+        }),
+        { closeButton: true },
+      );
+      return;
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: ["providers", "kimi"] });
+    }
+    toast.success(
+      t("notifications.addToConfigSuccess", { defaultValue: "已添加到配置" }),
+      { closeButton: true },
+    );
+  };
+
   const disableOmoMutation = useDisableCurrentOmo();
   const handleDisableOmo = () => {
     disableOmoMutation.mutate(undefined, {
@@ -1340,7 +1361,9 @@ function App() {
             onSwitch={(provider) =>
               void (activeApp === "pi"
                 ? handleEnablePiProvider(provider)
-                : switchProvider(provider))
+                : activeApp === "kimi"
+                  ? handleAddKimiProvider(provider)
+                  : switchProvider(provider))
             }
             onRemoveFromConfig={
               activeApp === "opencode" ||
@@ -1362,7 +1385,7 @@ function App() {
               activeApp === "openclaw" || activeApp === "opencode"
                 ? (provider, modelId) =>
                     void setAsDefaultModel(provider, modelId)
-                : activeApp === "hermes"
+                : activeApp === "hermes" || activeApp === "kimi"
                   ? (provider) => void switchProvider(provider)
                   : undefined
             }

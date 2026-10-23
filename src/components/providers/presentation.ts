@@ -731,37 +731,45 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
         });
       }
       const current = live && p.id === input.kimiCurrentId;
+      // 「添加」只写进 config.toml（模型出现在 Kimi 的 /model 列表），「移除」从 config.toml
+      // 拿掉、卡片留着；改 default_model 的「设为默认」和 OpenCode 一样收在「更多」菜单里
+      const buttons: CardButton[] = [];
+      const menuItems: CardMenuItem[] = [];
+      if (!live) {
+        buttons.push({
+          key: "add",
+          label: t("providerCard.action.add"),
+          onClick: () => actions.add(p),
+        });
+      } else {
+        if (!current) {
+          menuItems.push({
+            key: "setDefault",
+            label: t("providerCard.action.setDefault"),
+            onSelect: () => actions.setDefault(p),
+          });
+        }
+        buttons.push({
+          key: "remove",
+          label: t("providerCard.action.remove"),
+          disabledReason:
+            protectedReason ??
+            (current
+              ? t("providerCard.reason.currentCannotRemove")
+              : undefined),
+          onClick: () => actions.remove(p),
+        });
+      }
       (live ? added : available).push({
         provider: p,
         presentation: {
-          tone: current ? "direct" : undefined,
+          tone: current ? "neutral" : undefined,
           status: current
-            ? { label: t("providerCard.status.inUse"), dot: "direct" }
+            ? { label: t("providerCard.status.default"), dot: "muted" }
             : undefined,
           chips,
-          buttons: current
-            ? []
-            : [
-                {
-                  key: "switch",
-                  label: t("providerCard.action.switch"),
-                  onClick: () => actions.add(p),
-                },
-              ],
-          menuItems: live
-            ? [
-                {
-                  key: "remove",
-                  label: t("providerCard.action.remove"),
-                  disabledReason:
-                    protectedReason ??
-                    (current
-                      ? t("providerCard.reason.currentCannotRemove")
-                      : undefined),
-                  onSelect: () => actions.remove(p),
-                },
-              ]
-            : undefined,
+          buttons,
+          menuItems: menuItems.length ? menuItems : undefined,
           editDisabledReason: officialReason,
           deleteDisabledReason:
             protectedReason ??
