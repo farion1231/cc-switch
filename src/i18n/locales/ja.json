@@ -1098,12 +1098,41 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code",
+    "workbuddy": "WorkBuddy",
     "agy": "Antigravity"
   },
   "mcode": {
     "empty": {
       "title": "カスタムプロバイダーはまだありません",
       "description": "MiniMax アカウントのログインは MiniMax Code 自身が管理するため、インポートは不要です。config.yaml に既にあるカスタムプロバイダーはここに自動で表示されます。右上の + から、プリセットまたはカスタムプロバイダーを追加できます。"
+    }
+  },
+  "workbuddy": {
+    "empty": {
+      "title": "WorkBuddy のプロバイダーはまだありません",
+      "description": "CC Switch はプロバイダーをカスタムモデルとして WorkBuddy の ~/.workbuddy/models.json に書き込み、WorkBuddy で追加したモデルは変更しません。そのためインポートするものはありません。右上の + からプリセットまたはカスタムプロバイダーを追加してください。"
+    },
+    "form": {
+      "providerKeyHint": "小文字・数字・ハイフンのみ。models.json のどのエントリがこのプロバイダーのものかを示します。",
+      "providerKeyLockedHint": "キーは models.json のエントリに記録されるため、作成後は変更できません。",
+      "url": "API エンドポイント",
+      "urlHint": "OpenAI 互換 Chat Completions の完全な URL（通常 /chat/completions で終わる）。",
+      "urlResponsesHint": "ベース URL を入力します。WorkBuddy は {url}/responses にリクエストします。",
+      "responsesApi": "OpenAI Responses API を使う",
+      "responsesApiHint": "オフ：Chat Completions（既定）。オン：各モデルに api: \"openai-responses\" を書き込みます。",
+      "apiKeyHint": "このマシンの models.json に保存されます。${ENV_VAR} 形式の参照は WorkBuddy が展開します。",
+      "vendor": "ベンダー表示名",
+      "models": "モデル",
+      "addModel": "モデルを追加",
+      "modelsEmpty": "モデルを 1 つ以上追加してください。モデル ID はそのまま API に送られます。",
+      "modelId": "モデル ID",
+      "modelName": "表示名",
+      "removeModel": "モデルを削除",
+      "maxInputTokens": "最大入力トークン",
+      "maxOutputTokens": "最大出力トークン",
+      "supportsToolCall": "ツール呼び出し",
+      "supportsImages": "画像入力",
+      "supportsReasoning": "推論"
     }
   },
   "pi": {

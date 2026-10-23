@@ -657,7 +657,7 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
-            AppType::ClaudeDesktop | AppType::Mcode | AppType::Kimi => {}
+            AppType::ClaudeDesktop | AppType::Mcode | AppType::Kimi | AppType::WorkBuddy => {}
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
                     return Ok(custom.join("skills"));
@@ -707,6 +707,7 @@ impl SkillService {
         Ok(match app {
             AppType::Mcode => crate::mcode_config::data_dir().join("skills"),
             AppType::Kimi => crate::kimi_config::data_dir().join("skills"),
+            AppType::WorkBuddy => crate::workbuddy_config::data_dir().join("skills"),
             AppType::Claude => home.join(".claude").join("skills"),
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),
@@ -2678,7 +2679,8 @@ impl SkillService {
     /// - Symlink: 仅使用 symlink
     /// - Copy: 仅使用文件复制
     pub fn sync_to_app_dir(directory: &str, app: &AppType) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop) {
+        // WorkBuddy 的 Skill 目录归 WorkBuddy 自己管（库里没有它的启用列），这里从不写入。
+        if matches!(app, AppType::ClaudeDesktop | AppType::WorkBuddy) {
             return Ok(());
         }
 
@@ -2877,7 +2879,7 @@ impl SkillService {
         app: &AppType,
         preserved_path: Option<&Path>,
     ) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop) {
+        if matches!(app, AppType::ClaudeDesktop | AppType::WorkBuddy) {
             return Ok(());
         }
 
@@ -2922,7 +2924,7 @@ impl SkillService {
     fn is_sync_managed_app(app: &AppType) -> bool {
         !matches!(
             app,
-            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi
+            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi | AppType::WorkBuddy
         )
     }
 
@@ -4041,8 +4043,10 @@ impl SkillService {
         }
 
         for app in AppType::all() {
-            if matches!(app, AppType::Mcode | AppType::Agy | AppType::Kimi)
-                && !skill.apps.is_enabled_for(&app)
+            if matches!(
+                app,
+                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::WorkBuddy
+            ) && !skill.apps.is_enabled_for(&app)
             {
                 continue;
             }

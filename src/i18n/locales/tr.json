@@ -1062,12 +1062,41 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "workbuddy": "WorkBuddy"
   },
   "mcode": {
     "empty": {
       "title": "Henüz özel sağlayıcı yok",
       "description": "MiniMax hesabınızda oturum açma işleminiz MiniMax Code'nin kendisi tarafından yönetildiğinden içe aktarılacak hiçbir şey yoktur. Zaten config.yaml'de bulunan özel sağlayıcılar burada otomatik olarak görünür. Ön ayar veya özel sağlayıcı eklemek için sağ üst köşedeki + düğmesini kullanın."
+    }
+  },
+  "workbuddy": {
+    "empty": {
+      "title": "No WorkBuddy providers yet",
+      "description": "CC Switch writes its providers into WorkBuddy's ~/.workbuddy/models.json as custom models and leaves models you added in WorkBuddy untouched, so there is nothing to import. Use the + button in the top-right corner to add a preset or custom provider."
+    },
+    "form": {
+      "providerKeyHint": "Lowercase letters, numbers, and hyphens only. Marks which models.json entries belong to this provider.",
+      "providerKeyLockedHint": "The key marks this provider's entries in models.json, so it can't be changed after creation.",
+      "url": "API endpoint",
+      "urlHint": "Full OpenAI-compatible Chat Completions URL, usually ending in /chat/completions.",
+      "urlResponsesHint": "Base URL; WorkBuddy sends requests to {url}/responses.",
+      "responsesApi": "Use the OpenAI Responses API",
+      "responsesApiHint": "Off: Chat Completions (default). On: writes api: \"openai-responses\" for each model.",
+      "apiKeyHint": "Stored in models.json on this machine. ${ENV_VAR} references are expanded by WorkBuddy.",
+      "vendor": "Vendor label",
+      "models": "Models",
+      "addModel": "Add model",
+      "modelsEmpty": "Add at least one model. The model ID is sent to the API as-is.",
+      "modelId": "Model ID",
+      "modelName": "Display name",
+      "removeModel": "Remove model",
+      "maxInputTokens": "Max input tokens",
+      "maxOutputTokens": "Max output tokens",
+      "supportsToolCall": "Tool calls",
+      "supportsImages": "Image input",
+      "supportsReasoning": "Reasoning"
     }
   },
   "pi": {

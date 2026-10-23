@@ -1098,12 +1098,41 @@
     "hermes": "Hermes",
     "pi": "Pi",
     "mcode": "MiniMax Code",
+    "workbuddy": "WorkBuddy",
     "agy": "Antigravity"
   },
   "mcode": {
     "empty": {
       "title": "No custom providers yet",
       "description": "Your MiniMax account sign-in is managed by MiniMax Code itself, so there is nothing to import. Custom providers already in config.yaml appear here automatically. Use the + button in the top-right corner to add a preset or custom provider."
+    }
+  },
+  "workbuddy": {
+    "empty": {
+      "title": "No WorkBuddy providers yet",
+      "description": "CC Switch writes its providers into WorkBuddy's ~/.workbuddy/models.json as custom models and leaves models you added in WorkBuddy untouched, so there is nothing to import. Use the + button in the top-right corner to add a preset or custom provider."
+    },
+    "form": {
+      "providerKeyHint": "Lowercase letters, numbers, and hyphens only. Marks which models.json entries belong to this provider.",
+      "providerKeyLockedHint": "The key marks this provider's entries in models.json, so it can't be changed after creation.",
+      "url": "API endpoint",
+      "urlHint": "Full OpenAI-compatible Chat Completions URL, usually ending in /chat/completions.",
+      "urlResponsesHint": "Base URL; WorkBuddy sends requests to {url}/responses.",
+      "responsesApi": "Use the OpenAI Responses API",
+      "responsesApiHint": "Off: Chat Completions (default). On: writes api: \"openai-responses\" for each model.",
+      "apiKeyHint": "Stored in models.json on this machine. ${ENV_VAR} references are expanded by WorkBuddy.",
+      "vendor": "Vendor label",
+      "models": "Models",
+      "addModel": "Add model",
+      "modelsEmpty": "Add at least one model. The model ID is sent to the API as-is.",
+      "modelId": "Model ID",
+      "modelName": "Display name",
+      "removeModel": "Remove model",
+      "maxInputTokens": "Max input tokens",
+      "maxOutputTokens": "Max output tokens",
+      "supportsToolCall": "Tool calls",
+      "supportsImages": "Image input",
+      "supportsReasoning": "Reasoning"
     }
   },
   "pi": {

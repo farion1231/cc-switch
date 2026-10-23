@@ -35,6 +35,8 @@ pub(crate) fn provider_exists_in_live_config(
         }
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::WorkBuddy => crate::workbuddy_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
         _ => Ok(false),
     }
 }
@@ -306,6 +308,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Agy
+        | AppType::WorkBuddy
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -384,7 +387,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Mcode
         | AppType::Kimi
         | AppType::ClaudeDesktop
-        | AppType::Agy => Ok(settings.clone()),
+        | AppType::Agy
+        | AppType::WorkBuddy => Ok(settings.clone()),
     }
 }
 
@@ -705,6 +709,9 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
+        AppType::WorkBuddy => {
+            crate::workbuddy_config::set_provider(&provider.id, &provider.settings_config)?
+        }
         AppType::Pi => {
             return Err(AppError::InvalidInput(
                 "Pi providers use the Pi provider service".to_string(),
@@ -1002,6 +1009,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         }
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
+        AppType::WorkBuddy => Ok(json!(crate::workbuddy_config::get_providers()?)),
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
@@ -1125,7 +1133,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Hermes
         | AppType::Pi
         | AppType::Mcode
-        | AppType::Kimi => {
+        | AppType::Kimi
+        | AppType::WorkBuddy => {
             unreachable!("additive mode apps are handled by early return")
         }
     };

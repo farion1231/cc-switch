@@ -169,6 +169,7 @@ export function ProviderList({
       switch (appId) {
         case "kimi":
         case "mcode":
+        case "workbuddy":
           return provider.meta?.liveConfigManaged === true;
         case "opencode":
           return opencodeLiveIds?.includes(provider.id) ?? false;
@@ -449,7 +450,10 @@ export function ProviderList({
           appId={appId}
           onCreate={appId === "pi" ? undefined : onCreate}
           onImport={
-            appId === "pi" || appId === "mcode" || appId === "kimi"
+            appId === "pi" ||
+            appId === "mcode" ||
+            appId === "kimi" ||
+            appId === "workbuddy"
               ? undefined
               : () => importMutation.mutate()
           }
