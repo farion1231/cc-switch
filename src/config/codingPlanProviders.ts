@@ -151,6 +151,9 @@ export function extractBaseUrlForUsageDetection(
     case "openclaw":
       raw = settingsConfig.baseUrl;
       break;
+    case "kimi":
+      raw = settingsConfig.provider?.base_url;
+      break;
     case "hermes":
       raw = settingsConfig.base_url;
       break;
