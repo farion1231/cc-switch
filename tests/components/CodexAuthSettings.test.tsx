@@ -150,7 +150,7 @@ describe("CodexAuthSettings unified history desktop compatibility", () => {
       );
     });
     expect(screen.getByRole("note")).toHaveTextContent(
-      "settings.unifyCodexDesktopWarning",
+      "settings.unifyCodexNativeIdentityNote",
     );
   });
 
@@ -161,7 +161,7 @@ describe("CodexAuthSettings unified history desktop compatibility", () => {
       screen.getByRole("switch", { name: "settings.unifyCodexSessionHistory" }),
     );
     expect(screen.getByRole("dialog")).toHaveTextContent(
-      "settings.unifyCodexDesktopWarning",
+      "settings.unifyCodexNativeIdentityNote",
     );
     fireEvent.click(screen.getByRole("button", { name: "common.cancel" }));
     expect(onChange).not.toHaveBeenCalled();
@@ -172,7 +172,7 @@ describe("CodexAuthSettings unified history desktop compatibility", () => {
     fireEvent.click(
       screen.getByRole("switch", { name: "settings.unifyCodexSessionHistory" }),
     );
-    expect(screen.getByRole("checkbox")).not.toBeChecked();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "confirm.unifyCodexHistory.confirm" }),
     );

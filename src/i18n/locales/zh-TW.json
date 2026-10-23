@@ -380,7 +380,7 @@
     },
     "unifyCodexHistory": {
       "title": "統一 Codex 會話歷史",
-      "message": "此選項會修改 CLI 與桌面版共用的 Codex 設定，將官方訂閱改以 custom 供應商識別執行，使 CLI 的 resume 清單合併顯示官方與第三方會話。桌面版已能顯示全部會話，無需開啟。可選擇遷入既有官方會話（遷移前自動備份），關閉時依備份還原。跨供應商繼續會話時，對方後端可能無法解密 encrypted_content 推理內容，導致繼續失敗。",
+      "message": "官方帳號保留內建 OpenAI 身分，桌面功能保持可用。新的官方會話與本機路由中的 API 會話使用同一身分。既有 custom 會話保留連線定義，不改寫歷史檔案。第三方 API 請使用本機路由；嚴格直連 API 仍獨立使用。歷史可見不代表加密推論或原生搜尋可跨後端續接。",
       "migrateExisting": "同時遷入現有官方會話歷史",
       "confirm": "我已了解，繼續開啟"
     },
@@ -856,8 +856,8 @@
     "preserveCodexOfficialAuthOnSwitch": "非接管切換時保留官方登入",
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未開啟本機路由時切換第三方供應商是否保留 Codex 官方登入；路由接管期間一律保留",
     "unifyCodexSessionHistory": "統一 Codex 會話歷史",
-    "unifyCodexSessionHistoryDescription": "此選項會修改 CLI 與桌面版共用的 Codex 設定，將官方訂閱改以 custom 供應商識別執行，使 CLI 的 resume 清單合併顯示官方與第三方會話。桌面版已能顯示全部會話，無需開啟。可選擇遷入既有官方會話（遷移前自動備份），關閉時依備份還原。跨供應商繼續會話時，對方後端可能無法解密 encrypted_content 推理內容，導致繼續失敗。",
-    "unifyCodexDesktopWarning": "統一歷史會將官方帳號切換為自訂供應商，可能停用 ChatGPT 桌面版的語音聊天、聽寫及其他需要內建 OpenAI 供應商的功能。使用桌面語音時請保持關閉；切換 ChatGPT 帳號無需開啟此選項。關閉後請重新開啟 ChatGPT 視窗以更新功能狀態。",
+    "unifyCodexSessionHistoryDescription": "官方帳號保留內建 OpenAI 身分，桌面功能保持可用。新的官方會話與本機路由中的 API 會話使用同一身分。既有 custom 會話保留連線定義，不改寫歷史檔案。第三方 API 請使用本機路由；嚴格直連 API 仍獨立使用。歷史可見不代表加密推論或原生搜尋可跨後端續接。",
+    "unifyCodexNativeIdentityNote": "切換帳號時保留既有上下文，不搬動歷史檔案。舊 custom 會話保留官方連線別名，新會話使用內建 OpenAI 身分，無需因供應商識別變更反覆重新啟動。修復前已開啟的視窗可能需要重開一次。",
     "codexStackClassicSubagents": "聚合模式下子 agent 用經典工具",
     "codexStackClassicSubagentsDescription": "主、子 agent 不在同一家供應商時必須開啟，否則子 agent 收不到任務。",
     "codexStackClassicSubagentsForcedV2": "Codex 的 config.toml 裡開啟了 [features] multi_agent_v2，它比這個開關優先，開關不會生效",

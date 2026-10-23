@@ -2,17 +2,18 @@
 
 > Applies to CC Switch v3.16.x and later. This guide is based on the current code; every command and path can be verified by hand. Examples use de-identified data and contain no real session content or API keys.
 
-## Desktop voice and multiple accounts (v4.0.19)
+## Current repair: separate shared context from official identity
 
-This option changes the **runtime configuration shared by the CLI and desktop app**, not just a CLI list. Recent ChatGPT/Codex desktop builds can list sessions across providers, but some official features check the built-in `openai` identity. The generated `custom` official mirror can therefore disable voice chat, dictation and Dot even with a valid official login. Availability also depends on the client version, account and workspace.
+This branch does not require disabling unified history to recover voice. **Leave unified history enabled.** Official accounts use built-in `openai`; existing `custom` official conversations retain a validated connection alias instead of being redirected to a dormant local proxy.
 
-- **Switching between two ChatGPT accounts does not require unified history.** Account selection chooses the login; this option chooses the shared provider identity.
-- **Editing `model_provider` by hand is temporary.** With this option on, the next official-card switch or config rewrite generates `custom` again. Login preservation and WebSocket preferences do not change that identity check.
-- **For desktop official features, turn unified history off in Settings.** Official cards use built-in `openai` again. The CLI lists separate official and third-party sessions; desktop does not delete sessions from its list. Reopen existing desktop windows to refresh cached capabilities.
-- **Turning the option off and restoring history are separate actions.** To change only the runtime identity, leave the restore-from-backup checkbox unchecked in the disable dialog. If restoring, use the migration backup ledger only; sessions created while unified cannot be attributed from the current account. Do not bulk relabel unknown `custom` history as `openai`.
-- CLI users can keep the option on with the desktop compatibility tradeoff. Visibility does not guarantee compatibility of encrypted reasoning or backend-scoped native search handles.
+- Switching official accounts changes the login without rewriting transcript bytes, provider labels, pagination offsets or indexes. This repair does not require restarting desktop on every account switch.
+- Enabling no longer offers implicit history migration. Legacy migration/restore code and backups remain available; this branch adds no bulk history rewrite. Desktop can list and resume the old aliases; CLI filtering of legacy buckets is not deletion.
+- Third-party APIs in unified **local routing** also use built-in identity for new sessions. The proxy replaces upstream credentials and strips official account headers/internal metadata. Strict API direct mode remains separate; official credentials must not be forwarded to a third party.
+- Only the exact generated official alias is retained. Unknown endpoints, extra credentials and auth headers do not become trusted because their display name says OpenAI.
+- Windows opened before the repair may need reopening once to refresh cached capabilities. Switching official accounts no longer changes the provider identity.
+- Visibility does not establish compatibility of encrypted reasoning or backend-scoped native search handles. Synthetic configuration tests cannot establish arbitrary real upstream compatibility.
 
-See the maintainer's explanations in [#8735](https://github.com/farion1231/cc-switch/issues/8735#issuecomment-6356488222) and [#5851](https://github.com/farion1231/cc-switch/issues/5851#issuecomment-6336607277). The two-bucket explanation below mainly describes CLI history filtering; unchanged authentication does not imply unchanged desktop capabilities.
+The current official release still has the limitation documented in [#8735](https://github.com/farion1231/cc-switch/issues/8735). This branch builds on the identity/routing separation in [#8640](https://github.com/farion1231/cc-switch/pull/8640), adds legacy-alias regression coverage, and deliberately excludes its bulk v2 migration. The following sections describe the **legacy custom-bucket design for troubleshooting**, not instructions to rewrite existing history on this branch.
 
 ## What this feature is
 

@@ -82,11 +82,11 @@ export function CodexAuthSettings({
       });
   };
 
-  const handleEnableConfirm = (migrateExisting: boolean) => {
+  const handleEnableConfirm = () => {
     setShowEnableConfirm(false);
     void onChange({
       unifyCodexSessionHistory: true,
-      unifyCodexMigrateExisting: migrateExisting,
+      unifyCodexMigrateExisting: false,
     });
   };
 
@@ -157,8 +157,8 @@ export function CodexAuthSettings({
       />
 
       {settings.unifyCodexSessionHistory && (
-        <div role="note" className="px-4 py-3 text-sm text-warning-text">
-          {t("settings.unifyCodexDesktopWarning")}
+        <div role="note" className="px-4 py-3 text-sm text-fg-2">
+          {t("settings.unifyCodexNativeIdentityNote")}
         </div>
       )}
 
@@ -183,8 +183,7 @@ export function CodexAuthSettings({
       <ConfirmDialog
         isOpen={showEnableConfirm}
         title={t("confirm.unifyCodexHistory.title")}
-        message={`${t("settings.unifyCodexDesktopWarning")}\n\n${t("confirm.unifyCodexHistory.message")}`}
-        checkboxLabel={t("confirm.unifyCodexHistory.migrateExisting")}
+        message={`${t("settings.unifyCodexNativeIdentityNote")}\n\n${t("confirm.unifyCodexHistory.message")}`}
         confirmText={t("confirm.unifyCodexHistory.confirm")}
         variant="info"
         onConfirm={handleEnableConfirm}

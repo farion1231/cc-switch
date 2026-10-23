@@ -380,7 +380,7 @@
     },
     "unifyCodexHistory": {
       "title": "Codex セッション履歴を統一",
-      "message": "この設定は CLI とデスクトップ版で共有する Codex 設定を変更します。公式サブスクリプションを custom プロバイダー ID で実行し、CLI の resume 一覧に公式とサードパーティのセッションをまとめます。デスクトップ版は既に全セッションを表示できるため不要です。既存の公式セッションも移行できます（事前にバックアップ）。オフにする際に復元できます。他のプロバイダーでは encrypted_content を復号できず、再開に失敗する場合があります。",
+      "message": "公式アカウントは内蔵 OpenAI の識別子を保持し、デスクトップ機能を利用できます。新しい公式セッションとローカルルーティングの API セッションは同じ識別子を使います。既存の custom 履歴は接続定義を保持し、ファイルを書き換えません。サードパーティ API にはローカルルーティングを使用してください。厳密な直接 API モードは別扱いです。暗号化推論やネイティブ検索の互換性は保証しません。",
       "migrateExisting": "既存の公式セッション履歴も移行する",
       "confirm": "理解しました、オンにする"
     },
@@ -856,8 +856,8 @@
     "preserveCodexOfficialAuthOnSwitch": "直接切替時に公式ログインを保持",
     "preserveCodexOfficialAuthOnSwitchDescription": "ローカルルーティングが無効な場合のサードパーティ切替を制御します。ルーティング接管中は常に Codex の公式ログインを保持します。",
     "unifyCodexSessionHistory": "Codex セッション履歴を統一",
-    "unifyCodexSessionHistoryDescription": "この設定は CLI とデスクトップ版で共有する Codex 設定を変更します。公式サブスクリプションを custom プロバイダー ID で実行し、CLI の resume 一覧に公式とサードパーティのセッションをまとめます。デスクトップ版は既に全セッションを表示できるため不要です。既存の公式セッションも移行できます（事前にバックアップ）。オフにする際に復元できます。他のプロバイダーでは encrypted_content を復号できず、再開に失敗する場合があります。",
-    "unifyCodexDesktopWarning": "履歴の統一は公式アカウントにカスタムプロバイダーを選択するため、ChatGPT デスクトップ版の音声会話、音声入力、内蔵 OpenAI プロバイダーを必要とする機能が無効になる場合があります。音声を使う場合はオフにしてください。ChatGPT アカウントの切り替えにこの設定は不要です。オフにした後は ChatGPT ウィンドウを開き直してください。",
+    "unifyCodexSessionHistoryDescription": "公式アカウントは内蔵 OpenAI の識別子を保持し、デスクトップ機能を利用できます。新しい公式セッションとローカルルーティングの API セッションは同じ識別子を使います。既存の custom 履歴は接続定義を保持し、ファイルを書き換えません。サードパーティ API にはローカルルーティングを使用してください。厳密な直接 API モードは別扱いです。暗号化推論やネイティブ検索の互換性は保証しません。",
+    "unifyCodexNativeIdentityNote": "アカウントを切り替えても履歴ファイルを移動せず、既存のコンテキストを保持します。旧 custom セッションには公式接続の別名を残し、新規セッションは内蔵 OpenAI を使用します。識別子の変更による毎回の再起動は不要です。修正前のウィンドウは一度開き直す必要がある場合があります。",
     "codexStackClassicSubagents": "集約モードでサブエージェントにクラシックツールを使う",
     "codexStackClassicSubagentsDescription": "メインとサブのエージェントが別のプロバイダーを使う場合は必ずオンにしてください。オフだとサブエージェントにタスクが届きません。",
     "codexStackClassicSubagentsForcedV2": "Codex の config.toml で [features] multi_agent_v2 がオンになっています。こちらが優先されるため、この設定は効きません。",

@@ -380,7 +380,7 @@
     },
     "unifyCodexHistory": {
       "title": "Unified Codex session history",
-      "message": "This changes the shared Codex configuration, including the desktop app. The CLI resume list then shows official subscription and third-party sessions together under the custom provider id. Desktop already shows all sessions and does not need this option. You can optionally migrate existing official sessions (backed up first), then restore them when turning it off. Resuming across providers may fail if the other backend cannot decrypt encrypted_content reasoning.",
+      "message": "Official accounts keep the built-in OpenAI identity, so desktop features remain available. New official and locally routed API sessions use that identity. Existing custom sessions keep their connection definition and are not rewritten. Use local routing for third-party API providers; strict direct API mode remains separate. History visibility does not guarantee encrypted reasoning or native search portability.",
       "migrateExisting": "Also migrate existing official session history",
       "confirm": "I understand, enable"
     },
@@ -856,8 +856,8 @@
     "preserveCodexOfficialAuthOnSwitch": "Keep official login for direct switches",
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
     "unifyCodexSessionHistory": "Unified Codex session history",
-    "unifyCodexSessionHistoryDescription": "This changes the shared Codex configuration, including the desktop app. The CLI resume list then shows official subscription and third-party sessions together under the custom provider id. Desktop already shows all sessions and does not need this option. You can optionally migrate existing official sessions (backed up first), then restore them when turning it off. Resuming across providers may fail if the other backend cannot decrypt encrypted_content reasoning.",
-    "unifyCodexDesktopWarning": "Unified history selects a custom provider for official accounts, which can disable ChatGPT desktop voice, dictation, and other features that require the built-in OpenAI provider. Keep this off when using desktop voice; switching ChatGPT accounts does not require it. After turning it off, reopen the ChatGPT window to refresh feature availability.",
+    "unifyCodexSessionHistoryDescription": "Official accounts keep the built-in OpenAI identity, so desktop features remain available. New official and locally routed API sessions use that identity. Existing custom sessions keep their connection definition and are not rewritten. Use local routing for third-party API providers; strict direct API mode remains separate. History visibility does not guarantee encrypted reasoning or native search portability.",
+    "unifyCodexNativeIdentityNote": "Account switching keeps existing context without moving history files. Older custom sessions retain an official alias; new sessions use built-in OpenAI. Changing accounts does not require restarting the app for a provider-id change. Existing windows opened before this fix may need reopening once.",
     "codexStackClassicSubagents": "Classic sub-agent tools in aggregation",
     "codexStackClassicSubagentsDescription": "Must be on when the main agent and a sub-agent use different providers, or the sub-agent cannot receive its task.",
     "codexStackClassicSubagentsForcedV2": "Codex config.toml turns on [features] multi_agent_v2, which takes precedence over this setting, so it has no effect.",
