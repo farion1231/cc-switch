@@ -160,6 +160,13 @@ describe("usage format helpers", () => {
     expect(
       getEstimatedTokensPerSecond({ ...session, dataSource: "codex_session" }),
     ).toBe(90);
+    expect(
+      getEstimatedTokensPerSecond({
+        ...session,
+        dataSource: "kimi_session",
+        firstTokenMs: 4_000,
+      }),
+    ).toBe(90);
     // 推出了首字的会话日志：仍按整段耗时估，不当成精确速度
     const withFirstToken = { ...session, firstTokenMs: 4_000 };
     expect(getEstimatedTokensPerSecond(withFirstToken)).toBe(90);
