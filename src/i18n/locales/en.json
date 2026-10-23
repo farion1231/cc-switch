@@ -3178,6 +3178,10 @@
   },
   "hermes": {
     "profilePanel": {
+      "title": "Per-agent configuration",
+      "summary": "{{total}} agents · {{independent}} independent",
+      "search": "Search agents…",
+      "empty": "No matching agents",
       "hint": "Each agent can enter proxy mode on its own: its own /hermes/<name>/v1 namespace, routing target and load balancing; once independent it no longer follows the unified routing above.",
       "independent": "Independent",
       "direct": "Direct",

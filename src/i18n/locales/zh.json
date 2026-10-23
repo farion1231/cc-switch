@@ -3178,6 +3178,10 @@
   },
   "hermes": {
     "profilePanel": {
+      "title": "按 agent 独立配置",
+      "summary": "{{total}} 个 agent · {{independent}} 个独立代理",
+      "search": "搜索 agent…",
+      "empty": "没有匹配的 agent",
       "hint": "每个 agent 可以单独进入代理模式：独立命名空间 /hermes/<名称>/v1、自己的路由目标与负载均衡；独立进入后不再跟随上方的统一路由。",
       "independent": "独立代理",
       "direct": "直连",

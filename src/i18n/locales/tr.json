@@ -3049,6 +3049,10 @@
   },
   "hermes": {
     "profilePanel": {
+      "title": "Ajan başına yapılandırma",
+      "summary": "{{total}} ajan · {{independent}} bağımsız",
+      "search": "Ajan ara…",
+      "empty": "Eşleşen ajan yok",
       "hint": "Her ajan kendi başına proxy moduna girebilir: kendi /hermes/<ad>/v1 ad alanı, yönlendirme hedefi ve yük dengelemesi vardır; bağımsız olduktan sonra yukarıdaki birleşik yönlendirmeyi izlemez.",
       "independent": "Bağımsız",
       "direct": "Doğrudan",
