@@ -242,6 +242,15 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     // grok-4.7 支持 /v1/responses，只在 gf 分组（gpt.ge/models/grok-4.7，2026-10-23）
     config: grokPresetConfig("V-API", "https://api.gpt.ge/v1", "grok-4.7"),
     category: "aggregator",
+    // 备用线路取自 gpt.ge/api/status 的 api_list（2026-10-23）
+    endpointCandidates: [
+      "https://api.gpt.ge/v1",
+      "https://api.vveai.com/v1",
+      "https://run.v3.cm/v1",
+      "https://api1.v3.cm/v1",
+      "https://api2.v3.cm/v1",
+      "https://us.gpt.ge/v1",
+    ],
     isPartner: true,
     partnerPromotionKey: "vapi",
     icon: "vapi",

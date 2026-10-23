@@ -172,6 +172,15 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     model: "gemini-3.8-flash",
     description: "V-API",
     category: "aggregator",
+    // 备用线路取自 gpt.ge/api/status 的 api_list（2026-10-23）
+    endpointCandidates: [
+      "https://api.gpt.ge",
+      "https://api.vveai.com",
+      "https://run.v3.cm",
+      "https://api1.v3.cm",
+      "https://api2.v3.cm",
+      "https://us.gpt.ge",
+    ],
     isPartner: true,
     partnerPromotionKey: "vapi",
     icon: "vapi",

@@ -4739,6 +4739,36 @@ fn wsl_distro_for_tool(tool: &str) -> Option<String> {
     wsl_distro_from_path(&override_dir)
 }
 
+/// `hermes dashboard` 的启动命令行（交给 `launch_terminal_running`）。
+///
+/// Windows 上 Hermes 配置目录指向 WSL（UNC 路径）时，要进对应发行版里启动，
+/// 否则跑起来的是 Windows 本机的 hermes（或报找不到命令），#8689。
+/// Web UI 探测的 `127.0.0.1` 端口由 WSL2 的 localhost 转发到发行版里，不用改。
+pub(crate) fn hermes_dashboard_command_line() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(distro) = wsl_distro_for_tool("hermes") {
+            return wsl_hermes_dashboard_line(&distro);
+        }
+    }
+    Ok("hermes dashboard".to_string())
+}
+
+/// 用发行版里用户自己的登录交互 shell（`$SHELL -lic`）跑，PATH 才带得上
+/// `~/.local/bin` 这类在 `.bashrc` / `.profile` 里加的目录。只用一个 flag、
+/// 不像版本探测那样失败后换 flag 重试：dashboard 被 Ctrl+C 结束也是非零退出，
+/// 重试会把它再拉起来。
+#[cfg(target_os = "windows")]
+fn wsl_hermes_dashboard_line(distro: &str) -> Result<String, String> {
+    if !is_valid_wsl_distro_name(distro) {
+        return Err(format!("Invalid WSL distro name: {distro}"));
+    }
+    Ok(format!(
+        "wsl.exe -d {distro} -- sh -c {}",
+        windows_cmd_double_quote_arg(&wsl_auto_shell_command("hermes dashboard", Some("-lic")))
+    ))
+}
+
 /// 从 UNC 路径中提取 WSL 发行版名称
 /// 支持 `\\wsl$\Ubuntu\...` 和 `\\wsl.localhost\Ubuntu\...` 两种格式
 #[cfg(target_os = "windows")]
@@ -8179,6 +8209,16 @@ mod tests {
                 !install_cmd.contains('|') && install_cmd.contains(" -o $tmp && bash $tmp"),
                 "WSL hermes 安装不应依赖 pipefail,得到: {install_cmd}"
             );
+        }
+
+        #[test]
+        fn wsl_hermes_dashboard_runs_inside_the_distro_login_shell() {
+            let line = wsl_hermes_dashboard_line("Ubuntu-22.04").expect("valid WSL command line");
+            assert_eq!(
+                line,
+                r#"wsl.exe -d Ubuntu-22.04 -- sh -c "\"${SHELL:-sh}\" -lic 'hermes dashboard'""#
+            );
+            assert!(wsl_hermes_dashboard_line("Ubuntu & calc").is_err());
         }
 
         #[test]
