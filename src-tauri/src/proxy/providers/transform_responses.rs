@@ -4756,6 +4756,70 @@ mod tests {
     }
 
     #[test]
+    fn test_deepseek_plaintext_reasoning_round_trips_through_anthropic_history() {
+        let original = json!({
+            "id": "fixture_reasoning",
+            "type": "reasoning",
+            "summary": [],
+            "content": [
+                {"type": "reasoning_text", "text": "Need to call lookup."}
+            ]
+        });
+        let response = json!({
+            "id": "resp_deepseek",
+            "status": "completed",
+            "model": "deepseek-flash",
+            "output": [
+                original.clone(),
+                {
+                    "type": "function_call",
+                    "id": "call_lookup",
+                    "name": "lookup",
+                    "arguments": "{}"
+                }
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 2}
+        });
+
+        let anthropic = responses_to_anthropic(response).unwrap();
+        assert_eq!(anthropic["content"].as_array().unwrap().len(), 2);
+        let thinking = anthropic["content"][0].clone();
+        assert_eq!(thinking["type"], "thinking");
+        assert_eq!(thinking["thinking"], "Need to call lookup.");
+        assert!(thinking["signature"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("ccswitch-openai-reasoning-v1:")));
+
+        let replay = anthropic_to_responses(
+            json!({
+                "model": "deepseek-flash",
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            thinking,
+                            {"type": "tool_use", "id": "call_lookup", "name": "lookup", "input": {}}
+                        ]
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "tool_result", "tool_use_id": "call_lookup", "content": "lookup result"}
+                        ]
+                    }
+                ]
+            }),
+            None,
+            true,
+            false,
+        )
+        .unwrap();
+        assert_eq!(replay["input"][0], original);
+        assert_eq!(replay["input"][1]["type"], "function_call");
+        assert_eq!(replay["input"][2]["type"], "function_call_output");
+    }
+
+    #[test]
     fn test_replayed_legacy_envelope_omits_output_only_fields() {
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 

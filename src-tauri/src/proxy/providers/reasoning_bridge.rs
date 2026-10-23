@@ -19,13 +19,27 @@ use serde_json::{json, Value};
 pub(crate) const OPENAI_REASONING_ITEM_PREFIX: &str = "ccswitch-openai-reasoning-v1:";
 
 /// The only fields safe to send back as a `reasoning` input item:
-/// `encrypted_content` is the stateless-replay payload, `id`/`summary` are
-/// accepted context, and everything else the backend emits is output-only.
-const REPLAYABLE_REASONING_FIELDS: &[&str] = &["type", "id", "summary", "encrypted_content"];
+/// `encrypted_content` is the stateless-replay payload for backends that support it (OpenAI),
+/// `id`/`summary` are accepted context, and `content` is the plaintext payload
+/// required by backends like DeepSeek when encrypted_content is absent.
+const REPLAYABLE_REASONING_FIELDS: &[&str] =
+    &["type", "id", "summary", "content", "encrypted_content"];
 
 fn sanitize_reasoning_item(item: &Value) -> Value {
     let mut sanitized = serde_json::Map::new();
+    let has_encrypted = item
+        .get("encrypted_content")
+        .and_then(Value::as_str)
+        .is_some_and(|v| !v.is_empty());
+
     for field in REPLAYABLE_REASONING_FIELDS {
+        // If encrypted_content is present (official OpenAI), plaintext `content`
+        // is output-only and must be dropped to prevent backend unknown-parameter rejection.
+        // If encrypted_content is absent (DeepSeek Responses), `content` is the
+        // replay payload and must be preserved.
+        if *field == "content" && has_encrypted {
+            continue;
+        }
         if let Some(value) = item.get(*field) {
             sanitized.insert((*field).to_string(), value.clone());
         }
@@ -34,7 +48,8 @@ fn sanitize_reasoning_item(item: &Value) -> Value {
 }
 
 pub(crate) fn reasoning_summary_text(item: &Value) -> String {
-    item.get("summary")
+    let summary = item
+        .get("summary")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
@@ -42,6 +57,27 @@ pub(crate) fn reasoning_summary_text(item: &Value) -> String {
             matches!(
                 part.get("type").and_then(Value::as_str),
                 Some("summary_text" | "reasoning_text")
+            )
+            .then(|| part.get("text").and_then(Value::as_str))
+            .flatten()
+        })
+        .collect::<Vec<_>>()
+        .join("");
+
+    if !summary.is_empty() {
+        return summary;
+    }
+
+    // DeepSeek and other plaintext Responses backends place plain-text reasoning
+    // in `content` rather than `summary`.
+    item.get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|part| {
+            matches!(
+                part.get("type").and_then(Value::as_str),
+                Some("reasoning_text" | "summary_text" | "text")
             )
             .then(|| part.get("text").and_then(Value::as_str))
             .flatten()
@@ -95,12 +131,21 @@ pub(crate) fn anthropic_block_from_openai_reasoning_item(item: &Value) -> Option
         }));
     }
 
-    (!text.is_empty()).then(|| {
-        json!({
+    if !text.is_empty() {
+        if let Some(envelope) = encode_openai_reasoning_item(item) {
+            return Some(json!({
+                "type": "thinking",
+                "thinking": text,
+                "signature": envelope
+            }));
+        }
+        return Some(json!({
             "type": "thinking",
             "thinking": text
-        })
-    })
+        }));
+    }
+
+    None
 }
 
 pub(crate) fn openai_reasoning_item_from_anthropic_block(block: &Value) -> Option<Value> {
@@ -210,5 +255,29 @@ mod tests {
             })),
             Some(expected)
         );
+    }
+
+    #[test]
+    fn deepseek_plaintext_reasoning_item_round_trips_through_thinking_signature() {
+        // DeepSeek Responses API returns reasoning items with plaintext content
+        // and empty summary, without encrypted_content.
+        let item = json!({
+            "id": "fixture_reasoning",
+            "type": "reasoning",
+            "summary": [],
+            "content": [
+                {"type": "reasoning_text", "text": "Need to call lookup."}
+            ]
+        });
+        let block = anthropic_block_from_openai_reasoning_item(&item).unwrap();
+        assert_eq!(block["type"], "thinking");
+        assert_eq!(block["thinking"], "Need to call lookup.");
+        assert!(block["signature"]
+            .as_str()
+            .unwrap()
+            .starts_with(OPENAI_REASONING_ITEM_PREFIX));
+
+        let restored = openai_reasoning_item_from_anthropic_block(&block);
+        assert_eq!(restored, Some(item));
     }
 }

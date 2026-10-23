@@ -4434,7 +4434,12 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                             .get("encrypted_content")
                                             .and_then(Value::as_str)
                                             .is_some_and(|value| !value.is_empty());
-                                        if encrypted {
+                                        let has_replayable_envelope = encrypted
+                                            || final_item
+                                                .get("content")
+                                                .and_then(Value::as_array)
+                                                .is_some_and(|c| !c.is_empty());
+                                        if has_replayable_envelope {
                                             if let Some(envelope) = encode_openai_reasoning_item(&final_item) {
                                                 if open_indices.contains(&index) {
                                                     let signature_event = json!({
@@ -4448,7 +4453,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                                     let signature_sse = format!("event: content_block_delta\ndata: {}\n\n",
                                                         serde_json::to_string(&signature_event).unwrap_or_default());
                                                     yield Ok(Bytes::from(signature_sse));
-                                                } else {
+                                                } else if encrypted {
                                                     let start_event = json!({
                                                         "type": "content_block_start",
                                                         "index": index,
