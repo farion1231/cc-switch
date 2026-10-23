@@ -29,6 +29,7 @@ export const APP_IDS: AppId[] = [
   "mcode",
   "kimi",
   "agy",
+  "codebuddy",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -44,6 +45,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   mcode: true,
   kimi: true,
   agy: true,
+  codebuddy: true,
 };
 
 /** App IDs shown in Skills panels. */
@@ -107,12 +109,13 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi"
+  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi" | "codebuddy"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
   "mcode",
   "kimi",
+  "codebuddy",
   "opencode",
   "openclaw",
   "hermes",
@@ -138,8 +141,14 @@ export function usesEditorView(appId: AppId): boolean {
   return EDITOR_VIEW_APP_IDS.includes(appId);
 }
 
-/** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
-export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw">;
+/**
+ * Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`）。
+ * CodeBuddy 的 MCP 同步需要数据库新增 enabled_codebuddy 列，暂未接入。
+ */
+export type McpAppId = Exclude<
+  AppId,
+  "claude-desktop" | "openclaw" | "codebuddy"
+>;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
   "codex",
@@ -268,6 +277,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
     badgeClass:
       "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
+  },
+  codebuddy: {
+    label: "CodeBuddy",
+    icon: (
+      <ProviderIcon
+        icon="tencent"
+        name="CodeBuddy"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-blue-500/10 ring-1 ring-blue-500/20 hover:bg-blue-500/20 text-blue-700 dark:text-blue-300",
+    badgeClass:
+      "bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/20 border-0 gap-1.5",
   },
   agy: {
     label: "Antigravity",

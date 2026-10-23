@@ -657,7 +657,7 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
-            AppType::ClaudeDesktop | AppType::Mcode | AppType::Kimi => {}
+            AppType::ClaudeDesktop | AppType::Mcode | AppType::Kimi | AppType::Codebuddy => {}
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
                     return Ok(custom.join("skills"));
@@ -707,6 +707,7 @@ impl SkillService {
         Ok(match app {
             AppType::Mcode => crate::mcode_config::data_dir().join("skills"),
             AppType::Kimi => crate::kimi_config::data_dir().join("skills"),
+            AppType::Codebuddy => crate::codebuddy_config::data_dir().join("skills"),
             AppType::Claude => home.join(".claude").join("skills"),
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),
@@ -1149,7 +1150,11 @@ impl SkillService {
                     for app in AppType::all() {
                         if matches!(
                             app,
-                            AppType::Pi | AppType::Mcode | AppType::Agy | AppType::Kimi
+                            AppType::Pi
+                                | AppType::Mcode
+                                | AppType::Agy
+                                | AppType::Kimi
+                                | AppType::Codebuddy
                         ) {
                             continue;
                         }
@@ -2678,7 +2683,7 @@ impl SkillService {
     /// - Symlink: 仅使用 symlink
     /// - Copy: 仅使用文件复制
     pub fn sync_to_app_dir(directory: &str, app: &AppType) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop) {
+        if matches!(app, AppType::ClaudeDesktop | AppType::Codebuddy) {
             return Ok(());
         }
 
@@ -2877,7 +2882,8 @@ impl SkillService {
         app: &AppType,
         preserved_path: Option<&Path>,
     ) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop) {
+        // CodeBuddy skills are not projected yet; its directory belongs to CodeBuddy.
+        if matches!(app, AppType::ClaudeDesktop | AppType::Codebuddy) {
             return Ok(());
         }
 
@@ -2920,9 +2926,10 @@ impl SkillService {
     /// 同步时一个字节都不能碰——OpenClaw 自己的 `~/.openclaw/skills` 里和受管
     /// Skill 同名的真实目录，否则会被当成「已关掉的投影」删掉。
     fn is_sync_managed_app(app: &AppType) -> bool {
+        // CodeBuddy has no enabled_codebuddy column yet, so its directory is never projected.
         !matches!(
             app,
-            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi
+            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi | AppType::Codebuddy
         )
     }
 
@@ -4041,8 +4048,10 @@ impl SkillService {
         }
 
         for app in AppType::all() {
-            if matches!(app, AppType::Mcode | AppType::Agy | AppType::Kimi)
-                && !skill.apps.is_enabled_for(&app)
+            if matches!(
+                app,
+                AppType::Mcode | AppType::Agy | AppType::Kimi | AppType::Codebuddy
+            ) && !skill.apps.is_enabled_for(&app)
             {
                 continue;
             }

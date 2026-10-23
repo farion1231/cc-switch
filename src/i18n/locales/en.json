@@ -4966,5 +4966,33 @@
       "description": "Configure an endpoint, API key and models. Existing Kimi configuration is imported automatically."
     },
     "deleteSessionHint": "Delete this session in Kimi Code to update its index and history together."
+  },
+  "codebuddy": {
+    "empty": {
+      "title": "No custom models yet",
+      "description": "CodeBuddy's official models and sign-in stay managed by CodeBuddy Code. Custom models already in ~/.codebuddy/models.json show up here automatically. Click + in the top right to add one from a preset or a custom configuration."
+    },
+    "modelId": "Model ID",
+    "modelIdHint": "The id written to models.json and the name you pick in /model, usually the endpoint's model name.",
+    "modelIdLockedHint": "The model ID can't be changed after it's created.",
+    "modelIdDuplicate": "A model with this ID already exists.",
+    "modelIdInvalid": "The model ID can't start or end with a space.",
+    "api": "API protocol",
+    "apiChatCompletions": "OpenAI Chat Completions",
+    "apiResponses": "OpenAI Responses",
+    "vendor": "Vendor",
+    "url": "Endpoint URL",
+    "urlHint": "Use the full path, usually ending in /chat/completions. ${VAR} environment references work.",
+    "urlHintResponses": "Use the base URL; requests go to {url}/responses. ${VAR} environment references work.",
+    "urlInvalid": "Enter a valid http(s) URL.",
+    "apiKey": "API key",
+    "apiKeyHint": "Enter the key, or reference an environment variable as ${MY_API_KEY}. models.json is saved with 600 permissions.",
+    "getApiKey": "Get an API key",
+    "maxInputTokens": "Max input tokens",
+    "maxOutputTokens": "Max output tokens",
+    "supportsToolCall": "Supports tool calls",
+    "supportsImages": "Supports image input",
+    "supportsReasoning": "Supports reasoning",
+    "jsonHint": "One model entry in models.json (its id comes from Model ID above). CodeBuddy Code reloads the file on its own after you save."
   }
 }

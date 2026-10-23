@@ -4967,5 +4967,33 @@
       "tool_use": "工具呼叫",
       "dynamically_loaded_tools": "按需載入工具"
     }
+  },
+  "codebuddy": {
+    "empty": {
+      "title": "尚未新增自訂模型",
+      "description": "CodeBuddy 官方模型與登入由 CodeBuddy Code 自行管理；~/.codebuddy/models.json 中已有的自訂模型會自動顯示在這裡。點選右上角 +，從預設或自訂設定新增模型。"
+    },
+    "modelId": "模型 ID",
+    "modelIdHint": "寫入 models.json 的 id，也是 /model 中選擇的名稱，通常就是介面的模型名稱。",
+    "modelIdLockedHint": "模型 ID 建立後無法修改。",
+    "modelIdDuplicate": "已有相同的模型 ID。",
+    "modelIdInvalid": "模型 ID 不能以空格開頭或結尾。",
+    "api": "介面協定",
+    "apiChatCompletions": "OpenAI Chat Completions",
+    "apiResponses": "OpenAI Responses",
+    "vendor": "廠商",
+    "url": "介面位址",
+    "urlHint": "填寫完整路徑，通常以 /chat/completions 結尾；支援 ${VAR} 環境變數參照。",
+    "urlHintResponses": "填寫 Base URL，請求會送往 {url}/responses；支援 ${VAR} 環境變數參照。",
+    "urlInvalid": "請輸入有效的 http(s) 位址。",
+    "apiKey": "API Key",
+    "apiKeyHint": "可直接填寫，也可寫成 ${MY_API_KEY} 參照環境變數。models.json 會以 600 權限儲存。",
+    "getApiKey": "取得 API Key",
+    "maxInputTokens": "最大輸入 Token",
+    "maxOutputTokens": "最大輸出 Token",
+    "supportsToolCall": "支援工具呼叫",
+    "supportsImages": "支援圖片輸入",
+    "supportsReasoning": "支援推理模式",
+    "jsonHint": "對應 models.json 中的一筆模型設定（id 由上方模型 ID 決定）。儲存後 CodeBuddy Code 會自動重新載入。"
   }
 }

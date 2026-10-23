@@ -4966,5 +4966,33 @@
       "description": "配置请求地址、API Key 和模型；已有 Kimi 配置会自动导入。"
     },
     "deleteSessionHint": "请在 Kimi Code 中删除，以同时更新会话索引和历史记录。"
+  },
+  "codebuddy": {
+    "empty": {
+      "title": "还没有添加自定义模型",
+      "description": "CodeBuddy 官方模型和登录由 CodeBuddy Code 自行管理；~/.codebuddy/models.json 里已有的自定义模型会自动显示在这里。点击右上角 +，从预设或自定义配置添加模型。"
+    },
+    "modelId": "模型 ID",
+    "modelIdHint": "写入 models.json 的 id，也是 /model 里选择的名称，通常就是接口的模型名。",
+    "modelIdLockedHint": "模型 ID 创建后不可修改。",
+    "modelIdDuplicate": "已有同名的模型 ID。",
+    "modelIdInvalid": "模型 ID 不能以空格开头或结尾。",
+    "api": "接口协议",
+    "apiChatCompletions": "OpenAI Chat Completions",
+    "apiResponses": "OpenAI Responses",
+    "vendor": "厂商",
+    "url": "接口地址",
+    "urlHint": "填写完整路径，通常以 /chat/completions 结尾；支持 ${VAR} 环境变量引用。",
+    "urlHintResponses": "填写 Base URL，请求会发往 {url}/responses；支持 ${VAR} 环境变量引用。",
+    "urlInvalid": "请输入有效的 http(s) 地址。",
+    "apiKey": "API Key",
+    "apiKeyHint": "可直接填写，也可写成 ${MY_API_KEY} 引用环境变量。models.json 会以 600 权限保存。",
+    "getApiKey": "获取 API Key",
+    "maxInputTokens": "最大输入 Token",
+    "maxOutputTokens": "最大输出 Token",
+    "supportsToolCall": "支持工具调用",
+    "supportsImages": "支持图片输入",
+    "supportsReasoning": "支持推理模式",
+    "jsonHint": "对应 models.json 中的一条模型配置（id 由上方模型 ID 决定）。保存后 CodeBuddy Code 会自动重新加载。"
   }
 }

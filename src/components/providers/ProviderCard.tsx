@@ -578,6 +578,7 @@ export function ProviderCard({
               onTest &&
               appId !== "mcode" &&
               appId !== "kimi" &&
+              appId !== "codebuddy" &&
               provider.category !== "official"
                 ? () => onTest(provider)
                 : undefined

@@ -351,6 +351,7 @@ paru -S cc-switch-bin
 | Pi | 共存 | – | – | – | ✓ | ✓ | AGENTS.md、SYSTEM.md、提示词模板 | ✓ | ✓ |
 | MiniMax Code | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | [Kimi Code](docs/kimi-code-integration-zh.md) | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| CodeBuddy Code | 共存 | – | – | – | – | – | CODEBUDDY.md | – | – |
 
 - **切换**：同一时间只启用一个供应商；**共存**：多个供应商同时写入工具自身的配置，在工具里选择使用。
 - **本地路由**：由 CC Switch 在本机转发请求并转换接口格式，见下方[本地路由与故障转移](#本地路由与故障转移)。Claude Desktop 的供应商可选“直连”或“模型映射”，选“模型映射”时经本地路由转发。

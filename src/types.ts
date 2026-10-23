@@ -317,6 +317,7 @@ export interface VisibleApps {
   mcode: boolean;
   kimi: boolean;
   agy: boolean;
+  codebuddy: boolean;
 }
 
 // WebDAV 同步状态

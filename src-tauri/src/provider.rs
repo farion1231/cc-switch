@@ -226,6 +226,8 @@ impl Provider {
                 str_at(settings.get("baseUrl")),
                 str_at(settings.get("apiKey")),
             ),
+            // CodeBuddy models.json entries keep the full endpoint in `url`.
+            AppType::Codebuddy => (str_at(settings.get("url")), str_at(settings.get("apiKey"))),
             // Pi custom providers use the native models.json field names.
             AppType::Pi => (
                 crate::pi_config::provider_base_url(settings).unwrap_or_default(),

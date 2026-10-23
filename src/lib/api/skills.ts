@@ -14,7 +14,8 @@ export type AppType =
   | "pi"
   | "mcode"
   | "kimi"
-  | "agy";
+  | "agy"
+  | "codebuddy";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {
@@ -30,6 +31,8 @@ export interface SkillApps {
   mcode?: boolean;
   kimi?: boolean;
   agy?: boolean;
+  /** CodeBuddy skill sync is not wired yet (needs an enabled_codebuddy column). */
+  codebuddy?: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */

@@ -22,6 +22,7 @@ const PROMPT_FILE_NAME: Partial<Record<AppId, string>> = {
   pi: "AGENTS.md",
   mcode: "AGENTS.md",
   kimi: "AGENTS.md",
+  codebuddy: "CODEBUDDY.md",
 };
 
 export function promptFileName(app: AppId): string {
