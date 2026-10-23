@@ -11,7 +11,9 @@ DeepSeek Harness 的应用 ID 为 `dsh`，命令为 `dsh`，npm 包为 `@deepsee
 - npm 手动卸载：`npm uninstall -g @deepseek-ai/dsh`。自动卸载核对包名和实际 npm prefix，只移除所选安装。
 - 配置、凭据、Skills 和会话数据保留。无法确认归属的安装沿用现有手动处理流程。
 
-核对时 npm `latest` 为 `0.2.1-rc.2`，未声明 npm 的版本要求；官方当前源码声明 Node.js ≥24.9.0。请遵循官方 Node 要求。CC Switch 沿用目标 npm 包 `engines.node` 的升级检查，安装和升级还让 npm 检查所装依赖的 engines；不满足时报告错误。
+核对时 npm `latest` 为 `0.2.1-rc.2`，CLI 发布包未声明 `engines.node`，但对应发布标签 `dsh-v0.2.1-rc.2`（以及 `rc.3`）的根 `package.json` 要求 `^22.19.0 || >=24.0.0`：Node 22.19 及后续 22.x，或 Node 24 及以上。CC Switch 在发布元数据缺失时使用这一已核实的要求；应用页提前检查 npm 实际使用的 Node，版本过低时禁用安装并提示先升级 Node、再刷新列表，执行安装前还会再次检查。升级保留原有的目标版本 engines 检查与此缺失值回退。安装和升级仍由 npm 的 `--engine-strict` 检查依赖要求。
+
+如果当前是 Node 22.12.0，会被 `undici` 等依赖拒绝；请切换到符合要求的 Node（建议 Node 24 LTS 最新版），确认 `node --version` 后重新启动 CC Switch、刷新应用列表并重试。日志里的 `_jsr-registry` 是 npm 不识别环境配置项的警告，实际阻断原因是 `EBADENGINE`。
 
 安装后在终端运行 `dsh web` 打开官方 Web 界面。
 

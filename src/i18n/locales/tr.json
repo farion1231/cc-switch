@@ -4204,8 +4204,10 @@
       "pi": "Npm ile yüklenir",
       "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner",
       "agy": "Resmî kurulum betiğiyle yüklenir",
-      "omp": "Resmi komut dosyasıyla yüklenir"
-    }
+      "omp": "Resmi komut dosyasıyla yüklenir",
+      "dsh": "npm ile kurulur; Node.js 22.19+ (22.x) veya 24+ gerektirir"
+    },
+    "installNeedsNode": "Kurulum Node {{required}} gerektiriyor, ancak npm Node {{current}} kullanıyor. Node sürümünü yükseltin, ardından uygulama listesini yenileyin."
   },
   "appPage": {
     "moreActions": "{{name}} için diğer işlemler",

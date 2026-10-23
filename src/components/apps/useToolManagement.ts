@@ -34,7 +34,7 @@ export interface ToolVersion {
   installed_but_broken: boolean;
   env_type: "windows" | "wsl" | "macos" | "linux" | "unknown";
   wsl_distro: string | null;
-  // 有新版本、但这处安装用的 Node 达不到新版本的要求：不给升级，提示先升级 Node。
+  // 安装或升级使用的 Node 不满足要求时，提示先升级 Node。保留现有后端字段名。
   update_blocked_by_node: NodeRequirementGap | null;
 }
 

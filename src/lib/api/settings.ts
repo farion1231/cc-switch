@@ -370,7 +370,7 @@ export interface ToolInstallation {
 }
 
 /** 卸载对话框里的一处安装：能自动卸载就带 plan，否则给出原因。对应后端 ToolUninstallCandidate。 */
-/** 新版本要求的 Node（`engines.node` 原文）与这处安装用的 Node 版本。 */
+/** 安装或升级要求的 Node（npm engines 或官方运行时要求）与实际 Node 版本。 */
 export interface NodeRequirementGap {
   required: string;
   current: string;
