@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  COPILOT_API_FORMATS,
   COPILOT_ENV,
+  applyCopilotApiFormat,
+  copilotApiFormatOf,
   compactCopilotEnv,
   copilotOfficialPreset,
   copilotProviderPresets,
@@ -45,5 +48,35 @@ describe("copilotProviderPresets", () => {
         COPILOT_PROVIDER_API_KEY: "",
       }),
     ).toEqual({ COPILOT_MODEL: "gpt-5.4" });
+  });
+
+  it("one API format sets both the protocol and the wire API", () => {
+    expect(copilotApiFormatOf({})).toBe("openai-completions");
+    expect(copilotApiFormatOf({ COPILOT_PROVIDER_TYPE: "azure" })).toBe(
+      "azure-completions",
+    );
+    const responses = applyCopilotApiFormat(
+      { COPILOT_MODEL: "gpt-5.4" },
+      "openai-responses",
+    );
+    expect(responses).toEqual({
+      COPILOT_MODEL: "gpt-5.4",
+      COPILOT_PROVIDER_TYPE: "openai",
+      COPILOT_PROVIDER_WIRE_API: "responses",
+    });
+    const anthropic = applyCopilotApiFormat(responses, "anthropic");
+    expect(anthropic[COPILOT_ENV.type]).toBe("anthropic");
+    expect(anthropic[COPILOT_ENV.wireApi]).toBeUndefined();
+    for (const format of COPILOT_API_FORMATS) {
+      expect(copilotApiFormatOf(applyCopilotApiFormat({}, format.id))).toBe(
+        format.id,
+      );
+    }
+    for (const preset of copilotProviderPresets) {
+      const id = copilotApiFormatOf(preset.settingsConfig.env);
+      expect(applyCopilotApiFormat(preset.settingsConfig.env, id)).toEqual(
+        preset.settingsConfig.env,
+      );
+    }
   });
 });

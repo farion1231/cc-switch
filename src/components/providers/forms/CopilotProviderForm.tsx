@@ -27,13 +27,15 @@ import type { ProviderCategory, ProviderMeta } from "@/types";
 import {
   COPILOT_ENV,
   COPILOT_OFFICIAL_PRESET_ID,
-  COPILOT_PROVIDER_TYPES,
-  COPILOT_WIRE_APIS,
+  COPILOT_API_FORMATS,
+  applyCopilotApiFormat,
+  copilotApiFormatOf,
   compactCopilotEnv,
   copilotEnvOf,
   copilotOfficialPreset,
   copilotProviderPresets,
   formatCopilotHeaders,
+  type CopilotApiFormatId,
   type CopilotEnv,
 } from "@/config/copilotProviderPresets";
 import { normalizeRequestHeaders } from "./helpers/requestHeaders";
@@ -130,8 +132,8 @@ export function CopilotProviderForm({
   const baseUrl = env[COPILOT_ENV.baseUrl] ?? "";
   const apiKey = env[COPILOT_ENV.apiKey] ?? "";
   const model = env[COPILOT_ENV.model] ?? "";
+  const apiFormat = copilotApiFormatOf(env);
   const providerType = env[COPILOT_ENV.type] || "openai";
-  const wireApi = env[COPILOT_ENV.wireApi] || "completions";
   const ready = Boolean(
     jsonValid &&
       name.trim() &&
@@ -208,6 +210,7 @@ export function CopilotProviderForm({
             : {
                 [COPILOT_ENV.baseUrl]: "",
                 [COPILOT_ENV.type]: "openai",
+                [COPILOT_ENV.wireApi]: "completions",
                 [COPILOT_ENV.apiKey]: "",
                 [COPILOT_ENV.model]: "",
               },
@@ -298,59 +301,32 @@ export function CopilotProviderForm({
           )}
           {!isOfficial && (
             <>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label htmlFor="copilot-provider-type">
-                    {t("copilot.form.providerType")}
-                  </Label>
-                  <Select
-                    value={providerType}
-                    onValueChange={(value) => {
-                      const next: CopilotEnv = {
-                        ...env,
-                        [COPILOT_ENV.type]: value,
-                      };
-                      // Anthropic 只有 Messages 接口，不认 COPILOT_PROVIDER_WIRE_API。
-                      if (value === "anthropic")
-                        delete next[COPILOT_ENV.wireApi];
-                      update(next);
-                    }}
-                  >
-                    <SelectTrigger id="copilot-provider-type">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {COPILOT_PROVIDER_TYPES.map((type) => (
-                        <SelectItem key={type} value={type}>
-                          {type}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="copilot-wire-api">
-                    {t("copilot.form.wireApi")}
-                  </Label>
-                  <Select
-                    value={wireApi}
-                    disabled={providerType === "anthropic"}
-                    onValueChange={(value) =>
-                      setField(COPILOT_ENV.wireApi, value)
-                    }
-                  >
-                    <SelectTrigger id="copilot-wire-api">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {COPILOT_WIRE_APIS.map((api) => (
-                        <SelectItem key={api} value={api}>
-                          {api}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="copilot-api-format">
+                  {t("copilot.form.apiFormat")}
+                </Label>
+                <Select
+                  value={apiFormat}
+                  onValueChange={(value) =>
+                    update(
+                      applyCopilotApiFormat(env, value as CopilotApiFormatId),
+                    )
+                  }
+                >
+                  <SelectTrigger id="copilot-api-format">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {COPILOT_API_FORMATS.map((format) => (
+                      <SelectItem key={format.id} value={format.id}>
+                        {format.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-fg-2">
+                  {t("copilot.form.apiFormatHint")}
+                </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="copilot-base-url">

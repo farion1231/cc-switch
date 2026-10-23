@@ -38,6 +38,66 @@ export type CopilotProviderType = (typeof COPILOT_PROVIDER_TYPES)[number];
 export const COPILOT_WIRE_APIS = ["completions", "responses"] as const;
 export type CopilotWireApi = (typeof COPILOT_WIRE_APIS)[number];
 
+/**
+ * 表单里的「接口格式」：一项同时决定 `COPILOT_PROVIDER_TYPE` 和 `COPILOT_PROVIDER_WIRE_API`。
+ * Anthropic 只有 Messages 接口，不写 WIRE_API。
+ */
+export const COPILOT_API_FORMATS = [
+  {
+    id: "openai-completions",
+    label: "OpenAI Chat Completions",
+    type: "openai",
+    wireApi: "completions",
+  },
+  {
+    id: "openai-responses",
+    label: "OpenAI Responses",
+    type: "openai",
+    wireApi: "responses",
+  },
+  { id: "anthropic", label: "Anthropic Messages", type: "anthropic" },
+  {
+    id: "azure-completions",
+    label: "Azure OpenAI Chat Completions",
+    type: "azure",
+    wireApi: "completions",
+  },
+  {
+    id: "azure-responses",
+    label: "Azure OpenAI Responses",
+    type: "azure",
+    wireApi: "responses",
+  },
+] as const satisfies ReadonlyArray<{
+  id: string;
+  label: string;
+  type: CopilotProviderType;
+  wireApi?: CopilotWireApi;
+}>;
+export type CopilotApiFormatId = (typeof COPILOT_API_FORMATS)[number]["id"];
+
+/** 按 Copilot CLI 的默认值（openai / completions）读出当前格式。 */
+export function copilotApiFormatOf(env: CopilotEnv): CopilotApiFormatId {
+  const type = env[COPILOT_ENV.type]?.trim() || "openai";
+  if (type === "anthropic") return "anthropic";
+  const responses = env[COPILOT_ENV.wireApi]?.trim() === "responses";
+  if (type === "azure")
+    return responses ? "azure-responses" : "azure-completions";
+  return responses ? "openai-responses" : "openai-completions";
+}
+
+export function applyCopilotApiFormat(
+  env: CopilotEnv,
+  id: CopilotApiFormatId,
+): CopilotEnv {
+  const format = COPILOT_API_FORMATS.find((item) => item.id === id);
+  if (!format) return env;
+  const next: CopilotEnv = { ...env, [COPILOT_ENV.type]: format.type };
+  if ("wireApi" in format) next[COPILOT_ENV.wireApi] = format.wireApi;
+  else delete next[COPILOT_ENV.wireApi];
+  return next;
+}
+
 export const COPILOT_OFFICIAL_PRESET_ID = "copilot-official";
 
 /** 用 Copilot CLI 自己的 GitHub 登录；模型可留空（用 Copilot 的默认 / `/model` 选择）。 */

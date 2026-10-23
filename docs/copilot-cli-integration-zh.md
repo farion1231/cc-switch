@@ -9,10 +9,17 @@ GitHub Copilot CLI 是独立应用，应用 ID 为 `copilot`（兼容 `copilot-c
 1. 在「应用」页安装 GitHub Copilot CLI（`npm i -g @github/copilot@latest`；Homebrew cask `copilot-cli` 的安装也能识别和卸载）。
 2. 在侧栏选择 **Copilot CLI**，点击「添加供应商」：
    - **GitHub Copilot（官方）**：用 Copilot CLI 自己的 GitHub 登录。可选模型（以 `--model` 传入，只对这次会话生效）；可以绑定授权中心里的 GitHub 账号，打开终端时经 `COPILOT_GITHUB_TOKEN` 只给这一个进程使用该账号，卡片同时显示该账号的 Premium 额度。
-   - **自带模型（BYOK）**：从「模型厂商」「第三方平台」「云服务商」「本地」中选预设（复用 Pi 的供应商目录，换算为 Copilot 的协议字段），或「自定义配置」。填写协议（openai / azure / anthropic）、接口格式（completions / responses）、地址、Key 和模型；「获取模型」从地址的 `/models` 读取可用模型。
+   - **自带模型（BYOK）**：从「模型厂商」「第三方平台」「云服务商」「本地」中选预设（复用 Pi 的供应商目录，换算为 Copilot 的协议字段），或「自定义配置」。选择接口格式（OpenAI Chat Completions、OpenAI Responses、Anthropic Messages、Azure OpenAI 的 Chat Completions / Responses，一项同时决定 `COPILOT_PROVIDER_TYPE` 和 `COPILOT_PROVIDER_WIRE_API`），填写地址、Key 和模型；「获取模型」从地址的 `/models` 读取可用模型。
 3. 卡片只有「打开终端」，没有「启用」。从卡片打开的终端按这张卡启动 `copilot`。
 
 ## 为什么没有「启用」
+
+结论：Copilot CLI 只能用启动形式，不能像 Kimi、OpenCode 那样以添加（共存）形式写进原生配置。依据（Copilot CLI 1.0.103）：
+
+- `copilot help config` 列出的 `settings.json` 设置里没有任何供应商、地址或 Key 字段；`copilot help providers` 只给出 `COPILOT_PROVIDER_*` 环境变量。
+- 实测在 `settings.json` 写 `"env": { "COPILOT_PROVIDER_BASE_URL": … }` 无效：只靠它启动时 CLI 仍提示需要设置 `COPILOT_PROVIDER_BASE_URL`。
+- CLI 内置的「Provider discovery」只发现扩展、Foundry Local 等运行时提供的模型，没有用户可写的持久化 BYOK 配置；SDK / ACP 会话的 `provider` 参数也只对单个会话有效。
+
 
 Copilot CLI 的自带模型只能经进程环境变量 `COPILOT_PROVIDER_*` 配置，没有对应的配置文件字段；写进 shell 启动文件会影响所有终端，也会让 Key 常驻磁盘。所以与 Antigravity 相同：
 

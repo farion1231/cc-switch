@@ -93,6 +93,15 @@ describe("CopilotProviderForm", () => {
     });
   });
 
+  it("shows protocol and wire API as a single API format", () => {
+    setup(byok);
+    expect(
+      screen.getByRole("combobox", { name: "copilot.form.apiFormat" }),
+    ).toHaveTextContent("OpenAI Chat Completions");
+    expect(screen.queryByText("copilot.form.wireApi")).toBeNull();
+    expect(screen.queryByText("copilot.form.providerType")).toBeNull();
+  });
+
   it("fetches models from the BYOK endpoint with the card's key", async () => {
     fetchModels.mockResolvedValueOnce([
       { id: "deepseek-v4-pro", ownedBy: null },
