@@ -633,6 +633,7 @@ impl RequestForwarder {
         provider: &Provider,
         app_type_str: &str,
         used_half_open_permit: bool,
+        selected_provider_id: Option<&str>,
         (response, claude_api_format, outbound_model): (
             ProxyResponse,
             Option<String>,
@@ -671,7 +672,10 @@ impl RequestForwarder {
             let mut status = self.status.write().await;
             status.success_requests += 1;
             status.last_error = None;
-            if self.current_provider_id_at_start.as_str() != provider.id.as_str() {
+            // 会话模式下新会话本来就可能落到非指针账号；与路由选中账号比
+            // 才是真故障转移，避免 route 指针随轮询来回翻转、托盘反复刷新。
+            let route_anchor = selected_provider_id.unwrap_or(&self.current_provider_id_at_start);
+            if route_anchor != provider.id.as_str() {
                 status.failover_count += 1;
 
                 let fm = self.failover_manager.clone();
@@ -777,9 +781,17 @@ impl RequestForwarder {
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
         if !self.routing_state_enabled() {
+            let selected = providers.first().map(|p| p.id.clone());
             return self
                 .forward_with_retry_inner(
-                    app_type, method, endpoint, body, headers, extensions, providers,
+                    app_type,
+                    method,
+                    endpoint,
+                    body,
+                    headers,
+                    extensions,
+                    providers,
+                    selected.as_deref(),
                 )
                 .await;
         }
@@ -793,7 +805,14 @@ impl RequestForwarder {
         let selected_provider_id = providers.first().map(|p| p.id.clone());
         let result = self
             .forward_with_retry_inner(
-                app_type, method, endpoint, body, headers, extensions, providers,
+                app_type,
+                method,
+                endpoint,
+                body,
+                headers,
+                extensions,
+                providers,
+                selected_provider_id.as_deref(),
             )
             .await;
         // 把 guard 注入到 Ok 结果，让它随响应一起流转到 response_processor，
@@ -827,6 +846,12 @@ impl RequestForwarder {
         }
     }
 
+    /// 测试专用：读共享状态（断言 failover_count 等聚合量）
+    #[cfg(test)]
+    pub(crate) fn status_for_test(&self) -> Arc<RwLock<ProxyStatus>> {
+        self.status.clone()
+    }
+
     /// 实际转发逻辑（不包含客户端维度的入口/出口计数）
     ///
     /// # Arguments
@@ -836,6 +861,8 @@ impl RequestForwarder {
     /// * `body` - 请求体
     /// * `headers` - 请求头
     /// * `providers` - 已选择的 Provider 列表（由 RequestContext 提供，避免重复调用 select_providers）
+    /// * `selected_provider_id` - 路由选中账号（列表首位）；finish_success 以它为
+    ///   故障转移判定锚点，会话模式下新会话落到非指针账号不算 failover
     #[allow(clippy::too_many_arguments)]
     async fn forward_with_retry_inner(
         &self,
@@ -846,6 +873,7 @@ impl RequestForwarder {
         headers: axum::http::HeaderMap,
         extensions: Extensions,
         providers: Vec<Provider>,
+        selected_provider_id: Option<&str>,
     ) -> Result<ForwardResult, ForwardError> {
         // 获取适配器
         let adapter = get_adapter(app_type).ok_or_else(|| ForwardError {
@@ -962,6 +990,7 @@ impl RequestForwarder {
                             provider,
                             app_type_str,
                             used_half_open_permit,
+                            selected_provider_id,
                             forwarded,
                             in_flight_handle.take(),
                             attempted_codex_upstream_format,
@@ -1026,6 +1055,7 @@ impl RequestForwarder {
                                             provider,
                                             app_type_str,
                                             used_half_open_permit,
+                                            selected_provider_id,
                                             forwarded,
                                             in_flight_handle.take(),
                                             media_retry_codex_upstream_format,
@@ -1116,6 +1146,7 @@ impl RequestForwarder {
                                             provider,
                                             app_type_str,
                                             used_half_open_permit,
+                                            selected_provider_id,
                                             forwarded,
                                             in_flight_handle.take(),
                                             opaque_retry_codex_upstream_format,
@@ -1223,6 +1254,7 @@ impl RequestForwarder {
                                                 provider,
                                                 app_type_str,
                                                 used_half_open_permit,
+                                                selected_provider_id,
                                                 forwarded,
                                                 in_flight_handle.take(),
                                                 signature_retry_codex_upstream_format,
@@ -1323,6 +1355,7 @@ impl RequestForwarder {
                                             provider,
                                             app_type_str,
                                             used_half_open_permit,
+                                            selected_provider_id,
                                             forwarded,
                                             in_flight_handle.take(),
                                             budget_retry_codex_upstream_format,
@@ -4869,6 +4902,7 @@ mod tests {
                     &provider,
                     "codex",
                     false,
+                    None,
                     (response, None, Some("resolved-model".to_string())),
                     None,
                     format,

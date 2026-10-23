@@ -5,7 +5,8 @@
 //! ③ 杀一号后会话迁移（failover 重映射） ④ 429 后新会话避开冷却账号
 //!
 //! mock 上游用手写 HTTP/1.1 应答（不引新 dev-dependency），按序消费 canned
-//! 响应，耗尽后回 500。
+//! 响应，耗尽后回 200（自动 id）——错误注入靠队列，队列外的请求一律成功，
+//! 让断言落在请求计数与粘性映射上（传输层的重试/重连不该炸成 500）。
 
 use super::forwarder::RequestForwarder;
 use super::provider_router::ProviderRouter;
@@ -37,7 +38,9 @@ struct MockResponse {
 }
 
 /// 极简 HTTP mock 上游：读完请求头+body，回 canned 响应。
-/// 返回 (地址, 请求计数)。响应耗尽后回 500。
+/// 返回 (地址, 请求计数)。canned 响应按序弹出；耗尽后回 200（自动唯一 id），
+/// 多余的 upstream 尝试（重试、Connection: close 重连）由调用方的计数/粘性
+/// 断言兜底，而不是把 mock 变成偶发 500。
 async fn spawn_mock_upstream(responses: Vec<MockResponse>) -> (SocketAddr, Arc<AtomicUsize>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -70,12 +73,12 @@ async fn spawn_mock_upstream(responses: Vec<MockResponse>) -> (SocketAddr, Arc<A
                         }
                     }
                 }
-                counter.fetch_add(1, Ordering::SeqCst);
+                let auto_id = counter.fetch_add(1, Ordering::SeqCst) + 1;
                 let (status, retry_after, body) = {
                     let mut queue = queue.lock().unwrap();
                     match queue.pop_front() {
                         Some(r) => (r.status, r.retry_after, r.body),
-                        None => (500u16, None, "{\"error\":\"exhausted\"}".to_string()),
+                        None => (200u16, None, ok_body(&format!("auto_{auto_id}"))),
                     }
                 };
                 let reason = match status {
@@ -189,6 +192,15 @@ fn make_forwarder(
     session_id: &str,
     client_provided: bool,
 ) -> RequestForwarder {
+    make_forwarder_with_start(router, session_id, client_provided, "a".to_string())
+}
+
+fn make_forwarder_with_start(
+    router: Arc<ProviderRouter>,
+    session_id: &str,
+    client_provided: bool,
+    current_provider_id_at_start: String,
+) -> RequestForwarder {
     RequestForwarder::new(
         router,
         5, // non_streaming_timeout（秒）
@@ -198,7 +210,7 @@ fn make_forwarder(
         Arc::new(CodexChatHistoryStore::default()),
         Arc::new(FailoverSwitchManager::new()),
         None,
-        "a".to_string(),
+        current_provider_id_at_start,
         session_id.to_string(),
         client_provided,
         5, // streaming_first_byte_timeout（秒）
@@ -238,6 +250,57 @@ async fn forward_once(router: &Arc<ProviderRouter>, session_id: &str, client_pro
     if let Err(e) = result {
         panic!("forward failed: {}", e.error);
     }
+}
+
+/// 回归（review P2）：会话模式下新会话落到非指针账号是正常分摊，不是 failover——
+/// 不该翻转 route 指针（try_switch）也不该累计 failover_count。
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial]
+async fn session_mode_success_does_not_count_failover() {
+    let _home = TempHome::new();
+    let (addr_a, count_a) = spawn_mock_upstream(vec![MockResponse {
+        status: 200,
+        retry_after: None,
+        body: ok_body("msg_lb_regress"),
+    }])
+    .await;
+    let (addr_b, _count_b) = spawn_mock_upstream(vec![MockResponse {
+        status: 200,
+        retry_after: None,
+        body: ok_body("msg_lb_regress_b"),
+    }])
+    .await;
+
+    let db = Arc::new(Database::memory().unwrap());
+    seed_session_mode(&db, &addr_a, &addr_b).await;
+    let router = Arc::new(ProviderRouter::new(db));
+
+    let providers = router
+        .select_providers_for_session("claude", "s1", true, "claude-3-5-sonnet")
+        .await
+        .unwrap();
+    // 路由选中 a（游标起点），但 route 指针（请求开始时的当前供应商）在 b：
+    // 模拟"新会话轮询落到非指针账号"的常态
+    let forwarder = make_forwarder_with_start(router.clone(), "s1", true, "b".to_string());
+    let result = forwarder
+        .forward_with_retry(
+            &AppType::Claude,
+            http::Method::POST,
+            "/v1/messages",
+            request_body(),
+            HeaderMap::new(),
+            Extensions::new(),
+            providers,
+        )
+        .await;
+    assert!(result.is_ok());
+    assert_eq!(count_a.load(Ordering::SeqCst), 1, "应由选中账号 a 服务");
+    let status = forwarder.status_for_test();
+    assert_eq!(
+        status.read().await.failover_count,
+        0,
+        "分摊不是 failover，不该计数/翻转 route 指针"
+    );
 }
 
 /// 场景①：多会话在两账号间轮询分摊；粘性映射各归各账号
@@ -486,12 +549,18 @@ async fn e2e_proxy_server_distributes_sessions_and_logs_usage() {
 
     server.stop().await.expect("stop proxy server");
 
-    // ① 分摊：a=3（s1 两轮 + s3），b=1（s2）
-    assert_eq!(count_a.load(Ordering::SeqCst), 3, "上游 a 请求计数");
-    assert_eq!(count_b.load(Ordering::SeqCst), 1, "上游 b 请求计数");
+    // ① 上游计数只验下界：传输层的重试/重连会多发 TCP 请求（平台相关），
+    //    不属于负载均衡语义；精确分摊由下方请求日志断言。
+    assert!(count_a.load(Ordering::SeqCst) >= 1, "上游 a 应收到请求");
+    assert!(count_b.load(Ordering::SeqCst) >= 1, "上游 b 应收到请求");
+    assert!(
+        count_a.load(Ordering::SeqCst) + count_b.load(Ordering::SeqCst) >= 4,
+        "4 次请求至少送达 4 次"
+    );
 
-    // ② 同会话恒定：s1 两轮都落 a（上游计数即证明）
-    // ③ 用量同涨：两 provider 的 proxy_request_logs 均有行（异步落库，轮询等待）
+    // ② 同会话恒定 + ③ 用量分摊：断言落在 proxy_request_logs（每逻辑请求
+    //    恰好一行，不受 upstream 重试影响）
+    //    异步落库，轮询等待
     let mut logs = db.count_request_logs_by_provider("claude");
     for _ in 0..40 {
         if logs.iter().map(|(_, n)| n).sum::<i64>() >= 4 {
@@ -504,11 +573,34 @@ async fn e2e_proxy_server_distributes_sessions_and_logs_usage() {
     assert_eq!(
         by_provider.get("a"),
         Some(&3),
-        "provider a 用量行数: {by_provider:?}"
+        "provider a 用量行数（s1×2 + s3）: {by_provider:?}"
     );
     assert_eq!(
         by_provider.get("b"),
         Some(&1),
-        "provider b 用量行数: {by_provider:?}"
+        "provider b 用量行数（s2）: {by_provider:?}"
+    );
+
+    // 粘性：同一 session 的所有日志行 provider 唯一
+    let pairs = db.request_log_session_provider_pairs("claude");
+    assert_eq!(pairs.len(), 4, "应有 4 行带 session 的日志: {pairs:?}");
+    let mut sticky: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for (session, provider) in &pairs {
+        match sticky.entry(session.as_str()) {
+            std::collections::hash_map::Entry::Occupied(e) => {
+                assert_eq!(*e.get(), provider.as_str(), "会话 {session} 漂移");
+            }
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(provider.as_str());
+            }
+        }
+    }
+    // 分摊：两个 provider 都分到会话，且 s1 与 s2 不同（轮询）
+    let s1_p = sticky["s1"];
+    let s2_p = sticky["s2"];
+    assert_ne!(s1_p, s2_p, "相邻新会话应分到不同账号（轮询）");
+    assert_eq!(
+        sticky["s3"], s1_p,
+        "第三个新会话应回到 s1 的账号（轮询回绕）"
     );
 }
