@@ -59,6 +59,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "pi",
   "mcode",
   "kimi",
+  "codebuddy",
   "agy",
 ];
 

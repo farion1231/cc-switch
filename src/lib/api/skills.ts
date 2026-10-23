@@ -31,7 +31,6 @@ export interface SkillApps {
   mcode?: boolean;
   kimi?: boolean;
   agy?: boolean;
-  /** CodeBuddy skill sync is not wired yet (needs an enabled_codebuddy column). */
   codebuddy?: boolean;
 }
 
