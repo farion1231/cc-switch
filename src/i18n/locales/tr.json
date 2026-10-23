@@ -4831,7 +4831,6 @@
     "modelIdInvalid": "Model kimliği boşlukla başlayamaz veya bitemez.",
     "vendor": "Sağlayıcı firma",
     "urlHint": "Tam yolu girin, genellikle /chat/completions ile biter. ${VAR} ortam değişkeni başvuruları desteklenir.",
-    "urlHintResponses": "Temel URL'yi girin; istekler {url}/responses adresine gönderilir. ${VAR} ortam değişkeni başvuruları desteklenir.",
     "urlInvalid": "Geçerli bir http(s) adresi girin.",
     "apiKeyPlaceholder": "API anahtarını girin veya ${MY_API_KEY} ile bir ortam değişkenine başvurun",
     "maxInputTokens": "Maksimum giriş token",

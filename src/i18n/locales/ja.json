@@ -4980,7 +4980,6 @@
     "modelIdInvalid": "モデル ID の先頭と末尾に空白は使えません。",
     "vendor": "ベンダー表示名",
     "urlHint": "完全なパスを入力します（通常は /chat/completions で終わります）。${VAR} の環境変数参照も使えます。",
-    "urlHintResponses": "Base URL を入力します。リクエストは {url}/responses に送られます。${VAR} の環境変数参照も使えます。",
     "urlInvalid": "有効な http(s) URL を入力してください。",
     "apiKeyPlaceholder": "API キーを入力するか、${MY_API_KEY} で環境変数を参照します",
     "maxInputTokens": "最大入力トークン",

@@ -4980,7 +4980,6 @@
     "modelIdInvalid": "模型 ID 不能以空格开头或结尾。",
     "vendor": "厂商标签",
     "urlHint": "填写完整路径，通常以 /chat/completions 结尾；支持 ${VAR} 环境变量引用。",
-    "urlHintResponses": "填写 Base URL，请求会发往 {url}/responses；支持 ${VAR} 环境变量引用。",
     "urlInvalid": "请输入有效的 http(s) 地址。",
     "apiKeyPlaceholder": "输入 API Key，或写成 ${MY_API_KEY} 引用环境变量",
     "maxInputTokens": "最大输入 Token",

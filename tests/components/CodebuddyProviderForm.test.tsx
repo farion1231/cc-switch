@@ -276,24 +276,53 @@ describe("CodebuddyProviderForm", () => {
     ).toBeChecked();
   });
 
-  it("derives the models endpoint from both CodeBuddy url styles", () => {
+  it("derives the models endpoint from the chat-completions url", () => {
     expect(
-      codebuddyModelsBase("https://api.example.com/v1/chat/completions/", ""),
+      codebuddyModelsBase("https://api.example.com/v1/chat/completions/"),
     ).toEqual({ baseUrl: "https://api.example.com/v1", isFullUrl: false });
     expect(
-      codebuddyModelsBase(
-        "https://api.example.com/v1/responses",
-        "openai-responses",
-      ),
-    ).toEqual({ baseUrl: "https://api.example.com/v1", isFullUrl: false });
-    expect(
-      codebuddyModelsBase("https://api.example.com/v1", "openai-responses"),
-    ).toEqual({ baseUrl: "https://api.example.com/v1", isFullUrl: false });
-    expect(
-      codebuddyModelsBase("https://gateway.example.com/openai/chat", undefined),
+      codebuddyModelsBase("https://gateway.example.com/openai/chat"),
     ).toEqual({
       baseUrl: "https://gateway.example.com/openai/chat",
       isFullUrl: true,
+    });
+  });
+
+  it("has no API format menu and keeps an existing api field on save", async () => {
+    const submit = vi.fn();
+    render(
+      <CodebuddyProviderForm
+        appId="codebuddy"
+        providerId="legacy"
+        initialData={{
+          name: "Legacy",
+          settingsConfig: {
+            id: "legacy",
+            name: "Legacy",
+            url: "https://api.example.com/v1/responses",
+            api: "openai-responses",
+          },
+        }}
+        submitLabel="Save"
+        onSubmit={submit}
+        onCancel={() => {}}
+      />,
+    );
+    expect(
+      screen.queryByLabelText("opencode.npmPackage"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.getByText("codebuddy.urlHint")).toBeInTheDocument();
+    expect(
+      (screen.getByLabelText("provider.configJson") as HTMLTextAreaElement)
+        .value,
+    ).toContain('"api": "openai-responses"');
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(JSON.parse(submit.mock.calls[0][0].settingsConfig)).toEqual({
+      name: "Legacy",
+      url: "https://api.example.com/v1/responses",
+      api: "openai-responses",
     });
   });
 

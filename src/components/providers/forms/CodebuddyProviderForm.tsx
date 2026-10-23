@@ -8,13 +8,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { HelpTip } from "@/components/ui/help-tip";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import JsonEditor from "@/components/JsonEditor";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { useLatestRef } from "@/hooks/useLatestRef";
@@ -29,7 +22,6 @@ import {
 import { useProvidersQuery } from "@/lib/query/queries";
 import type { ProviderFormData } from "@/lib/schemas/provider";
 import {
-  CODEBUDDY_API_FORMATS,
   codebuddyProviderPresets,
   type CodebuddyModelConfig,
 } from "@/config/codebuddyProviderPresets";
@@ -47,9 +39,6 @@ const PRESET_ENTRIES = codebuddyProviderPresets.map((preset, index) => ({
   id: String(index),
   preset,
 }));
-
-/** Radix Select items need a non-empty value; this stands for "no `api` field". */
-const CHAT_COMPLETIONS = "chat-completions";
 
 const EMPTY_CONFIG: CodebuddyModelConfig = {
   vendor: "",
@@ -92,18 +81,16 @@ const CAPABILITIES = [
 ] as const;
 
 /**
- * Where `GET /models` lives for a CodeBuddy `url`: Chat Completions takes the full
- * `/chat/completions` path and Responses takes the base URL (`/responses` optional).
+ * Where `GET /models` lives for a CodeBuddy `url`, which is the full OpenAI Chat
+ * Completions path: strip `/chat/completions`, or treat a non-standard path as a
+ * full URL.
  */
 export const codebuddyModelsBase = (
   url: string,
-  api: unknown,
 ): { baseUrl: string; isFullUrl: boolean } => {
   const trimmed = url.trim().replace(/\/+$/, "");
-  const suffix =
-    api === "openai-responses" ? /\/responses$/ : /\/chat\/completions$/;
-  const stripped = trimmed.replace(suffix, "");
-  return api !== "openai-responses" && stripped === trimmed
+  const stripped = trimmed.replace(/\/chat\/completions$/, "");
+  return stripped === trimmed
     ? { baseUrl: trimmed, isFullUrl: true }
     : { baseUrl: stripped, isFullUrl: false };
 };
@@ -205,15 +192,14 @@ export function CodebuddyProviderForm({
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const fetchGeneration = useRef(0);
   const apiKey = config.apiKey ?? "";
-  const api = config.api;
   useEffect(() => {
     setFetchedModels((prev) => (prev.length === 0 ? prev : []));
     setIsFetchingModels(false);
     return () => {
-      // 地址、Key 或接口格式变了，旧请求的结果不再适用。
+      // 地址或 Key 变了，旧请求的结果不再适用。
       fetchGeneration.current += 1;
     };
-  }, [url, apiKey, api]);
+  }, [url, apiKey]);
   const handleFetchModels = useCallback(() => {
     const endpoint = url.trim();
     const key = apiKey.trim();
@@ -224,7 +210,7 @@ export function CodebuddyProviderForm({
       });
       return;
     }
-    const { baseUrl, isFullUrl } = codebuddyModelsBase(endpoint, config.api);
+    const { baseUrl, isFullUrl } = codebuddyModelsBase(endpoint);
     const generation = ++fetchGeneration.current;
     setFetchedModels([]);
     setIsFetchingModels(true);
@@ -248,7 +234,7 @@ export function CodebuddyProviderForm({
       .finally(() => {
         if (generation === fetchGeneration.current) setIsFetchingModels(false);
       });
-  }, [url, apiKey, config.api, t]);
+  }, [url, apiKey, t]);
 
   const fillModelMetadata = useModelMetadataFill({
     baseUrl: url,
@@ -285,7 +271,8 @@ export function CodebuddyProviderForm({
               ...config,
               name: identity.name.trim(),
             };
-            for (const key of ["vendor", "apiKey", "api"] as const) {
+            // 已有条目的 `api` 字段不在表单里编辑，原样保留。
+            for (const key of ["vendor", "apiKey"] as const) {
               if (typeof settings[key] === "string" && !settings[key]?.trim())
                 delete settings[key];
             }
@@ -330,39 +317,6 @@ export function CodebuddyProviderForm({
           className="min-w-0 space-y-6 border-0 p-0 disabled:opacity-50"
         >
           <BasicFormFields form={form} />
-          <div className="space-y-2">
-            <FormLabel htmlFor="codebuddy-api">
-              {t("opencode.npmPackage")}
-            </FormLabel>
-            <Select
-              value={config.api ? String(config.api) : CHAT_COMPLETIONS}
-              onValueChange={(value) =>
-                setField("api", value === CHAT_COMPLETIONS ? undefined : value)
-              }
-            >
-              <SelectTrigger id="codebuddy-api">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {CODEBUDDY_API_FORMATS.map((format) => (
-                  <SelectItem
-                    key={format.value || CHAT_COMPLETIONS}
-                    value={format.value || CHAT_COMPLETIONS}
-                  >
-                    {format.label}
-                  </SelectItem>
-                ))}
-                {config.api &&
-                  !CODEBUDDY_API_FORMATS.some(
-                    (format) => format.value === config.api,
-                  ) && (
-                    <SelectItem value={String(config.api)}>
-                      {String(config.api)}
-                    </SelectItem>
-                  )}
-              </SelectContent>
-            </Select>
-          </div>
           <ApiKeySection
             id="codebuddy-api-key"
             value={apiKey}
@@ -383,18 +337,8 @@ export function CodebuddyProviderForm({
               label={t("providerForm.apiEndpoint")}
               value={url}
               onChange={(value) => setField("url", value)}
-              placeholder={
-                config.api === "openai-responses"
-                  ? "https://api.example.com/v1"
-                  : "https://api.example.com/v1/chat/completions"
-              }
-              hint={
-                urlInvalid
-                  ? undefined
-                  : config.api === "openai-responses"
-                    ? t("codebuddy.urlHintResponses")
-                    : t("codebuddy.urlHint")
-              }
+              placeholder="https://api.example.com/v1/chat/completions"
+              hint={urlInvalid ? undefined : t("codebuddy.urlHint")}
             />
             {urlInvalid && (
               <p className="text-xs text-destructive">

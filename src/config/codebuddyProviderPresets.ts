@@ -12,7 +12,10 @@ export interface CodebuddyModelConfig {
   vendor?: string;
   url?: string;
   apiKey?: string;
-  /** Omitted = OpenAI Chat Completions (full `/chat/completions` URL). */
+  /**
+   * Not edited by the form: CC Switch only targets OpenAI Chat Completions (full
+   * `/chat/completions` URL). Kept as-is when an existing entry carries it.
+   */
   api?: string;
   maxInputTokens?: number;
   maxOutputTokens?: number;
@@ -21,12 +24,6 @@ export interface CodebuddyModelConfig {
   supportsReasoning?: boolean;
   [key: string]: unknown;
 }
-
-// Same protocol names as the Pi, OpenCode and Kimi Code "API format" menus.
-export const CODEBUDDY_API_FORMATS = [
-  { value: "", label: "OpenAI Chat Completions" },
-  { value: "openai-responses", label: "OpenAI Responses" },
-] as const;
 
 export interface CodebuddyProviderPreset extends PresetFamilyFields {
   name: string;
