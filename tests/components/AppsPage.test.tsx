@@ -1987,6 +1987,49 @@ describe("AppsPage concurrent CLI upgrades", () => {
     ).toBeEnabled();
   });
 
+  it("blocks DeepSeek installation on an older Node and allows it after refreshing the runtime", async () => {
+    missing.add("dsh");
+    let nodeTooOld = true;
+    const defaultVersions = mocks.getToolVersions.getMockImplementation()!;
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+      (await defaultVersions(tools)).map((tool: { name: string }) => ({
+        ...tool,
+        update_blocked_by_node:
+          tool.name === "dsh" && nodeTooOld
+            ? { required: "^22.19.0 || >=24.0.0", current: "22.12.0" }
+            : null,
+      })),
+    );
+    await renderApps();
+    expect(
+      card("DeepSeek Harness").getByText("appsPage.installNeedsNode"),
+    ).toBeInTheDocument();
+    const install = () =>
+      card("DeepSeek Harness").getByRole("button", {
+        name: "settings.toolInstall",
+      });
+    expect(install()).toBeDisabled();
+    fireEvent.click(install());
+    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+
+    nodeTooOld = false;
+    fireEvent.click(
+      screen.getByRole("button", { name: "appsPage.checkUpdates" }),
+    );
+    await waitFor(() => expect(install()).toBeEnabled());
+    expect(
+      card("DeepSeek Harness").queryByText("appsPage.installNeedsNode"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(install());
+    await waitFor(() =>
+      expect(mocks.runToolLifecycleAction).toHaveBeenCalledWith(
+        ["dsh"],
+        "install",
+        {},
+      ),
+    );
+  });
+
   it("withholds the upgrade when the new version needs a newer Node and leaves it out of update all", async () => {
     const defaultVersions = mocks.getToolVersions.getMockImplementation()!;
     mocks.getToolVersions.mockImplementation(async (tools: string[]) =>

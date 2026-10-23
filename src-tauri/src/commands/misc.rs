@@ -374,6 +374,11 @@ pub async fn run_tool_lifecycle_action(
     // 排队结束后再探测安装目标，与执行一起持锁，避免读到另一升级的中间状态。
     TOOL_LIFECYCLE
         .run(requested, move |tools| {
+            if matches!(action, ToolLifecycleAction::Install) {
+                for tool in tools {
+                    tool_node_requirement::ensure_install_node(tool)?;
+                }
+            }
             let command_line =
                 build_tool_lifecycle_command(tools, action, wsl_shell_by_tool.as_ref())?;
             run_tool_lifecycle_silently(&command_line, label)
@@ -1331,6 +1336,7 @@ async fn get_single_tool_version_impl(
         {
             tool_node_requirement::update_node_gap(&client, tool, latest).await
         }
+        (None, _) if tool == "dsh" => tool_node_requirement::install_node_gap(tool).await,
         _ => None,
     };
 

@@ -4236,8 +4236,10 @@
       "pi": "透過 npm 安裝",
       "mcode": "安裝時執行官方安裝腳本，失敗時改用 npm",
       "agy": "安裝時執行官方安裝腳本",
-      "omp": "安裝時執行官方安裝腳本"
-    }
+      "omp": "安裝時執行官方安裝腳本",
+      "dsh": "透過 npm 安裝，需要 Node.js 22.19+（22.x）或 24+"
+    },
+    "installNeedsNode": "安裝需要 Node {{required}}，目前 npm 使用 Node {{current}}。請先升級 Node，再重新整理應用程式列表。"
   },
   "appPage": {
     "moreActions": "{{name}} 的更多操作",

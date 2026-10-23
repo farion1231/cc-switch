@@ -5,10 +5,62 @@
 
 use super::*;
 
-/// 新版本要求的 Node 和升级会用到的 Node 对不上。
+// The published CLI omits engines.node. The repository root at the matching
+// dsh-v0.2.1-rc.2 / rc.3 release tags declares this range; do not take the
+// requirement from the newer development branch.
+const DSH_NODE_REQUIREMENT: &str = "^22.19.0 || >=24.0.0";
+
+fn required_node_range(tool: &str, declared: Option<String>) -> Option<String> {
+    declared.or_else(|| (tool == "dsh").then(|| DSH_NODE_REQUIREMENT.to_string()))
+}
+
+fn node_gap(required: &str, current: &str) -> Option<NodeRequirementGap> {
+    (node_range_satisfied(required, current) == Some(false)).then(|| NodeRequirementGap {
+        required: required.into(),
+        current: current.into(),
+    })
+}
+
+fn install_node_gap_sync(tool: &str) -> Option<NodeRequirementGap> {
+    if tool != "dsh" {
+        return None;
+    }
+    // npm launchers prefer a sibling node, then the effective PATH.
+    let npm = resolve_path_default(
+        "npm",
+        CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+    )
+    .ok()
+    .flatten();
+    let current = node_version_next_to(npm.as_deref())?;
+    node_gap(DSH_NODE_REQUIREMENT, &current)
+}
+
+pub(super) async fn install_node_gap(tool: &str) -> Option<NodeRequirementGap> {
+    if tool != "dsh" {
+        return None;
+    }
+    let tool = tool.to_owned();
+    tokio::task::spawn_blocking(move || install_node_gap_sync(&tool))
+        .await
+        .ok()
+        .flatten()
+}
+
+pub(super) fn ensure_install_node(tool: &str) -> Result<(), String> {
+    match install_node_gap_sync(tool) {
+        Some(gap) => Err(format!(
+            "{} requires Node.js {}, but npm uses Node.js {}. Upgrade Node.js, refresh the application list, then install again.",
+            tool_display_name(tool), gap.required, gap.current
+        )),
+        None => Ok(()),
+    }
+}
+
+/// 目标应用要求的 Node 和安装／升级会用到的 Node 对不上。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct NodeRequirementGap {
-    /// 目标版本的 `engines.node`，原样展示。
+    /// npm engines.node 或已核实的官方运行时要求，原样展示。
     required: String,
     /// 升级会用到的 node 的版本（不带 `v`）。
     current: String,
@@ -33,11 +85,8 @@ pub(super) async fn update_node_gap(
     let current = tokio::task::spawn_blocking(move || update_node_version(&owned))
         .await
         .ok()??;
-    let required = fetch_engines_node(client, package, target).await?;
-    match node_range_satisfied(&required, &current) {
-        Some(false) => Some(NodeRequirementGap { required, current }),
-        _ => None,
-    }
+    let required = required_node_range(tool, fetch_engines_node(client, package, target).await)?;
+    node_gap(&required, &current)
 }
 
 /// 执行升级前的检查：目标是 `latest`（`npm i -g <pkg>@latest` 与各家 self-update 的稳定通道）。
@@ -78,8 +127,12 @@ fn update_node_version(tool: &str) -> Option<String> {
         return None;
     }
 
-    let sibling = Path::new(&inst.path)
-        .parent()
+    node_version_next_to(Some(Path::new(&inst.path)))
+}
+
+fn node_version_next_to(launcher: Option<&Path>) -> Option<String> {
+    let sibling = launcher
+        .and_then(Path::parent)
         .map(|dir| {
             dir.join(if cfg!(target_os = "windows") {
                 "node.exe"
@@ -264,6 +317,20 @@ fn comparator(op: &str, parts: &[u64]) -> Option<Vec<Bound>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dsh_uses_official_node_requirement_when_npm_metadata_omits_engines() {
+        let required = required_node_range("dsh", None).unwrap();
+        assert!(node_gap(&required, "22.12.0").is_some());
+        assert!(node_gap(&required, "22.19.0").is_none());
+        assert!(node_gap(&required, "23.0.0").is_some());
+        assert!(node_gap(&required, "24.0.0").is_none());
+        assert!(node_gap(&required, "24.9.0").is_none());
+        assert!(node_gap(&required, "26.0.0").is_none());
+        assert_eq!(required_node_range("codex", None), None);
+        let newer = required_node_range("dsh", Some(">=26.0.0".into())).unwrap();
+        assert!(node_gap(&newer, "24.9.0").is_some());
+    }
 
     #[test]
     fn openclaw_range_rejects_node_22_and_admits_24_and_26() {
