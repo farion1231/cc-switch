@@ -1,6 +1,22 @@
 # CC Switch 用量多维度 详细设计评审记录
 
-## 最新复核：Kimi 与迁移兼容（2026-10-22）
+## 最新复核：用量页面改版合并（2026-10-23）
+
+合并上游 `main` `717172bd`，解决 Kimi 同步器、用量面板、供应商表、模型表、请求详情、请求日志与图表颜色配置共 7 个文件的文本冲突。保留上游新布局、级联筛选、设置抽屉、日志分页收缩和列分组，同时保留项目维度、供应商身份隔离、缓存下钻与归属信息。
+
+- 级联模型查询继续使用原始供应商 ID、应用类型和项目；新增同名、同 ID 跨应用的回归，确认只显示所选供应商对应的模型，概览和日志沿用相同过滤。
+- 项目页签接入上游计数布局时，`useProjectStats` 原先忽略 `enabled`，导致未打开页签就查询；新增回归先复现 1 次意外调用，修复后未打开时不查询，打开后正常加载。
+- 请求详情新增原生会话回归，验证项目、归属来源、置信度和原因仍可见；保留上游隐藏会话内部 ID 的行为。
+- Kimi 保留上游解析器调整及账号能力，同时保留原生会话的未识别标记与重复同步修复；5 项 Kimi 测试通过。
+
+验证结果：
+
+- `pnpm test:unit --maxWorkers=2 --minWorkers=1`：257 个文件、3271 项通过。
+- `pnpm typecheck`、`pnpm format:check`、`pnpm build:renderer`：通过。
+- `cargo fmt --manifest-path src-tauri/Cargo.toml --check`、`cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings`：通过。
+- 使用隔离测试目录，运行 `NO_PROXY=127.0.0.1,localhost cargo test --manifest-path src-tauri/Cargo.toml`：4204 项通过，含 4001 项库测试和 203 项集成测试；12 项忽略，0 失败。
+
+## 上一轮复核：Kimi 与迁移兼容（2026-10-22）
 
 合并上游 `main` `e4873bc8`。文本自动合并成功，但组合后的代码存在三个实际问题，均已增加回归并修复：
 

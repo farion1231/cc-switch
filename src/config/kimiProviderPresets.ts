@@ -17,8 +17,8 @@ export const KIMI_PROVIDER_TYPES = [
 export const KIMI_CAPABILITIES = [
   "image_in",
   "thinking",
-  "always_thinking",
   "tool_use",
+  "always_thinking",
   "dynamically_loaded_tools",
 ] as const;
 
@@ -73,6 +73,20 @@ export interface KimiProviderPreset
   extends Omit<PiProviderPreset, "settingsConfig"> {
   settingsConfig: KimiProviderConfig;
 }
+
+export const KIMI_ACCOUNT_PRESET_ID = "kimi-official-account";
+export const KIMI_OFFICIAL_PROVIDER_NAME = "Kimi Official";
+
+// An action in the account-login group, separate from the API-key catalog.
+export const kimiAccountPreset: KimiProviderPreset = {
+  name: KIMI_OFFICIAL_PROVIDER_NAME,
+  nameKey: "kimi.oauth.title",
+  providerKey: KIMI_ACCOUNT_PRESET_ID,
+  websiteUrl: "https://www.kimi.com",
+  icon: "kimi",
+  category: "official",
+  settingsConfig: emptyKimiConfig(),
+};
 
 type KimiProviderType = KimiProviderConfig["provider"]["type"];
 type KimiModel = KimiProviderConfig["models"][string];

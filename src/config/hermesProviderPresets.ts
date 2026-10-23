@@ -515,7 +515,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "DIT.ai",
     websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai/register",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
     settingsConfig: {
       name: "dit_ai",
       base_url: "https://api.dit.ai",

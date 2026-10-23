@@ -125,6 +125,7 @@ module.exports = {
           4: "var(--chart-4)",
           5: "var(--chart-5)",
           6: "var(--chart-6)",
+          usage: "var(--chart-usage)",
           grid: "var(--chart-grid)",
         },
         blue: {

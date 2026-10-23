@@ -166,7 +166,33 @@ describe("RequestDetailPanel", () => {
     expect(
       screen.getByText("usage.detail.noTimingSession"),
     ).toBeInTheDocument();
-    expect(screen.getByText("usage.detail.sourceSession")).toBeInTheDocument();
+    // 供应商已经叫「会话日志」：不再重复列来源和内部的供应商 ID
+    expect(screen.queryByText("usage.detail.source")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("usage.detail.providerId"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps project and attribution evidence visible for native sessions", () => {
+    renderWith(
+      log({
+        dataSource: "codex_session",
+        projectKey: "/workspace/demo",
+        projectName: "Demo",
+        projectPath: "/workspace/demo",
+        attributionSource: "session_meta",
+        attributionConfidence: "exact",
+        attributionReason: "native_provider_id",
+      }),
+    );
+    expect(screen.getByText("Demo")).toBeInTheDocument();
+    expect(
+      screen.getByText("usage.attribution.source.session_meta"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("usage.attribution.confidence.exact"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("native_provider_id")).toBeInTheDocument();
   });
 
   it("shows the error and a retry button when loading fails", () => {

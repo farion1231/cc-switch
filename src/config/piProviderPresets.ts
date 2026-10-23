@@ -449,7 +449,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     name: "DIT.ai",
     providerKey: "cc-switch-dit-ai",
     websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai/register",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
     settingsConfig: {
       name: "DIT.ai",
       baseUrl: "https://api.dit.ai",
