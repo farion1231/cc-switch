@@ -170,9 +170,9 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 11] = [
+const VALID_TOOLS: [&str; 12] = [
     "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "kimi",
-    "agy",
+    "traecli", "agy",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -628,6 +628,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "pi" => "Pi",
         "mcode" => "MiniMax Code",
         "kimi" => "Kimi Code",
+        "traecli" => "TRAE CLI",
         "agy" => "Antigravity CLI",
         _ => "Unknown",
     }
@@ -671,6 +672,15 @@ const KIMI_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://code.kimi.com/kimi-code/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 #[cfg(target_os = "windows")]
 const KIMI_INSTALL_WINDOWS_SCRIPT: &str = "irm https://code.kimi.com/kimi-code/install.ps1 | iex";
+
+/// TRAE CLI 2.0 official installer: a standalone binary in `~/.local/bin`
+/// (`TRAECLI_INSTALL_DIR` overrides). It has no npm distribution.
+const TRAE_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://trae.cn/trae-cli/install_v2.sh -o $tmp && sh $tmp; status=$?; rm -f $tmp; exit $status'";
+#[cfg(target_os = "windows")]
+const TRAE_INSTALL_WINDOWS_SCRIPT: &str = "irm https://trae.cn/trae-cli/install_v2.ps1 | iex";
+const TRAE_LATEST_MANIFEST_URL: &str =
+    "https://lf-cdn.trae.com.cn/obj/trae-com-cn/trae-cli/v2/public/stable/latest.json";
 
 /// Antigravity CLI 官方 installer：把原生二进制放进 `~/.local/bin`，再跑 `agy install`
 /// 把该目录加进 shell 配置。目标处已有 `agy` 时它只提示已安装、exit 0，所以只用于新装；
@@ -731,6 +741,14 @@ fn mcode_install_windows_command() -> String {
     format!(
         "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
         powershell_encoded_command(MCODE_INSTALL_WINDOWS_SCRIPT)
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn trae_install_windows_command() -> String {
+    format!(
+        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(TRAE_INSTALL_WINDOWS_SCRIPT)
     )
 }
 
@@ -908,7 +926,7 @@ fn npm_install_extra_args(tool: &str) -> &'static str {
 // `cmd.output()` 正是非 TTY，放进来会让 `mcode update || <fallback>` 的兜底永不触发。
 fn official_update_args(tool: &str) -> Option<&'static str> {
     match tool {
-        "claude" | "codex" | "grok" | "hermes" | "agy" => Some("update"),
+        "claude" | "codex" | "grok" | "hermes" | "agy" | "traecli" => Some("update"),
         "openclaw" => Some("update --yes"),
         "opencode" => Some("upgrade"),
         "kimi" => Some("upgrade --yes"),
@@ -941,6 +959,21 @@ fn tool_action_shell_command_for_shell(
     action: ToolLifecycleAction,
     shell: LifecycleCommandShell,
 ) -> Option<String> {
+    if tool == "traecli" {
+        let install = match shell {
+            LifecycleCommandShell::Posix => TRAE_INSTALL_UNIX.to_string(),
+            #[cfg(target_os = "windows")]
+            LifecycleCommandShell::WindowsBatch => trae_install_windows_command(),
+            #[cfg(not(target_os = "windows"))]
+            LifecycleCommandShell::WindowsBatch => return None,
+        };
+        return Some(match action {
+            ToolLifecycleAction::Install => install,
+            ToolLifecycleAction::Update => {
+                chain_update_commands("traecli update".into(), install, shell)
+            }
+        });
+    }
     if tool == "kimi" {
         let install = match shell {
             LifecycleCommandShell::Posix => KIMI_INSTALL_UNIX.to_string(),
@@ -1280,6 +1313,7 @@ async fn get_single_tool_version_impl(
         "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
         "kimi" => fetch_npm_latest_for_tool(&client, "@moonshot-ai/kimi-code", tool, local).await,
         "agy" => fetch_agy_latest_version(&client).await,
+        "traecli" => fetch_trae_latest_version(&client).await,
         _ => None,
     };
 
@@ -1510,6 +1544,24 @@ async fn fetch_agy_latest_version(client: &reqwest::Client) -> Option<String> {
         .ok()?;
     let json = resp.json::<serde_json::Value>().await.ok()?;
     json.get("version")
+        .and_then(|v| v.as_str())
+        .and_then(release_display_version)
+}
+
+async fn fetch_trae_latest_version(client: &reqwest::Client) -> Option<String> {
+    let json = client
+        .get(TRAE_LATEST_MANIFEST_URL)
+        .timeout(LATEST_PROBE_TIMEOUT)
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json::<serde_json::Value>()
+        .await
+        .ok()?;
+    json.get("binary_version")
+        .or_else(|| json.get("version"))
         .and_then(|v| v.as_str())
         .and_then(release_display_version)
 }
@@ -2473,6 +2525,14 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
     // 常见的安装路径（原生安装优先）
     // Preserve search priority without scanning all previous paths for every insertion.
     let mut search_paths = IndexSet::new();
+    if tool == "traecli" {
+        for var in ["TRAECLI_INSTALL_DIR", "XDG_BIN_HOME"] {
+            if let Some(dir) = std::env::var_os(var).filter(|value| !value.is_empty()) {
+                push_unique_path(&mut search_paths, PathBuf::from(dir));
+            }
+        }
+        push_unique_path(&mut search_paths, home.join(".local").join("bin"));
+    }
     if tool == "kimi" {
         let install_dir = std::env::var_os("KIMI_INSTALL_DIR")
             .filter(|value| !value.is_empty())
@@ -3656,7 +3716,10 @@ fn grok_native_update_command(update: String) -> String {
 fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
     match shell {
         LifecycleCommandShell::Posix => {
-            matches!(tool, "claude" | "opencode" | "openclaw" | "kimi")
+            matches!(
+                tool,
+                "claude" | "opencode" | "openclaw" | "kimi" | "traecli"
+            )
         }
         LifecycleCommandShell::WindowsBatch => {
             matches!(
@@ -3665,7 +3728,7 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
                 // 安装方式探测失败弹交互 prompt（spawn npm.cmd 没传 shell:true）；静默
                 // lifecycle 没有 stdin 会挂死，Windows 先锚到包管理器路径，等上游修了
                 // 再把 opencode 加回这里。
-                "claude" | "openclaw" | "kimi"
+                "claude" | "openclaw" | "kimi" | "traecli"
             )
         }
     }
@@ -4589,6 +4652,7 @@ fn posix_install_command_for(tool: &str) -> String {
         "mcode" => installer_with_npm_fallback(MCODE_INSTALL_UNIX, tool),
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
         "kimi" => KIMI_INSTALL_UNIX.to_string(),
+        "traecli" => TRAE_INSTALL_UNIX.to_string(),
         "agy" => AGY_INSTALL_UNIX.to_string(),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
     }
@@ -7022,6 +7086,27 @@ mod tests {
             .as_deref(),
             Some("npm i -g @xai-official/grok@latest")
         );
+    }
+
+    #[test]
+    fn trae_install_uses_official_standalone_installer() {
+        let posix = tool_action_shell_command_for_shell(
+            "traecli",
+            ToolLifecycleAction::Install,
+            LifecycleCommandShell::Posix,
+        )
+        .unwrap();
+        assert_eq!(posix, TRAE_INSTALL_UNIX);
+        assert_eq!(posix_install_command_for("traecli"), posix);
+        assert!(!posix.contains("npm"));
+        let update = tool_action_shell_command_for_shell(
+            "traecli",
+            ToolLifecycleAction::Update,
+            LifecycleCommandShell::Posix,
+        )
+        .unwrap();
+        assert_eq!(update, format!("traecli update || {posix}"));
+        assert_eq!(tool_display_name("traecli"), "TRAE CLI");
     }
 
     #[test]

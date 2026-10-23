@@ -14,6 +14,7 @@ export type AppType =
   | "pi"
   | "mcode"
   | "kimi"
+  | "trae"
   | "agy";
 
 /** Skill 应用启用状态 */
@@ -29,6 +30,7 @@ export interface SkillApps {
   pi: boolean;
   mcode?: boolean;
   kimi?: boolean;
+  trae?: boolean;
   agy?: boolean;
 }
 

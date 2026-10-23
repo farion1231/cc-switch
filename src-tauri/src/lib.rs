@@ -45,6 +45,7 @@ mod session_manager;
 mod settings;
 mod store;
 
+mod trae_config;
 mod tray;
 mod tray_panel;
 mod usage_events;

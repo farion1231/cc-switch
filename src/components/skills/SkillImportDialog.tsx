@@ -101,6 +101,7 @@ export function SkillImportDialog({
               pi: false,
               mcode: chosen.has("mcode"),
               kimi: chosen.has("kimi"),
+              trae: chosen.has("trae"),
               agy: chosen.has("agy"),
             },
           };

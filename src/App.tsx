@@ -593,6 +593,7 @@ function App() {
         if (
           activeApp === "mcode" ||
           activeApp === "kimi" ||
+          activeApp === "trae" ||
           activeApp === "agy"
         )
           return;
@@ -841,7 +842,11 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: hermesKeys.liveProviderIds,
         });
-      } else if (activeApp === "mcode" || activeApp === "kimi") {
+      } else if (
+        activeApp === "mcode" ||
+        activeApp === "kimi" ||
+        activeApp === "trae"
+      ) {
         await queryClient.invalidateQueries({
           queryKey: ["providers", activeApp],
         });
@@ -980,7 +985,11 @@ function App() {
         existingKeys,
       );
       duplicatedProvider.addToLive = false;
-    } else if (activeApp === "mcode" || activeApp === "kimi") {
+    } else if (
+      activeApp === "mcode" ||
+      activeApp === "kimi" ||
+      activeApp === "trae"
+    ) {
       // The MCode list already includes its live custom nodes; the backend
       // rejects a key that MCode itself owns.
       duplicatedProvider.providerKey = generateUniqueProviderCopyKey(
@@ -998,6 +1007,10 @@ function App() {
             },
           ]),
         );
+        duplicatedProvider.addToLive = false;
+      }
+      if (activeApp === "trae") {
+        // A copy starts outside traecli.toml until the user switches to it.
         duplicatedProvider.addToLive = false;
       }
     }
@@ -1185,6 +1198,7 @@ function App() {
           {currentView === "providers" &&
             activeApp !== "mcode" &&
             activeApp !== "kimi" &&
+            activeApp !== "trae" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
@@ -1348,7 +1362,8 @@ function App() {
               activeApp === "hermes" ||
               activeApp === "pi" ||
               activeApp === "mcode" ||
-              activeApp === "kimi"
+              activeApp === "kimi" ||
+              activeApp === "trae"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
             }

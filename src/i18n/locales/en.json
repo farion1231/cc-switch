@@ -4966,5 +4966,21 @@
       "description": "Configure an endpoint, API key and models. Existing Kimi configuration is imported automatically."
     },
     "deleteSessionHint": "Delete this session in Kimi Code to update its index and history together."
+  },
+  "trae": {
+    "officialPresetName": "TRAE account login",
+    "officialHint": "Use the account login built into TRAE CLI (traecli /login). Switching to it removes model_provider and model from traecli.toml so the account supplies the model.",
+    "officialExists": "The TRAE account login has already been added.",
+    "providerKeyHint": "Becomes [model_providers.<key>] in traecli.toml. Letters, digits, - and _ only",
+    "providerKeyInvalid": "Use only letters, digits, - and _, and avoid built-in names such as openai, oss, ollama and lmstudio",
+    "responsesOnlyHint": "TRAE CLI only supports the OpenAI Responses API (wire_api = \"responses\"). Enter an endpoint compatible with /v1/responses.",
+    "envKey": "API key environment variable (optional)",
+    "envKeyHint": "TRAE CLI reads the key from this variable (env_key), so the API key does not have to be stored in the config file.",
+    "model": "Model",
+    "empty": {
+      "title": "Add a TRAE CLI provider",
+      "description": "Configure a Responses API endpoint, API key and model. Providers already in traecli.toml are imported automatically."
+    },
+    "deleteSessionHint": "Run traecli delete <session id> in a terminal so TRAE CLI also updates its session index."
   }
 }

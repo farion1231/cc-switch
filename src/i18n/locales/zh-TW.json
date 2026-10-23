@@ -4967,5 +4967,21 @@
       "tool_use": "工具呼叫",
       "dynamically_loaded_tools": "按需載入工具"
     }
+  },
+  "trae": {
+    "officialPresetName": "TRAE 帳號登入",
+    "officialHint": "使用 TRAE CLI 內建的帳號登入（traecli /login）。切換到此項會移除 traecli.toml 中的 model_provider 和 model，模型由帳號提供。",
+    "officialExists": "已新增 TRAE 帳號登入。",
+    "providerKeyHint": "對應 traecli.toml 中的 [model_providers.<識別碼>]，只能使用字母、數字、- 和 _",
+    "providerKeyInvalid": "識別碼只能包含字母、數字、- 和 _，且不能使用 openai、oss、ollama、lmstudio 等內建名稱",
+    "responsesOnlyHint": "TRAE CLI 僅支援 OpenAI Responses API（wire_api = \"responses\"），請填寫相容 /v1/responses 的位址。",
+    "envKey": "API Key 環境變數（選填）",
+    "envKeyHint": "填寫後 TRAE CLI 從該環境變數讀取金鑰（env_key），可不在設定檔中儲存 API Key。",
+    "model": "模型",
+    "empty": {
+      "title": "新增 TRAE CLI 供應商",
+      "description": "設定 Responses API 位址、API Key 和模型；traecli.toml 中既有的供應商會自動匯入。"
+    },
+    "deleteSessionHint": "請在終端機執行 traecli delete <工作階段 ID> 刪除，以同時更新 TRAE CLI 的工作階段索引。"
   }
 }

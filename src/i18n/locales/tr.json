@@ -4837,5 +4837,21 @@
       "tool_use": "Araç kullanımı",
       "dynamically_loaded_tools": "Araçları gerektiğinde yükle"
     }
+  },
+  "trae": {
+    "officialPresetName": "TRAE hesap girişi",
+    "officialHint": "TRAE CLI'nin yerleşik hesap girişini (traecli /login) kullanır. Buna geçmek traecli.toml içindeki model_provider ve model değerlerini kaldırır; model hesaptan gelir.",
+    "officialExists": "TRAE hesap girişi zaten eklendi.",
+    "providerKeyHint": "traecli.toml içinde [model_providers.<anahtar>] olur. Yalnızca harf, rakam, - ve _",
+    "providerKeyInvalid": "Yalnızca harf, rakam, - ve _ kullanın; openai, oss, ollama, lmstudio gibi yerleşik adlar kullanılamaz",
+    "responsesOnlyHint": "TRAE CLI yalnızca OpenAI Responses API'yi (wire_api = \"responses\") destekler. /v1/responses uyumlu bir uç nokta girin.",
+    "envKey": "API anahtarı ortam değişkeni (isteğe bağlı)",
+    "envKeyHint": "TRAE CLI anahtarı bu değişkenden okur (env_key); API anahtarını yapılandırma dosyasında saklamanız gerekmez.",
+    "model": "Model",
+    "empty": {
+      "title": "TRAE CLI sağlayıcısı ekle",
+      "description": "Responses API uç noktası, API anahtarı ve model yapılandırın. traecli.toml içindeki mevcut sağlayıcılar otomatik içe aktarılır."
+    },
+    "deleteSessionHint": "TRAE CLI oturum dizinini de güncellemesi için terminalde traecli delete <oturum kimliği> çalıştırın."
   }
 }
