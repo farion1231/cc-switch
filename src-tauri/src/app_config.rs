@@ -12,6 +12,8 @@ pub struct McpApps {
     #[serde(default)]
     pub kimi: bool,
     #[serde(default)]
+    pub workbuddy: bool,
+    #[serde(default)]
     pub agy: bool,
     #[serde(default)]
     pub claude: bool,
@@ -45,8 +47,7 @@ impl McpApps {
             AppType::Pi => self.pi,
             AppType::ClaudeDesktop => false,
             AppType::Agy => self.agy,
-            // WorkBuddy 没有 MCP 启用列（库表结构未扩展），不参与统一 MCP 同步。
-            AppType::WorkBuddy => false,
+            AppType::WorkBuddy => self.workbuddy,
         }
     }
 
@@ -65,7 +66,7 @@ impl McpApps {
             AppType::Pi => self.pi = enabled,
             AppType::ClaudeDesktop => {}
             AppType::Agy => self.agy = enabled,
-            AppType::WorkBuddy => {}
+            AppType::WorkBuddy => self.workbuddy = enabled,
         }
     }
 
@@ -93,6 +94,9 @@ impl McpApps {
         if self.kimi {
             apps.push(AppType::Kimi);
         }
+        if self.workbuddy {
+            apps.push(AppType::WorkBuddy);
+        }
         if self.mcode {
             apps.push(AppType::Mcode);
         }
@@ -115,6 +119,7 @@ impl McpApps {
             && !self.hermes
             && !self.agy
             && !self.kimi
+            && !self.workbuddy
             && !self.mcode
             && !self.pi
     }
@@ -127,6 +132,8 @@ pub struct SkillApps {
     pub mcode: bool,
     #[serde(default)]
     pub kimi: bool,
+    #[serde(default)]
+    pub workbuddy: bool,
     #[serde(default)]
     pub agy: bool,
     #[serde(default)]
@@ -161,8 +168,7 @@ impl SkillApps {
             AppType::OpenClaw => false,
             AppType::Agy => self.agy,
             AppType::ClaudeDesktop => false,
-            // WorkBuddy 没有 Skill 启用列，不参与统一 Skill 同步。
-            AppType::WorkBuddy => false,
+            AppType::WorkBuddy => self.workbuddy,
         }
     }
 
@@ -181,7 +187,7 @@ impl SkillApps {
             AppType::OpenClaw => {}
             AppType::Agy => self.agy = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
-            AppType::WorkBuddy => {}
+            AppType::WorkBuddy => self.workbuddy = enabled,
         }
     }
 
@@ -209,6 +215,9 @@ impl SkillApps {
         if self.kimi {
             apps.push(AppType::Kimi);
         }
+        if self.workbuddy {
+            apps.push(AppType::WorkBuddy);
+        }
         if self.mcode {
             apps.push(AppType::Mcode);
         }
@@ -231,6 +240,7 @@ impl SkillApps {
             && !self.hermes
             && !self.agy
             && !self.kimi
+            && !self.workbuddy
             && !self.mcode
             && !self.pi
     }

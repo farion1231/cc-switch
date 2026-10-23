@@ -545,6 +545,7 @@ command = "say"
                 hermes: false,
                 mcode: false,
                 kimi: false,
+                workbuddy: false,
                 pi: false,
             },
             description: None,
