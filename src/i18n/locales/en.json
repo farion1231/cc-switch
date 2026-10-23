@@ -1828,8 +1828,10 @@
     "deploymentEnterprise": "GitHub Enterprise Server",
     "enterpriseDomainPlaceholder": "e.g. company.ghe.com",
     "form": {
-      "officialHint": "Uses GitHub Copilot CLI's own GitHub sign-in. \"Open Terminal\" starts copilot with this card's model; bind an Auth Center account to start it with that account instead.",
-      "byokHint": "Bring your own model (BYOK). Copilot CLI reads these settings only from its environment, so the card works only in terminals opened from it and is never written to Copilot's own files.",
+      "officialTitle": "Uses Copilot CLI's GitHub sign-in",
+      "officialHint": "Open Terminal starts copilot with this card's model. Bind an Auth Center account to start it with that account.",
+      "byokTitle": "Only applies in terminals opened from this card",
+      "byokHint": "Copilot CLI reads custom models only from its environment, so nothing is written to Copilot's own files.",
       "apiFormat": "API format",
       "baseUrl": "API endpoint",
       "baseUrlHint": "OpenAI-compatible endpoints usually end in /v1 (e.g. Ollama http://localhost:11434/v1); Anthropic uses the host only (https://api.anthropic.com).",
@@ -1838,7 +1840,6 @@
       "byokModelHint": "The model ID your endpoint expects (COPILOT_MODEL).",
       "maxPromptTokens": "Max prompt tokens",
       "maxOutputTokens": "Max output tokens",
-      "envJson": "Environment variables",
       "envJsonHint": "Advanced: any COPILOT_PROVIDER_* variable (for example COPILOT_PROVIDER_MODEL_ID or COPILOT_PROVIDER_BEARER_TOKEN) is passed to copilot as-is."
     }
   },

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
-import { Download, Info, Loader2 } from "lucide-react";
+import { Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Form } from "@/components/ui/form";
+import { Form, FormLabel } from "@/components/ui/form";
+import { HelpTip } from "@/components/ui/help-tip";
+import { Notice } from "@/components/ui/notice";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -39,8 +41,8 @@ import {
   type CopilotEnv,
 } from "@/config/copilotProviderPresets";
 import { normalizeRequestHeaders } from "./helpers/requestHeaders";
-import { BasicFormFields } from "./BasicFormFields";
-import { ApiKeySection, ModelInputWithFetch } from "./shared";
+import { BasicFormFields, REQUIRED_LABEL } from "./BasicFormFields";
+import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { CopilotAuthSection } from "./CopilotAuthSection";
@@ -274,20 +276,23 @@ export function CopilotProviderForm({
     <Form {...form}>
       <form id="provider-form" className="space-y-6" onSubmit={submit}>
         {!isEdit && presetSelector}
-        <div className="flex gap-3 rounded-lg border border-border-strong bg-subtle p-4">
-          <Info className="h-5 w-5 flex-shrink-0 text-fg-1" />
-          <p className="text-sm text-fg-1">
-            {isOfficial
-              ? t("copilot.form.officialHint")
-              : t("copilot.form.byokHint")}
-          </p>
-        </div>
+        <Notice
+          title={
+            isOfficial
+              ? t("copilot.form.officialTitle")
+              : t("copilot.form.byokTitle")
+          }
+        >
+          {isOfficial
+            ? t("copilot.form.officialHint")
+            : t("copilot.form.byokHint")}
+        </Notice>
         <fieldset
           disabled={busy || !jsonValid}
           className="min-w-0 space-y-6 border-0 p-0 disabled:opacity-50"
         >
           <BasicFormFields form={form} />
-          {isOfficial && (
+          {isOfficial ? (
             <CopilotAuthSection
               mode="select"
               selectedAccountId={accountId}
@@ -298,8 +303,7 @@ export function CopilotProviderForm({
                   : undefined
               }
             />
-          )}
-          {!isOfficial && (
+          ) : (
             <>
               <div className="space-y-2">
                 <Label htmlFor="copilot-api-format">
@@ -313,7 +317,7 @@ export function CopilotProviderForm({
                     )
                   }
                 >
-                  <SelectTrigger id="copilot-api-format">
+                  <SelectTrigger id="copilot-api-format" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -324,22 +328,6 @@ export function CopilotProviderForm({
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="copilot-base-url">
-                  {t("copilot.form.baseUrl")} *
-                </Label>
-                <Input
-                  id="copilot-base-url"
-                  value={baseUrl}
-                  onChange={(e) =>
-                    setField(COPILOT_ENV.baseUrl, e.target.value)
-                  }
-                  placeholder="https://api.example.com/v1"
-                />
-                <p className="text-xs text-fg-2">
-                  {t("copilot.form.baseUrlHint")}
-                </p>
               </div>
               <ApiKeySection
                 id="copilot-api-key"
@@ -352,14 +340,32 @@ export function CopilotProviderForm({
                 partnerPromotionKey={preset?.partnerPromotionKey}
                 required={category !== "local"}
               />
+              <EndpointField
+                id="copilot-base-url"
+                label={t("copilot.form.baseUrl")}
+                value={baseUrl}
+                onChange={(value) => setField(COPILOT_ENV.baseUrl, value)}
+                placeholder="https://api.example.com/v1"
+                help={t("copilot.form.baseUrlHint")}
+                showManageButton={false}
+              />
             </>
           )}
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="copilot-model">
-                {t("copilot.form.model")}
-                {isOfficial ? "" : " *"}
-              </Label>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-0.5">
+                <FormLabel
+                  htmlFor="copilot-model"
+                  className={isOfficial ? undefined : REQUIRED_LABEL}
+                >
+                  {t("copilot.form.model")}
+                </FormLabel>
+                <HelpTip title={t("copilot.form.model")}>
+                  {isOfficial
+                    ? t("copilot.form.officialModelHint")
+                    : t("copilot.form.byokModelHint")}
+                </HelpTip>
+              </div>
               {!isOfficial && (
                 <Button
                   type="button"
@@ -392,11 +398,6 @@ export function CopilotProviderForm({
               }
               isLoading={isFetchingModels}
             />
-            <p className="text-xs text-fg-2">
-              {isOfficial
-                ? t("copilot.form.officialModelHint")
-                : t("copilot.form.byokModelHint")}
-            </p>
           </div>
           {!isOfficial && (
             <>
@@ -410,6 +411,7 @@ export function CopilotProviderForm({
                     type="number"
                     min={1}
                     step={1}
+                    inputMode="numeric"
                     value={env[COPILOT_ENV.maxPromptTokens] ?? ""}
                     onChange={(e) =>
                       setField(COPILOT_ENV.maxPromptTokens, e.target.value)
@@ -425,6 +427,7 @@ export function CopilotProviderForm({
                     type="number"
                     min={1}
                     step={1}
+                    inputMode="numeric"
                     value={env[COPILOT_ENV.maxOutputTokens] ?? ""}
                     onChange={(e) =>
                       setField(COPILOT_ENV.maxOutputTokens, e.target.value)
@@ -442,13 +445,17 @@ export function CopilotProviderForm({
           )}
         </fieldset>
         <div className="space-y-2">
-          <Label htmlFor="copilot-settings-config">
-            {t("copilot.form.envJson")}
-          </Label>
-          <p className="text-xs text-fg-2">{t("copilot.form.envJsonHint")}</p>
+          <div className="flex items-center gap-0.5">
+            <Label htmlFor="copilot-settings-config">
+              {t("provider.configJson")}
+            </Label>
+            <HelpTip title={t("provider.configJson")}>
+              {t("copilot.form.envJsonHint")}
+            </HelpTip>
+          </div>
           <JsonEditor
             id="copilot-settings-config"
-            ariaLabel={t("copilot.form.envJson")}
+            ariaLabel={t("provider.configJson")}
             value={text}
             darkMode={darkMode}
             language="json"

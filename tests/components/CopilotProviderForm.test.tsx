@@ -80,9 +80,12 @@ function setup(
 describe("CopilotProviderForm", () => {
   it("saves BYOK cards as Copilot CLI environment variables", async () => {
     const submit = setup(byok);
-    fireEvent.change(screen.getByLabelText(/copilot\.form\.baseUrl/), {
-      target: { value: "https://relay.example.com/v1" },
-    });
+    fireEvent.change(
+      screen.getByPlaceholderText("https://api.example.com/v1"),
+      {
+        target: { value: "https://relay.example.com/v1" },
+      },
+    );
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
     expect(JSON.parse(submit.mock.calls[0][0].settingsConfig)).toEqual({

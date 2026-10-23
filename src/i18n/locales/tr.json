@@ -1783,8 +1783,10 @@
     "deploymentEnterprise": "GitHub Kurumsal Sunucu",
     "enterpriseDomainPlaceholder": "örneğin şirket.ghe.com",
     "form": {
-      "officialHint": "GitHub Copilot CLI'nin kendi GitHub oturumunu kullanır. \"Terminal aç\", copilot'u bu kartın modeliyle başlatır; Yetki Merkezi'nden bir hesap bağlarsanız o hesapla başlatır.",
-      "byokHint": "Kendi modelinizi getirin (BYOK). Copilot CLI bu ayarları yalnızca ortam değişkenlerinden okur; bu yüzden kart yalnızca buradan açılan terminallerde çalışır ve Copilot'un kendi dosyalarına yazılmaz.",
+      "officialTitle": "Copilot CLI'nin GitHub oturumunu kullanır",
+      "officialHint": "\"Terminal aç\", copilot'u bu kartın modeliyle başlatır; Yetki Merkezi'nden bir hesap bağlarsanız o hesapla başlatır.",
+      "byokTitle": "Yalnızca bu karttan açılan terminallerde geçerlidir",
+      "byokHint": "Copilot CLI özel modelleri yalnızca ortam değişkenlerinden okur; Copilot'un kendi dosyalarına hiçbir şey yazılmaz.",
       "apiFormat": "API biçimi",
       "baseUrl": "API uç noktası",
       "baseUrlHint": "OpenAI uyumlu uç noktalar genellikle /v1 ile biter (ör. Ollama http://localhost:11434/v1); Anthropic için yalnızca sunucu adresi (https://api.anthropic.com).",
@@ -1793,7 +1795,6 @@
       "byokModelHint": "Uç noktanızın beklediği model kimliği (COPILOT_MODEL).",
       "maxPromptTokens": "En fazla istem token'ı",
       "maxOutputTokens": "En fazla çıktı token'ı",
-      "envJson": "Ortam değişkenleri",
       "envJsonHint": "Gelişmiş: her COPILOT_PROVIDER_* değişkeni (ör. COPILOT_PROVIDER_MODEL_ID veya COPILOT_PROVIDER_BEARER_TOKEN) copilot'a olduğu gibi iletilir."
     }
   },

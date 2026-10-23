@@ -1828,8 +1828,10 @@
     "deploymentEnterprise": "GitHub Enterprise Server",
     "enterpriseDomainPlaceholder": "例: company.ghe.com",
     "form": {
-      "officialHint": "GitHub Copilot CLI 自身の GitHub ログインを使います。「ターミナルを開く」はこのカードのモデルで copilot を起動します。認証センターのアカウントを紐付けると、そのアカウントで起動します。",
-      "byokHint": "独自モデル（BYOK）。Copilot CLI はこれらの設定をプロセス環境からのみ読み込むため、このカードはここから開いたターミナルでのみ有効で、Copilot 自身のファイルには書き込まれません。",
+      "officialTitle": "Copilot CLI 自身の GitHub ログインを使用",
+      "officialHint": "「ターミナルを開く」はこのカードのモデルで copilot を起動します。認証センターのアカウントを紐付けると、そのアカウントで起動します。",
+      "byokTitle": "このカードから開いたターミナルでのみ有効",
+      "byokHint": "Copilot CLI は独自モデルをプロセス環境からのみ読み込むため、Copilot 自身のファイルには書き込みません。",
       "apiFormat": "API 形式",
       "baseUrl": "API エンドポイント",
       "baseUrlHint": "OpenAI 互換エンドポイントは通常 /v1 で終わります（例：Ollama http://localhost:11434/v1）。Anthropic はホストのみ（https://api.anthropic.com）。",
@@ -1838,7 +1840,6 @@
       "byokModelHint": "エンドポイントが要求するモデル ID（COPILOT_MODEL）。",
       "maxPromptTokens": "最大入力トークン",
       "maxOutputTokens": "最大出力トークン",
-      "envJson": "環境変数",
       "envJsonHint": "上級者向け：任意の COPILOT_PROVIDER_* 変数（COPILOT_PROVIDER_MODEL_ID、COPILOT_PROVIDER_BEARER_TOKEN など）はそのまま copilot に渡されます。"
     }
   },

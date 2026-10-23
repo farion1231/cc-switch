@@ -100,6 +100,8 @@ fn copilot_import_uses_the_signed_in_model_only_when_present() {
     let providers = ProviderService::list(&state, AppType::Copilot).unwrap();
     let imported = &providers["default"];
     assert_eq!(imported.category.as_deref(), Some("official"));
+    assert_eq!(imported.name, "GitHub Copilot");
+    assert_eq!(imported.icon.as_deref(), Some("githubcopilot"));
     assert_eq!(
         imported.settings_config["env"]["COPILOT_MODEL"],
         "gpt-5.6-terra"
