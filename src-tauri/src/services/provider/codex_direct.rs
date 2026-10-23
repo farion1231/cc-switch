@@ -921,10 +921,9 @@ fn official_subagent_choices(
         })
         .filter_map(|entry| {
             let model = entry.get("slug")?.as_str()?;
-            if !matches!(
-                crate::mode::stack::decode(&AppType::Codex, model),
-                crate::mode::stack::Decoded::Plain
-            ) {
+            // Keep this aligned with the UI's reserved-prefix filtering, including
+            // incomplete ccs-* names that the router treats as plain models.
+            if model.starts_with("ccs-") {
                 return None;
             }
             let display = entry
