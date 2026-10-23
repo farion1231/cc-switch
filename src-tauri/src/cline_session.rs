@@ -3,12 +3,19 @@
 //! Cline keeps its index in `sessions.db` (WAL) and each conversation in
 //! `<sessions dir>/<id>/<id>.messages.json`. The database is only ever opened
 //! read-only; when it is missing the per-session manifests are used instead.
+//!
+//! The CLI and the desktop app write to the same index in the same format, and
+//! `cline --id` resumes either, so both are read alike. Sessions from the IDE
+//! extensions are left out.
 use rusqlite::{Connection, OpenFlags, Row};
 use serde_json::Value;
 use std::{
     fs,
     path::{Path, PathBuf},
 };
+
+/// `sessions.source` values that belong to Cline CLI and Cline desktop.
+const SOURCES: [&str; 2] = ["cli", "desktop"];
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ClineSession {
@@ -95,8 +102,11 @@ fn from_database(db_path: &Path, sessions_dir: &Path) -> Option<Vec<ClineSession
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .ok()?;
+    let sources = SOURCES.map(|source| format!("'{source}'")).join(", ");
     let mut stmt = conn
-        .prepare("SELECT * FROM sessions WHERE source = 'cli'")
+        .prepare(&format!(
+            "SELECT * FROM sessions WHERE source IN ({sources})"
+        ))
         .ok()?;
     let rows = stmt
         .query_map([], |row| {
@@ -146,7 +156,11 @@ fn from_manifests(sessions_dir: &Path) -> Vec<ClineSession> {
         else {
             continue;
         };
-        if manifest.get("source").and_then(Value::as_str) != Some("cli") {
+        if !manifest
+            .get("source")
+            .and_then(Value::as_str)
+            .is_some_and(|source| SOURCES.contains(&source))
+        {
             continue;
         }
         let text = |key: &str| {
@@ -234,7 +248,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn cline_index_reads_cli_rows_read_only_and_falls_back_to_manifests() {
+    fn cline_index_reads_cli_and_desktop_rows_and_falls_back_to_manifests() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("db/sessions.db");
         let sessions_dir = dir.path().join("sessions");
@@ -243,6 +257,7 @@ pub(crate) mod tests {
             &sessions_dir,
             &[
                 ("s_cli", "cli", false, json!([])),
+                ("s_desktop", "desktop", false, json!([])),
                 ("s_vscode", "vscode", false, json!([])),
                 ("s_sub", "cli", true, json!([])),
             ],
@@ -254,7 +269,7 @@ pub(crate) mod tests {
                 .iter()
                 .map(|s| (s.id.as_str(), s.is_subagent))
                 .collect::<Vec<_>>(),
-            vec![("s_cli", false), ("s_sub", true)]
+            vec![("s_cli", false), ("s_desktop", false), ("s_sub", true)]
         );
         assert_eq!(sessions[0].title.as_deref(), Some("Fixture title"));
         assert_eq!(sessions[0].cwd.as_deref(), Some("/work/project"));
@@ -268,8 +283,20 @@ pub(crate) mod tests {
             json!({"session_id":"m1","source":"cli","cwd":"/p","started_at":"2026-10-22T16:43:37.848Z","metadata":{"title":"T"}}).to_string(),
         )
         .unwrap();
-        let fallback = read_index(&dir.path().join("missing.db"), &manifest_dir);
-        assert_eq!(fallback.len(), 1);
+        for (id, source) in [("d1", "desktop"), ("v1", "vscode")] {
+            fs::create_dir_all(manifest_dir.join(id)).unwrap();
+            fs::write(
+                manifest_dir.join(format!("{id}/{id}.json")),
+                json!({"session_id": id, "source": source}).to_string(),
+            )
+            .unwrap();
+        }
+        let mut fallback = read_index(&dir.path().join("missing.db"), &manifest_dir);
+        fallback.sort_by(|a, b| b.id.cmp(&a.id));
+        assert_eq!(
+            fallback.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            vec!["m1", "d1"]
+        );
         assert_eq!(fallback[0].title.as_deref(), Some("T"));
         assert_eq!(
             fallback[0].messages_path,

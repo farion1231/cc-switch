@@ -299,15 +299,18 @@ mod tests {
                     json!([conversation()[0], conversation()[1]]),
                 ),
                 ("s_vscode", "vscode", false, conversation()),
+                ("s_desktop", "desktop", false, conversation()),
             ],
         );
         let sessions = cline_session::read_index(&db_path, &sessions_dir);
         let result = sync_sessions(&db, &sessions).unwrap();
         assert!(result.errors.is_empty());
-        assert_eq!((result.imported, result.files_scanned), (4, 2));
+        assert_eq!((result.imported, result.files_scanned), (7, 3));
 
         let rows = rows(&db);
         let find = |request: &str| rows.iter().find(|row| row.0 == request).unwrap().clone();
+        assert_eq!(find("cline:s_desktop:msg_priced").7, "s_desktop");
+        assert!(!rows.iter().any(|row| row.0.contains("s_vscode")));
         let priced = find("cline:s_cli:msg_priced");
         // 130 total input - 20 cache read - 10 cache write = 100 fresh input.
         assert_eq!(
@@ -335,7 +338,7 @@ mod tests {
         .unwrap();
         let again = sync_sessions(&db, &sessions).unwrap();
         assert_eq!((again.imported, again.skipped), (0, 3));
-        assert_eq!(db.rollup_and_prune(30).unwrap(), 4);
+        assert_eq!(db.rollup_and_prune(30).unwrap(), 7);
         db.conn
             .lock()
             .unwrap()
