@@ -24,7 +24,10 @@ import {
   type TraeProviderConfig,
   type TraeProviderTable,
 } from "@/config/traeProviderPresets";
-import { BasicFormFields } from "./BasicFormFields";
+import { Notice } from "@/components/ui/notice";
+import { HelpTip } from "@/components/ui/help-tip";
+import { BasicFormFields, REQUIRED_LABEL } from "./BasicFormFields";
+import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 import type { ProviderFormProps } from "./ProviderForm";
@@ -247,11 +250,8 @@ export function TraeProviderForm({
             beforeNameSlot={
               official ? undefined : (
                 <div className="space-y-2">
-                  <Label htmlFor="trae-provider-key">
+                  <Label htmlFor="trae-provider-key" className={REQUIRED_LABEL}>
                     {t("opencode.providerKey")}
-                    <span aria-hidden="true" className="text-destructive ml-1">
-                      *
-                    </span>
                   </Label>
                   <Input
                     id="trae-provider-key"
@@ -264,15 +264,14 @@ export function TraeProviderForm({
                     disabled={isEdit}
                     placeholder={t("opencode.providerKeyPlaceholder")}
                     autoComplete="off"
-                    className={
-                      keyTaken || keyInvalid ? "border-destructive" : ""
-                    }
+                    aria-required
+                    aria-invalid={keyTaken || keyInvalid}
                   />
                   <p
                     className={
                       keyTaken || keyInvalid
-                        ? "text-xs text-destructive"
-                        : "text-xs text-fg-2"
+                        ? "text-caption text-danger-text"
+                        : "text-caption text-fg-2"
                     }
                   >
                     {keyTaken
@@ -289,13 +288,9 @@ export function TraeProviderForm({
           />
           {official ? (
             <div className="space-y-2">
-              <p className="rounded-md border border-border-default bg-subtle p-3 text-sm text-fg-2">
-                {t("trae.officialHint")}
-              </p>
+              <Notice title={t("trae.officialHint")} />
               {keyTaken && (
-                <p className="text-xs text-destructive">
-                  {t("trae.officialExists")}
-                </p>
+                <Notice tone="warning" title={t("trae.officialExists")} />
               )}
             </div>
           ) : (
@@ -323,7 +318,12 @@ export function TraeProviderForm({
                 required={!envKey.trim()}
               />
               <div className="space-y-2">
-                <Label htmlFor="trae-env-key">{t("trae.envKey")}</Label>
+                <div className="flex items-center gap-0.5">
+                  <Label htmlFor="trae-env-key">{t("trae.envKey")}</Label>
+                  <HelpTip title={t("trae.envKey")}>
+                    {t("trae.envKeyHint")}
+                  </HelpTip>
+                </div>
                 <Input
                   id="trae-env-key"
                   value={envKey}
@@ -333,14 +333,10 @@ export function TraeProviderForm({
                   placeholder="MY_PROVIDER_API_KEY"
                   autoComplete="off"
                 />
-                <p className="text-xs text-fg-2">{t("trae.envKeyHint")}</p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="trae-model">
+                <Label htmlFor="trae-model" className={REQUIRED_LABEL}>
                   {t("trae.model")}
-                  <span aria-hidden="true" className="text-destructive ml-1">
-                    *
-                  </span>
                 </Label>
                 <ModelInputWithFetch
                   id="trae-model"
@@ -354,6 +350,20 @@ export function TraeProviderForm({
                   onFetch={handleFetchModels}
                 />
               </div>
+              <RequestHeadersEditor
+                headers={
+                  (custom?.provider.http_headers as
+                    | Record<string, string>
+                    | undefined) ?? {}
+                }
+                onHeadersChange={(headers) =>
+                  updateProvider({
+                    http_headers: Object.keys(headers).length
+                      ? headers
+                      : undefined,
+                  })
+                }
+              />
             </>
           )}
         </fieldset>
