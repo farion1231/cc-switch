@@ -767,6 +767,7 @@ export interface McpServerSpec {
 export interface McpApps {
   mcode?: boolean;
   kimi?: boolean;
+  codebuddy?: boolean;
   agy?: boolean;
   claude: boolean;
   "claude-desktop"?: boolean;

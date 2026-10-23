@@ -12,6 +12,8 @@ pub struct McpApps {
     #[serde(default)]
     pub kimi: bool,
     #[serde(default)]
+    pub codebuddy: bool,
+    #[serde(default)]
     pub agy: bool,
     #[serde(default)]
     pub claude: bool,
@@ -39,8 +41,7 @@ impl McpApps {
             AppType::GrokBuild => self.grokbuild,
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => false, // OpenClaw doesn't support MCP
-            // CodeBuddy MCP sync needs an enabled_codebuddy column (schema change).
-            AppType::Codebuddy => false,
+            AppType::Codebuddy => self.codebuddy,
             AppType::Hermes => self.hermes,
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
@@ -59,7 +60,7 @@ impl McpApps {
             AppType::GrokBuild => self.grokbuild = enabled,
             AppType::OpenCode => self.opencode = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
-            AppType::Codebuddy => {}
+            AppType::Codebuddy => self.codebuddy = enabled,
             AppType::Hermes => self.hermes = enabled,
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
@@ -93,6 +94,9 @@ impl McpApps {
         if self.kimi {
             apps.push(AppType::Kimi);
         }
+        if self.codebuddy {
+            apps.push(AppType::Codebuddy);
+        }
         if self.mcode {
             apps.push(AppType::Mcode);
         }
@@ -115,6 +119,7 @@ impl McpApps {
             && !self.hermes
             && !self.agy
             && !self.kimi
+            && !self.codebuddy
             && !self.mcode
             && !self.pi
     }
@@ -127,6 +132,8 @@ pub struct SkillApps {
     pub mcode: bool,
     #[serde(default)]
     pub kimi: bool,
+    #[serde(default)]
+    pub codebuddy: bool,
     #[serde(default)]
     pub agy: bool,
     #[serde(default)]
@@ -159,8 +166,7 @@ impl SkillApps {
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
             AppType::OpenClaw => false,
-            // CodeBuddy skill sync needs an enabled_codebuddy column (schema change).
-            AppType::Codebuddy => false,
+            AppType::Codebuddy => self.codebuddy,
             AppType::Agy => self.agy,
             AppType::ClaudeDesktop => false,
         }
@@ -179,7 +185,7 @@ impl SkillApps {
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
             AppType::OpenClaw => {}
-            AppType::Codebuddy => {}
+            AppType::Codebuddy => self.codebuddy = enabled,
             AppType::Agy => self.agy = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
         }
@@ -209,6 +215,9 @@ impl SkillApps {
         if self.kimi {
             apps.push(AppType::Kimi);
         }
+        if self.codebuddy {
+            apps.push(AppType::Codebuddy);
+        }
         if self.mcode {
             apps.push(AppType::Mcode);
         }
@@ -231,6 +240,7 @@ impl SkillApps {
             && !self.hermes
             && !self.agy
             && !self.kimi
+            && !self.codebuddy
             && !self.mcode
             && !self.pi
     }
