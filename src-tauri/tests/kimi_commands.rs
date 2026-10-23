@@ -85,6 +85,64 @@ fn kimi_official_accounts_are_protected_only_while_present_in_native_config() {
 }
 
 #[test]
+fn kimi_official_cards_need_a_local_login_and_take_their_own_credential_with_them() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let home = KimiHome::new();
+    let state = create_test_state().unwrap();
+    let custom = json!({"type":"openai","api_key":"test"});
+    let mut config = json!({"default_model":"custom/model", "providers":{"custom":custom},"models":{"custom/model":{"provider":"custom","model":"test","max_context_size":32000}}});
+    for (id, key) in [
+        ("managed:kimi-code", "kimi-code"),
+        ("kimi-code-ccs-second", "kimi-code-ccs-second"),
+    ] {
+        config["providers"][id] = json!({"type":"kimi","base_url":"https://api.kimi.com/coding/v1","oauth":{"storage":"file","key":format!("oauth/{key}")}});
+        config["models"][format!("{id}/k3")] =
+            json!({"provider":id,"model":"k3","max_context_size":1048576});
+    }
+    fs::write(home.config(), toml::to_string(&config).unwrap()).unwrap();
+    ProviderService::list(&state, AppType::Kimi).unwrap();
+
+    // A card whose login is not on this machine (e.g. synced from another
+    // device) must not point Kimi at a missing credential.
+    let original = fs::read(home.config()).unwrap();
+    let error = ProviderService::switch(&state, AppType::Kimi, "kimi-code-ccs-second").unwrap_err();
+    assert!(
+        error.to_string().contains("Authorization Center")
+            || error.to_string().contains("授权中心")
+    );
+    assert_eq!(fs::read(home.config()).unwrap(), original);
+
+    let credentials = home.directory.path().join("credentials");
+    fs::create_dir_all(&credentials).unwrap();
+    let valid = json!({"access_token":"a","refresh_token":"r","expires_at":4_102_444_800i64});
+    for name in ["kimi-code", "kimi-code-ccs-second"] {
+        fs::write(
+            credentials.join(format!("{name}.json")),
+            serde_json::to_vec(&valid).unwrap(),
+        )
+        .unwrap();
+    }
+    ProviderService::switch(&state, AppType::Kimi, "kimi-code-ccs-second").unwrap();
+    assert_eq!(
+        ProviderService::current(&state, AppType::Kimi).unwrap(),
+        "kimi-code-ccs-second"
+    );
+    ProviderService::switch(&state, AppType::Kimi, "custom").unwrap();
+
+    // Kimi dropped both nodes: deleting the cards also deletes CC Switch's own
+    // credential slot, but never Kimi's default login.
+    let only_custom = json!({"default_model":"custom/model", "providers":{"custom":custom},"models":{"custom/model":{"provider":"custom","model":"test","max_context_size":32000}}});
+    fs::write(home.config(), toml::to_string(&only_custom).unwrap()).unwrap();
+    ProviderService::list(&state, AppType::Kimi).unwrap();
+    for id in ["managed:kimi-code", "kimi-code-ccs-second"] {
+        ProviderService::delete(&state, AppType::Kimi, id).unwrap();
+    }
+    assert!(credentials.join("kimi-code.json").exists());
+    assert!(!credentials.join("kimi-code-ccs-second.json").exists());
+}
+
+#[test]
 fn kimi_official_import_repairs_existing_display_identity_without_rewriting_native_config() {
     let _guard = test_mutex().lock().unwrap();
     reset_test_fs();
@@ -126,6 +184,13 @@ fn kimi_provider_lifecycle_imports_native_config_and_tracks_external_removal() {
     let state = create_test_state().unwrap();
     let native = "# user settings\ndefault_model = 'official'\n[providers.official]\ntype = 'kimi'\nbase_url = 'https://api.kimi.com/coding/v1'\napi_key = ''\n[providers.official.oauth]\nkey = 'kimi-code'\nstorage = 'file'\n[models.official]\nprovider = 'official'\nmodel = 'kimi-for-coding'\nmax_context_size = 262144\n[thinking]\neffort = 'high'\n";
     fs::write(home.config(), native).unwrap();
+    // Switching back to an official account needs its login on this machine.
+    fs::create_dir_all(home.directory.path().join("credentials")).unwrap();
+    fs::write(
+        home.directory.path().join("credentials/kimi-code.json"),
+        r#"{"access_token":"a","refresh_token":"r","expires_at":4102444800}"#,
+    )
+    .unwrap();
     assert!(ProviderService::list(&state, AppType::Kimi)
         .unwrap()
         .contains_key("official"));

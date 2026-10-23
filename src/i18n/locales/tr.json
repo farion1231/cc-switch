@@ -185,7 +185,7 @@
     "terminalOpenFailed": "Terminal açılamadı",
     "openTerminalDialog": {
       "title": "Terminal hangi klasörde açılsın?",
-      "description": "Seçtiğiniz klasörde bir terminal açılır ve {{app}}, \"{{name}}\" ayarlarıyla başlatılır. Genellikle proje klasörünüzü seçersiniz.",
+      "description": "Seçtiğiniz klasörde bir terminal açılır ve {{app}}, \"{{name}}\" ayarlarıyla başlatılır. Genellikle proje klasörünüzü seçebilirsiniz.",
       "isolationTitle": "Bu terminal yalıtılmıştır",
       "isolationBody": "Bu terminal \"{{name}}\" sağlayıcısında kalır: CC Switch'te daha sonra sağlayıcı değiştirmeniz bu terminali etkilemez ve CC Switch'in o anda kullandığı sağlayıcıyı değiştirmez.",
       "isolationBodyAgy": "\"{{name}}\" anahtarı ve uç noktası yalnızca bu terminalde agy tarafından kullanılır ve hiçbir dosyaya yazılmaz. agy'yi başka bir terminalde doğrudan çalıştırırsanız Google hesabınızdaki oturum kullanılır.",
@@ -216,9 +216,9 @@
       "agy": {
         "endpointHelp": "Google'ın varsayılan API'sini kullanmak için boş bırakın. Üçüncü taraf uç noktalar Gemini API'sini ve agy'nin yerleşik Gemini modellerini desteklemelidir.",
         "modelHelp": "Model listesindeki görünen adı kullanın (Modelleri Getir). Yalnızca bu oturum için geçerlidir.",
-        "keyFieldsHint": "Model, anahtar ve uç noktası yalnızca \"Terminal Aç\" tarafından kullanılır; Antigravity'nin kendi ayarlarına hiçbir zaman yazılmaz.",
+        "keyFieldsHint": "Model, anahtar ve uç nokta yalnızca \"Terminal Aç\" tarafından kullanılır ve Antigravity’nin kendi ayarlarına hiçbir zaman yazılmaz.",
         "envFile": "Başlatıcı ortam değişkenleri",
-        "envFileHint": "agy, karttaki \"Terminal Aç\" seçeneğiyle başlatıldığında CC Switch, API anahtarını ve uç noktasını yalnızca o agy sürecine iletir; hiçbir dosyaya yazmaz. Diğer ortam değişkenleri uygulanmaz.",
+        "envFileHint": "agy, sağlayıcı kartındaki \"Terminal Aç\" seçeneğiyle başlatıldığında CC Switch API anahtarını ve uç noktasını yalnızca o agy sürecine iletir; hiçbir dosyaya yazmaz. Diğer ortam değişkenleri uygulanmaz.",
         "configJson": "Model yapılandırması (CC Switch biçimi)",
         "configJsonHint": "Burada yalnızca model ayarları desteklenir. Diğer Antigravity seçeneklerini agy'de değiştirin; MCP'yi MCP panelinden yönetin.",
         "account": "Hesap",
@@ -1635,7 +1635,9 @@
       "alltokens_si": "AllTokens SI, istikrar ve güvenilirliği temel alan kurumsal bir yapay zekâ token aktarım ve ekip iş birliği platformudur. Üyeler, anahtarlar, kullanım ve bakiye tek bir şirket konsolunda yönetilir; açık izinler ve harcama sınırları ekip kullanımının izlenebilir ve denetimli olmasını sağlar.",
       "openmodel": "OpenModel, desteklenen modellerde Codex için %90'a, Claude Code için %60'a varan uygulamaya özel indirimler sunar. Bu bağlantıyla kaydolup \"cc-switch\" promosyon kodunu kullanan CC Switch kullanıcıları ilk yüklemelerinde %10 indirim kazanır!",
       "grooroute": "GrooRoute Pro; kullandıkça öde ve abonelik planlarıyla OpenAI, Claude, DeepSeek ve diğer yaygın modellere erişim sağlayan güvenilir bir yapay zekâ API aktarım hizmetidir. Bu bağlantı üzerinden kaydolan CC Switch kullanıcıları ¥5 deneme bakiyesi kazanır!",
-      "dit": "DIT.ai, birden fazla sağlayıcıya daha düşük maliyetle yönlendirme yapan bir yapay zekâ token borsasıdır. OpenAI uyumlu tek bir API üzerinden GPT, Claude, Gemini, DeepSeek, Grok ve Llama dahil 50'den fazla önde gelen modele erişilir; 160'tan fazla rotada sağlayıcılar rekabet eder ve fiyatlar genellikle resmî ücretlerden %30–70 daha düşüktür. CC Switch kullanıcıları bu bağlantıdan kaydolup \"ccswitch\" promosyon koduyla 5 ABD doları değerinde hoş geldin kuponu alabilir!"
+      "dit": "DIT.ai, birden fazla sağlayıcıya daha düşük maliyetle yönlendirme yapan bir yapay zekâ token borsasıdır. OpenAI uyumlu tek bir API üzerinden GPT, Claude, Gemini, DeepSeek, Grok ve Llama dahil 50'den fazla önde gelen modele erişilir; 160'tan fazla rotada sağlayıcılar rekabet eder ve fiyatlar genellikle resmî ücretlerden %30–70 daha düşüktür. CC Switch kullanıcıları bu bağlantıdan kaydolup \"ccswitch\" promosyon koduyla 5 ABD doları değerinde hoş geldin kuponu alabilir!",
+      "buytoken": "BuyToken; Claude Code, Codex, DeepSeek ve daha fazlası için kurumsal düzeyde eşzamanlılık ve hızlı faturalandırma sunan, uzun süreli ve istikrarlı kullanım için tasarlanmış bir yönlendirme hizmetidir. CC Switch kullanıcıları bu bağlantı üzerinden kaydolduklarında 3 ¥ deneme kredisi ve ilk yüklemelerinde %10 indirim kazanır.",
+      "vapi": "V-API, bireyler, geliştiriciler ve işletmeler için istikrarlı, hızlı ve güvenli, yüksek kaliteli LLM API hizmetleri sunan üç yıllık bir markadır. Resmî sözleşme ve e-fatura (temel veya ticari) sağlar. CC Switch kullanıcıları bu bağlantı üzerinden kaydolduklarında 2 ¥ indirim ve ilk siparişlerinde %10 indirim kazanır."
     },
     "presets": {
       "ucloud": "Compshare",
@@ -4924,35 +4926,26 @@
       "mainland-cn": "Çin ana karası",
       "global": "Küresel",
       "signIn": "Kimi'de oturum aç",
-      "signInAgain": "Yeniden oturum aç",
-      "signOut": "Oturumu kapat",
-      "signedIn": "Oturum açıldı · {{region}}",
       "signedOut": "Oturum kapatıldı",
       "statusFailed": "Oturum açma durumu okunamıyor",
-      "refresh": "Kimi oturum açma durumunu yenile",
-      "waiting": "Tarayıcı yetkilendirmesi bekleniyor",
-      "copyCode": "Yetkilendirme kodunu kopyala",
-      "copied": "Yetkilendirme kodu kopyalandı",
-      "openPage": "Yetkilendirme sayfasını aç",
-      "manualHint": "Bu sayfa, yetkilendirme tamamlandıktan sonra güncellenir. Tarayıcı açılmadıysa aşağıdaki bağlantıyı ziyaret edip kodu girin.",
-      "error": "Kimi oturumu açılamadı",
       "expired": "Yetkilendirme kodunun süresi doldu. Yeniden oturum açın.",
       "denied": "Yetkilendirme reddedildi. Yeniden oturum açın.",
       "cancelled": "Bu oturum açma işlemi iptal edildi veya başka bir işlemle değiştirildi. Yeniden oturum açın.",
       "success": "Kimi Code'da oturum açıldı ve resmî modeller eklendi.",
-      "signOutConfirm": "{{name}} hesabından çıkış yapılsın mı? Yalnızca bu hesabın yerel kimlik bilgileri silinir. Diğer hesaplar, sağlayıcılar, modeller ve geçerli model seçimi korunur.",
-      "addAccount": "Hesap ekle",
-      "accountCount": "Kayıtlı hesaplar: {{count}}",
       "manageAccounts": "Kimi hesaplarını yönet",
-      "managedHint": "Yetkilendirme Merkezi'nde Kimi'nin resmî hesaplarını yönetin."
+      "managedHint": "Yetkilendirme Merkezi'nde Kimi'nin resmî hesaplarını yönetin.",
+      "removeAccount": "Hesabı kaldır",
+      "dismissAccount": "Listeden gizle",
+      "removeConfirm": "{{name}} kaldırılsın mı? Bu hesabın sağlayıcısı ve modelleri, yerel kimlik bilgileri ve kartıyla birlikte Kimi Code'dan kaldırılır. Diğer hesaplar etkilenmez.",
+      "dismissConfirm": "{{name}} listeden gizlensin mi? Bu, Kimi Code'un kendi oturumudur; CC Switch oturumu kapatmaz ve kimlik bilgileriyle modelleri saklar. Oturumu kapatmak için Kimi Code'da /logout komutunu çalıştırın. Yeniden oturum açınca hesap listeye geri gelir.",
+      "primaryHidden": "Kimi Code'un kendi oturumu listeden kaldırıldı; yeniden görünmesi için aynı hesapla oturum açın",
+      "removeCurrentHint": "Bu hesap kullanımda. Kaldırmadan önce başka bir hesaba geçin.",
+      "current": "Kimi tarafından kullanılıyor",
+      "primaryShort": "Kimi Code'un kendi oturumu",
+      "empty": "Henüz Kimi hesabı yok. Kimi Code'da oturum açılmış hesap burada otomatik olarak görünür.",
+      "help": "Birden fazla Kimi kodlama planı hesabı ekleyin; her hesap için Kimi Code'da ayrı bir sağlayıcı ve model kümesi oluşturulur. “Bu hesabı kullan” seçeneği Kimi Code'un varsayılan modelini o hesaba geçirir ve bundan sonra açılan oturumlar bu hesabı kullanır. Kimi Code'un kendi oturum açtığı hesap burada otomatik olarak görünür ve web aramasıyla veri getirme işlemlerinde her zaman kullanılır. Bu hesabı buradan kaldırmak yalnızca listeden gizler; Kimi Code oturumunu kapatmaz."
     },
     "modelSelectionHint": "Bir sağlayıcıyı seçmek için kartındaki geçiş düğmesini kullanın. Başka bir model seçmek için Kimi Code'da /model komutunu kullanın.",
-    "providerType": "Sağlayıcı türü",
-    "baseUrl": "Temel URL",
-    "models": "Modeller",
-    "addModel": "Model ekle",
-    "removeModel": "Modeli kaldır",
-    "modelId": "Model kimliği",
     "contextSize": "Bağlam uzunluğu",
     "capabilities": {
       "image_in": "Görsel girdisi",
@@ -4965,6 +4958,14 @@
       "title": "Kimi Code sağlayıcısı ekle",
       "description": "Bir uç nokta, API anahtarı ve modeller yapılandırın. Mevcut Kimi yapılandırması otomatik olarak içe aktarılır."
     },
-    "deleteSessionHint": "Dizini ve geçmişi birlikte güncellemek için bu oturumu Kimi Code'da silin."
+    "deleteSessionHint": "Dizini ve geçmişi birlikte güncellemek için bu oturumu Kimi Code'da silin.",
+    "capabilityHints": {
+      "always_thinking": "Modelin akıl yürütme özelliği kapatılamıyorsa işaretleyin: bu model seçildiğinde Kimi akıl yürütmeyi açar ve kapatma seçeneğini gizler.",
+      "dynamically_loaded_tools": "İstekleri kısa tutmak için modelin araç açıklamalarını gerektiğinde yüklemesini sağlar. Yalnızca Kimi'nin kendi modelleri destekler; üçüncü taraf modellerde kapalı bırakın. KIMI_CODE_EXPERIMENTAL_TOOL_SELECT ayarının da etkin olması gerekir."
+    },
+    "error": {
+      "defaultModelInUse": "Kimi Code bu sağlayıcıdaki bir modeli kullanıyor. Önce Kimi Code'da /model komutuyla başka bir modele geçin.",
+      "secondaryModelInUse": "Kimi Code'un alt ajan modeli bu sağlayıcıdaki bir modeli kullanıyor. Önce Kimi Code'da /secondary-model komutuyla değiştirin."
+    }
   }
 }

@@ -1635,7 +1635,9 @@
       "alltokens_si": "AllTokens SI is built on stability and honesty: an enterprise AI token relay and team collaboration platform. Members, keys, usage, and balance all live in one company console, and clear permissions and spending limits keep team usage traceable and under control.",
       "openmodel": "OpenModel offers client-specific discounts of up to 90% for Codex and 60% for Claude Code across supported models. CC Switch users who register via this link and use promo code \"cc-switch\" get 10% off their first top-up!",
       "grooroute": "GrooRoute Pro is a reliable AI API relay with access to OpenAI, Claude, DeepSeek, and other mainstream models, offering pay-as-you-go and subscription plans. CC Switch users get ¥5 in free trial credit by registering via this link!",
-      "dit": "DIT.ai is an AI token exchange for lower-cost multi-provider routing: one OpenAI-compatible API reaches 50+ leading models including GPT, Claude, Gemini, DeepSeek, Grok, and Llama, with providers competing across 160+ routes, typically 30–70% below official pricing. CC Switch users can register via this link and use promo code \"ccswitch\" to claim a $5 welcome coupon!"
+      "dit": "DIT.ai is an AI token exchange for lower-cost multi-provider routing: one OpenAI-compatible API reaches 50+ leading models including GPT, Claude, Gemini, DeepSeek, Grok, and Llama, with providers competing across 160+ routes, typically 30–70% below official pricing. CC Switch users can register via this link and use promo code \"ccswitch\" to claim a $5 welcome coupon!",
+      "buytoken": "BuyToken offers relay access for Claude Code, Codex, DeepSeek, and more, with enterprise-grade concurrency and fast invoicing, built to be a stable, long-running service. CC Switch users who register via this link get ¥3 in trial credit and 10% off their first top-up!",
+      "vapi": "V-API is a three-year-old brand offering stable, fast, and secure high-quality LLM API services for individuals, developers, and businesses, with formal contracts and official invoices (general / special VAT). CC Switch users who register via this link get ¥2 off and 10% off their first order!"
     },
     "presets": {
       "ucloud": "Compshare",
@@ -4924,35 +4926,26 @@
       "mainland-cn": "Mainland China",
       "global": "Global",
       "signIn": "Sign in to Kimi",
-      "signInAgain": "Sign in again",
-      "signOut": "Sign out",
-      "signedIn": "Signed in · {{region}}",
+      "removeAccount": "Remove account",
+      "dismissAccount": "Hide from list",
       "signedOut": "Signed out",
       "statusFailed": "Cannot read sign-in status",
-      "refresh": "Refresh Kimi sign-in status",
-      "waiting": "Waiting for browser authorization",
-      "copyCode": "Copy authorization code",
-      "copied": "Authorization code copied",
-      "openPage": "Open authorization page",
-      "manualHint": "This page updates after authorization. If the browser did not open, visit the link below and enter the code.",
-      "error": "Kimi sign-in did not complete",
       "expired": "The authorization code expired. Please sign in again.",
       "denied": "Authorization was denied. Please sign in again.",
       "cancelled": "This sign-in was cancelled or replaced. Please sign in again.",
       "success": "Signed in to Kimi Code and added the official models.",
-      "signOutConfirm": "Sign out {{name}}? Only this account's local credentials are removed. Other accounts, providers, models and the current model selection are kept.",
-      "addAccount": "Add account",
-      "accountCount": "Saved accounts: {{count}}",
+      "removeConfirm": "Remove {{name}}? Its provider and models are removed from Kimi Code, along with its local credentials and card. Other accounts are not affected.",
+      "dismissConfirm": "Hide {{name}} from the list? This is Kimi Code's own login; CC Switch will not sign it out and keeps its credentials and models. To sign out, run /logout in Kimi Code. Signing in again brings it back to the list.",
+      "primaryHidden": "Kimi Code's own login was removed from the list; sign in to the same account to bring it back",
+      "removeCurrentHint": "This account is in use. Switch to another account before removing it.",
       "manageAccounts": "Manage Kimi accounts",
-      "managedHint": "Manage official Kimi accounts in the Authorization Center."
+      "managedHint": "Manage official Kimi accounts in the Authorization Center.",
+      "current": "In use by Kimi",
+      "primaryShort": "Kimi Code's own login",
+      "empty": "No Kimi accounts yet. The account signed in to Kimi Code shows up here automatically.",
+      "help": "Add several Kimi coding plan accounts; each gets its own provider and models in Kimi Code. \"Use this account\" switches Kimi Code's default model to that account, and new sessions use it from then on. The account Kimi Code itself is signed in with shows up here automatically and is always used for web search and fetch; removing it here only hides it from the list and never signs Kimi Code out."
     },
     "modelSelectionHint": "Use the switch button on a provider card to select it. To choose another model, use /model in Kimi Code.",
-    "providerType": "Provider type",
-    "baseUrl": "Base URL",
-    "models": "Models",
-    "addModel": "Add model",
-    "removeModel": "Remove model",
-    "modelId": "Model ID",
     "contextSize": "Context size",
     "capabilities": {
       "image_in": "Image input",
@@ -4961,10 +4954,18 @@
       "tool_use": "Tool use",
       "dynamically_loaded_tools": "Load tools on demand"
     },
+    "capabilityHints": {
+      "always_thinking": "Check when the model's thinking can't be turned off: Kimi turns thinking on when this model is selected and hides the off option",
+      "dynamically_loaded_tools": "Lets the model load tool descriptions on demand to keep requests short. Only Kimi's own models support it; leave it off for third-party models. Also requires KIMI_CODE_EXPERIMENTAL_TOOL_SELECT"
+    },
     "empty": {
       "title": "Add a Kimi Code provider",
       "description": "Configure an endpoint, API key and models. Existing Kimi configuration is imported automatically."
     },
-    "deleteSessionHint": "Delete this session in Kimi Code to update its index and history together."
+    "deleteSessionHint": "Delete this session in Kimi Code to update its index and history together.",
+    "error": {
+      "defaultModelInUse": "Kimi Code is using a model from this provider. Switch to another model with /model in Kimi Code first.",
+      "secondaryModelInUse": "Kimi Code's subagent model uses a model from this provider. Change it with /secondary-model in Kimi Code first."
+    }
   }
 }

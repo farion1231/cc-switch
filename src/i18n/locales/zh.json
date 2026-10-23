@@ -1635,7 +1635,9 @@
       "alltokens_si": "AllTokens SI 秉持「稳定为基，真实为本」，是专为企业打造的 AI Token 中转与团队协作平台：成员、密钥、用量与余额统一纳入企业控制台，以清晰的权限与额度配置，让团队协作有据可查、安心可控。",
       "openmodel": "OpenModel 为 Codex 和 Claude Code 提供客户端专属折扣，所支持的模型通过 Codex 调用最高优惠 90%、通过 Claude Code 调用最高优惠 60%。CC Switch 用户通过此链接注册并使用优惠码 \"cc-switch\"，即可享受首次充值九折优惠！",
       "grooroute": "GrooRoute Pro 是可靠流畅的 AI API 中转服务平台，接入 OpenAI、Claude、DeepSeek 等主流大模型，支持按量计费与订阅套餐。CC Switch 用户通过此链接注册即可获得免费 5 元体验额度！",
-      "dit": "DIT.ai 是面向多供应商低价路由的 AI Token 交易市场：一个 OpenAI 兼容 API 即可调用 GPT、Claude、Gemini、DeepSeek、Grok、Llama 等 50 多个主流模型，160 多条线路实时竞价，价格通常比官方低 30–70%。CC Switch 用户通过此链接注册并使用优惠码 \"ccswitch\"，可领取 5 美元新人券！"
+      "dit": "DIT.ai 是面向多供应商低价路由的 AI Token 交易市场：一个 OpenAI 兼容 API 即可调用 GPT、Claude、Gemini、DeepSeek、Grok、Llama 等 50 多个主流模型，160 多条线路实时竞价，价格通常比官方低 30–70%。CC Switch 用户通过此链接注册并使用优惠码 \"ccswitch\"，可领取 5 美元新人券！",
+      "buytoken": "BuyToken 提供 Claude Code、Codex、DeepSeek 等各类中转服务，支持企业级并发、可极速开票，专注做稳定长久站。CC Switch 用户通过此链接注册可得 3 元体验额度，首充享 9 折！",
+      "vapi": "V-API 是三年老品牌，为个人、开发者和企业提供稳定、快速、安全的高品质大语言模型 API 服务，支持合同签约、正规开票（普票 / 专票）。CC Switch 用户通过此链接注册，首单立减 2 元并享 9 折优惠！"
     },
     "presets": {
       "ucloud": "优云智算",
@@ -4924,35 +4926,26 @@
       "mainland-cn": "国内版",
       "global": "海外版",
       "signIn": "登录 Kimi",
-      "signInAgain": "重新登录",
-      "signOut": "退出登录",
-      "signedIn": "已登录 · {{region}}",
+      "removeAccount": "删除账号",
+      "dismissAccount": "移出列表",
       "signedOut": "未登录",
       "statusFailed": "无法读取登录状态",
-      "refresh": "刷新 Kimi 登录状态",
-      "waiting": "等待浏览器授权",
-      "copyCode": "复制授权码",
-      "copied": "授权码已复制",
-      "openPage": "打开授权页面",
-      "manualHint": "在浏览器完成授权后会自动更新。浏览器未打开时，可手动访问下方链接并输入授权码。",
-      "error": "Kimi 登录未完成",
       "expired": "授权码已过期，请重新登录。",
       "denied": "授权已被拒绝，请重新登录。",
       "cancelled": "登录已取消或被其他登录替代，请重新登录。",
       "success": "Kimi Code 登录成功，已添加官方模型。",
-      "signOutConfirm": "退出 {{name}}？仅移除此账号的本机凭据，其他账号、供应商、模型和当前模型选择会保留。",
-      "addAccount": "添加账号",
-      "accountCount": "已保存 {{count}} 个账号",
+      "removeConfirm": "删除 {{name}}？会从 Kimi Code 里删掉这个账号的供应商和模型，并删除它的本机登录凭据和卡片。其他账号不受影响。",
+      "dismissConfirm": "把 {{name}} 移出列表？这是 Kimi Code 自己的登录，CC Switch 不会替它退出登录，凭据和模型都会保留；如需退出，请在 Kimi Code 里运行 /logout。之后重新登录会让它回到列表。",
+      "primaryHidden": "Kimi Code 自己的登录已移出列表，重新登录同一账号即可找回",
+      "removeCurrentHint": "这个账号正在使用，请先切换到其他账号再删除",
       "manageAccounts": "管理 Kimi 账号",
-      "managedHint": "请在授权中心管理 Kimi 官方账号。"
+      "managedHint": "请在授权中心管理 Kimi 官方账号。",
+      "current": "Kimi 在用",
+      "primaryShort": "Kimi Code 自己的登录",
+      "empty": "还没有 Kimi 账号。Kimi Code 里已登录的号会自动出现在这里。",
+      "help": "可添加多个 Kimi 编程套餐账号，每个号在 Kimi Code 里有自己的供应商和模型。「使用此账号」会把 Kimi Code 的默认模型换成这个号的，之后新开的会话都用它。Kimi Code 自己登着的号会自动出现在这里，联网搜索和网页抓取始终用它；在这里删掉它只会移出列表，不会让 Kimi Code 退出登录。"
     },
     "modelSelectionHint": "点击供应商卡片的切换按钮选择默认供应商；需要指定其他模型时，在 Kimi Code 中使用 /model。",
-    "providerType": "供应商类型",
-    "baseUrl": "请求地址",
-    "models": "模型",
-    "addModel": "添加模型",
-    "removeModel": "移除模型",
-    "modelId": "模型 ID",
     "contextSize": "上下文长度",
     "capabilities": {
       "image_in": "图片输入",
@@ -4961,10 +4954,18 @@
       "tool_use": "工具调用",
       "dynamically_loaded_tools": "按需加载工具"
     },
+    "capabilityHints": {
+      "always_thinking": "模型的思考无法关闭时勾选：选中该模型时自动开启思考，且不提供关闭选项",
+      "dynamically_loaded_tools": "让模型按需加载工具说明，缩短请求。仅 Kimi 自家模型支持，第三方模型请勿勾选；还需开启 KIMI_CODE_EXPERIMENTAL_TOOL_SELECT"
+    },
     "empty": {
       "title": "添加 Kimi Code 供应商",
       "description": "配置请求地址、API Key 和模型；已有 Kimi 配置会自动导入。"
     },
-    "deleteSessionHint": "请在 Kimi Code 中删除，以同时更新会话索引和历史记录。"
+    "deleteSessionHint": "请在 Kimi Code 中删除，以同时更新会话索引和历史记录。",
+    "error": {
+      "defaultModelInUse": "Kimi Code 正在使用该供应商的模型，请先在 Kimi Code 中用 /model 切换到其他模型",
+      "secondaryModelInUse": "Kimi Code 的子代理模型正在使用该供应商的模型，请先在 Kimi Code 中用 /secondary-model 更换"
+    }
   }
 }
