@@ -383,7 +383,8 @@ impl ProfileService {
                         match ProviderService::switch(state, app.clone(), target_pid) {
                             Ok(result) => warnings.extend(result.warnings),
                             Err(e) => warnings.push(format!(
-                                "[{app_str}] switch provider '{target_pid}' failed: {e}"
+                                "[{app_str}] switch provider '{target_pid}' failed: {}",
+                                crate::error::display_error_message(&e.to_string())
                             )),
                         }
                     }

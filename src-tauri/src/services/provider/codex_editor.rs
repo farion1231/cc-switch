@@ -203,6 +203,7 @@ fn plan_for_view(
     let plan = |provider: &Provider| {
         codex_direct::plan(
             db,
+            op::APPLY,
             owner,
             &Target::Direct(Some(provider)),
             &Prepared::default(),
@@ -520,10 +521,11 @@ pub(crate) fn write_live(
             let owner = prev.map_or(Owner::None, Owner::Provider);
             let spec = Target::Direct(Some(target));
             let prepared = codex_direct::prepare(manager, &owner, &spec)?;
-            let planned = codex_direct::plan(db, &owner, &spec, &prepared)?;
+            let op_name = if set_pointer { op::SWITCH } else { op::APPLY };
+            let planned = codex_direct::plan(db, op_name, &owner, &spec, &prepared)?;
             codex_direct::run_with_edits(
                 db,
-                if set_pointer { op::SWITCH } else { op::APPLY },
+                op_name,
                 planned,
                 &prepared,
                 PendingTarget::pointer(set_pointer.then(|| target.id.clone())),

@@ -8,6 +8,7 @@ import { parseLiveEditConflict } from "@/lib/errors/liveEditConflict";
 import type { Provider, SessionMeta, Settings } from "@/types";
 import {
   extractErrorMessage,
+  translateCodexProviderMutationError,
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
@@ -368,7 +369,11 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       }
     },
     onError: (error: Error) => {
-      const detail = extractErrorMessage(error) || t("common.unknown");
+      const message = extractErrorMessage(error) || t("common.unknown");
+      const detail =
+        (appId === "codex" &&
+          translateCodexProviderMutationError(message, t)) ||
+        message;
 
       toast.error(
         t("notifications.switchFailedTitle", { defaultValue: "切换失败" }),

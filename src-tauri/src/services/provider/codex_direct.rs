@@ -213,6 +213,7 @@ pub(crate) fn prepare(
 /// 10 秒）放到阻塞线程池里做，不占异步运行时的工作线程。
 pub(crate) async fn prepare_official_rows(
     db: &Database,
+    op_name: &str,
     owner: &Owner<'_>,
     target: &Target<'_>,
     prepared: &mut Prepared,
@@ -229,7 +230,7 @@ pub(crate) async fn prepare_official_rows(
     ) {
         prepared.keychain = Some(off_runtime(codex_official_models::keychain_login).await?);
     }
-    let login = predicted_official_login(db, owner, target, prepared)?;
+    let login = predicted_official_login(db, op_name, owner, target, prepared)?;
     let rows = off_runtime(move || codex_official_models::rows_for_switch(&login)).await?;
     // 取官方行最多要 10 秒，这期间 Codex 可能在钥匙串里换了号。取完再读一次，拿锁后按
     // 这次读到的核对（见 `run_with_edits`），换了号就停下。
@@ -259,11 +260,12 @@ pub(crate) fn needs_official_rows(route: &Provider, stack: &[Member]) -> bool {
 /// 读，调用方要在阻塞线程里。
 pub(crate) fn predicted_official_login(
     db: &Database,
+    op_name: &str,
     owner: &Owner<'_>,
     target: &Target<'_>,
     prepared: &Prepared,
 ) -> Result<Result<OfficialLogin, OfficialSkip>, AppError> {
-    let (auth_plan, live) = predicted_auth(db, owner, target, prepared)?;
+    let (auth_plan, live) = predicted_auth(db, op_name, owner, target, prepared)?;
     let keychain = || {
         prepared
             .keychain
@@ -280,12 +282,13 @@ pub(crate) fn predicted_official_login(
 /// 按未加锁读到的内容预测这次操作对 `auth.json` 的去向，和读到的 live `auth.json`。只读。
 fn predicted_auth(
     db: &Database,
+    op_name: &str,
     owner: &Owner<'_>,
     target: &Target<'_>,
     prepared: &Prepared,
 ) -> Result<(AuthPlan, Option<Value>), AppError> {
     // 先按没有官方行算一遍，拿到这次对 auth.json 的去向（目录在第二遍才算）。
-    let planned = plan(db, owner, target, prepared)?;
+    let planned = plan(db, op_name, owner, target, prepared)?;
     let live = read_current(&get_codex_auth_path())
         .ok()
         .flatten()
@@ -301,10 +304,15 @@ fn predicted_auth(
         live_is_managed: live_is_managed(prepared, live.as_ref()),
         third_party_keys: &planned.retired_keys,
         leaving_official: planned.leaving_official.as_ref(),
-        target: auth_target(&planned.auth, op::SWITCH),
+        target: auth_target(&planned.auth, op_name),
         stash,
         now: chrono::Utc::now().timestamp(),
     });
+    ensure_official_login(
+        planned.expected_official_login.as_deref(),
+        &auth_plan,
+        live.as_ref(),
+    )?;
     Ok((auth_plan, live))
 }
 
@@ -316,7 +324,7 @@ pub(crate) fn predicted_auth_file(
     owner: &Owner<'_>,
     target: &Target<'_>,
 ) -> Result<Option<Value>, AppError> {
-    let (auth_plan, live) = predicted_auth(db, owner, target, &Prepared::default())?;
+    let (auth_plan, live) = predicted_auth(db, op::APPLY, owner, target, &Prepared::default())?;
     Ok(file_after(&auth_plan, live.as_ref()))
 }
 
@@ -327,6 +335,42 @@ fn file_after(auth_plan: &AuthPlan, live: Option<&Value>) -> Option<Value> {
         Some(None) => None,
         Some(Some(auth)) => Some(auth.clone()),
     }
+}
+
+/// Reject selecting a different legacy card if auth.json would keep another
+/// login. An absent login is valid after logout or with keychain storage; writes
+/// to the current card must also follow account changes made inside Codex.
+fn ensure_official_login(
+    expected: Option<&str>,
+    auth_plan: &AuthPlan,
+    live: Option<&Value>,
+) -> Result<(), AppError> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    let after = match &auth_plan.auth {
+        None => live,
+        Some(None) => None,
+        Some(Some(auth)) => Some(auth),
+    };
+    let Some(actual) = after.and_then(codex_login::official_login_requirement) else {
+        return Ok(());
+    };
+    if actual != expected {
+        let message = AppError::localized(
+            "codex.official_login_unavailable",
+            "这张卡片对应的 Codex 官方登录在本机不可用。请先在授权中心添加账号，再编辑卡片，将登录方式绑定到该账号。客户端文件和供应商选择均未更改。",
+            "Codex official login is unavailable for this card on this device. Add the account in Accounts, then edit the card and select that account as its login method. No client files or provider selection were changed.",
+        );
+        return Err(AppError::Message(
+            serde_json::json!({
+                "code": "codex.official_login_unavailable",
+                "message": message.to_string(),
+            })
+            .to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// 操作之后 Codex 实际会用的登录，按 `cli_auth_credentials_store`：file 看操作之后的
@@ -556,6 +600,9 @@ pub(crate) struct Planned {
     stamp: Option<RouteAuth>,
     catalog: Option<Vec<u8>>,
     auth: AuthGoal,
+    /// Only selecting a different card checks which login would remain on disk.
+    /// Editing or reapplying the current card follows the user's Codex login.
+    expected_official_login: Option<String>,
     /// 切走的是没绑托管账号的官方卡：它行里的 `auth`。
     leaving_official: Option<Value>,
     retired_keys: Vec<String>,
@@ -576,6 +623,7 @@ impl Planned {
 /// 算出写入内容；行有问题（比如会把官方登录发给第三方）就在这里报错，什么都不写。
 pub(crate) fn plan(
     db: &Database,
+    op_name: &str,
     owner: &Owner<'_>,
     target: &Target<'_>,
     prepared: &Prepared,
@@ -759,6 +807,13 @@ pub(crate) fn plan(
         stamp,
         catalog,
         auth,
+        expected_official_login: official_login.filter(|_| {
+            // Mode changes reapply independently selected direct/route cards.
+            // Only an explicit card switch requires the target's saved login.
+            matches!(op_name, op::SWITCH | op::ROUTE)
+                && owner.provider().map(|provider| &provider.id)
+                    != provider.map(|provider| &provider.id)
+        }),
         leaving_official,
         retired_keys: facts.third_party_keys,
         official_logins: facts.official_logins,
@@ -1167,6 +1222,11 @@ pub(crate) fn run_with_edits(
         stash,
         now: chrono::Utc::now().timestamp(),
     });
+    ensure_official_login(
+        planned.expected_official_login.as_deref(),
+        &auth_plan,
+        live_auth.as_ref(),
+    )?;
     let config_text = read_config_text();
     // 目录里的官方行是按拿锁前预测的登录取的：实际的目标登录换了人（Codex 恰好重新登录、
     // settle 补完了上一次操作），就停下，什么都不写。不能换成别的来源：目录已经算进契约。
@@ -1320,14 +1380,14 @@ pub(crate) fn write_direct(
 ) -> Result<OperationReport, AppError> {
     let target = Target::Direct(target);
     let prepared = prepare(manager, &owner, &target)?;
-    let planned = plan(db, &owner, &target, &prepared)?;
+    let planned = plan(db, op, &owner, &target, &prepared)?;
     run(db, op, planned, &prepared, pending)
 }
 
 /// 只校验，不写：切换前用它挡住会被拒绝的目标（行有问题时指针不能先动）。
 pub(crate) fn preflight(db: &Database, provider: &Provider) -> Result<(), AppError> {
     let target = Target::Direct(Some(provider));
-    plan(db, &Owner::None, &target, &Prepared::default()).map(|_| ())
+    plan(db, op::APPLY, &Owner::None, &target, &Prepared::default()).map(|_| ())
 }
 
 #[cfg(test)]

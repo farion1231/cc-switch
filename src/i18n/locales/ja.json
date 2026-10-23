@@ -315,6 +315,7 @@
     "providerSaved": "プロバイダー設定を保存しました",
     "providerDeleted": "プロバイダーを削除しました",
     "switchSuccess": "切り替え成功！",
+    "codexOfficialLoginUnavailable": "このカードの Codex ログインは、このデバイスでは利用できません。「アカウント」でアカウントを追加し、カードを編集してログイン方法にそのアカウントを選択してください。クライアントファイルとプロバイダーの選択は変更されていません。",
     "codexRestartRequired": "切り替えました。反映するにはクライアントを再起動してください",
     "geminiRestartRequired": "切り替えました。反映するには Gemini CLI を再起動してください",
     "grokBuildRestartRequired": "切り替えました。反映するには Grok Build を再起動してください",

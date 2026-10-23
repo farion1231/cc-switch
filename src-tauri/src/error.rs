@@ -123,6 +123,24 @@ impl serde::Serialize for AppError {
     }
 }
 
+/// Native UI surfaces need readable text while command errors retain their code.
+pub(crate) fn display_error_message(message: &str) -> String {
+    let Some(start) = message.find('{') else {
+        return message.to_string();
+    };
+    let Ok(error) = serde_json::from_str::<serde_json::Value>(&message[start..]) else {
+        return message.to_string();
+    };
+    if error.get("code").and_then(serde_json::Value::as_str)
+        == Some("codex.official_login_unavailable")
+    {
+        if let Some(detail) = error.get("message").and_then(serde_json::Value::as_str) {
+            return format!("{}{detail}", &message[..start]);
+        }
+    }
+    message.to_string()
+}
+
 /// 格式化为 JSON 错误字符串，前端可解析为结构化错误
 pub fn format_skill_error(
     code: &str,
@@ -146,4 +164,36 @@ pub fn format_skill_error(
         // 如果 JSON 序列化失败，返回简单格式
         format!("ERROR:{code}")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::display_error_message;
+
+    #[test]
+    fn codex_login_display_keeps_context_without_showing_json() {
+        let error = serde_json::json!({
+            "code": "codex.official_login_unavailable",
+            "message": "Add the account in Accounts."
+        })
+        .to_string();
+        for prefix in ["", "切换路由失败: "] {
+            assert_eq!(
+                display_error_message(&format!("{prefix}{error}")),
+                format!("{prefix}Add the account in Accounts.")
+            );
+        }
+    }
+
+    #[test]
+    fn codex_login_display_preserves_unrecognized_errors() {
+        for message in [
+            "an ordinary error",
+            "wrapped: {invalid json}",
+            r#"{"code":"another.error","message":"keep the payload"}"#,
+            r#"{"code":"codex.official_login_unavailable"}"#,
+        ] {
+            assert_eq!(display_error_message(message), message);
+        }
+    }
 }

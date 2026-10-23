@@ -1384,7 +1384,7 @@ fn record_switch_failure(app: &AppType, reason: String) {
     failures.retain(|failure| failure.app != *app);
     failures.push(SwitchFailure {
         app: app.clone(),
-        reason,
+        reason: crate::error::display_error_message(&reason),
     });
 }
 

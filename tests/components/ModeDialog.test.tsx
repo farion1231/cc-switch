@@ -55,9 +55,7 @@ describe("ModeDialog exit", () => {
       screen.getByRole("button", { name: "mode.dialog.confirmDirect" }),
     );
 
-    await waitFor(() =>
-      expect(props.onExit).toHaveBeenCalledWith("deepseek"),
-    );
+    await waitFor(() => expect(props.onExit).toHaveBeenCalledWith("deepseek"));
   });
 
   it("keeps the dialog open and shows the error when leaving fails", async () => {
@@ -72,6 +70,32 @@ describe("ModeDialog exit", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("write failed");
     expect(props.onClose).not.toHaveBeenCalled();
   });
+
+  it.each(["", "切换路由失败: "])(
+    "explains a Codex account selection failure after leaving route mode (%s)",
+    async (prefix) => {
+      const props = renderExit({
+        app: "codex",
+        state: { kind: "exit", useProviderId: "deepseek" },
+        onExit: vi.fn().mockRejectedValue(
+          new Error(
+            prefix +
+              JSON.stringify({
+                code: "codex.official_login_unavailable",
+                message: "Backend fallback wording",
+              }),
+          ),
+        ),
+      });
+      fireEvent.click(
+        screen.getByRole("button", { name: "mode.dialog.confirmDirect" }),
+      );
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "notifications.codexOfficialLoginUnavailable",
+      );
+      expect(props.onClose).not.toHaveBeenCalled();
+    },
+  );
 
   it("gives Claude Desktop its own notes: restart, no file, no failover", () => {
     renderExit({ app: "claude-desktop" });
