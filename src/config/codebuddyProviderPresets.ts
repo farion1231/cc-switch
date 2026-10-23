@@ -22,9 +22,10 @@ export interface CodebuddyModelConfig {
   [key: string]: unknown;
 }
 
+// Same protocol names as the Pi, OpenCode and Kimi Code "API format" menus.
 export const CODEBUDDY_API_FORMATS = [
-  { value: "", labelKey: "codebuddy.apiChatCompletions" },
-  { value: "openai-responses", labelKey: "codebuddy.apiResponses" },
+  { value: "", label: "OpenAI Chat Completions" },
+  { value: "openai-responses", label: "OpenAI Responses" },
 ] as const;
 
 export interface CodebuddyProviderPreset extends PresetFamilyFields {

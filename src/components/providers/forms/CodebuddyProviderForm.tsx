@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
+import { ChevronRight, Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Form } from "@/components/ui/form";
+import { Form, FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
+import { HelpTip } from "@/components/ui/help-tip";
 import {
   Select,
   SelectContent,
@@ -15,7 +17,10 @@ import {
 } from "@/components/ui/select";
 import JsonEditor from "@/components/JsonEditor";
 import { useDarkMode } from "@/hooks/useDarkMode";
+import { useLatestRef } from "@/hooks/useLatestRef";
+import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
 import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -28,8 +33,13 @@ import {
   codebuddyProviderPresets,
   type CodebuddyModelConfig,
 } from "@/config/codebuddyProviderPresets";
+import { codebuddyPresetModelSources } from "@/config/presetModelMetadata";
 import { BasicFormFields, REQUIRED_LABEL } from "./BasicFormFields";
-import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
+import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
+import {
+  fillCodebuddyModel,
+  metadataFilledAnything,
+} from "./modelMetadataFill";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import type { ProviderFormProps } from "./ProviderForm";
 
@@ -159,13 +169,16 @@ export function CodebuddyProviderForm({
     onSubmitReadyChange?.(ready);
   }, [ready, onSubmitReadyChange]);
 
+  const configRef = useLatestRef(config);
+  const modelIdRef = useLatestRef(trimmedId);
   const update = (next: CodebuddyModelConfig) => {
+    configRef.current = next;
     setConfig(next);
     setJsonText(JSON.stringify(next, null, 2));
     setJsonValid(true);
   };
   const setField = (key: keyof CodebuddyModelConfig, value: unknown) => {
-    const next = { ...config };
+    const next = { ...configRef.current };
     if (value === undefined || value === "") delete next[key];
     else next[key] = value;
     update(next);
@@ -192,6 +205,15 @@ export function CodebuddyProviderForm({
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const fetchGeneration = useRef(0);
   const apiKey = config.apiKey ?? "";
+  const api = config.api;
+  useEffect(() => {
+    setFetchedModels((prev) => (prev.length === 0 ? prev : []));
+    setIsFetchingModels(false);
+    return () => {
+      // 地址、Key 或接口格式变了，旧请求的结果不再适用。
+      fetchGeneration.current += 1;
+    };
+  }, [url, apiKey, api]);
   const handleFetchModels = useCallback(() => {
     const endpoint = url.trim();
     const key = apiKey.trim();
@@ -227,6 +249,26 @@ export function CodebuddyProviderForm({
         if (generation === fetchGeneration.current) setIsFetchingModels(false);
       });
   }, [url, apiKey, config.api, t]);
+
+  const fillModelMetadata = useModelMetadataFill({
+    baseUrl: url,
+    presets: codebuddyPresetModelSources,
+    prefetch: fetchedModels.length > 0,
+  });
+  const selectFetchedModel = (id: string) => {
+    setModelId(id);
+    modelIdRef.current = id;
+    // 补全可能晚到：确认模型 ID 仍是这个再补。
+    fillModelMetadata(id, (metadata) => {
+      if (modelIdRef.current !== id) return false;
+      const current = configRef.current;
+      const filled = fillCodebuddyModel(current, metadata);
+      if (!metadataFilledAnything(current, filled)) return false;
+      update(filled);
+      return true;
+    });
+  };
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <Form {...form}>
@@ -287,51 +329,11 @@ export function CodebuddyProviderForm({
           disabled={busy || !jsonValid}
           className="min-w-0 space-y-6 border-0 p-0 disabled:opacity-50"
         >
-          <BasicFormFields
-            form={form}
-            beforeNameSlot={
-              <div className="space-y-2">
-                <Label htmlFor="codebuddy-model-id" className={REQUIRED_LABEL}>
-                  {t("codebuddy.modelId")}
-                </Label>
-                {isEdit ? (
-                  <Input
-                    id="codebuddy-model-id"
-                    value={modelId}
-                    disabled
-                    autoComplete="off"
-                  />
-                ) : (
-                  <ModelInputWithFetch
-                    id="codebuddy-model-id"
-                    value={modelId}
-                    onChange={setModelId}
-                    placeholder="deepseek-chat"
-                    fetchedModels={fetchedModels}
-                    isLoading={isFetchingModels}
-                    onFetch={handleFetchModels}
-                  />
-                )}
-                <p
-                  className={
-                    keyTaken || keyInvalid
-                      ? "text-xs text-destructive"
-                      : "text-xs text-fg-2"
-                  }
-                >
-                  {keyTaken
-                    ? t("codebuddy.modelIdDuplicate")
-                    : keyInvalid
-                      ? t("codebuddy.modelIdInvalid")
-                      : isEdit
-                        ? t("codebuddy.modelIdLockedHint")
-                        : t("codebuddy.modelIdHint")}
-                </p>
-              </div>
-            }
-          />
+          <BasicFormFields form={form} />
           <div className="space-y-2">
-            <Label htmlFor="codebuddy-api">{t("codebuddy.api")}</Label>
+            <FormLabel htmlFor="codebuddy-api">
+              {t("opencode.npmPackage")}
+            </FormLabel>
             <Select
               value={config.api ? String(config.api) : CHAT_COMPLETIONS}
               onValueChange={(value) =>
@@ -347,7 +349,7 @@ export function CodebuddyProviderForm({
                     key={format.value || CHAT_COMPLETIONS}
                     value={format.value || CHAT_COMPLETIONS}
                   >
-                    {t(format.labelKey)}
+                    {format.label}
                   </SelectItem>
                 ))}
                 {config.api &&
@@ -410,38 +412,151 @@ export function CodebuddyProviderForm({
               autoComplete="off"
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            {(["maxInputTokens", "maxOutputTokens"] as const).map((key) => (
-              <div key={key} className="space-y-2">
-                <Label htmlFor={`codebuddy-${key}`}>
-                  {t(`codebuddy.${key}`)}
-                </Label>
-                <Input
-                  id={`codebuddy-${key}`}
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={config[key] === undefined ? "" : String(config[key])}
-                  onChange={(event) =>
-                    setField(key, toPositiveInt(event.target.value))
-                  }
-                  autoComplete="off"
-                />
+          {/* 一张卡片就是 models.json 里的一条模型，所以只有固定的一行。 */}
+          <div className="space-y-3 border-l border-border pl-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1">
+                <FormLabel>{t("opencode.models")}</FormLabel>
+                <HelpTip title={t("opencode.models")}>
+                  {t("codebuddy.modelsHint")}
+                </HelpTip>
               </div>
-            ))}
-          </div>
-          <div className="flex flex-wrap gap-4">
-            {CAPABILITIES.map((key) => (
-              <label key={key} className="flex items-center gap-2 text-sm">
-                <Checkbox
-                  checked={config[key] === true}
-                  onCheckedChange={(checked) =>
-                    setField(key, checked ? true : undefined)
-                  }
-                />
-                {t(`codebuddy.${key}`)}
-              </label>
-            ))}
+              {!isEdit && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleFetchModels}
+                  disabled={isFetchingModels}
+                  className="h-7 gap-1"
+                >
+                  {isFetchingModels ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Download className="h-3.5 w-3.5" />
+                  )}
+                  {t("providerForm.fetchModels")}
+                </Button>
+              )}
+            </div>
+            <div className="space-y-2">
+              <div className="mb-1 flex items-center gap-2 px-1 text-xs text-fg-2">
+                <span className="w-9" />
+                <span className={cn("flex-1", REQUIRED_LABEL)}>
+                  {t("opencode.modelId")}
+                </span>
+                <span className={cn("flex-1", REQUIRED_LABEL)}>
+                  {t("opencode.modelName")}
+                </span>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setExpanded((open) => !open)}
+                    aria-label={t("opencode.toggleModelDetails")}
+                    aria-expanded={expanded}
+                    className="h-9 w-9 shrink-0"
+                  >
+                    <ChevronRight
+                      className={cn(
+                        "h-4 w-4 transition-transform motion-reduce:transition-none",
+                        expanded && "rotate-90",
+                      )}
+                    />
+                  </Button>
+                  <div className="flex min-w-0 flex-1 gap-1">
+                    <Input
+                      id="codebuddy-model-id"
+                      value={modelId}
+                      onChange={(event) => setModelId(event.target.value)}
+                      disabled={isEdit}
+                      placeholder="deepseek-chat"
+                      aria-label={t("opencode.modelId")}
+                      aria-invalid={keyTaken || keyInvalid}
+                      autoComplete="off"
+                      className="min-w-0 flex-1"
+                    />
+                    {!isEdit && fetchedModels.length > 0 && (
+                      <ModelDropdown
+                        models={fetchedModels}
+                        onSelect={selectFetchedModel}
+                      />
+                    )}
+                  </div>
+                  {/* models.json 的 name 同时是卡片名称，和上方「供应商名称」是同一个值。 */}
+                  <Input
+                    id="codebuddy-model-name"
+                    value={name}
+                    onChange={(event) =>
+                      form.setValue("name", event.target.value, {
+                        shouldDirty: true,
+                      })
+                    }
+                    placeholder={t("opencode.modelName")}
+                    aria-label={t("opencode.modelName")}
+                    autoComplete="off"
+                    className="min-w-0 flex-1"
+                  />
+                </div>
+                {(keyTaken || keyInvalid) && (
+                  <p className="ml-11 text-xs text-destructive">
+                    {keyTaken
+                      ? t("codebuddy.modelIdDuplicate")
+                      : t("codebuddy.modelIdInvalid")}
+                  </p>
+                )}
+                {expanded && (
+                  <div className="ml-9 grid gap-3 border-l-2 border-muted pl-4 sm:grid-cols-2">
+                    <div className="flex min-h-9 flex-wrap items-center gap-x-8 gap-y-2 sm:col-span-2">
+                      {CAPABILITIES.map((key) => (
+                        <div key={key} className="flex items-center gap-2.5">
+                          <Label
+                            htmlFor={`codebuddy-${key}`}
+                            className="cursor-pointer"
+                          >
+                            {t(`codebuddy.${key}`)}
+                          </Label>
+                          <Switch
+                            id={`codebuddy-${key}`}
+                            checked={config[key] === true}
+                            onCheckedChange={(checked) =>
+                              setField(key, checked ? true : undefined)
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    {(["maxInputTokens", "maxOutputTokens"] as const).map(
+                      (key) => (
+                        <div key={key} className="space-y-2">
+                          <Label htmlFor={`codebuddy-${key}`}>
+                            {t(`codebuddy.${key}`)}
+                          </Label>
+                          <Input
+                            id={`codebuddy-${key}`}
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={
+                              config[key] === undefined
+                                ? ""
+                                : String(config[key])
+                            }
+                            onChange={(event) =>
+                              setField(key, toPositiveInt(event.target.value))
+                            }
+                            autoComplete="off"
+                          />
+                        </div>
+                      ),
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </fieldset>
         <div className="space-y-2">

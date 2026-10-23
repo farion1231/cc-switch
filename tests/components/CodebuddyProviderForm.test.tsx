@@ -6,13 +6,17 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
   CodebuddyProviderForm,
   codebuddyModelsBase,
 } from "@/components/providers/forms/CodebuddyProviderForm";
 import { codebuddyProviderPresets } from "@/config/codebuddyProviderPresets";
 import { fetchModelsForConfig } from "@/lib/api/model-fetch";
+import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
+import { server } from "../msw/server";
 import { setProviders } from "../msw/state";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
@@ -39,12 +43,22 @@ vi.mock("@/components/JsonEditor", () => ({
   ),
 }));
 
+// 模型参数收在模型行的展开区里，和 Kimi、Pi、OpenCode 一样。
+const expandModel = () =>
+  fireEvent.click(
+    screen.getByRole("button", { name: "opencode.toggleModelDetails" }),
+  );
+
 const render = (ui: ReactElement) =>
   rtlRender(
     <QueryClientProvider client={createTestQueryClient()}>
       {ui}
     </QueryClientProvider>,
   );
+
+beforeAll(() => {
+  Element.prototype.scrollIntoView ??= vi.fn();
+});
 
 describe("CodebuddyProviderForm", () => {
   it("edits native fields while preserving unknown model settings", async () => {
@@ -71,7 +85,8 @@ describe("CodebuddyProviderForm", () => {
         onCancel={() => {}}
       />,
     );
-    expect(screen.getByLabelText("codebuddy.modelId")).toBeDisabled();
+    expect(screen.getByLabelText("opencode.modelId")).toBeDisabled();
+    expect(screen.getByLabelText("opencode.modelName")).toHaveValue("My Model");
     expect(
       screen.queryByRole("button", { name: "providerForm.fetchModels" }),
     ).not.toBeInTheDocument();
@@ -80,16 +95,22 @@ describe("CodebuddyProviderForm", () => {
       "password",
     );
     expect(
-      screen.getByRole("checkbox", { name: "codebuddy.supportsToolCall" }),
+      screen.queryByLabelText("codebuddy.maxOutputTokens"),
+    ).not.toBeInTheDocument();
+    expandModel();
+    expect(
+      screen.getByRole("switch", { name: "codebuddy.supportsToolCall" }),
     ).not.toBeChecked();
-    fireEvent.change(screen.getByLabelText("provider.name"), {
+    // 显示名称就是卡片名称：两处改的是同一个值。
+    fireEvent.change(screen.getByLabelText("opencode.modelName"), {
       target: { value: "Renamed" },
     });
+    expect(screen.getByLabelText("provider.name")).toHaveValue("Renamed");
     fireEvent.change(screen.getByLabelText("codebuddy.maxOutputTokens"), {
       target: { value: "8192" },
     });
     fireEvent.click(
-      screen.getByRole("checkbox", { name: "codebuddy.supportsReasoning" }),
+      screen.getByRole("switch", { name: "codebuddy.supportsReasoning" }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
@@ -131,7 +152,7 @@ describe("CodebuddyProviderForm", () => {
     fireEvent.change(screen.getByLabelText("providerForm.apiEndpoint"), {
       target: { value: "not a url" },
     });
-    fireEvent.change(screen.getByLabelText("codebuddy.modelId"), {
+    fireEvent.change(screen.getByLabelText("opencode.modelId"), {
       target: { value: "new-model" },
     });
     expect(save).toBeDisabled();
@@ -140,7 +161,7 @@ describe("CodebuddyProviderForm", () => {
     fireEvent.change(screen.getByLabelText("providerForm.apiEndpoint"), {
       target: { value: "https://api.example.com/v1/chat/completions" },
     });
-    fireEvent.change(screen.getByLabelText("codebuddy.modelId"), {
+    fireEvent.change(screen.getByLabelText("opencode.modelId"), {
       target: { value: "taken" },
     });
     await waitFor(() =>
@@ -150,7 +171,7 @@ describe("CodebuddyProviderForm", () => {
     );
     expect(save).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText("codebuddy.modelId"), {
+    fireEvent.change(screen.getByLabelText("opencode.modelId"), {
       target: { value: "new-model" },
     });
     await waitFor(() => expect(save).toBeEnabled());
@@ -193,6 +214,66 @@ describe("CodebuddyProviderForm", () => {
         false,
       ),
     );
+  });
+
+  it("fills the picked model's parameters from models.dev", async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchModelsForConfig).mockResolvedValue([
+      { id: "model-x", ownedBy: "example" },
+    ]);
+    server.use(
+      http.get(MODELS_DEV_API_URL, () =>
+        HttpResponse.json({
+          example: {
+            api: "https://api.example.com/v1",
+            models: {
+              "model-x": {
+                limit: { context: 123456, output: 8192 },
+                reasoning: true,
+                modalities: { input: ["text", "image"], output: ["text"] },
+              },
+            },
+          },
+        }),
+      ),
+    );
+    render(
+      <CodebuddyProviderForm
+        appId="codebuddy"
+        submitLabel="Add"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("providerForm.apiEndpoint"), {
+      target: { value: "https://api.example.com/v1/chat/completions" },
+    });
+    fireEvent.change(screen.getByLabelText("API Key"), {
+      target: { value: "local-test-key" },
+    });
+    await user.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Select model" }),
+    );
+    await user.click(await screen.findByRole("option", { name: "model-x" }));
+    expect(screen.getByLabelText("opencode.modelId")).toHaveValue("model-x");
+    expandModel();
+    await waitFor(() =>
+      expect(screen.getByLabelText("codebuddy.maxInputTokens")).toHaveValue(
+        123456,
+      ),
+    );
+    expect(screen.getByLabelText("codebuddy.maxOutputTokens")).toHaveValue(
+      8192,
+    );
+    expect(
+      screen.getByRole("switch", { name: "codebuddy.supportsImages" }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("switch", { name: "codebuddy.supportsReasoning" }),
+    ).toBeChecked();
   });
 
   it("derives the models endpoint from both CodeBuddy url styles", () => {
