@@ -5003,7 +5003,7 @@
       "baseUrl": "有効な http(s) のベース URL を入力してください。",
       "headers": "リクエストヘッダーの値はテキストである必要があります。",
       "protocol": "対応しているプロトコルを選択してください。",
-      "anthropicClient": "Anthropic プロトコルのプロバイダーには client \"anthropic\" が必要です。",
+      "protocolClient": "Anthropic と Gemini のプロトコルには対応する client（\"anthropic\" / \"gemini\"）が必要です。",
       "models": "モデルを 1 つ以上追加してください。",
       "modelId": "すべてのモデルにモデル ID が必要です。",
       "duplicateModel": "モデル ID は重複できません。",

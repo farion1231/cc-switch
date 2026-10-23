@@ -323,12 +323,11 @@ export function ClineProviderForm({
               baseUrl: assembled.provider.baseUrl.trim(),
               defaultModelId: settings.model,
             };
-            // Anthropic needs client "anthropic"; no other protocol may keep it.
-            // Other native clients are left alone.
-            if (provider.protocol === "anthropic")
-              provider.client = "anthropic";
-            else if (provider.client === "anthropic") delete provider.client;
-            payload.provider = provider;
+            // Anthropic and Gemini need their matching client; other native
+            // clients are left alone.
+            payload.provider = provider.protocol
+              ? withClineProtocol(provider, provider.protocol)
+              : provider;
           }
           const found = validateClineConfig(payload);
           const ids = rows.map((row) => row.id.trim());
@@ -438,7 +437,16 @@ export function ClineProviderForm({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {CLINE_PROTOCOLS.map((protocol) => (
+                    {[
+                      ...CLINE_PROTOCOLS,
+                      // A protocol set in Cline that is no longer offered stays visible.
+                      ...(config.provider.protocol &&
+                      !(CLINE_PROTOCOLS as readonly string[]).includes(
+                        config.provider.protocol,
+                      )
+                        ? [config.provider.protocol]
+                        : []),
+                    ].map((protocol) => (
                       <SelectItem key={protocol} value={protocol}>
                         {protocol}
                       </SelectItem>

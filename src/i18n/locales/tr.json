@@ -4854,7 +4854,7 @@
       "baseUrl": "Geçerli bir http(s) temel URL'si girin.",
       "headers": "İstek başlığı değerleri metin olmalıdır.",
       "protocol": "Desteklenen bir protokol seçin.",
-      "anthropicClient": "Anthropic protokollü sağlayıcılar \"anthropic\" istemcisi gerektirir.",
+      "protocolClient": "Anthropic ve Gemini protokolleri eşleşen istemciyi gerektirir (\"anthropic\" / \"gemini\").",
       "models": "En az bir model ekleyin.",
       "modelId": "Her modelin bir model kimliği olmalıdır.",
       "duplicateModel": "Model kimlikleri benzersiz olmalıdır.",

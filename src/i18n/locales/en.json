@@ -5003,7 +5003,7 @@
       "baseUrl": "Enter a valid http(s) base URL.",
       "headers": "Request header values must be text.",
       "protocol": "Select a supported protocol.",
-      "anthropicClient": "Anthropic-protocol providers need client \"anthropic\".",
+      "protocolClient": "Anthropic and Gemini protocols need the matching client (\"anthropic\" / \"gemini\").",
       "models": "Add at least one model.",
       "modelId": "Every model needs a model ID.",
       "duplicateModel": "Model IDs must be unique.",

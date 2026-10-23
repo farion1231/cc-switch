@@ -28,6 +28,8 @@ static WRITE_LOCK: Mutex<()> = Mutex::new(());
 /// Cline's built-in provider ids.
 pub(crate) const CUSTOM_ID_PREFIX: &str = "ccs-";
 const BACKUP_SUFFIX: &str = "cc-switch.bak";
+/// Protocols Cline accepts. CC Switch no longer offers `openai-r1`, but keeps
+/// accepting it so providers written in Cline still save.
 const PROTOCOLS: &[&str] = &[
     "openai-responses",
     "openai-chat",
@@ -36,6 +38,16 @@ const PROTOCOLS: &[&str] = &[
     "openai-r1",
     "ai-sdk",
 ];
+/// Cline uses a protocol's native endpoint only with the matching client;
+/// without it Anthropic and Gemini providers are sent to /chat/completions.
+const PROTOCOL_CLIENTS: &[(&str, &str)] = &[("anthropic", "anthropic"), ("gemini", "gemini")];
+
+pub(crate) fn protocol_client(protocol: &str) -> Option<&'static str> {
+    PROTOCOL_CLIENTS
+        .iter()
+        .find(|(name, _)| *name == protocol)
+        .map(|(_, client)| *client)
+}
 const CLIENTS: &[&str] = &[
     "custom",
     "anthropic",
@@ -344,13 +356,16 @@ pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError
     }) {
         return Err(AppError::InvalidInput("Unsupported Cline client".into()));
     }
-    // Without `client`, Cline sends Anthropic-protocol providers to /chat/completions.
-    if provider.get("protocol").and_then(Value::as_str) == Some("anthropic")
-        && provider.get("client").and_then(Value::as_str) != Some("anthropic")
+    if let Some((protocol, client)) = provider
+        .get("protocol")
+        .and_then(Value::as_str)
+        .and_then(|protocol| protocol_client(protocol).map(|client| (protocol, client)))
     {
-        return Err(AppError::InvalidInput(
-            "Anthropic-protocol Cline providers need client \"anthropic\"".into(),
-        ));
+        if provider.get("client").and_then(Value::as_str) != Some(client) {
+            return Err(AppError::InvalidInput(format!(
+                "{protocol}-protocol Cline providers need client \"{client}\""
+            )));
+        }
     }
     if provider
         .get("defaultModelId")
@@ -918,6 +933,21 @@ mod tests {
         assert!(
             validate_provider("ccs-x", &bad).is_err(),
             "anthropic needs client"
+        );
+        let mut gemini = custom("m1");
+        gemini["provider"]["protocol"] = json!("gemini");
+        assert!(
+            validate_provider("ccs-x", &gemini).is_err(),
+            "gemini needs client"
+        );
+        gemini["provider"]["client"] = json!("gemini");
+        assert!(validate_provider("ccs-x", &gemini).is_ok());
+        let mut r1 = custom("m1");
+        r1["provider"]["protocol"] = json!("openai-r1");
+        r1["provider"].as_object_mut().unwrap().remove("client");
+        assert!(
+            validate_provider("ccs-x", &r1).is_ok(),
+            "native openai-r1 still saves"
         );
         let mut bad = custom("m1");
         bad["settings"]["model"] = json!("undeclared");

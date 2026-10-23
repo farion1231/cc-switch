@@ -972,8 +972,8 @@ fn build_cline_settings(
         "defaultModelId": model,
         "protocol": protocol,
     });
-    if protocol == "anthropic" {
-        provider["client"] = json!("anthropic");
+    if let Some(client) = crate::cline_config::protocol_client(protocol) {
+        provider["client"] = json!(client);
     }
     let mut settings = json!({ "model": model });
     if let Some(api_key) = request.api_key.as_deref().filter(|key| !key.is_empty()) {

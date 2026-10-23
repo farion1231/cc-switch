@@ -6,16 +6,30 @@ import {
   type PiProviderPreset,
 } from "./piProviderPresets";
 
-/** Protocols accepted for custom providers in Cline's `models.json`. */
+/** Protocols offered for custom providers in Cline's `models.json`. */
 export const CLINE_PROTOCOLS = [
   "openai-chat",
   "openai-responses",
   "anthropic",
   "gemini",
-  "openai-r1",
   "ai-sdk",
 ] as const;
 export type ClineProtocol = (typeof CLINE_PROTOCOLS)[number];
+
+/** Not offered, but still accepted so providers written in Cline keep saving. */
+const CLINE_ACCEPTED_PROTOCOLS: readonly string[] = [
+  ...CLINE_PROTOCOLS,
+  "openai-r1",
+];
+
+/**
+ * Cline only uses a protocol's native endpoint when the matching client is set;
+ * without it, Anthropic and Gemini providers are sent to /chat/completions.
+ */
+export const CLINE_PROTOCOL_CLIENTS: Readonly<Record<string, string>> = {
+  anthropic: "anthropic",
+  gemini: "gemini",
+};
 
 /** Numeric model fields; Cline resets its files when any of them is not a number. */
 export const CLINE_MODEL_NUMBER_FIELDS = [
@@ -99,23 +113,28 @@ export function emptyClineCustomConfig(
       name: "",
       baseUrl: "",
       protocol,
-      ...(protocol === "anthropic" ? { client: "anthropic" } : {}),
+      ...(CLINE_PROTOCOL_CLIENTS[protocol]
+        ? { client: CLINE_PROTOCOL_CLIENTS[protocol] }
+        : {}),
     },
     models: {},
   };
 }
 
 /**
- * Cline sends Anthropic-protocol providers to /chat/completions unless the
- * client is also "anthropic"; any other protocol must not keep that client.
+ * Set the protocol together with the client it needs (see
+ * `CLINE_PROTOCOL_CLIENTS`). A client bound to another protocol is dropped;
+ * any other native client is kept.
  */
 export function withClineProtocol(
   provider: NonNullable<ClineProviderConfig["provider"]>,
   protocol: string,
 ): NonNullable<ClineProviderConfig["provider"]> {
-  const { client: _client, ...rest } = provider;
-  return protocol === "anthropic"
-    ? { ...rest, protocol, client: "anthropic" }
+  const { client, ...rest } = provider;
+  const required = CLINE_PROTOCOL_CLIENTS[protocol];
+  if (required) return { ...rest, protocol, client: required };
+  return client && !Object.values(CLINE_PROTOCOL_CLIENTS).includes(client)
+    ? { ...rest, protocol, client }
     : { ...rest, protocol };
 }
 
@@ -175,12 +194,14 @@ export function validateClineConfig(config: ClineProviderConfig): string[] {
   }
   if (
     provider.protocol !== undefined &&
-    !(CLINE_PROTOCOLS as readonly string[]).includes(provider.protocol)
+    !CLINE_ACCEPTED_PROTOCOLS.includes(provider.protocol)
   ) {
     issues.push("cline.validation.protocol");
   }
-  if (provider.protocol === "anthropic" && provider.client !== "anthropic") {
-    issues.push("cline.validation.anthropicClient");
+  const requiredClient =
+    provider.protocol && CLINE_PROTOCOL_CLIENTS[provider.protocol];
+  if (requiredClient && provider.client !== requiredClient) {
+    issues.push("cline.validation.protocolClient");
   }
   const entries = Object.entries(config.models ?? {});
   if (!entries.length) {

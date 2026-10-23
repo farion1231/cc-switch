@@ -128,16 +128,40 @@ describe("Cline provider helpers", () => {
     );
   });
 
-  it("pairs the anthropic protocol with the anthropic client", () => {
+  it("pairs the anthropic and gemini protocols with their clients", () => {
     const provider = { name: "R", baseUrl: "https://r.example/v1" };
     expect(withClineProtocol(provider, "anthropic").client).toBe("anthropic");
+    expect(withClineProtocol(provider, "gemini").client).toBe("gemini");
     expect(
       withClineProtocol({ ...provider, client: "anthropic" }, "openai-chat"),
     ).not.toHaveProperty("client");
+    expect(
+      withClineProtocol({ ...provider, client: "anthropic" }, "gemini").client,
+    ).toBe("gemini");
+    // A native client unrelated to the protocols is kept.
+    expect(
+      withClineProtocol({ ...provider, client: "fetch" }, "openai-chat").client,
+    ).toBe("fetch");
     expect(emptyClineCustomConfig("anthropic").provider!.client).toBe(
       "anthropic",
     );
+    expect(emptyClineCustomConfig("gemini").provider!.client).toBe("gemini");
     expect(CLINE_PROTOCOLS).toContain("openai-chat");
+  });
+
+  it("no longer offers openai-r1 but still accepts it from Cline", () => {
+    expect(CLINE_PROTOCOLS as readonly string[]).not.toContain("openai-r1");
+    expect(
+      validateClineConfig(
+        custom({
+          provider: {
+            name: "R1",
+            baseUrl: "https://r.example/v1",
+            protocol: "openai-r1",
+          },
+        }),
+      ),
+    ).toEqual([]);
   });
 
   it("mirrors the backend validation rules", () => {
@@ -155,7 +179,7 @@ describe("Cline provider helpers", () => {
     ).toEqual([
       "cline.validation.name",
       "cline.validation.baseUrl",
-      "cline.validation.anthropicClient",
+      "cline.validation.protocolClient",
     ]);
     expect(validateClineConfig(custom({ models: {} }))).toEqual([
       "cline.validation.models",
@@ -165,6 +189,17 @@ describe("Cline provider helpers", () => {
         custom({ models: { m1: { contextWindow: Number.NaN } } }),
       ),
     ).toEqual(["cline.validation.modelNumber"]);
+    expect(
+      validateClineConfig(
+        custom({
+          provider: {
+            name: "G",
+            baseUrl: "https://g.example/v1beta",
+            protocol: "gemini",
+          },
+        }),
+      ),
+    ).toEqual(["cline.validation.protocolClient"]);
     expect(
       validateClineConfig(custom({ settings: { model: "missing" } })),
     ).toEqual(["cline.validation.selectedModel"]);

@@ -5003,7 +5003,7 @@
       "baseUrl": "请填写有效的 http(s) 请求地址。",
       "headers": "请求头的值必须是文本。",
       "protocol": "请选择受支持的协议。",
-      "anthropicClient": "Anthropic 协议的供应商需要 client 为 \"anthropic\"。",
+      "protocolClient": "Anthropic 和 Gemini 协议需要对应的 client（\"anthropic\" / \"gemini\"）。",
       "models": "请至少添加一个模型。",
       "modelId": "每个模型都需要填写模型 ID。",
       "duplicateModel": "模型 ID 不能重复。",

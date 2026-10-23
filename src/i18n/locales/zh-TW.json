@@ -5004,7 +5004,7 @@
       "baseUrl": "請填寫有效的 http(s) 請求位址。",
       "headers": "請求標頭的值必須是文字。",
       "protocol": "請選擇支援的協定。",
-      "anthropicClient": "Anthropic 協定的供應商需要 client 為 \"anthropic\"。",
+      "protocolClient": "Anthropic 與 Gemini 協定需要對應的 client（\"anthropic\" / \"gemini\"）。",
       "models": "請至少新增一個模型。",
       "modelId": "每個模型都需要填寫模型 ID。",
       "duplicateModel": "模型 ID 不能重複。",
