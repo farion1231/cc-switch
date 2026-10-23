@@ -26,10 +26,12 @@ import {
   MODELS_DEV_SYNC_CONFIG_QUERY_KEY,
   syncModelsDevPricingOnStartup,
 } from "./lib/modelsDevAutoSync";
+import { initializeContextMenuGuard } from "@/lib/contextMenu";
 import { initializeWindowActivity } from "@/lib/windowActivity";
 import { initializeInputModality } from "@/lib/inputModality";
 
 installGlobalErrorHandlers();
+initializeContextMenuGuard();
 
 // 根据平台添加 body class，便于平台特定样式
 try {
