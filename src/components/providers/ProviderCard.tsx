@@ -22,13 +22,19 @@ import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
+import AgyAccountQuotaFooter from "@/components/AgyAccountQuotaFooter";
+import KimiAccountQuotaFooter from "@/components/KimiAccountQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import {
   extractCodexExperimentalBearerToken,
   extractProviderBaseUrl,
 } from "@/utils/providerConfigUtils";
 import { resolveManagedAccountId } from "@/lib/authBinding";
-import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
+import { isMac } from "@/lib/platform";
+import {
+  isOfficialAccount,
+  resolveCodexOfficialIdentity,
+} from "@/utils/providerCapabilities";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
@@ -61,12 +67,11 @@ interface ProviderCardProps {
   dragHandleProps?: DragHandleProps;
 }
 
-/** 当前那张：模式色边框 + 淡底；共存式「已添加」是中性的。 */
+/** 当前那张：模式色边框 + 淡底；共存式应用的默认那家同直连色。 */
 const TONE_CLASS: Record<CardTone, string> = {
   direct: "border-direct-border bg-direct-soft",
   route: "border-route-border bg-route-soft",
   stack: "border-stack-border bg-stack-soft",
-  neutral: "border-border-strong bg-subtle",
 };
 
 const CHIP_CLASS: Record<CardChip["tone"], string> = {
@@ -113,6 +118,7 @@ function HealthChip({
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
 function isOfficialProvider(provider: Provider, appId: AppId): boolean {
+  if (appId === "kimi") return isOfficialAccount(appId, provider);
   if (provider.category === "official") {
     return true;
   }
@@ -134,7 +140,7 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
       (!apiKey || (typeof apiKey === "string" && apiKey.trim() === ""))
     );
   }
-  if (appId === "gemini") {
+  if (appId === "gemini" || appId === "agy") {
     // 无 GEMINI_API_KEY 且无 GOOGLE_GEMINI_BASE_URL → Google OAuth 官方模式
     const apiKey = config?.env?.GEMINI_API_KEY;
     const baseUrl = config?.env?.GOOGLE_GEMINI_BASE_URL;
@@ -144,6 +150,17 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
     );
   }
   return false;
+}
+
+/** Antigravity 卡片直接显示当前模型，省得进编辑才知道。 */
+function extractAgyModel(provider: Provider): string | null {
+  const config = provider.settingsConfig as Record<string, any>;
+  const model = config?.config?.model?.name;
+  if (typeof model === "string" && model.trim()) return model.trim();
+  const envModel = config?.env?.GEMINI_MODEL;
+  return typeof envModel === "string" && envModel.trim()
+    ? envModel.trim()
+    : null;
 }
 
 const extractApiUrl = (provider: Provider, fallbackText: string) => {
@@ -217,6 +234,11 @@ export function ProviderCard({
     return extractApiUrl(provider, fallbackUrlText);
   }, [provider, fallbackUrlText]);
 
+  const agyModel = useMemo(
+    () => (appId === "agy" ? extractAgyModel(provider) : null),
+    [appId, provider],
+  );
+
   const isClickableUrl = useMemo(() => {
     if (provider.notes?.trim()) {
       return false;
@@ -232,7 +254,8 @@ export function ProviderCard({
     provider.meta?.usage_script?.enabled ?? isBoundCodexOfficial;
   const isOfficial = isOfficialProvider(provider, appId);
   const supportsOfficialSubscription =
-    isOfficial && ["claude", "codex", "gemini", "grokbuild"].includes(appId);
+    isOfficial &&
+    ["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId);
   const isOfficialSubscriptionUsage =
     provider.meta?.usage_script?.templateType ===
     TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
@@ -248,6 +271,11 @@ export function ProviderCard({
       : provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
   // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
   const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
+  // Antigravity 官方卡绑了授权中心的账号：额度查绑定的号（只有 macOS 能切号，其他平台忽略绑定）
+  const agyBoundAccountId =
+    appId === "agy" && isOfficial && isMac()
+      ? resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || null
+      : null;
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery = isAdditiveAppId(appId) ? isInConfig : isCurrent;
@@ -298,7 +326,7 @@ export function ProviderCard({
         presentation.tone
           ? TONE_CLASS[presentation.tone]
           : "border-border bg-surface hover:border-border-strong hover:shadow-v7-sm",
-        dragHandleProps?.isDragging && "z-10 cursor-grabbing shadow-v7-md",
+        dragHandleProps?.isDragging && "cursor-grabbing shadow-v7-md",
       )}
     >
       <div className="flex min-h-[58px] items-center gap-3 py-2.5 pe-3 ps-2">
@@ -420,6 +448,12 @@ export function ProviderCard({
                 </span>
               )}
             </div>
+          ) : agyModel ? (
+            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
+              <span className="min-w-0 truncate" title={agyModel}>
+                {agyModel}
+              </span>
+            </div>
           ) : displayUrl ? (
             <button
               type="button"
@@ -467,16 +501,35 @@ export function ProviderCard({
                   inline={true}
                   isCurrent={isCurrent}
                 />
+              ) : appId === "kimi" && isOfficial ? (
+                // 每张 Kimi 官方卡就是授权中心里的一个账号，额度按卡上那个号查
+                <KimiAccountQuotaFooter
+                  accountId={provider.id}
+                  name={provider.name}
+                  inline={true}
+                  isCurrent={isCurrent}
+                />
               ) : isOfficial ? (
                 officialSubscriptionEnabled ? (
-                  <SubscriptionQuotaFooter
-                    appId={appId}
-                    inline={true}
-                    isCurrent={isCurrent}
-                    autoQueryInterval={
-                      provider.meta?.usage_script?.autoQueryInterval ?? 0
-                    }
-                  />
+                  agyBoundAccountId ? (
+                    <AgyAccountQuotaFooter
+                      accountId={agyBoundAccountId}
+                      inline={true}
+                      isCurrent={isCurrent}
+                      autoQueryInterval={
+                        provider.meta?.usage_script?.autoQueryInterval ?? 0
+                      }
+                    />
+                  ) : (
+                    <SubscriptionQuotaFooter
+                      appId={appId}
+                      inline={true}
+                      isCurrent={isCurrent}
+                      autoQueryInterval={
+                        provider.meta?.usage_script?.autoQueryInterval ?? 0
+                      }
+                    />
+                  )
                 ) : null
               ) : hasMultiplePlans ? (
                 <span className="text-caption text-fg-2">
@@ -522,11 +575,18 @@ export function ProviderCard({
             presentation={presentation}
             onEdit={() => onEdit(provider)}
             onDelete={() => onDelete(provider)}
-            onDuplicate={onDuplicate ? () => onDuplicate(provider) : undefined}
+            onDuplicate={
+              onDuplicate && !(appId === "kimi" && isOfficial)
+                ? () => onDuplicate(provider)
+                : undefined
+            }
             onTest={
               // 连通检测对第三方/自定义/Copilot/Codex-OAuth 供应商开放。官方供应商一律不给：
               // 它们 base_url 故意留空、走客户端默认/OAuth 端点，没有可靠的探测目标。
-              onTest && appId !== "mcode" && provider.category !== "official"
+              onTest &&
+              appId !== "mcode" &&
+              appId !== "kimi" &&
+              provider.category !== "official"
                 ? () => onTest(provider)
                 : undefined
             }

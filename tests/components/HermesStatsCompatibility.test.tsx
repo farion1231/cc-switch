@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SuccessSpeedCells } from "@/components/usage/statsColumns";
+import { PerformanceCells } from "@/components/usage/statsColumns";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -15,14 +15,14 @@ describe("Hermes compatibility with v4 usage statistics", () => {
       <table>
         <tbody>
           <tr>
-            <SuccessSpeedCells stat={stat} />
+            <PerformanceCells stat={stat} />
           </tr>
         </tbody>
       </table>,
     );
     expect(screen.queryByText("0.0%")).not.toBeInTheDocument();
     expect(screen.getAllByRole("cell").map((cell) => cell.textContent)).toEqual(
-      ["—", "—"],
+      ["—", "—", "—"],
     );
   });
 
@@ -31,7 +31,7 @@ describe("Hermes compatibility with v4 usage statistics", () => {
       <table>
         <tbody>
           <tr>
-            <SuccessSpeedCells
+            <PerformanceCells
               stat={{
                 successRate: 100,
                 speedOutputTokens: 200,

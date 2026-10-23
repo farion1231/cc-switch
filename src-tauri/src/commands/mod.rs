@@ -1,17 +1,20 @@
 #![allow(non_snake_case)]
 
+mod agy_account;
 mod auth;
 mod balance;
 mod codex_oauth;
 mod coding_plan;
 mod config;
 mod copilot;
+mod custom_icon;
 mod deeplink;
 mod env;
 mod failover;
 mod global_proxy;
 mod hermes;
 mod import_export;
+mod kimi_oauth;
 mod mcp;
 mod misc;
 mod model_fetch;
@@ -37,18 +40,21 @@ mod usage;
 mod webdav_sync;
 mod workspace;
 
+pub use agy_account::*;
 pub use auth::*;
 pub use balance::*;
 pub use codex_oauth::*;
 pub use coding_plan::*;
 pub use config::*;
 pub use copilot::*;
+pub use custom_icon::*;
 pub use deeplink::*;
 pub use env::*;
 pub use failover::*;
 pub use global_proxy::*;
 pub use hermes::*;
 pub use import_export::*;
+pub use kimi_oauth::*;
 pub use mcp::*;
 pub use misc::*;
 pub use model_fetch::*;

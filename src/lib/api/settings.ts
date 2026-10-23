@@ -81,6 +81,10 @@ export const settingsApi = {
     await invoke("check_for_updates");
   },
 
+  async openPortableUpdateDownload(version: string): Promise<void> {
+    await invoke("open_portable_update_download", { version });
+  },
+
   async isPortable(): Promise<boolean> {
     return await invoke("is_portable_mode");
   },
@@ -111,6 +115,10 @@ export const settingsApi = {
 
   async openAppConfigFolder(): Promise<void> {
     await invoke("open_app_config_folder");
+  },
+
+  async revealAppLogFile(): Promise<void> {
+    await invoke("reveal_app_log_file");
   },
 
   async getAppConfigDirOverride(): Promise<string | null> {
@@ -268,6 +276,7 @@ export const settingsApi = {
       installed_but_broken: boolean;
       env_type: "windows" | "wsl" | "macos" | "linux" | "unknown";
       wsl_distro: string | null;
+      update_blocked_by_node: NodeRequirementGap | null;
     }>
   > {
     return await invoke("get_tool_versions", { tools, wslShellByTool });
@@ -275,17 +284,30 @@ export const settingsApi = {
 
   async runToolLifecycleAction(
     tools: string[],
-    action: "install" | "update",
+    action: "install" | "update" | "uninstall",
     wslShellByTool?: Record<
       string,
       { wslShell?: string | null; wslShellFlag?: string | null }
     >,
+    uninstallPlan?: ToolUninstallPlan,
   ): Promise<void> {
     await invoke("run_tool_lifecycle_action", {
       tools,
       action,
       wslShellByTool,
+      uninstallPlan,
     });
+  },
+
+  /** List every installation with its read-only uninstall preview; execution checks the chosen one is still current. */
+  async prepareToolUninstall(
+    tool: string,
+    wslShellByTool?: Record<
+      string,
+      { wslShell?: string | null; wslShellFlag?: string | null }
+    >,
+  ): Promise<ToolUninstallCandidate[]> {
+    return await invoke("prepare_tool_uninstall", { tool, wslShellByTool });
   },
 
   /** 探测各工具安装分布：枚举所有安装、标记冲突、生成锚定升级命令。
@@ -328,6 +350,15 @@ export const settingsApi = {
   },
 };
 
+export interface ToolUninstallPlan {
+  tool: string;
+  path: string;
+  real_path: string;
+  command: string;
+  native: boolean;
+  wsl_distro: string | null;
+}
+
 /** 单处工具安装的诊断信息（多处安装冲突检测）。字段对应后端 ToolInstallation。 */
 export interface ToolInstallation {
   path: string;
@@ -336,6 +367,20 @@ export interface ToolInstallation {
   error: string | null;
   source: string;
   is_path_default: boolean;
+}
+
+/** 卸载对话框里的一处安装：能自动卸载就带 plan，否则给出原因。对应后端 ToolUninstallCandidate。 */
+/** 新版本要求的 Node（`engines.node` 原文）与这处安装用的 Node 版本。 */
+export interface NodeRequirementGap {
+  required: string;
+  current: string;
+}
+
+export interface ToolUninstallCandidate extends ToolInstallation {
+  plan: ToolUninstallPlan | null;
+  unavailable_reason: string | null;
+  /** 工具自己的更新程序会把这份装回来（Grok 的 npm 模式），单独删掉只是暂时的。 */
+  reinstalled_by_updater: boolean;
 }
 
 /** 一次"探测工具安装分布"的结果。字段对应后端 ToolInstallationReport。 */

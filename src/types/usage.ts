@@ -28,6 +28,7 @@ export interface RequestLog {
   totalCostUsd: string;
   isStreaming: boolean;
   latencyMs: number;
+  /** 路由服务记的是精确首字；会话日志导入的是按时间戳推出来的估算值（看 dataSource） */
   firstTokenMs?: number;
   durationMs?: number;
   statusCode: number;
@@ -147,6 +148,10 @@ export interface ProviderStats {
   estSpeedOutputTokens?: number;
   /** 估算速度分母：同一批请求的估算耗时（含首字等待）之和，毫秒 */
   estSpeedDurationMs?: number;
+  /** 首字时间中位数（毫秒）：经路由服务、成功的流式明细请求；没有时为 null */
+  firstTokenMedianMs?: number | null;
+  /** 估算首字中位数（毫秒）：会话日志导入、按时间戳推出了首字的请求；没有精确值时才显示，带 ≈ */
+  estFirstTokenMedianMs?: number | null;
 }
 
 export interface ModelStats {
@@ -169,6 +174,9 @@ export interface ModelStats {
   totalCacheReadTokens?: number;
   totalCacheWriteTokens?: number;
   totalReasoningTokens?: number;
+  /** 首字时间中位数，口径同 ProviderStats 的那两个字段 */
+  firstTokenMedianMs?: number | null;
+  estFirstTokenMedianMs?: number | null;
 }
 
 /** Metadata returned by the Hermes aggregate usage source. */
@@ -258,7 +266,9 @@ export type AppType =
   | "opencode"
   | "hermes"
   | "pi"
-  | "mcode";
+  | "mcode"
+  | "kimi"
+  | "agy";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -271,6 +281,8 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "hermes",
   "pi",
   "mcode",
+  "kimi",
+  "agy",
 ];
 
 /**
@@ -297,6 +309,7 @@ export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
 const PARTIAL_CACHE_WRITE_APP_TYPES: ReadonlySet<string> = new Set([
   "pi",
   "mcode",
+  "kimi",
 ]);
 
 export type CacheWriteAvailability = "ok" | "partial" | "na";

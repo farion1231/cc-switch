@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { createInstance } from "i18next";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -49,6 +50,8 @@ async function renderExpanded(
   render(
     <I18nextProvider i18n={i18n}>
       <UsageHero
+        metric="tokens"
+        onMetricChange={() => {}}
         range={{ preset: "today" }}
         appType={appType}
         refreshIntervalMs={0}
@@ -62,6 +65,33 @@ async function renderExpanded(
 }
 
 describe("UsageHero reasoning availability and real translations", () => {
+  it.each(["0.50", "-0.50"])(
+    "shows zero-call Hermes cost correction %s rather than no-data placeholders",
+    async (cost) => {
+      const i18n = await renderExpanded(
+        "en",
+        [
+          {
+            appType: "hermes",
+            summary: {
+              ...summary,
+              totalRequests: 0,
+              totalCost: cost,
+              totalInputTokens: 0,
+              totalOutputTokens: 0,
+              realTotalTokens: 0,
+            },
+          },
+        ],
+        "hermes",
+      );
+      expect(
+        screen.getByRole("button", {
+          name: (name) => name.startsWith(i18n.t("usage.totalCost")),
+        }),
+      ).toHaveAccessibleName(/0\.50/);
+    },
+  );
   it.each([
     ["en", "Reasoning tokens"],
     ["zh", "推理 Token"],

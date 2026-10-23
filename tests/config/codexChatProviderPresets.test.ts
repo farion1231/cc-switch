@@ -261,10 +261,21 @@ describe("Codex Chat provider presets", () => {
         "MiniMax",
         {
           baseUrl: "https://api.minimax.cn/v1",
-          contextWindows: { "MiniMax-M3": 1000000 },
+          contextWindows: {
+            "MiniMax-M3": 1000000,
+            "MiniMax-M3.1-Flash": 1000000,
+          },
         },
       ],
-      ["MiniMax en", { contextWindows: { "MiniMax-M3": 1000000 } }],
+      [
+        "MiniMax en",
+        {
+          contextWindows: {
+            "MiniMax-M3": 1000000,
+            "MiniMax-M3.1-Flash": 1000000,
+          },
+        },
+      ],
       [
         "Xiaomi MiMo",
         {

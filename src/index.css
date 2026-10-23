@@ -37,22 +37,23 @@
 
   .dark {
     --background: 240 3.4% 11.4%;
-    --foreground: 240 4.8% 95.9%;
+    /* 文字色与下方 --text-1 一致（#e4e4e7）：纯白主文字铺满整屏时刺眼 */
+    --foreground: 240 5.9% 90%;
     --card: 240 5.2% 19%;
-    --card-foreground: 240 4.8% 95.9%;
+    --card-foreground: 240 5.9% 90%;
     --popover: 240 5.2% 19%;
-    --popover-foreground: 240 4.8% 95.9%;
+    --popover-foreground: 240 5.9% 90%;
 
     --primary: 240 4.8% 95.9%;
     --primary-foreground: 240 5.9% 10%;
 
     --secondary: 240 5% 15.7%;
-    --secondary-foreground: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 90%;
 
     --muted: 240 5% 15.7%;
-    --muted-foreground: 240 5.7% 72.5%;
+    --muted-foreground: 240 5.4% 68.6%;
     --accent: 240 5% 15.7%;
-    --accent-foreground: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 90%;
 
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
@@ -120,11 +121,14 @@
     --danger-text: #b91c1c;
     --danger-soft: #fee2e2;
     --chart-1: #0891b2;
-    /* 热力图 1–4 档：前三档用 chart-1 保住饱和度，最深档换同色相深一级的 #0e7490。
-       chart-1 是中等亮度，只按浓度混的话最深档不够深，整张图偏淡 */
-    --heat-1: color-mix(in srgb, var(--chart-1) 32%, transparent);
-    --heat-2: color-mix(in srgb, var(--chart-1) 62%, transparent);
-    --heat-3: var(--chart-1);
+    /* 用量页的趋势图和热力图。暂时沿用 chart-1（深色下跟着 chart-1 变）；
+       单独留一个变量，以后换用量图配色不牵动额度条等其他用 chart-1 的地方 */
+    --chart-usage: var(--chart-1);
+    /* 热力图 1–4 档：前三档用 chart-usage 保住饱和度，最深档换同色相深一级的 #0e7490。
+       chart-usage 是中等亮度，只按浓度混的话最深档不够深，整张图偏淡 */
+    --heat-1: color-mix(in srgb, var(--chart-usage) 32%, transparent);
+    --heat-2: color-mix(in srgb, var(--chart-usage) 62%, transparent);
+    --heat-3: var(--chart-usage);
     --heat-4: #0e7490;
     --chart-2: #db2777;
     --chart-grid: #ececf0;
@@ -154,9 +158,11 @@
     --bg-selected: #313136;
     --bg-card: #2e2e33;
     --border-strong: #4a4a52;
-    --text-1: #f4f4f5;
-    --text-2: #d0d0d8;
-    --text-3: #b5b5bd;
+    /* 三档文字都比纯白压低一截并拉开明度差：太亮时三档都贴近白色，整屏显得刺眼、层次压平。
+       次级、三级对卡片底、选中底（--bg-card / --bg-selected）都 ≥ 4.5:1 */
+    --text-1: #e4e4e7;
+    --text-2: #ababb3;
+    --text-3: #9a9aa2;
     /* 深色模式：实心块压暗一档（大面积不刺眼）+ 白字；文字、焦点描边用亮一档的 #fb923c */
     --action-bg: #ea580c;
     --action-fg: #ffffff;
@@ -203,11 +209,11 @@
     --danger-text: #fca5a5;
     --danger-soft: #3a1414;
     --chart-1: #38bdf8;
-    /* 深色底上越亮越多，chart-1 本身就是最亮档 */
-    --heat-1: color-mix(in srgb, var(--chart-1) 30%, transparent);
-    --heat-2: color-mix(in srgb, var(--chart-1) 50%, transparent);
-    --heat-3: color-mix(in srgb, var(--chart-1) 75%, transparent);
-    --heat-4: var(--chart-1);
+    /* 深色底上越亮越多，chart-usage 本身就是最亮档 */
+    --heat-1: color-mix(in srgb, var(--chart-usage) 30%, transparent);
+    --heat-2: color-mix(in srgb, var(--chart-usage) 50%, transparent);
+    --heat-3: color-mix(in srgb, var(--chart-usage) 75%, transparent);
+    --heat-4: var(--chart-usage);
     --chart-2: #f472b6;
     --chart-grid: #2c2c31;
 
@@ -360,7 +366,9 @@
   border-top: 2px solid hsl(var(--border));
 }
 
-[data-tauri-drag-region] {
+/* Windows 使用 Tauri 的事件拖拽。原生拖拽 CSS 会触发 WebView2 的
+   UpdateDraggableRegions，可能导致高 CPU 或挂起 */
+.is-mac [data-tauri-drag-region] {
   -webkit-app-region: drag;
 }
 

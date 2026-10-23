@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { afterEach, expect, it, vi } from "vitest";
 import { UsageHeatmap } from "@/components/usage/UsageHeatmap";
 
@@ -30,6 +31,7 @@ it("keeps Hermes filters and all token dimensions in the upstream heatmap", () =
     isLoading: false,
   });
   const props = {
+    metric: "tokens" as const,
     appType: "hermes",
     profileName: "profile-a",
     task: "task-a",

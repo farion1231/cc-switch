@@ -1,10 +1,5 @@
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  within,
-} from "@testing-library/react";
+import { cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelStatsTable } from "@/components/usage/ModelStatsTable";
 import { ProviderStatsTable } from "@/components/usage/ProviderStatsTable";
@@ -110,6 +105,8 @@ function renderCountedStats(appType: string) {
   render(
     <>
       <UsageHero
+        metric="tokens"
+        onMetricChange={() => {}}
         range={range}
         appType={appType === "all" ? undefined : appType}
         refreshIntervalMs={0}
@@ -174,7 +171,7 @@ describe("usage count semantics", () => {
 
     renderCountedStats("all");
 
-    const cacheWriteLabel = screen.getByText("usage.cacheWrite");
+    const cacheWriteLabel = screen.getByText("usage.logColumns.cacheWrite");
     expect(
       within(cacheWriteLabel.parentElement!.parentElement!).getByText("150"),
     ).toBeInTheDocument();
@@ -204,13 +201,16 @@ describe("usage count semantics", () => {
 
     renderCountedStats("all");
 
-    const cacheWriteLabel = screen.getByText("usage.cacheWrite");
+    const cacheWriteLabel = screen.getByText("usage.logColumns.cacheWrite");
     const cacheWriteStat = cacheWriteLabel.parentElement!.parentElement!;
     expect(within(cacheWriteStat).getByText("120")).toHaveClass("text-fg-3");
-    expect(within(cacheWriteStat).getByText("120")).toHaveAttribute(
-      "title",
-      expect.stringContaining("usage.cacheWritePartial"),
-    );
+    // The upstream UI exposes availability help via its help button, not a native title.
+    expect(
+      within(cacheWriteStat).getByRole("button", {
+        name: "usage.logColumns.cacheWrite",
+        hidden: true,
+      }),
+    ).toBeInTheDocument();
   });
 
   it("keeps Hermes-only cache write separate from cache creation", () => {
@@ -228,10 +228,18 @@ describe("usage count semantics", () => {
       isLoading: false,
     });
 
-    render(<UsageHero range={range} appType="hermes" refreshIntervalMs={0} />);
+    render(
+      <UsageHero
+        range={range}
+        appType="hermes"
+        refreshIntervalMs={0}
+        metric="tokens"
+        onMetricChange={() => {}}
+      />,
+    );
     fireEvent.click(screen.getByRole("button", { name: "usage.metrics.more" }));
 
-    const cacheWriteLabel = screen.getByText("usage.cacheWrite");
+    const cacheWriteLabel = screen.getByText("usage.logColumns.cacheWrite");
     expect(
       within(cacheWriteLabel.parentElement!.parentElement!).getByText("30"),
     ).toBeInTheDocument();
@@ -253,19 +261,19 @@ describe("usage count semantics", () => {
     },
   );
 
-  it("keeps the upstream six-column empty state for Hermes without inventing metrics", () => {
+  it("keeps the upstream seven-column empty state for Hermes without inventing metrics", () => {
     useProviderStatsMock.mockReturnValue({ data: [], isLoading: false });
     renderCountedStats("hermes");
 
     const table = screen.getAllByRole("table")[0]!;
-    expect(within(table).getAllByRole("columnheader")).toHaveLength(6);
+    expect(within(table).getAllByRole("columnheader")).toHaveLength(7);
     expect(
       within(table).queryByRole("columnheader", { name: labels.successRate }),
     ).toBeInTheDocument();
     expect(
       within(table).queryByRole("columnheader", { name: labels.avgLatency }),
     ).not.toBeInTheDocument();
-    expect(within(table).getByRole("cell")).toHaveAttribute("colspan", "6");
+    expect(within(table).getByRole("cell")).toHaveAttribute("colspan", "7");
   });
 
   it.each(["all", "claude"])(
@@ -274,7 +282,7 @@ describe("usage count semantics", () => {
       renderCountedStats(appType);
 
       const table = screen.getAllByRole("table")[0]!;
-      expect(within(table).getAllByRole("columnheader")).toHaveLength(6);
+      expect(within(table).getAllByRole("columnheader")).toHaveLength(7);
       expect(
         within(table).getByRole("columnheader", { name: labels.successRate }),
       ).toBeInTheDocument();
