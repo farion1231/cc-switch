@@ -1683,12 +1683,17 @@ async fn handle_codex_xai_native_responses_rewrite(
     if response.is_sse() {
         let builder = rewritten_sse_response_builder(status, response.headers());
 
-        // Copilot: stabilize item IDs, then repair late tool arguments, then restore
-        // Grok names. Direct xAI responses retain their original stream pipeline.
+        // Copilot: stabilize item IDs before repairing late tool arguments. Grok Build
+        // also needs late arguments repaired before required-field fills for providers
+        // that can send empty end events before the complete delta (for example MiniMax).
         let stream = codex_native_responses_stream(response, ctx);
+        let repair_first = (matches!(ctx.app_type, AppType::Codex)
+            && ctx.provider.is_github_copilot())
+            || (grokbuild
+                && super::providers::provider_needs_responses_late_arguments_repair(&ctx.provider));
         let stream: std::pin::Pin<
             Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>,
-        > = if matches!(ctx.app_type, AppType::Codex) && ctx.provider.is_github_copilot() {
+        > = if repair_first {
             Box::pin(
                 super::providers::responses_late_arguments::create_late_arguments_repair_stream(
                     stream,
@@ -5242,6 +5247,7 @@ mod copilot_grok_responses_tests {
             &state,
             None,
             restore_map,
+            false,
         )
         .await
         .unwrap();
@@ -5300,6 +5306,7 @@ mod copilot_grok_responses_tests {
             &state,
             None,
             grok_namespace_restore_map(),
+            false,
         )
         .await
         .unwrap();
@@ -5351,6 +5358,7 @@ mod copilot_grok_responses_tests {
             &state,
             None,
             grok_namespace_restore_map(),
+            false,
         )
         .await
         .unwrap();
@@ -5380,6 +5388,7 @@ mod copilot_grok_responses_tests {
             &state,
             None,
             grok_namespace_restore_map(),
+            false,
         )
         .await
         .unwrap();
