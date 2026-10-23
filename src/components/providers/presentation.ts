@@ -45,6 +45,8 @@ export interface CardMenuItem {
   /** 不能点的原因：照常列出来，原因写在名字下面 */
   disabledReason?: string;
   onSelect: () => void;
+  /** 展开成子菜单选一项（OpenClaw / OpenCode 的「设为默认」选默认模型） */
+  submenu?: { title: string; options: CardMenuOption[] };
 }
 
 export interface CardButton {
@@ -53,8 +55,6 @@ export interface CardButton {
   onClick: () => void;
   /** 不能点的原因：按钮照常画出来，原因挂在按钮的说明卡上 */
   disabledReason?: string;
-  /** 点开选一项（OpenClaw 的「设为默认 ▾」选默认模型） */
-  menu?: { title: string; options: CardMenuOption[] };
 }
 
 export interface CardPresentation {
@@ -63,7 +63,7 @@ export interface CardPresentation {
   /** 主操作位换成状态文字（使用中 / 路由中 / 当前默认 / 已添加…） */
   status?: { label: string; dot: CardTone | "muted" };
   buttons: CardButton[];
-  /** 「更多」菜单最前面、跟当前模式有关的操作（聚合页的「设为默认」） */
+  /** 「更多」菜单最前面、跟当前模式有关的操作（聚合页、OpenClaw / OpenCode 的「设为默认」） */
   menuItems?: CardMenuItem[];
   chips: CardChip[];
   /** 整卡淡一些（不能用于当前模式的官方订阅、Hermes 托管） */
@@ -852,6 +852,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
 
     // 已添加：白底、不写「● 已添加」（分组标题和「移除」已经说清楚）；灰底只给默认那一家
     const buttons: CardButton[] = [];
+    const menuItems: CardMenuItem[] = [];
     let status: CardPresentation["status"];
     let isDefault = false;
     let removeReason: string | undefined = piBlocked;
@@ -873,13 +874,14 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
         }
       } else {
         const models = input.defaultModelOptions?.(p) ?? [];
+        // 「设为默认」放「更多」菜单，不占卡片上的主操作位；多个模型时展开子菜单选。
         // OpenCode 内置供应商可以不列模型（运行时才有），给不出选项就不显示
         if (app === "openclaw" || models.length > 0) {
-          buttons.push({
+          menuItems.push({
             key: "setDefault",
             label: t("providerCard.action.setDefault"),
-            onClick: () => actions.setDefault(p, models[0]?.id),
-            menu:
+            onSelect: () => actions.setDefault(p, models[0]?.id),
+            submenu:
               models.length > 1
                 ? {
                     title: t("openclaw.selectDefaultModel"),
@@ -931,6 +933,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
         editDisabledReason: readOnlyReason,
         deleteDisabledReason: readOnlyReason ?? piBlocked,
         buttons,
+        menuItems: menuItems.length ? menuItems : undefined,
       },
     });
   }

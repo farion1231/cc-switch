@@ -543,13 +543,20 @@ describe("buildAdditiveSections", () => {
     expect(button(sections, "relay", "remove").disabledReason).toBe(
       "providerCard.reason.defaultCannotRemove",
     );
-    const setDefault = button(sections, "multi", "setDefault");
-    expect(setDefault.menu?.options.map((o) => [o.label, o.detail])).toEqual([
-      ["Model 1", "m-1"],
-      ["m-2", undefined],
+    // 「设为默认」在「更多」菜单里，卡片主操作位只剩「移除」
+    expect(item(sections, "multi").buttons.map((b) => b.key)).toEqual([
+      "remove",
     ]);
-    setDefault.menu?.options[1].onSelect();
+    const setDefault = setDefaultItem(sections, "multi");
+    expect(setDefault.submenu?.options.map((o) => [o.label, o.detail])).toEqual(
+      [
+        ["Model 1", "m-1"],
+        ["m-2", undefined],
+      ],
+    );
+    setDefault.submenu?.options[1].onSelect();
     expect(actions.setDefault).toHaveBeenCalledWith(multi, "m-2");
+    expect(item(sections, "relay").menuItems).toBeUndefined();
   });
 
   it("lets OpenCode set the top-level default model without blocking removal", () => {
@@ -574,10 +581,10 @@ describe("buildAdditiveSections", () => {
       item(sections, "relay").chips.some((c) => c.key === "defaultModel"),
     ).toBe(true);
     expect(button(sections, "relay", "remove").disabledReason).toBeUndefined();
-    const setDefault = button(sections, "multi", "setDefault");
-    setDefault.onClick();
+    const setDefault = setDefaultItem(sections, "multi");
+    setDefault.onSelect();
     expect(actions.setDefault).toHaveBeenCalledWith(multi, "m-1");
-    setDefault.menu?.options[1].onSelect();
+    setDefault.submenu?.options[1].onSelect();
     expect(actions.setDefault).toHaveBeenCalledWith(multi, "m-2");
     // relay 不是默认时也没有声明模型（内置供应商）：不给「设为默认」
     const other = buildAdditiveSections({
@@ -590,6 +597,7 @@ describe("buildAdditiveSections", () => {
       actions,
     });
     expect(item(other, "relay").buttons.map((b) => b.key)).toEqual(["remove"]);
+    expect(item(other, "relay").menuItems).toBeUndefined();
   });
 
   it("reads OpenCode models from a stored full config as the backend does", () => {
