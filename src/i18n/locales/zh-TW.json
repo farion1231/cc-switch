@@ -1832,7 +1832,6 @@
       "officialHint": "使用 GitHub Copilot CLI 自己的 GitHub 登入。「開啟終端機」以這張卡的模型啟動 copilot；綁定授權中心的帳號後改用該帳號啟動。",
       "byokHint": "自帶模型（BYOK）。Copilot CLI 只從程序環境讀取這些設定，所以這張卡只在從它開啟的終端機裡生效，不會寫進 Copilot 自己的檔案。",
       "apiFormat": "介面格式",
-      "apiFormatHint": "同時決定協定（COPILOT_PROVIDER_TYPE）和介面（COPILOT_PROVIDER_WIRE_API）。GPT-5 系列模型請選 Responses。",
       "baseUrl": "API 位址",
       "baseUrlHint": "OpenAI 相容位址通常以 /v1 結尾（如 Ollama http://localhost:11434/v1）；Anthropic 只填主機（https://api.anthropic.com）。",
       "model": "模型",

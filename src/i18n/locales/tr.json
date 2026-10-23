@@ -1786,7 +1786,6 @@
       "officialHint": "GitHub Copilot CLI'nin kendi GitHub oturumunu kullanır. \"Terminal aç\", copilot'u bu kartın modeliyle başlatır; Yetki Merkezi'nden bir hesap bağlarsanız o hesapla başlatır.",
       "byokHint": "Kendi modelinizi getirin (BYOK). Copilot CLI bu ayarları yalnızca ortam değişkenlerinden okur; bu yüzden kart yalnızca buradan açılan terminallerde çalışır ve Copilot'un kendi dosyalarına yazılmaz.",
       "apiFormat": "API biçimi",
-      "apiFormatHint": "Protokolü (COPILOT_PROVIDER_TYPE) ve kablo API'sini (COPILOT_PROVIDER_WIRE_API) birlikte belirler. GPT-5 serisi modeller için Responses seçin.",
       "baseUrl": "API uç noktası",
       "baseUrlHint": "OpenAI uyumlu uç noktalar genellikle /v1 ile biter (ör. Ollama http://localhost:11434/v1); Anthropic için yalnızca sunucu adresi (https://api.anthropic.com).",
       "model": "Model",

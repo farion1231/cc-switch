@@ -324,9 +324,6 @@ export function CopilotProviderForm({
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-fg-2">
-                  {t("copilot.form.apiFormatHint")}
-                </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="copilot-base-url">

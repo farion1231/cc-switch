@@ -1831,7 +1831,6 @@
       "officialHint": "GitHub Copilot CLI 自身の GitHub ログインを使います。「ターミナルを開く」はこのカードのモデルで copilot を起動します。認証センターのアカウントを紐付けると、そのアカウントで起動します。",
       "byokHint": "独自モデル（BYOK）。Copilot CLI はこれらの設定をプロセス環境からのみ読み込むため、このカードはここから開いたターミナルでのみ有効で、Copilot 自身のファイルには書き込まれません。",
       "apiFormat": "API 形式",
-      "apiFormatHint": "プロトコル（COPILOT_PROVIDER_TYPE）とワイヤ API（COPILOT_PROVIDER_WIRE_API）をまとめて設定します。GPT-5 系モデルは Responses を選んでください。",
       "baseUrl": "API エンドポイント",
       "baseUrlHint": "OpenAI 互換エンドポイントは通常 /v1 で終わります（例：Ollama http://localhost:11434/v1）。Anthropic はホストのみ（https://api.anthropic.com）。",
       "model": "モデル",
