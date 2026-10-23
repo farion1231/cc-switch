@@ -150,25 +150,29 @@ pub struct TrayTexts {
 /// 镜像前端 `i18n/getInitialLanguage` 的判定顺序，确保首次安装
 /// （`settings.language` 尚未写入）时托盘语言与界面语言一致：
 /// 繁中系统（zh-TW/HK/MO/Hant）→ `zh-TW`，其余 zh → `zh`，
-/// 日文 → `ja`，土耳其文 → `tr`，英文 → `en`，其他语言回退到 `en`，
+/// 日文 → `ja`，韩文 → `ko`，土耳其文 → `tr`，英文 → `en`，其他语言回退到 `en`，
 /// 区域为空时回退到 `zh`（与前端默认一致）。
 fn map_locale_to_tray_language(locale: &str) -> &'static str {
     let locale = locale.to_lowercase();
     if locale == "zh" {
         "zh"
-    } else if locale.starts_with("zh-tw")
-        || locale.starts_with("zh-hk")
-        || locale.starts_with("zh-mo")
-        || locale.starts_with("zh-hant")
+    } else if locale == "zh-tw"
+        || locale.starts_with("zh-tw-")
+        || locale == "zh-hk"
+        || locale.starts_with("zh-hk-")
+        || locale == "zh-mo"
+        || locale.starts_with("zh-mo-")
+        || locale == "zh-hant"
+        || locale.starts_with("zh-hant-")
     {
         "zh-TW"
-    } else if locale.starts_with("zh") {
+    } else if locale == "zh" || locale.starts_with("zh-") {
         "zh"
-    } else if locale.starts_with("ja") {
+    } else if locale == "ja" || locale.starts_with("ja-") {
         "ja"
-    } else if locale.starts_with("ko") {
+    } else if locale == "ko" || locale.starts_with("ko-") {
         "ko"
-    } else if locale.starts_with("tr") {
+    } else if locale == "tr" || locale.starts_with("tr-") {
         "tr"
     } else if locale.is_empty() {
         "zh"
@@ -3421,6 +3425,29 @@ mod tests {
                 "zh",
                 "expected {locale} -> zh"
             );
+        }
+    }
+
+    #[test]
+    fn locale_matches_language_and_chinese_region_boundaries() {
+        for locale in ["zha", "zhb-CN", "jam", "trv-TW"] {
+            assert_eq!(map_locale_to_tray_language(locale), "en", "{locale}");
+        }
+        for locale in ["zh-TW-u-nu-hanidec", "zh-Hant-TW", "zh-HK"] {
+            assert_eq!(map_locale_to_tray_language(locale), "zh-TW", "{locale}");
+        }
+        for locale in ["zh-hantx", "zh-hkx"] {
+            assert_eq!(map_locale_to_tray_language(locale), "zh", "{locale}");
+        }
+    }
+
+    #[test]
+    fn locale_maps_korean_without_matching_other_language_subtags() {
+        for locale in ["ko", "ko-KR", "ko-KP", "KO-kr"] {
+            assert_eq!(map_locale_to_tray_language(locale), "ko");
+        }
+        for locale in ["kok", "kok-IN", "kos"] {
+            assert_eq!(map_locale_to_tray_language(locale), "en");
         }
     }
 

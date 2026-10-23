@@ -43,31 +43,35 @@ const getInitialLanguage = (): Language => {
   }
 
   if (
-    navigatorLang?.startsWith("zh-tw") ||
-    navigatorLang?.startsWith("zh-hk") ||
-    navigatorLang?.startsWith("zh-mo") ||
-    navigatorLang?.startsWith("zh-hant")
+    navigatorLang === "zh-tw" ||
+    navigatorLang?.startsWith("zh-tw-") ||
+    navigatorLang === "zh-hk" ||
+    navigatorLang?.startsWith("zh-hk-") ||
+    navigatorLang === "zh-mo" ||
+    navigatorLang?.startsWith("zh-mo-") ||
+    navigatorLang === "zh-hant" ||
+    navigatorLang?.startsWith("zh-hant-")
   ) {
     return "zh-TW";
   }
 
-  if (navigatorLang?.startsWith("zh")) {
+  if (navigatorLang === "zh" || navigatorLang?.startsWith("zh-")) {
     return "zh";
   }
 
-  if (navigatorLang?.startsWith("ja")) {
+  if (navigatorLang === "ja" || navigatorLang?.startsWith("ja-")) {
     return "ja";
   }
 
-  if (navigatorLang?.startsWith("ko")) {
+  if (navigatorLang === "ko" || navigatorLang?.startsWith("ko-")) {
     return "ko";
   }
 
-  if (navigatorLang?.startsWith("tr")) {
+  if (navigatorLang === "tr" || navigatorLang?.startsWith("tr-")) {
     return "tr";
   }
 
-  if (navigatorLang?.startsWith("en")) {
+  if (navigatorLang === "en" || navigatorLang?.startsWith("en-")) {
     return "en";
   }
 

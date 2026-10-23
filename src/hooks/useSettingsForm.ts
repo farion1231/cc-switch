@@ -19,9 +19,13 @@ const normalizeLanguage = (lang?: string | null): Language => {
 
   if (
     normalized === "zh-tw" ||
-    normalized.startsWith("zh-hant") ||
-    normalized.startsWith("zh-hk") ||
-    normalized.startsWith("zh-mo")
+    normalized.startsWith("zh-tw-") ||
+    normalized === "zh-hant" ||
+    normalized.startsWith("zh-hant-") ||
+    normalized === "zh-hk" ||
+    normalized.startsWith("zh-hk-") ||
+    normalized === "zh-mo" ||
+    normalized.startsWith("zh-mo-")
   ) {
     return "zh-TW";
   }
@@ -35,7 +39,7 @@ const normalizeLanguage = (lang?: string | null): Language => {
     return normalized;
   }
 
-  if (normalized.startsWith("zh")) {
+  if (normalized === "zh" || normalized.startsWith("zh-")) {
     return "zh";
   }
 
@@ -50,7 +54,8 @@ const isSupportedLanguage = (lang?: string | null): boolean => {
     normalized === "ja" ||
     normalized === "tr" ||
     normalized === "ko" ||
-    normalized.startsWith("zh")
+    normalized === "zh" ||
+    normalized.startsWith("zh-")
   );
 };
 

@@ -28,6 +28,26 @@ afterEach(() => {
 });
 
 describe("useSettingsForm Hook", () => {
+  it("ignores an unsupported cached language sharing the Chinese prefix", () => {
+    useSettingsQueryMock.mockReturnValue({ data: null, isLoading: false });
+    window.localStorage.setItem("language", "zha");
+    (i18n as any).language = "en";
+    const { result } = renderHook(() => useSettingsForm());
+    expect(result.current.readPersistedLanguage()).toBe("en");
+  });
+
+  it.each([
+    ["zh-TW-u-nu-hanidec", "zh-TW"],
+    ["zh-Hant-TW", "zh-TW"],
+    ["zh-hantx", "zh"],
+    ["zh-hkx", "zh"],
+  ])("normalizes the Chinese tag %s to %s", (language, expected) => {
+    useSettingsQueryMock.mockReturnValue({ data: null, isLoading: false });
+    window.localStorage.setItem("language", language);
+    const { result } = renderHook(() => useSettingsForm());
+    expect(result.current.readPersistedLanguage()).toBe(expected);
+  });
+
   it("should normalize settings and sync language on initialization", async () => {
     useSettingsQueryMock.mockReturnValue({
       data: {

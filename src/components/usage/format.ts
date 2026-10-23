@@ -392,9 +392,13 @@ function normalizeLanguageTag(language: string): string {
 function isTraditionalChineseLanguage(normalizedLanguage: string): boolean {
   return (
     normalizedLanguage === "zh-tw" ||
-    normalizedLanguage.startsWith("zh-hant") ||
-    normalizedLanguage.startsWith("zh-hk") ||
-    normalizedLanguage.startsWith("zh-mo")
+    normalizedLanguage.startsWith("zh-tw-") ||
+    normalizedLanguage === "zh-hant" ||
+    normalizedLanguage.startsWith("zh-hant-") ||
+    normalizedLanguage === "zh-hk" ||
+    normalizedLanguage.startsWith("zh-hk-") ||
+    normalizedLanguage === "zh-mo" ||
+    normalizedLanguage.startsWith("zh-mo-")
   );
 }
 
@@ -405,10 +409,10 @@ export function getLocaleFromLanguage(language: string): string {
   if (isTraditionalChineseLanguage(normalized)) {
     return "zh-TW";
   }
-  if (normalized.startsWith("zh")) return "zh-CN";
-  if (normalized.startsWith("ja")) return "ja-JP";
-  if (normalized.startsWith("ko")) return "ko-KR";
-  if (normalized.startsWith("tr")) return "tr-TR";
+  if (normalized === "zh" || normalized.startsWith("zh-")) return "zh-CN";
+  if (normalized === "ja" || normalized.startsWith("ja-")) return "ja-JP";
+  if (normalized === "ko" || normalized.startsWith("ko-")) return "ko-KR";
+  if (normalized === "tr" || normalized.startsWith("tr-")) return "tr-TR";
   return "en-US";
 }
 
@@ -421,19 +425,24 @@ export function getResolvedLang(i18n: I18nLike): string {
   return i18n.resolvedLanguage || i18n.language || "en";
 }
 
-function isCjkLanguage(lang: string): boolean {
+function usesChineseJapanesePunctuation(lang: string): boolean {
   const normalized = normalizeLanguageTag(lang);
-  return normalized.startsWith("zh") || normalized.startsWith("ja");
+  return (
+    normalized === "zh" ||
+    normalized.startsWith("zh-") ||
+    normalized === "ja" ||
+    normalized.startsWith("ja-")
+  );
 }
 
 /** 并列的名字：中日文用「、」，其他语言用逗号。 */
 export function joinNames(items: readonly string[], lang: string): string {
-  return items.join(isCjkLanguage(lang) ? "、" : ", ");
+  return items.join(usesChineseJapanesePunctuation(lang) ? "、" : ", ");
 }
 
 /** 并列的分句：中日文用「；」，其他语言用分号。 */
 export function joinClauses(items: readonly string[], lang: string): string {
-  return items.join(isCjkLanguage(lang) ? "；" : "; ");
+  return items.join(usesChineseJapanesePunctuation(lang) ? "；" : "; ");
 }
 
 /**
@@ -456,12 +465,17 @@ export function formatTokensShort(
     if (value >= 1e4) return `${(value / 1e4).toFixed(decimals)} 萬`;
     return value.toLocaleString("zh-TW");
   }
-  if (normalizedLang.startsWith("zh") || normalizedLang.startsWith("ja")) {
+  if (
+    normalizedLang === "zh" ||
+    normalizedLang.startsWith("zh-") ||
+    normalizedLang === "ja" ||
+    normalizedLang.startsWith("ja-")
+  ) {
     if (value >= 1e8) return `${(value / 1e8).toFixed(2)} 亿`;
     if (value >= 1e4) return `${(value / 1e4).toFixed(decimals)} 万`;
     return value.toLocaleString();
   }
-  if (normalizedLang.startsWith("ko")) {
+  if (normalizedLang === "ko" || normalizedLang.startsWith("ko-")) {
     if (value >= 1e8) return `${(value / 1e8).toFixed(2)}억`;
     if (value >= 1e4) return `${(value / 1e4).toFixed(decimals)}만`;
     return value.toLocaleString("ko-KR");

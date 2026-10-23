@@ -16,6 +16,12 @@ describe("Korean language", () => {
     expect(i18n.language).toBe("ko");
     expect(i18n.t("common.save")).toBe("저장");
   });
+  it("falls back to English for Konkani instead of selecting Korean", async () => {
+    vi.stubGlobal("navigator", { language: "kok-IN" });
+    const { default: i18n } = await import("@/i18n");
+    expect(i18n.language).toBe("en");
+    expect(i18n.t("common.save")).toBe("Save");
+  });
   it("restores Korean from backend settings and caches it for restart", async () => {
     vi.stubGlobal("navigator", { language: "en-US" });
     const { default: i18n, syncLanguageFromSettings } = await import("@/i18n");

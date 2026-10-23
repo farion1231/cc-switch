@@ -73,9 +73,13 @@ describe("useDragSort", () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it.each(["ko", "ko-KR"])(
-    "sorts provider names in Korean order for %s",
-    async (language) => {
+  it.each([
+    ["ko", ["가나다", "나무", "Alpha"]],
+    ["ko-KR", ["가나다", "나무", "Alpha"]],
+    ["kok-IN", ["Alpha", "가나다", "나무"]],
+  ])(
+    "uses the appropriate provider-name collation for %s",
+    async (language, expected) => {
       const previousLanguage = i18n.language;
       await i18n.changeLanguage(language);
       try {
@@ -91,7 +95,7 @@ describe("useDragSort", () => {
           { wrapper },
         );
         expect(result.current.sortedProviders.map((item) => item.name)).toEqual(
-          ["가나다", "나무", "Alpha"],
+          expected,
         );
         unmount();
       } finally {

@@ -19,12 +19,13 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
   const { t, i18n } = useTranslation();
 
   const sortedProviders = useMemo(() => {
+    const language = i18n.language?.toLowerCase();
     const locale =
       i18n.language === "zh"
         ? "zh-CN"
         : i18n.language === "zh-TW"
           ? "zh-TW"
-          : i18n.language?.toLowerCase().replace(/_/g, "-").startsWith("ko")
+          : language === "ko" || language?.startsWith("ko-")
             ? "ko-KR"
             : "en-US";
     return Object.values(providers).sort((a, b) => {
