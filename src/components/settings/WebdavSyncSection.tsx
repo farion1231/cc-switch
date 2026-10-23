@@ -148,6 +148,18 @@ const S3_PRESETS: S3Preset[] = [
   },
 ];
 
+/** Match a saved S3 endpoint to one of the preset providers. */
+function detectS3Preset(endpoint: string | null | undefined): string {
+  const host = (endpoint ?? "").trim().toLowerCase();
+  if (!host) return "aws-s3";
+  if (host.includes("aliyuncs.com")) return "s3-oss";
+  if (host.includes("myqcloud.com")) return "s3-cos";
+  if (host.includes("myhuaweicloud.com")) return "s3-obs";
+  if (host.includes("r2.cloudflarestorage.com")) return "s3-r2";
+  if (host.includes("amazonaws.com")) return "aws-s3";
+  return "s3-custom";
+}
+
 /** Parse a persisted addressing style; empty/unknown means "follow the endpoint". */
 function readSavedAddressingStyle(
   style: string | null | undefined,
@@ -289,7 +301,9 @@ export function WebdavSyncSection({
   }));
 
   // ─── S3 form state ─────────────────────────────────────────
-  const [s3Preset, setS3Preset] = useState("aws-s3");
+  const [s3Preset, setS3Preset] = useState(() =>
+    detectS3Preset(s3Config?.endpoint),
+  );
   const [s3Region, setS3Region] = useState(s3Config?.region ?? "");
   const [s3Bucket, setS3Bucket] = useState(s3Config?.bucket ?? "");
   const [s3AccessKeyId, setS3AccessKeyId] = useState(
@@ -403,6 +417,7 @@ export function WebdavSyncSection({
     setS3AccessKeyId(s3Config.accessKeyId ?? "");
     setS3SecretAccessKey(s3Config.secretAccessKey ?? "");
     setS3Endpoint(s3Config.endpoint ?? "");
+    setS3Preset(detectS3Preset(s3Config.endpoint));
     setS3AddressingStyleChoice(
       readSavedAddressingStyle(s3Config.addressingStyle),
     );
