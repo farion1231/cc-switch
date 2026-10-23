@@ -1138,6 +1138,14 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["buytoken", "buy token", "relay", "gateway"],
     defaultColor: "currentColor",
   },
+  vapi: {
+    name: "vapi",
+    displayName: "V-API",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["vapi", "v-api", "gpt.ge", "relay", "aggregator"],
+    defaultColor: "currentColor",
+  },
   everyapi: {
     name: "everyapi",
     displayName: "EveryAPI",
