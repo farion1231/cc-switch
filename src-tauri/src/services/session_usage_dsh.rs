@@ -478,8 +478,14 @@ fn token_count(value: Option<&Value>) -> u32 {
 }
 
 /// DSH 的模型 id 可能带 `<路由>:<模型>` 前缀（例如网关写入的
-/// `global:deepseek-v4.1-flash`）。原样查不到定价时，去掉第一个 `:` 之前的部分
-/// 再查一次；查到就返回用于计价的模型名，供 `pricing_model` 列记录。
+/// `global:deepseek-v4.1-flash`）。原样查得到定价时不动；查不到就把去掉前缀的
+/// 裸模型名交给 `pricing_model` 列。
+///
+/// 关键在于**当时有没有价都要记下裸名**：`pricing_model` 为空时，
+/// `backfill_missing_usage_costs` 会回落到 `model` 列，而
+/// `clean_model_id_for_pricing` 取的是 `:` **前**的部分，`global:<新模型>` 会被
+/// 当成 `global` 去查，之后定价表补上 `<新模型>` 也永远补不回费用；记下裸名后，
+/// 补价时按 `pricing_model` 就能命中。
 ///
 /// 不直接改写 `model` 列：请求日志仍显示 DSH 真实写入的 id，和其余会话导入器
 /// 一致；只有计价与模型分组收敛到干净的名字。
@@ -488,12 +494,7 @@ fn resolve_pricing_model(conn: &rusqlite::Connection, model: &str) -> Option<Str
         return None;
     }
     let (_, stripped) = model.split_once(':')?;
-    if stripped.is_empty() {
-        return None;
-    }
-    find_model_pricing(conn, stripped)
-        .is_some()
-        .then(|| stripped.to_string())
+    (!stripped.is_empty()).then(|| stripped.to_string())
 }
 
 /// 按模型定价算五项费用；没有定价的模型记 0（与其余会话导入器一致）。
@@ -953,6 +954,75 @@ mod tests {
         assert_eq!(row.0, "global:deepseek-v4.1-flash");
         assert_eq!(row.1.as_deref(), Some("deepseek-v4.1-flash"));
         assert_eq!(row.2, "3");
+    }
+
+    #[test]
+    fn dsh_usage_reprices_prefixed_models_after_pricing_is_added() {
+        let db = Database::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join("--proj--")
+            .join("session-test")
+            .join("session.v4.jsonl");
+        write_lines(
+            &path,
+            &[
+                header(),
+                step_start(1, 1, 1_700_000_000_000),
+                assistant_message(
+                    1,
+                    1,
+                    "m1",
+                    1_700_000_003_000,
+                    "global:brand-new-model",
+                    1_000_000,
+                    500_000,
+                    0,
+                    1_700_000_000_200,
+                ),
+            ],
+        );
+        assert_eq!(sync_dsh_usage_from(&db, dir.path()).unwrap().imported, 1);
+
+        // 导入时还没有这个模型的定价：成本为 0，但裸模型名必须已经落库，
+        // 否则之后补价时回填会回落到 `model` 列、把 `global` 当成模型名去查。
+        {
+            let conn = db.conn.lock().unwrap();
+            let (pricing_model, total): (Option<String>, String) = conn
+                .query_row(
+                    "SELECT pricing_model, total_cost_usd FROM proxy_request_logs",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(pricing_model.as_deref(), Some("brand-new-model"));
+            assert_eq!(total, "0");
+        }
+
+        // 之后补上定价：回填按 pricing_model 命中，把这条历史行重算。
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO model_pricing (model_id, display_name, input_cost_per_million,
+                    output_cost_per_million, cache_read_cost_per_million, cache_creation_cost_per_million)
+                 VALUES ('brand-new-model', 'Brand New Model', '1', '2', '0', '0')",
+                [],
+            )
+            .unwrap();
+        }
+        assert_eq!(db.backfill_missing_usage_costs().unwrap(), 1);
+
+        let conn = db.conn.lock().unwrap();
+        let (pricing_model, total): (Option<String>, String) = conn
+            .query_row(
+                "SELECT pricing_model, total_cost_usd FROM proxy_request_logs",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(pricing_model.as_deref(), Some("brand-new-model"));
+        assert_eq!(total, "2.000000");
     }
 
     #[test]
