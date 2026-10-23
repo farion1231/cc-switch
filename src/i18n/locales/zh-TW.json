@@ -1845,6 +1845,10 @@
       "maxPromptTokens": "最大輸入 Token",
       "maxOutputTokens": "最大輸出 Token",
       "envJsonHint": "進階：任意 COPILOT_PROVIDER_* 變數（如 COPILOT_PROVIDER_MODEL_ID、COPILOT_PROVIDER_BEARER_TOKEN）都會原樣傳給 copilot。"
+    },
+    "quota": {
+      "accountNotInAuthCenter": "授權中心裡沒有 Copilot CLI 目前登入的帳號 {{login}}。請在授權中心新增它，或在卡片裡綁定帳號。",
+      "notSignedIn": "Copilot CLI 尚未登入。請執行 copilot 並用 /login 登入，或在卡片裡綁定授權中心的帳號。"
     }
   },
   "codexOauth": {

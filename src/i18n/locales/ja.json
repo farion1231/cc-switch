@@ -1844,6 +1844,10 @@
       "maxPromptTokens": "最大入力トークン",
       "maxOutputTokens": "最大出力トークン",
       "envJsonHint": "上級者向け：任意の COPILOT_PROVIDER_* 変数（COPILOT_PROVIDER_MODEL_ID、COPILOT_PROVIDER_BEARER_TOKEN など）はそのまま copilot に渡されます。"
+    },
+    "quota": {
+      "accountNotInAuthCenter": "Copilot CLI でログイン中のアカウント {{login}} が認証センターにありません。認証センターに追加するか、このカードでアカウントを紐付けてください。",
+      "notSignedIn": "Copilot CLI にログインしていません。copilot を実行して /login でログインするか、このカードで認証センターのアカウントを紐付けてください。"
     }
   },
   "codexOauth": {

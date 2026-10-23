@@ -1844,6 +1844,10 @@
       "maxPromptTokens": "Max prompt tokens",
       "maxOutputTokens": "Max output tokens",
       "envJsonHint": "Advanced: any COPILOT_PROVIDER_* variable (for example COPILOT_PROVIDER_MODEL_ID or COPILOT_PROVIDER_BEARER_TOKEN) is passed to copilot as-is."
+    },
+    "quota": {
+      "accountNotInAuthCenter": "The Auth Center has no account for {{login}}, which Copilot CLI is signed in with. Add it in the Auth Center, or bind an account on this card.",
+      "notSignedIn": "Copilot CLI isn't signed in. Run copilot and use /login, or bind an Auth Center account on this card."
     }
   },
   "codexOauth": {

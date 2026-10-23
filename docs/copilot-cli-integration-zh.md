@@ -20,7 +20,6 @@ GitHub Copilot CLI 是独立应用，应用 ID 为 `copilot`（兼容 `copilot-c
 - 实测在 `settings.json` 写 `"env": { "COPILOT_PROVIDER_BASE_URL": … }` 无效：只靠它启动时 CLI 仍提示需要设置 `COPILOT_PROVIDER_BASE_URL`。
 - CLI 内置的「Provider discovery」只发现扩展、Foundry Local 等运行时提供的模型，没有用户可写的持久化 BYOK 配置；SDK / ACP 会话的 `provider` 参数也只对单个会话有效。
 
-
 Copilot CLI 的自带模型只能经进程环境变量 `COPILOT_PROVIDER_*` 配置，没有对应的配置文件字段；写进 shell 启动文件会影响所有终端，也会让 Key 常驻磁盘。所以与 Antigravity 相同：
 
 - 卡片里存的就是这些环境变量：`{ "env": { "COPILOT_PROVIDER_BASE_URL": …, "COPILOT_PROVIDER_TYPE": …, "COPILOT_PROVIDER_WIRE_API": …, "COPILOT_PROVIDER_API_KEY": …, "COPILOT_MODEL": … } }`。其他 `COPILOT_PROVIDER_*`（`BEARER_TOKEN`、`MODEL_ID`、`WIRE_MODEL`、`MAX_PROMPT_TOKENS`、`MAX_OUTPUT_TOKENS`、`HEADERS`、`TRANSPORT`、`AZURE_API_VERSION`）可在环境变量 JSON 里填写。
@@ -35,18 +34,19 @@ Copilot CLI 的自带模型只能经进程环境变量 `COPILOT_PROVIDER_*` 配�
 
 ## 配置与能力
 
-| 能力       | 原生位置 / 行为                                                                                                                                                                                                          |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 供应商     | 仅「打开终端」时经进程环境传入，不落盘                                                                                                                                                                                   |
-| 官方账号   | Copilot CLI 自己的登录；或绑定授权中心 GitHub 账号，经 `COPILOT_GITHUB_TOKEN` / `COPILOT_GH_HOST` 传入                                                                                                                   |
-| MCP        | `~/.copilot/mcp-config.json`：stdio 写为 `"type": "local"`，另有 `http`、`sse`；新条目带 `"tools": ["*"]`，已有条目的 `tools`、`timeout` 保留。停用时移除条目；导入时 `settings.json` 的 `disabledMcpServers` 记为未启用 |
-| Skills     | `~/.copilot/skills/`，与 Kimi 相同的原生目录保护（同名外部目录不覆盖、不删除）                                                                                                                                           |
-| 全局提示词 | `~/.copilot/copilot-instructions.md`（`copilot instruction list` 中的 Personal instructions）                                                                                                                            |
-| 会话       | `~/.copilot/session-state/<id>/events.jsonl` 与 `workspace.yaml`；旧版本没有 `workspace.yaml` 时退回 `session.start`                                                                                                     |
-| 恢复会话   | `copilot --resume=<id>`                                                                                                                                                                                                  |
-| 用量       | 导入 `session.usage_record`（新版本才写出）；按项目价格表估算费用                                                                                                                                                        |
-| 连通性检查 | 自带模型卡检查 `COPILOT_PROVIDER_BASE_URL`；官方卡不提供                                                                                                                                                                 |
-| 深链接     | `resource=provider&app=copilot`，`apiFormat` 支持 `openai_chat`、`openai_responses`、`anthropic`；`config` 可为 `{env:{…}}` 或扁平 `COPILOT_*`，只取地址、Key、模型；导入后只保存，不启用。MCP 用 `apps=copilot`         |
+| 能力       | 原生位置 / 行为                                                                                                                                                                                                                                                                                                   |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 供应商     | 仅「打开终端」时经进程环境传入，不落盘                                                                                                                                                                                                                                                                            |
+| 官方账号   | Copilot CLI 自己的登录；或绑定授权中心 GitHub 账号，经 `COPILOT_GITHUB_TOKEN` / `COPILOT_GH_HOST` 传入                                                                                                                                                                                                            |
+| 官方额度   | 卡片显示 GitHub Copilot 的 Premium 额度，在卡片「更多 → 配置用量查询」里开关（只有 Copilot 额度一种模板）。绑了授权中心账号的卡默认打开并查该账号；没绑的卡默认关闭，打开后读 `~/.copilot/config.json` 的 `lastLoggedInUser`，按用户名和域名在授权中心找对应账号来查；找不到或 Copilot CLI 未登录时卡片上提示原因 |
+| MCP        | `~/.copilot/mcp-config.json`：stdio 写为 `"type": "local"`，另有 `http`、`sse`；新条目带 `"tools": ["*"]`，已有条目的 `tools`、`timeout` 保留。停用时移除条目；导入时 `settings.json` 的 `disabledMcpServers` 记为未启用                                                                                          |
+| Skills     | `~/.copilot/skills/`，与 Kimi 相同的原生目录保护（同名外部目录不覆盖、不删除）                                                                                                                                                                                                                                    |
+| 全局提示词 | `~/.copilot/copilot-instructions.md`（`copilot instruction list` 中的 Personal instructions）                                                                                                                                                                                                                     |
+| 会话       | `~/.copilot/session-state/<id>/events.jsonl` 与 `workspace.yaml`；旧版本没有 `workspace.yaml` 时退回 `session.start`                                                                                                                                                                                              |
+| 恢复会话   | `copilot --resume=<id>`                                                                                                                                                                                                                                                                                           |
+| 用量       | 导入 `session.usage_record`（新版本才写出）；按项目价格表估算费用                                                                                                                                                                                                                                                 |
+| 连通性检查 | 自带模型卡检查 `COPILOT_PROVIDER_BASE_URL`；官方卡不提供                                                                                                                                                                                                                                                          |
+| 深链接     | `resource=provider&app=copilot`，`apiFormat` 支持 `openai_chat`、`openai_responses`、`anthropic`；`config` 可为 `{env:{…}}` 或扁平 `COPILOT_*`，只取地址、Key、模型；导入后只保存，不启用。MCP 用 `apps=copilot`                                                                                                  |
 
 ## 会话与 Token 语义
 
