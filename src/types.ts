@@ -341,6 +341,9 @@ export interface WebDavSyncSettings {
   status?: WebDavSyncStatus;
 }
 
+// S3 对象寻址方式
+export type S3AddressingStyle = "virtual-hosted" | "path";
+
 // S3 同步配置
 export interface S3SyncSettings {
   enabled?: boolean;
@@ -350,6 +353,7 @@ export interface S3SyncSettings {
   accessKeyId?: string;
   secretAccessKey?: string;
   endpoint?: string;
+  addressingStyle?: S3AddressingStyle | "";
   remoteRoot?: string;
   profile?: string;
   status?: WebDavSyncStatus;

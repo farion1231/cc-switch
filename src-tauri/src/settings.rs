@@ -216,6 +216,10 @@ pub struct S3SyncSettings {
     pub secret_access_key: String,
     #[serde(default)]
     pub endpoint: String,
+    /// Object addressing style: `virtual-hosted` or `path`.
+    /// Empty string means automatic (legacy behavior: AWS virtual-hosted, custom endpoint path).
+    #[serde(default)]
+    pub addressing_style: String,
     #[serde(default = "default_remote_root")]
     pub remote_root: String,
     #[serde(default = "default_profile")]
@@ -234,6 +238,7 @@ impl Default for S3SyncSettings {
             access_key_id: String::new(),
             secret_access_key: String::new(),
             endpoint: String::new(),
+            addressing_style: String::new(),
             remote_root: default_remote_root(),
             profile: default_profile(),
             status: WebDavSyncStatus::default(),
@@ -279,6 +284,7 @@ impl S3SyncSettings {
         self.bucket = self.bucket.trim().to_string();
         self.access_key_id = self.access_key_id.trim().to_string();
         self.endpoint = self.endpoint.trim().to_string();
+        self.addressing_style = self.addressing_style.trim().to_lowercase();
         self.remote_root = self.remote_root.trim().to_string();
         self.profile = self.profile.trim().to_string();
         if self.remote_root.is_empty() {
