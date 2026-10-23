@@ -102,6 +102,33 @@ pub fn get_hermes_config_path() -> PathBuf {
     get_hermes_dir().join("config.yaml")
 }
 
+/// Hermes 命名 profile 的配置文件：`<hermes-home>/profiles/<name>/config.yaml`。
+///
+/// profile home 是自包含的 Hermes home（`hermes --profile <name>` 或根目录
+/// `active_profile` 把 home 重定向过去，`hermes_constants.py:named_profile_home`），
+/// 不从默认 home 的 config.yaml 继承任何内容。只列目录名不以 `.` 开头、且带
+/// `config.yaml` 的目录（`.deleted` 墓碑、纯资源目录不算）。按名字排序，保证
+/// 契约摘要和写入顺序稳定。
+pub fn list_profile_config_paths() -> Vec<(String, PathBuf)> {
+    let root = get_hermes_dir().join("profiles");
+    let Ok(entries) = fs::read_dir(&root) else {
+        return Vec::new();
+    };
+    let mut homes: Vec<(String, PathBuf)> = entries
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let name = entry.file_name().into_string().ok()?;
+            if name.starts_with('.') {
+                return None;
+            }
+            let path = entry.path().join("config.yaml");
+            path.is_file().then_some((name, path))
+        })
+        .collect();
+    homes.sort_by(|a, b| a.0.cmp(&b.0));
+    homes
+}
+
 pub(crate) fn hermes_write_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
@@ -1253,6 +1280,53 @@ pub fn read_memory_limits() -> Result<HermesMemoryLimits, AppError> {
 
 #[cfg(test)]
 mod tests {
+    struct TempHermesHome {
+        saved: Option<std::ffi::OsString>,
+        dir: tempfile::TempDir,
+    }
+
+    impl TempHermesHome {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let saved = std::env::var_os("HERMES_HOME");
+            std::env::set_var("HERMES_HOME", dir.path());
+            Self { saved, dir }
+        }
+    }
+
+    impl Drop for TempHermesHome {
+        fn drop(&mut self) {
+            match self.saved.take() {
+                Some(value) => std::env::set_var("HERMES_HOME", value),
+                None => std::env::remove_var("HERMES_HOME"),
+            }
+        }
+    }
+
+    #[test]
+    fn list_profile_config_paths_filters_and_sorts() {
+        let _home = TempHermesHome::new();
+        let root = get_hermes_dir().join("profiles");
+        for name in ["b-agent", "a-agent"] {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+            std::fs::write(root.join(name).join("config.yaml"), "model:\n").unwrap();
+        }
+        // 没带 config.yaml 的目录、点开头目录（.deleted 墓碑）不算；普通文件也不算。
+        std::fs::create_dir_all(root.join("no-config")).unwrap();
+        std::fs::create_dir_all(root.join(".deleted")).unwrap();
+        std::fs::write(root.join(".deleted").join("gone"), "").unwrap();
+        std::fs::write(root.join("stray.yaml"), "").unwrap();
+
+        let homes = list_profile_config_paths();
+        let names: Vec<&str> = homes.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["a-agent", "b-agent"],
+            "只列带 config.yaml 的 profile，按名排序"
+        );
+        assert!(homes[0].1.ends_with("profiles/a-agent/config.yaml"));
+    }
+
     use super::*;
     use serial_test::serial;
     use std::sync::{Mutex, OnceLock};

@@ -66,15 +66,17 @@ pub fn grok(projection: &GrokProjection) -> Contract {
     }
 }
 
-/// Hermes：路由条目（指向本地代理、发布路由那家的模型列表）和 `model:` 段的指向。
-/// 换路由、换代理地址或路由那家改了模型列表，都要重写 `config.yaml`。
-pub fn hermes(projection: &HermesProjection) -> Contract {
+/// Hermes：路由条目（指向本地代理、发布路由那家的模型列表）、`model:` 段的指向，
+/// 以及写入的 home 名单（默认 home 为空串 + 全部 profile 名）。换路由、换代理地址、
+/// 路由那家改了模型列表，或 profile 增减，都要重写各 `config.yaml`。
+pub fn hermes(projection: &HermesProjection, homes: &[String]) -> Contract {
     Contract {
         version: CONTRACT_VERSION,
         key: key_of(&json!({
             "app": "hermes",
             "version": CONTRACT_VERSION,
             "projection": projection.to_value(),
+            "homes": homes,
         })),
         exclusive: Map::new(),
     }

@@ -161,6 +161,7 @@ command = "say"
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: true,
                 gemini: false,
@@ -168,6 +169,7 @@ command = "say"
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
                 pi: false,
             },
             description: None,
@@ -1571,6 +1573,7 @@ fn switch_codex_ignores_a_broken_claude_json() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: true,
                 gemini: false,
@@ -1578,6 +1581,7 @@ fn switch_codex_ignores_a_broken_claude_json() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
                 pi: false,
             },
             description: None,
@@ -1634,6 +1638,7 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
                 "command": "echo"
             }),
             apps: McpApps {
+                agy: false,
                 claude: false,
                 codex: true,
                 gemini: false,
@@ -1641,6 +1646,7 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimi: false,
                 pi: false,
             },
             description: None,

@@ -68,6 +68,8 @@ impl Database {
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_agy BOOLEAN NOT NULL DEFAULT 0,
+            enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0
         )",
@@ -99,6 +101,8 @@ impl Database {
             enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_agy BOOLEAN NOT NULL DEFAULT 0,
+            enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -589,14 +593,35 @@ impl Database {
                         Self::set_user_version(conn, 20)?;
                     }
                     20 => {
-                        log::info!("迁移数据库从 v20 到 v21（负载均衡模式列）");
-                        Self::migrate_v20_to_v21(conn)?;
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_agy",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
                         Self::set_user_version(conn, 21)?;
                     }
                     21 => {
-                        log::info!("迁移数据库从 v21 到 v22（Hermes 独立代理配置行）");
-                        Self::migrate_v21_to_v22(conn)?;
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_kimi",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
                         Self::set_user_version(conn, 22)?;
+                    }
+                    22 => {
+                        log::info!("迁移数据库从 v22 到 v23（负载均衡模式列）");
+                        Self::migrate_v22_to_v23(conn)?;
+                        Self::set_user_version(conn, 23)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1648,11 +1673,14 @@ impl Database {
         Ok(())
     }
 
-    /// v20 -> v21: proxy_config 增加负载均衡模式列（会话粘性负载均衡）。
+    /// v22 -> v23：负载均衡模式列 + 历史缺口兜底。
     ///
-    /// 全量 DB 走 `add_column_if_missing`（对含列的新 DDL 库为 no-op）；
-    /// v13→v14 等旧路径重建的 proxy_config 不含该列，也由此补齐，默认 'off'。
-    fn migrate_v20_to_v21(conn: &Connection) -> Result<(), AppError> {
+    /// 本地库可能从不同迁移路径到达 v22（官方链 Agy→Kimi，或旧本地链
+    /// LB(v21)→Hermes(v22)），列/行状态不定；全部用幂等操作补齐：
+    /// - `load_balance_mode`：`add_column_if_missing`（新 DDL 库 no-op）
+    /// - `enabled_agy` / `enabled_kimi`：本地链越过官方 v20/v21 迁移时补列
+    /// - hermes 代理配置行：本地链在 v21=>v22 未执行时补行
+    fn migrate_v22_to_v23(conn: &Connection) -> Result<(), AppError> {
         if Self::table_exists(conn, "proxy_config")? {
             Self::add_column_if_missing(
                 conn,
@@ -1661,15 +1689,33 @@ impl Database {
                 "TEXT NOT NULL DEFAULT 'off'",
             )?;
         }
-        Ok(())
+        for table in ["mcp_servers", "skills"] {
+            if Self::table_exists(conn, table)? {
+                Self::add_column_if_missing(
+                    conn,
+                    table,
+                    "enabled_agy",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )?;
+                Self::add_column_if_missing(
+                    conn,
+                    table,
+                    "enabled_kimi",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )?;
+            }
+        }
+        Self::ensure_hermes_proxy_row(conn)
     }
 
-    /// v21 -> v22：Hermes 拥有独立代理配置行（`/hermes/v1` 命名空间路由）。
+    /// Hermes 独立代理配置行（`/hermes/v1` 命名空间路由）。
+    ///
+    /// 幂等：表已含 hermes 只补行，缺列/缺行一并补齐。
     ///
     /// 与 v13→v14 给 Grok Build 加行同理：`proxy_config` 的 `app_type` CHECK 约束
     /// 不含 `hermes`，先重建表放宽约束，再补种默认行。新表带上全部现行列
     /// （含 v21 的 `load_balance_mode`），旧行逐列拷贝、缺失列回落默认。
-    fn migrate_v21_to_v22(conn: &Connection) -> Result<(), AppError> {
+    fn ensure_hermes_proxy_row(conn: &Connection) -> Result<(), AppError> {
         if !Self::table_exists(conn, "proxy_config")? {
             return Ok(());
         }
@@ -2535,6 +2581,17 @@ impl Database {
             ),
             (
                 "deepseek-flash",
+                "DeepSeek V4.1 Flash",
+                "0.3",
+                "1.2",
+                "0.006",
+                "0",
+            ),
+            // 第三方上游（OpenCode Go、OpenRouter 的 deepseek/ 命名空间、Hermes 预设等）用带版本号的
+            // deepseek-v4.1-flash。点号版本既剥不成 deepseek-flash，前缀兜底也只命中更长的行，
+            // 不单列会显示「未定价」并按 0 计费
+            (
+                "deepseek-v4.1-flash",
                 "DeepSeek V4.1 Flash",
                 "0.3",
                 "1.2",
@@ -4044,7 +4101,8 @@ mod tests {
     }
 
     #[test]
-    fn migrate_v21_to_v22_adds_hermes_proxy_row_and_preserves_values() -> Result<(), AppError> {
+    fn migrate_v22_to_v23_backfills_hermes_proxy_row_and_preserves_values() -> Result<(), AppError>
+    {
         let conn = Connection::open_in_memory()?;
         // v21 形状的 proxy_config：CHECK 只认四个应用，已带负载均衡列
         conn.execute_batch(
@@ -4102,6 +4160,87 @@ mod tests {
             |row| row.get(0),
         )?;
         assert!(create_sql.contains("'hermes'"));
+        Ok(())
+    }
+
+    #[test]
+    fn kimi_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_codex BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_claude BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 21)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for (table, flag) in [
+            ("mcp_servers", "enabled_codex"),
+            ("skills", "enabled_claude"),
+        ] {
+            let flags = conn.query_row(
+                &format!("SELECT {flag}, enabled_kimi FROM {table}"),
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(flags, (1, 0));
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    #[test]
+    fn kimi_clean_database_persists_mcp_and_skill_flags_independently() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let server = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"echo"}, "apps":{"kimi":true,"codex":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Kimi, false)?;
+        let saved = db.get_all_mcp_servers()?;
+        assert!(!saved["m"].apps.kimi);
+        assert!(saved["m"].apps.codex);
+        let skill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "description":"", "directory":"s", "apps":{"kimi":true,"claude":true}, "installedAt":0})).unwrap();
+        db.save_skill(&skill)?;
+        let saved = db.get_installed_skill("s")?.unwrap();
+        assert!(saved.apps.kimi && saved.apps.claude);
+        assert!(db.get_all_installed_skills()?["s"].apps.kimi);
+        Ok(())
+    }
+
+    #[test]
+    fn agy_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_gemini BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_codex BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 20)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for (table, flag) in [
+            ("mcp_servers", "enabled_gemini"),
+            ("skills", "enabled_codex"),
+        ] {
+            let row = conn.query_row(
+                &format!("SELECT {flag}, enabled_agy FROM {table}"),
+                [],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(row, (1, 0));
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    #[test]
+    fn agy_clean_database_persists_independent_mcp_and_skill_flags() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let mut server: crate::app_config::McpServer = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"echo"}, "apps":{"gemini":true,"agy":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        server.apps.agy = false;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Agy, false)?;
+        assert_eq!(db.get_all_mcp_servers()?["m"].apps, server.apps);
+        let skill: crate::app_config::InstalledSkill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "directory":"s", "installedAt":0, "apps":{"agy":true,"gemini":true}})).unwrap();
+        db.save_skill(&skill)?;
+        assert!(db.get_installed_skill("s")?.unwrap().apps.agy);
+        let mut apps = skill.apps;
+        apps.agy = false;
+        db.update_skill_apps("s", &apps)?;
+        let read = db.get_all_installed_skills()?;
+        assert!(!read["s"].apps.agy);
+        assert!(read["s"].apps.gemini);
         Ok(())
     }
 

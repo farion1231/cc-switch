@@ -11,7 +11,8 @@
     <?error Unsupported value of sys.BUILDARCH=$(sys.BUILDARCH)?>
 <?endif?>
 
-<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
     <Product
             Id="*"
             Name="{{product_name}}"
@@ -33,10 +34,29 @@
         <!-- reinstall all files; rewrite all registry entries; reinstall all shortcuts -->
         <Property Id="REINSTALLMODE" Value="amus" />
 
+        <!-- Never let this installer restart the machine (#8534). The in-app updater runs
+             `msiexec /passive /promptrestart`; with no restart option, passive mode reboots without any
+             prompt as soon as a file is still in use. Updaters shipped in older releases do not pass
+             REBOOT=ReallySuppress themselves, so the package has to carry it. Files that are still
+             in use are then replaced on the next restart instead. -->
+        <Property Id="REBOOT" Value="ReallySuppress" />
+
         <!-- Auto launch app after installation, useful for passive mode which usually used in updates -->
         <Property Id="AUTOLAUNCHAPP" Secure="yes" />
         <!-- Property to forward cli args to the launched app to not lose those of the pre-update instance -->
         <Property Id="LAUNCHAPPARGS" Secure="yes" />
+
+        <!-- Keep a running instance from holding the files this install replaces. AUTOLAUNCHAPP is only
+             passed by the in-app updater, which has already run the app's exit cleanup, so a leftover
+             instance is terminated there. A manual install only gets a polite close request and never
+             kills an instance the user may still be using.
+             Newer tauri-plugin-updater versions only pass AUTOLAUNCHAPP while restart_after_install is
+             enabled (the default). If that is ever turned off, an update install falls back to the polite
+             close request and nothing is terminated. -->
+        <util:CloseApplication Id="TerminateAppForUpdate" Target="cc-switch.exe"
+                               CloseMessage="no" TerminateProcess="0" RebootPrompt="no">AUTOLAUNCHAPP</util:CloseApplication>
+        <util:CloseApplication Id="CloseAppForInstall" Target="cc-switch.exe"
+                               CloseMessage="yes" RebootPrompt="no">NOT AUTOLAUNCHAPP</util:CloseApplication>
 
         <!-- Whether the desktop shortcut is still there before this install runs (AppSearch runs before the old version is removed) -->
         <Property Id="DESKTOPSHORTCUTEXISTS">
@@ -44,6 +64,12 @@
                 <FileSearch Id="DesktopShortcutFileSearch" Name="{{product_name}}.lnk" />
             </DirectorySearch>
         </Property>
+        <!-- Public property also allows silent installs to opt out with CREATEDESKTOPSHORTCUT=0. -->
+        <Property Id="CREATEDESKTOPSHORTCUT" Secure="yes" />
+        <!-- Initialize only once so the execute sequence does not reset an unchecked checkbox. -->
+        <SetProperty Id="CREATEDESKTOPSHORTCUT" Value="1" Before="CostFinalize" Sequence="first">
+            NOT CREATEDESKTOPSHORTCUT AND (NOT (Installed OR WIX_UPGRADE_DETECTED) OR DESKTOPSHORTCUTEXISTS)
+        </SetProperty>
 
         {{#if allow_downgrades}}
             <MajorUpgrade Schedule="afterInstallInitialize" AllowDowngrades="yes" />
@@ -53,6 +79,35 @@
 
         <InstallExecuteSequence>
             <RemoveShortcuts>Installed AND NOT UPGRADINGPRODUCTCODE</RemoveShortcuts>
+        </InstallExecuteSequence>
+
+        <!-- The desktop shortcut is optional, so failing to create or remove it (read-only or redirected
+             Desktop, security software, ...) must not abort or roll back the install (#5667). A Shortcut
+             table row has no way to tolerate that, so the desktop shortcut is a copy of the Start Menu
+             shortcut made by custom actions that ignore their own failure. Copying keeps the target,
+             working directory and AppUserModelID of the Start Menu shortcut. CAQuietExec reads its
+             command line from the property that shares the action's Id. -->
+        <CustomAction Id="CreateDesktopShortcut" BinaryKey="WixCA" DllEntry="CAQuietExec"
+                      Execute="deferred" Impersonate="yes" Return="ignore" />
+        <SetProperty Id="CreateDesktopShortcut" Before="CreateDesktopShortcut" Sequence="execute"
+                     Value="&quot;[SystemFolder]cmd.exe&quot; /c copy /y &quot;[ApplicationProgramsFolder]{{product_name}}.lnk&quot; &quot;[DesktopFolder]{{product_name}}.lnk&quot;">
+            NOT REMOVE AND CREATEDESKTOPSHORTCUT = "1"
+        </SetProperty>
+
+        <!-- Removed on a real uninstall, and on an upgrade where the user opted out: older installers leave
+             their desktop shortcut behind when they are replaced. -->
+        <CustomAction Id="RemoveDesktopShortcut" BinaryKey="WixCA" DllEntry="CAQuietExec"
+                      Execute="deferred" Impersonate="yes" Return="ignore" />
+        <SetProperty Id="RemoveDesktopShortcut" Before="RemoveDesktopShortcut" Sequence="execute"
+                     Value="&quot;[SystemFolder]cmd.exe&quot; /c del /f /q &quot;[DesktopFolder]{{product_name}}.lnk&quot;">
+            (REMOVE = "ALL" AND NOT UPGRADINGPRODUCTCODE) OR (WIX_UPGRADE_DETECTED AND DESKTOPSHORTCUTEXISTS AND NOT REMOVE AND CREATEDESKTOPSHORTCUT &lt;&gt; "1")
+        </SetProperty>
+
+        <InstallExecuteSequence>
+            <Custom Action="RemoveDesktopShortcut" After="RemoveShortcuts">
+                (REMOVE = "ALL" AND NOT UPGRADINGPRODUCTCODE) OR (WIX_UPGRADE_DETECTED AND DESKTOPSHORTCUTEXISTS AND NOT REMOVE AND CREATEDESKTOPSHORTCUT &lt;&gt; "1")
+            </Custom>
+            <Custom Action="CreateDesktopShortcut" After="CreateShortcuts">NOT REMOVE AND CREATEDESKTOPSHORTCUT = "1"</Custom>
         </InstallExecuteSequence>
 
         <Media Id="1" Cabinet="app.cab" EmbedCab="yes" />
@@ -92,19 +147,49 @@
         <CustomAction Id="LaunchApplication" Impersonate="yes" FileKey="Path" ExeCommand="[LAUNCHAPPARGS]" Return="asyncNoWait" />
 
         <UI>
+            <!-- Extend the standard install-directory page with an optional desktop shortcut. -->
+            <Dialog Id="InstallDirOptionsDlg" Width="370" Height="270" Title="!(loc.InstallDirDlg_Title)">
+                <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
+                <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+                <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+                    <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+                </Control>
+                <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.InstallDirDlgDescription)" />
+                <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.InstallDirDlgTitle)" />
+                <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
+                <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+                <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+                <Control Id="FolderLabel" Type="Text" X="20" Y="60" Width="290" Height="30" NoPrefix="yes" Text="!(loc.InstallDirDlgFolderLabel)" />
+                <Control Id="Folder" Type="PathEdit" X="20" Y="100" Width="320" Height="18" Property="WIXUI_INSTALLDIR" Indirect="yes" />
+                <Control Id="ChangeFolder" Type="PushButton" X="20" Y="120" Width="56" Height="17" Text="!(loc.InstallDirDlgChange)" />
+                <Control Id="DesktopShortcut" Type="CheckBox" X="20" Y="160" Width="320" Height="18" Property="CREATEDESKTOPSHORTCUT" CheckBoxValue="1" Text="Create a &amp;desktop shortcut" />
+            </Dialog>
+
             <!-- launch app checkbox -->
             <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
 
             <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
 
+            <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="InstallDirOptionsDlg" Order="2">LicenseAccepted = "1"</Publish>
+            <Publish Dialog="InstallDirOptionsDlg" Control="Next" Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1">1</Publish>
+            <Publish Dialog="InstallDirOptionsDlg" Control="Next" Event="DoAction" Value="WixUIValidatePath" Order="2">NOT WIXUI_DONTVALIDATEPATH</Publish>
+            <Publish Dialog="InstallDirOptionsDlg" Control="Next" Event="SpawnDialog" Value="InvalidDirDlg" Order="3"><![CDATA[NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID <> "1"]]></Publish>
+            <Publish Dialog="InstallDirOptionsDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="4">WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID = "1"</Publish>
+            <Publish Dialog="InstallDirOptionsDlg" Control="ChangeFolder" Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1">1</Publish>
+            <Publish Dialog="InstallDirOptionsDlg" Control="ChangeFolder" Event="SpawnDialog" Value="BrowseDlg" Order="2">1</Publish>
+            <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="InstallDirOptionsDlg" Order="3">NOT Installed</Publish>
+
+            {{#if license}}
+            <Publish Dialog="InstallDirOptionsDlg" Control="Back" Event="NewDialog" Value="LicenseAgreementDlg">1</Publish>
+            {{/if}}
             {{#unless license}}
             <!-- Skip license dialog -->
             <Publish Dialog="WelcomeDlg"
                      Control="Next"
                      Event="NewDialog"
-                     Value="InstallDirDlg"
+                     Value="InstallDirOptionsDlg"
                      Order="2">1</Publish>
-            <Publish Dialog="InstallDirDlg"
+            <Publish Dialog="InstallDirOptionsDlg"
                      Control="Back"
                      Event="NewDialog"
                      Value="WelcomeDlg"
@@ -115,21 +200,9 @@
         <UIRef Id="WixUI_InstallDir" />
 
         <Directory Id="TARGETDIR" Name="SourceDir">
-            <Directory Id="DesktopFolder" Name="Desktop">
-                <Component Id="ApplicationShortcutDesktop" Guid="*">
-                    <!-- Fresh install: create it. Upgrade: only keep it if the user hasn't deleted it -->
-                    <Condition><![CDATA[NOT WIX_UPGRADE_DETECTED OR DESKTOPSHORTCUTEXISTS]]></Condition>
-                    <Shortcut Id="ApplicationDesktopShortcut"
-                        Name="{{product_name}}"
-                        Description="Runs {{product_name}}"
-                        Target="[!Path]"
-                        WorkingDirectory="INSTALLDIR">
-                        <ShortcutProperty Key="System.AppUserModel.ID" Value="{{bundle_id}}"/>
-                    </Shortcut>
-                    <RemoveFolder Id="DesktopFolder" On="uninstall" />
-                    <RegistryValue Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}" Name="Desktop Shortcut" Type="integer" Value="1" KeyPath="yes" />
-                </Component>
-            </Directory>
+            <!-- No component: the desktop shortcut is made by the CreateDesktopShortcut custom action.
+                 The directory keeps [DesktopFolder] available to AppSearch and to those actions. -->
+            <Directory Id="DesktopFolder" Name="Desktop" />
             <Directory Id="LocalAppDataFolder">
                 <Directory Id="TauriLocalAppDataPrograms" Name="Programs">
                     <Directory Id="INSTALLDIR" Name="{{product_name}}"/>
@@ -267,7 +340,6 @@
                 <ComponentRef Id="Path"/>
                 <ComponentRef Id="CMP_UninstallShortcut" />
                 <ComponentRef Id="ApplicationShortcut" />
-                <ComponentRef Id="ApplicationShortcutDesktop" />
             </Feature>
 
             <Feature

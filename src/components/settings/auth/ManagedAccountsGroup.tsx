@@ -75,6 +75,9 @@ interface ManagedAccountsGroupProps {
   onAdd: () => void;
   /** Copilot 选部署类型的那块；有它时不显示空状态那行 */
   chooser?: React.ReactNode;
+  /** 「默认」徽标和 ⋯ 里「设为默认」的文案（Antigravity 是「agy 在用」「切换 agy 到这个账号」） */
+  defaultLabel?: string;
+  setDefaultLabel?: string;
   /** ⋯ 里有没有「重新登录」（Copilot 没有） */
   canReauth: boolean;
   onReauth: (accountId: string) => void;
@@ -111,6 +114,8 @@ export function ManagedAccountsGroup({
   loginLabel,
   onAdd,
   chooser,
+  defaultLabel,
+  setDefaultLabel,
   canReauth,
   onReauth,
   onSetDefault,
@@ -308,6 +313,8 @@ export function ManagedAccountsGroup({
           <AccountRow
             key={account.id}
             account={account}
+            defaultLabel={defaultLabel}
+            setDefaultLabel={setDefaultLabel}
             canReauth={canReauth}
             busy={busy}
             pendingId={pendingId}
@@ -368,7 +375,30 @@ export function ManagedAccountsGroup({
                 {t("common.cancel", { defaultValue: "取消" })}
               </Button>
             </div>
-            {login.deviceCode && (
+            {login.deviceCode && !login.deviceCode.user_code && (
+              <div className="flex flex-wrap items-center gap-2 text-caption text-fg-2">
+                <span className="min-w-0 flex-1">
+                  {t("authCenter.pending.browserNote", {
+                    defaultValue:
+                      "已在浏览器打开 {{service}} 的登录页，登录并同意授权后这里会自动更新。",
+                    service: name,
+                  })}
+                </span>
+                <Button
+                  type="button"
+                  variant="quiet"
+                  size="compact"
+                  className="gap-1"
+                  onClick={openPage}
+                >
+                  <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.5} />
+                  {t("authCenter.pending.reopen", {
+                    defaultValue: "重新打开登录页",
+                  })}
+                </Button>
+              </div>
+            )}
+            {login.deviceCode?.user_code && (
               <>
                 <div className="flex flex-wrap items-center gap-2 text-caption text-fg-2">
                   <span>
@@ -495,6 +525,8 @@ function AccountAvatar({
 
 interface AccountRowProps {
   account: GroupAccountRow;
+  defaultLabel?: string;
+  setDefaultLabel?: string;
   canReauth: boolean;
   busy: boolean;
   pendingId: string;
@@ -507,6 +539,8 @@ interface AccountRowProps {
 
 function AccountRow({
   account,
+  defaultLabel,
+  setDefaultLabel,
   canReauth,
   busy,
   pendingId,
@@ -534,7 +568,8 @@ function AccountRow({
           </span>
           {account.isDefault && (
             <span className={cn(PILL, "border border-border-strong text-fg-2")}>
-              {t("authCenter.default", { defaultValue: "默认" })}
+              {defaultLabel ??
+                t("authCenter.default", { defaultValue: "默认" })}
             </span>
           )}
           {account.needsReauth && (
@@ -603,7 +638,8 @@ function AccountRow({
               onSelect={() => onSetDefault(account.id)}
               className="h-[30px] rounded-control px-2.5 text-body"
             >
-              {t("authCenter.setDefault", { defaultValue: "设为默认" })}
+              {setDefaultLabel ??
+                t("authCenter.setDefault", { defaultValue: "设为默认" })}
             </DropdownMenuItem>
           )}
           {canReauth && (

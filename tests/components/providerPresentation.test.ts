@@ -5,6 +5,7 @@ import type { AppMode } from "@/types/proxy";
 import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/opencodeFormUtils";
 import {
   buildAdditiveSections,
+  buildLaunchSections,
   buildSwitchSections,
   queueMoveSortUpdates,
   type ProviderSection,
@@ -644,6 +645,57 @@ describe("buildAdditiveSections", () => {
     );
   });
 
+  it("protects every official Kimi OAuth provider, including inactive accounts", () => {
+    const accounts = ["managed:kimi-code", "kimi-code-ccs-second"].map((id) =>
+      provider(id, {
+        settingsConfig: {
+          provider: { type: "kimi", oauth: { key: `oauth/${id}` } },
+        },
+      }),
+    );
+    const sections = buildAdditiveSections({
+      app: "kimi",
+      t,
+      providers: [...accounts, relay],
+      isInConfig: () => true,
+      kimiCurrentId: accounts[0].id,
+      actions: additiveActions(),
+    });
+    for (const account of accounts) {
+      const presentation = item(sections, account.id);
+      expect(presentation.editDisabledReason).toBe("kimi.oauth.managedHint");
+      expect(presentation.deleteDisabledReason).toBe("kimi.oauth.managedHint");
+      expect(
+        presentation.menuItems?.find((action) => action.key === "remove")
+          ?.disabledReason,
+      ).toBe("kimi.oauth.managedHint");
+    }
+    expect(
+      button(sections, accounts[1].id, "switch").disabledReason,
+    ).toBeUndefined();
+    expect(item(sections, "relay").editDisabledReason).toBeUndefined();
+  });
+
+  it("allows deleting a saved official Kimi account after its native node is removed", () => {
+    const account = provider("managed:kimi-code", {
+      settingsConfig: {
+        provider: { type: "kimi", oauth: { key: "oauth/kimi-code" } },
+      },
+    });
+    const sections = buildAdditiveSections({
+      app: "kimi",
+      t,
+      providers: [account],
+      isInConfig: () => false,
+      kimiCurrentId: account.id,
+      actions: additiveActions(),
+    });
+    const presentation = item(sections, account.id);
+    expect(presentation.deleteDisabledReason).toBeUndefined();
+    expect(presentation.menuItems).toBeUndefined();
+    expect(presentation.status).toBeUndefined();
+  });
+
   it("blocks every Pi change while Pi's current state is unavailable", () => {
     const sections = buildAdditiveSections({
       app: "pi",
@@ -722,5 +774,36 @@ describe("queueMoveSortUpdates", () => {
     expect(queueMoveSortUpdates(items, {}, "a", -1)).toBeNull();
     expect(queueMoveSortUpdates(items, {}, "b", 1)).toBeNull();
     expect(queueMoveSortUpdates(items, {}, "x", 1)).toBeNull();
+  });
+});
+
+describe("buildLaunchSections", () => {
+  it("gives every Antigravity card Open Terminal instead of enable or in use", () => {
+    const openTerminal = vi.fn();
+    const [section] = buildLaunchSections({
+      app: "agy",
+      t,
+      providers: [official, relay],
+      openTerminal,
+    });
+    expect(section.items.map((item) => item.provider.id)).toEqual([
+      "official",
+      "relay",
+    ]);
+    for (const { provider: p, presentation } of section.items) {
+      expect(presentation.status).toBeUndefined();
+      expect(presentation.tone).toBeUndefined();
+      // 没有「使用中」，哪张都能删
+      expect(presentation.deleteDisabledReason).toBeUndefined();
+      expect(presentation.buttons.map((button) => button.key)).toEqual([
+        "openTerminal",
+      ]);
+      presentation.buttons[0].onClick();
+      expect(openTerminal).toHaveBeenLastCalledWith(p);
+    }
+    expect(section.items[0].presentation.chips.map((chip) => chip.key)).toEqual(
+      ["official"],
+    );
+    expect(section.items[1].presentation.chips).toEqual([]);
   });
 });

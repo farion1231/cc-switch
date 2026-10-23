@@ -445,7 +445,6 @@
         "title": "Uyumluluk düzeltici",
         "description": "API isteği uyumluluk sorunlarını otomatik olarak düzeltin",
         "enabled": "Uyumluluk düzelticiyi etkinleştir",
-        "enabledDescription": "Ana anahtar, kapatıldığında tüm düzeltme özellikleri devre dışı bırakılacaktır",
         "requestGroup": "İstek düzeltme",
         "responseGroup": "Yanıt düzeltme",
         "thinkingSignature": "Düşünme imzası düzeltme",
@@ -482,7 +481,6 @@
           "debug": "Hata ayıklama",
           "trace": "İz"
         },
-        "levelHint": "Günlük düzeyi açıklamaları:",
         "levelDesc": {
           "error": "Yalnızca kritik hatalar",
           "warn": "Hatalar + uyarılar",
@@ -623,7 +621,6 @@
     },
     "webdavSync": {
       "title": "WebDAV bulut eşitleme",
-      "description": "WebDAV aracılığıyla veritabanı ve beceri yapılandırmalarını cihazlar arasında eşitle edin.",
       "baseUrl": "WebDAV Sunucu URL'si",
       "baseUrlPlaceholder": "https://dav.example.com/dav/",
       "username": "WebDAV Hesabı",
@@ -664,8 +661,6 @@
         "synologyHint": "Önce Synology Paket Merkezi'nde WebDAV Sunucu paketini kurun ve etkinleştirin.",
         "custom": "Özel"
       },
-      "remoteRootDefault": "Varsayılan: cc-switch-sync",
-      "profileDefault": "Varsayılan: varsayılan",
       "saveAndTestSuccess": "Yapılandırma kaydedildi, bağlantı tamam",
       "saveAndTestFailed": "Yapılandırma kaydedildi ancak bağlantı testi başarısız oldu: {{error}}",
       "noRemoteData": "Uzak sunucuda eşitleme verisi bulunamadı",
@@ -738,9 +733,7 @@
       "endpointHint": "Çoğu S3 uyumlu hizmet için gereklidir",
       "endpointPlaceholder": "örneğin https://s3-compatible.example.com",
       "remoteRoot": "Uzak Kök Dizini",
-      "remoteRootDefault": "Varsayılan: cc-switch-sync",
       "profile": "Eşitleme profili adı",
-      "profileDefault": "Varsayılan: varsayılan",
       "autoSync": "Otomatik eşitleme",
       "autoSyncHint": "Etkinleştirildiğinde, her veritabanı değişikliği otomatik bir S3 yüklemesini tetikler.",
       "enabled": "S3 Eşitlemeunu Etkinleştir",
@@ -1591,7 +1584,6 @@
       "subrouter": "SubRouter, bir anahtarın birden fazla modele ve sağlayıcıya erişmesine olanak tanıyan bir AI aktarma toplayıcıdır.",
       "qiniu": "Qiniu Cloud, çok protokollü bir yapay zeka aktarımıdır: yerel Claude, GPT ve Gemini modelleri için tek bir anahtar; Anthropic, OpenAI ve Gemini API'lerinin tümü desteklenir.",
       "fenno": "Fenno.ai, geniş bir ana akım model yelpazesine erişmenizi sağlayan istikrarlı, verimli bir API rölesidir. Özel CC Switch teklifi: Bu bağlantı aracılığıyla 7 gün geçerli, 50$ kredi değerindeki 1,99$ Deneme Planına abone olun!",
-      "zetaapi": "ZetaAPI gerçek, bozulmamış modelleri resmi fiyatlandırmanın %35'i kadar düşük bir fiyatla sunar. Özel CC Switch teklifi: bu bağlantı aracılığıyla kaydolun ve ilk yüklemenizde %10 indirim için CC-SWITCH promosyon kodunu kullanın!",
       "teamorouter": "TeamoRouter, %90'a varan indirimlerle kurumsal düzeyde bir Agentic LLM ağ geçididir. CC Switch kullanıcılarına özel avantajlar sunar: ilk yüklemenizde %10 indirim için bu bağlantı aracılığıyla yeni bir kullanıcı olarak kaydolun!",
       "ppio": "PPIO, Çin'in önde gelen bağımsız Aracı Bulut sağlayıcısıdır ve her amiral gemisi açık kaynak modeline tek bir API anahtarı aracılığıyla hizmet verir. 10 ¥ değerinde kredi kuponu almak için bu bağlantı aracılığıyla kaydolun ve kimlik doğrulamayı tamamlayın.",
       "xycai": "XycAi kurumsal düzeyde bir token fabrikasıdır: 200'den fazla global modele tek tıklamayla erişim, otomatik SLA telafisi ve anormal önbellek ücretleri için %100 geri ödeme!",
@@ -1988,16 +1980,13 @@
     "npmPackage": "API Biçimi",
     "nativeConfigHint": "Yerel OpenCode V2 yapılandırmasını aşağıdaki JSON olarak düzenleyin. Kaydederken sağlayıcı ve model alanları korunur.",
     "selectPackage": "API biçimini seçin",
-    "npmPackageHint": "AI hizmeti için API formatını seçin",
     "builtinDefaults": "OpenCode yerleşik sağlayıcı varsayılanlarını kullanın",
     "customProviderRequired": "Yeni bir sağlayıcı kimliği, bir npm paketi ve en az bir model gerektirir. Yalnızca canlı yapılandırmadaki mevcut bir kimlik varsayılanları devralabilir.",
     "duplicateRequiresDefinition": "Bu sağlayıcıda bir npm paketi veya model tanımı eksik ve doğrudan kopyalanamıyor. Özel sağlayıcı olarak kopyalamadan önce bir npm paketi ve en az bir model belirtin.",
     "duplicateRequiresNativeDefinition": "Bu yerel V2 sağlayıcısında paket veya model tanımları eksik ve doğrudan kopyalanamıyor. Yeni bir kimlik altına kopyalamadan önce bir paket ve en az bir model ekleyin.",
     "nativeCustomProviderRequired": "Yeni sağlayıcı kimliği bir paket ve en az bir model gerektirir. Yalnızca canlı yapılandırmadaki mevcut bir kimlik varsayılanları devralabilir.",
     "baseUrl": "Temel URL",
-    "baseUrlHint": "Özel API uç nokta URL'si",
     "models": "Modeller",
-    "modelsHint": "Mevcut modelleri ve görünen adlarını yapılandırın",
     "addModel": "Manuel olarak ekle",
     "modelId": "Model Kimliği",
     "modelName": "Görünen Ad",
@@ -2081,6 +2070,7 @@
     "universalDetail": "Claude Code, Codex, Gemini CLI ile eşitle edildi",
     "manageUniversal": "Mevcut evrensel sağlayıcıları yönetin ›",
     "loginWith": {
+      "kimi": "Kimi hesabıyla giriş yap",
       "claude": "Claude hesabıyla oturum açın",
       "chatgpt": "ChatGPT hesabıyla oturum açın",
       "github": "GitHub hesabıyla oturum açın",
@@ -2940,7 +2930,6 @@
       "title": "Günlük Hafıza",
       "sectionTitle": "Günlük Hafıza",
       "cardTitle": "Günlük Bellek Dosyaları",
-      "cardDescription": "Günlük anılara göz atın ve yönetin",
       "createToday": "Bellek Ekle",
       "empty": "Henüz günlük hafıza dosyası yok",
       "loadFailed": "Günlük bellek dosyaları yüklenemedi",
@@ -2971,7 +2960,6 @@
     "selectProtocol": "API Protokolünü seçin",
     "apiProtocolHint": "Sağlayıcının API'si ile uyumlu protokol türünü seçin. Çoğu sağlayıcı OpenAI Tamamlamalar biçimini kullanır.",
     "baseUrl": "API Uç Nokta",
-    "baseUrlHint": "Sağlayıcının API uç nokta adresi.",
     "models": "Model Yapılandırması",
     "addModel": "Model Ekle",
     "selectDefaultModel": "Varsayılan Modeli Seçin",
@@ -2995,7 +2983,6 @@
     "userAgentHint": "Bazı sağlayıcılar, düzgün çalışması için bir tarayıcı Kullanıcı Aracısı başlığına ihtiyaç duyar.",
     "env": {
       "title": "Ortam Değişkenleri",
-      "description": "openclaw.json'daki ortam değişkenlerini yönetin (API anahtarları, özel değişkenler vb.)",
       "editorHint": "Env bölümünün tamamını JSON olarak düzenleyin. env.vars ve env.shellEnv gibi iç içe geçmiş nesneler desteklenir.",
       "objectRequired": "OpenClaw env bir JSON nesnesi olmalıdır.",
       "invalidJson": "OpenClaw ortamı geçerli JSON olmalıdır.",
@@ -3010,7 +2997,6 @@
     },
     "tools": {
       "title": "Araç İzinleri",
-      "description": "openclaw.json'daki araç izinlerini yönetin (izin ver/reddet listeleri)",
       "profile": "İzin Profili",
       "profileMinimal": "Asgari",
       "profileCoding": "Kodlama",
@@ -3064,7 +3050,6 @@
   "hermes": {
     "form": {
       "baseUrl": "API Uç Nokta",
-      "baseUrlHint": "Bu sağlayıcının API uç nokta URL'si.",
       "providerKey": "Sağlayıcı Anahtarı",
       "providerKeyPlaceholder": "my-provider",
       "providerKeyHint": "Yalnızca küçük harfler, sayılar ve kısa çizgiler. config.yaml dosyasında sağlayıcı adı olarak kullanılır.",
@@ -3073,7 +3058,6 @@
       "providerKeyInvalid": "Sağlayıcı anahtarı yalnızca küçük harfler, sayılar ve kısa çizgiler içerebilir",
       "providerKeyDuplicate": "Bu sağlayıcı anahtarı zaten mevcut",
       "apiMode": "API Modu",
-      "apiModeHint": "Sağlayıcı API protokolü. Uç noktanızla eşleşen formatı seçin.",
       "apiModeChatCompletions": "OpenAI Sohbet Tamamlamaları",
       "apiModeAnthropicMessages": "Anthropic Mesajları",
       "apiModeCodexResponses": "OpenAI Yanıtları",
@@ -3752,7 +3736,16 @@
       "stopFailed": "Yönlendirme hizmeti durdurulamadı: {{detail}}"
     },
     "stoppedWithRestore": "Yönlendirme hizmeti durduruldu; tüm uygulamalar doğrudan bağlantılara geri döndü",
-    "stopWithRestoreFailed": "Durdurma başarısız oldu: {{detail}}"
+    "stopWithRestoreFailed": "Durdurma başarısız oldu: {{detail}}",
+    "loadBalance": {
+      "modeLabel": "Yük dengeleme modu",
+      "off": "Kapalı (birincil/yedek)",
+      "session": "Oturum yapışkan döngüsel dağıtım",
+      "hint": "Aynı oturum tek bir hesapta kalır; yeni oturumlar yük devretme kuyruğuna yayılır. Kuyrukta birden fazla hesaplı otomatik yük devretme gerektirir.",
+      "live": "Havuz {{pool}} hesap · {{inflight}} devam eden · {{cooling}} soğuyor",
+      "liveLoading": "Yük durumu yükleniyor…",
+      "minuteUnit": "dk"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}}'ye ulaşılabilir ({{responseTimeMs}}ms)",
@@ -4135,7 +4128,7 @@
     },
     "active": "aktif",
     "activeTitle": "{{mode}} aktif",
-    "noProvider": "(yok)",
+    "noProvider": "yok",
     "failover": "Yedek sağlayıcıya geçiş",
     "routeSettings": "Yönlendirme ayarları",
     "routeSettingsTitle": "Yönlendirme ayarları",
@@ -4785,6 +4778,101 @@
       "loading": "Kota kontrol ediliyor…",
       "refresh": "Kotayı yenile",
       "refreshAria": "{{login}} için kotayı yenileyin"
+    }
+  },
+  "codingPlanPresets": {
+    "placeholder": "Plan ön ayarı (hızlı doldurma)",
+    "kimiTier1": "Kimi Seviye 1",
+    "kimiTier2": "Kimi Seviye 2",
+    "kimiTier3": "Kimi Seviye 3",
+    "kimiTier4": "Kimi Seviye 4",
+    "kimiMax": "Kimi Max",
+    "glmMax": "GLM Coding Max",
+    "mimo": "MiMo",
+    "sources": {
+      "userSpecified": "Kullanıcı tarafından belirtildi (2026-10-07)",
+      "kimiMax": "Kullanıcı tarafından 8 belirtildi (2026-10-07); resmî fiyat sayfası Max=4 gösteriyor — kullanıcı değeri önceliklidir",
+      "glmConsole": "Konsoldan doğrulandı (2026-10-07): glm-5.3=30, glm-5.3-flash=50",
+      "mimoUnspecified": "Resmî rakam yok; sınırsız bırakıldı. Çalışma zamanı 429/403 soğumasıyla uyum sağlar"
+    }
+  },
+  "providerAdvanced": {
+    "loadBalance": {
+      "title": "Eşzamanlılık sınırı",
+      "enable": "Etkinleştir",
+      "hint": "Oturum yapışkan yük dengelemesinde yeni oturumlar sınırın altındaki hesapları tercih eder; 0 veya boş = sınırsız. Yapışkan oturumlar asla sınırlanmaz.",
+      "preset": "Plan ön ayarı",
+      "presetHint": "Seçin ve doldurun; her kademenin kaynak notuna bakın. Sonradan düzenlenebilir",
+      "maxConcurrent": "Hesap varsayılan eşzamanlılığı",
+      "maxConcurrentHint": "0 veya boş = sınırsız",
+      "byModel": "Model başına geçersiz kılmalar",
+      "byModelHint": "Belirli giden modeller için ayrı sınır ayarlayın (model eşlemesinden sonraki ad); hesap varsayılanına göre önceliklidir",
+      "model": "Model adı",
+      "limit": "Sınır",
+      "addOverride": "Model geçersiz kılma ekle"
+    },
+    "pricingConfig": "Fiyatlandırma Yapılandırması",
+    "useCustomPricing": "Ayrı yapılandırma kullan",
+    "pricingConfigDesc": "Bu sağlayıcı için ayrı fiyatlandırma parametreleri yapılandırın. Devre dışıyken genel varsayılanlar kullanılır.",
+    "costMultiplier": "Maliyet Çarpanı",
+    "costMultiplierPlaceholder": "Genel varsayılanı (1) kullanmak için boş bırakın",
+    "costMultiplierHint": "Gerçek maliyet = Temel maliyet × Çarpan; 1,5 gibi ondalıklar desteklenir",
+    "pricingModelSourceLabel": "Fiyatlandırma Modu",
+    "pricingModelSourceInherit": "Genel varsayılanı devral",
+    "pricingModelSourceRequest": "İstek modeli",
+    "pricingModelSourceResponse": "Yanıt modeli",
+    "pricingModelSourceHint": "Fiyatlandırmanın istek modeline mi yanıt modeline mi göre eşleşeceğini seçin"
+  },
+  "kimi": {
+    "oauth": {
+      "useAccount": "Bu hesabı kullan",
+      "title": "Kimi Code resmî girişi",
+      "description": "Ayrı kimlik bilgileri ve sağlayıcılarla birden fazla Kimi kodlama planı hesabı ekleyin. Girişi burada yönetin, ardından resmî modellerini kullanmak için bir hesap seçin.",
+      "region": "Giriş bölgesi",
+      "mainland-cn": "Çin ana karası",
+      "global": "Küresel",
+      "signIn": "Kimi hesabına giriş yap",
+      "signInAgain": "Yeniden giriş yap",
+      "signOut": "Çıkış yap",
+      "signedIn": "Giriş yapıldı · {{region}}",
+      "signedOut": "Giriş yapılmadı",
+      "statusFailed": "Giriş durumu okunamadı",
+      "refresh": "Kimi giriş durumunu yenile",
+      "waiting": "Tarayıcı yetkilendirmesi bekleniyor",
+      "copyCode": "Yetkilendirme kodunu kopyala",
+      "copied": "Yetkilendirme kodu kopyalandı",
+      "openPage": "Yetkilendirme sayfasını aç",
+      "manualHint": "Yetkilendirmeden sonra bu sayfa güncellenir. Tarayıcı açılmadıysa aşağıdaki bağlantıyı ziyaret edip kodu girin.",
+      "error": "Kimi girişi tamamlanamadı",
+      "expired": "Yetkilendirme kodunun süresi doldu. Yeniden giriş yapın.",
+      "denied": "Yetkilendirme reddedildi. Yeniden giriş yapın.",
+      "cancelled": "Bu giriş iptal edildi veya değiştirildi. Yeniden giriş yapın.",
+      "success": "Kimi Code girişi yapıldı ve resmî modeller eklendi.",
+      "signOutConfirm": "{{name}} oturumu kapatılsın mı? Yalnızca bu hesabın yerel kimlik bilgileri kaldırılır. Diğer hesaplar, sağlayıcılar, modeller ve geçerli model seçimi korunur.",
+      "addAccount": "Hesap ekle",
+      "accountCount": "Kayıtlı hesaplar: {{count}}",
+      "manageAccounts": "Kimi hesaplarını yönet",
+      "managedHint": "Resmî Kimi hesaplarını Yetkilendirme Merkezi'nde yönetin."
+    },
+    "modelSelectionHint": "Sağlayıcıyı seçmek için karttaki geçiş düğmesini kullanın. Başka bir model seçmek için Kimi Code içinde /model komutunu kullanın.",
+    "providerType": "Sağlayıcı türü",
+    "baseUrl": "İstek adresi",
+    "models": "Modeller",
+    "addModel": "Model ekle",
+    "removeModel": "Modeli kaldır",
+    "modelId": "Model kimliği",
+    "contextSize": "Bağlam uzunluğu",
+    "deleteSessionHint": "Dizin ve geçmişin birlikte güncellenmesi için oturumu Kimi Code içinden silin.",
+    "empty": {
+      "title": "Kimi Code sağlayıcısı ekleyin",
+      "description": "Adres, API anahtarı ve modelleri yapılandırın. Mevcut Kimi yapılandırması otomatik olarak içe aktarılır."
+    },
+    "capabilities": {
+      "image_in": "Görsel girişi",
+      "thinking": "Düşünme",
+      "always_thinking": "Her zaman düşünme",
+      "tool_use": "Araç kullanımı",
+      "dynamically_loaded_tools": "Araçları gerektiğinde yükle"
     }
   }
 }

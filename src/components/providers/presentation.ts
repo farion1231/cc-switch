@@ -635,7 +635,50 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
   ];
 }
 
-// ─── 共存式应用（OpenCode / OpenClaw / Hermes / Pi / MiniMax Code）───────────
+// ─── 启动器式应用（Antigravity）──────────────────────────────────────────────
+
+export interface LaunchInput {
+  app: AppId;
+  t: TFunction;
+  providers: Provider[];
+  openTerminal: (provider: Provider) => void;
+}
+
+/**
+ * Antigravity：第三方 Key 只能经环境变量交给 CC Switch 打开的那个 agy，管不到用户自己敲的
+ * `agy`，所以没有「启用 / 使用中」，每张卡的主操作就是「打开终端」，哪张都能删。
+ */
+export function buildLaunchSections(input: LaunchInput): ProviderSection[] {
+  const { app, t, providers, openTerminal } = input;
+  return [
+    {
+      key: "all",
+      items: providers.map((p) => ({
+        provider: p,
+        presentation: {
+          chips: isOfficialAccount(app, p)
+            ? [
+                {
+                  key: "official",
+                  label: t("providerCard.chip.official"),
+                  tone: "outline",
+                },
+              ]
+            : [],
+          buttons: [
+            {
+              key: "openTerminal",
+              label: t("provider.openTerminalWithProvider"),
+              onClick: () => openTerminal(p),
+            },
+          ],
+        },
+      })),
+    },
+  ];
+}
+
+// ─── 共存式应用（OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Kimi）─────
 
 export interface AdditiveInput {
   app: AppId;
@@ -654,6 +697,8 @@ export interface AdditiveInput {
   isHermesManaged?: (provider: Provider) => boolean;
   /** Pi：读不到当前配置时一律不能改 */
   piStateUnavailable?: boolean;
+  /** Kimi：原生 default_model 别名所属的供应商。 */
+  kimiCurrentId?: string | null;
   actions: {
     add: (provider: Provider) => void;
     remove: (provider: Provider) => void;
@@ -673,6 +718,58 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
 
   for (const p of providers) {
     const chips: CardChip[] = [];
+    if (app === "kimi") {
+      const official = isOfficialAccount(app, p);
+      const live = input.isInConfig(p);
+      const officialReason = official ? t("kimi.oauth.managedHint") : undefined;
+      const protectedReason = live ? officialReason : undefined;
+      if (official) {
+        chips.push({
+          key: "official",
+          label: t("providerCard.chip.official"),
+          tone: "outline",
+        });
+      }
+      const current = live && p.id === input.kimiCurrentId;
+      (live ? added : available).push({
+        provider: p,
+        presentation: {
+          tone: current ? "direct" : undefined,
+          status: current
+            ? { label: t("providerCard.status.inUse"), dot: "direct" }
+            : undefined,
+          chips,
+          buttons: current
+            ? []
+            : [
+                {
+                  key: "switch",
+                  label: t("providerCard.action.switch"),
+                  onClick: () => actions.add(p),
+                },
+              ],
+          menuItems: live
+            ? [
+                {
+                  key: "remove",
+                  label: t("providerCard.action.remove"),
+                  disabledReason:
+                    protectedReason ??
+                    (current
+                      ? t("providerCard.reason.currentCannotRemove")
+                      : undefined),
+                  onSelect: () => actions.remove(p),
+                },
+              ]
+            : undefined,
+          editDisabledReason: officialReason,
+          deleteDisabledReason:
+            protectedReason ??
+            (current ? t("providerCard.reason.inUseCannotDelete") : undefined),
+        },
+      });
+      continue;
+    }
     const isOmo = p.category === "omo";
     const isOmoSlim = p.category === "omo-slim";
     if (isOmo) chips.push({ key: "omo", label: "OMO", tone: "outline" });

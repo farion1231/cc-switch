@@ -490,13 +490,14 @@ async fn write_proxy(
             unchanged
         }
         AppType::Hermes => {
-            // 累加式应用：契约 = 指向本地代理的路由条目 + model: 段的指向。
+            // 累加式应用：契约 = 指向本地代理的路由条目 + model: 段的指向 + 写入的
+            // home 名单（默认 home + 全部 profile，名单变了也要重写）。
             let base_url = format!("{}/hermes/v1", proxy_url.trim_end_matches('/'));
             let projection = hermes_direct::proxy_contract(route, &base_url).map_err(err)?;
-            let contract = contract::hermes(&projection);
+            let contract = contract::hermes(&projection, &hermes_direct::home_names());
             let unchanged = !force && live_now.has_contract(&contract.key);
             target.contract = Some(contract);
-            hermes_direct::run(
+            hermes_direct::run_enter(
                 &state.db,
                 op_name,
                 (!unchanged).then_some(&projection),
@@ -617,11 +618,16 @@ fn write_direct(
         }
         AppType::Hermes => {
             // 累加式应用：直连那家的条目本来就在 live 里，不重写；只删 CC Switch 的
-            // 路由条目、把 model: 段指回直连指针那家（行里带占位符的照删不误——
-            // 条目名专属 CC Switch，不按行内容判断）。
-            let projection = attached.then(|| hermes_direct::direct_projection(direct.as_ref()));
-            hermes_direct::run(&state.db, op_name, projection.as_ref(), pending_target)
-                .map_err(err)?;
+            // 路由条目。默认 home 的 model: 段指回直连指针那家，profile home 按进入
+            // 时记录的原值恢复（没有记录的只删条目）。
+            hermes_direct::run_exit(
+                &state.db,
+                op_name,
+                attached,
+                direct.as_ref(),
+                pending_target,
+            )
+            .map_err(err)?;
         }
         AppType::ClaudeDesktop => {
             // 直连那家写不进去（模型映射卡、配置不全）也不能让 Desktop 一直指着路由：退回官方。
@@ -5295,12 +5301,43 @@ model_provider = "c"
         )
     }
 
+    /// 在临时 HOME 里种两个 profile home：`p-one` 带旧接管残留，`p-two` 的默认模型
+    /// 恰好在路由那家的列表里。
+    fn seed_hermes_profiles() {
+        let root = hermes_path().parent().unwrap().join("profiles");
+        fs::create_dir_all(root.join("p-one")).unwrap();
+        fs::create_dir_all(root.join("p-two")).unwrap();
+        fs::write(
+            root.join("p-one").join("config.yaml"),
+            "model:\n  default: aim\n  provider: custom:cc-switch\ncustom_providers:\n  - name: cc-switch\n    api_key: PROXY_MANAGED\n    base_url: http://127.0.0.1:15721\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("p-two").join("config.yaml"),
+            "model:\n  default: a-model\n  provider: kimi\ncustom_providers:\n  - name: kimi\n",
+        )
+        .unwrap();
+    }
+
+    fn hermes_profile_text(name: &str) -> String {
+        fs::read_to_string(
+            hermes_path()
+                .parent()
+                .unwrap()
+                .join("profiles")
+                .join(name)
+                .join("config.yaml"),
+        )
+        .unwrap()
+    }
+
     #[tokio::test]
     #[serial]
     async fn hermes_proxy_writes_route_entry_and_exit_restores_direct() {
         let _hermes_env = HermesHomeEnv::new();
         let _home = Home::new();
         seed_hermes(HERMES_USER_LIVE);
+        seed_hermes_profiles();
         let state = state_with(AppType::Hermes, &[hermes_row("a"), hermes_row("b")], "a").await;
 
         // 直连切换：条目 + model 段指向 a。
@@ -5332,6 +5369,34 @@ model_provider = "c"
         assert!(hermes_text().starts_with("# mine\ntheme: dark\n"));
         assert!(hermes_entries(&yaml).iter().any(|(name, _)| name == "mine"));
 
+        // profile home 同步写入：路由条目就位、model 段指过去；p-two 的默认模型
+        // 路由那家仍提供 → 保留；p-one 的不在 → 换成首个发布模型，旧接管残留被清掉。
+        let p_one = hermes_profile_text("p-one");
+        let p_one_yaml: serde_yaml::Value = serde_yaml::from_str(&p_one).unwrap();
+        assert_eq!(
+            p_one_yaml["model"]["provider"].as_str(),
+            Some("cc-switch-route")
+        );
+        assert_eq!(p_one_yaml["model"]["default"].as_str(), Some("a-model"));
+        let names: Vec<&str> = p_one_yaml["custom_providers"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e.get("name").and_then(|n| n.as_str()))
+            .collect();
+        assert!(!names.contains(&"cc-switch"), "旧接管残留被清掉: {p_one}");
+        let p_two = hermes_profile_text("p-two");
+        let p_two_yaml: serde_yaml::Value = serde_yaml::from_str(&p_two).unwrap();
+        assert_eq!(
+            p_two_yaml["model"]["provider"].as_str(),
+            Some("cc-switch-route")
+        );
+        assert_eq!(
+            p_two_yaml["model"]["default"].as_str(),
+            Some("a-model"),
+            "路由仍提供的默认模型保留"
+        );
+
         // 代理内换路由：条目按新路由那家重写。
         let result = ProviderService::switch(&state, AppType::Hermes, "b").expect("route to b");
         assert!(result.route.is_some());
@@ -5351,6 +5416,19 @@ model_provider = "c"
         assert!(!names.contains(&"b"), "{}", hermes_text());
         assert_eq!(yaml["model"]["provider"].as_str(), Some("a"));
         assert!(hermes_text().starts_with("# mine\ntheme: dark\n"));
+
+        // profile home 按进入时记录的原值恢复。
+        let p_one_yaml: serde_yaml::Value =
+            serde_yaml::from_str(&hermes_profile_text("p-one")).unwrap();
+        assert_eq!(
+            p_one_yaml["model"]["provider"].as_str(),
+            Some("custom:cc-switch")
+        );
+        assert_eq!(p_one_yaml["model"]["default"].as_str(), Some("aim"));
+        let p_two_yaml: serde_yaml::Value =
+            serde_yaml::from_str(&hermes_profile_text("p-two")).unwrap();
+        assert_eq!(p_two_yaml["model"]["provider"].as_str(), Some("kimi"));
+        assert_eq!(p_two_yaml["model"]["default"].as_str(), Some("a-model"));
 
         // 直连再切到 b：条目按累加式语义落盘。
         ProviderService::switch(&state, AppType::Hermes, "b").expect("direct b");

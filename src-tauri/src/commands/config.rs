@@ -138,6 +138,13 @@ pub async fn get_config_status(
 
             Ok(ConfigStatus { exists, path })
         }
+        AppType::Kimi => {
+            let file = crate::kimi_config::config_path();
+            Ok(ConfigStatus {
+                exists: file.exists(),
+                path: file.to_string_lossy().to_string(),
+            })
+        }
         AppType::Mcode => {
             let file = crate::mcode_config::config_path();
             Ok(ConfigStatus {
@@ -154,6 +161,13 @@ pub async fn get_config_status(
             Ok(ConfigStatus {
                 exists: config_path.exists(),
                 path,
+            })
+        }
+        AppType::Agy => {
+            let dir = crate::agy_config::agy_dir();
+            Ok(ConfigStatus {
+                exists: crate::agy_config::settings_path().exists(),
+                path: dir.to_string_lossy().into_owned(),
             })
         }
     }
@@ -178,10 +192,12 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
+        AppType::Kimi => crate::kimi_config::data_dir(),
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()
             .unwrap()
             .to_path_buf(),
+        AppType::Agy => crate::agy_config::agy_dir(),
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -201,10 +217,12 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
+        AppType::Kimi => crate::kimi_config::data_dir(),
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()
             .unwrap()
             .to_path_buf(),
+        AppType::Agy => crate::agy_config::agy_dir(),
     };
 
     if !config_dir.exists() {
