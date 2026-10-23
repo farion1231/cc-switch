@@ -1121,17 +1121,9 @@
       "urlResponsesHint": "填基礎位址，WorkBuddy 會請求 {url}/responses。",
       "apiKeyHint": "儲存在本機的 models.json 裡；${ENV_VAR} 形式的參照由 WorkBuddy 展開。",
       "vendor": "廠商標籤",
-      "addModel": "新增模型",
-      "newModel": "新模型",
-      "modelsEmpty": "至少新增一個模型。模型 ID 會原樣傳送給介面。",
-      "modelId": "模型 ID",
-      "modelName": "顯示名稱",
-      "removeModel": "移除模型",
+      "modelsHint": "至少新增一個模型。模型 ID 會原樣傳送給介面。",
       "maxInputTokens": "最大輸入 Token",
-      "maxOutputTokens": "最大輸出 Token",
-      "supportsToolCall": "工具呼叫",
-      "supportsImages": "圖片輸入",
-      "supportsReasoning": "推理"
+      "maxOutputTokens": "最大輸出 Token"
     }
   },
   "pi": {

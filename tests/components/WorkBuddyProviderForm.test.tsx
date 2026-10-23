@@ -70,7 +70,7 @@ describe("WorkBuddyProviderForm", () => {
       />,
     );
     expect(screen.getByLabelText(/opencode.providerKey/)).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("workbuddy.form.modelName"), {
+    fireEvent.change(screen.getByLabelText("opencode.modelName"), {
       target: { value: "Chat" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -109,10 +109,8 @@ describe("WorkBuddyProviderForm", () => {
     });
     expect(save).toBeDisabled();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /workbuddy.form.addModel/ }),
-    );
-    fireEvent.change(screen.getByLabelText("workbuddy.form.modelId"), {
+    fireEvent.click(screen.getByRole("button", { name: /opencode.addModel/ }));
+    fireEvent.change(screen.getByLabelText("opencode.modelId"), {
       target: { value: " my-model " },
     });
     await waitFor(() => expect(save).toBeEnabled());
@@ -162,7 +160,58 @@ describe("WorkBuddyProviderForm", () => {
     ).toBeInTheDocument();
   });
 
-  it("toggles model capabilities with checkboxes", async () => {
+  it("lays models out as rows with details behind the expand arrow", () => {
+    render(
+      <WorkBuddyProviderForm
+        appId="workbuddy"
+        providerId="deepseek"
+        initialData={{
+          name: "DeepSeek",
+          settingsConfig: {
+            ...existing,
+            models: [
+              { id: "first", maxInputTokens: 111 },
+              { id: "second", maxInputTokens: 222 },
+              { id: "third", maxInputTokens: 333 },
+            ],
+          },
+        }}
+        submitLabel="Save"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.getAllByLabelText("opencode.modelId")).toHaveLength(3);
+    expect(
+      screen.queryByLabelText("workbuddy.form.maxInputTokens"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "opencode.models" }),
+    ).toBeInTheDocument();
+
+    const toggles = screen.getAllByRole("button", {
+      name: "opencode.toggleModelDetails",
+    });
+    fireEvent.click(toggles[2]);
+    expect(toggles[2]).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("workbuddy.form.maxInputTokens")).toHaveValue(
+      333,
+    );
+    expect(
+      screen.getByLabelText("workbuddy.form.maxOutputTokens"),
+    ).toBeInTheDocument();
+
+    // 删掉第一行，展开的仍是原来那一行。
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "common.delete" })[0],
+    );
+    expect(screen.getAllByLabelText("opencode.modelId")).toHaveLength(2);
+    expect(screen.getByLabelText("workbuddy.form.maxInputTokens")).toHaveValue(
+      333,
+    );
+  });
+
+  it("toggles model capabilities with switches", async () => {
     const submit = vi.fn();
     render(
       <WorkBuddyProviderForm
@@ -174,14 +223,17 @@ describe("WorkBuddyProviderForm", () => {
         onCancel={() => {}}
       />,
     );
-    const reasoning = screen.getByRole("checkbox", {
-      name: "workbuddy.form.supportsReasoning",
+    fireEvent.click(
+      screen.getByRole("button", { name: "opencode.toggleModelDetails" }),
+    );
+    const reasoning = screen.getByRole("switch", {
+      name: "kimi.capabilities.thinking",
     });
     expect(reasoning).not.toBeChecked();
     fireEvent.click(reasoning);
     expect(reasoning).toBeChecked();
     fireEvent.click(
-      screen.getByRole("checkbox", { name: "workbuddy.form.supportsToolCall" }),
+      screen.getByRole("switch", { name: "kimi.capabilities.tool_use" }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
@@ -211,10 +263,8 @@ describe("WorkBuddyProviderForm", () => {
     fireEvent.change(screen.getByLabelText("workbuddy.form.url"), {
       target: { value: "api.example.com/v1/chat/completions" },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: /workbuddy.form.addModel/ }),
-    );
-    fireEvent.change(screen.getByLabelText("workbuddy.form.modelId"), {
+    fireEvent.click(screen.getByRole("button", { name: /opencode.addModel/ }));
+    fireEvent.change(screen.getByLabelText("opencode.modelId"), {
       target: { value: "m" },
     });
     fireEvent.change(key, { target: { value: "mine" } });

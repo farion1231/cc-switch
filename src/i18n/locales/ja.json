@@ -1120,17 +1120,9 @@
       "urlResponsesHint": "ベース URL を入力します。WorkBuddy は {url}/responses にリクエストします。",
       "apiKeyHint": "このマシンの models.json に保存されます。${ENV_VAR} 形式の参照は WorkBuddy が展開します。",
       "vendor": "ベンダー表示名",
-      "addModel": "モデルを追加",
-      "newModel": "新しいモデル",
-      "modelsEmpty": "モデルを 1 つ以上追加してください。モデル ID はそのまま API に送られます。",
-      "modelId": "モデル ID",
-      "modelName": "表示名",
-      "removeModel": "モデルを削除",
+      "modelsHint": "モデルを 1 つ以上追加してください。モデル ID はそのまま API に送られます。",
       "maxInputTokens": "最大入力トークン",
-      "maxOutputTokens": "最大出力トークン",
-      "supportsToolCall": "ツール呼び出し",
-      "supportsImages": "画像入力",
-      "supportsReasoning": "推論"
+      "maxOutputTokens": "最大出力トークン"
     }
   },
   "pi": {

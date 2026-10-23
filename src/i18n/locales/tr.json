@@ -1082,21 +1082,11 @@
       "url": "API endpoint",
       "urlHint": "Full OpenAI-compatible Chat Completions URL, usually ending in /chat/completions.",
       "urlResponsesHint": "Base URL; WorkBuddy sends requests to {url}/responses.",
-      "responsesApi": "Use the OpenAI Responses API",
-      "responsesApiHint": "Off: Chat Completions (default). On: writes api: \"openai-responses\" for each model.",
       "apiKeyHint": "Stored in models.json on this machine. ${ENV_VAR} references are expanded by WorkBuddy.",
       "vendor": "Vendor label",
-      "models": "Models",
-      "addModel": "Add model",
-      "modelsEmpty": "Add at least one model. The model ID is sent to the API as-is.",
-      "modelId": "Model ID",
-      "modelName": "Display name",
-      "removeModel": "Remove model",
+      "modelsHint": "Add at least one model. The model ID is sent to the API as-is.",
       "maxInputTokens": "Max input tokens",
-      "maxOutputTokens": "Max output tokens",
-      "supportsToolCall": "Tool calls",
-      "supportsImages": "Image input",
-      "supportsReasoning": "Reasoning"
+      "maxOutputTokens": "Max output tokens"
     }
   },
   "pi": {
