@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   QWEN_AUTH_TYPES,
+  QWEN_EDITABLE_AUTH_TYPES,
   qwenConfigSchema,
   qwenProviderPresets,
 } from "./qwenProviderPresets";
@@ -56,6 +57,17 @@ describe("qwenProviderPresets", () => {
       authType: "openai",
       baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     });
+  });
+
+  it("does not offer the Gemini protocol for new providers or presets", () => {
+    expect(QWEN_EDITABLE_AUTH_TYPES).not.toContain("gemini");
+    // Imported native entries may still use it.
+    expect(QWEN_AUTH_TYPES).toContain("gemini");
+    expect(
+      qwenProviderPresets.filter(
+        (preset) => preset.settingsConfig.authType === "gemini",
+      ),
+    ).toEqual([]);
   });
 
   it("strips the cc-switch- prefix into a valid native provider key", () => {

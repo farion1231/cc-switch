@@ -218,6 +218,23 @@ describe("QwenProviderForm", () => {
     // A full form flow, like the App integration tests.
   }, 10_000);
 
+  it("keeps the Gemini protocol of an imported provider", () => {
+    renderForm({
+      providerId: "gemini-relay",
+      initialData: {
+        name: "Gemini relay",
+        settingsConfig: {
+          authType: "gemini",
+          envKey: "GEMINI_API_KEY",
+          models: [{ id: "gemini-pro" }],
+        },
+      },
+    });
+    expect(screen.getByLabelText("opencode.npmPackage")).toHaveTextContent(
+      "qwen.authTypes.gemini",
+    );
+  });
+
   it("requires a base URL for the Anthropic protocol", () => {
     renderForm({
       providerId: "anthropic-relay",

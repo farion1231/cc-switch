@@ -15,12 +15,15 @@ export const QWEN_AUTH_TYPES = [
   "vertex-ai",
 ] as const;
 
-/** Protocols offered when creating a provider; `vertex-ai` is kept only for imports. */
+/**
+ * Protocols offered when creating a provider. `gemini` and `vertex-ai` are kept
+ * only for entries imported from settings.json: OpenAI-compatible relays rarely
+ * serve the Gemini `/v1beta` API that Qwen Code's Gemini client calls.
+ */
 export const QWEN_EDITABLE_AUTH_TYPES = [
   "openai",
   "openai-responses",
   "anthropic",
-  "gemini",
 ] as const;
 
 const qwenAuthTypeSchema = z.enum(QWEN_AUTH_TYPES);
@@ -64,12 +67,12 @@ export interface QwenProviderPreset
 }
 
 // Only native protocol equivalents are admitted. Bedrock's signed Converse API
-// has no equivalent in Qwen Code and must not become an OpenAI/Anthropic preset.
+// has no equivalent in Qwen Code and must not become an OpenAI/Anthropic preset;
+// Gemini presets are not offered (see QWEN_EDITABLE_AUTH_TYPES).
 const QWEN_API_FORMATS: Partial<Record<PiApiFormat, QwenAuthType>> = {
   "openai-completions": "openai",
   "openai-responses": "openai-responses",
   "anthropic-messages": "anthropic",
-  "google-generative-ai": "gemini",
 };
 
 function toQwenModel(

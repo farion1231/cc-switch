@@ -41,7 +41,7 @@ Qwen OAuth 免费额度已于 2026-04-15 停止，不提供官方登录入口；
 | --- | --- |
 | 供应商和模型 | `~/.qwen/settings.json` 的 `modelProviders.<authType>[]`，Key 写入同文件的 `env` |
 | 当前模型 | `security.auth.selectedType` + `model.name`（同名模型用 `model.baseUrl` 区分） |
-| 协议 | `openai`（Chat Completions）、`openai-responses`、`anthropic`、`gemini`、`vertex-ai` |
+| 协议 | 新建可选 `openai`（Chat Completions）、`openai-responses`、`anthropic`；`gemini`、`vertex-ai` 只用于从原生配置导入的条目（Gemini 客户端会在请求地址后自动拼接 `/v1beta/models/...`，大多数 OpenAI 兼容中转站不提供该接口） |
 | 供应商目录 | 复用 Pi 的供应商信息；AWS Bedrock 的专有签名协议不兼容，不提供该预设 |
 | MCP | `settings.json` 的 `mcpServers`：stdio 用 `command`，HTTP 用 `httpUrl`，SSE 用 `url` |
 | Skills | `~/.qwen/skills/`，通过统一 Skills 页面管理 |

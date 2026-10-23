@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useId, useMemo, useState } from "react";
 import {
   getIcon,
   hasIcon,
@@ -8,6 +8,29 @@ import {
 } from "@/icons/extracted";
 import { cn } from "@/lib/utils";
 import { isCustomIcon } from "@/utils/customIcon";
+
+/**
+ * Inline SVGs share one document, so `id`s inside them (gradients, clip paths)
+ * collide when an icon appears more than once: `url(#id)` resolves to the first
+ * copy, and WebKit paints nothing when that copy is hidden. Give each instance
+ * its own ids and rewrite the references to them.
+ */
+export function scopeSvgIds(svg: string, suffix: string): string {
+  const ids = [...svg.matchAll(/(?<![\w-])id="([^"]+)"/g)].map(
+    (match) => match[1],
+  );
+  if (ids.length === 0) return svg;
+  const escape = (value: string) =>
+    value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return ids.reduce((result, id) => {
+    const scoped = `${id}-${suffix}`;
+    const name = escape(id);
+    return result
+      .replace(new RegExp(`(?<![\\w-])id="${name}"`, "g"), `id="${scoped}"`)
+      .replace(new RegExp(`url\\(#${name}\\)`, "g"), `url(#${scoped})`)
+      .replace(new RegExp(`href="#${name}"`, "g"), `href="#${scoped}"`);
+  }, svg);
+}
 
 interface ProviderIconProps {
   icon?: string; // 图标名称
@@ -28,13 +51,14 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
   showFallback = true,
   fallbackClassName,
 }) => {
-  // 获取内联 SVG 字符串
+  // 获取内联 SVG 字符串；每个实例的 SVG id 各自独立，避免同页多个图标互相引用
+  const instanceId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const iconSvg = useMemo(() => {
     if (icon && !isCustomIcon(icon) && !isUrlIcon(icon) && hasIcon(icon)) {
-      return getIcon(icon);
+      return scopeSvgIds(getIcon(icon), `pi${instanceId}`);
     }
     return "";
-  }, [icon]);
+  }, [icon, instanceId]);
 
   // 获取图标 URL：内置的大图（URL_ICONS 列表中的 SVG / 光栅图片），或用户上传的 PNG。
   // 自定义图标只认我们自己编码的 PNG data URI，从不把外链地址当图标加载
