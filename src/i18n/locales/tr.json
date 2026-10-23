@@ -4805,12 +4805,6 @@
       "managedHint": "Resmî Kimi hesaplarını Yetkilendirme Merkezi'nde yönetin."
     },
     "modelSelectionHint": "Sağlayıcıyı seçmek için karttaki geçiş düğmesini kullanın. Başka bir model seçmek için Kimi Code içinde /model komutunu kullanın.",
-    "providerType": "Sağlayıcı türü",
-    "baseUrl": "İstek adresi",
-    "models": "Modeller",
-    "addModel": "Model ekle",
-    "removeModel": "Modeli kaldır",
-    "modelId": "Model kimliği",
     "contextSize": "Bağlam uzunluğu",
     "deleteSessionHint": "Dizin ve geçmişin birlikte güncellenmesi için oturumu Kimi Code içinden silin.",
     "empty": {

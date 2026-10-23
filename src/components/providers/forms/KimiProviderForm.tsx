@@ -1,18 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { ChevronRight, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Form } from "@/components/ui/form";
+import { Form, FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import { Switch } from "@/components/ui/switch";
 import { HelpTip } from "@/components/ui/help-tip";
+import { HoverTip } from "@/components/ui/hover-tip";
 import {
   Select,
   SelectContent,
@@ -30,6 +26,7 @@ import {
   type FetchedModel,
 } from "@/lib/api/model-fetch";
 import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
 import { useProvidersQuery } from "@/lib/query/queries";
 import type { ProviderFormData } from "@/lib/schemas/provider";
 import type { ProviderCategory } from "@/types";
@@ -48,8 +45,13 @@ import {
   findRequestHeaderValue,
   normalizeRequestHeaders,
 } from "./helpers/requestHeaders";
-import { BasicFormFields } from "./BasicFormFields";
-import { ApiKeySection, ModelDropdown } from "./shared";
+import { BasicFormFields, REQUIRED_LABEL } from "./BasicFormFields";
+import {
+  ApiKeySection,
+  EndpointField,
+  GptContextWindowHint,
+  ModelDropdown,
+} from "./shared";
 import {
   FetchedModelPicker,
   type FetchedModelSelection,
@@ -74,6 +76,19 @@ const MODEL_FETCH_API_FORMATS: Partial<
 > = {
   anthropic: "anthropic-messages",
   "google-genai": "google-generative-ai",
+};
+
+// 和 Pi、OpenCode 的「接口格式」下拉用同一套叫法。
+const PROVIDER_TYPE_LABELS: Record<
+  KimiProviderConfig["provider"]["type"],
+  string
+> = {
+  kimi: "Kimi",
+  openai: "OpenAI Chat Completions",
+  openai_responses: "OpenAI Responses",
+  anthropic: "Anthropic Messages",
+  "google-genai": "Google Generative AI",
+  vertexai: "Google Vertex AI",
 };
 
 const PRESETS = [
@@ -183,6 +198,15 @@ export function KimiProviderForm({
   };
   // 窗口还是占位值的行（这次新加、用户没改过窗口），选中模型时可以换成查到的值。
   const placeholderContextKeys = useRef(new Set<string>());
+  const [expandedModels, setExpandedModels] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const toggleModelExpand = (key: string) =>
+    setExpandedModels((current) => {
+      const next = new Set(current);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
   const modelKeyPrefix = providerKey || "custom";
   const uniqueModelKey = (models: KimiProviderConfig["models"], id: string) => {
     let key = `${modelKeyPrefix}/${id}`;
@@ -197,13 +221,6 @@ export function KimiProviderForm({
   const { type: providerType, base_url: baseUrl = "" } = config.provider;
   const apiKey = config.provider.api_key ?? "";
   const headersKey = JSON.stringify(config.provider.custom_headers ?? {});
-  // 请求头很少用到，收在高级选项里；已经有值（编辑已有卡、选了带请求头的预设）时展开。
-  const hasCustomHeaders =
-    Object.keys(config.provider.custom_headers ?? {}).length > 0;
-  const [advancedExpanded, setAdvancedExpanded] = useState(hasCustomHeaders);
-  useEffect(() => {
-    if (hasCustomHeaders) setAdvancedExpanded(true);
-  }, [hasCustomHeaders]);
   useEffect(() => {
     setFetchedModels((prev) => (prev.length === 0 ? prev : []));
     setIsFetchingModels(false);
@@ -438,7 +455,6 @@ export function KimiProviderForm({
             {error}
           </p>
         )}
-        <p className="text-sm text-fg-2">{t("kimi.modelSelectionHint")}</p>
         <fieldset
           disabled={busy || !jsonValid}
           className="min-w-0 space-y-6 border-0 p-0 disabled:opacity-50"
@@ -447,8 +463,8 @@ export function KimiProviderForm({
             form={form}
             beforeNameSlot={
               <div className="space-y-2">
-                <Label htmlFor="kimi-provider-key">
-                  {t("opencode.providerKey")} *
+                <Label htmlFor="kimi-provider-key" className={REQUIRED_LABEL}>
+                  {t("opencode.providerKey")}
                 </Label>
                 <Input
                   id="kimi-provider-key"
@@ -471,6 +487,9 @@ export function KimiProviderForm({
                     placeholderContextKeys.current = new Set(
                       [...placeholderContextKeys.current].map(rename),
                     );
+                    setExpandedModels(
+                      (current) => new Set([...current].map(rename)),
+                    );
                     setProviderKey(next);
                     update({ ...config, models });
                   }}
@@ -491,7 +510,9 @@ export function KimiProviderForm({
             }
           />
           <div className="space-y-2">
-            <Label htmlFor="kimi-provider-type">{t("kimi.providerType")}</Label>
+            <FormLabel htmlFor="kimi-provider-type">
+              {t("opencode.npmPackage")}
+            </FormLabel>
             <Select
               value={config.provider.type}
               onValueChange={(type) =>
@@ -506,20 +527,11 @@ export function KimiProviderForm({
               <SelectContent>
                 {KIMI_PROVIDER_TYPES.map((type) => (
                   <SelectItem key={type} value={type}>
-                    {type}
+                    {PROVIDER_TYPE_LABELS[type]}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="kimi-base-url">{t("kimi.baseUrl")} *</Label>
-            <Input
-              id="kimi-base-url"
-              value={config.provider.base_url ?? ""}
-              onChange={(e) => updateProvider({ base_url: e.target.value })}
-              placeholder="https://api.example.com/v1"
-            />
           </div>
           <ApiKeySection
             id="kimi-api-key"
@@ -532,38 +544,27 @@ export function KimiProviderForm({
             partnerPromotionKey={preset?.partnerPromotionKey}
             required={!config.provider.oauth}
           />
-          <Collapsible
-            open={advancedExpanded}
-            onOpenChange={setAdvancedExpanded}
-            className="rounded-lg border border-border p-4"
-          >
-            <CollapsibleTrigger asChild>
-              <Button
-                type="button"
-                variant={null}
-                size="sm"
-                className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70 active:scale-100"
-              >
-                {advancedExpanded ? (
-                  <ChevronDown className="h-4 w-4" />
-                ) : (
-                  <ChevronRight className="h-4 w-4" />
-                )}
-                {t("providerForm.advancedOptionsToggle")}
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="pt-2">
-              <RequestHeadersEditor
-                headers={config.provider.custom_headers ?? {}}
-                onHeadersChange={(custom_headers) =>
-                  updateProvider({ custom_headers })
-                }
-              />
-            </CollapsibleContent>
-          </Collapsible>
-          <div className="space-y-3">
+          <EndpointField
+            id="kimi-base-url"
+            label={t("opencode.baseUrl")}
+            value={config.provider.base_url ?? ""}
+            onChange={(base_url) => updateProvider({ base_url })}
+            placeholder="https://api.example.com/v1"
+          />
+          <RequestHeadersEditor
+            headers={config.provider.custom_headers ?? {}}
+            onHeadersChange={(custom_headers) =>
+              updateProvider({ custom_headers })
+            }
+          />
+          <div className="space-y-3 border-l border-border pl-3">
             <div className="flex items-center justify-between">
-              <Label>{t("kimi.models")}</Label>
+              <div className="flex items-center gap-1">
+                <FormLabel>{t("opencode.models")}</FormLabel>
+                <HelpTip title={t("opencode.models")}>
+                  {t("kimi.modelSelectionHint")}
+                </HelpTip>
+              </div>
               <div className="flex gap-1">
                 <FetchedModelPicker
                   models={fetchedModels}
@@ -579,6 +580,7 @@ export function KimiProviderForm({
                   type="button"
                   variant="outline"
                   size="sm"
+                  className="h-7 gap-1"
                   onClick={() => {
                     let index = Object.keys(config.models).length + 1;
                     let key = `${modelKeyPrefix}/model-${index}`;
@@ -599,111 +601,177 @@ export function KimiProviderForm({
                     });
                   }}
                 >
-                  <Plus className="mr-1 h-4 w-4" />
-                  {t("kimi.addModel")}
+                  <Plus className="h-3.5 w-3.5" />
+                  {t("opencode.addModel")}
                 </Button>
               </div>
             </div>
-            {Object.entries(config.models).map(([key, model]) => (
-              <div
-                key={key}
-                className="space-y-3 rounded-lg border border-border p-4"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-sm text-fg-2">{key}</span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label={t("kimi.removeModel")}
-                    onClick={() => {
-                      const models = { ...config.models };
-                      delete models[key];
-                      placeholderContextKeys.current.delete(key);
-                      update({ ...config, models });
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+            {Object.keys(config.models).length === 0 ? (
+              <p className="py-2 text-sm text-fg-2">{t("opencode.noModels")}</p>
+            ) : (
+              <div className="space-y-2">
+                <div className="mb-1 flex items-center gap-2 px-1 text-xs text-fg-2">
+                  <span className="w-9" />
+                  <span className={cn("flex-1", REQUIRED_LABEL)}>
+                    {t("opencode.modelId")}
+                  </span>
+                  <span className="flex-1">{t("opencode.modelName")}</span>
+                  <span className="w-9" />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label htmlFor={`kimi-model-${key}`}>
-                      {t("kimi.modelId")} *
-                    </Label>
-                    <div className="flex gap-1">
+                {Object.entries(config.models).map(([key, model]) => (
+                  <div key={key} className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => toggleModelExpand(key)}
+                        aria-label={t("opencode.toggleModelDetails")}
+                        aria-expanded={expandedModels.has(key)}
+                        className="h-9 w-9 shrink-0"
+                      >
+                        <ChevronRight
+                          className={cn(
+                            "h-4 w-4 transition-transform motion-reduce:transition-none",
+                            expandedModels.has(key) && "rotate-90",
+                          )}
+                        />
+                      </Button>
+                      <div className="flex min-w-0 flex-1 gap-1">
+                        <Input
+                          id={`kimi-model-${key}`}
+                          value={model.model}
+                          onChange={(e) =>
+                            updateModel(key, { model: e.target.value })
+                          }
+                          placeholder="model-id"
+                          aria-label={t("opencode.modelId")}
+                          className="min-w-0 flex-1"
+                        />
+                        {fetchedModels.length > 0 && (
+                          <ModelDropdown
+                            models={fetchedModels}
+                            onSelect={(id) => {
+                              updateModel(key, { model: id });
+                              fillModelMetadataFor(key, id);
+                            }}
+                          />
+                        )}
+                      </div>
                       <Input
-                        id={`kimi-model-${key}`}
-                        value={model.model}
+                        id={`kimi-model-name-${key}`}
+                        value={model.display_name ?? ""}
                         onChange={(e) =>
-                          updateModel(key, { model: e.target.value })
+                          updateModel(key, {
+                            display_name: e.target.value || undefined,
+                          })
                         }
+                        placeholder={t("opencode.modelName")}
+                        aria-label={t("opencode.modelName")}
+                        className="min-w-0 flex-1"
                       />
-                      {fetchedModels.length > 0 && (
-                        <ModelDropdown
-                          models={fetchedModels}
-                          onSelect={(id) => {
-                            updateModel(key, { model: id });
-                            fillModelMetadataFor(key, id);
+                      <HoverTip content={t("common.delete")}>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label={t("common.delete")}
+                          className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
+                          onClick={() => {
+                            const models = { ...config.models };
+                            delete models[key];
+                            placeholderContextKeys.current.delete(key);
+                            setExpandedModels((current) => {
+                              const next = new Set(current);
+                              next.delete(key);
+                              return next;
+                            });
+                            update({ ...config, models });
                           }}
-                        />
-                      )}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </HoverTip>
                     </div>
+                    {expandedModels.has(key) && (
+                      <div className="ml-9 grid gap-3 border-l-2 border-muted pl-4 sm:grid-cols-2">
+                        <div className="flex min-h-9 flex-wrap items-center gap-x-8 gap-y-2 sm:col-span-2">
+                          {KIMI_CAPABILITIES.map((capability) => (
+                            <div
+                              key={capability}
+                              className="flex items-center gap-2.5"
+                            >
+                              <div className="flex items-center gap-0.5">
+                                <Label
+                                  htmlFor={`kimi-model-${capability}-${key}`}
+                                  className="cursor-pointer"
+                                >
+                                  {t(`kimi.capabilities.${capability}`)}
+                                </Label>
+                                {CAPABILITIES_WITH_HELP.has(capability) && (
+                                  <HelpTip
+                                    title={t(`kimi.capabilities.${capability}`)}
+                                  >
+                                    {t(`kimi.capabilityHints.${capability}`)}
+                                  </HelpTip>
+                                )}
+                              </div>
+                              <Switch
+                                id={`kimi-model-${capability}-${key}`}
+                                checked={
+                                  model.capabilities?.includes(capability) ??
+                                  false
+                                }
+                                onCheckedChange={(checked) =>
+                                  updateModel(key, {
+                                    capabilities: checked
+                                      ? [
+                                          ...new Set([
+                                            ...(model.capabilities ?? []),
+                                            capability,
+                                          ]),
+                                        ]
+                                      : (model.capabilities ?? []).filter(
+                                          (item) => item !== capability,
+                                        ),
+                                  })
+                                }
+                              />
+                            </div>
+                          ))}
+                        </div>
+                        <div className="space-y-2">
+                          <Label
+                            htmlFor={`kimi-context-${key}`}
+                            className={REQUIRED_LABEL}
+                          >
+                            {t("kimi.contextSize")}
+                          </Label>
+                          <Input
+                            id={`kimi-context-${key}`}
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={model.max_context_size}
+                            onChange={(e) => {
+                              placeholderContextKeys.current.delete(key);
+                              updateModel(key, {
+                                max_context_size: Number(e.target.value),
+                              });
+                            }}
+                            placeholder="262144"
+                          />
+                          <GptContextWindowHint
+                            modelId={model.model}
+                            contextWindow={model.max_context_size}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor={`kimi-context-${key}`}>
-                      {t("kimi.contextSize")} *
-                    </Label>
-                    <Input
-                      id={`kimi-context-${key}`}
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={model.max_context_size}
-                      onChange={(e) => {
-                        placeholderContextKeys.current.delete(key);
-                        updateModel(key, {
-                          max_context_size: Number(e.target.value),
-                        });
-                      }}
-                    />
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-4">
-                  {KIMI_CAPABILITIES.map((capability) => (
-                    <div key={capability} className="flex items-center gap-1">
-                      <label className="flex items-center gap-2 text-sm">
-                        <Checkbox
-                          checked={
-                            model.capabilities?.includes(capability) ?? false
-                          }
-                          onCheckedChange={(checked) =>
-                            updateModel(key, {
-                              capabilities: checked
-                                ? [
-                                    ...new Set([
-                                      ...(model.capabilities ?? []),
-                                      capability,
-                                    ]),
-                                  ]
-                                : (model.capabilities ?? []).filter(
-                                    (item) => item !== capability,
-                                  ),
-                            })
-                          }
-                        />
-                        {t(`kimi.capabilities.${capability}`)}
-                      </label>
-                      {CAPABILITIES_WITH_HELP.has(capability) && (
-                        <HelpTip title={t(`kimi.capabilities.${capability}`)}>
-                          {t(`kimi.capabilityHints.${capability}`)}
-                        </HelpTip>
-                      )}
-                    </div>
-                  ))}
-                </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
         </fieldset>
         <div className="space-y-2">

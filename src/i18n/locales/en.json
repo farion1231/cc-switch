@@ -4944,12 +4944,6 @@
       "help": "Add several Kimi coding plan accounts; each gets its own provider and models in Kimi Code. \"Use this account\" switches Kimi Code's default model to that account, and new sessions use it from then on. The account Kimi Code itself is signed in with shows up here automatically and is always used for web search and fetch; removing it here only hides it from the list and never signs Kimi Code out."
     },
     "modelSelectionHint": "Use the switch button on a provider card to select it. To choose another model, use /model in Kimi Code.",
-    "providerType": "Provider type",
-    "baseUrl": "Base URL",
-    "models": "Models",
-    "addModel": "Add model",
-    "removeModel": "Remove model",
-    "modelId": "Model ID",
     "contextSize": "Context size",
     "capabilities": {
       "image_in": "Image input",

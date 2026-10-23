@@ -1,11 +1,5 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
@@ -56,6 +50,14 @@ const config = {
     },
   },
 };
+
+// 模型参数收在每行的展开区里，和 Pi、OpenCode 一样。
+function expandModels() {
+  for (const toggle of screen.getAllByRole("button", {
+    name: "opencode.toggleModelDetails",
+  }))
+    fireEvent.click(toggle);
+}
 
 function setup(
   onSubmit = vi.fn(),
@@ -121,16 +123,17 @@ describe("KimiProviderForm", () => {
           target: { value: JSON.stringify(native) },
         });
       }
+      expandModels();
       expect(
-        screen.getByRole("checkbox", { name: "kimi.capabilities.image_in" }),
+        screen.getByRole("switch", { name: "kimi.capabilities.image_in" }),
       ).toBeChecked();
       expect(
-        screen.queryByRole("checkbox", { name: "kimi.capabilities.audio_in" }),
+        screen.queryByRole("switch", { name: "kimi.capabilities.audio_in" }),
       ).not.toBeInTheDocument();
       expect(
-        screen.queryByRole("checkbox", { name: "kimi.capabilities.video_in" }),
+        screen.queryByRole("switch", { name: "kimi.capabilities.video_in" }),
       ).not.toBeInTheDocument();
-      fireEvent.change(screen.getByLabelText(/kimi\.baseUrl/), {
+      fireEvent.change(screen.getByLabelText("opencode.baseUrl"), {
         target: { value: "https://updated.example.com/v1" },
       });
       fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -154,8 +157,9 @@ describe("KimiProviderForm", () => {
       "future_capability",
     );
     const submit = setup(vi.fn(), undefined, native);
+    expandModels();
     fireEvent.click(
-      screen.getByRole("checkbox", { name: "kimi.capabilities.image_in" }),
+      screen.getByRole("switch", { name: "kimi.capabilities.image_in" }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
@@ -202,10 +206,10 @@ describe("KimiProviderForm", () => {
         }),
       );
       await user.click(screen.getByRole("button", { name }));
-      expect(screen.getByLabelText("opencode.providerKey *")).toHaveValue(
+      expect(screen.getByLabelText("opencode.providerKey")).toHaveValue(
         selected.providerKey,
       );
-      expect(screen.getByLabelText("kimi.baseUrl *")).toHaveValue(
+      expect(screen.getByLabelText("opencode.baseUrl")).toHaveValue(
         selected.settingsConfig.provider.base_url,
       );
       expect(
@@ -262,7 +266,7 @@ describe("KimiProviderForm", () => {
 
   it("edits native endpoints while preserving OAuth and model overrides", async () => {
     const submit = setup();
-    fireEvent.change(screen.getByLabelText("kimi.baseUrl *"), {
+    fireEvent.change(screen.getByLabelText("opencode.baseUrl"), {
       target: { value: "https://example.com/v1" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -276,19 +280,52 @@ describe("KimiProviderForm", () => {
     expect(submit.mock.calls[0][0].providerKey).toBe("managed:kimi-code");
   });
 
-  it("keeps request headers in advanced options, open only when some are set", () => {
+  it("shows request headers inline like Pi", () => {
     setup();
     expect(screen.getByDisplayValue("X-Custom")).toBeInTheDocument();
-    cleanup();
+    expect(
+      screen.queryByRole("button", {
+        name: "providerForm.advancedOptionsToggle",
+      }),
+    ).not.toBeInTheDocument();
+  });
 
-    const { custom_headers: _, ...provider } = config.provider;
-    setup(vi.fn(), undefined, { ...config, provider });
-    const toggle = screen.getByRole("button", {
-      name: "providerForm.advancedOptionsToggle",
-    });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
+  it("flags a preset whose provider key collides with an existing card", async () => {
+    const user = userEvent.setup();
+    const selected = kimiProviderPresets.find(
+      (preset) => preset.name === "Kimi",
+    )!;
+    server.use(
+      http.post("http://tauri.local/get_providers", () =>
+        HttpResponse.json({
+          [selected.providerKey]: {
+            id: selected.providerKey,
+            name: "Kimi",
+            settingsConfig: {},
+          },
+        }),
+      ),
+    );
+    render(
+      <QueryClientProvider client={createTestQueryClient()}>
+        <KimiProviderForm
+          appId="kimi"
+          submitLabel="Save"
+          onSubmit={vi.fn()}
+          onCancel={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+    await user.click(
+      screen.getByRole("button", { name: /^providerPreset\.group\.vendor / }),
+    );
+    await user.click(screen.getByRole("button", { name: "Kimi" }));
+    expect(
+      await screen.findByText("opencode.providerKeyDuplicate"),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("opencode.providerKey")).toHaveValue(
+      selected.providerKey,
+    );
   });
 
   it("blocks invalid JSON until the editor is corrected", () => {
@@ -303,15 +340,16 @@ describe("KimiProviderForm", () => {
 
   it("requires at least one model with a positive context length", () => {
     setup();
-    fireEvent.change(screen.getByLabelText("kimi.contextSize *"), {
+    expandModels();
+    fireEvent.change(screen.getByLabelText("kimi.contextSize"), {
       target: { value: "0" },
     });
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("kimi.contextSize *"), {
+    fireEvent.change(screen.getByLabelText("kimi.contextSize"), {
       target: { value: "262144" },
     });
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "kimi.removeModel" }));
+    fireEvent.click(screen.getByRole("button", { name: "common.delete" }));
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 
@@ -355,10 +393,10 @@ describe("KimiProviderForm", () => {
         />
       </QueryClientProvider>,
     );
-    fireEvent.change(screen.getByLabelText("opencode.providerKey *"), {
+    fireEvent.change(screen.getByLabelText("opencode.providerKey"), {
       target: { value: "acme" },
     });
-    fireEvent.change(screen.getByLabelText("kimi.baseUrl *"), {
+    fireEvent.change(screen.getByLabelText("opencode.baseUrl"), {
       target: { value: "https://api.example.com/v1" },
     });
     fireEvent.change(screen.getByLabelText("API Key"), {
