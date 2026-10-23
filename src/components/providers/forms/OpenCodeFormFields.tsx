@@ -55,10 +55,11 @@ function ModelIdInput({
   placeholder,
 }: {
   modelId: string;
-  onChange: (newId: string) => void;
+  onChange: (newId: string) => boolean | void;
   placeholder?: string;
 }) {
   const [localValue, setLocalValue] = useState(modelId);
+  const [resetKey, setResetKey] = useState(0);
 
   // Sync when external modelId changes (e.g., undo operation)
   useEffect(() => {
@@ -67,13 +68,22 @@ function ModelIdInput({
 
   return (
     <ImeSafeInput
+      key={resetKey}
       value={localValue}
       onValueChange={setLocalValue}
       onBlur={(event) => {
         const nextValue = event.currentTarget.value;
-        if (nextValue !== modelId && nextValue.trim()) {
-          onChange(nextValue);
+        if (
+          nextValue !== modelId &&
+          (!nextValue.trim() || onChange(nextValue) === false)
+        ) {
+          // An unfinished IME composition can commit and reject in one batch,
+          // leaving the controlled value unchanged. Reset its internal draft.
+          setResetKey((key) => key + 1);
         }
+        // Accepted renames arrive through modelId; rejected drafts must not
+        // keep displaying an ID that was never stored.
+        setLocalValue(modelId);
       }}
       placeholder={placeholder}
       className="flex-1"
@@ -137,11 +147,12 @@ function ModelOptionKeyInput({
   placeholder,
 }: {
   optionKey: string;
-  onChange: (newKey: string) => void;
+  onChange: (newKey: string) => boolean | void;
   placeholder?: string;
 }) {
   const displayValue = optionKey.startsWith("option-") ? "" : optionKey;
   const [localValue, setLocalValue] = useState(displayValue);
+  const [resetKey, setResetKey] = useState(0);
 
   useEffect(() => {
     setLocalValue(optionKey.startsWith("option-") ? "" : optionKey);
@@ -149,12 +160,16 @@ function ModelOptionKeyInput({
 
   return (
     <ImeSafeInput
+      key={resetKey}
       value={localValue}
       onValueChange={setLocalValue}
       onBlur={(event) => {
         const trimmed = event.currentTarget.value.trim();
-        if (trimmed && trimmed !== optionKey) {
-          onChange(trimmed);
+        if (
+          trimmed !== optionKey &&
+          (!trimmed || onChange(trimmed) === false)
+        ) {
+          setResetKey((key) => key + 1);
         }
         // Reset to prop value: if parent accepted the rename, useEffect
         // will update localValue when the new optionKey prop arrives;
@@ -370,6 +385,7 @@ export function OpenCodeFormFields({
   // Update model ID (key)
   const handleModelIdChange = (oldKey: string, newKey: string) => {
     if (oldKey === newKey || !newKey.trim()) return;
+    if (Object.prototype.hasOwnProperty.call(models, newKey)) return false;
     const newModels: Record<string, OpenCodeModel> = {};
     for (const [k, v] of Object.entries(models)) {
       if (k === oldKey) {
@@ -461,6 +477,8 @@ export function OpenCodeFormFields({
   ) => {
     if (!newKey.trim() || oldKey === newKey) return;
     const model = models[modelKey];
+    if (Object.prototype.hasOwnProperty.call(model.options || {}, newKey))
+      return false;
     const newOptions: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(model.options || {})) {
       if (k === oldKey) newOptions[newKey] = v;
@@ -522,7 +540,7 @@ export function OpenCodeFormFields({
     const model = models[modelKey];
     // Reject reserved keys and duplicate extra field names
     if (isKnownModelKey(newKey) || (newKey !== oldKey && newKey in model))
-      return;
+      return false;
     const newModel: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(model)) {
       if (k === oldKey) newModel[newKey] = v;
