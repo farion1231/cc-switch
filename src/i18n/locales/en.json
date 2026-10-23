@@ -4145,6 +4145,7 @@
     "mainLabel": "Main navigation",
     "skipToContent": "Skip to main content",
     "expandSidebar": "Expand sidebar",
+    "resizeSidebar": "Resize sidebar",
     "collapseSidebar": "Collapse sidebar",
     "appsGroup": "Apps",
     "today": "Today {{value}}",

@@ -23,7 +23,15 @@ let running: {
   animation: Animation;
   cover: HTMLElement;
   edge: () => number;
+  cleanup: () => void;
 } | null = null;
+
+export function stopSidebarAnimation() {
+  if (!running) return;
+  const previous = running;
+  previous.cleanup();
+  previous.animation.cancel();
+}
 
 /**
  * 侧栏开合不过渡 width：宽度动画每帧都要在主线程重排，WKWebView 主线程渲染还限在 60fps 左右，ProMotion 屏上看着发顿。
@@ -33,20 +41,18 @@ let running: {
  * - 收起：盖板是侧栏底色，先挡住内容区左边那段，往左滑进侧栏底下，把内容露出来。
  * 盖板的边就是这段时间的分隔线。
  */
-function animateToggle(nav: HTMLElement, fromWidth: number, toWidth: number) {
+export function animateSidebarToggle(
+  nav: HTMLElement,
+  fromWidth: number,
+  toWidth: number,
+) {
   const main = document.getElementById("content-area");
   if (!main || typeof main.animate !== "function") return;
   if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
 
   // 上一次还没滑完就再切：从当前看到的边缘位置接着滑，不跳
   const startEdge = running ? running.edge() : fromWidth;
-  if (running) {
-    // cancel 事件是异步派发的，旧盖板和层级在这里同步收拾掉，免得它晚到时拆掉新动画的
-    const previous = running;
-    running = null;
-    previous.animation.cancel();
-    previous.cover.remove();
-  }
+  stopSidebarAnimation();
   nav.style.removeProperty("z-index");
   main.style.removeProperty("z-index");
   if (startEdge === toWidth) return;
@@ -88,7 +94,6 @@ function animateToggle(nav: HTMLElement, fromWidth: number, toWidth: number) {
         : 0;
     return (expanding ? left : left + width) + x;
   };
-  running = { animation, cover, edge };
   const cleanup = () => {
     if (running?.animation !== animation) return;
     running = null;
@@ -96,12 +101,15 @@ function animateToggle(nav: HTMLElement, fromWidth: number, toWidth: number) {
     nav.style.removeProperty("z-index");
     main.style.removeProperty("z-index");
   };
+  running = { animation, cover, edge, cleanup };
   animation.onfinish = cleanup;
   animation.oncancel = cleanup;
 }
 
-export const sidebarWidth = (collapsed: boolean) =>
-  collapsed ? sidebarRailWidth() : SIDEBAR_EXPANDED_WIDTH;
+export const sidebarWidth = (
+  collapsed: boolean,
+  expandedWidth = SIDEBAR_EXPANDED_WIDTH,
+) => (collapsed ? sidebarRailWidth() : expandedWidth);
 
 function readManualPreference(): boolean | null {
   try {
@@ -143,20 +151,44 @@ export function useSidebarCollapsed(navRef: RefObject<HTMLElement | null>) {
     const from = animateFrom.current;
     animateFrom.current = null;
     if (from !== null && navRef.current) {
-      animateToggle(navRef.current, from, sidebarWidth(collapsed));
+      animateSidebarToggle(
+        navRef.current,
+        from,
+        navRef.current.getBoundingClientRect().width,
+      );
     }
   }, [collapsed, navRef]);
 
-  const toggle = useCallback(() => {
-    const next = !collapsed;
-    animateFrom.current = sidebarWidth(collapsed);
+  const applyPreference = useCallback((next: boolean | null) => {
     setManual(next);
     try {
-      localStorage.setItem(STORAGE_KEY, String(next));
+      if (next === null) localStorage.removeItem(STORAGE_KEY);
+      else localStorage.setItem(STORAGE_KEY, String(next));
     } catch {
-      // 记不住也不影响这次切换
+      // Storage is optional; keep the in-memory preference.
     }
-  }, [collapsed]);
+  }, []);
+
+  const setCollapsed = useCallback(
+    (next: boolean) => {
+      animateFrom.current = navRef.current?.hasAttribute("data-resizing")
+        ? null
+        : (navRef.current?.getBoundingClientRect().width ?? null);
+      applyPreference(next);
+    },
+    [navRef, applyPreference],
+  );
+
+  // A drag captures this callback before its first snap changes the preference.
+  const restoreCollapsedPreference = useCallback(() => {
+    animateFrom.current = null;
+    applyPreference(manual);
+  }, [manual, applyPreference]);
+
+  const toggle = useCallback(
+    () => setCollapsed(!collapsed),
+    [collapsed, setCollapsed],
+  );
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -169,5 +201,5 @@ export function useSidebarCollapsed(navRef: RefObject<HTMLElement | null>) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [toggle]);
 
-  return { collapsed, toggle };
+  return { collapsed, toggle, setCollapsed, restoreCollapsedPreference };
 }

@@ -4146,6 +4146,7 @@
     "mainLabel": "主導覽",
     "skipToContent": "跳到主要內容",
     "expandSidebar": "展開側欄",
+    "resizeSidebar": "調整側欄寬度",
     "collapseSidebar": "收起側欄",
     "appsGroup": "應用",
     "today": "今日 {{value}}",
