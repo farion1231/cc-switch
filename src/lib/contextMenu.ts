@@ -9,6 +9,11 @@ const SELECTABLE_SELECTOR =
  */
 export function initializeContextMenuGuard(): void {
   document.addEventListener("contextmenu", (event) => {
+    // A live selection means the user is working with copyable text (e.g.
+    // Tailwind `select-text` areas): keep the native menu for Copy.
+    if (window.getSelection()?.toString()) {
+      return;
+    }
     if (
       event.target instanceof Element &&
       event.target.closest(SELECTABLE_SELECTOR)

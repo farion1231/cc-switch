@@ -39,4 +39,18 @@ describe("contextMenu guard", () => {
     expect(dispatchContextMenu(document.querySelector("pre")!)).toBe(false);
     expect(dispatchContextMenu(document.querySelector("code")!)).toBe(false);
   });
+
+  it("keeps the menu when a text selection exists", () => {
+    document.body.innerHTML = `<div class="card"><span id="sel">selected text</span></div>`;
+    const range = document.createRange();
+    range.selectNodeContents(document.getElementById("sel")!);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    try {
+      expect(dispatchContextMenu(document.querySelector(".card")!)).toBe(false);
+    } finally {
+      selection?.removeAllRanges();
+    }
+  });
 });
