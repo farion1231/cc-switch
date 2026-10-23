@@ -136,6 +136,56 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "openmodel",
   },
   {
+    name: "DIT.ai",
+    websiteUrl: "https://dit.ai",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
+    // Gemini 原生 /v1beta 在站点根；网关也认 x-goog-api-key（2026-10-21 用假 Key
+    // 探测为 invalid_api_key 而非 missing_api_key）
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.dit.ai",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.dit.ai",
+    model: "gemini-3.8-flash",
+    description: "DIT.ai",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "dit",
+    icon: "dit",
+  },
+  {
+    name: "V-API",
+    websiteUrl: "https://gpt.ge",
+    apiKeyUrl: "https://gpt.ge/signup?aff=URNP",
+    // Gemini 原生 /v1beta（含 streamGenerateContent）在站点根，令牌选 gemini 或
+    // gemini_cli 分组（gpt.ge/models/gemini-3.8-flash，2026-10-23）
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.gpt.ge",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.gpt.ge",
+    model: "gemini-3.8-flash",
+    description: "V-API",
+    category: "aggregator",
+    // 备用线路取自 gpt.ge/api/status 的 api_list（2026-10-23）
+    endpointCandidates: [
+      "https://api.gpt.ge",
+      "https://api.vveai.com",
+      "https://run.v3.cm",
+      "https://api1.v3.cm",
+      "https://api2.v3.cm",
+      "https://us.gpt.ge",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "vapi",
+    icon: "vapi",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
@@ -491,6 +541,50 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "modelflare",
     icon: "modelflare",
+  },
+  {
+    name: "AllTokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    // Sub2API 网关：Key 绑定单个分组，须用 Gemini 分组的 Key（分组与模型见
+    // alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://alltokens.cc",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://alltokens.cc",
+    model: "gemini-3.8-flash",
+    description: "AllTokens",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
+  },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    // Gemini 分组不在默认自动分组里，须用 Gemini 分组的 Key；目录里唯一
+    // 规范的 3.8 Flash ID 是 gemini-3.8-flash-high（alltokens.si/api/pricing，
+    // 2026-10-19 核对）
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://alltokens.si",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash-high",
+      },
+    },
+    baseURL: "https://alltokens.si",
+    model: "gemini-3.8-flash-high",
+    description: "AllTokens SI",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {

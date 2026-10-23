@@ -559,7 +559,7 @@ async fn upload_phase(
             &protocol::device_dir(&device_id),
             &manifest_path(&device_id),
             bytes,
-            "application/json",
+            transport.manifest_content_type(),
         )
         .await?;
     blocking(db, move |conn| store::commit_nonce(conn, &nonce, seq)).await?;

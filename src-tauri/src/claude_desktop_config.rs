@@ -670,7 +670,40 @@ fn direct_inference_model_specs(provider: &Provider) -> Result<Vec<InferenceMode
     Ok(result)
 }
 
+fn uses_default_proxy_routes(provider: &Provider) -> bool {
+    !is_official_provider(provider)
+        && !needs_routing(provider)
+        && provider
+            .meta
+            .as_ref()
+            .is_none_or(|meta| meta.claude_desktop_model_routes.is_empty())
+}
+
 pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>, AppError> {
+    // 原生直连卡允许留空模型列表。先用同名角色路由进入代理，之后才能保存模型映射，
+    // 否则「先开路由」和「先存映射」会互相阻挡。显式映射卡仍须配置模型。
+    if uses_default_proxy_routes(provider) {
+        validate_direct_provider(provider)?;
+        let mut routes = DEFAULT_PROXY_ROUTES
+            .iter()
+            .map(|route| ResolvedModelRoute {
+                route_id: route.route_id.to_string(),
+                upstream_model: route.route_id.to_string(),
+                label_override: None,
+                supports_1m: false,
+            })
+            .collect::<Vec<_>>();
+        routes.sort_by(|a, b| a.route_id.cmp(&b.route_id));
+        return Ok(routes);
+    }
+
+    configured_proxy_model_routes(provider)
+}
+
+/// 聚合成员只能发布用户配置过的模型，不能把路由引导用的默认角色当成上游目录。
+pub(crate) fn configured_proxy_model_routes(
+    provider: &Provider,
+) -> Result<Vec<ResolvedModelRoute>, AppError> {
     let routes = provider
         .meta
         .as_ref()
@@ -705,7 +738,7 @@ pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>
             next_catalog_safe_route_id(&result, &reserved_route_ids)
         };
         result.push(ResolvedModelRoute {
-            route_id: repaired_route_id,
+            route_id: published_route_id(repaired_route_id, upstream_model, &reserved_route_ids),
             upstream_model: upstream_model.to_string(),
             label_override: route
                 .label_override
@@ -732,6 +765,21 @@ pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>
     }
 
     Ok(result)
+}
+
+/// 发布给 Desktop 的模型名。Desktop 按这个名字决定请求参数：映射表里的 Opus / Sonnet 键固定是
+/// `claude-opus-5` / `claude-sonnet-5`，目标是 5.5 时照写，5.5 上游会拒收按 5 组的请求（#8082）。
+/// 和 Claude Code 的路由契约一样换成目录里的 5.5 名字；映射表里的键不变，旧 profile 发来的
+/// 原键仍按键查到目标（见 [`legacy_raw_route_upstream_model`]）。用户自己配了这个名字的路由
+/// 时不换，免得两条撞名。
+fn published_route_id(
+    route_id: String,
+    upstream_model: &str,
+    reserved: &std::collections::HashSet<String>,
+) -> String {
+    crate::live::project::claude::point_release_client_id(&route_id, upstream_model)
+        .filter(|catalog_id| !reserved.contains(*catalog_id))
+        .map_or(route_id, str::to_string)
 }
 
 fn next_catalog_safe_route_id(
@@ -813,6 +861,11 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
     let requested = strip_one_m_suffix_for_route_lookup(&requested_raw);
 
     let routes = proxy_model_routes(provider)?;
+    // 默认列表只提供进入路由时的角色菜单，不把原生的日期后缀或版本别名改成默认 ID。
+    if uses_default_proxy_routes(provider) && is_claude_safe_model_id(requested) {
+        body["model"] = json!(requested);
+        return Ok(normalize_upstream_request(body, provider));
+    }
     let upstream_model = routes
         .iter()
         .find(|r| r.route_id == requested)
@@ -1868,6 +1921,97 @@ mod tests {
     }
 
     #[test]
+    fn claude_desktop_native_provider_without_catalog_can_start_routing() {
+        for with_meta in [false, true] {
+            let mut provider = direct_provider("native");
+            if !with_meta {
+                provider.meta = None;
+            } else {
+                provider.meta.as_mut().unwrap().claude_desktop_mode =
+                    Some(ClaudeDesktopMode::Direct);
+            }
+            let before = serde_json::to_value(&provider).expect("provider snapshot");
+            let db = test_db();
+            let profile = route_profile(&db, &provider, "http://127.0.0.1:15721", &[])
+                .expect("native provider should not need a pre-existing mapping");
+
+            assert_eq!(
+                profile["inferenceGatewayBaseUrl"],
+                json!("http://127.0.0.1:15721/claude-desktop")
+            );
+            assert_eq!(
+                profile["inferenceModels"],
+                json!([
+                    "claude-fable-5",
+                    "claude-haiku-4-5",
+                    "claude-opus-5",
+                    "claude-sonnet-5"
+                ])
+            );
+            let models = model_list_response(&provider).expect("local model discovery");
+            configured_proxy_model_routes(&provider)
+                .expect_err("bootstrap defaults must not become a configured catalog");
+            assert_eq!(models["data"].as_array().expect("models").len(), 4);
+            assert!(models["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|model| model.get("supports1m").is_none()));
+            assert_eq!(serde_json::to_value(&provider).unwrap(), before);
+            assert!(direct_profile(&provider)
+                .expect("direct profile remains valid")
+                .get("inferenceModels")
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn claude_desktop_native_default_routes_preserve_requested_model_versions() {
+        let provider = direct_provider("native");
+        for model in [
+            "claude-haiku-4-5-20251001",
+            "claude-opus-4-8",
+            "anthropic/claude-sonnet-4-6",
+        ] {
+            let mapped = map_proxy_request_model(
+                json!({"model": format!("{model} [1M]"), "messages": []}),
+                &provider,
+            )
+            .expect("native model should pass through without a version rewrite");
+            assert_eq!(mapped["model"], json!(model));
+        }
+        map_proxy_request_model(json!({"model": "unconfigured-model"}), &provider)
+            .expect_err("default native routes must not accept arbitrary model names");
+    }
+
+    #[test]
+    fn claude_desktop_mapping_provider_still_requires_explicit_routes() {
+        let mut provider = proxy_provider("mapping");
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes
+            .clear();
+
+        let error = validate_proxy_provider(&provider).expect_err("mapping is required");
+        assert!(error.to_string().contains("至少需要一个模型路由映射"));
+        route_profile(&test_db(), &provider, "http://127.0.0.1:15721", &[])
+            .expect_err("an empty mapping must not silently become native defaults");
+    }
+
+    #[test]
+    fn claude_desktop_default_routes_do_not_bypass_native_provider_validation() {
+        let mut provider = direct_provider("invalid-native");
+        provider.meta.as_mut().expect("meta").api_format = Some("openai_chat".to_string());
+        proxy_model_routes(&provider).expect_err("native defaults require native API format");
+
+        provider.meta.as_mut().expect("meta").api_format = Some("anthropic".to_string());
+        provider.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"] = json!("");
+        proxy_model_routes(&provider).expect_err("native defaults require credentials");
+    }
+
+    #[test]
     fn claude_desktop_proxy_apply_writes_local_gateway_profile_with_safe_models() {
         let temp = TempDir::new().expect("tempdir");
         let paths = test_paths(temp.path());
@@ -1940,6 +2084,79 @@ mod tests {
         let err = map_proxy_request_model(json!({"model": "claude-opus-4-8"}), &provider)
             .expect_err("unknown route should fail");
         assert!(err.to_string().contains("claude-opus-4-8"));
+    }
+
+    #[test]
+    fn claude_desktop_proxy_publishes_catalog_ids_for_point_release_targets() {
+        let route = |model: &str| ClaudeDesktopModelRoute {
+            model: model.to_string(),
+            label_override: None,
+            supports_1m: None,
+        };
+        let mut provider = proxy_provider("proxy");
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes = std::collections::HashMap::from([
+            ("claude-opus-5".to_string(), route("claude-opus-5.5")),
+            (
+                "claude-sonnet-5".to_string(),
+                route("anthropic/claude-sonnet-5-5-20261001"),
+            ),
+            ("claude-haiku-4-5".to_string(), route("glm-5")),
+        ]);
+
+        let names = |provider: &Provider| -> Vec<String> {
+            proxy_model_routes(provider)
+                .expect("routes")
+                .into_iter()
+                .map(|route| route.route_id)
+                .collect()
+        };
+        assert_eq!(
+            names(&provider),
+            ["claude-haiku-4-5", "claude-opus-5-5", "claude-sonnet-5-5"]
+        );
+        let models = model_list_response(&provider).expect("model list");
+        assert_eq!(models["data"][1]["id"], json!("claude-opus-5-5"));
+
+        // 新名字、旧 profile 里的原键、带日期的全名都落到同一个目标。
+        for (requested, upstream) in [
+            ("claude-opus-5-5", "claude-opus-5.5"),
+            ("claude-opus-5", "claude-opus-5.5"),
+            ("claude-opus-5-5-20261001[1m]", "claude-opus-5.5"),
+            ("claude-sonnet-5-5", "anthropic/claude-sonnet-5-5-20261001"),
+            ("claude-sonnet-5", "anthropic/claude-sonnet-5-5-20261001"),
+            ("claude-haiku-4-5", "glm-5"),
+        ] {
+            let mapped =
+                map_proxy_request_model(json!({ "model": requested }), &provider).expect(requested);
+            assert_eq!(mapped["model"], json!(upstream), "{requested}");
+        }
+
+        // 用户自己配了 claude-opus-5-5 这条路由时，原键不换名，两条各走各的。
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes
+            .insert(
+                "claude-opus-5-5".to_string(),
+                route("claude-opus-5-5-thinking"),
+            );
+        assert_eq!(
+            names(&provider),
+            [
+                "claude-haiku-4-5",
+                "claude-opus-5",
+                "claude-opus-5-5",
+                "claude-sonnet-5-5"
+            ]
+        );
+        let mapped = map_proxy_request_model(json!({ "model": "claude-opus-5" }), &provider)
+            .expect("original key");
+        assert_eq!(mapped["model"], json!("claude-opus-5.5"));
     }
 
     #[test]

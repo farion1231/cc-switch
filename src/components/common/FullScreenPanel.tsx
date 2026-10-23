@@ -22,8 +22,8 @@ interface FullScreenPanelProps {
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
-  /** Defaults to no motion to avoid revealing the underlying page during a fade. */
-  motionPreset?: "none" | "fade" | "slide-from-right";
+  /** Defaults to no motion to avoid revealing the underlying page during panel transitions. */
+  motionPreset?: "none" | "slide-from-right";
   /**
    * 覆盖内容区滚动容器的内边距/间距类。默认 `px-6 py-6 space-y-6`。
    * 通过 `cn`(twMerge) 合并，传入如 `pt-3` 只覆盖顶部内边距，其余保持默认。
@@ -57,6 +57,13 @@ const unlockBodyScroll = () => {
     bodyOverflowBeforeFirstLock = null;
   }
 };
+
+/**
+ * 打开着的面板，后打开的在最后。二级页里再开二级页（定价 → 编辑定价、编辑供应商 → 测速）时
+ * 每层都在 window 上挂了 ESC 监听，stopPropagation 拦不住同一目标上的其他监听，
+ * 所以只让栈顶那层响应，一次 ESC 只退一层。
+ */
+const openPanelStack: object[] = [];
 
 /**
  * Reusable full-screen panel component
@@ -103,8 +110,16 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   React.useEffect(() => {
     if (!isOpen) return;
 
+    const entry = {};
+    openPanelStack.push(entry);
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        // 上面还叠着别的面板：交给最上面那层
+        if (openPanelStack[openPanelStack.length - 1] !== entry) {
+          return;
+        }
+
         // 子组件（例如 Radix 的 Select/Dialog/Dropdown）如果已经消费了 ESC，就不要再关闭整个面板
         if (event.defaultPrevented) {
           return;
@@ -123,6 +138,8 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
     window.addEventListener("keydown", handleKeyDown, false);
     return () => {
       window.removeEventListener("keydown", handleKeyDown, false);
+      const index = openPanelStack.indexOf(entry);
+      if (index >= 0) openPanelStack.splice(index, 1);
     };
   }, [isOpen]);
 

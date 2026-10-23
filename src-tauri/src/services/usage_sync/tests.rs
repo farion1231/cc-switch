@@ -1210,7 +1210,7 @@ fn migration_from_v20_creates_usage_sync_tables() -> Result<(), AppError> {
         Database::get_user_version(&conn)?,
         crate::database::SCHEMA_VERSION
     );
-    assert_eq!(crate::database::SCHEMA_VERSION, 21);
+    assert_eq!(crate::database::SCHEMA_VERSION, 23);
     for table in [
         "usage_sync_identity",
         "usage_sync_devices",
@@ -4118,4 +4118,453 @@ async fn identities_keep_being_recorded_only_where_the_identity_already_publishe
         .query_row("SELECT COUNT(*) FROM usage_sync_identity", [], |r| r.get(0))
         .unwrap();
     assert_eq!(identities, 0);
+}
+
+// ─── Schema v23: upstream v21 (AGY) / v22 (Kimi) + usage sync ─────────
+
+const USAGE_SYNC_TABLES: [&str; 15] = [
+    "usage_sync_identity",
+    "usage_sync_devices",
+    "usage_sync_remote_partitions",
+    "usage_sync_remote_logs",
+    "usage_sync_remote_rollups",
+    "usage_sync_remote_claims",
+    "usage_sync_remote_inherited",
+    "usage_sync_ledger_suppressed",
+    "usage_sync_remote_multi",
+    "usage_sync_inherited_effective",
+    "usage_sync_partition_versions",
+    "usage_sync_export_cache",
+    "usage_sync_namespaces",
+    "usage_sync_inherited",
+    "usage_rollup_ledger",
+];
+
+/// What a database looked like on disk before this build.
+#[derive(Clone, Copy, Debug)]
+struct SchemaFixture {
+    user_version: i32,
+    /// Usage sync tables present (pre-release builds of this change).
+    usage_sync: bool,
+    agy: bool,
+    kimi: bool,
+    /// Version triggers with the pre-R4 body.
+    old_triggers: bool,
+}
+
+fn column_exists(conn: &rusqlite::Connection, table: &str, column: &str) -> bool {
+    conn.query_row(
+        &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = ?1"),
+        [column],
+        |r| r.get::<_, i64>(0),
+    )
+    .unwrap()
+        > 0
+}
+
+fn count(conn: &rusqlite::Connection, sql: &str) -> i64 {
+    conn.query_row(sql, [], |r| r.get(0)).unwrap()
+}
+
+/// Turn a current database into `fixture`, with representative data.
+fn shape_fixture(conn: &rusqlite::Connection, fixture: SchemaFixture) {
+    conn.execute_batch(
+        "INSERT INTO providers (id, app_type, name, settings_config, meta)
+            VALUES ('prov-1', 'claude', 'Kept Provider', '{}', '{}');
+         INSERT INTO proxy_request_logs (request_id, provider_id, app_type, model,
+            latency_ms, status_code, created_at) VALUES ('keep-log', 'prov-1', 'claude', 'm', 1, 200, 1);
+         INSERT INTO usage_daily_rollups (date, app_type, provider_id, model, request_count)
+            VALUES ('2026-09-01', 'claude', 'prov-1', 'm', 4);",
+    )
+    .unwrap();
+    for (table, id) in [("mcp_servers", "mcp-1"), ("skills", "skill-1")] {
+        let columns: Vec<(String, bool, Option<String>)> = conn
+            .prepare(&format!(
+                "SELECT name, \"notnull\", dflt_value FROM pragma_table_info('{table}')"
+            ))
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? != 0, r.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        // Fill every NOT NULL column without a default; enable the Claude flag.
+        let mut names = vec!["id".to_string()];
+        let mut values = vec![format!("'{id}'")];
+        for (name, not_null, default) in &columns {
+            if name == "id" {
+                continue;
+            }
+            if name == "enabled_claude" {
+                names.push(name.clone());
+                values.push("1".into());
+            } else if *not_null && default.is_none() {
+                names.push(name.clone());
+                values.push("'x'".into());
+            }
+        }
+        conn.execute(
+            &format!(
+                "INSERT INTO {table} ({}) VALUES ({})",
+                names.join(", "),
+                values.join(", ")
+            ),
+            [],
+        )
+        .unwrap();
+    }
+    if fixture.usage_sync {
+        conn.execute_batch(
+            "INSERT INTO usage_sync_identity (id, device_id, created_at, committed_nonce, manifest_seq)
+                VALUES (1, '0f8fad5b-d9cb-469f-a165-70867728950e', 0, 'nonce-1', 3);
+             INSERT INTO usage_rollup_ledger (request_id, data_source, date, app_type, provider_id,
+                model, rolled_up_at) VALUES ('keep-ledger', 'proxy', '2026-09-01', 'claude', 'prov-1', 'm', 0);
+             INSERT INTO usage_sync_export_cache (partition_key, device_id, detail_level, version,
+                names_version, content_sha256) VALUES ('m-2026-09', 'x', 'records', 1, 0, 'cached');",
+        )
+        .unwrap();
+        if fixture.old_triggers {
+            let names: Vec<String> = conn
+                .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'usage_sync_version_%'")
+                .unwrap()
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            let bump = |key: &str| {
+                format!(
+                    "INSERT OR IGNORE INTO usage_sync_partition_versions (partition_key, version)
+                        VALUES ({key}, 0);
+                     UPDATE usage_sync_partition_versions SET version = version + 1
+                        WHERE partition_key = {key};"
+                )
+            };
+            let mut sql = String::new();
+            for name in &names {
+                sql.push_str(&format!("DROP TRIGGER \"{name}\";"));
+            }
+            for table in [
+                "usage_daily_rollups",
+                "usage_rollup_ledger",
+                "usage_sync_inherited",
+            ] {
+                let (n, o) = (
+                    "'m-' || substr(NEW.date, 1, 7)",
+                    "'m-' || substr(OLD.date, 1, 7)",
+                );
+                sql.push_str(&format!(
+                    "CREATE TRIGGER usage_sync_version_{table}_ins AFTER INSERT ON {table} BEGIN {} END;
+                     CREATE TRIGGER usage_sync_version_{table}_upd AFTER UPDATE ON {table} BEGIN {} {} END;
+                     CREATE TRIGGER usage_sync_version_{table}_del AFTER DELETE ON {table} BEGIN {} END;",
+                    bump(n), bump(n), bump(o), bump(o)
+                ));
+            }
+            for (suffix, event) in [
+                ("ins", "INSERT"),
+                ("upd", "UPDATE OF id, app_type, name"),
+                ("del", "DELETE"),
+            ] {
+                sql.push_str(&format!(
+                    "CREATE TRIGGER usage_sync_version_providers_{suffix} AFTER {event} ON providers BEGIN {} END;",
+                    bump("'*names'")
+                ));
+            }
+            conn.execute_batch(&sql).unwrap();
+        }
+    } else {
+        let triggers: Vec<String> = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'usage_sync_version_%'")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        for name in triggers {
+            conn.execute_batch(&format!("DROP TRIGGER \"{name}\";"))
+                .unwrap();
+        }
+        for table in USAGE_SYNC_TABLES {
+            conn.execute_batch(&format!("DROP TABLE {table};")).unwrap();
+        }
+    }
+    for (column, keep) in [("enabled_agy", fixture.agy), ("enabled_kimi", fixture.kimi)] {
+        if !keep {
+            for table in ["mcp_servers", "skills"] {
+                conn.execute_batch(&format!("ALTER TABLE {table} DROP COLUMN {column};"))
+                    .unwrap();
+            }
+        }
+    }
+    Database::set_user_version(conn, fixture.user_version).unwrap();
+}
+
+/// A full start-up: table creation, then the migration ladder.
+fn start_up(conn: &rusqlite::Connection) {
+    Database::create_tables_on_conn(conn).unwrap();
+    Database::apply_schema_migrations_on_conn(conn).unwrap();
+}
+
+fn schema_text(conn: &rusqlite::Connection) -> String {
+    let rows: Vec<String> = conn
+        .prepare("SELECT type || ' ' || name || ' ' || COALESCE(sql, '') FROM sqlite_master ORDER BY type, name")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    rows.join("\n")
+}
+
+fn assert_v23(conn: &rusqlite::Connection, fixture: Option<SchemaFixture>) {
+    let label = format!("{fixture:?}");
+    assert_eq!(Database::get_user_version(conn).unwrap(), 23, "{label}");
+    for table in ["mcp_servers", "skills"] {
+        for column in ["enabled_agy", "enabled_kimi", "enabled_claude"] {
+            assert!(
+                column_exists(conn, table, column),
+                "{label}: {table}.{column}"
+            );
+        }
+    }
+    for table in USAGE_SYNC_TABLES {
+        assert!(
+            Database::table_exists(conn, table).unwrap(),
+            "{label}: {table}"
+        );
+    }
+    let marker = crate::database::VERSION_TRIGGER_MARKER;
+    let current: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'
+             AND name LIKE 'usage_sync_version_%' AND instr(sql, ?1) > 0",
+            [marker],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(current, 12, "{label}: current triggers");
+    assert_eq!(count(conn, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'usage_sync_version_%'"), 12, "{label}");
+    let Some(fixture) = fixture else { return };
+    // Existing data survives.
+    assert_eq!(
+        count(
+            conn,
+            "SELECT COUNT(*) FROM providers WHERE id = 'prov-1' AND name = 'Kept Provider'"
+        ),
+        1,
+        "{label}"
+    );
+    assert_eq!(
+        count(
+            conn,
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = 'keep-log'"
+        ),
+        1,
+        "{label}"
+    );
+    assert_eq!(
+        count(conn, "SELECT SUM(request_count) FROM usage_daily_rollups"),
+        4,
+        "{label}"
+    );
+    for (table, id) in [("mcp_servers", "mcp-1"), ("skills", "skill-1")] {
+        let flags: (i64, i64, i64) = conn
+            .query_row(
+                &format!(
+                    "SELECT enabled_claude, enabled_agy, enabled_kimi FROM {table} WHERE id = ?1"
+                ),
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(flags, (1, 0, 0), "{label}: {table} flags");
+    }
+    if fixture.usage_sync {
+        assert_eq!(
+            count(conn, "SELECT COUNT(*) FROM usage_sync_identity WHERE device_id = '0f8fad5b-d9cb-469f-a165-70867728950e' AND committed_nonce = 'nonce-1' AND manifest_seq = 3"),
+            1,
+            "{label}: identity"
+        );
+        assert_eq!(
+            count(
+                conn,
+                "SELECT COUNT(*) FROM usage_rollup_ledger WHERE request_id = 'keep-ledger'"
+            ),
+            1,
+            "{label}: ledger"
+        );
+        // The export cache is reset only when outdated triggers were replaced.
+        let cached = count(conn, "SELECT COUNT(*) FROM usage_sync_export_cache");
+        assert_eq!(
+            cached,
+            if fixture.old_triggers { 0 } else { 1 },
+            "{label}: export cache"
+        );
+    } else {
+        assert_eq!(
+            count(conn, "SELECT COUNT(*) FROM usage_sync_identity"),
+            0,
+            "{label}"
+        );
+        assert_eq!(
+            count(conn, "SELECT COUNT(*) FROM usage_rollup_ledger"),
+            0,
+            "{label}"
+        );
+    }
+}
+
+#[test]
+fn schema_v23_migration_matrix() {
+    // A brand-new database, through the same start-up as `Database::init`.
+    {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        start_up(&conn);
+        assert_v23(&conn, None);
+    }
+    let cases = [
+        // Official releases.
+        SchemaFixture {
+            user_version: 20,
+            usage_sync: false,
+            agy: false,
+            kimi: false,
+            old_triggers: false,
+        },
+        SchemaFixture {
+            user_version: 21,
+            usage_sync: false,
+            agy: true,
+            kimi: false,
+            old_triggers: false,
+        },
+        SchemaFixture {
+            user_version: 22,
+            usage_sync: false,
+            agy: true,
+            kimi: true,
+            old_triggers: false,
+        },
+        // Pre-release builds of this change (their v21 = usage sync, no AGY / Kimi).
+        SchemaFixture {
+            user_version: 21,
+            usage_sync: true,
+            agy: false,
+            kimi: false,
+            old_triggers: true,
+        },
+        SchemaFixture {
+            user_version: 21,
+            usage_sync: true,
+            agy: false,
+            kimi: false,
+            old_triggers: false,
+        },
+    ];
+    for fixture in cases {
+        let db = Database::memory().unwrap();
+        let conn = db.conn.lock().unwrap();
+        shape_fixture(&conn, fixture);
+        start_up(&conn);
+        assert_v23(&conn, Some(fixture));
+        // Re-running start-up changes nothing (schema and data).
+        let schema = schema_text(&conn);
+        let cache = count(&conn, "SELECT COUNT(*) FROM usage_sync_export_cache");
+        conn.execute(
+            "INSERT OR REPLACE INTO usage_sync_export_cache (partition_key, device_id, detail_level,
+                version, names_version, content_sha256) VALUES ('m-2026-10', 'x', 'records', 1, 0, 'later')",
+            [],
+        )
+        .unwrap();
+        start_up(&conn);
+        assert_eq!(
+            schema_text(&conn),
+            schema,
+            "{fixture:?}: schema changed on re-run"
+        );
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM usage_sync_export_cache"),
+            cache + 1,
+            "{fixture:?}: re-run cleared the export cache"
+        );
+        assert_v23(&conn, None);
+    }
+}
+
+#[test]
+#[serial]
+fn sql_backups_and_snapshots_cross_the_v23_boundary() {
+    // A SQL backup of a pre-release v21 database (usage sync, no AGY/Kimi)
+    // restores into this build as v23 with its usage sync state.
+    let old = Database::memory().unwrap();
+    let fixture = SchemaFixture {
+        user_version: 21,
+        usage_sync: true,
+        agy: false,
+        kimi: false,
+        old_triggers: true,
+    };
+    {
+        let conn = old.conn.lock().unwrap();
+        shape_fixture(&conn, fixture);
+    }
+    let dump = old.export_sql_string().unwrap();
+    let restored = Database::memory().unwrap();
+    restored.import_sql_string(&dump).unwrap();
+    {
+        let conn = restored.conn.lock().unwrap();
+        assert_v23(&conn, Some(fixture));
+    }
+
+    // Round trip of a v23 backup keeps everything.
+    let dump = restored.export_sql_string().unwrap();
+    let again = Database::memory().unwrap();
+    again.import_sql_string(&dump).unwrap();
+    {
+        let conn = again.conn.lock().unwrap();
+        assert_v23(&conn, None);
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT COUNT(*) FROM usage_rollup_ledger WHERE request_id = 'keep-ledger'"
+            ),
+            1
+        );
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM usage_sync_identity"), 1);
+    }
+
+    // A Cloud Sync snapshot from an official v22 client applies to a v23
+    // database and keeps its local usage sync state.
+    let upstream = Database::memory().unwrap();
+    {
+        let conn = upstream.conn.lock().unwrap();
+        shape_fixture(
+            &conn,
+            SchemaFixture {
+                user_version: 22,
+                usage_sync: false,
+                agy: true,
+                kimi: true,
+                old_triggers: false,
+            },
+        );
+    }
+    let snapshot = upstream.export_sql_string_for_sync().unwrap();
+    again.import_sql_string_for_sync(&snapshot).unwrap();
+    let conn = again.conn.lock().unwrap();
+    assert_v23(&conn, None);
+    assert_eq!(
+        count(&conn, "SELECT COUNT(*) FROM usage_sync_identity"),
+        1,
+        "local identity kept"
+    );
+    assert_eq!(
+        count(
+            &conn,
+            "SELECT COUNT(*) FROM usage_rollup_ledger WHERE request_id = 'keep-ledger'"
+        ),
+        1
+    );
+    assert_eq!(
+        count(&conn, "SELECT COUNT(*) FROM providers WHERE id = 'prov-1'"),
+        1
+    );
 }

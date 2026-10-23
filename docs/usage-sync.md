@@ -125,7 +125,11 @@ source device.
    objects named by content hash.
 4. Persist a fresh nonce as _pending_, PUT the manifest, then commit the nonce
    and `seq`. A crash between the PUT and the commit is recognised by the
-   pending nonce, not reported as a conflict.
+   pending nonce, not reported as a conflict. On WebDAV the manifest is sent
+   as `application/octet-stream` (some servers, e.g. CSTCloud Data Capsule,
+   reject multi-line JSON sent as `application/json`; Cloud Sync's manifest
+   does the same); S3 keeps `application/json`. The bytes and hashes are
+   identical either way and readers never look at the content type.
 5. Superseded objects are listed in `retired` and deleted after a 24 h grace
    period, so a reader that fetched the previous manifest can still finish.
    A failed delete keeps the object listed and is retried. Every `retired`
@@ -153,7 +157,7 @@ a trigger to the statements in its body, so an `INSERT OR IGNORE` + `UPDATE`
 body would be reset to 0 by the rollup's `INSERT OR REPLACE`. The version
 therefore only ever counts up.
 
-Databases created by an earlier v21 build carry the old trigger body. At
+Databases created by an earlier pre-release build carry the old trigger body. At
 start-up, triggers without the UPSERT body are replaced and the export cache
 is cleared once, so the next sync re-encodes every month (objects are
 uploaded only where the content hash changed). Later starts find the current
@@ -274,7 +278,7 @@ chooses:
   republishes its own data under the same id. If both copies keep running they
   overwrite each other, which the dialog states.
 
-## Local storage (schema v21)
+## Local storage (schema v23)
 
 | Table                            | Purpose                                                                                   |
 | -------------------------------- | ----------------------------------------------------------------------------------------- |
@@ -318,9 +322,15 @@ chooses:
   session row). Kind 2 is never published, because a heuristic guess must not
   become a fleet-wide alias that drops another device's copy; locally it
   behaves like before.
-- Migration v20 → v21 only creates these tables (idempotent DDL shared with
-  fresh databases); existing data is untouched, and the usual pre-migration
-  backup runs. History rolled up before the upgrade has no ledger entries.
+- Migration v22 → v23 creates these tables (idempotent DDL shared with fresh
+  databases) after upstream's v20 → v21 (AGY flags) and v21 → v22 (Kimi
+  flags); existing data is untouched, and the usual pre-migration backup runs.
+  History rolled up before the upgrade has no ledger entries.
+- Pre-release builds of this change used v21 for the usage sync tables. Such a
+  database continues through upstream's v21 → v22 step, which never adds the
+  AGY flags, so v22 → v23 adds any missing `enabled_agy` / `enabled_kimi`
+  columns by checking the actual schema rather than `user_version`. Its usage
+  sync tables, identity and ledger are kept.
 - All fifteen tables are in `SYNC_SKIP_TABLES` (rows never enter `db.sql`);
   all but `usage_sync_export_cache` are in `SYNC_PRESERVE_TABLES` (a snapshot
   download keeps the local rows).
@@ -350,15 +360,22 @@ milliseconds of lock time; one corrected month costs only that month.
 
 ## Compatibility
 
-- **Schema bump (v20 → v21)**: like every upstream schema bump, a CC Switch
-  build with schema v20 refuses a configuration snapshot (`db.sql`) uploaded by
+- **Schema bump (v22 → v23)**: like every upstream schema bump, a CC Switch
+  build with schema v22 or older refuses a configuration snapshot (`db.sql`) uploaded by
   this build with "database version too new". This applies to ordinary Cloud
   Sync between devices even when usage sync is never enabled: update all
   devices that share a Cloud Sync profile together. `DB_COMPAT_VERSION` (the
-  remote snapshot directory `v2/db-v6`) is unchanged; downloading v20
-  snapshots into this build works.
+  remote snapshot directory `v2/db-v6`) is unchanged; downloading v22 and
+  older snapshots into this build works.
 - Downgrading the app after the upgrade is refused by the existing
   "database version too new" check; restore the pre-migration backup instead.
+- Databases of pre-release builds of this change (their v21 = usage sync
+  tables) must only move forward to this build. A stock v21/v22 release would
+  read them as its own v21 and never add the AGY flags; restore the
+  pre-migration backup instead of switching such a database to a stock
+  release. That backup is taken after start-up has already replaced outdated
+  version triggers and cleared the export cache (device-local, rebuilt by the
+  next sync).
 - Usage protocol: unknown fields are ignored within v1; newer-version
   manifests/segments are reported and never overwritten by an older client.
 - Lazy table creation without a schema bump was considered and rejected:
@@ -476,7 +493,8 @@ cargo test --lib usage_sync::tests_http::live -- --ignored --test-threads=1
   rollup transition, GC (+ retry), cost/model corrections, daily mode privacy,
   sensitive-field leak check, cloned identity + resolution, newer protocol,
   stale manifests, hidden/vanished devices, injection-safe scope, viewer-local
-  bucketing, config snapshot isolation, v20 → v21 migration.
+  bucketing, config snapshot isolation, the v23 migration matrix (fresh, v20,
+  v21, v22, pre-release v21, re-runs, SQL backups and snapshots).
 - `usage_sync::tests_http`: real reqwest transport against fake WebDAV and
   S3 servers (Basic auth, MKCOL, PROPFIND, ListObjectsV2 pagination, DELETE).
 

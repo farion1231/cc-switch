@@ -8,11 +8,10 @@ use std::time::Duration;
 
 use crate::error::AppError;
 use crate::proxy::http_client;
+use crate::services::sync_protocol::{transfer_timeout, TRANSFER_IDLE_TIMEOUT};
 use futures::StreamExt;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
-/// Timeout for large file transfers (PUT/GET of db.sql, skills.zip).
-const TRANSFER_TIMEOUT_SECS: u64 = 300;
 
 /// Auth pair: `(username, Some(password))`.
 pub type WebDavAuth = Option<(String, Option<String>)>;
@@ -126,6 +125,16 @@ fn webdav_transport_error(
     )
 }
 
+fn webdav_stalled_error(key: &'static str, op_zh: &str, op_en: &str, target_url: &str) -> AppError {
+    let secs = TRANSFER_IDLE_TIMEOUT.as_secs();
+    let safe_url = redact_url(target_url);
+    AppError::localized(
+        key,
+        format!("WebDAV {op_zh}失败（{secs} 秒未收到数据）: {safe_url}"),
+        format!("WebDAV {op_en} failed (no data received for {secs}s): {safe_url}"),
+    )
+}
+
 // ─── HTTP operations ─────────────────────────────────────────
 
 /// Test WebDAV connectivity via PROPFIND Depth=0 on the base URL.
@@ -233,8 +242,8 @@ pub async fn put_bytes(
         client
             .put(url)
             .header("Content-Type", content_type)
-            .body(bytes)
-            .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS)),
+            .timeout(transfer_timeout(bytes.len() as u64))
+            .body(bytes),
         auth,
     )
     .send()
@@ -256,15 +265,16 @@ pub async fn get_bytes(
     max_bytes: usize,
 ) -> Result<Option<(Vec<u8>, Option<String>)>, AppError> {
     let client = http_client::get();
-    let resp = apply_auth(
-        client
-            .get(url)
-            .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS)),
+    let request = apply_auth(
+        client.get(url).timeout(transfer_timeout(max_bytes as u64)),
         auth,
-    )
-    .send()
-    .await
-    .map_err(|e| webdav_transport_error("webdav.get_failed", "GET 请求", "GET request", url, &e))?;
+    );
+    let resp = tokio::time::timeout(TRANSFER_IDLE_TIMEOUT, request.send())
+        .await
+        .map_err(|_| webdav_stalled_error("webdav.get_failed", "GET 请求", "GET request", url))?
+        .map_err(|e| {
+            webdav_transport_error("webdav.get_failed", "GET 请求", "GET request", url, &e)
+        })?;
 
     if resp.status() == StatusCode::NOT_FOUND {
         return Ok(None);
@@ -281,7 +291,18 @@ pub async fn get_bytes(
         .map(|s| s.to_string());
     let mut bytes = Vec::new();
     let mut stream = resp.bytes_stream();
-    while let Some(chunk) = stream.next().await {
+    // Slow transfers may run long; only a stretch without any data fails them.
+    while let Some(chunk) = tokio::time::timeout(TRANSFER_IDLE_TIMEOUT, stream.next())
+        .await
+        .map_err(|_| {
+            webdav_stalled_error(
+                "webdav.response_read_failed",
+                "读取响应",
+                "response read",
+                url,
+            )
+        })?
+    {
         let chunk = chunk.map_err(|e| {
             AppError::localized(
                 "webdav.response_read_failed",

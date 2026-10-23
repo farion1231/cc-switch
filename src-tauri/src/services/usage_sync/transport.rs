@@ -96,6 +96,21 @@ impl UsageTransport {
         }
     }
 
+    /// Content type of the manifest PUT. Some WebDAV servers (e.g. CSTCloud
+    /// Data Capsule) answer a multi-line body sent as `application/json` with
+    /// a size-mismatch 500 but store the same bytes sent as a generic binary;
+    /// Cloud Sync uploads its manifest the same way. Bytes and hashes are
+    /// unchanged and readers never look at the type, so every version keeps
+    /// reading every other's manifests. S3 keeps `application/json`.
+    pub(crate) fn manifest_content_type(&self) -> &'static str {
+        match self {
+            Self::WebDav { .. } => "application/octet-stream",
+            Self::S3 { .. } => "application/json",
+            #[cfg(test)]
+            Self::Memory(_) => "application/json",
+        }
+    }
+
     /// Stable identifier of the remote namespace this transport reads and
     /// writes: backend, server location (scheme, host, port, path; never
     /// user info, credentials or query), bucket and the namespace path

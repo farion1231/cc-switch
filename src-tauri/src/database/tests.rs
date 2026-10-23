@@ -1040,6 +1040,7 @@ fn model_pricing_seed_covers_deepseek_v41_flash_aliases() {
     // 查价前缀兜底是 LIKE '{id}-%'，只命中更长的行，任一行缺失都会静默按 0 计费。
     for model_id in [
         "deepseek-flash",
+        "deepseek-v4.1-flash",
         "deepseek-v4-flash",
         "deepseek-v4-flash-0731",
         "deepseek-v4-flash-vision-exp",

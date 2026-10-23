@@ -338,6 +338,7 @@ export function useProviderStats(
       );
     },
     placeholderData: keepPreviousData,
+    enabled: options?.enabled ?? true,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -369,6 +370,7 @@ export function useModelStats(
       );
     },
     placeholderData: keepPreviousData,
+    enabled: options?.enabled ?? true,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -404,6 +406,7 @@ export function useRequestLogs({
       return usageApi.getRequestLogs(effectiveFilters, page, pageSize);
     },
     placeholderData: keepPreviousData,
+    enabled: options?.enabled ?? true,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });

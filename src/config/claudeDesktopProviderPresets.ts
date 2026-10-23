@@ -256,19 +256,6 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "packycode",
   },
   {
-    name: "ZetaAPI",
-    websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/u117",
-    category: "aggregator",
-    baseUrl: "https://api.zetaapi.ai",
-    mode: "direct",
-    apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(true),
-    isPartner: true,
-    partnerPromotionKey: "zetaapi",
-    icon: "zetaapi",
-  },
-  {
     name: "APINebula",
     websiteUrl: "https://apinebula.ai",
     apiKeyUrl: "https://apinebula.ai/VjM74M",
@@ -309,6 +296,25 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "patewayai",
     icon: "pateway",
+  },
+  {
+    name: "hao.ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    category: "aggregator",
+    baseUrl: "https://api.hao.ai/anthropic",
+    mode: "direct",
+    apiFormat: "anthropic",
+    // 模型目录 hao.ai/models（2026-10-21）的 ID 都带 anthropic/ 前缀，按目录映射
+    modelRoutes: mappedRoutes(
+      "anthropic/claude-sonnet-5-5",
+      "anthropic/claude-opus-5-5",
+      "anthropic/claude-haiku-5-5",
+      true,
+    ),
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
   },
   {
     name: "FennoAI",
@@ -357,6 +363,31 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "openmodel",
   },
   {
+    name: "EveryAPI",
+    websiteUrl: "https://everyapi.ai",
+    apiKeyUrl:
+      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
+    category: "aggregator",
+    baseUrl: "https://api.everyapi.ai",
+    // 网关没有 claude-haiku-4-5（api.everyapi.ai/api/pricing，2026-10-17），
+    // 不能透传，按 5.5 系列映射
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5-5",
+      "claude-opus-5-5",
+      "claude-haiku-5-5",
+      true,
+    ),
+    endpointCandidates: [
+      "https://api.everyapi.ai",
+      "https://api-cn.everyapi.ai",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "everyapi",
+    icon: "everyapi",
+  },
+  {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
     apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
@@ -374,6 +405,75 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "grooroute",
     icon: "grooroute",
+  },
+  {
+    name: "DIT.ai",
+    websiteUrl: "https://dit.ai",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
+    category: "aggregator",
+    baseUrl: "https://api.dit.ai",
+    mode: "direct",
+    apiFormat: "anthropic",
+    // 网关没有不带日期的 claude-haiku-4-5（dit.ai/models，2026-10-21），透传会让
+    // Haiku 档 404，所以映射到带日期的 ID
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5-5",
+      "claude-opus-5-5",
+      "claude-haiku-4-5-20251001",
+      true,
+    ),
+    isPartner: true,
+    partnerPromotionKey: "dit",
+    icon: "dit",
+  },
+  {
+    name: "BuyToken",
+    websiteUrl: "https://buytoken.work",
+    apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
+    category: "aggregator",
+    baseUrl: "https://api.buytoken.work",
+    mode: "direct",
+    apiFormat: "anthropic",
+    // 网关只认带日期的 Haiku ID（buytoken.work/docs，2026-10-23），透传会让
+    // Haiku 档失败，所以映射
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5-5",
+      "claude-opus-5-5",
+      "claude-haiku-4-5-20251001",
+      true,
+    ),
+    isPartner: true,
+    partnerPromotionKey: "buytoken",
+    icon: "buytoken",
+  },
+  {
+    name: "V-API",
+    websiteUrl: "https://gpt.ge",
+    apiKeyUrl: "https://gpt.ge/signup?aff=URNP",
+    category: "aggregator",
+    baseUrl: "https://api.gpt.ge",
+    mode: "direct",
+    apiFormat: "anthropic",
+    // 网关没有不带日期的 claude-haiku-4-5（gpt.ge/models，2026-10-23），透传会让
+    // Haiku 档失败，按 5.5 系列映射
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5-5",
+      "claude-opus-5-5",
+      "claude-haiku-5-5",
+      true,
+    ),
+    // 备用线路取自 gpt.ge/api/status 的 api_list（2026-10-23）
+    endpointCandidates: [
+      "https://api.gpt.ge",
+      "https://api.vveai.com",
+      "https://run.v3.cm",
+      "https://api1.v3.cm",
+      "https://api2.v3.cm",
+      "https://us.gpt.ge",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "vapi",
+    icon: "vapi",
   },
   {
     name: "TokenFactory",
@@ -396,23 +496,35 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "tokenfactory",
   },
   {
-    name: "Shengsuanyun",
-    nameKey: "providerForm.presets.shengsuanyun",
-    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
-    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    // FluxA AgentMarket 以合作价转售的百度智能云 TokenPlan：产品页写明
+    // "purchase it through AgentMarket, then use Baidu AI Cloud's endpoint and
+    // API key directly"，端点取其所链的百度国际站 Token Plan Enterprise 文档
+    // （2026-09-16 版）team 专属基址 —— 与国内个人版 qianfan.baidubce.com/
+    // .../personal 是两套部署，勿合并。模型名与 Claude 角色无对应关系，
+    // 故走 proxy + brandedRoutes 全角色映射到 deepseek-v4-pro（与国内
+    // Token Plan 预设同款）
+    name: "FluxA Token Plan",
+    websiteUrl: "https://agentmarket.fluxapay.xyz/",
+    apiKeyUrl: "https://agentmarket.fluxapay.xyz/marketplace/tokenplans",
     category: "aggregator",
-    baseUrl: "https://router.shengsuanyun.com/api",
-    mode: "direct",
+    baseUrl: "https://api.baiduqianfan.ai/anthropic/tokenplan/team",
+    mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: mappedRoutes(
-      "anthropic/claude-sonnet-5",
-      "anthropic/claude-opus-5",
-      "anthropic/claude-haiku-4.5",
+    // supports1m：DeepSeek V4 Pro 官方窗口 1M（千帆平台与 FluxA 产品页
+    // 模型表均标 1M，仓库各 catalog 同记 1048576）。[1m] 只是 Claude
+    // Desktop 本地标记，匹配前会被剥掉，不会随请求发往上游
+    modelRoutes: brandedRoutes(
+      "deepseek-v4-pro",
+      "deepseek-v4-pro",
+      "deepseek-v4-pro",
       true,
     ),
+    endpointCandidates: [
+      "https://api.baiduqianfan.ai/anthropic/tokenplan/team",
+    ],
     isPartner: true,
-    partnerPromotionKey: "shengsuanyun",
-    icon: "shengsuanyun",
+    partnerPromotionKey: "fluxa",
+    icon: "fluxa",
   },
   {
     name: "AIGoCode",
@@ -476,35 +588,23 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "subrouter",
   },
   {
-    // FluxA AgentMarket 以合作价转售的百度智能云 TokenPlan：产品页写明
-    // "purchase it through AgentMarket, then use Baidu AI Cloud's endpoint and
-    // API key directly"，端点取其所链的百度国际站 Token Plan Enterprise 文档
-    // （2026-09-16 版）team 专属基址 —— 与国内个人版 qianfan.baidubce.com/
-    // .../personal 是两套部署，勿合并。模型名与 Claude 角色无对应关系，
-    // 故走 proxy + brandedRoutes 全角色映射到 deepseek-v4-pro（与国内
-    // Token Plan 预设同款）
-    name: "FluxA Token Plan",
-    websiteUrl: "https://agentmarket.fluxapay.xyz/",
-    apiKeyUrl: "https://agentmarket.fluxapay.xyz/marketplace/tokenplans",
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
     category: "aggregator",
-    baseUrl: "https://api.baiduqianfan.ai/anthropic/tokenplan/team",
-    mode: "proxy",
+    baseUrl: "https://router.shengsuanyun.com/api",
+    mode: "direct",
     apiFormat: "anthropic",
-    // supports1m：DeepSeek V4 Pro 官方窗口 1M（千帆平台与 FluxA 产品页
-    // 模型表均标 1M，仓库各 catalog 同记 1048576）。[1m] 只是 Claude
-    // Desktop 本地标记，匹配前会被剥掉，不会随请求发往上游
-    modelRoutes: brandedRoutes(
-      "deepseek-v4-pro",
-      "deepseek-v4-pro",
-      "deepseek-v4-pro",
+    modelRoutes: mappedRoutes(
+      "anthropic/claude-sonnet-5",
+      "anthropic/claude-opus-5",
+      "anthropic/claude-haiku-4.5",
       true,
     ),
-    endpointCandidates: [
-      "https://api.baiduqianfan.ai/anthropic/tokenplan/team",
-    ],
     isPartner: true,
-    partnerPromotionKey: "fluxa",
-    icon: "fluxa",
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
   },
   {
     name: "88API",
@@ -1013,6 +1113,43 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     partnerPromotionKey: "modelflare",
     icon: "modelflare",
   },
+  {
+    name: "AllTokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    category: "aggregator",
+    baseUrl: "https://alltokens.cc",
+    // Sub2API 网关：Key 绑定单个分组，须用 Claude 分组的 Key（分组与模型见
+    // alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+    // Claude 分组直接提供 claude-sonnet-5 / claude-opus-5 / claude-haiku-4-5，直连透传
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(true),
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
+  },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    category: "aggregator",
+    baseUrl: "https://alltokens.si",
+    // 目录没有 claude-haiku-4-5、Claude ID 用点号（alltokens.si/api/pricing，
+    // 2026-10-19），不能透传；Haiku 档映射到 Sonnet
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5.5",
+      "claude-opus-5.5",
+      "claude-sonnet-5.5",
+      true,
+    ),
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",
@@ -1322,7 +1459,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     family: "zhipu",
     regionKey: "cn",
     websiteUrl: "https://open.bigmodel.cn",
-    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code",
     category: "cn_official",
     baseUrl: "https://open.bigmodel.cn/api/anthropic",
     mode: "proxy",
@@ -1336,7 +1473,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     family: "zhipu",
     regionKey: "intl",
     websiteUrl: "https://z.ai",
-    apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
+    apiKeyUrl: "https://z.ai/subscribe",
     category: "cn_official",
     baseUrl: "https://api.z.ai/api/anthropic",
     mode: "proxy",
@@ -1596,7 +1733,21 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.minimax.cn/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("MiniMax-M3", "MiniMax-M3", "MiniMax-M3", true),
+    modelRoutes: [
+      ...brandedRoutes(
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3.1-Flash",
+        true,
+      ),
+      // extra route (fable slot) so M3 stays selectable; defaults stay on M3.1
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.fable,
+        upstreamModel: "MiniMax-M3",
+        labelOverride: "MiniMax-M3",
+        supports1m: true,
+      },
+    ],
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",
@@ -1614,7 +1765,21 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.minimax.io/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("MiniMax-M3", "MiniMax-M3", "MiniMax-M3", true),
+    modelRoutes: [
+      ...brandedRoutes(
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3.1-Flash",
+        true,
+      ),
+      // extra route (fable slot) so M3 stays selectable; defaults stay on M3.1
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.fable,
+        upstreamModel: "MiniMax-M3",
+        labelOverride: "MiniMax-M3",
+        supports1m: true,
+      },
+    ],
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",

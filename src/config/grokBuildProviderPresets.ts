@@ -99,18 +99,6 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "packycode",
   },
   {
-    name: "ZetaAPI",
-    websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/u117",
-    auth: grokAuth(),
-    config: grokPresetConfig("ZetaAPI", "https://api.zetaapi.ai/v1"),
-    endpointCandidates: ["https://api.zetaapi.ai/v1"],
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "zetaapi",
-    icon: "zetaapi",
-  },
-  {
     name: "APINebula",
     websiteUrl: "https://apinebula.ai",
     apiKeyUrl: "https://apinebula.ai/VjM74M",
@@ -151,6 +139,22 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "patewayai",
     icon: "pateway",
+  },
+  {
+    name: "hao.ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    auth: grokAuth(),
+    // xAI 协议另有地址 /x-ai/v1（hao.ai/docs/develop/authentication，2026-10-21）
+    config: grokPresetConfig(
+      "hao.ai",
+      "https://api.hao.ai/x-ai/v1",
+      "x-ai/grok-4.7",
+    ),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
   },
   {
     name: "FennoAI",
@@ -202,6 +206,54 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "grooroute",
     icon: "grooroute",
+  },
+  {
+    name: "DIT.ai",
+    websiteUrl: "https://dit.ai",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
+    auth: grokAuth(),
+    config: grokPresetConfig("DIT.ai", "https://api.dit.ai/v1", "grok-4.7"),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "dit",
+    icon: "dit",
+  },
+  {
+    name: "BuyToken",
+    websiteUrl: "https://buytoken.work",
+    apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
+    auth: grokAuth(),
+    // 须用 grok 分组的 Key；分组里只有 grok-4.7（buytoken.work/pricing，2026-10-23）
+    config: grokPresetConfig(
+      "BuyToken",
+      "https://api.buytoken.work/v1",
+      "grok-4.7",
+    ),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "buytoken",
+    icon: "buytoken",
+  },
+  {
+    name: "V-API",
+    websiteUrl: "https://gpt.ge",
+    apiKeyUrl: "https://gpt.ge/signup?aff=URNP",
+    auth: grokAuth(),
+    // grok-4.7 支持 /v1/responses，只在 gf 分组（gpt.ge/models/grok-4.7，2026-10-23）
+    config: grokPresetConfig("V-API", "https://api.gpt.ge/v1", "grok-4.7"),
+    category: "aggregator",
+    // 备用线路取自 gpt.ge/api/status 的 api_list（2026-10-23）
+    endpointCandidates: [
+      "https://api.gpt.ge/v1",
+      "https://api.vveai.com/v1",
+      "https://run.v3.cm/v1",
+      "https://api1.v3.cm/v1",
+      "https://api2.v3.cm/v1",
+      "https://us.gpt.ge/v1",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "vapi",
+    icon: "vapi",
   },
   {
     name: "Shengsuanyun",
@@ -556,6 +608,37 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "modelflare",
     icon: "modelflare",
+  },
+  {
+    name: "AllTokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    auth: grokAuth(),
+    // Sub2API 网关：Key 绑定单个分组，须用 Grok 分组的 Key（分组与模型见
+    // alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+    config: grokPresetConfig("AllTokens", "https://alltokens.cc/v1"),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
+  },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    auth: grokAuth(),
+    // Grok 分组不在默认自动分组里，须用 Grok 分组的 Key；分组没有 grok-4.5，
+    // 取 grok-4.7（alltokens.si/api/pricing，2026-10-19 核对）
+    config: grokPresetConfig(
+      "AllTokens SI",
+      "https://alltokens.si/v1",
+      "grok-4.7",
+    ),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {

@@ -8,6 +8,7 @@ import { server } from "../msw/server";
 import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
 import { piThinkingProfiles } from "@/config/piThinkingProfiles";
+import { piProviderPresets } from "@/config/piProviderPresets";
 
 const TAURI_ENDPOINT = "http://tauri.local";
 
@@ -48,6 +49,47 @@ describe("PiProviderForm", () => {
     Element.prototype.scrollIntoView = vi.fn();
   });
 
+  it("shows a preset's provider key and blocks saving when it is already taken", async () => {
+    const user = userEvent.setup();
+    const preset = piProviderPresets.find((entry) => entry.name === "Kimi")!;
+    server.use(
+      http.post("http://tauri.local/get_providers", () =>
+        HttpResponse.json({
+          [preset.providerKey]: {
+            id: preset.providerKey,
+            name: "Kimi",
+            settingsConfig: {},
+          },
+        }),
+      ),
+    );
+    const onSubmit = vi.fn();
+    render(
+      <PiProviderForm
+        appId="pi"
+        submitLabel="Save Pi provider"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: /^providerPreset\.group\.vendor / }),
+    );
+    await user.click(screen.getByRole("button", { name: "Kimi" }));
+    expect(screen.getByLabelText("pi.form.providerKey")).toHaveValue(
+      preset.providerKey,
+    );
+    expect(
+      await screen.findByText("pi.form.providerKeyDuplicate"),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save Pi provider" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "pi.form.providerKeyDuplicate",
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   it("starts in the same editable custom state as OpenCode", async () => {
     const onSubmitReadyChange = vi.fn();
     const { container } = render(
@@ -61,9 +103,7 @@ describe("PiProviderForm", () => {
     );
 
     // 表单直接铺在添加页里，不再套一层卡片
-    expect(container.querySelector("#provider-form")).not.toHaveClass(
-      "glass",
-    );
+    expect(container.querySelector("#provider-form")).not.toHaveClass("glass");
     expect(screen.getByLabelText("provider.name")).toBeInTheDocument();
     expect(screen.getByLabelText("provider.notes")).toBeInTheDocument();
     expect(screen.getByLabelText("provider.websiteUrl")).toBeInTheDocument();
@@ -159,8 +199,8 @@ describe("PiProviderForm", () => {
     expect(
       within(
         document.querySelector("#pi-provider-compat") as HTMLElement,
-      ).queryByRole("button", { name: /pi\.form\.compatibility/ }),
-    ).not.toBeInTheDocument();
+      ).getByRole("button", { name: "pi.form.compatibility" }),
+    ).toHaveAttribute("aria-expanded", "false");
     expect(
       screen.getByText("pi.form.noCompatibilityOptions"),
     ).toBeInTheDocument();
@@ -1377,9 +1417,10 @@ describe("PiProviderForm", () => {
     await user.click(
       screen.getByRole("button", { name: "展开或收起模型详情" }),
     );
+    // models.dev 按地址认出了这家，GPT 窗口照用它登记的值，不封顶。
     await waitFor(() =>
       expect(screen.getByLabelText("pi.form.contextWindow")).toHaveValue(
-        272000,
+        400000,
       ),
     );
     expect(screen.getByLabelText("pi.form.maxTokens")).toHaveValue(128000);

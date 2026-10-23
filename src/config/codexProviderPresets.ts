@@ -458,22 +458,6 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     icon: "packycode",
   },
   {
-    name: "ZetaAPI",
-    websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/u117",
-    category: "aggregator",
-    auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig(
-      "zetaapi",
-      "https://api.zetaapi.ai/v1",
-      "gpt-5.6-sol",
-    ),
-    endpointCandidates: ["https://api.zetaapi.ai/v1"],
-    isPartner: true,
-    partnerPromotionKey: "zetaapi",
-    icon: "zetaapi",
-  },
-  {
     name: "APINebula",
     websiteUrl: "https://apinebula.ai",
     apiKeyUrl: "https://apinebula.ai/VjM74M",
@@ -531,6 +515,23 @@ requires_openai_auth = true`,
     icon: "pateway",
   },
   {
+    name: "hao.ai",
+    websiteUrl: "https://hao.ai",
+    apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    // 接入文档 hao.ai/docs/integrations/codex/model-provider：/v1 + Responses；
+    // 模型 ID 带 openai/ 前缀（hao.ai/models，2026-10-21）
+    config: generateThirdPartyConfig(
+      "hao_ai",
+      "https://api.hao.ai/v1",
+      "openai/gpt-5.6-sol",
+    ),
+    isPartner: true,
+    partnerPromotionKey: "haoai",
+    icon: "haoai",
+  },
+  {
     name: "FennoAI",
     websiteUrl: "https://api.fenno.ai",
     apiKeyUrl:
@@ -579,6 +580,26 @@ requires_openai_auth = true`,
     icon: "openmodel",
   },
   {
+    name: "EveryAPI",
+    websiteUrl: "https://everyapi.ai",
+    apiKeyUrl:
+      "https://app.everyapi.ai/signin?aff=FqlMa2eVVY&utm_source=ccswitch&utm_medium=invite",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "everyapi",
+      "https://api.everyapi.ai/v1",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: [
+      "https://api.everyapi.ai/v1",
+      "https://api-cn.everyapi.ai/v1",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "everyapi",
+    icon: "everyapi",
+  },
+  {
     name: "GrooRoute Pro",
     websiteUrl: "https://grooroute.pro",
     apiKeyUrl: "https://grooroute.pro/sign-up?aff=qqm9",
@@ -596,6 +617,63 @@ requires_openai_auth = true`,
     isPartner: true,
     partnerPromotionKey: "grooroute",
     icon: "grooroute",
+  },
+  {
+    name: "DIT.ai",
+    websiteUrl: "https://dit.ai",
+    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "dit_ai",
+      "https://api.dit.ai/v1",
+      "gpt-5.6-sol",
+    ),
+    isPartner: true,
+    partnerPromotionKey: "dit",
+    icon: "dit",
+  },
+  {
+    name: "BuyToken",
+    websiteUrl: "https://buytoken.work",
+    apiKeyUrl: "https://buytoken.work/sign-up?aff=cc-switch",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    // 须用 Codex 分组的 Key；地址必须带 /v1（buytoken.work/docs，2026-10-23）
+    config: generateThirdPartyConfig(
+      "buytoken",
+      "https://api.buytoken.work/v1",
+      "gpt-5.6-sol",
+    ),
+    isPartner: true,
+    partnerPromotionKey: "buytoken",
+    icon: "buytoken",
+  },
+  {
+    name: "V-API",
+    websiteUrl: "https://gpt.ge",
+    apiKeyUrl: "https://gpt.ge/signup?aff=URNP",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    // gpt-5.6-sol 支持 /v1/responses，令牌选 codex 或 default 分组
+    // （gpt.ge/models/gpt-5.6-sol，2026-10-23）
+    config: generateThirdPartyConfig(
+      "vapi",
+      "https://api.gpt.ge/v1",
+      "gpt-5.6-sol",
+    ),
+    // 备用线路取自 gpt.ge/api/status 的 api_list（2026-10-23）
+    endpointCandidates: [
+      "https://api.gpt.ge/v1",
+      "https://api.vveai.com/v1",
+      "https://run.v3.cm/v1",
+      "https://api1.v3.cm/v1",
+      "https://api2.v3.cm/v1",
+      "https://us.gpt.ge/v1",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "vapi",
+    icon: "vapi",
   },
   {
     name: "TokenFactory",
@@ -662,94 +740,6 @@ requires_openai_auth = true`,
       },
     ]),
     icon: "tokenfactory",
-  },
-  {
-    name: "Shengsuanyun",
-    nameKey: "providerForm.presets.shengsuanyun",
-    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
-    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
-    auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig(
-      "shengsuanyun",
-      "https://router.shengsuanyun.com/api/v1",
-      "openai/gpt-5.6-sol",
-    ),
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "shengsuanyun",
-    icon: "shengsuanyun",
-  },
-  {
-    name: "AIGoCode",
-    websiteUrl: "https://aigocode.net",
-    apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
-    category: "third_party",
-    auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig(
-      "aigocode",
-      "https://api.aigocode.dev",
-      "gpt-5.6-sol",
-    ),
-    endpointCandidates: [
-      "https://api.aigocode.dev",
-      "https://api.aigocode.app",
-    ],
-    isPartner: true, // 合作伙伴
-    partnerPromotionKey: "aigocode", // 促销信息 i18n key
-    icon: "aigocode",
-    iconColor: "#5B7FFF",
-  },
-  {
-    name: "Qiniu",
-    nameKey: "providerForm.presets.qiniu",
-    websiteUrl: "https://s.qiniu.com/nMvAvy",
-    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
-    category: "aggregator",
-    auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig(
-      "qiniu",
-      "https://api.qnaigc.com/bypass/openai/v1",
-      "gpt-6-astra",
-    ),
-    endpointCandidates: [
-      "https://api.qnaigc.com/bypass/openai/v1",
-      "https://api.modelink.ai/bypass/openai/v1",
-    ],
-    isPartner: true,
-    partnerPromotionKey: "qiniu",
-    icon: "qiniu",
-  },
-  {
-    name: "AICoding",
-    websiteUrl: "https://aicoding.inc",
-    apiKeyUrl: "https://aicoding.inc/i/CCSWITCH",
-    auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig(
-      "aicoding",
-      "https://api.aicoding.inc",
-      "gpt-5.6-sol",
-    ),
-    endpointCandidates: ["https://api.aicoding.inc"],
-    isPartner: true,
-    partnerPromotionKey: "aicoding",
-    icon: "aicoding",
-    iconColor: "#000000",
-  },
-  {
-    name: "SubRouter",
-    websiteUrl: "https://subrouter.ai",
-    apiKeyUrl: "https://subrouter.ai/register?aff=l3ri",
-    category: "aggregator",
-    auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig(
-      "subrouter",
-      "https://subrouter.ai/v1",
-      "gpt-5.6-sol",
-    ),
-    endpointCandidates: ["https://subrouter.ai/v1"],
-    isPartner: true,
-    partnerPromotionKey: "subrouter",
-    icon: "subrouter",
   },
   {
     // FluxA AgentMarket 以合作价转售的百度智能云 TokenPlan：产品页写明
@@ -833,6 +823,94 @@ requires_openai_auth = true`,
     isPartner: true,
     partnerPromotionKey: "fluxa",
     icon: "fluxa",
+  },
+  {
+    name: "AIGoCode",
+    websiteUrl: "https://aigocode.net",
+    apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
+    category: "third_party",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "aigocode",
+      "https://api.aigocode.dev",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: [
+      "https://api.aigocode.dev",
+      "https://api.aigocode.app",
+    ],
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "aigocode", // 促销信息 i18n key
+    icon: "aigocode",
+    iconColor: "#5B7FFF",
+  },
+  {
+    name: "Qiniu",
+    nameKey: "providerForm.presets.qiniu",
+    websiteUrl: "https://s.qiniu.com/nMvAvy",
+    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "qiniu",
+      "https://api.qnaigc.com/bypass/openai/v1",
+      "gpt-6-astra",
+    ),
+    endpointCandidates: [
+      "https://api.qnaigc.com/bypass/openai/v1",
+      "https://api.modelink.ai/bypass/openai/v1",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "qiniu",
+    icon: "qiniu",
+  },
+  {
+    name: "AICoding",
+    websiteUrl: "https://aicoding.inc",
+    apiKeyUrl: "https://aicoding.inc/i/CCSWITCH",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "aicoding",
+      "https://api.aicoding.inc",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: ["https://api.aicoding.inc"],
+    isPartner: true,
+    partnerPromotionKey: "aicoding",
+    icon: "aicoding",
+    iconColor: "#000000",
+  },
+  {
+    name: "SubRouter",
+    websiteUrl: "https://subrouter.ai",
+    apiKeyUrl: "https://subrouter.ai/register?aff=l3ri",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "subrouter",
+      "https://subrouter.ai/v1",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: ["https://subrouter.ai/v1"],
+    isPartner: true,
+    partnerPromotionKey: "subrouter",
+    icon: "subrouter",
+  },
+  {
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "shengsuanyun",
+      "https://router.shengsuanyun.com/api/v1",
+      "openai/gpt-5.6-sol",
+    ),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
   },
   {
     name: "88API",
@@ -1492,6 +1570,41 @@ requires_openai_auth = true`,
     partnerPromotionKey: "modelflare",
     icon: "modelflare",
   },
+  {
+    name: "AllTokens",
+    websiteUrl: "https://alltokens.cc",
+    apiKeyUrl: "https://alltokens.cc/register",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    // Sub2API 网关：Key 绑定单个分组，须用 GPT 分组的 Key（分组与模型见
+    // alltokens.cc/api/v1/model-plaza，2026-10-17 核对）
+    config: generateThirdPartyConfig(
+      "alltokens",
+      "https://alltokens.cc/v1",
+      "gpt-5.6-sol",
+    ),
+    isPartner: true,
+    partnerPromotionKey: "alltokens",
+    icon: "alltokens",
+  },
+  {
+    name: "AllTokens SI",
+    websiteUrl: "https://alltokens.si",
+    // 站点关闭了个人注册（/api/status 的 register_enabled=false），只能企业注册
+    apiKeyUrl: "https://alltokens.si/enterprise-register",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    // GPT 分组（alltokens.si/api/pricing，2026-10-19）。目录只声明 Chat，但
+    // new-api 的 OpenAI 渠道同样转发 /v1/responses，按 Codex 惯例走 Responses
+    config: generateThirdPartyConfig(
+      "alltokens_si",
+      "https://alltokens.si/v1",
+      "gpt-5.6-sol",
+    ),
+    isPartner: true,
+    partnerPromotionKey: "alltokens_si",
+    icon: "alltokens-si",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",
@@ -1655,7 +1768,7 @@ requires_openai_auth = true`,
     family: "zhipu",
     regionKey: "cn",
     websiteUrl: "https://open.bigmodel.cn",
-    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code",
     auth: generateThirdPartyAuth(""),
     // 智谱三端点分立（docs.bigmodel.cn/cn/coding-plan/tool/others）：Anthropic
     // /api/anthropic、OpenAI Chat /api/coding/paas/v4、OpenAI Responses /api/v1，
@@ -1720,7 +1833,7 @@ requires_openai_auth = true`,
     family: "zhipu",
     regionKey: "intl",
     websiteUrl: "https://z.ai",
-    apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
+    apiKeyUrl: "https://z.ai/subscribe",
     auth: generateThirdPartyAuth(""),
     // 国际站同上（docs.z.ai/devpack/tool/others + devpack/tool/codex，2026-09-04
     // 核对）：Responses 端点 /api/v1，官方 models.json 仅列 glm-5.3。
@@ -3101,7 +3214,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "minimax",
       "https://api.minimax.cn/v1",
-      "MiniMax-M3",
+      "MiniMax-M3.1-Flash",
     ),
     endpointCandidates: ["https://api.minimax.cn/v1"],
     // MiniMax 官方 API 参考已列 /v1/responses 为正式端点（CN/intl 双区，POST /v1/responses），原生 Responses，无需路由接管转换
@@ -3112,6 +3225,16 @@ requires_openai_auth = true`,
     // 端点接受但与 high 行为完全等价，不给假差异档）。与模板默认一致故 Codex 侧
     // 零行为变化，显式声明只为表单可见（"未设置"误导性更大，Jason 2026-08-15 拍板）
     modelCatalog: modelCatalog([
+      {
+        model: "MiniMax-M3.1-Flash",
+        displayName: "MiniMax-M3.1-Flash",
+        contextWindow: 1000000,
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text", "image"],
+        baseInstructions:
+          "You are Codex, a coding agent based on MiniMax-M3.1-Flash. You and the user share the same workspace and collaborate to achieve the user's goals.",
+      },
       {
         model: "MiniMax-M3",
         displayName: "MiniMax-M3",
@@ -3141,7 +3264,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "minimax_en",
       "https://api.minimax.io/v1",
-      "MiniMax-M3",
+      "MiniMax-M3.1-Flash",
     ),
     endpointCandidates: ["https://api.minimax.io/v1"],
     // MiniMax 官方 API 参考已列 /v1/responses 为正式端点（CN/intl 双区，POST /v1/responses），原生 Responses，无需路由接管转换
@@ -3152,6 +3275,16 @@ requires_openai_auth = true`,
     // 端点接受但与 high 行为完全等价，不给假差异档）。与模板默认一致故 Codex 侧
     // 零行为变化，显式声明只为表单可见（"未设置"误导性更大，Jason 2026-08-15 拍板）
     modelCatalog: modelCatalog([
+      {
+        model: "MiniMax-M3.1-Flash",
+        displayName: "MiniMax-M3.1-Flash",
+        contextWindow: 1000000,
+        reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
+        supportsParallelToolCalls: true,
+        inputModalities: ["text", "image"],
+        baseInstructions:
+          "You are Codex, a coding agent based on MiniMax-M3.1-Flash. You and the user share the same workspace and collaborate to achieve the user's goals.",
+      },
       {
         model: "MiniMax-M3",
         displayName: "MiniMax-M3",
@@ -4198,8 +4331,7 @@ requires_openai_auth = true`,
     // 官方列 low/medium/high/xhigh/max，无 none/minimal）；GLM-5.3 平台声明
     // low/high/max；DeepSeek V4 Pro 0813 平台未写，退回 DeepSeek 官方
     // low/high/max。每档都含 high，与 config 的 model_reasoning_effort = "high"
-    // 一致，无需 defaultReasoningLevel。窗口取平台模型表，GPT 按
-    // GPT_CONTEXT_WINDOW_CAP 封顶；GPT-6.1 Sol 超 272K
+    // 一致，无需 defaultReasoningLevel。窗口取平台模型表；GPT-6.1 Sol 超 272K
     // 按长上下文价计费（docs.digitalocean.com/products/inference/details/
     // pricing）。Tier 1 / Tier 2 账号只能用 gpt-oss，GPT-6.1 Sol 须 Tier 3+。
     // 首行 = 默认模型，须与 config 的 model 一致
@@ -4207,7 +4339,7 @@ requires_openai_auth = true`,
       {
         model: "openai-gpt-6-1-sol",
         displayName: "GPT-6.1 Sol",
-        contextWindow: 272000,
+        contextWindow: 1050000,
         inputModalities: ["text", "image"],
         reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
       },

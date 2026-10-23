@@ -197,6 +197,29 @@ describe("injectCodingPlanUsageScript", () => {
     ).toBeUndefined();
   });
 
+  it("preselects Volcengine without enabling it (needs AccessKey first)", () => {
+    expect(
+      inject("opencode", {
+        settingsConfig: {
+          options: { baseURL: "https://ark.cn-beijing.volces.com/api/plan/v3" },
+        },
+      }).meta?.usage_script,
+    ).toMatchObject({
+      enabled: false,
+      templateType: "token_plan",
+      codingPlanProvider: "volcengine",
+    });
+    expect(
+      inject("claude", {
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://ark.cn-beijing.volces.com/api/coding",
+          },
+        },
+      }).meta?.usage_script,
+    ).toMatchObject({ enabled: false, codingPlanProvider: "volcengine" });
+  });
+
   it("never overwrites an existing usage_script", () => {
     const provider: TestProvider = {
       settingsConfig: {

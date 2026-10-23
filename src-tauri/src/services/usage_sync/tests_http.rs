@@ -15,6 +15,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Router;
 
 use super::transport::UsageTransport;
+use super::{protocol, store};
 use super::{sync_with, SyncOptions};
 use crate::database::Database;
 use crate::services::usage_stats::UsageDeviceScope;
@@ -62,6 +63,11 @@ struct DavState {
     dirs: BTreeSet<String>,
     auth: String,
     requests: Vec<String>,
+    /// Content-Type of the last PUT per path.
+    content_types: BTreeMap<String, String>,
+    /// Behave like CSTCloud Data Capsule: a multi-line body sent as
+    /// `application/json` fails with a size-mismatch 500.
+    reject_multiline_json: bool,
 }
 
 type Dav = Arc<Mutex<DavState>>;
@@ -110,6 +116,22 @@ async fn dav_handler(
             if !st.dirs.contains(&parent_of(&path)) {
                 return StatusCode::CONFLICT.into_response();
             }
+            let content_type = headers
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            if st.reject_multiline_json
+                && content_type.starts_with("application/json")
+                && body.contains(&b'\n')
+            {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Uploaded object size does not match the upload session",
+                )
+                    .into_response();
+            }
+            st.content_types.insert(path.clone(), content_type);
             st.files.insert(path, body.to_vec());
             StatusCode::CREATED.into_response()
         }
@@ -210,6 +232,8 @@ struct S3State {
     objects: BTreeMap<String, Vec<u8>>,
     page_size: usize,
     list_calls: usize,
+    /// Content-Type of the last PUT per key.
+    content_types: BTreeMap<String, String>,
 }
 
 type S3 = Arc<Mutex<S3State>>;
@@ -325,6 +349,12 @@ async fn s3_handler(
     match method.as_str() {
         "HEAD" if key.is_empty() => StatusCode::OK.into_response(),
         "PUT" => {
+            let content_type = headers
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            st.content_types.insert(key.clone(), content_type);
             st.objects.insert(key, body.to_vec());
             StatusCode::OK.into_response()
         }
@@ -589,6 +619,95 @@ async fn s3_rejected_credentials_do_not_leak_secret() {
 //   USAGE_SYNC_IT_S3_BUCKET=usage-it USAGE_SYNC_IT_S3_AK=... USAGE_SYNC_IT_S3_SK=... \
 //   cargo test --lib usage_sync::tests_http::live -- --ignored --test-threads=1
 // Every run writes below a fresh random profile, so reruns never collide.
+
+// ─── Manifest content type (WebDAV servers that reject multi-line JSON) ──
+
+#[tokio::test]
+async fn webdav_manifest_is_uploaded_as_octet_stream_with_unchanged_bytes() {
+    init_http();
+    let (base_url, dav) = start_dav("alice", "dav-secret").await;
+    // CSTCloud-like server: multi-line JSON as application/json → 500.
+    dav.lock().unwrap().reject_multiline_json = true;
+    let transport = UsageTransport::from_webdav(&webdav_settings(&base_url, "dav-secret")).unwrap();
+    let a = device_with_logs("a", 3);
+    let b = device_with_logs("b", 2);
+    for (db, name) in [(&a, "A"), (&b, "B"), (&a, "A")] {
+        let report = sync_with(db, &transport, &options(name)).await.unwrap();
+        assert!(
+            report.upload_error.is_none() && report.download_error.is_none(),
+            "{report:?}"
+        );
+    }
+    assert_eq!(all_requests(&a), 5);
+    assert_eq!(all_requests(&b), 5);
+
+    let st = dav.lock().unwrap();
+    let manifests: Vec<_> = st
+        .files
+        .iter()
+        .filter(|(path, _)| path.ends_with("/manifest.json") && path.contains("/usage-v1/"))
+        .collect();
+    assert_eq!(manifests.len(), 2);
+    for (path, bytes) in &manifests {
+        assert_eq!(
+            st.content_types.get(*path).map(String::as_str),
+            Some("application/octet-stream"),
+            "{path}"
+        );
+        // Same bytes as before the change: the pretty-printed manifest.
+        assert!(bytes.contains(&b'\n'), "multi-line body reached the server");
+        let parsed = protocol::parse_manifest(bytes).unwrap();
+        assert_eq!(&serde_json::to_vec_pretty(&parsed).unwrap(), *bytes);
+    }
+    for (path, content_type) in &st.content_types {
+        if path.contains("/parts/") {
+            assert_eq!(content_type, "application/gzip", "{path}");
+        }
+    }
+    // Readers identify a manifest by the hash of its bytes, not its type.
+    let a_id = {
+        let conn = a.conn.lock().unwrap();
+        store::load_or_create_identity(&conn).unwrap().device_id
+    };
+    let a_manifest = st
+        .files
+        .iter()
+        .find(|(path, _)| path.ends_with(&format!("/devices/{a_id}/manifest.json")))
+        .map(|(_, bytes)| bytes.clone())
+        .unwrap();
+    drop(st);
+    let recorded: String = b
+        .conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT manifest_sha256 FROM usage_sync_devices WHERE device_id = ?1",
+            [&a_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        recorded,
+        crate::services::sync_protocol::sha256_hex(&a_manifest)
+    );
+}
+
+#[tokio::test]
+async fn s3_manifest_content_type_is_unchanged() {
+    init_http();
+    let (endpoint, s3) = start_s3(100).await;
+    let transport = UsageTransport::from_s3(&s3_settings(&endpoint)).unwrap();
+    let a = device_with_logs("a", 2);
+    let report = sync_with(&a, &transport, &options("A")).await.unwrap();
+    assert!(report.upload_error.is_none(), "{report:?}");
+    let st = s3.lock().unwrap();
+    let manifest = st
+        .content_types
+        .iter()
+        .find(|(key, _)| key.ends_with("/manifest.json"))
+        .expect("manifest uploaded");
+    assert_eq!(manifest.1, "application/json");
+}
 
 mod live {
     use super::*;
