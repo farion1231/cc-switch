@@ -86,7 +86,7 @@ describe("WorkBuddyAccountSection", () => {
     mocks.openApp.mockResolvedValue(undefined);
   });
 
-  it("marks the account WorkBuddy uses and switches from the menu", async () => {
+  it("marks the account WorkBuddy uses and leaves switching to the provider list", async () => {
     const auth = baseAuth();
     auth.accounts = [
       account("u-1", { account_kind: "personal" }),
@@ -94,7 +94,6 @@ describe("WorkBuddyAccountSection", () => {
     ];
     auth.defaultAccountId = "u-1";
     mocks.useManagedAuth.mockReturnValue(auth);
-    mocks.setDefault.mockResolvedValue(undefined);
     renderWithClient(<WorkBuddyAccountSection />);
 
     expect(mocks.useManagedAuth).toHaveBeenCalledWith("workbuddy_account");
@@ -107,17 +106,17 @@ describe("WorkBuddyAccountSection", () => {
       ),
     ).toBeInTheDocument();
 
+    // 授权中心不再切换：⋯ 菜单里只有删除
     await userEvent.click(
       screen.getByRole("button", { name: "u-2 的更多操作" }),
     );
-    await userEvent.click(
-      await screen.findByRole("menuitem", {
-        name: "切换 WorkBuddy 到这个账号",
-      }),
-    );
-    await waitFor(() =>
-      expect(mocks.setDefault).toHaveBeenCalledWith("workbuddy_account", "u-2"),
-    );
+    expect(
+      await screen.findByRole("menuitem", { name: /删除/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /切换/ }),
+    ).not.toBeInTheDocument();
+    expect(mocks.setDefault).not.toHaveBeenCalled();
   });
 
   it("imports the current sign-in from the empty state", async () => {

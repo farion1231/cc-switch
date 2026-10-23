@@ -16,9 +16,12 @@ import {
   type GroupAccountRow,
 } from "@/components/settings/auth/ManagedAccountsGroup";
 import { signedInDate } from "@/components/settings/auth/accountDetails";
+import { workbuddyPlanLabel } from "@/components/settings/auth/workbuddyPlan";
+import { useManagedAccountUsers } from "@/components/providers/forms/hooks/useManagedAccountUsers";
+import { WORKBUDDY_LIVE_KEY } from "@/components/providers/workbuddyOfficial";
 
 const PROVIDER = "workbuddy_account";
-const LIVE_KEY = ["workbuddy-account-live"];
+const LIVE_KEY = WORKBUDDY_LIVE_KEY;
 
 /** 添加账号后要给用户看的下一步：当前号已收录（想加另一个）、或 WorkBuddy 没登录。 */
 type AddHint = "already" | "signedOut" | null;
@@ -32,8 +35,9 @@ const message = (error: unknown) =>
 
 /**
  * 授权中心的 WorkBuddy 账号组。WorkBuddy 的登录由桌面端完成，CC Switch 只能把当前登录的那组
- * 凭据文件收录成快照、以后再还原（「切换」）。「默认」就是 WorkBuddy 现在登着的号。
- * 快照只在本机有效；删账号只删 CC Switch 的副本，不让 WorkBuddy 登出。
+ * 凭据文件收录成快照。切换账号在供应商列表里：添加「WorkBuddy 官方登录」卡绑定账号再「切换」。
+ * 「WorkBuddy 在用」就是它现在登着的号。快照只在本机有效；删账号只删 CC Switch 的副本，
+ * 不让 WorkBuddy 登出。
  */
 export function WorkBuddyAccountSection({
   helpSide,
@@ -50,6 +54,7 @@ export function WorkBuddyAccountSection({
     logout,
     refetchStatus,
   } = useManagedAuth(PROVIDER);
+  const accountUsers = useManagedAccountUsers(PROVIDER, defaultAccountId);
   const { data: live } = useQuery({
     queryKey: LIVE_KEY,
     queryFn: authApi.workbuddyAccountLiveState,
@@ -112,23 +117,6 @@ export function WorkBuddyAccountSection({
     },
   });
 
-  const switchMutation = useMutation({
-    mutationFn: (accountId: string) =>
-      authApi.authSetDefaultAccount(PROVIDER, accountId),
-    onSuccess: async () => {
-      toast.success(
-        t("authCenter.workbuddy.switched", {
-          defaultValue: "已切换，下次打开 WorkBuddy 会使用这个账号。",
-        }),
-      );
-      await refresh();
-    },
-    onError: async (error) => {
-      toast.error(message(error));
-      await refresh();
-    },
-  });
-
   const confirmRemove = () => {
     const target = removeTarget;
     setRemoveTarget(null);
@@ -136,13 +124,6 @@ export function WorkBuddyAccountSection({
     if (target.kind === "all") logout();
     else removeAccount(target.accountId);
   };
-
-  // 版型 / 套餐：已知 code 本地化（authCenter.workbuddy.plan.<code>），未知的原样显示。
-  const planLabel = (code: string) =>
-    t([`authCenter.workbuddy.plan.${code}`, "authCenter.workbuddy.plan._raw"], {
-      defaultValue: code,
-      plan: code,
-    });
 
   const rows: GroupAccountRow[] = accounts.map((account) => {
     const date = signedInDate(account.authenticated_at, i18n.language);
@@ -153,7 +134,9 @@ export function WorkBuddyAccountSection({
           }),
         ]
       : [
-          ...(account.account_kind ? [planLabel(account.account_kind)] : []),
+          ...(account.account_kind
+            ? [workbuddyPlanLabel(t, account.account_kind)]
+            : []),
           ...(date
             ? [
                 t("authCenter.workbuddy.addedOn", {
@@ -169,7 +152,7 @@ export function WorkBuddyAccountSection({
       details,
       isDefault: defaultAccountId === account.id,
       needsReauth: account.requires_reauth,
-      users: [],
+      users: accountUsers([account.id]),
     };
   });
 
@@ -182,7 +165,7 @@ export function WorkBuddyAccountSection({
     >
       {t("authCenter.workbuddy.runningBody", {
         defaultValue:
-          "切换账号前请先完全退出 WorkBuddy（含菜单栏/托盘），否则它会把当前登录写回去。",
+          "切换账号或登录另一个账号前，请先完全退出 WorkBuddy（含菜单栏/托盘），否则它会把当前登录写回去。",
       })}
     </Notice>
   ) : live?.signedIn && !live.recognized ? (
@@ -194,7 +177,7 @@ export function WorkBuddyAccountSection({
     >
       {t("authCenter.workbuddy.unrecognizedBody", {
         defaultValue:
-          "登录文件的格式可能变了，暂时不能收录。切换到别的账号前会把它原样暂存。",
+          "登录文件的格式可能变了，暂时不能收录。在供应商列表切换到别的账号前会把它原样暂存。",
       })}
     </Notice>
   ) : live?.signedIn &&
@@ -285,7 +268,7 @@ export function WorkBuddyAccountSection({
       iconName="workbuddy"
       help={t("authCenter.group.workbuddyHelp", {
         defaultValue:
-          "WorkBuddy 桌面端的官方登录。CC Switch 不能替 WorkBuddy 登录，只能收录它当前登着的账号（整组登录文件的快照），「切换」时把选中账号的那组还原回去，下次打开 WorkBuddy 就是这个号。切换前需要退出 WorkBuddy。快照只在这台电脑上有效，不会随云同步。",
+          "WorkBuddy 桌面端的官方登录。CC Switch 不能替 WorkBuddy 登录，只能收录它当前登着的账号（整组登录文件的快照）。要切换账号，在供应商列表里添加「WorkBuddy 官方登录」卡并点「切换」。快照只在这台电脑上有效，不会随云同步。",
       })}
       helpSide={helpSide}
       accounts={rows}
@@ -307,13 +290,9 @@ export function WorkBuddyAccountSection({
       defaultLabel={t("authCenter.workbuddy.current", {
         defaultValue: "WorkBuddy 在用",
       })}
-      setDefaultLabel={t("authCenter.workbuddy.switchTo", {
-        defaultValue: "切换 WorkBuddy 到这个账号",
-      })}
       canReauth={false}
       onReauth={() => {}}
-      onSetDefault={(accountId) => switchMutation.mutate(accountId)}
-      settingDefault={switchMutation.isPending}
+      settingDefault={false}
       onRemove={(accountId, login) =>
         setRemoveTarget({ kind: "one", accountId, login })
       }
@@ -343,7 +322,15 @@ export function WorkBuddyAccountSection({
       <ManagedAccountRemoveDialog
         target={removeTarget}
         serviceName="WorkBuddy"
-        users={[]}
+        users={
+          removeTarget
+            ? accountUsers(
+                removeTarget.kind === "one"
+                  ? [removeTarget.accountId]
+                  : removeTarget.accountIds,
+              )
+            : []
+        }
         othersRemain={accounts.length > 1}
         note={t("authCenter.workbuddy.removeNote", {
           defaultValue:
