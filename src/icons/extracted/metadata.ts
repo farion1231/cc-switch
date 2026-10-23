@@ -741,6 +741,14 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: [],
     defaultColor: "currentColor",
   },
+  workbuddy: {
+    name: "workbuddy",
+    displayName: "WorkBuddy",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["workbuddy", "tencent", "codebuddy"],
+    defaultColor: "#01C886",
+  },
   xai: {
     name: "xai",
     displayName: "xai",
