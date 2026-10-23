@@ -406,11 +406,13 @@ mod tests {
 
         let listed = crate::session_manager::providers::cline::scan_sessions();
         assert_eq!(listed.len(), 1);
-        assert!(listed[0]
-            .resume_command
-            .as_deref()
-            .unwrap()
-            .contains("CLINE_DATA_DIR="));
+        let resume = listed[0].resume_command.as_deref().unwrap();
+        // The resume command carries the data dir in the platform's own syntax.
+        #[cfg(windows)]
+        assert!(resume.contains("$env:CLINE_DATA_DIR = "), "{resume}");
+        #[cfg(not(windows))]
+        assert!(resume.contains("CLINE_DATA_DIR="), "{resume}");
+        assert!(resume.ends_with("cline --id s_env"), "{resume}");
         let messages = crate::session_manager::load_transcript(
             "cline",
             listed[0].source_path.as_deref().unwrap(),

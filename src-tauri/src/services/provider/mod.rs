@@ -5499,6 +5499,10 @@ impl ProviderService {
                     provider.settings_config = config.clone();
                 }
                 Self::set_provider_live_config_managed(provider, native.contains_key(id));
+                if app_type == AppType::Cline {
+                    // Also clears login tokens that rows saved by earlier builds still hold.
+                    crate::cline_config::strip_credentials(&mut provider.settings_config);
+                }
                 if app_type == AppType::Kimi {
                     crate::kimi_config::normalize_provider_identity(
                         provider,
@@ -5547,6 +5551,10 @@ impl ProviderService {
         create: bool,
     ) -> Result<bool, AppError> {
         if app_type == &AppType::Cline {
+            // Cline login tokens never enter the (synced, exported) providers table.
+            let mut stored = provider.clone();
+            crate::cline_config::strip_credentials(&mut stored.settings_config);
+            let provider = &stored;
             return if write_live {
                 crate::cline_config::save_and_commit(
                     &provider.id,
@@ -6614,6 +6622,7 @@ impl ProviderService {
                 .db
                 .get_provider_by_id(id, "cline")?
                 .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+            crate::cline_config::strip_credentials(&mut provider.settings_config);
             Self::set_provider_live_config_managed(&mut provider, true);
             return crate::cline_config::add_and_commit(
                 id,
@@ -6664,6 +6673,7 @@ impl ProviderService {
         if app_type == AppType::Cline {
             return crate::cline_config::save_and_commit(id, None, false, || {
                 if let Some(mut provider) = state.db.get_provider_by_id(id, "cline")? {
+                    crate::cline_config::strip_credentials(&mut provider.settings_config);
                     Self::set_provider_live_config_managed(&mut provider, false);
                     state.db.save_provider("cline", &provider)?;
                 }

@@ -70,7 +70,7 @@ fn sync_file(path: &Path, id: &str, spec: Option<&Value>) -> Result<(), AppError
     }
     let servers = document["mcpServers"].as_object_mut().unwrap();
     if let Some(spec) = spec {
-        super::validation::validate_server_spec(&unified_spec(spec))?;
+        super::validation::validate_server_spec(&write_spec(spec))?;
         let mut merged = servers.get(id).cloned().unwrap_or_else(|| json!({}));
         let object = merged
             .as_object_mut()
@@ -90,9 +90,20 @@ fn sync_file(path: &Path, id: &str, spec: Option<&Value>) -> Result<(), AppError
     atomic_write_private(path, text.as_bytes())
 }
 
-/// CC Switch spec → Cline entry.
+/// CC Switch spec with its transport resolved the way every app projection does
+/// (a bare `url` is HTTP in CC Switch, even though Cline reads it as SSE).
+fn write_spec(spec: &Value) -> Value {
+    let kind = super::validation::spec_transport_type(spec).to_string();
+    let mut spec = spec.clone();
+    if let Some(object) = spec.as_object_mut() {
+        object.insert("type".into(), json!(kind));
+    }
+    spec
+}
+
+/// CC Switch spec → Cline entry, always with an explicit transport.
 fn native_spec(spec: &Value) -> Value {
-    let mut native = unified_spec(spec);
+    let mut native = write_spec(spec);
     let object = native.as_object_mut().unwrap();
     object.retain(|key, _| TRANSPORT_FIELDS.contains(&key.as_str()));
     let kind = match object.get("type").and_then(Value::as_str) {
@@ -104,7 +115,8 @@ fn native_spec(spec: &Value) -> Value {
     native
 }
 
-/// Cline entry → CC Switch spec (`type` is `stdio`, `http` or `sse`).
+/// Cline entry → CC Switch spec (`type` is `stdio`, `http` or `sse`). Read
+/// direction only: a bare `url` follows Cline's own default (SSE).
 fn unified_spec(native: &Value) -> Value {
     let mut spec = native.clone();
     let Some(object) = spec.as_object_mut() else {
@@ -237,7 +249,7 @@ mod tests {
     }
 
     #[test]
-    fn bare_url_is_sse_like_cline() {
+    fn bare_url_in_cline_file_is_imported_as_sse() {
         assert_eq!(unified_spec(&json!({"url": "https://x"}))["type"], "sse");
         assert_eq!(
             unified_spec(&json!({"url": "https://x", "transportType": "http"}))["type"],
@@ -248,6 +260,29 @@ mod tests {
             native_spec(&json!({"type": "sse", "url": "https://x"}))["type"],
             "sse"
         );
+    }
+
+    #[test]
+    fn url_only_ccs_spec_is_written_as_streamable_http() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cline_mcp_settings.json");
+        sync_file(
+            &path,
+            "remote",
+            Some(&json!({"url": "https://example.com/mcp"})),
+        )
+        .unwrap();
+        let value = read(&path).unwrap();
+        assert_eq!(value["mcpServers"]["remote"]["type"], "streamableHttp");
+        assert_eq!(
+            native_spec(&json!({"url": "https://x"}))["type"],
+            "streamableHttp"
+        );
+        assert_eq!(
+            native_spec(&json!({"type": "stdio", "url": "https://x"}))["type"],
+            "streamableHttp"
+        );
+        assert_eq!(native_spec(&json!({"command": "node"}))["type"], "stdio");
     }
 
     #[test]

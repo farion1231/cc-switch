@@ -50,6 +50,12 @@ const CLIENTS: &[&str] = &[
     "vertex",
 ];
 const TOKEN_SOURCES: &[&str] = &["manual", "oauth", "migration"];
+/// Login credentials inside an entry's settings. They belong to Cline: CC Switch
+/// never stores them (the providers table is synced and exported) and never
+/// writes them from its own copy.
+const CREDENTIALS_KEY: &str = "auth";
+/// The only settings the form manages on a `tokenSource: "oauth"` entry.
+const OAUTH_FORM_KEYS: &[&str] = &["model"];
 const MODEL_NUMBER_FIELDS: &[&str] = &[
     "maxTokens",
     "contextWindow",
@@ -166,6 +172,7 @@ fn entry_config(documents: &Documents, id: &str) -> Option<Value> {
         .cloned()
         .unwrap_or_default();
     settings.remove("provider");
+    settings.remove(CREDENTIALS_KEY);
     config.insert("settings".into(), Value::Object(settings));
     if let Some(source) = entry.and_then(|entry| entry.get("tokenSource")) {
         config.insert("tokenSource".into(), source.clone());
@@ -181,6 +188,13 @@ fn entry_config(documents: &Documents, id: &str) -> Option<Value> {
         );
     }
     Some(Value::Object(config))
+}
+
+/// Drop Cline login credentials from a CCS provider config before it is stored.
+pub(crate) fn strip_credentials(config: &mut Value) {
+    if let Some(settings) = config.get_mut("settings").and_then(Value::as_object_mut) {
+        settings.remove(CREDENTIALS_KEY);
+    }
 }
 
 /// JSON pointer escaping for provider ids used as object keys.
@@ -445,8 +459,6 @@ fn apply_provider(
         return Ok(after);
     };
 
-    let mut settings = config["settings"].as_object().cloned().unwrap_or_default();
-    settings.insert("provider".into(), json!(id));
     let previous_entry = before
         .providers
         .pointer(&format!("/providers/{}", escape(id)))
@@ -455,11 +467,39 @@ fn apply_provider(
         .clone()
         .filter(Value::is_object)
         .unwrap_or_else(|| json!({}));
-    let token_source = config
+    // An existing entry keeps the token source Cline gave it.
+    let token_source = entry
         .get("tokenSource")
         .cloned()
-        .or_else(|| entry.get("tokenSource").cloned())
+        .or_else(|| config.get("tokenSource").cloned())
         .unwrap_or_else(|| json!("manual"));
+    let previous_settings = entry.get("settings").and_then(Value::as_object).cloned();
+    let mut incoming = config["settings"].as_object().cloned().unwrap_or_default();
+    incoming.remove(CREDENTIALS_KEY);
+    let mut settings = if token_source == "oauth" {
+        // Login entries belong to Cline: start from its current settings and
+        // only change what the form manages, so refreshed tokens survive.
+        let Some(mut settings) = previous_settings else {
+            return Err(AppError::InvalidInput(format!(
+                "Cline provider '{id}' is a login that is not on this device. Sign in with `cline auth` first; CC Switch does not keep Cline login tokens"
+            )));
+        };
+        for key in OAUTH_FORM_KEYS {
+            if let Some(value) = incoming.get(*key) {
+                settings.insert((*key).into(), value.clone());
+            }
+        }
+        settings
+    } else {
+        if let Some(credentials) = previous_settings
+            .as_ref()
+            .and_then(|settings| settings.get(CREDENTIALS_KEY))
+        {
+            incoming.insert(CREDENTIALS_KEY.into(), credentials.clone());
+        }
+        incoming
+    };
+    settings.insert("provider".into(), json!(id));
     let changed = previous_entry
         .as_ref()
         .and_then(|entry| entry.get("settings"))
@@ -760,6 +800,70 @@ mod tests {
         let config = entry_config(&d, "ccs-relay").unwrap();
         assert!(config["settings"].get("provider").is_none());
         assert_eq!(config["models"]["m1"]["contextWindow"], 200000);
+    }
+
+    fn write_login(dir: &TempDir, token: &str) {
+        let (p, _) = paths(dir);
+        fs::write(
+            &p,
+            json!({"version": 1, "lastUsedProvider": "cline", "modes": {}, "providers": {
+                "cline": {"settings": {"provider": "cline", "model": "anthropic/claude-sonnet-5.5",
+                                       "auth": {"accessToken": token, "refreshToken": "refresh"}},
+                          "updatedAt": "2026-01-01T00:00:00.000Z", "tokenSource": "oauth"},
+                "deepseek": {"settings": {"provider": "deepseek", "apiKey": "sk-d", "model": "d",
+                                          "auth": {"apiKey": "kept"}},
+                             "updatedAt": "2026-01-01T00:00:00.000Z", "tokenSource": "manual"}}})
+            .to_string(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn login_credentials_are_not_returned_or_written_from_a_stored_copy() {
+        let dir = TempDir::new().unwrap();
+        write_login(&dir, "fresh");
+        let (p, m) = paths(&dir);
+        let listed = entry_config(&docs(&dir), "cline").unwrap();
+        assert!(listed["settings"].get("auth").is_none());
+        assert_eq!(listed["tokenSource"], "oauth");
+
+        // Cline refreshed its token after the list was loaded; saving a stale copy
+        // that still carries credentials only changes the model.
+        write_login(&dir, "refreshed");
+        let mut stale = listed.clone();
+        stale["settings"]["auth"] = json!({"accessToken": "stale"});
+        stale["settings"]["apiKey"] = json!("injected");
+        stale["settings"]["model"] = json!("anthropic/claude-opus-5-5");
+        save(&dir, "cline", Some(stale), false).unwrap();
+        let entry = &docs(&dir).providers["providers"]["cline"];
+        assert_eq!(entry["settings"]["auth"]["accessToken"], "refreshed");
+        assert_eq!(entry["settings"]["model"], "anthropic/claude-opus-5-5");
+        assert!(entry["settings"].get("apiKey").is_none());
+
+        // A login that is not in Cline (removed, or another device) is never
+        // recreated from the stored copy.
+        switch_at((&p, &m), "deepseek", json!({}), |_| Ok(())).unwrap();
+        save(&dir, "cline", None, false).unwrap();
+        let before = fs::read(&p).unwrap();
+        assert!(switch_at((&p, &m), "cline", listed.clone(), |_| Ok(())).is_err());
+        assert!(add_at((&p, &m), "cline", listed, || Ok(())).is_err());
+        assert_eq!(fs::read(&p).unwrap(), before);
+    }
+
+    #[test]
+    fn api_key_entries_keep_credentials_cline_stored() {
+        let dir = TempDir::new().unwrap();
+        write_login(&dir, "t");
+        let mut config = entry_config(&docs(&dir), "deepseek").unwrap();
+        assert!(config["settings"].get("auth").is_none());
+        config["settings"]["model"] = json!("d2");
+        save(&dir, "deepseek", Some(config), false).unwrap();
+        let entry = &docs(&dir).providers["providers"]["deepseek"];
+        assert_eq!(entry["settings"]["auth"]["apiKey"], "kept");
+        assert_eq!(entry["settings"]["model"], "d2");
+        let mut stored = json!({"settings": {"auth": {"accessToken": "x"}}});
+        strip_credentials(&mut stored);
+        assert_eq!(stored, json!({"settings": {}}));
     }
 
     #[test]

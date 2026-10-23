@@ -180,6 +180,55 @@ fn cline_provider_lifecycle_imports_native_config_and_keeps_cline_owned_entries(
 }
 
 #[test]
+fn cline_login_tokens_never_reach_the_database() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let home = ClineHome::new();
+    let state = create_test_state().unwrap();
+    let native = write_native(&home);
+    // A row saved by an earlier build still holds the login tokens.
+    let legacy = Provider::with_id(
+        "cline".into(),
+        "cline".into(),
+        json!({"settings": {"model": "m", "auth": {"accessToken": "old", "refreshToken": "old"}},
+               "tokenSource": "oauth"}),
+        None,
+    );
+    state.db.save_provider("cline", &legacy).unwrap();
+
+    let listed = ProviderService::list(&state, AppType::Cline).unwrap();
+    assert!(listed["cline"].settings_config["settings"]
+        .get("auth")
+        .is_none());
+    for provider in state.db.get_all_providers("cline").unwrap().values() {
+        assert!(
+            provider.settings_config["settings"].get("auth").is_none(),
+            "{} kept credentials",
+            provider.id
+        );
+    }
+
+    // Saving the account card changes only the model; Cline's tokens stay.
+    let mut account = listed["cline"].clone();
+    account.settings_config["settings"]["model"] = json!("anthropic/claude-opus-5-5");
+    ProviderService::update(&state, AppType::Cline, None, account).unwrap();
+    let entry = &home.providers()["providers"]["cline"];
+    assert_eq!(
+        entry["settings"]["auth"],
+        native["providers"]["cline"]["settings"]["auth"]
+    );
+    assert_eq!(entry["settings"]["model"], "anthropic/claude-opus-5-5");
+    assert!(state
+        .db
+        .get_provider_by_id("cline", "cline")
+        .unwrap()
+        .unwrap()
+        .settings_config["settings"]
+        .get("auth")
+        .is_none());
+}
+
+#[test]
 fn cline_built_in_provider_writes_only_providers_json() {
     let _guard = test_mutex().lock().unwrap();
     reset_test_fs();
