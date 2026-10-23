@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
-import { Plus, Trash2 } from "lucide-react";
+import { ChevronRight, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Form } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -36,7 +38,7 @@ import {
   type QwenProviderConfig,
 } from "@/config/qwenProviderPresets";
 import { BasicFormFields } from "./BasicFormFields";
-import { ApiKeySection } from "./shared";
+import { ApiKeySection, GptContextWindowHint } from "./shared";
 import {
   FetchedModelPicker,
   type FetchedModelSelection,
@@ -175,6 +177,23 @@ export function QwenProviderForm({
   // Metadata may arrive after later edits; fills apply to the latest config.
   const configRef = useRef(config);
   configRef.current = config;
+  // Stable row keys keep the expanded state on the right model when rows move.
+  const rowKeySeq = useRef(0);
+  const rowKeys = useRef<string[]>([]);
+  while (rowKeys.current.length < config.models.length) {
+    rowKeys.current.push(`model-${rowKeySeq.current++}`);
+  }
+  rowKeys.current.length = config.models.length;
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const toggleRow = (key: string) =>
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   const update = (next: QwenProviderConfig) => {
     configRef.current = next;
     setConfig(next);
@@ -224,19 +243,41 @@ export function QwenProviderForm({
         if (generation === fetchGeneration.current) setIsFetchingModels(false);
       });
   }, [apiKey, baseUrl, config.authType, t]);
-  const handleApplyFetchedModels = ({ add, remove }: FetchedModelSelection) => {
+  const handleAddModel = () =>
+    update({
+      ...configRef.current,
+      models: [...configRef.current.models, { id: "" }],
+    });
+  const handleRemoveModel = (index: number) => {
     const current = configRef.current;
-    const kept = current.models.filter(
-      (model) => !remove.includes(model.id.trim()),
-    );
-    const present = new Set(kept.map((model) => model.id.trim()));
-    // Replace a single blank row instead of keeping it next to the picks.
-    const base =
-      kept.length === 1 && !kept[0].id.trim() && add.length > 0 ? [] : kept;
-    const additions = add.filter((id) => !present.has(id));
+    rowKeys.current.splice(index, 1);
     update({
       ...current,
-      models: [...base, ...additions.map((id) => ({ id }))],
+      models: current.models.filter((_, i) => i !== index),
+    });
+  };
+  const handleApplyFetchedModels = ({ add, remove }: FetchedModelSelection) => {
+    const current = configRef.current;
+    const keptIndexes = current.models
+      .map((model, index) => ({ model, index }))
+      .filter(({ model }) => !remove.includes(model.id.trim()));
+    const present = new Set(keptIndexes.map(({ model }) => model.id.trim()));
+    // Replace a single blank row instead of keeping it next to the picks.
+    const base =
+      keptIndexes.length === 1 &&
+      !keptIndexes[0].model.id.trim() &&
+      add.length > 0
+        ? []
+        : keptIndexes;
+    const additions = add.filter((id) => !present.has(id));
+    // Kept rows keep their keys (and expanded state); new rows get fresh ones.
+    rowKeys.current = base.map(({ index }) => rowKeys.current[index]);
+    update({
+      ...current,
+      models: [
+        ...base.map(({ model }) => model),
+        ...additions.map((id) => ({ id })),
+      ],
     });
     for (const id of additions) {
       fillModelMetadata(
@@ -460,8 +501,9 @@ export function QwenProviderForm({
               <p className="text-xs text-fg-2">{t("qwen.envKeyHint")}</p>
             </div>
           )}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between gap-2">
+          {/* Models editor: same layout as the OpenClaw / Hermes forms */}
+          <div className="space-y-3 border-l border-border pl-3">
+            <div className="flex items-center justify-between gap-3">
               <Label>{t("qwen.models")}</Label>
               <div className="flex gap-1">
                 <FetchedModelPicker
@@ -478,104 +520,142 @@ export function QwenProviderForm({
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() =>
-                    update({
-                      ...config,
-                      models: [...config.models, { id: "" }],
-                    })
-                  }
+                  onClick={handleAddModel}
+                  className="h-7 gap-1"
                 >
-                  <Plus className="mr-1 h-4 w-4" />
+                  <Plus className="h-3.5 w-3.5" />
                   {t("qwen.addModel")}
                 </Button>
               </div>
             </div>
-            {problems.noModels && (
-              <p className="text-xs text-destructive">
-                {t("qwen.modelsRequired")}
+
+            {config.models.length === 0 ? (
+              <p role="status" className="py-2 text-sm text-fg-2">
+                {t("qwen.noModels")}
               </p>
-            )}
-            {config.models.map((model, index) => {
-              const duplicateId = problems.duplicateModelIds.has(
-                model.id.trim(),
-              );
-              const size = model.generationConfig?.contextWindowSize;
-              return (
-                <div
-                  key={index}
-                  className="space-y-3 rounded-lg border border-border p-4"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-sm text-fg-2">
-                      {model.name || model.id || `#${index + 1}`}
-                    </span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label={t("qwen.removeModel")}
-                      onClick={() =>
-                        update({
-                          ...config,
-                          models: config.models.filter((_, i) => i !== index),
-                        })
-                      }
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="space-y-2">
-                      <Label htmlFor={`qwen-model-id-${index}`}>
-                        {t("qwen.modelId")} *
-                      </Label>
-                      <Input
-                        id={`qwen-model-id-${index}`}
-                        value={model.id}
-                        onChange={(e) =>
-                          updateModel(index, { ...model, id: e.target.value })
-                        }
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor={`qwen-model-name-${index}`}>
-                        {t("qwen.modelName")}
-                      </Label>
-                      <Input
-                        id={`qwen-model-name-${index}`}
-                        value={model.name ?? ""}
-                        onChange={(e) =>
-                          updateModel(index, {
-                            ...model,
-                            name: e.target.value,
-                          })
-                        }
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor={`qwen-context-${index}`}>
-                        {t("qwen.contextWindowSize")}
-                      </Label>
-                      <Input
-                        id={`qwen-context-${index}`}
-                        type="number"
-                        min={1}
-                        step={1}
-                        value={size ?? ""}
-                        onChange={(e) =>
-                          setContextWindow(index, e.target.value)
-                        }
-                      />
-                    </div>
-                  </div>
-                  {duplicateId && (
-                    <p className="text-xs text-destructive">
-                      {t("qwen.duplicateModelId")}
-                    </p>
-                  )}
+            ) : (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 px-1 text-xs text-fg-2">
+                  <span className="w-9" />
+                  <span className="flex-1">{t("qwen.modelId")}</span>
+                  <span className="flex-1">{t("qwen.modelName")}</span>
+                  <span className="w-9" />
                 </div>
-              );
-            })}
+                {config.models.map((model, index) => {
+                  const rowKey = rowKeys.current[index];
+                  const isExpanded = expandedRows.has(rowKey);
+                  const duplicateId = problems.duplicateModelIds.has(
+                    model.id.trim(),
+                  );
+                  const size = model.generationConfig?.contextWindowSize;
+                  const override =
+                    model.authType || model.baseUrl
+                      ? [
+                          model.authType &&
+                            t(`qwen.authTypes.${model.authType}`),
+                          model.baseUrl,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")
+                      : "";
+                  return (
+                    <div key={rowKey} className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => toggleRow(rowKey)}
+                          aria-expanded={isExpanded}
+                          aria-label={t("qwen.toggleModelDetails")}
+                          className="h-9 w-9 shrink-0"
+                        >
+                          <ChevronRight
+                            className={`h-4 w-4 transition-transform motion-reduce:transition-none ${
+                              isExpanded ? "rotate-90" : ""
+                            }`}
+                          />
+                        </Button>
+                        <ImeSafeInput
+                          value={model.id}
+                          onValueChange={(value) =>
+                            updateModel(index, { ...model, id: value })
+                          }
+                          placeholder="qwen3-coder-plus"
+                          aria-label={t("qwen.modelId")}
+                          aria-invalid={duplicateId || !model.id.trim()}
+                          className="min-w-0 flex-1"
+                        />
+                        <ImeSafeInput
+                          value={model.name ?? ""}
+                          onValueChange={(value) =>
+                            updateModel(index, { ...model, name: value })
+                          }
+                          placeholder={model.id.trim() || "Qwen3 Coder Plus"}
+                          aria-label={t("qwen.modelName")}
+                          className="min-w-0 flex-1"
+                        />
+                        <HoverTip content={t("qwen.removeModel")}>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleRemoveModel(index)}
+                            aria-label={t("qwen.removeModel")}
+                            className="h-9 w-9 shrink-0 text-fg-2 hover:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </HoverTip>
+                      </div>
+                      {duplicateId && (
+                        <p className="ml-11 text-xs text-destructive">
+                          {t("qwen.duplicateModelId")}
+                        </p>
+                      )}
+
+                      {isExpanded && (
+                        <div className="ml-9 grid gap-3 border-l-2 border-muted pl-4 sm:grid-cols-2 animate-in fade-in-0 slide-in-from-top-1 duration-200 motion-reduce:animate-none">
+                          <div className="space-y-1">
+                            <Label
+                              htmlFor={`qwen-context-${rowKey}`}
+                              className="text-xs text-fg-2"
+                            >
+                              {t("qwen.contextWindowSize")}
+                            </Label>
+                            <Input
+                              id={`qwen-context-${rowKey}`}
+                              type="number"
+                              min={1}
+                              step={1}
+                              value={size ?? ""}
+                              onChange={(event) =>
+                                setContextWindow(index, event.target.value)
+                              }
+                              placeholder="131072"
+                            />
+                            <GptContextWindowHint
+                              modelId={model.id}
+                              contextWindow={size}
+                            />
+                          </div>
+                          {override && (
+                            <div className="space-y-1 sm:col-span-2">
+                              <span className="text-xs text-fg-2">
+                                {t("qwen.modelOverride")}
+                              </span>
+                              <p className="break-all font-mono text-xs text-fg-1">
+                                {override}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </fieldset>
         <div className="space-y-2">

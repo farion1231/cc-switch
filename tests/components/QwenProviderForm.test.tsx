@@ -73,6 +73,11 @@ function renderForm(
 }
 
 const save = () => screen.getByRole("button", { name: "Save" });
+// Context windows live in each model's collapsed details, as in the other forms.
+const expandModels = () =>
+  screen
+    .getAllByRole("button", { name: "qwen.toggleModelDetails" })
+    .forEach((toggle) => fireEvent.click(toggle));
 
 describe("QwenProviderForm", () => {
   it.each([
@@ -124,7 +129,7 @@ describe("QwenProviderForm", () => {
     expect(key).toHaveValue("mykey");
     fireEvent.click(screen.getByRole("button", { name: /qwen\.addModel/ }));
     expect(save()).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("qwen.modelId *"), {
+    fireEvent.change(screen.getByLabelText("qwen.modelId"), {
       target: { value: "qwen3-coder-plus" },
     });
     expect(save()).toBeEnabled();
@@ -194,10 +199,11 @@ describe("QwenProviderForm", () => {
     await waitFor(() =>
       expect(
         screen
-          .getAllByLabelText("qwen.modelId *")
+          .getAllByLabelText("qwen.modelId")
           .map((input) => (input as HTMLInputElement).value),
       ).toEqual(["qwen3.7-plus", "glm-5"]),
     );
+    expandModels();
     await waitFor(() =>
       expect(screen.getAllByLabelText("qwen.contextWindowSize")[0]).toHaveValue(
         1000000,
@@ -243,11 +249,12 @@ describe("QwenProviderForm", () => {
       },
     });
     expect(save()).toBeEnabled();
-    const [, second] = screen.getAllByLabelText("qwen.modelId *");
+    const [, second] = screen.getAllByLabelText("qwen.modelId");
     fireEvent.change(second, { target: { value: "a" } });
     expect(save()).toBeDisabled();
     expect(screen.getAllByText("qwen.duplicateModelId")).toHaveLength(2);
     fireEvent.change(second, { target: { value: "b" } });
+    expandModels();
     const [context] = screen.getAllByLabelText("qwen.contextWindowSize");
     fireEvent.change(context, { target: { value: "0" } });
     expect(save()).toBeDisabled();
@@ -261,6 +268,11 @@ describe("QwenProviderForm", () => {
       initialData: { name: "OpenAI", settingsConfig: imported },
     });
     expect(screen.getByLabelText("qwen.envKey")).toHaveValue("OPENAI_API_KEY");
+    expandModels();
+    // A model imported with its own protocol and endpoint shows them read-only.
+    expect(
+      screen.getByText("qwen.authTypes.anthropic · https://other.example.com"),
+    ).toBeInTheDocument();
     const [context] = screen.getAllByLabelText("qwen.contextWindowSize");
     fireEvent.change(context, { target: { value: "262144" } });
     fireEvent.click(save());
