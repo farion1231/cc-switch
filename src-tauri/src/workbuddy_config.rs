@@ -27,6 +27,13 @@ pub(crate) const OWNER_FIELD: &str = "ccSwitchProviderId";
 /// 供应商层面的字段，写入时复制到每个模型条目（条目自己的同名字段优先）。
 const SHARED_FIELDS: [&str; 4] = ["vendor", "url", "apiKey", "api"];
 
+/// WorkBuddy 官方登录卡（`category: "official"`）：只绑定授权中心里的一个 WorkBuddy 账号，
+/// 「切换」时还原那个号的登录文件。它不是自定义模型，从不写进 models.json（添加、编辑、
+/// 同步、移除、删除都跳过文件）。
+pub(crate) fn is_official_provider(provider: &crate::provider::Provider) -> bool {
+    provider.category.as_deref() == Some("official")
+}
+
 pub(crate) fn data_dir() -> PathBuf {
     explicit_data_dir(std::env::var("WORKBUDDY_CONFIG_DIR").ok().as_deref())
         .unwrap_or_else(|| get_home_dir().join(".workbuddy"))

@@ -710,6 +710,10 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
         AppType::WorkBuddy => {
+            // 官方登录卡只绑定账号，没有模型条目：任何写 live 的路径（全量同步等）都跳过它
+            if crate::workbuddy_config::is_official_provider(provider) {
+                return Ok(());
+            }
             crate::workbuddy_config::set_provider(&provider.id, &provider.settings_config)?
         }
         AppType::Pi => {

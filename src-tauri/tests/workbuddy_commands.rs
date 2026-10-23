@@ -113,6 +113,126 @@ fn workbuddy_providers_are_written_to_models_json_and_removed_cleanly() {
         .is_none());
 }
 
+fn official_card(id: &str, account_id: &str) -> Provider {
+    let mut card = Provider::with_id(id.into(), "Alice".into(), json!({}), None);
+    card.category = Some("official".into());
+    card.meta = Some(
+        serde_json::from_value(json!({
+            "authBinding": {
+                "source": "managed_account",
+                "authProvider": "workbuddy_account",
+                "accountId": account_id
+            }
+        }))
+        .unwrap(),
+    );
+    card
+}
+
+#[test]
+fn workbuddy_official_cards_never_touch_models_json() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let path = ensure_test_home().join(".workbuddy/models.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    ProviderService::add(
+        &state,
+        AppType::WorkBuddy,
+        provider("ds", "deepseek-chat"),
+        true,
+    )
+    .unwrap();
+    let before = fs::read_to_string(&path).unwrap();
+
+    // 添加（即使要求写 live）只存绑定，标成不在 live
+    ProviderService::add(
+        &state,
+        AppType::WorkBuddy,
+        official_card("wb-official", "uid-1"),
+        true,
+    )
+    .unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    let saved = state
+        .db
+        .get_provider_by_id("wb-official", "workbuddy")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        saved
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.live_config_managed),
+        Some(false)
+    );
+    assert_eq!(
+        saved
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.managed_account_id_for("workbuddy_account")),
+        Some("uid-1".to_string())
+    );
+
+    // 编辑：换绑账号，文件不动
+    let mut edited = official_card("wb-official", "uid-2");
+    edited.meta.as_mut().unwrap().live_config_managed = Some(true);
+    ProviderService::update(&state, AppType::WorkBuddy, None, edited).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    let saved = state
+        .db
+        .get_provider_by_id("wb-official", "workbuddy")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        saved
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.live_config_managed),
+        Some(false)
+    );
+
+    // 「添加到配置」被拒绝；全量同步、移除、删除都不碰文件
+    assert!(ProviderService::switch(&state, AppType::WorkBuddy, "wb-official").is_err());
+    ProviderService::sync_current_to_live(&state).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    ProviderService::remove_from_live_config(&state, AppType::WorkBuddy, "wb-official").unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    ProviderService::delete(&state, AppType::WorkBuddy, "wb-official").unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    assert!(state
+        .db
+        .get_provider_by_id("wb-official", "workbuddy")
+        .unwrap()
+        .is_none());
+    // 自定义模型卡不受影响
+    assert!(state
+        .db
+        .get_provider_by_id("ds", "workbuddy")
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+fn workbuddy_official_card_without_live_flag_is_skipped_by_sync() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let path = ensure_test_home().join(".workbuddy/models.json");
+    // 旧数据 / 云同步来的行可能没有 live 标记、甚至带着模型配置：全量同步也不能把它写进 models.json
+    let mut card = official_card("wb-official", "uid-1");
+    card.settings_config = provider("x", "leftover-model").settings_config;
+    card.meta.as_mut().unwrap().live_config_managed = None;
+    state.db.save_provider("workbuddy", &card).unwrap();
+    ProviderService::sync_current_to_live(&state).unwrap();
+    assert!(
+        !path.exists()
+            || !fs::read_to_string(&path)
+                .unwrap()
+                .contains("leftover-model")
+    );
+}
+
 #[test]
 fn workbuddy_refuses_to_take_over_a_model_id_it_does_not_own() {
     let _guard = test_mutex().lock().unwrap();
