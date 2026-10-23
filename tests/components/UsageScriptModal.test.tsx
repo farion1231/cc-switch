@@ -4,7 +4,6 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import UsageScriptModal from "@/components/UsageScriptModal";
-import type { AppId } from "@/lib/api";
 import type { Provider, UsageScript } from "@/types";
 
 vi.mock("@/components/common/FullScreenPanel", () => ({
@@ -52,23 +51,19 @@ const provider: Provider = {
 function renderModal(
   onSave: (script: UsageScript) => void,
   usageScript?: UsageScript,
-  overrides?: { provider?: Provider; appId?: AppId },
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  const baseProvider = overrides?.provider ?? provider;
-  const withScript = usageScript
-    ? {
-        ...baseProvider,
-        meta: { ...baseProvider.meta, usage_script: usageScript },
-      }
-    : baseProvider;
   render(
     <QueryClientProvider client={client}>
       <UsageScriptModal
-        provider={withScript}
-        appId={overrides?.appId ?? "claude"}
+        provider={
+          usageScript
+            ? { ...provider, meta: { usage_script: usageScript } }
+            : provider
+        }
+        appId="claude"
         isOpen
         onClose={() => {}}
         onSave={onSave}
@@ -118,37 +113,6 @@ describe("UsageScriptModal Sub2API template", () => {
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({ templateType: "sub2api" }),
     );
-  });
-});
-
-describe("UsageScriptModal DSH provider credentials", () => {
-  it("extracts baseURL (with baseUrl fallback) and apiKey for the variable hints", async () => {
-    const onSave = vi.fn();
-    const dshProvider: Provider = {
-      id: "company",
-      name: "Company",
-      settingsConfig: {
-        baseURL: "https://relay.example/v1/",
-        apiKey: "sk-dsh",
-      },
-      meta: {
-        usage_script: {
-          enabled: true,
-          language: "javascript",
-          code: "({ request: { url: '' }, extractor: function () { return {}; } })",
-          templateType: "custom",
-        },
-      },
-    };
-    renderModal(onSave, undefined, {
-      provider: dshProvider,
-      appId: "deepseek-harness",
-    });
-
-    // {{baseUrl}} 提示显示去掉尾斜杠的 baseURL，而不是「未设置」
-    expect(screen.getByText("https://relay.example/v1")).toBeInTheDocument();
-    // {{apiKey}} 已提取则显示掩码
-    expect(screen.getByText("••••••••")).toBeInTheDocument();
   });
 });
 

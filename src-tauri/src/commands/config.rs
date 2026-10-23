@@ -157,7 +157,7 @@ pub async fn get_config_status(
             })
         }
         AppType::DeepSeekHarness => {
-            let config_path = crate::deepseek_harness_config::get_settings_path();
+            let config_path = crate::deepseek_harness_config::get_profile_patch_path();
             Ok(ConfigStatus {
                 exists: config_path.exists(),
                 path: crate::deepseek_harness_config::get_dsh_home()

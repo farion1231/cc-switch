@@ -53,22 +53,30 @@ pub(super) fn add(
             "Only the native official route may use the dsh_deepseek provider type".to_string(),
         ));
     }
-    // Validate the model catalog before any write so a model-less provider
-    // cannot be half-committed to the native file and the database.
-    let first_model = first_model_id(&provider.settings_config)?;
+    // Validate both catalog and saved default before any native, credential or
+    // DB write, including when this is only being saved for later activation.
+    let default_model = default_model_id(&provider)?;
+    let should_select = if add_to_live {
+        let native = crate::deepseek_harness_config::read_native_state()?;
+        !native
+            .current_provider
+            .as_deref()
+            .is_some_and(|id| native.providers.contains_key(id))
+    } else {
+        false
+    };
     if add_to_live {
-        write_native_provider(&provider)?;
+        crate::deepseek_harness_config::with_native_transaction(|| {
+            write_native_provider(&provider)?;
+            if should_select {
+                crate::deepseek_harness_config::set_current_model(&provider.id, &default_model)?;
+            }
+            state.db.save_provider(APP, &provider)
+        })?;
+    } else {
+        state.db.save_provider(APP, &provider)?;
     }
-    state.db.save_provider(APP, &provider)?;
-    if add_to_live
-        && crate::mode::current::provider_for(
-            &state.db,
-            &crate::app_config::AppType::DeepSeekHarness,
-            crate::mode::current::Purpose::Direct,
-        )?
-        .is_none()
-    {
-        crate::deepseek_harness_config::set_current_model(&provider.id, &first_model)?;
+    if should_select {
         state.db.set_current_provider(APP, &provider.id)?;
         crate::settings::set_current_provider(
             &crate::app_config::AppType::DeepSeekHarness,
@@ -100,8 +108,8 @@ pub(super) fn update(
     )?;
     let native = crate::deepseek_harness_config::read_native_state()?;
     // DB-only providers (e.g. duplicates created with addToLive = false) must
-    // stay out of settings.yaml: an edit only updates the database row until
-    // the user explicitly adds the route to the live configuration.
+    // stay out of the profile patch: an edit only updates the database row
+    // until the user explicitly adds the route to the live configuration.
     let in_native = native.providers.contains_key(provider.id.as_str());
     // The edit form's default-model field only takes effect on the route that
     // is currently selected in DSH; applying it unconditionally would let an
@@ -126,16 +134,25 @@ pub(super) fn update(
             )));
         }
     }
+    let changes_model =
+        desired_model.is_some_and(|model| native.current_model.as_deref() != Some(model));
     if in_native {
-        write_native_provider(&provider)?;
+        crate::deepseek_harness_config::with_native_transaction(|| {
+            write_native_provider(&provider)?;
+            if changes_model {
+                crate::deepseek_harness_config::set_current_model(
+                    &provider.id,
+                    desired_model.expect("changed model is present"),
+                )?;
+            }
+            state.db.save_provider(APP, &provider)
+        })?;
+    } else {
+        state.db.save_provider(APP, &provider)?;
     }
-    state.db.save_provider(APP, &provider)?;
-    if let Some(model) = desired_model {
-        if native.current_model.as_deref() != Some(model) {
-            crate::deepseek_harness_config::set_current_model(&provider.id, model)?;
-            let native = crate::deepseek_harness_config::read_native_state()?;
-            sync_native_locked(state, &native)?;
-        }
+    if changes_model {
+        let native = crate::deepseek_harness_config::read_native_state()?;
+        sync_native_locked(state, &native)?;
     }
     Ok(true)
 }
@@ -145,9 +162,11 @@ pub(super) fn delete(state: &AppState, id: &str) -> Result<(), AppError> {
     let Some(provider) = state.db.get_provider_by_id(id, APP)? else {
         return Ok(());
     };
-    remove_native_provider(&provider)?;
-    crate::deepseek_harness_config::clear_current_model_if_provider(id)?;
-    state.db.delete_provider(APP, id)
+    crate::deepseek_harness_config::with_native_transaction(|| {
+        remove_native_provider(&provider)?;
+        crate::deepseek_harness_config::clear_current_model_if_provider(id)?;
+        state.db.delete_provider(APP, id)
+    })
 }
 
 pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppError> {
@@ -156,17 +175,23 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
         .db
         .get_provider_by_id(id, APP)?
         .ok_or_else(|| AppError::InvalidInput(format!("Provider '{id}' not found")))?;
-    write_native_provider(&provider)?;
+    // Reject invalid saved defaults/catalogs before write_native_provider can
+    // change either the profile or credentials. Inspect the current selection
+    // before writing too, so a read/selection error has no partial side effects.
+    let default_model = default_model_id(&provider)?;
     let native = crate::deepseek_harness_config::read_native_state()?;
     let model = if native.current_provider.as_deref() == Some(id) {
         native
             .current_model
             .filter(|model| provider_has_model(&provider.settings_config, model))
-            .unwrap_or(first_model_id(&provider.settings_config)?)
+            .unwrap_or(default_model)
     } else {
-        first_model_id(&provider.settings_config)?
+        default_model
     };
-    crate::deepseek_harness_config::set_current_model(id, &model)?;
+    crate::deepseek_harness_config::with_native_transaction(|| {
+        write_native_provider(&provider)?;
+        crate::deepseek_harness_config::set_current_model(id, &model)
+    })?;
     let native = crate::deepseek_harness_config::read_native_state()?;
     sync_native_locked(state, &native)?;
     Ok(SwitchResult::default())
@@ -230,7 +255,15 @@ fn sync_native_locked(
             .meta
             .as_ref()
             .and_then(|meta| meta.dsh_current_model.clone());
-        provider.name = route.name.clone();
+        // Custom routes carry their display name in the patch entry, so a
+        // rename lands in the native config on save and echoes back here.
+        // The official route has no native display name: once the row exists,
+        // keep the user's chosen name instead of resetting it to "DeepSeek".
+        let is_official =
+            route.source == crate::deepseek_harness_config::NativeProviderSource::DeepSeek;
+        if !is_official || !saved.contains_key(id) {
+            provider.name = route.name.clone();
+        }
         provider.settings_config = route.config.clone();
         let meta = provider.meta.get_or_insert_with(ProviderMeta::default);
         meta.provider_type = Some(
@@ -240,10 +273,16 @@ fn sync_native_locked(
             }
             .to_string(),
         );
+        // The native pointer is authoritative for the current route only.
+        // Background routes have no native default slot, so retain their saved
+        // choice for a subsequent enable (unless its catalog no longer has it).
         meta.dsh_current_model = if native.current_provider.as_deref() == Some(id) {
             native.current_model.clone()
         } else {
-            None
+            previous_current_model
+                .as_ref()
+                .filter(|model| provider_has_model(&provider.settings_config, model))
+                .cloned()
         };
         if !saved.contains_key(id)
             || previous_name != provider.name
@@ -275,9 +314,11 @@ pub(super) fn remove_from_live(state: &AppState, id: &str) -> Result<(), AppErro
         .db
         .get_provider_by_id(id, APP)?
         .ok_or_else(|| AppError::InvalidInput(format!("Provider '{id}' not found")))?;
-    remove_native_provider(&provider)?;
-    crate::deepseek_harness_config::clear_current_model_if_provider(id)?;
-    Ok(())
+    crate::deepseek_harness_config::with_native_transaction(|| {
+        remove_native_provider(&provider)?;
+        crate::deepseek_harness_config::clear_current_model_if_provider(id)?;
+        Ok(())
+    })
 }
 
 fn write_native_provider(provider: &Provider) -> Result<(), AppError> {
@@ -332,6 +373,28 @@ fn first_model_id(config: &Value) -> Result<String, AppError> {
         .ok_or_else(|| AppError::InvalidInput("DeepSeek Harness provider has no model".to_string()))
 }
 
+/// Resolve the form's optional default only after validating it against a
+/// usable catalog. Callers must do this before starting any write path.
+fn default_model_id(provider: &Provider) -> Result<String, AppError> {
+    let first_model = first_model_id(&provider.settings_config)?;
+    let requested = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.dsh_current_model.as_deref())
+        .filter(|model| !model.trim().is_empty());
+    if let Some(model) = requested {
+        if !provider_has_model(&provider.settings_config, model) {
+            return Err(AppError::InvalidInput(format!(
+                "Model '{model}' is not configured for DSH provider '{}'",
+                provider.id
+            )));
+        }
+        Ok(model.to_string())
+    } else {
+        Ok(first_model)
+    }
+}
+
 fn provider_has_model(config: &Value, model_id: &str) -> bool {
     config
         .get("models")
@@ -354,6 +417,7 @@ mod tests {
     struct DshHome {
         _dir: tempfile::TempDir,
         previous: Option<std::ffi::OsString>,
+        previous_test_home: Option<std::ffi::OsString>,
     }
 
     impl DshHome {
@@ -361,9 +425,13 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let previous = std::env::var_os("DSH_HOME");
             std::env::set_var("DSH_HOME", dir.path());
+            let previous_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            let profile_dir = dir.path().join("profiles/desktop");
+            std::fs::create_dir_all(&profile_dir).unwrap();
             std::fs::write(
-                dir.path().join("settings.yaml"),
-                "llm-deepseek:\n  baseURL: https://api.deepseek.com\n  apiKeyEnv: DEEPSEEK_API_KEY\n  models:\n    - id: deepseek-v4-pro\nllm-pi-ai:\n  providers:\n    company:\n      displayName: Company\n      api: openai-completions\n      baseURL: https://gateway.example/v1\n      apiKeyEnv: COMPANY_API_KEY\n      models:\n        - id: glm-5.3\nagent-default-model:\n  provider: company\n  model: glm-5.3\n",
+                profile_dir.join("cordis.patch.yml"),
+                "- id: llm-deepseek\n  name: \"@deepseek-ai/dsh-llm-deepseek-api-key\"\n  config:\n    baseURL: https://api.deepseek.com\n    apiKeyEnv: DEEPSEEK_API_KEY\n    models:\n      - id: deepseek-v4-pro\n- id: llm-pi-ai\n  name: \"@deepseek-ai/dsh-llm-pi-ai\"\n  config:\n    providers:\n      company:\n        displayName: Company\n        api: openai-completions\n        baseURL: https://gateway.example/v1\n        apiKeyEnv: COMPANY_API_KEY\n        models:\n          - id: glm-5.3\n- id: agent-default-model\n  name: \"@deepseek-ai/dsh-agent-default-model\"\n  config:\n    provider: company\n    model: glm-5.3\n",
             )
             .unwrap();
             std::fs::write(
@@ -374,7 +442,21 @@ mod tests {
             Self {
                 _dir: dir,
                 previous,
+                previous_test_home,
             }
+        }
+
+        fn patch(&self) -> String {
+            std::fs::read_to_string(self._dir.path().join("profiles/desktop/cordis.patch.yml"))
+                .unwrap()
+        }
+
+        fn write_patch(&self, contents: &str) {
+            std::fs::write(
+                self._dir.path().join("profiles/desktop/cordis.patch.yml"),
+                contents,
+            )
+            .unwrap();
         }
     }
 
@@ -384,11 +466,271 @@ mod tests {
                 Some(value) => std::env::set_var("DSH_HOME", value),
                 None => std::env::remove_var("DSH_HOME"),
             }
+            match self.previous_test_home.take() {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
         }
     }
 
     fn state() -> AppState {
         AppState::new(Arc::new(Database::memory().unwrap()))
+    }
+
+    fn two_model_provider(default: &str) -> Provider {
+        let mut provider = Provider::with_id(
+            "two-models".to_string(),
+            "Two Models".to_string(),
+            json!({
+                "displayName": "Two Models",
+                "api": "openai-completions",
+                "baseURL": "https://two.example/v1",
+                "apiKeyEnv": "TWO_MODELS_API_KEY",
+                "apiKey": "test-only-key",
+                "models": [{"id": "first"}, {"id": "second"}]
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("dsh_pi_ai".to_string()),
+            dsh_current_model: Some(default.to_string()),
+            ..Default::default()
+        });
+        provider
+    }
+
+    #[test]
+    #[serial]
+    fn add_first_provider_selects_second_model_default() {
+        let home = DshHome::new();
+        home.write_patch("[]\n");
+        let state = state();
+        add(&state, two_model_provider("second"), true).unwrap();
+        let native = crate::deepseek_harness_config::read_native_state().unwrap();
+        assert_eq!(native.current_model.as_deref(), Some("second"));
+    }
+
+    #[test]
+    #[serial]
+    fn db_only_then_enable_uses_saved_second_model_default() {
+        let home = DshHome::new();
+        let state = state();
+        let before = home.patch();
+        add(&state, two_model_provider("second"), false).unwrap();
+        assert_eq!(before, home.patch());
+        enable(&state, "two-models").unwrap();
+        let native = crate::deepseek_harness_config::read_native_state().unwrap();
+        assert_eq!(native.current_provider.as_deref(), Some("two-models"));
+        assert_eq!(native.current_model.as_deref(), Some("second"));
+    }
+
+    #[test]
+    #[serial]
+    fn background_default_survives_sync_and_enable() {
+        let _home = DshHome::new();
+        let state = state();
+        import_from_live(&state).unwrap();
+        add(&state, two_model_provider("second"), true).unwrap();
+        list(&state).unwrap();
+        enable(&state, "two-models").unwrap();
+        let native = crate::deepseek_harness_config::read_native_state().unwrap();
+        assert_eq!(native.current_model.as_deref(), Some("second"));
+        enable(&state, "company").unwrap();
+        enable(&state, "two-models").unwrap();
+        assert_eq!(
+            crate::deepseek_harness_config::read_native_state()
+                .unwrap()
+                .current_model
+                .as_deref(),
+            Some("second")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn enable_keeps_valid_current_native_model_over_saved_default() {
+        let _home = DshHome::new();
+        let state = state();
+        add(&state, two_model_provider("second"), false).unwrap();
+        write_native_provider(&two_model_provider("second")).unwrap();
+        crate::deepseek_harness_config::set_current_model("two-models", "first").unwrap();
+        enable(&state, "two-models").unwrap();
+        assert_eq!(
+            crate::deepseek_harness_config::read_native_state()
+                .unwrap()
+                .current_model
+                .as_deref(),
+            Some("first")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn enable_stale_native_model_falls_back_to_saved_default() {
+        let _home = DshHome::new();
+        let state = state();
+        add(&state, two_model_provider("second"), false).unwrap();
+        write_native_provider(&two_model_provider("second")).unwrap();
+        crate::deepseek_harness_config::set_current_model("two-models", "removed-model").unwrap();
+        enable(&state, "two-models").unwrap();
+        assert_eq!(
+            crate::deepseek_harness_config::read_native_state()
+                .unwrap()
+                .current_model
+                .as_deref(),
+            Some("second")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn enable_blank_saved_default_falls_back_to_first_model() {
+        let _home = DshHome::new();
+        let state = state();
+        add(&state, two_model_provider("  "), false).unwrap();
+        enable(&state, "two-models").unwrap();
+        assert_eq!(
+            crate::deepseek_harness_config::read_native_state()
+                .unwrap()
+                .current_model
+                .as_deref(),
+            Some("first")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn default_model_home_override_rejects_add_and_enable_without_partial_writes() {
+        let home = DshHome::new();
+        home.write_patch("[]\n");
+        std::fs::write(
+            home._dir.path().join("cordis.patch.yml"),
+            "- id: agent-default-model\n  config:\n    provider: locked\n    model: locked-model\n",
+        )
+        .unwrap();
+        let state = state();
+        let patch = home.patch();
+        let credentials = std::fs::read(home._dir.path().join(".credentials.yaml")).unwrap();
+        assert!(add(&state, two_model_provider("second"), true).is_err());
+        assert_eq!(home.patch(), patch);
+        assert_eq!(
+            std::fs::read(home._dir.path().join(".credentials.yaml")).unwrap(),
+            credentials
+        );
+        assert!(state.db.get_all_providers(APP).unwrap().is_empty());
+
+        add(&state, two_model_provider("second"), false).unwrap();
+        let before = serde_json::to_value(state.db.get_all_providers(APP).unwrap()).unwrap();
+        assert!(enable(&state, "two-models").is_err());
+        assert_eq!(home.patch(), patch);
+        assert_eq!(
+            std::fs::read(home._dir.path().join(".credentials.yaml")).unwrap(),
+            credentials
+        );
+        assert_eq!(
+            serde_json::to_value(state.db.get_all_providers(APP).unwrap()).unwrap(),
+            before
+        );
+        assert!(state.db.get_current_provider(APP).unwrap().is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn home_default_conflict_rolls_back_update_delete_and_remove() {
+        let home = DshHome::new();
+        let state = state();
+        import_from_live(&state).unwrap();
+        std::fs::write(
+            home._dir.path().join("cordis.patch.yml"),
+            "- id: agent-default-model\n  disabled: false\n  config:\n    provider: company\n    model: glm-5.3\n",
+        )
+        .unwrap();
+        let patch = home.patch();
+        let credentials = std::fs::read(home._dir.path().join(".credentials.yaml")).unwrap();
+        let before = serde_json::to_value(state.db.get_all_providers(APP).unwrap()).unwrap();
+        let mut provider = state
+            .db
+            .get_provider_by_id("company", APP)
+            .unwrap()
+            .unwrap();
+        provider.settings_config["models"] = json!([{"id": "glm-5.3"}, {"id": "second"}]);
+        provider.settings_config["apiKey"] = json!("replacement-test-key");
+        provider.meta.as_mut().unwrap().dsh_current_model = Some("second".into());
+        assert!(update(&state, None, provider).is_err());
+        assert_eq!(home.patch(), patch);
+        assert_eq!(
+            std::fs::read(home._dir.path().join(".credentials.yaml")).unwrap(),
+            credentials
+        );
+        assert_eq!(
+            serde_json::to_value(state.db.get_all_providers(APP).unwrap()).unwrap(),
+            before
+        );
+        for remove_only in [false, true] {
+            let result = if remove_only {
+                remove_from_live(&state, "company")
+            } else {
+                delete(&state, "company")
+            };
+            assert!(result.is_err());
+            assert_eq!(home.patch(), patch);
+            assert_eq!(
+                std::fs::read(home._dir.path().join(".credentials.yaml")).unwrap(),
+                credentials
+            );
+            assert_eq!(
+                serde_json::to_value(state.db.get_all_providers(APP).unwrap()).unwrap(),
+                before
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn add_unknown_default_has_no_native_db_or_credentials_writes() {
+        let home = DshHome::new();
+        let state = state();
+        for live in [false, true] {
+            let patch = home.patch();
+            let credentials = std::fs::read(home._dir.path().join(".credentials.yaml")).unwrap();
+            assert!(add(&state, two_model_provider("unknown"), live).is_err());
+            assert_eq!(home.patch(), patch);
+            assert_eq!(
+                std::fs::read(home._dir.path().join(".credentials.yaml")).unwrap(),
+                credentials
+            );
+            assert!(state.db.get_all_providers(APP).unwrap().is_empty());
+            assert!(state.db.get_current_provider(APP).unwrap().is_none());
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn enable_invalid_catalog_or_default_has_no_partial_writes() {
+        let home = DshHome::new();
+        let state = state();
+        for no_models in [false, true] {
+            let mut provider = two_model_provider("unknown");
+            if no_models {
+                provider.settings_config["models"] = json!([]);
+                provider.meta.as_mut().unwrap().dsh_current_model = None;
+            }
+            state.db.save_provider(APP, &provider).unwrap();
+            let before = serde_json::to_value(state.db.get_all_providers(APP).unwrap()).unwrap();
+            let patch = home.patch();
+            let credentials = std::fs::read(home._dir.path().join(".credentials.yaml")).unwrap();
+            assert!(enable(&state, &provider.id).is_err());
+            assert_eq!(home.patch(), patch);
+            assert_eq!(
+                std::fs::read(home._dir.path().join(".credentials.yaml")).unwrap(),
+                credentials
+            );
+            assert_eq!(
+                serde_json::to_value(state.db.get_all_providers(APP).unwrap()).unwrap(),
+                before
+            );
+            assert!(state.db.get_current_provider(APP).unwrap().is_none());
+        }
     }
 
     #[test]
@@ -474,11 +816,9 @@ mod tests {
     #[serial]
     fn set_current_model_validates_membership_and_updates_state() {
         let home = DshHome::new();
-        std::fs::write(
-            home._dir.path().join("settings.yaml"),
-            "llm-pi-ai:\n  providers:\n    k3:\n      baseURL: https://k3.example.com\n      models:\n        - id: k3\n        - id: k3-turbo\n",
-        )
-        .unwrap();
+        home.write_patch(
+            "- id: llm-pi-ai\n  name: \"@deepseek-ai/dsh-llm-pi-ai\"\n  config:\n    providers:\n      k3:\n        baseURL: https://k3.example.com\n        models:\n          - id: k3\n          - id: k3-turbo\n",
+        );
         let state = state();
 
         set_current_model(&state, "k3", "k3-turbo").unwrap();
@@ -521,10 +861,10 @@ mod tests {
 
         remove_from_live(&state, "k3").unwrap();
 
-        let settings = std::fs::read_to_string(home._dir.path().join("settings.yaml")).unwrap();
-        assert!(settings.contains("llm-deepseek"));
-        assert!(settings.contains("company"));
-        assert!(!settings.contains("k3"));
+        let patch = home.patch();
+        assert!(patch.contains("llm-deepseek"));
+        assert!(patch.contains("company"));
+        assert!(!patch.contains("k3"));
     }
 
     #[test]
@@ -536,13 +876,18 @@ mod tests {
 
         remove_from_live(&state, crate::deepseek_harness_config::OFFICIAL_PROVIDER_ID).unwrap();
 
-        let settings = std::fs::read_to_string(home._dir.path().join("settings.yaml")).unwrap();
-        assert!(!settings.contains("llm-deepseek"));
-        assert!(settings.contains("llm-pi-ai"));
-        assert!(settings.contains("company"));
+        let patch = home.patch();
+        // A profile deletion may retain a $remove tombstone to suppress base
+        // bundle defaults; assert effective state rather than patch spelling.
+        let native = crate::deepseek_harness_config::read_native_state().unwrap();
+        assert!(!native
+            .providers
+            .contains_key(crate::deepseek_harness_config::OFFICIAL_PROVIDER_ID));
+        assert!(patch.contains("llm-pi-ai"));
+        assert!(patch.contains("company"));
         // The removed route was not the current one: the default-model pointer
         // must survive untouched.
-        assert!(settings.contains("agent-default-model"));
+        assert!(patch.contains("agent-default-model"));
     }
 
     #[test]
@@ -552,11 +897,9 @@ mod tests {
         let state = state();
         import_from_live(&state).unwrap();
         // Make both pi-ai routes share one credential ref.
-        std::fs::write(
-            home._dir.path().join("settings.yaml"),
-            "llm-pi-ai:\n  providers:\n    route-a:\n      displayName: A\n      baseURL: https://a.example/v1\n      apiKeyEnv: COMPANY_API_KEY\n      models:\n        - id: m-a\n    route-b:\n      displayName: B\n      baseURL: https://b.example/v1\n      apiKeyEnv: COMPANY_API_KEY\n      models:\n        - id: m-b\n",
-        )
-        .unwrap();
+        home.write_patch(
+            "- id: llm-pi-ai\n  name: \"@deepseek-ai/dsh-llm-pi-ai\"\n  config:\n    providers:\n      route-a:\n        displayName: A\n        baseURL: https://a.example/v1\n        apiKeyEnv: COMPANY_API_KEY\n        models:\n          - id: m-a\n      route-b:\n        displayName: B\n        baseURL: https://b.example/v1\n        apiKeyEnv: COMPANY_API_KEY\n        models:\n          - id: m-b\n",
+        );
         import_from_live(&state).unwrap();
 
         delete(&state, "route-a").unwrap();
@@ -583,11 +926,9 @@ mod tests {
         let state = state();
         import_from_live(&state).unwrap();
         // The custom route shares DEEPSEEK_API_KEY with the official route.
-        std::fs::write(
-            home._dir.path().join("settings.yaml"),
-            "llm-deepseek:\n  baseURL: https://api.deepseek.com\n  apiKeyEnv: DEEPSEEK_API_KEY\n  models:\n    - id: deepseek-v4-pro\nllm-pi-ai:\n  providers:\n    company:\n      displayName: Company\n      baseURL: https://gateway.example/v1\n      apiKeyEnv: DEEPSEEK_API_KEY\n      models:\n        - id: glm-5.3\n",
-        )
-        .unwrap();
+        home.write_patch(
+            "- id: llm-deepseek\n  name: \"@deepseek-ai/dsh-llm-deepseek-api-key\"\n  config:\n    baseURL: https://api.deepseek.com\n    apiKeyEnv: DEEPSEEK_API_KEY\n    models:\n      - id: deepseek-v4-pro\n- id: llm-pi-ai\n  name: \"@deepseek-ai/dsh-llm-pi-ai\"\n  config:\n    providers:\n      company:\n        displayName: Company\n        baseURL: https://gateway.example/v1\n        apiKeyEnv: DEEPSEEK_API_KEY\n        models:\n          - id: glm-5.3\n",
+        );
         import_from_live(&state).unwrap();
 
         remove_from_live(&state, crate::deepseek_harness_config::OFFICIAL_PROVIDER_ID).unwrap();
@@ -624,8 +965,7 @@ mod tests {
             ..Default::default()
         });
         add(&state, copy, false).unwrap();
-        let settings_before =
-            std::fs::read_to_string(home._dir.path().join("settings.yaml")).unwrap();
+        let patch_before = home.patch();
         let credentials_before = std::fs::read(home._dir.path().join(".credentials.yaml")).unwrap();
 
         let mut edited = state
@@ -641,10 +981,9 @@ mod tests {
         )
         .unwrap();
 
-        let settings_after =
-            std::fs::read_to_string(home._dir.path().join("settings.yaml")).unwrap();
         assert_eq!(
-            settings_before, settings_after,
+            patch_before,
+            home.patch(),
             "editing a DB-only provider must not touch the native file"
         );
         assert_eq!(
@@ -661,14 +1000,12 @@ mod tests {
     #[test]
     #[serial]
     fn deleting_the_current_provider_clears_the_native_default_model() {
-        let home = DshHome::new();
+        let _home = DshHome::new();
         let state = state();
         import_from_live(&state).unwrap();
 
         delete(&state, "company").unwrap();
 
-        let settings = std::fs::read_to_string(home._dir.path().join("settings.yaml")).unwrap();
-        assert!(!settings.contains("agent-default-model"));
         let native = crate::deepseek_harness_config::read_native_state().unwrap();
         assert!(native.current_provider.is_none());
         assert!(native.current_model.is_none());
@@ -684,9 +1021,11 @@ mod tests {
 
         remove_from_live(&state, "company").unwrap();
 
-        let settings = std::fs::read_to_string(home._dir.path().join("settings.yaml")).unwrap();
-        assert!(!settings.contains("company"));
-        assert!(!settings.contains("agent-default-model"));
+        let patch = home.patch();
+        assert!(!patch.contains("company"));
+        let native = crate::deepseek_harness_config::read_native_state().unwrap();
+        assert!(native.current_provider.is_none());
+        assert!(native.current_model.is_none());
     }
 
     #[test]
@@ -767,7 +1106,7 @@ mod tests {
         let home = DshHome::new();
         let state = state();
         import_from_live(&state).unwrap();
-        let before = std::fs::read_to_string(home._dir.path().join("settings.yaml")).unwrap();
+        let before = home.patch();
 
         let mut provider = Provider::with_id(
             "official-copy".to_string(),
@@ -787,8 +1126,7 @@ mod tests {
 
         assert!(add(&state, provider, true).is_err());
 
-        let after = std::fs::read_to_string(home._dir.path().join("settings.yaml")).unwrap();
-        assert_eq!(before, after);
+        assert_eq!(before, home.patch());
         assert!(state
             .db
             .get_provider_by_id("official-copy", APP)
@@ -834,11 +1172,9 @@ mod tests {
     #[serial]
     fn enable_supports_string_form_model_catalogs_and_skips_blank_ids() {
         let home = DshHome::new();
-        std::fs::write(
-            home._dir.path().join("settings.yaml"),
-            "llm-pi-ai:\n  providers:\n    strings:\n      baseURL: https://s.example\n      models:\n        - \"\"\n        - str-model\n",
-        )
-        .unwrap();
+        home.write_patch(
+            "- id: llm-pi-ai\n  name: \"@deepseek-ai/dsh-llm-pi-ai\"\n  config:\n    providers:\n      strings:\n        baseURL: https://s.example\n        models:\n          - \"\"\n          - str-model\n",
+        );
         let state = state();
         import_from_live(&state).unwrap();
 

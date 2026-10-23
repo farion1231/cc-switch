@@ -2,17 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-describe("DeepSeek Harness visible surfaces", () => {
-  it("appears in the local environment tool matrix", () => {
-    const source = fs.readFileSync(
-      path.resolve(__dirname, "../../src/components/apps/useToolManagement.ts"),
-      "utf8",
-    );
-    expect(source).toContain('"dsh"');
-    expect(source).toContain('dsh: "DeepSeek Harness"');
-    expect(source).toContain('dsh: "deepseek-harness"');
-  });
+// Environment detection & install management for DSH ship in a follow-up PR;
+// this file only covers surfaces that are part of provider switching.
 
+describe("DeepSeek Harness visible surfaces", () => {
   it("shows the active app name above the provider list", () => {
     const source = fs.readFileSync(
       path.resolve(__dirname, "../../src/App.tsx"),

@@ -229,8 +229,7 @@ export type AppType =
   | "opencode"
   | "pi"
   | "mcode"
-  | "agy"
-  | "deepseek-harness";
+  | "agy";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -243,7 +242,6 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "pi",
   "mcode",
   "agy",
-  "deepseek-harness",
 ];
 
 /**

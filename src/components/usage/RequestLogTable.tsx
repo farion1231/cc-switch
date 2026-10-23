@@ -101,9 +101,9 @@ const APP_SHORT_NAME: Record<AppId, string> = {
   openclaw: "OpenClaw",
   hermes: "Hermes",
   pi: "Pi",
-  "deepseek-harness": "DSH",
   mcode: "MiniMax",
   agy: "Antigravity",
+  "deepseek-harness": "DSH",
 };
 
 export function appShortName(appType: string): string {

@@ -2,10 +2,6 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Pi 表单用例最重（渲染 + msw 模型拉取 + 逐字段断言），全量套件高负载下
-// 单用例普遍 4-7s；双核 CI 的 5s 默认超时不够，整文件放宽到 20s。
-vi.setConfig({ testTimeout: 20_000 });
-
 import { PiProviderForm } from "@/components/providers/forms/PiProviderForm";
 import { http, HttpResponse } from "msw";
 import { server } from "../msw/server";
@@ -630,75 +626,69 @@ describe("PiProviderForm", () => {
     );
   });
 
-  // These two exercise the heaviest form flows and can exceed the 5s default
-  // on CI runners (two-core, cold caches).
-  it(
-    "stores Pi-native request headers without mixing them with API-key auth",
-    { timeout: 20_000 },
-    async () => {
-      const user = userEvent.setup();
-      const onSubmit = vi.fn().mockResolvedValue(undefined);
-      render(
-        <PiProviderForm
-          appId="pi"
-          submitLabel="Save identity"
-          onSubmit={onSubmit}
-          onCancel={() => {}}
-        />,
-      );
+  it("stores Pi-native request headers without mixing them with API-key auth", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <PiProviderForm
+        appId="pi"
+        submitLabel="Save identity"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
 
-      await user.click(
-        screen.getByRole("button", { name: "providerPreset.custom" }),
-      );
-      fireEvent.change(screen.getByPlaceholderText("my-provider"), {
-        target: { value: "identity-provider" },
-      });
-      fireEvent.change(screen.getByLabelText("provider.name"), {
-        target: { value: "Identity provider" },
-      });
-      await user.click(document.querySelector("#pi-provider-api-select")!);
-      await user.click(
-        await screen.findByRole("option", { name: "Anthropic Messages" }),
-      );
-      fireEvent.change(
-        screen.getByPlaceholderText("https://api.example.com/v1"),
-        {
-          target: { value: "https://api.example.com" },
-        },
-      );
-      fireEvent.click(screen.getByRole("button", { name: "pi.form.addModel" }));
-      fireEvent.change(screen.getByPlaceholderText("model-id"), {
-        target: { value: "identity-model" },
-      });
-      await user.click(
-        screen.getByRole("button", { name: "展开或收起模型详情" }),
-      );
-      fireEvent.change(screen.getByLabelText("pi.form.contextWindow"), {
-        target: { value: "128000" },
-      });
-      fireEvent.change(screen.getByLabelText("pi.form.maxTokens"), {
-        target: { value: "16384" },
-      });
+    await user.click(
+      screen.getByRole("button", { name: "providerPreset.custom" }),
+    );
+    fireEvent.change(screen.getByPlaceholderText("my-provider"), {
+      target: { value: "identity-provider" },
+    });
+    fireEvent.change(screen.getByLabelText("provider.name"), {
+      target: { value: "Identity provider" },
+    });
+    await user.click(document.querySelector("#pi-provider-api-select")!);
+    await user.click(
+      await screen.findByRole("option", { name: "Anthropic Messages" }),
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText("https://api.example.com/v1"),
+      {
+        target: { value: "https://api.example.com" },
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "pi.form.addModel" }));
+    fireEvent.change(screen.getByPlaceholderText("model-id"), {
+      target: { value: "identity-model" },
+    });
+    await user.click(
+      screen.getByRole("button", { name: "展开或收起模型详情" }),
+    );
+    fireEvent.change(screen.getByLabelText("pi.form.contextWindow"), {
+      target: { value: "128000" },
+    });
+    fireEvent.change(screen.getByLabelText("pi.form.maxTokens"), {
+      target: { value: "16384" },
+    });
 
-      await user.click(screen.getByRole("button", { name: "Add header" }));
-      const headerName = screen.getByLabelText("Header");
-      fireEvent.change(headerName, {
-        target: { value: "X-Client-Name" },
-      });
-      fireEvent.blur(headerName);
-      fireEvent.change(screen.getByLabelText("Value"), {
-        target: { value: "pi-ui" },
-      });
-      await user.click(screen.getByRole("button", { name: "Save identity" }));
+    await user.click(screen.getByRole("button", { name: "Add header" }));
+    const headerName = screen.getByLabelText("Header");
+    fireEvent.change(headerName, {
+      target: { value: "X-Client-Name" },
+    });
+    fireEvent.blur(headerName);
+    fireEvent.change(screen.getByLabelText("Value"), {
+      target: { value: "pi-ui" },
+    });
+    await user.click(screen.getByRole("button", { name: "Save identity" }));
 
-      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-      const config = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
-      expect(config.headers).toEqual({ "X-Client-Name": "pi-ui" });
-      expect(config).not.toHaveProperty("authHeader");
-      expect(config.headers).not.toHaveProperty("authorization");
-      expect(config.headers).not.toHaveProperty("x-api-key");
-    },
-  );
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const config = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
+    expect(config.headers).toEqual({ "X-Client-Name": "pi-ui" });
+    expect(config).not.toHaveProperty("authHeader");
+    expect(config.headers).not.toHaveProperty("authorization");
+    expect(config.headers).not.toHaveProperty("x-api-key");
+  });
 
   it("echoes existing Pi headers and preserves them when saving", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
@@ -1500,93 +1490,83 @@ describe("PiProviderForm", () => {
     });
   });
 
-  it(
-    "edits Pi thinking-map missing, null, and string states from the collapsed capability area",
-    { timeout: 20_000 },
-    async () => {
-      const user = userEvent.setup();
-      // Start with a model so this test exercises thinking-map interactions without
-      // repeating the separately covered preset selection and model creation flow.
-      render(
-        <PiProviderForm
-          appId="pi"
-          providerId="custom-provider"
-          submitLabel="Save custom thinking map"
-          onSubmit={vi.fn()}
-          onCancel={() => {}}
-          initialData={{
-            name: "Custom reasoning provider",
-            settingsConfig: {
-              api: "openai-completions",
-              models: [completeModel("custom-reasoning-model")],
-            },
-          }}
-        />,
-      );
+  it("edits Pi thinking-map missing, null, and string states from the collapsed capability area", async () => {
+    const user = userEvent.setup();
+    // Start with a model so this test exercises thinking-map interactions without
+    // repeating the separately covered preset selection and model creation flow.
+    render(
+      <PiProviderForm
+        appId="pi"
+        providerId="custom-provider"
+        submitLabel="Save custom thinking map"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+        initialData={{
+          name: "Custom reasoning provider",
+          settingsConfig: {
+            api: "openai-completions",
+            models: [completeModel("custom-reasoning-model")],
+          },
+        }}
+      />,
+    );
 
-      await user.click(
-        screen.getByRole("button", { name: "展开或收起模型详情" }),
-      );
-      await user.click(screen.getByLabelText("pi.form.reasoning"));
-      await user.click(
-        screen.getByRole("button", {
-          name: "pi.form.customizeThinkingLevels",
-        }),
-      );
+    await user.click(
+      screen.getByRole("button", { name: "展开或收起模型详情" }),
+    );
+    await user.click(screen.getByLabelText("pi.form.reasoning"));
+    await user.click(
+      screen.getByRole("button", {
+        name: "pi.form.customizeThinkingLevels",
+      }),
+    );
 
-      const configEditor = screen.getByLabelText(
-        "provider.configJson",
-      ) as HTMLTextAreaElement;
-      expect(JSON.parse(configEditor.value).models[0]).not.toHaveProperty(
-        "thinkingLevelMap",
-      );
+    const configEditor = screen.getByLabelText(
+      "provider.configJson",
+    ) as HTMLTextAreaElement;
+    expect(JSON.parse(configEditor.value).models[0]).not.toHaveProperty(
+      "thinkingLevelMap",
+    );
 
-      await user.click(
-        screen
-          .getByText("pi.form.thinkingLevels.high")
-          .closest("button") as HTMLButtonElement,
-      );
-      await user.click(
-        screen.getByLabelText("pi.form.thinkingLevelMarkUnavailable"),
-      );
-      expect(JSON.parse(configEditor.value).models[0].thinkingLevelMap).toEqual(
-        {
-          high: null,
-        },
-      );
+    await user.click(
+      screen
+        .getByText("pi.form.thinkingLevels.high")
+        .closest("button") as HTMLButtonElement,
+    );
+    await user.click(
+      screen.getByLabelText("pi.form.thinkingLevelMarkUnavailable"),
+    );
+    expect(JSON.parse(configEditor.value).models[0].thinkingLevelMap).toEqual({
+      high: null,
+    });
 
-      await user.keyboard("{Escape}");
-      await user.click(
-        screen
-          .getByText("pi.form.thinkingLevels.xhigh")
-          .closest("button") as HTMLButtonElement,
-      );
-      await user.click(screen.getByLabelText("pi.form.thinkingLevelMapTo"));
-      fireEvent.change(screen.getByLabelText("pi.form.thinkingLevelValue"), {
-        target: { value: "xhigh-vendor-value" },
-      });
-      expect(JSON.parse(configEditor.value).models[0].thinkingLevelMap).toEqual(
-        {
-          high: null,
-          xhigh: "xhigh-vendor-value",
-        },
-      );
+    await user.keyboard("{Escape}");
+    await user.click(
+      screen
+        .getByText("pi.form.thinkingLevels.xhigh")
+        .closest("button") as HTMLButtonElement,
+    );
+    await user.click(screen.getByLabelText("pi.form.thinkingLevelMapTo"));
+    fireEvent.change(screen.getByLabelText("pi.form.thinkingLevelValue"), {
+      target: { value: "xhigh-vendor-value" },
+    });
+    expect(JSON.parse(configEditor.value).models[0].thinkingLevelMap).toEqual({
+      high: null,
+      xhigh: "xhigh-vendor-value",
+    });
 
-      await user.click(screen.getByLabelText("pi.form.reasoning"));
-      expect(
-        screen.queryByText("pi.form.thinkingLevelsLabel"),
-      ).not.toBeInTheDocument();
-      expect(JSON.parse(configEditor.value).models[0].thinkingLevelMap).toEqual(
-        {
-          high: null,
-          xhigh: "xhigh-vendor-value",
-        },
-      );
+    await user.click(screen.getByLabelText("pi.form.reasoning"));
+    expect(
+      screen.queryByText("pi.form.thinkingLevelsLabel"),
+    ).not.toBeInTheDocument();
+    expect(JSON.parse(configEditor.value).models[0].thinkingLevelMap).toEqual({
+      high: null,
+      xhigh: "xhigh-vendor-value",
+    });
 
-      await user.click(screen.getByLabelText("pi.form.reasoning"));
-      expect(screen.getByText("pi.form.thinkingLevelsLabel")).toBeVisible();
-    },
-  );
+    await user.click(screen.getByLabelText("pi.form.reasoning"));
+    expect(screen.getByText("pi.form.thinkingLevelsLabel")).toBeVisible();
+  });
 
   it("lets the user edit a preset thinking map without automatic recovery", async () => {
     const user = userEvent.setup();
@@ -1990,7 +1970,7 @@ describe("PiProviderForm", () => {
         },
       ],
     );
-  }, 20_000);
+  });
 
   it("edits an incomplete model without inventing optional fields", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);

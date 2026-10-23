@@ -1269,6 +1269,7 @@
     }
   },
   "deepseekHarness": {
+    "desktopProfileHint": "デスクトップ版の desktop プロファイルのみを管理します。実行中の DSH に変更を反映するには HMR の有効化または再起動が必要です。CLI の他のプロファイルは変更しません。",
     "providerKey": "Provider Key",
     "providerKeyRequired": "Provider Key を入力してください",
     "providerKeyDuplicate": "この Provider Key は既に存在します",
@@ -1283,7 +1284,7 @@
     "modelsRequired": "モデルを1つ以上追加してください",
     "credentialRef": "認証情報参照",
     "credentialRefHint": "DSH の認証情報に API キーを保存するための大文字識別子。",
-    "credentialRefInvalid": "Credential Ref は大文字の識別子で、英字・数字・アンダースコアのみ使用できます（例: CUSTOM_DSH_API_KEY）。",
+    "credentialRefInvalid": "Credential Ref は大文字の識別子で、英字・数字・アンダースコアのみ使用できます（例: MY_GATEWAY_API_KEY）。",
     "baseUrl": "Base URL",
     "baseUrlHint": "API エンドポイントのベース URL。",
     "apiFormat": "API 形式",
@@ -4240,8 +4241,7 @@
       "hermes": "公式インストールスクリプトでインストール",
       "pi": "npm でインストール",
       "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います",
-      "agy": "公式インストールスクリプトでインストール",
-      "dsh": "npm でインストールします"
+      "agy": "公式インストールスクリプトでインストール"
     }
   },
   "appPage": {

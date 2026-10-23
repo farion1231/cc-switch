@@ -29,7 +29,6 @@ describe("DeepSeek Harness provider presets", () => {
       apiKeyUrl: "https://platform.deepseek.com/api_keys",
       settingsConfig: {
         baseURL: "https://api.deepseek.com",
-        profile: "desktop",
         models: [
           { id: "deepseek-v4-flash", name: "DeepSeek-V4-Flash" },
           { id: "deepseek-v4-pro", name: "DeepSeek-V4-Pro" },

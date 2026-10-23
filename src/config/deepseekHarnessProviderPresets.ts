@@ -16,7 +16,6 @@ export interface DeepSeekHarnessProviderConfig {
   // Official (`llm-deepseek`) route fields.
   apiKey?: string;
   baseURL?: string;
-  profile?: string;
   // Custom (`llm-pi-ai.providers.<id>`) route fields.
   displayName?: string;
   api?: string;
@@ -45,7 +44,6 @@ export interface DeepSeekHarnessProviderPreset extends PresetFamilyFields {
 export const DEEPSEEK_HARNESS_DEFAULT_CONFIG: DeepSeekHarnessProviderConfig = {
   apiKey: "",
   baseURL: "https://api.deepseek.com",
-  profile: "desktop",
   models: [
     { id: "deepseek-v4-flash", name: "DeepSeek-V4-Flash" },
     { id: "deepseek-v4-pro", name: "DeepSeek-V4-Pro" },
@@ -92,8 +90,8 @@ const OPENCODE_NPM_TO_DSH_API: Record<string, string> = {
   "@ai-sdk/google": "openai-completions",
 };
 
-/** Derives an uppercase credential reference name from a preset display name. */
-function toApiKeyEnvBase(name: string): string {
+/** Derives an uppercase credential reference name from a display name or route key. */
+export function toApiKeyEnvBase(name: string): string {
   let ref = name
     .toUpperCase()
     .replace(/[^A-Z0-9]+/g, "_")
@@ -104,7 +102,7 @@ function toApiKeyEnvBase(name: string): string {
 }
 
 /** Reserves a unique credential reference, appending `_2`, `_3`, ... on conflict. */
-function reserveApiKeyEnv(name: string, usedRefs: Set<string>): string {
+export function reserveApiKeyEnv(name: string, usedRefs: Set<string>): string {
   const base = toApiKeyEnvBase(name);
   let ref = base;
   let counter = 2;

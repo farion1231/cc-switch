@@ -1195,15 +1195,16 @@ function ProviderFormFull({
     isLoading: isHermesLiveProviderIdsLoading,
   } = useHermesLiveProviderIds(appId === "hermes");
 
+  const { data: dshCurrentState, isLoading: isDshCurrentStateLoading } =
+    useDshCurrentState(appId === "deepseek-harness");
   const dshForm = useDeepSeekHarnessFormState({
     initialData,
     appId,
     providerId,
+    usedCredentialRefs: dshCurrentState?.credentialRefs,
     onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
     getSettingsConfig: () => form.getValues("settingsConfig"),
   });
-  const { data: dshCurrentState, isLoading: isDshCurrentStateLoading } =
-    useDshCurrentState(appId === "deepseek-harness");
 
   const additiveExistingProviderKeys = useMemo(() => {
     if (appId === "opencode" && !isAnyOmoCategory) {
@@ -1901,6 +1902,15 @@ function ProviderFormFull({
           string,
           unknown
         >;
+        if (!dshForm.dshIsOfficial) {
+          // The native entry key stays the provider key, but its display name
+          // must follow the name field — otherwise the next native sync would
+          // reset the row back to the default display name.
+          const name = values.name.trim();
+          if (name) config.displayName = name;
+          // The credential ref field is the source of truth the user sees.
+          config.apiKeyEnv = dshForm.dshApiKeyEnv;
+        }
         settingsConfig = JSON.stringify(pruneDshModelRows(config));
       } catch {
         settingsConfig = values.settingsConfig.trim();
@@ -3292,7 +3302,7 @@ function ProviderFormFull({
   "displayName": "Custom DSH",
   "api": "openai-completions",
   "baseURL": "https://api.example.com/v1",
-  "apiKeyEnv": "CUSTOM_DSH_API_KEY",
+  "apiKeyEnv": "MY_GATEWAY_API_KEY",
   "apiKey": "your-api-key-here",
   "models": []
 }`}

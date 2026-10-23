@@ -791,7 +791,7 @@ describe("App integration with MSW", () => {
     );
   });
 
-  it("duplicates deepseek-harness providers with a generated provider key", async () => {
+  it("duplicates deepseek-harness providers with an isolated credential ref", async () => {
     localStorage.setItem("cc-switch-last-app", "deepseek-harness");
     setProviders("deepseek-harness", {
       "dsh-1": {
@@ -810,11 +810,23 @@ describe("App integration with MSW", () => {
         createdAt: Date.now(),
       },
     });
+    // A DB-only route reserves a suffix even though native providerIds omit it.
+    const dbRoutes = await providersApi.getAll("deepseek-harness");
+    setProviders("deepseek-harness", {
+      ...dbRoutes,
+      "db-only": {
+        id: "db-only",
+        name: "DB only",
+        settingsConfig: { apiKeyEnv: "DSH_1_COPY_API_KEY_2" },
+        createdAt: Date.now(),
+      },
+    });
     setCurrentProviderId("deepseek-harness", "dsh-1");
     server.use(
       http.post("http://tauri.local/get_dsh_current_state", () =>
         HttpResponse.json({
           providerIds: ["dsh-1"],
+          credentialRefs: ["COMPANY_API_KEY", "DSH_1_COPY_API_KEY"],
           currentProviderId: "dsh-1",
           currentModel: "glm-5",
         }),
@@ -836,6 +848,13 @@ describe("App integration with MSW", () => {
       const providerList = screen.getByTestId("provider-list").textContent;
       expect(providerList).toContain("dsh-1-copy");
       expect(providerList).toContain("Company Gateway copy");
+      const routes = JSON.parse(providerList ?? "{}");
+      expect(routes["dsh-1-copy"].settingsConfig).toMatchObject({
+        displayName: "Company Gateway copy",
+        apiKeyEnv: "DSH_1_COPY_API_KEY_3",
+        apiKey: "test-key",
+      });
+      expect(routes["dsh-1"].settingsConfig.apiKeyEnv).toBe("COMPANY_API_KEY");
     });
 
     expect(toastErrorMock).not.toHaveBeenCalledWith(

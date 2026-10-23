@@ -348,14 +348,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey: options.apiKey,
             baseUrl: options.baseURL,
           };
-        } else if (appId === "deepseek-harness") {
-          // DSH: 顶层扁平 camelCase；baseURL 首选、baseUrl 兜底，
-          // 与后端 Provider::resolve_usage_credentials 的 DSH 分支对齐。
-          const root = config as any;
-          return {
-            apiKey: root.apiKey,
-            baseUrl: root.baseURL || root.baseUrl,
-          };
         }
         return { apiKey: undefined, baseUrl: undefined };
       } catch (error) {

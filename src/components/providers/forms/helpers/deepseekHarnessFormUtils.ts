@@ -89,7 +89,9 @@ export const DSH_CUSTOM_DEFAULT_CONFIG: Record<string, unknown> = {
   displayName: "Custom DSH",
   api: "openai-completions",
   baseURL: "",
-  apiKeyEnv: "CUSTOM_DSH_API_KEY",
+  // Filled from the provider key on save; a fixed shared ref here would let
+  // the second custom route silently overwrite the first route's key.
+  apiKeyEnv: "",
   apiKey: "",
   models: [],
 };

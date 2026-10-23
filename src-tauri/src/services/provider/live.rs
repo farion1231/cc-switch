@@ -1034,7 +1034,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
 pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
     // Additive mode apps (OpenCode, OpenClaw) should use their dedicated
     // import_xxx_providers_from_live functions, not this generic default config import
-    if app_type.is_additive_mode() || matches!(app_type, AppType::DeepSeekHarness) {
+    if app_type.is_additive_mode() {
         return Ok(false);
     }
 
@@ -1219,7 +1219,7 @@ pub fn should_import_default_config_on_startup(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<bool, AppError> {
-    if app_type.is_additive_mode() || matches!(app_type, AppType::DeepSeekHarness) {
+    if app_type.is_additive_mode() {
         return Ok(false);
     }
 

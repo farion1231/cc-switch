@@ -13,6 +13,7 @@ interface RenderOptions {
   providerId?: string;
   category?: string;
   meta?: { dshCurrentModel?: string; providerType?: string };
+  usedCredentialRefs?: string[];
 }
 
 const renderDshFormState = (
@@ -33,6 +34,7 @@ const renderDshFormState = (
         meta: options.meta,
       },
       providerId: options.providerId,
+      usedCredentialRefs: options.usedCredentialRefs,
       onSettingsConfigChange,
       getSettingsConfig: () => settingsConfig,
     }),
@@ -48,7 +50,6 @@ const renderDshFormState = (
 const OFFICIAL_CONFIG = {
   apiKey: "sk-official",
   baseURL: "https://api.deepseek.com",
-  profile: "desktop",
   models: [{ id: "deepseek-v4-pro", name: "DeepSeek-V4-Pro" }],
 };
 
@@ -85,12 +86,13 @@ describe("useDeepSeekHarnessFormState", () => {
 
   it("hydrates a custom pi-ai provider", () => {
     const { result } = renderDshFormState(CUSTOM_CONFIG, {
+      providerId: "company-gateway",
       category: "custom",
       meta: { dshCurrentModel: "deepseek-v4-pro" },
     });
 
     expect(result.current.dshIsOfficial).toBe(false);
-    expect(result.current.dshProviderKey).toBe("");
+    expect(result.current.dshProviderKey).toBe("company-gateway");
     expect(result.current.dshApiKeyEnv).toBe("COMPANY_API_KEY");
     expect(result.current.dshApi).toBe("openai-completions");
     expect(result.current.dshDefaultModel).toBe("deepseek-v4-pro");
@@ -115,17 +117,134 @@ describe("useDeepSeekHarnessFormState", () => {
     expect(customByType.result.current.dshIsOfficial).toBe(false);
   });
 
-  it("defaults the credential ref for a custom provider", () => {
-    const { result } = renderDshFormState({}, { category: "custom" });
+  it("derives the credential ref from the provider key", () => {
+    const { result } = renderDshFormState(
+      {},
+      { category: "custom", providerId: "my-gateway" },
+    );
 
-    expect(result.current.dshApiKeyEnv).toBe("CUSTOM_DSH_API_KEY");
+    expect(result.current.dshApiKeyEnv).toBe("MY_GATEWAY_API_KEY");
     expect(result.current.dshBaseUrl).toBe("");
     expect(result.current.dshApi).toBe("openai-completions");
     expect(result.current.dshModels).toEqual([]);
   });
 
+  it("reserves a credential ref that avoids refs already in use", () => {
+    const { result } = renderDshFormState(
+      {},
+      {
+        category: "custom",
+        providerId: "my-gateway",
+        usedCredentialRefs: ["MY_GATEWAY_API_KEY"],
+      },
+    );
+
+    expect(result.current.dshApiKeyEnv).toBe("MY_GATEWAY_API_KEY_2");
+  });
+
+  it("follows provider key edits until the ref is edited by hand", () => {
+    const { result, getSettingsConfig } = renderDshFormState(
+      {},
+      { category: "custom", providerId: "first-key" },
+    );
+    expect(result.current.dshApiKeyEnv).toBe("FIRST_KEY_API_KEY");
+
+    act(() => {
+      result.current.setDshProviderKey("renamed-key");
+    });
+    expect(result.current.dshProviderKey).toBe("renamed-key");
+    expect(result.current.dshApiKeyEnv).toBe("RENAMED_KEY_API_KEY");
+    expect(JSON.parse(getSettingsConfig()).apiKeyEnv).toBe(
+      "RENAMED_KEY_API_KEY",
+    );
+
+    // A hand-edited ref is authoritative: later key edits leave it alone.
+    act(() => {
+      result.current.handleDshApiKeyEnvChange("FIXED_REF");
+    });
+    act(() => {
+      result.current.setDshProviderKey("another-key");
+    });
+    expect(result.current.dshApiKeyEnv).toBe("FIXED_REF");
+  });
+
+  it("does not reserve its own suggestions across repeated key edits", () => {
+    const { result } = renderDshFormState({});
+    for (const key of ["gateway", "other", "gateway", "gateway"]) {
+      act(() => result.current.setDshProviderKey(key));
+      expect(result.current.dshApiKeyEnv).toBe(`${key.toUpperCase()}_API_KEY`);
+    }
+  });
+
+  it("corrects automatic refs when native refs arrive and reset uses latest refs", () => {
+    let config = "{}";
+    const { result, rerender } = renderHook(
+      ({ refs }: { refs?: string[] }) =>
+        useDeepSeekHarnessFormState({
+          appId: "deepseek-harness",
+          usedCredentialRefs: refs,
+          getSettingsConfig: () => config,
+          onSettingsConfigChange: (next) => {
+            config = next;
+          },
+        }),
+      { initialProps: { refs: undefined as string[] | undefined } },
+    );
+    act(() => result.current.setDshProviderKey("gateway"));
+    rerender({ refs: ["GATEWAY_API_KEY", "CUSTOM_DSH_API_KEY"] });
+    expect(result.current.dshApiKeyEnv).toBe("GATEWAY_API_KEY_2");
+    expect(JSON.parse(config).apiKeyEnv).toBe("GATEWAY_API_KEY_2");
+    act(() => result.current.resetDshState());
+    expect(result.current.dshApiKeyEnv).toBe("CUSTOM_DSH_API_KEY_2");
+    rerender({ refs: ["GATEWAY_API_KEY", "CUSTOM_DSH_API_KEY"] });
+    expect(result.current.dshApiKeyEnv).toBe("CUSTOM_DSH_API_KEY_2");
+  });
+
+  it("derives repeated custom presets from the new key instead of sharing preset refs", () => {
+    const { result, getSettingsConfig } = renderDshFormState(
+      {},
+      {
+        usedCredentialRefs: ["COMPANY_API_KEY", "SECOND_ROUTE_API_KEY"],
+      },
+    );
+    act(() => result.current.resetDshState(CUSTOM_CONFIG, false));
+    act(() => result.current.setDshProviderKey("second-route"));
+    expect(result.current.dshApiKeyEnv).toBe("SECOND_ROUTE_API_KEY_2");
+    expect(JSON.parse(getSettingsConfig()).apiKeyEnv).toBe(
+      "SECOND_ROUTE_API_KEY_2",
+    );
+    act(() => result.current.resetDshState(CUSTOM_CONFIG, false));
+    act(() => result.current.setDshProviderKey("third-route"));
+    expect(result.current.dshApiKeyEnv).toBe("THIRD_ROUTE_API_KEY");
+    expect(CUSTOM_CONFIG.apiKeyEnv).toBe("COMPANY_API_KEY");
+  });
+
+  it("does not inherit the source credential ref when copying a new custom route", () => {
+    const { result } = renderDshFormState(CUSTOM_CONFIG, {
+      usedCredentialRefs: ["COMPANY_API_KEY", "COPY_API_KEY"],
+    });
+    act(() => result.current.setDshProviderKey("copy"));
+    expect(result.current.dshApiKeyEnv).toBe("COPY_API_KEY_2");
+  });
+
+  it("preserves existing and manually entered legacy refs on key changes", () => {
+    const { result } = renderDshFormState(
+      { apiKeyEnv: "CUSTOM_DSH_API_KEY" },
+      {
+        providerId: "existing-route",
+        usedCredentialRefs: ["CUSTOM_DSH_API_KEY"],
+      },
+    );
+    act(() => result.current.setDshProviderKey("renamed"));
+    expect(result.current.dshApiKeyEnv).toBe("CUSTOM_DSH_API_KEY");
+    act(() => result.current.handleDshApiKeyEnvChange("CUSTOM_DSH_API_KEY"));
+    act(() => result.current.setDshProviderKey("another"));
+    expect(result.current.dshApiKeyEnv).toBe("CUSTOM_DSH_API_KEY");
+  });
+
   it("writes base URL, API key and models back with the custom shape", () => {
     const { result, getSettingsConfig } = renderDshFormState(CUSTOM_CONFIG, {
+      providerId: "company-gateway",
       category: "custom",
     });
 
@@ -164,7 +283,6 @@ describe("useDeepSeekHarnessFormState", () => {
     expect(parsed).toMatchObject({
       apiKey: "sk-next",
       baseURL: "https://api.deepseek.com",
-      profile: "desktop",
     });
     expect(parsed).not.toHaveProperty("apiKeyEnv");
     expect(parsed).not.toHaveProperty("displayName");
@@ -172,6 +290,7 @@ describe("useDeepSeekHarnessFormState", () => {
 
   it("uppercases the credential ref on input", () => {
     const { result, getSettingsConfig } = renderDshFormState(CUSTOM_CONFIG, {
+      providerId: "company-gateway",
       category: "custom",
     });
 
@@ -184,9 +303,12 @@ describe("useDeepSeekHarnessFormState", () => {
   });
 
   it("updates the default model without touching settingsConfig", () => {
-    const { result, onSettingsConfigChange } = renderDshFormState(CUSTOM_CONFIG, {
-      category: "custom",
-    });
+    const { result, onSettingsConfigChange } = renderDshFormState(
+      CUSTOM_CONFIG,
+      {
+        category: "custom",
+      },
+    );
 
     act(() => {
       result.current.handleDshDefaultModelChange("glm-5");
@@ -197,7 +319,9 @@ describe("useDeepSeekHarnessFormState", () => {
   });
 
   it("resets to the official shape and back to custom defaults", () => {
-    const { result } = renderDshFormState(CUSTOM_CONFIG, { category: "custom" });
+    const { result } = renderDshFormState(CUSTOM_CONFIG, {
+      category: "custom",
+    });
 
     act(() => {
       result.current.resetDshState(OFFICIAL_CONFIG, true);
@@ -236,9 +360,9 @@ describe("useDeepSeekHarnessFormState", () => {
 describe("deepseekHarnessFormUtils", () => {
   it("detects official providers by the authoritative providerType", () => {
     // providerType wins over every other signal, in both directions.
-    expect(
-      isDshOfficial("custom", "custom", undefined, "dsh_deepseek"),
-    ).toBe(true);
+    expect(isDshOfficial("custom", "custom", undefined, "dsh_deepseek")).toBe(
+      true,
+    );
     expect(
       isDshOfficial("deepseek-official", "official", undefined, "dsh_pi_ai"),
     ).toBe(false);
@@ -250,7 +374,12 @@ describe("deepseekHarnessFormUtils", () => {
       isDshOfficial("custom", "custom", { apiKeyEnv: "DEEPSEEK_API_KEY" }),
     ).toBe(false);
     expect(
-      isDshOfficial("custom", "custom", { apiKeyEnv: "DEEPSEEK_API_KEY" }, "dsh_pi_ai"),
+      isDshOfficial(
+        "custom",
+        "custom",
+        { apiKeyEnv: "DEEPSEEK_API_KEY" },
+        "dsh_pi_ai",
+      ),
     ).toBe(false);
   });
 
@@ -308,10 +437,7 @@ describe("deepseekHarnessFormUtils", () => {
   });
 
   it("assigns stable client-only row keys without sharing them", () => {
-    const rows = withDshRowKeys([
-      { id: "a", rowKey: "kept" },
-      { id: "b" },
-    ]);
+    const rows = withDshRowKeys([{ id: "a", rowKey: "kept" }, { id: "b" }]);
     expect(rows[0].rowKey).toBe("kept");
     expect(rows[1].rowKey).toMatch(/^dsh-row-/);
     expect(rows[0].rowKey).not.toBe(rows[1].rowKey);

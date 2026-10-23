@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import {
   DSH_OFFICIAL_DEFAULT_CONFIG,
   DSH_CUSTOM_DEFAULT_CONFIG,
@@ -7,6 +7,7 @@ import {
   withDshRowKeys,
   type DshModel,
 } from "../helpers/deepseekHarnessFormUtils";
+import { reserveApiKeyEnv } from "@/config/deepseekHarnessProviderPresets";
 
 interface UseDeepSeekHarnessFormStateParams {
   initialData?: {
@@ -16,6 +17,10 @@ interface UseDeepSeekHarnessFormStateParams {
   };
   appId: string;
   providerId?: string;
+  /** Credential references already used by native routes; a new custom
+   * route's default reference must avoid them (a shared reference would let
+   * the second route's key silently overwrite the first's). */
+  usedCredentialRefs?: string[];
   onSettingsConfigChange: (config: string) => void;
   getSettingsConfig: () => string;
 }
@@ -46,6 +51,7 @@ export function useDeepSeekHarnessFormState({
   initialData,
   appId,
   providerId,
+  usedCredentialRefs,
   onSettingsConfigChange,
   getSettingsConfig,
 }: UseDeepSeekHarnessFormStateParams): DeepSeekHarnessFormState {
@@ -55,6 +61,18 @@ export function useDeepSeekHarnessFormState({
     appId === "deepseek-harness"
       ? withDshRowKeys(normalizeDshModels(initial.models))
       : [];
+  const usedRefs = useMemo(
+    () => new Set(usedCredentialRefs ?? []),
+    [usedCredentialRefs],
+  );
+  const suggestApiKeyEnv = useCallback(
+    (providerKey: string) =>
+      reserveApiKeyEnv(providerKey.trim() || "Custom DSH", new Set(usedRefs)),
+    [usedRefs],
+  );
+  // The reference auto-derived from the provider key. While the user has not
+  // edited the credential ref by hand, key edits keep regenerating it.
+  const autoApiKeyEnvRef = useRef<string | null>(null);
 
   const [dshProviderKey, setDshProviderKey] = useState<string>(() => {
     if (appId !== "deepseek-harness") return "";
@@ -94,10 +112,17 @@ export function useDeepSeekHarnessFormState({
       initial,
       initialData?.meta?.providerType,
     );
-    if (typeof initial.apiKeyEnv === "string" && initial.apiKeyEnv) {
+    if (
+      (official || providerId) &&
+      typeof initial.apiKeyEnv === "string" &&
+      initial.apiKeyEnv
+    ) {
       return initial.apiKeyEnv;
     }
-    return official ? "DEEPSEEK_API_KEY" : "CUSTOM_DSH_API_KEY";
+    if (official) return "DEEPSEEK_API_KEY";
+    const suggested = suggestApiKeyEnv(providerId ?? "");
+    autoApiKeyEnvRef.current = suggested;
+    return suggested;
   });
 
   const [dshBaseUrl, setDshBaseUrl] = useState<string>(() => {
@@ -145,6 +170,31 @@ export function useDeepSeekHarnessFormState({
     [getSettingsConfig, onSettingsConfigChange, dshIsOfficial],
   );
 
+  // Native credential refs are loaded asynchronously. Re-evaluate only automatic
+  // suggestions, never persisted or manually entered refs, against that snapshot.
+  useEffect(() => {
+    if (
+      appId !== "deepseek-harness" ||
+      dshIsOfficial ||
+      autoApiKeyEnvRef.current === null
+    )
+      return;
+    const nextValue = suggestApiKeyEnv(dshProviderKey);
+    if (nextValue === dshApiKeyEnv) return;
+    autoApiKeyEnvRef.current = nextValue;
+    setDshApiKeyEnv(nextValue);
+    updateDshSettings((config) => {
+      config.apiKeyEnv = nextValue;
+    });
+  }, [
+    appId,
+    dshIsOfficial,
+    dshProviderKey,
+    dshApiKeyEnv,
+    suggestApiKeyEnv,
+    updateDshSettings,
+  ]);
+
   const handleDshApiKeyChange = useCallback(
     (apiKey: string) => {
       setDshApiKey(apiKey);
@@ -158,12 +208,30 @@ export function useDeepSeekHarnessFormState({
   const handleDshApiKeyEnvChange = useCallback(
     (apiKeyEnv: string) => {
       const nextValue = apiKeyEnv.toUpperCase();
+      autoApiKeyEnvRef.current = null;
       setDshApiKeyEnv(nextValue);
       updateDshSettings((config) => {
         config.apiKeyEnv = nextValue;
       });
     },
     [updateDshSettings],
+  );
+
+  const setDshProviderKeyWithRefSync = useCallback(
+    (key: string) => {
+      setDshProviderKey(key);
+      if (dshIsOfficial) return;
+      // Persisted and hand-edited references are authoritative, including the
+      // legacy default. Only this form's own suggestions follow key edits.
+      if (autoApiKeyEnvRef.current === null) return;
+      const nextValue = suggestApiKeyEnv(key);
+      autoApiKeyEnvRef.current = nextValue;
+      setDshApiKeyEnv(nextValue);
+      updateDshSettings((config) => {
+        config.apiKeyEnv = nextValue;
+      });
+    },
+    [dshApiKeyEnv, dshIsOfficial, suggestApiKeyEnv, updateDshSettings],
   );
 
   const handleDshBaseUrlChange = useCallback(
@@ -215,9 +283,16 @@ export function useDeepSeekHarnessFormState({
       setDshApiKey(typeof source.apiKey === "string" ? source.apiKey : "");
       const apiKeyEnv =
         typeof source.apiKeyEnv === "string" ? source.apiKeyEnv : "";
-      setDshApiKeyEnv(
-        apiKeyEnv || (official ? "DEEPSEEK_API_KEY" : "CUSTOM_DSH_API_KEY"),
-      );
+      if (official) {
+        autoApiKeyEnvRef.current = null;
+        setDshApiKeyEnv(apiKeyEnv || "DEEPSEEK_API_KEY");
+      } else {
+        // Reset selects a new preset/custom route, not an existing route.
+        // Catalog references are templates, not permission to share credentials.
+        const suggested = suggestApiKeyEnv("");
+        autoApiKeyEnvRef.current = suggested;
+        setDshApiKeyEnv(suggested);
+      }
       setDshBaseUrl(typeof source.baseURL === "string" ? source.baseURL : "");
       setDshApi(
         typeof source.api === "string" && source.api
@@ -227,12 +302,12 @@ export function useDeepSeekHarnessFormState({
       setDshModels(withDshRowKeys(models));
       setDshDefaultModel(models[0]?.id ?? "");
     },
-    [],
+    [suggestApiKeyEnv],
   );
 
   return {
     dshProviderKey,
-    setDshProviderKey,
+    setDshProviderKey: setDshProviderKeyWithRefSync,
     dshIsOfficial,
     dshApiKey,
     dshApiKeyEnv,

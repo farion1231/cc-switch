@@ -151,10 +151,6 @@ export function extractBaseUrlForUsageDetection(
     case "openclaw":
       raw = settingsConfig.baseUrl;
       break;
-    case "deepseek-harness":
-      // baseURL 首选、baseUrl 兜底，与后端 resolve_usage_credentials 的 DSH 分支对齐
-      raw = settingsConfig.baseURL || settingsConfig.baseUrl;
-      break;
     case "hermes":
       raw = settingsConfig.base_url;
       break;

@@ -555,8 +555,7 @@ function ToolRow({
   const broken = Boolean(info?.installed_but_broken);
   const isBusy = tools.busyTools.has(tool);
   const busyAction = tools.busyTools.get(tool);
-  const canUninstall =
-    tool !== "dsh" && Boolean(info?.version || broken || defaultInstall);
+  const canUninstall = Boolean(info?.version || broken || defaultInstall);
   const action: Exclude<ToolLifecycleAction, "uninstall"> | null =
     (busyAction !== "uninstall" ? busyAction : undefined) ??
     (isVersionLoading || broken

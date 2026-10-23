@@ -1269,6 +1269,7 @@
     }
   },
   "deepseekHarness": {
+    "desktopProfileHint": "仅管理桌面版的 desktop 配置。运行中的 DSH 需启用 HMR 或重启后加载文件修改；不会修改 CLI 的其他配置。",
     "providerKey": "Provider Key",
     "providerKeyRequired": "请填写 Provider Key",
     "providerKeyDuplicate": "该 Provider Key 已存在",
@@ -1283,7 +1284,7 @@
     "modelsRequired": "请至少添加一个模型",
     "credentialRef": "凭据引用",
     "credentialRefHint": "用于在 DSH 凭据中保存 API Key 的大写标识符。",
-    "credentialRefInvalid": "Credential Ref 必须为大写标识符，只能使用字母、数字和下划线（例如 CUSTOM_DSH_API_KEY）。",
+    "credentialRefInvalid": "Credential Ref 必须为大写标识符，只能使用字母、数字和下划线（例如 MY_GATEWAY_API_KEY）。",
     "baseUrl": "Base URL",
     "baseUrlHint": "API 端点的基础地址。",
     "apiFormat": "API 格式",
@@ -4240,8 +4241,7 @@
       "hermes": "安装时运行官方安装脚本",
       "pi": "通过 npm 安装",
       "mcode": "安装时运行官方安装脚本，失败时改用 npm",
-      "agy": "安装时运行官方安装脚本",
-      "dsh": "通过 npm 安装"
+      "agy": "安装时运行官方安装脚本"
     }
   },
   "appPage": {

@@ -9,6 +9,8 @@ import { createTestQueryClient } from "../utils/testQueryClient";
 
 const dshState = vi.hoisted(() => ({
   providerIds: [] as string[],
+  credentialRefs: [] as string[],
+  isLoading: false,
 }));
 
 vi.mock("sonner", () => ({
@@ -16,8 +18,7 @@ vi.mock("sonner", () => ({
 }));
 
 vi.mock("@/lib/api/model-fetch", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/lib/api/model-fetch")>();
+  const actual = await importOriginal<typeof import("@/lib/api/model-fetch")>();
   return {
     ...actual,
     fetchModelsForConfig: vi.fn().mockResolvedValue([]),
@@ -31,8 +32,9 @@ vi.mock("@/lib/query/dsh", () => ({
       providerIds: dshState.providerIds,
       currentProviderId: null,
       currentModel: null,
+      credentialRefs: dshState.credentialRefs,
     },
-    isLoading: false,
+    isLoading: dshState.isLoading,
   }),
   invalidateDshProviderCaches: vi.fn(),
   dshKeys: { all: ["dsh"], currentState: ["dsh", "currentState"] },
@@ -80,6 +82,55 @@ function renderForm(
 describe("DeepSeek Harness provider form (shared shell)", () => {
   beforeEach(() => {
     dshState.providerIds = [];
+    dshState.credentialRefs = [];
+    dshState.isLoading = false;
+  });
+
+  it("isolates repeated presets and synchronizes late native refs before saving", async () => {
+    const onSubmit = vi.fn();
+    dshState.isLoading = true;
+    const { rerender } = renderForm(onSubmit);
+    fireEvent.click(screen.getByRole("button", { name: /OpenAI Compatible/ }));
+    // Programmatic input simulates a filled draft while native refs are loading.
+    fireEvent.change(screen.getByLabelText(/Provider Key/), {
+      target: { value: "second-route" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.change(screen.getAllByPlaceholderText("Model ID")[0], {
+      target: { value: "model" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSubmit).not.toHaveBeenCalled());
+
+    dshState.isLoading = false;
+    dshState.credentialRefs = ["OPENAI_API_KEY", "SECOND_ROUTE_API_KEY"];
+    rerender(
+      <QueryClientProvider client={createTestQueryClient()}>
+        <ProviderForm
+          appId="deepseek-harness"
+          submitLabel="Save"
+          onSubmit={onSubmit}
+          onCancel={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    const editor = screen.getByLabelText(
+      "dsh-settings-config",
+    ) as HTMLTextAreaElement;
+    await waitFor(() =>
+      expect(JSON.parse(editor.value).apiKeyEnv).toBe("SECOND_ROUTE_API_KEY_2"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(onSubmit.mock.calls[0][0].settingsConfig).apiKeyEnv).toBe(
+      "SECOND_ROUTE_API_KEY_2",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /OpenAI Compatible/ }));
+    fireEvent.change(screen.getByLabelText(/Provider Key/), {
+      target: { value: "third-route" },
+    });
+    expect(JSON.parse(editor.value).apiKeyEnv).toBe("THIRD_ROUTE_API_KEY");
   });
 
   it("reuses the shared shell and creates a custom pi-ai route", async () => {
@@ -96,7 +147,7 @@ describe("DeepSeek Harness provider form (shared shell)", () => {
       "dsh-settings-config",
     ) as HTMLTextAreaElement;
     expect(jsonEditor).toBeInTheDocument();
-    expect(jsonEditor.value).toContain("CUSTOM_DSH_API_KEY");
+    expect(jsonEditor.value).toContain("Custom DSH");
 
     // DSH structured fields are rendered alongside the shared shell.
     expect(screen.getByLabelText(/Provider Key/)).toBeInTheDocument();
@@ -133,10 +184,12 @@ describe("DeepSeek Harness provider form (shared shell)", () => {
     expect(values.meta?.providerType).toBe("dsh_pi_ai");
     expect(values.meta?.dshCurrentModel).toBe("glm-5.3");
     expect(JSON.parse(values.settingsConfig)).toMatchObject({
-      displayName: "Custom DSH",
+      // The name field follows into the native display name, and the
+      // credential ref is derived from the provider key.
+      displayName: "Company Gateway",
       api: "openai-completions",
       baseURL: "https://gateway.example/v1",
-      apiKeyEnv: "CUSTOM_DSH_API_KEY",
+      apiKeyEnv: "COMPANY_GATEWAY_API_KEY",
       apiKey: "secret",
       models: [{ id: "glm-5.3" }],
     });
@@ -173,7 +226,9 @@ describe("DeepSeek Harness provider form (shared shell)", () => {
     expect(values.providerKey).toBe("deepseek-official");
     expect(values.meta?.providerType).toBe("dsh_deepseek");
     const settings = JSON.parse(values.settingsConfig);
-    expect(settings.profile).toBe("desktop");
+    // The desktop profile is the fixed write target; it must not leak into
+    // the provider settings (the llm-deepseek schema has no profile field).
+    expect(settings.profile).toBeUndefined();
     expect(settings.models.length).toBeGreaterThan(0);
   });
 
@@ -200,7 +255,9 @@ describe("DeepSeek Harness provider form (shared shell)", () => {
     expect(
       container.querySelector<HTMLInputElement>('input[name="name"]')?.value,
     ).toBe("Company Gateway");
-    expect(screen.getByLabelText(/Provider Key/)).toHaveValue("company-gateway");
+    expect(screen.getByLabelText(/Provider Key/)).toHaveValue(
+      "company-gateway",
+    );
     expect(screen.getByLabelText(/Provider Key/)).toBeDisabled();
     expect(screen.getByLabelText("Base URL")).toHaveValue(
       "https://company.example/v1",

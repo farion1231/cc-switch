@@ -227,18 +227,9 @@ impl Provider {
                 crate::pi_config::provider_base_url(settings).unwrap_or_default(),
                 str_at(settings.get("apiKey")),
             ),
-            // DeepSeek Harness keeps the official settings and credential surfaces separate.
-            AppType::DeepSeekHarness => (
-                {
-                    let base_url = str_at(settings.get("baseURL"));
-                    if base_url.is_empty() {
-                        str_at(settings.get("baseUrl"))
-                    } else {
-                        base_url
-                    }
-                },
-                str_at(settings.get("apiKey")),
-            ),
+            // DSH usage-script credential wiring ships with the usage follow-up,
+            // not with the first provider-switching PR.
+            AppType::DeepSeekHarness => (String::new(), String::new()),
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
             AppType::OpenCode | AppType::Mcode => {
                 let options = settings.get("options");
@@ -1720,21 +1711,6 @@ mod tests {
             (
                 "https://api.deepseek.com".to_string(),
                 "sk-openclaw".to_string()
-            )
-        );
-    }
-
-    #[test]
-    fn resolve_credentials_deepseek_harness_base_url() {
-        let p = provider_with(json!({
-            "baseURL": "https://api.deepseek.com/v1",
-            "apiKey": "sk-dsh",
-        }));
-        assert_eq!(
-            p.resolve_usage_credentials(&AppType::DeepSeekHarness),
-            (
-                "https://api.deepseek.com/v1".to_string(),
-                "sk-dsh".to_string()
             )
         );
     }

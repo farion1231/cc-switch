@@ -125,6 +125,7 @@ import {
 } from "@/lib/query/omo";
 import { invalidatePiProviderCaches, usePiCurrentState } from "@/lib/query/pi";
 import { dshApi } from "@/lib/api/dsh";
+import { reserveApiKeyEnv } from "@/config/deepseekHarnessProviderPresets";
 import { invalidateDshProviderCaches, dshKeys } from "@/lib/query/dsh";
 import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
 import EnvPanel from "@/components/openclaw/EnvPanel";
@@ -990,36 +991,42 @@ function App() {
       activeApp === "deepseek-harness"
     ) {
       let liveProviderIds: string[] = [];
+      let dshCredentialRefs: string[] = [];
       try {
-        liveProviderIds =
-          activeApp === "opencode"
-            ? await queryClient.ensureQueryData({
-                queryKey: ["opencodeLiveProviderIds"],
-                queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
-              })
-            : activeApp === "openclaw"
+        // Copy must reserve against a fresh native snapshot, not a cached
+        // provider-id query that may predate another route's credentials.
+        if (activeApp === "deepseek-harness") {
+          const state = await queryClient.fetchQuery({
+            queryKey: dshKeys.currentState,
+            queryFn: () => dshApi.getCurrentState(),
+            staleTime: 0,
+          });
+          liveProviderIds = state.providerIds;
+          dshCredentialRefs = state.credentialRefs ?? [];
+        } else {
+          liveProviderIds =
+            activeApp === "opencode"
               ? await queryClient.ensureQueryData({
-                  queryKey: openclawKeys.liveProviderIds,
-                  queryFn: () => providersApi.getOpenClawLiveProviderIds(),
+                  queryKey: ["opencodeLiveProviderIds"],
+                  queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
                 })
-              : activeApp === "hermes"
+              : activeApp === "openclaw"
                 ? await queryClient.ensureQueryData({
-                    queryKey: hermesKeys.liveProviderIds,
-                    queryFn: () => providersApi.getHermesLiveProviderIds(),
+                    queryKey: openclawKeys.liveProviderIds,
+                    queryFn: () => providersApi.getOpenClawLiveProviderIds(),
                   })
-                : activeApp === "pi"
-                  ? (
+                : activeApp === "hermes"
+                  ? await queryClient.ensureQueryData({
+                      queryKey: hermesKeys.liveProviderIds,
+                      queryFn: () => providersApi.getHermesLiveProviderIds(),
+                    })
+                  : (
                       await queryClient.ensureQueryData({
                         queryKey: ["pi", "currentState"],
                         queryFn: () => piApi.getCurrentState(),
                       })
-                    ).enabledProviderIds
-                  : (
-                      await queryClient.ensureQueryData({
-                        queryKey: dshKeys.currentState,
-                        queryFn: () => dshApi.getCurrentState(),
-                      })
-                    ).providerIds;
+                    ).enabledProviderIds;
+        }
       } catch (error) {
         console.error(
           "[App] Failed to load live provider IDs for duplication",
@@ -1041,6 +1048,18 @@ function App() {
         existingKeys,
       );
       duplicatedProvider.addToLive = false;
+      if (activeApp === "deepseek-harness") {
+        const usedRefs = new Set(dshCredentialRefs);
+        for (const route of Object.values(providers)) {
+          const ref = route.settingsConfig.apiKeyEnv;
+          if (typeof ref === "string" && ref) usedRefs.add(ref);
+        }
+        duplicatedProvider.settingsConfig.displayName = duplicatedProvider.name;
+        duplicatedProvider.settingsConfig.apiKeyEnv = reserveApiKeyEnv(
+          duplicatedProvider.providerKey,
+          usedRefs,
+        );
+      }
     } else if (activeApp === "mcode") {
       // The MCode list already includes its live custom nodes; the backend
       // rejects a key that MCode itself owns.

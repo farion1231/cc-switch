@@ -140,6 +140,9 @@ export function DeepSeekHarnessFormFields({
 
   return (
     <>
+      <p className="text-xs text-muted-foreground">
+        {t("deepseekHarness.desktopProfileHint")}
+      </p>
       {/* API Key */}
       {/* The official DeepSeek route has no OAuth login: it requires an API
           key stored under DEEPSEEK_API_KEY, so the input must stay editable
@@ -178,7 +181,7 @@ export function DeepSeekHarnessFormFields({
             value={apiKeyEnv}
             onValueChange={(value) => onApiKeyEnvChange(value.toUpperCase())}
             normalize={(value) => value.toUpperCase()}
-            placeholder="CUSTOM_DSH_API_KEY"
+            placeholder="MY_GATEWAY_API_KEY"
             autoComplete="off"
           />
           <p className="text-xs text-muted-foreground">

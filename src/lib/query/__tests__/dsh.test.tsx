@@ -25,12 +25,14 @@ describe("useDshCurrentState", () => {
       providerIds: ["deepseek-official", "k3"],
       currentProviderId: "k3",
       currentModel: "k3",
+      credentialRefs: ["DEEPSEEK_API_KEY", "K3_API_KEY"],
     });
     const { result } = renderHook(() => useDshCurrentState(true), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(invokeMock).toHaveBeenCalledWith("get_dsh_current_state");
     expect(result.current.data?.providerIds).toContain("k3");
     expect(result.current.data?.currentProviderId).toBe("k3");
+    expect(result.current.data?.credentialRefs).toContain("K3_API_KEY");
   });
 
   it("is disabled without the flag", () => {

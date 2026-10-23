@@ -170,9 +170,8 @@ pub struct ToolVersion {
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
 }
 
-const VALID_TOOLS: [&str; 11] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "dsh",
-    "agy",
+const VALID_TOOLS: [&str; 10] = [
+    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode", "agy",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -626,7 +625,6 @@ fn tool_display_name(tool: &str) -> &'static str {
         "openclaw" => "OpenClaw",
         "hermes" => "Hermes",
         "pi" => "Pi",
-        "dsh" => "DeepSeek Harness",
         "mcode" => "MiniMax Code",
         "agy" => "Antigravity CLI",
         _ => "Unknown",
@@ -862,7 +860,6 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
-        "dsh" => Some("npm i -g @deepseek-ai/dsh@latest"),
         _ => None,
     }
 }
@@ -1156,18 +1153,7 @@ fn probe_local_version(
     wsl_shell: Option<&str>,
     wsl_shell_flag: Option<&str>,
 ) -> ShellProbe {
-    if tool == "dsh" {
-        // 桌面 app（新/旧名）优先；都没装时回退 CLI 探测——npm 全局包
-        // (@deepseek-ai/dsh) 装的 `dsh` 同样是有效安装，不能误报"未安装"。
-        let desktop = try_get_dsh_desktop_version();
-        if !matches!(desktop, ShellProbe::NotFound(_)) {
-            return desktop;
-        }
-        if let Some(distro) = wsl_distro {
-            return try_get_version_wsl(tool, distro, wsl_shell, wsl_shell_flag);
-        }
-        try_get_version(tool)
-    } else if let Some(distro) = wsl_distro {
+    if let Some(distro) = wsl_distro {
         try_get_version_wsl(tool, distro, wsl_shell, wsl_shell_flag)
     } else {
         #[cfg(target_os = "windows")]
@@ -1283,49 +1269,6 @@ async fn get_single_tool_version_impl(
         wsl_distro,
         update_blocked_by_node,
     }
-}
-
-#[cfg(target_os = "macos")]
-fn try_get_dsh_desktop_version() -> ShellProbe {
-    // 官方 0.2.x-rc.x 起应用名为 "DeepSeek Harness.app"；旧版（≤2.x 壳构建）
-    // 叫 "DSH Desktop.app"。两者都试，兼容升级/改名前后的安装。
-    let candidates = [
-        "/Applications/DeepSeek Harness.app/Contents/Info.plist",
-        "/Applications/DSH Desktop.app/Contents/Info.plist",
-    ];
-    let plist = candidates
-        .iter()
-        .map(std::path::Path::new)
-        .find(|path| path.exists());
-    let Some(plist) = plist else {
-        return ShellProbe::NotFound(NOT_INSTALLED.to_string());
-    };
-    match std::process::Command::new("/usr/bin/plutil")
-        .args(["-extract", "CFBundleShortVersionString", "raw", "-o", "-"])
-        .arg(plist)
-        .output()
-    {
-        Ok(output) if output.status.success() => {
-            let version = decode_command_output(&output.stdout).trim().to_string();
-            if version.is_empty() {
-                ShellProbe::FoundButFailed("DSH Desktop version is missing".to_string())
-            } else {
-                ShellProbe::Found(version)
-            }
-        }
-        Ok(output) => {
-            ShellProbe::FoundButFailed(last_lines(decode_command_output(&output.stderr).trim(), 4))
-        }
-        Err(error) => ShellProbe::FoundButFailed(format!("Unable to inspect DSH Desktop: {error}")),
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn try_get_dsh_desktop_version() -> ShellProbe {
-    // DSH Desktop is only distributed as a macOS .app; other platforms have no
-    // standalone desktop bundle to probe (their DSH CLI detection goes through
-    // try_get_version / try_get_version_wsl in the environment-check flow).
-    ShellProbe::NotFound("DSH Desktop is only available on macOS".to_string())
 }
 
 /// 该工具在 npm 上的预发布通道 tag(靠前者优先)。仅当本地版本已**严格领先**
@@ -3297,7 +3240,6 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "openclaw" => Some("openclaw"),
         "pi" => Some("@earendil-works/pi-coding-agent"),
         "mcode" => Some("@minimax-ai/code"),
-        "dsh" => Some("@deepseek-ai/dsh"),
         _ => None,
     }
 }
@@ -7055,25 +6997,6 @@ mod tests {
         // The verified distribution exposes `pi --version`, but no updater
         // contract is assumed; upgrades stay on the package-manager path.
         assert_eq!(official_update_args("pi"), None);
-    }
-
-    #[test]
-    fn dsh_lifecycle_uses_official_npm_package() {
-        assert!(VALID_TOOLS.contains(&"dsh"));
-        assert_eq!(tool_display_name("dsh"), "DeepSeek Harness");
-        // 官方 CLI 发行渠道是 npm scoped 包 @deepseek-ai/dsh；安装/升级走 npm。
-        assert_eq!(npm_package_for("dsh"), Some("@deepseek-ai/dsh"));
-        // 桌面 app 自带更新器，无原生自升级命令；npm 是唯一生命周期通道。
-        assert_eq!(official_update_args("dsh"), None);
-        for action in [ToolLifecycleAction::Install, ToolLifecycleAction::Update] {
-            let command =
-                tool_action_shell_command_for_shell("dsh", action, LifecycleCommandShell::Posix);
-            assert_eq!(
-                command.as_deref(),
-                Some("npm i -g @deepseek-ai/dsh@latest"),
-                "dsh {action:?} must fall back to the official npm package"
-            );
-        }
     }
 
     #[test]

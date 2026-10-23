@@ -5513,13 +5513,15 @@ impl ProviderService {
     ///
     /// 对于累加模式应用（OpenCode, OpenClaw），不存在"当前供应商"概念，直接返回空字符串。
     pub fn current(state: &AppState, app_type: AppType) -> Result<String, AppError> {
-        // Additive mode apps have no "current" provider concept
-        if app_type.is_additive_mode() {
-            return Ok(String::new());
-        }
+        // Additive mode apps have no "current" provider concept. DeepSeek
+        // Harness is additive but keeps a live current selection
+        // (`agent-default-model`), so it must be resolved first.
         if app_type == AppType::DeepSeekHarness {
             return crate::deepseek_harness_config::read_native_state()
                 .map(|state| state.current_provider.unwrap_or_default());
+        }
+        if app_type.is_additive_mode() {
+            return Ok(String::new());
         }
         // 代理模式下界面上的「当前」是代理路由到的那家。
         crate::mode::current::provider_for(

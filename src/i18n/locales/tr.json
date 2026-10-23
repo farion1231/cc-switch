@@ -1230,6 +1230,7 @@
     }
   },
   "deepseekHarness": {
+    "desktopProfileHint": "Yalnızca masaüstü uygulamasının desktop profilini yönetir. Çalışan DSH, dosya değişikliklerini yüklemek için etkin HMR veya yeniden başlatma gerektirir; diğer CLI profilleri değiştirilmez.",
     "providerKey": "Sağlayıcı Anahtarı",
     "providerKeyRequired": "Sağlayıcı Anahtarı zorunludur",
     "providerKeyDuplicate": "Bu Sağlayıcı Anahtarı zaten mevcut",
@@ -1244,7 +1245,7 @@
     "modelsRequired": "En az bir model ekleyin",
     "credentialRef": "Kimlik Bilgisi Referansı",
     "credentialRefHint": "API anahtarını DSH kimlik bilgilerinde saklamak için kullanılan büyük harf tanımlayıcı.",
-    "credentialRefInvalid": "Kimlik Bilgisi Referansı; harf, rakam ve alt çizgi içeren büyük harf bir tanımlayıcı olmalıdır (örneğin CUSTOM_DSH_API_KEY).",
+    "credentialRefInvalid": "Kimlik Bilgisi Referansı; harf, rakam ve alt çizgi içeren büyük harf bir tanımlayıcı olmalıdır (örneğin MY_GATEWAY_API_KEY).",
     "baseUrl": "Temel URL",
     "baseUrlHint": "API uç noktasının temel URL'si.",
     "apiFormat": "API Biçimi",
@@ -4136,8 +4137,7 @@
       "openclaw": "Npm ile yüklenir",
       "hermes": "Resmi komut dosyasıyla yüklenir",
       "pi": "Npm ile yüklenir",
-      "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner",
-      "dsh": "npm ile yüklenir"
+      "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner"
     }
   },
   "appPage": {

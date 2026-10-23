@@ -48,7 +48,6 @@ export const TOOL_NAMES = [
   "hermes",
   "pi",
   "mcode",
-  "dsh",
   "agy",
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -193,7 +192,6 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   hermes: "Hermes",
   pi: "Pi",
   mcode: "MiniMax Code",
-  dsh: "DeepSeek Harness",
   agy: "Antigravity CLI",
 };
 
@@ -213,7 +211,6 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   hermes: "hermes",
   pi: "pi",
   mcode: "mcode",
-  dsh: "deepseek-harness",
   agy: "agy",
 };
 
@@ -357,7 +354,6 @@ export function useToolManagement() {
   const updatableToolNames = useMemo(
     () =>
       TOOL_NAMES.filter((toolName) => {
-        if (toolName === "dsh") return false;
         const tool = toolVersionByName.get(toolName);
         return (
           !busyTools.has(toolName) &&

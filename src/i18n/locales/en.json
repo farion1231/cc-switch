@@ -933,7 +933,7 @@
     "piConfigDir": "Pi Configuration Directory",
     "dshConfigDir": "DSH Configuration Directory",
     "piConfigDirDescription": "Override the Pi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
-    "dshConfigDirDescription": "Override the DSH configuration directory (settings.yaml, credentials, profiles).",
+    "dshConfigDirDescription": "Override the DSH configuration directory (credentials, profiles).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
@@ -1269,6 +1269,7 @@
     }
   },
   "deepseekHarness": {
+    "desktopProfileHint": "Manages the Desktop desktop profile only. Running DSH needs enabled HMR or a restart to load file changes; CLI profiles are not changed.",
     "providerKey": "Provider Key",
     "providerKeyRequired": "Provider Key is required",
     "providerKeyDuplicate": "This Provider Key already exists",
@@ -1283,7 +1284,7 @@
     "modelsRequired": "Add at least one model",
     "credentialRef": "Credential Ref",
     "credentialRefHint": "Uppercase identifier used to store the API key in DSH credentials.",
-    "credentialRefInvalid": "Credential Ref must be an uppercase identifier using letters, digits, and underscores (for example CUSTOM_DSH_API_KEY).",
+    "credentialRefInvalid": "Credential Ref must be an uppercase identifier using letters, digits, and underscores (for example MY_GATEWAY_API_KEY).",
     "baseUrl": "Base URL",
     "baseUrlHint": "The base URL for the API endpoint.",
     "apiFormat": "API Format",
@@ -4240,8 +4241,7 @@
       "hermes": "Installs with the official script",
       "pi": "Installs with npm",
       "mcode": "Installs with the official script, falls back to npm",
-      "agy": "Installs with the official script",
-      "dsh": "Installs with npm"
+      "agy": "Installs with the official script"
     }
   },
   "appPage": {

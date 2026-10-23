@@ -4,6 +4,8 @@ export interface DshCurrentState {
   providerIds: string[];
   currentProviderId: string | null;
   currentModel: string | null;
+  /** Credential references the native routes currently use. */
+  credentialRefs: string[];
 }
 
 export const dshApi = {

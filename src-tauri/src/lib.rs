@@ -60,7 +60,7 @@ pub use config::{get_claude_mcp_path, get_claude_settings_path, read_json_file};
 pub use database::{Database, Profile};
 pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
 pub use deepseek_harness_config::{
-    get_credentials_path, get_dsh_home, get_profile_dir, get_settings_path,
+    get_credentials_path, get_dsh_home, get_profile_dir, get_profile_patch_path,
 };
 pub use error::AppError;
 pub use grok_config::get_grok_config_path;
