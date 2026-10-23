@@ -2238,6 +2238,26 @@ fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf>
     }
 }
 
+/// 在终端里启动 CLI 时用的可执行文件：按工具搜索路径找，跳过版本管理器的 shim 目录
+/// （mise/asdf/scoop 的 shim 可能已失效，例如 `mise ERROR codebuddy is not a valid shim`），
+/// 找不到真实安装时再退回 shim。都没有就返回 `None`，由调用方用裸命令名兜底。
+pub(crate) fn locate_cli_for_terminal(tool: &str) -> Option<std::path::PathBuf> {
+    let mut shim = None;
+    for dir in build_tool_search_paths(tool) {
+        let in_shims = dir.file_name().is_some_and(|name| name == "shims");
+        for candidate in tool_executable_candidates(tool, &dir) {
+            if !is_executable_file(&candidate) {
+                continue;
+            }
+            if !in_shims {
+                return Some(candidate);
+            }
+            shim.get_or_insert(candidate);
+        }
+    }
+    shim
+}
+
 fn extend_mise_node_search_paths(paths: &mut IndexSet<std::path::PathBuf>, home: &Path) {
     if home.as_os_str().is_empty() {
         return;
