@@ -1793,6 +1793,9 @@
       "model": "Model",
       "officialModelHint": "Boş bırakırsanız Copilot'un geçerli modeli kullanılır. Yalnızca bu oturum için --model olarak iletilir; copilot içindeki /model çalışmaya devam eder.",
       "byokModelHint": "Uç noktanızın beklediği model kimliği (COPILOT_MODEL).",
+      "reasoningEffort": "Akıl yürütme düzeyi",
+      "reasoningEffortDefault": "Copilot varsayılanı",
+      "reasoningEffortHint": "Terminal açılırken --reasoning-effort olarak iletilir. none seçildiğinde Copilot, Responses isteklerinde reasoning.summary göndermez; bazı aktarıcılar bu alanı kabul etmez.",
       "maxPromptTokens": "En fazla istem token'ı",
       "maxOutputTokens": "En fazla çıktı token'ı",
       "envJsonHint": "Gelişmiş: her COPILOT_PROVIDER_* değişkeni (ör. COPILOT_PROVIDER_MODEL_ID veya COPILOT_PROVIDER_BEARER_TOKEN) copilot'a olduğu gibi iletilir."

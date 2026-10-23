@@ -45,6 +45,13 @@ pub(crate) const TYPE_ENV: &str = "COPILOT_PROVIDER_TYPE";
 pub(crate) const WIRE_API_ENV: &str = "COPILOT_PROVIDER_WIRE_API";
 pub(crate) const HEADERS_ENV: &str = "COPILOT_PROVIDER_HEADERS";
 
+/// 卡片里的推理强度（`settingsConfig.reasoningEffort`），启动时作为 `--reasoning-effort`
+/// 传给 copilot：Copilot CLI 没有对应的环境变量或设置项。`none` 时 Copilot 不再在
+/// Responses 请求里带 `reasoning.summary`，不认这个字段的中转靠它才能用 Responses。
+pub(crate) const REASONING_EFFORT_KEY: &str = "reasoningEffort";
+pub(crate) const REASONING_EFFORTS: &[&str] =
+    &["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
 /// `~/.copilot`；设置了 `COPILOT_HOME` 时跟随它（CC Switch 进程需要继承这个环境变量）。
 pub fn copilot_dir() -> PathBuf {
     std::env::var_os("COPILOT_HOME")
@@ -128,6 +135,7 @@ pub(crate) fn has_managed_content(settings: &Value) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct CopilotProjection {
     pub model: Option<String>,
+    pub reasoning_effort: Option<String>,
     /// 自带模型的环境变量（不含 `COPILOT_MODEL`），只收非空值。
     pub byok: Vec<(&'static str, String)>,
 }
@@ -140,7 +148,17 @@ impl CopilotProjection {
             .iter()
             .filter_map(|key| env_string(env, key).map(|value| (*key, value)))
             .collect();
-        Self { model, byok }
+        let reasoning_effort = settings
+            .get(REASONING_EFFORT_KEY)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        Self {
+            model,
+            reasoning_effort,
+            byok,
+        }
     }
 
     pub(crate) fn get(&self, key: &str) -> Option<&str> {
@@ -204,6 +222,23 @@ pub(crate) fn validate_settings(settings: &Value) -> Result<(), AppError> {
                     format!("GitHub Copilot CLI environment variable {key} must not contain control characters"),
                 ));
             }
+        }
+    }
+    if let Some(value) = obj.get(REASONING_EFFORT_KEY) {
+        let valid = value.is_null()
+            || value
+                .as_str()
+                .map(str::trim)
+                .is_some_and(|text| text.is_empty() || REASONING_EFFORTS.contains(&text));
+        if !valid {
+            return Err(AppError::localized(
+                "copilot.validation.invalid_reasoning_effort",
+                format!("推理强度只能是 {}", REASONING_EFFORTS.join(" / ")),
+                format!(
+                    "Reasoning effort must be one of {}",
+                    REASONING_EFFORTS.join(" / ")
+                ),
+            ));
         }
     }
     let projection = CopilotProjection::of(settings);
@@ -279,6 +314,8 @@ pub(crate) struct CopilotLaunch {
     /// 只给这一个 copilot 进程的环境变量；`None` 表示要清掉（用户 rc 里可能 export 过）。
     pub env: Vec<(&'static str, Option<String>)>,
     pub byok: bool,
+    /// `--reasoning-effort`；没设时用 Copilot 自己的默认值。
+    pub reasoning_effort: Option<String>,
 }
 
 /// 准备在终端里启动某张卡。官方卡清掉所有 `COPILOT_PROVIDER_*`，免得 rc 里 export 的
@@ -291,6 +328,7 @@ pub(crate) fn prepare_launch(settings: &Value) -> Result<CopilotLaunch, AppError
             model: projection.model,
             env: BYOK_ENV_KEYS.iter().map(|key| (*key, None)).collect(),
             byok: false,
+            reasoning_effort: projection.reasoning_effort,
         });
     }
     let mut env: Vec<(&'static str, Option<String>)> = BYOK_ENV_KEYS
@@ -317,6 +355,7 @@ pub(crate) fn prepare_launch(settings: &Value) -> Result<CopilotLaunch, AppError
         model: None,
         env,
         byok: true,
+        reasoning_effort: projection.reasoning_effort,
     })
 }
 
@@ -412,6 +451,32 @@ mod tests {
 
         assert!(validate_settings(&json!({"env":{}})).is_ok());
         assert!(validate_settings(&json!({"env":{"COPILOT_MODEL":"auto"}})).is_ok());
+    }
+
+    #[test]
+    fn reasoning_effort_is_validated_and_passed_to_both_card_kinds() {
+        let mut settings = byok();
+        settings[REASONING_EFFORT_KEY] = json!("none");
+        assert_eq!(
+            prepare_launch(&settings)
+                .unwrap()
+                .reasoning_effort
+                .as_deref(),
+            Some("none")
+        );
+        let official = json!({"env":{"COPILOT_MODEL":"gpt-5-mini"},"reasoningEffort":"high"});
+        assert_eq!(
+            prepare_launch(&official)
+                .unwrap()
+                .reasoning_effort
+                .as_deref(),
+            Some("high")
+        );
+        assert_eq!(prepare_launch(&byok()).unwrap().reasoning_effort, None);
+        settings[REASONING_EFFORT_KEY] = json!("turbo");
+        assert!(validate_settings(&settings).is_err());
+        settings[REASONING_EFFORT_KEY] = json!(3);
+        assert!(validate_settings(&settings).is_err());
     }
 
     #[test]

@@ -1838,6 +1838,9 @@
       "model": "モデル",
       "officialModelHint": "空欄なら Copilot の現在のモデルを使います。--model として渡され、このセッションにのみ適用されます。copilot 内の /model も使えます。",
       "byokModelHint": "エンドポイントが要求するモデル ID（COPILOT_MODEL）。",
+      "reasoningEffort": "推論の強さ",
+      "reasoningEffortDefault": "Copilot の既定値",
+      "reasoningEffortHint": "ターミナルを開くときに --reasoning-effort として渡します。none を選ぶと、Copilot は Responses リクエストに reasoning.summary を付けません（このフィールドを受け付けない中継があります）。",
       "maxPromptTokens": "最大入力トークン",
       "maxOutputTokens": "最大出力トークン",
       "envJsonHint": "上級者向け：任意の COPILOT_PROVIDER_* 変数（COPILOT_PROVIDER_MODEL_ID、COPILOT_PROVIDER_BEARER_TOKEN など）はそのまま copilot に渡されます。"

@@ -26,6 +26,7 @@ Copilot CLI 的自带模型只能经进程环境变量 `COPILOT_PROVIDER_*` 配�
 - 卡片里存的就是这些环境变量：`{ "env": { "COPILOT_PROVIDER_BASE_URL": …, "COPILOT_PROVIDER_TYPE": …, "COPILOT_PROVIDER_WIRE_API": …, "COPILOT_PROVIDER_API_KEY": …, "COPILOT_MODEL": … } }`。其他 `COPILOT_PROVIDER_*`（`BEARER_TOKEN`、`MODEL_ID`、`WIRE_MODEL`、`MAX_PROMPT_TOKENS`、`MAX_OUTPUT_TOKENS`、`HEADERS`、`TRANSPORT`、`AZURE_API_VERSION`）可在环境变量 JSON 里填写。
 - 「打开终端」：macOS / Linux 的启动脚本先读入一个 `0600` 的临时文件，读完立即删除，再经 `env` 把变量交给这一个 copilot 进程；Windows 写进 `.bat` 的 `setlocal` 段。Key 不出现在命令行参数里，也不写进任何常驻文件。卡上没填的同名变量会被 `env -u` 清掉，避免与用户 rc 里 export 的值混用；官方卡会清掉全部 `COPILOT_PROVIDER_*`，防止 rc 里的 BYOK 变量把它悄悄变成自带模型。
 - `COPILOT_PROVIDER_HEADERS` 的多行值在传给进程前转成字面量 `\n` 分隔（Copilot CLI 同样认这种写法），以便 Windows 批处理也能承载。
+- 卡片可选「推理强度」（`settingsConfig.reasoningEffort`：none / minimal / low / medium / high / xhigh / max），「打开终端」时作为 `--reasoning-effort` 传入；Copilot CLI 没有对应的环境变量或设置项。Responses 接口下 Copilot 默认在请求里带 `reasoning.summary`，不认这个字段的中转会返回 400（如 `unknown field "summary"`）；选 `none` 时不带这个字段（实测本地中转 + DeepSeek 可正常回复）。
 - `~/.copilot/settings.json` 不被供应商功能改写；直接运行 `copilot` 永远是 Copilot 自己的登录和 `/model` 选择。
 
 保存前校验：值必须是字符串、不能含控制字符（`HEADERS` 允许换行）；有凭据或选项时必须有地址；自带模型必须有模型（`COPILOT_MODEL`、`COPILOT_PROVIDER_MODEL_ID` 或 `COPILOT_PROVIDER_WIRE_MODEL`）；协议、接口、传输取值与 token 上限必须是 Copilot CLI 认的值。

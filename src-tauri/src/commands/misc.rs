@@ -5084,7 +5084,7 @@ fn copilot_terminal_launch(
             env.push(("COPILOT_GH_HOST", Some(domain)));
         }
     }
-    let (args, batch_command, batch_vars) = match launch.model {
+    let (mut args, mut batch_command, batch_vars) = match launch.model {
         Some(model) => (
             vec![format!("--model={model}")],
             format!("copilot \"--model=%{COPILOT_MODEL_BATCH_VAR}%\""),
@@ -5092,6 +5092,11 @@ fn copilot_terminal_launch(
         ),
         None => (Vec::new(), "copilot".to_string(), Vec::new()),
     };
+    // 只会是 copilot_config::REASONING_EFFORTS 里的小写单词（已校验），可以直接写进命令。
+    if let Some(effort) = launch.reasoning_effort {
+        args.push(format!("--reasoning-effort={effort}"));
+        batch_command.push_str(&format!(" --reasoning-effort={effort}"));
+    }
     Ok(ProviderLaunch {
         title: if launch.byok {
             "Starting GitHub Copilot CLI with this provider's model"
@@ -6786,6 +6791,28 @@ mod tests {
         assert!(env_file.contains("gpt-5.4"));
         assert!(!env_file.contains("gho_x"));
         assert_eq!(launch.batch_command, "copilot");
+    }
+
+    #[test]
+    fn copilot_launch_passes_the_card_reasoning_effort() {
+        let row = crate::provider::Provider::with_id(
+            "relay".into(),
+            "Relay".into(),
+            serde_json::json!({"env":{
+                "COPILOT_PROVIDER_BASE_URL":"https://relay.test/v1",
+                "COPILOT_PROVIDER_API_KEY":"fixture-key",
+                "COPILOT_PROVIDER_WIRE_API":"responses",
+                "COPILOT_MODEL":"deepseek-v4-flash"
+            },"reasoningEffort":"none"}),
+            None,
+        );
+        let launch = copilot_terminal_launch(&row, None).unwrap();
+        assert!(
+            unix_launch_command(&launch).ends_with(" copilot --reasoning-effort=none"),
+            "{}",
+            unix_launch_command(&launch)
+        );
+        assert_eq!(launch.batch_command, "copilot --reasoning-effort=none");
     }
 
     #[test]

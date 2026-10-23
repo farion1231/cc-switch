@@ -1839,6 +1839,9 @@
       "model": "模型",
       "officialModelHint": "留空則使用 Copilot 目前的模型。以 --model 傳入，只對這次工作階段生效；copilot 裡的 /model 照常可用。",
       "byokModelHint": "介面要求的模型 ID（COPILOT_MODEL）。",
+      "reasoningEffort": "推理強度",
+      "reasoningEffortDefault": "Copilot 預設",
+      "reasoningEffortHint": "開啟終端機時作為 --reasoning-effort 傳入。選 none 時 Copilot 不再在 Responses 請求裡帶 reasoning.summary，部分中轉不認這個欄位。",
       "maxPromptTokens": "最大輸入 Token",
       "maxOutputTokens": "最大輸出 Token",
       "envJsonHint": "進階：任意 COPILOT_PROVIDER_* 變數（如 COPILOT_PROVIDER_MODEL_ID、COPILOT_PROVIDER_BEARER_TOKEN）都會原樣傳給 copilot。"

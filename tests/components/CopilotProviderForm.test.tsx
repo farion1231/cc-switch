@@ -105,6 +105,49 @@ describe("CopilotProviderForm", () => {
     expect(screen.queryByText("copilot.form.providerType")).toBeNull();
   });
 
+  it("keeps the card reasoning effort next to the environment", async () => {
+    const submit = setup({ ...byok, reasoningEffort: "none" });
+    expect(
+      screen.getByRole("combobox", { name: "copilot.form.reasoningEffort" }),
+    ).toHaveTextContent("none");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(JSON.parse(submit.mock.calls[0][0].settingsConfig)).toEqual({
+      ...byok,
+      reasoningEffort: "none",
+    });
+  });
+
+  it("keeps new header rows as drafts instead of saving them upstream", async () => {
+    const submit = setup(byok);
+    const add = screen.getByRole("button", { name: "Add header" });
+    fireEvent.click(add);
+    fireEvent.click(add);
+    expect(screen.getAllByRole("textbox", { name: "Header" })).toHaveLength(2);
+    expect(screen.queryByDisplayValue("draft-header")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
+    expect(saved.env.COPILOT_PROVIDER_HEADERS).toBeUndefined();
+  });
+
+  it("saves edited header rows as Copilot header lines", async () => {
+    const submit = setup(byok);
+    fireEvent.click(screen.getByRole("button", { name: "Add header" }));
+    const nameInput = screen.getByRole("textbox", {
+      name: "Header",
+    });
+    fireEvent.change(nameInput, { target: { value: "X-Tenant" } });
+    fireEvent.blur(nameInput);
+    fireEvent.change(screen.getByRole("textbox", { name: "Value" }), {
+      target: { value: "team-a" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
+    expect(saved.env.COPILOT_PROVIDER_HEADERS).toBe("X-Tenant: team-a");
+  });
+
   it("fetches models from the BYOK endpoint with the card's key", async () => {
     fetchModels.mockResolvedValueOnce([
       { id: "deepseek-v4-pro", ownedBy: null },

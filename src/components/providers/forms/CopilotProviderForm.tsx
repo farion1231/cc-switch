@@ -68,6 +68,32 @@ function parseHeaders(text: string | undefined): Record<string, string> {
   return headers;
 }
 
+/** Copilot CLI `--reasoning-effort` 的取值（与后端 `REASONING_EFFORTS` 一致）。 */
+const REASONING_EFFORTS = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+const DEFAULT_EFFORT = "default";
+
+function reasoningEffortOf(settingsConfig: unknown): string {
+  const value = (settingsConfig as { reasoningEffort?: unknown } | undefined)
+    ?.reasoningEffort;
+  return typeof value === "string" &&
+    (REASONING_EFFORTS as readonly string[]).includes(value.trim())
+    ? value.trim()
+    : "";
+}
+
+/** 卡片配置：`env` 之外只有可选的 `reasoningEffort`，没设时不写这个键。 */
+function cardConfig(env: CopilotEnv, reasoningEffort: string) {
+  return reasoningEffort ? { env, reasoningEffort } : { env };
+}
+
 const presetModels = (models?: string[]): FetchedModel[] =>
   (models ?? []).map((id) => ({ id, ownedBy: null }));
 
@@ -87,10 +113,27 @@ export function CopilotProviderForm({
   const [env, setEnv] = useState<CopilotEnv>(() =>
     copilotEnvOf(initialData?.settingsConfig),
   );
+  const [reasoningEffort, setReasoningEffort] = useState(() =>
+    reasoningEffortOf(initialData?.settingsConfig),
+  );
   const [text, setText] = useState(() =>
-    JSON.stringify({ env: copilotEnvOf(initialData?.settingsConfig) }, null, 2),
+    JSON.stringify(
+      cardConfig(
+        copilotEnvOf(initialData?.settingsConfig),
+        reasoningEffortOf(initialData?.settingsConfig),
+      ),
+      null,
+      2,
+    ),
   );
   const [jsonValid, setJsonValid] = useState(true);
+  // 请求头编辑器的行放在组件状态里：新行的草稿键（draft-header:<时间戳>）本身带冒号，
+  // 不能经 COPILOT_PROVIDER_HEADERS 的「名称: 值」文本往返，否则会变成真的请求头。
+  const [headers, setHeaders] = useState<Record<string, string>>(() =>
+    parseHeaders(
+      copilotEnvOf(initialData?.settingsConfig)[COPILOT_ENV.headers],
+    ),
+  );
   const [presetId, setPresetId] = useState(
     isEdit ? "custom" : COPILOT_OFFICIAL_PRESET_ID,
   );
@@ -123,9 +166,15 @@ export function CopilotProviderForm({
   });
   const name = form.watch("name");
 
-  const update = (next: CopilotEnv) => {
+  const update = (
+    next: CopilotEnv,
+    effort = reasoningEffort,
+    nextHeaders = parseHeaders(next[COPILOT_ENV.headers]),
+  ) => {
     setEnv(next);
-    setText(JSON.stringify({ env: next }, null, 2));
+    setHeaders(nextHeaders);
+    setReasoningEffort(effort);
+    setText(JSON.stringify(cardConfig(next, effort), null, 2));
     setJsonValid(true);
   };
   const setField = (key: string, value: string) =>
@@ -216,6 +265,7 @@ export function CopilotProviderForm({
                 [COPILOT_ENV.apiKey]: "",
                 [COPILOT_ENV.model]: "",
               },
+          "",
         );
         setFetchedModels(presetModels(next?.models));
         form.reset({
@@ -264,7 +314,7 @@ export function CopilotProviderForm({
         meta,
         presetId: presetId === "custom" ? undefined : presetId,
         presetCategory: category,
-        settingsConfig: JSON.stringify({ env: saved }),
+        settingsConfig: JSON.stringify(cardConfig(saved, reasoningEffort)),
       });
     } finally {
       setBusy(false);
@@ -399,6 +449,36 @@ export function CopilotProviderForm({
               isLoading={isFetchingModels}
             />
           </div>
+          <div className="space-y-2">
+            <div className="flex items-center gap-0.5">
+              <Label htmlFor="copilot-reasoning-effort">
+                {t("copilot.form.reasoningEffort")}
+              </Label>
+              <HelpTip title={t("copilot.form.reasoningEffort")}>
+                {t("copilot.form.reasoningEffortHint")}
+              </HelpTip>
+            </div>
+            <Select
+              value={reasoningEffort || DEFAULT_EFFORT}
+              onValueChange={(value) =>
+                update(env, value === DEFAULT_EFFORT ? "" : value)
+              }
+            >
+              <SelectTrigger id="copilot-reasoning-effort" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={DEFAULT_EFFORT}>
+                  {t("copilot.form.reasoningEffortDefault")}
+                </SelectItem>
+                {REASONING_EFFORTS.map((effort) => (
+                  <SelectItem key={effort} value={effort}>
+                    {effort}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           {!isOfficial && (
             <>
               <div className="grid grid-cols-2 gap-3">
@@ -436,10 +516,16 @@ export function CopilotProviderForm({
                 </div>
               </div>
               <RequestHeadersEditor
-                headers={parseHeaders(env[COPILOT_ENV.headers])}
-                onHeadersChange={(headers) =>
-                  setField(COPILOT_ENV.headers, formatCopilotHeaders(headers))
-                }
+                headers={headers}
+                onHeadersChange={(next) => {
+                  const text = formatCopilotHeaders(
+                    normalizeRequestHeaders(next),
+                  );
+                  const nextEnv: CopilotEnv = { ...env };
+                  if (text) nextEnv[COPILOT_ENV.headers] = text;
+                  else delete nextEnv[COPILOT_ENV.headers];
+                  update(nextEnv, reasoningEffort, next);
+                }}
               />
             </>
           )}
@@ -470,7 +556,12 @@ export function CopilotProviderForm({
                   typeof parsed === "object" &&
                   !Array.isArray(parsed);
                 setJsonValid(valid);
-                if (valid) setEnv(copilotEnvOf(parsed));
+                if (valid) {
+                  const parsedEnv = copilotEnvOf(parsed);
+                  setEnv(parsedEnv);
+                  setHeaders(parseHeaders(parsedEnv[COPILOT_ENV.headers]));
+                  setReasoningEffort(reasoningEffortOf(parsed));
+                }
               } catch {
                 setJsonValid(false);
               }

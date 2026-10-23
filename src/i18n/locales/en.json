@@ -1838,6 +1838,9 @@
       "model": "Model",
       "officialModelHint": "Leave empty to use Copilot's current model. Passed as --model for this session only; /model in copilot still works.",
       "byokModelHint": "The model ID your endpoint expects (COPILOT_MODEL).",
+      "reasoningEffort": "Reasoning effort",
+      "reasoningEffortDefault": "Copilot default",
+      "reasoningEffortHint": "Passed as --reasoning-effort when the terminal opens. With none, Copilot doesn't send reasoning.summary on Responses requests, which some relays reject.",
       "maxPromptTokens": "Max prompt tokens",
       "maxOutputTokens": "Max output tokens",
       "envJsonHint": "Advanced: any COPILOT_PROVIDER_* variable (for example COPILOT_PROVIDER_MODEL_ID or COPILOT_PROVIDER_BEARER_TOKEN) is passed to copilot as-is."
