@@ -366,3 +366,142 @@ fn auth_dir_can_be_overridden() {
             .join("auth")
     ));
 }
+
+// ---------- 额度 ----------
+
+#[test]
+fn quota_base_url_only_for_known_sites() {
+    assert_eq!(
+        quota::base_url(Some("www.codebuddy.cn")).as_deref(),
+        Some("https://www.codebuddy.cn")
+    );
+    assert_eq!(
+        quota::base_url(Some("WWW.CodeBuddy.ai")).as_deref(),
+        Some("https://www.codebuddy.ai")
+    );
+    assert_eq!(
+        quota::base_url(Some("acme.sso.copilot.qq.com")).as_deref(),
+        Some("https://acme.sso.copilot.qq.com")
+    );
+    assert_eq!(quota::base_url(None), None);
+    assert_eq!(quota::base_url(Some("evil.example.com")), None);
+    assert_eq!(quota::base_url(Some("codebuddy.cn.evil.com")), None);
+    assert_eq!(quota::base_url(Some("evilcodebuddy.cn")), None);
+    assert_eq!(quota::base_url(Some("www.codebuddy.cn/x")), None);
+    assert_eq!(quota::base_url(Some("www.codebuddy.cn:8443")), None);
+}
+
+#[test]
+fn quota_parses_personal_summary() {
+    let body = br#"{"code":0,"msg":"OK","data":{
+        "Packages":[
+            {"PackageCode":"a","CycleTotalCapacity":"100","CycleRemainCapacity":"60.5","CycleUsedCapacity":"39.5"},
+            {"PackageCode":"b","CycleTotalCapacity":50,"CycleRemainCapacity":"50","CycleUsedCapacity":"0"}
+        ],
+        "SubscriptionPackageName":" Plan ","IsPaidUser":true}}"#;
+    let quota::ParseOutcome::Ok(credits) = quota::parse_personal(body) else {
+        panic!("should parse");
+    };
+    assert_eq!(credits.plan_name.as_deref(), Some("Plan"));
+    assert!(credits.is_paid);
+    assert!(!credits.enterprise);
+    assert_eq!(credits.total, 150.0);
+    assert_eq!(credits.remaining, 110.5);
+    assert_eq!(credits.used, 39.5);
+
+    let empty = br#"{"code":0,"data":{"SubscriptionPackageName":""}}"#;
+    let quota::ParseOutcome::Ok(credits) = quota::parse_personal(empty) else {
+        panic!("should parse");
+    };
+    assert_eq!(credits.plan_name, None);
+    assert_eq!(credits.total, 0.0);
+}
+
+#[test]
+fn quota_reports_business_errors() {
+    assert_eq!(
+        quota::parse_personal(br#"{"code":10085,"msg":"bad request"}"#),
+        quota::ParseOutcome::Rejected("bad request".into())
+    );
+    assert_eq!(
+        quota::parse_personal(br#"{"code":0}"#),
+        quota::ParseOutcome::Rejected("CodeBuddy 没有返回额度".into())
+    );
+    assert!(matches!(
+        quota::parse_personal(b"<html>"),
+        quota::ParseOutcome::Rejected(_)
+    ));
+}
+
+#[test]
+fn quota_parses_enterprise_usage() {
+    let quota::ParseOutcome::Ok(credits) =
+        quota::parse_enterprise(br#"{"code":0,"data":{"limit_num":1000,"used_num":250}}"#)
+    else {
+        panic!("should parse");
+    };
+    assert!(credits.enterprise && !credits.unlimited);
+    assert_eq!(
+        (credits.total, credits.remaining, credits.used),
+        (1000.0, 750.0, 250.0)
+    );
+
+    let quota::ParseOutcome::Ok(credits) =
+        quota::parse_enterprise(br#"{"code":0,"data":{"limitNum":-1,"credit":12}}"#)
+    else {
+        panic!("should parse");
+    };
+    assert!(credits.unlimited);
+    assert_eq!((credits.total, credits.used), (0.0, 12.0));
+}
+
+#[test]
+fn quota_credentials_and_expiry() {
+    let raw = r#"{"auth":{"accessToken":"t","domain":"www.codebuddy.cn","expiresAt":2000,"refreshExpiresAt":5000},
+        "account":{"uid":"u1","enterpriseId":" "}}"#;
+    let creds = quota::credentials_of(raw).unwrap();
+    assert_eq!(creds.uid, "u1");
+    assert_eq!(creds.enterprise_id, None);
+    assert!(!format!("{creds:?}").contains("\"t\""));
+    // 小于 1e12 的时间戳按秒算：access 2_000_000 ms，refresh 5_000_000 ms
+    assert!(quota::expired_status(&creds, 1_000_000).is_none());
+    assert!(matches!(
+        quota::expired_status(&creds, 3_000_000),
+        Some(crate::services::subscription::CredentialStatus::RefreshPending)
+    ));
+    let creds = quota::QuotaCredentials {
+        access_expires_at: Some(1_000_000),
+        refresh_expires_at: Some(5_000_000),
+        ..creds
+    };
+    assert!(quota::expired_status(&creds, 500_000).is_none());
+    assert!(matches!(
+        quota::expired_status(&creds, 2_000_000),
+        Some(crate::services::subscription::CredentialStatus::RefreshPending)
+    ));
+    assert!(matches!(
+        quota::expired_status(&creds, 6_000_000),
+        Some(crate::services::subscription::CredentialStatus::Expired)
+    ));
+    assert!(quota::credentials_of(r#"{"auth":{},"account":{"uid":"1"}}"#).is_none());
+}
+
+#[tokio::test]
+async fn quota_does_not_query_with_expired_tokens() {
+    let fx = Fixture::new();
+    let mut value: Value = serde_json::from_str(&credential("100", CN, "a1", "s1")).unwrap();
+    value["auth"]["expiresAt"] = json!(1_000);
+    let raw = serde_json::to_string(&value).unwrap();
+    fx.set_live(&raw);
+    let account = fx.manager.import_current().await.unwrap();
+    let quota = fx.manager.quota(&account.id, "zh-CN", false).await.unwrap();
+    assert!(!quota.success);
+    assert!(matches!(
+        quota.credential_status,
+        crate::services::subscription::CredentialStatus::RefreshPending
+    ));
+    // 没查到的不进缓存，文件没被动过
+    assert!(fx.manager.quota_cache.lock().await.is_empty());
+    assert_eq!(fx.live(), raw);
+    assert!(fx.manager.quota("nope@x", "en", false).await.is_err());
+}

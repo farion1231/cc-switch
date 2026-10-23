@@ -17,6 +17,11 @@
 //!   再读回核对。
 //! - 从 CC Switch 删账号只删自己的副本，永远不动 CodeBuddy 的文件（不替它登出）。
 //! - 不往 settings.json 的 env 写 `CODEBUDDY_API_KEY` / `CODEBUDDY_AUTH_TOKEN`。
+//! - 额度只用副本里的 accessToken 只读查询，不续期（见 [`quota`]）。
+
+mod quota;
+
+pub use quota::CodebuddyQuota;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -258,6 +263,8 @@ pub struct CodebuddyAccountManager {
     /// 账号表；同时充当所有改动（含写凭据文件）的进程内互斥锁
     store: Mutex<StoreFile>,
     pending: Mutex<HashMap<String, PendingLogin>>,
+    /// 额度缓存：`(账号 id, 语言)` → (查询时刻, 结果)
+    quota_cache: Mutex<HashMap<(String, String), (Instant, CodebuddyQuota)>>,
 }
 
 impl CodebuddyAccountManager {
@@ -283,6 +290,7 @@ impl CodebuddyAccountManager {
             auth_dir,
             store: Mutex::new(store),
             pending: Mutex::new(HashMap::new()),
+            quota_cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -489,6 +497,10 @@ impl CodebuddyAccountManager {
         if store.accounts.remove(account_id).is_none() {
             return Err(account_not_found(account_id));
         }
+        self.quota_cache
+            .lock()
+            .await
+            .retain(|(id, _), _| id != account_id);
         self.persist(&store)
     }
 
@@ -496,8 +508,74 @@ impl CodebuddyAccountManager {
         let mut store = self.store.lock().await;
         let removed: Vec<String> = store.accounts.keys().cloned().collect();
         store.accounts.clear();
+        self.quota_cache.lock().await.clear();
         self.persist(&store)?;
         Ok(removed)
+    }
+
+    // ---------- 额度 ----------
+
+    /// 这个账号的套餐与积分。先把凭据文件里现在那份收回来（当前登录的号用 CodeBuddy 刚续过的
+    /// 令牌），再用副本里的 accessToken 只读查询；令牌过期时不查也不续期。`force` 跳过缓存。
+    pub async fn quota(
+        &self,
+        account_id: &str,
+        lang: &str,
+        force: bool,
+    ) -> Result<CodebuddyQuota, AppError> {
+        let lang = if lang.to_ascii_lowercase().starts_with("zh") {
+            "zh"
+        } else {
+            "en"
+        };
+        let key = (account_id.to_string(), lang.to_string());
+        if !force {
+            if let Some((at, cached)) = self.quota_cache.lock().await.get(&key) {
+                if at.elapsed() < quota::QUOTA_CACHE_TTL {
+                    return Ok(cached.clone());
+                }
+            }
+        }
+
+        let raw = {
+            let mut store = self.store.lock().await;
+            let live = self.read_live();
+            let (_, changed) = absorb(&mut store, &live, false);
+            if changed {
+                self.persist(&store)?;
+            }
+            store
+                .accounts
+                .get(account_id)
+                .map(|account| account.raw.clone())
+                .ok_or_else(|| account_not_found(account_id))?
+        };
+        let Some(creds) = quota::credentials_of(&raw) else {
+            return Ok(CodebuddyQuota::failed(
+                crate::services::subscription::CredentialStatus::ParseError,
+                "这个账号的登录信息认不出",
+            ));
+        };
+        let result = match quota::expired_status(&creds, now_ms()) {
+            Some(status) => {
+                let message = match status {
+                    crate::services::subscription::CredentialStatus::Expired => {
+                        "CodeBuddy 登录已过期"
+                    }
+                    _ => "令牌待 CodeBuddy 续期",
+                };
+                CodebuddyQuota::failed(status, message)
+            }
+            None => quota::fetch(&creds, lang).await,
+        };
+        // 只缓存查到的；失败的下次再试
+        if result.success {
+            self.quota_cache
+                .lock()
+                .await
+                .insert(key, (Instant::now(), result.clone()));
+        }
+        Ok(result)
     }
 
     // ---------- 内部 ----------

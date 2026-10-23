@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use crate::commands::auth::{map_codebuddy_account, ManagedAuthAccount};
-use crate::services::codebuddy_account::{CodebuddyAccountManager, CodebuddyLiveSummary};
+use crate::services::codebuddy_account::{
+    CodebuddyAccountManager, CodebuddyLiveSummary, CodebuddyQuota,
+};
 
 pub struct CodebuddyAccountState(pub Arc<CodebuddyAccountManager>);
 
@@ -90,4 +92,24 @@ pub async fn codebuddy_account_import_current(
 #[tauri::command]
 pub async fn codebuddy_account_open_login_terminal() -> Result<(), String> {
     open_codebuddy_login_terminal().await
+}
+
+/// 授权中心账号行的套餐与积分：用这个账号副本里的令牌只读查询，不切号、不续期。
+/// 5 分钟内重复查询走缓存，`force` 为 true（手动刷新）时跳过缓存。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn codebuddy_account_quota(
+    account_id: String,
+    lang: Option<String>,
+    force: Option<bool>,
+    state: tauri::State<'_, CodebuddyAccountState>,
+) -> Result<CodebuddyQuota, String> {
+    state
+        .0
+        .quota(
+            &account_id,
+            lang.as_deref().unwrap_or("zh"),
+            force.unwrap_or(false),
+        )
+        .await
+        .map_err(|e| e.to_string())
 }
