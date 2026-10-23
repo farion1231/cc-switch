@@ -341,6 +341,9 @@ impl<F: FnMut(&Path) -> Result<Vec<Value>, String>> AgyUsageSync<'_, F> {
             }
         };
         // Drop the parent's transcript before loading any child transcript.
+        // 这里以 agy 重写日志会保留已完成的子代理创建记录为前提，重复同步仍使用这些记录解析模型。
+        // 模型为 None 表示没有可确定的继承模型，不等同于读取或 JSON 解析失败；
+        // 此时仍读取子代理自身日志，使用其自身的模型依据。
         for (child, model) in resolved {
             if self.graph.incoming.get(&child.session_id) == Some(&1) {
                 self.visit_session(&child.session_id, model.as_deref());
@@ -539,7 +542,9 @@ fn resolve_child_model(
         let sub_index = result.ids.iter().position(|id| id == session)?;
         candidates = vec![arguments[call_index].as_ref()?[sub_index]];
     }
-    // 先读匹配调用的 Model：显式值不依赖祖先模型；省略或空字符串沿用默认 inherit。
+    // 原生 agy 将显式模型写在 invoke_subagent 参数的 Model 中（如 flash/pro），
+    // 而非 PLANNER_RESPONSE 顶层的 model。先读匹配调用的 Model，显式值不依赖祖先模型；
+    // 仅省略、空字符串或 inherit 才使用父代理的模型时间线。
     // inherit 直接读取父代理在真实创建步的模型状态，不再向上查找祖先。
     let models = candidates
         .into_iter()
