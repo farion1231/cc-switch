@@ -2248,6 +2248,8 @@
       "actionEllipsis": "重建 Codex 用量"
     },
     "totalRecords": "共 {{total}} 条记录",
+    "pageSize": "每页 {{count}} 条",
+    "pageSizeLabel": "每页条数",
     "goToPage": "跳转",
     "pageInputPlaceholder": "页码",
     "modelPricing": "模型定价",
@@ -2382,16 +2384,14 @@
     "cacheReadCostPerMillion": "缓存读取成本 (每百万 tokens, USD)",
     "cacheCreationCostPerMillion": "缓存写入成本 (每百万 tokens, USD)",
     "syncStatus": {
-      "auto": "会话日志 · 自动扫描",
-      "justNow": "会话日志 · 刚刚同步",
-      "minutesAgo": "会话日志 · {{count}} 分钟前同步",
-      "off": "会话日志 · 自动扫描已关闭",
-      "tipAuto": "后台每 10 分钟扫描一次；打开用量页时按右侧间隔扫描",
-      "tipOff": "只在手动同步时扫描会话日志"
+      "justNow": "刚刚同步",
+      "minutesAgo": "{{count}} 分钟前同步",
+      "syncing": "同步中…",
+      "tip": "点击立即同步",
+      "tipOff": "自动扫描已关闭，点击立即同步"
     },
     "refreshMenu": {
-      "label": "每 {{seconds}} 秒扫描",
-      "seconds": "{{seconds}} 秒"
+      "label": "每 {{seconds}} 秒扫描"
     },
     "dataSources": "数据来源",
     "display": {
@@ -2411,7 +2411,6 @@
       },
       "sidebarTodayLimit": "最多选 {{count}} 项",
       "logColumns": "请求日志的列",
-      "logColumnsSummary": "{{shown}} / {{total}} 列",
       "trendChartType": "趋势图样式",
       "trendChartTypes": {
         "bar": "柱形图",
@@ -2450,16 +2449,17 @@
       "requests": "请求",
       "tokens": "Tokens",
       "cost": "成本",
-      "requestsLegend": "请求数"
+      "requestsLegend": "请求数",
+      "titleMetric": "{{metric}} · {{granularity}}",
+      "hourly": "按小时",
+      "daily": "按天"
     },
     "tabs": {
       "label": "明细",
       "providers": "供应商",
       "models": "模型",
-      "pricing": "定价",
-      "settings": "设置"
+      "pricing": "定价"
     },
-    "sortedByRequests": "按请求数排序",
     "app": "应用",
     "speed": "速度",
     "speedValue": "{{value}} tok/s",
@@ -2496,7 +2496,6 @@
       "performance": "性能",
       "source": "来源",
       "sourceProxy": "路由服务 · 状态码 {{code}}",
-      "sourceSession": "会话日志",
       "total": "合计",
       "firstToken": "首字",
       "firstTokenEstimated": "首字（估算）",
@@ -2550,7 +2549,12 @@
       "cacheWrite": "缓存写入"
     },
     "prevMonth": "上个月",
-    "nextMonth": "下个月"
+    "nextMonth": "下个月",
+    "settings": {
+      "title": "用量设置",
+      "pricingSummary": "按模型设置每百万 Tokens 的价格，可从 models.dev 同步",
+      "managePricing": "管理定价…"
+    }
   },
   "usageScript": {
     "title": "配置用量查询",
@@ -4915,7 +4919,7 @@
     "oauth": {
       "useAccount": "使用此账号",
       "title": "Kimi Code 官方登录",
-      "description": "使用 Kimi 账号登录编程套餐，登录完成后自动添加官方模型。",
+      "description": "可添加多个 Kimi 编程套餐账号，各自保存凭据和供应商。在此管理登录，再选择账号使用其官方模型。",
       "region": "登录区域",
       "mainland-cn": "国内版",
       "global": "海外版",
@@ -4936,7 +4940,11 @@
       "denied": "授权已被拒绝，请重新登录。",
       "cancelled": "登录已取消或被其他登录替代，请重新登录。",
       "success": "Kimi Code 登录成功，已添加官方模型。",
-      "signOutConfirm": "这会移除 Kimi Code 当前区域的本机登录凭据，Kimi Code 也将退出登录。供应商、模型和当前模型选择会保留。"
+      "signOutConfirm": "退出 {{name}}？仅移除此账号的本机凭据，其他账号、供应商、模型和当前模型选择会保留。",
+      "addAccount": "添加账号",
+      "accountCount": "已保存 {{count}} 个账号",
+      "manageAccounts": "管理 Kimi 账号",
+      "managedHint": "请在授权中心管理 Kimi 官方账号。"
     },
     "modelSelectionHint": "点击供应商卡片的切换按钮选择默认供应商；需要指定其他模型时，在 Kimi Code 中使用 /model。",
     "providerType": "供应商类型",

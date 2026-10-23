@@ -2248,6 +2248,8 @@
       "actionEllipsis": "Codex 使用量を再構築"
     },
     "totalRecords": "全 {{total}} 件",
+    "pageSize": "{{count}} 件/ページ",
+    "pageSizeLabel": "1 ページの件数",
     "goToPage": "移動",
     "pageInputPlaceholder": "ページ",
     "modelPricing": "モデル料金",
@@ -2382,16 +2384,14 @@
     "cacheReadCostPerMillion": "キャッシュ読み取りコスト（100万トークンあたり、USD）",
     "cacheCreationCostPerMillion": "キャッシュ書き込みコスト（100万トークンあたり、USD）",
     "syncStatus": {
-      "auto": "セッションログ · 自動スキャン",
-      "justNow": "セッションログ · たった今同期",
-      "minutesAgo": "セッションログ · {{count}} 分前に同期",
-      "off": "セッションログ · 自動スキャンはオフ",
-      "tipAuto": "バックグラウンドでは 10 分ごとにスキャン。このページを開いている間は右側の間隔でスキャンします",
-      "tipOff": "手動で同期したときだけセッションログをスキャンします"
+      "justNow": "たった今同期",
+      "minutesAgo": "{{count}} 分前に同期",
+      "syncing": "同期中…",
+      "tip": "クリックして今すぐ同期",
+      "tipOff": "自動スキャンはオフです。クリックして今すぐ同期"
     },
     "refreshMenu": {
-      "label": "{{seconds}} 秒ごとにスキャン",
-      "seconds": "{{seconds}} 秒"
+      "label": "{{seconds}} 秒ごとにスキャン"
     },
     "dataSources": "データソース",
     "display": {
@@ -2411,7 +2411,6 @@
       },
       "sidebarTodayLimit": "最大 {{count}} 項目まで",
       "logColumns": "リクエストログの列",
-      "logColumnsSummary": "{{shown}} / {{total}} 列",
       "trendChartType": "トレンドグラフの種類",
       "trendChartTypes": {
         "bar": "棒グラフ",
@@ -2450,16 +2449,17 @@
       "requests": "リクエスト",
       "tokens": "Tokens",
       "cost": "コスト",
-      "requestsLegend": "リクエスト数"
+      "requestsLegend": "リクエスト数",
+      "titleMetric": "{{metric}} · {{granularity}}",
+      "hourly": "1 時間ごと",
+      "daily": "1 日ごと"
     },
     "tabs": {
       "label": "明細",
       "providers": "プロバイダー",
       "models": "モデル",
-      "pricing": "料金",
-      "settings": "設定"
+      "pricing": "料金"
     },
-    "sortedByRequests": "リクエスト数順",
     "app": "アプリ",
     "speed": "速度",
     "speedValue": "{{value}} tok/s",
@@ -2496,7 +2496,6 @@
       "performance": "パフォーマンス",
       "source": "ソース",
       "sourceProxy": "ルーティングサービス · ステータス {{code}}",
-      "sourceSession": "セッションログ",
       "total": "合計",
       "firstToken": "最初のトークン",
       "firstTokenEstimated": "最初のトークン（推定）",
@@ -2550,7 +2549,12 @@
       "cacheWrite": "キャッシュ書き込み"
     },
     "prevMonth": "前月",
-    "nextMonth": "翌月"
+    "nextMonth": "翌月",
+    "settings": {
+      "title": "使用量の設定",
+      "pricingSummary": "モデルごとに 100 万トークンあたりの料金を設定します。models.dev から同期することもできます",
+      "managePricing": "料金を管理…"
+    }
   },
   "usageScript": {
     "title": "利用状況を設定",
@@ -4915,7 +4919,7 @@
     "oauth": {
       "useAccount": "このアカウントを使用",
       "title": "Kimi Code 公式ログイン",
-      "description": "Kimi のコーディングプランにログインすると、公式モデルが自動的に追加されます。",
+      "description": "複数の Kimi コーディングプランのアカウントを、独立した認証情報とプロバイダーとして追加できます。ここでログインを管理し、使用する公式アカウントを選択してください。",
       "region": "ログイン地域",
       "mainland-cn": "中国本土版",
       "global": "グローバル版",
@@ -4936,7 +4940,11 @@
       "denied": "認証が拒否されました。再ログインしてください。",
       "cancelled": "ログインがキャンセルされたか、別のログインに置き換えられました。再ログインしてください。",
       "success": "Kimi Code にログインし、公式モデルを追加しました。",
-      "signOutConfirm": "現在の地域のローカル認証情報を削除し、Kimi Code からもログアウトします。プロバイダー、モデル、現在のモデル選択は保持されます。"
+      "signOutConfirm": "{{name}} からログアウトしますか？このアカウントのローカル認証情報のみ削除します。他のアカウント、プロバイダー、モデル、現在のモデル選択は保持されます。",
+      "addAccount": "アカウントを追加",
+      "accountCount": "保存済みアカウント: {{count}}",
+      "manageAccounts": "Kimi アカウントを管理",
+      "managedHint": "Kimi 公式アカウントは認証センターで管理してください。"
     },
     "modelSelectionHint": "プロバイダーカードの切り替えボタンで既定のプロバイダーを選択します。別のモデルを選ぶには、Kimi Code で /model を使用してください。",
     "providerType": "プロバイダーの種類",

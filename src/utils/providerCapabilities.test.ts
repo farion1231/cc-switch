@@ -22,11 +22,27 @@ describe("Kimi official account identity", () => {
     (key) => {
       const provider = mkProvider({
         id: "managed:kimi-code",
-        settingsConfig: { provider: { oauth: { key } } },
+        settingsConfig: { provider: { type: "kimi", oauth: { key } } },
       });
       expect(isOfficialAccount("kimi", provider)).toBe(true);
     },
   );
+  it("recognizes an official account with its own provider ID and credential slot", () => {
+    expect(
+      isOfficialAccount(
+        "kimi",
+        mkProvider({
+          id: "kimi-code-ccs-second",
+          settingsConfig: {
+            provider: {
+              type: "kimi",
+              oauth: { key: "oauth/kimi-code-ccs-second" },
+            },
+          },
+        }),
+      ),
+    ).toBe(true);
+  });
   it("does not mark an API-key or custom OAuth provider as the official login", () => {
     expect(
       isOfficialAccount(

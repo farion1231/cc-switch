@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KimiAccountLogin } from "@/components/providers/KimiAccountLogin";
@@ -25,10 +25,18 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 vi.mock("@/lib/clipboard", () => ({ copyText: mocks.copy }));
 
-const signedOut: KimiOAuthStatus = {
-  authenticated: false,
-  region: "mainland-cn",
+const account = {
+  id: "kimi-code-ccs-first",
+  name: "Kimi Official (first)",
+  authenticated: true,
+  region: "mainland-cn" as const,
   expiresAt: null,
+  error: null,
+};
+const signedOut: KimiOAuthStatus = { accounts: [], currentAccountId: null };
+const signedIn: KimiOAuthStatus = {
+  accounts: [account],
+  currentAccountId: account.id,
 };
 const device = {
   flowId: "flow-1",
@@ -51,7 +59,7 @@ async function setup(status = signedOut) {
   vi.mocked(kimiOAuthApi.status).mockResolvedValue(status);
   const view = render(
     <QueryClientProvider client={client}>
-      <KimiAccountLogin onUseAccount={vi.fn()} />
+      <KimiAccountLogin />
     </QueryClientProvider>,
   );
   await flush();
@@ -80,11 +88,44 @@ describe("Kimi official account login", () => {
     vi.useRealTimers();
   });
 
+  it("selects and reauthenticates the requested account while allowing another account to be added", async () => {
+    const second = {
+      ...account,
+      id: "kimi-code-ccs-second",
+      name: "Kimi Official (second)",
+      region: "global" as const,
+    };
+    await setup({ accounts: [account, second], currentAccountId: account.id });
+    const row = screen
+      .getByText(second.name)
+      .closest('[role="listitem"]')! as HTMLElement;
+    fireEvent.click(
+      within(row).getByRole("button", { name: "kimi.oauth.useAccount" }),
+    );
+    await flush();
+    expect(kimiOAuthApi.useAccount).toHaveBeenCalledWith(second.id);
+    fireEvent.click(
+      within(row).getByRole("button", { name: "kimi.oauth.signInAgain" }),
+    );
+    await flush();
+    expect(kimiOAuthApi.start).toHaveBeenCalledWith("global", second.id);
+    fireEvent.click(screen.getByRole("button", { name: "common.cancel" }));
+    await flush();
+    fireEvent.click(
+      screen.getByRole("button", { name: "kimi.oauth.addAccount" }),
+    );
+    await flush();
+    expect(kimiOAuthApi.start).toHaveBeenLastCalledWith(
+      "mainland-cn",
+      undefined,
+    );
+  });
+
   it("keeps the authorization code and manual link available when opening the browser fails", async () => {
     mocks.openExternal.mockRejectedValue(new Error("No browser"));
     await setup();
     await start();
-    expect(kimiOAuthApi.start).toHaveBeenCalledWith("mainland-cn");
+    expect(kimiOAuthApi.start).toHaveBeenCalledWith("mainland-cn", undefined);
     expect(screen.getByText(device.userCode)).toBeInTheDocument();
     expect(screen.getByRole("link")).toHaveAttribute(
       "href",
@@ -108,17 +149,14 @@ describe("Kimi official account login", () => {
       interval: 0,
       ended: null,
     });
-    vi.mocked(kimiOAuthApi.status).mockResolvedValue({
-      ...signedOut,
-      authenticated: true,
-    });
+    vi.mocked(kimiOAuthApi.status).mockResolvedValue(signedIn);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
     await flush();
     expect(screen.queryByText(device.userCode)).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "kimi.oauth.signInAgain" }),
+      screen.getByRole("button", { name: "kimi.oauth.addAccount" }),
     ).toBeEnabled();
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: ["providers", "kimi"],
@@ -232,7 +270,7 @@ describe("Kimi official account login", () => {
   );
 
   it("requires confirmation before removing the native login", async () => {
-    await setup({ ...signedOut, authenticated: true });
+    await setup(signedIn);
     fireEvent.click(screen.getByRole("button", { name: "kimi.oauth.signOut" }));
     expect(kimiOAuthApi.logout).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog")).toHaveTextContent(
@@ -242,6 +280,6 @@ describe("Kimi official account login", () => {
       screen.getAllByRole("button", { name: "kimi.oauth.signOut" }).at(-1)!,
     );
     await flush();
-    expect(kimiOAuthApi.logout).toHaveBeenCalledTimes(1);
+    expect(kimiOAuthApi.logout).toHaveBeenCalledWith(account.id);
   });
 });

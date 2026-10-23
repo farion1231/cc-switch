@@ -120,7 +120,7 @@ export function useKimiOAuth() {
   );
 
   const start = useCallback(
-    async (region: KimiRegion) => {
+    async (region: KimiRegion, accountId?: string) => {
       const current = ++generation.current;
       clearTimer();
       const previous = activeFlow.current;
@@ -132,7 +132,7 @@ export function useKimiOAuth() {
       try {
         if (previous) await cancelBackend(previous);
         if (current !== generation.current) return;
-        const next = await kimiOAuthApi.start(region);
+        const next = await kimiOAuthApi.start(region, accountId);
         if (current !== generation.current) {
           void cancelBackend(next.flowId);
           return;
@@ -167,13 +167,13 @@ export function useKimiOAuth() {
   };
 
   const logout = useMutation({
-    mutationFn: kimiOAuthApi.logout,
+    mutationFn: (accountId: string) => kimiOAuthApi.logout(accountId),
     onSuccess: invalidate,
     onError: (e) => setError(extractErrorMessage(e)),
   });
 
   const useAccount = useMutation({
-    mutationFn: kimiOAuthApi.useAccount,
+    mutationFn: (accountId: string) => kimiOAuthApi.useAccount(accountId),
     onSuccess: invalidate,
     onError: (e) => setError(extractErrorMessage(e)),
   });

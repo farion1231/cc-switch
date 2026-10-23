@@ -8,7 +8,7 @@ import {
 import { QueryClientProvider } from "@tanstack/react-query";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
-import { kimiOAuthApi } from "@/lib/api/kimiOAuth";
+import { kimiOAuthApi, type KimiOAuthStatus } from "@/lib/api/kimiOAuth";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
 vi.mock("@/lib/api/kimiOAuth", () => ({
@@ -20,6 +20,18 @@ vi.mock("@/lib/api/kimiOAuth", () => ({
     logout: vi.fn(),
     useAccount: vi.fn(),
   },
+}));
+vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
+  CopilotAuthSection: () => null,
+}));
+vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
+  CodexOAuthSection: () => null,
+}));
+vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
+  XaiOAuthSection: () => null,
+}));
+vi.mock("@/components/providers/forms/AgyOAuthSection", () => ({
+  AgyOAuthSection: () => null,
 }));
 vi.mock("@/components/JsonEditor", () => ({
   default: ({
@@ -41,13 +53,14 @@ vi.mock("@/components/JsonEditor", () => ({
 
 beforeAll(() => {
   Element.prototype.scrollIntoView ??= vi.fn();
+  window.matchMedia ??= vi.fn().mockReturnValue({
+    matches: false,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  });
 });
 
-const status = {
-  authenticated: false,
-  region: "mainland-cn" as const,
-  expiresAt: null,
-};
+const status: KimiOAuthStatus = { accounts: [], currentAccountId: null };
 const device = {
   flowId: "kimi-flow",
   userCode: "TEST-CODE",
@@ -78,10 +91,17 @@ async function selectAccount() {
   fireEvent.click(
     await screen.findByRole("button", { name: "kimi.oauth.title" }),
   );
-  await screen.findByLabelText("kimi.oauth.region");
+  await screen.findByRole("button", { name: "kimi.oauth.manageAccounts" });
+}
+async function openAuthCenter() {
+  await selectAccount();
+  fireEvent.click(
+    screen.getByRole("button", { name: "kimi.oauth.manageAccounts" }),
+  );
+  return screen.findByRole("region", { name: "kimi.oauth.title" });
 }
 
-describe("Kimi add-provider account login", () => {
+describe("Kimi account entry in the add-provider dialog", () => {
   beforeEach(() => {
     vi.mocked(kimiOAuthApi.status).mockResolvedValue(status);
     vi.mocked(kimiOAuthApi.start).mockResolvedValue(device);
@@ -89,97 +109,69 @@ describe("Kimi add-provider account login", () => {
     vi.mocked(kimiOAuthApi.useAccount).mockResolvedValue(undefined);
   });
 
-  it("opens official login from the account group without showing API-key fields or the add footer", async () => {
+  it("directs official sign-in to Auth Center without API-key fields or an add footer", async () => {
     const { onSubmit } = setup();
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: /^providerPreset.group.login /,
-      }),
-    );
-    expect(
-      screen.getByText("providerPreset.loginWith.kimi"),
-    ).toBeInTheDocument();
     await selectAccount();
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("button", { name: "common.add" }),
-      ).not.toBeInTheDocument(),
-    );
+    expect(
+      screen.queryByRole("button", { name: "common.add" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "kimi.oauth.signIn" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "kimi.oauth.manageAccounts" }),
+    );
+    const group = await screen.findByRole("region", {
+      name: "kimi.oauth.title",
+    });
     expect(
-      screen.queryByLabelText("provider.configJson"),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByLabelText("opencode.providerKey *"),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "providerPreset.change" }),
-    ).not.toBeInTheDocument();
-    const presetBar = screen
-      .getByRole("button", { name: "kimi.oauth.signIn" })
-      .closest("[data-preset-selector]");
-    expect(presetBar).not.toBeNull();
-    expect(
-      within(presetBar as HTMLElement).getByText("kimi.oauth.title"),
-    ).toBeInTheDocument();
+      within(group).getByRole("button", { name: "kimi.oauth.signIn" }),
+    ).toBeEnabled();
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("cancels authorization on returning to the picker and restores the normal custom-provider footer", async () => {
+  it("starts and cancels the device login inside Auth Center", async () => {
     const { onSubmit } = setup();
-    await selectAccount();
-    fireEvent.click(screen.getByRole("button", { name: "kimi.oauth.signIn" }));
-    await screen.findByText(device.userCode);
-    expect(kimiOAuthApi.start).toHaveBeenCalledWith("mainland-cn");
-    expect(onSubmit).not.toHaveBeenCalled();
+    const group = await openAuthCenter();
     fireEvent.click(
-      screen.getByRole("button", { name: "providerPreset.backToPick" }),
+      within(group).getByRole("button", { name: "kimi.oauth.signIn" }),
+    );
+    await screen.findByText(device.userCode);
+    expect(kimiOAuthApi.start).toHaveBeenCalledWith("mainland-cn", undefined);
+    fireEvent.click(
+      within(group).getByRole("button", { name: "common.cancel" }),
     );
     await waitFor(() =>
       expect(kimiOAuthApi.cancel).toHaveBeenCalledWith(device.flowId),
     );
-    expect(screen.queryByText(device.userCode)).not.toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "providerPreset.custom" }),
-    );
-    expect(
-      await screen.findByRole("button", { name: "common.add" }),
-    ).toBeDisabled();
-    expect(screen.getByLabelText("API Key")).toBeInTheDocument();
-  });
-
-  it("returns to the supplier list when using an existing native account without creating an API-key provider", async () => {
-    vi.mocked(kimiOAuthApi.status).mockResolvedValue({
-      ...status,
-      authenticated: true,
-    });
-    const { onOpenChange, onSubmit } = setup();
-    await selectAccount();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "kimi.oauth.useAccount" }),
-    );
-    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
-    expect(kimiOAuthApi.useAccount).toHaveBeenCalledOnce();
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("keeps the login page open when selecting the official model fails", async () => {
-    vi.mocked(kimiOAuthApi.status).mockResolvedValue({
-      ...status,
+  it("selects an existing account by ID and keeps account management open", async () => {
+    const account = {
+      id: "kimi-code-ccs-existing",
+      name: "Kimi Official (existing)",
       authenticated: true,
+      region: "global" as const,
+      expiresAt: null,
+      error: null,
+    };
+    vi.mocked(kimiOAuthApi.status).mockResolvedValue({
+      accounts: [account],
+      currentAccountId: null,
     });
-    vi.mocked(kimiOAuthApi.useAccount).mockRejectedValueOnce(
-      "Cannot update Kimi model selection",
-    );
-    const { onOpenChange, onSubmit } = setup();
-    await selectAccount();
+    const { onSubmit, onOpenChange } = setup();
+    const group = await openAuthCenter();
     fireEvent.click(
-      await screen.findByRole("button", { name: "kimi.oauth.useAccount" }),
+      await within(group).findByRole("button", {
+        name: "kimi.oauth.useAccount",
+      }),
     );
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Cannot update Kimi model selection",
+    await waitFor(() =>
+      expect(kimiOAuthApi.useAccount).toHaveBeenCalledWith(account.id),
     );
+    expect(onSubmit).not.toHaveBeenCalled();
     expect(onOpenChange).not.toHaveBeenCalled();
-    expect(onSubmit).not.toHaveBeenCalled();
   });
 });

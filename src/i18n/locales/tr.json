@@ -2382,16 +2382,14 @@
     "cacheReadCostPerMillion": "Önbellek Okuma Maliyeti (milyon token başına, USD)",
     "cacheCreationCostPerMillion": "Önbellek Yazma Maliyeti (milyon token başına, USD)",
     "syncStatus": {
-      "auto": "Oturum günlükleri · otomatik tarama",
       "justNow": "Oturum günlükleri · az önce eşitle edildi",
       "minutesAgo": "Oturum günlükleri · {{count}} dakika önce eşitle edildi",
-      "off": "Oturum günlükleri · otomatik tarama kapalı",
-      "tipAuto": "Arka planda her 10 dakikada bir taranır; bu sayfa açıkken sağdaki aralıkla taranır",
-      "tipOff": "Oturum günlükleri yalnızca manuel olarak eşitlediğinizde taranır"
+      "tipOff": "Oturum günlükleri yalnızca manuel olarak eşitlediğinizde taranır",
+      "syncing": "Eşitleniyor…",
+      "tip": "Şimdi eşitlemek için tıklayın"
     },
     "refreshMenu": {
-      "label": "Her {{seconds}} saniyede tara",
-      "seconds": "{{seconds}}'ler"
+      "label": "Her {{seconds}} saniyede tara"
     },
     "dataSources": "Veri kaynakları",
     "display": {
@@ -2411,7 +2409,6 @@
       },
       "sidebarTodayLimit": "En fazla {{count}} öğe seçin",
       "logColumns": "İstek günlüğü sütunları",
-      "logColumnsSummary": "{{total}} sütunun {{shown}} tanesi gösteriliyor",
       "trendChartType": "Trend grafiği",
       "trendChartTypes": {
         "bar": "Çubuk",
@@ -2450,16 +2447,17 @@
       "requests": "İstekler",
       "tokens": "Tokenlar",
       "cost": "Maliyet",
-      "requestsLegend": "İstekler"
+      "requestsLegend": "İstekler",
+      "titleMetric": "{{metric}} · {{granularity}}",
+      "hourly": "Saatlik",
+      "daily": "Günlük"
     },
     "tabs": {
       "label": "Ayrıntılar",
       "providers": "Sağlayıcılar",
       "models": "Modeller",
-      "pricing": "Fiyatlandırma",
-      "settings": "Ayarlar"
+      "pricing": "Fiyatlandırma"
     },
-    "sortedByRequests": "İsteklere göre sıralandı",
     "app": "Uygulama",
     "speed": "Hız",
     "speedValue": "{{value}} tok/sn",
@@ -2496,7 +2494,6 @@
       "performance": "Performans",
       "source": "Kaynak",
       "sourceProxy": "Yönlendirme hizmeti · durumu {{code}}",
-      "sourceSession": "Oturum günlüğü",
       "total": "Toplam",
       "firstToken": "İlk token",
       "firstTokenEstimated": "İlk token (tahmini)",
@@ -2550,7 +2547,14 @@
       "cacheWrite": "Önbelleğe yazma"
     },
     "prevMonth": "Önceki ay",
-    "nextMonth": "Gelecek ay"
+    "nextMonth": "Gelecek ay",
+    "pageSize": "Sayfa başına {{count}} satır",
+    "pageSizeLabel": "Sayfa başına satır",
+    "settings": {
+      "title": "Kullanım ayarları",
+      "pricingSummary": "Milyon token başına model fiyatlarını belirleyin veya models.dev üzerinden eşitleyin.",
+      "managePricing": "Fiyatlandırmayı yönet…"
+    }
   },
   "usageScript": {
     "title": "Kullanım Sorgusunu Yapılandır",
@@ -4915,7 +4919,7 @@
     "oauth": {
       "useAccount": "Bu hesabı kullan",
       "title": "Kimi Code resmî oturumu",
-      "description": "Resmî modelleri otomatik eklemek için Kimi Code planınızda oturum açın.",
+      "description": "Her Kimi kodlama planı hesabı için ayrı kimlik bilgileri ve sağlayıcılar ekleyin. Oturum açma işlemlerini buradan yönetin; resmî modelleri kullanmak için bir hesap seçin.",
       "region": "Oturum açma bölgesi",
       "mainland-cn": "Çin ana karası",
       "global": "Küresel",
@@ -4936,7 +4940,11 @@
       "denied": "Yetkilendirme reddedildi. Yeniden oturum açın.",
       "cancelled": "Bu oturum açma işlemi iptal edildi veya başka bir işlemle değiştirildi. Yeniden oturum açın.",
       "success": "Kimi Code'da oturum açıldı ve resmî modeller eklendi.",
-      "signOutConfirm": "Bu işlem, geçerli Kimi Code bölgesine ait yerel kimlik bilgilerini silip Kimi Code oturumunu kapatır. Sağlayıcılar, modeller ve seçili model korunur."
+      "signOutConfirm": "{{name}} hesabından çıkış yapılsın mı? Yalnızca bu hesabın yerel kimlik bilgileri silinir. Diğer hesaplar, sağlayıcılar, modeller ve geçerli model seçimi korunur.",
+      "addAccount": "Hesap ekle",
+      "accountCount": "Kayıtlı hesaplar: {{count}}",
+      "manageAccounts": "Kimi hesaplarını yönet",
+      "managedHint": "Yetkilendirme Merkezi'nde Kimi'nin resmî hesaplarını yönetin."
     },
     "modelSelectionHint": "Bir sağlayıcıyı seçmek için kartındaki geçiş düğmesini kullanın. Başka bir model seçmek için Kimi Code'da /model komutunu kullanın.",
     "providerType": "Sağlayıcı türü",

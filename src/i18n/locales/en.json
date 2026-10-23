@@ -2248,6 +2248,8 @@
       "actionEllipsis": "Rebuild Codex Usage"
     },
     "totalRecords": "{{total}} records total",
+    "pageSize": "{{count}} per page",
+    "pageSizeLabel": "Rows per page",
     "goToPage": "Go",
     "pageInputPlaceholder": "Page",
     "modelPricing": "Model Pricing",
@@ -2382,16 +2384,14 @@
     "cacheReadCostPerMillion": "Cache Read Cost (per million tokens, USD)",
     "cacheCreationCostPerMillion": "Cache Write Cost (per million tokens, USD)",
     "syncStatus": {
-      "auto": "Session logs · auto scan",
-      "justNow": "Session logs · synced just now",
-      "minutesAgo": "Session logs · synced {{count}} min ago",
-      "off": "Session logs · auto scan off",
-      "tipAuto": "Scanned every 10 minutes in the background, and at the interval on the right while this page is open",
-      "tipOff": "Session logs are scanned only when you sync manually"
+      "justNow": "Synced just now",
+      "minutesAgo": "Synced {{count}} min ago",
+      "syncing": "Syncing…",
+      "tip": "Click to sync now",
+      "tipOff": "Auto scan is off. Click to sync now"
     },
     "refreshMenu": {
-      "label": "Scan every {{seconds}}s",
-      "seconds": "{{seconds}}s"
+      "label": "Scan every {{seconds}}s"
     },
     "dataSources": "Data sources",
     "display": {
@@ -2411,7 +2411,6 @@
       },
       "sidebarTodayLimit": "Pick up to {{count}}",
       "logColumns": "Request log columns",
-      "logColumnsSummary": "{{shown}} of {{total}} columns",
       "trendChartType": "Trend chart",
       "trendChartTypes": {
         "bar": "Bar",
@@ -2450,16 +2449,17 @@
       "requests": "Requests",
       "tokens": "Tokens",
       "cost": "Cost",
-      "requestsLegend": "Requests"
+      "requestsLegend": "Requests",
+      "titleMetric": "{{metric}} · {{granularity}}",
+      "hourly": "hourly",
+      "daily": "daily"
     },
     "tabs": {
       "label": "Details",
       "providers": "Providers",
       "models": "Models",
-      "pricing": "Pricing",
-      "settings": "Settings"
+      "pricing": "Pricing"
     },
-    "sortedByRequests": "Sorted by requests",
     "app": "App",
     "speed": "Speed",
     "speedValue": "{{value}} tok/s",
@@ -2496,7 +2496,6 @@
       "performance": "Performance",
       "source": "Source",
       "sourceProxy": "Routing service · status {{code}}",
-      "sourceSession": "Session log",
       "total": "Total",
       "firstToken": "First token",
       "firstTokenEstimated": "First token (estimated)",
@@ -2550,7 +2549,12 @@
       "cacheWrite": "Cache write"
     },
     "prevMonth": "Previous month",
-    "nextMonth": "Next month"
+    "nextMonth": "Next month",
+    "settings": {
+      "title": "Usage settings",
+      "pricingSummary": "Set per-model prices per million tokens, or sync them from models.dev",
+      "managePricing": "Manage pricing…"
+    }
   },
   "usageScript": {
     "title": "Configure Usage Query",
@@ -4915,7 +4919,7 @@
     "oauth": {
       "useAccount": "Use this account",
       "title": "Kimi Code official sign-in",
-      "description": "Sign in to your Kimi coding plan to add the official models automatically.",
+      "description": "Add Kimi coding plan accounts with separate credentials and providers. Manage sign-in here, then select an account to use its official models.",
       "region": "Sign-in region",
       "mainland-cn": "Mainland China",
       "global": "Global",
@@ -4936,7 +4940,11 @@
       "denied": "Authorization was denied. Please sign in again.",
       "cancelled": "This sign-in was cancelled or replaced. Please sign in again.",
       "success": "Signed in to Kimi Code and added the official models.",
-      "signOutConfirm": "This removes the local credentials for the current Kimi Code region and signs Kimi Code out. Providers, models and the current model selection are kept."
+      "signOutConfirm": "Sign out {{name}}? Only this account's local credentials are removed. Other accounts, providers, models and the current model selection are kept.",
+      "addAccount": "Add account",
+      "accountCount": "Saved accounts: {{count}}",
+      "manageAccounts": "Manage Kimi accounts",
+      "managedHint": "Manage official Kimi accounts in the Authorization Center."
     },
     "modelSelectionHint": "Use the switch button on a provider card to select it. To choose another model, use /model in Kimi Code.",
     "providerType": "Provider type",

@@ -46,6 +46,45 @@ fn provider(id: &str, model: &str) -> Provider {
 }
 
 #[test]
+fn kimi_official_accounts_are_protected_only_while_present_in_native_config() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let home = KimiHome::new();
+    let state = create_test_state().unwrap();
+    let mut config = json!({"default_model":"custom/model", "providers":{"custom":{"type":"openai","api_key":"test"}},"models":{"custom/model":{"provider":"custom","model":"test","max_context_size":32000}}});
+    for id in ["managed:kimi-code", "kimi-code-ccs-second"] {
+        config["providers"][id] = json!({"type":"kimi","base_url":"https://api.kimi.com/coding/v1","oauth":{"storage":"file","key":format!("oauth/{}", id.replace(':', "-"))}});
+        config["models"][format!("{id}/k3")] =
+            json!({"provider":id,"model":"k3","max_context_size":1048576});
+    }
+    fs::write(home.config(), toml::to_string(&config).unwrap()).unwrap();
+    let entries = ProviderService::list(&state, AppType::Kimi).unwrap();
+    for id in ["managed:kimi-code", "kimi-code-ccs-second"] {
+        let original = fs::read(home.config()).unwrap();
+        assert_eq!(entries[id].category.as_deref(), Some("official"));
+        assert!(entries[id].name.starts_with("Kimi Official"));
+        assert!(ProviderService::delete(&state, AppType::Kimi, id).is_err());
+        assert!(ProviderService::remove_from_live_config(&state, AppType::Kimi, id).is_err());
+        let mut edited = entries[id].clone();
+        edited.settings_config["provider"] = json!({"type":"openai","api_key":"replacement"});
+        assert!(ProviderService::update(&state, AppType::Kimi, None, edited).is_err());
+        assert_eq!(fs::read(home.config()).unwrap(), original);
+    }
+    fs::write(home.config(), "").unwrap();
+    let entries = ProviderService::list(&state, AppType::Kimi).unwrap();
+    for id in ["managed:kimi-code", "kimi-code-ccs-second"] {
+        assert_eq!(
+            entries[id].meta.as_ref().unwrap().live_config_managed,
+            Some(false)
+        );
+        ProviderService::remove_from_live_config(&state, AppType::Kimi, id).unwrap();
+        ProviderService::delete(&state, AppType::Kimi, id).unwrap();
+        assert!(state.db.get_provider_by_id(id, "kimi").unwrap().is_none());
+    }
+    assert_eq!(fs::read_to_string(home.config()).unwrap(), "");
+}
+
+#[test]
 fn kimi_official_import_repairs_existing_display_identity_without_rewriting_native_config() {
     let _guard = test_mutex().lock().unwrap();
     reset_test_fs();

@@ -15,27 +15,37 @@ static WRITE_LOCK: Mutex<()> = Mutex::new(());
 pub(crate) const OFFICIAL_PROVIDER_ID: &str = "managed:kimi-code";
 const OFFICIAL_PROVIDER_NAME: &str = "Kimi Official";
 
-/// Native login creates a managed node, not a CCS display profile. Fill in its
-/// identity on import and repair older auto-imports without replacing user names
-/// or icons. Never rename the native id: Kimi uses it for OAuth model refresh.
-pub(crate) fn normalize_provider_identity(provider: &mut Provider) {
-    if provider.id != OFFICIAL_PROVIDER_ID {
-        return;
+pub(crate) fn is_official_provider(config: &Value) -> bool {
+    config.pointer("/provider/type").and_then(Value::as_str) == Some("kimi")
+        && config
+            .pointer("/provider/oauth/key")
+            .and_then(Value::as_str)
+            .is_some_and(|key| !key.trim().is_empty())
+}
+
+pub(crate) fn official_provider_name(id: &str) -> String {
+    if id == OFFICIAL_PROVIDER_ID {
+        OFFICIAL_PROVIDER_NAME.into()
+    } else {
+        let account = id.strip_prefix("kimi-code-ccs-").unwrap_or(id);
+        format!(
+            "{OFFICIAL_PROVIDER_NAME} ({})",
+            account.chars().take(8).collect::<String>()
+        )
     }
-    let oauth = provider
-        .settings_config
-        .pointer("/provider/oauth/key")
-        .and_then(Value::as_str)
-        .is_some_and(|key| !key.trim().is_empty());
-    if !oauth {
+}
+
+/// Fill in native account identities without replacing custom display fields.
+pub(crate) fn normalize_provider_identity(provider: &mut Provider) {
+    if !is_official_provider(&provider.settings_config) {
         if provider.category.as_deref() == Some("official") {
             provider.category = None;
         }
         return;
     }
     provider.category = Some("official".into());
-    if provider.name.trim().is_empty() || provider.name == OFFICIAL_PROVIDER_ID {
-        provider.name = OFFICIAL_PROVIDER_NAME.into();
+    if provider.name.trim().is_empty() || provider.name == provider.id {
+        provider.name = official_provider_name(&provider.id);
     }
     if provider
         .icon
@@ -75,7 +85,7 @@ pub(crate) fn config_path() -> PathBuf {
     data_dir().join("config.toml")
 }
 
-fn read(path: &Path) -> Result<Value, AppError> {
+pub(crate) fn read(path: &Path) -> Result<Value, AppError> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(json!({})),
@@ -290,6 +300,15 @@ fn apply_provider(
     config: Option<Value>,
     create: bool,
 ) -> Result<Value, AppError> {
+    if before
+        .get("providers")
+        .and_then(|providers| providers.get(id))
+        .is_some_and(|provider| is_official_provider(&json!({"provider": provider})))
+    {
+        return Err(AppError::InvalidInput(
+            "Manage Kimi official accounts in the Authorization Center".into(),
+        ));
+    }
     if let Some(config) = &config {
         validate_provider(id, config)?;
     }
@@ -502,14 +521,14 @@ fn switch_at<T>(
 
 /// Selecting the account is explicit: signing in alone preserves the current
 /// model, while "Use this account" selects one of its official model aliases.
-pub(crate) fn use_oauth_account(home: &Path) -> Result<(), AppError> {
+pub(crate) fn use_oauth_account(home: &Path, id: &str) -> Result<(), AppError> {
     let _guard = WRITE_LOCK
         .lock()
         .map_err(|e| AppError::Message(e.to_string()))?;
     let path = home.join("config.toml");
     let before = read(&path)?;
-    if before
-        .pointer("/providers/managed:kimi-code/oauth/key")
+    if before["providers"][id]
+        .pointer("/oauth/key")
         .and_then(Value::as_str)
         .is_none_or(str::is_empty)
     {
@@ -518,7 +537,7 @@ pub(crate) fn use_oauth_account(home: &Path) -> Result<(), AppError> {
         ));
     }
     let mut after = before.clone();
-    select_provider_model(&mut after, "managed:kimi-code")?;
+    select_provider_model(&mut after, id)?;
     write(&path, &before, &after)
 }
 
@@ -527,6 +546,7 @@ pub(crate) fn use_oauth_account(home: &Path) -> Result<(), AppError> {
 /// If credentials cannot be saved, restore the exact original configuration.
 pub(crate) fn save_oauth_login(
     home: &Path,
+    provider_id: &str,
     token_path: &Path,
     token: &[u8],
     base_url: &str,
@@ -549,7 +569,6 @@ pub(crate) fn save_oauth_login(
             )));
         }
     }
-    let provider_id = "managed:kimi-code";
     let mut merged_models = serde_json::Map::new();
     for (key, model) in &models {
         let mut merged = after["models"].get(key).cloned().unwrap_or(json!({}));
@@ -593,14 +612,8 @@ pub(crate) fn save_oauth_login(
         after["default_model"] = json!(models.keys().next().unwrap());
     }
     for (name, suffix) in [("moonshot_search", "search"), ("moonshot_fetch", "fetch")] {
-        // A custom service is user-owned. Only provision missing services or
-        // update services already attached to the official login.
-        if after["services"].get(name).is_none()
-            || after["services"][name]
-                .pointer("/oauth/key")
-                .and_then(Value::as_str)
-                .is_some_and(|key| key == "kimi-code" || key.starts_with("oauth/kimi-code"))
-        {
+        // Signing in must not switch services away from the selected account.
+        if after["services"].get(name).is_none() {
             after["services"][name] = json!({
                 "base_url": format!("{base_url}/{suffix}"), "api_key": "", "oauth": oauth
             });
@@ -697,6 +710,7 @@ mod tests {
         let oauth = json!({"storage": "file", "key": "oauth/kimi-code"});
         save_oauth_login(
             dir.path(),
+            OFFICIAL_PROVIDER_ID,
             &credential,
             b"test-credential",
             "https://api.kimi.com/coding/v1",
@@ -737,6 +751,7 @@ mod tests {
         fs::write(&blocked, "not a directory").unwrap();
         assert!(save_oauth_login(
             dir.path(),
+            OFFICIAL_PROVIDER_ID,
             &blocked.join("kimi-code.json"),
             b"new",
             "https://api.kimi.com/coding/v1",
@@ -754,10 +769,11 @@ mod tests {
         let path = dir.path().join("config.toml");
         let initial = "# preserve\ndefault_model = 'custom/model'\n[models.'custom/model']\nprovider = 'custom'\nmodel = 'custom'\nmax_context_size = 32000\n[thinking]\neffort = 'high'\n";
         fs::write(&path, initial).unwrap();
-        assert!(use_oauth_account(dir.path()).is_err());
+        assert!(use_oauth_account(dir.path(), OFFICIAL_PROVIDER_ID).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), initial);
         save_oauth_login(
             dir.path(),
+            OFFICIAL_PROVIDER_ID,
             &dir.path().join("credentials/kimi-code.json"),
             b"credential",
             "https://api.kimi.com/coding/v1",
@@ -766,7 +782,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(read(&path).unwrap()["default_model"], "custom/model");
-        use_oauth_account(dir.path()).unwrap();
+        use_oauth_account(dir.path(), OFFICIAL_PROVIDER_ID).unwrap();
         let config = read(&path).unwrap();
         assert_eq!(config["default_model"], "kimi-code/k3");
         assert_eq!(config["thinking"]["effort"], "high");
@@ -784,6 +800,7 @@ mod tests {
         fs::write(&credential, "old").unwrap();
         assert!(save_oauth_login(
             dir.path(),
+            OFFICIAL_PROVIDER_ID,
             &credential,
             b"new",
             "https://api.kimi.com/coding/v1",

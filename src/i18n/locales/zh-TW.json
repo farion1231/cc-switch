@@ -2249,6 +2249,8 @@
       "actionEllipsis": "重建 Codex 用量"
     },
     "totalRecords": "共 {{total}} 筆紀錄",
+    "pageSize": "每頁 {{count}} 筆",
+    "pageSizeLabel": "每頁筆數",
     "goToPage": "跳轉",
     "pageInputPlaceholder": "頁碼",
     "modelPricing": "模型定價",
@@ -2383,16 +2385,14 @@
     "cacheReadCostPerMillion": "快取讀取成本 (每百萬 tokens, USD)",
     "cacheCreationCostPerMillion": "快取寫入成本 (每百萬 tokens, USD)",
     "syncStatus": {
-      "auto": "工作階段日誌 · 自動掃描",
-      "justNow": "工作階段日誌 · 剛剛同步",
-      "minutesAgo": "工作階段日誌 · {{count}} 分鐘前同步",
-      "off": "工作階段日誌 · 自動掃描已關閉",
-      "tipAuto": "背景每 10 分鐘掃描一次；開啟用量頁時依右側間隔掃描",
-      "tipOff": "只在手動同步時掃描工作階段日誌"
+      "justNow": "剛剛同步",
+      "minutesAgo": "{{count}} 分鐘前同步",
+      "syncing": "同步中…",
+      "tip": "點擊立即同步",
+      "tipOff": "自動掃描已關閉，點擊立即同步"
     },
     "refreshMenu": {
-      "label": "每 {{seconds}} 秒掃描",
-      "seconds": "{{seconds}} 秒"
+      "label": "每 {{seconds}} 秒掃描"
     },
     "dataSources": "資料來源",
     "display": {
@@ -2412,7 +2412,6 @@
       },
       "sidebarTodayLimit": "最多選 {{count}} 項",
       "logColumns": "請求日誌的欄位",
-      "logColumnsSummary": "{{shown}} / {{total}} 欄",
       "trendChartType": "趨勢圖樣式",
       "trendChartTypes": {
         "bar": "長條圖",
@@ -2451,16 +2450,17 @@
       "requests": "請求",
       "tokens": "Tokens",
       "cost": "成本",
-      "requestsLegend": "請求數"
+      "requestsLegend": "請求數",
+      "titleMetric": "{{metric}} · {{granularity}}",
+      "hourly": "按小時",
+      "daily": "按天"
     },
     "tabs": {
       "label": "明細",
       "providers": "供應商",
       "models": "模型",
-      "pricing": "定價",
-      "settings": "設定"
+      "pricing": "定價"
     },
-    "sortedByRequests": "依請求數排序",
     "app": "應用程式",
     "speed": "速度",
     "speedValue": "{{value}} tok/s",
@@ -2497,7 +2497,6 @@
       "performance": "效能",
       "source": "來源",
       "sourceProxy": "路由服務 · 狀態碼 {{code}}",
-      "sourceSession": "工作階段日誌",
       "total": "合計",
       "firstToken": "首字",
       "firstTokenEstimated": "首字（估算）",
@@ -2551,7 +2550,12 @@
       "cacheWrite": "快取寫入"
     },
     "prevMonth": "上個月",
-    "nextMonth": "下個月"
+    "nextMonth": "下個月",
+    "settings": {
+      "title": "用量設定",
+      "pricingSummary": "依模型設定每百萬 Tokens 的價格，可從 models.dev 同步",
+      "managePricing": "管理定價…"
+    }
   },
   "usageScript": {
     "title": "設定用量查詢",
@@ -4916,7 +4920,7 @@
     "oauth": {
       "useAccount": "使用此帳號",
       "title": "Kimi Code 官方登入",
-      "description": "使用 Kimi 帳號登入程式開發方案，登入完成後自動新增官方模型。",
+      "description": "可新增多個 Kimi 程式開發方案帳號，各自儲存憑證與供應商。在此管理登入，再選擇帳號使用其官方模型。",
       "region": "登入區域",
       "mainland-cn": "中國大陸版",
       "global": "海外版",
@@ -4937,7 +4941,11 @@
       "denied": "授權已遭拒絕，請重新登入。",
       "cancelled": "登入已取消或被其他登入取代，請重新登入。",
       "success": "Kimi Code 登入成功，已新增官方模型。",
-      "signOutConfirm": "這會移除 Kimi Code 目前區域的本機登入憑證，Kimi Code 也將登出。供應商、模型及目前的模型選擇會保留。"
+      "signOutConfirm": "登出 {{name}}？僅移除此帳號的本機憑證，其他帳號、供應商、模型及目前的模型選擇會保留。",
+      "addAccount": "新增帳號",
+      "accountCount": "已儲存 {{count}} 個帳號",
+      "manageAccounts": "管理 Kimi 帳號",
+      "managedHint": "請在授權中心管理 Kimi 官方帳號。"
     },
     "modelSelectionHint": "點擊供應商卡片的切換按鈕選擇預設供應商；若要指定其他模型，請在 Kimi Code 中使用 /model。",
     "providerType": "供應商類型",
