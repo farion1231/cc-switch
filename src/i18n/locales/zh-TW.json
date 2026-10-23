@@ -4992,7 +4992,7 @@
     "outputPrice": "輸出價格（$/百萬 Token）",
     "selectedModel": "使用此模型",
     "useModel": "使用模型 {{model}}",
-    "restartHint": "新增或修改的自訂供應商需重新啟動 Cline（或執行 `cline doctor fix`）後才會載入；切換供應商會在下次執行 Cline 時生效。",
+    "restartHint": "新增或修改的自訂供應商要等 Cline 背景程序（cline-hub）重新啟動後才會載入：執行 `cline doctor fix`，再重新執行 cline 或開啟 Cline 桌面版。只結束 Cline 桌面版不會結束背景程序。設為預設不需要重新啟動。",
     "oauthReadOnly": "此供應商透過 Cline 登入，憑證由 Cline 管理，這裡不會修改；仍可切換到它。",
     "duplicateBuiltinUnsupported": "Cline 內建供應商無法複製，請改為新增自訂供應商。",
     "preset": {
@@ -5015,6 +5015,17 @@
       "title": "新增 Cline 供應商",
       "description": "可新增 Cline 內建供應商，或 OpenAI / Anthropic 相容的自訂端點。Cline 中已設定的供應商會自動匯入。"
     },
-    "deleteSessionHint": "請在 Cline 中刪除此工作階段（cline history delete --session-id）。"
+    "deleteSessionHint": "請在 Cline 中刪除此工作階段（cline history delete --session-id）。",
+    "hub": {
+      "staleTitle": "Cline 背景程序仍在使用舊的自訂供應商",
+      "staleBody": "cline-hub（PID {{pid}}）在自訂供應商修改之前啟動，新增或修改的自訂供應商尚未載入；只結束 Cline 桌面版不會結束它。執行 `{{command}}` 結束背景程序（會中斷進行中的 Cline 工作階段），再重新執行 cline 或開啟 Cline 桌面版。",
+      "copyCommand": "複製指令",
+      "copied": "已複製 {{command}}",
+      "copyFailed": "無法複製到剪貼簿"
+    },
+    "cliModel": {
+      "title": "Cline CLI 的 /model 不會列出自訂供應商的模型",
+      "body": "這是 Cline CLI 本身的限制（桌面版能正常列出）。在 CLI 中可用 `cline -m <模型 ID>` 指定，或在 /model 裡選擇「Create custom model ID」手動輸入模型 ID；未指定時使用在此設定的模型。"
+    }
   }
 }

@@ -4991,7 +4991,7 @@
     "outputPrice": "Output price ($/M tokens)",
     "selectedModel": "Use this model",
     "useModel": "Use model {{model}}",
-    "restartHint": "Restart Cline (or run `cline doctor fix`) for new or changed custom providers to load. Switching providers takes effect on the next Cline run.",
+    "restartHint": "New or changed custom providers load only after the Cline background service (cline-hub) restarts: run `cline doctor fix`, then run cline or open the Cline desktop app again. Quitting the desktop app alone does not stop it. Setting a default needs no restart.",
     "oauthReadOnly": "This provider signs in through Cline. Its credentials are managed in Cline and are not edited here; you can still switch to it.",
     "duplicateBuiltinUnsupported": "Built-in Cline providers can't be duplicated. Add a custom provider instead.",
     "preset": {
@@ -5014,6 +5014,17 @@
       "title": "Add a Cline provider",
       "description": "Add a built-in Cline provider or a custom OpenAI- or Anthropic-compatible endpoint. Providers already configured in Cline are imported automatically."
     },
-    "deleteSessionHint": "Delete this session in Cline (cline history delete --session-id)."
+    "deleteSessionHint": "Delete this session in Cline (cline history delete --session-id).",
+    "hub": {
+      "staleTitle": "Cline's background service still has the old custom providers",
+      "staleBody": "cline-hub (PID {{pid}}) started before the custom providers changed, so new or changed ones are not loaded yet. Quitting the Cline desktop app does not stop it. Run `{{command}}` to stop it (this ends running Cline sessions), then run cline or open the Cline desktop app again.",
+      "copyCommand": "Copy command",
+      "copied": "Copied {{command}}",
+      "copyFailed": "Couldn't copy to the clipboard"
+    },
+    "cliModel": {
+      "title": "Cline CLI's /model doesn't list custom provider models",
+      "body": "This is a limitation of the Cline CLI (the desktop app lists them). In the CLI, pass `cline -m <model ID>`, or choose \"Create custom model ID\" in /model and type the model ID. Without either, the model set here is used."
+    }
   }
 }

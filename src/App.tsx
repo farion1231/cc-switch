@@ -78,6 +78,11 @@ import { WindowControls } from "@/components/shell/WindowControls";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
+import {
+  ClineHubNotice,
+  clineHubStatusKey,
+} from "@/components/providers/ClineHubNotice";
+import { ClineCliModelNotice } from "@/components/providers/ClineCliModelNotice";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import {
   hasOpencodeDefinition,
@@ -851,6 +856,9 @@ function App() {
       ]);
     } else if (app === "mcode" || app === "kimi" || app === "cline") {
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
+      if (app === "cline") {
+        await queryClient.invalidateQueries({ queryKey: clineHubStatusKey });
+      }
     }
   };
 
@@ -1380,6 +1388,10 @@ function App() {
         className="min-h-0 flex-1 overflow-y-auto scroll-stable overflow-x-hidden px-6 pb-12 pt-4"
       >
         <div className="space-y-4">
+          {activeApp === "cline" && <ClineHubNotice />}
+          {activeApp === "cline" && (
+            <ClineCliModelNotice providers={providers} />
+          )}
           <ProviderList
             {...listCallbacks}
             providers={providers}

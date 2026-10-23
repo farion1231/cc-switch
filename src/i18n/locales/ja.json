@@ -4991,7 +4991,7 @@
     "outputPrice": "出力価格（$/100 万トークン）",
     "selectedModel": "このモデルを使用",
     "useModel": "モデル {{model}} を使用",
-    "restartHint": "追加・変更したカスタムプロバイダーを読み込むには Cline を再起動してください（または `cline doctor fix` を実行）。プロバイダーの切り替えは次回 Cline 実行時に反映されます。",
+    "restartHint": "追加・変更したカスタムプロバイダーは、Cline のバックグラウンドサービス（cline-hub）が再起動してから読み込まれます。`cline doctor fix` を実行してから、cline を再実行するか Cline デスクトップ版を開き直してください。デスクトップ版を終了するだけでは停止しません。デフォルトの設定に再起動は不要です。",
     "oauthReadOnly": "このプロバイダーは Cline でサインインしています。認証情報は Cline が管理し、ここでは編集しません。切り替えは可能です。",
     "duplicateBuiltinUnsupported": "Cline の組み込みプロバイダーは複製できません。カスタムプロバイダーを追加してください。",
     "preset": {
@@ -5014,6 +5014,17 @@
       "title": "Cline プロバイダーを追加",
       "description": "Cline の組み込みプロバイダー、または OpenAI / Anthropic 互換のカスタムエンドポイントを追加できます。Cline で設定済みのプロバイダーは自動で取り込まれます。"
     },
-    "deleteSessionHint": "このセッションは Cline で削除してください（cline history delete --session-id）。"
+    "deleteSessionHint": "このセッションは Cline で削除してください（cline history delete --session-id）。",
+    "hub": {
+      "staleTitle": "Cline のバックグラウンドサービスが古いカスタムプロバイダーのままです",
+      "staleBody": "cline-hub（PID {{pid}}）はカスタムプロバイダーの変更前に起動したため、追加・変更分はまだ読み込まれていません。Cline デスクトップ版を終了しても停止しません。`{{command}}` で停止してから（実行中の Cline セッションは中断されます）、cline を再実行するか Cline デスクトップ版を開き直してください。",
+      "copyCommand": "コマンドをコピー",
+      "copied": "{{command}} をコピーしました",
+      "copyFailed": "クリップボードにコピーできませんでした"
+    },
+    "cliModel": {
+      "title": "Cline CLI の /model にはカスタムプロバイダーのモデルが表示されません",
+      "body": "これは Cline CLI 側の制限です（デスクトップ版では表示されます）。CLI では `cline -m <モデル ID>` で指定するか、/model で「Create custom model ID」を選んでモデル ID を入力してください。指定しない場合はここで設定したモデルが使われます。"
+    }
   }
 }

@@ -4991,7 +4991,7 @@
     "outputPrice": "输出价格（$/百万 Token）",
     "selectedModel": "使用此模型",
     "useModel": "使用模型 {{model}}",
-    "restartHint": "新增或修改的自定义供应商需重启 Cline（或运行 `cline doctor fix`）后才会加载；切换供应商在下次运行 Cline 时生效。",
+    "restartHint": "新增或修改的自定义供应商要等 Cline 后台（cline-hub）重启后才会加载：运行 `cline doctor fix`，再重新运行 cline 或打开 Cline 桌面版。只退出 Cline 桌面版不会结束后台。设为默认不需要重启。",
     "oauthReadOnly": "该供应商通过 Cline 登录，凭据由 Cline 管理，这里不会修改；仍可切换到它。",
     "duplicateBuiltinUnsupported": "Cline 内置供应商不能复制，请改为添加自定义供应商。",
     "preset": {
@@ -5014,6 +5014,17 @@
       "title": "添加 Cline 供应商",
       "description": "可添加 Cline 内置供应商，或 OpenAI / Anthropic 兼容的自定义端点。Cline 中已配置的供应商会自动导入。"
     },
-    "deleteSessionHint": "请在 Cline 中删除该会话（cline history delete --session-id）。"
+    "deleteSessionHint": "请在 Cline 中删除该会话（cline history delete --session-id）。",
+    "hub": {
+      "staleTitle": "Cline 后台还在使用旧的自定义供应商",
+      "staleBody": "cline-hub（PID {{pid}}）在自定义供应商修改之前启动，新增或修改的自定义供应商还没有加载；只退出 Cline 桌面版不会结束它。运行 `{{command}}` 结束后台（会中断正在进行的 Cline 会话），再重新运行 cline 或打开 Cline 桌面版。",
+      "copyCommand": "复制命令",
+      "copied": "已复制 {{command}}",
+      "copyFailed": "没能复制到剪贴板"
+    },
+    "cliModel": {
+      "title": "Cline CLI 的 /model 不会列出自定义供应商的模型",
+      "body": "这是 Cline CLI 自身的限制（桌面版能正常列出）。在 CLI 中可用 `cline -m <模型 ID>` 指定，或在 /model 里选择「Create custom model ID」手动输入模型 ID；不指定时使用在此设置的模型。"
+    }
   }
 }

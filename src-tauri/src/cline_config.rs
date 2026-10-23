@@ -744,6 +744,92 @@ fn add_at<T>(
     write_and_commit(paths, &before, &after, commit)
 }
 
+/// Where the running `cline-hub` advertises itself (pid, start time, port and a
+/// local auth token — only the first two are read here).
+pub(crate) fn hub_discovery_path() -> PathBuf {
+    env_path("CLINE_HUB_DISCOVERY_PATH")
+        .unwrap_or_else(|| data_dir().join("locks").join("hub").join("production.json"))
+}
+
+/// The Cline CLI and desktop app share one background `cline-hub`, which reads
+/// custom providers (`models.json`) only when it starts. Quitting the desktop
+/// app leaves it running, so changes there stay invisible until it restarts.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClineHubStatus {
+    pub running: bool,
+    /// Running, but started before `models.json` last changed.
+    pub stale: bool,
+    pub pid: Option<u32>,
+    pub started_at: Option<String>,
+}
+
+pub(crate) fn hub_status() -> ClineHubStatus {
+    hub_status_at(&hub_discovery_path(), &models_path(), process_alive)
+}
+
+fn hub_status_at(record: &Path, models: &Path, alive: impl Fn(u32) -> bool) -> ClineHubStatus {
+    let Some((pid, started_at)) = fs::read(record)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|record| {
+            let pid = u32::try_from(record.get("pid")?.as_u64()?).ok()?;
+            let started = record.get("startedAt")?.as_str()?.to_string();
+            Some((pid, started))
+        })
+    else {
+        return ClineHubStatus::default();
+    };
+    if !alive(pid) {
+        return ClineHubStatus::default();
+    }
+    let started = chrono::DateTime::parse_from_rfc3339(&started_at).ok();
+    let changed = fs::metadata(models)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .map(chrono::DateTime::<chrono::Utc>::from);
+    let stale = matches!((started, changed), (Some(started), Some(changed)) if changed > started);
+    ClineHubStatus {
+        running: true,
+        stale,
+        pid: Some(pid),
+        started_at: Some(started_at),
+    }
+}
+
+#[cfg(unix)]
+fn process_alive(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    if pid <= 0 {
+        return false;
+    }
+    // SAFETY: signal 0 only checks that the process exists.
+    let signalled = unsafe { libc::kill(pid, 0) == 0 };
+    // EPERM: it exists but belongs to another user.
+    signalled || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(windows)]
+fn process_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    // SAFETY: query only; the handle is closed below.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        return false;
+    }
+    let mut code = 0u32;
+    // SAFETY: valid handle, output points at a local.
+    let ok = unsafe { GetExitCodeProcess(handle, &mut code) != 0 };
+    // SAFETY: closed exactly once.
+    unsafe { CloseHandle(handle) };
+    ok && code == STILL_ACTIVE as u32
+}
+
 /// Base URL and API key for connectivity checks and model listing.
 pub(crate) fn endpoint_and_key(config: &Value) -> (String, String) {
     let base = config
@@ -1032,6 +1118,63 @@ mod tests {
         stale["settings"]["apiKey"] = json!("stale");
         add_at((&p, &m), "ccs-b", stale, || Ok(())).unwrap();
         assert_eq!((fs::read(&p).unwrap(), fs::read(&m).unwrap()), before);
+    }
+
+    #[test]
+    fn hub_is_stale_only_when_running_and_started_before_models_changed() {
+        let dir = TempDir::new().unwrap();
+        let record = dir.path().join("production.json");
+        let models = dir.path().join("models.json");
+        let write_record = |started: &str| {
+            fs::write(
+                &record,
+                json!({"pid": 4242, "startedAt": started, "authToken": "secret", "port": 1})
+                    .to_string(),
+            )
+            .unwrap();
+        };
+        // No record: nothing running.
+        assert_eq!(
+            hub_status_at(&record, &models, |_| true),
+            ClineHubStatus::default()
+        );
+
+        fs::write(&models, "{}").unwrap();
+        write_record("2000-01-01T00:00:00.000Z");
+        let status = hub_status_at(&record, &models, |pid| pid == 4242);
+        assert!(status.running && status.stale);
+        assert_eq!(status.pid, Some(4242));
+        // The auth token is never part of the status.
+        assert!(!serde_json::to_string(&status).unwrap().contains("secret"));
+
+        // Started after the last change: up to date.
+        write_record("2999-01-01T00:00:00.000Z");
+        let status = hub_status_at(&record, &models, |_| true);
+        assert!(status.running && !status.stale);
+
+        // A record left by a hub that exited is ignored.
+        write_record("2000-01-01T00:00:00.000Z");
+        assert_eq!(
+            hub_status_at(&record, &models, |_| false),
+            ClineHubStatus::default()
+        );
+
+        // No custom providers yet: nothing to reload.
+        fs::remove_file(&models).unwrap();
+        assert!(!hub_status_at(&record, &models, |_| true).stale);
+
+        fs::write(&record, "{broken").unwrap();
+        assert_eq!(
+            hub_status_at(&record, &models, |_| true),
+            ClineHubStatus::default()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn process_alive_sees_this_process() {
+        assert!(process_alive(std::process::id()));
+        assert!(!process_alive(0));
     }
 
     #[test]
