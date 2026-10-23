@@ -1,4 +1,4 @@
-//! 升级前的 Node 版本检查。npm 包的新版本在 `engines.node` 里抬高 Node 要求后（OpenClaw
+//! 安装和升级前的 Node 版本检查。npm 包在 `engines.node` 里声明 Node 要求后（OpenClaw
 //! 2026.9.3 起要 24.16+），用旧 Node 升级必然失败：OpenClaw 自己的 `update` 预检和包的
 //! preinstall 都会拒绝；没有自带检查的包则会被 npm 照装、装完跑不起来。所以「应用」页
 //! 提前标出来、不给升级按钮，执行升级前再查一次。认不出、查不到时一律放行。
@@ -21,10 +21,57 @@ fn node_gap(required: &str, current: &str) -> Option<NodeRequirementGap> {
     })
 }
 
-fn install_node_gap_sync(tool: &str) -> Option<NodeRequirementGap> {
-    if tool != "dsh" {
+fn install_uses_npm(tool: &str, shell: LifecycleCommandShell) -> bool {
+    let Some(npm) = npm_install_command_for(tool) else {
+        return false;
+    };
+    let command = match shell {
+        LifecycleCommandShell::Posix => Some(posix_install_command_for(tool)),
+        LifecycleCommandShell::WindowsBatch => {
+            tool_action_shell_command_for_shell(tool, ToolLifecycleAction::Install, shell)
+        }
+    };
+    // A native installer with an npm fallback must remain usable without system Node.
+    command.as_deref() == Some(npm)
+}
+
+pub(super) async fn install_node_requirement(
+    client: &reqwest::Client,
+    tool: &str,
+    target: &str,
+) -> Option<String> {
+    #[cfg(target_os = "windows")]
+    let shell = if wsl_distro_for_tool(tool).is_some() {
+        LifecycleCommandShell::Posix
+    } else {
+        LifecycleCommandShell::WindowsBatch
+    };
+    #[cfg(not(target_os = "windows"))]
+    let shell = LifecycleCommandShell::Posix;
+    if !install_uses_npm(tool, shell) {
         return None;
     }
+    let package = npm_package_for(tool)?;
+    required_node_range(tool, fetch_engines_node(client, package, target).await)
+}
+
+fn install_node_version(
+    tool: &str,
+    preference: Option<&WslShellPreferenceInput>,
+) -> Option<String> {
+    #[cfg(target_os = "windows")]
+    if let Some(distro) = wsl_distro_for_tool(tool) {
+        return match try_get_version_wsl(
+            "node",
+            &distro,
+            preference.and_then(|pref| pref.wsl_shell.as_deref()),
+            preference.and_then(|pref| pref.wsl_shell_flag.as_deref()),
+        ) {
+            ShellProbe::Found(version) => Some(version),
+            _ => None,
+        };
+    }
+    let _ = (tool, preference);
     // npm launchers prefer a sibling node, then the effective PATH.
     let npm = resolve_path_default(
         "npm",
@@ -32,27 +79,39 @@ fn install_node_gap_sync(tool: &str) -> Option<NodeRequirementGap> {
     )
     .ok()
     .flatten();
-    let current = node_version_next_to(npm.as_deref())?;
-    node_gap(DSH_NODE_REQUIREMENT, &current)
+    node_version_next_to(npm.as_deref())
 }
 
-pub(super) async fn install_node_gap(tool: &str) -> Option<NodeRequirementGap> {
-    if tool != "dsh" {
-        return None;
-    }
+pub(super) async fn install_node_gap(
+    client: &reqwest::Client,
+    tool: &str,
+    target: &str,
+    preference: Option<&WslShellPreferenceInput>,
+) -> Option<NodeRequirementGap> {
+    let required = install_node_requirement(client, tool, target).await?;
     let tool = tool.to_owned();
-    tokio::task::spawn_blocking(move || install_node_gap_sync(&tool))
-        .await
-        .ok()
-        .flatten()
+    let preference = preference.cloned();
+    let current =
+        tokio::task::spawn_blocking(move || install_node_version(&tool, preference.as_ref()))
+            .await
+            .ok()??;
+    node_gap(&required, &current)
 }
 
-pub(super) fn ensure_install_node(tool: &str) -> Result<(), String> {
-    match install_node_gap_sync(tool) {
-        Some(gap) => Err(format!(
-            "{} requires Node.js {}, but npm uses Node.js {}. Upgrade Node.js, refresh the application list, then install again.",
-            tool_display_name(tool), gap.required, gap.current
-        )),
+fn requirement_error(tool: &str, gap: &NodeRequirementGap) -> String {
+    serde_json::json!({"code":"TOOL_NODE_REQUIREMENT", "tool":tool, "required":gap.required, "current":gap.current}).to_string()
+}
+
+pub(super) fn ensure_install_node(
+    tool: &str,
+    required: Option<&str>,
+    preference: Option<&WslShellPreferenceInput>,
+) -> Result<(), String> {
+    let gap = required.and_then(|range| {
+        install_node_version(tool, preference).and_then(|current| node_gap(range, &current))
+    });
+    match gap {
+        Some(gap) => Err(requirement_error(tool, &gap)),
         None => Ok(()),
     }
 }
@@ -73,10 +132,6 @@ pub(super) async fn update_node_gap(
     target: &str,
 ) -> Option<NodeRequirementGap> {
     let package = npm_package_for(tool)?;
-    // MiniMax Code 的官方 installer 在系统 Node 不达标时会自带一份 Node。
-    if tool == "mcode" {
-        return None;
-    }
     #[cfg(target_os = "windows")]
     if wsl_distro_for_tool(tool).is_some() {
         return None;
@@ -102,13 +157,7 @@ pub(super) async fn ensure_update_node(tool: &str) -> Result<(), String> {
         return Ok(());
     };
     match update_node_gap(&client, tool, &latest).await {
-        Some(gap) => {
-            let name = tool_display_name(tool);
-            Err(format!(
-                "{name} {latest} requires Node {}, but this installation runs on Node {}. Upgrade Node first, then update {name}.",
-                gap.required, gap.current
-            ))
-        }
+        Some(gap) => Err(requirement_error(tool, &gap)),
         None => Ok(()),
     }
 }
@@ -119,7 +168,16 @@ fn update_node_version(tool: &str) -> Option<String> {
     let installs = enumerate_tool_installations(tool);
     let inst = default_install(&installs)?;
     let real = inst.real.to_string_lossy();
-    if !real.replace('\\', "/").contains("/node_modules/") || inst.source == "bun" {
+    if tool == "mcode"
+        && (mcode_receipt_install_root(&inst.path, McodeLayout::NATIVE).is_some()
+            || mcode_script_install_root(&inst.path, &real, McodeLayout::NATIVE).is_some())
+    {
+        return None;
+    }
+    if inst.source == "bun"
+        || (!real.replace('\\', "/").contains("/node_modules/")
+            && tool_uninstall::npm_prefix(tool, inst).is_none())
+    {
         return None;
     }
     #[cfg(not(target_os = "windows"))]
@@ -317,6 +375,54 @@ fn comparator(op: &str, parts: &[u64]) -> Option<Vec<Bound>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installation_checks_follow_the_selected_installer() {
+        for tool in ["codex", "gemini", "openclaw", "pi", "dsh"] {
+            assert!(
+                install_uses_npm(tool, LifecycleCommandShell::Posix),
+                "{tool}"
+            );
+            assert!(
+                install_uses_npm(tool, LifecycleCommandShell::WindowsBatch),
+                "{tool}"
+            );
+        }
+        for tool in [
+            "claude", "opencode", "grok", "mcode", "kimi", "hermes", "agy",
+        ] {
+            assert!(
+                !install_uses_npm(tool, LifecycleCommandShell::Posix),
+                "{tool}"
+            );
+        }
+        #[cfg(target_os = "windows")]
+        {
+            for tool in ["claude", "opencode"] {
+                assert!(
+                    install_uses_npm(tool, LifecycleCommandShell::WindowsBatch),
+                    "{tool}"
+                );
+            }
+            for tool in ["grok", "mcode", "kimi", "hermes", "agy"] {
+                assert!(
+                    !install_uses_npm(tool, LifecycleCommandShell::WindowsBatch),
+                    "{tool}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn node_errors_preserve_structured_values_for_frontend_localization() {
+        let gap = node_gap(">=24.22.1 <25 || >=26.12.1", "22.12.0").unwrap();
+        let error: serde_json::Value =
+            serde_json::from_str(&requirement_error("openclaw", &gap)).unwrap();
+        assert_eq!(error["code"], "TOOL_NODE_REQUIREMENT");
+        assert_eq!(error["tool"], "openclaw");
+        assert_eq!(error["required"], ">=24.22.1 <25 || >=26.12.1");
+        assert_eq!(error["current"], "22.12.0");
+    }
 
     #[test]
     fn dsh_uses_official_node_requirement_when_npm_metadata_omits_engines() {

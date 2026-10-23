@@ -4207,7 +4207,9 @@
       "omp": "Resmi komut dosyasıyla yüklenir",
       "dsh": "npm ile kurulur; Node.js 22.19+ (22.x) veya 24+ gerektirir"
     },
-    "installNeedsNode": "Kurulum Node {{required}} gerektiriyor, ancak npm Node {{current}} kullanıyor. Node sürümünü yükseltin, ardından uygulama listesini yenileyin."
+    "installNeedsNode": "Kurulum Node {{required}} gerektiriyor, ancak npm Node {{current}} kullanıyor. Node sürümünü yükseltin, ardından uygulama listesini yenileyin.",
+    "nodeRequirementError": "{{name}} Node {{required}} gerektiriyor, ancak mevcut çalışma zamanı Node {{current}}. Node sürümünü yükseltin, uygulama listesini yenileyin ve tekrar deneyin.",
+    "updateNeedsNode": "{{version}} sürümü Node {{required}} gerektiriyor, ancak bu kurulum Node {{current}} kullanıyor. Önce Node sürümünü yükseltin."
   },
   "appPage": {
     "moreActions": "{{name}} için diğer işlemler",

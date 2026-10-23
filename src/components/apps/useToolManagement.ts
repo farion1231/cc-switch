@@ -15,7 +15,10 @@ import type {
   ToolUninstallPlan,
 } from "@/lib/api/settings";
 import type { AppId } from "@/lib/api/types";
-import { extractErrorMessage } from "@/utils/errorUtils";
+import {
+  extractErrorMessage,
+  translateToolNodeRequirementError,
+} from "@/utils/errorUtils";
 import { isWindows } from "@/lib/platform";
 import { isUpdateAvailable } from "@/lib/version";
 
@@ -778,7 +781,11 @@ export function useToolManagement() {
               void diagnoseToolSilently(toolName);
             }
           } catch (error) {
-            const detail = extractErrorMessage(error) || String(error);
+            const detail = translateToolNodeRequirementError(
+              extractErrorMessage(error) || String(error),
+              t,
+              TOOL_DISPLAY_NAMES[toolName],
+            );
             if (detail === "TOOL_ACTION_IN_PROGRESS") {
               toast.info(t("settings.toolActionInProgress"), {
                 description: t("settings.toolActionInProgressDetail", {

@@ -15,6 +15,8 @@ DeepSeek Harness 的应用 ID 为 `dsh`，命令为 `dsh`，npm 包为 `@deepsee
 
 如果当前是 Node 22.12.0，会被 `undici` 等依赖拒绝；请切换到符合要求的 Node（建议 Node 24 LTS 最新版），确认 `node --version` 后重新启动 CC Switch、刷新应用列表并重试。日志里的 `_jsr-registry` 是 npm 不识别环境配置项的警告，实际阻断原因是 `EBADENGINE`。
 
+此检查也用于其他直接通过 npm 安装的应用，按目标发布包的 `engines.node` 动态判断。使用官方独立安装器的应用不会因为系统 Node 版本过低而被拦截；已有 npm 安装的升级则按对应安装位置检查 Node。Windows npm 启动脚本及 MiniMax Code 自带运行时的安装会分别识别，WSL 安装检查对应发行版内的 Node。安装行提示、升级提示和执行时的版本错误均提供简体中文、繁体中文、英文、日文和土耳其语翻译。
+
 安装后在终端运行 `dsh web` 打开官方 Web 界面。
 
 ## 供应商与模型
