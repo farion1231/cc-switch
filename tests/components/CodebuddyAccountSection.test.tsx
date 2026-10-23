@@ -111,7 +111,7 @@ describe("CodebuddyAccountSection", () => {
     mocks.quota.mockResolvedValue(quotaResult());
   });
 
-  it("lists accounts with their site and switches from the menu", async () => {
+  it("lists accounts with their site and leaves switching to the provider list", async () => {
     const auth = baseAuth();
     auth.accounts = [
       account("100", "www.codebuddy.cn", "alice"),
@@ -127,17 +127,19 @@ describe("CodebuddyAccountSection", () => {
     expect(within(current).getByText("CodeBuddy 在用")).toBeInTheDocument();
     expect(screen.getAllByText(/国内版/).length).toBeGreaterThan(0);
     expect(screen.getByText(/UID 300/)).toBeInTheDocument();
-    expect(screen.getByText(/登录已过期，切不过去/)).toBeInTheDocument();
+    expect(screen.getByText(/登录已过期，需要重新登录/)).toBeInTheDocument();
 
+    // 切换改在供应商列表的官方登录卡上做，账号菜单里只剩重新登录、删除
     await userEvent.click(
       screen.getByRole("button", { name: "carol 的更多操作" }),
     );
-    await userEvent.click(
-      await screen.findByRole("menuitem", {
-        name: "切换 CodeBuddy 到这个账号",
-      }),
-    );
-    expect(auth.setDefaultAccount).toHaveBeenCalledWith("300@www.codebuddy.ai");
+    expect(
+      await screen.findByRole("menuitem", { name: /删除/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /切换/ }),
+    ).not.toBeInTheDocument();
+    expect(auth.setDefaultAccount).not.toHaveBeenCalled();
   });
 
   it("offers to collect an uncollected sign-in", async () => {

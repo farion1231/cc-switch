@@ -93,7 +93,8 @@ interface ManagedAccountsGroupProps {
   /** ⋯ 里有没有「重新登录」（Copilot 没有） */
   canReauth: boolean;
   onReauth: (accountId: string) => void;
-  onSetDefault: (accountId: string) => void;
+  /** ⋯ 里的「设为默认」；不传就没有这一项（CodeBuddy 在供应商列表里切换） */
+  onSetDefault?: (accountId: string) => void;
   settingDefault: boolean;
   onRemove: (accountId: string, login: string) => void;
   /** 标题行 ⋯ 里的「删除全部账号」；不传就没有这个菜单（Kimi） */
@@ -548,7 +549,7 @@ interface AccountRowProps {
   settingDefault: boolean;
   removing: boolean;
   onReauth: (accountId: string) => void;
-  onSetDefault: (accountId: string) => void;
+  onSetDefault?: (accountId: string) => void;
   onRemove: (accountId: string, login: string) => void;
 }
 
@@ -567,7 +568,8 @@ function AccountRow({
 }: AccountRowProps) {
   const { t } = useTranslation();
   const subId = useId();
-  const canSetDefault = !account.isDefault && !account.needsReauth;
+  const canSetDefault =
+    Boolean(onSetDefault) && !account.isDefault && !account.needsReauth;
   const separator = " · ";
 
   return (
@@ -650,7 +652,7 @@ function AccountRow({
           {canSetDefault && (
             <DropdownMenuItem
               disabled={settingDefault}
-              onSelect={() => onSetDefault(account.id)}
+              onSelect={() => onSetDefault?.(account.id)}
               className="h-[30px] rounded-control px-2.5 text-body"
             >
               {setDefaultLabel ??

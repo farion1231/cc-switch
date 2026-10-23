@@ -319,18 +319,6 @@ export function useManagedAuth(
           );
         }
       }
-      // CodeBuddy 监听凭据目录，运行中的 CLI 会自己换到这个号
-      if (authProvider === "codebuddy_oauth") {
-        toast.success(
-          t("authCenter.codebuddy.switched", {
-            defaultValue:
-              "已切换。正在运行的 CodeBuddy 会自动换到这个账号，新开的也会用它。",
-          }),
-        );
-        await queryClient.invalidateQueries({
-          queryKey: ["codebuddy-account-live"],
-        });
-      }
       await refetchStatus();
       await queryClient.invalidateQueries({ queryKey });
     },

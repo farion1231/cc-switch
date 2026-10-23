@@ -47,8 +47,8 @@ interface CodebuddyAccountSectionProps {
 
 /**
  * 授权中心的 CodeBuddy Code 账号组。CodeBuddy 只有一份全局登录（凭据文件），「在用」就是它现在
- * 登着的那个号；「切换」把选中的号写进去，运行中的 CLI 会自己换号。添加账号是在终端里跑
- * `codebuddy` 执行 `/login`，或者直接收录当前登录。删账号只删 CC Switch 的副本。
+ * 登着的那个号。这里只管账号（收录、终端登录、删除、额度）；切换在供应商列表里：添加
+ * 「CodeBuddy 官方登录」卡绑定账号，点卡片上的「切换」。删账号只删 CC Switch 的副本。
  */
 export const CodebuddyAccountSection: React.FC<
   CodebuddyAccountSectionProps
@@ -66,10 +66,8 @@ export const CodebuddyAccountSection: React.FC<
     isPolling,
     isAddingAccount,
     isRemovingAccount,
-    isSettingDefaultAccount,
     addAccount,
     removeAccount,
-    setDefaultAccount,
     cancelAuth,
     logout,
     refetchStatus,
@@ -82,7 +80,7 @@ export const CodebuddyAccountSection: React.FC<
     queryFn: authApi.codebuddyAccountLive,
     refetchInterval: 15_000,
   });
-  // 账号表变了（终端登录收录、切换、删除）时凭据文件的状态也跟着变
+  // 账号表变了（终端登录收录、删除）或 CodeBuddy 换了号时凭据文件的状态也跟着变
   const accountKey = accounts.map((account) => account.id).join(",");
   React.useEffect(() => {
     void queryClient.invalidateQueries({ queryKey: CODEBUDDY_LIVE_KEY });
@@ -136,7 +134,7 @@ export const CodebuddyAccountSection: React.FC<
     if (account.requires_reauth) {
       details.push(
         t("authCenter.codebuddy.expiredNote", {
-          defaultValue: "登录已过期，切不过去",
+          defaultValue: "登录已过期，需要重新登录",
         }),
       );
     } else if (date) {
@@ -205,7 +203,7 @@ export const CodebuddyAccountSection: React.FC<
       iconName="codebuddy"
       help={t("authCenter.group.codebuddyHelp", {
         defaultValue:
-          "CodeBuddy Code 的官方登录（国内版、国际版都在这里）。CodeBuddy 同时只能登录一个号，「切换」会把它的登录换成选中的账号，正在运行的 CodeBuddy 也会自动换过去。添加账号会打开终端运行 codebuddy，在里面执行 /login 登录后这里自动收录；令牌由 CodeBuddy 自己续期。",
+          "CodeBuddy Code 的官方登录（国内版、国际版都在这里）。要切换账号，在供应商列表里添加「CodeBuddy 官方登录」卡并切换。添加账号会打开终端运行 codebuddy，在里面执行 /login 登录后这里自动收录；令牌由 CodeBuddy 自己续期。",
       })}
       helpSide={helpSide}
       accounts={rows}
@@ -226,14 +224,10 @@ export const CodebuddyAccountSection: React.FC<
       defaultLabel={t("authCenter.codebuddy.current", {
         defaultValue: "CodeBuddy 在用",
       })}
-      setDefaultLabel={t("authCenter.codebuddy.switchTo", {
-        defaultValue: "切换 CodeBuddy 到这个账号",
-      })}
       canReauth
       // 在终端里用同一个号重新 /login，收录时替换旧副本
       onReauth={() => addAccount()}
-      onSetDefault={setDefaultAccount}
-      settingDefault={isSettingDefaultAccount}
+      settingDefault={false}
       onRemove={(accountId, login) =>
         setRemoveTarget({ kind: "one", accountId, login })
       }
