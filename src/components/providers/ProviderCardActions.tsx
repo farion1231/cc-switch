@@ -47,7 +47,6 @@ const DOT: Record<CardTone | "muted", string> = {
   direct: "bg-direct",
   route: "bg-route",
   stack: "bg-stack",
-  neutral: "bg-fg-2",
   muted: "bg-fg-3",
 };
 

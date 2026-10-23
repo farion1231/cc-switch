@@ -442,7 +442,7 @@ describe("ProviderList Component", () => {
     expect(screen.getByTestId("status-current")).toHaveTextContent(
       "providerCard.status.default",
     );
-    expect(lastProps("current")?.presentation.tone).toBe("neutral");
+    expect(lastProps("current")?.presentation.tone).toBe("direct");
     expect(lastProps("current")?.isCurrent).toBe(true);
     expect(screen.queryByTestId("switch-current")).not.toBeInTheDocument();
     expect(

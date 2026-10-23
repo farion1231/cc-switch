@@ -13,7 +13,7 @@ import {
  * 供应商卡片怎么画（v7）：当前那张的模式色、状态文字或按钮、徽标。由列表按应用和正在查看的
  * 模式算好交给卡片，卡片本身不再判断模式。
  */
-export type CardTone = "direct" | "route" | "stack" | "neutral";
+export type CardTone = "direct" | "route" | "stack";
 
 export type ChipTone =
   | "outline"
@@ -58,7 +58,7 @@ export interface CardButton {
 }
 
 export interface CardPresentation {
-  /** 当前那张：模式色边框 + 淡底；neutral（灰底）只给共存式应用的默认那家（OpenClaw 默认、Hermes 当前） */
+  /** 当前那张：模式色边框 + 淡底；共存式应用的默认那家（OpenClaw / OpenCode / Kimi 默认、Hermes 当前）也用 direct */
   tone?: CardTone;
   /** 主操作位换成状态文字（使用中 / 路由中 / 当前默认 / 已添加…） */
   status?: { label: string; dot: CardTone | "muted" };
@@ -763,9 +763,9 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
       (live ? added : available).push({
         provider: p,
         presentation: {
-          tone: current ? "neutral" : undefined,
+          tone: current ? "direct" : undefined,
           status: current
-            ? { label: t("providerCard.status.default"), dot: "muted" }
+            ? { label: t("providerCard.status.default"), dot: "direct" }
             : undefined,
           chips,
           buttons,
@@ -858,7 +858,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
       continue;
     }
 
-    // 已添加：白底、不写「● 已添加」（分组标题和「移除」已经说清楚）；灰底只给默认那一家
+    // 已添加：白底、不写「● 已添加」（分组标题和「移除」已经说清楚）；蓝底只给默认那一家
     const buttons: CardButton[] = [];
     const menuItems: CardMenuItem[] = [];
     let status: CardPresentation["status"];
@@ -869,7 +869,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     if (app === "openclaw" || app === "opencode") {
       isDefault = input.defaultModel?.providerId === p.id;
       if (isDefault) {
-        status = { label: t("providerCard.status.default"), dot: "muted" };
+        status = { label: t("providerCard.status.default"), dot: "direct" };
         chips.push({
           key: "defaultModel",
           label: t("providerCard.chip.defaultModel", {
@@ -912,7 +912,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     if (app === "hermes") {
       if (p.id === input.hermesCurrentId) {
         isDefault = true;
-        status = { label: t("providerCard.status.current"), dot: "muted" };
+        status = { label: t("providerCard.status.current"), dot: "direct" };
         removeReason = t("providerCard.reason.currentCannotRemove");
       } else {
         buttons.push({
@@ -934,7 +934,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     added.push({
       provider: p,
       presentation: {
-        tone: isDefault ? "neutral" : undefined,
+        tone: isDefault ? "direct" : undefined,
         status,
         chips,
         dim: managed,

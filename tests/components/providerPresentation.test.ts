@@ -535,7 +535,7 @@ describe("buildAdditiveSections", () => {
     });
 
     expect(item(sections, "relay")).toMatchObject({
-      tone: "neutral",
+      tone: "direct",
       status: { label: "providerCard.status.default" },
     });
     expect(item(sections, "multi").tone).toBeUndefined();
@@ -574,7 +574,7 @@ describe("buildAdditiveSections", () => {
     });
 
     expect(item(sections, "relay")).toMatchObject({
-      tone: "neutral",
+      tone: "direct",
       status: { label: "providerCard.status.default" },
     });
     expect(
@@ -641,7 +641,7 @@ describe("buildAdditiveSections", () => {
     expect(button(sections, "relay", "remove").disabledReason).toBe(
       "providerCard.reason.currentCannotRemove",
     );
-    expect(item(sections, "relay").tone).toBe("neutral");
+    expect(item(sections, "relay").tone).toBe("direct");
     expect(item(sections, "managed").tone).toBeUndefined();
     expect(item(sections, "managed")).toMatchObject({
       dim: true,
