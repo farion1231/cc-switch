@@ -5482,6 +5482,9 @@ impl ProviderService {
                     provider.settings_config = config.clone();
                 }
                 Self::set_provider_live_config_managed(provider, native.contains_key(id));
+                if app_type == AppType::Kimi {
+                    crate::kimi_config::normalize_provider_identity(provider);
+                }
                 state.db.save_provider(app_type.as_str(), provider)?;
             }
             return Ok(saved);
@@ -5497,6 +5500,9 @@ impl ProviderService {
     ///
     /// 对于累加模式应用（OpenCode, OpenClaw），不存在"当前供应商"概念，直接返回空字符串。
     pub fn current(state: &AppState, app_type: AppType) -> Result<String, AppError> {
+        if app_type == AppType::Kimi {
+            return crate::kimi_config::current_provider();
+        }
         // Additive mode apps have no "current" provider concept
         if app_type.is_additive_mode() {
             return Ok(String::new());
@@ -5592,6 +5598,13 @@ impl ProviderService {
         provider: Provider,
         add_to_live: bool,
     ) -> Result<bool, AppError> {
+        if app_type == AppType::Kimi
+            && crate::kimi_config::is_official_provider(&provider.settings_config)
+        {
+            return Err(AppError::InvalidInput(
+                "Manage Kimi official accounts in the Authorization Center".into(),
+            ));
+        }
         if app_type == AppType::Pi {
             return pi::add(state, provider, add_to_live);
         }
@@ -6156,6 +6169,14 @@ impl ProviderService {
         original_id: Option<&str>,
         provider: Provider,
     ) -> Result<bool, AppError> {
+        if app_type == AppType::Kimi {
+            Self::ensure_kimi_provider_editable(original_id.unwrap_or(&provider.id))?;
+            if crate::kimi_config::is_official_provider(&provider.settings_config) {
+                return Err(AppError::InvalidInput(
+                    "Manage Kimi official accounts in the Authorization Center".into(),
+                ));
+            }
+        }
         if app_type == AppType::Pi {
             return pi::update(state, original_id, provider);
         }
@@ -6446,6 +6467,7 @@ impl ProviderService {
             return pi::delete(state, id);
         }
         if app_type == AppType::Kimi {
+            Self::ensure_kimi_provider_editable(id)?;
             return crate::kimi_config::save_and_commit(id, None, false, || {
                 state.db.delete_provider("kimi", id)
             });
@@ -6538,6 +6560,7 @@ impl ProviderService {
             return pi::remove(state, id);
         }
         if app_type == AppType::Kimi {
+            Self::ensure_kimi_provider_editable(id)?;
             return crate::kimi_config::save_and_commit(id, None, false, || {
                 if let Some(mut provider) = state.db.get_provider_by_id(id, "kimi")? {
                     Self::set_provider_live_config_managed(&mut provider, false);
@@ -6600,6 +6623,19 @@ impl ProviderService {
         Ok(())
     }
 
+    fn ensure_kimi_provider_editable(id: &str) -> Result<(), AppError> {
+        let native = crate::kimi_config::get_providers()?;
+        if native
+            .get(id)
+            .is_some_and(crate::kimi_config::is_official_provider)
+        {
+            return Err(AppError::InvalidInput(
+                "Manage Kimi official accounts in the Authorization Center".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// 切换供应商。
     ///
     /// - 代理模式：只换代理路由，直连指针不变；契约没变时客户端文件不读也不写。
@@ -6659,7 +6695,14 @@ impl ProviderService {
         if app_type == AppType::Kimi {
             let mut provider = _provider.clone();
             Self::set_provider_live_config_managed(&mut provider, true);
-            Self::save_native_provider(state, &app_type, &provider, true, false)?;
+            crate::kimi_config::switch_and_commit(
+                id,
+                provider.settings_config.clone(),
+                |config| {
+                    provider.settings_config = config;
+                    state.db.save_provider("kimi", &provider)
+                },
+            )?;
             return Ok(SwitchResult::default());
         }
 

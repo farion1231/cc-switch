@@ -160,17 +160,36 @@ describe("ModelStatsTable distribution", () => {
     );
     expect(disclosure()).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("button", { name: /^alpha,/ })).toBeNull();
+    const headers = within(screen.getByRole("table")).getAllByRole(
+      "columnheader",
+    );
+    const expectedHeaders = [
+      /^usage.model$/,
+      /^usage.requests/,
+      /^usage.cost$/,
+      /^usage.modelDistribution.costShare$/,
+      /^usage.tokens$/,
+      /^usage.modelDistribution.tokenShare$/,
+      /^usage.successRate$/,
+      /^usage.speed/,
+      /^usage.firstToken/,
+    ];
+    expect(headers).toHaveLength(expectedHeaders.length);
+    expectedHeaders.forEach((name, index) => {
+      expect(headers[index]).toHaveAccessibleName(name);
+    });
+    expect(headers[1]).toHaveAttribute("aria-sort", "descending");
     const rows = within(screen.getByRole("table")).getAllByRole("row");
     expect(within(rows[1]).getByText("alpha")).toBeInTheDocument();
     expect(within(rows[2]).getByText("beta")).toBeInTheDocument();
     const cells = within(rows[1]).getAllByRole("cell");
     expect(cells).toHaveLength(9);
-    expect(cells[3]).toHaveTextContent(/^75.0%$/);
-    expect(cells[5]).toHaveTextContent(/^25.0%$/);
+    expect(cells[3]).toHaveTextContent(/^25.0%$/);
+    expect(cells[5]).toHaveTextContent(/^75.0%$/);
     expect(cells[6]).toHaveTextContent("98.4%");
     expect(cells[7]).toHaveTextContent("50tok/s");
     expect(cells[8]).toHaveTextContent("0.4s");
-    expect(cells[4]).toHaveAttribute(
+    expect(cells[2]).toHaveAttribute(
       "title",
       "$1.000000 · usage.avgCost $0.5000",
     );
@@ -236,6 +255,9 @@ describe("ModelStatsTable distribution", () => {
       expect(label.lastChild?.textContent).toBe(`${model} 100.0%`);
     }
     expect(within(legend(model)).getByText(model)).toBeInTheDocument();
+    expect(within(tableRow(model)).getAllByRole("cell")[0]).toHaveTextContent(
+      model,
+    );
   });
 
   it("omits a smaller outside label that collides after pie padding while keeping both models in the legend", async () => {
@@ -296,7 +318,7 @@ describe("ModelStatsTable distribution", () => {
     ).toBe(false);
     expect(screen.getByTitle("100")).toHaveTextContent("100");
     expect(screen.getByTitle("$4.000000")).toHaveTextContent("$4.00");
-    expect(within(tableRow("alpha")).getAllByRole("cell")[3]).toHaveTextContent(
+    expect(within(tableRow("alpha")).getAllByRole("cell")[5]).toHaveTextContent(
       "75.0%",
     );
 
@@ -474,7 +496,7 @@ describe("ModelStatsTable distribution", () => {
     expect(legend("alpha")).toHaveAccessibleName(
       "alpha, usage.modelDistribution.tokenShare: 75.0%, usage.modelDistribution.costShare: —",
     );
-    expect(within(tableRow("alpha")).getAllByRole("cell")[5]).toHaveTextContent(
+    expect(within(tableRow("alpha")).getAllByRole("cell")[3]).toHaveTextContent(
       "—",
     );
 
@@ -487,7 +509,7 @@ describe("ModelStatsTable distribution", () => {
     expect(legend("alpha")).toHaveAccessibleName(
       "alpha, usage.modelDistribution.tokenShare: —, usage.modelDistribution.costShare: 25.0%",
     );
-    expect(within(tableRow("alpha")).getAllByRole("cell")[3]).toHaveTextContent(
+    expect(within(tableRow("alpha")).getAllByRole("cell")[5]).toHaveTextContent(
       "—",
     );
   });
@@ -500,7 +522,7 @@ describe("ModelStatsTable distribution", () => {
     await waitFor(() => expect(sectors(container)).toHaveLength(4));
     const paths = sectors(container).map((path) => path.getAttribute("d"));
     expect(screen.getByTitle("$4.000000")).toHaveTextContent("$4.00");
-    expect(within(tableRow("alpha")).getAllByRole("cell")[4]).toHaveTextContent(
+    expect(within(tableRow("alpha")).getAllByRole("cell")[2]).toHaveTextContent(
       "$1.00",
     );
     fireEvent.mouseEnter(container.querySelectorAll(".recharts-pie-sector")[3]);
@@ -515,10 +537,10 @@ describe("ModelStatsTable distribution", () => {
     });
     rerender(<ModelStatsTable {...defaultProps} />);
     expect(screen.getByTitle("¥8.00 ($4.000000)")).toHaveTextContent("¥8.00");
-    expect(within(tableRow("alpha")).getAllByRole("cell")[4]).toHaveTextContent(
+    expect(within(tableRow("alpha")).getAllByRole("cell")[2]).toHaveTextContent(
       "¥2.00",
     );
-    expect(within(tableRow("alpha")).getAllByRole("cell")[4]).toHaveAttribute(
+    expect(within(tableRow("alpha")).getAllByRole("cell")[2]).toHaveAttribute(
       "title",
       "¥2.00 ($1.000000) · usage.avgCost ¥1.00",
     );
@@ -527,10 +549,10 @@ describe("ModelStatsTable distribution", () => {
     expect(sectors(container).map((path) => path.getAttribute("d"))).toEqual(
       paths,
     );
-    expect(within(tableRow("alpha")).getAllByRole("cell")[3]).toHaveTextContent(
+    expect(within(tableRow("alpha")).getAllByRole("cell")[5]).toHaveTextContent(
       "75.0%",
     );
-    expect(within(tableRow("alpha")).getAllByRole("cell")[5]).toHaveTextContent(
+    expect(within(tableRow("alpha")).getAllByRole("cell")[3]).toHaveTextContent(
       "25.0%",
     );
   });

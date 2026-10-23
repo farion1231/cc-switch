@@ -24,6 +24,7 @@ const TAURI_ENDPOINT = "http://tauri.local";
 const useDragSortMock = vi.fn();
 const useSortableMock = vi.fn();
 const providerCardRenderSpy = vi.fn();
+
 /** 某张卡片最近一次渲染拿到的 props。 */
 const lastProps = (id: string) =>
   providerCardRenderSpy.mock.calls
@@ -157,6 +158,26 @@ describe("ProviderList Component", () => {
     onDuplicate: vi.fn(),
     onOpenWebsite: vi.fn(),
   };
+
+  it.each([false, true])(
+    "keeps account login inside the add-provider flow with existing providers: %s",
+    (hasProvider) => {
+      const providers: Record<string, Provider> = hasProvider
+        ? {
+            custom: {
+              id: "custom",
+              name: "Custom",
+              settingsConfig: {},
+              meta: { liveConfigManaged: true },
+            },
+          }
+        : {};
+      renderWithQueryClient(
+        <ProviderList {...baseProps} appId="kimi" providers={providers} />,
+      );
+      expect(screen.queryByText("kimi.oauth.title")).not.toBeInTheDocument();
+    },
+  );
 
   function switchMode(
     overrides: Partial<SwitchModeProps> = {},
@@ -342,7 +363,7 @@ describe("ProviderList Component", () => {
     expect(onSwitch).toHaveBeenCalledWith(providerA);
   });
 
-  it.each(["mcode", "kimi"] as const)(
+  it.each(["mcode"] as const)(
     "uses native membership to add and remove %s providers",
     async (appId) => {
       const saved = createProvider({
@@ -377,6 +398,136 @@ describe("ProviderList Component", () => {
       expect(onSwitch).toHaveBeenCalledWith(saved);
     },
   );
+
+  it("switches Kimi providers and marks only the native default-model owner as in use", () => {
+    const current = createProvider({
+      id: "current",
+      name: "Current",
+      meta: { liveConfigManaged: true },
+    });
+    const other = createProvider({
+      id: "other",
+      name: "Other",
+      meta: { liveConfigManaged: true },
+    });
+    const saved = createProvider({
+      id: "saved",
+      name: "Saved",
+      meta: { liveConfigManaged: false },
+    });
+    const onSwitch = vi.fn();
+    const onRemoveFromConfig = vi.fn();
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [current, other, saved],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    const props = {
+      ...baseProps,
+      appId: "kimi" as const,
+      providers: { current, other, saved },
+      onSwitch,
+      onRemoveFromConfig,
+    };
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <ProviderList {...props} currentProviderId="current" />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId("status-current")).toHaveTextContent(
+      "providerCard.status.inUse",
+    );
+    expect(lastProps("current")?.presentation.tone).toBe("direct");
+    expect(lastProps("current")?.isCurrent).toBe(true);
+    expect(screen.queryByTestId("switch-current")).not.toBeInTheDocument();
+    expect(
+      lastProps("current")?.presentation.deleteDisabledReason,
+    ).toBeTruthy();
+    expect(
+      lastProps("current")?.presentation.menuItems[0].disabledReason,
+    ).toBeTruthy();
+    fireEvent.click(screen.getByTestId("switch-other"));
+    expect(onSwitch).toHaveBeenLastCalledWith(other);
+    fireEvent.click(screen.getByTestId("switch-saved"));
+    expect(onSwitch).toHaveBeenLastCalledWith(saved);
+    lastProps("other")?.presentation.menuItems[0].onSelect();
+    expect(onRemoveFromConfig).toHaveBeenCalledWith(other);
+    rerender(
+      <QueryClientProvider client={client}>
+        <ProviderList {...props} currentProviderId="other" />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByTestId("status-current")).not.toBeInTheDocument();
+    expect(screen.getByTestId("status-other")).toHaveTextContent(
+      "providerCard.status.inUse",
+    );
+    expect(screen.getByTestId("switch-current")).toBeInTheDocument();
+  });
+
+  it("does not mark any Kimi provider as current when the native selection is missing", () => {
+    const provider = createProvider({
+      id: "live",
+      meta: { liveConfigManaged: true },
+    });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        appId="kimi"
+        providers={{ live: provider }}
+      />,
+    );
+    expect(screen.queryByTestId("status-live")).not.toBeInTheDocument();
+    expect(screen.getByTestId("switch-live")).toBeInTheDocument();
+  });
+
+  it("marks the native Kimi OAuth card as official without marking API-key presets", () => {
+    const official = createProvider({
+      id: "managed:kimi-code",
+      name: "Kimi Official",
+      icon: "kimi",
+      settingsConfig: {
+        provider: { type: "kimi", oauth: { key: "oauth/kimi-code" } },
+        models: {},
+      },
+      meta: { liveConfigManaged: true },
+    });
+    const apiKey = createProvider({
+      id: "kimi-coding",
+      name: "Kimi For Coding",
+      category: "cn_official",
+      meta: { liveConfigManaged: true },
+    });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [official, apiKey],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        appId="kimi"
+        currentProviderId={official.id}
+        providers={{ [official.id]: official, [apiKey.id]: apiKey }}
+      />,
+    );
+    expect(lastProps(official.id)?.presentation.chips).toContainEqual({
+      key: "official",
+      label: "providerCard.chip.official",
+      tone: "outline",
+    });
+    expect(lastProps(official.id)?.presentation.status.label).toBe(
+      "providerCard.status.inUse",
+    );
+    expect(lastProps(apiKey.id)?.presentation.chips).toEqual([]);
+  });
 
   it.each([{ ctrlKey: true }, { metaKey: true }])(
     "keeps search in the list flow and restores cards on close (%o)",
