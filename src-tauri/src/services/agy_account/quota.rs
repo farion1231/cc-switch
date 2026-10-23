@@ -89,7 +89,9 @@ struct ErrorDetail {
     message: Option<String>,
 }
 
-fn user_agent() -> String {
+/// 生成 Antigravity Hub 官方格式的 User-Agent
+async fn user_agent() -> String {
+    let version = super::version::get_latest_version().await;
     let os = match std::env::consts::OS {
         "macos" => "darwin",
         other => other,
@@ -99,7 +101,7 @@ fn user_agent() -> String {
         "x86_64" => "x86_64",
         other => other,
     };
-    format!("antigravity/hub/2.24.0 (aidev_client; os_type={os}; arch={arch})")
+    format!("antigravity/hub/{version} (aidev_client; os_type={os}; arch={arch})")
 }
 
 pub async fn fetch(access_token: &str) -> Result<Vec<QuotaTier>, QuotaError> {
@@ -145,7 +147,7 @@ async fn post(
         .post(format!("{API_BASE}:{method}"))
         .timeout(REQUEST_TIMEOUT)
         .bearer_auth(access_token)
-        .header(reqwest::header::USER_AGENT, user_agent())
+        .header(reqwest::header::USER_AGENT, user_agent().await)
         .json(&body)
         .send()
         .await?;
@@ -265,9 +267,9 @@ mod tests {
         assert_eq!(parse_ineligible_reason(b"{}"), None);
     }
 
-    #[test]
-    fn user_agent_uses_antigravity_hub_signature() {
-        let ua = user_agent();
+    #[tokio::test]
+    async fn user_agent_uses_antigravity_hub_signature() {
+        let ua = user_agent().await;
         assert!(ua.starts_with("antigravity/hub/"));
         assert!(ua.contains("aidev_client"));
     }

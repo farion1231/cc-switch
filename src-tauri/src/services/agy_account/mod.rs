@@ -15,6 +15,7 @@
 pub mod keychain;
 pub mod oauth;
 pub mod quota;
+pub mod version;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
