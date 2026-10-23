@@ -78,6 +78,16 @@ const VERSION_SEGMENT = /^v\d+(?:(?:alpha|beta)\d*)?$/;
 const REQUEST_SEGMENTS = new Set(["responses", "messages"]);
 
 /**
+ * 同一个接口的新旧地址（归一后的写法）。OpenCode 的 Zen / Go 在 models.dev
+ * 里改成了 `/inference/...`（2026-10），预设和用户手里的仍是 `/zen/...`，两者
+ * 都能用、计费相同。
+ */
+const ENDPOINT_ALIASES: Record<string, string> = {
+  "opencode.ai/zen": "opencode.ai/inference/openai",
+  "opencode.ai/zen/go": "opencode.ai/inference/go/openai",
+};
+
+/**
  * 把地址归一成「域名 + 路径」，去掉末尾的版本号（`v1`、`v4`、`v1beta`）和请求
  * 路径（`chat/completions`、`responses`、`messages`）：这些写不写都是同一个接口。
  * 其余路径必须完全一致才算同一个接口——`opencode.ai/zen/v1` 和 `/zen/go/v1`、
@@ -109,7 +119,8 @@ function endpointKey(url: string): string | null {
       break;
     }
   }
-  return [parsed.hostname.toLowerCase(), ...segments].join("/");
+  const key = [parsed.hostname.toLowerCase(), ...segments].join("/");
+  return ENDPOINT_ALIASES[key] ?? key;
 }
 
 /** 挑出与地址是同一个接口的候选，保持原有顺序。 */
