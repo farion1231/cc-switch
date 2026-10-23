@@ -152,3 +152,43 @@ fn trae_mcp_servers_sync_into_traecli_toml() {
         .get("mcp_servers")
         .is_none_or(|servers| servers.get("docs").is_none()));
 }
+
+#[test]
+fn trae_add_to_config_keeps_the_selection_and_switch_writes_the_model_catalog() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let home = TraeHome::new();
+    let state = create_test_state().unwrap();
+    let mut gateway = provider("gateway", "deepseek-v4-pro");
+    gateway.settings_config["models"] = json!(["deepseek-v4-flash"]);
+    // Saved without writing traecli.toml, then added from the card.
+    ProviderService::add(&state, AppType::Trae, gateway, false).unwrap();
+    assert!(!home.config().exists());
+    ProviderService::add_to_live_config(&state, AppType::Trae, "gateway").unwrap();
+    let config = home.read();
+    assert!(config["model_providers"].get("gateway").is_some());
+    assert!(config.get("model_provider").is_none());
+    assert!(config.get("model_catalog_json").is_none());
+
+    ProviderService::switch(&state, AppType::Trae, "gateway").unwrap();
+    let config = home.read();
+    let catalog_path = home.directory.path().join("cc-switch-model-catalog.json");
+    assert_eq!(
+        config["model_catalog_json"],
+        catalog_path.to_string_lossy().as_ref()
+    );
+    let catalog: Value = serde_json::from_str(&fs::read_to_string(&catalog_path).unwrap()).unwrap();
+    let slugs: Vec<&str> = catalog["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["slug"].as_str().unwrap())
+        .collect();
+    assert_eq!(slugs, ["deepseek-v4-pro", "deepseek-v4-flash"]);
+    // The CCS profile keeps the model list for later switches.
+    let listed = ProviderService::list(&state, AppType::Trae).unwrap();
+    assert_eq!(
+        listed["gateway"].settings_config["models"],
+        json!(["deepseek-v4-flash"])
+    );
+}

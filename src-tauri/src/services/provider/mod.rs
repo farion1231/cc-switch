@@ -6633,6 +6633,20 @@ impl ProviderService {
         app_type: AppType,
         id: &str,
     ) -> Result<(), AppError> {
+        if app_type == AppType::Trae {
+            // 只写进 [model_providers.<id>]，不改 model_provider：选中由「设为默认」完成
+            let mut provider = state
+                .db
+                .get_provider_by_id(id, "trae")?
+                .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+            Self::set_provider_live_config_managed(&mut provider, true);
+            return crate::trae_config::save_and_commit(
+                id,
+                Some(provider.settings_config.clone()),
+                false,
+                || state.db.save_provider("trae", &provider),
+            );
+        }
         if app_type != AppType::Kimi {
             return Err(AppError::InvalidInput(format!(
                 "{} adds providers through switch",

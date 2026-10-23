@@ -4829,10 +4829,15 @@
     "envKey": "API anahtarı ortam değişkeni (isteğe bağlı)",
     "envKeyHint": "TRAE CLI anahtarı bu değişkenden okur (env_key); API anahtarını yapılandırma dosyasında saklamanız gerekmez.",
     "model": "Model",
+    "models": "Kullanılabilir modeller",
+    "modelsHint": "Bu modeller varsayılan modelle birlikte TRAE CLI model kataloğuna yazılır; traecli içinde /model ile aralarında geçiş yapabilirsiniz.",
+    "modelsEmpty": "Başka model eklenmedi; traecli yalnızca varsayılan modeli listeler.",
+    "removeModel": "{{model}} kaldır",
     "empty": {
       "title": "TRAE CLI sağlayıcısı ekle",
       "description": "Responses API uç noktası, API anahtarı ve model yapılandırın. traecli.toml içindeki mevcut sağlayıcılar otomatik içe aktarılır."
     },
-    "deleteSessionHint": "TRAE CLI oturum dizinini de güncellemesi için terminalde traecli delete <oturum kimliği> çalıştırın."
+    "deleteSessionHint": "TRAE CLI oturum dizinini de güncellemesi için terminalde traecli delete <oturum kimliği> çalıştırın.",
+    "switchNeedsModel": "Önce bu sağlayıcıyı düzenleyip bir model ayarlayın"
   }
 }

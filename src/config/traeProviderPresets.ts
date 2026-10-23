@@ -19,7 +19,7 @@ export interface TraeProviderTable {
 }
 
 export type TraeProviderConfig =
-  | { provider: TraeProviderTable; model: string }
+  | { provider: TraeProviderTable; model: string; models?: string[] }
   | { official: true };
 
 export interface TraeProviderPreset extends PresetFamilyFields {

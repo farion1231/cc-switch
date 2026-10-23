@@ -365,10 +365,13 @@ function App() {
     }
   };
 
-  // Kimi「添加」只写进 config.toml、不改默认模型；「切换」走 switchProvider
-  const handleAddKimiProvider = async (provider: Provider) => {
+  // Kimi / TRAE CLI「添加」只写进配置文件、不改当前选中；「设为默认」走 switchProvider
+  const handleAddNativeProvider = async (
+    provider: Provider,
+    app: "kimi" | "trae",
+  ) => {
     try {
-      await providersApi.addToLiveConfig(provider.id, "kimi");
+      await providersApi.addToLiveConfig(provider.id, app);
     } catch (error) {
       toast.error(
         t("notifications.addFailed", {
@@ -378,7 +381,7 @@ function App() {
       );
       return;
     } finally {
-      await queryClient.invalidateQueries({ queryKey: ["providers", "kimi"] });
+      await queryClient.invalidateQueries({ queryKey: ["providers", app] });
     }
     toast.success(
       t("notifications.addToConfigSuccess", { defaultValue: "已添加到配置" }),
@@ -1379,8 +1382,8 @@ function App() {
             onSwitch={(provider) =>
               void (activeApp === "pi"
                 ? handleEnablePiProvider(provider)
-                : activeApp === "kimi"
-                  ? handleAddKimiProvider(provider)
+                : activeApp === "kimi" || activeApp === "trae"
+                  ? handleAddNativeProvider(provider, activeApp)
                   : switchProvider(provider))
             }
             onRemoveFromConfig={
@@ -1404,7 +1407,9 @@ function App() {
               activeApp === "openclaw" || activeApp === "opencode"
                 ? (provider, modelId) =>
                     void setAsDefaultModel(provider, modelId)
-                : activeApp === "hermes" || activeApp === "kimi"
+                : activeApp === "hermes" ||
+                    activeApp === "kimi" ||
+                    activeApp === "trae"
                   ? (provider) => void switchProvider(provider)
                   : undefined
             }

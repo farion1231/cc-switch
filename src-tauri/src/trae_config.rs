@@ -4,8 +4,15 @@
 //! selects the active one. Without `model_provider`, traecli uses the TRAE
 //! account login, represented here by the reserved official provider.
 //!
-//! A saved CCS provider is `{ provider: <model_providers table>, model: "<id>" }`,
-//! or `{ official: true }` for the TRAE login.
+//! A saved CCS provider is `{ provider: <model_providers table>, model: "<id>",
+//! models?: ["<id>", ...] }`, or `{ official: true }` for the TRAE login.
+//!
+//! traecli does not list a custom provider's models on its own: its model list
+//! (`traecli models`, `/model`) comes from a Codex-format catalog. While a CCS
+//! provider is active, CCS writes `cc-switch-model-catalog.json` next to the
+//! config and points `model_catalog_json` at it (absolute path; traecli resolves
+//! relative paths against the working directory). A catalog the user configured
+//! themselves is left alone.
 use crate::config::{atomic_write_private, get_home_dir};
 use crate::error::AppError;
 use indexmap::IndexMap;
@@ -22,6 +29,10 @@ pub(crate) const OFFICIAL_PROVIDER_ID: &str = "trae-official";
 /// `[model_providers]` is ignored or rejected, so CCS never writes these keys.
 const RESERVED_PROVIDER_IDS: [&str; 4] = ["openai", "oss", "ollama", "lmstudio"];
 const SELECTION_KEYS: [&str; 2] = ["model_provider", "model"];
+const CATALOG_KEY: &str = "model_catalog_json";
+pub(crate) const CATALOG_FILE: &str = "cc-switch-model-catalog.json";
+/// Top-level keys CCS may rewrite; everything else is preserved as-is.
+const MANAGED_TOP_KEYS: [&str; 3] = ["model_provider", "model", CATALOG_KEY];
 
 pub(crate) fn data_dir() -> PathBuf {
     std::env::var_os("TRAE_HOME")
@@ -103,9 +114,11 @@ pub(crate) fn provider_key_exists(id: &str) -> Result<bool, AppError> {
 /// the database knows.
 pub(crate) fn merge_saved(saved: &Value, native: &Value) -> Value {
     let mut merged = native.clone();
-    if merged.get("model").is_none() {
-        if let Some(model) = saved.get("model").filter(|model| model.is_string()) {
-            merged["model"] = model.clone();
+    for key in ["model", "models"] {
+        if merged.get(key).is_none() {
+            if let Some(value) = saved.get(key).filter(|value| !value.is_null()) {
+                merged[key] = value.clone();
+            }
         }
     }
     merged
@@ -177,7 +190,120 @@ pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError
             "Enter the model TRAE CLI should use with this provider".into(),
         ));
     }
+    if config.get("models").is_some_and(|models| {
+        models.as_array().is_none_or(|models| {
+            models
+                .iter()
+                .any(|model| model.as_str().is_none_or(|model| model.trim().is_empty()))
+        })
+    }) {
+        return Err(AppError::InvalidInput(
+            "TRAE CLI models must be a list of model IDs".into(),
+        ));
+    }
     Ok(())
+}
+
+/// Models listed in traecli for a provider: the default model first, then the
+/// provider's other models, without duplicates.
+fn catalog_models(config: &Value) -> Vec<String> {
+    let mut models: Vec<String> = Vec::new();
+    let default = config.get("model").and_then(Value::as_str);
+    let extra = config
+        .get("models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str);
+    for model in default.into_iter().chain(extra) {
+        let model = model.trim();
+        if !model.is_empty() && !models.iter().any(|known| known == model) {
+            models.push(model.to_string());
+        }
+    }
+    models
+}
+
+fn catalog_path(dir: &Path) -> String {
+    dir.join(CATALOG_FILE).to_string_lossy().into_owned()
+}
+
+/// CCS owns `model_catalog_json` only while it is unset or points at its own file.
+fn owns_catalog(document: &Value, dir: &Path) -> bool {
+    match document.get(CATALOG_KEY) {
+        None => true,
+        Some(value) => value.as_str() == Some(catalog_path(dir).as_str()),
+    }
+}
+
+/// Point the document at the CCS catalog for `config` (or drop the pointer for
+/// the account login) and return the catalog to write, if any.
+fn select_catalog(
+    after: &mut Value,
+    dir: &Path,
+    table: Option<&Value>,
+    config: &Value,
+) -> Result<Option<Value>, AppError> {
+    if !owns_catalog(after, dir) {
+        return Ok(None);
+    }
+    let base_url = table
+        .and_then(|table| table.get("base_url"))
+        .and_then(Value::as_str);
+    let models = catalog_models(config);
+    match base_url {
+        Some(base_url) if !models.is_empty() => {
+            after[CATALOG_KEY] = json!(catalog_path(dir));
+            Ok(Some(crate::codex_config::native_responses_catalog(
+                base_url, &models,
+            )?))
+        }
+        _ => {
+            if let Some(object) = after.as_object_mut() {
+                object.remove(CATALOG_KEY);
+            }
+            Ok(None)
+        }
+    }
+}
+
+/// Write traecli.toml (and the catalog) together with the database commit.
+/// If anything fails, both files are restored.
+fn write_all_and_commit<T>(
+    path: &Path,
+    catalog: Option<Value>,
+    write_config: impl FnOnce() -> Result<(), AppError>,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let catalog_file = dir.join(CATALOG_FILE);
+    let previous = match fs::read(&catalog_file) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(AppError::io(&catalog_file, error)),
+    };
+    let result = crate::mcode_config::write_and_commit(
+        path,
+        || {
+            if let Some(catalog) = &catalog {
+                let text = serde_json::to_string_pretty(catalog)
+                    .map_err(|e| AppError::Config(e.to_string()))?;
+                atomic_write_private(&catalog_file, text.as_bytes())?;
+            }
+            write_config()
+        },
+        commit,
+    );
+    if result.is_err() && catalog.is_some() {
+        let restored = match &previous {
+            Some(bytes) => atomic_write_private(&catalog_file, bytes),
+            None => fs::remove_file(&catalog_file).map_err(|e| AppError::io(&catalog_file, e)),
+        };
+        if let Err(error) = restored {
+            log::warn!("Restoring {} failed: {error}", catalog_file.display());
+        }
+    }
+    result
 }
 
 /// The table written to `[model_providers.<id>]`. traecli requires `name`.
@@ -247,7 +373,7 @@ fn write(path: &Path, before: &Value, after: &Value) -> Result<(), AppError> {
             }
         }
     }
-    for key in SELECTION_KEYS {
+    for key in MANAGED_TOP_KEYS {
         if before.get(key) == after.get(key) {
             continue;
         }
@@ -317,13 +443,40 @@ fn apply_provider(
     Ok(document)
 }
 
-fn update(path: &Path, id: &str, config: Option<&Value>, create: bool) -> Result<(), AppError> {
+/// The new document plus the catalog to write when the edited provider is active.
+fn plan_update(
+    path: &Path,
+    id: &str,
+    config: Option<&Value>,
+    create: bool,
+) -> Result<(Value, Value, Option<Value>), AppError> {
     let before = read(path)?;
-    let after = apply_provider(&before, id, config, create)?;
-    if before == after {
-        return Ok(());
+    let mut after = apply_provider(&before, id, config, create)?;
+    let mut catalog = None;
+    if let Some(config) = config.filter(|config| !is_official(config)) {
+        if after.get("model_provider").and_then(Value::as_str) == Some(id) {
+            let dir = path.parent().unwrap_or_else(|| Path::new("."));
+            let table = after["model_providers"][id].clone();
+            catalog = select_catalog(&mut after, dir, Some(&table), config)?;
+        }
     }
-    write(path, &before, &after)
+    Ok((before, after, catalog))
+}
+
+#[cfg(test)]
+fn update(path: &Path, id: &str, config: Option<&Value>, create: bool) -> Result<(), AppError> {
+    let (before, after, catalog) = plan_update(path, id, config, create)?;
+    write_all_and_commit(
+        path,
+        catalog,
+        || {
+            if before == after {
+                return Ok(());
+            }
+            write(path, &before, &after)
+        },
+        || Ok(()),
+    )
 }
 
 pub(crate) fn save_and_commit<T>(
@@ -334,9 +487,16 @@ pub(crate) fn save_and_commit<T>(
 ) -> Result<T, AppError> {
     let _guard = lock()?;
     let path = config_path();
-    crate::mcode_config::write_and_commit(
+    let (before, after, catalog) = plan_update(&path, id, config.as_ref(), create)?;
+    write_all_and_commit(
         &path,
-        || update(&path, id, config.as_ref(), create),
+        catalog,
+        || {
+            if before == after {
+                return Ok(());
+            }
+            write(&path, &before, &after)
+        },
         commit,
     )
 }
@@ -386,12 +546,15 @@ fn switch_at<T>(
 ) -> Result<T, AppError> {
     let before = read(path)?;
     let mut after = before.clone();
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
     if id == OFFICIAL_PROVIDER_ID {
         for key in SELECTION_KEYS {
             if let Some(object) = after.as_object_mut() {
                 object.remove(key);
             }
         }
+        // The account's own model list replaces CCS's catalog.
+        select_catalog(&mut after, dir, None, &json!({}))?;
         return crate::mcode_config::write_and_commit(
             path,
             || write(path, &before, &after),
@@ -435,8 +598,20 @@ fn switch_at<T>(
     after["model_providers"][id] = table.clone();
     after["model_provider"] = json!(id);
     after["model"] = json!(model);
-    let config = json!({ "provider": table, "model": model });
-    crate::mcode_config::write_and_commit(path, || write(path, &before, &after), || commit(config))
+    let mut config = json!({ "provider": table, "model": model });
+    if let Some(models) = archived_config
+        .get("models")
+        .filter(|models| models.is_array())
+    {
+        config["models"] = models.clone();
+    }
+    let catalog = select_catalog(&mut after, dir, Some(&table), &config)?;
+    write_all_and_commit(
+        path,
+        catalog,
+        || write(path, &before, &after),
+        || commit(config),
+    )
 }
 
 #[cfg(test)]
@@ -587,6 +762,95 @@ mod tests {
         assert!(validate_provider("custom", &node(" ")).is_err());
         assert!(validate_provider(OFFICIAL_PROVIDER_ID, &json!({"official": true})).is_ok());
         assert!(validate_provider("custom", &json!({"official": true})).is_err());
+    }
+
+    fn catalog_slugs(dir: &Path) -> Vec<String> {
+        let catalog: Value =
+            serde_json::from_str(&fs::read_to_string(dir.join(CATALOG_FILE)).unwrap()).unwrap();
+        catalog["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["slug"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn switching_lists_the_provider_models_in_a_cc_switch_catalog() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("traecli.toml");
+        fs::write(&path, NATIVE).unwrap();
+        let mut config = node("deepseek-v4-pro");
+        config["models"] = json!(["deepseek-v4-flash", "deepseek-v4-pro"]);
+        let saved = switch_at(&path, "custom", config, Ok).unwrap();
+        assert_eq!(
+            saved["models"],
+            json!(["deepseek-v4-flash", "deepseek-v4-pro"])
+        );
+        let value = read(&path).unwrap();
+        let pointer = dir.path().join(CATALOG_FILE);
+        assert_eq!(value[CATALOG_KEY], pointer.to_string_lossy().as_ref());
+        assert!(pointer.is_absolute());
+        assert_eq!(
+            catalog_slugs(dir.path()),
+            ["deepseek-v4-pro", "deepseek-v4-flash"]
+        );
+        // Every entry carries the fields traecli's Codex catalog parser requires.
+        let catalog: Value = serde_json::from_str(&fs::read_to_string(&pointer).unwrap()).unwrap();
+        assert!(catalog["models"][0].get("base_instructions").is_some());
+        assert_eq!(catalog["models"][0]["visibility"], "list");
+
+        // Editing the active provider refreshes the list.
+        let mut edited = node("deepseek-v4-flash");
+        edited["models"] = json!(["deepseek-flash"]);
+        update(&path, "custom", Some(&edited), false).unwrap();
+        assert_eq!(
+            catalog_slugs(dir.path()),
+            ["deepseek-v4-flash", "deepseek-flash"]
+        );
+
+        // The account login brings back traecli's own list.
+        switch_at(&path, OFFICIAL_PROVIDER_ID, json!({}), Ok).unwrap();
+        assert!(read(&path).unwrap().get(CATALOG_KEY).is_none());
+        assert!(fs::read_to_string(&path)
+            .unwrap()
+            .contains("# keep this comment"));
+    }
+
+    #[test]
+    fn a_user_catalog_is_never_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("traecli.toml");
+        fs::write(&path, "model_catalog_json = \"/opt/my-catalog.json\"\n").unwrap();
+        switch_at(&path, "custom", node("gpt-5"), Ok).unwrap();
+        assert_eq!(read(&path).unwrap()[CATALOG_KEY], "/opt/my-catalog.json");
+        assert!(!dir.path().join(CATALOG_FILE).exists());
+        switch_at(&path, OFFICIAL_PROVIDER_ID, json!({}), Ok).unwrap();
+        assert_eq!(read(&path).unwrap()[CATALOG_KEY], "/opt/my-catalog.json");
+    }
+
+    #[test]
+    fn a_failed_commit_restores_the_catalog_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("traecli.toml");
+        switch_at(&path, "custom", node("model-a"), Ok).unwrap();
+        let config = fs::read(&path).unwrap();
+        let catalog = fs::read(dir.path().join(CATALOG_FILE)).unwrap();
+        let failed = switch_at(&path, "other", node("model-b"), |_| {
+            Err::<(), _>(AppError::Message("database failed".into()))
+        });
+        assert!(failed.is_err());
+        assert_eq!(fs::read(&path).unwrap(), config);
+        assert_eq!(fs::read(dir.path().join(CATALOG_FILE)).unwrap(), catalog);
+    }
+
+    #[test]
+    fn invalid_model_lists_are_rejected() {
+        let mut config = node("m");
+        config["models"] = json!(["ok", " "]);
+        assert!(validate_provider("custom", &config).is_err());
+        config["models"] = json!("m");
+        assert!(validate_provider("custom", &config).is_err());
     }
 
     #[test]

@@ -95,6 +95,23 @@ describe("TraeProviderForm", () => {
     expect(provider).not.toHaveProperty("experimental_bearer_token");
   });
 
+  it("keeps the extra catalog models and lets the user remove one", async () => {
+    const { onSubmit } = setup({
+      ...custom,
+      models: ["deepseek-v4-flash", "deepseek-flash"],
+    });
+    expect(screen.getByText("deepseek-v4-flash")).toBeInTheDocument();
+    // Test i18n renders keys, so pick the first chip's remove button.
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "trae.removeModel" })[0],
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(JSON.parse(onSubmit.mock.calls[0][0].settingsConfig).models).toEqual(
+      ["deepseek-flash"],
+    );
+  });
+
   it("shows only the login hint for the TRAE account provider", async () => {
     const { container, onSubmit } = setup({ official: true }, "trae-official");
     expect(container.querySelector("#trae-base-url")).toBeNull();

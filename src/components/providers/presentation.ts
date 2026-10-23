@@ -752,6 +752,16 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           menuItems.push({
             key: "setDefault",
             label: t("providerCard.action.setDefault"),
+            // TRAE CLI 选中一家需要模型：从 traecli.toml 导入的非当前供应商没有模型
+            disabledReason:
+              app === "trae" &&
+              !official &&
+              !(
+                typeof p.settingsConfig?.model === "string" &&
+                p.settingsConfig.model.trim()
+              )
+                ? t("trae.switchNeedsModel")
+                : undefined,
             onSelect: () => actions.setDefault(p),
           });
         }

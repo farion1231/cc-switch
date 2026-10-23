@@ -30,6 +30,11 @@ import { BasicFormFields, REQUIRED_LABEL } from "./BasicFormFields";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
+import {
+  FetchedModelPicker,
+  type FetchedModelSelection,
+} from "./FetchedModelPicker";
+import { X } from "lucide-react";
 import type { ProviderFormProps } from "./ProviderForm";
 
 const PRESET_ENTRIES = traeProviderPresets.map((preset, index) => ({
@@ -37,7 +42,11 @@ const PRESET_ENTRIES = traeProviderPresets.map((preset, index) => ({
   preset,
 }));
 
-type CustomConfig = { provider: TraeProviderTable; model: string };
+type CustomConfig = {
+  provider: TraeProviderTable;
+  model: string;
+  models?: string[];
+};
 
 const emptyConfig = (): CustomConfig => ({
   provider: {
@@ -110,6 +119,28 @@ export function TraeProviderForm({
   });
   const name = form.watch("name");
   const custom = isCustomConfig(config) ? config : undefined;
+  // Models offered in traecli's `/model` list besides the default model.
+  const extraModels = (custom?.models ?? []).filter(
+    (model) => model && model !== custom?.model,
+  );
+  const listedModels = custom?.model
+    ? [custom.model, ...extraModels]
+    : extraModels;
+  const setExtraModels = (models: string[]) => {
+    const current = custom ?? emptyConfig();
+    const next = { ...current };
+    if (models.length) next.models = models;
+    else delete next.models;
+    update(next);
+  };
+  const applyFetchedModels = ({ add, remove }: FetchedModelSelection) => {
+    const removed = new Set(remove);
+    const kept = extraModels.filter((model) => !removed.has(model));
+    const added = add.filter(
+      (model) => model !== custom?.model && !kept.includes(model),
+    );
+    setExtraModels([...kept, ...added]);
+  };
   const baseUrl = custom?.provider.base_url ?? "";
   const apiKey = custom?.provider.experimental_bearer_token ?? "";
   const envKey = custom?.provider.env_key ?? "";
@@ -363,6 +394,51 @@ export function TraeProviderForm({
                   isLoading={isFetchingModels}
                   onFetch={handleFetchModels}
                 />
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-0.5">
+                    <Label>{t("trae.models")}</Label>
+                    <HelpTip title={t("trae.models")}>
+                      {t("trae.modelsHint")}
+                    </HelpTip>
+                  </div>
+                  <FetchedModelPicker
+                    models={fetchedModels}
+                    configuredModelIds={listedModels}
+                    onApply={applyFetchedModels}
+                    onFetch={handleFetchModels}
+                    isFetching={isFetchingModels}
+                  />
+                </div>
+                {extraModels.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {extraModels.map((model) => (
+                      <span
+                        key={model}
+                        className="inline-flex items-center gap-1 rounded-control border border-border bg-subtle py-0.5 pe-1 ps-2 text-caption text-fg-1"
+                      >
+                        {model}
+                        <button
+                          type="button"
+                          aria-label={t("trae.removeModel", { model })}
+                          className="rounded-sm p-0.5 text-fg-2 transition-colors hover:text-fg-1"
+                          onClick={() =>
+                            setExtraModels(
+                              extraModels.filter((item) => item !== model),
+                            )
+                          }
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-caption text-fg-2">
+                    {t("trae.modelsEmpty")}
+                  </p>
+                )}
               </div>
             </>
           )}

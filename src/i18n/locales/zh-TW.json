@@ -4979,10 +4979,15 @@
     "envKey": "API Key 環境變數（選填）",
     "envKeyHint": "填寫後 TRAE CLI 從該環境變數讀取金鑰（env_key），可不在設定檔中儲存 API Key。",
     "model": "模型",
+    "models": "可選模型",
+    "modelsHint": "這些模型會和預設模型一起寫入 TRAE CLI 的模型目錄，可在 traecli 的 /model 中切換。",
+    "modelsEmpty": "未新增其他模型；traecli 只會列出預設模型。",
+    "removeModel": "移除 {{model}}",
     "empty": {
       "title": "新增 TRAE CLI 供應商",
       "description": "設定 Responses API 位址、API Key 和模型；traecli.toml 中既有的供應商會自動匯入。"
     },
-    "deleteSessionHint": "請在終端機執行 traecli delete <工作階段 ID> 刪除，以同時更新 TRAE CLI 的工作階段索引。"
+    "deleteSessionHint": "請在終端機執行 traecli delete <工作階段 ID> 刪除，以同時更新 TRAE CLI 的工作階段索引。",
+    "switchNeedsModel": "請先編輯此供應商並設定模型"
   }
 }
