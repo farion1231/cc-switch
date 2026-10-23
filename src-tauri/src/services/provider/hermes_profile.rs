@@ -348,7 +348,19 @@ pub async fn attach_all(state: &AppState) {
         let Some(route_id) = mode.proxy_route.clone() else {
             continue;
         };
-        let _ = enter(state, profile, &route_id, true, "keep").await;
+        // 重接上不改用户设置：故障转移与负载均衡沿用已存的配置行。
+        let key = app_key(profile);
+        let Ok(config) = state.db.get_proxy_config_for_app(&key).await else {
+            continue;
+        };
+        let _ = enter(
+            state,
+            profile,
+            &route_id,
+            config.auto_failover_enabled,
+            &config.load_balance_mode,
+        )
+        .await;
     }
 }
 
