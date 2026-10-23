@@ -33,6 +33,7 @@ import { resolveManagedAccountId } from "@/lib/authBinding";
 import { isMac } from "@/lib/platform";
 import {
   isOfficialAccount,
+  TRAE_OFFICIAL_PROVIDER_ID,
   resolveCodexOfficialIdentity,
 } from "@/utils/providerCapabilities";
 import { useProviderHealth } from "@/lib/query/failover";
@@ -119,6 +120,7 @@ function HealthChip({
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
 function isOfficialProvider(provider: Provider, appId: AppId): boolean {
   if (appId === "kimi") return isOfficialAccount(appId, provider);
+  if (appId === "trae") return provider.id === TRAE_OFFICIAL_PROVIDER_ID;
   if (provider.category === "official") {
     return true;
   }
@@ -576,7 +578,8 @@ export function ProviderCard({
             onEdit={() => onEdit(provider)}
             onDelete={() => onDelete(provider)}
             onDuplicate={
-              onDuplicate && !(appId === "kimi" && isOfficial)
+              onDuplicate &&
+              !((appId === "kimi" || appId === "trae") && isOfficial)
                 ? () => onDuplicate(provider)
                 : undefined
             }
@@ -586,6 +589,7 @@ export function ProviderCard({
               onTest &&
               appId !== "mcode" &&
               appId !== "kimi" &&
+              appId !== "trae" &&
               provider.category !== "official"
                 ? () => onTest(provider)
                 : undefined

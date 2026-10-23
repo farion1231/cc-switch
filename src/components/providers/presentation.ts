@@ -7,6 +7,7 @@ import {
   providerNeedsRouting,
   supportsFailover,
   supportsOfficialProxyTakeover,
+  TRAE_OFFICIAL_PROVIDER_ID,
 } from "@/utils/providerCapabilities";
 
 /**
@@ -697,7 +698,7 @@ export interface AdditiveInput {
   isHermesManaged?: (provider: Provider) => boolean;
   /** Pi：读不到当前配置时一律不能改 */
   piStateUnavailable?: boolean;
-  /** Kimi：原生 default_model 别名所属的供应商。 */
+  /** Kimi / TRAE CLI：原生配置当前选中的供应商（Kimi 的 default_model、TRAE 的 model_provider）。 */
   kimiCurrentId?: string | null;
   actions: {
     add: (provider: Provider) => void;
@@ -718,10 +719,15 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
 
   for (const p of providers) {
     const chips: CardChip[] = [];
-    if (app === "kimi") {
-      const official = isOfficialAccount(app, p);
+    if (app === "kimi" || app === "trae") {
+      const official =
+        app === "kimi"
+          ? isOfficialAccount(app, p)
+          : p.id === TRAE_OFFICIAL_PROVIDER_ID;
       const live = input.isInConfig(p);
-      const officialReason = official ? t("kimi.oauth.managedHint") : undefined;
+      const officialReason = official
+        ? t(app === "kimi" ? "kimi.oauth.managedHint" : "trae.officialHint")
+        : undefined;
       const protectedReason = live ? officialReason : undefined;
       if (official) {
         chips.push({
@@ -746,6 +752,16 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           menuItems.push({
             key: "setDefault",
             label: t("providerCard.action.setDefault"),
+            // TRAE CLI 选中一家需要模型：从 traecli.toml 导入的非当前供应商没有模型
+            disabledReason:
+              app === "trae" &&
+              !official &&
+              !(
+                typeof p.settingsConfig?.model === "string" &&
+                p.settingsConfig.model.trim()
+              )
+                ? t("trae.switchNeedsModel")
+                : undefined,
             onSelect: () => actions.setDefault(p),
           });
         }

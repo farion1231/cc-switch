@@ -15,6 +15,7 @@ const SESSION_PROVIDER_APPS: Record<string, AppId> = {
   "Grok Build (Session)": "grokbuild",
   "MiniMax Code (Session)": "mcode",
   "Kimi Code (Session)": "kimi",
+  "TRAE CLI (Session)": "trae",
   "Pi (Session)": "pi",
   "Antigravity (Session)": "agy",
 };

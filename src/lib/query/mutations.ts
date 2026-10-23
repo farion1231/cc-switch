@@ -71,7 +71,8 @@ export const useAddProviderMutation = (appId: AppId) => {
         appId === "hermes" ||
         appId === "pi" ||
         appId === "mcode" ||
-        appId === "kimi"
+        appId === "kimi" ||
+        appId === "trae"
       ) {
         if (
           providerInput.category === "omo" ||
@@ -236,10 +237,10 @@ export const useUpdateProviderMutation = (appId: AppId) => {
     onSettled: async () => {
       if (appId === "pi") {
         await invalidatePiProviderCaches(queryClient);
-      } else if (appId === "kimi") {
-        // 默认模型可能在 Kimi Code 里改过：失败时也重读，页面上的「默认」才跟得上
+      } else if (appId === "kimi" || appId === "trae") {
+        // 默认模型 / model_provider 可能在客户端里改过：失败时也重读，页面上的「使用中」才跟得上
         await queryClient.invalidateQueries({
-          queryKey: ["providers", "kimi"],
+          queryKey: ["providers", appId],
         });
       }
     },
@@ -319,10 +320,10 @@ export const useDeleteProviderMutation = (appId: AppId) => {
     onSettled: async () => {
       if (appId === "pi") {
         await invalidatePiProviderCaches(queryClient);
-      } else if (appId === "kimi") {
-        // 默认模型可能在 Kimi Code 里改过：失败时也重读，页面上的「默认」才跟得上
+      } else if (appId === "kimi" || appId === "trae") {
+        // 默认模型 / model_provider 可能在客户端里改过：失败时也重读，页面上的「使用中」才跟得上
         await queryClient.invalidateQueries({
-          queryKey: ["providers", "kimi"],
+          queryKey: ["providers", appId],
         });
       }
     },

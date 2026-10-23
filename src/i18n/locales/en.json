@@ -4967,5 +4967,26 @@
       "defaultModelInUse": "Kimi Code is using a model from this provider. Switch to another model with /model in Kimi Code first.",
       "secondaryModelInUse": "Kimi Code's subagent model uses a model from this provider. Change it with /secondary-model in Kimi Code first."
     }
+  },
+  "trae": {
+    "officialPresetName": "TRAE account login",
+    "officialHint": "Use the account login built into TRAE CLI (traecli /login). Switching to it removes model_provider and model from traecli.toml so the account supplies the model.",
+    "officialExists": "The TRAE account login has already been added.",
+    "providerKeyHint": "Becomes [model_providers.<key>] in traecli.toml. Letters, digits, - and _ only",
+    "providerKeyInvalid": "Use only letters, digits, - and _, and avoid built-in names such as openai, oss, ollama and lmstudio",
+    "responsesOnlyHint": "TRAE CLI only supports the OpenAI Responses API (wire_api = \"responses\"). Enter an endpoint compatible with /v1/responses.",
+    "envKey": "API key environment variable (optional)",
+    "envKeyHint": "TRAE CLI reads the key from this variable (env_key), so the API key does not have to be stored in the config file.",
+    "model": "Model",
+    "models": "Available models",
+    "modelsHint": "These models are written to TRAE CLI's model catalog together with the default model, so you can switch between them with /model in traecli.",
+    "modelsEmpty": "No other models added; traecli will only list the default model.",
+    "removeModel": "Remove {{model}}",
+    "empty": {
+      "title": "Add a TRAE CLI provider",
+      "description": "Configure a Responses API endpoint, API key and model. Providers already in traecli.toml are imported automatically."
+    },
+    "deleteSessionHint": "Run traecli delete <session id> in a terminal so TRAE CLI also updates its session index.",
+    "switchNeedsModel": "Edit this provider and set a model first"
   }
 }

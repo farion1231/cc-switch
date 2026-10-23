@@ -14,6 +14,8 @@ import {
 export const CODEX_OFFICIAL_PROVIDER_ID = "codex-official";
 export const GROKBUILD_OFFICIAL_PROVIDER_ID = "grokbuild-official";
 export const KIMI_OFFICIAL_PROVIDER_ID = "managed:kimi-code";
+/** TRAE CLI 账号登录：后端 `trae_config::OFFICIAL_PROVIDER_ID`，切到它会移除 model_provider。 */
+export const TRAE_OFFICIAL_PROVIDER_ID = "trae-official";
 
 export type CodexOfficialIdentity =
   | "native_login"

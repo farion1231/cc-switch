@@ -4967,5 +4967,26 @@
       "defaultModelInUse": "Kimi Code がこのプロバイダーのモデルを使用中です。先に Kimi Code の /model でほかのモデルに切り替えてください。",
       "secondaryModelInUse": "Kimi Code のサブエージェントモデルがこのプロバイダーのモデルを使用中です。先に Kimi Code の /secondary-model で変更してください。"
     }
+  },
+  "trae": {
+    "officialPresetName": "TRAE アカウントログイン",
+    "officialHint": "TRAE CLI 標準のアカウントログイン（traecli /login）を使います。切り替えると traecli.toml の model_provider と model を削除し、モデルはアカウントから提供されます。",
+    "officialExists": "TRAE アカウントログインは追加済みです。",
+    "providerKeyHint": "traecli.toml の [model_providers.<キー>] になります。英数字、- と _ のみ使用できます",
+    "providerKeyInvalid": "英数字、- と _ のみ使用でき、openai・oss・ollama・lmstudio などの組み込み名は使えません",
+    "responsesOnlyHint": "TRAE CLI は OpenAI Responses API（wire_api = \"responses\"）のみ対応しています。/v1/responses 互換のエンドポイントを入力してください。",
+    "envKey": "API キーの環境変数（任意）",
+    "envKeyHint": "指定すると TRAE CLI はこの環境変数からキーを読み取り（env_key）、設定ファイルに API キーを保存せずに済みます。",
+    "model": "モデル",
+    "models": "選択可能なモデル",
+    "modelsHint": "これらのモデルはデフォルトモデルと一緒に TRAE CLI のモデルカタログに書き込まれ、traecli の /model で切り替えられます。",
+    "modelsEmpty": "他のモデルは追加されていません。traecli にはデフォルトモデルのみ表示されます。",
+    "removeModel": "{{model}} を削除",
+    "empty": {
+      "title": "TRAE CLI のプロバイダーを追加",
+      "description": "Responses API のエンドポイント、API キー、モデルを設定します。traecli.toml の既存プロバイダーは自動でインポートされます。"
+    },
+    "deleteSessionHint": "TRAE CLI のセッション索引も更新されるよう、ターミナルで traecli delete <セッション ID> を実行して削除してください。",
+    "switchNeedsModel": "先にこのプロバイダーを編集してモデルを設定してください"
   }
 }
