@@ -561,12 +561,16 @@ export function UsageDashboard({
   const { data: settings } = useSettingsQuery();
   const filterApps = useMemo(() => {
     const visible = { ...DEFAULT_VISIBLE_APPS, ...settings?.visibleApps };
-    return KNOWN_APP_TYPES.filter(
-      (app) =>
+    return KNOWN_APP_TYPES.filter((app) => {
+      // 只来自会话日志的应用（DeepSeek Harness）不在「应用」页里，没有显示开关，
+      // 所以始终列出这一项，否则筛选条上看不到它的用量。
+      if (app === "dsh") return true;
+      return (
         visible[app] ||
         (app === "claude" && visible["claude-desktop"]) ||
-        app === appType,
-    );
+        app === appType
+      );
+    });
   }, [settings?.visibleApps, appType]);
   const appFilterIndicator = useSlidingIndicator<HTMLDivElement>(
     '[aria-pressed="true"]',
