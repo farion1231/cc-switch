@@ -25,6 +25,12 @@ pub fn enter_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
     // else: already in lightweight mode or window not found, just set the flag
 
     LIGHTWEIGHT_MODE.store(true, Ordering::Release);
+    // 记住偏好：重启后自动进入轻量模式、关闭主窗口时自动回到轻量模式
+    // （见 lib.rs 的 RunEvent::Ready 分支与 CloseRequested 拦截）。
+    // 持久化失败只影响"记住"，不阻断本次进入。
+    if let Err(e) = crate::settings::set_lightweight_mode_preference(true) {
+        log::warn!("持久化轻量模式偏好失败: {e}");
+    }
     // 托盘面板也是一个 WebView：收着的当场释放，开着的（在面板里点的轻量模式）收起时释放。
     crate::tray_panel::release_if_lightweight(app);
     crate::tray::refresh_tray_menu(app);
