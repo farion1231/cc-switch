@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { Plus, Trash2 } from "lucide-react";
@@ -16,6 +16,14 @@ import {
 } from "@/components/ui/select";
 import JsonEditor from "@/components/JsonEditor";
 import { useDarkMode } from "@/hooks/useDarkMode";
+import { useLatestRef } from "@/hooks/useLatestRef";
+import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
+import {
+  fetchModelsForConfig,
+  showFetchModelsError,
+  type FetchedModel,
+} from "@/lib/api/model-fetch";
+import { toast } from "@/lib/toast";
 import { useProvidersQuery } from "@/lib/query/queries";
 import type { ProviderFormData } from "@/lib/schemas/provider";
 import type { ProviderCategory } from "@/types";
@@ -29,13 +37,33 @@ import {
   KIMI_CAPABILITIES,
   type KimiProviderConfig,
 } from "@/config/kimiProviderPresets";
-import { normalizeRequestHeaders } from "./helpers/requestHeaders";
+import { kimiPresetModelSources } from "@/config/presetModelMetadata";
+import {
+  findRequestHeaderValue,
+  normalizeRequestHeaders,
+} from "./helpers/requestHeaders";
 import { BasicFormFields } from "./BasicFormFields";
-import { ApiKeySection } from "./shared";
+import { ApiKeySection, ModelDropdown } from "./shared";
+import {
+  FetchedModelPicker,
+  type FetchedModelSelection,
+} from "./FetchedModelPicker";
+import { fillKimiModel, metadataFilledAnything } from "./modelMetadataFill";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import type { ProviderFormProps } from "./ProviderForm";
 import { usePresetStep } from "./presetStep";
+
+// 新加的行先用这个窗口占位（max_context_size 必填），选中模型后换成查到的值。
+const PLACEHOLDER_CONTEXT_SIZE = 262144;
+
+// 拉模型列表时按协议选认证头：Anthropic 用 x-api-key，Gemini 用 x-goog-api-key。
+const MODEL_FETCH_API_FORMATS: Partial<
+  Record<KimiProviderConfig["provider"]["type"], string>
+> = {
+  anthropic: "anthropic-messages",
+  "google-genai": "google-generative-ai",
+};
 
 const PRESETS = [
   { id: KIMI_ACCOUNT_PRESET_ID, preset: kimiAccountPreset },
@@ -135,10 +163,132 @@ export function KimiProviderForm({
   useEffect(() => {
     onSubmitReadyChange?.(ready);
   }, [ready, onSubmitReadyChange]);
+  const configRef = useLatestRef(config);
   const update = (next: KimiProviderConfig) => {
+    configRef.current = next;
     setConfig(next);
     setText(JSON.stringify(next, null, 2));
     setJsonValid(true);
+  };
+  // 窗口还是占位值的行（这次新加、用户没改过窗口），选中模型时可以换成查到的值。
+  const placeholderContextKeys = useRef(new Set<string>());
+  const modelKeyPrefix = providerKey || "custom";
+  const uniqueModelKey = (models: KimiProviderConfig["models"], id: string) => {
+    let key = `${modelKeyPrefix}/${id}`;
+    for (let index = 2; Object.prototype.hasOwnProperty.call(models, key); )
+      key = `${modelKeyPrefix}/${id}-${index++}`;
+    return key;
+  };
+
+  const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const modelFetchGeneration = useRef(0);
+  const { type: providerType, base_url: baseUrl = "" } = config.provider;
+  const apiKey = config.provider.api_key ?? "";
+  const headersKey = JSON.stringify(config.provider.custom_headers ?? {});
+  useEffect(() => {
+    setFetchedModels((prev) => (prev.length === 0 ? prev : []));
+    setIsFetchingModels(false);
+    return () => {
+      // 地址、Key、协议或请求头变了，旧请求的结果不再适用。
+      modelFetchGeneration.current += 1;
+    };
+  }, [providerType, baseUrl, apiKey, headersKey]);
+
+  const handleFetchModels = useCallback(() => {
+    const endpoint = baseUrl.trim();
+    const requestHeaders = normalizeRequestHeaders(
+      JSON.parse(headersKey) as Record<string, string>,
+    );
+    const hasCredentials =
+      Boolean(apiKey) || Object.keys(requestHeaders).length > 0;
+    if (!endpoint || !hasCredentials) {
+      showFetchModelsError(null, t, {
+        hasApiKey: hasCredentials,
+        hasBaseUrl: Boolean(endpoint),
+      });
+      return;
+    }
+    const generation = ++modelFetchGeneration.current;
+    setFetchedModels([]);
+    setIsFetchingModels(true);
+    fetchModelsForConfig(
+      endpoint,
+      apiKey,
+      undefined,
+      undefined,
+      findRequestHeaderValue(requestHeaders, "user-agent"),
+      { apiFormat: MODEL_FETCH_API_FORMATS[providerType], requestHeaders },
+    )
+      .then((result) => {
+        if (generation !== modelFetchGeneration.current) return;
+        const models = [
+          ...new Map(result.map((model) => [model.id, model])).values(),
+        ];
+        setFetchedModels(models);
+        // 拉到模型时直接打开选择弹窗，不再提示成功。
+        if (models.length === 0) toast.info(t("providerForm.fetchModelsEmpty"));
+      })
+      .catch((err) => {
+        if (generation !== modelFetchGeneration.current) return;
+        console.warn("[ModelFetch] Failed:", err);
+        showFetchModelsError(err, t);
+      })
+      .finally(() => {
+        if (generation === modelFetchGeneration.current) {
+          setIsFetchingModels(false);
+        }
+      });
+  }, [apiKey, baseUrl, headersKey, providerType, t]);
+
+  const fillModelMetadata = useModelMetadataFill({
+    baseUrl,
+    presets: kimiPresetModelSources,
+    prefetch: fetchedModels.length > 0,
+  });
+  // 补全可能晚到：读最新的配置，确认这一行仍是这个模型再补。
+  const fillModelMetadataFor = (key: string, id: string, silent?: boolean) =>
+    fillModelMetadata(
+      id,
+      (metadata) => {
+        const current = configRef.current;
+        const model = current.models[key];
+        if (model?.model !== id) return false;
+        const filled = fillKimiModel(model, metadata, {
+          replaceContext: placeholderContextKeys.current.has(key),
+        });
+        if (!metadataFilledAnything(model, filled)) return false;
+        placeholderContextKeys.current.delete(key);
+        update({ ...current, models: { ...current.models, [key]: filled } });
+        return true;
+      },
+      { silent },
+    );
+
+  const handleApplyFetchedModels = ({ add, remove }: FetchedModelSelection) => {
+    const removed = new Set(remove);
+    const models = Object.fromEntries(
+      Object.entries(configRef.current.models).filter(
+        ([, model]) => !removed.has(model.model),
+      ),
+    );
+    const configured = new Set(Object.values(models).map((m) => m.model));
+    const added: [string, string][] = [];
+    for (const id of add) {
+      if (configured.has(id)) continue;
+      const key = uniqueModelKey(models, id);
+      // Kimi 自己按目录导入模型时也默认支持工具调用。
+      models[key] = {
+        model: id,
+        max_context_size: PLACEHOLDER_CONTEXT_SIZE,
+        capabilities: ["tool_use"],
+      };
+      placeholderContextKeys.current.add(key);
+      added.push([key, id]);
+    }
+    update({ ...configRef.current, models });
+    // 弹窗里已经显示过这些参数，补完不再提示。
+    for (const [key, id] of added) fillModelMetadataFor(key, id, true);
   };
   const updateProvider = (patch: Partial<KimiProviderConfig["provider"]>) =>
     update({ ...config, provider: { ...config.provider, ...patch } });
@@ -147,8 +297,11 @@ export function KimiProviderForm({
     patch: Partial<KimiProviderConfig["models"][string]>,
   ) =>
     update({
-      ...config,
-      models: { ...config.models, [key]: { ...config.models[key], ...patch } },
+      ...configRef.current,
+      models: {
+        ...configRef.current.models,
+        [key]: { ...configRef.current.models[key], ...patch },
+      },
     });
   const presetSelector = (
     <ProviderPresetSelector
@@ -169,6 +322,7 @@ export function KimiProviderForm({
         const preset =
           id === "custom" ? undefined : kimiProviderPresets[Number(id)];
         setCategory(preset?.category ?? "custom");
+        placeholderContextKeys.current.clear();
         update(
           kimiConfigSchema.parse(
             structuredClone(preset?.settingsConfig ?? emptyKimiConfig()),
@@ -286,13 +440,18 @@ export function KimiProviderForm({
                     const next = e.target.value
                       .toLowerCase()
                       .replace(/[^a-z0-9-]/g, "");
+                    const rename = (key: string) =>
+                      key.startsWith(`${modelKeyPrefix}/`)
+                        ? `${next || "custom"}/${key.slice(modelKeyPrefix.length + 1)}`
+                        : key;
                     const models = Object.fromEntries(
                       Object.entries(config.models).map(([key, model]) => [
-                        key.startsWith(`${providerKey}/`)
-                          ? `${next}/${key.slice(providerKey.length + 1)}`
-                          : key,
+                        rename(key),
                         model,
                       ]),
+                    );
+                    placeholderContextKeys.current = new Set(
+                      [...placeholderContextKeys.current].map(rename),
                     );
                     setProviderKey(next);
                     update({ ...config, models });
@@ -364,29 +523,45 @@ export function KimiProviderForm({
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <Label>{t("kimi.models")}</Label>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  let index = Object.keys(config.models).length + 1;
-                  let key = `${providerKey || "custom"}/model-${index}`;
-                  while (
-                    Object.prototype.hasOwnProperty.call(config.models, key)
-                  )
-                    key = `${providerKey || "custom"}/model-${++index}`;
-                  update({
-                    ...config,
-                    models: {
-                      ...config.models,
-                      [key]: { model: "", max_context_size: 262144 },
-                    },
-                  });
-                }}
-              >
-                <Plus className="mr-1 h-4 w-4" />
-                {t("kimi.addModel")}
-              </Button>
+              <div className="flex gap-1">
+                <FetchedModelPicker
+                  models={fetchedModels}
+                  configuredModelIds={Object.values(config.models).map(
+                    (model) => model.model,
+                  )}
+                  onApply={handleApplyFetchedModels}
+                  onFetch={handleFetchModels}
+                  isFetching={isFetchingModels}
+                  metadataSource={{ baseUrl, presets: kimiPresetModelSources }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    let index = Object.keys(config.models).length + 1;
+                    let key = `${modelKeyPrefix}/model-${index}`;
+                    while (
+                      Object.prototype.hasOwnProperty.call(config.models, key)
+                    )
+                      key = `${modelKeyPrefix}/model-${++index}`;
+                    placeholderContextKeys.current.add(key);
+                    update({
+                      ...config,
+                      models: {
+                        ...config.models,
+                        [key]: {
+                          model: "",
+                          max_context_size: PLACEHOLDER_CONTEXT_SIZE,
+                        },
+                      },
+                    });
+                  }}
+                >
+                  <Plus className="mr-1 h-4 w-4" />
+                  {t("kimi.addModel")}
+                </Button>
+              </div>
             </div>
             {Object.entries(config.models).map(([key, model]) => (
               <div
@@ -403,6 +578,7 @@ export function KimiProviderForm({
                     onClick={() => {
                       const models = { ...config.models };
                       delete models[key];
+                      placeholderContextKeys.current.delete(key);
                       update({ ...config, models });
                     }}
                   >
@@ -414,13 +590,24 @@ export function KimiProviderForm({
                     <Label htmlFor={`kimi-model-${key}`}>
                       {t("kimi.modelId")} *
                     </Label>
-                    <Input
-                      id={`kimi-model-${key}`}
-                      value={model.model}
-                      onChange={(e) =>
-                        updateModel(key, { model: e.target.value })
-                      }
-                    />
+                    <div className="flex gap-1">
+                      <Input
+                        id={`kimi-model-${key}`}
+                        value={model.model}
+                        onChange={(e) =>
+                          updateModel(key, { model: e.target.value })
+                        }
+                      />
+                      {fetchedModels.length > 0 && (
+                        <ModelDropdown
+                          models={fetchedModels}
+                          onSelect={(id) => {
+                            updateModel(key, { model: id });
+                            fillModelMetadataFor(key, id);
+                          }}
+                        />
+                      )}
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor={`kimi-context-${key}`}>
@@ -432,11 +619,12 @@ export function KimiProviderForm({
                       min={1}
                       step={1}
                       value={model.max_context_size}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        placeholderContextKeys.current.delete(key);
                         updateModel(key, {
                           max_context_size: Number(e.target.value),
-                        })
-                      }
+                        });
+                      }}
                     />
                   </div>
                 </div>

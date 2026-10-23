@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   fillCodexCatalogModel,
   fillHermesModel,
+  fillKimiModel,
   fillOpenClawModel,
   fillOpenCodeModel,
   piPresetThinkingFor,
@@ -162,6 +163,37 @@ describe("fillOpenCodeModel", () => {
 
   it("leaves the model untouched when nothing is known", () => {
     expect(fillOpenCodeModel({ name: "m" }, {})).toEqual({ name: "m" });
+  });
+});
+
+describe("fillKimiModel", () => {
+  it("replaces a placeholder window and adds supported capabilities", () => {
+    expect(
+      fillKimiModel(
+        { model: "m", max_context_size: 1, capabilities: ["tool_use"] },
+        metadata,
+        { replaceContext: true },
+      ),
+    ).toEqual({
+      model: "m",
+      max_context_size: 262144,
+      capabilities: ["tool_use", "image_in", "thinking"],
+    });
+  });
+
+  it("keeps a window the user set and never removes capabilities", () => {
+    const model = {
+      model: "m",
+      max_context_size: 1000,
+      capabilities: ["thinking", "video_in"],
+    };
+    expect(
+      fillKimiModel(
+        model,
+        { contextWindow: 9, inputModalities: ["text"], reasoning: false },
+        { replaceContext: false },
+      ),
+    ).toEqual(model);
   });
 });
 
