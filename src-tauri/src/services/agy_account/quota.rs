@@ -1,9 +1,11 @@
 //! 直接向 Google 查某个 Antigravity 账号的剩余额度（授权中心逐个账号显示）。
 //!
 //! 和 agy 的 `/usage` 是同一个接口、同一组额度桶，区别是用 CC Switch 存的那份令牌查，
-//! 不用先把 agy 切到这个号。Google 服务端对该接口要求 User-Agent 必须符合 Antigravity
-//! 官方客户端格式（以 `antigravity/hub/` 开头），否则虽然不报 403，但服务端会过滤掉
-//! `Gemini Models` 额度桶，只下发第三方模型（Claude/GPT）额度。因此这里采用标准官方 Hub UA。
+//! 不用先把 agy 切到这个号。服务端按 User-Agent 决定回什么：不带 `antigravity` 一律
+//! 403「没有有效许可」；带了但不是 `antigravity/cli/<版本>`（或版本低于 1.2.0）时只回
+//! Claude 和 GPT 那组，Gemini 那组整个省掉。所以 UA 写成
+//! `cc-switch/<版本> (antigravity/cli/<本机 agy 版本>)`：照实报 CC Switch，括号里补上
+//! 服务端要的客户端标识，版本取本机装的 agy，读不到时用 `FALLBACK_AGY_VERSION`。
 //! 只查额度，不调模型、不做预热，也不据额度自动换号。
 //!
 //! 没有使用资格的号（如 Google 判定未满 18 岁）同样回 403「没有有效许可」，这时再问一次
@@ -13,6 +15,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tokio::sync::OnceCell;
 
 use crate::services::subscription::QuotaTier;
 use crate::services::subscription_agy::collect_tiers;
@@ -20,6 +23,9 @@ use crate::services::subscription_agy::collect_tiers;
 const API_BASE: &str = "https://cloudcode-pa.googleapis.com/v1internal";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_BODY: usize = 256 * 1024;
+/// 本机读不到 agy 版本时写进 UA 的版本（实测过的发行版；服务端要 1.2.0 起才回 Gemini 那组）
+const FALLBACK_AGY_VERSION: &str = "1.4.6";
+const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, thiserror::Error)]
 pub enum QuotaError {
@@ -89,19 +95,56 @@ struct ErrorDetail {
     message: Option<String>,
 }
 
-/// 生成 Antigravity Hub 官方格式的 User-Agent
-async fn user_agent() -> String {
-    let version = super::version::get_latest_version().await;
-    let os = match std::env::consts::OS {
-        "macos" => "darwin",
-        other => other,
-    };
-    let arch = match std::env::consts::ARCH {
-        "aarch64" => "arm64",
-        "x86_64" => "x86_64",
-        other => other,
-    };
-    format!("antigravity/hub/{version} (aidev_client; os_type={os}; arch={arch})")
+fn user_agent(agy_version: &str) -> String {
+    format!(
+        "cc-switch/{} (antigravity/cli/{agy_version})",
+        env!("CARGO_PKG_VERSION")
+    )
+}
+
+/// 本机 agy 的版本，每个进程只探测一次（定位 agy 可能要问登录 shell）；读不到用固定值。
+async fn agy_version() -> &'static str {
+    static VERSION: OnceCell<String> = OnceCell::const_new();
+    VERSION
+        .get_or_init(|| async {
+            probe_agy_version()
+                .await
+                .unwrap_or_else(|| FALLBACK_AGY_VERSION.to_string())
+        })
+        .await
+}
+
+async fn probe_agy_version() -> Option<String> {
+    let bin = tokio::task::spawn_blocking(crate::agy_config::real_agy_bin)
+        .await
+        .ok()??;
+    let mut command = tokio::process::Command::new(bin);
+    command
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    let output = tokio::time::timeout(VERSION_PROBE_TIMEOUT, command.output())
+        .await
+        .ok()?
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| parse_version(&output.stdout))
+        .flatten()
+}
+
+/// `agy --version` 的输出里第一个形如 `1.4.6` 的词（允许带 `v` 前缀）。
+fn parse_version(stdout: &[u8]) -> Option<String> {
+    String::from_utf8_lossy(stdout)
+        .split_whitespace()
+        .map(|word| word.trim_start_matches('v'))
+        .find(|word| {
+            word.contains('.')
+                && word.starts_with(|c: char| c.is_ascii_digit())
+                && word.chars().all(|c| c.is_ascii_digit() || c == '.')
+        })
+        .map(str::to_string)
 }
 
 pub async fn fetch(access_token: &str) -> Result<Vec<QuotaTier>, QuotaError> {
@@ -147,7 +190,7 @@ async fn post(
         .post(format!("{API_BASE}:{method}"))
         .timeout(REQUEST_TIMEOUT)
         .bearer_auth(access_token)
-        .header(reqwest::header::USER_AGENT, user_agent().await)
+        .header(reqwest::header::USER_AGENT, user_agent(agy_version().await))
         .json(&body)
         .send()
         .await?;
@@ -267,11 +310,25 @@ mod tests {
         assert_eq!(parse_ineligible_reason(b"{}"), None);
     }
 
-    #[tokio::test]
-    async fn user_agent_uses_antigravity_hub_signature() {
-        let ua = user_agent().await;
-        assert!(ua.starts_with("antigravity/hub/"));
-        assert!(ua.contains("aidev_client"));
+    #[test]
+    fn user_agent_names_cc_switch_and_the_agy_cli_version() {
+        // 服务端只在看到 `antigravity/cli/<版本>` 时才回 Gemini 那组，写成 `(antigravity)` 会漏
+        let ua = user_agent("1.4.6");
+        assert!(ua.starts_with("cc-switch/"));
+        assert!(ua.ends_with(" (antigravity/cli/1.4.6)"));
+        assert!(user_agent(FALLBACK_AGY_VERSION).contains("antigravity/cli/"));
+    }
+
+    #[test]
+    fn version_is_read_from_agy_version_output() {
+        assert_eq!(parse_version(b"1.4.6\n").as_deref(), Some("1.4.6"));
+        assert_eq!(
+            parse_version(b"agy version v1.5.0 (abc123)").as_deref(),
+            Some("1.5.0")
+        );
+        assert_eq!(parse_version(b""), None);
+        assert_eq!(parse_version(b"unknown"), None);
+        assert_eq!(parse_version(b"build 42"), None);
     }
 
     #[test]
