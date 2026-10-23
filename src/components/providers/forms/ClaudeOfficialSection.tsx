@@ -5,6 +5,7 @@ import { Loader2, Plus } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { authApi } from "@/lib/api";
 import { isMac } from "@/lib/platform";
+import { useSettingsQuery } from "@/lib/query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,6 +29,15 @@ import {
 import { signedInDate } from "@/components/settings/auth/accountDetails";
 
 const SERVICE_NAME = "Claude";
+
+/**
+ * 切卡不会全局换号、只能从卡片「打开终端」用选中账号的情况，和后端
+ * `claude_official::global_switch_available` 一致：macOS，或设了 Claude 配置目录覆盖。
+ */
+function useClaudeAccountTerminalOnly(): boolean {
+  const { data: settings } = useSettingsQuery();
+  return isMac() || Boolean(settings?.claudeConfigDir?.trim());
+}
 
 /**
  * 浏览器授权后回不到本机（远程桌面、浏览器拦了本机地址）时的退路：把浏览器地址栏里的
@@ -134,6 +144,7 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
   helpSide,
 }) => {
   const { t, i18n } = useTranslation();
+  const terminalOnly = useClaudeAccountTerminalOnly();
   const {
     accounts,
     isStatusSuccess,
@@ -194,8 +205,8 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
       name={SERVICE_NAME}
       iconName="claude"
       help={
-        isMac()
-          ? t("authCenter.group.claudeHelpMac", {
+        terminalOnly
+          ? t("authCenter.group.claudeHelpTerminal", {
               defaultValue:
                 "Claude Code 的官方订阅账号（Pro / Max / Team）。在 Claude 的官方卡上选一个账号，再从卡片「打开终端」，终端里的 claude 就用这个号。~/.claude 里原来的登录是「默认登录」，不受影响。",
             })
@@ -292,6 +303,7 @@ export function ClaudeAccountSelect({
   onChange,
 }: ClaudeAccountSelectProps) {
   const { t } = useTranslation();
+  const terminalOnly = useClaudeAccountTerminalOnly();
   const { data } = useQuery({
     queryKey: ["managed-auth-status", "claude_official"],
     queryFn: () => authApi.authGetStatus("claude_official"),
@@ -441,10 +453,10 @@ export function ClaudeAccountSelect({
         </p>
       )}
       <p className="text-caption text-fg-2">
-        {isMac()
-          ? t("provider.form.claudeAccount.helpMac", {
+        {terminalOnly
+          ? t("provider.form.claudeAccount.helpTerminal", {
               defaultValue:
-                "macOS 上请从卡片「打开终端」使用选中的账号：直接切换这张卡不会改变其他终端里 claude 用的号。",
+                "请从卡片「打开终端」使用选中的账号：直接切换这张卡不会改变其他终端里 claude 用的号。",
             })
           : t("provider.form.claudeAccount.help", {
               defaultValue:
@@ -457,10 +469,11 @@ export function ClaudeAccountSelect({
 
 /**
  * 绑了账号的 Claude 官方卡底部：写出用的是哪个号（额度查的是默认登录，对不上，先不显示）。
- * macOS 上切卡不会全局换号，提示从卡片打开终端。
+ * 切卡不会全局换号时（macOS、设了配置目录覆盖），提示从卡片打开终端。
  */
 export function ClaudeBoundAccountFooter({ accountId }: { accountId: string }) {
   const { t } = useTranslation();
+  const terminalOnly = useClaudeAccountTerminalOnly();
   const { data, isSuccess } = useQuery({
     queryKey: ["managed-auth-status", "claude_official"],
     queryFn: () => authApi.authGetStatus("claude_official"),
@@ -475,8 +488,8 @@ export function ClaudeBoundAccountFooter({ accountId }: { accountId: string }) {
       });
   return (
     <span className="min-w-0 truncate text-caption text-fg-2" title={label}>
-      {isMac()
-        ? t("provider.form.claudeAccount.cardMac", {
+      {terminalOnly
+        ? t("provider.form.claudeAccount.cardTerminal", {
             defaultValue: "账号：{{label}} · 从卡片打开终端使用",
             label,
           })

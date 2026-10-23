@@ -299,7 +299,9 @@ fn supervise(child: &mut Child, cancel: &AtomicBool, timeout: Duration) -> Super
             None
         };
         if let Some(reason) = reason {
-            let _ = child.kill();
+            // 整树终止：Windows 上 npm 装的 claude.cmd 直接子进程是 cmd.exe，真正等授权的
+            // node 是它的后代，只杀 cmd.exe 的话 node 还占着输出管道，读输出的线程等不到 EOF
+            crate::commands::terminate_child_tree(child);
             let _ = child.wait();
             return reason;
         }
@@ -475,6 +477,41 @@ pub fn apply_account_env(cmd: &mut std::process::Command, config_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 取消登录要终止整棵进程树：后代进程还占着输出管道的话，读输出的线程永远等不到
+    /// EOF（Windows 上 claude.cmd → node 就是这样）。这里用 sh → sleep 模拟。
+    #[cfg(unix)]
+    #[test]
+    fn cancel_ends_descendants_holding_the_output_pipe() {
+        use std::os::unix::process::CommandExt;
+
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", "sleep 30 & echo ready; wait"])
+            .stdout(Stdio::piped())
+            // 和 detected_tool_command 一样放进单独的进程组
+            .process_group(0);
+        let mut child = cmd.spawn().expect("spawn sh");
+        let mut stdout = BufReader::new(child.stdout.take().expect("stdout"));
+        // 等后代进程起来再取消
+        let mut ready = String::new();
+        stdout.read_line(&mut ready).expect("read ready");
+        assert_eq!(ready.trim(), "ready");
+        let (eof_tx, eof_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = std::io::copy(&mut stdout, &mut std::io::sink());
+            let _ = eof_tx.send(());
+        });
+
+        let cancel = AtomicBool::new(true);
+        assert!(matches!(
+            supervise(&mut child, &cancel, Duration::from_secs(60)),
+            Supervised::Cancelled
+        ));
+        assert!(
+            eof_rx.recv_timeout(Duration::from_secs(5)).is_ok(),
+            "the grandchild still holds the pipe"
+        );
+    }
 
     #[test]
     fn unset_list_covers_every_protocol_selector() {
