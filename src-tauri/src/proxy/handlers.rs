@@ -33,7 +33,7 @@ use super::{
         },
         transform, transform_codex_anthropic, transform_codex_chat,
         transform_codex_responses_namespace, transform_codex_responses_xai_sanitize,
-        transform_gemini, transform_responses,
+        transform_gemini, transform_native_responses, transform_responses,
     },
     response_processor::{
         create_logged_passthrough_stream, create_usage_collector, process_response,
@@ -1212,17 +1212,24 @@ async fn handle_responses_for_app(
 
     // Native Responses passthrough to a strict gateway (xAI): restore flattened
     // function-call names *and* rewrite whole-float tool arguments. The integer
-    // rewrite must run even when the request had no namespace tools.
-    if super::providers::provider_needs_responses_namespace_flatten(
-        &ctx.provider,
-        ctx.outbound_model.as_deref(),
-    ) {
+    // rewrite must run even when the request had no namespace tools. Grok Build
+    // rides the same rewrite regardless of provider: its CLI deserializes
+    // `annotations` / `arguments` / `sequence_number` as required and compatible
+    // upstreams return nodes missing them (#8387).
+    let grokbuild = matches!(app_type, AppType::GrokBuild);
+    if grokbuild
+        || super::providers::provider_needs_responses_namespace_flatten(
+            &ctx.provider,
+            ctx.outbound_model.as_deref(),
+        )
+    {
         return handle_codex_xai_native_responses_rewrite(
             response,
             &ctx,
             &state,
             connection_guard,
             namespace_restore_map,
+            grokbuild,
         )
         .await;
     }
@@ -1556,16 +1563,20 @@ async fn handle_responses_compact_for_app(
         .await;
     }
 
-    if super::providers::provider_needs_responses_namespace_flatten(
-        &ctx.provider,
-        ctx.outbound_model.as_deref(),
-    ) {
+    let grokbuild = matches!(app_type, AppType::GrokBuild);
+    if grokbuild
+        || super::providers::provider_needs_responses_namespace_flatten(
+            &ctx.provider,
+            ctx.outbound_model.as_deref(),
+        )
+    {
         return handle_codex_xai_native_responses_rewrite(
             response,
             &ctx,
             &state,
             connection_guard,
             namespace_restore_map,
+            grokbuild,
         )
         .await;
     }
@@ -1637,7 +1648,9 @@ async fn handle_codex_late_arguments_repair(
 
 /// Response handler for native Responses to xAI (direct or Copilot): restore
 /// flattened `function_call` names and rewrite whole-float tool arguments.
-/// Error bodies pass through unchanged. Usage is collected exactly as
+/// For Grok Build it also fills the required fields (`annotations`,
+/// `arguments`) and SSE `sequence_number`s its CLI fails on (#8387). Error
+/// bodies pass through unchanged. Usage is collected exactly as
 /// `process_response` would (same `CODEX_PARSER_CONFIG`).
 async fn handle_codex_xai_native_responses_rewrite(
     response: super::hyper_client::ProxyResponse,
@@ -1648,6 +1661,7 @@ async fn handle_codex_xai_native_responses_rewrite(
         String,
         transform_codex_responses_namespace::NamespacedName,
     >,
+    grokbuild: bool,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
 
@@ -1687,6 +1701,7 @@ async fn handle_codex_xai_native_responses_rewrite(
             transform_codex_responses_xai_sanitize::create_xai_native_responses_sse_stream(
                 stream,
                 restore_map,
+                grokbuild,
             );
         let usage_collector =
             create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
@@ -1700,7 +1715,7 @@ async fn handle_codex_xai_native_responses_rewrite(
 
         let body = axum::body::Body::from_stream(logged_stream);
         return builder.body(body).map_err(|e| {
-            log::error!("[{}] 构建 namespace 还原流式响应失败: {e}", ctx.tag);
+            log::error!("[{}] 构建 Responses 兼容流式响应失败: {e}", ctx.tag);
             ProxyError::Internal(format!("Failed to build streaming response: {e}"))
         });
     }
@@ -1730,6 +1745,9 @@ async fn handle_codex_xai_native_responses_rewrite(
             transform_codex_responses_xai_sanitize::normalize_xai_function_call_integer_arguments(
                 &mut value,
             );
+            if grokbuild {
+                transform_native_responses::ensure_grokbuild_required_fields(&mut value);
+            }
             if let Some(usage) =
                 TokenUsage::from_codex_response_auto(&value).filter(TokenUsage::has_billable_tokens)
             {
