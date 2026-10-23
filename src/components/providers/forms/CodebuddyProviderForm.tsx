@@ -445,9 +445,8 @@ export function CodebuddyProviderForm({
                 <span className={cn("flex-1", REQUIRED_LABEL)}>
                   {t("opencode.modelId")}
                 </span>
-                <span className={cn("flex-1", REQUIRED_LABEL)}>
-                  {t("opencode.modelName")}
-                </span>
+                <span className="flex-1">{t("opencode.modelName")}</span>
+                <span className="w-9" />
               </div>
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
@@ -500,6 +499,8 @@ export function CodebuddyProviderForm({
                     autoComplete="off"
                     className="min-w-0 flex-1"
                   />
+                  {/* 一张卡片就是一个模型，不能删；留出和 Kimi 删除列同宽的位置让两列对齐。 */}
+                  <span aria-hidden="true" className="h-9 w-9 shrink-0" />
                 </div>
                 {(keyTaken || keyInvalid) && (
                   <p className="ml-11 text-xs text-destructive">
