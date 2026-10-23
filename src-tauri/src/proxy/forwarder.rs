@@ -2676,6 +2676,13 @@ impl RequestForwarder {
             );
         }
 
+        // The shared local Codex provider intentionally omits upstream headers.
+        // Resolve them from this request's selected row instead, so aggregate
+        // routing and failover never reuse another provider's header values.
+        if matches!(app_type, AppType::Codex) && !codex_official_auth_passthrough {
+            apply_codex_provider_header_overrides(&mut ordered_headers, provider, is_copilot);
+        }
+
         apply_local_proxy_header_overrides(
             &mut ordered_headers,
             provider
@@ -4356,6 +4363,40 @@ fn merge_json_override_inner(target: &mut Value, patch: &Value, is_top_level: bo
     }
 }
 
+fn apply_codex_provider_header_overrides(
+    headers: &mut http::HeaderMap,
+    provider: &Provider,
+    is_copilot: bool,
+) {
+    let Some(config) = provider
+        .settings_config
+        .get("config")
+        .and_then(Value::as_str)
+    else {
+        return;
+    };
+    let Ok(config) = config.parse::<toml::Value>() else {
+        return;
+    };
+    let Some(configured_headers) = config
+        .get("model_provider")
+        .and_then(toml::Value::as_str)
+        .and_then(|active| config.get("model_providers")?.get(active))
+        .and_then(|active| active.get("http_headers"))
+        .and_then(toml::Value::as_table)
+    else {
+        return;
+    };
+    let overrides = LocalProxyRequestOverrides {
+        headers: configured_headers
+            .iter()
+            .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_string())))
+            .collect(),
+        body: None,
+    };
+    apply_local_proxy_header_overrides(headers, Some(&overrides), is_copilot);
+}
+
 fn apply_local_proxy_header_overrides(
     headers: &mut http::HeaderMap,
     overrides: Option<&LocalProxyRequestOverrides>,
@@ -5021,6 +5062,43 @@ mod tests {
             Some("ok")
         );
         assert!(headers.get("x-bad").is_none());
+
+        let mut provider = Provider::with_id(
+            "relay".to_string(),
+            "Relay".to_string(),
+            json!({"config": r#"
+model_provider = "relay"
+[model_providers.other.http_headers]
+x-other = "must-not-leak"
+[model_providers.relay.http_headers]
+x-openai-actor-authorization = "local-image-extension"
+Authorization = "Bearer bad"
+x-bad = "bad\nvalue"
+x-non-string = 1
+"#}),
+            None,
+        );
+        apply_codex_provider_header_overrides(&mut headers, &provider, false);
+        assert_eq!(
+            headers["x-openai-actor-authorization"],
+            "local-image-extension"
+        );
+        assert_eq!(headers[http::header::AUTHORIZATION], "Bearer good");
+        assert!(headers.get("x-other").is_none());
+        assert!(headers.get("x-bad").is_none());
+        assert!(headers.get("x-non-string").is_none());
+
+        // Selecting another row reads only that row; no header is cached.
+        provider.settings_config["config"] = json!(
+            "model_provider = \"other\"\n[model_providers.other.http_headers]\nx-other = \"selected\""
+        );
+        let mut other_headers = http::HeaderMap::new();
+        apply_codex_provider_header_overrides(&mut other_headers, &provider, false);
+        assert_eq!(other_headers["x-other"], "selected");
+        assert!(other_headers.get("x-openai-actor-authorization").is_none());
+        let mut copilot_headers = http::HeaderMap::new();
+        apply_codex_provider_header_overrides(&mut copilot_headers, &provider, true);
+        assert!(copilot_headers.is_empty());
     }
 
     #[test]
@@ -7079,14 +7157,23 @@ mod tests {
         async fn stacked_requests_drop_chatgpt_identity_but_keep_native_responses_beta_marker() {
             let upstream = upstream().await;
             for api_format in ["openai_responses", "openai_chat", "anthropic"] {
+                let mut row = provider(&upstream, api_format);
+                let config = row.settings_config["config"].as_str().unwrap();
+                row.settings_config["config"] = json!(format!(
+                    "{config}\n[model_providers.custom.http_headers]\nx-openai-actor-authorization = \"local-image-extension\"\n"
+                ));
                 let seen = send(
                     &forwarder(true),
                     &upstream,
-                    provider(&upstream, api_format),
+                    row,
                     "/responses",
                     body("listed", json!([])),
                 )
                 .await;
+                assert_eq!(
+                    seen.headers["x-openai-actor-authorization"],
+                    "local-image-extension"
+                );
                 for name in [
                     "chatgpt-account-id",
                     "originator",
