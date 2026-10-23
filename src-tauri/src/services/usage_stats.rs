@@ -311,6 +311,7 @@ pub struct RequestLogDetail {
     /// Internal storage semantics; omitted from the UI/API payload.
     #[serde(skip)]
     pub input_token_semantics: i64,
+    pub fresh_input_tokens: u32,
     pub input_cost_usd: String,
     pub output_cost_usd: String,
     pub cache_read_cost_usd: String,
@@ -330,15 +331,15 @@ pub struct RequestLogDetail {
     pub pricing_model: Option<String>,
 }
 
-/// 把 26 列的查询结果映射为 `RequestLogDetail`。
+/// 把 27 列的查询结果映射为 `RequestLogDetail`。
 ///
-/// 调用方的 SELECT **必须**按以下顺序返回 26 列：
+/// 调用方的 SELECT **必须**按以下顺序返回 27 列：
 /// `request_id, provider_id, provider_name, app_type, model, request_model,
 ///  cost_multiplier, input_tokens, output_tokens, cache_read_tokens,
 ///  cache_creation_tokens, input_cost_usd, output_cost_usd, cache_read_cost_usd,
 ///  cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
 ///  first_token_ms, duration_ms, status_code, error_message, created_at,
-///  data_source, pricing_model, input_token_semantics`
+///  data_source, pricing_model, input_token_semantics, fresh_input_sql(..)`
 ///
 /// 不需要 provider_name 时（如 backfill）SELECT `NULL AS provider_name` 占位即可。
 fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLogDetail> {
@@ -371,6 +372,7 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
         data_source: row.get(23)?,
         pricing_model: row.get(24)?,
         input_token_semantics: row.get::<_, i64>(25)?,
+        fresh_input_tokens: row.get::<_, i64>(26)? as u32,
     })
 }
 
@@ -2186,6 +2188,7 @@ impl Database {
         params.push(Box::new(offset as i64));
 
         let logs_pname = provider_name_coalesce("l", "p");
+        let logs_fresh_input = fresh_input_sql("l");
         let sql = format!(
             "SELECT l.request_id, l.provider_id, {logs_pname} as provider_name, l.app_type, l.model,
                     l.request_model, l.cost_multiplier,
@@ -2193,7 +2196,7 @@ impl Database {
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
                     l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model,
-                    l.input_token_semantics
+                    l.input_token_semantics, {logs_fresh_input} AS fresh_input_tokens
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              {where_clause}
@@ -2230,6 +2233,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
 
         let detail_pname = provider_name_coalesce("l", "p");
+        let detail_fresh_input = fresh_input_sql("l");
         let detail_sql = format!(
             "SELECT l.request_id, l.provider_id, {detail_pname} as provider_name, l.app_type, l.model,
                     l.request_model, l.cost_multiplier,
@@ -2237,7 +2241,7 @@ impl Database {
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
                     l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model,
-                    l.input_token_semantics
+                    l.input_token_semantics, {detail_fresh_input} AS fresh_input_tokens
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              WHERE l.request_id = ?"
@@ -2386,21 +2390,24 @@ impl Database {
         conn: &Connection,
         only_model_id: Option<&str>,
     ) -> Result<u64, AppError> {
-        const BASE_SQL: &str =
+        let fresh_input = fresh_input_sql("");
+        let base_sql = format!(
             "SELECT request_id, provider_id, NULL AS provider_name, app_type, model, request_model,
                         cost_multiplier,
                         input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                         input_cost_usd, output_cost_usd, cache_read_cost_usd,
                         cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
                         first_token_ms, duration_ms, status_code, error_message, created_at,
-                        data_source, pricing_model, input_token_semantics
+                        data_source, pricing_model, input_token_semantics,
+                        {fresh_input} AS fresh_input_tokens
              FROM proxy_request_logs
              WHERE CAST(total_cost_usd AS REAL) <= 0
                AND (input_tokens > 0 OR output_tokens > 0
-                    OR cache_read_tokens > 0 OR cache_creation_tokens > 0)";
+                    OR cache_read_tokens > 0 OR cache_creation_tokens > 0)"
+        );
 
         let mut logs = {
-            let mut stmt = conn.prepare(BASE_SQL)?;
+            let mut stmt = conn.prepare(&base_sql)?;
             let rows = stmt.query_map([], row_to_request_log_detail)?;
             rows.collect::<Result<Vec<_>, _>>()?
         };
@@ -3687,6 +3694,70 @@ mod tests {
             ]
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_request_logs_report_fresh_input_like_the_summary() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (request_id, app_type) in [
+                ("codex-legacy", "codex"),
+                ("codex-total", "codex"),
+                ("claude", "claude"),
+            ] {
+                insert_usage_log(
+                    &conn,
+                    request_id,
+                    app_type,
+                    "p1",
+                    "test-model",
+                    "proxy",
+                    1000,
+                    1000,
+                    50,
+                    300,
+                    600,
+                    200,
+                    "0.01",
+                )?;
+            }
+            conn.execute(
+                "UPDATE proxy_request_logs
+                 SET input_token_semantics = ?1
+                 WHERE request_id = 'codex-total'",
+                [INPUT_TOKEN_SEMANTICS_TOTAL],
+            )?;
+        }
+
+        let logs = db.get_request_logs(&LogFilters::default(), 0, 10)?;
+        let fresh: HashMap<&str, u32> = logs
+            .data
+            .iter()
+            .map(|log| (log.request_id.as_str(), log.fresh_input_tokens))
+            .collect();
+        assert_eq!(
+            fresh,
+            HashMap::from([
+                ("codex-legacy", 700),
+                ("codex-total", 100),
+                ("claude", 1000)
+            ])
+        );
+        let summary = db.get_usage_summary(None, None, None, None, None)?;
+        assert_eq!(
+            fresh.values().map(|&tokens| u64::from(tokens)).sum::<u64>(),
+            summary.total_input_tokens
+        );
+
+        let detail = db
+            .get_request_detail("codex-total")?
+            .expect("codex-total row");
+        assert_eq!(
+            serde_json::to_value(&detail).unwrap()["freshInputTokens"],
+            100
+        );
         Ok(())
     }
 
