@@ -399,6 +399,7 @@ export interface RectifierConfig {
   enabled: boolean;
   requestThinkingSignature: boolean;
   requestThinkingBudget: boolean;
+  normalizeSystemMessages: boolean;
   requestMediaFallback: boolean;
   requestMediaHeuristic: boolean;
 }
