@@ -1310,6 +1310,13 @@ pub fn run() {
                 app.manage(commands::AgyAccountState(Arc::new(manager)));
             }
 
+            // WorkBuddy 官方账号（授权中心收录、切换桌面端登录的快照）
+            {
+                use crate::services::workbuddy_account::WorkBuddyAccountManager;
+                let manager = WorkBuddyAccountManager::new(crate::config::get_app_config_dir());
+                app.manage(commands::WorkBuddyAccountState(Arc::new(manager)));
+            }
+
             // 初始化全局出站代理 HTTP 客户端
             {
                 let db = &app.state::<AppState>().db;
@@ -1868,6 +1875,10 @@ pub fn run() {
             commands::auth_logout,
             commands::agy_account_is_running,
             commands::agy_account_quota,
+            commands::workbuddy_account_live_state,
+            commands::workbuddy_account_import_current,
+            commands::workbuddy_account_prepare_new_login,
+            commands::workbuddy_account_open_app,
             commands::kimi_oauth_status,
             commands::kimi_oauth_start,
             commands::kimi_oauth_poll,
