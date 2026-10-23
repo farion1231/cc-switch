@@ -29,11 +29,10 @@ describe("traeProviderPresets", () => {
       expect(preset.settingsConfig.model.trim()).not.toBe("");
       expect(preset.providerKey).toMatch(TRAE_PROVIDER_KEY_PATTERN);
       expect(TRAE_RESERVED_PROVIDER_KEYS.has(preset.providerKey)).toBe(false);
+      const baseUrl = preset.settingsConfig.provider.base_url;
       const source = codexProviderPresets.find(
         (p) =>
-          p.name === preset.name &&
-          extractCodexBaseUrl(p.config) ===
-            preset.settingsConfig.provider.base_url,
+          p.name === preset.name && extractCodexBaseUrl(p.config) === baseUrl,
       );
       expect(source?.apiFormat).toBe("openai_responses");
     }
