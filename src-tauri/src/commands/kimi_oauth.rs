@@ -1,11 +1,15 @@
 use crate::services::kimi_oauth::{
     KimiLoginPoll, KimiLoginStart, KimiOAuthManager, KimiOAuthStatus, KimiRegion,
 };
+use crate::services::subscription::SubscriptionQuota;
+use crate::store::AppState;
 use tauri::State;
 
 #[tauri::command]
-pub fn kimi_oauth_status(state: State<'_, KimiOAuthManager>) -> Result<KimiOAuthStatus, String> {
-    state.status()
+pub async fn kimi_oauth_status(
+    state: State<'_, KimiOAuthManager>,
+) -> Result<KimiOAuthStatus, String> {
+    state.status().await
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -33,12 +37,28 @@ pub async fn kimi_oauth_cancel(
     Ok(state.cancel(&flow_id).await)
 }
 
+/// Separate accounts are deleted with their saved profile; Kimi's own default
+/// login is only removed from the list.
 #[tauri::command(rename_all = "camelCase")]
-pub async fn kimi_oauth_logout(
+pub async fn kimi_oauth_remove(
     account_id: String,
     state: State<'_, KimiOAuthManager>,
+    app_state: State<'_, AppState>,
 ) -> Result<(), String> {
-    state.logout(&account_id).await
+    state
+        .remove(&account_id, || {
+            app_state.db.delete_provider("kimi", &account_id)?;
+            Ok(())
+        })
+        .await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn kimi_oauth_quota(
+    account_id: String,
+    state: State<'_, KimiOAuthManager>,
+) -> Result<SubscriptionQuota, String> {
+    state.quota(&account_id).await
 }
 
 #[tauri::command(rename_all = "camelCase")]

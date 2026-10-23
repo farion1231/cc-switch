@@ -8,6 +8,7 @@ import { server } from "../msw/server";
 import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { MODELS_DEV_API_URL } from "@/lib/modelsDev";
 import { piThinkingProfiles } from "@/config/piThinkingProfiles";
+import { piProviderPresets } from "@/config/piProviderPresets";
 
 const TAURI_ENDPOINT = "http://tauri.local";
 
@@ -46,6 +47,47 @@ vi.mock("@/components/JsonEditor", () => ({
 describe("PiProviderForm", () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  it("shows a preset's provider key and blocks saving when it is already taken", async () => {
+    const user = userEvent.setup();
+    const preset = piProviderPresets.find((entry) => entry.name === "Kimi")!;
+    server.use(
+      http.post("http://tauri.local/get_providers", () =>
+        HttpResponse.json({
+          [preset.providerKey]: {
+            id: preset.providerKey,
+            name: "Kimi",
+            settingsConfig: {},
+          },
+        }),
+      ),
+    );
+    const onSubmit = vi.fn();
+    render(
+      <PiProviderForm
+        appId="pi"
+        submitLabel="Save Pi provider"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: /^providerPreset\.group\.vendor / }),
+    );
+    await user.click(screen.getByRole("button", { name: "Kimi" }));
+    expect(screen.getByLabelText("pi.form.providerKey")).toHaveValue(
+      preset.providerKey,
+    );
+    expect(
+      await screen.findByText("pi.form.providerKeyDuplicate"),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save Pi provider" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "pi.form.providerKeyDuplicate",
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("starts in the same editable custom state as OpenCode", async () => {
