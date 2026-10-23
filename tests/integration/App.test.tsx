@@ -272,6 +272,40 @@ describe("App integration with MSW", () => {
     expect(toastSuccessMock).toHaveBeenCalled();
   }, 10_000);
 
+  it("refreshes the route pointer when the proxy fails over to another provider", async () => {
+    let routeProviderId = "claude-1";
+    let modeRequests = 0;
+    server.use(
+      http.post("http://tauri.local/get_app_mode", async ({ request }) => {
+        const { appType } = (await request.json()) as { appType: string };
+        if (appType !== "claude") return;
+        modeRequests += 1;
+        return HttpResponse.json({
+          mode: "route",
+          attached: true,
+          routeProviderId,
+          directProviderId: "claude-1",
+        });
+      }),
+    );
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() => expect(modeRequests).toBeGreaterThan(0));
+    const before = modeRequests;
+
+    // 故障转移只改后端的路由指针，再发 provider-switched
+    routeProviderId = "claude-2";
+    emitTauriEvent("provider-switched", {
+      appType: "claude",
+      providerId: "claude-2",
+      source: "failover",
+    });
+
+    await waitFor(() => expect(modeRequests).toBeGreaterThan(before));
+  });
+
   it("resets provider view scroll when switching apps", async () => {
     const { default: App } = await import("@/App");
     const { container } = renderApp(App);
@@ -755,6 +789,72 @@ describe("App integration with MSW", () => {
     expect(screen.getByTestId("provider-list")).toHaveTextContent(
       "Custom MiniMax Code",
     );
+  });
+
+  it("rereads Kimi's default after a removal is refused for a stale default", async () => {
+    localStorage.setItem("cc-switch-last-app", "kimi");
+    let kimiCurrent = "kimi-sub";
+    let currentRequests = 0;
+    server.use(
+      http.post("http://tauri.local/get_providers", async ({ request }) => {
+        const { app } = (await request.json()) as { app: string };
+        if (app !== "kimi") return;
+        return HttpResponse.json({
+          go: {
+            id: "go",
+            name: "OpenCode Go",
+            settingsConfig: {},
+            meta: { liveConfigManaged: true },
+          },
+          "kimi-sub": {
+            id: "kimi-sub",
+            name: "Kimi subscription",
+            settingsConfig: {},
+            meta: { liveConfigManaged: true },
+          },
+        });
+      }),
+      http.post(
+        "http://tauri.local/get_current_provider",
+        async ({ request }) => {
+          const { app } = (await request.json()) as { app: string };
+          if (app !== "kimi") return;
+          currentRequests += 1;
+          return HttpResponse.json(kimiCurrent);
+        },
+      ),
+      http.post("http://tauri.local/remove_provider_from_live_config", () =>
+        HttpResponse.json(
+          "无效输入: Select another default model in Kimi Code before removing this model or provider",
+          { status: 500 },
+        ),
+      ),
+    );
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("current-provider")).toHaveTextContent(
+        "kimi-sub",
+      ),
+    );
+    // 用户在 Kimi Code 里用 /model 换到了 OpenCode Go 的模型，页面还没重读
+    kimiCurrent = "go";
+    const requestsBeforeRemoval = currentRequests;
+    fireEvent.click(screen.getByText("remove"));
+    fireEvent.click(screen.getByText("confirm-delete"));
+
+    await waitFor(() =>
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        "notifications.removeFromConfigFailed",
+        expect.objectContaining({ description: "kimi.error.defaultModelInUse" }),
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("current-provider")).toHaveTextContent("go"),
+    );
+    expect(currentRequests).toBeGreaterThan(requestsBeforeRemoval);
   });
 
   it("warns without blocking when removing Pi's global default provider", async () => {

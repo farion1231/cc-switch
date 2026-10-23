@@ -13,7 +13,7 @@ import {
  * 供应商卡片怎么画（v7）：当前那张的模式色、状态文字或按钮、徽标。由列表按应用和正在查看的
  * 模式算好交给卡片，卡片本身不再判断模式。
  */
-export type CardTone = "direct" | "route" | "stack" | "neutral";
+export type CardTone = "direct" | "route" | "stack";
 
 export type ChipTone =
   | "outline"
@@ -45,6 +45,8 @@ export interface CardMenuItem {
   /** 不能点的原因：照常列出来，原因写在名字下面 */
   disabledReason?: string;
   onSelect: () => void;
+  /** 展开成子菜单选一项（OpenClaw / OpenCode 的「设为默认」选默认模型） */
+  submenu?: { title: string; options: CardMenuOption[] };
 }
 
 export interface CardButton {
@@ -53,17 +55,15 @@ export interface CardButton {
   onClick: () => void;
   /** 不能点的原因：按钮照常画出来，原因挂在按钮的说明卡上 */
   disabledReason?: string;
-  /** 点开选一项（OpenClaw 的「设为默认 ▾」选默认模型） */
-  menu?: { title: string; options: CardMenuOption[] };
 }
 
 export interface CardPresentation {
-  /** 当前那张：模式色边框 + 淡底；neutral（灰底）只给共存式应用的默认那家（OpenClaw 默认、Hermes 当前） */
+  /** 当前那张：模式色边框 + 淡底；共存式应用的默认那家（OpenClaw / OpenCode / Kimi 默认、Hermes 当前）也用 direct */
   tone?: CardTone;
   /** 主操作位换成状态文字（使用中 / 路由中 / 当前默认 / 已添加…） */
   status?: { label: string; dot: CardTone | "muted" };
   buttons: CardButton[];
-  /** 「更多」菜单最前面、跟当前模式有关的操作（聚合页的「设为默认」） */
+  /** 「更多」菜单最前面、跟当前模式有关的操作（聚合页、OpenClaw / OpenCode 的「设为默认」） */
   menuItems?: CardMenuItem[];
   chips: CardChip[];
   /** 整卡淡一些（不能用于当前模式的官方订阅、Hermes 托管） */
@@ -635,7 +635,50 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
   ];
 }
 
-// ─── 共存式应用（OpenCode / OpenClaw / Hermes / Pi / MiniMax Code）───────────
+// ─── 启动器式应用（Antigravity）──────────────────────────────────────────────
+
+export interface LaunchInput {
+  app: AppId;
+  t: TFunction;
+  providers: Provider[];
+  openTerminal: (provider: Provider) => void;
+}
+
+/**
+ * Antigravity：第三方 Key 只能经环境变量交给 CC Switch 打开的那个 agy，管不到用户自己敲的
+ * `agy`，所以没有「启用 / 使用中」，每张卡的主操作就是「打开终端」，哪张都能删。
+ */
+export function buildLaunchSections(input: LaunchInput): ProviderSection[] {
+  const { app, t, providers, openTerminal } = input;
+  return [
+    {
+      key: "all",
+      items: providers.map((p) => ({
+        provider: p,
+        presentation: {
+          chips: isOfficialAccount(app, p)
+            ? [
+                {
+                  key: "official",
+                  label: t("providerCard.chip.official"),
+                  tone: "outline",
+                },
+              ]
+            : [],
+          buttons: [
+            {
+              key: "openTerminal",
+              label: t("provider.openTerminalWithProvider"),
+              onClick: () => openTerminal(p),
+            },
+          ],
+        },
+      })),
+    },
+  ];
+}
+
+// ─── 共存式应用（OpenCode / OpenClaw / Hermes / Pi / MiniMax Code / Kimi）─────
 
 export interface AdditiveInput {
   app: AppId;
@@ -645,15 +688,17 @@ export interface AdditiveInput {
   /** OpenCode：当前启用的 OMO / OMO Slim */
   currentOmoId?: string | null;
   currentOmoSlimId?: string | null;
-  /** OpenClaw：默认模型属于哪家、它的模型名 */
-  openclawDefault?: { providerId: string; model: string } | null;
-  /** OpenClaw：每家可选的模型 */
-  openclawModels?: (provider: Provider) => { id: string; name?: string }[];
+  /** OpenClaw / OpenCode：默认模型属于哪家、它的模型名 */
+  defaultModel?: { providerId: string; model: string } | null;
+  /** OpenClaw / OpenCode：每家可选的模型 */
+  defaultModelOptions?: (provider: Provider) => { id: string; name?: string }[];
   /** Hermes：model.provider 指向的那家 */
   hermesCurrentId?: string | null;
   isHermesManaged?: (provider: Provider) => boolean;
   /** Pi：读不到当前配置时一律不能改 */
   piStateUnavailable?: boolean;
+  /** Kimi：原生 default_model 别名所属的供应商。 */
+  kimiCurrentId?: string | null;
   actions: {
     add: (provider: Provider) => void;
     remove: (provider: Provider) => void;
@@ -673,6 +718,66 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
 
   for (const p of providers) {
     const chips: CardChip[] = [];
+    if (app === "kimi") {
+      const official = isOfficialAccount(app, p);
+      const live = input.isInConfig(p);
+      const officialReason = official ? t("kimi.oauth.managedHint") : undefined;
+      const protectedReason = live ? officialReason : undefined;
+      if (official) {
+        chips.push({
+          key: "official",
+          label: t("providerCard.chip.official"),
+          tone: "outline",
+        });
+      }
+      const current = live && p.id === input.kimiCurrentId;
+      // 「添加」只写进 config.toml（模型出现在 Kimi 的 /model 列表），「移除」从 config.toml
+      // 拿掉、卡片留着；改 default_model 的「设为默认」和 OpenCode 一样收在「更多」菜单里
+      const buttons: CardButton[] = [];
+      const menuItems: CardMenuItem[] = [];
+      if (!live) {
+        buttons.push({
+          key: "add",
+          label: t("providerCard.action.add"),
+          onClick: () => actions.add(p),
+        });
+      } else {
+        if (!current) {
+          menuItems.push({
+            key: "setDefault",
+            label: t("providerCard.action.setDefault"),
+            onSelect: () => actions.setDefault(p),
+          });
+        }
+        buttons.push({
+          key: "remove",
+          label: t("providerCard.action.remove"),
+          disabledReason:
+            protectedReason ??
+            (current
+              ? t("providerCard.reason.currentCannotRemove")
+              : undefined),
+          onClick: () => actions.remove(p),
+        });
+      }
+      (live ? added : available).push({
+        provider: p,
+        presentation: {
+          tone: current ? "direct" : undefined,
+          status: current
+            ? { label: t("providerCard.status.default"), dot: "direct" }
+            : undefined,
+          chips,
+          buttons,
+          menuItems: menuItems.length ? menuItems : undefined,
+          editDisabledReason: officialReason,
+          deleteDisabledReason:
+            protectedReason ??
+            (current ? t("providerCard.reason.inUseCannotDelete") : undefined),
+        },
+      });
+      continue;
+    }
     const isOmo = p.category === "omo";
     const isOmoSlim = p.category === "omo-slim";
     if (isOmo) chips.push({ key: "omo", label: "OMO", tone: "outline" });
@@ -753,53 +858,61 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
       continue;
     }
 
-    // 已添加：白底、不写「● 已添加」（分组标题和「移除」已经说清楚）；灰底只给默认那一家
+    // 已添加：白底、不写「● 已添加」（分组标题和「移除」已经说清楚）；蓝底只给默认那一家
     const buttons: CardButton[] = [];
+    const menuItems: CardMenuItem[] = [];
     let status: CardPresentation["status"];
     let isDefault = false;
     let removeReason: string | undefined = piBlocked;
 
-    if (app === "openclaw") {
-      isDefault = input.openclawDefault?.providerId === p.id;
+    // OpenCode 的顶层 model 一直允许移走所指的那家，这里不改；OpenClaw 不能
+    if (app === "openclaw" || app === "opencode") {
+      isDefault = input.defaultModel?.providerId === p.id;
       if (isDefault) {
-        status = { label: t("providerCard.status.default"), dot: "muted" };
+        status = { label: t("providerCard.status.default"), dot: "direct" };
         chips.push({
           key: "defaultModel",
           label: t("providerCard.chip.defaultModel", {
-            model: input.openclawDefault?.model ?? "",
+            model: input.defaultModel?.model ?? "",
           }),
           tone: "outline",
         });
-        removeReason = t("providerCard.reason.defaultCannotRemove");
+        if (app === "openclaw") {
+          removeReason = t("providerCard.reason.defaultCannotRemove");
+        }
       } else {
-        const models = input.openclawModels?.(p) ?? [];
-        buttons.push({
-          key: "setDefault",
-          label: t("providerCard.action.setDefault"),
-          onClick: () => actions.setDefault(p, models[0]?.id),
-          menu:
-            models.length > 1
-              ? {
-                  title: t("openclaw.selectDefaultModel"),
-                  options: models.map((model) => ({
-                    key: model.id,
-                    label: model.name?.trim() || model.id,
-                    detail:
-                      model.name?.trim() && model.name.trim() !== model.id
-                        ? model.id
-                        : undefined,
-                    onSelect: () => actions.setDefault(p, model.id),
-                  })),
-                }
-              : undefined,
-        });
+        const models = input.defaultModelOptions?.(p) ?? [];
+        // 「设为默认」放「更多」菜单，不占卡片上的主操作位；多个模型时展开子菜单选。
+        // OpenCode 内置供应商可以不列模型（运行时才有），给不出选项就不显示
+        if (app === "openclaw" || models.length > 0) {
+          menuItems.push({
+            key: "setDefault",
+            label: t("providerCard.action.setDefault"),
+            onSelect: () => actions.setDefault(p, models[0]?.id),
+            submenu:
+              models.length > 1
+                ? {
+                    title: t("openclaw.selectDefaultModel"),
+                    options: models.map((model) => ({
+                      key: model.id,
+                      label: model.name?.trim() || model.id,
+                      detail:
+                        model.name?.trim() && model.name.trim() !== model.id
+                          ? model.id
+                          : undefined,
+                      onSelect: () => actions.setDefault(p, model.id),
+                    })),
+                  }
+                : undefined,
+          });
+        }
       }
     }
 
     if (app === "hermes") {
       if (p.id === input.hermesCurrentId) {
         isDefault = true;
-        status = { label: t("providerCard.status.current"), dot: "muted" };
+        status = { label: t("providerCard.status.current"), dot: "direct" };
         removeReason = t("providerCard.reason.currentCannotRemove");
       } else {
         buttons.push({
@@ -821,13 +934,14 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     added.push({
       provider: p,
       presentation: {
-        tone: isDefault ? "neutral" : undefined,
+        tone: isDefault ? "direct" : undefined,
         status,
         chips,
         dim: managed,
         editDisabledReason: readOnlyReason,
         deleteDisabledReason: readOnlyReason ?? piBlocked,
         buttons,
+        menuItems: menuItems.length ? menuItems : undefined,
       },
     });
   }

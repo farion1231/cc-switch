@@ -1,3 +1,6 @@
+mod agy_config;
+#[cfg(all(test, unix))]
+mod agy_smoke_tests;
 mod app_config;
 mod app_store;
 mod auto_launch;
@@ -19,6 +22,8 @@ mod grok_config;
 pub mod hermes_config;
 mod init_status;
 mod jsonc_document;
+mod kimi_config;
+mod kimi_session;
 mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
@@ -41,6 +46,7 @@ mod settings;
 mod store;
 
 mod tray;
+mod tray_panel;
 mod usage_events;
 mod usage_script;
 
@@ -328,6 +334,11 @@ async fn update_tray_menu(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
+    if !tray_panel::uses_native_menu() {
+        // 用托盘面板、不挂原生菜单：更新图标状态，通知开着的面板重新取数据。
+        tray::refresh_tray_menu(&app);
+        return Ok(app.tray_by_id(tray::TRAY_ID).is_some());
+    }
     match tray::create_tray_menu(&app, state.inner()) {
         Ok(new_menu) => {
             if let Some(tray) = app.tray_by_id(tray::TRAY_ID) {
@@ -341,6 +352,45 @@ async fn update_tray_menu(
             log::error!("创建托盘菜单失败: {err}");
             Ok(false)
         }
+    }
+}
+
+/// 本进程打开文件描述符的软上限目标。macOS 的 `setrlimit` 不接受超过 `OPEN_MAX`（10240）的值。
+#[cfg(unix)]
+const OPEN_FILE_SOFT_LIMIT_TARGET: libc::rlim_t = 10240;
+
+/// 从 Finder / 登录项启动的 macOS 应用继承 launchd 的软上限，默认只有 256 个文件描述符。
+/// 本地路由并发时客户端连接、上游连接、日志、数据库和配置文件都要占用描述符，突发请求下
+/// accept、上游连接和打开数据库会一起报 EMFILE（Too many open files）。启动时把软上限
+/// 提到硬上限（封顶 10240），硬上限更低或已经足够时不动。
+#[cfg(unix)]
+fn raise_open_file_limit() {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: 传入的是有效的 rlimit 指针，调用只读写这个结构体。
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
+        log::warn!(
+            "读取文件描述符上限失败: {}",
+            std::io::Error::last_os_error()
+        );
+        return;
+    }
+    let target = OPEN_FILE_SOFT_LIMIT_TARGET.min(limit.rlim_max);
+    if limit.rlim_cur >= target {
+        return;
+    }
+    let previous = limit.rlim_cur;
+    limit.rlim_cur = target;
+    // SAFETY: 同上；软上限不超过硬上限，不需要特权。
+    if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) } != 0 {
+        log::warn!(
+            "提高文件描述符上限失败（当前 {previous}）: {}",
+            std::io::Error::last_os_error()
+        );
+    } else {
+        log::info!("文件描述符软上限 {previous} → {target}");
     }
 }
 
@@ -420,6 +470,10 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         // 拦截窗口关闭：根据设置决定是否最小化到托盘
         .on_window_event(|window, event| {
+            // 托盘面板自己处理关闭（只隐藏），不走主窗口的「最小化到托盘 / 退出」
+            if window.label() == tray_panel::PANEL_LABEL {
+                return;
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 log::info!("收到窗口关闭请求: label={}", window.label());
                 // 数据库版本过新的恢复模式下没有托盘可唤回，关闭即退出，避免应用隐身后台
@@ -460,6 +514,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(window_state_flags())
+                .with_denylist(&[tray_panel::PANEL_LABEL])
                 .build(),
         )
         .setup(|app| {
@@ -509,6 +564,9 @@ pub fn run() {
                 log::set_max_level(log::LevelFilter::Info);
                 log::info!("=== CC Switch v{} started ===", env!("CARGO_PKG_VERSION"));
             }
+
+            #[cfg(unix)]
+            raise_open_file_limit();
 
             // 首次读取覆盖路径时 logger 尚未可用；此处重放一次，
             // 让 Store 损坏或路径无效等启动警告能够真正落盘。
@@ -1132,24 +1190,33 @@ pub fn run() {
                 Err(e) => log::warn!("读取启动时的深链接失败: {e}"),
             }
 
-            // 创建动态托盘菜单
-            let menu = tray::create_tray_menu(app.handle(), &app_state)?;
-
-            // 构建托盘
+            // 构建托盘：Windows 左键打开主界面，右键默认弹出面板；macOS 左右键默认都弹出面板。
+            // 设置里打开「原生托盘菜单」就挂原生菜单（`tray::apply_tray_style` 运行时切换）。
+            // Linux（AppIndicator）不派发点击事件，只能出原生菜单，菜单里有一项打开面板。
+            let native_menu = tray_panel::uses_native_menu();
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
                 .tooltip("CC Switch") // 鼠标悬停提示
                 .on_tray_icon_event(|tray, event| {
-                    // Windows 的习惯是左键打开应用、右键出菜单（按平台给默认值，不加开关）；
-                    // macOS 左键仍出菜单；Linux（AppIndicator）不派发点击事件，只能出菜单。
-                    #[cfg(target_os = "windows")]
+                    if let TrayIconEvent::Click {
+                        button:
+                            button @ (tauri::tray::MouseButton::Left
+                            | tauri::tray::MouseButton::Right),
+                        button_state: tauri::tray::MouseButtonState::Up,
+                        rect,
+                        ..
+                    } = &event
                     {
-                        if let TrayIconEvent::Click {
-                            button: tauri::tray::MouseButton::Left,
-                            button_state: tauri::tray::MouseButtonState::Up,
-                            ..
-                        } = &event
+                        if cfg!(target_os = "windows")
+                            && *button == tauri::tray::MouseButton::Left
                         {
+                            tray_panel::hide_panel(tray.app_handle());
                             tray::show_main_window(tray.app_handle());
+                        } else if !tray_panel::uses_native_menu() {
+                            tray_panel::toggle(tray.app_handle(), rect);
+                            return;
+                        } else {
+                            // 弹出的菜单里已经有反馈行了：算显示过，下次悬停重建时拿掉。
+                            tray::mark_feedback_seen();
                         }
                     }
                     match &event {
@@ -1162,10 +1229,6 @@ pub fn run() {
                             if matches!(event, TrayIconEvent::Enter { .. }) {
                                 tray::refresh_tray_if_problems_changed(&app);
                             }
-                            // 弹出的菜单里已经有反馈行了：算显示过，下次悬停时拿掉。
-                            if let TrayIconEvent::Click { button, .. } = &event {
-                                tray::note_tray_click(*button);
-                            }
                             tauri::async_runtime::spawn(async move {
                                 crate::tray::refresh_all_usage_in_tray(&app).await;
                             });
@@ -1173,11 +1236,14 @@ pub fn run() {
                         _ => log::debug!("unhandled event {event:?}"),
                     }
                 })
-                .menu(&menu)
                 .on_menu_event(|app, event| {
                     tray::handle_tray_menu_event(app, &event.id.0);
                 })
-                .show_menu_on_left_click(cfg!(not(target_os = "windows")));
+                .show_menu_on_left_click(tray::native_menu_on_left_click(native_menu));
+            if native_menu {
+                let menu = tray::create_tray_menu(app.handle(), &app_state)?;
+                tray_builder = tray_builder.menu(&menu);
+            }
 
             // 使用平台对应的托盘图标（macOS 使用模板图标适配深浅色）；出问题时 tray.rs 换成带圆点的那张
             if let Some((icon, template)) = tray::base_tray_icon(app.handle()) {
@@ -1195,6 +1261,7 @@ pub fn run() {
             );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
+            app.manage(services::kimi_oauth::KimiOAuthManager::default());
 
             // 初始化 SkillService
             let skill_service = SkillService::new();
@@ -1232,6 +1299,13 @@ pub fn run() {
                 let xai_oauth_manager = XaiOAuthManager::new(app_config_dir);
                 app.manage(XaiOAuthState(Arc::new(RwLock::new(xai_oauth_manager))));
                 log::info!("✓ XaiOAuthManager initialized");
+            }
+
+            // Antigravity 官方账号（授权中心加号、切 agy 的全局登录）
+            {
+                use crate::services::agy_account::AgyAccountManager;
+                let manager = AgyAccountManager::new(crate::config::get_app_config_dir());
+                app.manage(commands::AgyAccountState(Arc::new(manager)));
             }
 
             // 初始化全局出站代理 HTTP 客户端
@@ -1286,6 +1360,12 @@ pub fn run() {
                 // 定下各应用的直连 / 代理模式（处理旧版遗留的接管状态），再把代理模式的
                 // 应用接上。要排在通用配置片段的自动提取之后：它读的是直连的 live。
                 crate::mode::controller::startup(&state).await;
+                // #8268 测试版给 agy 装过包装脚本、改过 shell 启动文件，撤掉带标记的部分。
+                if let Err(e) =
+                    crate::services::provider::agy_direct::migrate_legacy_launcher(&state.db)
+                {
+                    log::warn!("清理旧版 agy 启动器失败: {e}");
+                }
                 // 启动流程走完：托盘这时才开始报「路由服务没在运行」，并记下退回直连的应用。
                 crate::tray::mark_startup_settled(&app_handle);
                 // Codex 官方做路由、发布了 Stack 模型时，官方模型列表过期就在后台刷新。
@@ -1433,6 +1513,7 @@ pub fn run() {
             commands::update_provider,
             commands::get_provider_editor_view,
             commands::delete_provider,
+            commands::add_provider_to_live_config,
             commands::remove_provider_from_live_config,
             commands::switch_provider,
             commands::import_default_config,
@@ -1547,6 +1628,7 @@ pub fn run() {
             // Fetch OpenAI-compatible and Anthropic model lists. Response data structure:
             // data[].id, data[]?.owned_by. Special: supports Zhipu OpenAI Responses models[].slug.
             commands::fetch_models_for_config,
+            commands::get_agy_models,
             commands::get_opencode_models,
             // ours: endpoint speed test + custom endpoint management
             commands::test_api_endpoints,
@@ -1639,6 +1721,11 @@ pub fn run() {
             commands::set_proxy_route,
             commands::take_startup_attach_failures,
             tray::take_tray_navigation,
+            tray_panel::tray_panel_state,
+            tray_panel::tray_panel_placement,
+            tray_panel::tray_panel_layout,
+            tray_panel::tray_panel_hide,
+            tray_panel::tray_panel_action,
             tray::tray_app_page_seen,
             commands::exit_proxy_apps_in_mode,
             commands::get_direct_provider,
@@ -1732,6 +1819,8 @@ pub fn run() {
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,
+            commands::get_opencode_default_model,
+            commands::set_opencode_default_model,
             // OpenClaw specific
             commands::import_openclaw_providers_from_live,
             commands::get_openclaw_live_provider_ids,
@@ -1775,6 +1864,15 @@ pub fn run() {
             commands::auth_remove_account,
             commands::auth_set_default_account,
             commands::auth_logout,
+            commands::agy_account_is_running,
+            commands::agy_account_quota,
+            commands::kimi_oauth_status,
+            commands::kimi_oauth_start,
+            commands::kimi_oauth_poll,
+            commands::kimi_oauth_cancel,
+            commands::kimi_oauth_remove,
+            commands::kimi_oauth_quota,
+            commands::kimi_oauth_use_account,
             // Copilot OAuth commands (multi-account support)
             commands::copilot_start_device_flow,
             commands::copilot_poll_for_auth,
@@ -2309,6 +2407,30 @@ mod tests {
         classify_exit_request, error_for_log, redact_url_for_log, redact_url_for_log_with_secrets,
         redact_url_origin_for_log, runtime_log_level_allows, ExitRequestAction,
     };
+
+    #[cfg(unix)]
+    #[test]
+    fn raise_open_file_limit_lifts_soft_limit_to_target_or_hard_limit() {
+        fn current() -> libc::rlimit {
+            let mut limit = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            assert_eq!(
+                unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
+                0
+            );
+            limit
+        }
+
+        let before = current();
+        super::raise_open_file_limit();
+        let after = current();
+        let expected = super::OPEN_FILE_SOFT_LIMIT_TARGET.min(after.rlim_max);
+        assert!(after.rlim_cur >= expected);
+        assert!(after.rlim_cur >= before.rlim_cur);
+        assert_eq!(after.rlim_max, before.rlim_max);
+    }
 
     #[test]
     fn log_error_drops_toml_source_lines_but_keeps_position() {

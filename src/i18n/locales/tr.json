@@ -103,7 +103,7 @@
     "tabProvider": "Sağlayıcı",
     "tabUniversal": "Evrensel",
     "noProviders": "Henüz sağlayıcı yok",
-    "noProvidersDescription": "Zaten bir yapılandırmanız varsa, \"Geçerli Yapılandırmayı İçe Aktar\"ı tıklayın; tüm veriler güvenli bir şekilde varsayılan sağlayıcıya kaydedilecektir",
+    "noProvidersDescription": "Zaten bir yapılandırmanız varsa “Mevcut Yapılandırmayı İçe Aktar” düğmesine tıklayın. Tüm veriler varsayılan sağlayıcıya güvenli bir şekilde kaydedilecektir.",
     "noProvidersDescriptionKeyFields": "Sağlayıcıların değiştirilmesi yalnızca anahtarın, uç noktanın ve modelin yerini alır; eklentiler ve diğer ayarlar yapılandırma dosyasında kalır ve her sağlayıcıya uygulanır",
     "importCurrent": "Mevcut Yapılandırmayı İçe Aktar",
     "importFromClaude": "Mevcut sağlayıcıları Claude Code'den içe aktarın",
@@ -381,9 +381,9 @@
       "quotaDisplayHelp": "Sağlayıcı kartlarındaki, Hesaplar'daki ve tepsideki her kota penceresinin ne kadar kaldığını veya ne kadar kullanıldığını gösterip göstermediği. Bakiyeler ve Krediler her zaman kalanları gösterir.",
       "sidebarAndHeader": "Kenar çubuğu ve başlık",
       "visibleApps": "Kenar çubuğunda gösterilen uygulamalar",
-      "goToApps": "Uygulamaları Aç",
+      "goToApps": "Uygulamaları seç",
       "updates": "Uygulamalarınızın yeni sürümleri",
-      "checkToolUpdates": "Lansman sırasında uygulamalarınızın yeni sürümlerini kontrol edin",
+      "checkToolUpdates": "Açılışta uygulama güncellemelerini kontrol et",
       "checkToolUpdatesHelp": "CC Switch açıkken, her başlatıldığında yüklü komut satırı uygulamalarınızı yeni sürümler için kontrol eder ve bulursa kenar çubuğunda Uygulamalar üzerinde bir nokta gösterir. Hiçbir şey otomatik olarak yükseltilmez.",
       "windowAndTerminal": "Pencere ve terminal",
       "minimizeToTrayHelp": "Açık olduğunda, kapat düğmesi yalnızca pencereyi gizler ve CC Switch sistem tepsisinde çalışmaya devam eder (hafif mod tepsi menüsündedir). Kapatıldığında kapatma düğmesi kapanır.",
@@ -445,7 +445,6 @@
         "title": "Uyumluluk düzeltici",
         "description": "API isteği uyumluluk sorunlarını otomatik olarak düzeltin",
         "enabled": "Uyumluluk düzelticiyi etkinleştir",
-        "enabledDescription": "Ana anahtar, kapatıldığında tüm düzeltme özellikleri devre dışı bırakılacaktır",
         "requestGroup": "İstek düzeltme",
         "responseGroup": "Yanıt düzeltme",
         "thinkingSignature": "Düşünme imzası düzeltme",
@@ -482,7 +481,6 @@
           "debug": "Hata ayıklama",
           "trace": "İz"
         },
-        "levelHint": "Günlük düzeyi açıklamaları:",
         "levelDesc": {
           "error": "Yalnızca kritik hatalar",
           "warn": "Hatalar + uyarılar",
@@ -497,7 +495,7 @@
     "theme": "Açık ve koyu",
     "themeHint": "Uygulamanın görünüm temasını seçin, hemen geçerli olur.",
     "themeLight": "Ay'ın Aydınlık Yüzü",
-    "themeDark": "Ayın Karanlık Yüzü",
+    "themeDark": "Ay'ın Karanlık Yüzü",
     "themeSystem": "Sistem",
     "importExport": "SQL İçe/Dışa Aktarma",
     "importExportHint": "Geçiş veya geri yükleme için veritabanı SQL yedeklerini içe veya dışa aktarın (içe aktarma yalnızca CC Switch tarafından dışa aktarılan yedeklemeleri destekler).",
@@ -623,7 +621,6 @@
     },
     "webdavSync": {
       "title": "WebDAV bulut eşitleme",
-      "description": "WebDAV aracılığıyla veritabanı ve beceri yapılandırmalarını cihazlar arasında eşitle edin.",
       "baseUrl": "WebDAV Sunucu URL'si",
       "baseUrlPlaceholder": "https://dav.example.com/dav/",
       "username": "WebDAV Hesabı",
@@ -664,8 +661,6 @@
         "synologyHint": "Önce Synology Paket Merkezi'nde WebDAV Sunucu paketini kurun ve etkinleştirin.",
         "custom": "Özel"
       },
-      "remoteRootDefault": "Varsayılan: cc-switch-sync",
-      "profileDefault": "Varsayılan: varsayılan",
       "saveAndTestSuccess": "Yapılandırma kaydedildi, bağlantı tamam",
       "saveAndTestFailed": "Yapılandırma kaydedildi ancak bağlantı testi başarısız oldu: {{error}}",
       "noRemoteData": "Uzak sunucuda eşitleme verisi bulunamadı",
@@ -738,9 +733,7 @@
       "endpointHint": "Çoğu S3 uyumlu hizmet için gereklidir",
       "endpointPlaceholder": "örneğin https://s3-compatible.example.com",
       "remoteRoot": "Uzak Kök Dizini",
-      "remoteRootDefault": "Varsayılan: cc-switch-sync",
       "profile": "Eşitleme profili adı",
-      "profileDefault": "Varsayılan: varsayılan",
       "autoSync": "Otomatik eşitleme",
       "autoSyncHint": "Etkinleştirildiğinde, her veritabanı değişikliği otomatik bir S3 yüklemesini tetikler.",
       "enabled": "S3 Eşitlemeunu Etkinleştir",
@@ -812,7 +805,7 @@
     "languageOptionTurkish": "Türkçe",
     "windowBehavior": "Pencere Davranışı",
     "windowBehaviorHint": "Pencere simge durumuna küçültme ve Claude eklenti entegrasyon ilkelerini yapılandırın.",
-    "launchOnStartup": "Başlangıçta Başlat",
+    "launchOnStartup": "Sistem açılışında başlat",
     "launchOnStartupDescription": "Sistem başlatıldığında CC Switch'yi otomatik olarak çalıştır",
     "silentStartup": "Sessiz Başlangıç",
     "silentStartupDescription": "Ana pencereyi göstermeden arka plan modunda başlat",
@@ -854,7 +847,7 @@
       "showProviderSearchDescription": "Sağlayıcıları ada, notlara, web sitesine veya API adresine göre bulmak için sağlayıcı sayfasının üst kısmında bir arama düğmesi gösterin. Gizlendiğinde, ⌘F / Ctrl+F yine de aramayı açar"
     },
     "terminal": {
-      "title": "Tercih Edilen Terminal",
+      "title": "Tercih edilen terminal",
       "description": "Terminal düğmesine tıklandığında hangi terminal uygulamasının kullanılacağını seçin",
       "fallbackHint": "Seçilen terminal kullanılamıyorsa sistem varsayılanı kullanılacaktır",
       "options": {
@@ -935,6 +928,17 @@
     "starPrompt": "CC Switch size yardımcı olduysa lütfen GitHub’da bize yıldız verin — bu bizim için çok şey ifade ediyor",
     "starOnGithub": "GitHub’da yıldız",
     "manualInstallCommands": "Manuel Kurulum Komutları",
+    "manualUninstallCommands": "Manuel kaldırma komutları",
+    "manualUninstallHint": "Her uygulamanın ortamı varsayılan olarak otomatik algılanır; isterseniz farklı bir ortamı elle seçebilirsiniz. Özgün kurulum yöntemini seçin, ardından kaldırmak istediğiniz uygulamanın komutunu kopyalayıp bir terminalde çalıştırın. Durumunu yenilemek için sonrasında “Güncellemeleri kontrol et” seçeneğine tıklayın.",
+    "manualUninstallMethod": "Kurulum yöntemi",
+    "manualUninstallBunLauncherHint": "Bun, geride bir OpenClaw başlatıcısı bırakabilir. Bu dosyayı kaldırmadan önce “OpenClaw Bun launcher” başlığını ve paket yolunu inceleyin; paylaşılan bin dizinini koruyun.",
+    "manualUninstallOpenClawHint": "Yapılandırmayı ve çalışma alanlarını koruyarak Gateway hizmetini kaldırmak için önce openclaw uninstall --service --yes --non-interactive komutunu başarıyla çalıştırın. Ardından aşağıdaki komutla CLI'yi kaldırın.",
+    "manualUninstallEnvironment": "Ortam",
+    "manualUninstallEnvironmentHint": "Özgün kurulumla aynı Node ortamını ve paket yöneticisini kullanın. --prefix seçeneğini yalnızca doğrulanmış bir genel npm öneki için ekleyin. WSL uygulamalarına ait komutları ilgili dağıtımın içinde çalıştırın.",
+    "manualUninstallOtherMethods": "Yalnızca resmi kurulum talimatlarıyla doğrulanmış yöntemler listelenir. Komutlar yapılandırmayı ve oturum verilerini korur. Betikle yönetilen kurulumlar, indirmeler veya diğer yöntemler için özgün yükleyicinin talimatlarını kullanın; bunların yerine genel bir npm komutu kullanmayın. Betikle kurulan Pi için yükleyiciyi yeniden çalıştırıp “Uninstall Pi” seçeneğini belirleyin.",
+    "copyToolUninstallCommand": "{{tool}} için kaldırma komutunu kopyala",
+    "uninstallCommandCopied": "Kaldırma komutu kopyalandı",
+    "uninstallCommandCopyFailed": "Kopyalama başarısız. Komutu seçip elle kopyalayın.",
     "oneClickInstallHint": "Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes / Pi / MiniMax Code'yi yükleyin veya yükseltin",
     "localEnvCheck": "Yerel ortam kontrolü",
     "updateAllTools": "Tümünü Güncelle ({{count}})",
@@ -942,6 +946,19 @@
     "latestVersion": "Son Sürüm",
     "updateAvailableShort": "Güncelle",
     "toolInstall": "Yükle",
+    "toolUninstall": "Kaldır",
+    "toolUninstallConfirmTitle": "{{tool}} kaldırılsın mı?",
+    "toolUninstallConfirmHint": "Kaldırılacak kurulumu seçin. Yapılandırma ve oturum verileri korunur; diğer kurulumlar etkilenmez.",
+    "toolUninstallPreparing": "Kurulum denetleniyor…",
+    "toolUninstallManualRequired": "Otomatik olarak kaldırılamıyor. Bu uygulamayı elle kaldırın.",
+    "toolUninstallChooseInstall": "Kaldırılacak kurulum",
+    "toolUninstallNativeHint": "Yalnızca yukarıdaki komutta listelenen dosyalar kaldırılır; dizinler hiçbir zaman kaldırılmaz. Yapılandırma ve oturum verileri korunur.",
+    "toolUninstallReinstalledByUpdater": "{{tool}} güncelleyicisi bu kopyayı diğerinin yanına kurdu. Yalnızca bu kopyayı kaldırırsanız sonraki güncelleme onu yeniden kurar.",
+    "toolUninstallFailed": "Kaldırma başarısız",
+    "toolUninstallWarningTitle": "Kaldırma komutu tamamlandı; sonucu kontrol edin",
+    "toolUninstallHermesWindowsHint": "Windows'ta Hermes, çalışan Python kaldırma sırasında kilitli olduğundan bazı program dosyalarını geride bırakabilir. Komut tamamlandıktan sonra özgün kurulum dizininde kalan dosyaları kontrol edin; temizlik sırasında yapılandırmayı ve oturum verilerini koruyun.",
+    "toolUninstallRemaining": "Seçilen kurulum kaldırıldı; diğer kurulumlar duruyor",
+    "toolUninstallCheckFailed": "Kaldırma sonrasında kurulum durumu doğrulanamadı. Yeniden denemek için “Güncellemeleri kontrol et” seçeneğine tıklayın.",
     "toolUpdate": "Güncelle",
     "toolReady": "Hazır",
     "toolActionDone": "{{action}}, {{count}} takım(lar)ı için tamamlandı",
@@ -1269,7 +1286,7 @@
     "clearSearch": "Aramayı temizle",
     "foundCount": "{{count}} oturumları bulundu",
     "groupBy": "Gruplandırma ölçütü",
-    "groupByTime": "zamana göre",
+    "groupByTime": "Zamana göre",
     "groupByProject": "Projeye göre",
     "desktopNote": "Claude Desktop'nin kendine ait oturum kaydı yoktur. Claude Code oturumları gösteriliyor.",
     "matchCount": "{{count}} eşleştirme oturumları",
@@ -1567,7 +1584,6 @@
       "subrouter": "SubRouter, bir anahtarın birden fazla modele ve sağlayıcıya erişmesine olanak tanıyan bir AI aktarma toplayıcıdır.",
       "qiniu": "Qiniu Cloud, çok protokollü bir yapay zeka aktarımıdır: yerel Claude, GPT ve Gemini modelleri için tek bir anahtar; Anthropic, OpenAI ve Gemini API'lerinin tümü desteklenir.",
       "fenno": "Fenno.ai, geniş bir ana akım model yelpazesine erişmenizi sağlayan istikrarlı, verimli bir API rölesidir. Özel CC Switch teklifi: Bu bağlantı aracılığıyla 7 gün geçerli, 50$ kredi değerindeki 1,99$ Deneme Planına abone olun!",
-      "zetaapi": "ZetaAPI gerçek, bozulmamış modelleri resmi fiyatlandırmanın %35'i kadar düşük bir fiyatla sunar. Özel CC Switch teklifi: bu bağlantı aracılığıyla kaydolun ve ilk yüklemenizde %10 indirim için CC-SWITCH promosyon kodunu kullanın!",
       "teamorouter": "TeamoRouter, %90'a varan indirimlerle kurumsal düzeyde bir Agentic LLM ağ geçididir. CC Switch kullanıcılarına özel avantajlar sunar: ilk yüklemenizde %10 indirim için bu bağlantı aracılığıyla yeni bir kullanıcı olarak kaydolun!",
       "ppio": "PPIO, Çin'in önde gelen bağımsız Aracı Bulut sağlayıcısıdır ve her amiral gemisi açık kaynak modeline tek bir API anahtarı aracılığıyla hizmet verir. 10 ¥ değerinde kredi kuponu almak için bu bağlantı aracılığıyla kaydolun ve kimlik doğrulamayı tamamlayın.",
       "xycai": "XycAi kurumsal düzeyde bir token fabrikasıdır: 200'den fazla global modele tek tıklamayla erişim, otomatik SLA telafisi ve anormal önbellek ücretleri için %100 geri ödeme!",
@@ -1964,16 +1980,13 @@
     "npmPackage": "API Biçimi",
     "nativeConfigHint": "Yerel OpenCode V2 yapılandırmasını aşağıdaki JSON olarak düzenleyin. Kaydederken sağlayıcı ve model alanları korunur.",
     "selectPackage": "API biçimini seçin",
-    "npmPackageHint": "AI hizmeti için API formatını seçin",
     "builtinDefaults": "OpenCode yerleşik sağlayıcı varsayılanlarını kullanın",
     "customProviderRequired": "Yeni bir sağlayıcı kimliği, bir npm paketi ve en az bir model gerektirir. Yalnızca canlı yapılandırmadaki mevcut bir kimlik varsayılanları devralabilir.",
     "duplicateRequiresDefinition": "Bu sağlayıcıda bir npm paketi veya model tanımı eksik ve doğrudan kopyalanamıyor. Özel sağlayıcı olarak kopyalamadan önce bir npm paketi ve en az bir model belirtin.",
     "duplicateRequiresNativeDefinition": "Bu yerel V2 sağlayıcısında paket veya model tanımları eksik ve doğrudan kopyalanamıyor. Yeni bir kimlik altına kopyalamadan önce bir paket ve en az bir model ekleyin.",
     "nativeCustomProviderRequired": "Yeni sağlayıcı kimliği bir paket ve en az bir model gerektirir. Yalnızca canlı yapılandırmadaki mevcut bir kimlik varsayılanları devralabilir.",
     "baseUrl": "Temel URL",
-    "baseUrlHint": "Özel API uç nokta URL'si",
     "models": "Modeller",
-    "modelsHint": "Mevcut modelleri ve görünen adlarını yapılandırın",
     "addModel": "Manuel olarak ekle",
     "modelId": "Model Kimliği",
     "modelName": "Görünen Ad",
@@ -2057,6 +2070,7 @@
     "universalDetail": "Claude Code, Codex, Gemini CLI ile eşitle edildi",
     "manageUniversal": "Mevcut evrensel sağlayıcıları yönetin ›",
     "loginWith": {
+      "kimi": "Kimi hesabıyla giriş yap",
       "claude": "Claude hesabıyla oturum açın",
       "chatgpt": "ChatGPT hesabıyla oturum açın",
       "github": "GitHub hesabıyla oturum açın",
@@ -2106,7 +2120,7 @@
     "preset14d": "Son 14 gün",
     "preset30d": "Son 30 gün",
     "presetAll": "Tümü",
-    "totalRequests": "Toplam İstekler",
+    "totalRequests": "Toplam istek sayısı",
     "totalCost": "Toplam Maliyet",
     "cost": "Maliyet",
     "unpriced": "Fiyatlandırılmamış",
@@ -2119,9 +2133,9 @@
     "cacheTokens": "Önbellek Belirteçleri",
     "realTotal": "İşlenen Tokenlar",
     "realTotalHint": "Giriş + Çıkış + Önbelleğe Yazma + Önbelle Okuma",
-    "freshInput": "Taze Giriş",
+    "freshInput": "Önbelleksiz girdi",
     "cacheHitRate": "Önbellek İsabet Oranı",
-    "requestLogs": "Günlük Talep Et",
+    "requestLogs": "İstek günlüğü",
     "providerStats": "Sağlayıcı İstatistikleri",
     "modelStats": "Model İstatistikleri",
     "time": "Zaman",
@@ -2163,7 +2177,7 @@
     "sessionSync": {
       "title": "Oturum Günlüklerini Otomatik Tarama",
       "description": "Kullanımı izlemek için her istemcinin yerel oturum günlüklerini periyodik olarak tarar; kapalıyken günlükler yalnızca manuel eşitlemeda taranır",
-      "syncNow": "Şimdi Senkronize Et",
+      "syncNow": "Şimdi eşitle",
       "syncCompleted": "Eşitleme tamamlandı: {{imported}} içe aktarıldı, {{files}} dosyaları tarandı, {{errors}} hataları",
       "syncFailed": "Oturum kullanımı eşitlemeu başarısız oldu: {{error}}"
     },
@@ -2179,7 +2193,9 @@
       "failed": "Codex kullanımı yeniden oluşturulamadı: {{error}}",
       "actionEllipsis": "Codex Kullanımını Yeniden Oluşturun"
     },
-    "totalRecords": "Toplam {{total}} kayıtları",
+    "totalRecords": "Toplam {{total}} kayıt",
+    "pageSize": "Sayfa başına {{count}}",
+    "pageSizeLabel": "Sayfa başına satır",
     "goToPage": "Git",
     "pageInputPlaceholder": "Sayfa",
     "modelPricing": "Model Fiyatlandırması",
@@ -2314,16 +2330,14 @@
     "cacheReadCostPerMillion": "Önbellek Okuma Maliyeti (milyon token başına, USD)",
     "cacheCreationCostPerMillion": "Önbellek Yazma Maliyeti (milyon token başına, USD)",
     "syncStatus": {
-      "auto": "Oturum günlükleri · otomatik tarama",
-      "justNow": "Oturum günlükleri · az önce eşitle edildi",
-      "minutesAgo": "Oturum günlükleri · {{count}} dakika önce eşitle edildi",
-      "off": "Oturum günlükleri · otomatik tarama kapalı",
-      "tipAuto": "Arka planda her 10 dakikada bir taranır; bu sayfa açıkken sağdaki aralıkla taranır",
-      "tipOff": "Oturum günlükleri yalnızca manuel olarak eşitlediğinizde taranır"
+      "justNow": "Az önce eşitlendi",
+      "minutesAgo": "{{count}} dk önce eşitlendi",
+      "syncing": "Eşitleniyor…",
+      "tip": "Şimdi eşitlemek için tıklayın",
+      "tipOff": "Otomatik tarama kapalı. Şimdi eşitlemek için tıklayın"
     },
     "refreshMenu": {
-      "label": "Her {{seconds}} saniyede tara",
-      "seconds": "{{seconds}}'ler"
+      "label": "Her {{seconds}} saniyede tara"
     },
     "dataSources": "Veri kaynakları",
     "providerFilter": {
@@ -2358,16 +2372,17 @@
       "requests": "İstekler",
       "tokens": "Tokenlar",
       "cost": "Maliyet",
-      "requestsLegend": "İstekler"
+      "requestsLegend": "İstekler",
+      "titleMetric": "{{metric}} · {{granularity}}",
+      "hourly": "saatlik",
+      "daily": "günlük"
     },
     "tabs": {
       "label": "Ayrıntılar",
       "providers": "Sağlayıcılar",
       "models": "Modeller",
-      "pricing": "Fiyatlandırma",
-      "settings": "Ayarlar"
+      "pricing": "Fiyatlandırma"
     },
-    "sortedByRequests": "İsteklere göre sıralandı",
     "app": "Uygulama",
     "speed": "Hız",
     "speedValue": "{{value}} tok/sn",
@@ -2391,7 +2406,6 @@
       "performance": "Performans",
       "source": "Kaynak",
       "sourceProxy": "Yönlendirme hizmeti · durumu {{code}}",
-      "sourceSession": "Oturum günlüğü",
       "total": "Toplam",
       "firstToken": "İlk token",
       "duration": "Süre",
@@ -2451,7 +2465,22 @@
     "firstTokenHelp": "Yönlendirme hizmetinin isteği aldığı andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen süre. ≈ işaretli değer, yönlendirme kapalıyken oturum günlüğü zamanlarından hesaplanır: önceki günlük satırının yazıldığı andan başladığı için istemcinin isteği hazırlama süresini de içerir ve daha yüksek görünür. Claude Code’da yalnızca yanıt düşünme ile başladığında; Codex’te yalnızca yeni günlüklerde ve yanıt bir araç çağrısıyla başlamadığında hesaplanabilir.",
     "firstTokenSumHelpTitle": "İlk token süresi nasıl hesaplanır?",
     "firstTokenSumHelp": "Yönlendirme hizmetinin isteği aldığı andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen süre. Satır, isteklerin medyanını gösterir; böylece ara sıra yavaşlayan bir istek (kuyruk, soğuk başlangıç) değeri yükseltmez. Yalnızca yönlendirme hizmetinden geçen başarılı akış istekleri hesaba katılır; 30 günden eski ve günlük toplamlara dahil edilmiş istekler sayılmaz. ≈ işaretli değer oturum günlüklerinden türetilir (daha yüksek görünür ve yalnızca bazı isteklerde hesaplanabilir); yalnızca satırda yönlendirilmiş istek verisi yoksa gösterilir.",
-    "estimatedTimingTipWithFirstToken": "Yaklaşık {{duration}} sn · ilk token yaklaşık {{ttft}} sn (oturum günlüğü zamanlarından tahmin edildi)"
+    "estimatedTimingTipWithFirstToken": "Yaklaşık {{duration}} sn · ilk token yaklaşık {{ttft}} sn (oturum günlüğü zamanlarından tahmin edildi)",
+    "settings": {
+      "title": "Kullanım ayarları",
+      "pricingSummary": "Model başına milyon token fiyatlarını ayarlayın veya models.dev'den eşitleyin",
+      "managePricing": "Fiyatlandırmayı yönet…"
+    },
+    "logColumns": {
+      "reset": "Varsayılana sıfırla",
+      "cacheWrite": "Önbellek Yazma",
+      "hitRate": "İsabet Oranı",
+      "hitRateTip": "Önbelleğe alınabilir {{total}} girdinin {{read}} kadarı önbellekten geldi",
+      "duration": "Toplam Süre"
+    },
+    "display": {
+      "logColumns": "İstek günlüğü sütunları"
+    }
   },
   "usageScript": {
     "title": "Kullanım Sorgusunu Yapılandır",
@@ -2916,7 +2945,6 @@
       "title": "Günlük Hafıza",
       "sectionTitle": "Günlük Hafıza",
       "cardTitle": "Günlük Bellek Dosyaları",
-      "cardDescription": "Günlük anılara göz atın ve yönetin",
       "createToday": "Bellek Ekle",
       "empty": "Henüz günlük hafıza dosyası yok",
       "loadFailed": "Günlük bellek dosyaları yüklenemedi",
@@ -2947,7 +2975,6 @@
     "selectProtocol": "API Protokolünü seçin",
     "apiProtocolHint": "Sağlayıcının API'si ile uyumlu protokol türünü seçin. Çoğu sağlayıcı OpenAI Tamamlamalar biçimini kullanır.",
     "baseUrl": "API Uç Nokta",
-    "baseUrlHint": "Sağlayıcının API uç nokta adresi.",
     "models": "Model Yapılandırması",
     "addModel": "Model Ekle",
     "selectDefaultModel": "Varsayılan Modeli Seçin",
@@ -2971,7 +2998,6 @@
     "userAgentHint": "Bazı sağlayıcılar, düzgün çalışması için bir tarayıcı Kullanıcı Aracısı başlığına ihtiyaç duyar.",
     "env": {
       "title": "Ortam Değişkenleri",
-      "description": "openclaw.json'daki ortam değişkenlerini yönetin (API anahtarları, özel değişkenler vb.)",
       "editorHint": "Env bölümünün tamamını JSON olarak düzenleyin. env.vars ve env.shellEnv gibi iç içe geçmiş nesneler desteklenir.",
       "objectRequired": "OpenClaw env bir JSON nesnesi olmalıdır.",
       "invalidJson": "OpenClaw ortamı geçerli JSON olmalıdır.",
@@ -2986,7 +3012,6 @@
     },
     "tools": {
       "title": "Araç İzinleri",
-      "description": "openclaw.json'daki araç izinlerini yönetin (izin ver/reddet listeleri)",
       "profile": "İzin Profili",
       "profileMinimal": "Asgari",
       "profileCoding": "Kodlama",
@@ -3040,7 +3065,6 @@
   "hermes": {
     "form": {
       "baseUrl": "API Uç Nokta",
-      "baseUrlHint": "Bu sağlayıcının API uç nokta URL'si.",
       "providerKey": "Sağlayıcı Anahtarı",
       "providerKeyPlaceholder": "my-provider",
       "providerKeyHint": "Yalnızca küçük harfler, sayılar ve kısa çizgiler. config.yaml dosyasında sağlayıcı adı olarak kullanılır.",
@@ -3049,7 +3073,6 @@
       "providerKeyInvalid": "Sağlayıcı anahtarı yalnızca küçük harfler, sayılar ve kısa çizgiler içerebilir",
       "providerKeyDuplicate": "Bu sağlayıcı anahtarı zaten mevcut",
       "apiMode": "API Modu",
-      "apiModeHint": "Sağlayıcı API protokolü. Uç noktanızla eşleşen formatı seçin.",
       "apiModeChatCompletions": "OpenAI Sohbet Tamamlamaları",
       "apiModeAnthropicMessages": "Anthropic Mesajları",
       "apiModeCodexResponses": "OpenAI Yanıtları",
@@ -3065,6 +3088,7 @@
       "modelName": "Görünen ad",
       "modelNamePlaceholder": "Claude Opus 5",
       "contextLength": "Bağlam uzunluğu",
+      "supportsVision": "Görüntü girişini destekler",
       "toggleModelDetails": "Model ayrıntılarını genişletin veya daraltın",
       "removeModel": "Modeli kaldır",
       "modelsHint": "Etkinleştirildiğinde ilk model Hermes varsayılanı olur.",
@@ -3427,6 +3451,7 @@
     "usageScript": "Kullanım Sorgusu",
     "usageScriptEnabled": "Etkin",
     "usageScriptDisabled": "Devre dışı",
+    "usageCodingPlan": "Plan kotası: {{name}}",
     "usageScriptCode": "Komut dosyası kodu",
     "usageScriptWarning": "Bu, etkinleştirildikten sonra kullanım sorgulandığında çalışan JavaScript'tir. Yalnızca kaynağa güveniyorsanız içe aktarın.",
     "usageApiKey": "Kullanım API Anahtarı",
@@ -4077,13 +4102,13 @@
     "wslFlag": "Bayrak",
     "installHint": {
       "claude": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner",
-      "codex": "Npm ile yükler",
-      "gemini": "Npm ile yükler",
-      "grok": "Npm ile yükler",
+      "codex": "Npm ile yüklenir",
+      "gemini": "Npm ile yüklenir",
+      "grok": "Npm ile yüklenir",
       "opencode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner",
-      "openclaw": "Npm ile yükler",
+      "openclaw": "Npm ile yüklenir",
       "hermes": "Resmi komut dosyasıyla yüklenir",
-      "pi": "Npm ile yükler",
+      "pi": "Npm ile yüklenir",
       "mcode": "Resmi komut dosyasıyla yüklenir, npm'ye geri döner"
     }
   },
@@ -4109,7 +4134,7 @@
     },
     "active": "aktif",
     "activeTitle": "{{mode}} aktif",
-    "noProvider": "(yok)",
+    "noProvider": "yok",
     "failover": "Yedek sağlayıcıya geçiş",
     "routeSettings": "Yönlendirme ayarları",
     "routeSettingsTitle": "Yönlendirme ayarları",
@@ -4139,6 +4164,11 @@
       "enteredStack": "{{app}}, Birleştirme moduna geçti. Birleştirilen modelleri /model içinde görmek için {{app}} uygulamasını yeniden başlatın.",
       "enteredStackLive": "{{app}}, Birleştirme moduna geçti. Birleştirilen modeller artık /model içinde.",
       "exited": "Direkt olarak geri dön: {{app}} artık doğrudan {{provider}}'ye bağlanıyor.",
+      "routeRemembered": "{{provider}} sağlayıcısı, istemci Yönlendirme veya Birleştirme üzerinden bağlandığında kullanılmak üzere kaydedildi.",
+      "routeTargetChanged": "Yönlendirme hedefi {{provider}} olarak ayarlandı.",
+      "routeSwitched": "Yönlendirme {{provider}} sağlayıcısına geçirildi. Yeni istekler bu sağlayıcıyı kullanacak.",
+      "stackDefaultChanged": "Birleştirme varsayılanı {{provider}} olarak ayarlandı. Seçili birleştirilmiş modeller kendi sağlayıcılarını kullanmaya devam eder.",
+      "clientConfigChanged": " İstemci yapılandırması da değişti. Güncel yapılandırmayı yüklemek için {{app}} uygulamasını yeniden başlatın.",
       "defaultRemembered": "Birleştirme'ya geçtiğinizde {{provider}} varsayılan sağlayıcı olacaktır.",
       "restartHint": "Uygulamak için {{app}}'yi yeniden başlatın.",
       "failed": "Geçiş yapılamadı: {{detail}}"
@@ -4498,7 +4528,7 @@
       "showValues": "Değerleri göster",
       "jsonSyntax": "Bir sözdizimi hatası var",
       "jsonSyntaxLine": "{{line}} satırına yakın sözdizimi hatası",
-      "jsonNotObject": "En üst seviye bir nesne olmalıdır, ör. {\"komut\": \"npx\"}",
+      "jsonNotObject": "En üst seviye bir nesne olmalıdır, ör. {\"command\": \"npx\"}",
       "jsonBlocksForm": "Forma geri dönmek için sorunu düzeltin.",
       "jsonMaskedUnknown": "\"{{key}}\" hâlâ yer tutucuyu tutuyor ancak taslağın bu anahtar için orijinal değeri yok. Gerçek değeri girin veya anahtarları yeniden adlandırmadan önce \"Değerleri göster\" seçeneğini açın.",
       "writeTo": "Şuraya yaz:",
@@ -4754,6 +4784,39 @@
       "loading": "Kota kontrol ediliyor…",
       "refresh": "Kotayı yenile",
       "refreshAria": "{{login}} için kotayı yenileyin"
+    }
+  },
+  "kimi": {
+    "oauth": {
+      "useAccount": "Bu hesabı kullan",
+      "title": "Kimi Code resmî girişi",
+      "description": "Ayrı kimlik bilgileri ve sağlayıcılarla birden fazla Kimi kodlama planı hesabı ekleyin. Girişi burada yönetin, ardından resmî modellerini kullanmak için bir hesap seçin.",
+      "region": "Giriş bölgesi",
+      "mainland-cn": "Çin ana karası",
+      "global": "Küresel",
+      "signIn": "Kimi hesabına giriş yap",
+      "signedOut": "Giriş yapılmadı",
+      "statusFailed": "Giriş durumu okunamadı",
+      "expired": "Yetkilendirme kodunun süresi doldu. Yeniden giriş yapın.",
+      "denied": "Yetkilendirme reddedildi. Yeniden giriş yapın.",
+      "cancelled": "Bu giriş iptal edildi veya değiştirildi. Yeniden giriş yapın.",
+      "success": "Kimi Code girişi yapıldı ve resmî modeller eklendi.",
+      "manageAccounts": "Kimi hesaplarını yönet",
+      "managedHint": "Resmî Kimi hesaplarını Yetkilendirme Merkezi'nde yönetin."
+    },
+    "modelSelectionHint": "Sağlayıcıyı seçmek için karttaki geçiş düğmesini kullanın. Başka bir model seçmek için Kimi Code içinde /model komutunu kullanın.",
+    "contextSize": "Bağlam uzunluğu",
+    "deleteSessionHint": "Dizin ve geçmişin birlikte güncellenmesi için oturumu Kimi Code içinden silin.",
+    "empty": {
+      "title": "Kimi Code sağlayıcısı ekleyin",
+      "description": "Adres, API anahtarı ve modelleri yapılandırın. Mevcut Kimi yapılandırması otomatik olarak içe aktarılır."
+    },
+    "capabilities": {
+      "image_in": "Görsel girişi",
+      "thinking": "Düşünme",
+      "always_thinking": "Her zaman düşünme",
+      "tool_use": "Araç kullanımı",
+      "dynamically_loaded_tools": "Araçları gerektiğinde yükle"
     }
   }
 }

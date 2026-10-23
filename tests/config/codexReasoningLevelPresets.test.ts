@@ -88,9 +88,19 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // 优先，接受快照过时风险——官方目录变更时须同步）
     ["DeepSeek", "deepseek-flash", ["low", "high", "max"]],
     ["DeepSeek", "deepseek-v4-pro", ["low", "high", "max"]],
-    // MiniMax 官方 catalog=none/high；MiMo 2026-09-23 官方目录为四档、默认 low。
+    // MiniMax-M3 官方 catalog=none/high；M3.1 Flash 思考不可关，实测 low–max 可用、none 报 2013；MiMo 2026-09-23 官方目录为四档、默认 low。
     ["MiniMax", "MiniMax-M3", ["none", "high"]],
+    [
+      "MiniMax",
+      "MiniMax-M3.1-Flash",
+      ["low", "medium", "high", "xhigh", "max"],
+    ],
     ["MiniMax en", "MiniMax-M3", ["none", "high"]],
+    [
+      "MiniMax en",
+      "MiniMax-M3.1-Flash",
+      ["low", "medium", "high", "xhigh", "max"],
+    ],
     ["Xiaomi MiMo", "mimo-v2.5-pro", ["none", "low", "medium", "high"], "low"],
     ["Xiaomi MiMo", "mimo-v2.5", ["none", "low", "medium", "high"], "low"],
     [

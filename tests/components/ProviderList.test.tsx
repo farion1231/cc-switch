@@ -24,6 +24,7 @@ const TAURI_ENDPOINT = "http://tauri.local";
 const useDragSortMock = vi.fn();
 const useSortableMock = vi.fn();
 const providerCardRenderSpy = vi.fn();
+
 /** 某张卡片最近一次渲染拿到的 props。 */
 const lastProps = (id: string) =>
   providerCardRenderSpy.mock.calls
@@ -157,6 +158,26 @@ describe("ProviderList Component", () => {
     onDuplicate: vi.fn(),
     onOpenWebsite: vi.fn(),
   };
+
+  it.each([false, true])(
+    "keeps account login inside the add-provider flow with existing providers: %s",
+    (hasProvider) => {
+      const providers: Record<string, Provider> = hasProvider
+        ? {
+            custom: {
+              id: "custom",
+              name: "Custom",
+              settingsConfig: {},
+              meta: { liveConfigManaged: true },
+            },
+          }
+        : {};
+      renderWithQueryClient(
+        <ProviderList {...baseProps} appId="kimi" providers={providers} />,
+      );
+      expect(screen.queryByText("kimi.oauth.title")).not.toBeInTheDocument();
+    },
+  );
 
   function switchMode(
     overrides: Partial<SwitchModeProps> = {},
@@ -340,6 +361,191 @@ describe("ProviderList Component", () => {
     expect(onRemoveFromConfig).toHaveBeenCalledWith(live);
     fireEvent.click(screen.getByTestId("add-a"));
     expect(onSwitch).toHaveBeenCalledWith(providerA);
+  });
+
+  it.each(["mcode"] as const)(
+    "uses native membership to add and remove %s providers",
+    async (appId) => {
+      const saved = createProvider({
+        id: "saved",
+        name: "Saved",
+        meta: { liveConfigManaged: false },
+      });
+      const live = createProvider({
+        id: "live",
+        name: "Live",
+        meta: { liveConfigManaged: true },
+      });
+      const onSwitch = vi.fn();
+      const onRemoveFromConfig = vi.fn();
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [saved, live],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      renderWithQueryClient(
+        <ProviderList
+          {...baseProps}
+          providers={{ saved, live }}
+          appId={appId}
+          onSwitch={onSwitch}
+          onRemoveFromConfig={onRemoveFromConfig}
+        />,
+      );
+      fireEvent.click(await screen.findByTestId("remove-live"));
+      expect(onRemoveFromConfig).toHaveBeenCalledWith(live);
+      fireEvent.click(screen.getByTestId("add-saved"));
+      expect(onSwitch).toHaveBeenCalledWith(saved);
+    },
+  );
+
+  it("adds, switches and removes Kimi providers and marks only the native default-model owner as in use", () => {
+    const current = createProvider({
+      id: "current",
+      name: "Current",
+      meta: { liveConfigManaged: true },
+    });
+    const other = createProvider({
+      id: "other",
+      name: "Other",
+      meta: { liveConfigManaged: true },
+    });
+    const saved = createProvider({
+      id: "saved",
+      name: "Saved",
+      meta: { liveConfigManaged: false },
+    });
+    const onSwitch = vi.fn();
+    const onSetAsDefault = vi.fn();
+    const onRemoveFromConfig = vi.fn();
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [current, other, saved],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    const props = {
+      ...baseProps,
+      appId: "kimi" as const,
+      providers: { current, other, saved },
+      onSwitch,
+      onSetAsDefault,
+      onRemoveFromConfig,
+    };
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <ProviderList {...props} currentProviderId="current" />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId("status-current")).toHaveTextContent(
+      "providerCard.status.default",
+    );
+    expect(lastProps("current")?.presentation.tone).toBe("direct");
+    expect(lastProps("current")?.isCurrent).toBe(true);
+    expect(screen.queryByTestId("switch-current")).not.toBeInTheDocument();
+    expect(
+      lastProps("current")?.presentation.deleteDisabledReason,
+    ).toBeTruthy();
+    expect(
+      lastProps("current")?.presentation.buttons.find(
+        (button: { key: string }) => button.key === "remove",
+      )?.disabledReason,
+    ).toBeTruthy();
+    // 已添加的卡在「更多」菜单里「设为默认」；未添加的卡「添加」只写进配置
+    expect(screen.queryByTestId("switch-other")).not.toBeInTheDocument();
+    lastProps("other")
+      ?.presentation.menuItems.find(
+        (action: { key: string }) => action.key === "setDefault",
+      )
+      .onSelect();
+    expect(onSetAsDefault).toHaveBeenLastCalledWith(other, undefined);
+    expect(screen.queryByTestId("switch-saved")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("add-saved"));
+    expect(onSwitch).toHaveBeenLastCalledWith(saved);
+    fireEvent.click(screen.getByTestId("remove-other"));
+    expect(onRemoveFromConfig).toHaveBeenCalledWith(other);
+    rerender(
+      <QueryClientProvider client={client}>
+        <ProviderList {...props} currentProviderId="other" />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByTestId("status-current")).not.toBeInTheDocument();
+    expect(screen.getByTestId("status-other")).toHaveTextContent(
+      "providerCard.status.default",
+    );
+    expect(
+      lastProps("current")?.presentation.menuItems.map(
+        (action: { key: string }) => action.key,
+      ),
+    ).toEqual(["setDefault"]);
+  });
+
+  it("does not mark any Kimi provider as current when the native selection is missing", () => {
+    const provider = createProvider({
+      id: "live",
+      meta: { liveConfigManaged: true },
+    });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        appId="kimi"
+        providers={{ live: provider }}
+      />,
+    );
+    expect(screen.queryByTestId("status-live")).not.toBeInTheDocument();
+    expect(
+      lastProps("live")?.presentation.menuItems.map(
+        (action: { key: string }) => action.key,
+      ),
+    ).toEqual(["setDefault"]);
+  });
+
+  it("marks the native Kimi OAuth card as official without marking API-key presets", () => {
+    const official = createProvider({
+      id: "managed:kimi-code",
+      name: "Kimi Official",
+      icon: "kimi",
+      settingsConfig: {
+        provider: { type: "kimi", oauth: { key: "oauth/kimi-code" } },
+        models: {},
+      },
+      meta: { liveConfigManaged: true },
+    });
+    const apiKey = createProvider({
+      id: "kimi-coding",
+      name: "Kimi For Coding",
+      category: "cn_official",
+      meta: { liveConfigManaged: true },
+    });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [official, apiKey],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        appId="kimi"
+        currentProviderId={official.id}
+        providers={{ [official.id]: official, [apiKey.id]: apiKey }}
+      />,
+    );
+    expect(lastProps(official.id)?.presentation.chips).toContainEqual({
+      key: "official",
+      label: "providerCard.chip.official",
+      tone: "outline",
+    });
+    expect(lastProps(official.id)?.presentation.status.label).toBe(
+      "providerCard.status.default",
+    );
+    expect(lastProps(apiKey.id)?.presentation.chips).toEqual([]);
   });
 
   it.each([{ ctrlKey: true }, { metaKey: true }])(

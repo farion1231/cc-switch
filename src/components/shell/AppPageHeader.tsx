@@ -81,7 +81,7 @@ export function AppPageHeader({
           {title}
         </h1>
         {(subtitle || titleExtra) && (
-          <div className="flex items-center gap-1" style={NO_DRAG}>
+          <div className="flex min-w-0 items-center gap-1" style={NO_DRAG}>
             {subtitle && (
               <span className="whitespace-nowrap text-body text-fg-3">
                 {subtitle}
