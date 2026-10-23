@@ -76,7 +76,7 @@ describe("PiProviderForm", () => {
       screen.getByRole("button", { name: /^providerPreset\.group\.vendor / }),
     );
     await user.click(screen.getByRole("button", { name: "Kimi" }));
-    expect(screen.getByLabelText(/^pi\.form\.providerKey/)).toHaveValue(
+    expect(screen.getByLabelText("pi.form.providerKey")).toHaveValue(
       preset.providerKey,
     );
     expect(

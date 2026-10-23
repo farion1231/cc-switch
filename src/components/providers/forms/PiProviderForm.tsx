@@ -38,9 +38,10 @@ import {
 } from "@/components/ui/select";
 import type { ProviderFormProps, ProviderFormValues } from "./ProviderForm";
 import JsonEditor from "@/components/JsonEditor";
-import { BasicFormFields } from "./BasicFormFields";
+import { BasicFormFields, REQUIRED_LABEL } from "./BasicFormFields";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { useProvidersQuery } from "@/lib/query/queries";
+import { cn } from "@/lib/utils";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
 import {
@@ -1490,11 +1491,8 @@ export function PiProviderForm({
               form={form}
               beforeNameSlot={
                 <div className="space-y-2">
-                  <Label htmlFor="pi-provider-key">
+                  <Label htmlFor="pi-provider-key" className={REQUIRED_LABEL}>
                     {t("pi.form.providerKey")}
-                    <span aria-hidden="true" className="text-destructive ml-1">
-                      *
-                    </span>
                   </Label>
                   <Input
                     id="pi-provider-key"
@@ -1643,23 +1641,11 @@ export function PiProviderForm({
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 px-1 text-xs text-fg-2">
                     <span className="w-9" />
-                    <span className="flex-1">
+                    <span className={cn("flex-1", REQUIRED_LABEL)}>
                       {t("pi.form.modelId")}
-                      <span
-                        aria-hidden="true"
-                        className="ml-1 text-destructive"
-                      >
-                        *
-                      </span>
                     </span>
-                    <span className="flex-1">
+                    <span className={cn("flex-1", REQUIRED_LABEL)}>
                       {t("pi.form.modelName")}
-                      <span
-                        aria-hidden="true"
-                        className="ml-1 text-destructive"
-                      >
-                        *
-                      </span>
                     </span>
                     <span className="w-9" />
                   </div>
@@ -1788,17 +1774,8 @@ export function PiProviderForm({
                               </div>
                             </div>
                             <Field
-                              label={
-                                <>
-                                  {t("pi.form.contextWindow")}
-                                  <span
-                                    aria-hidden="true"
-                                    className="ml-1 text-destructive"
-                                  >
-                                    *
-                                  </span>
-                                </>
-                              }
+                              label={t("pi.form.contextWindow")}
+                              required
                               htmlFor={`pi-model-context-window-${model.key}`}
                             >
                               <Input
@@ -1824,17 +1801,8 @@ export function PiProviderForm({
                               />
                             </Field>
                             <Field
-                              label={
-                                <>
-                                  {t("pi.form.maxTokens")}
-                                  <span
-                                    aria-hidden="true"
-                                    className="ml-1 text-destructive"
-                                  >
-                                    *
-                                  </span>
-                                </>
-                              }
+                              label={t("pi.form.maxTokens")}
+                              required
                               htmlFor={`pi-model-max-tokens-${model.key}`}
                             >
                               <Input
@@ -2157,15 +2125,22 @@ export function PiProviderForm({
 function Field({
   label,
   htmlFor,
+  required,
   children,
 }: {
   label: React.ReactNode;
   htmlFor: string;
+  required?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <div className="space-y-2">
-      <Label htmlFor={htmlFor}>{label}</Label>
+      <Label
+        htmlFor={htmlFor}
+        className={required ? REQUIRED_LABEL : undefined}
+      >
+        {label}
+      </Label>
       {children}
     </div>
   );
