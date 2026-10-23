@@ -1,5 +1,11 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
@@ -268,6 +274,21 @@ describe("KimiProviderForm", () => {
     });
     expect(saved.models).toEqual(config.models);
     expect(submit.mock.calls[0][0].providerKey).toBe("managed:kimi-code");
+  });
+
+  it("keeps request headers in advanced options, open only when some are set", () => {
+    setup();
+    expect(screen.getByDisplayValue("X-Custom")).toBeInTheDocument();
+    cleanup();
+
+    const { custom_headers: _, ...provider } = config.provider;
+    setup(vi.fn(), undefined, { ...config, provider });
+    const toggle = screen.getByRole("button", {
+      name: "providerForm.advancedOptionsToggle",
+    });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
   });
 
   it("blocks invalid JSON until the editor is corrected", () => {

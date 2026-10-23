@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
-import { Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Form } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { HelpTip } from "@/components/ui/help-tip";
 import {
   Select,
@@ -192,6 +197,13 @@ export function KimiProviderForm({
   const { type: providerType, base_url: baseUrl = "" } = config.provider;
   const apiKey = config.provider.api_key ?? "";
   const headersKey = JSON.stringify(config.provider.custom_headers ?? {});
+  // 请求头很少用到，收在高级选项里；已经有值（编辑已有卡、选了带请求头的预设）时展开。
+  const hasCustomHeaders =
+    Object.keys(config.provider.custom_headers ?? {}).length > 0;
+  const [advancedExpanded, setAdvancedExpanded] = useState(hasCustomHeaders);
+  useEffect(() => {
+    if (hasCustomHeaders) setAdvancedExpanded(true);
+  }, [hasCustomHeaders]);
   useEffect(() => {
     setFetchedModels((prev) => (prev.length === 0 ? prev : []));
     setIsFetchingModels(false);
@@ -520,12 +532,35 @@ export function KimiProviderForm({
             partnerPromotionKey={preset?.partnerPromotionKey}
             required={!config.provider.oauth}
           />
-          <RequestHeadersEditor
-            headers={config.provider.custom_headers ?? {}}
-            onHeadersChange={(custom_headers) =>
-              updateProvider({ custom_headers })
-            }
-          />
+          <Collapsible
+            open={advancedExpanded}
+            onOpenChange={setAdvancedExpanded}
+            className="rounded-lg border border-border p-4"
+          >
+            <CollapsibleTrigger asChild>
+              <Button
+                type="button"
+                variant={null}
+                size="sm"
+                className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70"
+              >
+                {advancedExpanded ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronRight className="h-4 w-4" />
+                )}
+                {t("providerForm.advancedOptionsToggle")}
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pt-2">
+              <RequestHeadersEditor
+                headers={config.provider.custom_headers ?? {}}
+                onHeadersChange={(custom_headers) =>
+                  updateProvider({ custom_headers })
+                }
+              />
+            </CollapsibleContent>
+          </Collapsible>
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <Label>{t("kimi.models")}</Label>
