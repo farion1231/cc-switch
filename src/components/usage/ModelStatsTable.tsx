@@ -40,6 +40,7 @@ export function ModelStatsTable({
   const { t, i18n } = useTranslation();
   const { money, moneyTitle } = useMoneyFormat();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
+  const [chartsOpen, setChartsOpen] = useState("");
   const [hiddenModels, setHiddenModels] = useState<Set<string>>(new Set());
   const {
     data: stats,
@@ -122,7 +123,12 @@ export function ModelStatsTable({
         </p>
       )}
       {distribution.rows.length > 0 && (
-        <Accordion type="single" collapsible>
+        <Accordion
+          type="single"
+          collapsible
+          value={chartsOpen}
+          onValueChange={setChartsOpen}
+        >
           <AccordionItem
             value="distribution"
             className="overflow-hidden rounded-panel border border-border bg-surface"
