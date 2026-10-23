@@ -10,7 +10,6 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -106,149 +105,148 @@ export function HermesProfilePanel() {
               className="h-8 pl-8 text-sm"
             />
           </div>
-          <ScrollArea className="max-h-80 rounded-xl">
-            <div className="space-y-2 pr-2">
-              {filtered.map((profile) => {
-                const routeOptions = providers.filter(
-                  (provider) => provider.category !== "official",
-                );
-                const selectedRoute =
-                  profile.routeProviderId ??
-                  pendingRoute[profile.name] ??
-                  routeOptions[0]?.id ??
-                  "";
-                return (
-                  <div
-                    key={profile.name}
-                    className="rounded-xl border border-border bg-surface p-3 transition-colors hover:bg-subtle"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                        {profile.name}
-                      </span>
-                      <Badge
-                        variant={profile.independent ? "default" : "secondary"}
-                        className="shrink-0"
+          {/* 原生 overflow：Radix ScrollArea 在折叠动画容器里量不到视口高度 */}
+          <div className="max-h-80 space-y-2 overflow-y-auto rounded-xl pr-1">
+            {filtered.map((profile) => {
+              const routeOptions = providers.filter(
+                (provider) => provider.category !== "official",
+              );
+              const selectedRoute =
+                profile.routeProviderId ??
+                pendingRoute[profile.name] ??
+                routeOptions[0]?.id ??
+                "";
+              return (
+                <div
+                  key={profile.name}
+                  className="rounded-xl border border-border bg-surface p-3 transition-colors hover:bg-subtle"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                      {profile.name}
+                    </span>
+                    <Badge
+                      variant={profile.independent ? "default" : "secondary"}
+                      className="shrink-0"
+                    >
+                      {profile.independent
+                        ? t("hermes.profilePanel.independent")
+                        : t("hermes.profilePanel.direct")}
+                    </Badge>
+                    <Select
+                      value={selectedRoute}
+                      onValueChange={(value) => {
+                        if (profile.independent) {
+                          void run(profile.name, async () => {
+                            await hermesProfileApi.switchRoute(
+                              profile.name,
+                              value,
+                            );
+                          });
+                        } else {
+                          setPendingRoute((prev) => ({
+                            ...prev,
+                            [profile.name]: value,
+                          }));
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="h-8 w-40 shrink-0 text-xs">
+                        <SelectValue
+                          placeholder={t(
+                            "hermes.profilePanel.routePlaceholder",
+                          )}
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {routeOptions.map((provider) => (
+                          <SelectItem key={provider.id} value={provider.id}>
+                            {provider.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {profile.independent ? (
+                      <Button
+                        size="sm"
+                        variant="quiet"
+                        disabled={busy === profile.name}
+                        onClick={() =>
+                          void run(profile.name, () =>
+                            hermesProfileApi.exit(profile.name),
+                          )
+                        }
                       >
-                        {profile.independent
-                          ? t("hermes.profilePanel.independent")
-                          : t("hermes.profilePanel.direct")}
-                      </Badge>
-                      <Select
-                        value={selectedRoute}
-                        onValueChange={(value) => {
-                          if (profile.independent) {
-                            void run(profile.name, async () => {
-                              await hermesProfileApi.switchRoute(
-                                profile.name,
-                                value,
-                              );
-                            });
-                          } else {
-                            setPendingRoute((prev) => ({
-                              ...prev,
-                              [profile.name]: value,
-                            }));
-                          }
-                        }}
+                        {t("hermes.profilePanel.exit")}
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!selectedRoute || busy === profile.name}
+                        onClick={() =>
+                          void run(profile.name, () =>
+                            hermesProfileApi.enter({
+                              profile: profile.name,
+                              routeProviderId: selectedRoute,
+                            }),
+                          )
+                        }
                       >
-                        <SelectTrigger className="h-8 w-40 shrink-0 text-xs">
-                          <SelectValue
-                            placeholder={t(
-                              "hermes.profilePanel.routePlaceholder",
-                            )}
-                          />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {routeOptions.map((provider) => (
-                            <SelectItem key={provider.id} value={provider.id}>
-                              {provider.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {profile.independent ? (
-                        <Button
-                          size="sm"
-                          variant="quiet"
-                          disabled={busy === profile.name}
-                          onClick={() =>
-                            void run(profile.name, () =>
-                              hermesProfileApi.exit(profile.name),
-                            )
-                          }
-                        >
-                          {t("hermes.profilePanel.exit")}
-                        </Button>
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={!selectedRoute || busy === profile.name}
-                          onClick={() =>
+                        {t("hermes.profilePanel.enter")}
+                      </Button>
+                    )}
+                  </div>
+                  {profile.independent && (
+                    <div className="mt-2 flex items-center justify-end gap-4 border-t border-border pt-2">
+                      <label className="flex items-center gap-1.5 text-xs text-fg-2">
+                        {t("hermes.profilePanel.failover")}
+                        <Switch
+                          className="scale-90"
+                          checked={profile.autoFailoverEnabled}
+                          onCheckedChange={(checked) =>
                             void run(profile.name, () =>
                               hermesProfileApi.enter({
                                 profile: profile.name,
                                 routeProviderId: selectedRoute,
+                                autoFailover: checked,
+                                loadBalanceMode:
+                                  profile.loadBalanceMode === "session"
+                                    ? "session"
+                                    : "off",
                               }),
                             )
                           }
-                        >
-                          {t("hermes.profilePanel.enter")}
-                        </Button>
-                      )}
+                        />
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs text-fg-2">
+                        {t("hermes.profilePanel.sticky")}
+                        <Switch
+                          className="scale-90"
+                          checked={profile.loadBalanceMode === "session"}
+                          onCheckedChange={(checked) =>
+                            void run(profile.name, () =>
+                              hermesProfileApi.enter({
+                                profile: profile.name,
+                                routeProviderId: selectedRoute,
+                                autoFailover: profile.autoFailoverEnabled,
+                                loadBalanceMode: checked ? "session" : "off",
+                              }),
+                            )
+                          }
+                        />
+                      </label>
                     </div>
-                    {profile.independent && (
-                      <div className="mt-2 flex items-center justify-end gap-4 border-t border-border pt-2">
-                        <label className="flex items-center gap-1.5 text-xs text-fg-2">
-                          {t("hermes.profilePanel.failover")}
-                          <Switch
-                            className="scale-90"
-                            checked={profile.autoFailoverEnabled}
-                            onCheckedChange={(checked) =>
-                              void run(profile.name, () =>
-                                hermesProfileApi.enter({
-                                  profile: profile.name,
-                                  routeProviderId: selectedRoute,
-                                  autoFailover: checked,
-                                  loadBalanceMode:
-                                    profile.loadBalanceMode === "session"
-                                      ? "session"
-                                      : "off",
-                                }),
-                              )
-                            }
-                          />
-                        </label>
-                        <label className="flex items-center gap-1.5 text-xs text-fg-2">
-                          {t("hermes.profilePanel.sticky")}
-                          <Switch
-                            className="scale-90"
-                            checked={profile.loadBalanceMode === "session"}
-                            onCheckedChange={(checked) =>
-                              void run(profile.name, () =>
-                                hermesProfileApi.enter({
-                                  profile: profile.name,
-                                  routeProviderId: selectedRoute,
-                                  autoFailover: profile.autoFailoverEnabled,
-                                  loadBalanceMode: checked ? "session" : "off",
-                                }),
-                              )
-                            }
-                          />
-                        </label>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              {!filtered.length && (
-                <p className={cn("py-6 text-center text-xs text-fg-2")}>
-                  {t("hermes.profilePanel.empty")}
-                </p>
-              )}
-            </div>
-          </ScrollArea>
+                  )}
+                </div>
+              );
+            })}
+            {!filtered.length && (
+              <p className={cn("py-6 text-center text-xs text-fg-2")}>
+                {t("hermes.profilePanel.empty")}
+              </p>
+            )}
+          </div>
         </div>
       </CollapsibleContent>
     </Collapsible>
