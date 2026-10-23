@@ -203,6 +203,15 @@ fn count(value: Option<&Value>, key: &str) -> u64 {
         .unwrap_or(0)
 }
 
+/// 自定义模型在 `requestModelId` 里记成 `custom-local:<id>`；去掉前缀，
+/// 让用量里的模型和价格表、用户配置的模型 ID 对得上。
+fn strip_custom_prefix(model: &str) -> &str {
+    match model.split_once(':') {
+        Some((prefix, id)) if prefix.starts_with("custom-") && !id.trim().is_empty() => id.trim(),
+        _ => model,
+    }
+}
+
 /// 从 assistant `message` 事件里取用量；没有任何用量字段时返回 `None`。
 pub(crate) fn assistant_usage(record: &Value) -> Option<Usage> {
     if kind(record) != "message" || role(record) != "assistant" {
@@ -212,6 +221,7 @@ pub(crate) fn assistant_usage(record: &Value) -> Option<Usage> {
     let model = data
         .and_then(|data| data.get("model").or_else(|| data.get("requestModelId")))
         .and_then(Value::as_str)
+        .map(|model| strip_custom_prefix(model.trim()))
         .filter(|model| !model.is_empty())
         .map(str::to_string);
     let raw = data.and_then(|data| data.get("rawUsage"));
@@ -517,5 +527,20 @@ mod tests {
         );
         let user = serde_json::json!({"type": "message", "role": "user"});
         assert!(assistant_usage(&user).is_none());
+    }
+
+    #[test]
+    fn workbuddy_usage_drops_the_custom_model_prefix() {
+        let record = serde_json::json!({
+            "type": "message", "role": "assistant",
+            "providerData": {"requestModelId": "custom-local:deepseek-flash", "rawUsage": {"prompt_tokens": 10, "completion_tokens": 2}}
+        });
+        assert_eq!(
+            assistant_usage(&record)
+                .and_then(|usage| usage.model)
+                .as_deref(),
+            Some("deepseek-flash")
+        );
+        assert_eq!(strip_custom_prefix("glm-5"), "glm-5");
     }
 }
