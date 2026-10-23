@@ -62,8 +62,10 @@ Skills 复用现有应用同步、导入、更新和迁移机制，并沿用 Kim
 在 Windows 本机完成以下检查：
 
 - `pnpm typecheck`、`pnpm format:check`、`pnpm build:renderer`、`cargo fmt --check`、`cargo clippy --lib -- -D warnings` 通过。
-- `cargo test --lib dsh -- --test-threads=1`：13 项通过（其中 12 项覆盖本次接入，另 1 项是名称匹配到的既有 WebSocket 测试）。
+- `cargo test --lib dsh -- --test-threads=1`：17 项通过（其中 16 项覆盖本次接入，另 1 项是名称匹配到的既有 WebSocket 测试）；覆盖出厂 `[]` 模板首次添加供应商和 MCP、原生工具结果及错误状态、压缩替换范围和连续替换。
 - `cargo test --test dsh_commands`：2 项通过，覆盖完整供应商操作、原生配置保留、MCP 写入失败时的文件与数据库一致性。
+- `mcp_commands` 的默认同步目标回归测试通过，默认列表包含 `dsh`。
+- DeepSeek 预设 6 项前端测试通过；使用 `@deepseek-ai/dsh-llm-pi-ai@0.2.1-rc.2` 发布包中的推理档位和兼容字段校验函数，验证全部 113 个预设、387 个模型通过。
 - 前端全量首轮共 3269 项，3263 项通过、6 项失败。更新新增应用涉及的来源数量、隐藏应用 fixture、Skills 导入字段和图标文字定位断言后，涉及的 80 项用例分别复测全部通过；其中应用集成测试单独运行通过。
 - Rust 全量库测试首轮 3944 项通过、11 项忽略，1 项既有测试 `proxy::error::tests::describe_reqwest_error_keeps_cause_and_drops_url` 在本机失败：它要求连接被拒绝，环境返回了 HTTP 502；单独重跑仍失败。该测试及其实现未被本次修改。
 - 与 PR #8771 解决冲突后的隔离合并树：前端类型检查通过，用量面板和预设 6 项测试通过，PR 的用量导入 9 项测试通过。

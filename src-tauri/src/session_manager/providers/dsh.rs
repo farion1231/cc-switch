@@ -172,50 +172,51 @@ fn parse_messages(data: &[u8]) -> Result<Vec<SessionMessage>, String> {
                 pointer,
             })
         };
-        for (index, part) in raw["content"].as_array().into_iter().flatten().enumerate() {
-            match part["type"].as_str() {
-                Some("text") => {
-                    if let Some(text) = part["text"].as_str() {
-                        message_blocks.push(SessionBlock::text(text));
+        if role == "tool" {
+            let text = utils::extract_text(&raw["content"]);
+            message_blocks.push(blocks::tool_result_block(
+                raw["toolCallId"].as_str().unwrap_or_default(),
+                if raw["isError"] == true {
+                    ToolStatus::Error
+                } else {
+                    ToolStatus::Success
+                },
+                &text,
+                || reference(format!("{pointer}/content")),
+            ));
+        } else {
+            for (index, part) in raw["content"].as_array().into_iter().flatten().enumerate() {
+                match part["type"].as_str() {
+                    Some("text") => {
+                        if let Some(text) = part["text"].as_str() {
+                            message_blocks.push(SessionBlock::text(text));
+                        }
                     }
-                }
-                Some("thinking" | "reasoning") => {
-                    let field = if part.get("text").is_some() {
-                        "text"
-                    } else {
-                        "thinking"
-                    };
-                    message_blocks.push(blocks::thinking_block(
-                        part[field].as_str().unwrap_or_default(),
-                        None,
-                        None,
-                        || reference(format!("{pointer}/content/{index}/{field}")),
-                    ));
-                }
-                Some("tool-call") => {
-                    let arguments = blocks::parse_arguments(&part["arguments"]);
-                    message_blocks.push(blocks::tool_call_block(
-                        blocks::ToolSource::Generic,
-                        part["id"].as_str().unwrap_or_default(),
-                        part["name"].as_str().unwrap_or_default(),
-                        &arguments,
-                        || reference(format!("{pointer}/content/{index}/arguments")),
-                    ));
-                }
-                Some("tool-result") => {
-                    let text = utils::extract_text(&part["content"]);
-                    message_blocks.push(blocks::tool_result_block(
-                        part["toolCallId"].as_str().unwrap_or_default(),
-                        if part["isError"] == true {
-                            ToolStatus::Error
+                    Some("thinking" | "reasoning") => {
+                        let field = if part.get("text").is_some() {
+                            "text"
                         } else {
-                            ToolStatus::Success
-                        },
-                        &text,
-                        || reference(format!("{pointer}/content/{index}/content")),
-                    ));
+                            "thinking"
+                        };
+                        message_blocks.push(blocks::thinking_block(
+                            part[field].as_str().unwrap_or_default(),
+                            None,
+                            None,
+                            || reference(format!("{pointer}/content/{index}/{field}")),
+                        ));
+                    }
+                    Some("tool-call") => {
+                        let arguments = blocks::parse_arguments(&part["arguments"]);
+                        message_blocks.push(blocks::tool_call_block(
+                            blocks::ToolSource::Generic,
+                            part["id"].as_str().unwrap_or_default(),
+                            part["name"].as_str().unwrap_or_default(),
+                            &arguments,
+                            || reference(format!("{pointer}/content/{index}/arguments")),
+                        ));
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
         if message_blocks.is_empty() {
@@ -238,14 +239,22 @@ fn parse_messages(data: &[u8]) -> Result<Vec<SessionMessage>, String> {
                 ..Default::default()
             });
         }
+        let seq = record["seq"].as_u64().unwrap_or(start as u64);
         if let Some(operation) = record.get("surfaceOp").filter(|op| op["op"] == "replace") {
             if let (Some(start), Some(end)) =
-                (operation["start"].as_u64(), operation["end"].as_u64())
+                (operation["startSeq"].as_u64(), operation["endSeq"].as_u64())
             {
-                active.retain(|(seq, _)| *seq < start || *seq > end);
+                let first = active.iter().position(|(seq, _)| *seq == start);
+                let last = active.iter().position(|(seq, _)| *seq == end);
+                if let (Some(first), Some(last)) = (first, last) {
+                    if first <= last {
+                        active.splice(first..=last, [(seq, message)]);
+                        continue;
+                    }
+                }
             }
         }
-        active.push((record["seq"].as_u64().unwrap_or(start as u64), message));
+        active.push((seq, message));
     }
     let mut messages: Vec<_> = active.into_iter().map(|(_, message)| message).collect();
     blocks::assign_turn_ids(&mut messages);
@@ -261,7 +270,7 @@ mod tests {
         [json!({"type":"session","version":4,"id":"test","cwd":"/project","createdAt":1000}),
          json!({"type":"user/message","seq":1,"time":1001,"data":{"id":"u","role":"user","source":{"kind":"user"},"content":[{"type":"text","text":"Fix this"}]}}),
          json!({"type":"assistant/message","seq":2,"time":2000,"data":{"message":{"id":"a","source":{"model":"route:model"},"content":[{"type":"text","text":"Fixed"},{"type":"tool-call","id":"call","name":"read","arguments":"{\"path\":\"test.rs\"}"}]},"usage":{"inputTokens":10,"outputTokens":20,"cacheReadTokens":30}}}),
-         json!({"type":"tool/result","seq":3,"time":2001,"data":{"message":{"content":[{"type":"tool-result","toolCallId":"call","content":[{"type":"text","text":"contents"}]}]}}})]
+         json!({"type":"tool/result","seq":3,"time":2001,"data":{"message":{"id":"result","role":"tool","toolCallId":"call","isError":false,"content":[{"type":"text","text":"contents"}]}}})]
             .iter().map(|line| format!("{line}\n")).collect::<String>().into_bytes()
     }
 
@@ -294,18 +303,93 @@ mod tests {
         ));
         assert!(matches!(
             messages[2].blocks[0],
-            SessionBlock::ToolResult { .. }
+            SessionBlock::ToolResult { ref call_id, status: ToolStatus::Success, ref preview, .. }
+                if call_id == "call" && preview == "contents"
         ));
     }
 
     #[test]
     fn duplicate_messages_and_replaced_surface_ranges_are_not_shown_twice() {
         let mut bytes = fixture();
-        bytes.extend(format!("{}\n",json!({"type":"user/message","seq":4,"surfaceOp":{"op":"replace","start":1,"end":3},"data":{"id":"summary","content":[{"type":"text","text":"Summary"}]}})).as_bytes());
+        bytes.extend(format!("{}\n",json!({"type":"assistant/message","seq":4,"data":{"message":{"id":"a","content":[{"type":"text","text":"Duplicate"}]}}})).as_bytes());
+        bytes.extend(format!("{}\n",json!({"type":"user/message","seq":5,"surfaceOp":{"op":"replace","startSeq":1,"endSeq":3},"data":{"id":"summary","content":[{"type":"text","text":"Summary"}]}})).as_bytes());
         let parsed = parse_messages(&bytes).unwrap();
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].content, "Summary");
         bytes.extend(b"{partial");
         assert_eq!(parse_messages(&bytes).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn native_tool_results_preserve_errors_empty_results_and_full_content() {
+        let output = "failed output\n".repeat(20);
+        for content in [json!([]), json!([{"type":"text","text":output}])] {
+            let mut bytes = fixture();
+            bytes.extend(format!("{}\n", json!({"type":"tool/result","seq":4,"data":{"message":{"id":"failure","role":"tool","toolCallId":"failed-call","isError":true,"content":content}}})).as_bytes());
+            let messages = parse_messages(&bytes).unwrap();
+            assert_eq!(messages.len(), 4);
+            assert_eq!(messages[3].blocks.len(), 1);
+            let SessionBlock::ToolResult {
+                call_id,
+                status: ToolStatus::Error,
+                total_len,
+                full,
+                ..
+            } = &messages[3].blocks[0]
+            else {
+                panic!("expected a native tool error result");
+            };
+            assert_eq!(call_id, "failed-call");
+            let expected = utils::extract_text(&content);
+            assert_eq!(*total_len as usize, expected.chars().count());
+            if !expected.is_empty() {
+                let ContentRef::Jsonl {
+                    offset,
+                    len,
+                    pointer,
+                } = full.as_ref().unwrap()
+                else {
+                    panic!("expected a JSONL content reference");
+                };
+                let record: Value = serde_json::from_slice(
+                    &bytes[*offset as usize..*offset as usize + *len as usize],
+                )
+                .unwrap();
+                assert_eq!(pointer, "/data/message/content");
+                assert_eq!(
+                    utils::extract_text(record.pointer(pointer).unwrap()),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn surface_replacements_keep_their_position_and_can_replace_earlier_summaries() {
+        let mut bytes = fixture();
+        for record in [
+            json!({"type":"user/message","seq":4,"data":{"id":"later","content":[{"type":"text","text":"Keep this"}]}}),
+            json!({"type":"user/message","seq":5,"surfaceOp":{"op":"replace","startSeq":1,"endSeq":2},"data":{"id":"summary","content":[{"type":"text","text":"Summary"}]}}),
+        ] {
+            bytes.extend(format!("{record}\n").as_bytes());
+        }
+        let messages = parse_messages(&bytes).unwrap();
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>(),
+            ["Summary", "contents", "Keep this"]
+        );
+        bytes.extend(format!("{}\n", json!({"type":"user/message","seq":6,"surfaceOp":{"op":"replace","startSeq":5,"endSeq":3},"data":{"id":"summary-2","content":[{"type":"text","text":"New summary"}]}})).as_bytes());
+        // Surface order, rather than numeric seq order, defines the range.
+        let messages = parse_messages(&bytes).unwrap();
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>(),
+            ["New summary", "Keep this"]
+        );
     }
 }
