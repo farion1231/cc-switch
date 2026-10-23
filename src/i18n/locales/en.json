@@ -4958,6 +4958,10 @@
       "tool_use": "Tool use",
       "dynamically_loaded_tools": "Load tools on demand"
     },
+    "capabilityHints": {
+      "always_thinking": "Check when the model's thinking can't be turned off: Kimi turns thinking on when this model is selected and hides the off option",
+      "dynamically_loaded_tools": "Lets the model load tool descriptions on demand to keep requests short. Only Kimi's own models support it; leave it off for third-party models. Also requires KIMI_CODE_EXPERIMENTAL_TOOL_SELECT"
+    },
     "empty": {
       "title": "Add a Kimi Code provider",
       "description": "Configure an endpoint, API key and models. Existing Kimi configuration is imported automatically."

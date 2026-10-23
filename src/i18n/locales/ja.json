@@ -4963,6 +4963,10 @@
       "tool_use": "ツール呼び出し",
       "dynamically_loaded_tools": "必要に応じてツールを読み込む"
     },
+    "capabilityHints": {
+      "always_thinking": "モデルの思考をオフにできない場合にチェック：このモデルを選ぶと思考が自動でオンになり、オフの選択肢は表示されません",
+      "dynamically_loaded_tools": "モデルがツールの説明を必要に応じて読み込み、リクエストを短くします。Kimi 自社のモデルのみ対応のため、他社モデルではチェックしないでください。KIMI_CODE_EXPERIMENTAL_TOOL_SELECT の有効化も必要です"
+    },
     "error": {
       "defaultModelInUse": "Kimi Code がこのプロバイダーのモデルを使用中です。先に Kimi Code の /model でほかのモデルに切り替えてください。",
       "secondaryModelInUse": "Kimi Code のサブエージェントモデルがこのプロバイダーのモデルを使用中です。先に Kimi Code の /secondary-model で変更してください。"

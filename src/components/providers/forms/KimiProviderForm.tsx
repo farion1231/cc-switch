@@ -7,6 +7,7 @@ import { Form } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { HelpTip } from "@/components/ui/help-tip";
 import {
   Select,
   SelectContent,
@@ -56,6 +57,11 @@ import { usePresetStep } from "./presetStep";
 
 // 新加的行先用这个窗口占位（max_context_size 必填），选中模型后换成查到的值。
 const PLACEHOLDER_CONTEXT_SIZE = 262144;
+// 名字看不出含义的两项，旁边放「?」说明。
+const CAPABILITIES_WITH_HELP = new Set<string>([
+  "always_thinking",
+  "dynamically_loaded_tools",
+]);
 
 // 拉模型列表时按协议选认证头：Anthropic 用 x-api-key，Gemini 用 x-goog-api-key。
 const MODEL_FETCH_API_FORMATS: Partial<
@@ -630,31 +636,35 @@ export function KimiProviderForm({
                 </div>
                 <div className="flex flex-wrap gap-4">
                   {KIMI_CAPABILITIES.map((capability) => (
-                    <label
-                      key={capability}
-                      className="flex items-center gap-2 text-sm"
-                    >
-                      <Checkbox
-                        checked={
-                          model.capabilities?.includes(capability) ?? false
-                        }
-                        onCheckedChange={(checked) =>
-                          updateModel(key, {
-                            capabilities: checked
-                              ? [
-                                  ...new Set([
-                                    ...(model.capabilities ?? []),
-                                    capability,
-                                  ]),
-                                ]
-                              : (model.capabilities ?? []).filter(
-                                  (item) => item !== capability,
-                                ),
-                          })
-                        }
-                      />
-                      {t(`kimi.capabilities.${capability}`)}
-                    </label>
+                    <div key={capability} className="flex items-center gap-1">
+                      <label className="flex items-center gap-2 text-sm">
+                        <Checkbox
+                          checked={
+                            model.capabilities?.includes(capability) ?? false
+                          }
+                          onCheckedChange={(checked) =>
+                            updateModel(key, {
+                              capabilities: checked
+                                ? [
+                                    ...new Set([
+                                      ...(model.capabilities ?? []),
+                                      capability,
+                                    ]),
+                                  ]
+                                : (model.capabilities ?? []).filter(
+                                    (item) => item !== capability,
+                                  ),
+                            })
+                          }
+                        />
+                        {t(`kimi.capabilities.${capability}`)}
+                      </label>
+                      {CAPABILITIES_WITH_HELP.has(capability) && (
+                        <HelpTip title={t(`kimi.capabilities.${capability}`)}>
+                          {t(`kimi.capabilityHints.${capability}`)}
+                        </HelpTip>
+                      )}
+                    </div>
                   ))}
                 </div>
               </div>

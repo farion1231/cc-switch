@@ -17,8 +17,8 @@ export const KIMI_PROVIDER_TYPES = [
 export const KIMI_CAPABILITIES = [
   "image_in",
   "thinking",
-  "always_thinking",
   "tool_use",
+  "always_thinking",
   "dynamically_loaded_tools",
 ] as const;
 

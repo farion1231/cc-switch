@@ -4964,6 +4964,10 @@
       "tool_use": "工具呼叫",
       "dynamically_loaded_tools": "按需載入工具"
     },
+    "capabilityHints": {
+      "always_thinking": "模型的思考無法關閉時勾選：選取該模型時自動開啟思考，且不提供關閉選項",
+      "dynamically_loaded_tools": "讓模型按需載入工具說明，縮短請求。僅 Kimi 自家模型支援，第三方模型請勿勾選；還需開啟 KIMI_CODE_EXPERIMENTAL_TOOL_SELECT"
+    },
     "error": {
       "defaultModelInUse": "Kimi Code 正在使用此供應商的模型，請先在 Kimi Code 中用 /model 切換到其他模型",
       "secondaryModelInUse": "Kimi Code 的子代理模型正在使用此供應商的模型，請先在 Kimi Code 中用 /secondary-model 更換"
