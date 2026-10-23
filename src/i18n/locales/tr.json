@@ -4795,35 +4795,16 @@
       "mainland-cn": "Çin ana karası",
       "global": "Küresel",
       "signIn": "Kimi hesabına giriş yap",
-      "signInAgain": "Yeniden giriş yap",
-      "signOut": "Çıkış yap",
-      "signedIn": "Giriş yapıldı · {{region}}",
       "signedOut": "Giriş yapılmadı",
       "statusFailed": "Giriş durumu okunamadı",
-      "refresh": "Kimi giriş durumunu yenile",
-      "waiting": "Tarayıcı yetkilendirmesi bekleniyor",
-      "copyCode": "Yetkilendirme kodunu kopyala",
-      "copied": "Yetkilendirme kodu kopyalandı",
-      "openPage": "Yetkilendirme sayfasını aç",
-      "manualHint": "Yetkilendirmeden sonra bu sayfa güncellenir. Tarayıcı açılmadıysa aşağıdaki bağlantıyı ziyaret edip kodu girin.",
-      "error": "Kimi girişi tamamlanamadı",
       "expired": "Yetkilendirme kodunun süresi doldu. Yeniden giriş yapın.",
       "denied": "Yetkilendirme reddedildi. Yeniden giriş yapın.",
       "cancelled": "Bu giriş iptal edildi veya değiştirildi. Yeniden giriş yapın.",
       "success": "Kimi Code girişi yapıldı ve resmî modeller eklendi.",
-      "signOutConfirm": "{{name}} oturumu kapatılsın mı? Yalnızca bu hesabın yerel kimlik bilgileri kaldırılır. Diğer hesaplar, sağlayıcılar, modeller ve geçerli model seçimi korunur.",
-      "addAccount": "Hesap ekle",
-      "accountCount": "Kayıtlı hesaplar: {{count}}",
       "manageAccounts": "Kimi hesaplarını yönet",
       "managedHint": "Resmî Kimi hesaplarını Yetkilendirme Merkezi'nde yönetin."
     },
     "modelSelectionHint": "Sağlayıcıyı seçmek için karttaki geçiş düğmesini kullanın. Başka bir model seçmek için Kimi Code içinde /model komutunu kullanın.",
-    "providerType": "Sağlayıcı türü",
-    "baseUrl": "İstek adresi",
-    "models": "Modeller",
-    "addModel": "Model ekle",
-    "removeModel": "Modeli kaldır",
-    "modelId": "Model kimliği",
     "contextSize": "Bağlam uzunluğu",
     "deleteSessionHint": "Dizin ve geçmişin birlikte güncellenmesi için oturumu Kimi Code içinden silin.",
     "empty": {
@@ -4840,7 +4821,6 @@
   },
   "qwen": {
     "modelSelectionHint": "Sağlayıcıyı geçerli yapmak için karttaki geçiş düğmesini kullanın. Başka bir model kullanmak için Qwen Code içinde /model komutunu çalıştırın.",
-    "authType": "Protokol",
     "authTypes": {
       "openai": "OpenAI Chat Completions",
       "openai-responses": "OpenAI Responses",
@@ -4848,26 +4828,22 @@
       "gemini": "Gemini",
       "vertex-ai": "Vertex AI"
     },
-    "baseUrl": "İstek adresi",
     "baseUrlRequired": "Anthropic protokolü için istek adresi gereklidir.",
     "baseUrlInvalid": "İstek adresi http:// veya https:// ile başlamalıdır.",
     "envKey": "Ortam değişkeni",
     "envKeyHint": "Bu sağlayıcı anahtarını bu ortam değişkeninden okur. Qwen Code'un yerel yapılandırmasında yönetilir ve burada değiştirilemez.",
-    "models": "Modeller",
-    "modelsRequired": "En az bir model ekleyin.",
-    "noModels": "Yapılandırılmış model yok",
-    "toggleModelDetails": "Model ayrıntılarını göster veya gizle",
     "modelOverride": "Yalnızca bu modelin kullandığı protokol ve uç nokta (yerel yapılandırmadan)",
-    "addModel": "Model ekle",
     "removeModel": "Modeli kaldır",
-    "modelId": "Model kimliği",
-    "modelName": "Görünen ad",
     "contextWindowSize": "Bağlam penceresi",
     "duplicateModelId": "Bu model kimliği zaten kullanılıyor.",
     "empty": {
       "title": "Qwen Code sağlayıcısı ekleyin",
       "description": "Adres, API anahtarı ve modelleri yapılandırın. settings.json içindeki mevcut sağlayıcılar burada otomatik olarak görünür."
     },
-    "deleteSessionHint": "Dizin ve arşivin birlikte güncellenmesi için oturumu Qwen Code içinden (qwen sessions) silin."
+    "deleteSessionHint": "Dizin ve arşivin birlikte güncellenmesi için oturumu Qwen Code içinden (qwen sessions) silin.",
+    "error": {
+      "currentModelInUse": "Qwen Code bu sağlayıcının bir modelini kullanıyor. Önce başka bir sağlayıcıya geçin ya da Qwen Code içinde /model ile başka bir model seçin.",
+      "modelOwnedByOther": "Aynı uç noktadaki bu model başka bir sağlayıcıya ait. Model kimliğini veya uç noktayı değiştirin."
+    }
   }
 }

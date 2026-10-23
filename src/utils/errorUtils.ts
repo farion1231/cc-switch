@@ -60,6 +60,46 @@ export const translatePiProviderMutationError = (
 };
 
 /**
+ * Kimi 的默认模型可能在 Kimi Code 里被改过、页面上还是旧的，
+ * 后端按 config.toml 现读拒绝后，把这两条英文原因换成说明。
+ */
+export const translateKimiProviderMutationError = (
+  message: string,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string => {
+  if (!message) return "";
+  if (message.includes("Select another default model in Kimi Code")) {
+    return t("kimi.error.defaultModelInUse");
+  }
+  if (message.includes("Update the secondary model selection in Kimi Code")) {
+    return t("kimi.error.secondaryModelInUse");
+  }
+  return "";
+};
+
+/**
+ * Qwen Code 的当前模型可能在 Qwen Code 里被改过、页面上还是旧的，
+ * 后端按 settings.json 现读拒绝后，把英文原因换成说明。
+ */
+export const translateQwenProviderMutationError = (
+  message: string,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string => {
+  if (!message) return "";
+  if (
+    message.includes("Switch Qwen Code to another provider before removing")
+  ) {
+    return t("qwen.error.currentModelInUse");
+  }
+  if (
+    message.includes("at this base URL already belongs to another provider")
+  ) {
+    return t("qwen.error.modelOwnedByOther");
+  }
+  return "";
+};
+
+/**
  * 将已知的 MCP 相关后端错误（通常为中文硬编码）映射为 i18n 文案
  * 采用包含式匹配，尽量稳健地覆盖不同上下文的相似消息。
  * 若无法识别，返回空字符串以便调用方回退到原始 detail 或默认 i18n。

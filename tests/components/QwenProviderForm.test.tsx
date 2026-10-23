@@ -76,7 +76,7 @@ const save = () => screen.getByRole("button", { name: "Save" });
 // Context windows live in each model's collapsed details, as in the other forms.
 const expandModels = () =>
   screen
-    .getAllByRole("button", { name: "qwen.toggleModelDetails" })
+    .getAllByRole("button", { name: "opencode.toggleModelDetails" })
     .forEach((toggle) => fireEvent.click(toggle));
 
 describe("QwenProviderForm", () => {
@@ -97,7 +97,7 @@ describe("QwenProviderForm", () => {
         }),
       );
       await user.click(screen.getByRole("button", { name }));
-      expect(screen.getByLabelText("opencode.providerKey *")).toHaveValue(
+      expect(screen.getByLabelText("opencode.providerKey")).toHaveValue(
         selected.providerKey,
       );
       if (selected.category !== "local") {
@@ -124,12 +124,12 @@ describe("QwenProviderForm", () => {
     fireEvent.change(screen.getByLabelText(/provider\.name/), {
       target: { value: "My Provider" },
     });
-    const key = screen.getByLabelText("opencode.providerKey *");
+    const key = screen.getByLabelText("opencode.providerKey");
     fireEvent.change(key, { target: { value: "My_Key" } });
     expect(key).toHaveValue("mykey");
-    fireEvent.click(screen.getByRole("button", { name: /qwen\.addModel/ }));
+    fireEvent.click(screen.getByRole("button", { name: /opencode\.addModel/ }));
     expect(save()).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("qwen.modelId"), {
+    fireEvent.change(screen.getByLabelText("opencode.modelId"), {
       target: { value: "qwen3-coder-plus" },
     });
     expect(save()).toBeEnabled();
@@ -168,17 +168,17 @@ describe("QwenProviderForm", () => {
     fireEvent.change(screen.getByLabelText(/provider\.name/), {
       target: { value: "Relay" },
     });
-    fireEvent.change(screen.getByLabelText("opencode.providerKey *"), {
+    fireEvent.change(screen.getByLabelText("opencode.providerKey"), {
       target: { value: "relay" },
     });
-    fireEvent.change(screen.getByLabelText(/qwen\.baseUrl/), {
+    fireEvent.change(screen.getByLabelText("opencode.baseUrl"), {
       target: { value: "https://relay.example.com/v1" },
     });
     fireEvent.change(screen.getByLabelText("API Key"), {
       target: { value: "sk-relay" },
     });
     // A blank manual row is replaced by the picked models.
-    fireEvent.click(screen.getByRole("button", { name: /qwen\.addModel/ }));
+    fireEvent.click(screen.getByRole("button", { name: /opencode\.addModel/ }));
 
     await user.click(
       screen.getByRole("button", { name: "providerForm.fetchModels" }),
@@ -199,7 +199,7 @@ describe("QwenProviderForm", () => {
     await waitFor(() =>
       expect(
         screen
-          .getAllByLabelText("qwen.modelId")
+          .getAllByLabelText("opencode.modelId")
           .map((input) => (input as HTMLInputElement).value),
       ).toEqual(["qwen3.7-plus", "glm-5"]),
     );
@@ -215,7 +215,8 @@ describe("QwenProviderForm", () => {
       { id: "qwen3.7-plus", generationConfig: { contextWindowSize: 1000000 } },
       { id: "glm-5" },
     ]);
-  });
+    // A full form flow, like the App integration tests.
+  }, 10_000);
 
   it("requires a base URL for the Anthropic protocol", () => {
     renderForm({
@@ -231,7 +232,7 @@ describe("QwenProviderForm", () => {
     });
     expect(save()).toBeDisabled();
     expect(screen.getByText("qwen.baseUrlRequired")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("qwen.baseUrl *"), {
+    fireEvent.change(screen.getByLabelText("opencode.baseUrl"), {
       target: { value: "https://relay.example.com" },
     });
     expect(save()).toBeEnabled();
@@ -249,7 +250,7 @@ describe("QwenProviderForm", () => {
       },
     });
     expect(save()).toBeEnabled();
-    const [, second] = screen.getAllByLabelText("qwen.modelId");
+    const [, second] = screen.getAllByLabelText("opencode.modelId");
     fireEvent.change(second, { target: { value: "a" } });
     expect(save()).toBeDisabled();
     expect(screen.getAllByText("qwen.duplicateModelId")).toHaveLength(2);

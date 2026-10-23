@@ -727,6 +727,37 @@ pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
     save_and_commit(id, None, false, || Ok(()))
 }
 
+/// "Add" writes a saved provider into settings.json without selecting it, so its
+/// models show up in Qwen Code's /model list. Entries already there belong to
+/// Qwen and are kept as is (same rule as switching).
+pub(crate) fn add_and_commit<T>(
+    id: &str,
+    archived_config: Value,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let _guard = lock()?;
+    add_at(&config_path(), id, archived_config, commit)
+}
+
+fn add_at<T>(
+    path: &Path,
+    id: &str,
+    archived_config: Value,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    update_and_commit(
+        path,
+        |before| {
+            if groups(before).contains_key(id) {
+                Ok(before.clone())
+            } else {
+                apply_provider(before, id, Some(&archived_config), false)
+            }
+        },
+        |_| commit(),
+    )
+}
+
 pub(crate) fn switch_and_commit<T>(
     id: &str,
     archived_config: Value,
@@ -921,6 +952,53 @@ mod tests {
         let value = read(&path).unwrap();
         assert_eq!(value["model"]["baseUrl"], "https://b/v1");
         assert_eq!(current_provider_in(&value).as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn add_keeps_the_selected_model_and_never_overwrites_live_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let first = apply_provider(
+            &json!({}),
+            "a",
+            Some(&provider("https://a/v1", "ka", &["m"])),
+            true,
+        )
+        .unwrap();
+        let native = format!(
+            "// original\n{}",
+            serde_json::to_string_pretty(&first).unwrap()
+        );
+        fs::write(&path, &native).unwrap();
+        let failed = add_at(&path, "b", provider("https://b/v1", "kb", &["n"]), || {
+            Err::<(), _>(AppError::Message("database failed".into()))
+        });
+        assert!(failed.is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), native);
+
+        add_at(
+            &path,
+            "b",
+            provider("https://b/v1", "kb", &["n"]),
+            || Ok(()),
+        )
+        .unwrap();
+        let value = read(&path).unwrap();
+        assert_eq!(current_provider_in(&value).as_deref(), Some("a"));
+        assert_eq!(value["model"]["name"], "m");
+        assert!(groups(&value).contains_key("b"));
+        assert!(fs::read_to_string(&path).unwrap().contains("// original"));
+
+        // Entries already in Qwen belong to Qwen: adding again keeps them.
+        let before = fs::read_to_string(&path).unwrap();
+        add_at(
+            &path,
+            "b",
+            provider("https://stale/v1", "old", &["n"]),
+            || Ok(()),
+        )
+        .unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
     }
 
     #[test]

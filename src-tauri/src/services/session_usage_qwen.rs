@@ -361,7 +361,10 @@ mod tests {
 
     const ASSISTANT: &str = r#"{"uuid":"a1","sessionId":"s1","timestamp":"2026-10-22T17:29:57.798Z","type":"assistant","model":"m","message":{"role":"model","parts":[{"text":"hi"}]},"usageMetadata":{"promptTokenCount":1200,"candidatesTokenCount":34,"thoughtsTokenCount":0,"cachedContentTokenCount":1000}}"#;
 
-    fn rows(db: &Database) -> Vec<(String, String, i64, i64, i64, i64, Option<i64>)> {
+    /// request_id, model, input, output, cache read, latency, first token
+    type Row = (String, String, i64, i64, i64, i64, Option<i64>);
+
+    fn rows(db: &Database) -> Vec<Row> {
         let conn = db.conn.lock().unwrap();
         let mut stmt = conn
             .prepare("SELECT request_id, model, input_tokens, output_tokens, cache_read_tokens, latency_ms, first_token_ms FROM proxy_request_logs WHERE app_type = 'qwen' ORDER BY request_id")

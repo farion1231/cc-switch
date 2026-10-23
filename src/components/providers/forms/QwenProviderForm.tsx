@@ -3,9 +3,10 @@ import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { ChevronRight, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Form } from "@/components/ui/form";
+import { Form, FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { ImeSafeInput } from "@/components/ui/ime-safe-input";
+import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { Label } from "@/components/ui/label";
 import {
@@ -24,6 +25,7 @@ import {
   type FetchedModel,
 } from "@/lib/api/model-fetch";
 import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
 import { piPresetModelSources } from "@/config/presetModelMetadata";
 import { useProvidersQuery } from "@/lib/query/queries";
 import type { ProviderFormData } from "@/lib/schemas/provider";
@@ -37,8 +39,8 @@ import {
   type QwenModel,
   type QwenProviderConfig,
 } from "@/config/qwenProviderPresets";
-import { BasicFormFields } from "./BasicFormFields";
-import { ApiKeySection, GptContextWindowHint } from "./shared";
+import { BasicFormFields, REQUIRED_LABEL } from "./BasicFormFields";
+import { ApiKeySection, EndpointField, GptContextWindowHint } from "./shared";
 import {
   FetchedModelPicker,
   type FetchedModelSelection,
@@ -403,7 +405,6 @@ export function QwenProviderForm({
             {error}
           </p>
         )}
-        <p className="text-sm text-fg-2">{t("qwen.modelSelectionHint")}</p>
         <fieldset
           disabled={busy || !jsonValid}
           className="min-w-0 space-y-6 border-0 p-0 disabled:opacity-50"
@@ -412,8 +413,8 @@ export function QwenProviderForm({
             form={form}
             beforeNameSlot={
               <div className="space-y-2">
-                <Label htmlFor="qwen-provider-key">
-                  {t("opencode.providerKey")} *
+                <Label htmlFor="qwen-provider-key" className={REQUIRED_LABEL}>
+                  {t("opencode.providerKey")}
                 </Label>
                 <Input
                   id="qwen-provider-key"
@@ -443,7 +444,9 @@ export function QwenProviderForm({
             }
           />
           <div className="space-y-2">
-            <Label htmlFor="qwen-auth-type">{t("qwen.authType")}</Label>
+            <FormLabel htmlFor="qwen-auth-type">
+              {t("opencode.npmPackage")}
+            </FormLabel>
             <Select
               value={config.authType}
               onValueChange={(authType) =>
@@ -462,16 +465,24 @@ export function QwenProviderForm({
               </SelectContent>
             </Select>
           </div>
+          <ApiKeySection
+            id="qwen-api-key"
+            value={config.apiKey ?? ""}
+            onChange={(apiKey) => update({ ...config, apiKey })}
+            category={category}
+            shouldShowLink={Boolean(preset?.apiKeyUrl)}
+            websiteUrl={preset?.apiKeyUrl ?? ""}
+            isPartner={preset?.isPartner}
+            partnerPromotionKey={preset?.partnerPromotionKey}
+          />
           <div className="space-y-2">
-            <Label htmlFor="qwen-base-url">
-              {t("qwen.baseUrl")}
-              {config.authType === "anthropic" ? " *" : ""}
-            </Label>
-            <Input
+            <EndpointField
               id="qwen-base-url"
+              label={t("opencode.baseUrl")}
               value={config.baseUrl ?? ""}
-              onChange={(e) => update({ ...config, baseUrl: e.target.value })}
+              onChange={(baseUrl) => update({ ...config, baseUrl })}
               placeholder="https://api.example.com/v1"
+              required={config.authType === "anthropic"}
             />
             {problems.missingBaseUrl && (
               <p className="text-xs text-destructive">
@@ -484,16 +495,6 @@ export function QwenProviderForm({
               </p>
             )}
           </div>
-          <ApiKeySection
-            id="qwen-api-key"
-            value={config.apiKey ?? ""}
-            onChange={(apiKey) => update({ ...config, apiKey })}
-            category={category}
-            shouldShowLink={Boolean(preset?.apiKeyUrl)}
-            websiteUrl={preset?.apiKeyUrl ?? ""}
-            isPartner={preset?.isPartner}
-            partnerPromotionKey={preset?.partnerPromotionKey}
-          />
           {config.envKey && (
             <div className="space-y-2">
               <Label htmlFor="qwen-env-key">{t("qwen.envKey")}</Label>
@@ -504,7 +505,12 @@ export function QwenProviderForm({
           {/* Models editor: same layout as the OpenClaw / Hermes forms */}
           <div className="space-y-3 border-l border-border pl-3">
             <div className="flex items-center justify-between gap-3">
-              <Label>{t("qwen.models")}</Label>
+              <div className="flex items-center gap-1">
+                <FormLabel>{t("opencode.models")}</FormLabel>
+                <HelpTip title={t("opencode.models")}>
+                  {t("qwen.modelSelectionHint")}
+                </HelpTip>
+              </div>
               <div className="flex gap-1">
                 <FetchedModelPicker
                   models={fetchedModels}
@@ -524,21 +530,23 @@ export function QwenProviderForm({
                   className="h-7 gap-1"
                 >
                   <Plus className="h-3.5 w-3.5" />
-                  {t("qwen.addModel")}
+                  {t("opencode.addModel")}
                 </Button>
               </div>
             </div>
 
             {config.models.length === 0 ? (
               <p role="status" className="py-2 text-sm text-fg-2">
-                {t("qwen.noModels")}
+                {t("opencode.noModels")}
               </p>
             ) : (
               <div className="space-y-2">
-                <div className="flex items-center gap-2 px-1 text-xs text-fg-2">
+                <div className="mb-1 flex items-center gap-2 px-1 text-xs text-fg-2">
                   <span className="w-9" />
-                  <span className="flex-1">{t("qwen.modelId")}</span>
-                  <span className="flex-1">{t("qwen.modelName")}</span>
+                  <span className={cn("flex-1", REQUIRED_LABEL)}>
+                    {t("opencode.modelId")}
+                  </span>
+                  <span className="flex-1">{t("opencode.modelName")}</span>
                   <span className="w-9" />
                 </div>
                 {config.models.map((model, index) => {
@@ -567,7 +575,7 @@ export function QwenProviderForm({
                           size="icon"
                           onClick={() => toggleRow(rowKey)}
                           aria-expanded={isExpanded}
-                          aria-label={t("qwen.toggleModelDetails")}
+                          aria-label={t("opencode.toggleModelDetails")}
                           className="h-9 w-9 shrink-0"
                         >
                           <ChevronRight
@@ -582,7 +590,7 @@ export function QwenProviderForm({
                             updateModel(index, { ...model, id: value })
                           }
                           placeholder="qwen3-coder-plus"
-                          aria-label={t("qwen.modelId")}
+                          aria-label={t("opencode.modelId")}
                           aria-invalid={duplicateId || !model.id.trim()}
                           className="min-w-0 flex-1"
                         />
@@ -592,7 +600,7 @@ export function QwenProviderForm({
                             updateModel(index, { ...model, name: value })
                           }
                           placeholder={model.id.trim() || "Qwen3 Coder Plus"}
-                          aria-label={t("qwen.modelName")}
+                          aria-label={t("opencode.modelName")}
                           className="min-w-0 flex-1"
                         />
                         <HoverTip content={t("qwen.removeModel")}>

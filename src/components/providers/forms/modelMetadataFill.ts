@@ -4,6 +4,7 @@
 import type { KnownModelMetadata } from "@/lib/modelMetadata";
 import type { CodexCatalogModel, OpenClawModel, OpenCodeModel } from "@/types";
 import type { HermesModel } from "@/config/hermesProviderPresets";
+import type { KimiProviderConfig } from "@/config/kimiProviderPresets";
 import {
   PI_THINKING_LEVELS,
   type PiThinkingLevelMap,
@@ -40,7 +41,9 @@ export function fillCodexCatalogModel<T extends CodexCatalogModel>(
     );
     if (levels.length > 0) next.reasoningLevels = levels;
   }
-  if (!row.inputModalities && metadata.inputModalities) {
+  // 只补「支持图片」：没写时后端按注册表判断、认不出就当支持；查到只收文字就写
+  // ["text"] 会关掉 Codex 的图片入口，而编辑界面又没有改回来的地方（#8682）。
+  if (!row.inputModalities && metadata.inputModalities?.includes("image")) {
     next.inputModalities = textImageModalities(metadata.inputModalities);
   }
   return next;
@@ -119,6 +122,32 @@ export function fillOpenCodeModel(
   // 写 false 会盖住 models.dev 同名条目，用户明确写的 false 也不动。
   if (model.reasoning === undefined && metadata.reasoning === true) {
     next.reasoning = true;
+  }
+  return next;
+}
+
+type KimiModel = KimiProviderConfig["models"][string];
+
+/**
+ * Kimi 的 `max_context_size` 是必填项，新加的行先带一个占位值；`replaceContext`
+ * 为真表示这一行的窗口还是占位值、可以换成查到的值。能力只往「支持」方向补，
+ * 和 Kimi 按目录导入模型时的取法一致（`image_in` 看输入模态，`thinking` 看
+ * reasoning）。
+ */
+export function fillKimiModel(
+  model: KimiModel,
+  metadata: KnownModelMetadata,
+  { replaceContext }: { replaceContext: boolean },
+): KimiModel {
+  const next = { ...model };
+  if (replaceContext && metadata.contextWindow) {
+    next.max_context_size = metadata.contextWindow;
+  }
+  const capabilities = new Set(model.capabilities ?? []);
+  if (metadata.inputModalities?.includes("image")) capabilities.add("image_in");
+  if (metadata.reasoning === true) capabilities.add("thinking");
+  if (capabilities.size > (model.capabilities?.length ?? 0)) {
+    next.capabilities = [...capabilities];
   }
   return next;
 }
