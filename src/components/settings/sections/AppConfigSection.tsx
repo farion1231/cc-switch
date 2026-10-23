@@ -28,6 +28,7 @@ const DIRECTORY_FIELD: Record<DirectoryAppId, keyof Settings> = {
   openclaw: "openclawConfigDir",
   hermes: "hermesConfigDir",
   pi: "piConfigDir",
+  "deepseek-harness": "dshConfigDir",
 };
 
 const DIRECTORY_PLACEHOLDER: Record<DirectoryAppId, string> = {
@@ -39,6 +40,7 @@ const DIRECTORY_PLACEHOLDER: Record<DirectoryAppId, string> = {
   openclaw: "settings.browsePlaceholderOpenclaw",
   hermes: "settings.browsePlaceholderHermes",
   pi: "settings.browsePlaceholderPi",
+  "deepseek-harness": "settings.browsePlaceholderDsh",
 };
 
 const DIRECTORY_APPS: DirectoryAppId[] = [
@@ -50,6 +52,7 @@ const DIRECTORY_APPS: DirectoryAppId[] = [
   "openclaw",
   "hermes",
   "pi",
+  "deepseek-harness",
 ];
 
 const normalizeDir = (value: unknown) =>
@@ -107,7 +110,7 @@ export function AppConfigSection({
             | string
             | undefined
         }
-        resolvedValue={resolvedDirs[app]}
+        resolvedValue={resolvedDirs[app === "deepseek-harness" ? "dsh" : app]}
         placeholder={t(DIRECTORY_PLACEHOLDER[app])}
         onChange={(value) => onDirectoryChange(app, value)}
         onBrowse={() => onBrowseDirectory(app)}

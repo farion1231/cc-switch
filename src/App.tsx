@@ -124,6 +124,9 @@ import {
   useDisableCurrentOmoSlim,
 } from "@/lib/query/omo";
 import { invalidatePiProviderCaches, usePiCurrentState } from "@/lib/query/pi";
+import { dshApi } from "@/lib/api/dsh";
+import { reserveApiKeyEnv } from "@/config/deepseekHarnessProviderPresets";
+import { invalidateDshProviderCaches, dshKeys } from "@/lib/query/dsh";
 import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
 import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
@@ -364,6 +367,41 @@ function App() {
     }
   };
 
+  const handleSetDshDefaultModel = async (
+    provider: Provider,
+    modelId?: string,
+  ) => {
+    const config = provider.settingsConfig as {
+      models?: Array<{ id?: string } | string>;
+    };
+    const firstModel = config.models?.[0];
+    const resolved =
+      modelId ?? (typeof firstModel === "string" ? firstModel : firstModel?.id);
+    if (!resolved) {
+      toast.error(
+        t("dsh.provider.noModels", {
+          defaultValue: "该供应商没有配置模型",
+        }),
+      );
+      return;
+    }
+    try {
+      await dshApi.setCurrentModel(provider.id, resolved);
+      await invalidateDshProviderCaches(queryClient);
+      toast.success(
+        t("dsh.provider.defaultSet", { defaultValue: "已设为 DSH 默认模型" }),
+        { closeButton: true },
+      );
+    } catch (error) {
+      toast.error(
+        t("dsh.provider.defaultFailed", {
+          defaultValue: "设置 DSH 默认模型失败",
+        }),
+        { description: extractErrorMessage(error), closeButton: true },
+      );
+    }
+  };
+
   const disableOmoMutation = useDisableCurrentOmo();
   const handleDisableOmo = () => {
     disableOmoMutation.mutate(undefined, {
@@ -413,6 +451,9 @@ function App() {
             });
             if (event.appType === "pi") {
               await invalidatePiProviderCaches(queryClient);
+            }
+            if (event.appType === "deepseek-harness") {
+              await invalidateDshProviderCaches(queryClient);
             }
           },
         );
@@ -816,6 +857,9 @@ function App() {
         if (activeApp === "pi") {
           void invalidatePiProviderCaches(queryClient).catch(() => undefined);
         }
+        if (activeApp === "deepseek-harness") {
+          void invalidateDshProviderCaches(queryClient).catch(() => undefined);
+        }
         toast.error(t("notifications.removeFromConfigFailed"), {
           description: description || t("common.unknown"),
           closeButton: true,
@@ -824,6 +868,9 @@ function App() {
       }
       if (activeApp === "pi") {
         await invalidatePiProviderCaches(queryClient);
+      }
+      if (activeApp === "deepseek-harness") {
+        await invalidateDshProviderCaches(queryClient);
       }
       // Invalidate queries to refresh the isInConfig state
       if (activeApp === "opencode") {
@@ -885,6 +932,18 @@ function App() {
 
   const handleDuplicateProvider = async (provider: Provider) => {
     if (
+      activeApp === "deepseek-harness" &&
+      (provider.id === "deepseek-official" ||
+        provider.meta?.providerType === "dsh_deepseek")
+    ) {
+      toast.error(
+        t("deepseekHarness.officialNotCopyable", {
+          defaultValue: "官方 DeepSeek 路由不可复制",
+        }),
+      );
+      return;
+    }
+    if (
       activeApp === "opencode" &&
       provider.category !== "omo" &&
       provider.category !== "omo-slim"
@@ -933,32 +992,46 @@ function App() {
       activeApp === "opencode" ||
       activeApp === "openclaw" ||
       activeApp === "hermes" ||
-      activeApp === "pi"
+      activeApp === "pi" ||
+      activeApp === "deepseek-harness"
     ) {
       let liveProviderIds: string[] = [];
+      let dshCredentialRefs: string[] = [];
       try {
-        liveProviderIds =
-          activeApp === "opencode"
-            ? await queryClient.ensureQueryData({
-                queryKey: ["opencodeLiveProviderIds"],
-                queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
-              })
-            : activeApp === "openclaw"
+        // Copy must reserve against a fresh native snapshot, not a cached
+        // provider-id query that may predate another route's credentials.
+        if (activeApp === "deepseek-harness") {
+          const state = await queryClient.fetchQuery({
+            queryKey: dshKeys.currentState,
+            queryFn: () => dshApi.getCurrentState(),
+            staleTime: 0,
+          });
+          liveProviderIds = state.providerIds;
+          dshCredentialRefs = state.credentialRefs ?? [];
+        } else {
+          liveProviderIds =
+            activeApp === "opencode"
               ? await queryClient.ensureQueryData({
-                  queryKey: openclawKeys.liveProviderIds,
-                  queryFn: () => providersApi.getOpenClawLiveProviderIds(),
+                  queryKey: ["opencodeLiveProviderIds"],
+                  queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
                 })
-              : activeApp === "hermes"
+              : activeApp === "openclaw"
                 ? await queryClient.ensureQueryData({
-                    queryKey: hermesKeys.liveProviderIds,
-                    queryFn: () => providersApi.getHermesLiveProviderIds(),
+                    queryKey: openclawKeys.liveProviderIds,
+                    queryFn: () => providersApi.getOpenClawLiveProviderIds(),
                   })
-                : (
-                    await queryClient.ensureQueryData({
-                      queryKey: ["pi", "currentState"],
-                      queryFn: () => piApi.getCurrentState(),
+                : activeApp === "hermes"
+                  ? await queryClient.ensureQueryData({
+                      queryKey: hermesKeys.liveProviderIds,
+                      queryFn: () => providersApi.getHermesLiveProviderIds(),
                     })
-                  ).enabledProviderIds;
+                  : (
+                      await queryClient.ensureQueryData({
+                        queryKey: ["pi", "currentState"],
+                        queryFn: () => piApi.getCurrentState(),
+                      })
+                    ).enabledProviderIds;
+        }
       } catch (error) {
         console.error(
           "[App] Failed to load live provider IDs for duplication",
@@ -980,6 +1053,18 @@ function App() {
         existingKeys,
       );
       duplicatedProvider.addToLive = false;
+      if (activeApp === "deepseek-harness") {
+        const usedRefs = new Set(dshCredentialRefs);
+        for (const route of Object.values(providers)) {
+          const ref = route.settingsConfig.apiKeyEnv;
+          if (typeof ref === "string" && ref) usedRefs.add(ref);
+        }
+        duplicatedProvider.settingsConfig.displayName = duplicatedProvider.name;
+        duplicatedProvider.settingsConfig.apiKeyEnv = reserveApiKeyEnv(
+          duplicatedProvider.providerKey,
+          usedRefs,
+        );
+      }
     } else if (activeApp === "mcode" || activeApp === "kimi") {
       // The MCode list already includes its live custom nodes; the backend
       // rejects a key that MCode itself owns.
@@ -1347,6 +1432,7 @@ function App() {
               activeApp === "openclaw" ||
               activeApp === "hermes" ||
               activeApp === "pi" ||
+              activeApp === "deepseek-harness" ||
               activeApp === "mcode" ||
               activeApp === "kimi"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
@@ -1364,7 +1450,10 @@ function App() {
                     void setAsDefaultModel(provider, modelId)
                 : activeApp === "hermes"
                   ? (provider) => void switchProvider(provider)
-                  : undefined
+                  : activeApp === "deepseek-harness"
+                    ? (provider, modelId) =>
+                        void handleSetDshDefaultModel(provider, modelId)
+                    : undefined
             }
           />
         </div>

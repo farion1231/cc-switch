@@ -791,6 +791,128 @@ describe("App integration with MSW", () => {
     );
   });
 
+  it("duplicates deepseek-harness providers with an isolated credential ref", async () => {
+    localStorage.setItem("cc-switch-last-app", "deepseek-harness");
+    setProviders("deepseek-harness", {
+      "dsh-1": {
+        id: "dsh-1",
+        name: "Company Gateway",
+        settingsConfig: {
+          displayName: "Company Gateway",
+          api: "openai-completions",
+          baseURL: "https://gateway.example/v1",
+          apiKeyEnv: "COMPANY_API_KEY",
+          apiKey: "test-key",
+          models: [{ id: "glm-5" }],
+        },
+        category: "custom",
+        sortIndex: 0,
+        createdAt: Date.now(),
+      },
+    });
+    // A DB-only route reserves a suffix even though native providerIds omit it.
+    const dbRoutes = await providersApi.getAll("deepseek-harness");
+    setProviders("deepseek-harness", {
+      ...dbRoutes,
+      "db-only": {
+        id: "db-only",
+        name: "DB only",
+        settingsConfig: { apiKeyEnv: "DSH_1_COPY_API_KEY_2" },
+        createdAt: Date.now(),
+      },
+    });
+    setCurrentProviderId("deepseek-harness", "dsh-1");
+    server.use(
+      http.post("http://tauri.local/get_dsh_current_state", () =>
+        HttpResponse.json({
+          providerIds: ["dsh-1"],
+          credentialRefs: ["COMPANY_API_KEY", "DSH_1_COPY_API_KEY"],
+          currentProviderId: "dsh-1",
+          currentModel: "glm-5",
+        }),
+      ),
+    );
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "Company Gateway",
+      ),
+    );
+
+    fireEvent.click(screen.getByText("duplicate"));
+
+    await waitFor(() => {
+      const providerList = screen.getByTestId("provider-list").textContent;
+      expect(providerList).toContain("dsh-1-copy");
+      expect(providerList).toContain("Company Gateway copy");
+      const routes = JSON.parse(providerList ?? "{}");
+      expect(routes["dsh-1-copy"].settingsConfig).toMatchObject({
+        displayName: "Company Gateway copy",
+        apiKeyEnv: "DSH_1_COPY_API_KEY_3",
+        apiKey: "test-key",
+      });
+      expect(routes["dsh-1"].settingsConfig.apiKeyEnv).toBe("COMPANY_API_KEY");
+    });
+
+    expect(toastErrorMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("Provider key is required for deepseek-harness"),
+    );
+  });
+
+  it("blocks duplicating the deepseek-harness official route", async () => {
+    localStorage.setItem("cc-switch-last-app", "deepseek-harness");
+    setProviders("deepseek-harness", {
+      "dsh-official-route": {
+        id: "dsh-official-route",
+        name: "DeepSeek",
+        settingsConfig: {
+          displayName: "DeepSeek",
+          baseURL: "https://api.deepseek.com",
+          apiKeyEnv: "DEEPSEEK_API_KEY",
+          apiKey: "test-key",
+          models: [{ id: "deepseek-v4-pro" }],
+        },
+        category: "official",
+        sortIndex: 0,
+        createdAt: Date.now(),
+        meta: { providerType: "dsh_deepseek" },
+      },
+    });
+    setCurrentProviderId("deepseek-harness", "dsh-official-route");
+    server.use(
+      http.post("http://tauri.local/get_dsh_current_state", () =>
+        HttpResponse.json({
+          providerIds: ["dsh-official-route"],
+          currentProviderId: "dsh-official-route",
+          currentModel: "deepseek-v4-pro",
+        }),
+      ),
+    );
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "DeepSeek",
+      ),
+    );
+
+    fireEvent.click(screen.getByText("duplicate"));
+
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        expect.stringContaining("官方 DeepSeek 路由不可复制"),
+      );
+    });
+    expect(screen.getByTestId("provider-list").textContent).not.toContain(
+      "copy",
+    );
+  });
+
   it("warns without blocking when removing Pi's global default provider", async () => {
     localStorage.setItem("cc-switch-last-app", "pi");
     setProviders("pi", {

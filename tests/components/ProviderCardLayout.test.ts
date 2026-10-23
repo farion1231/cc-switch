@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
 
 const PROVIDER_CARD_TSX = path.resolve(
   __dirname,
@@ -35,6 +36,13 @@ describe("ProviderCard layout", () => {
   it("does not add a Pi-only model list to provider cards", () => {
     expect(source).not.toContain("ProviderModelSummary");
     expect(source).not.toContain("extractPiModelSummaryItems");
+  });
+
+  it("reads the official DSH baseURL field for card display", () => {
+    expect(source).toContain("extractProviderBaseUrl(provider.settingsConfig)");
+    expect(extractProviderBaseUrl({ baseURL: "https://api.deepseek.com" })).toBe(
+      "https://api.deepseek.com",
+    );
   });
 
   it("keeps Pi provider cards independent from routing capability state", () => {

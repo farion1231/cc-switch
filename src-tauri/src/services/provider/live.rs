@@ -30,6 +30,9 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Pi => crate::pi_config::pi_provider_exists(provider_id),
+        AppType::DeepSeekHarness => {
+            crate::deepseek_harness_config::provider_exists_in_live_config()
+        }
         AppType::Kimi => {
             crate::kimi_config::get_providers().map(|providers| providers.contains_key(provider_id))
         }
@@ -306,7 +309,8 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Agy
-        | AppType::ClaudeDesktop => false,
+        | AppType::ClaudeDesktop
+        | AppType::DeepSeekHarness => false,
     }
 }
 
@@ -384,6 +388,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Mcode
         | AppType::Kimi
         | AppType::ClaudeDesktop
+        | AppType::DeepSeekHarness
         | AppType::Agy => Ok(settings.clone()),
     }
 }
@@ -699,6 +704,18 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::DeepSeekHarness => {
+            let config = serde_json::from_value::<
+                crate::deepseek_harness_config::DeepSeekHarnessProviderConfig,
+            >(provider.settings_config.clone())
+            .map_err(|error| {
+                AppError::Config(format!(
+                    "Invalid DeepSeek Harness provider '{}': {error}",
+                    provider.id
+                ))
+            })?;
+            crate::deepseek_harness_config::set_provider(&provider.id, &config)?;
+        }
         AppType::Kimi => {
             crate::kimi_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
@@ -757,6 +774,9 @@ pub(crate) fn sync_additive_app_to_live(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<(), AppError> {
+    if matches!(app_type, AppType::DeepSeekHarness) {
+        return Ok(());
+    }
     sync_all_providers_to_live(state, app_type)?;
 
     // 本函数语义是"把这个应用同步到 live"，MCP 重投影也只针对该应用；
@@ -845,7 +865,10 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
     // Sync providers based on mode
     for app_type in AppType::all() {
-        if matches!(app_type, AppType::Pi | AppType::Mcode | AppType::Kimi) {
+        if matches!(
+            app_type,
+            AppType::Pi | AppType::DeepSeekHarness | AppType::Kimi | AppType::Mcode
+        ) {
             continue;
         }
         let result = if app_type.is_additive_mode() {
@@ -1005,6 +1028,10 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
+        AppType::DeepSeekHarness => Err(AppError::InvalidInput(
+            "DeepSeek Harness settings are read through its dedicated configuration module"
+                .to_string(),
+        )),
         AppType::Agy => crate::agy_config::read_live_settings(),
     }
 }
@@ -1125,7 +1152,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Hermes
         | AppType::Pi
         | AppType::Mcode
-        | AppType::Kimi => {
+        | AppType::Kimi
+        | AppType::DeepSeekHarness => {
             unreachable!("additive mode apps are handled by early return")
         }
     };

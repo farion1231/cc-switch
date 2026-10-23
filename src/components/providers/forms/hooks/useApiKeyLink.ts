@@ -8,6 +8,7 @@ import type { OpenCodeProviderPreset } from "@/config/opencodeProviderPresets";
 import type { ClaudeDesktopProviderPreset } from "@/config/claudeDesktopProviderPresets";
 import { extractBaseUrlForUsageDetection } from "@/config/codingPlanProviders";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import type { DeepSeekHarnessProviderPreset } from "@/config/deepseekHarnessProviderPresets";
 
 type PresetEntry = {
   id: string;
@@ -16,7 +17,8 @@ type PresetEntry = {
     | CodexProviderPreset
     | GeminiProviderPreset
     | OpenCodeProviderPreset
-    | ClaudeDesktopProviderPreset;
+    | ClaudeDesktopProviderPreset
+    | DeepSeekHarnessProviderPreset;
 };
 
 interface UseApiKeyLinkProps {
@@ -82,13 +84,23 @@ export function useApiKeyLink({
 }: UseApiKeyLinkProps) {
   // 判断是否显示 API Key 获取链接
   const shouldShowApiKeyLink = useMemo(() => {
+    // DSH has no OAuth surface — even its official route is a plain API key,
+    // so the official category must not hide the link there.
+    if (appId === "deepseek-harness") {
+      return (
+        category === "official" ||
+        category === "cn_official" ||
+        category === "aggregator" ||
+        category === "third_party"
+      );
+    }
     return (
       category !== "official" &&
       (category === "cn_official" ||
         category === "aggregator" ||
         category === "third_party")
     );
-  }, [category]);
+  }, [appId, category]);
 
   // 获取当前预设条目
   const currentPresetEntry = useMemo(() => {
@@ -123,9 +135,20 @@ export function useApiKeyLink({
 
   // 获取当前供应商的网址（用于 API Key 链接）
   const getWebsiteUrl = useMemo(() => {
-    if (linkPreset) return presetLinkUrl(linkPreset);
+    if (linkPreset) {
+      // DSH 无 OAuth：官方路由也是普通 API Key，链接优先指向官方取键页；
+      // 其余应用维持 presetLinkUrl 的分类规则（official 走官网）。
+      if (
+        appId === "deepseek-harness" &&
+        linkPreset.category === "official" &&
+        linkPreset.apiKeyUrl
+      ) {
+        return linkPreset.apiKeyUrl;
+      }
+      return presetLinkUrl(linkPreset);
+    }
     return formWebsiteUrl || "";
-  }, [linkPreset, formWebsiteUrl]);
+  }, [appId, linkPreset, formWebsiteUrl]);
 
   // 提取合作伙伴信息
   const isPartner = linkPreset?.isPartner ?? false;
@@ -140,7 +163,8 @@ export function useApiKeyLink({
       appId === "agy" ||
       appId === "opencode" ||
       appId === "openclaw" ||
-      appId === "hermes"
+      appId === "hermes" ||
+      appId === "deepseek-harness"
         ? shouldShowApiKeyLink
         : false,
     websiteUrl: getWebsiteUrl,

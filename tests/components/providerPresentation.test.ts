@@ -645,6 +645,46 @@ describe("buildAdditiveSections", () => {
     );
   });
 
+  it("uses native DSH membership and protects the current default", () => {
+    const multi = provider("multi", {
+      settingsConfig: { models: [" first ", { id: "second" }, " "] },
+    });
+    const actions = additiveActions();
+    const sections = buildAdditiveSections({
+      app: "deepseek-harness",
+      t,
+      providers: [relay, multi, backup],
+      isInConfig: (p) => p.id !== backup.id,
+      dshCurrent: {
+        currentProviderId: relay.id,
+        currentModel: "current-model",
+      },
+      actions,
+    });
+
+    expect(sections.map((s) => [s.key, s.items.length])).toEqual([
+      ["added", 2],
+      ["available", 1],
+    ]);
+    expect(item(sections, relay.id)).toMatchObject({
+      tone: "neutral",
+      deleteDisabledReason: "providerCard.reason.inUseCannotDelete",
+      chips: [{ key: "defaultModel", label: "current-model" }],
+    });
+    expect(button(sections, relay.id, "remove").disabledReason).toBe(
+      "providerCard.reason.currentCannotRemove",
+    );
+    const setDefault = button(sections, multi.id, "setDefault");
+    expect(setDefault.menu?.options.map((option) => option.key)).toEqual([
+      "first",
+      "second",
+    ]);
+    setDefault.menu?.options[1].onSelect();
+    expect(actions.setDefault).toHaveBeenCalledWith(multi, "second");
+    button(sections, backup.id, "add").onClick();
+    expect(actions.add).toHaveBeenCalledWith(backup);
+  });
+
   it("protects every official Kimi OAuth provider, including inactive accounts", () => {
     const accounts = ["managed:kimi-code", "kimi-code-ccs-second"].map((id) =>
       provider(id, {

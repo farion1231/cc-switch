@@ -48,7 +48,7 @@ import {
   useUninstallSkill,
   useUpdateSkill,
 } from "@/hooks/useSkills";
-import type { AppId } from "@/lib/api/types";
+import type { SkillsAppId as AppId } from "@/config/appConfig";
 import { SKILLS_APP_IDS } from "@/config/appConfig";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";

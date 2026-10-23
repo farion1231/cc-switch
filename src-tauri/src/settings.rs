@@ -51,6 +51,13 @@ pub struct VisibleApps {
     pub hermes: bool,
     #[serde(default = "default_true")]
     pub pi: bool,
+    #[serde(
+        rename = "deepseek-harness",
+        alias = "deepseekHarness",
+        alias = "deepseek_harness",
+        default = "default_true"
+    )]
+    pub deepseek_harness: bool,
     #[serde(default = "default_true")]
     pub mcode: bool,
     #[serde(default = "default_true")]
@@ -71,6 +78,7 @@ impl Default for VisibleApps {
             openclaw: true,
             hermes: false, // 默认不显示，需用户手动启用
             pi: true,
+            deepseek_harness: true,
             mcode: true,
             kimi: true,
             agy: true,
@@ -91,6 +99,7 @@ impl VisibleApps {
             AppType::OpenClaw => self.openclaw,
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
+            AppType::DeepSeekHarness => self.deepseek_harness,
             AppType::Mcode => self.mcode,
             AppType::Kimi => self.kimi,
             AppType::Agy => self.agy,
@@ -538,6 +547,8 @@ pub struct AppSettings {
     pub hermes_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pi_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dsh_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -673,6 +684,7 @@ impl Default for AppSettings {
             openclaw_config_dir: None,
             hermes_config_dir: None,
             pi_config_dir: None,
+            dsh_config_dir: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
@@ -763,6 +775,13 @@ impl AppSettings {
 
         self.pi_config_dir = self
             .pi_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.dsh_config_dir = self
+            .dsh_config_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -1259,6 +1278,17 @@ pub fn get_pi_override_dir() -> Option<PathBuf> {
         .map(|path| resolve_override_path(path))
 }
 
+// The only caller lives behind `#[cfg(not(test))]` in
+// deepseek_harness_config::settings_override, so test builds see no caller.
+#[cfg_attr(test, allow(dead_code))]
+pub fn get_dsh_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .dsh_config_dir
+        .as_ref()
+        .map(|path| resolve_override_path(path))
+}
+
 pub fn preserve_codex_official_auth_on_switch() -> bool {
     settings_store()
         .read()
@@ -1341,7 +1371,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
         AppType::Agy => settings.current_provider_agy.clone(),
-        AppType::Pi | AppType::Mcode | AppType::Kimi => None,
+        AppType::Pi | AppType::DeepSeekHarness | AppType::Kimi | AppType::Mcode => None,
     }
 }
 
@@ -1350,6 +1380,11 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
 /// 这是设备级别的设置，不随数据库同步。
 /// 传入 `None` 会清除当前供应商设置。
 pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), AppError> {
+    // Pi and DeepSeek Harness keep no device-level current provider in the
+    // settings store; skip the pointless read-modify-write of the file.
+    if matches!(app_type, AppType::Pi | AppType::DeepSeekHarness) {
+        return Ok(());
+    }
     let id_owned = id.map(|s| s.to_string());
     mutate_settings(|settings| match app_type {
         AppType::Claude => settings.current_provider_claude = id_owned.clone(),
@@ -1361,7 +1396,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
         AppType::Agy => settings.current_provider_agy = id_owned.clone(),
-        AppType::Pi | AppType::Mcode | AppType::Kimi => {}
+        AppType::Pi | AppType::DeepSeekHarness | AppType::Kimi | AppType::Mcode => {}
     })
 }
 

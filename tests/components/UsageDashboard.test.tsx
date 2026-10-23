@@ -364,6 +364,7 @@ describe("UsageDashboard", () => {
         hermes: true,
         pi: false,
         mcode: false,
+        "deepseek-harness": false,
         kimi: false,
         agy: false,
       },

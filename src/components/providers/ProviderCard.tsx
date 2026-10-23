@@ -568,7 +568,13 @@ export function ProviderCard({
             onEdit={() => onEdit(provider)}
             onDelete={() => onDelete(provider)}
             onDuplicate={
-              onDuplicate && !(appId === "kimi" && isOfficial)
+              onDuplicate &&
+              !(
+                appId === "deepseek-harness" &&
+                (provider.id === "deepseek-official" ||
+                  provider.meta?.providerType === "dsh_deepseek")
+              ) &&
+              !(appId === "kimi" && isOfficial)
                 ? () => onDuplicate(provider)
                 : undefined
             }

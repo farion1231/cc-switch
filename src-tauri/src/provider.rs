@@ -231,6 +231,9 @@ impl Provider {
                 crate::pi_config::provider_base_url(settings).unwrap_or_default(),
                 str_at(settings.get("apiKey")),
             ),
+            // DSH usage-script credential wiring ships with the usage follow-up,
+            // not with the first provider-switching PR.
+            AppType::DeepSeekHarness => (String::new(), String::new()),
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
             AppType::OpenCode | AppType::Mcode => {
                 let options = settings.get("options");
@@ -605,6 +608,9 @@ pub struct ProviderMeta {
     /// - "github_copilot": GitHub Copilot 供应商
     #[serde(rename = "providerType", skip_serializing_if = "Option::is_none")]
     pub provider_type: Option<String>,
+    /// Active model for a mirrored DeepSeek Harness native provider.
+    #[serde(rename = "dshCurrentModel", skip_serializing_if = "Option::is_none")]
+    pub dsh_current_model: Option<String>,
     /// GitHub Copilot 关联账号 ID（仅 github_copilot 供应商使用）
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]

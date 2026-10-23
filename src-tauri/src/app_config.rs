@@ -44,6 +44,7 @@ impl McpApps {
             AppType::Kimi => self.kimi,
             AppType::Pi => self.pi,
             AppType::ClaudeDesktop => false,
+            AppType::DeepSeekHarness => false,
             AppType::Agy => self.agy,
         }
     }
@@ -61,7 +62,8 @@ impl McpApps {
             AppType::Mcode => self.mcode = enabled,
             AppType::Kimi => self.kimi = enabled,
             AppType::Pi => self.pi = enabled,
-            AppType::ClaudeDesktop => {}
+            AppType::ClaudeDesktop => {} // Claude Desktop 3P provider config doesn't support MCP here
+            AppType::DeepSeekHarness => {}
             AppType::Agy => self.agy = enabled,
         }
     }
@@ -158,6 +160,7 @@ impl SkillApps {
             AppType::OpenClaw => false,
             AppType::Agy => self.agy,
             AppType::ClaudeDesktop => false,
+            AppType::DeepSeekHarness => false,
         }
     }
 
@@ -176,6 +179,7 @@ impl SkillApps {
             AppType::OpenClaw => {}
             AppType::Agy => self.agy = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
+            AppType::DeepSeekHarness => {}
         }
     }
 
@@ -446,6 +450,13 @@ pub enum AppType {
     OpenClaw,
     Hermes,
     Pi,
+    #[serde(
+        rename = "deepseek-harness",
+        alias = "deepseekharness",
+        alias = "deepseek_harness",
+        alias = "dsh"
+    )]
+    DeepSeekHarness,
     Mcode,
     Kimi,
     Agy,
@@ -463,6 +474,7 @@ impl AppType {
             AppType::OpenClaw => "openclaw",
             AppType::Hermes => "hermes",
             AppType::Pi => "pi",
+            AppType::DeepSeekHarness => "deepseek-harness",
             AppType::Mcode => "mcode",
             AppType::Kimi => "kimi",
             AppType::Agy => "agy",
@@ -473,7 +485,7 @@ impl AppType {
     ///
     /// - Switch mode (false): Only the current provider is written to live config (Claude, Codex, Gemini)
     /// - Additive mode (true): Providers coexist in native config and can be enabled independently
-    ///   (OpenCode, OpenClaw, Hermes, Pi)
+    ///   (OpenCode, OpenClaw, Hermes, Pi, Mcode, DeepSeekHarness)
     pub fn is_additive_mode(&self) -> bool {
         matches!(
             self,
@@ -482,6 +494,7 @@ impl AppType {
                 | AppType::Hermes
                 | AppType::Pi
                 | AppType::Mcode
+                | AppType::DeepSeekHarness
                 | AppType::Kimi
         )
     }
@@ -512,6 +525,7 @@ impl AppType {
             AppType::OpenClaw,
             AppType::Hermes,
             AppType::Pi,
+            AppType::DeepSeekHarness,
             AppType::Mcode,
             AppType::Kimi,
             AppType::Agy,
@@ -535,13 +549,16 @@ impl FromStr for AppType {
             "openclaw" => Ok(AppType::OpenClaw),
             "hermes" => Ok(AppType::Hermes),
             "pi" => Ok(AppType::Pi),
+            "deepseek-harness" | "deepseek_harness" | "deepseekharness" | "dsh" => {
+                Ok(AppType::DeepSeekHarness)
+            }
             "mcode" => Ok(AppType::Mcode),
             "kimi" | "kimi-code" => Ok(AppType::Kimi),
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, agy。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, agy."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, deepseek-harness, mcode, kimi, agy。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, deepseek-harness (dsh), mcode, kimi, agy."),
             )),
         }
     }
@@ -581,7 +598,11 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode.as_ref(),
             AppType::OpenClaw => self.openclaw.as_ref(),
             AppType::Hermes => self.hermes.as_ref(),
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy => None,
+            AppType::Pi
+            | AppType::DeepSeekHarness
+            | AppType::Kimi
+            | AppType::Mcode
+            | AppType::Agy => None,
         }
     }
 
@@ -596,7 +617,11 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode = snippet,
             AppType::OpenClaw => self.openclaw = snippet,
             AppType::Hermes => self.hermes = snippet,
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy => {}
+            AppType::Pi
+            | AppType::DeepSeekHarness
+            | AppType::Kimi
+            | AppType::Mcode
+            | AppType::Agy => {}
         }
     }
 }
@@ -923,7 +948,11 @@ impl MultiAppConfig {
             AppType::Hermes => &mut config.prompts.hermes.prompts,
             // Pi was added after prompts moved to SQLite. Keeping it out of
             // this legacy config avoids a second, unused prompt state.
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy => return Ok(false),
+            AppType::Pi
+            | AppType::DeepSeekHarness
+            | AppType::Kimi
+            | AppType::Mcode
+            | AppType::Agy => return Ok(false),
         };
 
         prompts.insert(id, prompt);
@@ -967,7 +996,13 @@ impl MultiAppConfig {
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
                 AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
-                AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy => continue, // Pi didn't exist in v3.6.x, skip
+                AppType::Pi
+                | AppType::DeepSeekHarness
+                | AppType::Kimi
+                | AppType::Mcode
+                | AppType::Agy => {
+                    continue; // Pi didn't exist in v3.6.x, skip
+                }
             };
 
             for (id, entry) in old_servers {
@@ -1082,6 +1117,22 @@ mod tests {
     use std::env;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn app_type_deserializes_deepseek_harness_with_hyphen() {
+        assert_eq!(
+            serde_json::from_str::<AppType>("\"deepseek-harness\"").unwrap(),
+            AppType::DeepSeekHarness
+        );
+        assert_eq!(
+            serde_json::to_string(&AppType::DeepSeekHarness).unwrap(),
+            "\"deepseek-harness\""
+        );
+        assert_eq!(
+            "deepseekharness".parse::<AppType>().unwrap(),
+            AppType::DeepSeekHarness
+        );
+    }
 
     #[test]
     fn app_type_parses_claude_desktop_aliases() {

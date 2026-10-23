@@ -20,6 +20,7 @@ const PROMPT_FILE_NAME: Partial<Record<AppId, string>> = {
   openclaw: "AGENTS.md",
   hermes: "SOUL.md",
   pi: "AGENTS.md",
+  "deepseek-harness": "AGENTS.md",
   mcode: "AGENTS.md",
   kimi: "AGENTS.md",
 };

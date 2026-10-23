@@ -44,6 +44,7 @@ type PresetFields = AnyPreset & {
 
 export function presetGroup(preset: AnyPreset): PresetGroup {
   const p = preset as PresetFields;
+  if ("id" in p && p.id === "deepseek-official") return "vendor";
   if (p.category === "official" || p.requiresOAuth || p.providerType) {
     return "login";
   }

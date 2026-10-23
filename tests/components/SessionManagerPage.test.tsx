@@ -288,6 +288,7 @@ describe("SessionManagerPage", () => {
         hermes: false,
         pi: false,
         mcode: false,
+        "deepseek-harness": false,
         kimi: false,
         agy: false,
       },

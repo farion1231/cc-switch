@@ -48,6 +48,7 @@ import { cn } from "@/lib/utils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
+import { useDshCurrentState } from "@/lib/query/dsh";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import {
   buildAdditiveSections,
@@ -141,6 +142,8 @@ export function ProviderList({
   const { data: hermesLiveIds, isPending: isHermesLiveIdsPending } =
     useHermesLiveProviderIds(appId === "hermes");
   const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
+  const { data: dshCurrentState, isPending: isDshCurrentStatePending } =
+    useDshCurrentState(appId === "deepseek-harness");
   const { data: openclawDefaultModel } = useOpenClawDefaultModel(
     appId === "openclaw",
   );
@@ -162,6 +165,7 @@ export function ProviderList({
     (appId === "opencode" && isOpencodeLiveIdsPending) ||
     (appId === "openclaw" && isOpenclawLiveIdsPending) ||
     (appId === "hermes" && isHermesLiveIdsPending) ||
+    (appId === "deepseek-harness" && isDshCurrentStatePending) ||
     (appId === "pi" && isPiCurrentStatePending);
 
   const isInConfig = useCallback(
@@ -176,6 +180,8 @@ export function ProviderList({
           return openclawLiveIds?.includes(provider.id) ?? false;
         case "hermes":
           return hermesLiveIds?.includes(provider.id) ?? false;
+        case "deepseek-harness":
+          return dshCurrentState?.providerIds.includes(provider.id) ?? false;
         case "pi":
           return isPiStateReady
             ? (piCurrentState?.enabledProviderIds.includes(provider.id) ??
@@ -190,6 +196,7 @@ export function ProviderList({
       opencodeLiveIds,
       openclawLiveIds,
       hermesLiveIds,
+      dshCurrentState,
       isPiStateReady,
       piCurrentState,
     ],
@@ -216,6 +223,10 @@ export function ProviderList({
       }
       if (appId === "claude-desktop") {
         return (await providersApi.importClaudeDesktopFromClaude()) > 0;
+      }
+      if (appId === "deepseek-harness") {
+        const count = await providersApi.importDeepSeekHarnessFromLive();
+        return count > 0;
       }
       return providersApi.importDefault(appId);
     },
@@ -371,6 +382,7 @@ export function ProviderList({
           .map((model) => ({ id: model.id, name: model.name }));
       },
       hermesCurrentId: hermesModelConfig?.provider ?? null,
+      dshCurrent: dshCurrentState,
       isHermesManaged: (provider) =>
         isHermesReadOnlyProvider(provider.settingsConfig),
       piStateUnavailable: appId === "pi" && !isPiStateReady,
@@ -402,6 +414,7 @@ export function ProviderList({
     currentOmoId,
     currentOmoSlimId,
     hermesModelConfig?.provider,
+    dshCurrentState,
     isPiStateReady,
     currentProviderId,
     onRemoveFromConfig,
@@ -462,6 +475,8 @@ export function ProviderList({
   // Antigravity 没有「启用」，每张卡都随时能打开，额度一律照常显示
   const isCurrentFor = (provider: Provider) => {
     if (appId === "pi") return false;
+    if (appId === "deepseek-harness")
+      return provider.id === dshCurrentState?.currentProviderId;
     if (appId === "agy") return true;
     if (provider.category === "omo") return provider.id === currentOmoId;
     if (provider.category === "omo-slim")

@@ -26,6 +26,7 @@ export const APP_IDS: AppId[] = [
   "openclaw",
   "hermes",
   "pi",
+  "deepseek-harness",
   "mcode",
   "kimi",
   "agy",
@@ -41,13 +42,18 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   openclaw: true,
   hermes: true,
   pi: true,
+  "deepseek-harness": true,
   mcode: true,
   kimi: true,
   agy: true,
 };
 
 /** App IDs shown in Skills panels. */
-export const SKILLS_APP_IDS: AppId[] = [
+export type SkillsAppId = Exclude<
+  AppId,
+  "claude-desktop" | "openclaw" | "deepseek-harness"
+>;
+export const SKILLS_APP_IDS: SkillsAppId[] = [
   "claude",
   "codex",
   "gemini",
@@ -107,10 +113,17 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi"
+  | "opencode"
+  | "openclaw"
+  | "hermes"
+  | "pi"
+  | "mcode"
+  | "kimi"
+  | "deepseek-harness"
 >;
 
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
+  "deepseek-harness",
   "mcode",
   "kimi",
   "opencode",
@@ -139,7 +152,10 @@ export function usesEditorView(appId: AppId): boolean {
 }
 
 /** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
-export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw">;
+export type McpAppId = Exclude<
+  AppId,
+  "claude-desktop" | "openclaw" | "deepseek-harness"
+>;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
   "codex",
@@ -268,6 +284,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-fuchsia-500/10 ring-1 ring-fuchsia-500/20 hover:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400",
     badgeClass:
       "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
+  },
+  "deepseek-harness": {
+    label: "DeepSeek Harness",
+    icon: (
+      <ProviderIcon
+        icon="deepseek"
+        name="DeepSeek Harness"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-sky-500/10 ring-1 ring-sky-500/20 hover:bg-sky-500/20 text-sky-600 dark:text-sky-400",
+    badgeClass:
+      "bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 border-0 gap-1.5",
   },
   agy: {
     label: "Antigravity",

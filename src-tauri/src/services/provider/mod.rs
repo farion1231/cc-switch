@@ -10,6 +10,7 @@ pub(crate) mod codex_direct;
 mod codex_editor;
 mod codex_login;
 pub(crate) mod codex_official_models;
+mod deepseek_harness;
 mod editor_toml;
 mod endpoints;
 mod gemini_auth;
@@ -47,6 +48,17 @@ pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError
     pi::import_from_live(state)
 }
 
+pub fn import_deepseek_harness_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    deepseek_harness::import_from_live(state)
+}
+
+pub fn set_dsh_current_model(
+    state: &AppState,
+    provider_id: &str,
+    model_id: &str,
+) -> Result<(), AppError> {
+    deepseek_harness::set_current_model(state, provider_id, model_id)
+}
 pub use claude_editor::{EditorSave, EditorView};
 
 // Internal re-exports (pub(crate))
@@ -2336,6 +2348,11 @@ requires_openai_auth = true
             .expect("set current provider");
         crate::settings::set_current_provider(&AppType::ClaudeDesktop, Some("p1"))
             .expect("set local current provider");
+        let mut proxy_config = db.get_proxy_config().await.expect("get proxy config");
+        proxy_config.listen_port = 0;
+        db.update_proxy_config(proxy_config)
+            .await
+            .expect("set test proxy config to an ephemeral port");
 
         // 路由模式路由到这张映射卡：编辑它要按新行重写指向本地路由的 profile。
         crate::mode::controller::enter_with_route(
@@ -5458,6 +5475,9 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::list(state);
         }
+        if app_type == AppType::DeepSeekHarness {
+            return deepseek_harness::list(state);
+        }
         if matches!(app_type, AppType::Mcode | AppType::Kimi) {
             let native = if app_type == AppType::Kimi {
                 crate::kimi_config::get_providers()?
@@ -5500,6 +5520,13 @@ impl ProviderService {
     ///
     /// 对于累加模式应用（OpenCode, OpenClaw），不存在"当前供应商"概念，直接返回空字符串。
     pub fn current(state: &AppState, app_type: AppType) -> Result<String, AppError> {
+        // Additive mode apps have no "current" provider concept. DeepSeek
+        // Harness is additive but keeps a live current selection
+        // (`agent-default-model`), so it must be resolved first.
+        if app_type == AppType::DeepSeekHarness {
+            return crate::deepseek_harness_config::read_native_state()
+                .map(|state| state.current_provider.unwrap_or_default());
+        }
         if app_type == AppType::Kimi {
             return crate::kimi_config::current_provider();
         }
@@ -5607,6 +5634,9 @@ impl ProviderService {
         }
         if app_type == AppType::Pi {
             return pi::add(state, provider, add_to_live);
+        }
+        if app_type == AppType::DeepSeekHarness {
+            return deepseek_harness::add(state, provider, add_to_live);
         }
 
         let mut provider = provider;
@@ -6180,6 +6210,9 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::update(state, original_id, provider);
         }
+        if app_type == AppType::DeepSeekHarness {
+            return deepseek_harness::update(state, original_id, provider);
+        }
 
         let mut provider = provider;
         let original_id = original_id.unwrap_or(provider.id.as_str()).to_string();
@@ -6466,6 +6499,9 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::delete(state, id);
         }
+        if app_type == AppType::DeepSeekHarness {
+            return deepseek_harness::delete(state, id);
+        }
         if app_type == AppType::Kimi {
             Self::ensure_kimi_provider_editable(id)?;
             return crate::kimi_config::save_and_commit(id, None, false, || {
@@ -6605,6 +6641,9 @@ impl ProviderService {
             AppType::Hermes => {
                 remove_hermes_provider_from_live(id)?;
             }
+            AppType::DeepSeekHarness => {
+                deepseek_harness::remove_from_live(state, id)?;
+            }
             AppType::Mcode => crate::mcode_config::remove_provider(id)?,
             AppType::Kimi => crate::kimi_config::remove_provider(id)?,
             _ => {
@@ -6676,6 +6715,9 @@ impl ProviderService {
     ) -> Result<SwitchResult, AppError> {
         if app_type == AppType::Pi {
             return pi::enable(state, id);
+        }
+        if app_type == AppType::DeepSeekHarness {
+            return deepseek_harness::enable(state, id);
         }
         // Antigravity 的卡只作用于它打开的终端，没有「启用」（见 agy_config 模块说明）。
         if app_type == AppType::Agy {
@@ -7133,7 +7175,11 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy => Ok(String::new()),
+            AppType::Pi
+            | AppType::DeepSeekHarness
+            | AppType::Kimi
+            | AppType::Mcode
+            | AppType::Agy => Ok(String::new()),
         }
     }
 
@@ -7151,7 +7197,11 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Agy => Ok(String::new()),
+            AppType::Pi
+            | AppType::DeepSeekHarness
+            | AppType::Kimi
+            | AppType::Mcode
+            | AppType::Agy => Ok(String::new()),
         }
     }
 
@@ -7917,6 +7967,18 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::DeepSeekHarness => {
+                serde_json::from_value::<
+                    crate::deepseek_harness_config::DeepSeekHarnessProviderConfig,
+                >(provider.settings_config.clone())
+                .map_err(|error| {
+                    AppError::localized(
+                        "provider.deepseek_harness.settings.invalid",
+                        format!("DeepSeek Harness 配置无效：{error}"),
+                        format!("Invalid DeepSeek Harness configuration: {error}"),
+                    )
+                })?;
+            }
             AppType::Kimi => {
                 crate::kimi_config::validate_provider(&provider.id, &provider.settings_config)?
             }
@@ -8156,6 +8218,30 @@ impl ProviderService {
                 let base_url = provider
                     .settings_config
                     .get("baseUrl")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                Ok((api_key, base_url))
+            }
+            AppType::DeepSeekHarness => {
+                let api_key = provider
+                    .settings_config
+                    .get("apiKey")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.deepseek_harness.api_key.missing",
+                            "缺少 API Key",
+                            "API key is missing",
+                        )
+                    })?
+                    .to_string();
+
+                let base_url = provider
+                    .settings_config
+                    .get("baseURL")
+                    .or_else(|| provider.settings_config.get("baseUrl"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();

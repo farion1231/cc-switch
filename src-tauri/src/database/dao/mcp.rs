@@ -94,11 +94,11 @@ impl Database {
             AppType::GrokBuild => Some("enabled_grokbuild"),
             AppType::OpenCode => Some("enabled_opencode"),
             AppType::Hermes => Some("enabled_hermes"),
-            // These applications intentionally have no MCP flag in the SSOT.
             AppType::Mcode => Some("enabled_mcode"),
             AppType::Kimi => Some("enabled_kimi"),
             AppType::Pi => Some("enabled_pi"),
-            AppType::ClaudeDesktop | AppType::OpenClaw => None,
+            // These applications intentionally have no MCP flag in the SSOT.
+            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::DeepSeekHarness => None,
             AppType::Agy => Some("enabled_agy"),
         };
 

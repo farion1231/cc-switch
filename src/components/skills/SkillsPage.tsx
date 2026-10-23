@@ -26,7 +26,7 @@ import {
   useSearchSkillsSh,
   useSkillRepos,
 } from "@/hooks/useSkills";
-import type { AppId } from "@/lib/api/types";
+import type { SkillsAppId as AppId } from "@/config/appConfig";
 import type {
   DiscoverableSkill,
   InstalledSkill,

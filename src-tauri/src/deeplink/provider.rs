@@ -350,6 +350,11 @@ pub(crate) fn build_provider_from_request(
                 "Add MCode providers from the MCode page".into(),
             ))
         }
+        AppType::DeepSeekHarness => {
+            return Err(AppError::InvalidInput(
+                "These providers must be added from their provider page".to_string(),
+            ));
+        }
         AppType::Agy => {
             let mut settings = build_gemini_settings(request);
             settings["env"]

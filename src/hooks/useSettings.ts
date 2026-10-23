@@ -61,6 +61,7 @@ const DIRECTORY_KEYS = [
   "openclawConfigDir",
   "hermesConfigDir",
   "piConfigDir",
+  "dshConfigDir",
 ] as const;
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -133,6 +134,7 @@ export function useSettings(): UseSettingsResult {
       openclaw: sanitizeDir(data?.openclawConfigDir),
       hermes: sanitizeDir(data?.hermesConfigDir),
       pi: sanitizeDir(data?.piConfigDir),
+      dsh: sanitizeDir(data?.dshConfigDir),
     });
     setRequiresRestart(false);
   }, [

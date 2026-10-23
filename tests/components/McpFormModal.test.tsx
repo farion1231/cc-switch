@@ -63,6 +63,14 @@ describe("McpFormModal (drawer)", () => {
     mocks.upsert.mockResolvedValue(undefined);
   });
 
+  it("offers Pi MCP support but excludes DeepSeek Harness", () => {
+    renderForm();
+    expect(MCP_APP_IDS).toContain("pi");
+    expect(MCP_APP_IDS).not.toContain("deepseek-harness");
+    expect(screen.getByRole("checkbox", { name: /Pi/ })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /DeepSeek/ })).toBeNull();
+  });
+
   it("fills the form from a template", async () => {
     renderForm();
     await userEvent.click(screen.getByRole("button", { name: "preset-stdio" }));

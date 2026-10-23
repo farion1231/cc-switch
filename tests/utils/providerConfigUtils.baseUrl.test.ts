@@ -4,6 +4,11 @@ import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
 describe("extractProviderBaseUrl", () => {
   it.each([
     [
+      "deepseek-harness",
+      { baseURL: "https://api.deepseek.com" },
+      "https://api.deepseek.com",
+    ],
+    [
       "claude / claude-desktop",
       { env: { ANTHROPIC_BASE_URL: "https://claude.example.com" } },
       "https://claude.example.com",

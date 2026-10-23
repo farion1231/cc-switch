@@ -694,6 +694,10 @@ export interface AdditiveInput {
   defaultModelOptions?: (provider: Provider) => { id: string; name?: string }[];
   /** Hermes：model.provider 指向的那家 */
   hermesCurrentId?: string | null;
+  dshCurrent?: {
+    currentProviderId?: string | null;
+    currentModel?: string | null;
+  } | null;
   isHermesManaged?: (provider: Provider) => boolean;
   /** Pi：读不到当前配置时一律不能改 */
   piStateUnavailable?: boolean;
@@ -914,6 +918,55 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
       }
     }
 
+    if (app === "deepseek-harness") {
+      isDefault = p.id === input.dshCurrent?.currentProviderId;
+      if (isDefault) {
+        status = {
+          label: t("providerCard.status.currentDefault"),
+          dot: "muted",
+        };
+        if (input.dshCurrent?.currentModel) {
+          chips.push({
+            key: "defaultModel",
+            label: input.dshCurrent.currentModel,
+            tone: "outline",
+          });
+        }
+        removeReason = t("providerCard.reason.currentCannotRemove");
+      } else {
+        const catalog = (p.settingsConfig as Record<string, unknown>)?.models;
+        const models = Array.isArray(catalog)
+          ? catalog.flatMap((model) => {
+              const id =
+                typeof model === "string"
+                  ? model.trim()
+                  : model &&
+                      typeof model === "object" &&
+                      typeof model.id === "string"
+                    ? model.id.trim()
+                    : "";
+              return id ? [id] : [];
+            })
+          : [];
+        buttons.push({
+          key: "setDefault",
+          label: t("providerCard.action.setDefault"),
+          onClick: () => actions.setDefault(p, models[0]),
+          menu:
+            models.length > 1
+              ? {
+                  title: t("openclaw.selectDefaultModel"),
+                  options: models.map((id) => ({
+                    key: id,
+                    label: id,
+                    onSelect: () => actions.setDefault(p, id),
+                  })),
+                }
+              : undefined,
+        });
+      }
+    }
+
     buttons.push({
       key: "remove",
       label: t("providerCard.action.remove"),
@@ -929,7 +982,10 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
         chips,
         dim: managed,
         editDisabledReason: readOnlyReason,
-        deleteDisabledReason: readOnlyReason ?? piBlocked,
+        deleteDisabledReason:
+          app === "deepseek-harness" && isDefault
+            ? t("providerCard.reason.inUseCannotDelete")
+            : (readOnlyReason ?? piBlocked),
         buttons,
       },
     });

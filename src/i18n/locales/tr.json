@@ -1062,6 +1062,7 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
+    "deepseek-harness": "DeepSeek Harness",
     "mcode": "MiniMax Code"
   },
   "mcode": {
@@ -1217,6 +1218,49 @@
       "templateDeletedSub": "Geri al, istemleri/{{slug}}.md dosyasını olduğu gibi geri yazar.",
       "templateRestored": "~/.pi/agent/prompts/{{slug}}.md geri yazdı"
     }
+  },
+  "dsh": {
+    "provider": {
+      "enabled": "DSH'de etkinleştirildi",
+      "removed": "DSH'den kaldırıldı",
+      "noModels": "Bu sağlayıcının yapılandırılmış modeli yok",
+      "defaultSet": "DSH varsayılan modeli olarak ayarlandı",
+      "defaultFailed": "DSH varsayılan modeli ayarlanamadı",
+      "selectDefaultModel": "Varsayılan modeli seçin"
+    }
+  },
+  "deepseekHarness": {
+    "desktopProfileHint": "Yalnızca masaüstü uygulamasının desktop profilini yönetir. Çalışan DSH, dosya değişikliklerini yüklemek için etkin HMR veya yeniden başlatma gerektirir; diğer CLI profilleri değiştirilmez.",
+    "providerKey": "Sağlayıcı Anahtarı",
+    "providerKeyRequired": "Sağlayıcı Anahtarı zorunludur",
+    "providerKeyDuplicate": "Bu Sağlayıcı Anahtarı zaten mevcut",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyInvalid": "Geçersiz biçim. Yalnızca küçük harf, rakam ve tire kullanın.",
+    "providerKeyOfficialHint": "Resmî DeepSeek rotası sabit deepseek-official anahtarını kullanır.",
+    "officialApiKeyPlaceholder": "DeepSeek API anahtarını girin (~/.dsh/.credentials.yaml içinde saklanır)",
+    "officialDuplicate": "Resmî DeepSeek rotası zaten mevcut ve iki kez eklenemez.",
+    "officialNotCopyable": "Resmî DeepSeek rotası kopyalanamaz.",
+    "providerKeyLockedHint": "Bu sağlayıcı DSH yapılandırmasında yer alıyor; anahtar kilitli.",
+    "providerKeyHint": "Yalnızca küçük harf, rakam ve tire.",
+    "modelsRequired": "En az bir model ekleyin",
+    "credentialRef": "Kimlik Bilgisi Referansı",
+    "credentialRefHint": "API anahtarını DSH kimlik bilgilerinde saklamak için kullanılan büyük harf tanımlayıcı.",
+    "credentialRefInvalid": "Kimlik Bilgisi Referansı; harf, rakam ve alt çizgi içeren büyük harf bir tanımlayıcı olmalıdır (örneğin MY_GATEWAY_API_KEY).",
+    "baseUrl": "Temel URL",
+    "baseUrlHint": "API uç noktasının temel URL'si.",
+    "apiFormat": "API Biçimi",
+    "api_openai_completions": "OpenAI Chat Completions",
+    "api_openai_responses": "OpenAI Responses",
+    "api_anthropic_messages": "Anthropic Messages",
+    "modelCatalog": "Model Kataloğu",
+    "modelId": "Model Kimliği",
+    "modelName": "Görünen Ad",
+    "contextWindow": "Bağlam Penceresi",
+    "addModel": "Ekle",
+    "noModels": "Yapılandırılmış model yok. Model eklemek için Ekle'ye tıklayın.",
+    "defaultModel": "Varsayılan Model",
+    "defaultModelHint": "DSH'nin varsayılan olarak kullandığı model.",
+    "defaultModelBackgroundHint": "Bu sağlayıcı, DSH'nin şu anda kullandığı rota değil; varsayılan model değişiklikleri uygulanmaz."
   },
   "appSwitcher": {
     "more": "Daha fazla uygulama"

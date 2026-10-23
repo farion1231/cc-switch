@@ -1,4 +1,3 @@
-import React from "react";
 import { useTranslation } from "react-i18next";
 import { Badge, badgeVariants } from "@/components/ui/badge";
 import type { AppId } from "@/lib/api/types";
@@ -6,25 +5,25 @@ import { APP_IDS, APP_ICON_MAP } from "@/config/appConfig";
 import { cn } from "@/lib/utils";
 import { HoverTip } from "@/components/ui/hover-tip";
 
-interface AppCountBarProps {
+interface AppCountBarProps<TApp extends AppId = AppId> {
   totalLabel: string;
   counts: Partial<Record<AppId, number>>;
-  appIds?: AppId[];
+  appIds?: TApp[];
   totalCount?: number;
-  onToggleAll?: (app: AppId, enabled: boolean) => void | Promise<void>;
-  pendingApp?: AppId | null;
+  onToggleAll?: (app: TApp, enabled: boolean) => void | Promise<void>;
+  pendingApp?: TApp | null;
   disabled?: boolean;
 }
 
-export const AppCountBar: React.FC<AppCountBarProps> = ({
+export const AppCountBar = <TApp extends AppId>({
   totalLabel,
   counts,
-  appIds = APP_IDS,
+  appIds = APP_IDS as TApp[],
   totalCount,
   onToggleAll,
   pendingApp,
   disabled = false,
-}) => {
+}: AppCountBarProps<TApp>) => {
   const { t } = useTranslation();
   const bulkToggleEnabled = totalCount !== undefined && !!onToggleAll;
   const bulkTotalCount = totalCount ?? 0;

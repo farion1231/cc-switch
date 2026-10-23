@@ -163,6 +163,15 @@ pub async fn get_config_status(
                 path,
             })
         }
+        AppType::DeepSeekHarness => {
+            let config_path = crate::deepseek_harness_config::get_profile_patch_path();
+            Ok(ConfigStatus {
+                exists: config_path.exists(),
+                path: crate::deepseek_harness_config::get_dsh_home()
+                    .to_string_lossy()
+                    .to_string(),
+            })
+        }
         AppType::Agy => {
             let dir = crate::agy_config::agy_dir();
             Ok(ConfigStatus {
@@ -192,6 +201,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
+        AppType::DeepSeekHarness => crate::deepseek_harness_config::get_dsh_home(),
         AppType::Kimi => crate::kimi_config::data_dir(),
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()
@@ -217,6 +227,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
+        AppType::DeepSeekHarness => crate::deepseek_harness_config::get_dsh_home(),
         AppType::Kimi => crate::kimi_config::data_dir(),
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()

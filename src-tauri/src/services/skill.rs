@@ -691,6 +691,7 @@ impl SkillService {
             AppType::Pi => {
                 return Ok(crate::pi_config::get_pi_agent_dir()?.join("skills"));
             }
+            AppType::DeepSeekHarness => {}
             AppType::Agy => {
                 return Ok(crate::config::get_home_dir()
                     .join(".gemini")
@@ -716,6 +717,9 @@ impl SkillService {
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
+            AppType::DeepSeekHarness => {
+                crate::deepseek_harness_config::get_dsh_home().join("skills")
+            }
             AppType::Agy => home.join(".gemini").join("config").join("skills"),
         })
     }
@@ -2922,7 +2926,7 @@ impl SkillService {
     fn is_sync_managed_app(app: &AppType) -> bool {
         !matches!(
             app,
-            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi
+            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi | AppType::DeepSeekHarness
         )
     }
 
@@ -4880,6 +4884,13 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn deepseek_harness_skills_are_not_sync_managed() {
+        assert!(!SkillService::is_sync_managed_app(
+            &AppType::DeepSeekHarness
+        ));
+    }
 
     #[test]
     fn skill_state_lock_allows_snapshots_but_excludes_writers() {
@@ -7399,6 +7410,10 @@ mod tests {
             "skills dir must live under the overridden test home, got {}",
             dir.display()
         );
+
+        let dsh_dir = SkillService::get_app_skills_dir(&AppType::DeepSeekHarness)
+            .expect("resolve deepseek harness skills dir");
+        assert_eq!(dsh_dir, temp.path().join(".dsh").join("skills"));
     }
 
     #[test]

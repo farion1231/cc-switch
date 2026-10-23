@@ -15,6 +15,7 @@ mod commands;
 mod config;
 mod database;
 mod deeplink;
+mod deepseek_harness_config;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
@@ -60,6 +61,9 @@ pub use commands::*;
 pub use config::{get_claude_mcp_path, get_claude_settings_path, read_json_file};
 pub use database::{Database, Profile};
 pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
+pub use deepseek_harness_config::{
+    get_credentials_path, get_dsh_home, get_profile_dir, get_profile_patch_path,
+};
 pub use error::AppError;
 pub use grok_config::get_grok_config_path;
 pub use mcp::{
@@ -971,6 +975,14 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No Pi provider changes from native config"),
                 Err(e) => log::warn!("✗ Failed to import Pi providers: {e}"),
             }
+            match crate::services::provider::import_deepseek_harness_providers_from_live(&app_state)
+            {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} DeepSeek Harness provider(s) from native config");
+                }
+                Ok(_) => log::debug!("○ No DeepSeek Harness provider changes from native config"),
+                Err(e) => log::warn!("✗ Failed to import DeepSeek Harness providers: {e}"),
+            }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
@@ -1080,17 +1092,7 @@ pub fn run() {
             if app_state.db.is_prompts_table_empty().unwrap_or(false) {
                 log::info!("Prompts table empty, importing from live configurations...");
 
-                for app in [
-                    crate::app_config::AppType::Claude,
-                    crate::app_config::AppType::Codex,
-                    crate::app_config::AppType::Gemini,
-                    crate::app_config::AppType::GrokBuild,
-                    crate::app_config::AppType::OpenCode,
-                    crate::app_config::AppType::OpenClaw,
-                    crate::app_config::AppType::Hermes,
-                    crate::app_config::AppType::Pi,
-                    crate::app_config::AppType::Mcode,
-                ] {
+                for app in crate::services::prompt::PromptService::first_launch_import_apps() {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
                         app.clone(),
@@ -1817,6 +1819,9 @@ pub fn run() {
             commands::delete_custom_icon,
             // OpenCode specific
             commands::import_opencode_providers_from_live,
+            commands::import_deepseek_harness_providers_from_live,
+            commands::get_dsh_current_state,
+            commands::set_dsh_current_model,
             commands::get_opencode_live_provider_ids,
             commands::get_opencode_default_model,
             commands::set_opencode_default_model,
