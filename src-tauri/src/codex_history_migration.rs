@@ -215,6 +215,8 @@ fn migrate_third_party_history(
             let conn =
                 Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
             if !Database::table_exists(&conn, "threads")?
+                || !Database::has_column(&conn, "threads", "id")?
+                || !Database::has_column(&conn, "threads", "model_provider")?
                 || !Database::has_column(&conn, "threads", "rollout_path")?
             {
                 return Err(AppError::Message(format!(
@@ -364,9 +366,6 @@ fn migrate_official_history_with_lock(
     )?;
     let migrated_jsonl_files = files.migrated;
     let migrated_state_rows = state.migrated;
-    // 备份代际记录来源目录，restore 据此只取当前目录的账本。
-    write_backup_generation_meta(&backup_root, &codex_dir_key)?;
-
     let outcome = CodexHistoryProviderBucketMigrationOutcome {
         source_provider_ids: source_provider_ids.into_iter().collect(),
         migrated_jsonl_files,
@@ -525,16 +524,34 @@ fn canonical_dir_string(dir: &Path) -> String {
         .to_string()
 }
 
-/// 在备份代际根目录写入 meta.json，记录这批备份来自哪个 Codex 目录。
-/// 代际目录不存在（本轮没有任何文件被迁移）时跳过。
+/// Bind a backup generation before copying originals or modifying history.
+/// Reusing an existing generation is allowed only for the same directory.
 fn write_backup_generation_meta(backup_root: &Path, codex_dir_key: &str) -> Result<(), AppError> {
-    if !backup_root.exists() {
-        return Ok(());
+    fs::create_dir_all(backup_root).map_err(|e| AppError::io(backup_root, e))?;
+    let meta_path = backup_root.join("meta.json");
+    match fs::read_to_string(&meta_path) {
+        Ok(text) => {
+            if serde_json::from_str::<Value>(&text)
+                .ok()
+                .is_some_and(|value| value["codexConfigDir"].as_str() == Some(codex_dir_key))
+            {
+                return Ok(());
+            }
+            return Err(AppError::Message(format!(
+                "Cannot verify Codex backup directory metadata: {}",
+                meta_path.display()
+            )));
+        }
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                && matches!(fs::symlink_metadata(&meta_path), Err(missing) if missing.kind() == std::io::ErrorKind::NotFound) =>
+            {}
+        Err(error) => return Err(AppError::io(&meta_path, error)),
     }
     let payload = serde_json::json!({ "codexConfigDir": codex_dir_key });
     let bytes =
         serde_json::to_vec_pretty(&payload).map_err(|e| AppError::JsonSerialize { source: e })?;
-    atomic_write(&backup_root.join("meta.json"), &bytes)
+    atomic_write(&meta_path, &bytes)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -727,12 +744,22 @@ fn collect_official_ledger(
     Ok((session_ids, thread_ids))
 }
 
-/// 备份代际是否属于指定 Codex 目录。无 meta.json 或解析失败时宽容接受：
-/// 早期版本的备份没有 meta，而那个时期不存在切目录场景；误纳的代价也被
-/// "按会话 id 精确匹配 + 仅改写 custom"双重条件兜底。
+/// Only absent metadata retains the legacy compatibility path. Explicit
+/// metadata that cannot be read or validated never proves directory ownership.
 fn backup_generation_matches_dir(generation: &Path, codex_dir_key: &str) -> bool {
-    let Ok(text) = fs::read_to_string(generation.join("meta.json")) else {
-        return true;
+    let meta_path = generation.join("meta.json");
+    let text = match fs::read_to_string(&meta_path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return matches!(fs::symlink_metadata(&meta_path), Err(missing) if missing.kind() == std::io::ErrorKind::NotFound);
+        }
+        Err(error) => {
+            log::warn!(
+                "Cannot verify Codex backup generation {}: {error}",
+                generation.display()
+            );
+            return false;
+        }
     };
     serde_json::from_str::<Value>(&text)
         .ok()
@@ -742,7 +769,7 @@ fn backup_generation_matches_dir(generation: &Path, codex_dir_key: &str) -> bool
                 .and_then(Value::as_str)
                 .map(|dir| dir == codex_dir_key)
         })
-        .unwrap_or(true)
+        .unwrap_or(false)
 }
 
 fn collect_official_session_ids_from_backup(path: &Path, session_ids: &mut HashSet<String>) {
@@ -1885,6 +1912,7 @@ fn backup_codex_jsonl_file(
     codex_dir: &Path,
     backup_root: &Path,
 ) -> Result<(), AppError> {
+    write_backup_generation_meta(backup_root, &canonical_dir_string(codex_dir))?;
     let backup_path = backup_root
         .join("jsonl")
         .join(relative_backup_path(path, codex_dir));
@@ -1897,6 +1925,7 @@ fn backup_codex_state_db(
     backup_root: &Path,
     source_conn: &Connection,
 ) -> Result<(), AppError> {
+    write_backup_generation_meta(backup_root, &canonical_dir_string(codex_dir))?;
     let backup_path = backup_root
         .join("state")
         .join(relative_backup_path(db_path, codex_dir));
@@ -3471,6 +3500,198 @@ model_provider = "aihubmix"
                 |row| row.get(0),
             )
             .expect("thread provider")
+    }
+
+    #[test]
+    #[serial]
+    fn history_safety_managed_migration_rejects_incomplete_indexes_before_file_writes() {
+        let mut violations = Vec::new();
+        for (case, schema) in [
+            (
+                "missing provider",
+                "CREATE TABLE threads (id TEXT, rollout_path TEXT);",
+            ),
+            (
+                "missing id",
+                "CREATE TABLE threads (model_provider TEXT, rollout_path TEXT);",
+            ),
+            (
+                "missing rollout",
+                "CREATE TABLE threads (id TEXT, model_provider TEXT);",
+            ),
+            ("missing threads", "CREATE TABLE unrelated (id TEXT);"),
+        ] {
+            let home = IsolatedHome::new();
+            let codex = home.codex_dir();
+            fs::create_dir_all(codex.join("sessions")).unwrap();
+            fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
+            let mut settings = crate::settings::get_settings();
+            settings.unify_codex_session_history = true;
+            crate::settings::update_settings(settings).unwrap();
+            let db = Database::memory().unwrap();
+            db.save_provider("codex", &Provider::with_id("synthetic-card".into(), "Synthetic relay".into(), serde_json::json!({"config": "model_provider = \"legacy-relay\"\n[model_providers.legacy-relay]\nbase_url = \"https://api.example/v1\"\n"}), None)).unwrap();
+            let path = codex.join("sessions/history.jsonl");
+            let before = session_meta_line("history", "legacy-relay");
+            fs::write(&path, &before).unwrap();
+            Connection::open(codex.join(CODEX_STATE_DB_FILENAME))
+                .unwrap()
+                .execute_batch(schema)
+                .unwrap();
+
+            let result = migrate_managed_codex_history_to_unified_bucket(&db);
+            if result.is_ok() || fs::read_to_string(&path).unwrap() != before {
+                violations.push((case, result.is_err()));
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "unsupported indexes must fail before changing history: {violations:?}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn history_safety_failed_official_migration_keeps_backups_scoped_to_the_original_directory() {
+        let home = IsolatedHome::new();
+        let codex = home.codex_dir();
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
+        let mut settings = crate::settings::get_settings();
+        settings.unify_codex_session_history = true;
+        settings.unify_codex_migrate_existing = Some(true);
+        crate::settings::update_settings(settings).unwrap();
+        let original = codex.join("sessions/cloned.jsonl");
+        fs::write(&original, session_meta_line("cloned", "openai")).unwrap();
+        // A real index decoding failure occurs after the rollout has been backed up.
+        Connection::open(codex.join(CODEX_STATE_DB_FILENAME)).unwrap()
+            .execute_batch("CREATE TABLE threads (id BLOB PRIMARY KEY, model_provider TEXT); INSERT INTO threads VALUES (x'01', 'openai');").unwrap();
+        assert!(maybe_migrate_codex_official_history_to_unified_bucket().is_err());
+        assert_eq!(
+            fs::read_to_string(&original).unwrap(),
+            session_meta_line("cloned", "custom")
+        );
+
+        let other = home.dir.path().join("other-codex");
+        fs::create_dir_all(other.join("sessions")).unwrap();
+        let other_path = other.join("sessions/cloned.jsonl");
+        let before = session_meta_line("cloned", "custom");
+        fs::write(&other_path, &before).unwrap();
+        let outcome = restore_codex_official_history_inner(
+            &other,
+            &official_history_unify_backup_parent(),
+            &home.dir.path().join("restore-backup"),
+            "",
+        )
+        .unwrap();
+        assert_eq!(
+            outcome.restored_jsonl_files, 0,
+            "a failed migration's ledger must not authorize another directory"
+        );
+        assert_eq!(fs::read_to_string(other_path).unwrap(), before);
+        assert!(!has_official_history_unify_backup_for_dir(
+            &official_history_unify_backup_parent(),
+            &canonical_dir_string(&other)
+        ));
+    }
+
+    #[test]
+    fn history_safety_damaged_backup_metadata_does_not_prove_directory_ownership() {
+        let dir = tempdir().unwrap();
+        let codex = dir.path().join("codex");
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        let path = codex.join("sessions/cloned.jsonl");
+        let before = session_meta_line("cloned", "custom");
+        let mut violations = Vec::new();
+        for (case, metadata) in [
+            ("invalid-json", Some("{")),
+            ("missing-scope", Some("{}")),
+            ("wrong-type", Some("{\"codexConfigDir\":42}")),
+            ("unreadable-meta", None),
+        ] {
+            let ledger = dir.path().join(case);
+            let generation = ledger.join("generation");
+            fs::create_dir_all(generation.join("jsonl/sessions")).unwrap();
+            fs::write(
+                generation.join("jsonl/sessions/cloned.jsonl"),
+                session_meta_line("cloned", "openai"),
+            )
+            .unwrap();
+            if let Some(text) = metadata {
+                fs::write(generation.join("meta.json"), text).unwrap();
+            } else {
+                fs::create_dir(generation.join("meta.json")).unwrap();
+            }
+            fs::write(&path, &before).unwrap();
+            let outcome = restore_codex_official_history_inner(
+                &codex,
+                &ledger,
+                &dir.path().join(format!("restore-{case}")),
+                "",
+            )
+            .unwrap();
+            if outcome.restored_jsonl_files != 0
+                || fs::read_to_string(&path).unwrap() != before
+                || has_official_history_unify_backup_for_dir(&ledger, &canonical_dir_string(&codex))
+            {
+                violations.push(case);
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "damaged explicit metadata must never act as an unscoped legacy ledger: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn history_safety_backup_scope_failure_never_changes_the_rollout() {
+        let dir = tempdir().unwrap();
+        let codex = dir.path().join("codex");
+        let backup = dir.path().join("backup");
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::create_dir(&backup).unwrap();
+        fs::write(
+            backup.join("meta.json"),
+            "{\"codexConfigDir\":\"unrelated-directory\"}",
+        )
+        .unwrap();
+        let path = codex.join("sessions/history.jsonl");
+        let before = session_meta_line("history", "legacy-relay");
+        fs::write(&path, &before).unwrap();
+        let sources = HashSet::from(["legacy-relay".to_string()]);
+        let result =
+            rewrite_codex_session_file_for_provider_bucket(&path, &codex, &sources, &backup);
+        assert!(
+            result.is_err(),
+            "an unusable backup scope must stop the write"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn history_safety_dangling_backup_metadata_is_not_an_absent_legacy_file() {
+        let dir = tempdir().unwrap();
+        let codex = dir.path().join("codex");
+        let ledger = dir.path().join("ledger");
+        let generation = ledger.join("generation");
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        fs::create_dir_all(&generation).unwrap();
+        std::os::unix::fs::symlink("missing-meta.json", generation.join("meta.json")).unwrap();
+        let path = codex.join("sessions/history.jsonl");
+        let before = session_meta_line("history", "openai");
+        fs::write(&path, &before).unwrap();
+        let accepted =
+            has_official_history_unify_backup_for_dir(&ledger, &canonical_dir_string(&codex));
+        let result = rewrite_codex_session_file_for_provider_bucket(
+            &path,
+            &codex,
+            &HashSet::from(["openai".into()]),
+            &generation,
+        );
+        assert!(
+            !accepted && result.is_err() && fs::read_to_string(&path).unwrap() == before,
+            "a dangling metadata entry must not be adopted or silently replaced"
+        );
     }
 
     #[test]

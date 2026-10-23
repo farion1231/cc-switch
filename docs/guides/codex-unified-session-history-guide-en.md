@@ -455,12 +455,13 @@ When injection is refused, live is not unified, and the migration gate (checking
 - **Class B**: created during the unified period—in no backup, and official / third-party can't be distinguished, so they're **never moved automatically** (stay `custom`);
 - **Class C**: pure third-party history from before enabling—never touched.
 
-### 5. The safety of migration / restore (data is never truly deleted; where the guarantee comes from)
+### 5. Migration / restore safeguards and recovery limits
 
-Four layers of design jointly guarantee that under **all paths, normal and abnormal**, the original session data is never truly deleted.
+These safeguards reduce migration risk. Quit Codex first; the operation does not provide atomicity across files or across processes.
 
 - **Only change the field, never the body**: migration / restore only switch the `model_provider` value in session metadata between `openai` and `custom`; conversation content, `response_item`, and `encrypted_content` are all kept exactly as is.
 - **Always copy a backup before a rewrite**: jsonl uses file copy, the state DB uses a full SQLite copy, both stored in a timestamped generation directory. Migration backups live in `codex-official-history-unify-v1/`, restore backups in the separate `codex-official-history-unify-restore-v1/`—the two are kept apart to keep the ledger clean.
+- **Verify backup ownership first**: new backups record their source Codex directory before originals are copied, so an index-stage failure cannot leave them unscoped. Existing directory metadata that is damaged or unreadable is rejected; only older backups with no metadata file retain the legacy compatibility path. Manual third-party migration also rejects indexes missing required ID, provider or rollout-path columns before changing any files.
 - **Equal-length patches**: plain JSONL metadata is patched in place, compressed files keep their representation, and index rows use transactional updates. Files with IDs that cannot fit without changing byte offsets are skipped and counted rather than reserialized.
 - **Pessimistic skip + idempotent and retryable**: when buckets are inconsistent (`live_not_unified`), it would rather not migrate; a single process lock serializes migration and restore to avoid "startup retry / post-save background task / disable-time restore" concurrently rewriting the same batch of files in both directions; the completion marker is bound to the Codex directory and written conditionally to prevent missed migrations; restore uses the "in the ledger + currently still custom" dual condition to prevent wrong changes. Restore scans the union of all backup generations, so even after many switch cycles it can still restore early-migrated sessions; a repeated restore returns `nothing_to_restore`, which is idempotent protection rather than failure.
 
@@ -478,4 +479,4 @@ The reasoning ciphertext inside a session can only be decrypted by the backend t
 
 ---
 
-**One last word for you**: what you see as "sessions disappeared / resume failed" is essentially **the session being moved to another history list (drawer), or the other backend being unable to decrypt the old reasoning content**; the files always sit untouched in `~/.codex/sessions/` (and `state_5.sqlite`). Checking "restore from backup" when you turn off the switch precisely flips the official sessions you migrated in back to the official list; and even if you don't restore, both the original `.jsonl` files and the backup copies under `~/.cc-switch/backups/codex-official-history-unify-*/` are all still there—**the data is never truly lost.**
+After a switch, check the selected history bucket and whether the current backend can read the earlier encrypted reasoning. Migration preserves conversation content and keeps backups under `~/.cc-switch/backups/codex-official-history-unify-*/`. Restore only changes verified ledger entries. Damaged backups or concurrent client writes may require manual recovery from a reliable copy; automatic recovery cannot be guaranteed for every failure.
