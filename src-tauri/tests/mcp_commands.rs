@@ -1761,6 +1761,7 @@ fn resync_targets_default_to_managed_apps_and_reject_unsupported() {
             "pi",
             "mcode",
             "kimi",
+            "dsh",
             "agy",
             "omp"
         ]

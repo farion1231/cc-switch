@@ -60,6 +60,22 @@ fn replace_entry(text: &str, id: &str, entry: Option<Yaml>) -> Result<String, Ap
         .transpose()
         .map_err(|error| AppError::Config(error.to_string()))?
         .unwrap_or_default();
+    if parsed.is_empty() {
+        if replacement.is_empty() {
+            return Ok(text.to_owned());
+        }
+        // Native profiles start with comments followed by `[]`. Appending a
+        // block entry to that flow sequence would produce invalid YAML.
+        let mut next: String = text
+            .split_inclusive('\n')
+            .filter(|line| line.trim().is_empty() || line.trim_start().starts_with('#'))
+            .collect();
+        if !next.is_empty() && !next.ends_with('\n') {
+            next.push('\n');
+        }
+        next.push_str(&replacement);
+        return Ok(next);
+    }
     let mut starts = vec![];
     let mut offset = 0;
     for line in text.split_inclusive('\n') {
@@ -69,9 +85,6 @@ fn replace_entry(text: &str, id: &str, entry: Option<Yaml>) -> Result<String, Ap
         offset += line.len();
     }
     if parsed.len() != starts.len() {
-        if parsed.is_empty() {
-            return Ok(replacement);
-        }
         return Err(AppError::Config(
             "Use block-style YAML for the DeepSeek Harness profile".into(),
         ));
@@ -653,8 +666,54 @@ fn sync_mcp_file_and_commit<T>(
 mod tests {
     use super::*;
 
+    // @deepseek-ai/dsh-app-boot@0.2.1-rc.2 PROFILE_PATCH_TEMPLATE.
+    const FACTORY_PROFILE: &str = "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries (id-targeted config\n# overrides, disables, and insert lists; `!!js` expressions allowed).\n[]\n";
+
     fn editor_config() -> Value {
         json!({"name":"Gateway","api":"openai-responses","options":{"baseURL":"https://gateway.example/v1","apiKey":"test-value","headers":{"X-Client":"cc-switch"}},"models":{"test-model":{"name":"Model","limit":{"context":100000,"output":1000},"modalities":{"input":["text","image"],"output":["text"]},"reasoningEfforts":{"off":null,"high":"high"},"compat":{"supportsStore":false}}}})
+    }
+
+    #[test]
+    fn provider_initializes_factory_profile_as_valid_block_yaml() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("cordis.patch.yml");
+        let credentials = temp.path().join(".credentials.yaml");
+        fs::write(&path, FACTORY_PROFILE).unwrap();
+        save_paths_and_commit(
+            &path,
+            &credentials,
+            "gateway",
+            Some(editor_config()),
+            true,
+            || Ok(()),
+        )
+        .unwrap();
+        let text = read_text(&path).unwrap();
+        assert!(text.starts_with(FACTORY_PROFILE.trim_end_matches("[]\n")));
+        assert_eq!(entries(&text).unwrap().len(), 1);
+        assert_eq!(get_providers_from(&path, &credentials).unwrap().len(), 1);
+        assert!(!text.lines().any(|line| line.trim() == "[]"));
+    }
+
+    #[test]
+    fn mcp_initializes_factory_profile_as_valid_block_yaml() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("cordis.patch.yml");
+        fs::write(&path, FACTORY_PROFILE).unwrap();
+        sync_mcp_file_and_commit(
+            &path,
+            "test",
+            Some(&json!({"type":"http","url":"https://example.com/mcp"})),
+            || Ok(()),
+        )
+        .unwrap();
+        let text = read_text(&path).unwrap();
+        assert!(text.starts_with(FACTORY_PROFILE.trim_end_matches("[]\n")));
+        let entries = entries(&text).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["config"]["serverName"], "test");
+        assert_eq!(entries[0]["config"]["transport"], "streamable-http");
+        assert!(!text.lines().any(|line| line.trim() == "[]"));
     }
 
     #[test]
