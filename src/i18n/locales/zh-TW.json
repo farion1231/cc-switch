@@ -4943,6 +4943,14 @@
       "statusLoadFailed": "無法讀取 WorkBuddy 帳號，請重試。",
       "empty": "還沒有 WorkBuddy 帳號。先在 WorkBuddy 裡登入，再收錄目前登入的帳號。",
       "importCurrent": "收錄目前登入",
+      "plan": {
+        "free": "免費版",
+        "pro": "專業版",
+        "team": "團隊版",
+        "enterprise": "企業版",
+        "personal": "個人版",
+        "_raw": "{{plan}}"
+      },
       "importNow": "收錄",
       "current": "WorkBuddy 使用中",
       "switchTo": "將 WorkBuddy 切換到這個帳號",

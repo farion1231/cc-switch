@@ -54,14 +54,19 @@ pub struct WorkBuddyPaths {
     pub auth_dir: PathBuf,
     /// `~/.workbuddy/keyblob`
     pub keyblob: PathBuf,
+    /// `~/.workbuddy/storage/skeleton/account-snapshot.json`：WorkBuddy 自己维护的当前登录画像
+    /// （明文 uid / 昵称 / 版型）。只读，用来补上 `.info` 里加密读不到的昵称和套餐。
+    pub profile_snapshot: PathBuf,
 }
 
 impl WorkBuddyPaths {
     /// 本机的真实位置。macOS 已确认；Windows / Linux 按 Electron 惯例推断，未实测。
     pub fn system() -> Self {
+        let data_dir = crate::workbuddy_config::data_dir();
         Self {
             auth_dir: system_shared_data_dir().join("auth"),
-            keyblob: crate::workbuddy_config::data_dir().join("keyblob"),
+            keyblob: data_dir.join("keyblob"),
+            profile_snapshot: data_dir.join("storage/skeleton/account-snapshot.json"),
         }
     }
 
@@ -126,6 +131,9 @@ struct AccountData {
     kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     nickname: Option<String>,
+    /// 版型 / 套餐（来自 WorkBuddy 明文画像的 `editionType`，如 free / pro）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    plan: Option<String>,
     /// 会话到期（秒）；明文才有
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expires_at: Option<i64>,
@@ -155,6 +163,8 @@ pub struct WorkBuddyAccount {
     pub id: String,
     pub kind: Option<String>,
     pub nickname: Option<String>,
+    /// 版型 / 套餐（WorkBuddy 明文画像里的 `editionType`，如 free / pro）
+    pub plan: Option<String>,
     pub expires_at: Option<i64>,
     pub refresh_expires_at: Option<i64>,
     pub added_at: i64,
@@ -176,6 +186,7 @@ impl From<&AccountData> for WorkBuddyAccount {
             id: data.id.clone(),
             kind: data.kind.clone(),
             nickname: data.nickname.clone(),
+            plan: data.plan.clone(),
             expires_at: data.expires_at,
             refresh_expires_at: data.refresh_expires_at,
             added_at: data.added_at,
@@ -220,8 +231,32 @@ struct Identity {
     id: String,
     kind: Option<String>,
     nickname: Option<String>,
+    /// 版型 / 套餐；`.info` 里没有明文，从 WorkBuddy 的明文画像补
+    plan: Option<String>,
     expires_at: Option<i64>,
     refresh_expires_at: Option<i64>,
+}
+
+/// WorkBuddy 自己维护的明文登录画像（`account-snapshot.json` 的 `primary`）。只取展示用的
+/// uid / 昵称 / 版型；绝不碰 token、手机号等任何加密或敏感字段。
+#[derive(Debug, Clone)]
+struct ProfileSnapshot {
+    uid: String,
+    nickname: Option<String>,
+    plan: Option<String>,
+}
+
+/// 读 WorkBuddy 的明文画像。读不到、解析失败、没有 uid 都当没有，调用方安全降级到 uid 显示。
+fn read_profile_snapshot(path: &Path) -> Option<ProfileSnapshot> {
+    let bytes = std::fs::read(path).ok()?;
+    let doc: Value = serde_json::from_slice(&bytes).ok()?;
+    let primary = doc.get("primary")?.as_object()?;
+    let uid = plain(primary.get("uid"))?;
+    Some(ProfileSnapshot {
+        uid,
+        nickname: plain(primary.get("nickname")),
+        plan: plain(primary.get("editionType")),
+    })
 }
 
 enum LiveLogin {
@@ -511,7 +546,20 @@ impl WorkBuddyAccountManager {
         };
         let identity = serde_json::from_slice::<Value>(&info)
             .ok()
-            .and_then(|doc| identity(&doc));
+            .and_then(|doc| identity(&doc))
+            .map(|mut identity| {
+                // 用 WorkBuddy 明文画像补上加密读不到的昵称和版型（仅当 uid 对得上当前登录）。
+                // 昵称不算敏感，可以缓存进账号表的显示名；画像读不到就保持 uid 显示。
+                if let Some(profile) = read_profile_snapshot(&self.paths.profile_snapshot) {
+                    if profile.uid == identity.id {
+                        if identity.nickname.is_none() {
+                            identity.nickname = profile.nickname;
+                        }
+                        identity.plan = profile.plan;
+                    }
+                }
+                identity
+            });
 
         let mut observations = BTreeMap::new();
         if let Ok(entries) = std::fs::read_dir(&self.paths.auth_dir) {
@@ -635,6 +683,7 @@ fn absorb_known(
         let unchanged = existing.bundle == bundle
             && (identity.kind.is_none() || existing.kind == identity.kind)
             && (identity.nickname.is_none() || existing.nickname == identity.nickname)
+            && (identity.plan.is_none() || existing.plan == identity.plan)
             && existing.expires_at == identity.expires_at
             && existing.refresh_expires_at == identity.refresh_expires_at;
         if unchanged {
@@ -660,6 +709,7 @@ fn upsert(store: &mut StoreFile, bundle: Bundle, identity: Identity) -> WorkBudd
             id: identity.id.clone(),
             kind: None,
             nickname: None,
+            plan: None,
             expires_at: None,
             refresh_expires_at: None,
             bundle: bundle.clone(),
@@ -674,6 +724,10 @@ fn upsert(store: &mut StoreFile, bundle: Bundle, identity: Identity) -> WorkBudd
     }
     if identity.nickname.is_some() {
         entry.nickname = identity.nickname;
+    }
+    // 画像暂时读不到时保留旧版型
+    if identity.plan.is_some() {
+        entry.plan = identity.plan;
     }
     entry.expires_at = identity.expires_at;
     entry.refresh_expires_at = identity.refresh_expires_at;
@@ -727,6 +781,8 @@ fn identity(doc: &Value) -> Option<Identity> {
         id,
         kind: plain(account.get("type")),
         nickname: plain(account.get("nickname")),
+        // `.info` 里没有明文版型；交给 read_live 用明文画像补
+        plan: None,
         expires_at: plain_timestamp(auth.and_then(|auth| auth.get("expiresAt"))),
         refresh_expires_at: plain_timestamp(auth.and_then(|auth| auth.get("refreshExpiresAt"))),
     })

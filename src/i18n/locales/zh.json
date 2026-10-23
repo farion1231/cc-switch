@@ -4942,6 +4942,14 @@
       "statusLoadFailed": "无法读取 WorkBuddy 账号，请重试。",
       "empty": "还没有 WorkBuddy 账号。先在 WorkBuddy 里登录，再收录当前登录的账号。",
       "importCurrent": "收录当前登录",
+      "plan": {
+        "free": "免费版",
+        "pro": "专业版",
+        "team": "团队版",
+        "enterprise": "企业版",
+        "personal": "个人版",
+        "_raw": "{{plan}}"
+      },
       "importNow": "收录",
       "current": "WorkBuddy 在用",
       "switchTo": "切换 WorkBuddy 到这个账号",

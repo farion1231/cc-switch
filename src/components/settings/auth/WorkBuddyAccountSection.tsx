@@ -137,6 +137,13 @@ export function WorkBuddyAccountSection({
     else removeAccount(target.accountId);
   };
 
+  // 版型 / 套餐：已知 code 本地化（authCenter.workbuddy.plan.<code>），未知的原样显示。
+  const planLabel = (code: string) =>
+    t([`authCenter.workbuddy.plan.${code}`, "authCenter.workbuddy.plan._raw"], {
+      defaultValue: code,
+      plan: code,
+    });
+
   const rows: GroupAccountRow[] = accounts.map((account) => {
     const date = signedInDate(account.authenticated_at, i18n.language);
     const details: React.ReactNode[] = account.requires_reauth
@@ -146,7 +153,7 @@ export function WorkBuddyAccountSection({
           }),
         ]
       : [
-          ...(account.account_kind ? [account.account_kind] : []),
+          ...(account.account_kind ? [planLabel(account.account_kind)] : []),
           ...(date
             ? [
                 t("authCenter.workbuddy.addedOn", {

@@ -4942,6 +4942,14 @@
       "statusLoadFailed": "Couldn't load WorkBuddy accounts. Try again.",
       "empty": "No WorkBuddy accounts yet. Sign in in WorkBuddy, then add the account it's signed in with.",
       "importCurrent": "Add current sign-in",
+      "plan": {
+        "free": "Free",
+        "pro": "Pro",
+        "team": "Team",
+        "enterprise": "Enterprise",
+        "personal": "Personal",
+        "_raw": "{{plan}}"
+      },
       "importNow": "Add",
       "current": "In use by WorkBuddy",
       "switchTo": "Switch WorkBuddy to this account",

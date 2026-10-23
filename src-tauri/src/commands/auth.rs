@@ -34,7 +34,7 @@ pub struct ManagedAuthAccount {
     pub reauth_required: bool,
     /// xAI 专用：refresh token 已失效，账号不可再用于请求。
     pub requires_reauth: bool,
-    /// WorkBuddy 专用：账号类型（`.info` 里的明文 `account.type`）
+    /// WorkBuddy 专用：版型 / 套餐（明文画像的 `editionType`），没有时退回账号类型（`account.type`）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account_kind: Option<String>,
 }
@@ -135,7 +135,9 @@ pub(crate) fn map_workbuddy_account(
         reauth_required: false,
         requires_reauth: account.expired,
         provider: AUTH_PROVIDER_WORKBUDDY_ACCOUNT.to_string(),
-        account_kind: account.kind,
+        // 优先显示版型 / 套餐（editionType，如 free / pro），没有时退回账号类型（personal 等）。
+        // 两者都是 WorkBuddy 明文字段，前端按已知 code 本地化、未知 code 原样显示。
+        account_kind: account.plan.or(account.kind),
         id: account.id,
     }
 }

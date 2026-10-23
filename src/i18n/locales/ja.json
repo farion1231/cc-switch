@@ -4942,6 +4942,14 @@
       "statusLoadFailed": "WorkBuddy のアカウントを読み込めませんでした。もう一度お試しください。",
       "empty": "WorkBuddy のアカウントはまだありません。WorkBuddy でログインしてから、現在のアカウントを取り込んでください。",
       "importCurrent": "現在のログインを取り込む",
+      "plan": {
+        "free": "無料版",
+        "pro": "Pro",
+        "team": "チーム版",
+        "enterprise": "エンタープライズ版",
+        "personal": "個人版",
+        "_raw": "{{plan}}"
+      },
       "importNow": "取り込む",
       "current": "WorkBuddy で使用中",
       "switchTo": "WorkBuddy をこのアカウントに切り替え",

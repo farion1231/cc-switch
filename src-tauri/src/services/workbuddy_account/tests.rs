@@ -19,6 +19,9 @@ impl Fixture {
         let paths = WorkBuddyPaths {
             auth_dir: dir.path().join("CodeBuddyExtension/Data/Public/auth"),
             keyblob: dir.path().join(".workbuddy/keyblob"),
+            profile_snapshot: dir
+                .path()
+                .join(".workbuddy/storage/skeleton/account-snapshot.json"),
         };
         std::fs::create_dir_all(&data_dir).unwrap();
         std::fs::create_dir_all(&paths.auth_dir).unwrap();
@@ -57,6 +60,25 @@ impl Fixture {
         .unwrap();
         std::fs::write(&self.paths.keyblob, format!("keyblob-{uid}-{generation}")).unwrap();
         let _ = std::fs::remove_file(self.paths.logout_marker());
+    }
+
+    /// 模拟 WorkBuddy 写的明文登录画像（`account-snapshot.json`）。
+    fn write_profile(&self, uid: &str, nickname: &str, edition: &str) {
+        std::fs::create_dir_all(self.paths.profile_snapshot.parent().unwrap()).unwrap();
+        std::fs::write(
+            &self.paths.profile_snapshot,
+            serde_json::to_vec(&json!({
+                "primary": {
+                    "version": 1,
+                    "uid": uid,
+                    "nickname": nickname,
+                    "type": "personal",
+                    "editionType": edition,
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
     }
 
     fn info(&self) -> String {
@@ -123,6 +145,36 @@ fn reads_only_plaintext_identity_fields() {
         plain_timestamp(Some(&json!("1700000000000"))),
         Some(1_700_000_000)
     );
+}
+
+#[test]
+fn fills_nickname_and_plan_from_the_plaintext_profile() {
+    let fixture = Fixture::new();
+    let manager = fixture.manager();
+    fixture.sign_in("u-1", 0);
+    // 画像匹配当前登录：昵称和版型补进来
+    fixture.write_profile("u-1", "Ada", "pro");
+
+    let account = manager.import_current().unwrap().account;
+    assert_eq!(account.label(), "Ada");
+    assert_eq!(account.plan.as_deref(), Some("pro"));
+
+    // 切到一个画像对不上的号：u-1 的昵称/版型作为缓存保留，不被清掉
+    fixture.sign_in("u-2", 0);
+    fixture.write_profile("u-2", "Bob", "free");
+    let status = manager.status().unwrap();
+    let u1 = status.accounts.iter().find(|a| a.id == "u-1").unwrap();
+    assert_eq!(u1.nickname.as_deref(), Some("Ada"));
+    assert_eq!(u1.plan.as_deref(), Some("pro"));
+    let u2 = status.accounts.iter().find(|a| a.id == "u-2").unwrap();
+    assert_eq!(u2.label(), "Bob");
+    assert_eq!(u2.plan.as_deref(), Some("free"));
+
+    // 画像 uid 对不上当前登录时忽略（不会把别人的昵称安到当前号上）
+    fixture.write_profile("someone-else", "Eve", "team");
+    let again = manager.status().unwrap();
+    let u2 = again.accounts.iter().find(|a| a.id == "u-2").unwrap();
+    assert_eq!(u2.label(), "Bob");
 }
 
 #[test]
