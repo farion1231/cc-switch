@@ -80,6 +80,7 @@ import {
   piSendsReasoningEffort,
   piThinkingLevelMapFromEfforts,
 } from "./modelMetadataFill";
+import { usePiCurrentState } from "@/lib/query/pi";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type { ProviderCategory } from "@/types";
 import { translatePiProviderMutationError } from "@/utils/errorUtils";
@@ -487,6 +488,13 @@ export function PiProviderForm({
     [initialData?.settingsConfig],
   );
   const isEdit = Boolean(initialData);
+  const { data: piCurrentState, isLoading: isPiCurrentStateLoading } =
+    usePiCurrentState(true);
+  const isProviderKeyLockStateLoading = isEdit && isPiCurrentStateLoading;
+  const isProviderKeyLocked = useMemo(() => {
+    if (!isEdit || !providerId) return false;
+    return piCurrentState?.enabledProviderIds.includes(providerId) ?? false;
+  }, [isEdit, providerId, piCurrentState]);
   const initialNativeName = optionalText(initialConfig.name);
   const initialDisplayName = initialData?.name ?? initialNativeName;
   const initialConfigHasNativeName = hasOwn(initialConfig, "name");
@@ -1205,7 +1213,7 @@ export function PiProviderForm({
           'input[name="name"]',
         );
       }
-      if (!isEdit && !trimmedKey) {
+      if (!trimmedKey) {
         throw new PiFormValidationError(
           t("pi.form.providerKeyRequired"),
           "#pi-provider-key",
@@ -1369,7 +1377,7 @@ export function PiProviderForm({
         settingsConfig: JSON.stringify(settingsConfig),
         icon: identity.icon || selectedPreset?.icon || "",
         iconColor: identity.iconColor || selectedPreset?.iconColor || "",
-        providerKey: isEdit ? providerId : trimmedKey,
+        providerKey: trimmedKey,
         presetId: selectedPresetId ?? undefined,
         presetCategory: category,
         meta: initialData?.meta,
@@ -1491,12 +1499,14 @@ export function PiProviderForm({
                       onChange={(event) =>
                         handleProviderKeyChange(event.target.value)
                       }
-                      disabled={isEdit}
+                      disabled={
+                        isProviderKeyLocked || isProviderKeyLockStateLoading
+                      }
                       placeholder="my-provider"
                       autoComplete="off"
                     />
                     <p className="text-xs text-fg-2">
-                      {isEdit
+                      {isProviderKeyLocked
                         ? t("opencode.providerKeyLockedHint", {
                             defaultValue:
                               "该供应商已添加到应用配置中，供应商标识不可修改",
