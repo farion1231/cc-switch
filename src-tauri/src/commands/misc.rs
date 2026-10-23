@@ -405,17 +405,27 @@ pub async fn run_tool_lifecycle_action(
         .await
 }
 
-/// 静默执行工具安装/更新脚本：直接捕获子进程输出并阻塞到命令真正结束，
-/// 不再弹出可见终端窗口（与 `launch_terminal_running` 的"开窗即返回"形成对比，
-/// 后者仍保留给 provider 切换等需要交互式终端的场景）。
-/// 失败时回传 stderr/stdout 末尾若干行，供前端 toast 提示。
+fn tool_management_working_dir() -> PathBuf {
+    // Global CLI maintenance must not inherit this checkout's .node-version,
+    // .nvmrc or package-manager configuration when launched by `pnpm dev`.
+    std::env::temp_dir()
+}
+
+/// 静默执行工具安装/更新脚本，捕获输出直到命令结束；从独立目录运行，
+/// 避免全局安装受到开发仓库的 Node 版本及 npm 配置影响。
 #[cfg(not(target_os = "windows"))]
 fn run_tool_lifecycle_silently(command_line: &str, _label: &str) -> Result<(), String> {
     use std::process::Command;
+    let script_dir = tempfile::Builder::new()
+        .prefix("cc_switch_lifecycle_")
+        .tempdir()
+        .map_err(|error| format!("Cannot create CLI lifecycle directory: {error}"))?;
     // command_line 是 bash 风格脚本（含 `set -e` 与多行命令）；强制用 bash 执行，
     // 避免用户默认 shell 为 fish/zsh 时 `set -e` 等语义不一致。
     let mut cmd = Command::new("bash");
-    cmd.arg("-c").arg(command_line);
+    cmd.arg("-c")
+        .arg(command_line)
+        .current_dir(script_dir.path());
     // GUI App 继承的是 launchd 的窄 PATH，而锚定探测用的是登录 shell —— 见
     // `login_shell_path` doc。命令自身用绝对路径不受影响，但工具**内部** spawn 的
     // npm/node 等子进程、以及 install 链里裸的 npm fallback 都需要真实 PATH。
@@ -450,6 +460,12 @@ fn windows_lifecycle_command(bat_file: &Path, effective_path: &str) -> std::proc
     command
         .arg("/C")
         .arg(bat_file)
+        .current_dir(
+            bat_file
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(tool_management_working_dir),
+        )
         // MSI 自动重启可能丢失用户 PATH（#8171）。执行与探测共用补全后的 PATH，
         // 让裸 npm 兜底及工具内部启动的 node/npm 都能找到；仅设置子进程环境。
         .env("PATH", effective_path)
@@ -1792,6 +1808,7 @@ fn try_get_version(tool: &str) -> ShellProbe {
         let mut cmd = Command::new(shell);
         cmd.arg(flag)
             .arg(format!("{tool} --version"))
+            .current_dir(tool_management_working_dir())
             // 与 `resolve_path_default` 相同：交互式 shell（-lic）不能读到继承来的
             // stdin，也不能因持有控制终端被 SIGTTIN 停住（从终端启动时整个应用卡死）。
             .stdin(Stdio::null())
@@ -2026,6 +2043,7 @@ fn try_get_version_wsl(
 
     let output = Command::new("wsl.exe")
         .args(["-d", distro, "--", &shell, flag, &cmd])
+        .current_dir(tool_management_working_dir())
         .creation_flags(CREATE_NO_WINDOW)
         .output();
 
@@ -2857,6 +2875,7 @@ fn build_windows_tool_command(
         let mut cmd = Command::new("cmd");
         cmd.args(["/D", "/S", "/C"])
             .raw_arg(&command)
+            .current_dir(tool_management_working_dir())
             .env("PATH", new_path)
             .creation_flags(CREATE_NO_WINDOW);
         return cmd;
@@ -2864,6 +2883,7 @@ fn build_windows_tool_command(
 
     let mut cmd = Command::new(tool_path);
     cmd.args(args)
+        .current_dir(tool_management_working_dir())
         .env("PATH", new_path)
         .creation_flags(CREATE_NO_WINDOW);
     cmd
@@ -2964,6 +2984,7 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
             let output = {
                 Command::new(&tool_path)
                     .arg("--version")
+                    .current_dir(tool_management_working_dir())
                     .env("PATH", &new_path)
                     .output()
             };
@@ -3146,6 +3167,7 @@ fn login_shell_path(deadline: Option<CommandDeadline>) -> Option<String> {
     let mut cmd = Command::new(shell);
     cmd.arg(flag)
         .arg("/usr/bin/env")
+        .current_dir(tool_management_working_dir())
         // 与 `resolve_path_default` 相同：交互式 rc 不能读到继承来的 stdin，
         // 也不能因持有控制终端被作业控制停住。
         .stdin(Stdio::null())
@@ -3178,6 +3200,7 @@ fn resolve_path_default(
     let mut cmd = Command::new(shell);
     cmd.arg(flag)
         .arg(format!("command -v {tool}"))
+        .current_dir(tool_management_working_dir())
         // 改 spawn 后 stdin 不再像 output() 那样默认置 null，须显式关闭：
         // 继承来的 stdin 可能是终端/管道，交互式 rc 里的读操作会永久阻塞。
         .stdin(Stdio::null())
@@ -3285,6 +3308,7 @@ fn run_probe_version_command(
 
     let mut cmd = Command::new(tool_path);
     cmd.arg("--version")
+        .current_dir(tool_management_working_dir())
         .env("PATH", new_path)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -6619,6 +6643,80 @@ mod tests {
             .unwrap_err()
             .contains("tool lifecycle task join error"));
         coordinator.run(vec!["claude"], |_| Ok(())).await.unwrap();
+    }
+
+    #[cfg(any(windows, unix))]
+    #[test]
+    fn tool_management_ignores_project_node_version() {
+        const CHILD: &str = "CC_SWITCH_TEST_TOOL_MANAGEMENT_CWD";
+        if let Some(root) = std::env::var_os(CHILD) {
+            let root = PathBuf::from(root);
+            assert_eq!(
+                std::fs::read_to_string(".node-version").unwrap().trim(),
+                "v22.12.0"
+            );
+            let installed = root.join("installed-node.txt");
+            #[cfg(windows)]
+            let launcher = root.join("node.cmd");
+            #[cfg(unix)]
+            let launcher = root.join("node");
+            #[cfg(windows)]
+            let output = run_probe_version_command(&launcher, &effective_path_string()).unwrap();
+            #[cfg(unix)]
+            let output =
+                run_probe_version_command(&launcher, &effective_path_os().unwrap_or_default())
+                    .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            assert_eq!(decode_command_output(&output.stdout).trim(), "v24.20.0");
+            #[cfg(windows)]
+            let script = format!(
+                "@echo off\r\ncall {} --version > {}\r\n",
+                win_quote_path_for_batch(&launcher.to_string_lossy()),
+                win_quote_path_for_batch(&installed.to_string_lossy())
+            );
+            #[cfg(unix)]
+            let script = format!(
+                "{} --version > {}",
+                shell_single_quote(&launcher.to_string_lossy()),
+                shell_single_quote(&installed.to_string_lossy())
+            );
+            run_tool_lifecycle_silently(&script, "tool_install").unwrap();
+            assert_eq!(
+                std::fs::read_to_string(installed).unwrap().trim(),
+                "v24.20.0"
+            );
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("project");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::write(project.join(".node-version"), "v22.12.0\n").unwrap();
+        // Simulate a version-manager shim which selects Node from its cwd.
+        #[cfg(windows)]
+        std::fs::write(root.path().join("node.cmd"), "@echo off\r\nif exist .node-version (\r\n type .node-version\r\n) else (\r\n echo v24.20.0\r\n)\r\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let launcher = root.path().join("node");
+            std::fs::write(&launcher, "#!/bin/sh\nif [ -f .node-version ]; then cat .node-version; else echo v24.20.0; fi\n").unwrap();
+            std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "commands::misc::tests::tool_management_ignores_project_node_version",
+                "--nocapture",
+            ])
+            .env(CHILD, root.path())
+            .current_dir(&project)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            decode_command_output(&output.stdout),
+            decode_command_output(&output.stderr)
+        );
     }
 
     #[cfg(target_os = "windows")]
